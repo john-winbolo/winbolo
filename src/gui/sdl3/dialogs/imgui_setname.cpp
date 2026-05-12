@@ -32,7 +32,6 @@ extern "C" {
 #include "../sdl3draw.h"
 #include "../../gamefront.h"
 #include "../../../bolo/global.h"
-#include "../../../bolo/screen.h"
 #include "../../../bolo/client_sim.h"
 #include "../../../bolo/util.h"
 #include "../../../bolo/playername_validate.h"
@@ -87,7 +86,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
     char playerName[PLAYER_NAME_LEN];
     playerName[0] = '\0';
     if (inGame) {
-        screenGetPlayerNameCS(cs, playerName);
+        clientSimGetPlayerName(cs, playerName);
     } else {
         gameFrontGetPlayerName(playerName);
     }
@@ -192,11 +191,11 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
             } else if (inGame) {
                 char oldName[PLAYER_NAME_LEN];
                 oldName[0] = '\0';
-                screenGetPlayerNameCS(cs, oldName);
+                clientSimGetPlayerName(cs, oldName);
                 if (playerNameCompare(oldName, newName) == 0) {
                     running = false;
                 } else {
-                    bool changeOK = screenSetPlayerNameCS(cs, newName);
+                    bool changeOK = clientSimSetPlayerName(cs, newName);
                     if (!changeOK) {
                         errorMsg = langGetText(STR_DLGSETNAME_INUSE_ERR);
                         ImGui::OpenPopup(errPopupId);

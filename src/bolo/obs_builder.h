@@ -43,7 +43,7 @@ struct ClientSim;
  *  Single-view (tank view rect) only.
  *
  *ARGUMENTS:
- *  bi  - Populated BrainInfo from screenMakeBrainInfoCS
+ *  bi  - Populated BrainInfo from brainDataMakeInfo
  *  obs - Output observation (zeroed and filled)
  *********************************************************/
 void obsBuildFromBrainInfo(const BrainInfo *bi, WinBoloObs *obs);

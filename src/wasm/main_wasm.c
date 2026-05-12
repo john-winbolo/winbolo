@@ -16,8 +16,9 @@
 #include <emscripten.h>
 #include <emscripten/html5.h>
 
-#include "../bolo/screen.h"
+#include "../bolo/client_render.h"
 #include "../bolo/client_sim.h"
+#include "../bolo/client_snapshot.h"
 #include "../bolo/frontend.h"
 #include "../bolo/playername_validate.h"
 #include "../bolo/transport.h"
@@ -171,7 +172,7 @@ static void windowRunGameTick(ClientSim *cs) {
         inputScroll(cs, &keys, isInMenu);
       }
       InputPacket pkt;
-      screenBuildInputPacketCS(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
+      clientBuildInputPacket(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
       clientMutexWaitFor();
       clientSimKeysTick(cs, &pkt);
       clientMutexRelease();
@@ -194,7 +195,7 @@ static void windowRunGameTick(ClientSim *cs) {
         inputScroll(cs, &keys, isInMenu);
       }
       InputPacket pkt;
-      screenBuildInputPacketCS(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
+      clientBuildInputPacket(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
       clientMutexWaitFor();
       clientSimGameTick(cs, &pkt, brainRunning);
       clientMutexRelease();
@@ -282,7 +283,7 @@ static void main_loop_iteration(void) {
   tick = winboloTimer();
   clientMutexWaitFor();
   if (finishedLoop == FALSE) {
-    screenUpdateCS(cs, redraw);
+    clientRenderFrame(cs, redraw);
   }
   clientMutexRelease();
   dwSysFrame += (winboloTimer() - tick);
@@ -467,16 +468,16 @@ void windowReCreate(void)  { }
 void windowSetQuitting(void) { winboloQuit = TRUE; finishedLoop = TRUE; }
 
 void windowApplyMenuChecks(ClientSim *cs) {
-  screenSetGunsightCS(cs, showGunsight);
-  screenSetAutoScroll(cs, autoScrollingEnabled);
-  screenSetLabelOwnTank(cs, labelSelf);
-  screenSetMesageLabelLen(cs, labelMsg);
-  screenSetTankLabelLen(cs, labelTank);
-  screenShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
-  screenShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
-  screenShowMessages(cs, MSG_AI, showAIMessages);
-  screenShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
-  screenShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
+  clientSimSetGunsight(cs, showGunsight);
+  clientSimSetAutoScroll(cs, autoScrollingEnabled);
+  clientSimSetLabelOwnTank(cs, labelSelf);
+  clientSimSetLabelMessage(cs, labelMsg);
+  clientSimSetLabelTankLabel(cs, labelTank);
+  clientSimShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
+  clientSimShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
+  clientSimShowMessages(cs, MSG_AI, showAIMessages);
+  clientSimShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
+  clientSimShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
   clientSimSetAllowNewPlayers(cs, allowNewPlayers);
 }
 
@@ -539,11 +540,11 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
 /* Menu toggles — called by sdl3imgui.cpp */
 void windowShowGunsight_toggle(ClientSim *cs) {
   showGunsight = !showGunsight;
-  screenSetGunsightCS(cs, showGunsight);
+  clientSimSetGunsight(cs, showGunsight);
 }
 void windowAutomaticScrolling_toggle(ClientSim *cs) {
   autoScrollingEnabled = !autoScrollingEnabled;
-  if (cs) screenSetAutoScroll(cs, autoScrollingEnabled);
+  if (cs) clientSimSetAutoScroll(cs, autoScrollingEnabled);
 }
 void windowShowPillLabels_toggle(ClientSim *cs) {
   BYTE count, total;
@@ -551,7 +552,7 @@ void windowShowPillLabels_toggle(ClientSim *cs) {
   sdl3DrawSetPillsStatusClear();
   total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
   for (count = 1; count <= total; count++) {
-    BYTE pillStat = screenPillAllianceCS(cs, count);
+    BYTE pillStat = clientSimGetPillAlliance(cs, count);
     sdl3DrawStatusPillbox(count, pillStat, showPillLabels);
   }
   sdl3DrawCopyPillsStatus(0, 0);
@@ -562,7 +563,7 @@ void windowShowBaseLabels_toggle(ClientSim *cs) {
   sdl3DrawSetBasesStatusClear();
   total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
   for (count = 1; count <= total; count++) {
-    BYTE baseStat = screenBaseAllianceCS(cs, count);
+    BYTE baseStat = clientSimGetBaseAlliance(cs, count);
     sdl3DrawStatusBase(count, baseStat, showBaseLabels);
   }
   sdl3DrawCopyBasesStatus(0, 0);
@@ -584,15 +585,15 @@ void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
   allowNewPlayers = !allowNewPlayers;
   clientSimSetAllowNewPlayers(cs, allowNewPlayers);
 }
-void windowMenuNewswire_toggle(ClientSim *cs)    { showNewswireMessages = !showNewswireMessages; if (cs) screenShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages); }
-void windowMenuAssistant_toggle(ClientSim *cs)   { showAssistantMessages = !showAssistantMessages; if (cs) screenShowMessages(cs, MSG_ASSISTANT, showAssistantMessages); }
-void windowMenuAI_toggle(ClientSim *cs)          { showAIMessages = !showAIMessages; if (cs) screenShowMessages(cs, MSG_AI, showAIMessages); }
-void windowMenuNetwork_toggle(ClientSim *cs)     { showNetworkStatusMessages = !showNetworkStatusMessages; if (cs) screenShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages); }
-void windowMenuNetworkDebug_toggle(ClientSim *cs){ showNetworkDebugMessages = !showNetworkDebugMessages; if (cs) screenShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages); }
+void windowMenuNewswire_toggle(ClientSim *cs)    { showNewswireMessages = !showNewswireMessages; if (cs) clientSimShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages); }
+void windowMenuAssistant_toggle(ClientSim *cs)   { showAssistantMessages = !showAssistantMessages; if (cs) clientSimShowMessages(cs, MSG_ASSISTANT, showAssistantMessages); }
+void windowMenuAI_toggle(ClientSim *cs)          { showAIMessages = !showAIMessages; if (cs) clientSimShowMessages(cs, MSG_AI, showAIMessages); }
+void windowMenuNetwork_toggle(ClientSim *cs)     { showNetworkStatusMessages = !showNetworkStatusMessages; if (cs) clientSimShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages); }
+void windowMenuNetworkDebug_toggle(ClientSim *cs){ showNetworkDebugMessages = !showNetworkDebugMessages; if (cs) clientSimShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages); }
 void windowHideMainView_toggle(void)    { hideMainView = !hideMainView; }
-void windowLabelOwnTank_toggle(ClientSim *cs)    { labelSelf = !labelSelf; if (cs) screenSetLabelOwnTank(cs, labelSelf); }
-void windowSetMessageLabelLen(ClientSim *cs, labelLen n){ labelMsg = n; if (cs) screenSetMesageLabelLen(cs, labelMsg); }
-void windowSetTankLabelLen(ClientSim *cs, labelLen n)   { labelTank = n; if (cs) screenSetTankLabelLen(cs, labelTank); }
+void windowLabelOwnTank_toggle(ClientSim *cs)    { labelSelf = !labelSelf; if (cs) clientSimSetLabelOwnTank(cs, labelSelf); }
+void windowSetMessageLabelLen(ClientSim *cs, labelLen n){ labelMsg = n; if (cs) clientSimSetLabelMessage(cs, labelMsg); }
+void windowSetTankLabelLen(ClientSim *cs, labelLen n)   { labelTank = n; if (cs) clientSimSetLabelTankLabel(cs, labelTank); }
 void windowNewGame(void)                 { winboloQuit = FALSE; }
 void windowQuit(void)                    { winboloQuit = TRUE; }
 
@@ -611,7 +612,7 @@ void windowDisableSound(void)           { soundEffects = FALSE; useSoundKeepaliv
 bool windowGetBackgroundSound(void)     { return backgroundSound; }
 void windowRedrawAll(ClientSim *cs) {
   clientMutexWaitFor();
-  sdl3DrawRedrawAll(cs, getBuildCurrentSelectCS(cs), NULL, showPillLabels, showBaseLabels);
+  sdl3DrawRedrawAll(cs, clientSimGetCurrentBuildSelect(cs), NULL, showPillLabels, showBaseLabels);
   clientMutexRelease();
 }
 void *windowWnd(void) { return NULL; }
@@ -624,8 +625,8 @@ void windowSaveMap(ClientSim *cs) {
 }
 
 void windowKeyPressed(ClientSim *cs, int keyCode) {
-  if (keyCode == keys.kiTankView) screenTankViewCS(cs);
-  else if (keyCode == keys.kiPillView) screenPillViewCS(cs, 0, 0);
+  if (keyCode == keys.kiTankView) clientSimTankView(cs);
+  else if (keyCode == keys.kiPillView) clientSimPillView(cs, 0, 0);
 }
 void windowButtonAdd(int keyCode)    { (void)keyCode; }
 void windowButtonRemove(int keyCode) { (void)keyCode; }
@@ -659,7 +660,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
                             int32_t srtDelay, bool isPillView, tank *tank, int edgeX, int edgeY) {
   if (hideMainView == FALSE && drawBusy == FALSE) {
     BYTE cursorX, cursorY;
-    bool showCursor = screenGetCursorPosCS(cs, &cursorX, &cursorY);
+    bool showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
     sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
     sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                        NULL, showPillLabels, showBaseLabels,
@@ -757,7 +758,7 @@ void frontEndRedrawAll(ClientSim *cs) { windowRedrawAll(cs); }
 
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
   showGunsight = !isShown;
-  screenSetGunsightCS(cs, showGunsight);
+  clientSimSetGunsight(cs, showGunsight);
 }
 
 void frontEndShowAllianceRequest(char *playerName, BYTE playerNum) {

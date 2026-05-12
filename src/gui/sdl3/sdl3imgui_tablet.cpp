@@ -41,9 +41,9 @@
 
 extern "C" {
 #include "../../bolo/global.h"
-#include "../../bolo/screen.h"
 #include "../../bolo/screentank.h"
 #include "../../bolo/client_sim.h"
+#include "../../bolo/client_render.h"  /* clientRenderFrame */
 #include "../gamefront.h"
 #include "../tiles.h"
 #include "../ui_mode.h"
@@ -54,14 +54,6 @@ extern "C" {
 
 #include "sdl3imgui.h"
 #include "sdl3imgui_tablet.h"
-
-extern "C" {
-  void screenSetCursorPosCS(struct ClientSim *csPtr, BYTE posX, BYTE posY);
-  void screenManMoveCS(struct ClientSim *csPtr, buildSelect buildS);
-  void screenPillViewCS(struct ClientSim *csPtr, int horz, int vert);
-  void screenTankViewCS(struct ClientSim *csPtr);
-  void screenUpdateCS(struct ClientSim *csPtr, updateType value);
-}
 
 static bool s_statusDrawerOpen = false;
 
@@ -577,10 +569,10 @@ static void processScrollJoystick(ClientSim *cs) {
   s_scrollKeyCount++;
   if (s_scrollKeyCount >= 3) {
     s_scrollKeyCount = 0;
-    if (scrollY < 0) screenUpdateCS(cs, up);
-    if (scrollY > 0) screenUpdateCS(cs, down);
-    if (scrollX < 0) screenUpdateCS(cs, left);
-    if (scrollX > 0) screenUpdateCS(cs, right);
+    if (scrollY < 0) clientRenderFrame(cs, up);
+    if (scrollY > 0) clientRenderFrame(cs, down);
+    if (scrollX < 0) clientRenderFrame(cs, left);
+    if (scrollX > 0) clientRenderFrame(cs, right);
   }
 }
 
@@ -614,10 +606,10 @@ static void processViewportDragScroll(ClientSim *cs) {
   if (tilePx < 1) tilePx = 1;
 
   /* Commit full tile scrolls to the engine */
-  while (s_vpDragAccumX >= tilePx)  { screenUpdateCS(cs, right); s_vpDragAccumX -= tilePx; }
-  while (s_vpDragAccumX <= -tilePx) { screenUpdateCS(cs, left);  s_vpDragAccumX += tilePx; }
-  while (s_vpDragAccumY >= tilePx)  { screenUpdateCS(cs, down);  s_vpDragAccumY -= tilePx; }
-  while (s_vpDragAccumY <= -tilePx) { screenUpdateCS(cs, up);    s_vpDragAccumY += tilePx; }
+  while (s_vpDragAccumX >= tilePx)  { clientRenderFrame(cs, right); s_vpDragAccumX -= tilePx; }
+  while (s_vpDragAccumX <= -tilePx) { clientRenderFrame(cs, left);  s_vpDragAccumX += tilePx; }
+  while (s_vpDragAccumY >= tilePx)  { clientRenderFrame(cs, down);  s_vpDragAccumY -= tilePx; }
+  while (s_vpDragAccumY <= -tilePx) { clientRenderFrame(cs, up);    s_vpDragAccumY += tilePx; }
 
   /* Set the sub-tile pixel offset for smooth rendering */
   sdl3DrawSetDragOffset((int)s_vpDragAccumX, (int)s_vpDragAccumY);
@@ -831,7 +823,7 @@ static void renderBuildSelectBar(ClientSim *cs) {
                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
                     ImGuiWindowFlags_NoScrollWithMouse)) {
 
-    buildSelect cur = getBuildCurrentSelectCS(cs);
+    buildSelect cur = clientSimGetCurrentBuildSelect(cs);
     const char *ids[] = { "##bsTree", "##bsRoad", "##bsWall", "##bsPill", "##bsMine" };
     buildSelect values[] = { BsTrees, BsRoad, BsBuilding, BsPillbox, BsMine };
 
@@ -853,14 +845,14 @@ static void renderBuildSelectBar(ClientSim *cs) {
 
       if (ImGui::ImageButton(ids[i], (ImTextureID)tilesTex,
                               ImVec2(iconSize, iconSize), uv0, uv1)) {
-        setBuildCurrentSelectCS(cs, values[i]);
+        clientSimSetCurrentBuildSelect(cs, values[i]);
       }
 
       /* Touch tap fallback — ImGui buttons may not register finger events on iOS */
       ImVec2 rMin = ImGui::GetItemRectMin();
       ImVec2 rMax = ImGui::GetItemRectMax();
       if (inputTouchConsumeTapInRect(rMin.x, rMin.y, rMax.x - rMin.x, rMax.y - rMin.y)) {
-        setBuildCurrentSelectCS(cs, values[i]);
+        clientSimSetCurrentBuildSelect(cs, values[i]);
       }
 
       ImGui::PopStyleColor(2);
@@ -1121,7 +1113,7 @@ static void renderStatusDrawer(ClientSim *cs) {
     /* Kills / Deaths */
     {
       int kills, deaths;
-      screenGetKillsDeathsCS(cs, &kills, &deaths);
+      clientSimGetKillsDeaths(cs, &kills, &deaths);
       MessageArgs args = {};
       args.number = kills;
       args.number2 = deaths;
@@ -1132,7 +1124,7 @@ static void renderStatusDrawer(ClientSim *cs) {
     /* Tank resource bars */
     if (ImGui::CollapsingHeader(langGetText(STR_TABLET_TANK_RESOURCES), ImGuiTreeNodeFlags_DefaultOpen)) {
       BYTE shells, mines, armour, trees;
-      screenGetTankStatsCS(cs, &shells, &mines, &armour, &trees);
+      clientSimGetTankStats(cs, &shells, &mines, &armour, &trees);
       ImGui::ProgressBar((float)shells / 40.0f, ImVec2(-1, 0), langGetText(STR_TABLET_SHELLS));
       ImGui::ProgressBar((float)mines  / 40.0f, ImVec2(-1, 0), langGetText(STR_TABLET_MINES));
       ImGui::ProgressBar((float)armour / 40.0f, ImVec2(-1, 0), langGetText(STR_TABLET_ARMOUR));
@@ -1143,7 +1135,7 @@ static void renderStatusDrawer(ClientSim *cs) {
     if (ImGui::CollapsingHeader(langGetText(STR_TABLET_PILLBOXES))) {
       BYTE total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
       for (BYTE i = 1; i <= total; i++) {
-        pillAlliance pa = screenPillAllianceCS(cs, i);
+        pillAlliance pa = clientSimGetPillAlliance(cs, i);
         ImVec4 col;
         switch (pa) {
           case pillAllie:   col = ImVec4(0.0f, 0.8f, 0.0f, 1.0f); break;
@@ -1163,7 +1155,7 @@ static void renderStatusDrawer(ClientSim *cs) {
     if (ImGui::CollapsingHeader(langGetText(STR_TABLET_BASES))) {
       BYTE total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
       for (BYTE i = 1; i <= total; i++) {
-        baseAlliance ba = screenBaseAllianceCS(cs, i);
+        baseAlliance ba = clientSimGetBaseAlliance(cs, i);
         ImVec4 col;
         switch (ba) {
           case baseOwnGood: col = ImVec4(0.0f, 0.8f, 0.0f, 1.0f); break;
@@ -1182,7 +1174,7 @@ static void renderStatusDrawer(ClientSim *cs) {
     /* Tanks status */
     if (ImGui::CollapsingHeader(langGetText(STR_TABLET_TANKS))) {
       for (BYTE i = 1; i <= MAX_TANKS; i++) {
-        tankAlliance ta = screenTankAllianceCS(cs, i);
+        tankAlliance ta = clientSimGetTankAlliance(cs, i);
         ImVec4 col;
         switch (ta) {
           case tankSelf:    col = ImVec4(0.0f, 0.8f, 0.0f, 1.0f); break;
@@ -1332,8 +1324,8 @@ static void handleTapToBuild(ClientSim *cs) {
        always-visible tablet overlay windows (build bar, resource bars)
        also set WantCaptureMouse and must not block building. */
     if (sdl3ImguiIsDialogOpen()) return;
-    screenSetCursorPosCS(cs, tileX, tileY);
-    screenManMoveCS(cs, getBuildCurrentSelectCS(cs));
+    clientSimSetCursorPos(cs, tileX, tileY);
+    clientSimManMove(cs, clientSimGetCurrentBuildSelect(cs));
   }
 }
 
@@ -1406,12 +1398,12 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
   /* Handle view button taps */
   if (inputTouchIsButtonTapped(TOUCH_BTN_PILL_VIEW)) {
     if (!clientSimIsInPillView(cs)) {
-      screenPillViewCS(cs, 0, 0);
+      clientSimPillView(cs, 0, 0);
     }
   }
   if (inputTouchIsButtonTapped(TOUCH_BTN_TANK_VIEW)) {
     if (clientSimIsInPillView(cs)) {
-      screenTankViewCS(cs);
+      clientSimTankView(cs);
     }
   }
 

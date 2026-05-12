@@ -15,8 +15,9 @@
 #include <emscripten.h>
 #include <emscripten/html5.h>
 
-#include "../bolo/screen.h"
+#include "../bolo/client_mapload.h"
 #include "../bolo/client_sim.h"
+#include "../bolo/client_snapshot.h"
 #include "../bolo/client_sim_control.h"
 #include "../bolo/control_event.h"
 #include "../bolo/global.h"
@@ -222,8 +223,8 @@ bool gameFrontLoadInBuiltMap(void) {
     if (fp != NULL) {
       fclose(fp);
       printf("[WASM] Loading map: %s\n", paths[i]);
-      return screenLoadMapCS(humanSim, (char *)paths[i], gametype, hiddenMines,
-                           startDelay, timeLen, gameFrontName, FALSE);
+      return clientLoadMap(humanSim, (char *)paths[i], gametype, hiddenMines,
+                         startDelay, timeLen, gameFrontName, FALSE);
     }
   }
 
@@ -243,8 +244,8 @@ bool gameFrontLoadTutorial(void) {
     FILE *fp = fopen(paths[i], "rb");
     if (fp != NULL) {
       fclose(fp);
-      return screenLoadMapCS(humanSim, (char *)paths[i], gameStrictTournament, FALSE,
-                           0, UNLIMITED_GAME_TIME, gameFrontName, FALSE);
+      return clientLoadMap(humanSim, (char *)paths[i], gameStrictTournament, FALSE,
+                         0, UNLIMITED_GAME_TIME, gameFrontName, FALSE);
     }
   }
   return FALSE;
@@ -435,16 +436,16 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
         savedMapName[MAP_STR_SIZE - 1] = '\0';
         clientSimDestroy(humanSim);
         humanSim = clientSimAlloc();
-        if (screenLoadCompressedMapCS(humanSim, (BYTE *)mapData, mapLen, savedMapName,
-                                     serverGame, serverHiddenMines,
-                                     serverStartDelay, serverGameLen,
-                                     gameFrontName, wasmPlayerNum, FALSE) == FALSE) {
+        if (clientLoadCompressedMap(humanSim, (BYTE *)mapData, mapLen, savedMapName,
+                                   serverGame, serverHiddenMines,
+                                   serverStartDelay, serverGameLen,
+                                   gameFrontName, wasmPlayerNum, FALSE) == FALSE) {
           printf("[WASM] Failed to load map from server\n");
           transportUdpClientDestroy(&wasmTransport);
           wasmTransportActive = FALSE;
           return FALSE;
         }
-        screenSetLocalTransportCS(humanSim, false);
+        clientSimSetLocalTransport(humanSim, false);
       } else {
         printf("[WASM] No map data from server\n");
         transportUdpClientDestroy(&wasmTransport);
@@ -454,7 +455,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       }
     }
 
-    screenNetSetupTankGoCS(humanSim);
+    clientNetSetupTankGo(humanSim);
     /* Gate lobby vs running: if we received PACKET_LOBBY_STATE during
      * join, stay in lobby state; otherwise proceed to running */
     if (clientSimIsInLobby(humanSim)) {
@@ -501,12 +502,12 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       if (compLen > 0) {
         clientSimDestroy(humanSim);
         humanSim = clientSimAlloc();
-        bool mapOk = screenLoadCompressedMapCS(humanSim, compressedMap, compLen, "Local Game",
+        bool mapOk = clientLoadCompressedMap(humanSim, compressedMap, compLen, "Local Game",
                                  gametype, hiddenMines, startDelay,
                                  timeLen, gameFrontName, 0, FALSE);
-        printf("[WASM] screenLoadCompressedMapCS returned %s\n", mapOk ? "TRUE" : "FALSE");
+        printf("[WASM] clientLoadCompressedMap returned %s\n", mapOk ? "TRUE" : "FALSE");
         if (!mapOk) {
-          printf("[WASM] Map load failed; humanSim has been destroyed by screenLoadCompressedMapCS\n");
+          printf("[WASM] Map load failed; humanSim has been destroyed by clientLoadCompressedMap\n");
           transportLocalDestroy(&wasmTransport);
           wasmTransportActive = FALSE;
           free(wasmServerSim);
@@ -548,9 +549,9 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
                              snapPills, snapHdr.pillCount,
                              snapEvents, snapHdr.reliableEventCount, 0);
     }
-    screenNetSetupTankGoCS(humanSim);
+    clientNetSetupTankGo(humanSim);
     /* Register the WASM client as a control-event subscriber. Placed
-     * after screenLoadCompressedMapCS (which calls clientSimCreate) so
+     * after clientLoadCompressedMap (which calls clientSimCreate) so
      * humanSim->myPlayerNum is initialized to 0 — matching the SP
      * slot — before sync's self-skip runs. */
     wasmControlSub = serverSimRegisterSubscriber(wasmServerSim,
@@ -559,10 +560,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     printf("[WASM] Single-player ServerSim ready\n");
   }
 
-  screenSetAiTypeCS(humanSim, compTanks);
+  clientSimSetAiType(humanSim, compTanks);
   clientMutexWaitFor();
-  screenSetTankAutoSlowdownCS(humanSim, useAutoslow);
-  screenSetTankAutoHideGunsightCS(humanSim, useAutohide);
+  clientSimSetTankAutoSlowdown(humanSim, useAutoslow);
+  clientSimSetTankAutoHideGunsight(humanSim, useAutohide);
   clientMutexRelease();
 
   dlgState = openFinished;
@@ -575,8 +576,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   clientMutexWaitFor();
   if (gamePlayed == TRUE) {
-    useAutoslow = screenGetTankAutoSlowdownCS(humanSim);
-    useAutohide = screenGetTankAutoHideGunsightCS(humanSim);
+    useAutoslow = clientSimGetTankAutoSlowdown(humanSim);
+    useAutohide = clientSimGetTankAutoHideGunsight(humanSim);
   }
   brainsHandlerShutdown();
   if (wasmTransportActive) {
@@ -670,7 +671,7 @@ void gameFrontSetPlayerName(char *pn)  { strcpy(gameFrontName, pn); }
 
 void gameFrontSetAIType(aiType ait) {
   compTanks = ait;
-  screenSetAiTypeCS(humanSim, compTanks);
+  clientSimSetAiType(humanSim, compTanks);
   if (compTanks == aiNone) brainsHandlerSet(FALSE);
   else brainsHandlerSet(TRUE);
 }
@@ -783,8 +784,8 @@ void gameFrontSaveWindowSettings(void) {
 
 void gameFrontSaveTankPrefs(ClientSim *cs) {
   if (cs != NULL) {
-    useAutoslow = screenGetTankAutoSlowdownCS(cs);
-    useAutohide = screenGetTankAutoHideGunsightCS(cs);
+    useAutoslow = clientSimGetTankAutoSlowdown(cs);
+    useAutohide = clientSimGetTankAutoHideGunsight(cs);
   }
 }
 

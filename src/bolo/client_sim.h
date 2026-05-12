@@ -32,13 +32,21 @@
 #include "interpolation.h"
 #include "input_packet.h"
 #include "netpacks.h"     /* For PACKET_MAX_PLAYER_NAME */
-#include "screen.h"
-#include "brain.h"  /* For BuildInfo, ObjectInfo, aiType */
+#include "client_enums.h" /* For aiType, buildSelect, gameType, labelLen */
+#include "viewport_types.h" /* For screen, screenMines, screenGunsight */
+#include "brain.h"  /* For BuildInfo, ObjectInfo */
 #include "brain_list.h"
-#include "players.h" /* For PlayerBitMap */
+#include "players.h" /* For PlayerBitMap, playerNumbers */
 #include "bolo_packets.h" /* For netType, netStatus enums */
 #include "messages.h"     /* For MessageState */
 #include "scroll.h"       /* For ScrollState */
+
+/* Messages status on/off */
+#define MSG_NEWSWIRE 0
+#define MSG_ASSISTANT 1
+#define MSG_AI 2
+#define MSG_NETWORK 3
+#define MSG_NETSTATUS 4
 
 /* Client-side mirror of server lobby slot state */
 typedef struct {
@@ -91,6 +99,9 @@ typedef struct {
 typedef struct ClientSim ClientSim;
 #endif
 
+/* Forward declaration — full definition in client_sim_internal.h */
+struct ViewPort;
+
 /* Access the local player's tank and LGM by server player number */
 #define MY_TANK(cs) (clientSimGetGameSim(cs)->tanks[clientSimGetMyPlayerNum(cs)])
 #define MY_LGM(cs)  (clientSimGetGameSim(cs)->lgmen[clientSimGetMyPlayerNum(cs)])
@@ -114,7 +125,7 @@ static inline struct ClientSim *clientSimFromSim(struct GameSim *sim) {
  *PURPOSE:
  *  Allocates a ClientSim on the heap, zero-initialised.
  *  Caller must follow with clientSimCreate() or
- *  screenLoadCompressedMapCS() to populate before use.
+ *  clientLoadCompressedMap() to populate before use.
  *  Pairs with clientSimDestroy, which frees the pointer.
  *
  *  After ClientSim opacity, external callers cannot
@@ -183,6 +194,8 @@ char *clientSimGetBrainsMessage(ClientSim *cs);
 unsigned short *clientSimGetBrainsNumObjects(ClientSim *cs);
 ObjectInfo *clientSimGetBrainObjects(ClientSim *cs);
 aiType *clientSimGetAllowComputerTanks(ClientSim *cs);
+aiType clientSimGetAiType(ClientSim *cs);
+void clientSimSetAiType(ClientSim *cs, aiType value);
 
 /* Network state accessors (per-instance) */
 netType clientSimGetNetType(ClientSim *cs);
@@ -201,14 +214,53 @@ void clientSimSetLockToggleSendFunc(ClientSim *cs, NetLockToggleSendFunc func);
 /* Lobby chat helper — appends "name: message\n" to lobbyChatHistory */
 void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message);
 
+/* Player-to-player chat delivery: routes to lobby chat or in-game inbox
+   depending on whether the client is still in the lobby. */
+void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr);
+
 /* Message functions (per-instance) */
 void clientSimMessageSendAllPlayers(ClientSim *cs, BYTE playerNum, char *message);
 void clientSimMessageSendPlayer(ClientSim *cs, BYTE playerNum, BYTE destPlayer, char *message);
 void clientSimSendChangePlayerName(ClientSim *cs, BYTE playerNum, char *newName);
+void clientSimGetPlayerName(ClientSim *cs, char *value);
+bool clientSimSetPlayerName(ClientSim *cs, char *value);
+
+/* High-level send-message wrappers used by the players-panel UI. */
+void clientSimSendMessageAllPlayers(ClientSim *cs, char *messageStr);
+void clientSimSendMessageAllAllies(ClientSim *cs, char *messageStr);
+void clientSimSendMessageAllNearby(ClientSim *cs, char *messageStr);
+void clientSimSendMessageAllSelected(ClientSim *cs, char *messageStr);
+
 void clientSimRequestAlliance(ClientSim *cs, BYTE playerNum, BYTE requestTo);
 void clientSimAllianceAccept(ClientSim *cs, BYTE playerNum);
 void clientSimLeaveAlliance(ClientSim *cs, BYTE playerNum);
+
+/* Local-player alliance actions (disambiguate from the targeted variants above). */
+void clientSimLeaveAllianceSelf(ClientSim *cs);
+void clientSimRequestAllianceSelected(ClientSim *cs);
+
 void clientSimSetAllowNewPlayers(ClientSim *cs, bool allow);
+
+/* Players-panel selection helpers — operate on local player check-state. */
+void clientSimTogglePlayerCheckState(ClientSim *cs, BYTE playerNum);
+void clientSimCheckAllNonePlayers(ClientSim *cs, bool isChecked);
+void clientSimCheckAlliedPlayers(ClientSim *cs);
+void clientSimCheckNearbyPlayers(ClientSim *cs);
+int  clientSimGetNumCheckedPlayers(ClientSim *cs);
+int  clientSimGetNumAllies(ClientSim *cs);
+int  clientSimGetNumNearbyTanks(ClientSim *cs);
+
+/* Tank preferences (per-instance) — operate on the local player's tank */
+bool clientSimGetTankAutoSlowdown(ClientSim *cs);
+void clientSimSetTankAutoSlowdown(ClientSim *cs, bool useSlowdown);
+bool clientSimGetTankAutoHideGunsight(ClientSim *cs);
+void clientSimSetTankAutoHideGunsight(ClientSim *cs, bool useAutohide);
+void clientSimSetGunsight(ClientSim *cs, bool shown);
+BYTE clientSimGetTank256Dir(ClientSim *cs);
+
+/* Game info (per-instance) */
+bool clientSimGetAllowHiddenMines(ClientSim *cs);
+BYTE clientSimGetNumPlayers(ClientSim *cs);
 
 void netGetStats(ClientSim *cs, char *status, int *ping, int *ppsec, int *retrans);
 void netGetServerAddressStr(ClientSim *cs, char *dest);
@@ -311,6 +363,14 @@ InterpContext *clientSimGetInterpCtx(ClientSim *cs);
 screen        *clientSimGetView(ClientSim *cs);
 screenMines   *clientSimGetMineView(ClientSim *cs);
 
+/* Bundled viewport accessor — for bolo-internal callers (viewport.c,
+ * screen.c, etc.) that want to operate on the whole ViewPort substruct
+ * rather than poking individual scalar fields. The scalar accessors
+ * above still exist and are the preferred entry point for external
+ * callers. */
+const struct ViewPort *clientSimViewport(const ClientSim *cs);
+struct ViewPort       *clientSimViewportMut(ClientSim *cs);
+
 /* Writable scalar slots — for callees that write through an
  * address (scroll*, pillsGetNextView, pillsMoveView). Use the
  * by-value clientSimGet<X> accessors for plain reads; these are
@@ -359,6 +419,7 @@ void clientSimSetGmeLength(ClientSim *cs, int32_t v);
 void clientSimSetTimeStart(ClientSim *cs, time_t v);
 void clientSimSetRunning(ClientSim *cs, bool v);
 void clientSimSetCurrentBuildSelect(ClientSim *cs, buildSelect v);
+void clientSimSetLocalTransport(ClientSim *cs, bool isLocal);
 
 /* Pending build input (set as a triple) */
 void clientSimSetPendingBuild(ClientSim *cs, BYTE action, BYTE x, BYTE y);
@@ -423,5 +484,45 @@ const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs);
 uint8_t clientSimGetLobbyLastRejectPacket(const ClientSim *cs);
 uint8_t clientSimGetLobbyLastRejectReason(const ClientSim *cs);
 void    clientSimClearLobbyLastReject(ClientSim *cs);
+
+/* View control — mutates viewport/cursor state by composing the
+ * underlying viewport ops with ClientSim's tank/scroll/gameSim. */
+void         clientSimTankView(ClientSim *cs);
+void         clientSimSetCursorPos(ClientSim *cs, BYTE posX, BYTE posY);
+bool         clientSimGetCursorPos(ClientSim *cs, BYTE *posX, BYTE *posY);
+void         clientSimPillView(ClientSim *cs, int horz, int vert);
+void         clientSimRecalc(ClientSim *cs);
+void         clientSimUpdateView(ClientSim *cs, updateType value);
+void         clientSimPanX(ClientSim *cs, int dxTiles);
+void         clientSimPanY(ClientSim *cs, int dyTiles);
+bool         clientSimTankIsDead(ClientSim *cs);
+bool         clientSimTankScroll(ClientSim *cs);
+void         clientSimCenterTank(ClientSim *cs);
+void         clientSimSetAutoScroll(ClientSim *cs, bool isAuto);
+void         clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown);
+void         clientSimNetStatusMessage(ClientSim *cs, char *messageStr);
+
+/* Submits a build request for the local LGM through InputPacket,
+ * gated on tank armour and net status. */
+void         clientSimManMove(ClientSim *cs, buildSelect buildS);
+
+/* Alliance accessors. playerNum is 1-based (legacy screen-facade
+ * convention); the function converts to 0-based internally. */
+tankAlliance clientSimGetTankAlliance(ClientSim *cs, BYTE playerNum);
+pillAlliance clientSimGetPillAlliance(ClientSim *cs, BYTE pillNum);
+baseAlliance clientSimGetBaseAlliance(ClientSim *cs, BYTE baseNum);
+
+/* Map-position lookups for the frontend label/click overlays.
+ * mx/my are screen-relative; the accessors fold in viewport offsets. */
+BYTE         clientSimGetPillNumPos(ClientSim *cs, BYTE mx, BYTE my);
+BYTE         clientSimGetBaseNumPos(ClientSim *cs, BYTE mx, BYTE my);
+
+/* Local tank stat accessors. */
+void         clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount);
+void         clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths);
+
+/* Notifies the local LGM and player table that the server connection
+ * has been lost; called by the frontend when a UDP shutdown is seen. */
+void         clientSimConnectionLost(ClientSim *cs);
 
 #endif /* CLIENT_SIM_H */

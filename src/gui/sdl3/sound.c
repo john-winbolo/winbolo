@@ -29,7 +29,7 @@
 #include "../../bolo/global.h"
 #include <SDL3/SDL.h>
 #include <stdio.h>
-#include "../../bolo/screen.h"
+#include "../../bolo/client_enums.h"  /* sndEffects */
 #include "../sound.h"
 
 #define NUM_SOUNDS 24

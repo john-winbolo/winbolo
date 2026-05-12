@@ -32,7 +32,7 @@
 #define SCROLL_ITEM_LIST_H
 
 #include "global.h"
-#include "screen.h"
+#include "viewport_types.h"  /* MAIN_SCREEN_SIZE_X/Y */
 
 /* Forward declarations */
 struct ScrollState;

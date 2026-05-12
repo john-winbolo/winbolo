@@ -14,7 +14,6 @@
 
 extern "C" {
 #include "players_panel.h"
-#include "../../bolo/screen.h"
 #include "../../bolo/players.h"
 #include "../../bolo/client_sim.h"
 #include "../sdl3/sdl3imgui.h"
@@ -88,19 +87,19 @@ extern "C" void playersPanelRender(void) {
 
     float btnW = 55.0f;
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALL), ImVec2(btnW, 0))) {
-        screenCheckAllNonePlayersCS(humanSim, true);
+        clientSimCheckAllNonePlayers(humanSim, true);
     }
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_NONE), ImVec2(btnW, 0))) {
-        screenCheckAllNonePlayersCS(humanSim, false);
+        clientSimCheckAllNonePlayers(humanSim, false);
     }
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALLIES), ImVec2(btnW, 0))) {
-        screenCheckAlliedPlayersCS(humanSim);
+        clientSimCheckAlliedPlayers(humanSim);
     }
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_NEARBY), ImVec2(btnW, 0))) {
-        screenCheckNearbyPlayersCS(humanSim);
+        clientSimCheckNearbyPlayers(humanSim);
     }
 
     ImGui::Separator();
@@ -126,7 +125,7 @@ extern "C" void playersPanelRender(void) {
             snprintf(checkId, sizeof(checkId), "%s##p%d", label, i);
             bool checked = sPlayerChecked[i];
             if (ImGui::Checkbox(checkId, &checked)) {
-                screenTogglePlayerCheckStateCS(humanSim, (BYTE)i);
+                clientSimTogglePlayerCheckState(humanSim, (BYTE)i);
             }
 
             if (ping > 0) {

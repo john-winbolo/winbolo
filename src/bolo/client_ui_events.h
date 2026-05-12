@@ -16,28 +16,23 @@
 
 
 /*********************************************************
-*Name:          Labels
-*Filename:      label.h
+*Name:          ClientUiEvents
+*Filename:      client_ui_events.h
 *Author:        John Morrison
-*Creation Date:  2/2/99
-*Last Modified:  2/2/99
 *Purpose:
-*  Responsable for message labels (short/long etc).
+*  Post-tick UI fan-out for the client. Pushes synced
+*  ClientSim state to the front end each tick: scrolling,
+*  status bars, kill/death counters, LGM indicator,
+*  pillbox view, messages, and game-over.
 *********************************************************/
 
-#ifndef LABELS_H
-#define LABELS_H
+#ifndef CLIENT_UI_EVENTS_H
+#define CLIENT_UI_EVENTS_H
 
 #include "global.h"
 
 struct ClientSim;
 
-/* The @ Symbol */
-#define LABEL_AT_SYMBOL "@\0"
+void clientUiOnTick(struct ClientSim *cs, bool isBrain);
 
-/* Prototypes */
-
-void labelMakeMessage(struct ClientSim *cs, char *res, char *name, char *loc);
-void labelMakeTankLabel(struct ClientSim *cs, char *res, char *name, char *loc, bool isOwn);
-
-#endif /* LABELS_H */
+#endif /* CLIENT_UI_EVENTS_H */

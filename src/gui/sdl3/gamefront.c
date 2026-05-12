@@ -47,8 +47,9 @@
 #include <time.h>
 
 #include "../../common/wb_log.h"
-#include "../../bolo/screen.h"
+#include "../../bolo/client_mapload.h"
 #include "../../bolo/client_sim.h"
+#include "../../bolo/client_snapshot.h"
 #include "../../bolo/client_sim_control.h"
 #include "../../bolo/control_event.h"
 #include "../../bolo/global.h"
@@ -474,12 +475,12 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     return FALSE;
   }
 
-  screenSetAiTypeCS(humanSim, compTanks);
+  clientSimSetAiType(humanSim, compTanks);
 
   if (isTutorial == FALSE) {
     clientMutexWaitFor();
-    screenSetTankAutoSlowdownCS(humanSim, useAutoslow);
-    screenSetTankAutoHideGunsightCS(humanSim, useAutohide);
+    clientSimSetTankAutoSlowdown(humanSim, useAutoslow);
+    clientSimSetTankAutoHideGunsight(humanSim, useAutohide);
     clientMutexRelease();
   }
 
@@ -497,8 +498,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
  * ------------------------------------------------------- */
 void gameFrontSaveTankPrefs(ClientSim *cs) {
   if (cs != NULL) {
-    useAutoslow = screenGetTankAutoSlowdownCS(cs);
-    useAutohide = screenGetTankAutoHideGunsightCS(cs);
+    useAutoslow = clientSimGetTankAutoSlowdown(cs);
+    useAutohide = clientSimGetTankAutoHideGunsight(cs);
   }
 }
 
@@ -509,8 +510,8 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   steam_clear_rich_presence();
   clientMutexWaitFor();
   if (gamePlayed == TRUE && humanSim != NULL) {
-    useAutoslow = screenGetTankAutoSlowdownCS(humanSim);
-    useAutohide = screenGetTankAutoHideGunsightCS(humanSim);
+    useAutoslow = clientSimGetTankAutoSlowdown(humanSim);
+    useAutohide = clientSimGetTankAutoHideGunsight(humanSim);
   }
   brainsHandlerShutdown();
   /* Clean up server-authoritative single-player state.
@@ -718,10 +719,10 @@ static bool gameFrontEnterSinglePlayerLobby(void) {
     BYTE compressedMap[65536];
     int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
     if (compLen > 0) {
-      screenLoadCompressedMapCS(humanSim, compressedMap, compLen,
-                               (char *)serverSimGetMapName(spServerSim),
-                               gametype, hiddenMines, startDelay,
-                               timeLen, gameFrontName, 0, FALSE);
+      clientLoadCompressedMap(humanSim, compressedMap, compLen,
+                              (char *)serverSimGetMapName(spServerSim),
+                              gametype, hiddenMines, startDelay,
+                              timeLen, gameFrontName, 0, FALSE);
     } else {
       clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
     }
@@ -1164,14 +1165,14 @@ bool gameFrontSetDlgState(openingStates newState) {
             clientSimDestroy(humanSim);
             humanSim = clientSimAlloc();
 
-            if (screenLoadCompressedMapCS(humanSim, (BYTE *)mapData, mapLen,
-                                         savedMapName, serverGame,
-                                         serverHiddenMines, serverStartDelay,
-                                         serverGameLen, gameFrontName,
-                                         (BYTE)udpPlayerNum, FALSE) == FALSE) {
+            if (clientLoadCompressedMap(humanSim, (BYTE *)mapData, mapLen,
+                                       savedMapName, serverGame,
+                                       serverHiddenMines, serverStartDelay,
+                                       serverGameLen, gameFrontName,
+                                       (BYTE)udpPlayerNum, FALSE) == FALSE) {
               mapLoadOk = FALSE;
             } else {
-              screenSetLocalTransportCS(humanSim, false);
+              clientSimSetLocalTransport(humanSim, false);
               /* Re-set network callbacks cleared by clientSimDestroy above */
               clientSimSetChatSendFunc(humanSim, gameFrontChatSendCallback);
               clientSimSetNameChangeSendFunc(humanSim, gameFrontNameChangeSendCallback);
@@ -1197,7 +1198,7 @@ bool gameFrontSetDlgState(openingStates newState) {
             returnValue = FALSE;
           } else {
             clientMutexWaitFor();
-            screenNetSetupTankGoCS(humanSim);
+            clientNetSetupTankGo(humanSim);
             clientMutexRelease();
             gameFrontUpdateSteamPresence(humanSim);
             dlgState = openFinished;
@@ -1279,10 +1280,9 @@ bool gameFrontSetDlgState(openingStates newState) {
             BYTE compressedMap[65536];
             int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
             if (compLen > 0) {
-              screenLoadCompressedMapCS(humanSim, compressedMap, compLen,
-                                       (char *)serverSimGetMapName(spServerSim),
-                                       gametype, hiddenMines, startDelay,
-                                       timeLen, gameFrontName, 0, FALSE);
+              clientLoadCompressedMap(humanSim, compressedMap, compLen, serverSimGetMapName(spServerSim),
+                                     gametype, hiddenMines, startDelay,
+                                     timeLen, gameFrontName, 0, FALSE);
             } else {
               clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
             }
@@ -1318,14 +1318,14 @@ bool gameFrontSetDlgState(openingStates newState) {
                                    snapEvents, snapHdr.reliableEventCount, 0);
           }
           /* Register humanSim as a control-event subscriber. Placed after
-           * clientSimCreate (run from the screenLoadCompressedMapCS / else
+           * clientSimCreate (run from the clientLoadCompressedMap / else
            * branch above) so myPlayerNum is initialized to 0 — matching the
            * SP slot — and the dispatcher's self-skip protects this slot
            * during sync. */
           spHumanSubHandle = serverSimRegisterSubscriber(spServerSim,
                                                         humanDeliverControl,
                                                         humanSim);
-          screenNetSetupTankGoCS(humanSim);
+          clientNetSetupTankGo(humanSim);
           /* Destroy background game before adding real bots — bgGameDestroy
            * calls botManagerDestroy which would wipe bots we add below. */
           {
@@ -1519,7 +1519,7 @@ void gameFrontSetPlayerName(char *pn) {
 void gameFrontSetAIType(aiType ait) {
   compTanks = ait;
   if (humanSim != NULL) {
-    screenSetAiTypeCS(humanSim, compTanks);
+    clientSimSetAiType(humanSim, compTanks);
   }
   if (compTanks == aiNone) {
     brainsHandlerSet(FALSE);
@@ -1838,7 +1838,7 @@ bool gameFrontLoadInBuiltMap(void) {
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-  return screenLoadCompressedMapCS(humanSim, emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen, gameFrontName, 0, FALSE);
+  return clientLoadCompressedMap(humanSim, emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen, gameFrontName, 0, FALSE);
 }
 
 bool gameFrontLoadTutorial(void) {
@@ -1863,8 +1863,8 @@ bool gameFrontLoadTutorial(void) {
     fp = fopen(candidates[i], "rb");
     if (fp != NULL) {
       fclose(fp);
-      /* screenLoadMapCS takes char* (not const) but doesn't mutate. */
-      return screenLoadMapCS(humanSim, (char *)candidates[i], gameStrictTournament, FALSE, 0, UNLIMITED_GAME_TIME, gameFrontName, FALSE);
+      /* clientLoadMap takes char* (not const) but doesn't mutate. */
+      return clientLoadMap(humanSim, (char *)candidates[i], gameStrictTournament, FALSE, 0, UNLIMITED_GAME_TIME, gameFrontName, FALSE);
     }
   }
   return FALSE;
@@ -2117,7 +2117,7 @@ void gameFrontPutPrefs(keyItems *keys) {
 
   /* Player Name */
   if (((humanSim != NULL && clientSimGetNetType(humanSim) == netSingle) || (gameFrontRemeber == TRUE && humanSim != NULL)) && dlgState != openSetup && !clientSimIsInLobby(humanSim)) {
-    screenGetPlayerNameCS(humanSim, playerName);
+    clientSimGetPlayerName(humanSim, playerName);
     strcpy(gameFrontName, playerName);
     WritePrivateProfileString("SETTINGS", "Player Name", playerName, prefsFile);
   } else {
@@ -2361,15 +2361,15 @@ bool gameFrontLoadDeferredMap(ClientSim **cs) {
   humanSim = *cs;
   sdl3DrawResetCachedText();
 
-  if (screenLoadCompressedMapCS(*cs, (BYTE *)mapData, mapLen,
-                               savedMapName, serverGame,
-                               serverHiddenMines, serverStartDelay,
-                               serverGameLen, gameFrontName,
-                               (BYTE)udpPlayerNum, FALSE) == FALSE) {
+  if (clientLoadCompressedMap(*cs, (BYTE *)mapData, mapLen,
+                             savedMapName, serverGame,
+                             serverHiddenMines, serverStartDelay,
+                             serverGameLen, gameFrontName,
+                             (BYTE)udpPlayerNum, FALSE) == FALSE) {
     return FALSE;
   }
 
-  screenSetLocalTransportCS(*cs, false);
+  clientSimSetLocalTransport(*cs, false);
   clientSimSetInLobby(*cs, wasInLobby);
   clientSimSetMapDownloadComplete(*cs, true);
 
@@ -2381,7 +2381,7 @@ bool gameFrontLoadDeferredMap(ClientSim **cs) {
   clientSimSetLockToggleSendFunc(*cs, gameFrontLockToggleCallback);
 
   clientMutexWaitFor();
-  screenNetSetupTankGoCS(*cs);
+  clientNetSetupTankGo(*cs);
   clientMutexRelease();
 
   return TRUE;
@@ -2472,7 +2472,7 @@ bool gameFrontStartSinglePlayerGame(ClientSim *cs) {
                               snapPills, snapHdr.pillCount,
                               snapEvents, snapHdr.reliableEventCount, 0);
   }
-  screenNetSetupTankGoCS(cs);
+  clientNetSetupTankGo(cs);
 
   /* Flip lobby flags so winbolo.c's main loop exits the lobby on
    * the next iteration and hands off to the in-game loop. */

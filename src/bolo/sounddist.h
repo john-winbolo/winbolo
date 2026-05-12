@@ -30,7 +30,7 @@
 #define _SOUNDDIST_H
 
 #include "global.h"
-#include "screen.h"
+#include "client_enums.h"  /* sndEffects */
 #include "game_sim.h"
 
 /* If the distance from the tank to the event is greater then */

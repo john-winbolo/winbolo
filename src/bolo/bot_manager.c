@@ -45,7 +45,7 @@
 #include "client_sim_control.h"
 #include "control_event.h"
 #include "transport.h"
-#include "screen.h"
+#include "client_snapshot.h"
 #include "screenbrainmap.h"
 #include "input_packet.h"
 #include "bot_manager.h"
@@ -603,10 +603,10 @@ static void runBotThinkJobImpl(BotJobCtx *j, BotContext *bot, Uint64 t0) {
     /* Build both InputPackets into per-bot scratch — packets are
      * thread-local to this ctx so two workers cannot collide. */
     bool firstIsGame = (serverSimGetTick(sim) % 2) == 0;
-    screenBuildInputPacketCS(bot->cs, &j->pkt1, 0, FALSE, FALSE,
+    clientBuildInputPacket(bot->cs, &j->pkt1, 0, FALSE, FALSE,
                              TRUE, firstIsGame, bot->playerNum,
                              serverSimGetTick(sim));
-    screenBuildInputPacketCS(bot->cs, &j->pkt2, 0, FALSE, FALSE,
+    clientBuildInputPacket(bot->cs, &j->pkt2, 0, FALSE, FALSE,
                              TRUE, !firstIsGame, bot->playerNum,
                              serverSimGetTick(sim) + 1);
     j->hasInput = true;
