@@ -80,18 +80,19 @@ static bool obsAddObjectAsEntity(const ObjectInfo *o, float self_wx, float self_
 
         /* Tank armour and flags from ClientSim (matches gymBuildObs) */
         if (cs != NULL && o->idnum < MAX_TANKS) {
-            BYTE armour = tankGetArmour(&cs->sim.tanks[o->idnum]);
+            GameSim *gs = clientSimGetGameSim(cs);
+            BYTE armour = tankGetArmour(&gs->tanks[o->idnum]);
             bool tankDead = armour > TANK_FULL_ARMOUR;
             ent->strength = tankDead ? 0.0f : (float)armour / 40.0f;
-            if (tankIsOnBoat(&cs->sim.tanks[o->idnum])) ent->flags |= WBGYM_FLAG_IN_BOAT;
+            if (tankIsOnBoat(&gs->tanks[o->idnum])) ent->flags |= WBGYM_FLAG_IN_BOAT;
             if (tankDead) ent->flags |= WBGYM_FLAG_DEAD;
-            if (tankIsNewTank(&cs->sim.tanks[o->idnum])) ent->flags |= WBGYM_FLAG_DEAD;
+            if (tankIsNewTank(&gs->tanks[o->idnum])) ent->flags |= WBGYM_FLAG_DEAD;
             /* Hidden check for non-self tanks */
             if (o->idnum != selfPlayer) {
                 WORLD tx_w, ty_w;
-                tankGetWorld(&cs->sim.tanks[o->idnum], &tx_w, &ty_w);
-                if (utilIsTankInTrees(&cs->sim.mp, &cs->sim.pb,
-                                     &cs->sim.bs, tx_w, ty_w))
+                tankGetWorld(&gs->tanks[o->idnum], &tx_w, &ty_w);
+                if (utilIsTankInTrees(&gs->mp, &gs->pb,
+                                     &gs->bs, tx_w, ty_w))
                     ent->flags |= WBGYM_FLAG_HIDDEN;
             }
         } else {
@@ -432,7 +433,8 @@ static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBolo
     bool dead = bi->armour > TANK_FULL_ARMOUR;
     int tank_tx = bi->tankx >> 8;
     int tank_ty = bi->tanky >> 8;
-    BYTE selfPlayer = cs->myPlayerNum;
+    GameSim *gs = clientSimGetGameSim(cs);
+    BYTE selfPlayer = clientSimGetMyPlayerNum(cs);
     PlayerBitMap alliesBits = bi->allies ? *(bi->allies) : 0;
 
     /* Scalars 0-11: same as obsBuildScalars */
@@ -458,21 +460,21 @@ static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBolo
     {
         int self_pills = 0, enemy_pills = 0, ally_pills = 0;
         int self_bases = 0, ally_bases = 0;
-        BYTE np = pillsGetNumPills(&cs->sim.pb);
+        BYTE np = pillsGetNumPills(&gs->pb);
         int total_pills = np;
         for (BYTE pi = 1; pi <= np; pi++) {
             pillbox p;
-            pillsGetPill(&cs->sim.pb, &p, pi);
+            pillsGetPill(&gs->pb, &p, pi);
             if (p.owner == 0xFF) continue;
             if (p.owner == selfPlayer) self_pills++;
             else if (alliesBits & (1u << p.owner)) ally_pills++;
             else enemy_pills++;
         }
-        BYTE nb = basesGetNumBases(&cs->sim.bs);
+        BYTE nb = basesGetNumBases(&gs->bs);
         int total_bases = nb;
         for (BYTE bsi = 1; bsi <= nb; bsi++) {
             base b;
-            basesGetBase(&cs->sim.bs, &b, bsi);
+            basesGetBase(&gs->bs, &b, bsi);
             if (b.owner == 0xFF) continue;
             if (b.owner == selfPlayer) self_bases++;
             else if (alliesBits & (1u << b.owner)) ally_bases++;
@@ -502,8 +504,8 @@ static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBolo
         if (ms == LGM_BRAIN_INTANK) {
             obs->scalar[23] = 0.0f;
         } else if (ms == LGM_BRAIN_DEAD) {
-            lgm *lg = &cs->sim.lgmen[selfPlayer];
-            if ((*lg)->isDead && tankGetArmour(&cs->sim.tanks[selfPlayer]) <= TANK_FULL_ARMOUR) {
+            lgm *lg = &gs->lgmen[selfPlayer];
+            if ((*lg)->isDead && tankGetArmour(&gs->tanks[selfPlayer]) <= TANK_FULL_ARMOUR) {
                 obs->scalar[23] = 0.66f; /* parachuting */
             } else {
                 obs->scalar[23] = 1.0f; /* actually dead */
@@ -516,7 +518,7 @@ static void obsBuildScalarsCS(const BrainInfo *bi, struct ClientSim *cs, WinBolo
     obs->scalar[24] = (float)bi->manobstructed / 2.0f;
 
     /* Scalar 25: death_wait from ClientSim (matches gymBuildObs) */
-    obs->scalar[25] = (float)tankGetDeathWait(&cs->sim.tanks[selfPlayer]) / 255.0f;
+    obs->scalar[25] = (float)tankGetDeathWait(&gs->tanks[selfPlayer]) / 255.0f;
 }
 
 /* Build pill/base lists and metadata from ClientSim (matches gymBuildObs) */
@@ -524,7 +526,8 @@ static void obsBuildMetaCS(const BrainInfo *bi, struct ClientSim *cs, WinBoloObs
     float self_wx = (float)bi->tankx;
     float self_wy = (float)bi->tanky;
     bool dead = bi->armour > TANK_FULL_ARMOUR;
-    BYTE selfPlayer = cs->myPlayerNum;
+    GameSim *gs = clientSimGetGameSim(cs);
+    BYTE selfPlayer = clientSimGetMyPlayerNum(cs);
     PlayerBitMap alliesBits = bi->allies ? *(bi->allies) : 0;
 
     /* LGM state */
@@ -538,10 +541,10 @@ static void obsBuildMetaCS(const BrainInfo *bi, struct ClientSim *cs, WinBoloObs
 
     /* Pill list from ClientSim (matches gymBuildObs) */
     {
-        BYTE np = pillsGetNumPills(&cs->sim.pb);
+        BYTE np = pillsGetNumPills(&gs->pb);
         for (BYTE pi = 1; pi <= np && obs->num_pillboxes < WBGYM_MAX_PILLBOXES; pi++) {
             pillbox p;
-            pillsGetPill(&cs->sim.pb, &p, pi);
+            pillsGetPill(&gs->pb, &p, pi);
             WinBoloPillObs *po = &obs->pillboxes[obs->num_pillboxes];
             po->tx = p.x;
             po->ty = p.y;
@@ -556,10 +559,10 @@ static void obsBuildMetaCS(const BrainInfo *bi, struct ClientSim *cs, WinBoloObs
 
     /* Base list from ClientSim (matches gymBuildObs) */
     {
-        BYTE nb = basesGetNumBases(&cs->sim.bs);
+        BYTE nb = basesGetNumBases(&gs->bs);
         for (BYTE bsi = 1; bsi <= nb && obs->num_bases < WBGYM_MAX_BASES; bsi++) {
             base b;
-            basesGetBase(&cs->sim.bs, &b, bsi);
+            basesGetBase(&gs->bs, &b, bsi);
             WinBoloBaseObs *bo = &obs->bases[obs->num_bases];
             bo->tx = b.x;
             bo->ty = b.y;
@@ -570,7 +573,7 @@ static void obsBuildMetaCS(const BrainInfo *bi, struct ClientSim *cs, WinBoloObs
             /* Expose stocks for friendly bases (matches gymBuildObs) */
             if (bo->owner == WBGYM_OWNER_SELF || bo->owner == WBGYM_OWNER_ALLY) {
                 BYTE shellsAmt, minesAmt, armourAmt;
-                basesGetStats(&cs->sim.bs, bsi, &shellsAmt, &minesAmt, &armourAmt);
+                basesGetStats(&gs->bs, bsi, &shellsAmt, &minesAmt, &armourAmt);
                 bo->shells = shellsAmt;
                 bo->mines = minesAmt;
                 bo->armour = armourAmt;
@@ -722,10 +725,11 @@ void obsBuildMultiView(struct ClientSim *cs, const BrainInfo *tankBi, WinBoloObs
     /* Identify owned alive pills and gather dynamic objects from their 15x15 rects.
      * Pills/bases are already in the entity list (gathered globally by aiYes mode or
      * from visible objects). We only need shells, tanks, and LGMs from pill rects. */
-    BYTE np = pillsGetNumPills(&cs->sim.pb);
+    GameSim *gs = clientSimGetGameSim(cs);
+    BYTE np = pillsGetNumPills(&gs->pb);
     for (BYTE pi = 1; pi <= np; pi++) {
         pillbox p;
-        pillsGetPill(&cs->sim.pb, &p, pi);
+        pillsGetPill(&gs->pb, &p, pi);
 
         /* Must be: owned by self or ally, not in tank, armour > 0 */
         if (p.inTank) continue;
@@ -746,12 +750,12 @@ void obsBuildMultiView(struct ClientSim *cs, const BrainInfo *tankBi, WinBoloObs
         BYTE top    = (BYTE)((int)p.y - 7);
         BYTE bottom = (BYTE)((int)p.y + 7);
 
-        shellsGetBrainShellsInRect(cs, &cs->sim, &cs->sim.shs,
+        shellsGetBrainShellsInRect(cs, gs, &gs->shs,
                                    left, right, top, bottom);
-        playersGetBrainTanksInRect(cs, &cs->sim.plyrs,
+        playersGetBrainTanksInRect(cs, &gs->plyrs,
                                    left, right, top, bottom,
                                    tankBi->tankx, tankBi->tanky);
-        playersGetBrainLgmsInRect(cs, &cs->sim.plyrs,
+        playersGetBrainLgmsInRect(cs, &gs->plyrs,
                                   left, right, top, bottom);
 
         /* Merge new objects into entity list with dedup */

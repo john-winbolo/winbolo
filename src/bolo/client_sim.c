@@ -857,3 +857,12 @@ void clientSimSetPendingBuild(ClientSim *cs, BYTE action, BYTE x, BYTE y) {
   cs->pendingBuildX = x;
   cs->pendingBuildY = y;
 }
+
+void clientSimSetBrainLastAssistMsg(ClientSim *cs, uint8_t v) { cs->brainLastAssistMsg = v; }
+void clientSimSetBrainEventCount(ClientSim *cs, int v)        { cs->brainEventCount = v; }
+void clientSimSetLabelMessage(ClientSim *cs, labelLen v)      { cs->labelMessage = v; }
+void clientSimSetLabelTankLabel(ClientSim *cs, labelLen v)    { cs->labelTankLabel = v; }
+void clientSimSetLabelOwnTank(ClientSim *cs, bool v)          { cs->labelOwnTank = v; }
+void clientSimSetMyLastPlayerName(ClientSim *cs, const char *name) {
+  strcpy(cs->myLastPlayerName, name);
+}
