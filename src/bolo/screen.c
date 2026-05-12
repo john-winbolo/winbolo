@@ -1013,7 +1013,7 @@ void screenSetupTankCS(ClientSim *csPtr, char *playerName, BYTE playerNum) {
   tankCreate(&csPtr->sim, &MY_TANK(csPtr));
   { BYTE sh, mi, ar, tr;
     tankGetStats(&MY_TANK(csPtr), &sh, &mi, &ar, &tr);
-    frontEndUpdateTankStatusBars(sh, mi, ar, tr);
+    frontEndUpdateTankStatusBars(csPtr, sh, mi, ar, tr);
   }
   playersSetSelf(csPtr, &csPtr->sim, &csPtr->sim.plyrs, (playerNumbers) playerNum, playerName, FALSE);
 
@@ -1147,7 +1147,7 @@ void screenLgmDropPillCS(ClientSim *csPtr, BYTE mx, BYTE my, BYTE owner, BYTE pi
   item.y = my;
   item.justSeen = FALSE;
   pillsSetPill(&csPtr->sim.pb,&item, pillNum);
-  frontEndStatusPillbox(pillNum, (pillsGetAllianceNum(&csPtr->sim, &csPtr->sim.pb, pillNum)));
+  frontEndStatusPillbox(csPtr, pillNum, (pillsGetAllianceNum(&csPtr->sim, &csPtr->sim.pb, pillNum)));
 }
 
 /*********************************************************
@@ -1737,7 +1737,7 @@ void screenSetBaseNetDataCS(ClientSim *csPtr, BYTE *buff, int length) {
   count = 1;
   max = basesGetNumBases(&csPtr->sim.bs);
   while (count <= max) {
-    frontEndStatusBase(count, basesGetStatusNum(&csPtr->sim, count));
+    frontEndStatusBase(csPtr, count, basesGetStatusNum(&csPtr->sim, count));
     count++;
   }
   /* Set our player name in the menu */
@@ -1776,7 +1776,7 @@ void screenSetPillNetDataCS(ClientSim *csPtr, BYTE *buff, BYTE dataLen) {
   count = 1;
   max = pillsGetNumPills(&csPtr->sim.pb);
   while (count <= max) {
-    frontEndStatusPillbox(count, pillsGetAllianceNum(&csPtr->sim, &csPtr->sim.pb, count));
+    frontEndStatusPillbox(csPtr, count, pillsGetAllianceNum(&csPtr->sim, &csPtr->sim.pb, count));
     count++;
   }
 }
@@ -1907,7 +1907,7 @@ void screenIncomingMessageCS(ClientSim *csPtr, BYTE playerNum, char *messageStr)
 *
 *********************************************************/
 void screenTogglePlayerCheckStateCS(ClientSim *csPtr, BYTE playerNum) {
-  playersToggleCheckedState(&csPtr->sim.plyrs, csPtr->myPlayerNum, playerNum, FALSE);
+  playersToggleCheckedState(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, playerNum, FALSE);
 }
 
 /*********************************************************
@@ -1922,7 +1922,7 @@ void screenTogglePlayerCheckStateCS(ClientSim *csPtr, BYTE playerNum) {
 *  isChecked - TRUE if check all
 *********************************************************/
 void screenCheckAllNonePlayersCS(ClientSim *csPtr, bool isChecked) {
-  playersCheckAllNone(&csPtr->sim.plyrs, csPtr->myPlayerNum, isChecked, FALSE);
+  playersCheckAllNone(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, isChecked, FALSE);
 }
 
 /*********************************************************
@@ -1937,7 +1937,7 @@ void screenCheckAllNonePlayersCS(ClientSim *csPtr, bool isChecked) {
 *
 *********************************************************/
 void screenCheckAlliedPlayersCS(ClientSim *csPtr) {
-  playersCheckAllies(&csPtr->sim.plyrs, csPtr->myPlayerNum, FALSE);
+  playersCheckAllies(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, FALSE);
 }
 
 /*********************************************************
@@ -1952,7 +1952,7 @@ void screenCheckAlliedPlayersCS(ClientSim *csPtr) {
 *
 *********************************************************/
 void screenCheckNearbyPlayersCS(ClientSim *csPtr) {
-  playersCheckNearbyPlayers(&csPtr->sim.plyrs, csPtr->myPlayerNum, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), FALSE);
+  playersCheckNearbyPlayers(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), FALSE);
 }
 
 /*********************************************************
@@ -2567,7 +2567,7 @@ void screenSetTankStartPositionCS(ClientSim *csPtr, BYTE xValue, BYTE yValue, TU
     numTrees = TANK_FULL_TREES;
   }
   tankSetStats(&MY_TANK(csPtr), numShells, numMines, TANK_FULL_ARMOUR, numTrees);
-  frontEndUpdateTankStatusBars(numShells, numMines, TANK_FULL_ARMOUR, numTrees);
+  frontEndUpdateTankStatusBars(csPtr, numShells, numMines, TANK_FULL_ARMOUR, numTrees);
   screenTankViewCS(csPtr);
   csPtr->sim.inStartFind = FALSE;
 }
@@ -2616,7 +2616,7 @@ bool screenGetGameRunningCS(ClientSim *csPtr) {
 *********************************************************/
 void screenConnectionLostCS(ClientSim *csPtr) {
   lgmConnectionLost(&csPtr->sim, &MY_LGM(csPtr), &MY_TANK(csPtr), &csPtr->sim.ss);
-  playersConnectionLost(&csPtr->sim, &csPtr->sim.plyrs, csPtr->myPlayerNum);
+  playersConnectionLost(csPtr, &csPtr->sim, &csPtr->sim.plyrs, csPtr->myPlayerNum);
 }
 
 
@@ -2718,7 +2718,7 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
   if (csPtr->gmeStartDelay > 0) {
     csPtr->messages.messageTime++;
     if (csPtr->messages.messageTime == MESSAGE_SCROLL_TIME) {
-      messageUpdate(&csPtr->messages);
+      messageUpdate(csPtr, &csPtr->messages);
       csPtr->messages.messageTime = 0;
     }
     return;
@@ -2726,14 +2726,14 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
 
   if (csPtr->gmeLength == 0) {
     csPtr->running = FALSE;
-    frontEndGameOver();
+    frontEndGameOver(csPtr);
     return;
   }
 
   if (csPtr->netStat != netRunning) {
     csPtr->messages.messageTime++;
     if (csPtr->messages.messageTime == MESSAGE_SCROLL_TIME) {
-      messageUpdate(&csPtr->messages);
+      messageUpdate(csPtr, &csPtr->messages);
       csPtr->messages.messageTime = 0;
     }
     return;
@@ -2774,14 +2774,14 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
   /* Update tank status bars — the server runs tankDeath/tankUpdate with
    * isServer=TRUE so frontEndUpdateTankStatusBars is not called from game
    * logic.  The client must push synced state to the display each tick. */
-  frontEndUpdateTankStatusBars(tankGetShells(&MY_TANK(csPtr)), tankGetMines(&MY_TANK(csPtr)),
+  frontEndUpdateTankStatusBars(csPtr, tankGetShells(&MY_TANK(csPtr)), tankGetMines(&MY_TANK(csPtr)),
                                tankGetArmour(&MY_TANK(csPtr)), tankGetTrees(&MY_TANK(csPtr)));
 
   /* Update kills/deaths display — same reason as above */
   {
     int kills, deaths;
     tankGetKillsDeaths(&MY_TANK(csPtr), &kills, &deaths);
-    frontEndKillsDeaths(kills, deaths);
+    frontEndKillsDeaths(csPtr, kills, deaths);
   }
 
   /* Update LGM status indicator — the server runs lgmUpdate with the
@@ -2792,16 +2792,16 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
     TURNTYPE lgmAngle = 0;
     lgmGetStatus(&MY_LGM(csPtr), &MY_TANK(csPtr), &lgmIsOut, &lgmIsDead, &lgmAngle);
     if (!lgmIsOut) {
-      frontEndManClear();
+      frontEndManClear(csPtr);
     } else {
-      frontEndManStatus(lgmIsDead, lgmAngle);
+      frontEndManStatus(csPtr, lgmIsDead, lgmAngle);
     }
   }
 
   /* Update base status bars */
   tankGetWorld(&MY_TANK(csPtr), &tankX, &tankY);
   basesGetStats(&csPtr->sim.bs, basesGetClosest(&csPtr->sim, tankX, tankY), &shellsAmount, &minesAmount, &armour);
-  frontEndUpdateBaseStatusBars(shellsAmount, minesAmount, armour);
+  frontEndUpdateBaseStatusBars(csPtr, shellsAmount, minesAmount, armour);
 
   /* Advance tank explosions locally for smooth animation/sounds between snapshots.
    * Destructive operations (pill damage, lgm death) are gated behind isServer
@@ -2815,7 +2815,7 @@ void screenSimDisplayTickCS(ClientSim *csPtr, bool isBrain) {
   /* Messaging */
   csPtr->messages.messageTime++;
   if (csPtr->messages.messageTime == MESSAGE_SCROLL_TIME) {
-    messageUpdate(&csPtr->messages);
+    messageUpdate(csPtr, &csPtr->messages);
     csPtr->messages.messageTime = 0;
   }
 }

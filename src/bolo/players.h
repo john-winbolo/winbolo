@@ -69,8 +69,7 @@ typedef struct playersObj *players;
 typedef struct {
   bool inUse;                       /* Is player slot in use? */
   char playerName[PLAYER_NAME_LEN]; /* Player name */
-  char location[512];               /* Location field (legacy, now stores country code) */
-  char countryCode[3];              /* ISO 3166-1 alpha-2 country code (e.g., "US") */
+  char location[3];                 /* ISO 3166-1 alpha-2 country code (e.g., "US") */
   allience allie;                   /* Alliences this player has */
   BYTE mapX;                        /* Map X and Y co-ordinates */
   BYTE mapY;
@@ -473,6 +472,14 @@ BYTE playersGetNumPlayers(players *plrs);
 *********************************************************/
 BYTE playersMakeNetAlliences(players *plrs, BYTE playerNum, BYTE *value);
 
+/* Rebuild selfPlayer's alliance list from the per-player alliance state.
+ * PACKET_PLAYER_LIST sends every other player's alliance bitmap but skips
+ * self's own entry, so single-direction checks against item[selfPlayer].allie
+ * (tank status icons, ally menu, scoreboard counts) miss our team membership.
+ * After applying a PLAYER_LIST, call this so all UI surfaces agree with
+ * the bidirectional checks used by pillbox/base alliance markers. */
+void playersRebuildSelfAlliance(struct GameSim *sim, players *plrs, BYTE selfPlayer);
+
 /*********************************************************
 *NAME:          playersGetFirstNotUsed
 *AUTHOR:        John Morrison
@@ -499,7 +506,7 @@ BYTE playersGetFirstNotUsed(players *plrs);
 * plrs - Pointer to the players object 
 * playerNum - The number of the player that has left
 *********************************************************/
-void playersLeaveGame(struct GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer);
+void playersLeaveGame(struct ClientSim *csParam, struct GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer);
 
 /*********************************************************
 *NAME:          playersSetMenuItems
@@ -554,7 +561,7 @@ int playersGetNumChecked(players *plrs);
 *ARGUMENTS:
 * plrs - Pointer to the players object 
 *********************************************************/
-void playersCheckAllies(players *plrs, BYTE selfPlayer, bool isServer);
+void playersCheckAllies(struct ClientSim *csParam, players *plrs, BYTE selfPlayer, bool isServer);
 
 /*********************************************************
 *NAME:          playersCheckAllNone
@@ -569,7 +576,7 @@ void playersCheckAllies(players *plrs, BYTE selfPlayer, bool isServer);
 * plrs - Pointer to the players object 
 * isChecked - TRUE if check all
 *********************************************************/
-void playersCheckAllNone(players *plrs, BYTE selfPlayer, bool isChecked, bool isServer);
+void playersCheckAllNone(struct ClientSim *csParam, players *plrs, BYTE selfPlayer, bool isChecked, bool isServer);
 
 /*********************************************************
 *NAME:          playersToggleCheckedState
@@ -583,7 +590,7 @@ void playersCheckAllNone(players *plrs, BYTE selfPlayer, bool isChecked, bool is
 * plrs - Pointer to the players object 
 * playerNum - The number of the player to check
 *********************************************************/
-void playersToggleCheckedState(players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer);
+void playersToggleCheckedState(struct ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer);
 
 /*********************************************************
 *NAME:          playersCheckNearbyPlayers
@@ -598,7 +605,7 @@ void playersToggleCheckedState(players *plrs, BYTE selfPlayer, BYTE playerNum, b
 * xValue - Your tanks X Map position
 * yValue - Your tanks Y Map position
 *********************************************************/
-void playersCheckNearbyPlayers(players *plrs, BYTE selfPlayer, BYTE xValue, BYTE yValue, bool isServer);
+void playersCheckNearbyPlayers(struct ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE xValue, BYTE yValue, bool isServer);
 
 /*********************************************************
 *NAME:          playersNumNearbyPlayers
@@ -802,7 +809,7 @@ void playersAcceptAlliance(struct GameSim *sim, players *plrs, BYTE selfPlayer, 
 * plrs - Pointer to the players object 
 * playerNum - The number of the player that has left
 *********************************************************/
-void playersConnectionLost(struct GameSim *sim, players *plrs, BYTE selfPlayer);
+void playersConnectionLost(struct ClientSim *csParam, struct GameSim *sim, players *plrs, BYTE selfPlayer);
 
 /*********************************************************
 *NAME:          playersGetBrainTanksInRect

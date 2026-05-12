@@ -88,30 +88,37 @@ function M.finish_tick(tick)
   counters = {}
 
   if ticks >= REPORT_INTERVAL then
-    local parts = {}
-    -- Sort keys for stable output
-    local keys = {}
-    for k in pairs(accum) do keys[#keys + 1] = k end
-    table.sort(keys)
-    for _, k in ipairs(keys) do
-      local total = accum[k]
-      local avg = total / ticks
-      parts[#parts + 1] = string.format("%s=%.0f(%.0f/t)", k, total, avg)
-    end
-    -- Append worst-case values
-    local mkeys = {}
-    for k in pairs(maxvals) do mkeys[#mkeys + 1] = k end
-    table.sort(mkeys)
-    for _, k in ipairs(mkeys) do
-      parts[#parts + 1] = string.format("%s_max=%.0f", k, maxvals[k])
-    end
-    local line = string.format(TAG .. " METRICS t=%d [%dt]: %s",
-      tick, ticks, table.concat(parts, "  "))
-    print(line)
-    if metrics_file then
-      metrics_file:write(line)
-      metrics_file:write("\n")
-      metrics_file:flush()
+    -- Skip the line build entirely when there's no destination — in
+    -- --opt without --profile-log/--debug, metrics_file is nil and
+    -- the console print is gated, so the whole sort+format pass is
+    -- wasted work. Also short-circuits the per-50-tick console spam
+    -- the user was seeing in --opt mode.
+    if BRAIN_DEBUG_MODE or metrics_file then
+      local parts = {}
+      -- Sort keys for stable output
+      local keys = {}
+      for k in pairs(accum) do keys[#keys + 1] = k end
+      table.sort(keys)
+      for _, k in ipairs(keys) do
+        local total = accum[k]
+        local avg = total / ticks
+        parts[#parts + 1] = string.format("%s=%.0f(%.0f/t)", k, total, avg)
+      end
+      -- Append worst-case values
+      local mkeys = {}
+      for k in pairs(maxvals) do mkeys[#mkeys + 1] = k end
+      table.sort(mkeys)
+      for _, k in ipairs(mkeys) do
+        parts[#parts + 1] = string.format("%s_max=%.0f", k, maxvals[k])
+      end
+      local line = string.format(TAG .. " METRICS t=%d [%dt]: %s",
+        tick, ticks, table.concat(parts, "  "))
+      if BRAIN_DEBUG_MODE then print(line) end
+      if metrics_file then
+        metrics_file:write(line)
+        metrics_file:write("\n")
+        metrics_file:flush()
+      end
     end
     if ticks_file then ticks_file:flush() end
     accum = {}

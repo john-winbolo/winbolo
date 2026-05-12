@@ -52,7 +52,7 @@
 *  armour  - Amount of armour
 *  trees   - Amount of trees
 *********************************************************/
-void frontEndUpdateTankStatusBars(BYTE shells, BYTE mines, BYTE armour, BYTE trees);
+void frontEndUpdateTankStatusBars(struct ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees);
 
 /*********************************************************
 *NAME:          frontEndUpdateBaseStatusBars
@@ -68,7 +68,7 @@ void frontEndUpdateTankStatusBars(BYTE shells, BYTE mines, BYTE armour, BYTE tre
 *  mines   - Number of mines
 *  armour  - Amount of armour
 *********************************************************/
-void frontEndUpdateBaseStatusBars(BYTE shells, BYTE mines, BYTE armour);
+void frontEndUpdateBaseStatusBars(struct ClientSim *cs, BYTE shells, BYTE mines, BYTE armour);
 
 /*********************************************************
 *NAME:          frontEndSoundEffects
@@ -81,7 +81,7 @@ void frontEndUpdateBaseStatusBars(BYTE shells, BYTE mines, BYTE armour);
 *ARGUMENTS:
 *  value - The sound effect to play
 *********************************************************/
-void frontEndPlaySound(sndEffects value);
+void frontEndPlaySound(struct ClientSim *cs, sndEffects value);
 
 /*********************************************************
 *NAME:          frontEndDrawMainScreen
@@ -118,7 +118,7 @@ void frontEndDrawMainScreen(struct ClientSim *cs, screen *value, screenMines *mi
 *  pillNum - The base number to draw (1-16)
 *  pa      - The allience of the pillbox
 *********************************************************/
-void frontEndStatusPillbox(BYTE pillNum, pillAlliance pb);
+void frontEndStatusPillbox(struct ClientSim *cs, BYTE pillNum, pillAlliance pb);
 
 /*********************************************************
 *NAME:          frontEndStatusTank
@@ -132,7 +132,7 @@ void frontEndStatusPillbox(BYTE pillNum, pillAlliance pb);
 *  tankNum - The tank number to draw (1-16)
 *  ts      - The allience of the tank
 *********************************************************/
-void frontEndStatusTank(BYTE tankNum, tankAlliance ts);
+void frontEndStatusTank(struct ClientSim *cs, BYTE tankNum, tankAlliance ts);
 
 /*********************************************************
 *NAME:          frontEndStatusBase
@@ -146,7 +146,7 @@ void frontEndStatusTank(BYTE tankNum, tankAlliance ts);
 *  pillNum - The base number to draw (1-16)
 *  bs      - The allience of the pillbox
 *********************************************************/
-void frontEndStatusBase(BYTE baseNum, baseAlliance bs);
+void frontEndStatusBase(struct ClientSim *cs, BYTE baseNum, baseAlliance bs);
 
 /*********************************************************
 *NAME:          frontEndMessages
@@ -160,7 +160,7 @@ void frontEndStatusBase(BYTE baseNum, baseAlliance bs);
 *  top    - The top line to write
 *  bottom - The bottom line to write
 *********************************************************/
-void frontEndMessages(char *top, char *bottom);
+void frontEndMessages(struct ClientSim *cs, char *top, char *bottom);
 
 /*********************************************************
 *NAME:          frontEndKillsDeaths
@@ -174,7 +174,7 @@ void frontEndMessages(char *top, char *bottom);
 *  kills  - The number of kills the tank has.
 *  deaths - The number of times the tank has died
 *********************************************************/
-void frontEndKillsDeaths(int kills, int deaths);
+void frontEndKillsDeaths(struct ClientSim *cs, int kills, int deaths);
 
 /*********************************************************
 *NAME:          frontEndManStatus
@@ -188,7 +188,7 @@ void frontEndKillsDeaths(int kills, int deaths);
 *  isDead - Is the man dead
 *  angle  - The angle the man is facing
 *********************************************************/
-void frontEndManStatus(bool isDead, TURNTYPE angle);
+void frontEndManStatus(struct ClientSim *cs, bool isDead, TURNTYPE angle);
 
 /*********************************************************
 *NAME:          frontEndManClear
@@ -201,7 +201,7 @@ void frontEndManStatus(bool isDead, TURNTYPE angle);
 *ARGUMENTS:
 *
 *********************************************************/
-void frontEndManClear(void);
+void frontEndManClear(struct ClientSim *cs);
 
 /*********************************************************
 *NAME:          frontEndGameOver
@@ -214,7 +214,7 @@ void frontEndManClear(void);
 *ARGUMENTS:
 *
 *********************************************************/
-void frontEndGameOver(void);
+void frontEndGameOver(struct ClientSim *cs);
 
 /*********************************************************
 *NAME:          frontEndClearPlayer
@@ -227,7 +227,7 @@ void frontEndGameOver(void);
 *ARGUMENTS:
 *  value - The player number to clear
 *********************************************************/
-void frontEndClearPlayer(playerNumbers value);
+void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value);
 
 /*********************************************************
 *NAME:          frontEndSetPlayer
@@ -273,7 +273,23 @@ void frontEndDrawDownload(struct ClientSim *cs, bool justBlack);
 * value     - The player number
 * isChecked - Is the item checked
 *********************************************************/
-void frontEndSetPlayerCheckState(playerNumbers value, bool isChecked);
+void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked);
+
+/*********************************************************
+*NAME:          frontEndSetActiveClientSim
+*PURPOSE:
+* Register which ClientSim drives the visible player-list UI.
+* Subsequent frontEnd* calls whose cs argument doesn't match the
+* registered active cs are suppressed as no-ops, preventing bot
+* / bg_game / gym ClientSims from polluting process-global UI
+* state. NULL means "no active UI cs registered yet" — calls
+* fall through (preserves pre-registration bootstrapping).
+*
+*ARGUMENTS:
+*  cs - The ClientSim that owns the visible UI (usually humanSim),
+*       or NULL to clear the registration.
+*********************************************************/
+void frontEndSetActiveClientSim(struct ClientSim *cs);
 
 /*********************************************************
 *NAME:          frontEndEnableRequestAllyMenu

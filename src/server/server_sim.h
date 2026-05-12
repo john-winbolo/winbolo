@@ -32,6 +32,25 @@
 #include "../bolo/brain_list.h"
 #include "../mapeditor/mapeditor_generate.h"
 
+/* Forward decl — full definition in bolo/control_event.h. Kept opaque here so
+ * server_sim.h doesn't drag client_sim.h's include closure into every TU. */
+struct ControlEvent;
+
+typedef int SubscriberHandle;
+#define SUBSCRIBER_HANDLE_INVALID (-1)
+
+/* Threading: serverSimPublishControl, serverSimRegisterSubscriber, and
+ * serverSimUnregisterSubscriber are not synchronized. All callers must run on
+ * the same thread (today: the main game-tick thread, which drives both
+ * transport_local and transport_udp_*). If a subscriber's deliver callback ever
+ * runs on a worker thread, or publish is called from outside the tick thread,
+ * add a mutex. */
+typedef struct {
+    void (*deliver)(void *ctx, const struct ControlEvent *evt);
+    void *ctx;
+    uint16_t generation;   /* matches subscriberGen[slot] when active */
+} ControlSubscriber;
+
 #ifndef _AITYPE_ENUM
 #define _AITYPE_ENUM
 typedef enum {
@@ -108,6 +127,8 @@ typedef struct ServerSim {
     uint32_t     tick;
     int32_t      startDelay;
     int32_t      gameLength;
+    int32_t      tickLimit;          /* 0 = unlimited; counts running game-ticks */
+    int32_t      ticksRun;           /* Running-state tick counter */
 
     /* Server state machine */
     ServerState  state;
@@ -247,6 +268,12 @@ typedef struct ServerSim {
     /* Log recording configuration (set from CLI args, used by serverSimStartGame) */
     bool         wantLogging;
     char         userLogFileName[512];
+
+    /* In-process control event subscribers (bot ClientSims, SP humanSim). */
+    ControlSubscriber subscribers[MAX_TANKS + 1];
+    uint16_t          subscriberGen[MAX_TANKS + 1];
+    int               numSubscribers;
+    bool              publishing;
 } ServerSim;
 
 /*********************************************************
@@ -666,5 +693,51 @@ bool serverSimCreateRandomMap(ServerSim *sim, const MapGenConfig *cfg,
  *  lobby. Returns TRUE on success.
  *********************************************************/
 bool serverSimRandomMapRegenerate(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimRegisterSubscriber
+ *PURPOSE:
+ *  Adds an in-process subscriber and synchronously delivers
+ *  the current server state to it before returning. Returns
+ *  an opaque handle, or SUBSCRIBER_HANDLE_INVALID if no
+ *  free slot is available.
+ *********************************************************/
+SubscriberHandle serverSimRegisterSubscriber(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimUnregisterSubscriber
+ *PURPOSE:
+ *  Removes a subscriber. Idempotent on stale or invalid
+ *  handles (no-op).
+ *********************************************************/
+void serverSimUnregisterSubscriber(ServerSim *sim, SubscriberHandle h);
+
+/*********************************************************
+ *NAME:          serverSimPublishControl
+ *PURPOSE:
+ *  Fans out a ControlEvent to every active subscriber.
+ *  Asserts the four dispatcher invariants (no reentry, no
+ *  self-subscription, snapshot iteration).
+ *********************************************************/
+void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt);
+
+/*********************************************************
+ *NAME:          serverSimFillGamePhaseEvent
+ *               serverSimFillLobbySettingsEvent
+ *               serverSimFillLobbySlotEvent
+ *               serverSimFillPlayerJoinEvent
+ *PURPOSE:
+ *  Populate a ControlEvent of the corresponding type from
+ *  the current ServerSim state. Used by both the initial
+ *  state sync (serverSimSyncSubscriber) and live publish
+ *  call sites that need an event payload.
+ *********************************************************/
+void serverSimFillGamePhaseEvent(const ServerSim *sim, struct ControlEvent *evt);
+void serverSimFillLobbySettingsEvent(ServerSim *sim, struct ControlEvent *evt);
+void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
+void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
 
 #endif /* SERVER_SIM_H */

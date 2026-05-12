@@ -479,6 +479,8 @@ void printArgs() {
   fprintf(stderr, "<Delay>       - Specifies the start delay (in seconds) (none if not specified)\n");
   fprintf(stderr, "<Limit>       - Specifies the game time limit (in minutes)\n");
   fprintf(stderr, "                \"-1\" for no time limit (none if not specified)\n");
+  fprintf(stderr, "-ticks <N>    - Exit cleanly after N game-ticks of running play.\n");
+  fprintf(stderr, "                \"0\" or omitted means unlimited (default).\n");
   fprintf(stderr, "<Password>    - Game Password (none if not specified)\n");
   fprintf(stderr, "<tracker>     - Internet tracker to notify. Options:\n");
   fprintf(stderr, "                -tracker alone uses default (%s:%d)\n", DEFAULT_TRACKER_ADDR, DEFAULT_TRACKER_PORT);
@@ -496,6 +498,7 @@ void printArgs() {
   fprintf(stderr, "-logfile      - Write all output to file instead of console.\n");
   fprintf(stderr, "-maxplayers   - Specifies the maximum number of players that can be on this\n");
   fprintf(stderr, "                server.\n");
+  fprintf(stderr, "-seed <N>     - Seed the RNG with N for reproducible runs.\n");
   fprintf(stderr, "-log          - Create game log file (filename optional)\n");
   fprintf(stderr, "-dontsendlog  - Don't upload game log to winbolo.net\n");
   fprintf(stderr, "-statusFile	 - Save list of unlocked players to a file.\n");
@@ -503,6 +506,9 @@ void printArgs() {
   fprintf(stderr, "                thread. 1 disables the worker pool. Default: logical cores.\n");
   fprintf(stderr, "-bots <N>     - Number of AI bot players to add (default: 0)\n");
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
+  fprintf(stderr, "-allybots [N] - Place all -bots on the same team (1-16, default 1) so\n");
+  fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
+  fprintf(stderr, "                them, or a different one to fight against them.\n");
   fprintf(stderr, "-nolobby      - Skip lobby, start game immediately (backward-compatible mode)\n");
   fprintf(stderr, "-quitonwin    - Quit server when a player/alliance wins\n");
   fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
@@ -784,6 +790,12 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
 
 int main(int argc, char **argv) {
   srand((unsigned int)(time(NULL) ^ getpid()));
+  {
+    int seedArg = findArg(argc, argv, "seed");
+    if (seedArg != ARG_NOT_FOUND) {
+      srand((unsigned int)strtoul((char *)argv[seedArg], NULL, 0));
+    }
+  }
   sentryInit("WinBoloDS", argc, argv);
   atexit(sentryClose);
   wb_log_init("WinBolo", "WinBoloDS", "winbolods.log");
@@ -1065,6 +1077,13 @@ int main(int argc, char **argv) {
   serverSim.quitOnWin = argExist(argc, argv, "quitonwin");
   serverSim.autoCloseOnEmpty = argExist(argc, argv, "autoclose");
 
+  {
+    int argNum = findArg(argc, argv, "ticks");
+    if (argNum != ARG_NOT_FOUND) {
+      serverSim.tickLimit = (int32_t)strtoul((char *)argv[argNum], NULL, 0);
+    }
+  }
+
   /* Empty reset configuration — on by default */
   if (argExist(argc, argv, "noemptyreset") == TRUE) {
     serverSim.emptyResetEnabled = FALSE;
@@ -1259,13 +1278,37 @@ int main(int argc, char **argv) {
     if (numBots > 0 && brainPath[0] != '\0') {
       int i;
       char botName[64];
+      int allyTeam = 0;  /* 0 = no allying; 1-16 = team to place bots on */
+      if (argExist(argc, argv, "allybots") == TRUE) {
+        int aArg = findArg(argc, argv, "allybots");
+        allyTeam = 1;
+        if (aArg != ARG_NOT_FOUND && argv[aArg][0] != '-') {
+          int t = atoi((char *)argv[aArg]);
+          if (t >= 1 && t <= 16) {
+            allyTeam = t;
+          } else {
+            fprintf(stderr, "Warning: -allybots team must be 1-16, defaulting to 1\n");
+          }
+        }
+      }
       for (i = 0; i < numBots; i++) {
         snprintf(botName, sizeof(botName), "Bot %d", i + 1);
         if (!botManagerAddBot(&serverSim, (BYTE)i, brainPath, botName, ai, game, hiddenMines)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);
+        } else if (allyTeam > 0) {
+          /* Shared non-zero team for every bot — server_sim's start-of-round
+           * pass converts matching teamNumber into alliances, and the lobby
+           * protocol already broadcasts teamNumber to clients so the lobby
+           * UI shows the bots on this team. */
+          serverSim.lobbyPlayers[i].teamNumber = (uint8_t)allyTeam;
         }
       }
-      fprintf(stderr, "Added %d bot(s) with brain '%s'\n", numBots, brainPath);
+      if (allyTeam > 0) {
+        fprintf(stderr, "Added %d bot(s) with brain '%s' (allied on team %d)\n",
+                numBots, brainPath, allyTeam);
+      } else {
+        fprintf(stderr, "Added %d bot(s) with brain '%s'\n", numBots, brainPath);
+      }
     } else if (numBots > 0) {
       fprintf(stderr, "Warning: -bots specified but no -brain path given\n");
     }
