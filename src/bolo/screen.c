@@ -258,7 +258,7 @@ tankButton screenTranslateBrainButtonsCS(ClientSim *csPtr, bool *isShoot, bool i
 *  baseNum - The base number to get
 *********************************************************/
 baseAlliance screenBaseAllianceCS(ClientSim *csPtr, BYTE baseNum) {
-  return basesGetStatusNum(clientSimGetGameSim(csPtr), baseNum);
+  return clientSimGetBaseAlliance(csPtr, baseNum);
 }
 
 
@@ -275,29 +275,7 @@ baseAlliance screenBaseAllianceCS(ClientSim *csPtr, BYTE baseNum) {
 *  pillNum - The pillbox number to get
 *********************************************************/
 pillAlliance screenPillAllianceCS(ClientSim *csPtr, BYTE pillNum) {
-  return pillsGetAllianceNum(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, pillNum);
-}
-
-
-/*********************************************************
-*NAME:          screenGetTankStats
-*AUTHOR:        John Morrison
-*CREATION DATE: 22/12/98
-*LAST MODIFIED: 22/12/98
-*PURPOSE:
-*  Returns the tank shells, mines, armour and trees 
-*
-*ARGUMENTS:
-*  shellsAmount - Pointer to hold number of shells
-*  minesAmount  - Pointer to hold number of mines
-*  armourAmount - Pointer to hold amount of armour
-*  treesAmount  - Pointer to hold amount of trees
-*********************************************************/
-void screenGetTankStatsCS(ClientSim *csPtr, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount) {
-  tankGetStats(&MY_TANK(csPtr), shellsAmount, minesAmount, armourAmount, treesAmount);
-  if (*armourAmount > TANK_FULL_ARMOUR) {
-    *armourAmount = 0;
-  }
+  return clientSimGetPillAlliance(csPtr, pillNum);
 }
 
 /*********************************************************
@@ -385,22 +363,6 @@ void clientCenterTankCS(ClientSim *csPtr) {
 }
 
 /*********************************************************
-*NAME:          screenGetKillsDeaths
-*AUTHOR:        John Morrison
-*CREATION DATE:  8/1/99
-*LAST MODIFIED:  8/1/99
-*PURPOSE:
-*  Gets the tanks kills/deaths
-*
-*ARGUMENTS:
-*  kills  - The number of kills the tank has.
-*  deaths - The number of times the tank has died
-*********************************************************/
-void screenGetKillsDeathsCS(ClientSim *csPtr, int *kills, int *deaths) {
-  tankGetKillsDeaths(&MY_TANK(csPtr), kills, deaths);
-}
-
-/*********************************************************
 *NAME:          screenShowMessages
 *AUTHOR:        John Morrison
 *CREATION DATE:  8/1/99
@@ -446,14 +408,7 @@ void screenShowMessages(ClientSim *csPtr, BYTE msgType, bool isShown) {
 *  buildS - The building type selected
 *********************************************************/
 void screenManMoveCS(ClientSim *csPtr, buildSelect buildS) {
-  if (tankGetArmour(&MY_TANK(csPtr)) <= TANK_FULL_ARMOUR && clientSimGetNetStatus(csPtr) != netFailed) {
-    /* Route build request through InputPacket so the server sim
-     * processes it authoritatively (matches brain build path). */
-    clientSimSetPendingBuild(csPtr,
-                             (BYTE) buildS + 1,  /* 1-based in InputPacket (0=none) */
-                             (BYTE) (clientSimGetCursorPosX(csPtr) + clientSimGetXOffset(csPtr)),
-                             (BYTE) (clientSimGetCursorPosY(csPtr) + clientSimGetYOffset(csPtr)));
-  }
+  clientSimManMove(csPtr, buildS);
 }
 
 
@@ -683,7 +638,7 @@ void screenSetTankLabelLen(ClientSim *csPtr, labelLen value) {
 *
 *********************************************************/
 void screenTankViewCS(ClientSim *csPtr) {
-  viewportFollowTank(clientSimViewportMut(csPtr), clientSimGetScroll(csPtr), MY_TANK(csPtr));
+  clientSimTankView(csPtr);
 }
 
 
@@ -700,8 +655,7 @@ void screenTankViewCS(ClientSim *csPtr) {
 *  vert - If we are moving up or down (0 for neither)
 *********************************************************/
 void screenPillViewCS(ClientSim *csPtr, int horz, int vert) {
-  viewportPanInPillView(clientSimViewportMut(csPtr), clientSimGetGameSim(csPtr),
-                        clientSimGetScroll(csPtr), MY_TANK(csPtr), horz, vert);
+  clientSimPillView(csPtr, horz, vert);
 }
 
 
@@ -718,7 +672,7 @@ void screenPillViewCS(ClientSim *csPtr, int horz, int vert) {
 *  fileName - path and filename to save
 *********************************************************/
 tankAlliance screenTankAllianceCS(ClientSim *csPtr, BYTE playerNum) {
-  return playersScreenAllience(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), (BYTE) (playerNum-1));
+  return clientSimGetTankAlliance(csPtr, playerNum);
 }
 
 
@@ -1275,7 +1229,7 @@ void screenSetTankAutoHideGunsightCS(ClientSim *csPtr, bool useAutohide) { clien
 *  posY - Top position
 *********************************************************/
 void screenSetCursorPosCS(ClientSim *csPtr, BYTE posX, BYTE posY) {
-  viewportSetCursor(clientSimViewportMut(csPtr), posX, posY);
+  clientSimSetCursorPos(csPtr, posX, posY);
 }
 
 /*********************************************************
@@ -1543,9 +1497,6 @@ buildSelect getBuildCurrentSelectCS(ClientSim *csPtr) {
 *  bs - The new build selection
 *********************************************************/
 void setBuildCurrentSelectCS(ClientSim *csPtr, buildSelect bs) {
-  if ((bs != BsTrees) && (bs != BsRoad) && (bs != BsBuilding) && (bs != BsPillbox) && (bs != BsMine)) {
-    return;
-  }
   clientSimSetCurrentBuildSelect(csPtr, bs);
 }
 
