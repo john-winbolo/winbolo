@@ -109,10 +109,6 @@ extern "C" void utilStripName(char *name);
 extern "C" void windowGetKeys(keyItems *value);
 extern "C" void windowSetKeys(keyItems *value);
 extern "C" void windowKeyPressed(struct ClientSim *cs, int keyCode);
-extern "C" bool screenGetTankAutoSlowdownCS(struct ClientSim *csPtr);
-extern "C" void screenSetTankAutoSlowdownCS(struct ClientSim *csPtr, bool useSlowdown);
-extern "C" bool screenGetTankAutoHideGunsightCS(struct ClientSim *csPtr);
-extern "C" void screenSetTankAutoHideGunsightCS(struct ClientSim *csPtr, bool useAutohide);
 extern "C" void inputTouchSetAbsoluteSteering(bool enabled);
 extern "C" bool inputTouchGetAbsoluteSteering(void);
 
@@ -840,7 +836,7 @@ static void renderGameInfoContent(ClientSim *cs) {
     }
     {
         MessageArgs args = {};
-        args.number = (int)screenGetNumPlayersCS(cs);
+        args.number = (int)clientSimGetNumPlayers(cs);
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMEINFO_NUMPLAYERS, &args));
     }
 
@@ -851,9 +847,9 @@ static void renderGameInfoContent(ClientSim *cs) {
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_GAMETYPE), langGetText(gtStr));
 
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_HIDDENMINES),
-                screenGetAllowHiddenMinesCS(cs) ? langGetText(STR_YES) : langGetText(STR_NO));
+                clientSimGetAllowHiddenMines(cs) ? langGetText(STR_YES) : langGetText(STR_NO));
 
-    aiType ai = screenGetAiTypeCS(cs);
+    aiType ai = clientSimGetAiType(cs);
     langid aiStr = STR_NO;
     if      (ai == aiYes)          aiStr = STR_YES;
     else if (ai == aiYesAdvantage) aiStr = STR_DLGGAMEINFO_AIADV;
@@ -996,7 +992,7 @@ static void renderSendMsgContent(ClientSim *cs) {
     /* "Sending to N player(s)" label */
     int numSend = 0;
     switch (s_sendMsgRecipient) {
-        case kSendAll:      numSend = (int)screenGetNumPlayersCS(cs);     break;
+        case kSendAll:      numSend = (int)clientSimGetNumPlayers(cs);     break;
         case kSendAllies:   numSend = screenNumAlliesCS(cs);              break;
         case kSendNearby:   numSend = screenNumNearbyTanksCS(cs);         break;
         case kSendSelected: numSend = screenNumCheckedPlayersCS(cs);      break;
@@ -1529,8 +1525,8 @@ static void renderKeySetupModal(ClientSim *cs) {
         ImGui::OpenPopup(title);
         s_showKeySetup = false;
         windowGetKeys(&s_keySetupKeys);
-        s_keySetupAutoSlowdown = screenGetTankAutoSlowdownCS(cs);
-        s_keySetupAutoGunsight = screenGetTankAutoHideGunsightCS(cs);
+        s_keySetupAutoSlowdown = clientSimGetTankAutoSlowdown(cs);
+        s_keySetupAutoGunsight = clientSimGetTankAutoHideGunsight(cs);
         s_keySetupWaiting      = ksNone;
     }
 
@@ -1632,8 +1628,8 @@ static void renderKeySetupModal(ClientSim *cs) {
 
     if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0))) {
         windowSetKeys(&s_keySetupKeys);
-        screenSetTankAutoSlowdownCS(cs, s_keySetupAutoSlowdown);
-        screenSetTankAutoHideGunsightCS(cs, s_keySetupAutoGunsight);
+        clientSimSetTankAutoSlowdown(cs, s_keySetupAutoSlowdown);
+        clientSimSetTankAutoHideGunsight(cs, s_keySetupAutoGunsight);
         s_keySetupWaiting = ksNone;
         ImGui::CloseCurrentPopup();
     }
@@ -2253,7 +2249,7 @@ static void renderMenuBar(ClientSim *cs) {
     }
 
     /* ---- Brains -------------------------------------- */
-    if (ImGui::BeginMenu(langGetText(STR_MENU_BRAINS), screenGetAiTypeCS(cs) != aiNone)) {
+    if (ImGui::BeginMenu(langGetText(STR_MENU_BRAINS), clientSimGetAiType(cs) != aiNone)) {
         bool running = luaBrainIsRunning() != 0;
         int  runIdx  = luaBrainGetRunningIndex();
 

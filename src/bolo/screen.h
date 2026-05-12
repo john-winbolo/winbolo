@@ -210,8 +210,6 @@ void screenCheckTankMineDamageCS(struct ClientSim *csPtr, BYTE mx, BYTE my);
 BYTE screenPillNumPosCS(struct ClientSim *csPtr, BYTE mx, BYTE my);
 BYTE screenBaseNumPosCS(struct ClientSim *csPtr, BYTE mx, BYTE my);
 void screenGetMapNameCS(struct ClientSim *csPtr, char *value);
-BYTE screenGetNumPlayersCS(struct ClientSim *csPtr);
-bool screenGetAllowHiddenMinesCS(struct ClientSim *csPtr);
 void screenSetAllowHiddenMinesCS(struct ClientSim *csPtr, bool hidden);
 int32_t screenGetGameStartDelayCS(struct ClientSim *csPtr);
 void screenGetPlayerNameCS(struct ClientSim *csPtr, char *value);
