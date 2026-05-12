@@ -75,7 +75,7 @@ void viewportUpdateView(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
 
   for (count = 0; count < MAIN_BACK_BUFFER_SIZE_X; count++) {
     for (count2 = 0; count2 < MAIN_BACK_BUFFER_SIZE_Y; count2++) {
-      (*(vp->view))->screenItem[count][count2] =
+      vp->view->screenItem[count][count2] =
           viewportCalcSquare(vp, sim, myPlayerNum,
                              (BYTE)(count + vp->xOffset),
                              (BYTE)(count2 + vp->yOffset), count, count2);
@@ -105,7 +105,7 @@ BYTE viewportCalcSquare(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
   BYTE below;
   BYTE belowRight;
 
-  (*(vp->mineView))->mineItem[scrX][scrY] = FALSE;
+  vp->mineView->mineItem[scrX][scrY] = FALSE;
   /* Set up Items */
   if ((pillsExistPos(&sim->pb, xValue, yValue)) == TRUE) {
     returnValue = pillsGetScreenHealth(sim, &sim->pb, xValue, yValue);
@@ -137,19 +137,19 @@ BYTE viewportCalcSquare(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
     currentPos = mapGetPos(&sim->mp, xValue, yValue);
     if (currentPos >= HALFBUILDING + MINE_SUBTRACT && currentPos != DEEP_SEA) {
       minesRemoveItem(&sim->mns, xValue, yValue);
-      (*(vp->mineView))->mineItem[scrX][scrY] = FALSE;
+      vp->mineView->mineItem[scrX][scrY] = FALSE;
       currentPos = currentPos - MINE_SUBTRACT;
       mapSetPos(sim, &sim->mp, xValue, yValue, currentPos, TRUE, TRUE);
     }
     if (mapIsMine(&sim->mp, xValue, yValue) == TRUE) {
       if (minesExistPos(&sim->mns, &sim->mp, xValue, yValue) == TRUE) {
-        (*(vp->mineView))->mineItem[scrX][scrY] = TRUE;
+        vp->mineView->mineItem[scrX][scrY] = TRUE;
       }
       if (currentPos != DEEP_SEA) {
         currentPos = currentPos - MINE_SUBTRACT;
       }
     } else {
-      (*(vp->mineView))->mineItem[scrX][scrY] = FALSE;
+      vp->mineView->mineItem[scrX][scrY] = FALSE;
     }
 
     if (basesExistPos(&sim->bs, (BYTE)(xValue - 1), (BYTE)(yValue - 1)) == TRUE) {
