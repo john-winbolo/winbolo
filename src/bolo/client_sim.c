@@ -740,8 +740,8 @@ void netProcessedDnsLookup(ClientSim *cs, char *ip, char *host) {
 
 bool clientSimIsRunning(const ClientSim *cs)              { return cs->running; }
 bool clientSimIsBot(const ClientSim *cs)                  { return cs->isBot; }
-bool clientSimIsInPillView(const ClientSim *cs)           { return cs->inPillView; }
-bool clientSimIsNeedScreenReCalc(const ClientSim *cs)     { return cs->needScreenReCalc; }
+bool clientSimIsInPillView(const ClientSim *cs)           { return cs->viewport.inPillView; }
+bool clientSimIsNeedScreenReCalc(const ClientSim *cs)     { return cs->viewport.needRecalc; }
 bool clientSimIsInLobby(const ClientSim *cs)              { return cs->inLobby; }
 bool clientSimIsMapDownloadComplete(const ClientSim *cs)  { return cs->mapDownloadComplete; }
 bool clientSimIsMapSkipAvailable(const ClientSim *cs)     { return cs->mapSkipAvailable; }
@@ -756,15 +756,15 @@ labelLen    clientSimGetLabelMessage(const ClientSim *cs)       { return cs->lab
 labelLen    clientSimGetLabelTankLabel(const ClientSim *cs)     { return cs->labelTankLabel; }
 
 BYTE     clientSimGetMyPlayerNum(const ClientSim *cs)       { return cs->myPlayerNum; }
-BYTE     clientSimGetXOffset(const ClientSim *cs)           { return cs->xOffset; }
-BYTE     clientSimGetYOffset(const ClientSim *cs)           { return cs->yOffset; }
-BYTE     clientSimGetPillViewX(const ClientSim *cs)         { return cs->pillViewX; }
-BYTE     clientSimGetPillViewY(const ClientSim *cs)         { return cs->pillViewY; }
+BYTE     clientSimGetXOffset(const ClientSim *cs)           { return cs->viewport.xOffset; }
+BYTE     clientSimGetYOffset(const ClientSim *cs)           { return cs->viewport.yOffset; }
+BYTE     clientSimGetPillViewX(const ClientSim *cs)         { return cs->viewport.pillViewX; }
+BYTE     clientSimGetPillViewY(const ClientSim *cs)         { return cs->viewport.pillViewY; }
 BYTE     clientSimGetPendingBuildAction(const ClientSim *cs){ return cs->pendingBuildAction; }
 BYTE     clientSimGetPendingBuildX(const ClientSim *cs)     { return cs->pendingBuildX; }
 BYTE     clientSimGetPendingBuildY(const ClientSim *cs)     { return cs->pendingBuildY; }
-int      clientSimGetCursorPosX(const ClientSim *cs)        { return cs->cursorPosX; }
-int      clientSimGetCursorPosY(const ClientSim *cs)        { return cs->cursorPosY; }
+int      clientSimGetCursorPosX(const ClientSim *cs)        { return cs->viewport.cursorPosX; }
+int      clientSimGetCursorPosY(const ClientSim *cs)        { return cs->viewport.cursorPosY; }
 int      clientSimGetGmeStartDelay(const ClientSim *cs)     { return cs->gmeStartDelay; }
 int      clientSimGetCountdownSeconds(const ClientSim *cs)  { return cs->countdownSeconds; }
 int      clientSimGetServerShellCount(const ClientSim *cs)  { return cs->serverShellCount; }
@@ -824,13 +824,16 @@ GameSim       *clientSimGetGameSim(ClientSim *cs)    { return &cs->sim; }
 MessageState  *clientSimGetMessages(ClientSim *cs)   { return &cs->messages; }
 ScrollState   *clientSimGetScroll(ClientSim *cs)     { return &cs->scroll; }
 InterpContext *clientSimGetInterpCtx(ClientSim *cs)  { return &cs->interpCtx; }
-screen        *clientSimGetView(ClientSim *cs)       { return &cs->view; }
-screenMines   *clientSimGetMineView(ClientSim *cs)   { return &cs->mineView; }
+screen        *clientSimGetView(ClientSim *cs)       { return &cs->viewport.view; }
+screenMines   *clientSimGetMineView(ClientSim *cs)   { return &cs->viewport.mineView; }
 
-BYTE *clientSimGetXOffsetPtr(ClientSim *cs)          { return &cs->xOffset; }
-BYTE *clientSimGetYOffsetPtr(ClientSim *cs)          { return &cs->yOffset; }
-BYTE *clientSimGetPillViewXPtr(ClientSim *cs)        { return &cs->pillViewX; }
-BYTE *clientSimGetPillViewYPtr(ClientSim *cs)        { return &cs->pillViewY; }
+const struct ViewPort *clientSimViewport(const ClientSim *cs)  { return &cs->viewport; }
+struct ViewPort       *clientSimViewportMut(ClientSim *cs)     { return &cs->viewport; }
+
+BYTE *clientSimGetXOffsetPtr(ClientSim *cs)          { return &cs->viewport.xOffset; }
+BYTE *clientSimGetYOffsetPtr(ClientSim *cs)          { return &cs->viewport.yOffset; }
+BYTE *clientSimGetPillViewXPtr(ClientSim *cs)        { return &cs->viewport.pillViewX; }
+BYTE *clientSimGetPillViewYPtr(ClientSim *cs)        { return &cs->viewport.pillViewY; }
 
 char *clientSimGetMapNameMutable(ClientSim *cs)      { return cs->mapName; }
 
@@ -850,16 +853,16 @@ void clientSimSetMapSkipMyVote(ClientSim *cs, bool vote) {
   cs->mapSkipMyVote = vote;
 }
 
-void clientSimSetXOffset(ClientSim *cs, BYTE v)            { cs->xOffset = v; }
-void clientSimSetYOffset(ClientSim *cs, BYTE v)            { cs->yOffset = v; }
-void clientSimSetCursorPosX(ClientSim *cs, int v)          { cs->cursorPosX = v; }
-void clientSimSetCursorPosY(ClientSim *cs, int v)          { cs->cursorPosY = v; }
-void clientSimSetNeedScreenReCalc(ClientSim *cs, bool v)   { cs->needScreenReCalc = v; }
-void clientSimSetInPillView(ClientSim *cs, bool v)         { cs->inPillView = v; }
-void clientSimSetPillViewX(ClientSim *cs, BYTE v)          { cs->pillViewX = v; }
-void clientSimSetPillViewY(ClientSim *cs, BYTE v)          { cs->pillViewY = v; }
-void clientSimSetView(ClientSim *cs, screen v)             { cs->view = v; }
-void clientSimSetMineView(ClientSim *cs, screenMines v)    { cs->mineView = v; }
+void clientSimSetXOffset(ClientSim *cs, BYTE v)            { cs->viewport.xOffset = v; }
+void clientSimSetYOffset(ClientSim *cs, BYTE v)            { cs->viewport.yOffset = v; }
+void clientSimSetCursorPosX(ClientSim *cs, int v)          { cs->viewport.cursorPosX = v; }
+void clientSimSetCursorPosY(ClientSim *cs, int v)          { cs->viewport.cursorPosY = v; }
+void clientSimSetNeedScreenReCalc(ClientSim *cs, bool v)   { cs->viewport.needRecalc = v; }
+void clientSimSetInPillView(ClientSim *cs, bool v)         { cs->viewport.inPillView = v; }
+void clientSimSetPillViewX(ClientSim *cs, BYTE v)          { cs->viewport.pillViewX = v; }
+void clientSimSetPillViewY(ClientSim *cs, BYTE v)          { cs->viewport.pillViewY = v; }
+void clientSimSetView(ClientSim *cs, screen v)             { cs->viewport.view = v; }
+void clientSimSetMineView(ClientSim *cs, screenMines v)    { cs->viewport.mineView = v; }
 
 void clientSimSetGmeStartDelay(ClientSim *cs, int v)       { cs->gmeStartDelay = v; }
 void clientSimSetGmeLength(ClientSim *cs, int32_t v)       { cs->gmeLength = v; }

@@ -15,6 +15,25 @@
 #define CLIENT_SIM_INTERNAL_H
 
 #include "client_sim.h"
+#include "viewport.h"
+
+/* Camera / visible-tile state bundled into one struct so viewport math
+ * functions in viewport.c can take a ViewPort* without depending on
+ * the full ClientSim layout. Embedded by value in struct ClientSim
+ * below; reached externally through clientSimViewport /
+ * clientSimViewportMut. */
+struct ViewPort {
+    BYTE        xOffset;
+    BYTE        yOffset;
+    screen      view;
+    screenMines mineView;
+    bool        inPillView;
+    BYTE        pillViewX;
+    BYTE        pillViewY;
+    int         cursorPosX;
+    int         cursorPosY;
+    bool        needRecalc;
+};
 
 struct ClientSim {
     GameSim     sim;    /* MUST be first member */
@@ -83,21 +102,16 @@ struct ClientSim {
     /* Per-instance last player name (was players.c global) */
     char        myLastPlayerName[PLAYER_NAME_LEN];
 
-    /* Client viewport / display state (was screen.c module-level statics) */
-    screen      view;
-    screenMines mineView;
-    BYTE        xOffset;
-    BYTE        yOffset;
-    bool        inPillView;
-    BYTE        pillViewX;
-    BYTE        pillViewY;
-    int         cursorPosX;
-    int         cursorPosY;
+    /* Client viewport / display state (was screen.c module-level statics).
+     * The 10 camera/visible-tile fields are bundled into a ViewPort
+     * substruct so viewport math can run against it directly; mapName,
+     * gmeStartDelay, gmeLength, and timeStart remain on ClientSim because
+     * they are round / map metadata rather than camera state. */
+    ViewPort    viewport;
     char        mapName[MAP_STR_SIZE];
     int         gmeStartDelay;
     int32_t     gmeLength;
     time_t      timeStart;
-    bool        needScreenReCalc;
 
     /* Network state (moved from network.c globals) */
     netType     networkGameType;
