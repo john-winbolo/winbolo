@@ -339,4 +339,94 @@ void netDestroy(ClientSim *cs);
 void netSendTrackerUpdate(void);
 void netProcessedDnsLookup(ClientSim *cs, char *ip, char *host);
 
+/*********************************************************
+ * Read accessors.
+ *
+ * One per externally-read ClientSim field. Callers outside
+ * src/bolo/client_sim.c, client_sim_control.c,
+ * client_snapshot.c, and transport_udp_client.c use these
+ * instead of touching fields directly. No mutator versions
+ * here — writes go through the public mutator/control-event
+ * API. Indexed accessors are bounds-checked: out-of-range
+ * returns NULL for pointer types, false/0 for scalars.
+ *********************************************************/
+
+/* Scalar (bool/enum) accessors */
+bool         clientSimIsRunning(const ClientSim *cs);
+bool         clientSimIsBot(const ClientSim *cs);
+bool         clientSimIsInPillView(const ClientSim *cs);
+bool         clientSimIsNeedScreenReCalc(const ClientSim *cs);
+bool         clientSimIsInLobby(const ClientSim *cs);
+bool         clientSimIsMapDownloadComplete(const ClientSim *cs);
+bool         clientSimIsMapSkipAvailable(const ClientSim *cs);
+bool         clientSimIsMapSkipMyVote(const ClientSim *cs);
+bool         clientSimIsLobbyHiddenMines(const ClientSim *cs);
+bool         clientSimIsBalanceProposalActive(const ClientSim *cs);
+bool         clientSimIsLabelOwnTank(const ClientSim *cs);
+buildSelect  clientSimGetCurrentBuildSelect(const ClientSim *cs);
+gameType     clientSimGetLobbyGameType(const ClientSim *cs);
+labelLen     clientSimGetLabelMessage(const ClientSim *cs);
+labelLen     clientSimGetLabelTankLabel(const ClientSim *cs);
+
+/* Scalar (integer) accessors */
+BYTE           clientSimGetMyPlayerNum(const ClientSim *cs);
+BYTE           clientSimGetXOffset(const ClientSim *cs);
+BYTE           clientSimGetYOffset(const ClientSim *cs);
+BYTE           clientSimGetPillViewX(const ClientSim *cs);
+BYTE           clientSimGetPillViewY(const ClientSim *cs);
+BYTE           clientSimGetPendingBuildAction(const ClientSim *cs);
+BYTE           clientSimGetPendingBuildX(const ClientSim *cs);
+BYTE           clientSimGetPendingBuildY(const ClientSim *cs);
+int            clientSimGetCursorPosX(const ClientSim *cs);
+int            clientSimGetCursorPosY(const ClientSim *cs);
+int            clientSimGetGmeStartDelay(const ClientSim *cs);
+int            clientSimGetCountdownSeconds(const ClientSim *cs);
+int            clientSimGetServerShellCount(const ClientSim *cs);
+int            clientSimGetPredictedShellCount(const ClientSim *cs);
+int            clientSimGetBrainEventCount(const ClientSim *cs);
+int32_t        clientSimGetGmeLength(const ClientSim *cs);
+int32_t        clientSimGetLobbyTimeLimit(const ClientSim *cs);
+uint8_t        clientSimGetLobbyAiType(const ClientSim *cs);
+uint8_t        clientSimGetLobbyPillCount(const ClientSim *cs);
+uint8_t        clientSimGetLobbyBaseCount(const ClientSim *cs);
+uint8_t        clientSimGetLobbyStartCount(const ClientSim *cs);
+uint8_t        clientSimGetBrainLastAssistMsg(const ClientSim *cs);
+uint32_t       clientSimGetLastServerTick(const ClientSim *cs);
+unsigned short clientSimGetServerPort(const ClientSim *cs);
+time_t         clientSimGetTimeStart(const ClientSim *cs);
+
+/* String (char[]) accessors */
+const char *clientSimGetMapName(const ClientSim *cs);
+const char *clientSimGetLobbyChatHistory(const ClientSim *cs);
+const char *clientSimGetMyLastPlayerName(const ClientSim *cs);
+
+/* Indexed-array accessors (bounds-checked; out-of-range
+ * returns NULL for pointer types, false/0 for scalars). */
+const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n);
+bool                   clientSimIsMapSkipVote(const ClientSim *cs, BYTE n);
+uint8_t                clientSimGetBalanceProposal(const ClientSim *cs, BYTE n);
+
+/* Array-pointer accessors (return pointer to backing storage).
+ * brainMap is returned non-const because external callers
+ * memset it and pass it to writers; the other arrays are
+ * read-only externally so far. */
+BYTE                 *clientSimGetBrainMap(ClientSim *cs);
+const ShellSnapshot  *clientSimGetServerShellSnaps(const ClientSim *cs);
+const PredictedShell *clientSimGetPredictedShells(const ClientSim *cs);
+const GameEvent      *clientSimGetBrainEvents(const ClientSim *cs);
+
+/* Struct-by-value accessor. */
+struct in_addr clientSimGetServerAddress(const ClientSim *cs);
+
+/* Cross-struct / interior-pointer accessors — return
+ * non-const pointers because callers continue to mutate
+ * these substructs through their existing APIs (same
+ * exception class as serverSimGetGameSim). */
+GameSim       *clientSimGetGameSim(ClientSim *cs);
+MessageState  *clientSimGetMessages(ClientSim *cs);
+ScrollState   *clientSimGetScroll(ClientSim *cs);
+InterpContext *clientSimGetInterpCtx(ClientSim *cs);
+screen        *clientSimGetView(ClientSim *cs);
+screenMines   *clientSimGetMineView(ClientSim *cs);
+
 #endif /* CLIENT_SIM_H */
