@@ -159,7 +159,7 @@ static void gymSetupGame(WinBoloGym *g) {
     clientLoadCompressedMap(g->clientSim, g->cachedMap, g->cachedMapLen,
                             "Gym", g->gameMode, false, 0,
                             UNLIMITED_GAME_TIME, "GymAgent", 0, FALSE);
-    screenSetAiTypeCS(g->clientSim, aiYes);
+    clientSimSetAiType(g->clientSim, aiYes);
     gymSyncSnapshot(g);
     screenNetSetupTankGoCS(g->clientSim);
 

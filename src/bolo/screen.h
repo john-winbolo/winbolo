@@ -223,7 +223,6 @@ BYTE screenMakeShellDataCS(struct ClientSim *csPtr, BYTE *buff);
 void screenExtractShellDataCS(struct ClientSim *csPtr, BYTE *buff, BYTE dataLen);
 void screenIncomingMessageCS(struct ClientSim *csPtr, BYTE playerNum, char *messageStr);
 bool screenTankScrollCS(struct ClientSim *csPtr);
-void screenSetAiTypeCS(struct ClientSim *csPtr, aiType value);
 void screenSetCursorPosCS(struct ClientSim *csPtr, BYTE posX, BYTE posY);
 void screenTankStopCarryingPillCS(struct ClientSim *csPtr, BYTE itemNum);
 void screenNetLgmReturnCS(struct ClientSim *csPtr, BYTE numTrees, BYTE numMines, BYTE pillNum);
