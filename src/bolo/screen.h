@@ -31,6 +31,8 @@
 
 /* Includes */
 #include "global.h"
+#include "viewport_types.h"
+#include "client_enums.h"
 #include "gametype.h"
 #include "screenbullet.h"
 #include "screentank.h"
@@ -55,72 +57,6 @@ struct GameSim;
 
 /* Button Pressed - These are the valid items
    that should be passed to this module*/
-
-#ifndef _GAMETYPE_ENUM
-#define _GAMETYPE_ENUM
-
-typedef enum {
-  gameOpen = 1,
-  gameTournament,
-  gameStrictTournament
-} gameType;
-
-#endif
-
-
-#ifndef _LABELLEN_ENUM
-#define _LABELLEN_ENUM
-
-typedef enum {
-  lblNone,
-  lblShort,
-  lblLong
-} labelLen;
-
-#endif
-
-#ifndef _UPDATETYPE_ENUM
-#define _UPDATETYPE_ENUM
-typedef enum {
-  left,
-  right,
-  up,
-  down,
-  redraw
-} updateType;
-
-#endif
-
-#ifndef _SNDEFFECTS_ENUM
-#define _SNDEFFECTS_ENUM
-typedef enum {
-  shootSelf,
-  shootNear,
-  shotTreeNear,
-  shotTreeFar,
-  shotBuildingNear,
-  shotBuildingFar,
-  hitTankNear,
-  hitTankFar,
-  hitTankSelf,
-  bubbles,
-  tankSinkNear,
-  tankSinkFar,
-  bigExplosionNear,
-  bigExplosionFar,
-  farmingTreeNear,
-  farmingTreeFar,
-  manBuildingNear,
-  manBuildingFar,
-  manDyingNear,
-  manDyingFar,
-  manLayingMineNear,
-  mineExplosionNear,
-  mineExplosionFar,
-  shootFar
-} sndEffects;
-
-#endif
 
 #ifndef _AITYPE_ENUM
 #define _AITYPE_ENUM
@@ -152,14 +88,6 @@ bool screenGenerateMapPreview(char *fileName, BYTE *buff);
  * backend.h was a "kitchen sink" header; these definitions
  * now live here as their canonical location.
  * ------------------------------------------------------- */
-
-/* Defines the screen sizes */
-#define MAIN_SCREEN_SIZE_X 15
-#define MAIN_SCREEN_SIZE_Y 15
-
-/* Size of the back buffer */
-#define MAIN_BACK_BUFFER_SIZE_X (MAIN_SCREEN_SIZE_X + 2)
-#define MAIN_BACK_BUFFER_SIZE_Y (MAIN_SCREEN_SIZE_Y + 2)
 
 /* The game timer is 20 milliseconds between events the game_tick_length is half this */
 #define GAME_TICK_LENGTH 10
@@ -238,26 +166,6 @@ typedef enum {
   player16
 } playerNumbers;
 #endif
-
-/* The screen object - Details what tiles are on the screen */
-typedef struct screenObj *screen;
-struct screenObj {
-  BYTE screenItem[MAIN_BACK_BUFFER_SIZE_X][MAIN_BACK_BUFFER_SIZE_Y];
-};
-
-/* Screen Mines - Array of boolean values */
-typedef struct screenMineObj *screenMines;
-struct screenMineObj {
-  bool mineItem[MAIN_BACK_BUFFER_SIZE_X][MAIN_BACK_BUFFER_SIZE_Y];
-};
-
-/* Defines the gunsight position on the screen */
-typedef struct {
-  int mapX;
-  BYTE mapY;
-  BYTE pixelX;
-  BYTE pixelY;
-} screenGunsight;
 
 BYTE screenGetPos(screen *value, BYTE xValue, BYTE yValue);
 bool screenIsMine(screenMines *value, BYTE xValue, BYTE yValue);
