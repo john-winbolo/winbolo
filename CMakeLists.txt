@@ -1253,7 +1253,7 @@ set(SERVER_SOURCES
     src/server/threads.c src/server/server_sim.c
     src/server/server_lifecycle.c
     src/server/server_frontend_stubs.c
-    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c src/bolo/client_sim_control.c
+    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c src/bolo/client_sim_control.c src/bolo/viewport.c
     src/bolo/nat_portmap.c
     src/bolo/bot_manager.c
     src/bolo/bot_worker_pool.c

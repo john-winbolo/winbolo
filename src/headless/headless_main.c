@@ -68,6 +68,7 @@
 #include "cJSON.h"
 
 #include "../bolo/screen.h"
+#include "../bolo/client_mapload.h"
 #include "../bolo/client_sim.h"
 #include "../bolo/client_sim_control.h"
 #include "../bolo/control_event.h"
@@ -1049,9 +1050,9 @@ static bool fastModeSetupGame(void) {
 
   /* Reload client sim from cached compressed map */
   humanSim = clientSimAlloc();
-  screenLoadCompressedMapCS(humanSim, cachedCompressedMap, cachedCompressedMapLen,
-                            "Fast Local", optGameType, false, 0,
-                            UNLIMITED_GAME_TIME, optName, 0, FALSE);
+  clientLoadCompressedMap(humanSim, cachedCompressedMap, cachedCompressedMapLen,
+                          "Fast Local", optGameType, false, 0,
+                          UNLIMITED_GAME_TIME, optName, 0, FALSE);
   screenSetAiTypeCS(humanSim, optAi);
 
   /* Sync initial snapshot and place tank */
@@ -1059,7 +1060,7 @@ static bool fastModeSetupGame(void) {
   screenNetSetupTankGoCS(humanSim);
 
   /* Register the headless client as a control-event subscriber. Placed
-   * after screenLoadCompressedMapCS (which calls clientSimCreate) so
+   * after clientLoadCompressedMap (which calls clientSimCreate) so
    * humanSim->myPlayerNum is initialized to 0 before sync's self-skip
    * runs. Unregister any prior handle first so a re-setup that skipped
    * the teardown path does not leak a slot. */
@@ -1131,15 +1132,15 @@ static int runFastMode(void) {
   transportActive = TRUE;
   playerNum = 0;
   humanSim = clientSimAlloc();
-  screenLoadCompressedMapCS(humanSim, cachedCompressedMap, cachedCompressedMapLen,
-                            "Fast Local", optGameType, false, 0,
-                            UNLIMITED_GAME_TIME, optName, 0, FALSE);
+  clientLoadCompressedMap(humanSim, cachedCompressedMap, cachedCompressedMapLen,
+                          "Fast Local", optGameType, false, 0,
+                          UNLIMITED_GAME_TIME, optName, 0, FALSE);
   screenSetAiTypeCS(humanSim, optAi);
   headlessSyncSnapshot();
   screenNetSetupTankGoCS(humanSim);
 
   /* Register the headless client as a control-event subscriber. Placed
-   * after screenLoadCompressedMapCS so humanSim->myPlayerNum is 0 before
+   * after clientLoadCompressedMap so humanSim->myPlayerNum is 0 before
    * sync's self-skip runs. */
   headlessControlSub = serverSimRegisterSubscriber(fastServerSim,
                                                   headlessDeliverControl,
@@ -1358,10 +1359,10 @@ static int runNetworkMode(void) {
       savedMapName[MAP_STR_SIZE - 1] = '\0';
       clientSimDestroy(humanSim);
       humanSim = clientSimAlloc();
-      if (screenLoadCompressedMapCS(humanSim, (BYTE *)mapData, mapLen, savedMapName,
-                                   serverGame, serverHiddenMines,
-                                   serverStartDelay, serverGameLen,
-                                   optName, playerNum, FALSE) == FALSE) {
+      if (clientLoadCompressedMap(humanSim, (BYTE *)mapData, mapLen, savedMapName,
+                                  serverGame, serverHiddenMines,
+                                  serverStartDelay, serverGameLen,
+                                  optName, playerNum, FALSE) == FALSE) {
         fprintf(stderr, "Error: failed to load map from server\n");
         transportUdpClientDestroy(&headlessTransport);
         return 1;
