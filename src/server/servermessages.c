@@ -28,7 +28,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "server_sim.h"
-#include "../bolo/messages.h"
+#include "messages.h"
 
 void serverMessageSetQuietMode(ServerSim *sim, bool modeOn) {
   serverSimSetQuiet(sim, modeOn);

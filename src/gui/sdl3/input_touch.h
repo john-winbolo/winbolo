@@ -17,8 +17,8 @@
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
-#include "../../bolo/global.h"
-#include "../../bolo/tank.h"  /* tankButton + TNONE/TACCEL/... */
+#include "global.h"
+#include "tank.h"  /* tankButton + TNONE/TACCEL/... */
 
 #ifdef __cplusplus
 extern "C" {

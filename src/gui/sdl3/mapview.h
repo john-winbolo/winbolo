@@ -26,12 +26,12 @@
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
-#include "../../bolo/global.h"
-#include "../../bolo/viewport_types.h"  /* screen, screenMines, screenGunsight */
-#include "../../bolo/screenbullet.h"
-#include "../../bolo/screentank.h"
-#include "../../bolo/screenlgm.h"
-#include "../../bolo/game_sim.h"
+#include "global.h"
+#include "viewport_types.h"  /* screen, screenMines, screenGunsight */
+#include "screenbullet.h"
+#include "screentank.h"
+#include "screenlgm.h"
+#include "game_sim.h"
 #include "sprite_positions.h"
 
 #ifdef __cplusplus

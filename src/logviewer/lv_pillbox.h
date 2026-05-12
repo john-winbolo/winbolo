@@ -30,7 +30,7 @@
 
 
 /* Includes */
-#include "bolo/types.h"
+#include "types.h"
 #include "global.h"
 
 

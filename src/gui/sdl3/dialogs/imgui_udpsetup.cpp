@@ -34,8 +34,8 @@ extern "C" {
 #include "../sdl3draw.h"
 #include "../bg_game.h"
 #include "../../gamefront.h"
-#include "../../../bolo/global.h"
-#include "../../../bolo/util.h"
+#include "global.h"
+#include "util.h"
 #include "../../lang.h"
 #include "imgui_udpsetup.h"
 }

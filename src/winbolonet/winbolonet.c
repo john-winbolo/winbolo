@@ -32,7 +32,7 @@
 #include "winbolonet.h"
 #include "http.h"
 #include "../server/server_sim.h"
-#include "../bolo/netpacks.h"
+#include "netpacks.h"
 #include "winbolonetevents.h"
 #include "winbolonetthread.h"
 

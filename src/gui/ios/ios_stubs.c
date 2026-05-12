@@ -12,8 +12,8 @@
 #include <stdio.h>
 #include <SDL3/SDL.h>
 
-#include "../../bolo/global.h"
-#include "../../bolo/client_sim.h"
+#include "global.h"
+#include "client_sim.h"
 
 /* Portable RECT */
 #ifndef _WIN32
@@ -233,12 +233,12 @@ void skinsGetFileName(char *value) { value[0] = '\0'; }
 
 /* ---- log stubs (log.c requires minizip/zlib) ---- */
 
-#include "../../bolo/log.h"
-#include "../../bolo/bolo_map.h"
-#include "../../bolo/pillbox.h"
-#include "../../bolo/bases.h"
-#include "../../bolo/starts.h"
-#include "../../bolo/players.h"
+#include "log.h"
+#include "bolo_map.h"
+#include "pillbox.h"
+#include "bases.h"
+#include "starts.h"
+#include "players.h"
 
 void logCreate(void) {}
 void logWriteEmpty(void) {}

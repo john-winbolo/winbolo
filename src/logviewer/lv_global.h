@@ -34,7 +34,7 @@ typedef struct { long left, top, right, bottom; } RECT;
 #endif
 
 /* Portable compile-time assertions and packed-struct macros */
-#include "../bolo/platform_types.h"
+#include "platform_types.h"
 
 /* Boolean type */
 #undef TRUE

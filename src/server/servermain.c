@@ -35,19 +35,19 @@
   #define USING_SDL
 #endif
 
-#include "../bolo/everard_map.h"
+#include "everard_map.h"
 
-#include "../bolo/debug_file_output.h"
+#include "debug_file_output.h"
 #include "geolookup.h"
-#include "../bolo/global.h"
-#include "../bolo/gametype.h"
+#include "global.h"
+#include "gametype.h"
 #include "threads.h"
 #include "../winbolonet/winbolonet.h"
 #include "server_sim.h"
 #include "../mapeditor/mapeditor_generate.h"
-#include "../bolo/log.h"
-#include "../bolo/transport_udp.h"
-#include "../bolo/bot_manager.h"
+#include "log.h"
+#include "transport_udp.h"
+#include "bot_manager.h"
 #include "server_lifecycle.h"
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"

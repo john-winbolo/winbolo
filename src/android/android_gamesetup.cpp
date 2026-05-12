@@ -27,9 +27,9 @@ extern "C" {
 #include "../gui/sdl3/bg_game.h"
 #include "../gui/gamefront.h"
 #include "../gui/lang.h"
-#include "../bolo/global.h"
-#include "../bolo/client_mapload.h"
-#include "../bolo/client_sim.h"
+#include "global.h"
+#include "client_mapload.h"
+#include "client_sim.h"
 #include "../gui/sdl3/dialogs/imgui_gamesetup.h"
 }
 

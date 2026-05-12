@@ -30,7 +30,7 @@
 #include <sys/stat.h>
 #include <pwd.h>
 #include <unistd.h>
-#include "../bolo/global.h"
+#include "global.h"
 
 /* ------------------------------------------------------------------ */
 /* preferencesGetPreferenceFile                                        */

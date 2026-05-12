@@ -31,7 +31,7 @@
 
 /* Includes */
 #include "global.h"
-#include "bolo/types.h"
+#include "types.h"
 /* Defines */
 #define MAX_BASES 16
 

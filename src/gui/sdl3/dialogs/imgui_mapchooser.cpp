@@ -38,11 +38,11 @@
 
 extern "C" {
 #include "../sdl3draw.h"
-#include "../../../bolo/global.h"
-#include "../../../bolo/bolo_map.h"
-#include "../../../bolo/pillbox.h"
-#include "../../../bolo/bases.h"
-#include "../../../bolo/starts.h"
+#include "global.h"
+#include "bolo_map.h"
+#include "pillbox.h"
+#include "bases.h"
+#include "starts.h"
 #include "../minimap_render.h"
 #include "../map_preview_popup.h"
 #include "../../../mapeditor/mapeditor_generate.h"

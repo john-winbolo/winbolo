@@ -14,8 +14,8 @@
 
 extern "C" {
 #include "players_panel.h"
-#include "../../bolo/players.h"
-#include "../../bolo/client_sim.h"
+#include "players.h"
+#include "client_sim.h"
 #include "../sdl3/sdl3imgui.h"
 #include "../lang.h"
 }

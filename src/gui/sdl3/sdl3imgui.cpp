@@ -49,9 +49,9 @@
 
 /* Bolo types (included after SDL3 to avoid #pragma pack conflicts) */
 extern "C" {
-#include "../../bolo/global.h"    /* BYTE, bool, FALSE/TRUE */
-#include "../../bolo/client_sim.h"
-#include "../../bolo/netpacks.h" /* PACKET_MAX_CHAT_MESSAGE */
+#include "global.h"    /* BYTE, bool, FALSE/TRUE */
+#include "client_sim.h"
+#include "netpacks.h" /* PACKET_MAX_CHAT_MESSAGE */
 #include "../gamefront.h"
 #include "../lang.h"
 }
@@ -64,10 +64,10 @@ extern "C" {
 
 /* Include players.h with C linkage — no #pragma pack inside, safe here */
 extern "C" {
-#include "../../bolo/players.h"
-#include "../../bolo/transport.h"
-#include "../../bolo/transport_udp.h"
-#include "../../bolo/bot_manager.h"
+#include "players.h"
+#include "transport.h"
+#include "transport_udp.h"
+#include "bot_manager.h"
 #include "../../server/server_lifecycle.h"
 #include "../../server/threads.h"
 }
