@@ -1006,17 +1006,6 @@ void clientCenterTankCS(ClientSim *csPtr) {
 *  playerName - The player name controling the tank
 *********************************************************/
 void screenSetupTankCS(ClientSim *csPtr, char *playerName, BYTE playerNum) {
-  if (MY_TANK(csPtr) != NULL) {
-    tankDestroy(&csPtr->sim, &MY_TANK(csPtr));
-    MY_TANK(csPtr) = NULL;
-  }
-  tankCreate(&csPtr->sim, &MY_TANK(csPtr));
-  { BYTE sh, mi, ar, tr;
-    tankGetStats(&MY_TANK(csPtr), &sh, &mi, &ar, &tr);
-    frontEndUpdateTankStatusBars(csPtr, sh, mi, ar, tr);
-  }
-  playersSetSelf(csPtr, &csPtr->sim, &csPtr->sim.plyrs, (playerNumbers) playerNum, playerName, FALSE);
-
   /* Self is the local source of truth for client identity — PLAYER_JOINED
    * and PLAYER_LIST receive paths skip self, so without this the local
    * row would stay CLIENT_TYPE_UNKNOWN. */
@@ -1026,8 +1015,13 @@ void screenSetupTankCS(ClientSim *csPtr, char *playerName, BYTE playerNum) {
   selfFlags |= PLAYER_FLAG_STEAM_BUILD;
 #endif
   if (bolo_steam_has_supporter_dlc()) selfFlags |= PLAYER_FLAG_SUPPORTER;
-  playersSetClientType (&csPtr->sim.plyrs, csPtr->myPlayerNum, selfType);
-  playersSetClientFlags(&csPtr->sim.plyrs, csPtr->myPlayerNum, selfFlags);
+
+  clientSimSetupSelf(csPtr, playerNum, playerName, selfType, selfFlags);
+
+  { BYTE sh, mi, ar, tr;
+    tankGetStats(&MY_TANK(csPtr), &sh, &mi, &ar, &tr);
+    frontEndUpdateTankStatusBars(csPtr, sh, mi, ar, tr);
+  }
   frontEndSetPlayer(csPtr, (playerNumbers) csPtr->myPlayerNum, playerName, "", 0, selfType, selfFlags);
 }
 

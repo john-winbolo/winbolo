@@ -2329,7 +2329,9 @@ static void renderMenuBar(ClientSim *cs) {
  * ------------------------------------------------------- */
 #ifdef _WIN32
 #include <commctrl.h>  /* SetWindowSubclass */
+#ifdef _MSC_VER
 #pragma comment(lib, "comctl32.lib")
+#endif
 
 #define ASPECT_SUBCLASS_ID 1
 
@@ -2857,7 +2859,6 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 /* Enforce aspect ratio: adjust height to match width */
                 int w = ev.window.data1;
                 int h = ev.window.data2;
-                int contentH = h - MENU_BAR_HEIGHT;
                 int correctContentH = w * SDL3_SCREEN_H / SDL3_SCREEN_W;
                 int correctH = correctContentH + MENU_BAR_HEIGHT;
                 if (h != correctH) {

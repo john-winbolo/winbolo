@@ -61,7 +61,7 @@
 #include "../bolo/bot_manager.h"
 #include "../winbolonet/winbolonet.h"
 #include "../winbolonet/http.h"
-#include "server_sim.h"
+#include "server_sim_internal.h"
 #include "server_lifecycle.h"
 #include "../bolo/control_event.h"
 #include <assert.h>
@@ -456,18 +456,26 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     }
 }
 
-bool serverSimCreate(ServerSim *sim, char *mapFileName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+    ServerSim *sim;
+
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSim create: map='%s' gameType=%d hiddenMines=%d startDelay=%d gameLen=%d",
         mapFileName ? mapFileName : "(null)",
         (int)game, (int)hiddenMines, (int)startDelay, (int)gameLen);
+
+    sim = (ServerSim *)malloc(sizeof(ServerSim));
+    if (sim == NULL) {
+        return NULL;
+    }
     serverSimInit(sim, game, hiddenMines, startDelay, gameLen);
 
     if (mapRead(mapFileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
         WB_LOG_ERROR(WB_LOG_CAT_SERVER,
             "serverSim create: mapRead failed for '%s'",
             mapFileName ? mapFileName : "(null)");
-        return FALSE;
+        serverSimDestroy(sim);
+        return NULL;
     }
 
     /* Store map name (basename without path or .map extension) for info packet responses */
@@ -504,14 +512,19 @@ bool serverSimCreate(ServerSim *sim, char *mapFileName, gameType game, bool hidd
     }
 
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
-    return TRUE;
+    return sim;
 }
 
-bool serverSimCreateCompressed(ServerSim *sim, BYTE *buff, int buffLen, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+    ServerSim *sim = (ServerSim *)malloc(sizeof(ServerSim));
+    if (sim == NULL) {
+        return NULL;
+    }
     serverSimInit(sim, game, hiddenMines, startDelay, gameLen);
 
     if (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss, buff, buffLen) == FALSE) {
-        return FALSE;
+        serverSimDestroy(sim);
+        return NULL;
     }
 
     basesClearMines(&sim->sim);
@@ -528,17 +541,22 @@ bool serverSimCreateCompressed(ServerSim *sim, BYTE *buff, int buffLen, gameType
     }
 
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
-    return TRUE;
+    return sim;
 }
 
-bool serverSimCreateRandomMap(ServerSim *sim, const MapGenConfig *cfg,
-                              gameType game, bool hiddenMines,
-                              int32_t startDelay, int32_t gameLen) {
+ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
+                                    gameType game, bool hiddenMines,
+                                    int32_t startDelay, int32_t gameLen) {
+    ServerSim *sim;
     BYTE tempBuf[65536];
     int len;
     char seedStr[64];
     int x, y;
 
+    sim = (ServerSim *)malloc(sizeof(ServerSim));
+    if (sim == NULL) {
+        return NULL;
+    }
     serverSimInit(sim, game, hiddenMines, startDelay, gameLen);
 
     /* Clear map to DEEP_SEA */
@@ -591,13 +609,14 @@ bool serverSimCreateRandomMap(ServerSim *sim, const MapGenConfig *cfg,
     len = serverSimGetCompressedMap(sim, tempBuf);
     sim->cachedMapData = malloc(len);
     if (sim->cachedMapData == NULL) {
-        return FALSE;
+        serverSimDestroy(sim);
+        return NULL;
     }
     memcpy(sim->cachedMapData, tempBuf, len);
     sim->cachedMapDataLen = len;
 
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
-    return TRUE;
+    return sim;
 }
 
 bool serverSimRandomMapRegenerate(ServerSim *sim) {
@@ -695,6 +714,10 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
 void serverSimDestroy(ServerSim *sim) {
     BYTE count;
 
+    if (sim == NULL) {
+        return;
+    }
+
     WB_LOG_INFO(WB_LOG_CAT_SERVER, "serverSim destroy: state=%d", (int)sim->state);
 
     /* Signal the balance thread to stop and wait for it to finish */
@@ -743,6 +766,8 @@ void serverSimDestroy(ServerSim *sim) {
     if (activeSim == sim) {
         activeSim = NULL;
     }
+
+    free(sim);
 }
 
 static void serverSimLogTick(ServerSim *sim) {
@@ -1555,6 +1580,167 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     }
 }
 
+bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
+                     const ServerSimBotConfig *cfg) {
+    if (cfg == NULL || cfg->brainPath == NULL) {
+        return false;
+    }
+    if (playerNum >= MAX_TANKS) {
+        return false;
+    }
+    if (sim->playerConnected[playerNum]) {
+        return false;
+    }
+
+    serverSimAddPlayer(sim, playerNum, cfg->brainName, false);
+
+    sim->lobbyPlayers[playerNum].isBot      = true;
+    sim->lobbyPlayers[playerNum].ready      = true;
+    sim->lobbyPlayers[playerNum].teamNumber = cfg->teamNumber;
+    return true;
+}
+
+void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
+    if (playerNum >= MAX_TANKS) {
+        return;
+    }
+    if (teamNumber > 16) {
+        teamNumber = 1;
+    }
+    sim->lobbyPlayers[playerNum].teamNumber = teamNumber;
+}
+
+void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready) {
+    if (playerNum >= MAX_TANKS) {
+        return;
+    }
+    if (!sim->lobbyEnabled) {
+        return;
+    }
+    sim->lobbyPlayers[playerNum].ready = ready ? TRUE : FALSE;
+}
+
+void serverSimSetBotAiType(ServerSim *sim, aiType ai) {
+    sim->botAiType = ai;
+}
+
+void serverSimSetBotBrainPath(ServerSim *sim, const char *path) {
+    if (path == NULL || path[0] == '\0') {
+        sim->botBrainPath[0] = '\0';
+        return;
+    }
+    strncpy(sim->botBrainPath, path, sizeof(sim->botBrainPath) - 1);
+    sim->botBrainPath[sizeof(sim->botBrainPath) - 1] = '\0';
+}
+
+void serverSimSetEmptyResetEnabled(ServerSim *sim, bool enabled) {
+    sim->emptyResetEnabled = enabled;
+}
+
+void serverSimSetHasPassword(ServerSim *sim, bool hasPassword) {
+    sim->hasPassword = hasPassword;
+}
+
+void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled) {
+    sim->lobbyEnabled = enabled;
+}
+
+void serverSimEnableRandomMap(ServerSim *sim,
+                              const MapGenConfig *cfg,
+                              bool fixedSeed) {
+    sim->randomMapEnabled = true;
+    if (cfg != NULL) sim->randomMapConfig = *cfg;
+    sim->randomMapFixedSeed = fixedSeed;
+}
+
+void serverSimEnterLobby(ServerSim *sim) {
+    sim->state = serverStateLobby;
+}
+
+void serverSimInstallMapDirList(ServerSim *sim,
+                                char **files, int count) {
+    sim->mapDirFiles = files;
+    sim->mapDirCount = count;
+}
+
+void serverSimPrependEvents(ServerSim *sim,
+                            const GameEvent *events,
+                            uint8_t count) {
+    if (count == 0) return;
+    if ((uint16_t)count + sim->eventCount > MAX_SNAPSHOT_EVENTS) return;
+    memmove(sim->events + count, sim->events,
+            sim->eventCount * sizeof(GameEvent));
+    memcpy(sim->events, events, count * sizeof(GameEvent));
+    sim->eventCount += count;
+}
+
+void serverSimSetAutoCloseOnEmpty(ServerSim *sim, bool enabled) {
+    sim->autoCloseOnEmpty = enabled;
+}
+
+void serverSimSetBalanceBroadcastNeeded(ServerSim *sim, bool needed) {
+    sim->balanceProposal.broadcastNeeded = needed;
+}
+
+void serverSimSetBalanceRequestInFlight(ServerSim *sim, bool inFlight) {
+    sim->balanceProposal.requestInFlight = inFlight;
+}
+
+void serverSimSetEmptyResetMinutes(ServerSim *sim, int minutes) {
+    sim->emptyResetMinutes = minutes;
+}
+
+void serverSimSetMapName(ServerSim *sim, const char *name) {
+    if (name == NULL || name[0] == '\0') {
+        sim->mapName[0] = '\0';
+        return;
+    }
+    strncpy(sim->mapName, name, MAP_STR_SIZE - 1);
+    sim->mapName[MAP_STR_SIZE - 1] = '\0';
+}
+
+void serverSimSetMessageLogFile(ServerSim *sim, const char *path) {
+    if (path == NULL || path[0] == '\0') {
+        sim->serverMessageLogFile[0] = '\0';
+        sim->serverMessageUseLogFile = FALSE;
+        return;
+    }
+    strncpy(sim->serverMessageLogFile, path,
+            sizeof(sim->serverMessageLogFile) - 1);
+    sim->serverMessageLogFile[sizeof(sim->serverMessageLogFile) - 1] = '\0';
+    sim->serverMessageUseLogFile = TRUE;
+}
+
+void serverSimSetQuiet(ServerSim *sim, bool quiet) {
+    sim->isServerQuiet = quiet;
+}
+
+void serverSimSetQuitOnWin(ServerSim *sim, bool enabled) {
+    sim->quitOnWin = enabled;
+}
+
+void serverSimSetServerPort(ServerSim *sim, unsigned short port) {
+    sim->serverPort = port;
+}
+
+void serverSimSetTickLimit(ServerSim *sim, int32_t ticks) {
+    sim->tickLimit = ticks;
+}
+
+void serverSimSetUserLogFileName(ServerSim *sim, const char *name) {
+    if (name == NULL || name[0] == '\0') {
+        sim->userLogFileName[0] = '\0';
+        return;
+    }
+    strncpy(sim->userLogFileName, name,
+            sizeof(sim->userLogFileName) - 1);
+    sim->userLogFileName[sizeof(sim->userLogFileName) - 1] = '\0';
+}
+
+void serverSimSetWantLogging(ServerSim *sim, bool enabled) {
+    sim->wantLogging = enabled;
+}
+
 bool serverSimGetTankState(ServerSim *sim, BYTE playerNum, WORLD *wx, WORLD *wy) {
     if (playerNum >= MAX_TANKS || sim->sim.tanks[playerNum] == NULL) {
         return FALSE;
@@ -2087,10 +2273,19 @@ bool serverSimIsRunning(void) {
     return sim != NULL && sim->state == serverStateRunning;
 }
 
+void serverSimAbortCountdown(ServerSim *sim) {
+    sim->state = serverStateLobby;
+    sim->countdownTicks = 0;
+}
+
 void serverSimClearActive(ServerSim *sim) {
     if (activeSim == sim) {
         activeSim = NULL;
     }
+}
+
+void serverSimClearBalanceProposal(ServerSim *sim) {
+    memset(&sim->balanceProposal, 0, sizeof(BalanceProposal));
 }
 
 void serverSimConsoleMessage(const char *msg) {
@@ -2744,7 +2939,8 @@ bool serverSimCheckEmptyReset(ServerSim *sim) {
     return FALSE;
 }
 
-bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
+bool serverSimScanMapDir(const char *dirPath,
+                         char ***outFiles, int *outCount) {
     char fullPath[2048];
     char **tempList = NULL;
     int tempCount = 0;
@@ -2814,9 +3010,21 @@ bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
         return FALSE;
     }
 
-    sim->mapDirFiles = tempList;
-    sim->mapDirCount = tempCount;
-    fprintf(stderr, "Map directory: %d valid map(s) loaded from '%s'\n", tempCount, dirPath);
+    *outFiles = tempList;
+    *outCount = tempCount;
+    return TRUE;
+}
+
+bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
+    char **files = NULL;
+    int count = 0;
+    if (!serverSimScanMapDir(dirPath, &files, &count)) {
+        return FALSE;
+    }
+    sim->mapDirFiles = files;
+    sim->mapDirCount = count;
+    fprintf(stderr, "Map directory: %d valid map(s) loaded from '%s'\n",
+            count, dirPath);
     return TRUE;
 }
 
@@ -2977,7 +3185,7 @@ void serverSimFillGamePhaseEvent(const ServerSim *sim, ControlEvent *evt) {
 void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->type = CTRL_LOBBY_SETTINGS;
     memset(evt->u.lobbySettings.mapName, 0, MAP_STR_SIZE);
-    strncpy(evt->u.lobbySettings.mapName, sim->mapName, MAP_STR_SIZE - 1);
+    snprintf(evt->u.lobbySettings.mapName, MAP_STR_SIZE, "%s", sim->mapName);
     evt->u.lobbySettings.lobbyGameType    = gameTypeGet(&sim->sim.game);
     evt->u.lobbySettings.lobbyHiddenMines = sim->sim.hiddenMines ? true : false;
     evt->u.lobbySettings.lobbyAiType      = (uint8_t)sim->botAiType;
@@ -3144,6 +3352,13 @@ SubscriberHandle serverSimRegisterSubscriber(
     return SUBSCRIBER_HANDLE_ENCODE(slot, sim->subscriberGen[slot]);
 }
 
+void serverSimRequestBalanceProposal(ServerSim *sim,
+                                     uint8_t totalPlayers,
+                                     uint8_t teamSize) {
+    winbolonetServerRequestBalance(totalPlayers, teamSize,
+                                   &sim->balanceProposal);
+}
+
 void serverSimUnregisterSubscriber(ServerSim *sim, SubscriberHandle h) {
     int slot;
     uint16_t gen;
@@ -3201,4 +3416,249 @@ void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
     }
 
     sim->publishing = false;
+}
+
+/*********************************************************
+ * Read accessors.
+ *********************************************************/
+
+bool serverSimBalanceShutdownRequested(const ServerSim *sim) {
+    /* SDL_GetAtomicInt takes a non-const pointer for ABI reasons,
+     * but the operation is a read. Const-cast is the standard
+     * pattern for this SDL API. */
+    return SDL_GetAtomicInt(
+        (SDL_AtomicInt *)&sim->balanceProposal.shutdownFlag) != 0;
+}
+
+bool serverSimIsLobbyEnabled(const ServerSim *sim) {
+    return sim->lobbyEnabled;
+}
+
+bool serverSimHasPassword(const ServerSim *sim) {
+    return sim->hasPassword;
+}
+
+bool serverSimIsRandomMapEnabled(const ServerSim *sim) {
+    return sim->randomMapEnabled;
+}
+
+bool serverSimIsQuiet(const ServerSim *sim) {
+    return sim->isServerQuiet;
+}
+
+bool serverSimGetServerMessageUseLogFile(const ServerSim *sim) {
+    return sim->serverMessageUseLogFile;
+}
+
+ServerState serverSimGetState(const ServerSim *sim) {
+    return sim->state;
+}
+
+aiType serverSimGetBotAiType(const ServerSim *sim) {
+    return sim->botAiType;
+}
+
+uint32_t serverSimGetTick(const ServerSim *sim) {
+    return sim->tick;
+}
+
+uint32_t serverSimGetTimeCreated(const ServerSim *sim) {
+    return sim->timeCreated;
+}
+
+int32_t serverSimGetStartDelay(const ServerSim *sim) {
+    return sim->startDelay;
+}
+
+int32_t serverSimGetGameLength(const ServerSim *sim) {
+    return sim->gameLength;
+}
+
+int32_t serverSimGetCountdownTicks(const ServerSim *sim) {
+    return sim->countdownTicks;
+}
+
+unsigned short serverSimGetServerPort(const ServerSim *sim) {
+    return sim->serverPort;
+}
+
+int serverSimGetMapDirCount(const ServerSim *sim) {
+    return sim->mapDirCount;
+}
+
+uint8_t serverSimGetEventCount(const ServerSim *sim) {
+    return sim->eventCount;
+}
+
+uint16_t serverSimGetMapEventCount(const ServerSim *sim) {
+    return sim->mapEventCount;
+}
+
+const char *serverSimGetMapName(const ServerSim *sim) {
+    return sim->mapName;
+}
+
+const char *serverSimGetBotBrainPath(const ServerSim *sim) {
+    return sim->botBrainPath;
+}
+
+const char *serverSimGetServerMessageLogFile(const ServerSim *sim) {
+    return sim->serverMessageLogFile;
+}
+
+const LobbyPlayer *serverSimGetLobbyPlayer(const ServerSim *sim, BYTE n) {
+    if (n >= MAX_TANKS) return NULL;
+    return &sim->lobbyPlayers[n];
+}
+
+bool serverSimIsPlayerConnected(const ServerSim *sim, BYTE n) {
+    if (n >= MAX_TANKS) return false;
+    return sim->playerConnected[n];
+}
+
+uint32_t serverSimGetLastProcessedInput(const ServerSim *sim, BYTE n) {
+    if (n >= MAX_TANKS) return 0;
+    return sim->lastProcessedInput[n];
+}
+
+bool serverSimIsMapSkipVote(const ServerSim *sim, BYTE n) {
+    if (n >= MAX_TANKS) return false;
+    return sim->mapSkipVotes[n];
+}
+
+char *const *serverSimGetMapDirFiles(const ServerSim *sim) {
+    return sim->mapDirFiles;
+}
+
+const GameEvent *serverSimGetEvents(const ServerSim *sim) {
+    return sim->events;
+}
+
+const GameEvent *serverSimGetMapEvents(const ServerSim *sim) {
+    return sim->mapEvents;
+}
+
+const BalanceProposal *serverSimGetBalanceProposal(const ServerSim *sim) {
+    return &sim->balanceProposal;
+}
+
+GameSim *serverSimGetGameSim(ServerSim *sim) {
+    return &sim->sim;
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * Lobby Layout A accessors (declared in server_sim.h)
+ * ──────────────────────────────────────────────────────────────── */
+
+const char *serverSimGetBotBrainPathFor(const ServerSim *sim, BYTE slot) {
+    if (!sim || slot >= MAX_TANKS) return NULL;
+    return sim->botBrainPaths[slot];
+}
+
+void serverSimSetBotBrainPathFor(ServerSim *sim, BYTE slot, const char *path) {
+    if (!sim || slot >= MAX_TANKS) return;
+    if (path == NULL) {
+        sim->botBrainPaths[slot][0] = '\0';
+        return;
+    }
+    SDL_strlcpy(sim->botBrainPaths[slot], path, sizeof(sim->botBrainPaths[slot]));
+}
+
+const BrainList *serverSimGetBrainList(const ServerSim *sim) {
+    return sim ? &sim->brainList : NULL;
+}
+
+const char *serverSimGetAdminIps(const ServerSim *sim) {
+    return sim ? sim->adminIps : NULL;
+}
+
+void serverSimSetAdminIps(ServerSim *sim, const char *csvIps) {
+    if (!sim) return;
+    if (csvIps == NULL) { sim->adminIps[0] = '\0'; return; }
+    SDL_strlcpy(sim->adminIps, csvIps, sizeof(sim->adminIps));
+}
+
+bool serverSimGetOpenHost(const ServerSim *sim) {
+    return sim ? sim->openHost : false;
+}
+
+void serverSimSetOpenHost(ServerSim *sim, bool v) {
+    if (sim) sim->openHost = v;
+}
+
+uint16_t serverSimGetServerLocks(const ServerSim *sim) {
+    return sim ? sim->serverLocks : 0;
+}
+
+void serverSimSetServerLocks(ServerSim *sim, uint16_t locks) {
+    if (sim) sim->serverLocks = locks;
+}
+
+bool serverSimGetAutoLockOnGameStart(const ServerSim *sim) {
+    return sim ? sim->autoLockOnGameStart : false;
+}
+
+void serverSimSetAutoLockOnGameStart(ServerSim *sim, bool v) {
+    if (sim) sim->autoLockOnGameStart = v;
+}
+
+uint8_t serverSimGetAiPolicy(const ServerSim *sim) {
+    return sim ? sim->aiPolicy : 0;
+}
+
+void serverSimSetAiPolicy(ServerSim *sim, uint8_t v) {
+    if (sim) sim->aiPolicy = v;
+}
+
+bool serverSimGetTimeLimit(const ServerSim *sim) {
+    return sim ? sim->timeLimit : false;
+}
+
+void serverSimSetTimeLimit(ServerSim *sim, bool v) {
+    if (sim) sim->timeLimit = v;
+}
+
+uint16_t serverSimGetTimeMinutes(const ServerSim *sim) {
+    return sim ? sim->timeMinutes : 0;
+}
+
+void serverSimSetTimeMinutes(ServerSim *sim, uint16_t v) {
+    if (sim) sim->timeMinutes = v;
+}
+
+const TeamMetadata *serverSimGetTeamMeta(const ServerSim *sim, BYTE teamId) {
+    if (!sim || teamId == 0 || teamId >= MAX_TANKS) return NULL;
+    return &sim->teams[teamId];
+}
+
+TeamMetadata *serverSimGetTeamMetaMut(ServerSim *sim, BYTE teamId) {
+    if (!sim || teamId == 0 || teamId >= MAX_TANKS) return NULL;
+    return &sim->teams[teamId];
+}
+
+const LobbyBotConfig *serverSimGetBotConfig(const ServerSim *sim, BYTE slot) {
+    if (!sim || slot >= MAX_TANKS) return NULL;
+    return &sim->botConfigs[slot];
+}
+
+LobbyBotConfig *serverSimGetBotConfigMut(ServerSim *sim, BYTE slot) {
+    if (!sim || slot >= MAX_TANKS) return NULL;
+    return &sim->botConfigs[slot];
+}
+
+LobbyPlayer *serverSimGetLobbyPlayerMut(ServerSim *sim, BYTE n) {
+    if (!sim || n >= MAX_TANKS) return NULL;
+    return &sim->lobbyPlayers[n];
+}
+
+void serverSimSetGameLength(ServerSim *sim, int32_t ticks) {
+    if (sim) sim->gameLength = ticks;
+}
+
+void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks) {
+    if (sim) sim->countdownTicks = ticks;
+}
+
+void serverSimSetState(ServerSim *sim, ServerState s) {
+    if (sim) sim->state = s;
 }

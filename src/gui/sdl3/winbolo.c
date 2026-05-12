@@ -1566,14 +1566,16 @@ void frontEndGameOver(ClientSim *cs) {
 }
 
 void frontEndSetActiveClientSim(struct ClientSim *cs) {
-  /* Before swapping the active UI ClientSim, wipe every slot in the
-   * shared player-roster statics. They're a single per-process view of
-   * "who is in the game", so leaving stale entries from a previously-
-   * active ClientSim (notably the bg_game menu bots) makes phantom
-   * "Bot N (??)" rows linger in the in-game Players panel even after
-   * the new sim takes over with a smaller roster. */
-  for (unsigned char i = 0; i < MAX_TANKS; i++) {
-    sdl3ImguiClearPlayer(i);
+  /* When the active UI ClientSim changes, wipe every slot in the
+   * shared player-roster statics. They're a single per-process view
+   * of "who is in the game", so leaving stale entries from the
+   * previously-active sim (notably the bg_game menu bots that each
+   * registered as control-event subscribers) makes phantom
+   * "Bot N (??)" rows linger in the in-game Players panel. */
+  if (cs != s_activeUiCs) {
+    for (BYTE i = 0; i < MAX_TANKS; i++) {
+      sdl3ImguiClearPlayer(i);
+    }
   }
   s_activeUiCs = cs;
 }
@@ -1742,7 +1744,7 @@ bool frontEndTutorial(BYTE pos) {
     if (humanSim) humanSim->sim.isTutorial = false;
     {
       ServerSim *srv = gameFrontGetServerSim();
-      if (srv) srv->sim.isTutorial = false;
+      if (srv) serverSimGetGameSim(srv)->isTutorial = false;
     }
     gameFrontSetShowTutorialButton(false);
   }

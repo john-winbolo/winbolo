@@ -466,39 +466,29 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     /* ---- Single-player via ServerSim + local transport ---- */
     printf("[WASM] Setting up single-player ServerSim...\n");
 
-    wasmServerSim = (ServerSim *)malloc(sizeof(ServerSim));
-    if (wasmServerSim == NULL) {
-      printf("[WASM] Failed to allocate ServerSim\n");
-      clientSimDestroy(humanSim);
-      return FALSE;
-    }
-
     {
-      bool simOk = FALSE;
       if (fileName[0] != '\0') {
-        simOk = serverSimCreate(wasmServerSim, fileName, gametype, hiddenMines, startDelay, timeLen);
-        if (!simOk) {
+        wasmServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
+        if (wasmServerSim == NULL) {
           printf("[WASM] Failed to load map '%s' into ServerSim, trying built-in\n", fileName);
         }
       }
-      if (!simOk) {
+      if (wasmServerSim == NULL) {
         BYTE emap[6000] = E_MAP;
-        simOk = serverSimCreateCompressed(wasmServerSim, emap, 5097, gametype, hiddenMines, startDelay, timeLen);
+        wasmServerSim = serverSimCreateCompressed(emap, 5097, gametype, hiddenMines, startDelay, timeLen);
       }
-      if (!simOk) {
+      if (wasmServerSim == NULL) {
         printf("[WASM] Failed to create ServerSim\n");
-        free(wasmServerSim);
-        wasmServerSim = NULL;
         clientSimDestroy(humanSim);
         return FALSE;
       }
     }
 
     /* WASM single-player: no lobby, run immediately */
-    wasmServerSim->lobbyEnabled = false;
-    wasmServerSim->state = serverStateRunning;
+    serverSimSetLobbyEnabled(wasmServerSim, false);
+    serverSimStartGame(wasmServerSim);
     serverSimAddPlayer(wasmServerSim, 0, gameFrontName, false);
-    wasmServerSim->sim.viewPlayer = 0;
+    serverSimGetGameSim(wasmServerSim)->viewPlayer = 0;
     wasmTransport = transportLocalCreate(wasmServerSim, 0);
     wasmTransportActive = TRUE;
     wasmPlayerNum = 0;
@@ -591,10 +581,11 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   if (wasmTransportActive) {
     if (wasmServerSim != NULL) {
       /* Local transport: free server tanks, then local transport */
+      GameSim *gs = serverSimGetGameSim(wasmServerSim);
       BYTE i;
       for (i = 0; i < MAX_TANKS; i++) {
-        if (wasmServerSim->sim.tanks[i] != NULL) {
-          tankDestroy(&wasmServerSim->sim, &wasmServerSim->sim.tanks[i]);
+        if (gs->tanks[i] != NULL) {
+          tankDestroy(gs, &gs->tanks[i]);
         }
       }
       serverSimUnregisterSubscriber(wasmServerSim, wasmControlSub);
