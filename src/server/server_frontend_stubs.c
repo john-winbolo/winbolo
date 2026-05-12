@@ -129,23 +129,14 @@ void frontEndTutorialReset(void) { }
 bool screenIsItemInTrees(GameSim *sim, tank viewerTank, WORLD bmx, WORLD bmy) { (void)sim; (void)viewerTank; (void)bmx; (void)bmy; return TRUE; }
 void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE playerNum, char *playerName) { (void)value; (void)mx; (void)my; (void)px; (void)py; (void)frame; (void)playerNum; (void)playerName; }
 void screenNetStatusMessage(ClientSim *csPtr, char *messageStr) { (void)csPtr; (void)messageStr; }
-/* clientCenterTankCS / screenPillViewCS — display-only helpers called from
- * client_snapshot.c.  Bots never invoke them (guarded by isHuman / view-key
- * tests), but the linker still needs the symbol. */
+/* clientCenterTankCS — display-only helper called from client_snapshot.c.
+ * Bots never invoke it (guarded by isHuman / view-key tests), but the linker
+ * still needs the symbol. */
 void clientCenterTankCS(ClientSim *csPtr) { (void)csPtr; }
-void screenPillViewCS(ClientSim *csPtr, int horz, int vert) { (void)csPtr; (void)horz; (void)vert; }
 
 
-/* Screen CS stubs — engine code calls these but the server has no display.
-   The isServer guards should prevent execution, but the linker needs symbols. */
-void screenReCalcCS(ClientSim *cs) { (void)cs; }
-bool screenTankScrollCS(ClientSim *cs) { (void)cs; return FALSE; }
-void screenMoveViewOffsetUpCS(ClientSim *cs, bool isUp) { (void)cs; (void)isUp; }
-void screenMoveViewOffsetLeftCS(ClientSim *cs, bool isLeft) { (void)cs; (void)isLeft; }
 void screenIncomingMessageCS(ClientSim *cs, BYTE playerNum, char *messageStr) { (void)cs; (void)playerNum; (void)messageStr; }
 
-/* Screen / display stubs — client_sim.c calls these but the server has no display */
-void screenTankViewCS(ClientSim *cs) { (void)cs; }
 /* screenSyncFromSnapshotCS lives in client_snapshot.c (linked into WinBoloDS) */
 void clientUiOnTick(ClientSim *cs, bool isBrain) { (void)cs; (void)isBrain; }
 void messageCreate(MessageState *ms) { (void)ms; }
@@ -163,6 +154,12 @@ void scrollCreate(ScrollState *ss) { (void)ss; }
  * the symbol. */
 void scrollCenterObject(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY) {
   (void)ss; (void)xValue; (void)yValue; (void)objectX; (void)objectY;
+}
+/* scrollManual is reached via clientSimTankScroll from tank.c — bots never
+ * enter that path (guarded by !isServer), but the linker still needs the
+ * symbol. */
+bool scrollManual(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, TURNTYPE angle) {
+  (void)ss; (void)xValue; (void)yValue; (void)objectX; (void)objectY; (void)angle; return FALSE;
 }
 
 

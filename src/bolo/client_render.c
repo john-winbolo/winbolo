@@ -85,7 +85,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
   }
   if (clientSimIsNeedScreenReCalc(csPtr) == TRUE) {
     clientSimSetNeedScreenReCalc(csPtr, FALSE);
-    screenUpdateViewCS(csPtr, (updateType) 0);
+    clientSimUpdateView(csPtr, (updateType) 0);
   }
 
   b = TRUE;
@@ -125,7 +125,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
         }
       }
     } else {
-      screenPillViewCS(csPtr, -1, 0);
+      clientSimPillView(csPtr, -1, 0);
     }
     clientSimSetNeedScreenReCalc(csPtr, TRUE);
     break;
@@ -139,7 +139,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
         }
       }
     } else {
-      screenPillViewCS(csPtr, 1, 0);
+      clientSimPillView(csPtr, 1, 0);
     }
     clientSimSetNeedScreenReCalc(csPtr, TRUE);
     break;
@@ -153,7 +153,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
         }
       }
     } else {
-      screenPillViewCS(csPtr, 0, -1);
+      clientSimPillView(csPtr, 0, -1);
     }
     clientSimSetNeedScreenReCalc(csPtr, TRUE);
     break;
@@ -168,7 +168,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
         }
       }
     } else {
-      screenPillViewCS(csPtr, 0, 1);
+      clientSimPillView(csPtr, 0, 1);
     }
     clientSimSetNeedScreenReCalc(csPtr, TRUE);
     break;

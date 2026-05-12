@@ -87,29 +87,29 @@ void clientUiOnTick(ClientSim *csPtr, bool isBrain) {
     if (clientSimIsInPillView(csPtr) == FALSE) {
       int oldXOffset = clientSimGetXOffset(csPtr);
       int oldYOffset = clientSimGetYOffset(csPtr);
-      if (scrollUpdate(clientSimGetScroll(csPtr), clientSimGetGameSim(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), tankGetScreenMX(&MY_TANK(csPtr)), tankGetScreenMY(&MY_TANK(csPtr)), TRUE, tmx, tmy, tankGetSpeed(&MY_TANK(csPtr)), tankGetArmour(&MY_TANK(csPtr)), (TURNTYPE)(tankGetTravelAngel(&MY_TANK(csPtr))), FALSE, screenTankIsDeadCS(csPtr)) == TRUE) {
+      if (scrollUpdate(clientSimGetScroll(csPtr), clientSimGetGameSim(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), tankGetScreenMX(&MY_TANK(csPtr)), tankGetScreenMY(&MY_TANK(csPtr)), TRUE, tmx, tmy, tankGetSpeed(&MY_TANK(csPtr)), tankGetArmour(&MY_TANK(csPtr)), (TURNTYPE)(tankGetTravelAngel(&MY_TANK(csPtr))), FALSE, clientSimTankIsDead(csPtr)) == TRUE) {
         if (oldXOffset < clientSimGetXOffset(csPtr)) { clientSimSetCursorPosX(csPtr, clientSimGetCursorPosX(csPtr) - 1); moveMousePointer(right); }
         else if (oldXOffset > clientSimGetXOffset(csPtr)) { clientSimSetCursorPosX(csPtr, clientSimGetCursorPosX(csPtr) + 1); moveMousePointer(left); }
         if (oldYOffset < clientSimGetYOffset(csPtr)) { clientSimSetCursorPosY(csPtr, clientSimGetCursorPosY(csPtr) - 1); moveMousePointer(down); }
         else if (oldYOffset > clientSimGetYOffset(csPtr)) { clientSimSetCursorPosY(csPtr, clientSimGetCursorPosY(csPtr) + 1); moveMousePointer(up); }
-        screenReCalcCS(csPtr);
+        clientSimRecalc(csPtr);
       }
     }
   }
 
   /* Follow the death fireball when the tank is dead */
-  if (clientSimIsInPillView(csPtr) == FALSE && screenTankIsDeadCS(csPtr)) {
+  if (clientSimIsInPillView(csPtr) == FALSE && clientSimTankIsDead(csPtr)) {
     BYTE expMX, expMY;
     if (tkExplosionGetOwnPosition(&clientSimGetGameSim(csPtr)->tankExplosions, clientSimGetMyPlayerNum(csPtr), &expMX, &expMY)) {
       scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), expMX, expMY);
-      screenReCalcCS(csPtr);
+      clientSimRecalc(csPtr);
     }
   }
 
   /* Check we are still allowed to be in pillbox view */
   if (clientSimIsInPillView(csPtr) == TRUE) {
     if (pillsCheckView(clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->pb, clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr)) == FALSE) {
-      screenTankViewCS(csPtr);
+      clientSimTankView(csPtr);
     }
   }
 

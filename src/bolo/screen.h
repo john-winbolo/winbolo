@@ -189,11 +189,7 @@ void screenSyncFromSnapshotCS(struct ClientSim *cs,
                               const PillSnapshot *pillSnaps, int pillCount,
                               const GameEvent *events, int eventCount,
                               BYTE playerNum);
-void screenUpdateViewCS(struct ClientSim *csPtr, updateType value);
 BYTE screenCalcSquareCS(struct ClientSim *csPtr, BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY);
-void screenReCalcCS(struct ClientSim *csPtr);
-void screenTankViewCS(struct ClientSim *csPtr);
-void screenPillViewCS(struct ClientSim *csPtr, int horz, int vert);
 tankButton screenTranslateBrainButtonsCS(struct ClientSim *csPtr, bool *isShoot, bool isGameTick);
 void screenGunsightRangeCS(struct ClientSim *csPtr, bool increase);
 void screenManMoveCS(struct ClientSim *csPtr, buildSelect buildS);
@@ -215,14 +211,10 @@ void screenSetBaseNetDataCS(struct ClientSim *csPtr, BYTE *buff, int length);
 void screenSetPillNetDataCS(struct ClientSim *csPtr, BYTE *buff, BYTE dataLen);
 void screenSetStartsNetDataCS(struct ClientSim *csPtr, BYTE *buff, BYTE dataLen);
 void screenChangeOwnershipCS(struct ClientSim *csPtr, BYTE oldOwner);
-void screenMoveViewOffsetLeftCS(struct ClientSim *csPtr, bool isLeft);
-void screenMoveViewOffsetUpCS(struct ClientSim *csPtr, bool isUp);
-bool screenTankIsDeadCS(struct ClientSim *csPtr);
 void screenGetLgmStatusCS(struct ClientSim *csPtr, bool *isOut, bool *isDead, TURNTYPE *angle);
 BYTE screenMakeShellDataCS(struct ClientSim *csPtr, BYTE *buff);
 void screenExtractShellDataCS(struct ClientSim *csPtr, BYTE *buff, BYTE dataLen);
 void screenIncomingMessageCS(struct ClientSim *csPtr, BYTE playerNum, char *messageStr);
-bool screenTankScrollCS(struct ClientSim *csPtr);
 void screenSetCursorPosCS(struct ClientSim *csPtr, BYTE posX, BYTE posY);
 void screenTankStopCarryingPillCS(struct ClientSim *csPtr, BYTE itemNum);
 void screenNetLgmReturnCS(struct ClientSim *csPtr, BYTE numTrees, BYTE numMines, BYTE pillNum);

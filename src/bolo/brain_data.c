@@ -442,7 +442,7 @@ void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
         clientSimSetPillViewX(csPtr, p.x);
         clientSimSetPillViewY(csPtr, p.y);
         scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr));
-        screenReCalcCS(csPtr);
+        clientSimRecalc(csPtr);
       }
     }
   }

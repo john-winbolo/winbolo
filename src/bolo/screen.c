@@ -89,8 +89,6 @@ extern void moveMousePointer(updateType value);
 
 /* Display statics removed — now fields of ClientSim (see client_sim.h) */
 
-void screenUpdateViewCS(ClientSim *csPtr, updateType value) { clientSimUpdateView(csPtr, value); }
-
 /*********************************************************
 *NAME:          screenCalcSquare
 *AUTHOR:        John Morrison
@@ -165,7 +163,7 @@ tankButton screenTranslateBrainButtonsCS(ClientSim *csPtr, bool *isShoot, bool i
     clientCenterTankCS(csPtr);
   }
   if (testkey(*tapKeys, KEY_PillView)) {
-    screenPillViewCS(csPtr, 0, 0);
+    clientSimPillView(csPtr, 0, 0);
   }
 
   *tapKeys = temp2;
@@ -212,7 +210,7 @@ tankButton screenTranslateBrainButtonsCS(ClientSim *csPtr, bool *isShoot, bool i
     clientCenterTankCS(csPtr);
   }
   if (testkey(*holdKeys, KEY_PillView)) {
-    screenPillViewCS(csPtr, 0, 0);
+    clientSimPillView(csPtr, 0, 0);
   }
 
   return returnValue;
@@ -245,9 +243,6 @@ void screenGunsightRangeCS(ClientSim *csPtr, bool increase) {
     tankGunsightDecrease(csPtr, clientSimGetGameSim(csPtr), &MY_TANK(csPtr));
   }
 }
-
-
-void screenReCalcCS(ClientSim *csPtr) { clientSimRecalc(csPtr); }
 
 
 /*********************************************************
@@ -489,39 +484,6 @@ void screenSetTankLabelLen(ClientSim *csPtr, labelLen value) {
 }
 
 /*********************************************************
-*NAME:          screenTankView
-*AUTHOR:        John Morrison
-*CREATION DATE: 3/2/99
-*LAST MODIFIED: 3/2/99
-*PURPOSE:
-* Frontend has requested a tank view.
-*
-*ARGUMENTS:
-*
-*********************************************************/
-void screenTankViewCS(ClientSim *csPtr) {
-  clientSimTankView(csPtr);
-}
-
-
-/*********************************************************
-*NAME:          screenPillView
-*AUTHOR:        John Morrison
-*CREATION DATE: 03/02/99
-*LAST MODIFIED: 21/01/01
-*PURPOSE:
-* Front end has requested a pill view.
-*
-*ARGUMENTS:
-*  horz - If we are moving left or right (0 for neither)
-*  vert - If we are moving up or down (0 for neither)
-*********************************************************/
-void screenPillViewCS(ClientSim *csPtr, int horz, int vert) {
-  clientSimPillView(csPtr, horz, vert);
-}
-
-
-/*********************************************************
 *NAME:          screenTanksAlliance
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
@@ -708,7 +670,7 @@ void screenNetSetupTankGoCS(ClientSim *csPtr) {
     }
   }
 
-  screenReCalcCS(csPtr);
+  clientSimRecalc(csPtr);
 }
 
 /*********************************************************
@@ -891,13 +853,6 @@ void screenChangeOwnershipCS(ClientSim *csPtr, BYTE oldOwner) {
   pillsMigrate(clientSimGetGameSim(csPtr), oldOwner, clientSimGetMyPlayerNum(csPtr));
 }
 
-void screenMoveViewOffsetLeftCS(ClientSim *csPtr, bool isLeft) { clientSimPanX(csPtr, isLeft ? -1 : +1); }
-
-void screenMoveViewOffsetUpCS(ClientSim *csPtr, bool isUp) { clientSimPanY(csPtr, isUp ? -1 : +1); }
-
-
-bool screenTankIsDeadCS(ClientSim *csPtr) { return clientSimTankIsDead(csPtr); }
-
 /*********************************************************
 *NAME:          screenGetLgmStatus
 *AUTHOR:        John Morrison
@@ -914,8 +869,6 @@ bool screenTankIsDeadCS(ClientSim *csPtr) { return clientSimTankIsDead(csPtr); }
 void screenGetLgmStatusCS(ClientSim *csPtr, bool *isOut, bool *isDead, TURNTYPE *angle) {
   lgmGetStatus(&MY_LGM(csPtr), &MY_TANK(csPtr), isOut, isDead, angle);
 }
-
-bool screenTankScrollCS(ClientSim *csPtr) { return clientSimTankScroll(csPtr); }
 
 /*********************************************************
 *NAME:          screenGetSubMapSquareOffset
@@ -1047,7 +1000,7 @@ void screenSetTankStartPositionCS(ClientSim *csPtr, BYTE xValue, BYTE yValue, TU
   }
   tankSetStats(&MY_TANK(csPtr), numShells, numMines, TANK_FULL_ARMOUR, numTrees);
   frontEndUpdateTankStatusBars(csPtr, numShells, numMines, TANK_FULL_ARMOUR, numTrees);
-  screenTankViewCS(csPtr);
+  clientSimTankView(csPtr);
   clientSimGetGameSim(csPtr)->inStartFind = FALSE;
 }
 
