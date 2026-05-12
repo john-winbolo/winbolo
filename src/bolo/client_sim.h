@@ -243,6 +243,7 @@ void clientSimSetTankAutoSlowdown(ClientSim *cs, bool useSlowdown);
 bool clientSimGetTankAutoHideGunsight(ClientSim *cs);
 void clientSimSetTankAutoHideGunsight(ClientSim *cs, bool useAutohide);
 void clientSimSetGunsight(ClientSim *cs, bool shown);
+BYTE clientSimGetTank256Dir(ClientSim *cs);
 
 /* Game info (per-instance) */
 bool clientSimGetAllowHiddenMines(ClientSim *cs);

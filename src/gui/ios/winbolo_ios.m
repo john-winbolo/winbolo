@@ -533,7 +533,7 @@ static void windowRunGameTick(ClientSim *cs) {
         if (justKeys == TRUE) {
             if (brainRunning == FALSE) {
                 if (uiModeIsTablet()) {
-                    inputTouchSetTankAngle(screenGetTank256DirCS(cs));
+                    inputTouchSetTankAngle(clientSimGetTank256Dir(cs));
                     tb = inputTouchGetMovement();
                 } else {
                     tb = touchInputGetKeys();
@@ -555,7 +555,7 @@ static void windowRunGameTick(ClientSim *cs) {
             t2++;
             if (brainRunning == FALSE) {
                 if (uiModeIsTablet()) {
-                    inputTouchSetTankAngle(screenGetTank256DirCS(cs));
+                    inputTouchSetTankAngle(clientSimGetTank256Dir(cs));
                     tb = inputTouchGetMovement();
                     isShoot = inputTouchIsFirePressed();
                     isMine = inputTouchIsMinePressed();
