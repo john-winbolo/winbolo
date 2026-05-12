@@ -16,14 +16,14 @@
 #include <emscripten.h>
 #include <emscripten/html5.h>
 
-#include "../bolo/client_render.h"
-#include "../bolo/client_sim.h"
-#include "../bolo/client_snapshot.h"
-#include "../bolo/frontend.h"
-#include "../bolo/playername_validate.h"
-#include "../bolo/transport.h"
-#include "../bolo/transport_udp.h"
-#include "../bolo/gui_message.h"
+#include "client_render.h"
+#include "client_sim.h"
+#include "client_snapshot.h"
+#include "frontend.h"
+#include "playername_validate.h"
+#include "transport.h"
+#include "transport_udp.h"
+#include "gui_message.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../gui/draw.h"

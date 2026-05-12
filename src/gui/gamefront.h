@@ -28,9 +28,9 @@
 #ifndef GAMEFRONT_H
 #define GAMEFRONT_H
 
-#include "../bolo/global.h"
-#include "../bolo/client_enums.h"  /* aiType, gameType */
-#include "../bolo/transport.h"
+#include "global.h"
+#include "client_enums.h"  /* aiType, gameType */
+#include "transport.h"
 #include "../server/server_sim.h"
 #include "input.h"
 #include "winbolo.h"

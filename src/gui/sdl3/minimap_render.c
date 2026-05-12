@@ -19,10 +19,10 @@
  *********************************************************/
 
 #include "minimap_render.h"
-#include "../../bolo/bolo_map.h"
-#include "../../bolo/pillbox.h"
-#include "../../bolo/bases.h"
-#include "../../bolo/starts.h"
+#include "bolo_map.h"
+#include "pillbox.h"
+#include "bases.h"
+#include "starts.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>

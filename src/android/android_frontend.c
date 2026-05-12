@@ -13,9 +13,9 @@
 #include <sys/stat.h>
 
 #include "../common/wb_log.h"
-#include "../bolo/client_sim.h"
-#include "../bolo/frontend.h"
-#include "../bolo/gui_message.h"
+#include "client_sim.h"
+#include "frontend.h"
+#include "gui_message.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../gui/draw.h"

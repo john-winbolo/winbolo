@@ -12,9 +12,9 @@
 
 extern "C" {
 #include "players_panel.h"
-#include "../bolo/global.h"
-#include "../bolo/players.h"
-#include "../bolo/client_sim.h"
+#include "global.h"
+#include "players.h"
+#include "client_sim.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/lang.h"
 }

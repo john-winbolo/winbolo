@@ -12,7 +12,7 @@
  * GNU General Public License for more details.
  */
 
-#include "../bolo/global.h"
+#include "global.h"
 #include "server_lifecycle.h"
 
 void serverInstanceRecordProbeReply(const char *reflexiveIp,

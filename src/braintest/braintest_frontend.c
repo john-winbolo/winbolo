@@ -22,9 +22,9 @@
 
 #include <stdio.h>
 #include <SDL3/SDL.h>
-#include "../bolo/global.h"
-#include "../bolo/client_sim.h"
-#include "../bolo/frontend.h"
+#include "global.h"
+#include "client_sim.h"
+#include "frontend.h"
 #include "../server/server_sim.h"
 
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {

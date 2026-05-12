@@ -26,9 +26,9 @@
 #define SERVER_SIM_H
 
 #include <SDL3/SDL.h>
-#include "../bolo/game_sim.h"
-#include "../bolo/position_history.h"
-#include "../bolo/input_packet.h"
+#include "game_sim.h"
+#include "position_history.h"
+#include "input_packet.h"
 #include "../mapeditor/mapeditor_generate.h"
 
 /* Forward decl — full definition in bolo/control_event.h. Kept opaque here so

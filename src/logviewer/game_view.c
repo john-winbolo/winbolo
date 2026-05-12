@@ -38,7 +38,7 @@
 #include <math.h>
 #include <stdio.h>
 
-#include "../bolo/global.h"
+#include "global.h"
 #include "../gui/sdl3/mapview.h"
 #include "../gui/sdl3/sdl3draw_status.h"
 #include "../gui/sdl3/sdl_bmp.h"

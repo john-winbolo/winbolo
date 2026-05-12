@@ -34,7 +34,7 @@
 #ifndef __HTTP_H
 #define __HTTP_H
 
-#include "../bolo/global.h"
+#include "global.h"
 
 struct cJSON;
 

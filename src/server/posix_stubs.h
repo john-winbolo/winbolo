@@ -21,7 +21,7 @@
 
 #ifndef _WIN32
 
-#include "../bolo/global.h"  /* DWORD, FILENAME_MAX */
+#include "global.h"  /* DWORD, FILENAME_MAX */
 
 /* Returns the platform config file path. If preferencesSetPreferenceFileOverride
  * has been called, returns that path; otherwise returns the headless default

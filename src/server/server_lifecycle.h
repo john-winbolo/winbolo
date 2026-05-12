@@ -25,8 +25,8 @@
 #ifndef SERVER_LIFECYCLE_H
 #define SERVER_LIFECYCLE_H
 
-#include "../bolo/global.h"
-#include "../bolo/game_sim.h"  /* GAME_TICK_LENGTH */
+#include "global.h"
+#include "game_sim.h"  /* GAME_TICK_LENGTH */
 #include "server_sim.h"
 
 #define SERVER_TICK_LENGTH (GAME_TICK_LENGTH * 2)

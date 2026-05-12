@@ -2,7 +2,7 @@
  * clientmutex_wasm.c - No-op mutex for single-threaded WASM build
  */
 
-#include "../bolo/global.h"
+#include "global.h"
 #include "../gui/clientmutex.h"
 
 bool clientMutexCreate(void)    { return TRUE; }

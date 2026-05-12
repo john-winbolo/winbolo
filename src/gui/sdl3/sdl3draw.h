@@ -40,13 +40,13 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "../../bolo/global.h"
-#include "../../bolo/viewport_types.h"  /* screen, screenMines, screenGunsight */
-#include "../../bolo/client_enums.h"    /* buildSelect */
-#include "../../bolo/screentank.h"      /* screenTanks, tank */
-#include "../../bolo/screenbullet.h"    /* screenBullets */
-#include "../../bolo/screenlgm.h"       /* screenLgm */
-#include "../../bolo/client_sim.h"
+#include "global.h"
+#include "viewport_types.h"  /* screen, screenMines, screenGunsight */
+#include "client_enums.h"    /* buildSelect */
+#include "screentank.h"      /* screenTanks, tank */
+#include "screenbullet.h"    /* screenBullets */
+#include "screenlgm.h"       /* screenLgm */
+#include "client_sim.h"
 /* Status / message / HUD renderers extracted in Phase C of
  * plans/ctrailer.md. sdl3draw.h re-exposes them transparently so
  * existing callers compile unchanged. */

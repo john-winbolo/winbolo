@@ -40,10 +40,10 @@
 extern "C" {
 #endif
 
-#include "../../bolo/global.h"
-#include "../../bolo/bases.h"
-#include "../../bolo/pillbox.h"
-#include "../../bolo/screentank.h"
+#include "global.h"
+#include "bases.h"
+#include "pillbox.h"
+#include "screentank.h"
 
 /* -----------------------------------------------------------------
  * Lifecycle / setter API.

@@ -12,8 +12,8 @@
 
 #include "mapeditor_generate.h"
 #include "mapeditor_maze.h"
-#include "../bolo/bolo_map.h"
-#include "../bolo/starts.h"
+#include "bolo_map.h"
+#include "starts.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

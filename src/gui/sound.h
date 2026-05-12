@@ -29,8 +29,8 @@
 #ifndef SOUND_H
 #define SOUND_H
 
-#include "../bolo/global.h"
-#include "../bolo/client_enums.h"  /* sndEffects */
+#include "global.h"
+#include "client_enums.h"  /* sndEffects */
 
 /*********************************************************
 *NAME:          soundSetup

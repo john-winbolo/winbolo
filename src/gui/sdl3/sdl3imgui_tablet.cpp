@@ -40,10 +40,10 @@
 #include "dialogs/imgui_dialog_utils.h"
 
 extern "C" {
-#include "../../bolo/global.h"
-#include "../../bolo/screentank.h"
-#include "../../bolo/client_sim.h"
-#include "../../bolo/client_render.h"  /* clientRenderFrame */
+#include "global.h"
+#include "screentank.h"
+#include "client_sim.h"
+#include "client_render.h"  /* clientRenderFrame */
 #include "../gamefront.h"
 #include "../tiles.h"
 #include "../ui_mode.h"

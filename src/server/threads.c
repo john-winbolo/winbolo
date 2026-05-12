@@ -27,7 +27,7 @@
 
 #include <stdio.h>
 #include <SDL3/SDL.h>
-#include "../bolo/global.h"
+#include "global.h"
 #include "server_sim.h"
 #include "threads.h"
 

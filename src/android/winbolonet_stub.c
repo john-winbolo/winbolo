@@ -7,7 +7,7 @@
 
 #include <stdint.h>
 
-#include "../bolo/global.h"
+#include "global.h"
 #include "../winbolonet/winbolonet.h"
 
 bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
