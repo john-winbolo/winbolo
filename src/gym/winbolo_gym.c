@@ -31,6 +31,7 @@
 
 #include "../bolo/global.h"
 #include "../bolo/screen.h"
+#include "../bolo/client_mapload.h"
 #include "../bolo/client_sim.h"
 #include "../bolo/client_sim_control.h"
 #include "../bolo/control_event.h"
@@ -155,15 +156,15 @@ static void gymSetupGame(WinBoloGym *g) {
     g->transport = transportLocalCreate(g->serverSim, 0);
 
     g->clientSim = clientSimAlloc();
-    screenLoadCompressedMapCS(g->clientSim, g->cachedMap, g->cachedMapLen,
-                              "Gym", g->gameMode, false, 0,
-                              UNLIMITED_GAME_TIME, "GymAgent", 0, FALSE);
+    clientLoadCompressedMap(g->clientSim, g->cachedMap, g->cachedMapLen,
+                            "Gym", g->gameMode, false, 0,
+                            UNLIMITED_GAME_TIME, "GymAgent", 0, FALSE);
     screenSetAiTypeCS(g->clientSim, aiYes);
     gymSyncSnapshot(g);
     screenNetSetupTankGoCS(g->clientSim);
 
     /* Register the gym client as a control-event subscriber. Placed after
-     * screenLoadCompressedMapCS (which calls clientSimCreate) so myPlayerNum
+     * clientLoadCompressedMap (which calls clientSimCreate) so myPlayerNum
      * is initialized to 0 — matching the gym agent's slot — before sync's
      * self-skip runs. */
     g->controlSub = serverSimRegisterSubscriber(g->serverSim,
