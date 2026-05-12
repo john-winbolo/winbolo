@@ -978,22 +978,6 @@ bool screenExtractMNTData(BYTE *buff, BYTE dataLen, bool isTcp) {
 }
 
 
-/*********************************************************
-*NAME:          screenLeaveGame
-*AUTHOR:        John Morrison
-*CREATION DATE: 20/3/99
-*LAST MODIFIED: 20/3/99
-*PURPOSE:
-* We want to quit a network game. Post the notification
-* to all players.
-*
-*ARGUMENTS:
-*
-*********************************************************/
-void screenLeaveGame(void) {
-
-}
-
 void screenIncomingMessageCS(ClientSim *csPtr, BYTE playerNum, char *messageStr) {
   char topLine[FILENAME_MAX];       /* The message topline */
 
@@ -1327,22 +1311,6 @@ void screenSetPlayersMenuCS(ClientSim *csPtr) {
 *********************************************************/
 bool screenGetGameRunningCS(ClientSim *csPtr) {
   return clientSimIsRunning(csPtr);
-}
-
-
-/*********************************************************
-*NAME:          screenGetGameRunning
-*AUTHOR:        John Morrison
-*CREATION DATE: 20/02/03
-*LAST MODIFIED: 20/02/03
-*PURPOSE:
-* Called when we have lost our connection to the server 
-*
-*ARGUMENTS:
-*
-*********************************************************/
-void screenConnectionLostCS(ClientSim *csPtr) {
-  clientSimConnectionLost(csPtr);
 }
 
 
