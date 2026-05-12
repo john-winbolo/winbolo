@@ -231,7 +231,6 @@ void screenIncomingMessageCS(struct ClientSim *csPtr, BYTE playerNum, char *mess
 bool screenTankScrollCS(struct ClientSim *csPtr);
 void screenSetAiTypeCS(struct ClientSim *csPtr, aiType value);
 aiType screenGetAiTypeCS(struct ClientSim *csPtr);
-BYTE screenGetTank256DirCS(struct ClientSim *csPtr);
 bool screenGetTankAutoSlowdownCS(struct ClientSim *csPtr);
 void screenSetTankAutoSlowdownCS(struct ClientSim *csPtr, bool useSlowdown);
 bool screenGetTankAutoHideGunsightCS(struct ClientSim *csPtr);

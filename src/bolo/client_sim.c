@@ -768,6 +768,10 @@ void clientSimSetGunsight(ClientSim *cs, bool shown) {
   tankSetGunsight(&MY_TANK(cs), shown);
 }
 
+BYTE clientSimGetTank256Dir(ClientSim *cs) {
+  return tankGet256Dir(&MY_TANK(cs));
+}
+
 /* Game info (per-instance) */
 bool clientSimGetAllowHiddenMines(ClientSim *cs) {
   return minesGetAllowHiddenMines(&clientSimGetGameSim(cs)->mns);

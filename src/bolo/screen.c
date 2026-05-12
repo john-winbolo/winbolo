@@ -1140,10 +1140,6 @@ void screenSetAiTypeCS(ClientSim *csPtr, aiType value) {
 aiType screenGetAiTypeCS(ClientSim *csPtr) { return clientSimGetAiType(csPtr); }
 
 
-BYTE screenGetTank256DirCS(ClientSim *csPtr) {
-  return tankGet256Dir(&MY_TANK(csPtr));
-}
-
 bool screenGetTankAutoSlowdownCS(ClientSim *csPtr) { return clientSimGetTankAutoSlowdown(csPtr); }
 void screenSetTankAutoSlowdownCS(ClientSim *csPtr, bool useSlowdown) { clientSimSetTankAutoSlowdown(csPtr, useSlowdown); }
 bool screenGetTankAutoHideGunsightCS(ClientSim *csPtr) { return clientSimGetTankAutoHideGunsight(csPtr); }
