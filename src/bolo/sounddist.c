@@ -30,6 +30,7 @@
 #include "screen.h"
 #include "tank.h"
 #include "game_sim.h"
+#include "client_sim.h"
 #include "players.h"
 #include "frontend.h"
 #include "sounddist.h"
@@ -41,7 +42,7 @@
 *CREATION DATE: 19/01/99
 *LAST MODIFIED: 05/05/01
 *PURPOSE:
-*  Calculates whether a soft sound of a loud sound should 
+*  Calculates whether a soft sound of a loud sound should
 *  be played and passes paremeters to frontend
 *
 *ARGUMENTS:
@@ -54,6 +55,7 @@ void clientSoundDist(GameSim *sim, sndEffects value, BYTE mx, BYTE my) {
   BYTE tankY; /* Tank Y Map Co-ordinate */
   BYTE gapX;  /* Distance from tank to sound */
   BYTE gapY;
+  struct ClientSim *cs = clientSimFromSim(sim);
 
   if (logIsRecording() == TRUE) {
     soundDistLog(value, mx, my);
@@ -85,82 +87,82 @@ void clientSoundDist(GameSim *sim, sndEffects value, BYTE mx, BYTE my) {
     switch (value) {
     case shootNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(shootFar);
-      } else { 
-        frontEndPlaySound(shootNear);
+        frontEndPlaySound(cs, shootFar);
+      } else {
+        frontEndPlaySound(cs, shootNear);
       }
       break;
     case shotTreeNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(shotTreeFar);
-      } else { 
-        frontEndPlaySound(shotTreeNear);
+        frontEndPlaySound(cs, shotTreeFar);
+      } else {
+        frontEndPlaySound(cs, shotTreeNear);
       }
       break;
     case shotBuildingNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(shotBuildingFar);
-      } else { 
-        frontEndPlaySound(shotBuildingNear);
+        frontEndPlaySound(cs, shotBuildingFar);
+      } else {
+        frontEndPlaySound(cs, shotBuildingNear);
       }
       break;
     case hitTankNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(hitTankFar);
-      } else { 
-        frontEndPlaySound(hitTankNear);
+        frontEndPlaySound(cs, hitTankFar);
+      } else {
+        frontEndPlaySound(cs, hitTankNear);
       }
       break;
     case bubbles:
       if (gapX <= SDIST_SOFT && gapY <= SDIST_SOFT) {
-        frontEndPlaySound(bubbles);
+        frontEndPlaySound(cs, bubbles);
       }
       break;
     case tankSinkNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(tankSinkFar);
+        frontEndPlaySound(cs, tankSinkFar);
       } else {
-        frontEndPlaySound(tankSinkNear);
+        frontEndPlaySound(cs, tankSinkNear);
       }
       break;
     case bigExplosionNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(bigExplosionFar);
-      } else { 
-        frontEndPlaySound(bigExplosionNear);
+        frontEndPlaySound(cs, bigExplosionFar);
+      } else {
+        frontEndPlaySound(cs, bigExplosionNear);
       }
       break;
     case farmingTreeNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(farmingTreeFar);
-      } else { 
-        frontEndPlaySound(farmingTreeNear);
+        frontEndPlaySound(cs, farmingTreeFar);
+      } else {
+        frontEndPlaySound(cs, farmingTreeNear);
       }
       break;
     case manBuildingNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(manBuildingFar);
-      } else { 
-        frontEndPlaySound(manBuildingNear);
+        frontEndPlaySound(cs, manBuildingFar);
+      } else {
+        frontEndPlaySound(cs, manBuildingNear);
       }
       break;
     case manDyingNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(manDyingFar);
-      } else { 
-        frontEndPlaySound(manDyingNear);
+        frontEndPlaySound(cs, manDyingFar);
+      } else {
+        frontEndPlaySound(cs, manDyingNear);
       }
       break;
     case mineExplosionNear:
       if (gapX > SDIST_SOFT || gapY > SDIST_SOFT) {
-        frontEndPlaySound(mineExplosionFar);
-      } else { 
-        frontEndPlaySound(mineExplosionNear);
+        frontEndPlaySound(cs, mineExplosionFar);
+      } else {
+        frontEndPlaySound(cs, mineExplosionNear);
       }
       break;
     case manLayingMineNear:
       if (gapX <= SDIST_SOFT || gapY <= SDIST_SOFT) {
-        frontEndPlaySound(manLayingMineNear);
+        frontEndPlaySound(cs, manLayingMineNear);
       }
       break;
     case shootSelf:
@@ -196,7 +198,7 @@ void clientSoundDist(GameSim *sim, sndEffects value, BYTE mx, BYTE my) {
 *********************************************************/
 void soundDistLog(sndEffects value, BYTE mx, BYTE my) {
   BYTE logMessageType = 0; /* Log item type */
-  
+
   switch (value) {
   case shootSelf:
   case shootNear:
@@ -240,7 +242,7 @@ void soundDistLog(sndEffects value, BYTE mx, BYTE my) {
   case manDyingFar:
     logMessageType = log_SoundManDie;
     break;
-  
+
   case manLayingMineNear:
     logMessageType = log_SoundMineLay;
     break;

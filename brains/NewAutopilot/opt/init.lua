@@ -13,6 +13,13 @@
 
 local C       = require("constants")
 local TAG     = "[" .. C.BRAIN_NAME .. "]"
+-- TAG-prefixed brain chatter (goal shifts, stuck warnings, command
+-- echoes) is wrapped in `if BRAIN_DEBUG_MODE then print(...) end` at
+-- each call site. The strip removes those blocks from opt/ entirely,
+-- so --opt pays zero cost — no function call, no string concat, no
+-- print. Bare print(...) calls (no TAG / no BRAIN_DEBUG_MODE wrap)
+-- are reserved for things that MUST surface in production: load-time
+-- errors, fatal asserts, and one-shot startup banners.
 local U       = require("util")
 local dbg     = require("debugger")
 local heap    = require("heap")
@@ -119,19 +126,15 @@ end
 
 function Brain.set_setting(id, value)
   if id == "command" and type(value) == "string" and value ~= "" then
-    print(string.format(TAG .. " COMMAND: '%s'", value))
     local cmd = cmds.parse(value)
     if cmd then
       local reply = cmds.execute(cmd, state, world)
       if reply then
-        print(TAG .. " REPLY: " .. reply)
       end
     else
-      print(TAG .. " unknown command: " .. value)
     end
   elseif id == "auto_explore" then
     state.auto_explore = value
-    print(string.format(TAG .. " auto_explore = %s", tostring(value)))
   elseif id == "logging" then
     if value and not log.is_open() then
       if log.open(log.make_filename("brain_p" .. state.player_number)) then
@@ -147,6 +150,83 @@ end
 -- Debug info for BrainTest viewer (called from C via lua_pcall)
 function Brain.get_queue_status()
   return goals.get_queue_status(state)
+end
+
+-- Capacity tier panel data. JSON shape consumed by tier_control.cpp.
+-- Includes the active tier, current override (if any), all 10 tier
+-- definitions for the legend, and the live values that hash to the
+-- active tier for highlighting.
+function Brain.get_capacity_state_json()
+  local lvls = C.BRAIN_CAPACITY_LEVELS
+  local tier = (state and state._capacity_tier) or 10
+  local ovr  = _G._BT_TIER_OVERRIDE
+  local last_ms = (_G.brain and _G.brain.lastThinkMs) or 0
+  local tgt_ms  = (_G.brain and _G.brain.targetMs)    or 0
+  local sm      = (state and state._capacity_ratio_ewma) or 0
+
+  -- Build per-tier rows + tier_ms snapshot.
+  local function lvl(t)
+    local L = lvls[t] or {}
+    return string.format(
+      '{"tier":%d,"dij_short":%d,"dij_long":%d,"scan_step":%d,"pp_spread":%d,"sb_spread":%d,"ttl_mult":%.2f,"eval_iv":%d,"wsim":%s,"place_r":%d,"tank_step":%d,"ms":%s}',
+      t, L.dij_short or 0, L.dij_long or 0, L.scan_step or 0,
+      L.pp_spread or 1, L.sb_spread or 1, L.ttl_mult or 1.0,
+      L.eval_iv or 1,
+      (L.wsim == nil and "null") or (L.wsim == false and "false") or tostring(L.wsim),
+      L.place_r or 0, L.tank_step or 0,
+      (state._tier_ms and state._tier_ms[t]) and string.format("%.2f", state._tier_ms[t]) or "null")
+  end
+  local rows = {}
+  for t = 1, 10 do rows[#rows + 1] = lvl(t) end
+
+  -- Per-tick section timing breakdown for the panel's stacked bar.
+  -- Populated by optimize.lua at flush() — only available when
+  -- BRAIN_PROFILE is on (i.e. --perf-log was passed). Shape:
+  --   { { name, ms, subs: [{name, ms}, ...] }, ... }
+  local secs = (opt and opt.last_sections) or {}
+  local sec_parts = {}
+  for _, s in ipairs(secs) do
+    local sub_parts = {}
+    if s.subs then
+      for _, sb in ipairs(s.subs) do
+        -- Third level: subsubs nested under each sub. Serialise them
+        -- the same way so the panel's renderer can draw three levels.
+        local ss_parts = {}
+        if sb.subs then
+          for _, ss in ipairs(sb.subs) do
+            ss_parts[#ss_parts + 1] = string.format('{"name":%q,"ms":%.3f}',
+              ss.name or "?", ss.ms or 0)
+          end
+        end
+        sub_parts[#sub_parts + 1] = string.format(
+          '{"name":%q,"ms":%.3f,"subs":[%s]}',
+          sb.name or "?", sb.ms or 0, table.concat(ss_parts, ","))
+      end
+    end
+    sec_parts[#sec_parts + 1] = string.format(
+      '{"name":%q,"ms":%.3f,"subs":[%s]}',
+      s.name or "?", s.ms or 0, table.concat(sub_parts, ","))
+  end
+
+  -- think_total_ms: real wall-clock between the two performance
+  -- markers at the top and bottom of Brain.think. Same timer (clock_us)
+  -- the section "done" emits use, so sum-of-sections and this number
+  -- share a single measurement basis. Null when --perf-log is off
+  -- (markers aren't captured to save the function-call cost).
+  local think_total_ms_str = "null"
+  if state._think_start_us and state._think_end_us then
+    think_total_ms_str = string.format("%.3f",
+      (state._think_end_us - state._think_start_us) / 1000)
+  end
+
+  return string.format(
+    '{"tier":%d,"override":%s,"last_ms":%.2f,"target_ms":%.2f,"ratio_ewma":%.2f,"think_total_ms":%s,"levels":[%s],"sections":[%s]}',
+    tier,
+    (type(ovr) == "number") and tostring(math.floor(ovr)) or "null",
+    last_ms, tgt_ms, sm,
+    think_total_ms_str,
+    table.concat(rows, ","),
+    table.concat(sec_parts, ","))
 end
 
 function Brain.get_pool_breakdown_json()
@@ -280,6 +360,15 @@ function Brain.open(info)
       braintest_panel_register("Queue status", "text",
         "return brain.get_queue_status()")
     end
+    -- Capacity tier control: bespoke renderer with up/down arrows that
+    -- push _G._BT_TIER_OVERRIDE back into the bot to lock its tier.
+    -- Shortcut Y → own SDL window. (T was the natural choice but it's
+    -- reserved by BrainTest core; Y is free and adjacent on QWERTY.)
+    -- Type name kept short (<= 10 chars) so PANEL_REG_TYPE_MAX (24) fits
+    -- "NewAutopilot:" + type without truncating off the trailing letter.
+    braintest_panel_register("Capacity tiers", "tier_ctrl",
+      "return brain.get_capacity_state_json()",
+      { shortcut = "Y" })
   end
   -- Shot-sim points of interest. Each lua_expr returns (wx, wy) when
   -- the POI is currently available, or nil. Polled every BrainTest
@@ -468,13 +557,19 @@ function Brain.open(info)
   -- Player 0 logs when _JSONL_LOGGER_ENABLED is set (controlled by the
   -- BrainTest debug modules panel — off by default since the file is huge
   -- and rarely needed). Other players log if ENABLE_LOGGING or debug_log.
+  -- JSONL behavior logger setup. Gate `BRAIN_LOG_JSON or BRAIN_DEBUG_MODE`
+  -- with LOG_JSON FIRST so the strip's `if BRAIN_DEBUG_MODE then` prefix
+  -- doesn't match — opt/ keeps this block, and at runtime BRAIN_LOG_JSON
+  -- (set from --log-json) decides. Dev mode auto-sets both true.
   local log_fname = nil
-  if info.player_number == 0 then
-    if _G._JSONL_LOGGER_ENABLED then
-      log_fname = log.make_filename("player0")
+  if BRAIN_LOG_JSON or BRAIN_DEBUG_MODE then
+    if info.player_number == 0 then
+      if _G._JSONL_LOGGER_ENABLED then
+        log_fname = log.make_filename("player0")
+      end
+    elseif ENABLE_LOGGING or state.debug_log then
+      log_fname = log.make_filename("brain_p" .. info.player_number)
     end
-  elseif ENABLE_LOGGING or state.debug_log then
-    log_fname = log.make_filename("brain_p" .. info.player_number)
   end
   local t_open_logsetup = clock_us()
   if log_fname then
@@ -487,10 +582,12 @@ function Brain.open(info)
   opt(string.format("  log.dump_map+world done %.2f ms (fname=%s)",
     (t_open_logdump - t_open_logsetup) / 1000, tostring(log_fname)))
 
-  -- Always open perf-metrics files for the debug bot (player 0, or any bot
+  -- Open perf-metrics files for the debug bot (player 0, or any bot
   -- whose debug_log flag is set). Independent of the JSONL logger flag —
   -- these files are small and drive scripts/analyze_metrics.py.
-  if info.player_number == 0 or state.debug_log then
+  -- Gated on BRAIN_PROFILE_LOG (file-write toggle) — without --profile-log
+  -- (or dev mode), never opens these files at all.
+  if BRAIN_PROFILE_LOG and (info.player_number == 0 or state.debug_log) then
     local dir = _G.DEBUG_SESSION_DIR or "."
     local prefix = "player" .. info.player_number
     metrics.open_files(dir, prefix)
@@ -594,12 +691,138 @@ end
 -- =========================================================================
 
 function Brain.think(info)
+  -- ── PERFORMANCE MARKER: START ──
+  -- First instruction in Brain.think when --perf-log is on: capture
+  -- a real tick-start clock so the Y panel can compute total_ms as
+  -- (think_end_us - think_start_us) using the SAME timer (clock_us)
+  -- every named section's "done" emit uses. Gated so non-perf runs
+  -- don't pay the function-call cost.
+  if _G.BRAIN_PROFILE then
+    state._think_start_us = clock_us()
+  end
   -- Capture wall clock at think entry; the matching exit-time
   -- snapshot at the bottom drives the top-left tick-info HUD.
   local _think_t0 = os.clock()
   state.tick = state.tick + 1
   state._last_info = info
   local now  = state.tick
+
+  -- Open the optimize.log section timer at the EARLIEST possible point
+  -- so prelude work (capacity tier calc, debug-mode viz refresh, the
+  -- startup-mode block, etc.) is included in the per-section sum. The
+  -- optimize.lua tick_start was previously set ~200 lines later, which
+  -- left the prelude as unaccounted gap in the time-bar.
+  opt.set_tick(now)
+  -- Real tick-start clock used by every later phase timer (t_early,
+  -- t_world, etc. all forward to this value). Captures from the actual
+  -- top of Brain.think, not after the prelude work.
+  local t_tick_start = clock_us()
+
+  -- ── Capacity tier ──
+  -- The host publishes brain.lastThinkMs (previous tick's wall ms),
+  -- brain.targetMs (per-bot CPU budget for this tick), and
+  -- brain.wasKilled (true if previous tick was force-killed) onto the
+  -- global `brain` table each tick.
+  --
+  -- Decision algorithm:
+  --   1. Record per-tier ms history. state._tier_ms[T] is an EWMA of how
+  --      long this bot's thinks cost at tier T given current world load.
+  --      This corroborates raises: we only raise if next-tier history
+  --      shows it actually fits in budget.
+  --   2. If wasKilled: drop CAPACITY_KILLED_CUT tiers and mark the prior
+  --      tier as "burned" for CAPACITY_KILLED_AVOID ticks so the raise
+  --      path doesn't immediately retry it.
+  --   3. Otherwise classify smoothed ratio = think_ms / target_ms:
+  --        > 1.50 → drop 2 tiers
+  --        > 1.20 → drop 1 tier
+  --        < 0.40 → raise 1 tier (free, ignores corroboration)
+  --        < 0.70 → raise 1 tier (only if next tier's history fits)
+  do
+    local last_ms = (_G.brain and _G.brain.lastThinkMs) or 0
+    -- Test-override: when set, treat this as our per-bot budget regardless
+    -- of what the host published. Lets us force-engage tiers for testing.
+    local tgt_ms  = C.CAPACITY_FORCED_TARGET_MS
+                or (_G.brain and _G.brain.targetMs)
+                or 0
+    local killed  = (_G.brain and _G.brain.wasKilled)   or false
+    local prev_tier = state._capacity_tier or C.CAPACITY_DEFAULT_TIER
+
+    -- Per-tier ms history (records the tier we just ran at).
+    state._tier_ms = state._tier_ms or {}
+    if last_ms > 0 then
+      local prior = state._tier_ms[prev_tier]
+      state._tier_ms[prev_tier] = prior
+        and (prior * (1 - C.CAPACITY_EWMA_ALPHA) + last_ms * C.CAPACITY_EWMA_ALPHA)
+        or  last_ms
+    end
+
+    state._tier_killed = state._tier_killed or {}
+
+    local cur = prev_tier
+    if killed then
+      cur = math.max(1, prev_tier - C.CAPACITY_KILLED_CUT)
+      state._tier_killed[prev_tier] = state.tick
+    elseif tgt_ms > 0 and last_ms > 0 then
+      local ratio = last_ms / tgt_ms
+      state._capacity_ratio_ewma = (state._capacity_ratio_ewma or ratio)
+                                 * (1 - C.CAPACITY_EWMA_ALPHA)
+                                 + ratio * C.CAPACITY_EWMA_ALPHA
+      local sm = state._capacity_ratio_ewma
+      if sm > C.CAPACITY_DROP_BIG_RATIO and cur > 1 then
+        cur = math.max(1, cur - 2)
+      elseif sm > C.CAPACITY_DROP_RATIO and cur > 1 then
+        cur = cur - 1
+      elseif cur < 10 then
+        local next_t = cur + 1
+        local k = state._tier_killed[next_t]
+        local recently_killed = k and (state.tick - k) < C.CAPACITY_KILLED_AVOID
+        if not recently_killed then
+          if sm < C.CAPACITY_RAISE_FREE_RATIO then
+            cur = next_t  -- big headroom: raise even without corroboration
+          elseif sm < C.CAPACITY_RAISE_RATIO then
+            local hist = state._tier_ms[next_t]
+            if not hist or hist < tgt_ms * C.CAPACITY_RAISE_HEADROOM then
+              cur = next_t  -- raise only if history shows next tier fits
+            end
+          end
+        end
+      end
+    end
+
+    -- BrainTest panel override: when _G._BT_TIER_OVERRIDE is set
+    -- (integer 1..10), force the capacity tier to that value regardless
+    -- of the dynamic algorithm. Lets the user lock the bot into a
+    -- specific tier from the T-window for testing.
+    local _ovr = _G._BT_TIER_OVERRIDE
+    if type(_ovr) == "number" and _ovr >= 1 and _ovr <= 10 then
+      cur = math.floor(_ovr)
+    end
+
+    state._capacity_tier = cur
+    state._capacity = C.BRAIN_CAPACITY_LEVELS[cur]
+
+    -- Tier-shift logging: every change emits a line to optimize.log so
+    -- we can verify the algorithm + corroborate per-tier ms history.
+    -- Format: tick, prev->new, ratio, last_ms, target_ms, killed flag,
+    -- and the per-tier ms history snapshot.
+    -- Tier shifts are infrequent but the line build does several
+    -- string.formats; gate on BRAIN_PROFILE_LOG so --opt without
+    -- profile-log skips this entirely. The console print also
+    -- becomes BRAIN_DEBUG_MODE-gated below.
+    if cur ~= prev_tier and BRAIN_PROFILE_LOG then
+      local hist_parts = {}
+      for t = 10, 1, -1 do
+        local v = state._tier_ms and state._tier_ms[t]
+        hist_parts[#hist_parts + 1] = v and string.format("%d:%.1f", t, v) or string.format("%d:--", t)
+      end
+      local line = string.format(
+        "[capacity] t=%d  tier %d->%d  ratio=%.2f  last=%.2fms  target=%.2fms  killed=%s  hist=[%s]",
+        state.tick or 0, prev_tier, cur,
+        state._capacity_ratio_ewma or -1, last_ms, tgt_ms, tostring(killed),
+        table.concat(hist_parts, " "))
+      opt.append("optimize.log", "  " .. line)
+    end
+  end
 
   -- Snapshot V-dialog enabled state once per tick so call-site
   -- `if viz.is_on("foo") then ... end` guards reduce to a single
@@ -622,9 +845,12 @@ function Brain.think(info)
   -- Expose brain tick to C side so debug file naming (.ldump, _queue.txt,
   -- _dbg.txt) can all use the same brain-tick number.
   _G._BRAIN_TICK = now
-  opt.set_tick(now)
+  -- (opt.set_tick already fired at the top of think; just emit the
+  -- BEGIN marker here.)
   opt("BEGIN tick=", now, " goal=", state.goal.kind, " sub=", tostring(state.goal.substate))
-  local t_tick_start = clock_us()
+  -- t_tick_start is the real top-of-think clock (set above, near
+  -- opt.set_tick). t_early is its alias used by the early-viz/HUD timer
+  -- so the first section measures from the actual tick start.
   local t_early = t_tick_start
 
   -- Diagnostic: log when Dijkstra newly reaches a base. State-tracked
@@ -639,7 +865,7 @@ function Brain.think(info)
         local c = cpf.dijkstra_cost_at(_slate, b.mx, b.my, _in_boat)
         if c < 1e29 then
           state._base_dij_known[id] = _now
-          if BRAIN_PERF_LOG then
+          if BRAIN_PROFILE_LOG then
             opt.append("optimize.log", string.format(
               "  [diag] base #%d at (%d,%d) owner=%s REACHED by Dijkstra slate=%d cost=%.1f tick=%d",
               id, b.mx, b.my, tostring(b.owner), _slate, c, _now))
@@ -859,23 +1085,28 @@ function Brain.think(info)
       goal_str = string.format("Goal: %s (%d,%d)",
         gkind, g.mx or 0, g.my or 0)
     end
-    -- Per-tick goal log (file write — non-viz, always runs).
-    local sdir = _G.DEBUG_SESSION_DIR
-    if sdir then
-      local pn = info.player_number or 0
-      local path = string.format("%s/goal_player%d.log", sdir, pn)
-      if not _G._GOAL_LOG_FILE or _G._GOAL_LOG_PATH ~= path then
-        if _G._GOAL_LOG_FILE then pcall(function() _G._GOAL_LOG_FILE:close() end) end
-        local f = io.open(path, "a")
-        if f then
-          _G._GOAL_LOG_FILE = f
-          _G._GOAL_LOG_PATH = path
+    -- Per-tick goal log — behavior trace. Gate `BRAIN_LOG_JSON or
+    -- BRAIN_DEBUG_MODE` (LOG_JSON first so strip leaves the block alone).
+    -- --opt without --log-json: both false, no file write. --opt --log-json
+    -- or dev mode: writes goal_player<N>.log to DEBUG_SESSION_DIR.
+    if BRAIN_LOG_JSON or BRAIN_DEBUG_MODE then
+      local sdir = _G.DEBUG_SESSION_DIR
+      if sdir then
+        local pn = info.player_number or 0
+        local path = string.format("%s/goal_player%d.log", sdir, pn)
+        if not _G._GOAL_LOG_FILE or _G._GOAL_LOG_PATH ~= path then
+          if _G._GOAL_LOG_FILE then pcall(function() _G._GOAL_LOG_FILE:close() end) end
+          local f = io.open(path, "a")
+          if f then
+            _G._GOAL_LOG_FILE = f
+            _G._GOAL_LOG_PATH = path
+          end
         end
-      end
-      if _G._GOAL_LOG_FILE then
-        local sub = (g.substate and g.substate ~= "" and g.substate ~= "-") and (" sub=" .. g.substate) or ""
-        _G._GOAL_LOG_FILE:write(string.format("%d\t%s%s\n", state.tick or 0, goal_str, sub))
-        _G._GOAL_LOG_FILE:flush()
+        if _G._GOAL_LOG_FILE then
+          local sub = (g.substate and g.substate ~= "" and g.substate ~= "-") and (" sub=" .. g.substate) or ""
+          _G._GOAL_LOG_FILE:write(string.format("%d\t%s%s\n", state.tick or 0, goal_str, sub))
+          _G._GOAL_LOG_FILE:flush()
+        end
       end
     end
     -- HUD draws (gated)
@@ -1225,11 +1456,37 @@ function Brain.think(info)
 
     -- Double-buffer restart: at each interval, snapshot the main slate into
     -- the backup so lookups always have complete coverage, then restart main.
-    local function maybe_copy_and_restart(main_idx, backup_idx, interval, max_cost, boat, allow_boat)
+    --
+    -- wait_for_done: when true, the schedule-driven restart only fires
+    -- once the current main is `done` (full map covered). Used for the
+    -- LONG slate, where at low capacity tiers a fresh restart can fail
+    -- to reach completion within `interval`. Restarting on schedule
+    -- regardless would leave the backup as a partial snapshot — and
+    -- the new main also partial — so the bot would never have a
+    -- complete cost surface. Holding off the restart until completion
+    -- preserves "always-complete backup" at the cost of a longer real
+    -- recompute cycle (e.g. ~40s at tier 1). Acceptable for long-range
+    -- strategic decisions: relative cost ranking is mostly preserved
+    -- under tank movement, and the short slate handles nearby tactical
+    -- routing with much fresher data.
+    --
+    -- Short slate keeps the original "restart on schedule" semantics:
+    -- its work fits in the budget at every tier so completion-within-
+    -- interval is the normal case, and stale short-range data hurts
+    -- tactical decisions much more than stale long-range data.
+    local function maybe_copy_and_restart(main_idx, backup_idx, interval,
+                                          max_cost, boat, allow_boat,
+                                          wait_for_done)
       refresh_slate(main_idx)
       local s = d.slates[main_idx]
       local age = now - s.started_tick
-      if not s.active or age >= interval then
+      local schedule_hit = age >= interval
+      if wait_for_done and schedule_hit and not s.done then
+        -- Holding off: keep stepping the current main until it
+        -- finishes, then snapshot + restart on the next pass.
+        return
+      end
+      if not s.active or schedule_hit then
         if s.active then
           local t_cs = clock_us()
           cpf.dijkstra_copy_slate(main_idx, backup_idx)
@@ -1242,16 +1499,29 @@ function Brain.think(info)
     end
 
     -- Short: land-only unless on a boat. Long: always allow boat.
+    -- Long passes wait_for_done=true so its backup is ALWAYS a fully-
+    -- complete map, even at low tiers where the long search may not
+    -- finish within DIJKSTRA_RECOMPUTE_INTERVAL.
     maybe_copy_and_restart(SLATE_SHORT_MAIN, SLATE_SHORT_BACKUP,
                            C.DIJKSTRA_SHORT_INTERVAL, C.DIJKSTRA_SHORT_MAX_COST,
-                           in_boat, in_boat)
+                           in_boat, in_boat, false)
     maybe_copy_and_restart(SLATE_LONG_MAIN, SLATE_LONG_BACKUP,
                            C.DIJKSTRA_RECOMPUTE_INTERVAL, C.DIJKSTRA_MAX_COST,
-                           in_boat, 1)
+                           in_boat, 1, true)
 
     -- Step only the main slates (backups are frozen snapshots, done=true).
     local budget_short = C.DIJKSTRA_SHORT_BUDGET
     local budget_long  = math.max(500, math.ceil(70000 / C.DIJKSTRA_LONG_SPREAD_TICKS))
+    -- Capacity tier dij_short / dij_long: cap each slate's per-tick node
+    -- expansion budget. Tier 10 → defaults; tier 1 → 100/25 nodes/tick.
+    if state._capacity then
+      if state._capacity.dij_short and state._capacity.dij_short < budget_short then
+        budget_short = state._capacity.dij_short
+      end
+      if state._capacity.dij_long and state._capacity.dij_long < budget_long then
+        budget_long = state._capacity.dij_long
+      end
+    end
     local active_slates = {}
     for _, idx in ipairs({ SLATE_SHORT_MAIN, SLATE_LONG_MAIN }) do
       refresh_slate(idx)
@@ -1282,7 +1552,6 @@ function Brain.think(info)
   opt(string.format("dij sched done %.2f ms", (t_dij1 - t_dij0) / 1000))
 
   -- Outgoing message -- only one per tick
-  local t_comms0 = clock_us()
   local send_msg = nil
   local msg_dest = 0
 
@@ -1300,8 +1569,6 @@ function Brain.think(info)
 
     local cmd = cmds.parse(info.message.text)
     if cmd then
-      print(string.format(TAG .. " t=%d RECV from player %d: '%s'",
-            now, info.message.sender, info.message.text))
       log.event("cmd_recv", info.message.text)
       local reply = cmds.execute(cmd, state, world)
       if reply and not send_msg then
@@ -1339,8 +1606,6 @@ function Brain.think(info)
   if info.newtank then
     state.stuck_for = 0
     attack.clear_attack_goal(state)
-    print(string.format(TAG .. " t=%d RESPAWN at (%d,%d)",
-          now, info.tankx >> 8, info.tanky >> 8))
     log.event("respawn", string.format("%d,%d", info.tankx >> 8, info.tanky >> 8))
   end
 
@@ -1396,9 +1661,6 @@ function Brain.think(info)
           -- All of the flee ray is blocked; stay put.
           fmx, fmy = cur_mx, cur_my
         end
-        print(string.format(
-          TAG .. " t=%d STUCK %s pill at (%d,%d) -- fleeing to (%d,%d)",
-          now, state.goal.kind, state.goal.mx, state.goal.my, fmx, fmy))
         log.event("stuck", string.format("%s@%d,%d->flee(%d,%d)",
           state.goal.kind, state.goal.mx, state.goal.my, fmx, fmy))
         state.goal = { kind = "flee_pill", mx = fmx, my = fmy,
@@ -1409,14 +1671,10 @@ function Brain.think(info)
             C.BRAIN_NAME .. ": STUCK attacking pill #%d -- fleeing",
             state.command_goal.id or 0)
           state.command_goal = nil
-          print(TAG .. " CMD: cancelled due to stuck (attack_pill)")
         end
       else
         local bk = U.mkey(state.goal.mx, state.goal.my)
         state.blocked[bk] = now + 600
-        print(string.format(
-          TAG .. " t=%d STUCK at (%d,%d) goal=%s dest=(%d,%d) -- blocking for 600t",
-          now, cur_mx, cur_my, state.goal.kind, state.goal.mx, state.goal.my))
         log.event("stuck", string.format("%s@%d,%d", state.goal.kind, state.goal.mx, state.goal.my))
         if state.command_goal then
           state.command_reply = string.format(
@@ -1424,7 +1682,6 @@ function Brain.think(info)
             state.command_goal.kind, state.command_goal.id,
             state.command_goal.mx, state.command_goal.my)
           state.command_goal = nil
-          print(TAG .. " CMD: cancelled due to stuck")
         end
         attack.clear_attack_goal(state)
       end
@@ -1462,9 +1719,15 @@ function Brain.think(info)
   local t_mid = clock_us()
   opt(string.format("  blocked/banned sweep done %.2f ms (sweep=%s)",
     (t_mid - t_stuck1) / 1000, tostring(now % 200 == 0)))
-  metrics.set("us_mid", t_mid - t4)
-  opt(string.format("mid done %.2f ms", (t_mid - t4) / 1000))
-  opt(string.format("  comms+stuck done %.2f ms", (t_mid - t_comms0) / 1000))
+  -- mid covers from end-of-dij-sched (t_dij1) to here. Was using t4,
+  -- which double-counted the dij sched block since that has its own
+  -- main "dij sched done" emit. The unattributed remainder of mid
+  -- (mid total minus stuck-detection minus blocked/banned) is the
+  -- comms processing + respawn handling + stuck setup between t_dij1
+  -- and t_stuck0. Dropped the "  comms+stuck done" sub-emit since it
+  -- measured essentially the same span as mid itself.
+  metrics.set("us_mid", t_mid - t_dij1)
+  opt(string.format("mid done %.2f ms", (t_mid - t_dij1) / 1000))
   local t_water0 = t_mid
   local t_goal0 = clock_us()   -- initialized here; updated below if goal section runs
   local t_goal1 = nil
@@ -1488,8 +1751,6 @@ function Brain.think(info)
     -- pathfinder and pool cache so they recalculate with on-foot costs.
     -- The periodic replan will naturally re-evaluate if a better goal
     -- exists with on-foot costs.
-    print(string.format(TAG .. " t=%d BOAT LOST at (%d,%d) goal=%s -- recalc on-foot",
-          now, cur_mx, cur_my, state.goal.kind))
     log.event("boat_lost", string.format("%d,%d goal=%s", cur_mx, cur_my, state.goal.kind))
   end
 
@@ -1507,8 +1768,6 @@ function Brain.think(info)
       state.water_build = { x = cur_mx, y = cur_my }
       if not state.water_build_logged then
         state.water_build_logged = true
-        print(string.format(TAG .. " t=%d WATER BUILD ROAD at (%d,%d) trees=%d",
-              now, cur_mx, cur_my, info.trees))
       end
     else
       state.water_build = nil
@@ -1522,8 +1781,6 @@ function Brain.think(info)
            or state.goal.mx ~= dry_x or state.goal.my ~= dry_y then
           state.goal = { kind = "escape_water", mx = dry_x, my = dry_y,
                          wx = U.m2w(dry_x), wy = U.m2w(dry_y) }
-          print(string.format(TAG .. " t=%d WATER ESCAPE to (%d,%d)",
-                now, dry_x, dry_y))
           log.event("water_escape", string.format("%d,%d tt=%d", dry_x, dry_y, tank_tt))
         end
       end
@@ -1534,8 +1791,6 @@ function Brain.think(info)
 
     -- Clear escape_water goal once on dry land and trigger immediate replan
     if state.goal.kind == "escape_water" then
-      print(string.format(TAG .. " t=%d ESCAPED WATER at (%d,%d) -- replanning",
-            now, cur_mx, cur_my))
       state.goal = { kind = "none" }
     end
 
@@ -1584,8 +1839,6 @@ function Brain.think(info)
             }
             state.pf.status = "idle"
             state.antitank_drop_cooldown = now + C.ANTITANK_DROP_COOLDOWN
-            print(string.format(TAG .. " t=%d ANTITANK DROP at (%d,%d) enemy@(%d,%d) dist=%d",
-                  now, mid_mx, mid_my, et.mx, et.my, et.dist))
             log.event("antitank_drop", string.format("at(%d,%d) enemy(%d,%d)", mid_mx, mid_my, et.mx, et.my))
           end
         end
@@ -1650,8 +1903,6 @@ function Brain.think(info)
             emergency = true,
           }
           state.pf.status = "idle"
-          print(string.format(TAG .. " t=%d EMERGENCY PILL DROP at (%d,%d) armour=%d",
-                now, best_drop_mx, best_drop_my, info.armour))
           log.event("emergency_drop", string.format("at(%d,%d) arm=%d", best_drop_mx, best_drop_my, info.armour))
           -- Overlay: emergency drop position
         end
@@ -1672,7 +1923,7 @@ function Brain.think(info)
       -- Accept neutral (normal capture) and hostile (weakened base drive-over capture)
       if not b or (b.owner ~= "neutral" and b.owner ~= "hostile") then
         -- Base captured — replan immediately (refuel will win if supplies are low)
-        if b and b.owner == "friendly" then
+        if b and b.owner == "friendly" and BRAIN_DEBUG_MODE then
           print(string.format(TAG .. " t=%d BASE CAPTURED: (%d,%d) — replanning", now, gmx, gmy))
         end
         goal_valid = false
@@ -1683,8 +1934,6 @@ function Brain.think(info)
         goal_valid = false
       elseif b.owner == "neutral" then
         -- Base armour depleted — it went neutral, now just drive over to capture
-        print(string.format(TAG .. " t=%d BASE CAPTURABLE: (%d,%d) owner=%s — switching to capture_base",
-              now, gmx, gmy, b.owner))
         log.event("base_capturable", string.format("(%d,%d) owner=%s", gmx, gmy, b.owner))
         state.goal.kind = "capture_base"
         state.pf.status = "idle"
@@ -1769,8 +2018,6 @@ function Brain.think(info)
       if not b or (b.owner ~= "friendly" and b.owner ~= "neutral") then goal_valid = false end
     end
     if not goal_valid then
-      print(string.format(TAG .. " t=%d GOAL INVALID: %s at (%d,%d) — replanning",
-            now, gk, gmx, gmy))
       log.event("goal_invalid", string.format("%s@%d,%d", gk, gmx, gmy))
       -- Build a specific reason for the clear-overlay: for attack_pill
       -- name WHICH check failed (the silent killer during finetune is
@@ -1790,7 +2037,7 @@ function Brain.think(info)
     end
 
     t_goal0 = clock_us()
-    if BRAIN_PERF_LOG and t_goal0 - t_gv0 > 1000 then
+    if BRAIN_PROFILE_LOG and t_goal0 - t_gv0 > 1000 then
       opt.append("optimize.log", string.format(
         "  [gv] SLOW total=%.3f ms pre=%.3f ms body=%.3f ms gk=%s",
         (t_goal0 - t_gv0) / 1000,
@@ -1902,9 +2149,6 @@ function Brain.think(info)
           local bk = U.mkey(state.goal.mx, state.goal.my)
           state.blocked[bk] = now + 200
           attack.clear_attack_goal(state)
-          print(string.format(TAG .. " t=%d REFUEL: base at (%d,%d) can't supply us (arm=%d sh=%d mn=%d), replanning",
-                now, state.goal.mx or 0, state.goal.my or 0,
-                info.base.armour or 0, info.base.shells or 0, info.base.mines or 0))
         elseif C.REFUEL_LOCK_IN then
           refuel_hold = true
         end
@@ -1927,7 +2171,7 @@ function Brain.think(info)
     -- same fields as the previous tick — pure noise.
     if BRAIN_DEBUG_MODE and (replan or timer_fire) then
     end
-    if timer_fire and not replan then
+    if timer_fire and not replan and BRAIN_DEBUG_MODE then
       print(string.format(TAG .. " t=%d REPLAN BLOCKED: hold=%s cmd=%s urgent=%s atk_done=%s refuel_done=%s",
         now, tostring(refuel_hold), tostring(state.command_goal ~= nil),
         tostring(urgent_replan), tostring(attack_tank_done), tostring(refuel_done)))
@@ -1951,7 +2195,7 @@ function Brain.think(info)
       metrics.inc("goal_replan")
       local t_pg0 = clock_us()
       local new_goal = goals.pick_goal(state, world, info)
-      if BRAIN_PERF_LOG and state._pick_goal_timing then
+      if BRAIN_PROFILE and state._pick_goal_timing then
         for _, entry in ipairs(state._pick_goal_timing) do opt(entry) end
       end
       opt(string.format("  pick_goal done %.2f ms", (clock_us() - t_pg0) / 1000))
@@ -2085,8 +2329,6 @@ function Brain.think(info)
       if state.goal.kind == "explore" then
         local gk = U.mkey(state.goal.mx, state.goal.my)
         state.visited[gk] = true
-        print(string.format(TAG .. " t=%d ARRIVED/FAILED explore (%d,%d) -- marking visited",
-              now, state.goal.mx, state.goal.my))
         attack.clear_attack_goal(state)
       elseif state.goal.kind == "attack_pill" or state.goal.kind == "pill_place" then
         -- Can't reach attack position: flee away from the pill.
@@ -2096,9 +2338,6 @@ function Brain.think(info)
         local len = math.max(1, math.sqrt(dx * dx + dy * dy))
         local fmx = U.mclamp(math.floor(cur_mx + dx / len * C.FLEE_PILL_DIST + 0.5))
         local fmy = U.mclamp(math.floor(cur_my + dy / len * C.FLEE_PILL_DIST + 0.5))
-        print(string.format(
-          TAG .. " t=%d PF FAILED for %s (%d,%d) -- fleeing to (%d,%d)",
-          now, state.goal.kind, state.goal.mx, state.goal.my, fmx, fmy))
         log.event("pf_failed", string.format("%s@%d,%d->flee(%d,%d)",
           state.goal.kind, state.goal.mx, state.goal.my, fmx, fmy))
         state.goal = { kind = "flee_pill", mx = fmx, my = fmy,
@@ -2111,8 +2350,6 @@ function Brain.think(info)
         if state.pf_fail_count >= 3 then
           if not state.pf_fail_logged then
             state.pf_fail_logged = true
-            print(string.format(TAG .. " t=%d PF FAILED for %s dest=(%d,%d) -- tank at (%d,%d), blocking",
-                  now, state.goal.kind, state.goal.mx, state.goal.my, cur_mx, cur_my))
             log.event("pf_failed", string.format("%s@%d,%d", state.goal.kind, state.goal.mx, state.goal.my))
           end
           -- Block this destination so goal selection picks something else
@@ -2133,7 +2370,7 @@ function Brain.think(info)
   attack.update_attack_substate(state.goal, state, world, info)
   local t_as1 = clock_us()
   opt(string.format("  attack_substate done %.2f ms", (t_as1 - t_as0) / 1000))
-  if t_as1 - t_as0 > 500 then
+  if BRAIN_PROFILE_LOG and t_as1 - t_as0 > 500 then
     opt.append("optimize.log", string.format(
       "  [as] SLOW sub=%s total=%.3f ms",
       tostring(state._attack_substate_name), (t_as1 - t_as0) / 1000))
@@ -2281,7 +2518,7 @@ function Brain.think(info)
   local t_steer1 = clock_us()
   metrics.set("us_steer", t_steer1 - t_steer0)
   opt(string.format("steer done %.2f ms", (t_steer1 - t_steer0) / 1000))
-  if t_steer1 - t_steer0 > 5000 then
+  if BRAIN_PROFILE_LOG and t_steer1 - t_steer0 > 5000 then
     opt.append("optimize.log", string.format(
       "  [steer] SLOW %.2f ms goal=%s sub=%s",
       (t_steer1 - t_steer0) / 1000,
@@ -2706,6 +2943,11 @@ function Brain.think(info)
   local us_total = t_end - t0
   metrics.set("us_post_build_hud", t_end - t_build1)
   opt(string.format("post-build HUD done %.2f ms", (t_end - t_build1) / 1000))
+  -- Anchor for the (tail) timer: real clock immediately after the last
+  -- named main-section emit. Anything between here and opt.flush() is
+  -- attributed to (tail) so the named-section sum equals the actual
+  -- tick wall-clock with no gap.
+  local _t_tail_anchor = clock_us()
   opt(string.format("TICK TOTAL %.2f ms", us_total / 1000))
   metrics.set("us_total", us_total)
   metrics.max("us_total", us_total)
@@ -2725,6 +2967,7 @@ function Brain.think(info)
 
   -- Finish metrics for this tick
   metrics.finish_tick(now)
+  local _t_tail_post_metrics = BRAIN_PROFILE and clock_us() or 0
 
 
   -- Label all pills and bases with their IDs (centered on tile)
@@ -2751,8 +2994,72 @@ function Brain.think(info)
   --   hold (green)      — continuous turn in `keys`; full turn rate
 
   -- Flush print2 log for this tick
+  -- Sub-section breakdown of (tail). Indented sub-section emits MUST
+  -- come before the (tail) main emit so rebuild_sections attaches them
+  -- as subs.
+  --   (tail)/metrics    — TICK TOTAL emit + metrics.set/max +
+  --                       metrics.finish_tick. Mostly opt() buffer-push
+  --                       overhead.
+  --   (tail)/late-debug — pill+base id labels, dbg.end_trace, arrow
+  --                       HUD, print2.flush. All stripped in opt/, so
+  --                       reads near zero in production. A non-trivial
+  --                       value here in opt/ implies a GC pause hit
+  --                       during this window.
+  if BRAIN_PROFILE then
+    opt(string.format("  (tail)/metrics done %.2f ms",
+                      (_t_tail_post_metrics - _t_tail_anchor) / 1000))
+    opt(string.format("  (tail)/late-debug done %.2f ms",
+                      (clock_us() - _t_tail_post_metrics) / 1000))
+  end
+  -- (tail) main: total from _t_tail_anchor to NOW. Emit AFTER the
+  -- indented subs above so the parser sees pending subs and attaches
+  -- them to this section.
+  opt(string.format("(tail) done %.2f ms", (clock_us() - _t_tail_anchor) / 1000))
   opt(string.format("END tick=%d total=%.2f ms", now, (clock_us() - t_tick_start) / 1000))
+  -- Anchor right before the flush itself. opt.flush()'s sync work
+  -- (rebuild_sections walk + queue-push to the threaded log writer)
+  -- happens between (tail) emit and the END marker — captured below
+  -- as a (post-flush) section appended to last_sections so that
+  -- sum-of-sections equals the end-marker think_total_ms.
+  local _t_pre_flush = clock_us()
   opt.flush()
+  if _G.BRAIN_PROFILE and opt.last_sections then
+    opt.last_sections[#opt.last_sections + 1] = {
+      name = "(post-flush)",
+      ms   = (clock_us() - _t_pre_flush) / 1000,
+      subs = {},
+    }
+  end
+
+  -- ── PERFORMANCE MARKER: END ──
+  -- Capture the wall-clock at think exit so the Y panel's header can
+  -- show think_total_ms (matched against host's lastThinkMs). Gated on
+  -- BRAIN_PROFILE because the panel only needs this when profiling is
+  -- on; without the marker, get_capacity_state_json reports null.
+  if _G.BRAIN_PROFILE then
+    state._think_end_us = clock_us()
+  end
+
+  -- ── performance.ticks.log ──────────────────────────────────────────
+  -- One JSON object per tick recording the same state the Y panel
+  -- shows. First byte of each line is `{` so jq -c / line-streaming
+  -- readers work. Lands in DEBUG_SESSION_DIR/performance.ticks.log when
+  -- the host set one, else cwd. Gated on BRAIN_PROFILE_LOG so we only
+  -- pay the JSON build + queue push when we actually want files.
+  if _G.BRAIN_PROFILE_LOG then
+    local body = Brain.get_capacity_state_json and Brain.get_capacity_state_json() or "{}"
+    local path = (_G.DEBUG_SESSION_DIR or ".") .. "/performance.ticks.log"
+    local line = string.format('{"tick":%d,"bot":%d,"data":%s}',
+                                now, state.player_number or 0, body)
+    if na_opt_log then
+      na_opt_log.append(path, line)
+    else
+      -- Fallback when the threaded writer isn't compiled in. Same
+      -- semantics, but file I/O on the brain thread.
+      local f = io.open(path, "a")
+      if f then f:write(line, "\n"); f:close() end
+    end
+  end
 
   -- Print2 watchdog: every 50 ticks, sanity-check that flushes are
   -- actually happening when the flag is on. The user wants HARD CRASHES
@@ -2786,6 +3093,11 @@ function Brain.think(info)
   -- Tick-info HUD (top-left, just below BrainTest's tick/think box).
   -- C-side already renders tick + think_ms; keep this line tight
   -- with the brain-only bits: replan countdown, phase, current goal.
+
+  -- (PERFORMANCE MARKER: END is captured inside the perf-log write
+  -- block above, just before get_capacity_state_json reads it. Doing
+  -- it there instead of here means the JSON's think_total_ms value
+  -- is fresh for the current tick.)
 
   -- Output
   return {
@@ -2859,22 +3171,15 @@ end
 function Brain.on_click(mx, my, mods)
   mods = mods or {}
   local rp = state._real_print or print
-  -- Debug to file since console may not be visible
-  local f = io.open("click_lua.log", "a")
-  if f then
-    local pill_count = 0
-    if world and world.pills then
-      for _ in pairs(world.pills) do pill_count = pill_count + 1 end
-    end
-    f:write(string.format("on_click: (%d,%d) shift=%s ctrl=%s tick=%d pills=%d\n",
-            mx, my, tostring(mods.shift), tostring(mods.ctrl), state.tick or -1, pill_count))
-    f:close()
-  end
+  -- Debug to file since console may not be visible. Gated on
+  -- BRAIN_DEBUG_MODE so the strip removes it from the production
+  -- brain (live game, no instruction = no file I/O).
   rp(string.format(TAG .. " CLICK: (%d,%d) shift=%s ctrl=%s", mx, my, tostring(mods.shift), tostring(mods.ctrl)))
 
   if mods.shift then
-    -- Toggle pill inspect overlay
-    local f2 = io.open("click_lua.log", "a")
+    -- Toggle pill inspect overlay. f2 is gated on BRAIN_DEBUG_MODE for
+    -- the same reason as the on_click line above.
+    local f2 = BRAIN_DEBUG_MODE and io.open("click_lua.log", "a") or nil
     if state.inspect_pill and state.inspect_pill.mx == mx and state.inspect_pill.my == my then
       state.inspect_pill = nil
       if f2 then f2:write("  -> cleared inspect\n"); f2:close() end

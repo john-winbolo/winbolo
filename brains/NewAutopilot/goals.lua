@@ -165,7 +165,7 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
   local _tw1 = clock_us()
   local r = wsim.run(C.WSIM_MAX_TICKS)
   local _tw2 = clock_us()
-  if BRAIN_PERF_LOG and (_tw2 - _tw0) > 200 then
+  if BRAIN_PROFILE_LOG and (_tw2 - _tw0) > 200 then
     opt.append("optimize.log", string.format(
       "  [wsim] goal=%s(%d,%d) snap=%.3fms run=%.3fms npath=%d",
       goal.kind, gmx, gmy, (_tw1-_tw0)/1000, (_tw2-_tw1)/1000, #path//2))
@@ -1555,7 +1555,12 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   end
 
   -- ── Scoring grid ────────────────────────────────────────────────────────
+  -- Capacity tier place_r: cap the heatmap search radius. (2R+1)² tiles
+  -- get scored, so halving R quarters the work.
   local R = C.STRATEGIC_PLACE_SEARCH_RADIUS
+  if state._capacity and state._capacity.place_r and state._capacity.place_r < R then
+    R = state._capacity.place_r
+  end
   local best_score = -math.huge
   local best_mx, best_my = nil, nil
   local all_cands = {}
@@ -2296,7 +2301,7 @@ function M.build_eval_queue(state, world, info)
   -- to optimize.log directly so we don't need print2 enabled.
   if not state._base_in_pool then state._base_in_pool = {} end
   local function _diag_log_first_pool_add(pool_idx, pool_name, id, obj)
-    if not BRAIN_PERF_LOG then return end
+    if not BRAIN_PROFILE_LOG then return end
     local key = pool_idx .. ":" .. id
     if state._base_in_pool[key] then return end
     state._base_in_pool[key] = state.tick or 0
@@ -2720,6 +2725,11 @@ function M.step_eval_queue(state, world, info)
   local pf = state.pf
   if pf and pf.status == "running" then return end
 
+  -- Capacity tier eval_iv: pop a candidate only every Nth tick when
+  -- throttled. Tier 10 → every tick. Tier 1 → every 5 ticks.
+  local _eval_iv = (state._capacity and state._capacity.eval_iv) or 1
+  if _eval_iv > 1 and ((state.tick or 0) % _eval_iv) ~= 0 then return end
+
   local queue = state.eval_queue
   if not queue then return end
   local pos = state.eval_queue_pos or 1
@@ -2861,7 +2871,7 @@ function M.step_eval_queue(state, world, info)
           _t_smart = clock_us() - _ts
           -- Diag: log pool 3 (capture_base) cost lookups so we can see
           -- whether Dijkstra is returning finite values yet.
-          if BRAIN_PERF_LOG and pool_idx == 3 then
+          if BRAIN_PROFILE_LOG and pool_idx == 3 then
             local rc = (raw_cost == math.huge) and "INF" or string.format("%.1f", raw_cost)
             opt.append("optimize.log", string.format(
               "  [diag] update_pool_cache pool=3 id=%s obj=(%d,%d) cheapest_adj=(%s,%s) raw_cost=%s tick=%d",
@@ -3057,6 +3067,8 @@ function M.step_eval_queue(state, world, info)
         elseif _sqdist < 900 then tier_ttl, tier_idx = 150, 2
         else                       tier_ttl, tier_idx = 500, 3
         end
+        local _ttl_mult = (state._capacity and state._capacity.ttl_mult) or 1.0
+        if _ttl_mult ~= 1.0 then tier_ttl = math.floor(tier_ttl * _ttl_mult) end
 
         local needs_eval
         if not dc then
@@ -3093,9 +3105,10 @@ function M.step_eval_queue(state, world, info)
             _spots     = nil
           end
         else
+          local _scan_step = (state._capacity and state._capacity.scan_step) or 5
           diff_score, _spots, best_spot =
             attack.evaluate_pill_difficulty(obj, world, force_detailed,
-                                            5, state.phase, state, tmx, tmy)
+                                            _scan_step, state.phase, state, tmx, tmy)
           diff_cache[dck] = { score = diff_score, spot = best_spot,
                               spots = _spots,  -- nil unless force_detailed
                               mx = obj.mx, my = obj.my,
@@ -3246,7 +3259,7 @@ function M.step_eval_queue(state, world, info)
         if (_diff_us > 1000 or _spot_us > 1000) then
           if BRAIN_DEBUG_MODE then print2(string.format("  pool6 candidate id=%s diff=%.2fms spot=%.2fms",
                                tostring(id), _diff_us / 1000, _spot_us / 1000)) end
-          if BRAIN_PERF_LOG then opt.append("optimize.log", string.format(
+          if BRAIN_PROFILE_LOG then opt.append("optimize.log", string.format(
             "  [diag] pool6 cand id=%s diff=%.2f spot=%.2f just_evaluated=%s force_detailed=%s",
             tostring(id), _diff_us / 1000, _spot_us / 1000,
             tostring(just_evaluated), tostring(force_detailed))) end
@@ -3438,7 +3451,7 @@ function M.step_eval_queue(state, world, info)
     -- shows up on the per-tick summary). Includes sub-timings for the
     -- 8-neighbor adjacent sweep + smart_cost call so we can identify
     -- which inner step dominates.
-    if BRAIN_PERF_LOG and _t_total > 500 then
+    if BRAIN_PROFILE_LOG and _t_total > 500 then
       opt.append("optimize.log", string.format(
         "  [diag] slow cand pool=%d id=%s total=%.2f raw=%.2f adj=%.2f smart=%.2f diff=%.2f spot=%.2f cost=%.0f obj=(%d,%d) hp=%s",
         pool_idx, tostring(id),
@@ -3514,7 +3527,7 @@ function M.finalize_pools(state, world, info)
     end
   end
 
-  if BRAIN_PERF_LOG then opt(string.format("    fp backfill %.2f ms", (clock_us() - _t0) / 1000)) end
+  if BRAIN_PROFILE then opt(string.format("    fp backfill %.2f ms", (clock_us() - _t0) / 1000)) end
   local _t1 = clock_us()
   -- Fresh cache each cycle (don't carry stale entries from last cycle)
   state.pool_cache = {}
@@ -3741,7 +3754,7 @@ function M.finalize_pools(state, world, info)
     pc[7] = nil
   end
 
-  if BRAIN_PERF_LOG then opt(string.format("    fp pool-finalizers %.2f ms", (clock_us() - _t1) / 1000)) end
+  if BRAIN_PROFILE then opt(string.format("    fp pool-finalizers %.2f ms", (clock_us() - _t1) / 1000)) end
   local _t2 = clock_us()
   -- Run cheap evaluators directly
   for _, idx in ipairs(FINALIZE_POOLS) do
@@ -3750,7 +3763,7 @@ function M.finalize_pools(state, world, info)
     if evaluator then
       pc[idx] = evaluator(state, world, info, tmx, tmy, boat, ammo)
     end
-    if BRAIN_PERF_LOG then opt(string.format("    fp eval[%d] %.2f ms", idx, (clock_us() - _te) / 1000)) end
+    if BRAIN_PROFILE then opt(string.format("    fp eval[%d] %.2f ms", idx, (clock_us() - _te) / 1000)) end
   end
 
   -- Summary: which pools got finalized
@@ -3794,7 +3807,7 @@ function M.update_pool_cache(state, world, info)
   -- giving ~49 ticks to process before the next decision.
   local _t_seq0 = clock_us()
   M.step_eval_queue(state, world, info)
-  if BRAIN_PERF_LOG then opt(string.format("  step_eval_queue done %.2f ms", (clock_us() - _t_seq0) / 1000)) end
+  if BRAIN_PROFILE then opt(string.format("  step_eval_queue done %.2f ms", (clock_us() - _t_seq0) / 1000)) end
 
   -- Staged-reveal pass for the pool-6 per-pill candidate overlays.
   -- Iterates the diff cache and emits each pill's spots with a mode
@@ -3847,9 +3860,9 @@ end
 --      applies hysteresis, picks lowest cost winner.
 -- =========================================================================
 local function goal_selection(state, world, info, quiet)
-  local _tgs0 = clock_us()  -- used by gs_diag slow-tick check (BRAIN_PERF_LOG)
+  local _tgs0 = clock_us()  -- used by gs_diag slow-tick check (BRAIN_PROFILE)
   local _tgs_t = 0
-  local _tgs_buf = state._pick_goal_timing  -- non-nil only when BRAIN_PERF_LOG; set by pick_goal
+  local _tgs_buf = state._pick_goal_timing  -- non-nil only when BRAIN_PROFILE; set by pick_goal
   if _tgs_buf then _tgs_t = _tgs0 end
   local function _tgs_log(label)
     if not _tgs_buf then return end
@@ -4181,14 +4194,16 @@ local function goal_selection(state, world, info, quiet)
     local co = state.capture_objective
     local p  = world.pills[co.id]
     if not p or p.owner == "friendly" then
-      print(string.format(TAG .. " CAPTURE: pill #%d captured!", co.id))
+      if BRAIN_DEBUG_MODE then print(string.format(TAG .. " CAPTURE: pill #%d captured!", co.id)) end
       state.command_reply     = string.format(C.BRAIN_NAME .. ": pill #%d captured!", co.id)
       state.capture_objective = nil
     elseif p.health == 0 then
       if not co.kill_tick then
         co.kill_tick = state.tick
-        print(string.format(TAG .. " CAPTURE: pill#%d killed at t=%d — holding %d ticks for shots to clear",
-              co.id, co.kill_tick, C.POST_KILL_WAIT_TICKS))
+        if BRAIN_DEBUG_MODE then
+          print(string.format(TAG .. " CAPTURE: pill#%d killed at t=%d — holding %d ticks for shots to clear",
+                co.id, co.kill_tick, C.POST_KILL_WAIT_TICKS))
+        end
       end
       local ticks_waited = state.tick - co.kill_tick
       if ticks_waited < C.POST_KILL_WAIT_TICKS then
@@ -4220,7 +4235,7 @@ local function goal_selection(state, world, info, quiet)
       local base, bid, bdist, bcands = nearest_where(world.bases, world, tmx, tmy,
         function(b) return b.owner ~= "friendly" end, boat, ammo, state, info, KIND_NORMAL)
       if not base then
-        print(TAG .. " CAPTURE: all bases captured!")
+        if BRAIN_DEBUG_MODE then print(TAG .. " CAPTURE: all bases captured!") end
         state.command_reply = C.BRAIN_NAME .. ": all bases captured!"
         state.base_capture_objective = nil
       else
@@ -4234,12 +4249,16 @@ local function goal_selection(state, world, info, quiet)
       local b = world.bases[bco.id]
       if not b or b.owner == "friendly" then
         if bco.all then
-          print(string.format(TAG .. " CAPTURE: base #%d captured, continuing cb:all", bco.id))
+          if BRAIN_DEBUG_MODE then
+            print(string.format(TAG .. " CAPTURE: base #%d captured, continuing cb:all", bco.id))
+          end
           bco.id = nil; bco.mx = 0; bco.my = 0
           state.pf.status = "idle"
           state.stuck_for = 0
         else
-          print(string.format(TAG .. " CAPTURE: base #%d captured!", bco.id))
+          if BRAIN_DEBUG_MODE then
+            print(string.format(TAG .. " CAPTURE: base #%d captured!", bco.id))
+          end
           state.command_reply = string.format(C.BRAIN_NAME .. ": base #%d captured!", bco.id)
           state.base_capture_objective = nil
         end
@@ -4677,10 +4696,20 @@ local function goal_selection(state, world, info, quiet)
        and C.WSIM_OPENING_ENABLED == false then
       wsim_active = false
     end
+    -- Capacity tier wsim cap: nil = sim every entry (default), integer N =
+    -- sim top-N of the cost-sorted pool only, false = skip entirely.
+    local _wsim_cap = nil
+    if state._capacity then
+      _wsim_cap = state._capacity.wsim
+      if _wsim_cap == false then wsim_active = false end
+    end
     local _tgs_pre_wsim = clock_us()
     _tgs_log("pool_build")
     if wsim_active then
+      local _wsim_done = 0
       for _, c in ipairs(pool) do
+        if _wsim_cap and _wsim_done >= _wsim_cap then break end
+        _wsim_done = _wsim_done + 1
         -- Only sim goals that travel through danger (skip refuel/explore)
         local sim_kinds = { capture_base=true, capture_pill=true,
                             attack_pill=true, attack_base=true,
@@ -4704,7 +4733,7 @@ local function goal_selection(state, world, info, quiet)
           end
           local extra, killed, sdesc, wsim_path, wsim_result = wsim_evaluate_goal(c.goal, world, info, attack_id, spot_x, spot_y)
           -- Debug print: every wsim run, even 0-damage survivors.
-          do
+          if BRAIN_DEBUG_MODE then
             local shot_parts = {}
             if wsim_result and wsim_result.pills then
               for _, ps in ipairs(wsim_result.pills) do
@@ -4762,7 +4791,7 @@ local function goal_selection(state, world, info, quiet)
     end
     local _tgs_post_wsim = clock_us()
     _tgs_log("wsim")
-    if BRAIN_PERF_LOG and (_tgs_post_wsim - _tgs0) > 500 then
+    if BRAIN_PROFILE_LOG and (_tgs_post_wsim - _tgs0) > 500 then
       opt.append("optimize.log", string.format(
         "  [gs_diag] total=%.2fms pre_pool=%.2fms pool_build=%.2fms wsim=%.2fms pool_size=%d",
         (_tgs_post_wsim-_tgs0)/1000, (_tgs_pre_pool-_tgs0)/1000,
@@ -4917,7 +4946,7 @@ local function goal_selection(state, world, info, quiet)
   -- Compare on stable key (kind+target) so wsim tick changes don't spam
   local goal_key = result and string.format("%s@%d,%d", result.kind, result.mx or 0, result.my or 0) or nil
   if goal_key ~= last_strategic_goal then
-    if not quiet then
+    if not quiet and BRAIN_DEBUG_MODE then
       if desc then
         print(TAG .. " GOAL: " .. desc)
       elseif last_strategic_goal then
@@ -4993,7 +5022,7 @@ local function goal_selection(state, world, info, quiet)
     -- needing print2 enabled. Includes which pools had cached winners
     -- so we can see whether pool_cache was empty or just got filtered
     -- out (blocked / cooldown / phase weight zero).
-    if BRAIN_PERF_LOG then
+    if BRAIN_PROFILE_LOG then
       do
         local pc_summary = {}
         local pc = state.pool_cache or {}
@@ -5062,8 +5091,10 @@ function M.pick_goal(state, world, info, quiet)
     end
 
     if arrived then
-      print(string.format(TAG .. " CMD: ARRIVED at %s #%d (%d,%d)",
-            cg.kind, cg.id, cg.mx, cg.my))
+      if BRAIN_DEBUG_MODE then
+        print(string.format(TAG .. " CMD: ARRIVED at %s #%d (%d,%d)",
+              cg.kind, cg.id, cg.mx, cg.my))
+      end
       state.command_reply = string.format(C.BRAIN_NAME .. ": arrived at %s #%d (%d,%d)",
         cg.kind, cg.id, cg.mx, cg.my)
       state.command_goal = nil
@@ -5107,7 +5138,7 @@ function M.pick_goal(state, world, info, quiet)
   end
 
   -- Strategic goal selection (timing buf populated only when perf-log is active)
-  state._pick_goal_timing = _G.BRAIN_PERF_LOG and {} or nil
+  state._pick_goal_timing = _G.BRAIN_PROFILE and {} or nil
   local strategic = goal_selection(state, world, info, quiet)
   if strategic then return strategic end
 

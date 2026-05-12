@@ -135,7 +135,10 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
 struct ServerSim;
 void serverMessageAdd(struct ServerSim *sim, messageType msgType, char *top, char *bottom);
 void messageAddItem(MessageState *ms, char *top, char *bottom);
-void messageUpdate(MessageState *ms);
+struct ClientSim;
+/* cs is forwarded to frontEndMessages so the active-cs gate suppresses
+ * messages from non-active ClientSims (bots/bg_game/gym). */
+void messageUpdate(struct ClientSim *cs, MessageState *ms);
 void messageGetMessage(MessageState *ms, char *top, char *bottom);
 void messageSetNewswire(MessageState *ms, bool isShown);
 void messageSetAssistant(MessageState *ms, bool isShown);

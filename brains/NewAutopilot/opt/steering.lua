@@ -23,6 +23,17 @@ end
 -- Local alias for the shared turn+speed helper in util.lua
 local nav_turn_speed = U.nav_turn_speed
 
+-- Per-tick accumulators feeding the nav-dispatch/path breakdown in the
+-- BrainTest "Capacity tiers" panel. Reset at the top of M.steer; written
+-- to from cpf_path_to (search + trace) and from the path_lookahead call
+-- sites; read at each nav-dispatch emit point. Module-scope is fine here
+-- — M.steer is called once per tick per brain and brains don't share
+-- their steering module instance across instances.
+local _path_search_us    = 0  -- cpf.path_to(...) C call (dijkstra+astar)
+local _path_trace_us     = 0  -- cpf.trace_path / dijkstra_trace_path
+local _path_lookahead_us = 0  -- path_lookahead(state, info, nx, ny)
+local _path_method       = "dij" -- cpf._last_method captured at search time
+
 -- ---------------------------------------------------------------------------
 -- Stuck-recovery: penalize cpf tiles where the tank is wedged.
 --
@@ -130,33 +141,12 @@ local function stuck_recovery(state, info, goal)
   local k = U.mkey(pf.next_mx, pf.next_my)
   if bl[k] == nil then
     cpf.set_overlay(pf.next_mx, pf.next_my, STUCK_PENALTY)
-    print(string.format(
-      "[STUCK_RECOVERY] t=%d pos=(%d,%d) spd=%d goal=%s next=(%d,%d) penalize %dt",
-      now, info.tankx >> 8, info.tanky >> 8, info.speed or 0,
-      goal.kind, pf.next_mx, pf.next_my, STUCK_DURATION))
     log.event("stuck_recovery", string.format(
       "%s next=%d,%d", goal.kind, pf.next_mx, pf.next_my))
   end
   bl[k] = now + STUCK_DURATION
   state.pf.status = "idle"  -- force A* recompute against the new overlay
   state.stuck_progress = nil
-end
-
--- Diagnostic: log every write to pf.next_mx so we can see where a
--- multi-tile cheb value came from. Writes to pf_next_ms.log in the cwd.
-local function log_pf_next(state, info, who, new_mx, new_my, extra)
-  local f = io.open("pf_next_ms.log", "a")
-  if not f then return end
-  local tmx = (info and info.tankx) and (info.tankx >> 8) or -1
-  local tmy = (info and info.tanky) and (info.tanky >> 8) or -1
-  local cheb = (new_mx >= 0 and tmx >= 0)
-    and math.max(math.abs(new_mx - tmx), math.abs(new_my - tmy))
-    or -1
-  f:write(string.format(
-    "t=%d who=%s tank=(%d,%d) new=(%d,%d) cheb=%d %s\n",
-    state and state.tick or -1,
-    who, tmx, tmy, new_mx, new_my, cheb, extra or ""))
-  f:close()
 end
 
 -- Wrapper: call C pathfinder and update state.pf for compatibility with
@@ -185,7 +175,16 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
   if state.goal and state.goal.kind == "capture_pill" then
     cpf.set_overlay(dest_mx, dest_my, 0)
   end
+  local _t_s0 = BRAIN_PROFILE and clock_us() or 0
   local status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET)
+  if BRAIN_PROFILE then
+    _path_search_us = _path_search_us + (clock_us() - _t_s0)
+    -- Snapshot which method (dij/astar) cpf.path_to actually used
+    -- right after the call. Reading later isn't safe — other parts of
+    -- the brain (goals.lua, etc.) might call cpf.path_to before we
+    -- emit, overwriting cpf._last_method.
+    _path_method = cpf._last_method or "dij"
+  end
 
   -- Update state.pf tracking fields
   pf.src_mx  = tmx
@@ -197,24 +196,22 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
     pf.status  = "done"
     pf.next_mx = nx
     pf.next_my = ny
-    log_pf_next(state, info, "cpf_path_to:done", nx, ny,
-      string.format("dest=(%d,%d)", dest_mx, dest_my))
     pf.age     = 0
     -- Capture full path chain for debug logging + path_lookahead.
     -- Try A* trace first (works when A* ran); fall back to Dijkstra
     -- trace (the common case now since cpf.path_to tries Dijkstra first
     -- and skips A* when it succeeds — leaving the A* state stale).
+    local _t_tr0 = BRAIN_PROFILE and clock_us() or 0
     pf.path_chain = cpf.trace_path()
     if not pf.path_chain or #pf.path_chain == 0 then
       pf.path_chain = cpf.dijkstra_trace_path(cpf.KIND_NORMAL, dest_mx, dest_my)
     end
+    if BRAIN_PROFILE then _path_trace_us = _path_trace_us + (clock_us() - _t_tr0) end
   elseif status == 0 then  -- running
     pf.status = "running"
     if nx >= 0 then
       pf.next_mx = nx
       pf.next_my = ny
-      log_pf_next(state, info, "cpf_path_to:running", nx, ny,
-        string.format("dest=(%d,%d)", dest_mx, dest_my))
     elseif pf.path_chain and #pf.path_chain >= 4 then
       -- A* restarted (nx=-1) but we have the green path from the last
       -- completed search. Walk it to find our current position and use
@@ -236,9 +233,6 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
         local nxt_my = pf.path_chain[2*best_i+2]
         pf.next_mx = nxt_mx
         pf.next_my = nxt_my
-        log_pf_next(state, info, "cpf_path_to:chain_fallback", nxt_mx, nxt_my,
-          string.format("best_i=%d chain#=%d dest=(%d,%d)",
-                        best_i, nwp, dest_mx, dest_my))
       end
     end
     pf.age = (pf.age or 0) + 1
@@ -246,8 +240,6 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
     pf.status  = "failed"
     pf.next_mx = -1
     pf.next_my = -1
-    log_pf_next(state, info, "cpf_path_to:failed", -1, -1,
-      string.format("dest=(%d,%d)", dest_mx, dest_my))
   end
 
   if (pf.status == "done" or pf.status == "running") and pf.next_mx >= 0 then
@@ -1359,7 +1351,9 @@ local function tank_combat_steer(state, world, info, goal)
       local best_nav_dist = math.huge
       -- Use 5° scan (72 directions) for precision once we've committed
       -- to attacking this target. Pool eval uses 45° for speed.
-      for deg = 0, 355, 5 do
+      -- Capacity tier tank_step coarsens the step at lower tiers.
+      local _tank_step = (state._capacity and state._capacity.tank_step) or 5
+      for deg = 0, 355, _tank_step do
         local rad = math.rad(deg)
         local sx = math.floor(target.mx + 0.5 + math.sin(rad) * R)
         local sy = math.floor(target.my + 0.5 - math.cos(rad) * R)
@@ -1515,7 +1509,20 @@ local function tank_combat_steer(state, world, info, goal)
 end
 
 function M.steer(state, world, info, goal)
-  local _t_steer_start = BRAIN_PERF_LOG and clock_us() or 0
+  local _t_steer_start = BRAIN_PROFILE and clock_us() or 0
+  local _t_phase = _t_steer_start
+  -- Mark "steer" as the current main so cpf.path_to / cost_to wrappers
+  -- attribute their timing as "  steer/path_to". Overwrite-style — no
+  -- cleanup needed; the next major section's set_main replaces it.
+  if BRAIN_PROFILE then
+    opt.set_main("steer")
+    -- Reset path-sub accumulators so this tick's nav-dispatch/path
+    -- breakdown reflects only this tick's work.
+    _path_search_us    = 0
+    _path_trace_us     = 0
+    _path_lookahead_us = 0
+    _path_method       = "dij"
+  end
   local keys = 0
   local taps = 0
   local tmx  = info.tankx >> 8
@@ -1526,7 +1533,12 @@ function M.steer(state, world, info, goal)
   -- Per-tile stuck-recovery: re-stamp the dynamic blacklist into the overlay
   -- (init.lua wipes it each tick) and watch progress toward pf.next_mx/my.
   stuck_recovery(state, info, goal)
-  local _t_after_stuck = BRAIN_PERF_LOG and clock_us() or 0
+  local _t_after_stuck = BRAIN_PROFILE and clock_us() or 0
+  if BRAIN_PROFILE then
+    opt(string.format("  steer/stuck_recovery done %.2f ms",
+                      (_t_after_stuck - _t_phase) / 1000))
+    _t_phase = _t_after_stuck
+  end
 
   -- ── Global cliff safety: runs BEFORE any goal-specific self-contained
   -- steering so no goal can drive us off a deep-sea edge at speed.
@@ -1565,8 +1577,18 @@ function M.steer(state, world, info, goal)
         tile_mx = trigger_mx, tile_my = trigger_my,
         step = trigger_step, speed = info.speed,
       })
+      if BRAIN_PROFILE then
+        opt(string.format("  steer/cliff_safety done %.2f ms",
+                          (clock_us() - _t_phase) / 1000))
+      end
       return KEY_SLOWER, 0
     end
+  end
+  if BRAIN_PROFILE then
+    local _t_now = clock_us()
+    opt(string.format("  steer/cliff_safety done %.2f ms",
+                      (_t_now - _t_phase) / 1000))
+    _t_phase = _t_now
   end
 
   -- Tank combat: self-contained steering for attack_tank goals.
@@ -1586,6 +1608,10 @@ function M.steer(state, world, info, goal)
           k = (k & ~KEY_FASTER) | KEY_SLOWER
         end
       end
+      if BRAIN_PROFILE then
+        opt(string.format("  steer/tank_combat done %.2f ms",
+                          (clock_us() - _t_phase) / 1000))
+      end
       return k, t
     end
   end
@@ -1593,14 +1619,39 @@ function M.steer(state, world, info, goal)
   -- Pill placement: self-contained steering for all pill_place substates
   if goal.kind == "pill_place" then
     local k, t = pill_place_steer(state, world, info, goal)
-    if k then return k, t end
+    if k then
+      if BRAIN_PROFILE then
+        opt(string.format("  steer/pill_place done %.2f ms",
+                          (clock_us() - _t_phase) / 1000))
+      end
+      return k, t
+    end
   end
 
   -- Attack pill: aim, engage, rush, plan_position substates
   if goal.kind == "attack_pill" then
     local k, t = attack_pill_steer(state, world, info, goal)
-    if k then return k, t end
+    if k then
+      if BRAIN_PROFILE then
+        opt(string.format("  steer/attack_pill done %.2f ms",
+                          (clock_us() - _t_phase) / 1000))
+      end
+      return k, t
+    end
   end
+
+  -- Sub-anchor for steer/nav-* breakdowns. _t_phase is the fall-through
+  -- start (right after cliff_safety completed and the goal-specific
+  -- dispatches all returned NIL).
+  local _t_nav_start = _t_phase
+  local _t_nav_dispatch_start = BRAIN_PROFILE and clock_us() or 0
+  -- Sub-breakdowns of nav-dispatch — accumulate across the elseif
+  -- branches and emit at each return point. `path` covers cpf_path_to
+  -- + path_lookahead in BOTH the refuel branch and the general branch
+  -- (only one fires per tick). `los` covers the attack_in_range LOS
+  -- check. `setup` is computed at emit time as total - path - los.
+  local _t_path_us = 0
+  local _t_los_us  = 0
 
   -- Perception cache: read once at top of steer
   local perc = state.perc or {}
@@ -1651,20 +1702,46 @@ function M.steer(state, world, info, goal)
     -- Was incorrectly placed inside attack_pill_steer where it was
     -- unreachable; moved here to actually fire.
     if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if BRAIN_PROFILE then
+      local _total_us = clock_us() - _t_nav_dispatch_start
+      local _setup_us = _total_us - _t_path_us - _t_los_us
+      if _setup_us < 0 then _setup_us = 0 end
+      local _path_misc_us = _t_path_us
+                           - _path_search_us - _path_trace_us - _path_lookahead_us
+      if _path_misc_us < 0 then _path_misc_us = 0 end
+      -- 4-space indent = level-3 (subsub) attached to the next 2-space
+      -- sub line (nav-dispatch/path). Order matters: subsubs are
+      -- emitted BEFORE their parent so the parser can attach them.
+      opt(string.format("    search (%s) done %.2f ms",
+                        _path_method == "dij" and "dijkstra" or "A*",
+                        _path_search_us / 1000))
+      opt(string.format("    trace done %.2f ms",     _path_trace_us     / 1000))
+      opt(string.format("    lookahead done %.2f ms", _path_lookahead_us / 1000))
+      opt(string.format("    misc done %.2f ms",      _path_misc_us      / 1000))
+      opt(string.format("  steer/nav-dispatch/path done %.2f ms",  _t_path_us / 1000))
+      opt(string.format("  steer/nav-dispatch/los done %.2f ms",   _t_los_us / 1000))
+      opt(string.format("  steer/nav-dispatch/setup done %.2f ms", _setup_us / 1000))
+    end
     return keys, taps
 
   elseif goal.kind == "refuel_at_base" then
     -- Navigate to the base if not on it yet; brake if already there
     local on_base = (tmx == goal.mx and tmy == goal.my)
     if not on_base then
+      local _t_p0 = BRAIN_PROFILE and clock_us() or 0
       local nx, ny = cpf_path_to(state, info, goal.mx, goal.my)
       if nx then
+        local _t_la0 = BRAIN_PROFILE and clock_us() or 0
         local lx, ly = path_lookahead(state, info, nx, ny)
+        if BRAIN_PROFILE then
+          _path_lookahead_us = _path_lookahead_us + (clock_us() - _t_la0)
+        end
         state._steer_lx = lx
         state._steer_ly = ly
         move_dir    = U.aim_at(info.tankx, info.tanky, U.m2w(lx), U.m2w(ly))
         target_dist = U.wdist(info.tankx, info.tanky, U.m2w(lx), U.m2w(ly))
       end
+      if BRAIN_PROFILE then _t_path_us = _t_path_us + (clock_us() - _t_p0) end
       goal_dist = U.wdist(info.tankx, info.tanky, goal.wx, goal.wy)
 
       -- Nav debug overlay (same as the generic navigate branch below)
@@ -1756,10 +1833,10 @@ function M.steer(state, world, info, goal)
     end
 
     -- Follow the A* next-step waypoint, with path lookahead to reduce wiggle
-    local _t_pre_path = BRAIN_PERF_LOG and clock_us() or 0
+    local _t_pre_path = BRAIN_PROFILE and clock_us() or 0
     local nx, ny = cpf_path_to(state, info, nav_mx, nav_my)
-    local _t_post_path = BRAIN_PERF_LOG and clock_us() or 0
-    if BRAIN_PERF_LOG and (_t_post_path - _t_pre_path > 3000 or _t_after_stuck - _t_steer_start > 3000) then
+    local _t_post_path = BRAIN_PROFILE and clock_us() or 0
+    if BRAIN_PROFILE_LOG and (_t_post_path - _t_pre_path > 3000 or _t_after_stuck - _t_steer_start > 3000) then
       opt.append("optimize.log", string.format(
         "  [steer-detail] tick=%d goal=%s stuck_r=%.2fms path_to=%.2fms dest=(%d,%d)",
         state.tick or 0, goal.kind or "?",
@@ -1770,7 +1847,11 @@ function M.steer(state, world, info, goal)
 
     if nx then
       -- Skip ahead on the path when the straight line is clear
+      local _t_la0 = BRAIN_PROFILE and clock_us() or 0
       local lx, ly = path_lookahead(state, info, nx, ny)
+      if BRAIN_PROFILE then
+        _path_lookahead_us = _path_lookahead_us + (clock_us() - _t_la0)
+      end
       state._steer_lx = lx
       state._steer_ly = ly
       local step_wx, step_wy = U.m2w(lx), U.m2w(ly)
@@ -1785,6 +1866,7 @@ function M.steer(state, world, info, goal)
         target_dist = center_dist
       end
     end
+    if BRAIN_PROFILE then _t_path_us = _t_path_us + (clock_us() - _t_pre_path) end
     goal_dist = U.wdist(info.tankx, info.tanky, nav_wx, nav_wy)
 
     -- Steering debug overlays (always draw when we have nav data)
@@ -1800,6 +1882,7 @@ function M.steer(state, world, info, goal)
   -- the boat_exit logic below from firing, stranding the tank at the water's
   -- edge indefinitely until the pill knocks the boat off.
   -- Pill engage: only shoot when in engage substate, in range, with LOS
+  local _t_l0 = BRAIN_PROFILE and clock_us() or 0
   local attack_in_range = false
   if goal.kind == "attack_pill" and goal.substate == "engage"
      and info.shells > C.SHELL_RESERVE then
@@ -1817,6 +1900,7 @@ function M.steer(state, world, info, goal)
       end
     end
   end
+  if BRAIN_PROFILE then _t_los_us = clock_us() - _t_l0 end
 
   local ws_holding = false  -- wall-shield removed
   if ws_holding then
@@ -1864,12 +1948,39 @@ function M.steer(state, world, info, goal)
     end
   end
 
+  -- Anchor: end of nav-dispatch (the goal-kind elseif chain that picks
+  -- a target tile + pf path), start of nav-apply (the wall-clear /
+  -- turn-rate / threat-cap / final keys+taps decision block below).
+  local _t_nav_apply_start = BRAIN_PROFILE and clock_us() or 0
+
   -- No goal or idle: brake to a stop.
   -- When attack_in_range, skip the navigation block and fall through to
   -- the engage aim/shoot block below.
   if move_dir == nil and not attack_in_range then
     if info.speed > 0 then
       keys = keys | KEY_SLOWER
+    end
+    if BRAIN_PROFILE then
+      local _total_us = _t_nav_apply_start - _t_nav_dispatch_start
+      local _setup_us = _total_us - _t_path_us - _t_los_us
+      if _setup_us < 0 then _setup_us = 0 end
+      local _path_misc_us = _t_path_us
+                           - _path_search_us - _path_trace_us - _path_lookahead_us
+      if _path_misc_us < 0 then _path_misc_us = 0 end
+      -- 4-space indent = level-3 (subsub) attached to the next 2-space
+      -- sub line (nav-dispatch/path). Order matters: subsubs are
+      -- emitted BEFORE their parent so the parser can attach them.
+      opt(string.format("    search (%s) done %.2f ms",
+                        _path_method == "dij" and "dijkstra" or "A*",
+                        _path_search_us / 1000))
+      opt(string.format("    trace done %.2f ms",     _path_trace_us     / 1000))
+      opt(string.format("    lookahead done %.2f ms", _path_lookahead_us / 1000))
+      opt(string.format("    misc done %.2f ms",      _path_misc_us      / 1000))
+      opt(string.format("  steer/nav-dispatch/path done %.2f ms",  _t_path_us / 1000))
+      opt(string.format("  steer/nav-dispatch/los done %.2f ms",   _t_los_us / 1000))
+      opt(string.format("  steer/nav-dispatch/setup done %.2f ms", _setup_us / 1000))
+      opt(string.format("  steer/nav-apply done %.2f ms",
+                        (clock_us() - _t_nav_apply_start) / 1000))
     end
     return keys, taps
   end
@@ -2574,6 +2685,25 @@ function M.steer(state, world, info, goal)
     end
   end
 
+  if BRAIN_PROFILE then
+    local _total_us = _t_nav_apply_start - _t_nav_dispatch_start
+    local _setup_us = _total_us - _t_path_us - _t_los_us
+    if _setup_us < 0 then _setup_us = 0 end
+    local _path_misc_us = _t_path_us
+                         - _path_search_us - _path_trace_us - _path_lookahead_us
+    if _path_misc_us < 0 then _path_misc_us = 0 end
+    opt(string.format("    search (%s) done %.2f ms",
+                      _path_method == "dij" and "dijkstra" or "A*",
+                      _path_search_us / 1000))
+    opt(string.format("    trace done %.2f ms",     _path_trace_us     / 1000))
+    opt(string.format("    lookahead done %.2f ms", _path_lookahead_us / 1000))
+    opt(string.format("    misc done %.2f ms",      _path_misc_us      / 1000))
+    opt(string.format("  steer/nav-dispatch/path done %.2f ms",  _t_path_us / 1000))
+    opt(string.format("  steer/nav-dispatch/los done %.2f ms",   _t_los_us / 1000))
+    opt(string.format("  steer/nav-dispatch/setup done %.2f ms", _setup_us / 1000))
+    opt(string.format("  steer/nav-apply done %.2f ms",
+                      (clock_us() - _t_nav_apply_start) / 1000))
+  end
   return keys, taps
 end
 

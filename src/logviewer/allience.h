@@ -19,11 +19,11 @@
 *Name:          Allience
 *Filename:      Allience.h
 *Author:        John Morrison
-*Creation Date: 18/2/99
+*Creation Date: 18/02/99
 *Last Modified: 18/2/99
 *Purpose:
-*  Handles allience. Who is allied to who etc. Uses a 
-*  simple set
+*  Handles allience. Who is allied to who etc. Backed by a
+*  bitmask: bit N set => allied to player N.
 *********************************************************/
 
 #ifndef ALLIENCE_H
@@ -31,22 +31,9 @@
 
 #include "global.h"
 
-/* Defines */
-/* Empty / Non Empty / Head / Tail Macros */
-#define IsEmpty(list) ((list) ==NULL)
-#define NonEmpty(list) (!IsEmpty(list))
-#define AllienceHead(list) ((list)->playerNum);
-#define AllienceTail(list) ((list)->next);
-
-
-
-/* Allience */
-
-typedef struct allienceObj *allience;
-struct allienceObj {
-  allience next;  /* Next item */ 
-  BYTE playerNum; /* The player this person is allied to */
-};
+/* Bitmask of allied player numbers; bit N set => allied to player N.
+ * MAX_TANKS (16) fits comfortably in PlayerBitMap (uint32_t). */
+typedef PlayerBitMap allience;
 
 
 /* Prototypes */
@@ -100,7 +87,7 @@ void lv_allienceAdd(allience *value, BYTE playerNum);
 * Removes an player from an allience
 *
 *ARGUMENTS:
-*  value     - The allience structure to remove from 
+*  value     - The allience structure to remove from
 *  playerNum - The player number to add
 *********************************************************/
 void lv_allienceRemove(allience *value, BYTE playerNum);
@@ -114,7 +101,7 @@ void lv_allienceRemove(allience *value, BYTE playerNum);
 * Returns whether a player number exist in this allience
 *
 *ARGUMENTS:
-*  value     - The allience structure to remove from 
+*  value     - The allience structure to remove from
 *  playerNum - The player number to add
 *********************************************************/
 bool lv_allienceExist(allience *value, BYTE playerNum);
@@ -128,7 +115,7 @@ bool lv_allienceExist(allience *value, BYTE playerNum);
 * Returns the number of allies a player has
 *
 *ARGUMENTS:
-*  value     - The allience structure to remove from 
+*  value     - The allience structure to remove from
 *********************************************************/
 BYTE lv_allienceNumAllies(allience *value);
 
@@ -141,7 +128,7 @@ BYTE lv_allienceNumAllies(allience *value);
 * Returns the player allience is allied with at num
 *
 *ARGUMENTS:
-*  value - The allience structure to remove from 
+*  value - The allience structure to remove from
 *  num   - Position in the structure to get
 *********************************************************/
 BYTE lv_allienceReturnNum(allience *value, BYTE num);

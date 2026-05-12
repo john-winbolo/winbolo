@@ -558,13 +558,16 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
     if (dx + scaledTile < originX || dx > originX + viewW ||
         dy + scaledTile < originY || dy > originY + viewH) continue;
 
-    /* Determine tank frame: direction (0-15) + colour offset */
+    /* Determine tank frame: direction (0-15) + colour offset.
+       Pick self/allie/evil sprite based on alliance with selfPlayer. */
     BYTE dir = tankGetDir(&sim->tanks[i]);
+    bool onBoat = tankIsOnBoat(&sim->tanks[i]);
+    tankAlliance al = playersScreenAllience(&sim->plyrs, selfPlayer, i);
     BYTE frameBase;
-    if (i == selfPlayer) {
-      frameBase = tankIsOnBoat(&sim->tanks[i]) ? TANK_SELFBOAT_0 : TANK_SELF_0;
-    } else {
-      frameBase = tankIsOnBoat(&sim->tanks[i]) ? TANK_EVILBOAT_0 : TANK_EVIL_0;
+    switch (al) {
+      case tankSelf:  frameBase = onBoat ? TANK_SELFBOAT_0 : TANK_SELF_0; break;
+      case tankAllie: frameBase = onBoat ? TANK_GOODBOAT_0 : TANK_GOOD_0; break;
+      default:        frameBase = onBoat ? TANK_EVILBOAT_0 : TANK_EVIL_0; break;
     }
     BYTE frame = frameBase + dir;
 
@@ -606,6 +609,38 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
       case TANK_SELFBOAT_0+13:srcX=TANK_SELFBOAT_13_X;srcY=TANK_SELFBOAT_13_Y; break;
       case TANK_SELFBOAT_0+14:srcX=TANK_SELFBOAT_14_X;srcY=TANK_SELFBOAT_14_Y; break;
       case TANK_SELFBOAT_0+15:srcX=TANK_SELFBOAT_15_X;srcY=TANK_SELFBOAT_15_Y; break;
+      case TANK_GOOD_0:      srcX=TANK_GOOD_0_X;      srcY=TANK_GOOD_0_Y;      break;
+      case TANK_GOOD_0+1:    srcX=TANK_GOOD_1_X;      srcY=TANK_GOOD_1_Y;      break;
+      case TANK_GOOD_0+2:    srcX=TANK_GOOD_2_X;      srcY=TANK_GOOD_2_Y;      break;
+      case TANK_GOOD_0+3:    srcX=TANK_GOOD_3_X;      srcY=TANK_GOOD_3_Y;      break;
+      case TANK_GOOD_0+4:    srcX=TANK_GOOD_4_X;      srcY=TANK_GOOD_4_Y;      break;
+      case TANK_GOOD_0+5:    srcX=TANK_GOOD_5_X;      srcY=TANK_GOOD_5_Y;      break;
+      case TANK_GOOD_0+6:    srcX=TANK_GOOD_6_X;      srcY=TANK_GOOD_6_Y;      break;
+      case TANK_GOOD_0+7:    srcX=TANK_GOOD_7_X;      srcY=TANK_GOOD_7_Y;      break;
+      case TANK_GOOD_0+8:    srcX=TANK_GOOD_8_X;      srcY=TANK_GOOD_8_Y;      break;
+      case TANK_GOOD_0+9:    srcX=TANK_GOOD_9_X;      srcY=TANK_GOOD_9_Y;      break;
+      case TANK_GOOD_0+10:   srcX=TANK_GOOD_10_X;     srcY=TANK_GOOD_10_Y;     break;
+      case TANK_GOOD_0+11:   srcX=TANK_GOOD_11_X;     srcY=TANK_GOOD_11_Y;     break;
+      case TANK_GOOD_0+12:   srcX=TANK_GOOD_12_X;     srcY=TANK_GOOD_12_Y;     break;
+      case TANK_GOOD_0+13:   srcX=TANK_GOOD_13_X;     srcY=TANK_GOOD_13_Y;     break;
+      case TANK_GOOD_0+14:   srcX=TANK_GOOD_14_X;     srcY=TANK_GOOD_14_Y;     break;
+      case TANK_GOOD_0+15:   srcX=TANK_GOOD_15_X;     srcY=TANK_GOOD_15_Y;     break;
+      case TANK_GOODBOAT_0:  srcX=TANK_GOODBOAT_0_X;  srcY=TANK_GOODBOAT_0_Y;  break;
+      case TANK_GOODBOAT_0+1:srcX=TANK_GOODBOAT_1_X;  srcY=TANK_GOODBOAT_1_Y;  break;
+      case TANK_GOODBOAT_0+2:srcX=TANK_GOODBOAT_2_X;  srcY=TANK_GOODBOAT_2_Y;  break;
+      case TANK_GOODBOAT_0+3:srcX=TANK_GOODBOAT_3_X;  srcY=TANK_GOODBOAT_3_Y;  break;
+      case TANK_GOODBOAT_0+4:srcX=TANK_GOODBOAT_4_X;  srcY=TANK_GOODBOAT_4_Y;  break;
+      case TANK_GOODBOAT_0+5:srcX=TANK_GOODBOAT_5_X;  srcY=TANK_GOODBOAT_5_Y;  break;
+      case TANK_GOODBOAT_0+6:srcX=TANK_GOODBOAT_6_X;  srcY=TANK_GOODBOAT_6_Y;  break;
+      case TANK_GOODBOAT_0+7:srcX=TANK_GOODBOAT_7_X;  srcY=TANK_GOODBOAT_7_Y;  break;
+      case TANK_GOODBOAT_0+8:srcX=TANK_GOODBOAT_8_X;  srcY=TANK_GOODBOAT_8_Y;  break;
+      case TANK_GOODBOAT_0+9:srcX=TANK_GOODBOAT_9_X;  srcY=TANK_GOODBOAT_9_Y;  break;
+      case TANK_GOODBOAT_0+10:srcX=TANK_GOODBOAT_10_X;srcY=TANK_GOODBOAT_10_Y; break;
+      case TANK_GOODBOAT_0+11:srcX=TANK_GOODBOAT_11_X;srcY=TANK_GOODBOAT_11_Y; break;
+      case TANK_GOODBOAT_0+12:srcX=TANK_GOODBOAT_12_X;srcY=TANK_GOODBOAT_12_Y; break;
+      case TANK_GOODBOAT_0+13:srcX=TANK_GOODBOAT_13_X;srcY=TANK_GOODBOAT_13_Y; break;
+      case TANK_GOODBOAT_0+14:srcX=TANK_GOODBOAT_14_X;srcY=TANK_GOODBOAT_14_Y; break;
+      case TANK_GOODBOAT_0+15:srcX=TANK_GOODBOAT_15_X;srcY=TANK_GOODBOAT_15_Y; break;
       case TANK_EVIL_0:      srcX=TANK_EVIL_0_X;      srcY=TANK_EVIL_0_Y;      break;
       case TANK_EVIL_0+1:    srcX=TANK_EVIL_1_X;      srcY=TANK_EVIL_1_Y;      break;
       case TANK_EVIL_0+2:    srcX=TANK_EVIL_2_X;      srcY=TANK_EVIL_2_Y;      break;
@@ -785,10 +820,14 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
   {
     tkExplosion q = sim->tankExplosions;
     while (q != NULL) {
+      /* Anchor top-left, matching mapViewDrawShells (the real game's path
+         for tank fireballs via screenBullets/SHELL_EXPLOSION1). Centering
+         here would offset the head half a tile from the trail explosions
+         and make it look like a separate spark traveling past the impact. */
       int tpx = ((int)q->x * tileSize) >> 8;
       int tpy = ((int)q->y * tileSize) >> 8;
-      float tx = (float)((tpx - camMX * tileSize) * zf - edgeX + originX - scaledTile / 2);
-      float ty = (float)((tpy - camMY * tileSize) * zf - edgeY + originY - scaledTile / 2);
+      float tx = (float)((tpx - camMX * tileSize) * zf - edgeX + originX);
+      float ty = (float)((tpy - camMY * tileSize) * zf - edgeY + originY);
 
       if (tx + scaledTile >= originX && tx <= originX + viewW &&
           ty + scaledTile >= originY && ty <= originY + viewH) {

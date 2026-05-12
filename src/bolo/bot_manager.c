@@ -39,8 +39,11 @@
 #include "starts.h"
 #include "tank.h"
 #include "players.h"
+#include "allience.h"
 #include "mines.h"
 #include "client_sim.h"
+#include "client_sim_control.h"
+#include "control_event.h"
 #include "transport.h"
 #include "screen.h"
 #include "screenbrainmap.h"
@@ -105,7 +108,12 @@ typedef struct {
      * instance is created; the count hook and every cpf_/wsim_/NA
      * binding cast lua_getextraspace(L) back to BotContext * to read
      * abort_flag and thinkDeadlineCounter without per-binding plumbing. */
+    SubscriberHandle controlSub;
 } BotContext;
+
+static void botDeliverControl(void *ctx, const ControlEvent *evt) {
+    clientSimApplyControl((ClientSim *)ctx, evt);
+}
 
 static BotContext bots[MAX_TANKS];
 
@@ -124,6 +132,45 @@ static int numBots = 0;
  * to scale per-bot time when more bots than runners are active. */
 static int g_threadsConfig = 1;
 
+/* Pending thread-count request from the BrainTest panel. -1 = no
+ * pending change. Applied at the top of botManagerTick (between ticks),
+ * never mid-dispatch. Single-producer (main thread) so a plain int
+ * is fine — no atomics needed. */
+static int s_pending_threads = -1;
+
+void botManagerRequestThreads(int total_runners) {
+    if (total_runners < 1) total_runners = 1;
+    int cores = SDL_GetNumLogicalCPUCores();
+    if (total_runners > cores)    total_runners = cores;
+    if (total_runners > MAX_TANKS) total_runners = MAX_TANKS;
+    s_pending_threads = total_runners;
+}
+
+int botManagerGetThreads(void) { return g_threadsConfig; }
+int botManagerGetPendingThreads(void) { return s_pending_threads; }
+
+/* Apply any pending pool-resize request. Called from botManagerTick
+ * before any dispatch happens, so the resize lands in the gap between
+ * ticks. */
+static void applyPendingThreadResize(void) {
+    int want = s_pending_threads;
+    if (want < 0 || want == g_threadsConfig) {
+        s_pending_threads = -1;
+        return;
+    }
+    botWorkerPoolDestroy();
+    int workers = want - 1;
+    if (workers > 0 && !botWorkerPoolCreate(workers)) {
+        WB_LOG_WARN(WB_LOG_CAT_PLATFORM,
+                    "botManager: pool create(%d) failed; staying serial",
+                    workers);
+        g_threadsConfig = 1;
+    } else {
+        g_threadsConfig = want;
+    }
+    s_pending_threads = -1;
+}
+
 /* Diagnostic toggle for the per-tick brain budget kill path. When 1
  * (default) the count hook is installed for every brain.think(), fires
  * tick_budget_exceeded on overrun, and C bindings poll the abort flag
@@ -131,10 +178,9 @@ static int g_threadsConfig = 1;
  * is never stamped, and brain.think runs to completion regardless of
  * how long it takes — the producer's post-tick overrun telemetry
  * (overrunCount, rate-limited slow-tick warning) still fires, so
- * operators still see overruns, just without the truncation. Flip to
- * 0 when investigating whether kill enforcement is causing fallout. */
+ * operators still see overruns, just without the truncation. */
 #ifndef BRAIN_BUDGET_ENFORCE
-#define BRAIN_BUDGET_ENFORCE 0
+#define BRAIN_BUDGET_ENFORCE 1
 #endif
 
 /* EWMA of the serial-stage cost (ms) of recent ticks. Seeded by the
@@ -374,6 +420,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     memset(bot, 0, sizeof(BotContext));
     bot->playerNum = playerNum;
     bot->ai = ai;
+    bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
     if (brainPath != NULL) {
         SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
     }
@@ -393,6 +440,17 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     bot->cs.isBot = true;
     clientSimSetPlayerNum(&bot->cs, playerNum);
 
+    /* Load map data from the server before tankCreate so the bot's local
+     * starts/pills/bases are populated when startsGetStart() runs — without
+     * starts loaded it early-returns on numStarts==0, leaving tankCreate's
+     * out-params undefined. */
+    if (!botLoadMapFromServer(bot, sim)) {
+        fprintf(stderr, "botManager: failed to load map for bot %d\n", playerNum);
+        clientSimDestroy(&bot->cs);
+        serverSimRemovePlayer(sim, playerNum);
+        return false;
+    }
+
     /* Create a tank at slot 0 for this ClientSim */
     if (MY_TANK(&bot->cs) != NULL) {
         tankDestroy(&bot->cs.sim, &MY_TANK(&bot->cs));
@@ -404,19 +462,19 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     playersSetSelf(NULL, &bot->cs.sim, &bot->cs.sim.plyrs, playerNum,
                    (char *)brainName, TRUE);
 
-    /* Load map data from the server */
-    if (!botLoadMapFromServer(bot, sim)) {
-        fprintf(stderr, "botManager: failed to load map for bot %d\n", playerNum);
-        clientSimDestroy(&bot->cs);
-        serverSimRemovePlayer(sim, playerNum);
-        return false;
-    }
-
     /* Set AI type on the ClientSim */
     bot->cs.allowComputerTanks = ai;
 
     /* Create passive transport (does NOT tick the server) */
     bot->transport = transportLocalCreatePassive(sim, playerNum);
+
+    /* Register this bot's ClientSim as a control-event subscriber so
+     * out-of-band roster/lobby/phase state from the server reaches it
+     * the same way snapshots do. Sync runs inside register and uses the
+     * dispatcher's self-skip to leave the playersSetSelf record above
+     * untouched. */
+    bot->controlSub = serverSimRegisterSubscriber(sim, botDeliverControl,
+                                                  &bot->cs);
 
     /* Initialize the brain map (fog-of-war) */
     /* screenBrainMapCreate already called by clientSimCreate,
@@ -429,6 +487,8 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
                                 &bot->cs, ai, s_default_debug_mode)) {
         fprintf(stderr, "botManager: failed to create brain for bot %d\n", playerNum);
+        serverSimUnregisterSubscriber(sim, bot->controlSub);
+        bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
         transportLocalDestroy(&bot->transport);
         clientSimDestroy(&bot->cs);
         serverSimRemovePlayer(sim, playerNum);
@@ -583,6 +643,11 @@ static void runBotThinkJob(int botIndex, void *userData) {
 void botManagerTick(ServerSim *sim, aiType ai) {
     int activeCount = 0;
 
+    /* Apply any pending thread-pool resize from the BrainTest panel.
+     * Lands here, before dispatch, so the pool destroy/create gap is
+     * always between ticks — never mid-flight. */
+    applyPendingThreadResize();
+
     /* Capture the start of the serial setup stage. The EWMA of serial
      * cost is (brainStart - setupStart) + (sendEnd - brainEnd), i.e.
      * everything inside this function that is not the dispatched
@@ -686,6 +751,9 @@ void botManagerTick(ServerSim *sim, aiType ai) {
             runBotThinkJob(s_jobIndices[k], NULL);
         }
     } else {
+        /* botWorkerPoolRun has its own serial fallback when the pool
+         * has 0 workers, so the panel resize-to-1 case Just Works
+         * without an extra check here. */
         botWorkerPoolRun(s_jobIndices, activeCount, runBotThinkJob, NULL);
     }
     Uint64 brainEnd = SDL_GetPerformanceCounter();
@@ -789,6 +857,24 @@ void botManagerOnGameStart(ServerSim *sim) {
     }
 }
 
+void botManagerSetTeams(ServerSim *sim, const BYTE *teamOf, BYTE numPlayers) {
+    if (sim == NULL || teamOf == NULL || numPlayers < 2) return;
+    if (numPlayers > MAX_TANKS) numPlayers = MAX_TANKS;
+
+    for (BYTE i = 0; i < numPlayers; i++) {
+        for (BYTE j = 0; j < numPlayers; j++) {
+            if (i == j || teamOf[i] != teamOf[j]) continue;
+
+            allienceAdd(&sim->sim.plyrs->item[i].allie, j);
+
+            for (BYTE k = 0; k < MAX_TANKS; k++) {
+                if (!bots[k].active) continue;
+                allienceAdd(&bots[k].cs.sim.plyrs->item[i].allie, j);
+            }
+        }
+    }
+}
+
 void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
     BotContext *bot;
     if (playerNum >= MAX_TANKS) return;
@@ -796,6 +882,8 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
     if (!bot->active) return;
 
     luaBrainInstanceDestroy(&bot->brain);
+    serverSimUnregisterSubscriber(sim, bot->controlSub);
+    bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
     transportLocalDestroy(&bot->transport);
     clientSimDestroy(&bot->cs);
     serverSimRemovePlayer(sim, playerNum);
