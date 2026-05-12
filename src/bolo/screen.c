@@ -89,22 +89,7 @@ extern void moveMousePointer(updateType value);
 
 /* Display statics removed — now fields of ClientSim (see client_sim.h) */
 
-/*********************************************************
-*NAME:          screenUpdateView
-*AUTHOR:        John Morrison
-*CREATION DATE: 29/10/98
-*LAST MODIFIED: 29/10/98
-*PURPOSE:
-*  Updates the values in the view area
-*
-*ARGUMENTS:
-* value - The update type (Helps in optimisations)
-*********************************************************/
-void screenUpdateViewCS(ClientSim *csPtr, updateType value) {
-  viewportUpdateView(clientSimViewportMut(csPtr), clientSimGetGameSim(csPtr),
-                     clientSimGetMyPlayerNum(csPtr),
-                     (BYTE (*)[MAP_ARRAY_SIZE])clientSimGetBrainMap(csPtr), value);
-}
+void screenUpdateViewCS(ClientSim *csPtr, updateType value) { clientSimUpdateView(csPtr, value); }
 
 /*********************************************************
 *NAME:          screenCalcSquare
@@ -262,20 +247,7 @@ void screenGunsightRangeCS(ClientSim *csPtr, bool increase) {
 }
 
 
-/*********************************************************
-*NAME:          screenReCalc
-*AUTHOR:        John Morrison
-*CREATION DATE: 30/12/98
-*LAST MODIFIED: 30/12/98
-*PURPOSE:
-*  Recalculates the screen data
-*
-*ARGUMENTS:
-*
-*********************************************************/
-void screenReCalcCS(ClientSim *csPtr) {
-  viewportRecalc(clientSimViewportMut(csPtr));
-}
+void screenReCalcCS(ClientSim *csPtr) { clientSimRecalc(csPtr); }
 
 
 /*********************************************************
@@ -919,60 +891,12 @@ void screenChangeOwnershipCS(ClientSim *csPtr, BYTE oldOwner) {
   pillsMigrate(clientSimGetGameSim(csPtr), oldOwner, clientSimGetMyPlayerNum(csPtr));
 }
 
-/*********************************************************
-*NAME:          screenMoveViewOffsetLeft
-*AUTHOR:        John Morrison
-*CREATION DATE: 2/11/99
-*LAST MODIFIED: 2/11/99
-*PURPOSE:
-* Moves our view left or right depending on the argument
-*
-*ARGUMENTS:
-*  isLeft - TRUE for left, FALSE for right
-*********************************************************/
-void screenMoveViewOffsetLeftCS(ClientSim *csPtr, bool isLeft) {
-  viewportPanX(clientSimViewportMut(csPtr), isLeft ? -1 : +1);
-}
+void screenMoveViewOffsetLeftCS(ClientSim *csPtr, bool isLeft) { clientSimPanX(csPtr, isLeft ? -1 : +1); }
 
-/*********************************************************
-*NAME:          screenMoveViewOffsetUp
-*AUTHOR:        John Morrison
-*CREATION DATE: 2/11/99
-*LAST MODIFIED: 2/11/99
-*PURPOSE:
-* Moves our view up or down depending on the argument
-*
-*ARGUMENTS:
-*  isup - TRUE for up, FALSE for dpwm
-*********************************************************/
-void screenMoveViewOffsetUpCS(ClientSim *csPtr, bool isUp) {
-  viewportPanY(clientSimViewportMut(csPtr), isUp ? -1 : +1);
-}
+void screenMoveViewOffsetUpCS(ClientSim *csPtr, bool isUp) { clientSimPanY(csPtr, isUp ? -1 : +1); }
 
 
-/*********************************************************
-*NAME:          screenTankIsDead
-*AUTHOR:        John Morrison
-*CREATION DATE: 2/11/99
-*LAST MODIFIED: 2/11/99
-*PURPOSE:
-* Returns if our tank is dead or not
-*
-*ARGUMENTS:
-*
-*********************************************************/
-bool screenTankIsDeadCS(ClientSim *csPtr) {
-  bool returnValue;
-  BYTE high, low, health, dummy;
-
-  returnValue = FALSE;
-  tankGetStats(&MY_TANK(csPtr), &high, &low, &health, &dummy);
-  if (health > TANK_FULL_ARMOUR) {
-    /* Tank is dead */
-    returnValue = TRUE;
-  }
-  return returnValue;
-}
+bool screenTankIsDeadCS(ClientSim *csPtr) { return clientSimTankIsDead(csPtr); }
 
 /*********************************************************
 *NAME:          screenGetLgmStatus
@@ -991,37 +915,7 @@ void screenGetLgmStatusCS(ClientSim *csPtr, bool *isOut, bool *isDead, TURNTYPE 
   lgmGetStatus(&MY_LGM(csPtr), &MY_TANK(csPtr), isOut, isDead, angle);
 }
 
-/*********************************************************
-*NAME:          screenTankScroll
-*AUTHOR:        John Morrison
-*CREATION DATE: 21/11/99
-*LAST MODIFIED: 10/06/01
-*PURPOSE:
-*  Does an scroll update check/move for the tank. Returns
-*  if a move occurs
-*
-*ARGUMENTS:
-*
-*********************************************************/
-bool screenTankScrollCS(ClientSim *csPtr) {
-  BYTE x;  /* Tank X and Y Co-ordinated       */
-  BYTE y;
-
-  /* Don't scroll the view while in pill view — the view is locked on the pill */
-  if (clientSimIsInPillView(csPtr) == TRUE) {
-    return FALSE;
-  }
-
-  x = tankGetScreenMX(&MY_TANK(csPtr));
-  y = tankGetScreenMY(&MY_TANK(csPtr));
-/*  if (px >3 || (x - xOffset -1) == 0) {
-    x++;
-  }
-  if (py >2) {
-    y++;
-  } */
-  return scrollManual(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), x, y, (TURNTYPE) tankGetTravelAngel(&MY_TANK(csPtr)));
-}
+bool screenTankScrollCS(ClientSim *csPtr) { return clientSimTankScroll(csPtr); }
 
 /*********************************************************
 *NAME:          screenGetSubMapSquareOffset

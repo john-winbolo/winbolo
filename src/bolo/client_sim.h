@@ -444,6 +444,12 @@ void         clientSimTankView(ClientSim *cs);
 void         clientSimSetCursorPos(ClientSim *cs, BYTE posX, BYTE posY);
 bool         clientSimGetCursorPos(ClientSim *cs, BYTE *posX, BYTE *posY);
 void         clientSimPillView(ClientSim *cs, int horz, int vert);
+void         clientSimRecalc(ClientSim *cs);
+void         clientSimUpdateView(ClientSim *cs, updateType value);
+void         clientSimPanX(ClientSim *cs, int dxTiles);
+void         clientSimPanY(ClientSim *cs, int dyTiles);
+bool         clientSimTankIsDead(ClientSim *cs);
+bool         clientSimTankScroll(ClientSim *cs);
 
 /* Submits a build request for the local LGM through InputPacket,
  * gated on tank armour and net status. */

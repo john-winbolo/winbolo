@@ -1052,6 +1052,50 @@ void clientSimPillView(ClientSim *cs, int horz, int vert) {
                         clientSimGetScroll(cs), MY_TANK(cs), horz, vert);
 }
 
+void clientSimRecalc(ClientSim *cs) {
+  viewportRecalc(clientSimViewportMut(cs));
+}
+
+void clientSimUpdateView(ClientSim *cs, updateType value) {
+  viewportUpdateView(clientSimViewportMut(cs), clientSimGetGameSim(cs),
+                     clientSimGetMyPlayerNum(cs),
+                     (BYTE (*)[MAP_ARRAY_SIZE])clientSimGetBrainMap(cs), value);
+}
+
+void clientSimPanX(ClientSim *cs, int dxTiles) {
+  viewportPanX(clientSimViewportMut(cs), dxTiles);
+}
+
+void clientSimPanY(ClientSim *cs, int dyTiles) {
+  viewportPanY(clientSimViewportMut(cs), dyTiles);
+}
+
+bool clientSimTankIsDead(ClientSim *cs) {
+  bool returnValue;
+  BYTE high, low, health, dummy;
+
+  returnValue = FALSE;
+  tankGetStats(&MY_TANK(cs), &high, &low, &health, &dummy);
+  if (health > TANK_FULL_ARMOUR) {
+    returnValue = TRUE;
+  }
+  return returnValue;
+}
+
+bool clientSimTankScroll(ClientSim *cs) {
+  BYTE x;
+  BYTE y;
+
+  /* Don't scroll the view while in pill view — the view is locked on the pill */
+  if (clientSimIsInPillView(cs) == TRUE) {
+    return FALSE;
+  }
+
+  x = tankGetScreenMX(&MY_TANK(cs));
+  y = tankGetScreenMY(&MY_TANK(cs));
+  return scrollManual(clientSimGetScroll(cs), clientSimGetXOffsetPtr(cs), clientSimGetYOffsetPtr(cs), x, y, (TURNTYPE) tankGetTravelAngel(&MY_TANK(cs)));
+}
+
 void clientSimManMove(ClientSim *cs, buildSelect buildS) {
   if (tankGetArmour(&MY_TANK(cs)) <= TANK_FULL_ARMOUR && clientSimGetNetStatus(cs) != netFailed) {
     /* Route build request through InputPacket so the server sim

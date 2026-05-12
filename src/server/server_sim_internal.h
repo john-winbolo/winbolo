@@ -13,6 +13,7 @@
 #ifndef SERVER_SIM_INTERNAL_H
 #define SERVER_SIM_INTERNAL_H
 
+#include <stddef.h>
 #include "server_sim.h"
 
 typedef struct ServerSim {
@@ -132,5 +133,8 @@ typedef struct ServerSim {
     int               numSubscribers;
     bool              publishing;
 } ServerSim;
+
+BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
+                   ServerSim_sim_must_be_first_member);
 
 #endif /* SERVER_SIM_INTERNAL_H */
