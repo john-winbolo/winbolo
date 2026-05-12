@@ -84,19 +84,19 @@ extern "C" void playersPanelRender(ClientSim *cs) {
     /* Selection shortcuts */
     float btnW = 55.0f;
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALL), ImVec2(btnW, 0))) {
-        screenCheckAllNonePlayersCS(cs, true);
+        clientSimCheckAllNonePlayers(cs, true);
     }
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_NONE), ImVec2(btnW, 0))) {
-        screenCheckAllNonePlayersCS(cs, false);
+        clientSimCheckAllNonePlayers(cs, false);
     }
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALLIES), ImVec2(btnW, 0))) {
-        screenCheckAlliedPlayersCS(cs);
+        clientSimCheckAlliedPlayers(cs);
     }
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_NEARBY), ImVec2(btnW, 0))) {
-        screenCheckNearbyPlayersCS(cs);
+        clientSimCheckNearbyPlayers(cs);
     }
 
     ImGui::Separator();
@@ -125,7 +125,7 @@ extern "C" void playersPanelRender(ClientSim *cs) {
             snprintf(checkId, sizeof(checkId), "%s##p%d", label, i);
             bool checked = sPlayerChecked[i];
             if (ImGui::Checkbox(checkId, &checked)) {
-                screenTogglePlayerCheckStateCS(cs, (BYTE)i);
+                clientSimTogglePlayerCheckState(cs, (BYTE)i);
             }
 
             /* Ping on same line, right-aligned */
