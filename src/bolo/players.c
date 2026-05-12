@@ -126,7 +126,7 @@ bool playersSetSelf(ClientSim *csParam, GameSim *sim, players *plrs, BYTE player
   returnValue = FALSE;
   if ((*plrs)->item[playerNum].inUse == FALSE) {
     if (playersNameTaken(plrs, playerName) == FALSE) {
-      if (csParam) strcpy(csParam->myLastPlayerName, playerName);
+      if (csParam) clientSimSetMyLastPlayerName(csParam, playerName);
       returnValue = TRUE;
       strcpy((*plrs)->item[playerNum].playerName, playerName);
       (*plrs)->item[playerNum].inUse = TRUE;
@@ -189,7 +189,7 @@ bool playersSetPlayerName(ClientSim *csParam, GameSim *sim, players *plrs, BYTE 
         strcat(temp, "@");
         strcat(temp, (*plrs)->item[playerNum].location);
       } else if (isServer == FALSE && csParam) {
-        strcpy(csParam->myLastPlayerName, playerName);
+        clientSimSetMyLastPlayerName(csParam, playerName);
       }
       if (isServer == FALSE) {
         frontEndSetPlayer(csParam, (playerNumbers) playerNum, temp,
@@ -320,7 +320,7 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
   }
 
   /* Update front end if we are in a running game (ie not in the joining phase) */
-  if (csParam == NULL || csParam->netStat != netFailed) {
+  if (csParam == NULL || clientSimGetNetStatus(csParam) != netFailed) {
     strcpy(str, (*plrs)->item[playerNum].playerName);
     if (playerNum != selfPlayer && (*plrs)->item[playerNum].location[0] != '\0') {
       strcat(str, " (");

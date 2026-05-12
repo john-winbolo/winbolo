@@ -736,7 +736,7 @@ BYTE gameFrontGetPlayerNum(void);
 *RETURNS:
 *  TRUE on success, FALSE on failure.
 *********************************************************/
-bool gameFrontLoadDeferredMap(struct ClientSim *cs);
+bool gameFrontLoadDeferredMap(struct ClientSim **cs);
 
 /* Dialog window position — used to place main window on same monitor */
 extern int gameFrontDialogX;

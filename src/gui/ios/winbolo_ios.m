@@ -300,7 +300,7 @@ ios_game_start:
             SDL_Quit();
             return 0;
         }
-        if (!gameFrontLoadDeferredMap(cs)) {
+        if (!gameFrontLoadDeferredMap(&cs)) {
             SDL_Log("[iOS] Failed to load deferred map");
             gameFrontEnd(&keys, FALSE, TRUE);
             endWinboloTimer();

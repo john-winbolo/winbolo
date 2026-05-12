@@ -154,7 +154,6 @@ static SubscriberHandle wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
 static void wasmDeliverControl(void *ctx, const ControlEvent *evt) {
     clientSimApplyControl((ClientSim *)ctx, evt);
 }
-ClientSim humanSimStorage;
 ClientSim *humanSim = NULL;
 
 extern bool isTutorial;
@@ -360,7 +359,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
   /* Start the game directly — no dialogs */
   printf("[WASM] Setting up screen...\n");
-  humanSim = &humanSimStorage;
+  humanSim = clientSimAlloc();
   clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
   frontEndSetActiveClientSim(humanSim);
 
@@ -413,8 +412,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       if (saddr.sin_addr.s_addr == INADDR_NONE) {
         saddr.sin_addr.s_addr = 0;
       }
-      humanSim->serverAddress = saddr.sin_addr;
-      humanSim->serverPort = gameFrontTargetUdp;
+      clientSimSetServerAddress(humanSim, saddr.sin_addr);
+      clientSimSetServerPort(humanSim, gameFrontTargetUdp);
     }
 
     /* Load map from server */
@@ -432,9 +431,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
       if (mapData != NULL && mapLen > 0) {
         char savedMapName[MAP_STR_SIZE];
-        strncpy(savedMapName, humanSim->mapName, MAP_STR_SIZE - 1);
+        strncpy(savedMapName, clientSimGetMapName(humanSim), MAP_STR_SIZE - 1);
         savedMapName[MAP_STR_SIZE - 1] = '\0';
         clientSimDestroy(humanSim);
+        humanSim = clientSimAlloc();
         if (screenLoadCompressedMapCS(humanSim, (BYTE *)mapData, mapLen, savedMapName,
                                      serverGame, serverHiddenMines,
                                      serverStartDelay, serverGameLen,
@@ -457,9 +457,9 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     screenNetSetupTankGoCS(humanSim);
     /* Gate lobby vs running: if we received PACKET_LOBBY_STATE during
      * join, stay in lobby state; otherwise proceed to running */
-    if (humanSim->inLobby) {
-      humanSim->mapDownloadComplete = true;
-      humanSim->netStat = netLobby;
+    if (clientSimIsInLobby(humanSim)) {
+      clientSimSetMapDownloadComplete(humanSim, true);
+      clientSimSetNetStatus(humanSim, netLobby);
     }
     printf("[WASM] UDP connected as player %d\n", wasmPlayerNum);
   } else {
@@ -500,6 +500,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       printf("[WASM] serverSimGetCompressedMap returned %d bytes\n", compLen);
       if (compLen > 0) {
         clientSimDestroy(humanSim);
+        humanSim = clientSimAlloc();
         bool mapOk = screenLoadCompressedMapCS(humanSim, compressedMap, compLen, "Local Game",
                                  gametype, hiddenMines, startDelay,
                                  timeLen, gameFrontName, 0, FALSE);
@@ -601,6 +602,7 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   }
   frontEndSetActiveClientSim(NULL);
   clientSimDestroy(humanSim);
+  humanSim = NULL;
   if (isQuiting == TRUE) {
     sdl3ImguiCleanup();
     sdl3DrawCleanup();
@@ -711,7 +713,7 @@ bool gameFrontGetWinbolonetUse(void) {
   return gameFrontWbnUse;
 }
 
-bool gameFrontLoadDeferredMap(ClientSim *cs)   { (void)cs; return FALSE; }
+bool gameFrontLoadDeferredMap(ClientSim **cs)  { (void)cs; return FALSE; }
 void gameFrontGetBotOptions(int *count, char *brainPath, size_t brainPathSize) {
   *count = 0; brainPath[0] = '\0'; (void)brainPathSize;
 }
