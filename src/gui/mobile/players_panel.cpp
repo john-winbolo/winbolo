@@ -115,9 +115,10 @@ extern "C" void playersPanelRender(void) {
         }
 
         if (sPlayerEnabled[i]) {
-            uint16_t ping  = playersGetPing(&humanSim->sim.plyrs, (BYTE)i);
-            uint8_t flags  = playersGetClientFlags(&humanSim->sim.plyrs, (BYTE)i);
-            uint8_t ctype  = playersGetClientType(&humanSim->sim.plyrs, (BYTE)i);
+            players *plrs  = &clientSimGetGameSim(humanSim)->plyrs;
+            uint16_t ping  = playersGetPing(plrs, (BYTE)i);
+            uint8_t flags  = playersGetClientFlags(plrs, (BYTE)i);
+            uint8_t ctype  = playersGetClientType(plrs, (BYTE)i);
 
             renderPlayerName(NULL, flags, ctype, "", false);
 

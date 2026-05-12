@@ -362,12 +362,15 @@ int main(int argc, char *argv[]) {
     SDL_Quit();
     return 1;
   }
-  fprintf(stderr, "[WASM] gameFrontStart OK; humanSim=%p plyrs=%p mp=%p tank0=%p\n",
-         (void*)humanSim,
-         humanSim ? (void*)humanSim->sim.plyrs : NULL,
-         humanSim ? (void*)humanSim->sim.mp : NULL,
-         humanSim ? (void*)humanSim->sim.tanks[0] : NULL);
-  fflush(stderr);
+  {
+    GameSim *gs = humanSim ? clientSimGetGameSim(humanSim) : NULL;
+    fprintf(stderr, "[WASM] gameFrontStart OK; humanSim=%p plyrs=%p mp=%p tank0=%p\n",
+           (void*)humanSim,
+           gs ? (void*)gs->plyrs : NULL,
+           gs ? (void*)gs->mp : NULL,
+           gs ? (void*)gs->tanks[0] : NULL);
+    fflush(stderr);
+  }
 
   /* Apply player name from URL after gameFrontStart sets defaults.
    * Gated like the Phase 7.1 Steam-persona seed: only honour ?name=
@@ -435,12 +438,15 @@ int main(int argc, char *argv[]) {
   oldTick = winboloTimer();
   lastFrameTime = emscripten_get_now();
 
-  fprintf(stderr, "[WASM] Starting main loop; humanSim=%p plyrs=%p mp=%p tank0=%p\n",
-         (void*)humanSim,
-         humanSim ? (void*)humanSim->sim.plyrs : NULL,
-         humanSim ? (void*)humanSim->sim.mp : NULL,
-         humanSim ? (void*)humanSim->sim.tanks[0] : NULL);
-  fflush(stderr);
+  {
+    GameSim *gs = humanSim ? clientSimGetGameSim(humanSim) : NULL;
+    fprintf(stderr, "[WASM] Starting main loop; humanSim=%p plyrs=%p mp=%p tank0=%p\n",
+           (void*)humanSim,
+           gs ? (void*)gs->plyrs : NULL,
+           gs ? (void*)gs->mp : NULL,
+           gs ? (void*)gs->tanks[0] : NULL);
+    fflush(stderr);
+  }
   emscripten_set_main_loop(main_loop_iteration, 0, 1);
 
   /* Cleanup (not reached with simulate_infinite_loop=1) */

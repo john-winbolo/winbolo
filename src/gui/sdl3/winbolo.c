@@ -302,7 +302,7 @@ int main(int argc, char *argv[]) {
       }
       /* lobbyResult == 1: game started — load the map that was
        * downloaded in the background during the lobby. */
-      if (!gameFrontLoadDeferredMap(cs)) {
+      if (!gameFrontLoadDeferredMap(&cs)) {
         imguiMessageBoxEx(DIALOG_BOX_TITLE, "Failed to load map from server",
                           IMGUI_MSG_ERROR, IMGUI_MSG_OK);
         winboloQuit = FALSE;
@@ -1712,7 +1712,7 @@ bool frontEndTutorial(BYTE pos) {
    * stops offering it (the player can re-enable from Settings). */
   if (tutorialStepIdx == tutorialStepCount - 1) {
     isTutorial = FALSE;
-    if (humanSim) humanSim->sim.isTutorial = false;
+    if (humanSim) clientSimGetGameSim(humanSim)->isTutorial = false;
     {
       ServerSim *srv = gameFrontGetServerSim();
       if (srv) serverSimGetGameSim(srv)->isTutorial = false;

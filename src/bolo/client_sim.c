@@ -133,6 +133,16 @@ static void csCallbackMineVisible(void *ctx, BYTE mx, BYTE my, BYTE sourcePlayer
  * The static globals were removed in the Phase 0 refactor. */
 
 /*********************************************************
+ *NAME:          clientSimAlloc
+ *PURPOSE:
+ *  Heap-allocates a zero-initialised ClientSim. Pairs with
+ *  clientSimDestroy, which frees the returned pointer.
+ *********************************************************/
+ClientSim *clientSimAlloc(void) {
+  return (ClientSim *)calloc(1, sizeof(ClientSim));
+}
+
+/*********************************************************
  *NAME:          clientSimCreate
  *PURPOSE:
  *  Initializes a ClientSim struct with all simulation state.
@@ -270,13 +280,16 @@ void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
 /*********************************************************
  *NAME:          clientSimDestroy
  *PURPOSE:
- *  Cleans up all simulation state in a ClientSim struct.
+ *  Cleans up all simulation state in a ClientSim struct and
+ *  frees the cs pointer (pairs with clientSimAlloc).
  *  Rendering cleanup is handled separately by screenRenderDestroy().
+ *  Accepts NULL as a no-op.
  *
  *ARGUMENTS:
- *  cs - Pointer to the ClientSim to destroy
+ *  cs - Pointer to the ClientSim to destroy and free
  *********************************************************/
 void clientSimDestroy(ClientSim *cs) {
+  if (cs == NULL) return;
   cs->running = FALSE;
   clientStateDestroy(&cs->clientState);
   tankDestroy(&cs->sim, &MY_TANK(cs));
@@ -326,6 +339,8 @@ void clientSimDestroy(ClientSim *cs) {
   cs->allianceAcceptFunc = NULL;
   cs->allianceLeaveFunc = NULL;
   cs->lockToggleSendFunc = NULL;
+
+  free(cs);
 }
 
 /*********************************************************
@@ -869,3 +884,7 @@ void clientSimSetMyLastPlayerName(ClientSim *cs, const char *name) {
 
 void clientSimSetInLobby(ClientSim *cs, bool v)             { cs->inLobby = v; }
 void clientSimSetMapDownloadComplete(ClientSim *cs, bool v) { cs->mapDownloadComplete = v; }
+
+void clientSimSetServerAddress(ClientSim *cs, struct in_addr v) { cs->serverAddress = v; }
+void clientSimSetServerPort(ClientSim *cs, unsigned short v)    { cs->serverPort = v; }
+void clientSimSetIsBot(ClientSim *cs, bool v)                   { cs->isBot = v; }

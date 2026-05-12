@@ -63,6 +63,11 @@ typedef void (*NetLockToggleSendFunc)(bool allow);
 /* Maximum predicted shells the client can track at once */
 #define MAX_PREDICTED_SHELLS 8
 
+/* Brain event ring buffer size — used to size cached event arrays
+ * inside ClientSim and external mirror arrays (e.g. winbolo_gym
+ * cachedEvents). */
+#define MAX_BRAIN_EVENTS 512
+
 /* A client-side predicted shell, created instantly on fire input
  * and removed once the server has processed the fire tick. */
 typedef struct {
@@ -84,145 +89,6 @@ typedef struct {
 #define CLIENTSIM_TYPEDEF
 typedef struct ClientSim ClientSim;
 #endif
-struct ClientSim {
-    GameSim     sim;    /* MUST be first member */
-    BYTE        myPlayerNum; /* Server-assigned player number; tanks[myPlayerNum] is our tank */
-
-    /* Client-side prediction state */
-    ClientState clientState;
-
-    /* Interpolation state for other players' tanks */
-    InterpContext interpCtx;
-
-    /* Server shell snapshots for UDP mode */
-    ShellSnapshot serverShellSnaps[MAX_SNAPSHOT_SHELLS];
-    int         serverShellCount;
-
-    /* Client-side predicted shells (Phase 4 of client-prediction) */
-    PredictedShell predictedShells[MAX_PREDICTED_SHELLS];
-    int         predictedShellCount;
-
-    /* Pending human-player build request */
-    BYTE        pendingBuildAction;
-    BYTE        pendingBuildX;
-    BYTE        pendingBuildY;
-
-    /* Current building item selected (was BsCurrent) */
-    buildSelect currentBuildSelect;
-
-    /* Are we running? */
-    bool        running;
-
-    /* Is this a bot ClientSim? (bot sims must not trigger frontend UI calls) */
-    bool        isBot;
-
-    /* Brain state (per-instance, moved from static globals in client_sim.c) */
-    uint32_t    brainHoldKeys;
-    uint32_t    brainTapKeys;
-    BuildInfo  *brainBuildInfo;
-    PlayerBitMap brainsWantAllies;
-    PlayerBitMap brainsMessageDest;
-    char        brainsMessage[FILENAME_MAX];
-    unsigned short brainsNumObjects;
-    ObjectInfo  brainObjects[1024];
-    aiType      allowComputerTanks;
-
-    /* Brain event buffer — filled in clientSimSyncFromSnapshot, consumed in screenMakeBrainInfoCS */
-#define MAX_BRAIN_EVENTS 512
-    GameEvent  brainEvents[MAX_BRAIN_EVENTS];
-    int        brainEventCount;
-    uint32_t   lastServerTick;
-    uint8_t    lastServerArmour;    /* Previous server snapshot armour for death detection */
-    uint8_t    brainLastAssistMsg;  /* ASSIST_MSG_* or 0 */
-
-    /* Per-instance fog-of-war brain map (was global sbm[256][256] in screenbrainmap.c) */
-    BYTE        brainMap[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
-
-    /* Per-instance message state (was messages.c globals) */
-    MessageState messages;
-
-    /* Per-instance scroll state (was scroll.c globals) */
-    ScrollState scroll;
-
-    /* Per-instance label state (was labels.c globals) */
-    bool        labelOwnTank;
-    labelLen    labelMessage;
-    labelLen    labelTankLabel;
-
-    /* Per-instance last player name (was players.c global) */
-    char        myLastPlayerName[PLAYER_NAME_LEN];
-
-    /* Client viewport / display state (was screen.c module-level statics) */
-    screen      view;
-    screenMines mineView;
-    BYTE        xOffset;
-    BYTE        yOffset;
-    bool        inPillView;
-    BYTE        pillViewX;
-    BYTE        pillViewY;
-    int         cursorPosX;
-    int         cursorPosY;
-    char        mapName[MAP_STR_SIZE];
-    int         gmeStartDelay;
-    int32_t     gmeLength;
-    time_t      timeStart;
-    bool        needScreenReCalc;
-
-    /* Network state (moved from network.c globals) */
-    netType     networkGameType;
-    netStatus   netStat;
-    NetChatSendFunc         chatSendFunc;
-    NetNameChangeSendFunc   nameChangeSendFunc;
-    NetAllianceRequestFunc  allianceRequestFunc;
-    NetAllianceAcceptFunc   allianceAcceptFunc;
-    NetAllianceLeaveFunc    allianceLeaveFunc;
-    NetLockToggleSendFunc   lockToggleSendFunc;
-
-    /* Server address info (for brain info, replaces netClientGetServerAddress) */
-    struct in_addr serverAddress;
-    unsigned short serverPort;
-
-    /* Lobby state (client-side mirror of server lobby) */
-    ClientLobbySlot  lobbySlots[16];    /* MAX_TANKS */
-    int              countdownSeconds;  /* 0 = not counting down */
-    bool             mapDownloadComplete; /* Gate for ready button */
-    bool             inLobby;           /* TRUE if server is lobby-enabled */
-    char             lobbyChatHistory[4096]; /* Lobby chat buffer with player names */
-
-    /* Lobby game settings (received from server in LOBBY_STATE packet) */
-    gameType         lobbyGameType;
-    bool             lobbyHiddenMines;
-    uint8_t          lobbyAiType;       /* 0=none, 1=yes, 2=yesAdvantage, 3=full */
-    int32_t          lobbyTimeLimit;    /* Game length in ticks (-1 = unlimited) */
-    uint8_t          lobbyPillCount;
-    uint8_t          lobbyBaseCount;
-    uint8_t          lobbyStartCount;
-    bool             mapSkipAvailable;  /* Server has map rotation with >1 map */
-    bool             mapSkipVotes[16];  /* Mirror of server vote state */
-    bool             mapSkipMyVote;     /* Local tracking of own vote */
-
-    /* Team balance proposal from WBN */
-    uint8_t  balanceProposal[16];      /* Proposed team per slot (0 = none) */
-    bool     balanceProposalActive;    /* TRUE if a proposal is being displayed */
-
-    /* Steam achievement: first capture tracking (per-game) */
-    bool     hasAnyBaseCaptured;
-    bool     hasAnyPillCaptured;
-
-    /* Steam achievement: per-game death/loss counters (zeroed by memset in clientSimCreate) */
-    uint16_t myDeathsThisGame;
-    uint16_t myLgmLossesThisGame;
-
-    /* Steam achievement: player count tracking (ACH_PLAYERS_6/8/16) */
-    uint8_t  maxPlayersSeenThisGame;
-
-    /* Steam achievement: lonely lobby tracking (ACH_LONELY_LOBBY) */
-    uint32_t lobbyAloneStartTick;
-
-    /* Steam achievement: rapid death tracking (ACH_RAPID_DEATH) */
-    uint32_t deathTimestamps[10];
-    uint8_t  deathTimestampIdx;
-};
 
 /* Access the local player's tank and LGM by server player number */
 #define MY_TANK(cs) (clientSimGetGameSim(cs)->tanks[clientSimGetMyPlayerNum(cs)])
@@ -241,6 +107,21 @@ static inline struct ClientSim *clientSimFromSim(struct GameSim *sim) {
     if (sim == NULL || sim->isServer) return NULL;
     return (struct ClientSim *)sim;
 }
+
+/*********************************************************
+ *NAME:          clientSimAlloc
+ *PURPOSE:
+ *  Allocates a ClientSim on the heap, zero-initialised.
+ *  Caller must follow with clientSimCreate() or
+ *  screenLoadCompressedMapCS() to populate before use.
+ *  Pairs with clientSimDestroy, which frees the pointer.
+ *
+ *  After ClientSim opacity, external callers cannot
+ *  declare a ClientSim by value (incomplete type) or
+ *  embed it as a struct field. Use this for the
+ *  allocation and release with clientSimDestroy.
+ *********************************************************/
+ClientSim *clientSimAlloc(void);
 
 /* Lifecycle API — initializes/destroys the ClientSim struct */
 bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDelay, int32_t gmeLen);
@@ -497,5 +378,15 @@ void clientSimSetMyLastPlayerName(ClientSim *cs, const char *name);
 /* Lobby state */
 void clientSimSetInLobby(ClientSim *cs, bool v);
 void clientSimSetMapDownloadComplete(ClientSim *cs, bool v);
+
+/* Server endpoint info — set by the frontend after the UDP transport
+ * resolves the server address; consumed by brain info. */
+void clientSimSetServerAddress(ClientSim *cs, struct in_addr v);
+void clientSimSetServerPort(ClientSim *cs, unsigned short v);
+
+/* Bot flag — set by bot_manager.c when creating a bot's ClientSim.
+ * Distinguishes bot sims from human sims (bot sims must not trigger
+ * frontend UI calls). */
+void clientSimSetIsBot(ClientSim *cs, bool v);
 
 #endif /* CLIENT_SIM_H */

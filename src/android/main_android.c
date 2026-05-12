@@ -374,7 +374,7 @@ int main(int argc, char *argv[]) {
       return 0;
     }
     /* lobbyResult == 1: game started — load the deferred map */
-    if (!gameFrontLoadDeferredMap(cs)) {
+    if (!gameFrontLoadDeferredMap(&cs)) {
       WB_LOG_ERROR(WB_LOG_CAT_PLATFORM, "[Android] Failed to load deferred map");
       gameFrontEnd(&keys, FALSE, TRUE);
       endWinboloTimer();
