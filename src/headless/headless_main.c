@@ -135,7 +135,6 @@ static void headlessDeliverControl(void *ctx, const ControlEvent *evt) {
     clientSimApplyControl((ClientSim *)ctx, evt);
 }
 static BYTE playerNum = 0;
-static ClientSim humanSimStorage;
 static ClientSim *humanSim = NULL;
 
 /* Fast mode: local server sim */
@@ -1049,7 +1048,7 @@ static bool fastModeSetupGame(void) {
   playerNum = 0;
 
   /* Reload client sim from cached compressed map */
-  humanSim = &humanSimStorage;
+  humanSim = clientSimAlloc();
   screenLoadCompressedMapCS(humanSim, cachedCompressedMap, cachedCompressedMapLen,
                             "Fast Local", optGameType, false, 0,
                             UNLIMITED_GAME_TIME, optName, 0, FALSE);
@@ -1131,7 +1130,7 @@ static int runFastMode(void) {
   headlessTransport = transportLocalCreate(fastServerSim, 0);
   transportActive = TRUE;
   playerNum = 0;
-  humanSim = &humanSimStorage;
+  humanSim = clientSimAlloc();
   screenLoadCompressedMapCS(humanSim, cachedCompressedMap, cachedCompressedMapLen,
                             "Fast Local", optGameType, false, 0,
                             UNLIMITED_GAME_TIME, optName, 0, FALSE);
@@ -1298,7 +1297,7 @@ static int runNetworkMode(void) {
   }
 
   /* Initialize the game engine with dummy params (will be re-created after map load) */
-  humanSim = &humanSimStorage;
+  humanSim = clientSimAlloc();
   clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
   playersSetMyLastPlayerName(humanSim, optName);
 
@@ -1355,9 +1354,10 @@ static int runNetworkMode(void) {
 
     if (mapData != NULL && mapLen > 0) {
       char savedMapName[MAP_STR_SIZE];
-      strncpy(savedMapName, humanSim->mapName, MAP_STR_SIZE - 1);
+      strncpy(savedMapName, clientSimGetMapName(humanSim), MAP_STR_SIZE - 1);
       savedMapName[MAP_STR_SIZE - 1] = '\0';
       clientSimDestroy(humanSim);
+      humanSim = clientSimAlloc();
       if (screenLoadCompressedMapCS(humanSim, (BYTE *)mapData, mapLen, savedMapName,
                                    serverGame, serverHiddenMines,
                                    serverStartDelay, serverGameLen,
@@ -1381,9 +1381,9 @@ static int runNetworkMode(void) {
 
   /* Gate lobby vs running: if we received PACKET_LOBBY_STATE during
    * join, stay in lobby state; otherwise proceed to running */
-  if (humanSim->inLobby) {
-    humanSim->mapDownloadComplete = true;
-    humanSim->netStat = netLobby;
+  if (clientSimIsInLobby(humanSim)) {
+    clientSimSetMapDownloadComplete(humanSim, true);
+    clientSimSetNetStatus(humanSim, netLobby);
   }
 
   if (!optQuiet) {
@@ -1415,7 +1415,7 @@ static int runNetworkMode(void) {
     /* Process game ticks */
     if ((ttick - oldTick) > GAME_TICK_LENGTH) {
       while ((ttick - oldTick) > GAME_TICK_LENGTH) {
-        if (humanSim->netStat == netLobby || humanSim->netStat == netLobbyCountdown) {
+        if (clientSimGetNetStatus(humanSim) == netLobby || clientSimGetNetStatus(humanSim) == netLobbyCountdown) {
           /* Lobby/countdown: just tick the transport to receive packets */
           headlessTransport.tick(headlessTransport.ctx);
           justKeys = !justKeys;

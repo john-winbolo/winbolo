@@ -2703,73 +2703,6 @@ void serverSimStartGame(ServerSim *sim) {
 #endif
 }
 
-/* Single-player path: copy server-side lobby state into the local
- * ClientSim, replacing the PACKET_LOBBY_STATE round-trip used in
- * multiplayer. The wire-protocol shape of LOBBY_STATE (see
- * transport_udp_server.c serverBuildLobbyStatePayload + the matching
- * decoder in transport_udp_client.c) is mirrored here field-for-field
- * so the lobby UI sees the same data either way.
- *
- * UDP-specific per-slot fields (pingMs, countryCode, clientType,
- * clientFlags) come from the server's plyrs accessors when populated
- * and zero out otherwise — single-player has no network presence to
- * report. Player names come from the players struct (set up during
- * playersSetSelf for slot 0 and botManagerAddBot for bot slots). */
-void serverSimSyncLobbyToClient(ServerSim *sim, struct ClientSim *cs) {
-    BYTE i;
-    if (!sim || !cs) return;
-    for (i = 0; i < MAX_TANKS; i++) {
-        ClientLobbySlot *dst = &cs->lobbySlots[i];
-        bool connected = sim->playerConnected[i];
-        memset(dst, 0, sizeof(*dst));
-        dst->connected = connected;
-        if (!connected) continue;
-        playersGetPlayerName(&sim->sim.plyrs, i, dst->playerName, FALSE);
-        dst->teamNumber  = sim->lobbyPlayers[i].teamNumber;
-        dst->ready       = sim->lobbyPlayers[i].ready;
-        dst->isBot       = sim->lobbyPlayers[i].isBot;
-        dst->pingMs      = sim->playerPing[i];
-        playersGetCountryCode(&sim->sim.plyrs, i, dst->countryCode);
-        dst->clientType  = playersGetClientType(&sim->sim.plyrs, i);
-        dst->clientFlags = playersGetClientFlags(&sim->sim.plyrs, i);
-    }
-    /* Game-settings tail (mirrors LOBBY_STATE settings block). */
-    cs->lobbyGameType    = gameTypeGet(&sim->sim.game);
-    cs->lobbyHiddenMines = sim->sim.hiddenMines ? true : false;
-    cs->lobbyAiType      = (uint8_t)sim->botAiType;
-    cs->lobbyTimeLimit   = sim->gameLength;
-    cs->lobbyPillCount   = pillsGetNumPills(&sim->sim.pb);
-    cs->lobbyBaseCount   = basesGetNumBases(&sim->sim.bs);
-    cs->lobbyStartCount  = startsGetNumStarts(&sim->sim.ss);
-    cs->mapSkipAvailable = (sim->mapDirCount > 1 || sim->randomMapEnabled);
-    /* Layout A flags. */
-    cs->lobbyOpenHost            = sim->openHost;
-    cs->lobbyAutoLockOnGameStart = sim->autoLockOnGameStart;
-    cs->lobbyServerLocks         = sim->serverLocks;
-    /* Per-team metadata. */
-    for (i = 0; i < MAX_TANKS; i++) {
-        cs->lobbyTeamInUse[i] = sim->teams[i].in_use;
-        cs->lobbyTeamColor[i] = sim->teams[i].color;
-        cs->lobbyTeamPool[i]  = sim->teams[i].namingPool;
-        strncpy(cs->lobbyTeamName[i], sim->teams[i].name,
-                sizeof(cs->lobbyTeamName[i]) - 1);
-        cs->lobbyTeamName[i][sizeof(cs->lobbyTeamName[i]) - 1] = '\0';
-    }
-    /* Per-bot config. */
-    for (i = 0; i < MAX_TANKS; i++) {
-        cs->lobbyBotDifficulty[i]  = sim->botConfigs[i].difficulty;
-        cs->lobbyBotPersonality[i] = sim->botConfigs[i].personality;
-        strncpy(cs->lobbyBotBrain[i], sim->botBrainPaths[i],
-                sizeof(cs->lobbyBotBrain[i]) - 1);
-        cs->lobbyBotBrain[i][sizeof(cs->lobbyBotBrain[i]) - 1] = '\0';
-    }
-    /* Brain list mirror so single-player and freshly joined clients can
-     * render the AiConfig "Bot Code" combo without a separate packet. */
-    cs->lobbyBrainList = sim->brainList;
-    strncpy(cs->mapName, sim->mapName, MAP_STR_SIZE - 1);
-    cs->mapName[MAP_STR_SIZE - 1] = '\0';
-}
-
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
     BYTE tempBuf[65536];
     int len;
@@ -3197,6 +3130,59 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
         (sim->mapDirCount > 1 || sim->randomMapEnabled) ? true : false;
     evt->u.lobbySettings.netStat          = serverPhaseToNetStat(sim->state);
     evt->u.lobbySettings.inLobby          = sim->lobbyEnabled ? true : false;
+    evt->u.lobbySettings.lobbyOpenHost            = sim->openHost;
+    evt->u.lobbySettings.lobbyAutoLockOnGameStart = sim->autoLockOnGameStart;
+    evt->u.lobbySettings.lobbyServerLocks         = sim->serverLocks;
+}
+
+void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, ControlEvent *evt) {
+    evt->type = CTRL_LOBBY_TEAM_META;
+    evt->u.lobbyTeamMeta.teamId = teamId;
+    if (teamId == 0 || teamId >= MAX_TANKS) {
+        evt->u.lobbyTeamMeta.in_use     = 0;
+        evt->u.lobbyTeamMeta.color      = 0;
+        evt->u.lobbyTeamMeta.namingPool = 0;
+        evt->u.lobbyTeamMeta.name[0]    = '\0';
+        return;
+    }
+    evt->u.lobbyTeamMeta.in_use     = sim->teams[teamId].in_use;
+    evt->u.lobbyTeamMeta.color      = sim->teams[teamId].color;
+    evt->u.lobbyTeamMeta.namingPool = sim->teams[teamId].namingPool;
+    memset(evt->u.lobbyTeamMeta.name, 0, LOBBY_TEAM_NAME_LEN);
+    strncpy(evt->u.lobbyTeamMeta.name, sim->teams[teamId].name,
+            LOBBY_TEAM_NAME_LEN - 1);
+}
+
+void serverSimFillLobbyBotConfigEvent(ServerSim *sim, BYTE slot, ControlEvent *evt) {
+    evt->type = CTRL_LOBBY_BOT_CONFIG;
+    evt->u.lobbyBotConfig.slot = slot;
+    memset(evt->u.lobbyBotConfig.name, 0, PACKET_MAX_PLAYER_NAME);
+    if (slot >= MAX_TANKS) {
+        evt->u.lobbyBotConfig.difficulty  = 0;
+        evt->u.lobbyBotConfig.personality = 0;
+        return;
+    }
+    evt->u.lobbyBotConfig.difficulty  = sim->botConfigs[slot].difficulty;
+    evt->u.lobbyBotConfig.personality = sim->botConfigs[slot].personality;
+    if (sim->playerConnected[slot]) {
+        strncpy(evt->u.lobbyBotConfig.name,
+                sim->sim.plyrs->item[slot].playerName,
+                PACKET_MAX_PLAYER_NAME - 1);
+    }
+}
+
+void serverSimFillLobbyBotBrainEvent(const ServerSim *sim, BYTE slot, ControlEvent *evt) {
+    evt->type = CTRL_LOBBY_BOT_BRAIN;
+    evt->u.lobbyBotBrain.slot = slot;
+    memset(evt->u.lobbyBotBrain.path, 0, BRAIN_LIST_PATH_LEN);
+    if (slot >= MAX_TANKS) return;
+    strncpy(evt->u.lobbyBotBrain.path, sim->botBrainPaths[slot],
+            BRAIN_LIST_PATH_LEN - 1);
+}
+
+void serverSimFillLobbyBrainListEvent(const ServerSim *sim, ControlEvent *evt) {
+    evt->type = CTRL_LOBBY_BRAIN_LIST;
+    evt->u.lobbyBrainList.list = sim->brainList;
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
@@ -3317,6 +3303,26 @@ static void serverSimSyncSubscriber(
             deliver(ctx, &evt);
         }
     }
+
+    /* Layout A initial state — team metadata, bot configs, bot brain
+     * paths, and the brain-list catalogue. */
+    for (i = 1; i < MAX_TANKS; i++) {
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillLobbyTeamMetaEvent(sim, i, &evt);
+        deliver(ctx, &evt);
+    }
+    for (i = 0; i < MAX_TANKS; i++) {
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillLobbyBotConfigEvent(sim, i, &evt);
+        deliver(ctx, &evt);
+
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillLobbyBotBrainEvent(sim, i, &evt);
+        deliver(ctx, &evt);
+    }
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyBrainListEvent(sim, &evt);
+    deliver(ctx, &evt);
 }
 
 SubscriberHandle serverSimRegisterSubscriber(
@@ -3524,6 +3530,11 @@ uint32_t serverSimGetLastProcessedInput(const ServerSim *sim, BYTE n) {
 bool serverSimIsMapSkipVote(const ServerSim *sim, BYTE n) {
     if (n >= MAX_TANKS) return false;
     return sim->mapSkipVotes[n];
+}
+
+uint16_t serverSimGetPlayerPing(const ServerSim *sim, BYTE n) {
+    if (n >= MAX_TANKS) return 0;
+    return sim->playerPing[n];
 }
 
 char *const *serverSimGetMapDirFiles(const ServerSim *sim) {

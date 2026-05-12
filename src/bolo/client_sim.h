@@ -64,6 +64,11 @@ typedef void (*NetLockToggleSendFunc)(bool allow);
 /* Maximum predicted shells the client can track at once */
 #define MAX_PREDICTED_SHELLS 8
 
+/* Brain event ring buffer size — used to size cached event arrays
+ * inside ClientSim and external mirror arrays (e.g. winbolo_gym
+ * cachedEvents). */
+#define MAX_BRAIN_EVENTS 512
+
 /* A client-side predicted shell, created instantly on fire input
  * and removed once the server has processed the fire tick. */
 typedef struct {
@@ -85,195 +90,10 @@ typedef struct {
 #define CLIENTSIM_TYPEDEF
 typedef struct ClientSim ClientSim;
 #endif
-struct ClientSim {
-    GameSim     sim;    /* MUST be first member */
-    BYTE        myPlayerNum; /* Server-assigned player number; tanks[myPlayerNum] is our tank */
-
-    /* Client-side prediction state */
-    ClientState clientState;
-
-    /* Interpolation state for other players' tanks */
-    InterpContext interpCtx;
-
-    /* Server shell snapshots for UDP mode */
-    ShellSnapshot serverShellSnaps[MAX_SNAPSHOT_SHELLS];
-    int         serverShellCount;
-
-    /* Client-side predicted shells (Phase 4 of client-prediction) */
-    PredictedShell predictedShells[MAX_PREDICTED_SHELLS];
-    int         predictedShellCount;
-
-    /* Pending human-player build request */
-    BYTE        pendingBuildAction;
-    BYTE        pendingBuildX;
-    BYTE        pendingBuildY;
-
-    /* Current building item selected (was BsCurrent) */
-    buildSelect currentBuildSelect;
-
-    /* Are we running? */
-    bool        running;
-
-    /* Is this a bot ClientSim? (bot sims must not trigger frontend UI calls) */
-    bool        isBot;
-
-    /* Single-player session — the local spServerSim runs in-process via
-     * transport_local. Lobby UI hides multiplayer-only controls (Allow
-     * new players / Disallow once started) and routes setting changes
-     * directly to the server instead of through the UDP packet path. */
-    bool        isSinglePlayer;
-    /* LAN-only host session — set by gamefront when "Host LAN game"
-     * was chosen. Mirrors gameFrontIsLanOnly. The lobby UI uses this
-     * (and isSinglePlayer) to hide WBN-derived badges and skip the
-     * connectivity test. Server-side, the cfg flags are already
-     * forced off in gameFrontSetupServer so this is presentation-
-     * only on the client. */
-    bool        isLanOnly;
-
-    /* Brain state (per-instance, moved from static globals in client_sim.c) */
-    uint32_t    brainHoldKeys;
-    uint32_t    brainTapKeys;
-    BuildInfo  *brainBuildInfo;
-    PlayerBitMap brainsWantAllies;
-    PlayerBitMap brainsMessageDest;
-    char        brainsMessage[FILENAME_MAX];
-    unsigned short brainsNumObjects;
-    ObjectInfo  brainObjects[1024];
-    aiType      allowComputerTanks;
-
-    /* Brain event buffer — filled in clientSimSyncFromSnapshot, consumed in screenMakeBrainInfoCS */
-#define MAX_BRAIN_EVENTS 512
-    GameEvent  brainEvents[MAX_BRAIN_EVENTS];
-    int        brainEventCount;
-    uint32_t   lastServerTick;
-    uint8_t    lastServerArmour;    /* Previous server snapshot armour for death detection */
-    uint8_t    brainLastAssistMsg;  /* ASSIST_MSG_* or 0 */
-
-    /* Per-instance fog-of-war brain map (was global sbm[256][256] in screenbrainmap.c) */
-    BYTE        brainMap[MAP_ARRAY_SIZE][MAP_ARRAY_SIZE];
-
-    /* Per-instance message state (was messages.c globals) */
-    MessageState messages;
-
-    /* Per-instance scroll state (was scroll.c globals) */
-    ScrollState scroll;
-
-    /* Per-instance label state (was labels.c globals) */
-    bool        labelOwnTank;
-    labelLen    labelMessage;
-    labelLen    labelTankLabel;
-
-    /* Per-instance last player name (was players.c global) */
-    char        myLastPlayerName[PLAYER_NAME_LEN];
-
-    /* Client viewport / display state (was screen.c module-level statics) */
-    screen      view;
-    screenMines mineView;
-    BYTE        xOffset;
-    BYTE        yOffset;
-    bool        inPillView;
-    BYTE        pillViewX;
-    BYTE        pillViewY;
-    int         cursorPosX;
-    int         cursorPosY;
-    char        mapName[MAP_STR_SIZE];
-    int         gmeStartDelay;
-    int32_t     gmeLength;
-    time_t      timeStart;
-    bool        needScreenReCalc;
-
-    /* Network state (moved from network.c globals) */
-    netType     networkGameType;
-    netStatus   netStat;
-    NetChatSendFunc         chatSendFunc;
-    NetNameChangeSendFunc   nameChangeSendFunc;
-    NetAllianceRequestFunc  allianceRequestFunc;
-    NetAllianceAcceptFunc   allianceAcceptFunc;
-    NetAllianceLeaveFunc    allianceLeaveFunc;
-    NetLockToggleSendFunc   lockToggleSendFunc;
-
-    /* Server address info (for brain info, replaces netClientGetServerAddress) */
-    struct in_addr serverAddress;
-    unsigned short serverPort;
-
-    /* Lobby state (client-side mirror of server lobby) */
-    ClientLobbySlot  lobbySlots[16];    /* MAX_TANKS */
-    int              countdownSeconds;  /* 0 = not counting down */
-    bool             mapDownloadComplete; /* Gate for ready button */
-    bool             inLobby;           /* TRUE if server is lobby-enabled */
-    char             lobbyChatHistory[4096]; /* Lobby chat buffer with player names */
-
-    /* Lobby game settings (received from server in LOBBY_STATE packet) */
-    gameType         lobbyGameType;
-    bool             lobbyHiddenMines;
-    uint8_t          lobbyAiType;       /* 0=none, 1=yes, 2=yesAdvantage, 3=full */
-    int32_t          lobbyTimeLimit;    /* Game length in ticks (-1 = unlimited) */
-    uint8_t          lobbyPillCount;
-    uint8_t          lobbyBaseCount;
-    uint8_t          lobbyStartCount;
-    bool             mapSkipAvailable;  /* Server has map rotation with >1 map */
-    bool             mapSkipVotes[16];  /* Mirror of server vote state */
-    bool             mapSkipMyVote;     /* Local tracking of own vote */
-
-    /* Team balance proposal from WBN */
-    uint8_t  balanceProposal[16];      /* Proposed team per slot (0 = none) */
-    bool     balanceProposalActive;    /* TRUE if a proposal is being displayed */
-
-    /* ── Layout A lobby state (client-side mirror of server) ──────
-     * Populated from PACKET_LOBBY_*_CHG broadcasts. The team metadata
-     * table starts zeroed (in_use=0 → "Team N" defaults); each
-     * TEAM_META_CHG broadcast updates one entry. Bot configs same
-     * shape, indexed by slot. */
-    uint8_t  lobbyTeamInUse[16];
-    uint8_t  lobbyTeamColor[16];
-    uint8_t  lobbyTeamPool[16];
-    char     lobbyTeamName[16][32];     /* LOBBY_TEAM_NAME_LEN */
-
-    uint8_t  lobbyBotDifficulty[16];
-    uint8_t  lobbyBotPersonality[16];
-
-    /* Per-bot brain path (full wire path like "Brains/NewAutopilot/init.lua").
-     * Empty when the slot is using whatever the server's global botBrainPath
-     * was at bot-create time. Drives the "Bot Code" combo in the lobby's
-     * AiConfig form. */
-    char     lobbyBotBrain[16][256];
-
-    /* Brain codebases the server has on disk — populated from
-     * PACKET_LOBBY_BRAIN_LIST on join. Used as the option list for the
-     * AiConfig "Bot Code" combo. */
-    BrainList lobbyBrainList;
-
-    bool     lobbyOpenHost;
-    bool     lobbyAutoLockOnGameStart;
-    uint16_t lobbyServerLocks;
-
-    /* Most recent server reject — surfaced via toast/log when set.
-     * lobbyLastRejectPacket is set to 0 when no pending message. */
-    uint8_t  lobbyLastRejectPacket;
-    uint8_t  lobbyLastRejectReason;
-
-    /* Steam achievement: first capture tracking (per-game) */
-    bool     hasAnyBaseCaptured;
-    bool     hasAnyPillCaptured;
-
-    /* Steam achievement: per-game death/loss counters (zeroed by memset in clientSimCreate) */
-    uint16_t myDeathsThisGame;
-    uint16_t myLgmLossesThisGame;
-
-    /* Steam achievement: player count tracking (ACH_PLAYERS_6/8/16) */
-    uint8_t  maxPlayersSeenThisGame;
-
-    /* Steam achievement: lonely lobby tracking (ACH_LONELY_LOBBY) */
-    uint32_t lobbyAloneStartTick;
-
-    /* Steam achievement: rapid death tracking (ACH_RAPID_DEATH) */
-    uint32_t deathTimestamps[10];
-    uint8_t  deathTimestampIdx;
-};
 
 /* Access the local player's tank and LGM by server player number */
-#define MY_TANK(cs) ((cs)->sim.tanks[(cs)->myPlayerNum])
-#define MY_LGM(cs)  ((cs)->sim.lgmen[(cs)->myPlayerNum])
+#define MY_TANK(cs) (clientSimGetGameSim(cs)->tanks[clientSimGetMyPlayerNum(cs)])
+#define MY_LGM(cs)  (clientSimGetGameSim(cs)->lgmen[clientSimGetMyPlayerNum(cs)])
 
 /* Recover the owning ClientSim from a GameSim* for the frontEnd
  * active-cs gate. Relies on the "GameSim sim MUST be first member"
@@ -288,6 +108,21 @@ static inline struct ClientSim *clientSimFromSim(struct GameSim *sim) {
     if (sim == NULL || sim->isServer) return NULL;
     return (struct ClientSim *)sim;
 }
+
+/*********************************************************
+ *NAME:          clientSimAlloc
+ *PURPOSE:
+ *  Allocates a ClientSim on the heap, zero-initialised.
+ *  Caller must follow with clientSimCreate() or
+ *  screenLoadCompressedMapCS() to populate before use.
+ *  Pairs with clientSimDestroy, which frees the pointer.
+ *
+ *  After ClientSim opacity, external callers cannot
+ *  declare a ClientSim by value (incomplete type) or
+ *  embed it as a struct field. Use this for the
+ *  allocation and release with clientSimDestroy.
+ *********************************************************/
+ClientSim *clientSimAlloc(void);
 
 /* Lifecycle API — initializes/destroys the ClientSim struct */
 bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDelay, int32_t gmeLen);
@@ -385,5 +220,208 @@ bool netSetup(ClientSim *cs, netType value, unsigned short myPort, char *targetI
 void netDestroy(ClientSim *cs);
 void netSendTrackerUpdate(void);
 void netProcessedDnsLookup(ClientSim *cs, char *ip, char *host);
+
+/*********************************************************
+ * Read accessors.
+ *
+ * One per externally-read ClientSim field. Callers outside
+ * src/bolo/client_sim.c, client_sim_control.c,
+ * client_snapshot.c, and transport_udp_client.c use these
+ * instead of touching fields directly. No mutator versions
+ * here — writes go through the public mutator/control-event
+ * API. Indexed accessors are bounds-checked: out-of-range
+ * returns NULL for pointer types, false/0 for scalars.
+ *********************************************************/
+
+/* Scalar (bool/enum) accessors */
+bool         clientSimIsRunning(const ClientSim *cs);
+bool         clientSimIsBot(const ClientSim *cs);
+bool         clientSimIsInPillView(const ClientSim *cs);
+bool         clientSimIsNeedScreenReCalc(const ClientSim *cs);
+bool         clientSimIsInLobby(const ClientSim *cs);
+bool         clientSimIsMapDownloadComplete(const ClientSim *cs);
+bool         clientSimIsMapSkipAvailable(const ClientSim *cs);
+bool         clientSimIsMapSkipMyVote(const ClientSim *cs);
+bool         clientSimIsLobbyHiddenMines(const ClientSim *cs);
+bool         clientSimIsBalanceProposalActive(const ClientSim *cs);
+bool         clientSimIsLabelOwnTank(const ClientSim *cs);
+buildSelect  clientSimGetCurrentBuildSelect(const ClientSim *cs);
+gameType     clientSimGetLobbyGameType(const ClientSim *cs);
+labelLen     clientSimGetLabelMessage(const ClientSim *cs);
+labelLen     clientSimGetLabelTankLabel(const ClientSim *cs);
+
+/* Scalar (integer) accessors */
+BYTE           clientSimGetMyPlayerNum(const ClientSim *cs);
+BYTE           clientSimGetXOffset(const ClientSim *cs);
+BYTE           clientSimGetYOffset(const ClientSim *cs);
+BYTE           clientSimGetPillViewX(const ClientSim *cs);
+BYTE           clientSimGetPillViewY(const ClientSim *cs);
+BYTE           clientSimGetPendingBuildAction(const ClientSim *cs);
+BYTE           clientSimGetPendingBuildX(const ClientSim *cs);
+BYTE           clientSimGetPendingBuildY(const ClientSim *cs);
+int            clientSimGetCursorPosX(const ClientSim *cs);
+int            clientSimGetCursorPosY(const ClientSim *cs);
+int            clientSimGetGmeStartDelay(const ClientSim *cs);
+int            clientSimGetCountdownSeconds(const ClientSim *cs);
+int            clientSimGetServerShellCount(const ClientSim *cs);
+int            clientSimGetPredictedShellCount(const ClientSim *cs);
+int            clientSimGetBrainEventCount(const ClientSim *cs);
+int32_t        clientSimGetGmeLength(const ClientSim *cs);
+int32_t        clientSimGetLobbyTimeLimit(const ClientSim *cs);
+uint8_t        clientSimGetLobbyAiType(const ClientSim *cs);
+uint8_t        clientSimGetLobbyPillCount(const ClientSim *cs);
+uint8_t        clientSimGetLobbyBaseCount(const ClientSim *cs);
+uint8_t        clientSimGetLobbyStartCount(const ClientSim *cs);
+uint8_t        clientSimGetBrainLastAssistMsg(const ClientSim *cs);
+uint32_t       clientSimGetLastServerTick(const ClientSim *cs);
+unsigned short clientSimGetServerPort(const ClientSim *cs);
+time_t         clientSimGetTimeStart(const ClientSim *cs);
+
+/* String (char[]) accessors */
+const char *clientSimGetMapName(const ClientSim *cs);
+const char *clientSimGetLobbyChatHistory(const ClientSim *cs);
+const char *clientSimGetMyLastPlayerName(const ClientSim *cs);
+
+/* Indexed-array accessors (bounds-checked; out-of-range
+ * returns NULL for pointer types, false/0 for scalars). */
+const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n);
+bool                   clientSimIsMapSkipVote(const ClientSim *cs, BYTE n);
+uint8_t                clientSimGetBalanceProposal(const ClientSim *cs, BYTE n);
+
+/* Array-pointer accessors (return pointer to backing storage).
+ * brainMap is returned non-const because external callers
+ * memset it and pass it to writers; the other arrays are
+ * read-only externally so far. */
+BYTE                 *clientSimGetBrainMap(ClientSim *cs);
+const ShellSnapshot  *clientSimGetServerShellSnaps(const ClientSim *cs);
+const PredictedShell *clientSimGetPredictedShells(const ClientSim *cs);
+const GameEvent      *clientSimGetBrainEvents(const ClientSim *cs);
+
+/* Struct-by-value accessor. */
+struct in_addr clientSimGetServerAddress(const ClientSim *cs);
+
+/* Cross-struct / interior-pointer accessors — return
+ * non-const pointers because callers continue to mutate
+ * these substructs through their existing APIs (same
+ * exception class as serverSimGetGameSim). */
+GameSim       *clientSimGetGameSim(ClientSim *cs);
+MessageState  *clientSimGetMessages(ClientSim *cs);
+ScrollState   *clientSimGetScroll(ClientSim *cs);
+InterpContext *clientSimGetInterpCtx(ClientSim *cs);
+screen        *clientSimGetView(ClientSim *cs);
+screenMines   *clientSimGetMineView(ClientSim *cs);
+
+/* Writable scalar slots — for callees that write through an
+ * address (scroll*, pillsGetNextView, pillsMoveView). Use the
+ * by-value clientSimGet<X> accessors for plain reads; these are
+ * only for the pass-by-pointer case. */
+BYTE *clientSimGetXOffsetPtr(ClientSim *cs);
+BYTE *clientSimGetYOffsetPtr(ClientSim *cs);
+BYTE *clientSimGetPillViewXPtr(ClientSim *cs);
+BYTE *clientSimGetPillViewYPtr(ClientSim *cs);
+
+/* Writable buffer access — pair with const-returning
+ * clientSimGetMapName. Used by sites that strcpy/strncpy
+ * into mapName or pass &mapName[0] to a buffer-filling
+ * function (utilExtractMapName). MAP_STR_SIZE is the buffer
+ * capacity; caller bounds-checks. */
+char *clientSimGetMapNameMutable(ClientSim *cs);
+
+/*********************************************************
+ * Mutators.
+ *
+ * Add a mutator here whenever a caller outside the
+ * marker-including files needs to write a ClientSim field
+ * that doesn't yet have a setter. Keep one mutator per
+ * field; coarse "do everything at once" calls don't belong
+ * here.
+ *********************************************************/
+
+void clientSimSetBalanceProposalActive(ClientSim *cs, bool active);
+void clientSimClearBalanceProposal(ClientSim *cs);
+void clientSimSetMapSkipMyVote(ClientSim *cs, bool vote);
+
+/* Viewport / cursor / view state */
+void clientSimSetXOffset(ClientSim *cs, BYTE v);
+void clientSimSetYOffset(ClientSim *cs, BYTE v);
+void clientSimSetCursorPosX(ClientSim *cs, int v);
+void clientSimSetCursorPosY(ClientSim *cs, int v);
+void clientSimSetNeedScreenReCalc(ClientSim *cs, bool v);
+void clientSimSetInPillView(ClientSim *cs, bool v);
+void clientSimSetPillViewX(ClientSim *cs, BYTE v);
+void clientSimSetPillViewY(ClientSim *cs, BYTE v);
+void clientSimSetView(ClientSim *cs, screen v);
+void clientSimSetMineView(ClientSim *cs, screenMines v);
+
+/* Game / round state */
+void clientSimSetGmeStartDelay(ClientSim *cs, int v);
+void clientSimSetGmeLength(ClientSim *cs, int32_t v);
+void clientSimSetTimeStart(ClientSim *cs, time_t v);
+void clientSimSetRunning(ClientSim *cs, bool v);
+void clientSimSetCurrentBuildSelect(ClientSim *cs, buildSelect v);
+
+/* Pending build input (set as a triple) */
+void clientSimSetPendingBuild(ClientSim *cs, BYTE action, BYTE x, BYTE y);
+
+/* Brain state */
+void clientSimSetBrainLastAssistMsg(ClientSim *cs, uint8_t v);
+void clientSimSetBrainEventCount(ClientSim *cs, int v);
+
+/* Label state */
+void clientSimSetLabelMessage(ClientSim *cs, labelLen v);
+void clientSimSetLabelTankLabel(ClientSim *cs, labelLen v);
+void clientSimSetLabelOwnTank(ClientSim *cs, bool v);
+
+/* Last-player-name buffer (copy semantics — strcpy into the field,
+ * matching the existing call site behavior; caller bounds-checks). */
+void clientSimSetMyLastPlayerName(ClientSim *cs, const char *name);
+
+/* Lobby state */
+void clientSimSetInLobby(ClientSim *cs, bool v);
+void clientSimSetMapDownloadComplete(ClientSim *cs, bool v);
+
+/* Server endpoint info — set by the frontend after the UDP transport
+ * resolves the server address; consumed by brain info. */
+void clientSimSetServerAddress(ClientSim *cs, struct in_addr v);
+void clientSimSetServerPort(ClientSim *cs, unsigned short v);
+
+/* Bot flag — set by bot_manager.c when creating a bot's ClientSim.
+ * Distinguishes bot sims from human sims (bot sims must not trigger
+ * frontend UI calls). */
+void clientSimSetIsBot(ClientSim *cs, bool v);
+
+/* Session-type flags — set by gamefront when starting a single-player
+ * or LAN-only host session. The lobby UI uses these to hide
+ * multiplayer-only controls and strip WBN-verified badges. */
+bool clientSimIsSinglePlayer(const ClientSim *cs);
+bool clientSimIsLanOnly(const ClientSim *cs);
+void clientSimSetIsSinglePlayer(ClientSim *cs, bool v);
+void clientSimSetIsLanOnly(ClientSim *cs, bool v);
+
+/* ────────────────────────────────────────────────────────────────
+ * Layout A lobby accessors (client-side mirror of server state).
+ * Indexed accessors return 0 / "" / NULL for out-of-range indices.
+ * ──────────────────────────────────────────────────────────────── */
+bool        clientSimGetLobbyOpenHost(const ClientSim *cs);
+bool        clientSimGetLobbyAutoLockOnGameStart(const ClientSim *cs);
+uint16_t    clientSimGetLobbyServerLocks(const ClientSim *cs);
+
+uint8_t     clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId);
+uint8_t     clientSimGetLobbyTeamColor(const ClientSim *cs, BYTE teamId);
+uint8_t     clientSimGetLobbyTeamPool(const ClientSim *cs, BYTE teamId);
+const char *clientSimGetLobbyTeamName(const ClientSim *cs, BYTE teamId);
+
+uint8_t     clientSimGetLobbyBotDifficulty(const ClientSim *cs, BYTE slot);
+uint8_t     clientSimGetLobbyBotPersonality(const ClientSim *cs, BYTE slot);
+const char *clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot);
+
+const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs);
+
+/* Last reject from server (toast pair). Both 0 = no pending message.
+ * clientSimClearLobbyLastReject clears both fields atomically after
+ * the toast has been rendered. */
+uint8_t clientSimGetLobbyLastRejectPacket(const ClientSim *cs);
+uint8_t clientSimGetLobbyLastRejectReason(const ClientSim *cs);
+void    clientSimClearLobbyLastReject(ClientSim *cs);
 
 #endif /* CLIENT_SIM_H */

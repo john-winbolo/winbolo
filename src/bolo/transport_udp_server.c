@@ -2099,21 +2099,35 @@ void transportUdpServerBroadcastLobbySettingChg(ServerSim *sim,
                                                 const uint8_t *value,
                                                 uint8_t valueLen) {
     uint8_t buf[PACKET_HEADER_SIZE + 2 + 32];
-    (void)sim;
     if (valueLen > 32) valueLen = 32;
     packHeader(buf, PACKET_LOBBY_SETTING_CHG, 0);
     buf[PACKET_HEADER_SIZE]     = settingType;
     buf[PACKET_HEADER_SIZE + 1] = valueLen;
     if (valueLen > 0 && value) memcpy(buf + PACKET_HEADER_SIZE + 2, value, valueLen);
     lobbyBroadcastBuf(buf, PACKET_HEADER_SIZE + 2 + valueLen);
+    /* Mirror to in-process subscribers: republish the full lobby
+     * settings event so they see the new value via the same path the
+     * multiplayer client sees it via PACKET_LOBBY_SETTING_CHG. */
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillLobbySettingsEvent(sim, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 void transportUdpServerBroadcastLobbyOpenHostChg(ServerSim *sim, bool openHost) {
     uint8_t buf[PACKET_HEADER_SIZE + 1];
-    (void)sim;
     packHeader(buf, PACKET_LOBBY_OPEN_HOST_CHG, 0);
     buf[PACKET_HEADER_SIZE] = openHost ? 1 : 0;
     lobbyBroadcastBuf(buf, sizeof(buf));
+    /* openHost is part of CTRL_LOBBY_SETTINGS — republish. */
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillLobbySettingsEvent(sim, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 void transportUdpServerBroadcastLobbyTeamMetaChg(ServerSim *sim, uint8_t teamId) {
@@ -2135,6 +2149,12 @@ void transportUdpServerBroadcastLobbyTeamMetaChg(ServerSim *sim, uint8_t teamId)
     if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 4, t->name, nameLen);
     len = PACKET_HEADER_SIZE + 4 + nameLen;
     lobbyBroadcastBuf(buf, len);
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillLobbyTeamMetaEvent(sim, teamId, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 /* Broadcast a change to one bot's brain script (script path only —
@@ -2154,6 +2174,12 @@ void transportUdpServerBroadcastLobbyBotBrainChg(ServerSim *sim, uint8_t slot) {
     if (pathLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 2, path, pathLen);
     len = PACKET_HEADER_SIZE + 2 + pathLen;
     lobbyBroadcastBuf(buf, len);
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillLobbyBotBrainEvent(sim, slot, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 /* Send the available-brains catalogue to a single newly-joined client.
@@ -2202,6 +2228,12 @@ void transportUdpServerBroadcastLobbyBotConfigChg(ServerSim *sim, uint8_t slot) 
     if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 4, name, nameLen);
     len = PACKET_HEADER_SIZE + 4 + nameLen;
     lobbyBroadcastBuf(buf, len);
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillLobbyBotConfigEvent(sim, slot, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 /* Auto-unready: clears every player's ready flag on the server side
@@ -2232,6 +2264,23 @@ void transportUdpServerBroadcastLobbyAutoUnready(ServerSim *sim) {
     }
     packHeader(buf, PACKET_LOBBY_AUTO_UNREADY, 0);
     lobbyBroadcastBuf(buf, sizeof(buf));
+    /* Republish each touched slot so in-process subscribers see the
+     * cleared ready flag. (We mirrored every connected human's
+     * ready=false above; bots and disconnected slots stay as-is.) */
+    {
+        ControlEvent evt;
+        int j;
+        for (j = 0; j < MAX_TANKS; j++) {
+            if (!serverSimIsPlayerConnected(sim, j)) continue;
+            memset(&evt, 0, sizeof(evt));
+            serverSimFillLobbySlotEvent(sim, j, &evt);
+            serverSimPublishControl(sim, &evt);
+        }
+        /* Game phase may have changed (countdown -> lobby). */
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillGamePhaseEvent(sim, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 /* Per-recipient reject: sent only to the originator of a rejected

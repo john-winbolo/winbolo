@@ -855,11 +855,11 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
   }
 
   /* Reset key state before brain runs (matches bot_manager) */
-  inst->cs->brainHoldKeys = 0;
-  inst->cs->brainTapKeys = 0;
+  *clientSimGetBrainHoldKeys(inst->cs) = 0;
+  *clientSimGetBrainTapKeys(inst->cs) = 0;
 
   screenMakeBrainInfoCS(inst->cs, &inst->bInfo, inst->isFirst,
-                        inst->cs->allowComputerTanks);
+                        *clientSimGetAllowComputerTanks(inst->cs));
   inst->isFirst = false;
   inst->bInfo.operation = BRAIN_THINK;
 
@@ -914,7 +914,7 @@ void luaBrainInstanceDestroy(LuaBrainInstance *inst) {
   }
 
   screenMakeBrainInfoCS(inst->cs, &inst->bInfo, false,
-                        inst->cs->allowComputerTanks);
+                        *clientSimGetAllowComputerTanks(inst->cs));
   inst->bInfo.operation = BRAIN_CLOSE;
   inst->worldPtr = inst->bInfo.theWorld;
   brainCoreCallMethod(inst->L, &inst->bInfo, "close");
@@ -1283,7 +1283,7 @@ bool luaBrainStart(const char *path, const char *name, ClientSim *cs) {
   clientMutexWaitFor();
   if (!luaBrainInstanceCreate(&singletonInst, path, name,
                               cs,
-                              cs->allowComputerTanks, false)) {
+                              *clientSimGetAllowComputerTanks(cs), false)) {
     clientMutexRelease();
     return false;
   }
@@ -1561,11 +1561,11 @@ bool mlBrainRunSingleton(ClientSim *cs) {
     brainsProcExecuting = true;
 
     /* Reset key state before brain runs (matches Lua path) */
-    cs->brainHoldKeys = 0;
-    cs->brainTapKeys = 0;
+    *clientSimGetBrainHoldKeys(cs) = 0;
+    *clientSimGetBrainTapKeys(cs) = 0;
 
     BrainInfo bi;
-    screenMakeBrainInfoCS(cs, &bi, false, cs->allowComputerTanks);
+    screenMakeBrainInfoCS(cs, &bi, false, *clientSimGetAllowComputerTanks(cs));
     bi.operation = BRAIN_THINK;
 
     bool ok;

@@ -899,6 +899,13 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, struct ControlEvent *evt);
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
 void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
 
+/* Layout A — per-team / per-bot / brain-list events. The matching
+ * client-side handlers live in clientSimApplyControl. */
+void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, struct ControlEvent *evt);
+void serverSimFillLobbyBotConfigEvent(ServerSim *sim, BYTE slot, struct ControlEvent *evt);
+void serverSimFillLobbyBotBrainEvent(const ServerSim *sim, BYTE slot, struct ControlEvent *evt);
+void serverSimFillLobbyBrainListEvent(const ServerSim *sim, struct ControlEvent *evt);
+
 /*********************************************************
  * Read accessors.
  *
@@ -941,6 +948,7 @@ const LobbyPlayer *serverSimGetLobbyPlayer(const ServerSim *sim, BYTE n);
 bool               serverSimIsPlayerConnected(const ServerSim *sim, BYTE n);
 uint32_t           serverSimGetLastProcessedInput(const ServerSim *sim, BYTE n);
 bool               serverSimIsMapSkipVote(const ServerSim *sim, BYTE n);
+uint16_t           serverSimGetPlayerPing(const ServerSim *sim, BYTE n);
 
 /* Array-pointer accessors (return pointer to backing storage). */
 char *const     *serverSimGetMapDirFiles(const ServerSim *sim);
@@ -1024,12 +1032,5 @@ void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
 /* Mutable server-state setter — used by start-game / return-to-lobby
  * paths in transport_udp_server. */
 void serverSimSetState(ServerSim *sim, ServerState s);
-
-/* Snapshot the server's lobby state onto a client.  Used by the SP
- * in-process flow (gamefront / imgui_lobby) to push the latest lobby
- * roster + settings into humanSim after a direct mutation; the
- * multiplayer path goes through PACKET_LOBBY_STATE instead. */
-struct ClientSim;
-void serverSimSyncLobbyToClient(ServerSim *sim, struct ClientSim *cs);
 
 #endif /* SERVER_SIM_H */

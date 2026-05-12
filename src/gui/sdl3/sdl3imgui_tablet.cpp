@@ -744,7 +744,7 @@ static void renderGunsightButtons(void) {
 
 static void renderViewButtons(ClientSim *cs) {
   ImDrawList *dl = ImGui::GetForegroundDrawList();
-  bool inPillView = (bool)cs->inPillView;
+  bool inPillView = clientSimIsInPillView(cs);
   SDL_Texture *tilesTex = sdl3DrawGetTilesTexture();
 
   /* Pill view button */
@@ -1141,7 +1141,7 @@ static void renderStatusDrawer(ClientSim *cs) {
 
     /* Pillbox status */
     if (ImGui::CollapsingHeader(langGetText(STR_TABLET_PILLBOXES))) {
-      BYTE total = pillsGetNumPills(&cs->sim.pb);
+      BYTE total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
       for (BYTE i = 1; i <= total; i++) {
         pillAlliance pa = screenPillAllianceCS(cs, i);
         ImVec4 col;
@@ -1161,7 +1161,7 @@ static void renderStatusDrawer(ClientSim *cs) {
 
     /* Base status */
     if (ImGui::CollapsingHeader(langGetText(STR_TABLET_BASES))) {
-      BYTE total = basesGetNumBases(&cs->sim.bs);
+      BYTE total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
       for (BYTE i = 1; i <= total; i++) {
         baseAlliance ba = screenBaseAllianceCS(cs, i);
         ImVec4 col;
@@ -1405,12 +1405,12 @@ void sdl3ImguiTabletOverlay(ClientSim *cs) {
 
   /* Handle view button taps */
   if (inputTouchIsButtonTapped(TOUCH_BTN_PILL_VIEW)) {
-    if (!cs->inPillView) {
+    if (!clientSimIsInPillView(cs)) {
       screenPillViewCS(cs, 0, 0);
     }
   }
   if (inputTouchIsButtonTapped(TOUCH_BTN_TANK_VIEW)) {
-    if (cs->inPillView) {
+    if (clientSimIsInPillView(cs)) {
       screenTankViewCS(cs);
     }
   }
