@@ -18,6 +18,7 @@
 #include "../bolo/screen.h"
 #include "../bolo/client_mapload.h"
 #include "../bolo/client_sim.h"
+#include "../bolo/client_snapshot.h"
 #include "../bolo/client_sim_control.h"
 #include "../bolo/control_event.h"
 #include "../bolo/global.h"
@@ -455,7 +456,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       }
     }
 
-    screenNetSetupTankGoCS(humanSim);
+    clientNetSetupTankGo(humanSim);
     /* Gate lobby vs running: if we received PACKET_LOBBY_STATE during
      * join, stay in lobby state; otherwise proceed to running */
     if (clientSimIsInLobby(humanSim)) {
@@ -549,7 +550,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
                              snapPills, snapHdr.pillCount,
                              snapEvents, snapHdr.reliableEventCount, 0);
     }
-    screenNetSetupTankGoCS(humanSim);
+    clientNetSetupTankGo(humanSim);
     /* Register the WASM client as a control-event subscriber. Placed
      * after clientLoadCompressedMap (which calls clientSimCreate) so
      * humanSim->myPlayerNum is initialized to 0 — matching the SP

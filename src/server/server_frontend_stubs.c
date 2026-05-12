@@ -63,39 +63,6 @@ void clientMutexWaitFor(void)   {}
 bool clientMutexTryWaitFor(void){ return TRUE; }
 void clientMutexRelease(void)   {}
 
-/* serverCoreSoundDist — logs sound events for game recording.
-   In client/headless builds this is defined in screen.c instead. */
-void serverCoreSoundDist(sndEffects value, BYTE mx, BYTE my) {
-  BYTE logMessageType = 0;
-  switch (value) {
-  case shootSelf: case shootNear: case shootFar:
-    logMessageType = log_SoundShoot; break;
-  case shotTreeNear: case shotTreeFar:
-    logMessageType = log_SoundHitTree; break;
-  case shotBuildingNear: case shotBuildingFar:
-    logMessageType = log_SoundHitWall; break;
-  case hitTankNear: case hitTankFar: case hitTankSelf:
-    logMessageType = log_SoundHitTank; break;
-  case bubbles: case tankSinkNear: case tankSinkFar:
-    break;
-  case bigExplosionNear: case bigExplosionFar:
-    logMessageType = log_SoundBigExplosion; break;
-  case farmingTreeNear: case farmingTreeFar:
-    logMessageType = log_SoundFarm; break;
-  case manBuildingNear: case manBuildingFar:
-    logMessageType = log_SoundBuild; break;
-  case manDyingNear: case manDyingFar:
-    logMessageType = log_SoundManDie; break;
-  case manLayingMineNear:
-    logMessageType = log_SoundMineLay; break;
-  case mineExplosionNear: case mineExplosionFar:
-    logMessageType = log_SoundMineExplode; break;
-  }
-  if (logMessageType) {
-    logAddEvent(logMessageType, mx, my, 0, 0, 0, NULL);
-  }
-}
-
 /* Frontend stubs */
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) { (void)cs; (void)shells; (void)mines; (void)armour; (void)trees; }
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) { (void)cs; (void)shells; (void)mines; (void)armour; }
@@ -135,9 +102,10 @@ void screenNetStatusMessage(ClientSim *csPtr, char *messageStr) { (void)csPtr; (
 void clientCenterTankCS(ClientSim *csPtr) { (void)csPtr; }
 
 
-void screenIncomingMessageCS(ClientSim *cs, BYTE playerNum, char *messageStr) { (void)cs; (void)playerNum; (void)messageStr; }
-
-/* screenSyncFromSnapshotCS lives in client_snapshot.c (linked into WinBoloDS) */
+/* clientSimIncomingMessage lives in client_sim.c (linked into WinBoloDS).
+ * The body delegates to clientMessageAdd, which is stubbed below — so on
+ * the server build the message-name lookup runs but the message itself is
+ * silently dropped. clientApplySnapshot also lives in client_snapshot.c. */
 void clientUiOnTick(ClientSim *cs, bool isBrain) { (void)cs; (void)isBrain; }
 void messageCreate(MessageState *ms) { (void)ms; }
 void messageDestroy(MessageState *ms) { (void)ms; }
@@ -163,8 +131,8 @@ bool scrollManual(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYT
 }
 
 
-/* screenBuildInputPacketCS lives in client_snapshot.c; screenMakeBrainInfoCS
-   and screenExtractBrainInfoCS live in brain_data.c (both linked into
+/* clientBuildInputPacket lives in client_snapshot.c; brainDataMakeInfo
+   and brainDataExtractInfo live in brain_data.c (both linked into
    WinBoloDS). */
 void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bottom) { (void)ms; (void)msgType; (void)top; (void)bottom; }
 void clientSoundDist(GameSim *sim, sndEffects value, BYTE mx, BYTE my) { (void)sim; (void)value; (void)mx; (void)my; }

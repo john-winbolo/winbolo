@@ -41,6 +41,7 @@
 #include "pillbox.h"
 #include "rubble.h"
 #include "screen.h"
+#include "brain_data.h"
 #include "screenbullet.h"
 #include "shells.h"
 #include "sounddist.h"
@@ -1168,7 +1169,7 @@ void shellsGetBrainShellsInRect(ClientSim *cs, GameSim *sim, shells *value, BYTE
       } else {
         owner = SHELLS_BRAIN_HOSTILE;
       }
-      screenAddBrainObject(cs, SHELLS_BRAIN_OBJECT_TYPE, position->x, position->y, 0, utilGet16Dir(position->angle), owner, 0);
+      brainDataAddObject(cs, SHELLS_BRAIN_OBJECT_TYPE, position->x, position->y, 0, utilGet16Dir(position->angle), owner, 0);
     }
     position = ShellsTail(position);
   }

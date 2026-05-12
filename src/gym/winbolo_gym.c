@@ -33,6 +33,7 @@
 #include "../bolo/screen.h"
 #include "../bolo/client_mapload.h"
 #include "../bolo/client_sim.h"
+#include "../bolo/client_snapshot.h"
 #include "../bolo/client_sim_control.h"
 #include "../bolo/control_event.h"
 #include "../bolo/frontend.h"
@@ -161,7 +162,7 @@ static void gymSetupGame(WinBoloGym *g) {
                             UNLIMITED_GAME_TIME, "GymAgent", 0, FALSE);
     clientSimSetAiType(g->clientSim, aiYes);
     gymSyncSnapshot(g);
-    screenNetSetupTankGoCS(g->clientSim);
+    clientNetSetupTankGo(g->clientSim);
 
     /* Register the gym client as a control-event subscriber. Placed after
      * clientLoadCompressedMap (which calls clientSimCreate) so myPlayerNum

@@ -193,7 +193,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
     }
 
     /* Server shell snapshots (other players' shells only — own shells filtered
-     * during snapshot sync in screenSyncFromSnapshotCS) */
+     * during snapshot sync in clientApplySnapshot) */
     {
       int si;
       BYTE myPlayer = clientSimGetInterpCtx(csPtr)->localPlayer;

@@ -27,6 +27,7 @@
 #include <time.h>
 #include "client_sim.h"
 #include "client_sim_internal.h"
+#include "client_snapshot.h"
 #include "client_state.h"
 #include "screen.h"
 #include "client_ui_events.h"
@@ -426,10 +427,23 @@ void clientSimSyncFromSnapshot(ClientSim *cs, const SnapshotHeader *hdr,
                                const PillSnapshot *pillSnaps, int pillCount,
                                const GameEvent *events, int eventCount,
                                BYTE playerNum) {
-  screenSyncFromSnapshotCS(cs, hdr, tanks, tankCount, shellSnaps, shellCount,
-                           tkExplSnaps, tkExplosionCount,
-                           baseSnaps, baseCount,
-                           pillSnaps, pillCount, events, eventCount, playerNum);
+  clientApplySnapshot(cs, hdr, tanks, tankCount, shellSnaps, shellCount,
+                      tkExplSnaps, tkExplosionCount,
+                      baseSnaps, baseCount,
+                      pillSnaps, pillCount, events, eventCount, playerNum);
+}
+
+void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr) {
+  char topLine[FILENAME_MAX];
+
+  topLine[0] = '\0';
+  playersMakeMessageName(cs, &clientSimGetGameSim(cs)->plyrs, clientSimGetMyPlayerNum(cs), playerNum, topLine);
+
+  if (clientSimIsInLobby(cs) && playerNum < 16) {
+    clientSimAppendLobbyChat(cs, clientSimGetLobbySlot(cs, playerNum)->playerName, messageStr);
+  } else {
+    clientMessageAdd(clientSimGetMessages(cs), (messageType) (playerNum + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  }
 }
 
 void clientSimDisplayTick(ClientSim *cs, bool isBrain) {

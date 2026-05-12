@@ -22,6 +22,7 @@
 #include "../../bolo/players.h"
 #include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
+#include "../../bolo/client_snapshot.h"
 #include "../../bolo/client_render.h"
 #include "../../bolo/input_packet.h"
 #include "../../bolo/transport.h"
@@ -540,7 +541,7 @@ static void windowRunGameTick(ClientSim *cs) {
                 }
             }
             InputPacket pkt;
-            screenBuildInputPacketCS(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
+            clientBuildInputPacket(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
             clientMutexWaitFor();
             clientSimKeysTick(cs, &pkt);
             clientMutexRelease();
@@ -566,7 +567,7 @@ static void windowRunGameTick(ClientSim *cs) {
                 }
             }
             InputPacket pkt;
-            screenBuildInputPacketCS(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
+            clientBuildInputPacket(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
             if (brainRunning == FALSE) {
                 if (uiModeIsTablet()) {
                     int gsChange = inputTouchGetGunsightChange();

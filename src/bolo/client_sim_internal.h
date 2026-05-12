@@ -81,7 +81,7 @@ struct ClientSim {
     ObjectInfo  brainObjects[1024];
     aiType      allowComputerTanks;
 
-    /* Brain event buffer — filled in clientSimSyncFromSnapshot, consumed in screenMakeBrainInfoCS */
+    /* Brain event buffer — filled in clientSimSyncFromSnapshot, consumed in brainDataMakeInfo */
     GameEvent  brainEvents[MAX_BRAIN_EVENTS];
     int        brainEventCount;
     uint32_t   lastServerTick;

@@ -34,6 +34,7 @@
 #include "messages.h"
 #include "players.h"
 #include "screen.h"
+#include "brain_data.h"
 #include "log.h"
 #include "../winbolonet/winbolonet.h"
 #include "bases.h"
@@ -1543,7 +1544,7 @@ void basesGetBrainBaseInRect(ClientSim *cs, GameSim *sim, BYTE leftPos, BYTE rig
       } else {
         armour = (BYTE) ((*value)->item[count].armour / 5);
       }
-      screenAddBrainObject(cs, BASES_BRAIN_OBJECT_TYPE, wx, wy, count, armour, owner, 0);
+      brainDataAddObject(cs, BASES_BRAIN_OBJECT_TYPE, wx, wy, count, armour, owner, 0);
     }
     count++;
   }
