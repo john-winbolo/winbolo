@@ -48,6 +48,7 @@
 
 #include "../../common/wb_log.h"
 #include "../../bolo/screen.h"
+#include "../../bolo/client_mapload.h"
 #include "../../bolo/client_sim.h"
 #include "../../bolo/frontend.h"
 #include "../../bolo/tutorial.h"
@@ -1377,7 +1378,7 @@ void windowSaveMap(ClientSim *cs) {
     SDL_WaitEventTimeout(&e, 100);
   }
   if (state.ok) {
-    if (screenSaveMapCS(cs, state.path) == FALSE) {
+    if (clientSaveMap(cs, state.path) == FALSE) {
       imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBERR_SAVEMAP),
                         IMGUI_MSG_ERROR, IMGUI_MSG_OK);
     }

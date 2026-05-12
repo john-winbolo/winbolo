@@ -116,7 +116,7 @@ static inline struct ClientSim *clientSimFromSim(struct GameSim *sim) {
  *PURPOSE:
  *  Allocates a ClientSim on the heap, zero-initialised.
  *  Caller must follow with clientSimCreate() or
- *  screenLoadCompressedMapCS() to populate before use.
+ *  clientLoadCompressedMap() to populate before use.
  *  Pairs with clientSimDestroy, which frees the pointer.
  *
  *  After ClientSim opacity, external callers cannot
