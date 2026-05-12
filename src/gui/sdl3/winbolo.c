@@ -286,8 +286,8 @@ int main(int argc, char *argv[]) {
   winboloQuit = FALSE;
   while (winboloQuit == FALSE) {
     /* Show lobby dialog if the server uses lobby mode */
-    if (cs && cs->inLobby &&
-        (cs->netStat == netLobby || cs->netStat == netLobbyCountdown)) {
+    if (cs && clientSimIsInLobby(cs) &&
+        (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
       const DialogBackend *db = dialogBackendGet();
       int lobbyResult = db->lobbyShow(cs);
       if (lobbyResult == 0) {
@@ -312,7 +312,7 @@ int main(int argc, char *argv[]) {
         }
         continue;
       }
-      cs->netStat = netRunning;
+      clientSimSetNetStatus(cs, netRunning);
       simTickCounter = 0;
       justKeysFlag = FALSE;
       /* Set Steam rich presence now that the game is running */
@@ -452,8 +452,8 @@ int main(int argc, char *argv[]) {
         }
 
         /* Detect game-over returning to lobby */
-        if (cs && cs->inLobby &&
-            (cs->netStat == netLobby || cs->netStat == netLobbyCountdown)) {
+        if (cs && clientSimIsInLobby(cs) &&
+            (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
           returnToLobby = TRUE;
           done = TRUE;
         }
@@ -608,7 +608,7 @@ static void windowRunGameTick(ClientSim *cs) {
     while ((ttick - oldTick) > GAME_TICK_LENGTH) {
       if (doingTutorial == FALSE) {
         BYTE myPlayerNum = gameFrontGetPlayerNum();
-        if (cs->netStat == netLobby || cs->netStat == netLobbyCountdown) {
+        if (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown) {
           /* Lobby/countdown: just tick the transport to receive packets */
           transport->tick(transport->ctx);
           justKeysFlag = !justKeysFlag; /* Alternate to maintain tick cadence */
@@ -740,7 +740,7 @@ static void windowRunGameTick(ClientSim *cs) {
   dwSysGame += (winboloTimer() - ttick);
 
   /* AI */
-  if (used == TRUE && inBrain == FALSE && brainRunning == TRUE && cs->netStat != netFailed) {
+  if (used == TRUE && inBrain == FALSE && brainRunning == TRUE && clientSimGetNetStatus(cs) != netFailed) {
     clientMutexWaitFor();
     inBrain = TRUE;
     clientMutexRelease();
@@ -1190,7 +1190,7 @@ void windowShowPillLabels_toggle(ClientSim *cs) {
 
   showPillLabels = !showPillLabels;
   sdl3DrawSetPillsStatusClear();
-  total = pillsGetNumPills(&cs->sim.pb);
+  total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
   for (count = 1; count <= total; count++) {
     BYTE pillStat = screenPillAllianceCS(cs, count);
     sdl3DrawStatusPillbox(count, pillStat, showPillLabels);
@@ -1203,7 +1203,7 @@ void windowShowBaseLabels_toggle(ClientSim *cs) {
 
   showBaseLabels = !showBaseLabels;
   sdl3DrawSetBasesStatusClear();
-  total = basesGetNumBases(&cs->sim.bs);
+  total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
   for (count = 1; count <= total; count++) {
     BYTE baseStat = screenBaseAllianceCS(cs, count);
     sdl3DrawStatusBase(count, baseStat, showBaseLabels);
@@ -1424,7 +1424,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
     bool showCursor;
 
     showCursor = screenGetCursorPosCS(cs, &cursorX, &cursorY);
-    sdl3DrawSetNetFailed(cs->netStat == netFailed);
+    sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
     sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                        NULL, showPillLabels, showBaseLabels,
                        srtDelay, isPillView, edgeX, edgeY,

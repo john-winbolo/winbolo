@@ -1501,14 +1501,14 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   } else {
     sdl3DrawSetBasesStatusClear();
     {
-      BYTE total = basesGetNumBases(&cs->sim.bs);
+      BYTE total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
       for (BYTE i = 1; i <= total; i++) {
         sdl3DrawStatusBase(i, screenBaseAllianceCS(cs, i), showBaseLabels);
       }
     }
     sdl3DrawSetPillsStatusClear();
     {
-      BYTE total = pillsGetNumPills(&cs->sim.pb);
+      BYTE total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
       for (BYTE i = 1; i <= total; i++) {
         sdl3DrawStatusPillbox(i, screenPillAllianceCS(cs, i), showPillLabels);
       }
@@ -1652,14 +1652,14 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
   } else {
     sdl3DrawSetBasesStatusClear();
     {
-      BYTE total = basesGetNumBases(&cs->sim.bs);
+      BYTE total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
       for (BYTE i = 1; i <= total; i++) {
         sdl3DrawStatusBase(i, screenBaseAllianceCS(cs, i), showBasesStatus);
       }
     }
     sdl3DrawSetPillsStatusClear();
     {
-      BYTE total = pillsGetNumPills(&cs->sim.pb);
+      BYTE total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
       for (BYTE i = 1; i <= total; i++) {
         sdl3DrawStatusPillbox(i, screenPillAllianceCS(cs, i), showPillsStatus);
       }
@@ -1764,14 +1764,14 @@ void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
   } else {
     sdl3DrawSetBasesStatusClear();
     {
-      BYTE total = basesGetNumBases(&cs->sim.bs);
+      BYTE total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
       for (BYTE i = 1; i <= total; i++) {
         sdl3DrawStatusBase(i, screenBaseAllianceCS(cs, i), FALSE);
       }
     }
     sdl3DrawSetPillsStatusClear();
     {
-      BYTE total = pillsGetNumPills(&cs->sim.pb);
+      BYTE total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
       for (BYTE i = 1; i <= total; i++) {
         sdl3DrawStatusPillbox(i, screenPillAllianceCS(cs, i), FALSE);
       }
@@ -2083,14 +2083,14 @@ void sdl3DrawTabletStatusGrids(ClientSim *cs) {
 
   sdl3DrawSetBasesStatusClear();
   {
-    BYTE total = basesGetNumBases(&cs->sim.bs);
+    BYTE total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
     for (BYTE i = 1; i <= total; i++) {
       sdl3DrawStatusBase(i, screenBaseAllianceCS(cs, i), FALSE);
     }
   }
   sdl3DrawSetPillsStatusClear();
   {
-    BYTE total = pillsGetNumPills(&cs->sim.pb);
+    BYTE total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
     for (BYTE i = 1; i <= total; i++) {
       sdl3DrawStatusPillbox(i, screenPillAllianceCS(cs, i), FALSE);
     }

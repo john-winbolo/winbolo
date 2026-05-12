@@ -741,7 +741,8 @@ void obsBuildMultiView(struct ClientSim *cs, const BrainInfo *tankBi, WinBoloObs
         if (obsPillCoveredByTankView((int)p.x, (int)p.y, tank_tx, tank_ty)) continue;
 
         /* Gather dynamic objects from this pill's 15x15 view rect.
-         * Use the engine's rect-gathering functions which write to cs->brainObjects. */
+         * Use the engine's rect-gathering functions which write to the
+         * brain-object storage (clientSimGetBrainObjects). */
         unsigned short *numObj = clientSimGetBrainsNumObjects(cs);
         *numObj = 0;
 

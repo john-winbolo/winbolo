@@ -866,3 +866,6 @@ void clientSimSetLabelOwnTank(ClientSim *cs, bool v)          { cs->labelOwnTank
 void clientSimSetMyLastPlayerName(ClientSim *cs, const char *name) {
   strcpy(cs->myLastPlayerName, name);
 }
+
+void clientSimSetInLobby(ClientSim *cs, bool v)             { cs->inLobby = v; }
+void clientSimSetMapDownloadComplete(ClientSim *cs, bool v) { cs->mapDownloadComplete = v; }
