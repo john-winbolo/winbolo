@@ -43,11 +43,6 @@ extern "C" {
 #include "../../../bolo/transport_udp.h"
 #include "../../../server/server_lifecycle.h"
 #include "../../../server/server_sim.h"
-/* TODO(opaque-sims-migration): imgui_lobby.cpp's SP branches mutate
- * spServerSim's internal layout (lobbyPlayers[].teamNumber, teams[i],
- * botBrainPaths[], etc.). Tracked as a follow-up — see the merge
- * commit message. */
-#include "../../../server/server_sim_internal.h"
 #include "../../../bolo/bolo_map.h"
 #include "../../../bolo/pillbox.h"
 #include "../../../bolo/bases.h"
@@ -129,14 +124,14 @@ static void lobbySendAddBot(ClientSim *cs, Transport *transport,
     if (cs && cs->isSinglePlayer) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim) return;
-        if (sim->state != serverStateLobby) return;
+        if (serverSimGetState(sim) != serverStateLobby) return;
         /* Find first free slot */
         BYTE slot;
         for (slot = 1; slot < MAX_TANKS; slot++) {
-            if (!sim->playerConnected[slot]) break;
+            if (!serverSimIsPlayerConnected(sim, slot)) break;
         }
         if (slot >= MAX_TANKS) return;
-        if (sim->botBrainPath[0] == '\0') return;
+        if (serverSimGetBotBrainPath(sim)[0] == '\0') return;
 
         /* Pick a name. If a pool override is supplied we use it; else
          * fall back to "Bot N". Build the used-names list from current
@@ -146,7 +141,7 @@ static void lobbySendAddBot(ClientSim *cs, Transport *transport,
             const char *usedNames[MAX_TANKS];
             int usedCount = 0;
             for (int i = 0; i < MAX_TANKS; i++) {
-                if (sim->playerConnected[i]) {
+                if (serverSimIsPlayerConnected(sim, i)) {
                     usedNames[usedCount++] = cs->lobbySlots[i].playerName;
                 }
             }
@@ -155,16 +150,15 @@ static void lobbySendAddBot(ClientSim *cs, Transport *transport,
             snprintf(botName, sizeof(botName), "Bot %d", slot);
         }
 
-        botManagerAddBot(sim, slot, sim->botBrainPath, botName,
-                         (aiType)sim->botAiType,
+        botManagerAddBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
+                         (aiType)serverSimGetBotAiType(sim),
                          (gameType)cs->lobbyGameType,
                          cs->lobbyHiddenMines);
         /* Mirror the path into the per-bot table so the AiConfig combo
          * reflects "this bot's brain" rather than a global default. */
-        SDL_strlcpy(sim->botBrainPaths[slot], sim->botBrainPath,
-                    sizeof(sim->botBrainPaths[slot]));
+        serverSimSetBotBrainPathFor(sim, slot, serverSimGetBotBrainPath(sim));
         if (teamNumber > 0 && teamNumber < MAX_TANKS) {
-            sim->lobbyPlayers[slot].teamNumber = teamNumber;
+            serverSimSetTeam(sim, slot, teamNumber);
         }
         /* Bot's name came from the pool — not an override. */
         s_botNameOverridden[slot] = false;
@@ -205,7 +199,7 @@ static void lobbySendRemoveBot(ClientSim *cs, Transport *transport, uint8_t slot
     if (cs && cs->isSinglePlayer) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim) return;
-        if (sim->state != serverStateLobby) return;
+        if (serverSimGetState(sim) != serverStateLobby) return;
         botManagerRemoveBot(sim, slot);
         if (slot < MAX_TANKS) s_botNameOverridden[slot] = false;
         serverSimSyncLobbyToClient(sim, cs);
@@ -223,7 +217,7 @@ static void lobbySendTeamSet(ClientSim *cs, Transport *transport,
     if (cs && cs->isSinglePlayer) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim || targetSlot >= MAX_TANKS) return;
-        sim->lobbyPlayers[targetSlot].teamNumber = teamNumber;
+        serverSimSetTeam(sim, targetSlot, teamNumber);
         serverSimSyncLobbyToClient(sim, cs);
         return;
     }
@@ -244,17 +238,22 @@ static void lobbySendBotConfig(ClientSim *cs, Transport *transport,
     if (cs && cs->isSinglePlayer) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim || slot >= MAX_TANKS) return;
-        if (sim->state != serverStateLobby) return;
+        if (serverSimGetState(sim) != serverStateLobby) return;
         if (difficulty > 2 || personality > 3) return;
-        if (!sim->lobbyPlayers[slot].isBot) return;
-        sim->botConfigs[slot].difficulty  = difficulty;
-        sim->botConfigs[slot].personality = personality;
+        if (!serverSimGetLobbyPlayer(sim, slot)->isBot) return;
+        {
+            LobbyBotConfig *bc = serverSimGetBotConfigMut(sim, slot);
+            if (bc) {
+                bc->difficulty  = difficulty;
+                bc->personality = personality;
+            }
+        }
         if (name && name[0] != '\0') {
             char nameBuf[32];
             strncpy(nameBuf, name, sizeof(nameBuf) - 1);
             nameBuf[sizeof(nameBuf) - 1] = '\0';
             char loc[3] = "??";
-            playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, slot,
+            playersSetPlayer(NULL, &serverSimGetGameSim(sim)->plyrs, NEUTRAL, slot,
                              nameBuf, loc,
                              0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
         }
@@ -275,11 +274,11 @@ static void lobbySendSetBotBrain(ClientSim *cs, Transport *transport,
     if (cs && cs->isSinglePlayer) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim || slot >= MAX_TANKS) return;
-        if (sim->state != serverStateLobby) return;
-        if (!sim->lobbyPlayers[slot].isBot) return;
-        SDL_strlcpy(sim->botBrainPaths[slot], brainPath,
-                    sizeof(sim->botBrainPaths[slot]));
-        botManagerSetBrainPath(slot, sim->botBrainPaths[slot]);
+        if (serverSimGetState(sim) != serverStateLobby) return;
+        if (!serverSimGetLobbyPlayer(sim, slot)->isBot) return;
+        serverSimSetBotBrainPathFor(sim, slot, brainPath);
+        botManagerSetBrainPath(slot,
+                               serverSimGetBotBrainPathFor(sim, slot));
         serverSimSyncLobbyToClient(sim, cs);
         return;
     }
@@ -296,7 +295,10 @@ static void lobbySendTeamClear(ClientSim *cs, Transport *transport,
     if (cs && cs->isSinglePlayer) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
-        memset(&sim->teams[teamId], 0, sizeof(sim->teams[teamId]));
+        {
+            TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
+            if (t) memset(t, 0, sizeof(*t));
+        }
         serverSimSyncLobbyToClient(sim, cs);
         return;
     }
@@ -316,7 +318,8 @@ static void lobbySendTeamPool(ClientSim *cs, Transport *transport,
     if (cs && cs->isSinglePlayer) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
-        TeamMetadata *t = &sim->teams[teamId];
+        TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
+        if (!t) return;
         t->in_use = 1;
         t->namingPool = namingPool;
         if (teamName && teamName[0]) {
@@ -333,14 +336,14 @@ static void lobbySendTeamPool(ClientSim *cs, Transport *transport,
         const char *usedNames[MAX_TANKS];
         int usedCount = 0;
         for (int i = 0; i < MAX_TANKS; i++) {
-            if (sim->playerConnected[i]) {
+            if (serverSimIsPlayerConnected(sim, i)) {
                 usedNames[usedCount++] = cs->lobbySlots[i].playerName;
             }
         }
         for (int slot = 0; slot < MAX_TANKS; slot++) {
-            if (!sim->playerConnected[slot]) continue;
-            if (!sim->lobbyPlayers[slot].isBot) continue;
-            if (sim->lobbyPlayers[slot].teamNumber != teamId) continue;
+            if (!serverSimIsPlayerConnected(sim, slot)) continue;
+            if (!serverSimGetLobbyPlayer(sim, slot)->isBot) continue;
+            if (serverSimGetLobbyPlayer(sim, slot)->teamNumber != teamId) continue;
             if (s_botNameOverridden[slot]) continue;
 
             char pickBuf[32];
@@ -421,48 +424,53 @@ static void lobbySendSetting(ClientSim *cs, Transport *transport,
     if (cs && cs->isSinglePlayer) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim) return;
-        if (sim->state != serverStateLobby) return;
+        if (serverSimGetState(sim) != serverStateLobby) return;
         switch (settingType) {
             case 1 /* LST_GAME_TYPE */:
                 /* gameType enum is 1..3 (Open / Tournament / Strict).
                  * The wire carries the raw enum value. */
                 if (valueLen == 1 && value[0] >= 1 && value[0] <= 3) {
-                    sim->sim.game = (gameType)value[0];
+                    serverSimGetGameSim(sim)->game = (gameType)value[0];
                 }
                 break;
             case 2 /* LST_HIDDEN_MINES */:
-                if (valueLen == 1) sim->sim.hiddenMines = value[0] != 0;
+                if (valueLen == 1) serverSimGetGameSim(sim)->hiddenMines = value[0] != 0;
                 break;
             case 3 /* LST_AI_POLICY */:
                 if (valueLen == 1 && value[0] <= 3) {
-                    sim->aiPolicy = value[0];
-                    sim->botAiType = (aiType)value[0];
+                    serverSimSetAiPolicy(sim, value[0]);
+                    serverSimSetBotAiType(sim, (aiType)value[0]);
                 }
                 break;
-            case 4 /* LST_TIME_LIMIT */:
+            case 4 /* LST_TIME_LIMIT */: {
                 if (valueLen == 1) {
-                    sim->timeLimit = value[0] != 0;
+                    bool tl = value[0] != 0;
+                    serverSimSetTimeLimit(sim, tl);
                     /* When the host turns the time limit off, gameLength
                      * goes to TIME_UNLIMITED; on, derive from current
-                     * timeMinutes mirror so the lobby still reflects
-                     * the previously-set value. */
-                    if (!sim->timeLimit) {
-                        sim->gameLength = -1;
-                    } else if (sim->timeMinutes > 0) {
-                        sim->gameLength = (int32_t)sim->timeMinutes * 60 * 50;
+                     * timeMinutes mirror. */
+                    if (!tl) {
+                        serverSimSetGameLength(sim, -1);
+                    } else if (serverSimGetTimeMinutes(sim) > 0) {
+                        serverSimSetGameLength(sim,
+                            (int32_t)serverSimGetTimeMinutes(sim) * 60 * 50);
                     }
                 }
                 break;
-            case 5 /* LST_TIME_MINUTES */:
+            }
+            case 5 /* LST_TIME_MINUTES */: {
                 if (valueLen == 2) {
-                    sim->timeMinutes = (uint16_t)((value[0] << 8) | value[1]);
-                    if (sim->timeLimit) {
-                        sim->gameLength = (int32_t)sim->timeMinutes * 60 * 50;
+                    uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
+                    serverSimSetTimeMinutes(sim, mins);
+                    if (serverSimGetTimeLimit(sim)) {
+                        serverSimSetGameLength(sim,
+                            (int32_t)mins * 60 * 50);
                     }
                 }
                 break;
+            }
             case 6 /* LST_AUTO_LOCK_ON_GAME */:
-                if (valueLen == 1) sim->autoLockOnGameStart = value[0] != 0;
+                if (valueLen == 1) serverSimSetAutoLockOnGameStart(sim, value[0] != 0);
                 break;
         }
         serverSimSyncLobbyToClient(sim, cs);
@@ -738,8 +746,8 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                      * Multiplayer: existing PACKET_LOBBY_TEAM_META. */
                     if (cs->isSinglePlayer) {
                         ServerSim *spSim = gameFrontGetSinglePlayerServerSim();
-                        if (spSim) {
-                            TeamMetadata *tm = &spSim->teams[t];
+                        TeamMetadata *tm = serverSimGetTeamMetaMut(spSim, t);
+                        if (spSim && tm) {
                             tm->in_use = 1;
                             tm->color = color;
                             tm->namingPool = 0;

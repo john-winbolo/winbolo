@@ -35,13 +35,6 @@
 #include "game_sim.h"
 #include "../server/geolookup.h"
 #include "../server/server_sim.h"
-/* TODO(opaque-sims-migration): transport_udp_server.c still reaches
- * into ServerSim through the internal struct definition.  The
- * opaque-sims branch wants this file to use the accessor/mutator API
- * exclusively (the documented allowed list of server_sim_internal.h
- * includers is server_sim.c + server_lifecycle.c).  Tracked as a
- * follow-up — see the merge commit message. */
-#include "../server/server_sim_internal.h"
 #include "../server/server_lifecycle.h"
 #include "control_event.h"
 #include "../winbolonet/winbolonet.h"
@@ -1851,7 +1844,7 @@ static void transportUdpServerSendLobbyStateToClient(ServerSim *sim, int clientI
     {
         int t;
         for (t = 1; t < MAX_TANKS; t++) {
-            if (sim->teams[t].in_use) {
+            if ((*serverSimGetTeamMetaMut(sim, t)).in_use) {
                 transportUdpServerBroadcastLobbyTeamMetaChg(sim, (uint8_t)t);
             }
         }
@@ -1863,17 +1856,17 @@ static void transportUdpServerSendLobbyStateToClient(ServerSim *sim, int clientI
     {
         int i;
         for (i = 0; i < MAX_TANKS; i++) {
-            if (sim->playerConnected[i] && sim->lobbyPlayers[i].isBot &&
-                sim->botBrainPaths[i][0] != '\0') {
+            if (serverSimIsPlayerConnected(sim, i) && serverSimGetLobbyPlayer(sim, i)->isBot &&
+                serverSimGetBotBrainPathFor(sim, i)[0] != '\0') {
                 uint8_t bb[PACKET_HEADER_SIZE + 2 + BRAIN_LIST_PATH_LEN];
-                int p = (int)strnlen(sim->botBrainPaths[i],
+                int p = (int)strnlen(serverSimGetBotBrainPathFor(sim, i),
                                      BRAIN_LIST_PATH_LEN - 1);
                 packHeader(bb, PACKET_LOBBY_BOT_BRAIN_CHG,
                            udpServer.clients[clientIdx].outSequence++);
                 bb[PACKET_HEADER_SIZE + 0] = (uint8_t)i;
                 bb[PACKET_HEADER_SIZE + 1] = (uint8_t)p;
                 if (p > 0) memcpy(bb + PACKET_HEADER_SIZE + 2,
-                                  sim->botBrainPaths[i], p);
+                                  serverSimGetBotBrainPathFor(sim, i), p);
                 udpSendTo(udpServer.sock, bb, PACKET_HEADER_SIZE + 2 + p,
                           &udpServer.clients[clientIdx].addr);
             }
@@ -2040,7 +2033,7 @@ void transportUdpServerNotifyMapChange(ServerSim *sim) {
      * actually in lobby state; mid-game map swaps (where this can be
      * called via random map regeneration) skip the unready since
      * everyone's mid-round anyway. */
-    if (sim->state == serverStateLobby) {
+    if (serverSimGetState(sim) == serverStateLobby) {
         transportUdpServerBroadcastLobbyAutoUnready(sim);
     }
 }
@@ -2129,7 +2122,7 @@ void transportUdpServerBroadcastLobbyTeamMetaChg(ServerSim *sim, uint8_t teamId)
     const TeamMetadata *t;
 
     if (teamId == 0 || teamId >= MAX_TANKS) return;
-    t = &sim->teams[teamId];
+    t = &(*serverSimGetTeamMetaMut(sim, teamId));
 
     /* Compute name length, clamped to LOBBY_TEAM_NAME_LEN-1. */
     nameLen = (int)strnlen(t->name, LOBBY_TEAM_NAME_LEN - 1);
@@ -2152,7 +2145,7 @@ void transportUdpServerBroadcastLobbyBotBrainChg(ServerSim *sim, uint8_t slot) {
     const char *path;
 
     if (slot >= MAX_TANKS) return;
-    path = sim->botBrainPaths[slot];
+    path = serverSimGetBotBrainPathFor(sim, slot);
     pathLen = (int)strnlen(path, BRAIN_LIST_PATH_LEN - 1);
 
     packHeader(buf, PACKET_LOBBY_BOT_BRAIN_CHG, 0);
@@ -2166,7 +2159,7 @@ void transportUdpServerBroadcastLobbyBotBrainChg(ServerSim *sim, uint8_t slot) {
 /* Send the available-brains catalogue to a single newly-joined client.
  * Format: [count 1] then per-entry [nameLen 1][name][verLen 1][ver][pathLen 1][path]. */
 static void transportUdpServerSendLobbyBrainList(ServerSim *sim, int clientIdx) {
-    const BrainList *list = &sim->brainList;
+    const BrainList *list = &(*serverSimGetBrainList(sim));
     /* Worst case: 1 count + 16 entries * (3 lenbytes + 32 + 24 + 256). */
     uint8_t buf[PACKET_HEADER_SIZE + 1 +
                 BRAIN_LIST_MAX * (3 + BRAIN_LIST_NAME_LEN +
@@ -2203,8 +2196,8 @@ void transportUdpServerBroadcastLobbyBotConfigChg(ServerSim *sim, uint8_t slot) 
 
     packHeader(buf, PACKET_LOBBY_BOT_CONFIG_CHG, 0);
     buf[PACKET_HEADER_SIZE + 0] = slot;
-    buf[PACKET_HEADER_SIZE + 1] = sim->botConfigs[slot].difficulty;
-    buf[PACKET_HEADER_SIZE + 2] = sim->botConfigs[slot].personality;
+    buf[PACKET_HEADER_SIZE + 1] = serverSimGetBotConfig(sim, slot)->difficulty;
+    buf[PACKET_HEADER_SIZE + 2] = serverSimGetBotConfig(sim, slot)->personality;
     buf[PACKET_HEADER_SIZE + 3] = (uint8_t)nameLen;
     if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 4, name, nameLen);
     len = PACKET_HEADER_SIZE + 4 + nameLen;
@@ -2227,15 +2220,15 @@ void transportUdpServerBroadcastLobbyAutoUnready(ServerSim *sim) {
      * countdown — the human's Ready click wouldn't launch a game with
      * bots filling the other slots. */
     for (i = 0; i < MAX_TANKS; i++) {
-        if (sim->lobbyPlayers[i].isBot) continue;
-        if (sim->lobbyPlayers[i].ready) {
-            sim->lobbyPlayers[i].ready = FALSE;
+        if (serverSimGetLobbyPlayer(sim, i)->isBot) continue;
+        if (serverSimGetLobbyPlayer(sim, i)->ready) {
+            serverSimGetLobbyPlayerMut(sim, i)->ready = FALSE;
         }
     }
     /* If a countdown was in flight, cancel it. */
-    if (sim->state == serverStateCountdown) {
-        sim->state = serverStateLobby;
-        sim->countdownTicks = 0;
+    if (serverSimGetState(sim) == serverStateCountdown) {
+        serverSimSetState(sim, serverStateLobby);
+        serverSimSetCountdownTicks(sim, 0);
     }
     packHeader(buf, PACKET_LOBBY_AUTO_UNREADY, 0);
     lobbyBroadcastBuf(buf, sizeof(buf));
@@ -2260,12 +2253,12 @@ static bool lobbyClientMayEdit(ServerSim *sim, int clientIdx) {
     if (clientIdx == 0) return TRUE;  /* slot 0 = host */
     /* Admin-flagged players (matched -admins IP) have host-level
      * authority regardless of the openHost toggle. */
-    if (sim->playerConnected[clientIdx] &&
-        (playersGetClientFlags(&sim->sim.plyrs, (BYTE)clientIdx)
+    if (serverSimIsPlayerConnected(sim, clientIdx) &&
+        (playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs, (BYTE)clientIdx)
          & PLAYER_FLAG_ADMIN)) {
         return TRUE;
     }
-    return sim->openHost && sim->playerConnected[clientIdx];
+    return serverSimGetOpenHost(sim) && serverSimIsPlayerConnected(sim, clientIdx);
 }
 
 void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
@@ -2351,7 +2344,7 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
     pkt.has_password = udpServer.password[0] != '\0' ? 1 : 0;
     /* Layout A — co-opt spare2 for the LOBBY_LOCK_* bitmask (5 bits
      * used today). Tracker clients render lock badges per setting. */
-    pkt.spare2 = (BYTE)(sim->serverLocks & 0xFF);
+    pkt.spare2 = (BYTE)(serverSimGetServerLocks(sim) & 0xFF);
 
     sendto(udpServer.sock, (const char *)&pkt, sizeof(pkt), 0,
            (const struct sockaddr *)&dest, sizeof(dest));
@@ -3062,8 +3055,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_SET_SETTING: {
             /* Wire: [header 8] [settingType 1] [valueLen 1] [value N] */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !sim->lobbyEnabled ||
-                sim->state != serverStateLobby ||
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
                 len < PACKET_HEADER_SIZE + 2) break;
             if (!lobbyClientMayEdit(sim, clientIdx)) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
@@ -3095,7 +3088,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 /* Unknown setting — silently drop (forward-compat). */
                 break;
             }
-            if (sim->serverLocks & lockBit) {
+            if (serverSimGetServerLocks(sim) & lockBit) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
                               LOBBY_REJECT_LOCKED);
                 break;
@@ -3109,55 +3102,57 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                      * gameStrictTournament=3. The wire carries the raw enum
                      * value (matches the LOBBY_STATE pack format). */
                     if (valueLen == 1 && value[0] >= 1 && value[0] <= 3) {
-                        sim->sim.game = (gameType)value[0];
+                        serverSimGetGameSim(sim)->game = (gameType)value[0];
                     } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
                                            LOBBY_REJECT_INVALID); break; }
                     break;
                 case LST_HIDDEN_MINES:
-                    if (valueLen == 1) sim->sim.hiddenMines = value[0] != 0;
+                    if (valueLen == 1) serverSimGetGameSim(sim)->hiddenMines = value[0] != 0;
                     break;
                 case LST_AI_POLICY:
                     if (valueLen == 1 && value[0] <= 3) {
-                        sim->aiPolicy = value[0];
+                        serverSimSetAiPolicy(sim, value[0]);
                         /* botAiType is the field packed into LOBBY_STATE
                          * and gates the AddBot handler. Keep it in sync
                          * or the next periodic LOBBY_STATE rebroadcast
                          * snaps every client back to the CLI startup
                          * value. */
-                        sim->botAiType = (aiType)value[0];
+                        serverSimSetBotAiType(sim, (aiType)value[0]);
                     } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
                                            LOBBY_REJECT_INVALID); break; }
                     break;
                 case LST_TIME_LIMIT:
                     if (valueLen == 1) {
-                        sim->timeLimit = value[0] != 0;
-                        /* LOBBY_STATE packs sim->gameLength, not
-                         * sim->timeLimit. Without keeping them in
-                         * sync, the next periodic rebroadcast snaps
+                        bool tl = value[0] != 0;
+                        serverSimSetTimeLimit(sim, tl);
+                        /* LOBBY_STATE packs sim->gameLength, not the
+                         * timeLimit bool. Keep them in sync so the
+                         * next periodic rebroadcast doesn't snap
                          * clients back to the previous on/off state. */
-                        if (sim->timeLimit) {
-                            uint16_t mins = sim->timeMinutes > 0
-                                ? sim->timeMinutes : 30;
-                            sim->gameLength = (int32_t)mins * 60
-                                            * GAME_NUMGAMETICKS_SEC;
+                        if (tl) {
+                            uint16_t mins = serverSimGetTimeMinutes(sim) > 0
+                                ? serverSimGetTimeMinutes(sim) : 30;
+                            serverSimSetGameLength(sim,
+                                (int32_t)mins * 60 * GAME_NUMGAMETICKS_SEC);
                         } else {
-                            sim->gameLength = UNLIMITED_GAME_TIME;
+                            serverSimSetGameLength(sim, UNLIMITED_GAME_TIME);
                         }
                     }
                     break;
                 case LST_TIME_MINUTES:
                     if (valueLen == 2) {
-                        sim->timeMinutes =
+                        uint16_t mins =
                             (uint16_t)((value[0] << 8) | value[1]);
-                        if (sim->timeLimit) {
-                            sim->gameLength = (int32_t)sim->timeMinutes
-                                            * 60 * GAME_NUMGAMETICKS_SEC;
+                        serverSimSetTimeMinutes(sim, mins);
+                        if (serverSimGetTimeLimit(sim)) {
+                            serverSimSetGameLength(sim,
+                                (int32_t)mins * 60 * GAME_NUMGAMETICKS_SEC);
                         }
                     } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
                                            LOBBY_REJECT_INVALID); break; }
                     break;
                 case LST_AUTO_LOCK_ON_GAME:
-                    if (valueLen == 1) sim->autoLockOnGameStart = value[0] != 0;
+                    if (valueLen == 1) serverSimSetAutoLockOnGameStart(sim, value[0] != 0);
                     break;
             }
 
@@ -3169,15 +3164,15 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_OPEN_HOST: {
             /* Wire: [header 8] [bool 1]. Host-only. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx != 0 || !sim->lobbyEnabled ||
-                sim->state != serverStateLobby ||
+            if (clientIdx != 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
                 len < PACKET_HEADER_SIZE + 1) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_OPEN_HOST,
                               LOBBY_REJECT_NOT_HOST);
                 break;
             }
-            sim->openHost = buf[PACKET_HEADER_SIZE] != 0;
-            transportUdpServerBroadcastLobbyOpenHostChg(sim, sim->openHost);
+            serverSimSetOpenHost(sim, buf[PACKET_HEADER_SIZE] != 0);
+            transportUdpServerBroadcastLobbyOpenHostChg(sim, serverSimGetOpenHost(sim));
             transportUdpServerBroadcastLobbyAutoUnready(sim);
             break;
         }
@@ -3185,8 +3180,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             /* Wire: [header 8] [teamId 1] [color 1] [namingPool 1]
              *       [nameLen 1] [name N] */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !sim->lobbyEnabled ||
-                sim->state != serverStateLobby ||
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
                 len < PACKET_HEADER_SIZE + 4) break;
             if (!lobbyClientMayEdit(sim, clientIdx)) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_META,
@@ -3202,7 +3197,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_META,
                               LOBBY_REJECT_INVALID); break;
             }
-            TeamMetadata *t = &sim->teams[teamId];
+            TeamMetadata *t = &(*serverSimGetTeamMetaMut(sim, teamId));
             t->in_use = 1;
             t->color = color;
             t->namingPool = namingPool;
@@ -3217,8 +3212,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_TEAM_CLEAR: {
             /* Wire: [header 8] [teamId 1] */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !sim->lobbyEnabled ||
-                sim->state != serverStateLobby ||
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
                 len < PACKET_HEADER_SIZE + 1) break;
             if (!lobbyClientMayEdit(sim, clientIdx)) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_CLEAR,
@@ -3229,7 +3224,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_CLEAR,
                               LOBBY_REJECT_INVALID); break;
             }
-            memset(&sim->teams[teamId], 0, sizeof(TeamMetadata));
+            memset(&(*serverSimGetTeamMetaMut(sim, teamId)), 0, sizeof(TeamMetadata));
             transportUdpServerBroadcastLobbyTeamMetaChg(sim, teamId);
             transportUdpServerBroadcastLobbyAutoUnready(sim);
             break;
@@ -3238,8 +3233,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             /* Wire: [header 8] [slot 1] [difficulty 1] [personality 1]
              *       [nameLen 1] [name N] */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !sim->lobbyEnabled ||
-                sim->state != serverStateLobby ||
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
                 len < PACKET_HEADER_SIZE + 4) break;
             if (!lobbyClientMayEdit(sim, clientIdx)) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
@@ -3256,8 +3251,13 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
                               LOBBY_REJECT_INVALID); break;
             }
-            sim->botConfigs[slot].difficulty  = difficulty;
-            sim->botConfigs[slot].personality = personality;
+            {
+                LobbyBotConfig *bc = serverSimGetBotConfigMut(sim, slot);
+                if (bc) {
+                    bc->difficulty  = difficulty;
+                    bc->personality = personality;
+                }
+            }
             if (nameLen > 0) {
                 char name[PACKET_MAX_PLAYER_NAME];
                 memset(name, 0, sizeof(name));
@@ -3271,8 +3271,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_SET_BOT_BRAIN: {
             /* Wire: [header 8] [slot 1] [pathLen 1] [path N]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !sim->lobbyEnabled ||
-                sim->state != serverStateLobby ||
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
                 len < PACKET_HEADER_SIZE + 2) break;
             if (!lobbyClientMayEdit(sim, clientIdx)) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_BOT_BRAIN,
@@ -3286,12 +3286,15 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_BOT_BRAIN,
                               LOBBY_REJECT_INVALID); break;
             }
-            memset(sim->botBrainPaths[slot], 0, sizeof(sim->botBrainPaths[slot]));
-            if (pathLen > 0) {
-                memcpy(sim->botBrainPaths[slot], buf + PACKET_HEADER_SIZE + 2,
-                       pathLen);
+            {
+                char pathBuf[260];
+                memset(pathBuf, 0, sizeof(pathBuf));
+                if (pathLen > 0 && pathLen < sizeof(pathBuf)) {
+                    memcpy(pathBuf, buf + PACKET_HEADER_SIZE + 2, pathLen);
+                }
+                serverSimSetBotBrainPathFor(sim, slot, pathBuf);
+                botManagerSetBrainPath(slot, pathBuf);
             }
-            botManagerSetBrainPath(slot, sim->botBrainPaths[slot]);
             transportUdpServerBroadcastLobbyBotBrainChg(sim, slot);
             transportUdpServerBroadcastLobbyAutoUnready(sim);
             break;
@@ -3299,8 +3302,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_KICK: {
             /* Wire: [header 8] [slot 1]. Host-only. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx != 0 || !sim->lobbyEnabled ||
-                sim->state != serverStateLobby ||
+            if (clientIdx != 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
                 len < PACKET_HEADER_SIZE + 1) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_KICK,
                               LOBBY_REJECT_NOT_HOST); break;

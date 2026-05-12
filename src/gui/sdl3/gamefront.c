@@ -58,10 +58,6 @@
 #include "../brainsHandler.h"
 #include "../clientmutex.h"
 #include "../gamefront.h"
-/* TODO(opaque-sims-migration): gamefront.c reaches into ServerSim's
- * internal layout in the SP lobby / start-game paths. Tracked as a
- * follow-up — see the merge commit. */
-#include "../../server/server_sim_internal.h"
 #include "../../server/threads.h"
 #include "../../bolo/bot_manager.h"
 #include "../input.h"
@@ -688,10 +684,10 @@ static bool gameFrontEnterSinglePlayerLobby(void) {
   }
 
   /* Lobby mode — host edits settings before clicking Start. */
-  spServerSim->lobbyEnabled = true;
-  spServerSim->state        = serverStateLobby;
+  serverSimSetLobbyEnabled(spServerSim, true);
+  serverSimSetState(spServerSim, serverStateLobby);
   serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
-  spServerSim->sim.viewPlayer = 0;
+  serverSimGetGameSim(spServerSim)->viewPlayer = 0;
   spTransport = transportLocalCreate(spServerSim, 0);
   spTransportLocalUsed = TRUE;
   spServerSimActive    = TRUE;
@@ -707,10 +703,10 @@ static bool gameFrontEnterSinglePlayerLobby(void) {
       findBrainPath(brainPath, sizeof(brainPath));
     }
     if (brainPath[0] != '\0') {
-      strncpy(spServerSim->botBrainPath, brainPath, sizeof(spServerSim->botBrainPath) - 1);
-      spServerSim->botBrainPath[sizeof(spServerSim->botBrainPath) - 1] = '\0';
+      serverSimSetBotBrainPath(spServerSim, brainPath);
     }
-    spServerSim->botAiType = (compTanks == aiNone) ? aiFull : compTanks;
+    serverSimSetBotAiType(spServerSim,
+                          (compTanks == aiNone) ? aiFull : compTanks);
   }
 
   /* Load map/bases/pills onto the client. Same compressed-map path
@@ -721,7 +717,8 @@ static bool gameFrontEnterSinglePlayerLobby(void) {
     BYTE compressedMap[65536];
     int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
     if (compLen > 0) {
-      screenLoadCompressedMapCS(humanSim, compressedMap, compLen, spServerSim->mapName,
+      screenLoadCompressedMapCS(humanSim, compressedMap, compLen,
+                               (char *)serverSimGetMapName(spServerSim),
                                gametype, hiddenMines, startDelay,
                                timeLen, gameFrontName, 0, FALSE);
     } else {
@@ -2386,7 +2383,7 @@ ServerSim *gameFrontGetSinglePlayerServerSim(void) {
 bool gameFrontStartSinglePlayerGame(ClientSim *cs) {
   BYTE i, j;
   if (cs == NULL || spServerSim == NULL) return FALSE;
-  if (spServerSim->state != serverStateLobby) return FALSE;
+  if (serverSimGetState(spServerSim) != serverStateLobby) return FALSE;
 
   /* Apply team alliances on both sims AND publish them through the
    * control-event dispatcher so every subscribed in-process bot also
@@ -2395,43 +2392,48 @@ bool gameFrontStartSinglePlayerGame(ClientSim *cs) {
    * shoots its teammates. Mirrors the serverSimStartGame loop in the
    * multiplayer path; we just skip the resetGameWorld dance because
    * the world is already fresh from gameFrontEnterSinglePlayerLobby. */
-  for (i = 0; i < MAX_TANKS; i++) {
-    if (!spServerSim->playerConnected[i]) continue;
-    if (spServerSim->lobbyPlayers[i].teamNumber == 0) continue;
-    for (j = i + 1; j < MAX_TANKS; j++) {
-      if (!spServerSim->playerConnected[j]) continue;
-      if (spServerSim->lobbyPlayers[j].teamNumber != spServerSim->lobbyPlayers[i].teamNumber) continue;
-      playersAcceptAlliance(&spServerSim->sim, &spServerSim->sim.plyrs, NEUTRAL, i, j, TRUE);
-      playersAcceptAlliance(&cs->sim, &cs->sim.plyrs, cs->myPlayerNum, i, j, FALSE);
-      {
-        ControlEvent allyEvt;
-        memset(&allyEvt, 0, sizeof(allyEvt));
-        allyEvt.type = CTRL_ALLIANCE_ACCEPT;
-        allyEvt.u.allianceAccept.acceptedBy = i;
-        allyEvt.u.allianceAccept.newMember  = j;
-        serverSimPublishControl(spServerSim, &allyEvt);
+  {
+    GameSim *gs = serverSimGetGameSim(spServerSim);
+    for (i = 0; i < MAX_TANKS; i++) {
+      if (!serverSimIsPlayerConnected(spServerSim, i)) continue;
+      const LobbyPlayer *lpI = serverSimGetLobbyPlayer(spServerSim, i);
+      if (!lpI || lpI->teamNumber == 0) continue;
+      for (j = i + 1; j < MAX_TANKS; j++) {
+        if (!serverSimIsPlayerConnected(spServerSim, j)) continue;
+        const LobbyPlayer *lpJ = serverSimGetLobbyPlayer(spServerSim, j);
+        if (!lpJ || lpJ->teamNumber != lpI->teamNumber) continue;
+        playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, i, j, TRUE);
+        playersAcceptAlliance(&cs->sim, &cs->sim.plyrs, cs->myPlayerNum, i, j, FALSE);
+        {
+          ControlEvent allyEvt;
+          memset(&allyEvt, 0, sizeof(allyEvt));
+          allyEvt.type = CTRL_ALLIANCE_ACCEPT;
+          allyEvt.u.allianceAccept.acceptedBy = i;
+          allyEvt.u.allianceAccept.newMember  = j;
+          serverSimPublishControl(spServerSim, &allyEvt);
+        }
       }
     }
-  }
 
-  /* Server side: transition to running and create tanks for each
-   * connected slot.  serverSimAddPlayer in lobby state defers tank
-   * creation; do it now in one batch (mirrors serverSimStartGame's
-   * post-reset tank loop, minus the reset). */
-  spServerSim->state = serverStateRunning;
-  for (i = 0; i < MAX_TANKS; i++) {
-    if (!spServerSim->playerConnected[i]) continue;
-    if (spServerSim->sim.tanks[i] != NULL) {
-      tankDestroy(&spServerSim->sim, &spServerSim->sim.tanks[i]);
-      spServerSim->sim.tanks[i] = NULL;
+    /* Server side: transition to running and create tanks for each
+     * connected slot.  serverSimAddPlayer in lobby state defers tank
+     * creation; do it now in one batch (mirrors serverSimStartGame's
+     * post-reset tank loop, minus the reset). */
+    serverSimSetState(spServerSim, serverStateRunning);
+    for (i = 0; i < MAX_TANKS; i++) {
+      if (!serverSimIsPlayerConnected(spServerSim, i)) continue;
+      if (gs->tanks[i] != NULL) {
+        tankDestroy(gs, &gs->tanks[i]);
+        gs->tanks[i] = NULL;
+      }
+      if (gs->lgmen[i] != NULL) {
+        lgmDestroy(&gs->lgmen[i]);
+        gs->lgmen[i] = NULL;
+      }
+      tankCreate(gs, &gs->tanks[i]);
+      gs->lgmen[i] = lgmCreate(i);
+      basesUpdateTimer(gs, i);
     }
-    if (spServerSim->sim.lgmen[i] != NULL) {
-      lgmDestroy(&spServerSim->sim.lgmen[i]);
-      spServerSim->sim.lgmen[i] = NULL;
-    }
-    tankCreate(&spServerSim->sim, &spServerSim->sim.tanks[i]);
-    spServerSim->sim.lgmen[i] = lgmCreate(i);
-    basesUpdateTimer(&spServerSim->sim, i);
   }
 
   /* Sync tank state from the first running-state snapshot so the
