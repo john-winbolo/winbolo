@@ -48,6 +48,7 @@
 
 #include "../../common/wb_log.h"
 #include "../../bolo/screen.h"
+#include "../../bolo/client_mapload.h"
 #include "../../bolo/client_sim.h"
 #include "../../bolo/client_sim_control.h"
 #include "../../bolo/control_event.h"
@@ -1000,11 +1001,11 @@ bool gameFrontSetDlgState(openingStates newState) {
             clientSimDestroy(humanSim);
             humanSim = clientSimAlloc();
 
-            if (screenLoadCompressedMapCS(humanSim, (BYTE *)mapData, mapLen,
-                                         savedMapName, serverGame,
-                                         serverHiddenMines, serverStartDelay,
-                                         serverGameLen, gameFrontName,
-                                         (BYTE)udpPlayerNum, FALSE) == FALSE) {
+            if (clientLoadCompressedMap(humanSim, (BYTE *)mapData, mapLen,
+                                       savedMapName, serverGame,
+                                       serverHiddenMines, serverStartDelay,
+                                       serverGameLen, gameFrontName,
+                                       (BYTE)udpPlayerNum, FALSE) == FALSE) {
               mapLoadOk = FALSE;
             } else {
               screenSetLocalTransportCS(humanSim, false);
@@ -1115,9 +1116,9 @@ bool gameFrontSetDlgState(openingStates newState) {
             BYTE compressedMap[65536];
             int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
             if (compLen > 0) {
-              screenLoadCompressedMapCS(humanSim, compressedMap, compLen, serverSimGetMapName(spServerSim),
-                                       gametype, hiddenMines, startDelay,
-                                       timeLen, gameFrontName, 0, FALSE);
+              clientLoadCompressedMap(humanSim, compressedMap, compLen, serverSimGetMapName(spServerSim),
+                                     gametype, hiddenMines, startDelay,
+                                     timeLen, gameFrontName, 0, FALSE);
             } else {
               clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
             }
@@ -1153,7 +1154,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                                    snapEvents, snapHdr.reliableEventCount, 0);
           }
           /* Register humanSim as a control-event subscriber. Placed after
-           * clientSimCreate (run from the screenLoadCompressedMapCS / else
+           * clientSimCreate (run from the clientLoadCompressedMap / else
            * branch above) so myPlayerNum is initialized to 0 — matching the
            * SP slot — and the dispatcher's self-skip protects this slot
            * during sync. */
@@ -1657,7 +1658,7 @@ bool gameFrontLoadInBuiltMap(void) {
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-  return screenLoadCompressedMapCS(humanSim, emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen, gameFrontName, 0, FALSE);
+  return clientLoadCompressedMap(humanSim, emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen, gameFrontName, 0, FALSE);
 }
 
 bool gameFrontLoadTutorial(void) {
@@ -1682,8 +1683,8 @@ bool gameFrontLoadTutorial(void) {
     fp = fopen(candidates[i], "rb");
     if (fp != NULL) {
       fclose(fp);
-      /* screenLoadMapCS takes char* (not const) but doesn't mutate. */
-      return screenLoadMapCS(humanSim, (char *)candidates[i], gameStrictTournament, FALSE, 0, UNLIMITED_GAME_TIME, gameFrontName, FALSE);
+      /* clientLoadMap takes char* (not const) but doesn't mutate. */
+      return clientLoadMap(humanSim, (char *)candidates[i], gameStrictTournament, FALSE, 0, UNLIMITED_GAME_TIME, gameFrontName, FALSE);
     }
   }
   return FALSE;
@@ -2173,11 +2174,11 @@ bool gameFrontLoadDeferredMap(ClientSim **cs) {
   humanSim = *cs;
   sdl3DrawResetCachedText();
 
-  if (screenLoadCompressedMapCS(*cs, (BYTE *)mapData, mapLen,
-                               savedMapName, serverGame,
-                               serverHiddenMines, serverStartDelay,
-                               serverGameLen, gameFrontName,
-                               (BYTE)udpPlayerNum, FALSE) == FALSE) {
+  if (clientLoadCompressedMap(*cs, (BYTE *)mapData, mapLen,
+                             savedMapName, serverGame,
+                             serverHiddenMines, serverStartDelay,
+                             serverGameLen, gameFrontName,
+                             (BYTE)udpPlayerNum, FALSE) == FALSE) {
     return FALSE;
   }
 
