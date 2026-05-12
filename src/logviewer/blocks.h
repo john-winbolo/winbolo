@@ -17,7 +17,7 @@
 #ifndef __BLOCKS_H
 #define __BLOCKS_H
 
-#include "global.h"
+#include "lv_global.h"
 
 #define logIsEOF() lv_blocksIsEOF()
 #define logReadBytes(X, Y) lv_blocksReadBytes(X, Y)

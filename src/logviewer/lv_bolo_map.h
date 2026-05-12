@@ -19,10 +19,10 @@
 #define MAP_H
 
 /* Defines */
-#include "global.h"
-#include "pillbox.h"
-#include "starts.h"
-#include "bases.h"
+#include "lv_global.h"
+#include "lv_pillbox.h"
+#include "lv_starts.h"
+#include "lv_bases.h"
 
 #define LENGTH_ID 8 /* Number of charecters in the "BMAPBOLO" id tag */
 #define CURRENT_MAP_VERSION 1 /* The current Version is */

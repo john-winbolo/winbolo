@@ -27,7 +27,7 @@
 
 #include <SDL3/SDL.h>
 #include "../common/wb_log.h"
-#include "global.h"
+#include "lv_global.h"
 #include "clientmutex.h"
 
 static SDL_Mutex *hClientMutexHandle = NULL;

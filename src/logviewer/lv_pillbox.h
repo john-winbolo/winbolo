@@ -31,7 +31,7 @@
 
 /* Includes */
 #include "types.h"
-#include "global.h"
+#include "lv_global.h"
 
 
 /* Defines */

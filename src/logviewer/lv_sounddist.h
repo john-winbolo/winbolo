@@ -29,7 +29,7 @@
 #ifndef _SOUNDDIST_H
 #define _SOUNDDIST_H
 
-#include "global.h"
+#include "lv_global.h"
 #include "backend.h"
 
 /* If the distance from the tank to the event is greater then */

@@ -26,12 +26,12 @@
 *********************************************************/
 
 /* Includes */
-#include "global.h"
-#include "tilenum.h"
-#include "pillbox.h"
+#include "lv_global.h"
+#include "lv_tilenum.h"
+#include "lv_pillbox.h"
 #include "backend.h"
-#include "players.h"
-#include "messages.h"
+#include "lv_players.h"
+#include "lv_messages.h"
 #include "../gui/lang.h"
 
 /*********************************************************

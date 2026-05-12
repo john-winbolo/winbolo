@@ -28,7 +28,7 @@
 #ifndef MESSAGE_H
 #define MESSAGE_H
 
-#include "global.h"
+#include "lv_global.h"
 #include "../gui/lang.h"
 
 #define IsEmpty(list) ((list) ==NULL)

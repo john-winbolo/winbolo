@@ -29,7 +29,7 @@
 #ifndef ALLIENCE_H
 #define ALLIENCE_H
 
-#include "global.h"
+#include "lv_global.h"
 
 /* Bitmask of allied player numbers; bit N set => allied to player N.
  * MAX_TANKS (16) fits comfortably in PlayerBitMap (uint32_t). */
