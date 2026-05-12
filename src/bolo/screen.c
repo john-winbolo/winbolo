@@ -1101,9 +1101,6 @@ void screenSetAiTypeCS(ClientSim *csPtr, aiType value) {
 }
 
 
-aiType screenGetAiTypeCS(ClientSim *csPtr) { return clientSimGetAiType(csPtr); }
-
-
 bool screenGetTankAutoSlowdownCS(ClientSim *csPtr) { return clientSimGetTankAutoSlowdown(csPtr); }
 void screenSetTankAutoSlowdownCS(ClientSim *csPtr, bool useSlowdown) { clientSimSetTankAutoSlowdown(csPtr, useSlowdown); }
 bool screenGetTankAutoHideGunsightCS(ClientSim *csPtr) { return clientSimGetTankAutoHideGunsight(csPtr); }
@@ -1257,22 +1254,6 @@ void screenSetTankStartPositionCS(ClientSim *csPtr, BYTE xValue, BYTE yValue, TU
 void screenSetPlayersMenuCS(ClientSim *csPtr) {
   playersSetPlayersMenu(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), FALSE);
 }
-
-/*********************************************************
-*NAME:          screenGetGameRunning
-*AUTHOR:        John Morrison
-*CREATION DATE: 20/02/03
-*LAST MODIFIED: 20/02/03
-*PURPOSE:
-* Returns if a game is running
-*
-*ARGUMENTS:
-*
-*********************************************************/
-bool screenGetGameRunningCS(ClientSim *csPtr) {
-  return clientSimIsRunning(csPtr);
-}
-
 
 //FIXME
 /*********************************************************
