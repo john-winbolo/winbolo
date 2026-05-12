@@ -1053,6 +1053,38 @@ void clientSimTankView(ClientSim *cs) {
   viewportFollowTank(clientSimViewportMut(cs), clientSimGetScroll(cs), MY_TANK(cs));
 }
 
+void clientSimCenterTank(ClientSim *cs) {
+  viewportCenterOnTank(clientSimViewportMut(cs), clientSimGetScroll(cs), MY_TANK(cs));
+}
+
+void clientSimSetAutoScroll(ClientSim *cs, bool isAuto) {
+  scrollSetScrollType(clientSimGetScroll(cs), isAuto);
+}
+
+void clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown) {
+  switch (msgType) {
+  case MSG_NEWSWIRE:
+    messageSetNewswire(clientSimGetMessages(cs), isShown);
+    break;
+  case MSG_ASSISTANT:
+    messageSetAssistant(clientSimGetMessages(cs), isShown);
+    break;
+  case MSG_AI:
+    messageSetAI(clientSimGetMessages(cs), isShown);
+    break;
+  case MSG_NETSTATUS:
+    messageSetNetStatus(clientSimGetMessages(cs), isShown);
+    break;
+  default:
+    messageSetNetwork(clientSimGetMessages(cs), isShown);
+    break;
+  }
+}
+
+void clientSimNetStatusMessage(ClientSim *cs, char *messageStr) {
+  clientMessageAdd(clientSimGetMessages(cs), networkStatus, (char *) "Network Status", messageStr);
+}
+
 void clientSimSetCursorPos(ClientSim *cs, BYTE posX, BYTE posY) {
   viewportSetCursor(clientSimViewportMut(cs), posX, posY);
 }

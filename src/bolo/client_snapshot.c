@@ -145,7 +145,7 @@ void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, b
     /* Client-side display actions (pill/tank view toggle) */
     if (testkey(*tapKeys, KEY_TankView) || testkey(*holdKeys, KEY_TankView)) {
       csPtr->viewport.inPillView = FALSE;
-      clientCenterTankCS(csPtr);
+      clientSimCenterTank(csPtr);
     }
     if (testkey(*tapKeys, KEY_PillView) || testkey(*holdKeys, KEY_PillView)) {
       clientSimPillView(csPtr, 0, 0);
@@ -278,7 +278,7 @@ void clientApplySnapshot(ClientSim *csPtr,
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
         csPtr->clientState.hasPredictedTank = TRUE;
         if (isHuman) {
-          clientCenterTankCS(csPtr);
+          clientSimCenterTank(csPtr);
         }
       } else if (csPtr->clientState.initialized && csPtr->clientState.hasPredictedTank && MY_TANK(csPtr) != NULL) {
         /* Build a temporary tank-like state for reconciliation.
@@ -407,7 +407,7 @@ void clientApplySnapshot(ClientSim *csPtr,
             csPtr->sim.inStartFind = FALSE;
             if (isHuman) {
               csPtr->viewport.inPillView = FALSE;
-              clientCenterTankCS(csPtr);
+              clientSimCenterTank(csPtr);
             }
           }
           csPtr->lastServerArmour = tanks[i].armour;
@@ -814,10 +814,10 @@ void clientApplySnapshot(ClientSim *csPtr,
         if (isHuman) {
           switch (events[i].data[0]) {
           case SERVER_MSG_GAME_LOCKED:
-            screenNetStatusMessage(csPtr, "This game is now locked to new players (server lock)");
+            clientSimNetStatusMessage(csPtr, "This game is now locked to new players (server lock)");
             break;
           case SERVER_MSG_GAME_UNLOCKED:
-            screenNetStatusMessage(csPtr, "This game is now unlocked to new players (server unlock)");
+            clientSimNetStatusMessage(csPtr, "This game is now unlocked to new players (server unlock)");
             break;
           }
         }
@@ -972,7 +972,7 @@ void clientNetSetupTankGo(ClientSim *csPtr) {
    * sim state at the moment of call), leave the view centered on a spot
    * the tank jumps away from on the next snapshot. Just centre on the
    * existing position. */
-  clientCenterTankCS(csPtr);
+  clientSimCenterTank(csPtr);
 
   for (count = 0; count < MAIN_BACK_BUFFER_SIZE_X; count++) {
     for (count2 = 0; count2 < MAIN_BACK_BUFFER_SIZE_Y; count2++) {

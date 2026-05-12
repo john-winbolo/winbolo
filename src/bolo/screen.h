@@ -71,14 +71,6 @@ typedef enum {
 
 #endif
 
-/* Prototypes */
-
-bool screenIsItemInTrees(struct GameSim *sim, tank viewerTank, WORLD bmx, WORLD bmy);
-void screenGetSubMapSquareOffset(int *xPos, int *yPos);
-void clientCenterTankCS(struct ClientSim *csPtr);
-void screenNetStatusMessage(struct ClientSim *csPtr, char *messageStr);
-
-
 /* -------------------------------------------------------
  * Content migrated from backend.h during Phase 7 cleanup.
  * backend.h was a "kitchen sink" header; these definitions
@@ -163,35 +155,4 @@ typedef enum {
 } playerNumbers;
 #endif
 
-void screenGetMessages(struct ClientSim *csPtr, char *top, char *bottom);
-void screenShowMessages(struct ClientSim *csPtr, BYTE msgType, bool isShown);
-void screenSetAutoScroll(struct ClientSim *csPtr, bool isAuto);
-void screenSetLabelOwnTank(struct ClientSim *csPtr, bool value);
-void screenSetMesageLabelLen(struct ClientSim *csPtr, labelLen value);
-void screenSetTankLabelLen(struct ClientSim *csPtr, labelLen value);
-
-/* Forward declaration for ClientSim-parameterized functions */
-struct ClientSim;
-
-BYTE screenCalcSquareCS(struct ClientSim *csPtr, BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY);
-tankButton screenTranslateBrainButtonsCS(struct ClientSim *csPtr, bool *isShoot, bool isGameTick);
-void screenGunsightRangeCS(struct ClientSim *csPtr, bool increase);
-void screenManMoveCS(struct ClientSim *csPtr, buildSelect buildS);
-void screenLgmDropPillCS(struct ClientSim *csPtr, BYTE mx, BYTE my, BYTE owner, BYTE pillNum);
-void screenTankLayMineCS(struct ClientSim *csPtr);
-void screenCheckTankMineDamageCS(struct ClientSim *csPtr, BYTE mx, BYTE my);
-void screenSetAllowHiddenMinesCS(struct ClientSim *csPtr, bool hidden);
-int32_t screenGetGameStartDelayCS(struct ClientSim *csPtr);
-tankAlliance screenTankAllianceCS(struct ClientSim *csPtr, BYTE playerNum);
-BYTE screenGetNumNeutralPillsCS(struct ClientSim *csPtr);
-int32_t screenGetTimeGameCreatedCS(struct ClientSim *csPtr);
-void screenSetTimeGameCreatedCS(struct ClientSim *csPtr, int32_t value);
-void screenSetMapNameCS(struct ClientSim *csPtr, char *name);
-void screenSetTimeLengthsCS(struct ClientSim *csPtr, int srtDelay, int32_t gmeLen);
-void screenSetGameTypeCS(struct ClientSim *csPtr, gameType gt);
-void screenChangeOwnershipCS(struct ClientSim *csPtr, BYTE oldOwner);
-void screenGetLgmStatusCS(struct ClientSim *csPtr, bool *isOut, bool *isDead, TURNTYPE *angle);
-void screenSetCursorPosCS(struct ClientSim *csPtr, BYTE posX, BYTE posY);
-void screenTankStopCarryingPillCS(struct ClientSim *csPtr, BYTE itemNum);
-void screenSetPlayersMenuCS(struct ClientSim *csPtr);
 #endif /* SCREEN_H */

@@ -820,15 +820,15 @@ void windowReCreate(void) {
  * ------------------------------------------------------- */
 void windowApplyMenuChecks(ClientSim *cs) {
   clientSimSetGunsight(cs, showGunsight);
-  screenSetAutoScroll(cs, autoScrollingEnabled);
-  screenSetLabelOwnTank(cs, labelSelf);
-  screenSetMesageLabelLen(cs, labelMsg);
-  screenSetTankLabelLen(cs, labelTank);
-  screenShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
-  screenShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
-  screenShowMessages(cs, MSG_AI, showAIMessages);
-  screenShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
-  screenShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
+  clientSimSetAutoScroll(cs, autoScrollingEnabled);
+  clientSimSetLabelOwnTank(cs, labelSelf);
+  clientSimSetLabelMessage(cs, labelMsg);
+  clientSimSetLabelTankLabel(cs, labelTank);
+  clientSimShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
+  clientSimShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
+  clientSimShowMessages(cs, MSG_AI, showAIMessages);
+  clientSimShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
+  clientSimShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
 }
 
 /* -------------------------------------------------------
@@ -1175,7 +1175,7 @@ void windowShowGunsight_toggle(ClientSim *cs) {
 
 void windowAutomaticScrolling_toggle(ClientSim *cs) {
   autoScrollingEnabled = !autoScrollingEnabled;
-  if (cs) screenSetAutoScroll(cs, autoScrollingEnabled);
+  if (cs) clientSimSetAutoScroll(cs, autoScrollingEnabled);
 }
 
 void windowSmoothScrolling_toggle(void) {
@@ -1238,27 +1238,27 @@ void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
 
 void windowMenuNewswire_toggle(ClientSim *cs) {
   showNewswireMessages = !showNewswireMessages;
-  if (cs) screenShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
+  if (cs) clientSimShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
 }
 
 void windowMenuAssistant_toggle(ClientSim *cs) {
   showAssistantMessages = !showAssistantMessages;
-  if (cs) screenShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
+  if (cs) clientSimShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
 }
 
 void windowMenuAI_toggle(ClientSim *cs) {
   showAIMessages = !showAIMessages;
-  if (cs) screenShowMessages(cs, MSG_AI, showAIMessages);
+  if (cs) clientSimShowMessages(cs, MSG_AI, showAIMessages);
 }
 
 void windowMenuNetwork_toggle(ClientSim *cs) {
   showNetworkStatusMessages = !showNetworkStatusMessages;
-  if (cs) screenShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
+  if (cs) clientSimShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
 }
 
 void windowMenuNetworkDebug_toggle(ClientSim *cs) {
   showNetworkDebugMessages = !showNetworkDebugMessages;
-  if (cs) screenShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
+  if (cs) clientSimShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
 }
 
 void windowHideMainView_toggle(void) {
@@ -1267,17 +1267,17 @@ void windowHideMainView_toggle(void) {
 
 void windowLabelOwnTank_toggle(ClientSim *cs) {
   labelSelf = !labelSelf;
-  if (cs) screenSetLabelOwnTank(cs, labelSelf);
+  if (cs) clientSimSetLabelOwnTank(cs, labelSelf);
 }
 
 void windowSetMessageLabelLen(ClientSim *cs, labelLen newLen) {
   labelMsg = newLen;
-  if (cs) screenSetMesageLabelLen(cs, labelMsg);
+  if (cs) clientSimSetLabelMessage(cs, labelMsg);
 }
 
 void windowSetTankLabelLen(ClientSim *cs, labelLen newLen) {
   labelTank = newLen;
-  if (cs) screenSetTankLabelLen(cs, labelTank);
+  if (cs) clientSimSetLabelTankLabel(cs, labelTank);
 }
 
 void windowNewGame(void) {

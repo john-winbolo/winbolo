@@ -93,13 +93,7 @@ bool frontEndTutorial(BYTE pos) { (void)pos; return FALSE; }
 void frontEndTutorialReset(void) { }
 
 /* Screen stubs — only functions still called from bolo/ engine code in the server build */
-bool screenIsItemInTrees(GameSim *sim, tank viewerTank, WORLD bmx, WORLD bmy) { (void)sim; (void)viewerTank; (void)bmx; (void)bmy; return TRUE; }
 void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame, BYTE playerNum, char *playerName) { (void)value; (void)mx; (void)my; (void)px; (void)py; (void)frame; (void)playerNum; (void)playerName; }
-void screenNetStatusMessage(ClientSim *csPtr, char *messageStr) { (void)csPtr; (void)messageStr; }
-/* clientCenterTankCS — display-only helper called from client_snapshot.c.
- * Bots never invoke it (guarded by isHuman / view-key tests), but the linker
- * still needs the symbol. */
-void clientCenterTankCS(ClientSim *csPtr) { (void)csPtr; }
 
 
 /* clientSimIncomingMessage lives in client_sim.c (linked into WinBoloDS).
@@ -109,6 +103,14 @@ void clientCenterTankCS(ClientSim *csPtr) { (void)csPtr; }
 void clientUiOnTick(ClientSim *cs, bool isBrain) { (void)cs; (void)isBrain; }
 void messageCreate(MessageState *ms) { (void)ms; }
 void messageDestroy(MessageState *ms) { (void)ms; }
+/* messageSet* — message-stream visibility toggles reached via
+ * clientSimShowMessages. Bots have no message UI, so the toggles are
+ * no-ops on the server build. */
+void messageSetNewswire(MessageState *ms, bool isShown)  { (void)ms; (void)isShown; }
+void messageSetAssistant(MessageState *ms, bool isShown) { (void)ms; (void)isShown; }
+void messageSetAI(MessageState *ms, bool isShown)        { (void)ms; (void)isShown; }
+void messageSetNetStatus(MessageState *ms, bool isShown) { (void)ms; (void)isShown; }
+void messageSetNetwork(MessageState *ms, bool isShown)   { (void)ms; (void)isShown; }
 /* messageIsNewMessage / messageGetNewMessage are called by brain_data.c
  * when building BrainInfo.  Bots have no chat inbox, so report "no message"
  * and never have GetNewMessage invoked. */
@@ -117,6 +119,9 @@ BYTE messageGetNewMessage(MessageState *ms, char *dest, uint32_t **playerBitmap)
   (void)ms; if (dest) dest[0] = '\0'; if (playerBitmap) *playerBitmap = NULL; return 0;
 }
 void scrollCreate(ScrollState *ss) { (void)ss; }
+/* scrollSetScrollType — reached via clientSimSetAutoScroll. The server
+ * build doesn't expose scroll preferences, so the toggle is a no-op. */
+void scrollSetScrollType(ScrollState *ss, bool isAuto) { (void)ss; (void)isAuto; }
 /* scrollCenterObject is called by client_snapshot.c only when the brain
  * switches pillbox view — bots never do this, but the linker still needs
  * the symbol. */
