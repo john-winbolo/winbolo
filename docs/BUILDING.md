@@ -94,6 +94,16 @@ Executables are placed in the `build/` directory:
 - `libwinbolo_gym.so` — ML training gym library
 - `BrainTest` — brain debug viewer
 
+### Build and run baseline tests
+
+To rebuild and run the `baseline` ctest suite in one command — and only run the tests if the build succeeds:
+
+```bash
+if cmake --build ~/linux-build -j$(nproc); then ctest --test-dir ~/linux-build -R baseline; else echo "build failed"; fi
+```
+
+The `if` form gates on the build's exit status, so a build failure prints `build failed` and skips the tests rather than running ctest against stale binaries. A test failure reports through ctest as normal.
+
 ## macOS
 
 ### Requirements
