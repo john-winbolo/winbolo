@@ -28,6 +28,7 @@
 #define _INPUT_H
 
 #include "../bolo/global.h"
+#include "../bolo/tank.h"  /* tankButton */
 
 /* Typestructure that holds the keys */
 typedef struct {
