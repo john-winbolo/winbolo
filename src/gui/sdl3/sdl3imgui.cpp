@@ -102,8 +102,6 @@ extern "C" int  windowGetAiTime(void);
 /* gameFrontGetTransport: now provided by gamefront.h */
 extern "C" uint16_t transportUdpClientGetPing(Transport *t);
 /* Dialog helpers — declared without pulling in pragma-pack headers */
-extern "C" void screenGetPlayerNameCS(struct ClientSim *cs, char *dest);
-extern "C" bool screenSetPlayerNameCS(struct ClientSim *cs, char *name);
 /* gameFrontSetGameOptions: now provided by gamefront.h */
 extern "C" void utilStripName(char *name);
 
@@ -832,7 +830,7 @@ static void renderNetInfoPanel(ClientSim *cs) {
 static void renderGameInfoContent(ClientSim *cs) {
     char mapName[256];
     mapName[0] = '\0';
-    screenGetMapNameCS(cs, mapName);
+    strcpy(mapName, clientSimGetMapName(cs));
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_MAPNAME), mapName);
     if (strncmp(mapName, "rand_", 5) == 0) {
         ImGui::SameLine();
@@ -862,7 +860,7 @@ static void renderGameInfoContent(ClientSim *cs) {
     else if (ai == aiFull)         aiStr = STR_DLGGAMEINFO_FULLADV;
     ImGui::Text("%s %s", langGetText(STR_DLGGAMEINFO_AILABEL), langGetText(aiStr));
 
-    long timeLeft = screenGetGameTimeLeftCS(cs);
+    long timeLeft = clientSimGetGmeLength(cs);
     if (timeLeft == UNLIMITED_GAME_TIME) {
         ImGui::Text("%s %s", langGetText(STR_DLGGAMEINFO_TIMELIMIT),
                     langGetText(STR_DLGGAMEINFO_UNLIMITED));
@@ -1343,7 +1341,7 @@ static void renderChangeNameModal(ClientSim *cs) {
         ImGui::OpenPopup(title);
         s_showChangeName    = false;
         s_changeNameBuf[0] = '\0';
-        screenGetPlayerNameCS(cs, s_changeNameBuf);
+        clientSimGetPlayerName(cs, s_changeNameBuf);
     }
     if (ImGui::BeginPopupModal(title, nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -1367,7 +1365,7 @@ static void renderChangeNameModal(ClientSim *cs) {
             } else if (s_changeNameBuf[0] == '*') {
                 /* invalid — stay open */
             } else {
-                if (screenSetPlayerNameCS(cs, s_changeNameBuf))
+                if (clientSimSetPlayerName(cs, s_changeNameBuf))
                     ImGui::CloseCurrentPopup();
                 /* else: name in use — stay open */
             }
@@ -1701,7 +1699,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             s_settingsNameBuf[32] = '\0';
             utilStripName(s_settingsNameBuf);
             if (s_settingsNameBuf[0] != '\0' && s_settingsNameBuf[0] != '*') {
-                screenSetPlayerNameCS(cs, s_settingsNameBuf);
+                clientSimSetPlayerName(cs, s_settingsNameBuf);
             }
         }
         ImGui::SameLine();
@@ -1712,7 +1710,7 @@ static void renderSettingsPanel(ClientSim *cs) {
                 s_settingsNameBuf[32] = '\0';
                 utilStripName(s_settingsNameBuf);
                 if (s_settingsNameBuf[0] != '\0' && s_settingsNameBuf[0] != '*') {
-                    screenSetPlayerNameCS(cs, s_settingsNameBuf);
+                    clientSimSetPlayerName(cs, s_settingsNameBuf);
                 }
             }
         }

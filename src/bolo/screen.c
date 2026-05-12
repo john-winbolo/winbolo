@@ -639,22 +639,6 @@ void screenSetAllowHiddenMinesCS(ClientSim *csPtr, bool hidden) {
 
 
 /*********************************************************
-*NAME:          screenGetGameTimeLeft
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/1/99
-*LAST MODIFIED: 27/1/99
-*PURPOSE:
-* Returns the time remaining the current game
-*
-*ARGUMENTS:
-*
-*********************************************************/
-int32_t screenGetGameTimeLeftCS(ClientSim *csPtr) {
-  return clientSimGetGmeLength(csPtr);
-}
-
-
-/*********************************************************
 *NAME:          screenGetGameStartDelay
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/1/99
@@ -673,10 +657,6 @@ int32_t screenGetGameStartDelayCS(ClientSim *csPtr) {
 
 void screenGetPlayerNameCS(ClientSim *csPtr, char *value) {
   clientSimGetPlayerName(csPtr, value);
-}
-
-bool screenSetPlayerNameCS(ClientSim *csPtr, char *value) {
-  return clientSimSetPlayerName(csPtr, value);
 }
 
 /*********************************************************
