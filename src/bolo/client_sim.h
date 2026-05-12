@@ -429,6 +429,22 @@ InterpContext *clientSimGetInterpCtx(ClientSim *cs);
 screen        *clientSimGetView(ClientSim *cs);
 screenMines   *clientSimGetMineView(ClientSim *cs);
 
+/* Writable scalar slots — for callees that write through an
+ * address (scroll*, pillsGetNextView, pillsMoveView). Use the
+ * by-value clientSimGet<X> accessors for plain reads; these are
+ * only for the pass-by-pointer case. */
+BYTE *clientSimGetXOffsetPtr(ClientSim *cs);
+BYTE *clientSimGetYOffsetPtr(ClientSim *cs);
+BYTE *clientSimGetPillViewXPtr(ClientSim *cs);
+BYTE *clientSimGetPillViewYPtr(ClientSim *cs);
+
+/* Writable buffer access — pair with const-returning
+ * clientSimGetMapName. Used by sites that strcpy/strncpy
+ * into mapName or pass &mapName[0] to a buffer-filling
+ * function (utilExtractMapName). MAP_STR_SIZE is the buffer
+ * capacity; caller bounds-checks. */
+char *clientSimGetMapNameMutable(ClientSim *cs);
+
 /*********************************************************
  * Mutators.
  *
@@ -442,5 +458,27 @@ screenMines   *clientSimGetMineView(ClientSim *cs);
 void clientSimSetBalanceProposalActive(ClientSim *cs, bool active);
 void clientSimClearBalanceProposal(ClientSim *cs);
 void clientSimSetMapSkipMyVote(ClientSim *cs, bool vote);
+
+/* Viewport / cursor / view state */
+void clientSimSetXOffset(ClientSim *cs, BYTE v);
+void clientSimSetYOffset(ClientSim *cs, BYTE v);
+void clientSimSetCursorPosX(ClientSim *cs, int v);
+void clientSimSetCursorPosY(ClientSim *cs, int v);
+void clientSimSetNeedScreenReCalc(ClientSim *cs, bool v);
+void clientSimSetInPillView(ClientSim *cs, bool v);
+void clientSimSetPillViewX(ClientSim *cs, BYTE v);
+void clientSimSetPillViewY(ClientSim *cs, BYTE v);
+void clientSimSetView(ClientSim *cs, screen v);
+void clientSimSetMineView(ClientSim *cs, screenMines v);
+
+/* Game / round state */
+void clientSimSetGmeStartDelay(ClientSim *cs, int v);
+void clientSimSetGmeLength(ClientSim *cs, int32_t v);
+void clientSimSetTimeStart(ClientSim *cs, time_t v);
+void clientSimSetRunning(ClientSim *cs, bool v);
+void clientSimSetCurrentBuildSelect(ClientSim *cs, buildSelect v);
+
+/* Pending build input (set as a triple) */
+void clientSimSetPendingBuild(ClientSim *cs, BYTE action, BYTE x, BYTE y);
 
 #endif /* CLIENT_SIM_H */
