@@ -80,7 +80,6 @@ void clientCenterTankCS(struct ClientSim *csPtr);
 void screenNetStatusMessage(struct ClientSim *csPtr, char *messageStr);
 bool screenExtractPNBData(BYTE *buff, BYTE dataLen, bool isTcp);
 bool screenExtractMNTData(BYTE *buff, BYTE dataLen, bool isTcp);
-bool screenGenerateMapPreview(char *fileName, BYTE *buff);
 
 
 /* -------------------------------------------------------
@@ -198,8 +197,6 @@ BYTE screenCalcSquareCS(struct ClientSim *csPtr, BYTE xValue, BYTE yValue, BYTE 
 void screenReCalcCS(struct ClientSim *csPtr);
 void screenTankViewCS(struct ClientSim *csPtr);
 void screenPillViewCS(struct ClientSim *csPtr, int horz, int vert);
-bool screenLoadMapCS(struct ClientSim *csPtr, char *fileName, gameType game, bool hiddenMines, int32_t srtDelay, int32_t gmeLen, char *playerName, bool wantFree);
-bool screenLoadCompressedMapCS(struct ClientSim *csPtr, BYTE *buff, int buffLen, char *mapn, gameType game, bool hiddenMines, int32_t srtDelay, int32_t gmeLen, char *playerName, BYTE playerNum, bool wantFree);
 tankButton screenTranslateBrainButtonsCS(struct ClientSim *csPtr, bool *isShoot, bool isGameTick);
 baseAlliance screenBaseAllianceCS(struct ClientSim *csPtr, BYTE baseNum);
 pillAlliance screenPillAllianceCS(struct ClientSim *csPtr, BYTE pillNum);
@@ -244,7 +241,6 @@ BYTE screenMakeShellDataCS(struct ClientSim *csPtr, BYTE *buff);
 void screenExtractShellDataCS(struct ClientSim *csPtr, BYTE *buff, BYTE dataLen);
 void screenIncomingMessageCS(struct ClientSim *csPtr, BYTE playerNum, char *messageStr);
 void screenSendMessageAllPlayersCS(struct ClientSim *csPtr, char *messageStr);
-bool screenSaveMapCS(struct ClientSim *csPtr, char *fileName);
 void screenTogglePlayerCheckStateCS(struct ClientSim *csPtr, BYTE playerNum);
 void screenCheckAllNonePlayersCS(struct ClientSim *csPtr, bool isChecked);
 void screenCheckAlliedPlayersCS(struct ClientSim *csPtr);

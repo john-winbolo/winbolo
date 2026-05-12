@@ -70,7 +70,6 @@
 #include "screenlgm.h"
 #include "screenbrainmap.h"
 #include "screen.h"
-#include "client_mapload.h"
 #include "client_state.h"
 #include "interpolation.h"
 #include "util.h"
@@ -381,37 +380,6 @@ void screenUpdateViewCS(ClientSim *csPtr, updateType value) {
 BYTE screenCalcSquareCS(ClientSim *csPtr, BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY) {
   return viewportCalcSquare(clientSimViewportMut(csPtr), clientSimGetGameSim(csPtr),
                             clientSimGetMyPlayerNum(csPtr), xValue, yValue, scrX, scrY);
-}
-
-
-/*********************************************************
-*NAME:          screenLoadMap
-*AUTHOR:        John Morrison
-*CREATION DATE: 29/10/98
-*LAST MODIFIED: 30/01/02
-*PURPOSE:
-*  Loads a map. Returns if it was sucessful reading the
-*  map or not.
-*
-*ARGUMENTS:
-* fileName - File name and path to map to open
-*  game - The game type-Open/tournament/strict tournament
-*  hiddenMines - Are hidden mines allowed
-*  srtDelay    - Game start delay (50th second increments)
-*  gmeLen      - Length of the game (in 50ths) 
-*                (-1 =unlimited)
-*  playerName  - Name of the player
-*  wantFree    - Should we free the backend after loading
-*                Usually TRUE if you only want to check
-*                if a map is valid
-*********************************************************/
-bool screenLoadMapCS(ClientSim *csPtr, char *fileName, gameType game, bool hiddenMines, int32_t srtDelay, int32_t gmeLen, char *playerName, bool wantFree) {
-  return clientLoadMap(csPtr, fileName, game, hiddenMines, srtDelay, gmeLen, playerName, wantFree);
-}
-
-
-bool screenLoadCompressedMapCS(ClientSim *csPtr, BYTE *buff, int buffLen, char *mapn, gameType game, bool hiddenMines, int32_t srtDelay, int32_t gmeLen, char *playerName, BYTE playerNum, bool wantFree) {
-  return clientLoadCompressedMap(csPtr, buff, buffLen, mapn, game, hiddenMines, srtDelay, gmeLen, playerName, playerNum, wantFree);
 }
 
 
@@ -1102,23 +1070,6 @@ void screenSendMessageAllPlayersCS(ClientSim *csPtr, char *messageStr) {
   clientMessageAdd(clientSimGetMessages(csPtr), (messageType) (clientSimGetMyPlayerNum(csPtr) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
   clientSimMessageSendAllPlayers(csPtr, clientSimGetMyPlayerNum(csPtr), messageStr);
 }
-
-/*********************************************************
-*NAME:          screenSaveMap
-*AUTHOR:        John Morrison
-*CREATION DATE:  5/2/99
-*LAST MODIFIED: 31/10/99
-*PURPOSE:
-* Saves the map. Returns whether the operation was 
-* sucessful or not.
-*
-*ARGUMENTS:
-*  fileName - path and filename to save
-*********************************************************/
-bool screenSaveMapCS(ClientSim *csPtr, char *fileName) {
-  return clientSaveMap(csPtr, fileName);
-}
-
 
 /*********************************************************
 *NAME:          screenTanksAlliance
@@ -1990,26 +1941,6 @@ void screenNetStatusMessage(ClientSim *csPtr, char *messageStr) {
 *********************************************************/
 void screenTankStopCarryingPillCS(ClientSim *csPtr, BYTE itemNum) {
   tankStopCarryingPill(&MY_TANK(csPtr), itemNum);
-}
-
-/*********************************************************
-*NAME:          screenGenerateMapPreview
-*AUTHOR:        John Morrison
-*CREATION DATE: 2/7/00
-*LAST MODIFIED: 2/7/00
-*PURPOSE:
-* Generates a map preview for the front end. A map preview
-* is a 256x256 byte buff with each square equal to a map
-* tile. tile numbers are identical to map square numbers
-* except DEEP_SEA = 16, pills = 17, bases = 18 and starts
-* = 19. Returns success
-*
-*ARGUMENTS:
-*  fileName - Map file name to open
-*  buff     - Buffer to copy into
-*********************************************************/
-bool screenGenerateMapPreview(char *fileName, BYTE *buff) {
-  return clientGenerateMapPreview(fileName, buff);
 }
 
 /*********************************************************
