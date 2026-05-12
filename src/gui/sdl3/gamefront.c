@@ -2402,11 +2402,13 @@ bool gameFrontStartSinglePlayerGame(ClientSim *cs) {
   if (cs == NULL || spServerSim == NULL) return FALSE;
   if (spServerSim->state != serverStateLobby) return FALSE;
 
-  /* Apply team alliances on both sims. The host edited teamNumber
-   * via the lobby UI; converting matching team numbers into mutual
-   * alliances mirrors what serverSimStartGame would do for the
-   * multiplayer path, but skips the resetGameWorld dance — the
-   * world is already fresh from gameFrontEnterSinglePlayerLobby. */
+  /* Apply team alliances on both sims AND publish them through the
+   * control-event dispatcher so every subscribed in-process bot also
+   * learns about the alliance — without the publish the bot's
+   * cs->sim.plyrs has no alliance bits set and the brain happily
+   * shoots its teammates. Mirrors the serverSimStartGame loop in the
+   * multiplayer path; we just skip the resetGameWorld dance because
+   * the world is already fresh from gameFrontEnterSinglePlayerLobby. */
   for (i = 0; i < MAX_TANKS; i++) {
     if (!spServerSim->playerConnected[i]) continue;
     if (spServerSim->lobbyPlayers[i].teamNumber == 0) continue;
@@ -2415,6 +2417,14 @@ bool gameFrontStartSinglePlayerGame(ClientSim *cs) {
       if (spServerSim->lobbyPlayers[j].teamNumber != spServerSim->lobbyPlayers[i].teamNumber) continue;
       playersAcceptAlliance(&spServerSim->sim, &spServerSim->sim.plyrs, NEUTRAL, i, j, TRUE);
       playersAcceptAlliance(&cs->sim, &cs->sim.plyrs, cs->myPlayerNum, i, j, FALSE);
+      {
+        ControlEvent allyEvt;
+        memset(&allyEvt, 0, sizeof(allyEvt));
+        allyEvt.type = CTRL_ALLIANCE_ACCEPT;
+        allyEvt.u.allianceAccept.acceptedBy = i;
+        allyEvt.u.allianceAccept.newMember  = j;
+        serverSimPublishControl(spServerSim, &allyEvt);
+      }
     }
   }
 
