@@ -147,7 +147,7 @@ void screenIncomingMessageCS(ClientSim *cs, BYTE playerNum, char *messageStr) { 
 /* Screen / display stubs — client_sim.c calls these but the server has no display */
 void screenTankViewCS(ClientSim *cs) { (void)cs; }
 /* screenSyncFromSnapshotCS lives in client_snapshot.c (linked into WinBoloDS) */
-void screenSimDisplayTickCS(ClientSim *cs, bool isBrain) { (void)cs; (void)isBrain; }
+void clientUiOnTick(ClientSim *cs, bool isBrain) { (void)cs; (void)isBrain; }
 void messageCreate(MessageState *ms) { (void)ms; }
 void messageDestroy(MessageState *ms) { (void)ms; }
 /* messageIsNewMessage / messageGetNewMessage are called by brain_data.c
