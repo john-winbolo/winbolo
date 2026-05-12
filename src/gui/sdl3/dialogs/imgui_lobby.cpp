@@ -758,7 +758,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
             ImGui::SameLine(0.0f, 20.0f * s);
             ImGui::AlignTextToFramePadding();
             ImGui::TextDisabled("Allow New Players:");
-            bool allowJoin = transportUdpServerGetLock();
+            bool allowJoin = transportUdpServerIsAcceptingJoins();
             ImGui::SameLine();
             if (ImGui::Checkbox("Now##allowNow", &allowJoin)) {
                 transportUdpClientSendLockToggle(transport, allowJoin);

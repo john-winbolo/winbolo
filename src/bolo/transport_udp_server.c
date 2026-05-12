@@ -2987,11 +2987,30 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                                            LOBBY_REJECT_INVALID); break; }
                     break;
                 case LST_TIME_LIMIT:
-                    if (valueLen == 1) sim->timeLimit = value[0] != 0;
+                    if (valueLen == 1) {
+                        sim->timeLimit = value[0] != 0;
+                        /* LOBBY_STATE packs sim->gameLength, not
+                         * sim->timeLimit. Without keeping them in
+                         * sync, the next periodic rebroadcast snaps
+                         * clients back to the previous on/off state. */
+                        if (sim->timeLimit) {
+                            uint16_t mins = sim->timeMinutes > 0
+                                ? sim->timeMinutes : 30;
+                            sim->gameLength = (int32_t)mins * 60
+                                            * GAME_NUMGAMETICKS_SEC;
+                        } else {
+                            sim->gameLength = UNLIMITED_GAME_TIME;
+                        }
+                    }
                     break;
                 case LST_TIME_MINUTES:
                     if (valueLen == 2) {
-                        sim->timeMinutes = (uint16_t)((value[0] << 8) | value[1]);
+                        sim->timeMinutes =
+                            (uint16_t)((value[0] << 8) | value[1]);
+                        if (sim->timeLimit) {
+                            sim->gameLength = (int32_t)sim->timeMinutes
+                                            * 60 * GAME_NUMGAMETICKS_SEC;
+                        }
                     } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
                                            LOBBY_REJECT_INVALID); break; }
                     break;
@@ -3695,6 +3714,15 @@ void transportUdpServerSetLock(ServerSim *sim, bool locked) {
 
 bool transportUdpServerGetLock(void) {
     return udpServer.gameLocked;
+}
+
+/* Net "is the server currently accepting new join requests?" — true
+ * iff neither the admin lock nor the all-clients-locked consensus is
+ * blocking. UI uses this for the "Allow New Players: Now" checkbox so
+ * the displayed state reflects whatever the toggle actually changed. */
+bool transportUdpServerIsAcceptingJoins(void) {
+    if (udpServer.gameLocked) return false;
+    return !serverClientsAllLocked();
 }
 
 void transportUdpServerSendServerMessage(const char *message) {

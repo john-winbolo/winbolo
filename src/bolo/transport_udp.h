@@ -356,6 +356,12 @@ void transportUdpServerKickPlayer(struct ServerSim *sim, const char *playerName)
 void transportUdpServerSetLock(struct ServerSim *sim, bool locked);
 bool transportUdpServerGetLock(void);
 
+/* Whether the in-process server is currently accepting new join
+ * requests (i.e. !gameLocked && !all-clients-locked). UI lobby
+ * checkbox state is keyed off this so the toggle reflects what the
+ * client-lock-toggle packet actually flips. */
+bool transportUdpServerIsAcceptingJoins(void);
+
 /* Broadcast a server message to all connected clients (for "say" command). */
 void transportUdpServerSendServerMessage(const char *message);
 
