@@ -231,10 +231,6 @@ void screenGetLgmStatusCS(struct ClientSim *csPtr, bool *isOut, bool *isDead, TU
 BYTE screenMakeShellDataCS(struct ClientSim *csPtr, BYTE *buff);
 void screenExtractShellDataCS(struct ClientSim *csPtr, BYTE *buff, BYTE dataLen);
 void screenIncomingMessageCS(struct ClientSim *csPtr, BYTE playerNum, char *messageStr);
-void screenTogglePlayerCheckStateCS(struct ClientSim *csPtr, BYTE playerNum);
-void screenCheckAllNonePlayersCS(struct ClientSim *csPtr, bool isChecked);
-void screenCheckAlliedPlayersCS(struct ClientSim *csPtr);
-void screenCheckNearbyPlayersCS(struct ClientSim *csPtr);
 bool screenTankScrollCS(struct ClientSim *csPtr);
 void screenSetAiTypeCS(struct ClientSim *csPtr, aiType value);
 aiType screenGetAiTypeCS(struct ClientSim *csPtr);

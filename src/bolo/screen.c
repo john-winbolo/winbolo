@@ -1028,22 +1028,6 @@ void screenIncomingMessageCS(ClientSim *csPtr, BYTE playerNum, char *messageStr)
   }
 }
 
-void screenTogglePlayerCheckStateCS(ClientSim *csPtr, BYTE playerNum) {
-  clientSimTogglePlayerCheckState(csPtr, playerNum);
-}
-
-void screenCheckAllNonePlayersCS(ClientSim *csPtr, bool isChecked) {
-  clientSimCheckAllNonePlayers(csPtr, isChecked);
-}
-
-void screenCheckAlliedPlayersCS(ClientSim *csPtr) {
-  clientSimCheckAlliedPlayers(csPtr);
-}
-
-void screenCheckNearbyPlayersCS(ClientSim *csPtr) {
-  clientSimCheckNearbyPlayers(csPtr);
-}
-
 /*********************************************************
 *NAME:          screenChangeOwnership
 *AUTHOR:        John Morrison
