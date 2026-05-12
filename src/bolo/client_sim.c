@@ -281,8 +281,9 @@ void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
  *NAME:          clientSimDestroy
  *PURPOSE:
  *  Cleans up all simulation state in a ClientSim struct and
- *  frees the cs pointer (pairs with clientSimAlloc).
- *  Rendering cleanup is handled separately by viewportDestroy().
+ *  frees the cs pointer (pairs with clientSimAlloc). Also
+ *  frees the viewport buffers (view/mineView) so the caller
+ *  doesn't need a separate viewportDestroy call.
  *  Accepts NULL as a no-op.
  *
  *ARGUMENTS:
@@ -290,6 +291,7 @@ void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
  *********************************************************/
 void clientSimDestroy(ClientSim *cs) {
   if (cs == NULL) return;
+  viewportDestroy(&cs->viewport);
   cs->running = FALSE;
   clientStateDestroy(&cs->clientState);
   tankDestroy(&cs->sim, &MY_TANK(cs));

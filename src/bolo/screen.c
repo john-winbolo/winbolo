@@ -70,6 +70,7 @@
 #include "screenlgm.h"
 #include "screenbrainmap.h"
 #include "screen.h"
+#include "client_mapload.h"
 #include "client_state.h"
 #include "interpolation.h"
 #include "util.h"
@@ -88,56 +89,6 @@ extern void moveMousePointer(updateType value);
 /* Module Level Variables */
 
 /* Display statics removed — now fields of ClientSim (see client_sim.h) */
-
-/*********************************************************
-*NAME:          screenSetup
-*AUTHOR:        John Morrison
-*CREATION DATE: 28/10/98
-*LAST MODIFIED: 05/05/01
-*PURPOSE:
-*  Sets up all the variables - Should be run when the
-*  program starts.
-*
-*ARGUMENTS:
-*  game - The game type-Open/tournament/strict tournament
-*  hiddenMines - Are hidden mines allowed
-*  srtDelay    - Game start delay (50th second increments)
-*  gmeLen      - Length of the game (in 50ths)
-*                (-1 =unlimited)
-*********************************************************/
-static void screenSetupCS(ClientSim *csPtr, gameType game, bool hiddenMines, int srtDelay, int32_t gmeLen) {
-  /* Initialize simulation state in ClientSim */
-  clientSimCreate(csPtr, game, hiddenMines, srtDelay, gmeLen);
-
-  /* Initialize rendering state */
-  viewportInit(clientSimViewportMut(csPtr));
-
-  /* Initialize display variables */
-  clientSimGetMapNameMutable(csPtr)[0] = '\0';
-  clientSimSetGmeStartDelay(csPtr, srtDelay);
-  clientSimSetGmeLength(csPtr, gmeLen);
-  clientSimSetTimeStart(csPtr, 0);
-}
-
-/*********************************************************
-*NAME:          screenDestroy
-*AUTHOR:        John Morrison
-*CREATION DATE: 28/10/98
-*LAST MODIFIED: 05/05/01
-*PURPOSE:
-*  Destroys the structures Should be called on
-*  program exit
-*
-*ARGUMENTS:
-*
-*********************************************************/
-void screenDestroyCS(ClientSim *csPtr) {
-  /* Clean up rendering state first */
-  viewportDestroy(clientSimViewportMut(csPtr));
-
-  /* Clean up simulation state */
-  clientSimDestroy(csPtr);
-}
 
 /*********************************************************
 *NAME:          screenUpdate
@@ -455,76 +406,12 @@ BYTE screenCalcSquareCS(ClientSim *csPtr, BYTE xValue, BYTE yValue, BYTE scrX, B
 *                if a map is valid
 *********************************************************/
 bool screenLoadMapCS(ClientSim *csPtr, char *fileName, gameType game, bool hiddenMines, int32_t srtDelay, int32_t gmeLen, char *playerName, bool wantFree) {
-  bool returnValue; /* Value to return */
-  bool doneFree;    /* If we have done the free */
-
-  returnValue = FALSE;
-  doneFree = FALSE;
-  screenSetupCS(csPtr, game, hiddenMines,srtDelay,gmeLen);
-  returnValue = mapRead(fileName, &clientSimGetGameSim(csPtr)->mp, &clientSimGetGameSim(csPtr)->pb, &clientSimGetGameSim(csPtr)->bs, &clientSimGetGameSim(csPtr)->ss);
-
-/*
- * Used to write out linux compressed map file.
-  {
-  BYTE buff[16*1024];
-  int buffLen;
-  FILE *fp;
-
-  fp = fopen("c:\\map.txt", "wb");
-  buffLen = mapSaveCompressedMap(&mp, &clientSimGetGameSim(csPtr)->pb, &clientSimGetGameSim(csPtr)->bs, &ss, buff);
-  fwrite(buff, buffLen, 1, fp);
-  fclose(fp);
-
-  }   */
-
-  if (returnValue == TRUE) {
-    utilExtractMapName(fileName, clientSimGetMapNameMutable(csPtr));
-    utilStripNameReplace(playerName);
-    screenSetupTankCS(csPtr, playerName, 0);
-    screenUpdateViewCS(csPtr, redraw);
-    basesClearMines(clientSimGetGameSim(csPtr));
-
-  } else {
-    screenDestroyCS(csPtr);
-    doneFree = TRUE;
-  }
-  if (doneFree == FALSE && wantFree == TRUE) {
-    screenDestroyCS(csPtr);
-  }
-
-  return returnValue;
+  return clientLoadMap(csPtr, fileName, game, hiddenMines, srtDelay, gmeLen, playerName, wantFree);
 }
 
 
 bool screenLoadCompressedMapCS(ClientSim *csPtr, BYTE *buff, int buffLen, char *mapn, gameType game, bool hiddenMines, int32_t srtDelay, int32_t gmeLen, char *playerName, BYTE playerNum, bool wantFree) {
-  bool returnValue;
-  bool doneFree = FALSE;
-
-  screenSetupCS(csPtr, game, hiddenMines, srtDelay, gmeLen);
-  /* clientSimCreate (inside screenSetupCS) resets myPlayerNum to 0.
-   * Restore the correct player number before creating the tank so it
-   * ends up in the right sim.tanks[] slot. This also moves the LGM
-   * and sets the base refuel timer for the correct index. */
-  if (playerNum != 0) {
-    clientSimSetPlayerNum(csPtr, playerNum);
-  }
-  returnValue = mapLoadCompressedMap(&clientSimGetGameSim(csPtr)->mp, &clientSimGetGameSim(csPtr)->pb, &clientSimGetGameSim(csPtr)->bs, &clientSimGetGameSim(csPtr)->ss, buff, buffLen);
-
-  if (returnValue == TRUE) {
-    strncpy(clientSimGetMapNameMutable(csPtr), mapn, MAP_STR_SIZE - 1);
-    clientSimGetMapNameMutable(csPtr)[MAP_STR_SIZE - 1] = '\0';
-    utilStripNameReplace(playerName);
-    screenSetupTankCS(csPtr, playerName, playerNum);
-    screenUpdateViewCS(csPtr, redraw);
-    basesClearMines(clientSimGetGameSim(csPtr));
-  } else {
-    screenDestroyCS(csPtr);
-    doneFree = TRUE;
-  }
-  if (doneFree == FALSE && wantFree == TRUE) {
-    screenDestroyCS(csPtr);
-  }
-  return returnValue;
+  return clientLoadCompressedMap(csPtr, buff, buffLen, mapn, game, hiddenMines, srtDelay, gmeLen, playerName, playerNum, wantFree);
 }
 
 
@@ -782,40 +669,6 @@ void screenGetMessages(ClientSim *csPtr, char *top, char *bottom) {
 *********************************************************/
 void clientCenterTankCS(ClientSim *csPtr) {
   viewportCenterOnTank(clientSimViewportMut(csPtr), clientSimGetScroll(csPtr), MY_TANK(csPtr));
-}
-
-/*********************************************************
-*NAME:          screenSetupTank
-*AUTHOR:        John Morrison
-*CREATION DATE: 3/1/99
-*LAST MODIFIED: 21/1/01
-*PURPOSE:
-*  Creates and sets up a tank. MUST be called after
-*  map is loaded and screen setup is called.
-*  Should only be called directly by single player
-*  games.
-*
-*ARGUMENTS:
-*  playerName - The player name controling the tank
-*********************************************************/
-void screenSetupTankCS(ClientSim *csPtr, char *playerName, BYTE playerNum) {
-  /* Self is the local source of truth for client identity — PLAYER_JOINED
-   * and PLAYER_LIST receive paths skip self, so without this the local
-   * row would stay CLIENT_TYPE_UNKNOWN. */
-  uint8_t selfType  = bolo_detect_client_type();
-  uint8_t selfFlags = 0;
-#ifdef HAVE_STEAM
-  selfFlags |= PLAYER_FLAG_STEAM_BUILD;
-#endif
-  if (bolo_steam_has_supporter_dlc()) selfFlags |= PLAYER_FLAG_SUPPORTER;
-
-  clientSimSetupSelf(csPtr, playerNum, playerName, selfType, selfFlags);
-
-  { BYTE sh, mi, ar, tr;
-    tankGetStats(&MY_TANK(csPtr), &sh, &mi, &ar, &tr);
-    frontEndUpdateTankStatusBars(csPtr, sh, mi, ar, tr);
-  }
-  frontEndSetPlayer(csPtr, (playerNumbers) clientSimGetMyPlayerNum(csPtr), playerName, "", 0, selfType, selfFlags);
 }
 
 /*********************************************************
@@ -1263,20 +1116,7 @@ void screenSendMessageAllPlayersCS(ClientSim *csPtr, char *messageStr) {
 *  fileName - path and filename to save
 *********************************************************/
 bool screenSaveMapCS(ClientSim *csPtr, char *fileName) {
-  bool returnValue;                 /* Value to return */
-
-  returnValue = mapWrite(fileName, &clientSimGetGameSim(csPtr)->mp, &clientSimGetGameSim(csPtr)->pb, &clientSimGetGameSim(csPtr)->bs, &clientSimGetGameSim(csPtr)->ss);
-  if (returnValue == TRUE) {
-    if (clientSimGetNetType(csPtr) == netSingle) {
-      MessageArgs args;
-      memset(&args, 0, sizeof(args));
-      playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), args.playerName);
-      args.playerFlags = playersGetAccountFlags(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr));
-      playersGetCountryCode(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), args.playerCountry);
-      clientSimGetGameSim(csPtr)->callbacks.messageAdd(clientSimGetGameSim(csPtr)->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_SAVED_MAP, &args);
-    }
-  }
-  return returnValue;
+  return clientSaveMap(csPtr, fileName);
 }
 
 
@@ -2169,61 +2009,7 @@ void screenTankStopCarryingPillCS(ClientSim *csPtr, BYTE itemNum) {
 *  buff     - Buffer to copy into
 *********************************************************/
 bool screenGenerateMapPreview(char *fileName, BYTE *buff) {
-  bool returnValue; /* Value to return */
-  map prevmp;       /* Items in loading */
-  bases prevbs;
-  pillboxes prevpb;
-  starts prevss;
-  BYTE xValue;           /* Looping variables */
-  BYTE yValue;
-  BYTE *ptr;
-
-
-  /* Create */
-  mapCreate(&prevmp);
-  startsCreate(&prevss);
-  basesCreate(&prevbs);
-  pillsCreate(&prevpb);
-
-  /* Load */
-  returnValue = mapRead(fileName, &prevmp, &prevpb, &prevbs, &prevss);
-  if (returnValue == TRUE) {
-    /* Make preview map info */
-    xValue = 0;
-    yValue = 0;
-    ptr = buff;
-    /* Set up Items */
-    while (yValue < 255) {
-      while (xValue < 255) {
-        if ((pillsExistPos(&prevpb, xValue, yValue)) == TRUE) {
-          *ptr = 17;
-        } else if ((basesExistPos(&prevbs, xValue, yValue)) == TRUE) {
-          *ptr = 18;
-        } else if ((startsExistPos(&prevss, xValue, yValue)) == TRUE) {
-          *ptr = 19;
-        } else {
-          *ptr = mapGetPos(&prevmp, xValue, yValue);
-          if (*ptr == DEEP_SEA) {
-            *ptr = 16;
-          }
-
-        }
-        xValue++;
-        ptr++;
-      }
-      xValue = 0;
-      yValue++;
-    }
-  }
-
-  /* Clean up */
-  mapDestroy(&prevmp);
-  startsDestroy(&prevss);
-  basesDestroy(&prevbs);
-  pillsDestroy(&prevpb);
-
-  return returnValue;
-
+  return clientGenerateMapPreview(fileName, buff);
 }
 
 /*********************************************************
