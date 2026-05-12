@@ -34,6 +34,7 @@
 #include "frontend.h"
 #include "sounddist.h"
 #include "screen.h"
+#include "brain_data.h"
 #include "messages.h"
 #include "players.h"
 #include "log.h"
@@ -1677,7 +1678,7 @@ void pillsGetBrainPillsInRect(ClientSim *cs, GameSim *sim, pillboxes *value, BYT
       } else {
         owner = PILLS_BRAIN_HOSTILE;
       }
-      screenAddBrainObject(cs, PILLS_BRAIN_OBJECT_TYPE, wx, wy, count, (*value)->item[count].armour, owner, 0);
+      brainDataAddObject(cs, PILLS_BRAIN_OBJECT_TYPE, wx, wy, count, (*value)->item[count].armour, owner, 0);
     }
     count++;
   }

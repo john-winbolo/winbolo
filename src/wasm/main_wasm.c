@@ -19,6 +19,7 @@
 #include "../bolo/screen.h"
 #include "../bolo/client_render.h"
 #include "../bolo/client_sim.h"
+#include "../bolo/client_snapshot.h"
 #include "../bolo/frontend.h"
 #include "../bolo/playername_validate.h"
 #include "../bolo/transport.h"
@@ -172,7 +173,7 @@ static void windowRunGameTick(ClientSim *cs) {
         inputScroll(cs, &keys, isInMenu);
       }
       InputPacket pkt;
-      screenBuildInputPacketCS(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
+      clientBuildInputPacket(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
       clientMutexWaitFor();
       clientSimKeysTick(cs, &pkt);
       clientMutexRelease();
@@ -195,7 +196,7 @@ static void windowRunGameTick(ClientSim *cs) {
         inputScroll(cs, &keys, isInMenu);
       }
       InputPacket pkt;
-      screenBuildInputPacketCS(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
+      clientBuildInputPacket(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
       clientMutexWaitFor();
       clientSimGameTick(cs, &pkt, brainRunning);
       clientMutexRelease();

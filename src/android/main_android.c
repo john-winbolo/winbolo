@@ -20,6 +20,7 @@
 #include "../common/wb_log.h"
 #include "../bolo/screen.h"
 #include "../bolo/client_sim.h"
+#include "../bolo/client_snapshot.h"
 #include "../bolo/client_render.h"
 #include "../bolo/frontend.h"
 #include "../bolo/transport.h"
@@ -166,7 +167,7 @@ static void windowRunGameTick(ClientSim *cs) {
         tb = touchInputGetKeys();
       }
       InputPacket pkt;
-      screenBuildInputPacketCS(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
+      clientBuildInputPacket(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
       clientMutexWaitFor();
       clientSimKeysTick(cs, &pkt);
       clientMutexRelease();
@@ -186,7 +187,7 @@ static void windowRunGameTick(ClientSim *cs) {
         isMine = touchInputShouldLayMine();
       }
       InputPacket pkt;
-      screenBuildInputPacketCS(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
+      clientBuildInputPacket(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
       if (brainRunning == FALSE) {
         int gsChange = touchInputGetGunsightChange();
         if (gsChange > 0) pkt.flags |= (1 << INPUT_FLAG_GUNSIGHT_SHIFT);

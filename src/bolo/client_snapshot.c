@@ -24,9 +24,10 @@
  *  messages (newswire path debounced via
  *  basesEnqueueCaptureMessage).
  *
- *  Contents (declared in screen.h):
- *    screenBuildInputPacketCS   - pack keys/build into an InputPacket
- *    screenSyncFromSnapshotCS   - apply a server snapshot to the ClientSim
+ *  Contents (declared in client_snapshot.h):
+ *    clientBuildInputPacket  - pack keys/build into an InputPacket
+ *    clientApplySnapshot     - apply a server snapshot to the ClientSim
+ *    clientNetSetupTankGo    - finalize tank setup after server places it
  *
  *  Companion file: brain_data.c (Lua-brain data shaping).
  *********************************************************/
@@ -67,6 +68,7 @@
 #include "players.h"
 #include "screenbrainmap.h"
 #include "screen.h"
+#include "client_snapshot.h"
 #include "client_state.h"
 #include "interpolation.h"
 #include "util.h"
@@ -76,12 +78,12 @@
 #include "../steam/steam_wrapper.h"
 
 /*********************************************************
-*NAME:          screenBuildInputPacket
+*NAME:          clientBuildInputPacket
 *PURPOSE:
 *  Builds an InputPacket from the current input state.
 *  Handles both keyboard input and brain input.
 *********************************************************/
-void screenBuildInputPacketCS(ClientSim *csPtr, InputPacket *pkt, tankButton tb, bool isShoot, bool isMine, bool isBrain, bool isGameTick, BYTE playerNum, uint32_t tick) {
+void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, bool isShoot, bool isMine, bool isBrain, bool isGameTick, BYTE playerNum, uint32_t tick) {
   memset(pkt, 0, sizeof(InputPacket));
   pkt->tick = tick;
   pkt->playerNum = playerNum;
@@ -195,15 +197,15 @@ void screenBuildInputPacketCS(ClientSim *csPtr, InputPacket *pkt, tankButton tb,
   }
 }
 /*********************************************************
-*NAME:          screenSyncFromSnapshot
+*NAME:          clientApplySnapshot
 *PURPOSE:
-*  Syncs client state from a network snapshot received over
-*  UDP transport. Updates tank positions (own tank via
+*  Applies a server snapshot received over UDP transport
+*  to the ClientSim. Updates tank positions (own tank via
 *  reconciliation, others via interpolation), rebuilds
 *  shells and explosions from snapshot data, and processes
 *  game events (map changes, etc.).
 *********************************************************/
-void screenSyncFromSnapshotCS(ClientSim *csPtr,
+void clientApplySnapshot(ClientSim *csPtr,
                               const SnapshotHeader *hdr,
                               const TankSnapshot *tanks, int tankCount,
                               const ShellSnapshot *shellSnaps, int shellCount,
@@ -610,7 +612,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
   csPtr->lastServerTick = hdr->serverTick;
 
   /* Buffer events for brain consumption (accumulate across syncs;
-   * reset happens when the brain consumes them in screenMakeBrainInfoCS) */
+   * reset happens when the brain consumes them in brainDataMakeInfo) */
   if (events != NULL) {
     for (i = 0; i < eventCount; i++) {
       switch (events[i].type) {
@@ -948,4 +950,35 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
   if (isHuman) {
     csPtr->viewport.needRecalc = TRUE;
   }
+}
+
+/*********************************************************
+*NAME:          clientNetSetupTankGo
+*AUTHOR:        John Morrison
+*CREATION DATE: 27/2/99
+*LAST MODIFIED: 27/11/99
+*PURPOSE:
+*  Map download is complete and we are ready to start
+*  playing.
+*********************************************************/
+void clientNetSetupTankGo(ClientSim *csPtr) {
+  BYTE count;   /* Looping variables */
+  BYTE count2;
+
+  /* The server is authoritative for tank placement: serverSimAddPlayer
+   * has already chosen the start and the first snapshot has copied the
+   * position into MY_TANK. Calling startsGetStart on the client here
+   * would re-pick locally and, if it disagrees with the server (different
+   * sim state at the moment of call), leave the view centered on a spot
+   * the tank jumps away from on the next snapshot. Just centre on the
+   * existing position. */
+  clientCenterTankCS(csPtr);
+
+  for (count = 0; count < MAIN_BACK_BUFFER_SIZE_X; count++) {
+    for (count2 = 0; count2 < MAIN_BACK_BUFFER_SIZE_Y; count2++) {
+      (*clientSimGetMineView(csPtr))->mineItem[count][count2] = FALSE;
+    }
+  }
+
+  clientSimRecalc(csPtr);
 }

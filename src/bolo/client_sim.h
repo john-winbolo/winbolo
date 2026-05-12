@@ -205,6 +205,10 @@ void clientSimSetLockToggleSendFunc(ClientSim *cs, NetLockToggleSendFunc func);
 /* Lobby chat helper — appends "name: message\n" to lobbyChatHistory */
 void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message);
 
+/* Player-to-player chat delivery: routes to lobby chat or in-game inbox
+   depending on whether the client is still in the lobby. */
+void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr);
+
 /* Message functions (per-instance) */
 void clientSimMessageSendAllPlayers(ClientSim *cs, BYTE playerNum, char *message);
 void clientSimMessageSendPlayer(ClientSim *cs, BYTE playerNum, BYTE destPlayer, char *message);

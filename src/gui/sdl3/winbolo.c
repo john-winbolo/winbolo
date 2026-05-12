@@ -51,6 +51,7 @@
 #include "../../bolo/client_mapload.h"
 #include "../../bolo/client_render.h"
 #include "../../bolo/client_sim.h"
+#include "../../bolo/client_snapshot.h"
 #include "../../bolo/frontend.h"
 #include "../../bolo/tutorial.h"
 #include "../../bolo/players.h"
@@ -621,7 +622,7 @@ static void windowRunGameTick(ClientSim *cs) {
             inputScroll(cs, &keys, isInMenu);
           }
           InputPacket pkt;
-          screenBuildInputPacketCS(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
+          clientBuildInputPacket(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
           if (!brainRunning) {
             uint8_t gsAdj = inputConsumeGunsightAdj();
             if (gsAdj) pkt.flags |= ((gsAdj & 0x3) << INPUT_FLAG_GUNSIGHT_SHIFT);
@@ -673,7 +674,7 @@ static void windowRunGameTick(ClientSim *cs) {
             inputScroll(cs, &keys, isInMenu);
           }
           InputPacket pkt;
-          screenBuildInputPacketCS(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
+          clientBuildInputPacket(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
           if (!brainRunning) {
             uint8_t gsAdj = inputConsumeGunsightAdj();
             if (gsAdj) pkt.flags |= ((gsAdj & 0x3) << INPUT_FLAG_GUNSIGHT_SHIFT);

@@ -40,6 +40,7 @@
 #include "players.h"
 #include "playername_validate.h"
 #include "screen.h"
+#include "brain_data.h"
 #include "client_sim.h"
 #include "screenlgm.h"
 #include "screentank.h"
@@ -1895,7 +1896,7 @@ void playersGetBrainTanksInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE
         } else {
           owner = PLAYERS_BRAIN_HOSTILE;
         }
-        screenAddBrainObject(cs, PLAYERS_BRAIN_OBJECT_TYPE_TANK, wx, wy, count, (*plrs)->item[count].frame, owner, (*plrs)->item[count].speed);
+        brainDataAddObject(cs, PLAYERS_BRAIN_OBJECT_TYPE_TANK, wx, wy, count, (*plrs)->item[count].frame, owner, (*plrs)->item[count].speed);
       }
     }
     count++;
@@ -1989,7 +1990,7 @@ void playersGetBrainLgmsInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE 
           } else {
             owner = PLAYERS_BRAIN_HOSTILE;
           }
-          screenAddBrainObject(cs, lgmType, wx, wy, count, 0, owner, 0);
+          brainDataAddObject(cs, lgmType, wx, wy, count, 0, owner, 0);
         }
       }
     }

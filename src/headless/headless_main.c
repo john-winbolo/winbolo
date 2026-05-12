@@ -68,8 +68,10 @@
 #include "cJSON.h"
 
 #include "../bolo/screen.h"
+#include "../bolo/brain_data.h"
 #include "../bolo/client_mapload.h"
 #include "../bolo/client_sim.h"
+#include "../bolo/client_snapshot.h"
 #include "../bolo/client_sim_control.h"
 #include "../bolo/control_event.h"
 #include "../bolo/frontend.h"
@@ -223,7 +225,7 @@ static void logStateVerbose(int tickNum) {
   /* Build brain info (same data Lua brains see).
    * first=TRUE on initial call fills the entire 256x256 brain map from the real map.
    * Subsequent calls use first=FALSE (incremental viewport updates suffice). */
-  screenMakeBrainInfoCS(humanSim, &bi, needMapInit, optAi);
+  brainDataMakeInfo(humanSim, &bi, needMapInit, optAi);
   needMapInit = FALSE;
   selfPlayer = (BYTE)bi.player_number;
   alliesBits = bi.allies ? *(bi.allies) : 0;
@@ -498,7 +500,7 @@ static void logStateVerbose(int tickNum) {
   fprintf(f, "}\n");
   fflush(f);
 
-  /* Cleanup BrainInfo allocations (subset of screenExtractBrainInfoCS —
+  /* Cleanup BrainInfo allocations (subset of brainDataExtractInfo —
    * we only need to free, not apply outputs) */
   free(bi.allies);
   if (bi.base != NULL) free(bi.base);
@@ -537,7 +539,7 @@ static void logStateBinary(int tickNum) {
     return;
   }
 
-  screenMakeBrainInfoCS(humanSim, &bi, needMapInit, optAi);
+  brainDataMakeInfo(humanSim, &bi, needMapInit, optAi);
   needMapInit = FALSE;
   selfPlayer = (BYTE)bi.player_number;
   alliesBits = bi.allies ? *(bi.allies) : 0;
@@ -1057,7 +1059,7 @@ static bool fastModeSetupGame(void) {
 
   /* Sync initial snapshot and place tank */
   headlessSyncSnapshot();
-  screenNetSetupTankGoCS(humanSim);
+  clientNetSetupTankGo(humanSim);
 
   /* Register the headless client as a control-event subscriber. Placed
    * after clientLoadCompressedMap (which calls clientSimCreate) so
@@ -1137,7 +1139,7 @@ static int runFastMode(void) {
                           UNLIMITED_GAME_TIME, optName, 0, FALSE);
   clientSimSetAiType(humanSim, optAi);
   headlessSyncSnapshot();
-  screenNetSetupTankGoCS(humanSim);
+  clientNetSetupTankGo(humanSim);
 
   /* Register the headless client as a control-event subscriber. Placed
    * after clientLoadCompressedMap so humanSim->myPlayerNum is 0 before
@@ -1184,7 +1186,7 @@ static int runFastMode(void) {
         pkt.playerNum = playerNum;
         pkt.buttons = stdinButtons;
       } else {
-        screenBuildInputPacketCS(humanSim, &pkt, 0, FALSE, FALSE, brainRunning, FALSE, playerNum, simTickCounter);
+        clientBuildInputPacket(humanSim, &pkt, 0, FALSE, FALSE, brainRunning, FALSE, playerNum, simTickCounter);
       }
       clientSimKeysTick(humanSim, &pkt);
       headlessTransport.sendInput(headlessTransport.ctx, &pkt);
@@ -1225,7 +1227,7 @@ static int runFastMode(void) {
         }
         stdinButtons = pkt.buttons;
       } else {
-        screenBuildInputPacketCS(humanSim, &pkt, 0, FALSE, FALSE, brainRunning, TRUE, playerNum, simTickCounter);
+        clientBuildInputPacket(humanSim, &pkt, 0, FALSE, FALSE, brainRunning, TRUE, playerNum, simTickCounter);
       }
       clientSimGameTick(humanSim, &pkt, brainRunning);
       headlessTransport.sendInput(headlessTransport.ctx, &pkt);
@@ -1378,7 +1380,7 @@ static int runNetworkMode(void) {
   }
 
   /* Set up tank at start position */
-  screenNetSetupTankGoCS(humanSim);
+  clientNetSetupTankGo(humanSim);
 
   /* Gate lobby vs running: if we received PACKET_LOBBY_STATE during
    * join, stay in lobby state; otherwise proceed to running */
@@ -1423,7 +1425,7 @@ static int runNetworkMode(void) {
         } else if (justKeys) {
           /* Keys tick */
           InputPacket pkt;
-          screenBuildInputPacketCS(humanSim, &pkt, 0, FALSE, FALSE, brainRunning, FALSE, playerNum, simTickCounter);
+          clientBuildInputPacket(humanSim, &pkt, 0, FALSE, FALSE, brainRunning, FALSE, playerNum, simTickCounter);
           clientMutexWaitFor();
           clientSimKeysTick(humanSim, &pkt);
           clientMutexRelease();
@@ -1437,7 +1439,7 @@ static int runNetworkMode(void) {
         } else {
           /* Game tick */
           InputPacket pkt;
-          screenBuildInputPacketCS(humanSim, &pkt, 0, FALSE, FALSE, brainRunning, TRUE, playerNum, simTickCounter);
+          clientBuildInputPacket(humanSim, &pkt, 0, FALSE, FALSE, brainRunning, TRUE, playerNum, simTickCounter);
           clientMutexWaitFor();
           clientSimGameTick(humanSim, &pkt, brainRunning);
           clientMutexRelease();

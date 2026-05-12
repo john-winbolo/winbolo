@@ -75,12 +75,8 @@ typedef enum {
 
 bool screenIsItemInTrees(struct GameSim *sim, tank viewerTank, WORLD bmx, WORLD bmy);
 void screenGetSubMapSquareOffset(int *xPos, int *yPos);
-void screenAddBrainObject(struct ClientSim *cs, unsigned short object, WORLD wx, WORLD wy, unsigned short idNum, BYTE dir, BYTE info, BYTE speed);
-void screenMakeBrainViewDataCS(struct ClientSim *cs, BYTE *buff, BYTE leftPos, BYTE rightPos, BYTE topPos, BYTE bottomPos);
 void clientCenterTankCS(struct ClientSim *csPtr);
 void screenNetStatusMessage(struct ClientSim *csPtr, char *messageStr);
-bool screenExtractPNBData(BYTE *buff, BYTE dataLen, bool isTcp);
-bool screenExtractMNTData(BYTE *buff, BYTE dataLen, bool isTcp);
 
 
 /* -------------------------------------------------------
@@ -177,18 +173,6 @@ void screenSetTankLabelLen(struct ClientSim *csPtr, labelLen value);
 /* Forward declaration for ClientSim-parameterized functions */
 struct ClientSim;
 
-void screenMakeBrainInfoCS(struct ClientSim *cs, BrainInfo *value, bool first, aiType aiMode);
-void screenExtractBrainInfoCS(struct ClientSim *cs, BrainInfo *value);
-void screenBuildInputPacketCS(struct ClientSim *cs, InputPacket *pkt, tankButton tb, bool isShoot, bool isMine, bool isBrain, bool isGameTick, BYTE playerNum, uint32_t tick);
-void screenSyncFromSnapshotCS(struct ClientSim *cs,
-                              const SnapshotHeader *hdr,
-                              const TankSnapshot *tanks, int tankCount,
-                              const ShellSnapshot *shellSnaps, int shellCount,
-                              const TkExplosionSnapshot *tkExplSnaps, int tkExplosionCount,
-                              const BaseSnapshot *baseSnaps, int baseCount,
-                              const PillSnapshot *pillSnaps, int pillCount,
-                              const GameEvent *events, int eventCount,
-                              BYTE playerNum);
 BYTE screenCalcSquareCS(struct ClientSim *csPtr, BYTE xValue, BYTE yValue, BYTE scrX, BYTE scrY);
 tankButton screenTranslateBrainButtonsCS(struct ClientSim *csPtr, bool *isShoot, bool isGameTick);
 void screenGunsightRangeCS(struct ClientSim *csPtr, bool increase);
@@ -205,20 +189,9 @@ void screenSetTimeGameCreatedCS(struct ClientSim *csPtr, int32_t value);
 void screenSetMapNameCS(struct ClientSim *csPtr, char *name);
 void screenSetTimeLengthsCS(struct ClientSim *csPtr, int srtDelay, int32_t gmeLen);
 void screenSetGameTypeCS(struct ClientSim *csPtr, gameType gt);
-void screenNetSetupTankCS(struct ClientSim *csPtr, bool isInStart);
-void screenNetSetupTankGoCS(struct ClientSim *csPtr);
-void screenSetBaseNetDataCS(struct ClientSim *csPtr, BYTE *buff, int length);
-void screenSetPillNetDataCS(struct ClientSim *csPtr, BYTE *buff, BYTE dataLen);
-void screenSetStartsNetDataCS(struct ClientSim *csPtr, BYTE *buff, BYTE dataLen);
 void screenChangeOwnershipCS(struct ClientSim *csPtr, BYTE oldOwner);
 void screenGetLgmStatusCS(struct ClientSim *csPtr, bool *isOut, bool *isDead, TURNTYPE *angle);
-BYTE screenMakeShellDataCS(struct ClientSim *csPtr, BYTE *buff);
-void screenExtractShellDataCS(struct ClientSim *csPtr, BYTE *buff, BYTE dataLen);
-void screenIncomingMessageCS(struct ClientSim *csPtr, BYTE playerNum, char *messageStr);
 void screenSetCursorPosCS(struct ClientSim *csPtr, BYTE posX, BYTE posY);
 void screenTankStopCarryingPillCS(struct ClientSim *csPtr, BYTE itemNum);
-void screenNetLgmReturnCS(struct ClientSim *csPtr, BYTE numTrees, BYTE numMines, BYTE pillNum);
-void screenNetManWorkingCS(struct ClientSim *csPtr, BYTE mapX, BYTE mapY, BYTE numMines, BYTE pillNum, BYTE numTrees);
-void screenSetTankStartPositionCS(struct ClientSim *csPtr, BYTE xValue, BYTE yValue, TURNTYPE angle, BYTE numShells, BYTE numMines);
 void screenSetPlayersMenuCS(struct ClientSim *csPtr);
 #endif /* SCREEN_H */

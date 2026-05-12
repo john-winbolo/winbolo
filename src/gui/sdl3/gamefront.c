@@ -50,6 +50,7 @@
 #include "../../bolo/screen.h"
 #include "../../bolo/client_mapload.h"
 #include "../../bolo/client_sim.h"
+#include "../../bolo/client_snapshot.h"
 #include "../../bolo/client_sim_control.h"
 #include "../../bolo/control_event.h"
 #include "../../bolo/global.h"
@@ -1034,7 +1035,7 @@ bool gameFrontSetDlgState(openingStates newState) {
             returnValue = FALSE;
           } else {
             clientMutexWaitFor();
-            screenNetSetupTankGoCS(humanSim);
+            clientNetSetupTankGo(humanSim);
             clientMutexRelease();
             gameFrontUpdateSteamPresence(humanSim);
             dlgState = openFinished;
@@ -1161,7 +1162,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           spHumanSubHandle = serverSimRegisterSubscriber(spServerSim,
                                                         humanDeliverControl,
                                                         humanSim);
-          screenNetSetupTankGoCS(humanSim);
+          clientNetSetupTankGo(humanSim);
           /* Destroy background game before adding real bots — bgGameDestroy
            * calls botManagerDestroy which would wipe bots we add below. */
           {
@@ -2194,7 +2195,7 @@ bool gameFrontLoadDeferredMap(ClientSim **cs) {
   clientSimSetLockToggleSendFunc(*cs, gameFrontLockToggleCallback);
 
   clientMutexWaitFor();
-  screenNetSetupTankGoCS(*cs);
+  clientNetSetupTankGo(*cs);
   clientMutexRelease();
 
   return TRUE;

@@ -841,7 +841,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
                 memcpy(message, buf + PACKET_HEADER_SIZE + 2, msgLen);
                 message[msgLen] = '\0';
-                screenIncomingMessageCS(c->clientSim, fromPlayer, message);
+                clientSimIncomingMessage(c->clientSim, fromPlayer, message);
             }
         }
         break;
