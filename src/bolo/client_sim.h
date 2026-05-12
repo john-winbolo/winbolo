@@ -90,6 +90,9 @@ typedef struct {
 typedef struct ClientSim ClientSim;
 #endif
 
+/* Forward declaration — full definition in client_sim_internal.h */
+struct ViewPort;
+
 /* Access the local player's tank and LGM by server player number */
 #define MY_TANK(cs) (clientSimGetGameSim(cs)->tanks[clientSimGetMyPlayerNum(cs)])
 #define MY_LGM(cs)  (clientSimGetGameSim(cs)->lgmen[clientSimGetMyPlayerNum(cs)])
@@ -309,6 +312,14 @@ ScrollState   *clientSimGetScroll(ClientSim *cs);
 InterpContext *clientSimGetInterpCtx(ClientSim *cs);
 screen        *clientSimGetView(ClientSim *cs);
 screenMines   *clientSimGetMineView(ClientSim *cs);
+
+/* Bundled viewport accessor — for bolo-internal callers (viewport.c,
+ * screen.c, etc.) that want to operate on the whole ViewPort substruct
+ * rather than poking individual scalar fields. The scalar accessors
+ * above still exist and are the preferred entry point for external
+ * callers. */
+const struct ViewPort *clientSimViewport(const ClientSim *cs);
+struct ViewPort       *clientSimViewportMut(ClientSim *cs);
 
 /* Writable scalar slots — for callees that write through an
  * address (scroll*, pillsGetNextView, pillsMoveView). Use the

@@ -142,7 +142,7 @@ void screenBuildInputPacketCS(ClientSim *csPtr, InputPacket *pkt, tankButton tb,
 
     /* Client-side display actions (pill/tank view toggle) */
     if (testkey(*tapKeys, KEY_TankView) || testkey(*holdKeys, KEY_TankView)) {
-      csPtr->inPillView = FALSE;
+      csPtr->viewport.inPillView = FALSE;
       clientCenterTankCS(csPtr);
     }
     if (testkey(*tapKeys, KEY_PillView) || testkey(*holdKeys, KEY_PillView)) {
@@ -404,7 +404,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
             /* dead→alive: recenter view on respawn */
             csPtr->sim.inStartFind = FALSE;
             if (isHuman) {
-              csPtr->inPillView = FALSE;
+              csPtr->viewport.inPillView = FALSE;
               clientCenterTankCS(csPtr);
             }
           }
@@ -946,6 +946,6 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
 
   /* Invalidate tile cache after applying snapshot state (human only) */
   if (isHuman) {
-    csPtr->needScreenReCalc = TRUE;
+    csPtr->viewport.needRecalc = TRUE;
   }
 }
