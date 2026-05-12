@@ -543,7 +543,7 @@ void windowShowPillLabels_toggle(ClientSim *cs) {
   BYTE count, total;
   showPillLabels = !showPillLabels;
   sdl3DrawSetPillsStatusClear();
-  total = pillsGetNumPills(&cs->sim.pb);
+  total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
   for (count = 1; count <= total; count++) {
     BYTE pillStat = screenPillAllianceCS(cs, count);
     sdl3DrawStatusPillbox(count, pillStat, showPillLabels);
@@ -554,7 +554,7 @@ void windowShowBaseLabels_toggle(ClientSim *cs) {
   BYTE count, total;
   showBaseLabels = !showBaseLabels;
   sdl3DrawSetBasesStatusClear();
-  total = basesGetNumBases(&cs->sim.bs);
+  total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
   for (count = 1; count <= total; count++) {
     BYTE baseStat = screenBaseAllianceCS(cs, count);
     sdl3DrawStatusBase(count, baseStat, showBaseLabels);
@@ -654,7 +654,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
   if (hideMainView == FALSE && drawBusy == FALSE) {
     BYTE cursorX, cursorY;
     bool showCursor = screenGetCursorPosCS(cs, &cursorX, &cursorY);
-    sdl3DrawSetNetFailed(cs->netStat == netFailed);
+    sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
     sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                        NULL, showPillLabels, showBaseLabels,
                        srtDelay, isPillView, edgeX, edgeY,

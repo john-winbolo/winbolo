@@ -356,8 +356,8 @@ int main(int argc, char *argv[]) {
    * the game loop would tick an uninitialized tank and crash.
    * The lobby creates its own ImGui context, so we must tear down the
    * existing one first to avoid an assertion failure in ImGui_ImplSDL3_Init. */
-  if (cs && cs->inLobby &&
-      (cs->netStat == netLobby || cs->netStat == netLobbyCountdown)) {
+  if (cs && clientSimIsInLobby(cs) &&
+      (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Entering lobby");
     sdl3ImguiCleanup();  /* Tear down existing ImGui — lobby creates its own */
     const DialogBackend *db = dialogBackendGet();
@@ -384,7 +384,7 @@ int main(int argc, char *argv[]) {
       SDL_Quit();
       return 0;
     }
-    cs->netStat = netRunning;
+    clientSimSetNetStatus(cs, netRunning);
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Lobby complete, game starting");
     /* Re-initialize ImGui for the main game loop */
     {

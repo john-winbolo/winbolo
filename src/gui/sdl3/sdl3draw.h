@@ -213,7 +213,7 @@ void sdl3DrawStartDelay(RECT *rcWindow, int32_t srtDelay);
 *NAME:          sdl3DrawSetNetFailed
 *PURPOSE:
 *  Call with v=true before sdl3DrawMainScreen when
-*  cs->netStat==netFailed so the overlay is drawn
+*  clientSimGetNetStatus(cs)==netFailed so the overlay is drawn
 *  inside the same frame.  Call with v=false otherwise.
 *********************************************************/
 void sdl3DrawSetNetFailed(bool v);

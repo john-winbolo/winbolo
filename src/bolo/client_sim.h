@@ -225,8 +225,8 @@ struct ClientSim {
 };
 
 /* Access the local player's tank and LGM by server player number */
-#define MY_TANK(cs) ((cs)->sim.tanks[(cs)->myPlayerNum])
-#define MY_LGM(cs)  ((cs)->sim.lgmen[(cs)->myPlayerNum])
+#define MY_TANK(cs) (clientSimGetGameSim(cs)->tanks[clientSimGetMyPlayerNum(cs)])
+#define MY_LGM(cs)  (clientSimGetGameSim(cs)->lgmen[clientSimGetMyPlayerNum(cs)])
 
 /* Recover the owning ClientSim from a GameSim* for the frontEnd
  * active-cs gate. Relies on the "GameSim sim MUST be first member"
@@ -493,5 +493,9 @@ void clientSimSetLabelOwnTank(ClientSim *cs, bool v);
 /* Last-player-name buffer (copy semantics — strcpy into the field,
  * matching the existing call site behavior; caller bounds-checks). */
 void clientSimSetMyLastPlayerName(ClientSim *cs, const char *name);
+
+/* Lobby state */
+void clientSimSetInLobby(ClientSim *cs, bool v);
+void clientSimSetMapDownloadComplete(ClientSim *cs, bool v);
 
 #endif /* CLIENT_SIM_H */

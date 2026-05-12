@@ -284,8 +284,8 @@ ios_game_start:
     ClientSim *cs = humanSim;
 
     /* Handle lobby if server uses lobby mode */
-    if (cs && cs->inLobby &&
-        (cs->netStat == netLobby || cs->netStat == netLobbyCountdown)) {
+    if (cs && clientSimIsInLobby(cs) &&
+        (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
         SDL_Log("[iOS] Entering lobby");
         sdl3ImguiCleanup();
         const DialogBackend *db = dialogBackendGet();
@@ -310,7 +310,7 @@ ios_game_start:
             SDL_Quit();
             return 0;
         }
-        cs->netStat = netRunning;
+        clientSimSetNetStatus(cs, netRunning);
         SDL_Log("[iOS] Lobby complete, game starting");
         {
             SDL_Window *win = sdl3DrawGetWindow();
@@ -769,7 +769,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
     if (hideMainView == FALSE && drawBusy == FALSE) {
         BYTE cursorX, cursorY;
         bool showCursor = screenGetCursorPosCS(cs, &cursorX, &cursorY);
-        sdl3DrawSetNetFailed(cs->netStat == netFailed);
+        sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
         sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                            NULL, showPillLabels, showBaseLabels,
                            srtDelay, isPillView, edgeX, edgeY,

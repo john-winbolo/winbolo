@@ -301,9 +301,9 @@ static void gameFrontLockToggleCallback(bool allow) {
 void gameFrontUpdateSteamPresence(ClientSim *cs) {
   if (cs == NULL) return;
   char status[256];
-  BYTE numPlayers = playersGetNumPlayers(&cs->sim.plyrs);
+  BYTE numPlayers = playersGetNumPlayers(&clientSimGetGameSim(cs)->plyrs);
   snprintf(status, sizeof(status), "On map '%s' - %d player%s",
-           cs->mapName, numPlayers, numPlayers == 1 ? "" : "s");
+           clientSimGetMapName(cs), numPlayers, numPlayers == 1 ? "" : "s");
   steam_set_rich_presence("status", status);
   steam_set_rich_presence("steam_display", "#StatusWithMap");
 
@@ -2155,9 +2155,9 @@ bool gameFrontLoadDeferredMap(ClientSim *cs) {
 
   /* Preserve lobby flag and map name across destroy/create — clientSimCreate
    * clears them, but we need them to survive the reload. */
-  bool wasInLobby = cs->inLobby;
+  bool wasInLobby = clientSimIsInLobby(cs);
   char savedMapName[MAP_STR_SIZE];
-  strncpy(savedMapName, cs->mapName, MAP_STR_SIZE - 1);
+  strncpy(savedMapName, clientSimGetMapName(cs), MAP_STR_SIZE - 1);
   savedMapName[MAP_STR_SIZE - 1] = '\0';
 
   clientSimDestroy(cs);
@@ -2172,8 +2172,8 @@ bool gameFrontLoadDeferredMap(ClientSim *cs) {
   }
 
   screenSetLocalTransportCS(cs, false);
-  cs->inLobby = wasInLobby;
-  cs->mapDownloadComplete = true;
+  clientSimSetInLobby(cs, wasInLobby);
+  clientSimSetMapDownloadComplete(cs, true);
 
   clientSimSetChatSendFunc(cs, gameFrontChatSendCallback);
   clientSimSetNameChangeSendFunc(cs, gameFrontNameChangeSendCallback);
