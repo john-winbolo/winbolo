@@ -33,6 +33,7 @@
 #include "global.h"
 #include "viewport_types.h"
 #include "client_enums.h"
+#include "client_render.h"
 #include "gametype.h"
 #include "screenbullet.h"
 #include "screentank.h"
@@ -166,8 +167,6 @@ typedef enum {
 } playerNumbers;
 #endif
 
-BYTE screenGetPos(screen *value, BYTE xValue, BYTE yValue);
-bool screenIsMine(screenMines *value, BYTE xValue, BYTE yValue);
 void screenGetMessages(struct ClientSim *csPtr, char *top, char *bottom);
 void screenShowMessages(struct ClientSim *csPtr, BYTE msgType, bool isShown);
 void screenSetAutoScroll(struct ClientSim *csPtr, bool isAuto);
