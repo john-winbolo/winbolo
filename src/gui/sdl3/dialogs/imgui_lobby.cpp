@@ -43,6 +43,11 @@ extern "C" {
 #include "../../../bolo/transport_udp.h"
 #include "../../../server/server_lifecycle.h"
 #include "../../../server/server_sim.h"
+/* TODO(opaque-sims-migration): imgui_lobby.cpp's SP branches mutate
+ * spServerSim's internal layout (lobbyPlayers[].teamNumber, teams[i],
+ * botBrainPaths[], etc.). Tracked as a follow-up — see the merge
+ * commit message. */
+#include "../../../server/server_sim_internal.h"
 #include "../../../bolo/bolo_map.h"
 #include "../../../bolo/pillbox.h"
 #include "../../../bolo/bases.h"

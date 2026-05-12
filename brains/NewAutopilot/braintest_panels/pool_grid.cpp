@@ -3,7 +3,7 @@
  *
  * Bot-specific BrainTest panel renderer for NewAutopilot's
  * goal-pool data model. Compiled into BrainTest at build
- * time via brains/<bot>/braintest_panels/*.cpp glob.
+ * time via brains/<bot>/braintest_panels/(*.cpp) glob.
  *
  * Visual layout matches the original optimize-branch
  * braintest_poolwindow.cpp pixel-for-pixel: 2x5 grid for

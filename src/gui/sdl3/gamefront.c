@@ -58,6 +58,10 @@
 #include "../brainsHandler.h"
 #include "../clientmutex.h"
 #include "../gamefront.h"
+/* TODO(opaque-sims-migration): gamefront.c reaches into ServerSim's
+ * internal layout in the SP lobby / start-game paths. Tracked as a
+ * follow-up — see the merge commit. */
+#include "../../server/server_sim_internal.h"
 #include "../../server/threads.h"
 #include "../../bolo/bot_manager.h"
 #include "../input.h"
@@ -318,7 +322,7 @@ void gameFrontUpdateSteamPresence(ClientSim *cs) {
   /* Set connect string so friends see a "Join Game" button */
   if (udpTransportActive && gameFrontUdpAddress[0] != '\0') {
     char connect[FILENAME_MAX];
-    snprintf(connect, sizeof(connect), "+connect %s:%u",
+    snprintf(connect, sizeof(connect), "+connect %.255s:%u",
              gameFrontUdpAddress, (unsigned)gameFrontTargetUdp);
     steam_set_rich_presence("connect", connect);
   }
@@ -525,10 +529,11 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
      * tanks (which are deep copies since Phase 4 prediction).
      * LGMs are still shared (not deep-copied), so screenDestroy frees them. */
     {
+      GameSim *gs = serverSimGetGameSim(spServerSim);
       BYTE i;
       for (i = 0; i < MAX_TANKS; i++) {
-        if (spServerSim->sim.tanks[i] != NULL) {
-          tankDestroy(&spServerSim->sim, &spServerSim->sim.tanks[i]);
+        if (gs->tanks[i] != NULL) {
+          tankDestroy(gs, &gs->tanks[i]);
         }
       }
     }
@@ -657,14 +662,11 @@ static bool pickRandomMap(char *out, size_t outLen) {
  *
  * Returns TRUE on success, FALSE on map-load / sim-init failure. */
 static bool gameFrontEnterSinglePlayerLobby(void) {
-  bool simOk = FALSE;
-  spServerSim = (ServerSim *)malloc(sizeof(ServerSim));
-  if (spServerSim == NULL) return FALSE;
-
   /* Default settings — host can change them in the lobby. */
   if (gametype == 0) gametype = gameOpen;
   /* timeLen / startDelay / hiddenMines: keep whatever globals already
-   * carry (preferences from previous session). */
+   * carry (preferences from previous session). opaque-sims style:
+   * serverSimCreate* allocates internally and returns the new sim. */
   if (strncmp(fileName, "randommap:", 10) == 0) {
     MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
     const char *seedStr = fileName + 10;
@@ -674,16 +676,14 @@ static bool gameFrontEnterSinglePlayerLobby(void) {
     }
     cfg.x1 = MAP_MINE_EDGE_LEFT + 1; cfg.y1 = MAP_MINE_EDGE_TOP + 1;
     cfg.x2 = MAP_MINE_EDGE_RIGHT - 1; cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
-    simOk = serverSimCreateRandomMap(spServerSim, &cfg, gametype, hiddenMines, startDelay, timeLen);
+    spServerSim = serverSimCreateRandomMap(&cfg, gametype, hiddenMines, startDelay, timeLen);
   } else if (fileName[0] != '\0') {
-    simOk = serverSimCreate(spServerSim, fileName, gametype, hiddenMines, startDelay, timeLen);
+    spServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
   } else {
     BYTE emap[6000] = E_MAP;
-    simOk = serverSimCreateCompressed(spServerSim, emap, 5097, gametype, hiddenMines, startDelay, timeLen);
+    spServerSim = serverSimCreateCompressed(emap, 5097, gametype, hiddenMines, startDelay, timeLen);
   }
-  if (!simOk) {
-    free(spServerSim);
-    spServerSim = NULL;
+  if (spServerSim == NULL) {
     return FALSE;
   }
 
@@ -913,7 +913,7 @@ static bool gameFrontDialogs(void) {
       /* Mark both sims so tank.c's tutorial stop logic fires
        * authoritatively on the server and keeps client prediction
        * consistent. */
-      if (spServerSim != NULL) spServerSim->sim.isTutorial = true;
+      if (spServerSim != NULL) serverSimGetGameSim(spServerSim)->isTutorial = true;
       if (humanSim != NULL)    humanSim->sim.isTutorial = true;
       break;
     case openSettings: {
@@ -1245,49 +1245,46 @@ bool gameFrontSetDlgState(openingStates newState) {
      * Create the server sim, then load the map on the client side
      * using the same compressed data the UDP path uses. */
     {
-        bool simOk = FALSE;
-        spServerSim = (ServerSim *)malloc(sizeof(ServerSim));
-        if (spServerSim != NULL) {
-          if (strncmp(fileName, "randommap:", 10) == 0) {
-            /* Random map — parse seed from "randommap:<seed>" */
-            MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
-            const char *seedStr = fileName + 10;
-            if (!mapGenSeedToConfig(seedStr, &cfg)) {
-                WB_LOG_WARN(WB_LOG_CAT_MAP, "failed to parse random map seed '%s', using defaults", seedStr);
-            }
-            cfg.x1 = MAP_MINE_EDGE_LEFT + 1; cfg.y1 = MAP_MINE_EDGE_TOP + 1;
-            cfg.x2 = MAP_MINE_EDGE_RIGHT - 1; cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
-            simOk = serverSimCreateRandomMap(spServerSim, &cfg, gametype, hiddenMines, startDelay, timeLen);
-          } else if (strcmp(fileName, "") != 0) {
-            simOk = serverSimCreate(spServerSim, fileName, gametype, hiddenMines, startDelay, timeLen);
-          } else {
-            BYTE emap[6000] = E_MAP;
-            simOk = serverSimCreateCompressed(spServerSim, emap, 5097, gametype, hiddenMines, startDelay, timeLen);
+        if (strncmp(fileName, "randommap:", 10) == 0) {
+          /* Random map — parse seed from "randommap:<seed>" */
+          MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
+          const char *seedStr = fileName + 10;
+          if (!mapGenSeedToConfig(seedStr, &cfg)) {
+              WB_LOG_WARN(WB_LOG_CAT_MAP, "failed to parse random map seed '%s', using defaults", seedStr);
           }
+          cfg.x1 = MAP_MINE_EDGE_LEFT + 1; cfg.y1 = MAP_MINE_EDGE_TOP + 1;
+          cfg.x2 = MAP_MINE_EDGE_RIGHT - 1; cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
+          spServerSim = serverSimCreateRandomMap(&cfg, gametype, hiddenMines, startDelay, timeLen);
+        } else if (strcmp(fileName, "") != 0) {
+          spServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
+        } else {
+          BYTE emap[6000] = E_MAP;
+          spServerSim = serverSimCreateCompressed(emap, 5097, gametype, hiddenMines, startDelay, timeLen);
         }
-        if (simOk) {
+        if (spServerSim != NULL) {
           /* Single-player: no lobby, run immediately */
-          spServerSim->lobbyEnabled = false;
-          spServerSim->state = serverStateRunning;
+          serverSimSetLobbyEnabled(spServerSim, false);
+          serverSimStartGame(spServerSim);
           serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
-          spServerSim->sim.viewPlayer = 0;
+          serverSimGetGameSim(spServerSim)->viewPlayer = 0;
           spTransport = transportLocalCreate(spServerSim, 0);
           spTransportLocalUsed = TRUE;
           spServerSimActive = TRUE;
           /* Load map/bases/pills on client via compressed map (same as UDP path) */
           humanSim = &humanSimStorage;
+          frontEndSetActiveClientSim(humanSim);
           {
             BYTE compressedMap[65536];
             int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
             if (compLen > 0) {
-              screenLoadCompressedMapCS(humanSim, compressedMap, compLen, spServerSim->mapName,
+              screenLoadCompressedMapCS(humanSim, compressedMap, compLen,
+                                       (char *)serverSimGetMapName(spServerSim),
                                        gametype, hiddenMines, startDelay,
                                        timeLen, gameFrontName, 0, FALSE);
             } else {
               clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
             }
           }
-          frontEndSetActiveClientSim(humanSim);
           if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
           /* Set up networking state after ClientSim is fully initialized */
           netSetup(humanSim, netSingle, gameFrontMyUdp, gameFrontUdpAddress, gameFrontTargetUdp,
@@ -1351,9 +1348,8 @@ bool gameFrontSetDlgState(openingStates newState) {
             }
             /* Set botBrainPath on the ServerSim so lobby Add Bot requests work */
             if (haveBrain) {
-              strncpy(spServerSim->botBrainPath, brainPath, sizeof(spServerSim->botBrainPath) - 1);
-              spServerSim->botBrainPath[sizeof(spServerSim->botBrainPath) - 1] = '\0';
-              spServerSim->botAiType = compTanks;
+              serverSimSetBotBrainPath(spServerSim, brainPath);
+              serverSimSetBotAiType(spServerSim, compTanks);
             }
             if (compTanks != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
               for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS; bi++) {
@@ -1367,7 +1363,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                 /* Apply team number */
                 uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
                 if (team > 0) {
-                  spServerSim->lobbyPlayers[slot].teamNumber = team;
+                  serverSimSetTeam(spServerSim, slot, team);
                   {
                     ControlEvent slotEvt;
                     memset(&slotEvt, 0, sizeof(slotEvt));
@@ -1378,7 +1374,7 @@ bool gameFrontSetDlgState(openingStates newState) {
               }
               /* Apply human player team number */
               if (gameFrontBotSetupData.playerTeamNumber > 0) {
-                spServerSim->lobbyPlayers[0].teamNumber = gameFrontBotSetupData.playerTeamNumber;
+                serverSimSetTeam(spServerSim, 0, gameFrontBotSetupData.playerTeamNumber);
                 {
                   ControlEvent slotEvt;
                   memset(&slotEvt, 0, sizeof(slotEvt));
@@ -1388,13 +1384,14 @@ bool gameFrontSetDlgState(openingStates newState) {
               }
               /* Apply team alliances — players with same non-zero team become allies. */
               for (int a = 0; a < 16; a++) {
-                if (!spServerSim->playerConnected[a]) continue;
-                if (spServerSim->lobbyPlayers[a].teamNumber == 0) continue;
+                if (!serverSimIsPlayerConnected(spServerSim, (BYTE)a)) continue;
+                if (serverSimGetLobbyPlayer(spServerSim, (BYTE)a)->teamNumber == 0) continue;
                 for (int b = a + 1; b < 16; b++) {
-                  if (!spServerSim->playerConnected[b]) continue;
-                  if (spServerSim->lobbyPlayers[b].teamNumber == spServerSim->lobbyPlayers[a].teamNumber) {
+                  if (!serverSimIsPlayerConnected(spServerSim, (BYTE)b)) continue;
+                  if (serverSimGetLobbyPlayer(spServerSim, (BYTE)b)->teamNumber == serverSimGetLobbyPlayer(spServerSim, (BYTE)a)->teamNumber) {
+                    GameSim *gs = serverSimGetGameSim(spServerSim);
                     ControlEvent allyEvt;
-                    playersAcceptAlliance(&spServerSim->sim, &spServerSim->sim.plyrs, NEUTRAL, (BYTE)a, (BYTE)b, TRUE);
+                    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, (BYTE)a, (BYTE)b, TRUE);
                     memset(&allyEvt, 0, sizeof(allyEvt));
                     allyEvt.type = CTRL_ALLIANCE_ACCEPT;
                     allyEvt.u.allianceAccept.acceptedBy = (BYTE)a;
@@ -1690,9 +1687,9 @@ void gameFrontHandleUrlOpen(char *url) {
     /* Reconstruct a clean URL from the parsed globals so fileName
        is not mangled by strtok. */
     if (gameFrontTargetUdp > 0) {
-      snprintf(fileName, FILENAME_MAX, "winbolo://%s:%d", gameFrontUdpAddress, gameFrontTargetUdp);
+      snprintf(fileName, FILENAME_MAX, "winbolo://%.255s:%d", gameFrontUdpAddress, gameFrontTargetUdp);
     } else {
-      snprintf(fileName, FILENAME_MAX, "winbolo://%s", gameFrontUdpAddress);
+      snprintf(fileName, FILENAME_MAX, "winbolo://%.255s", gameFrontUdpAddress);
     }
     dlgState = openInternetManual;
   }
@@ -1728,7 +1725,6 @@ void gameFrontShutdownServer(void) {
 
   serverInstanceShutdown(toFree);
   serverSimDestroy(toFree);
-  free(toFree);
 }
 
 bool gameFrontPreferencesExist(void) {
@@ -1744,7 +1740,6 @@ bool gameFrontPreferencesExist(void) {
 }
 
 bool gameFrontSetupServer(void) {
-  bool simOk = FALSE;
   ServerInstanceConfig cfg;
 
   /* Welcome-screen BgGame leaves the global botManager state populated
@@ -1759,11 +1754,6 @@ bool gameFrontSetupServer(void) {
     }
   }
 
-  spServerSim = (ServerSim *)malloc(sizeof(ServerSim));
-  if (spServerSim == NULL) {
-    return FALSE;
-  }
-
   if (strncmp(fileName, "randommap:", 10) == 0) {
     MapGenConfig mcfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
     const char *seedStr = fileName + 10;
@@ -1772,23 +1762,21 @@ bool gameFrontSetupServer(void) {
     }
     mcfg.x1 = MAP_MINE_EDGE_LEFT + 1; mcfg.y1 = MAP_MINE_EDGE_TOP + 1;
     mcfg.x2 = MAP_MINE_EDGE_RIGHT - 1; mcfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
-    simOk = serverSimCreateRandomMap(spServerSim, &mcfg, gametype, hiddenMines, startDelay, timeLen);
+    spServerSim = serverSimCreateRandomMap(&mcfg, gametype, hiddenMines, startDelay, timeLen);
   } else if (fileName[0] != '\0') {
-    simOk = serverSimCreate(spServerSim, fileName, gametype, hiddenMines, startDelay, timeLen);
+    spServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
   } else {
     BYTE emap[6000] = E_MAP;
-    simOk = serverSimCreateCompressed(spServerSim, emap, 5097, gametype, hiddenMines, startDelay, timeLen);
+    spServerSim = serverSimCreateCompressed(emap, 5097, gametype, hiddenMines, startDelay, timeLen);
   }
-  if (!simOk) {
-    free(spServerSim);
-    spServerSim = NULL;
+  if (spServerSim == NULL) {
     return FALSE;
   }
 
-  spServerSim->lobbyEnabled = true;
-  spServerSim->emptyResetEnabled = true;
-  spServerSim->state = serverStateLobby;
-  spServerSim->hasPassword = (password[0] != '\0');
+  serverSimSetLobbyEnabled(spServerSim, true);
+  serverSimSetEmptyResetEnabled(spServerSim, true);
+  serverSimEnterLobby(spServerSim);
+  serverSimSetHasPassword(spServerSim, (password[0] != '\0'));
 
   memset(&cfg, 0, sizeof(cfg));
   cfg.udpPort         = gameFrontMyUdp;
@@ -1821,7 +1809,6 @@ bool gameFrontSetupServer(void) {
 
   if (!serverInstanceStartup(spServerSim, &cfg)) {
     serverSimDestroy(spServerSim);
-    free(spServerSim);
     spServerSim = NULL;
     return FALSE;
   }
@@ -1830,7 +1817,6 @@ bool gameFrontSetupServer(void) {
   if (hostedServerTimerID == 0) {
     serverInstanceShutdown(spServerSim);
     serverSimDestroy(spServerSim);
-    free(spServerSim);
     spServerSim = NULL;
     return FALSE;
   }

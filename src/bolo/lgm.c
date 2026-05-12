@@ -512,7 +512,6 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
 *********************************************************/
 void lgmNewPrimaryRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY, BYTE action) {
   map *mp = &sim->mp;
-  bool isServer = sim->isServer;
   BYTE pillNum;
   bool isMine;
   BYTE trees;
@@ -1121,34 +1120,21 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
 *********************************************************/
 void lgmBackInTank(GameSim *sim, lgm *lgman, tank *tnk, bool sendItems) {
   bool isServer = sim->isServer;
-  BYTE trees;
-  BYTE minesAmount;
-  BYTE pillNum;
+  (void)sendItems;
 
-  minesAmount = trees = 0;
-  pillNum = LGM_NO_PILL;
   if ((*lgman)->numTrees > 0) {
     tankGiveTrees(sim, tnk, (*lgman)->numTrees);
-    trees = (*lgman)->numTrees;
     (*lgman)->numTrees = 0;
   }
   if ((*lgman)->numPills != LGM_NO_PILL) {
     tankPutCarriedPill(tnk, (*lgman)->numPills);
-    pillNum = (*lgman)->numPills;
     (*lgman)->numPills = LGM_NO_PILL;
   }
   if ((*lgman)->numMines > 0) {
-    minesAmount = (*lgman)->numMines;
     tankAddMines(sim, tnk, (*lgman)->numMines);
-    minesAmount = (*lgman)->numMines;
     (*lgman)->numMines = 0;
   }
 
-  if (sendItems == FALSE) {
-    trees = 0;
-    minesAmount = 0;
-    pillNum = LGM_NO_PILL;
-  }
   if (isServer == TRUE) {
     if ((*lgman)->nextAction != LGM_IDLE) {
       /* Server-authoritative: immediately start the queued action */
