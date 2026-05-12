@@ -22,6 +22,7 @@
 #include "../../bolo/players.h"
 #include "../../bolo/screen.h"
 #include "../../bolo/client_sim.h"
+#include "../../bolo/client_render.h"
 #include "../../bolo/input_packet.h"
 #include "../../bolo/transport.h"
 #include "../../bolo/transport_udp.h"
@@ -443,7 +444,7 @@ ios_game_start:
         tick = winboloTimer();
         clientMutexWaitFor();
         if (finishedLoop == FALSE) {
-            screenUpdateCS(cs, redraw);
+            clientRenderFrame(cs, redraw);
         }
         clientMutexRelease();
         dwSysFrame += (winboloTimer() - tick);
@@ -472,7 +473,6 @@ ios_game_start:
 
     SDL_Log("[iOS] Main loop ended, cleaning up");
 
-    screenLeaveGame();
     sdl3ImguiCleanup();
     gameFrontEnd(&keys, TRUE, winboloQuit);
 
@@ -519,7 +519,7 @@ static void windowRunGameTick(ClientSim *cs) {
      * Only check for UDP transports (serverSim == NULL means not local). */
     if (gameFrontGetServerSim() == NULL &&
         transportUdpClientGetJoinState(transport) == UDP_CLIENT_SERVER_SHUTDOWN) {
-        screenConnectionLostCS(cs);
+        clientSimConnectionLost(cs);
         imguiMessageBoxEx(DIALOG_BOX_TITLE,
                           langGetText(NETERR_LOSTCONNECTION_RETURN_MENU),
                           IMGUI_MSG_ERROR, IMGUI_MSG_OK);
@@ -586,7 +586,7 @@ static void windowRunGameTick(ClientSim *cs) {
             {
                 ServerSim *serverSim = gameFrontGetServerSim();
                 if (serverSim != NULL && botManagerGetNumBots() > 0) {
-                    botManagerTick(serverSim, screenGetAiTypeCS(cs));
+                    botManagerTick(serverSim, clientSimGetAiType(cs));
                 }
             }
             transport->tick(transport->ctx);
@@ -635,7 +635,7 @@ void windowReCreate(void) {}
 void windowSetQuitting(void) { winboloQuit = TRUE; finishedLoop = TRUE; }
 
 void windowApplyMenuChecks(ClientSim *cs) {
-    screenSetGunsightCS(cs, showGunsight);
+    clientSimSetGunsight(cs, showGunsight);
     screenSetAutoScroll(cs, autoScrollingEnabled);
     screenSetLabelOwnTank(cs, labelSelf);
     screenSetMesageLabelLen(cs, labelMsg);
@@ -683,7 +683,7 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
 
 void windowShowGunsight_toggle(void) {
     showGunsight = !showGunsight;
-    if (humanSim) screenSetGunsightCS(humanSim, showGunsight);
+    if (humanSim) clientSimSetGunsight(humanSim, showGunsight);
 }
 
 void windowSoundEffects_toggle(void) { soundEffects = !soundEffects; }
@@ -740,15 +740,15 @@ bool windowGetBackgroundSound(void) { return backgroundSound; }
 
 void windowRedrawAll(ClientSim *cs) {
     clientMutexWaitFor();
-    sdl3DrawRedrawAll(cs, getBuildCurrentSelectCS(cs), NULL, showPillLabels, showBaseLabels);
+    sdl3DrawRedrawAll(cs, clientSimGetCurrentBuildSelect(cs), NULL, showPillLabels, showBaseLabels);
     clientMutexRelease();
 }
 
 void windowSaveMap(ClientSim *cs) { (void)cs; }
 
 void windowKeyPressed(ClientSim *cs, int keyCode) {
-    if (keyCode == keys.kiTankView) screenTankViewCS(cs);
-    else if (keyCode == keys.kiPillView) screenPillViewCS(cs, 0, 0);
+    if (keyCode == keys.kiTankView) clientSimTankView(cs);
+    else if (keyCode == keys.kiPillView) clientSimPillView(cs, 0, 0);
 }
 
 void windowButtonAdd(int keyCode) { (void)keyCode; }
@@ -768,7 +768,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
                             int32_t srtDelay, bool isPillView, tank *tank, int edgeX, int edgeY) {
     if (hideMainView == FALSE && drawBusy == FALSE) {
         BYTE cursorX, cursorY;
-        bool showCursor = screenGetCursorPosCS(cs, &cursorX, &cursorY);
+        bool showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
         sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
         sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                            NULL, showPillLabels, showBaseLabels,
@@ -860,7 +860,7 @@ void frontEndClearPlayer(playerNumbers value) {
 
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
     char cc[3];
-    if (!screenGetGameRunningCS(cs)) {
+    if (!clientSimIsRunning(cs)) {
         cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
         sdl3ImguiSetPlayer((unsigned char)value, str, cc);
         return;
@@ -883,7 +883,7 @@ void frontEndRedrawAll(ClientSim *cs) { windowRedrawAll(cs); }
 
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
     showGunsight = !isShown;
-    screenSetGunsightCS(cs, showGunsight);
+    clientSimSetGunsight(cs, showGunsight);
 }
 
 void frontEndShowAllianceRequest(char *playerName, BYTE playerNum) {

@@ -173,7 +173,6 @@ void screenSetAutoScroll(struct ClientSim *csPtr, bool isAuto);
 void screenSetLabelOwnTank(struct ClientSim *csPtr, bool value);
 void screenSetMesageLabelLen(struct ClientSim *csPtr, labelLen value);
 void screenSetTankLabelLen(struct ClientSim *csPtr, labelLen value);
-void screenLeaveGame(void);
 
 /* Forward declaration for ClientSim-parameterized functions */
 struct ClientSim;
@@ -245,7 +244,6 @@ void screenNetManWorkingCS(struct ClientSim *csPtr, BYTE mapX, BYTE mapY, BYTE n
 void screenSetTankStartPositionCS(struct ClientSim *csPtr, BYTE xValue, BYTE yValue, TURNTYPE angle, BYTE numShells, BYTE numMines);
 void screenSetPlayersMenuCS(struct ClientSim *csPtr);
 bool screenGetGameRunningCS(struct ClientSim *csPtr);
-void screenConnectionLostCS(struct ClientSim *csPtr);
 buildSelect getBuildCurrentSelectCS(struct ClientSim *csPtr);
 void setBuildCurrentSelectCS(struct ClientSim *csPtr, buildSelect bs);
 void screenSetLocalTransportCS(struct ClientSim *csPtr, bool isLocal);
