@@ -1063,4 +1063,71 @@ bool         serverSimGetBaseStats(ServerSim *sim, BYTE i,
 bool         serverSimGetStart(ServerSim *sim, BYTE i,
                                BYTE *x, BYTE *y, BYTE *dir);
 
+/* --- Live-sim render-state readers ---
+ * Copy-out snapshots of moving objects (tanks, shells, explosions,
+ * LGMs, tank-explosion debris) for map renderers. Callers iterate
+ * the returned POD arrays instead of walking sim-internal linked
+ * lists or indexing the tank/lgm arrays directly. */
+
+typedef struct TankRenderInfo {
+    WORLD world_x;
+    WORLD world_y;
+    BYTE  dir;       /* 0-15, already converted from TURNTYPE */
+    bool  on_boat;
+    bool  alive;     /* false when slot is empty or tank is in death-wait */
+} TankRenderInfo;
+
+/* Populate *out from sim->tanks[i]. Returns false (without touching
+ * *out) if i >= MAX_TANKS or the slot is empty. When the slot is
+ * occupied but the tank is in death-wait, returns true with
+ * out->alive = false. */
+bool serverSimGetTankRender(ServerSim *sim, BYTE i, TankRenderInfo *out);
+
+/* Tank alliance from selfPlayer's perspective. Independent of
+ * sim->sim.viewPlayer so callers don't need to mutate that global
+ * just to colour tanks for a different camera. */
+tankAlliance serverSimGetTankAllianceFor(ServerSim *sim,
+                                         BYTE selfPlayer,
+                                         BYTE tankNum);
+
+typedef struct ShellRender {
+    WORLD    x;
+    WORLD    y;
+    TURNTYPE angle;
+} ShellRender;
+
+/* Copy live (non-dead) shells into out[0..min(n,cap)-1]; return n. */
+int serverSimGetShellSnapshot(ServerSim *sim, ShellRender out[], int cap);
+
+typedef struct ExplosionRender {
+    BYTE mx;
+    BYTE my;
+    BYTE px;
+    BYTE py;
+    BYTE length;
+} ExplosionRender;
+
+int serverSimGetExplosionSnapshot(ServerSim *sim, ExplosionRender out[], int cap);
+
+typedef struct LgmRender {
+    WORLD x;
+    WORLD y;
+    BYTE  frame;
+} LgmRender;
+
+/* Returns false (without touching *out) if i >= MAX_TANKS, the LGM
+ * slot is empty, or the LGM is in-tank / dead. */
+bool serverSimGetLgmRender(ServerSim *sim, BYTE i, LgmRender *out);
+
+typedef struct TankExplosionRender {
+    WORLD x;
+    WORLD y;
+} TankExplosionRender;
+
+int serverSimGetTankExplosionSnapshot(ServerSim *sim,
+                                      TankExplosionRender out[], int cap);
+
+/* Visible mine at (x, y)? Combines map-bit + visibility list. */
+bool serverSimMineExistsAt(ServerSim *sim, BYTE x, BYTE y);
+
 #endif /* SERVER_SIM_H */

@@ -26,9 +26,6 @@
 #include "../../common/wb_log.h"
 #include "global.h"
 #include "everard_map.h"
-#include "tank.h"
-#include "players.h"
-#include "allience.h"
 #include "control_event.h"
 
 #include <stdio.h>
@@ -296,15 +293,12 @@ void bgGameTick(BgGame *bg) {
     }
 
     /* Update camera to follow the tracked player (freeze while dead) */
-    GameSim *gs = serverSimGetGameSim(bg->sim);
-    if (bg->cameraPlayer < MAX_TANKS &&
-        gs->tanks[bg->cameraPlayer] != NULL &&
-        tankGetDeathWait(&gs->tanks[bg->cameraPlayer]) == 0) {
-        WORLD wx, wy;
-        if (serverSimGetTankState(bg->sim, bg->cameraPlayer, &wx, &wy)) {
+    if (bg->cameraPlayer < MAX_TANKS) {
+        TankRenderInfo info;
+        if (serverSimGetTankRender(bg->sim, bg->cameraPlayer, &info) && info.alive) {
             /* Smooth camera: lerp toward tank position */
-            bg->viewCenterX = bg->viewCenterX + ((int)wx - (int)bg->viewCenterX) / 8;
-            bg->viewCenterY = bg->viewCenterY + ((int)wy - (int)bg->viewCenterY) / 8;
+            bg->viewCenterX = bg->viewCenterX + ((int)info.world_x - (int)bg->viewCenterX) / 8;
+            bg->viewCenterY = bg->viewCenterY + ((int)info.world_y - (int)bg->viewCenterY) / 8;
         }
     }
 }
@@ -374,8 +368,10 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     if (!bg || !bg->valid) return;
 
     /* Temporarily set the sim's "self" player to the camera player so
-     * basesGetAlliancePos / pillsGetScreenHealth colour bases and pills
-     * correctly from this player's perspective (own = good, enemy = evil). */
+     * base-alliance / pill-screen-health queries colour bases and pills
+     * correctly from this player's perspective (own = good, enemy = evil).
+     * The serverSim wrappers read viewPlayer off the underlying GameSim,
+     * so we still need this mutation around the render. */
     GameSim *gs = serverSimGetGameSim(bg->sim);
     BYTE prevSelf = gs->viewPlayer;
     gs->viewPlayer = bg->cameraPlayer;
@@ -392,7 +388,7 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     if (zf < 1) zf = 1;
 
     MapViewCtx ctx = { renderer, bg->tilesTex, zf, 1 };
-    mapViewRenderCentered(&ctx, gs,
+    mapViewRenderCentered(&ctx, bg->sim,
                           bg->viewCenterX, bg->viewCenterY,
                           0, 0, screenW, screenH, bg->cameraPlayer);
 

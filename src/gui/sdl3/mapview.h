@@ -18,7 +18,7 @@
  *   Reusable map view renderer. Draws tiles, shells,
  *   tanks, and LGMs given an SDL renderer, tile atlas,
  *   and either pre-built screen* structs (client) or
- *   a raw GameSim* (bg_game welcome screen).
+ *   a ServerSim* (bg_game welcome screen / braintest).
  *********************************************************/
 
 #ifndef MAPVIEW_H
@@ -31,7 +31,7 @@
 #include "screenbullet.h"
 #include "screentank.h"
 #include "screenlgm.h"
-#include "game_sim.h"
+#include "server_sim.h"
 #include "sprite_positions.h"
 
 #ifdef __cplusplus
@@ -63,17 +63,17 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
                      int originX, int originY, int tileW, int tileH,
                      int edgeX, int edgeY);
 
-/* Adjacency-aware tile calculation from a GameSim (no module-static state).
+/* Adjacency-aware tile calculation from a ServerSim (no module-static state).
    selfPlayer = NEUTRAL (0xFF) for "no self" (bg_game case). */
-BYTE mapViewCalcSquare(GameSim *sim, BYTE mapX, BYTE mapY, bool *outMine, BYTE selfPlayer);
+BYTE mapViewCalcSquare(ServerSim *sim, BYTE mapX, BYTE mapY, bool *outMine, BYTE selfPlayer);
 
 /* Max tile buffer dimensions for mapViewRenderCentered */
 #define MAPVIEW_MAX_TILES_W 256
 #define MAPVIEW_MAX_TILES_H 256
 
 /* All-in-one: compute camera from world center, build tile+sprite buffers
-   from GameSim, render everything. selfPlayer=NEUTRAL for bg_game. */
-void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
+   from ServerSim, render everything. selfPlayer=NEUTRAL for bg_game. */
+void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
                            WORLD centerWX, WORLD centerWY,
                            int originX, int originY,
                            int viewW, int viewH,
