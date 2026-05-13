@@ -649,8 +649,7 @@ static bool gameFrontEnterSinglePlayerLobby(void) {
   serverSimSetLobbyEnabled(spServerSim, true);
   serverSimSetState(spServerSim, serverStateLobby);
   serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
-  serverSimGetGameSim(spServerSim)->viewPlayer = 0;
-  spTransport = transportLocalCreate(spServerSim, 0);
+  serverSimSetViewPlayer(spServerSim, 0);
   spTransportLocalUsed = TRUE;
   spServerSimActive    = TRUE;
 
@@ -705,10 +704,11 @@ static bool gameFrontEnterSinglePlayerLobby(void) {
     serverSimUnregisterSubscriber(spServerSim, spHumanSubHandle);
     spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
   }
-  spHumanSubHandle = serverSimRegisterSubscriber(spServerSim,
-                                                 humanDeliverControl,
-                                                 humanSim);
-  if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
+  spHumanSubHandle = serverSimRegisterClientSubscriber(spServerSim, humanSim);
+  /* Bind humanSim to the in-process server transport so the lobby
+   * input/snapshot pipe is wired before lobbyShow runs. */
+  clientSimConnectLocal(humanSim, spServerSim, 0);
+  if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
 
   /* Single-player networking marker. netSingle picks the local
    * transport in the renderer; M3 will keep this through Start. */
@@ -736,8 +736,8 @@ static bool gameFrontEnterSinglePlayerLobby(void) {
     }
   }
   /* Initialise the bot manager so the lobby's Add Bot path works. */
-  if (!botManagerInit(0)) {
-    fprintf(stderr, "[gameFront] botManagerInit failed; lobby Add Bot disabled\n");
+  if (!serverSimBotPoolInit(0)) {
+    fprintf(stderr, "[gameFront] serverSimBotPoolInit failed; lobby Add Bot disabled\n");
   }
 
   return TRUE;
@@ -2339,50 +2339,12 @@ bool gameFrontStartSinglePlayerGame(ClientSim *cs) {
    * cs->sim.plyrs has no alliance bits set and the brain happily
    * shoots its teammates. Mirrors the serverSimStartGame loop in the
    * multiplayer path; we just skip the resetGameWorld dance because
-   * the world is already fresh from gameFrontEnterSinglePlayerLobby. */
-  {
-    GameSim *gs = serverSimGetGameSim(spServerSim);
-    for (i = 0; i < MAX_TANKS; i++) {
-      if (!serverSimIsPlayerConnected(spServerSim, i)) continue;
-      const LobbyPlayer *lpI = serverSimGetLobbyPlayer(spServerSim, i);
-      if (!lpI || lpI->teamNumber == 0) continue;
-      for (j = i + 1; j < MAX_TANKS; j++) {
-        if (!serverSimIsPlayerConnected(spServerSim, j)) continue;
-        const LobbyPlayer *lpJ = serverSimGetLobbyPlayer(spServerSim, j);
-        if (!lpJ || lpJ->teamNumber != lpI->teamNumber) continue;
-        playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, i, j, TRUE);
-        playersAcceptAlliance(clientSimGetGameSim(cs), &clientSimGetGameSim(cs)->plyrs, clientSimGetMyPlayerNum(cs), i, j, FALSE);
-        {
-          ControlEvent allyEvt;
-          memset(&allyEvt, 0, sizeof(allyEvt));
-          allyEvt.type = CTRL_ALLIANCE_ACCEPT;
-          allyEvt.u.allianceAccept.acceptedBy = i;
-          allyEvt.u.allianceAccept.newMember  = j;
-          serverSimPublishControl(spServerSim, &allyEvt);
-        }
-      }
-    }
-
-    /* Server side: transition to running and create tanks for each
-     * connected slot.  serverSimAddPlayer in lobby state defers tank
-     * creation; do it now in one batch (mirrors serverSimStartGame's
-     * post-reset tank loop, minus the reset). */
-    serverSimSetState(spServerSim, serverStateRunning);
-    for (i = 0; i < MAX_TANKS; i++) {
-      if (!serverSimIsPlayerConnected(spServerSim, i)) continue;
-      if (gs->tanks[i] != NULL) {
-        tankDestroy(gs, &gs->tanks[i]);
-        gs->tanks[i] = NULL;
-      }
-      if (gs->lgmen[i] != NULL) {
-        lgmDestroy(&gs->lgmen[i]);
-        gs->lgmen[i] = NULL;
-      }
-      tankCreate(gs, &gs->tanks[i]);
-      gs->lgmen[i] = lgmCreate(i);
-      basesUpdateTimer(gs, i);
-    }
-  }
+   * the world is already fresh from gameFrontEnterSinglePlayerLobby.
+   * serverSimStartGameInPlace does the team-alliance reapply + tank
+   * creation + state transition + Layout A autoLock in one call;
+   * client-side alliance state arrives through the
+   * serverSimRegisterClientSubscriber wire-up set up at lobby entry. */
+  serverSimStartGameInPlace(spServerSim);
 
   /* Sync tank state from the first running-state snapshot so the
    * client view picks up the freshly created tanks. */
@@ -2409,7 +2371,7 @@ bool gameFrontStartSinglePlayerGame(ClientSim *cs) {
                               snapPills, snapHdr.pillCount,
                               snapEvents, snapHdr.reliableEventCount, 0);
   }
-  clientNetSetupTankGo(cs);
+  clientSimNetSetupTankGo(cs);
 
   /* Flip lobby flags so winbolo.c's main loop exits the lobby on
    * the next iteration and hands off to the in-game loop. */
