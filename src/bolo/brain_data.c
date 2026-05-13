@@ -71,7 +71,7 @@
 #include "interpolation.h"
 #include "util.h"
 #include "client_sim.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 #include "../steam/steam_wrapper.h"
 
 /*********************************************************

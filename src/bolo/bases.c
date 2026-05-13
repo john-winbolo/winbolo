@@ -39,7 +39,7 @@
 #include "bases.h"
 #include "game_sim.h"
 #include "client_sim.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 
 void basesUpdateTimer(GameSim *sim, int playerNumber){
 	sim->baseTimer[playerNumber]=BASE_TICKS_BETWEEN_REFUEL;

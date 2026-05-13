@@ -57,7 +57,7 @@
 #include "../../steam/steam_wrapper.h"
 #include "transport.h"
 #include "transport_udp.h"
-#include "../../server/server_sim.h"
+#include "server_sim.h"
 #include "../../server/threads.h"
 #include "bot_manager.h"
 #include "gui_message.h"

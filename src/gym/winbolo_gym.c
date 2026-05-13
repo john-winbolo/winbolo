@@ -49,7 +49,7 @@
 #include "lgm.h"
 #include "tank.h"
 #include "util.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 #include "brain_worldsim.h"
 
 /* Required by the engine — stub for library mode */

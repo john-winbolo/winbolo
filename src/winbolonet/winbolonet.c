@@ -31,7 +31,7 @@
 #include "cJSON.h"
 #include "winbolonet.h"
 #include "http.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 #include "netpacks.h"
 #include "winbolonetevents.h"
 #include "winbolonetthread.h"

@@ -55,7 +55,7 @@
 #include <lauxlib.h>   /* luaL_loadstring for botManagerExecLua */
 #include "transport_udp.h"
 #include "../common/wb_log.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 #include "../gui/sdl3/luabrainshandler.h"
 
 /* View size for brain map updates — 15x15 centered on tank */

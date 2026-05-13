@@ -37,7 +37,7 @@
 #include "messages.h"
 #include "players.h"
 #include "log.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 #include "pillbox.h"
 #include "game_sim.h"
 #include "client_sim.h"

@@ -72,7 +72,7 @@
 #include "control_event.h"
 #include "brain_pathfinder.h"
 #include "gui_message.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 #include "../gui/sdl3/mapview.h"
 #include "../gui/sdl3/tileloader.h"
 #include "../gui/sdl3/luabrainshandler.h"

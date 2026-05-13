@@ -956,6 +956,7 @@ const ShellSnapshot *clientSimGetServerShellSnaps(const ClientSim *cs) {
 
 const PredictedShell *clientSimGetPredictedShells(const ClientSim *cs) {
   return cs->predictedShells;
+  
 }
 
 const GameEvent *clientSimGetBrainEvents(const ClientSim *cs) {

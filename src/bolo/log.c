@@ -38,7 +38,7 @@
 #include "game_sim.h"
 #include "netpacks.h"
 #include "zip.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 #include "../winbolonet/winbolonet.h"
 
 zipFile logFile;               /* File to log to */
