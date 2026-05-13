@@ -42,6 +42,7 @@
 #include "allience.h"
 #include "mines.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"
 #include "client_sim_control.h"
 #include "control_event.h"
 #include "transport.h"

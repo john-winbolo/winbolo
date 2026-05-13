@@ -41,6 +41,7 @@
 #include "pillbox.h"
 #include "game_sim.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"
 #include "../winbolonet/winbolonet.h"
 
 /*********************************************************

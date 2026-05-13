@@ -485,7 +485,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     serverSimSetLobbyEnabled(wasmServerSim, false);
     serverSimStartGame(wasmServerSim);
     serverSimAddPlayer(wasmServerSim, 0, gameFrontName, false);
-    serverSimGetGameSim(wasmServerSim)->viewPlayer = 0;
+    serverSimSetViewPlayer(wasmServerSim, 0);
     clientSimConnectLocal(humanSim, wasmServerSim, 0);
     wasmTransportActive = TRUE;
     wasmPlayerNum = 0;

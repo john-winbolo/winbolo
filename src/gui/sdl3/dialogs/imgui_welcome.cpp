@@ -33,6 +33,7 @@ extern "C" {
 #include "../bg_game.h"
 #include "imgui_welcome.h"
 #include "../../gamefront.h"
+#include "../../lang.h"
 }
 
 /* Match openingStates enum from gamefront.h */

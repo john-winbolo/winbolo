@@ -26,10 +26,16 @@
 #define SERVER_SIM_H
 
 #include <SDL3/SDL.h>
-#include "game_sim.h"
-#include "position_history.h"
 #include "input_packet.h"
+#include "gametype.h"          /* gameType enum + brings global.h */
+#include "alliance_enums.h"    /* baseAlliance, pillAlliance */
+#include "screentank.h"        /* tankAlliance */
 #include "../../mapeditor/mapeditor_generate.h"
+
+#ifndef GAMESIM_TYPEDEF
+#define GAMESIM_TYPEDEF
+typedef struct GameSim GameSim;
+#endif
 
 /* Forward decl — full definition in bolo/control_event.h. Kept opaque here so
  * server_sim.h doesn't drag client_sim.h's include closure into every TU. */
@@ -1034,6 +1040,14 @@ const BalanceProposal *serverSimGetBalanceProposal(const ServerSim *sim);
 /* Cross-struct accessor — returns the embedded GameSim. NOT
  * const-qualified: callers of GameSim mutate it freely. */
 GameSim *serverSimGetGameSim(ServerSim *sim);
+
+/* viewPlayer — which player perspective the sim renders from. */
+BYTE serverSimGetViewPlayer(const ServerSim *sim);
+void serverSimSetViewPlayer(ServerSim *sim, BYTE playerNum);
+
+/* Tutorial-mode flag mirrored on the embedded GameSim. */
+bool serverSimIsTutorial(const ServerSim *sim);
+void serverSimSetTutorial(ServerSim *sim, bool v);
 
 /* --- Live-sim map / pill / base / start readers ---
  * Server-side perspective of the same map/pill/base/start state

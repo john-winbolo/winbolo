@@ -139,6 +139,33 @@ typedef enum {
 } playerNumbers;
 #endif
 
+#ifndef _NETTYPE_ENUM
+#define _NETTYPE_ENUM
+/* The network type of game being played */
+typedef enum {
+  netNone,   /* Game hasn't Started */
+  netSingle, /* Single-player (non-networked) game */
+  netUdp     /* Networked game */
+} netType;
+#endif
+
+#ifndef _NETSTATUS_ENUM
+#define _NETSTATUS_ENUM
+/* Network status */
+typedef enum {
+  netLobby,          /* In lobby, waiting for ready */
+  netLobbyCountdown, /* Countdown active, game starting soon */
+  netJoining,
+  netRunning,
+  netStartDownload, /* First thing we do */
+  netBaseDownload,  /* 2nd thing */
+  netPillDownload,  /* 3rd thing */
+  netMapDownload,   /* 4th - Map download */
+  netTimeDownload,  /* Final. Get game times */
+  netFailed
+} netStatus;
+#endif
+
 #ifndef _TANKBUTTON_ENUM
 #define _TANKBUTTON_ENUM
 typedef enum {

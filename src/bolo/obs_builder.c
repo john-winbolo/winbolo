@@ -37,6 +37,7 @@
 #include "tank.h"
 #include "util.h"
 #include "client_sim.h"
+#include "game_sim.h"
 
 /* Helper to determine allegiance from object info flags */
 static int8_t obsGetAllegiance(const ObjectInfo *o, BYTE selfPlayer) {

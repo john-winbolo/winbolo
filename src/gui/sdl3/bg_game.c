@@ -372,9 +372,8 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
      * correctly from this player's perspective (own = good, enemy = evil).
      * The serverSim wrappers read viewPlayer off the underlying GameSim,
      * so we still need this mutation around the render. */
-    GameSim *gs = serverSimGetGameSim(bg->sim);
-    BYTE prevSelf = gs->viewPlayer;
-    gs->viewPlayer = bg->cameraPlayer;
+    BYTE prevSelf = serverSimGetViewPlayer(bg->sim);
+    serverSimSetViewPlayer(bg->sim, bg->cameraPlayer);
 
     /* Pick zoom factor so the map content area fits the screen.
      * mapTilesW/H = number of tiles in the bounding box.
@@ -392,7 +391,7 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
                           bg->viewCenterX, bg->viewCenterY,
                           0, 0, screenW, screenH, bg->cameraPlayer);
 
-    gs->viewPlayer = prevSelf;
+    serverSimSetViewPlayer(bg->sim, prevSelf);
 
     /* Draw "Map: <name>" next to play/pause button, fading out after 10 seconds */
     bgGameRenderMapName(bg, renderer, screenW, screenH);

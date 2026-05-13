@@ -849,6 +849,46 @@ BYTE clientSimGetNumPlayers(ClientSim *cs) {
   return playersGetNumPlayers(&clientSimGetGameSim(cs)->plyrs);
 }
 
+bool clientSimIsTutorial(const ClientSim *cs) {
+  return clientSimGetGameSim((ClientSim *)cs)->isTutorial;
+}
+
+void clientSimSetTutorial(ClientSim *cs, bool v) {
+  clientSimGetGameSim(cs)->isTutorial = v;
+}
+
+gameType clientSimGetGameType(const ClientSim *cs) {
+  return clientSimGetGameSim((ClientSim *)cs)->game;
+}
+
+uint16_t clientSimGetPlayerPing(ClientSim *cs, BYTE playerNum) {
+  return playersGetPing(&clientSimGetGameSim(cs)->plyrs, playerNum);
+}
+
+uint8_t clientSimGetPlayerClientFlags(ClientSim *cs, BYTE playerNum) {
+  return playersGetClientFlags(&clientSimGetGameSim(cs)->plyrs, playerNum);
+}
+
+uint8_t clientSimGetPlayerClientType(ClientSim *cs, BYTE playerNum) {
+  return playersGetClientType(&clientSimGetGameSim(cs)->plyrs, playerNum);
+}
+
+void clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest) {
+  playersGetPlayerLocation(&clientSimGetGameSim(cs)->plyrs, playerNum, dest);
+}
+
+uint8_t clientSimGetPlayerAccountFlags(ClientSim *cs, BYTE playerNum) {
+  return playersGetAccountFlags(&clientSimGetGameSim(cs)->plyrs, playerNum);
+}
+
+void clientSimGetPlayerCountryCode(ClientSim *cs, BYTE playerNum, char *dest) {
+  playersGetCountryCode(&clientSimGetGameSim(cs)->plyrs, playerNum, dest);
+}
+
+bool clientSimIsPlayerAlly(ClientSim *cs, BYTE playerA, BYTE playerB) {
+  return playersIsAllie(&clientSimGetGameSim(cs)->plyrs, playerA, playerB);
+}
+
 
 void netGetStats(ClientSim *cs, char *status, int *ping, int *ppsec, int *retrans) {
   if (cs->netStat == netFailed) {

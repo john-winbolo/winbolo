@@ -3463,6 +3463,22 @@ GameSim *serverSimGetGameSim(ServerSim *sim) {
     return &sim->sim;
 }
 
+BYTE serverSimGetViewPlayer(const ServerSim *sim) {
+    return sim->sim.viewPlayer;
+}
+
+void serverSimSetViewPlayer(ServerSim *sim, BYTE playerNum) {
+    sim->sim.viewPlayer = playerNum;
+}
+
+bool serverSimIsTutorial(const ServerSim *sim) {
+    return sim->sim.isTutorial;
+}
+
+void serverSimSetTutorial(ServerSim *sim, bool v) {
+    sim->sim.isTutorial = v;
+}
+
 /* --- Live-sim map / pill / base / start readers --- */
 
 BYTE serverSimGetMapTerrain(const ServerSim *sim, BYTE x, BYTE y) {

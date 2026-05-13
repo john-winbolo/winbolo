@@ -239,6 +239,27 @@ void efree(Generic object);
 
 #define M_W_SHIFT_SIZE 8
 
+/* World ↔ map / pixel coordinate shift constants. Lifted from
+ * internal/tank.h and internal/shells.h so external renderers
+ * (logviewer, mapview, server snapshot, braintest) can interpret
+ * world coordinates without pulling internal sim headers. Values
+ * mirror the original internal definitions byte-for-byte. */
+#define TANK_SHIFT_MAPSIZE   8   /* world>>8 = map square */
+#define TANK_SHIFT_RIGHT2    4   /* pixel<<4 = sub-square world units */
+#define TANK_SHIFT_PIXELSIZE 12  /* world>>12 = pixel position */
+
+/* Sprite-frame offset for shell explosions. Used by external
+ * map renderers to compute the exploding-shell frame from a
+ * shell's direction. */
+#define SHELL_START_EXPLODE  8
+
+/* Game timing constants. Lifted from internal/game_sim.h so external
+ * callers (GUI main loop, logviewer playback, servermain timer) can
+ * sync to the tick cadence without pulling the GameSim layout. */
+#define GAME_TICK_LENGTH        10
+#define GAME_NUMTOTALTICKS_SEC  (1000 / GAME_TICK_LENGTH)
+#define GAME_NUMGAMETICKS_SEC   (1000 / 20)
+
 /* Used to bitmask with a key code to see if it's pressed or not */
 #define PRESSED 0x80
 

@@ -41,6 +41,7 @@
 #include "playername_validate.h"
 #include "brain_data.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"
 #include "screenlgm.h"
 #include "screentank.h"
 #include "tank.h"
