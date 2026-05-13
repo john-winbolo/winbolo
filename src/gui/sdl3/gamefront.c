@@ -492,35 +492,15 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
     useAutohide = clientSimGetTankAutoHideGunsight(humanSim);
   }
   brainsHandlerShutdown();
-  /* Clean up server-authoritative single-player state.
-   * clientSimDestroy() frees the shared game objects (map, bases, etc.) and
-   * the client's predicted tank. The server's tanks are separate deep copies
-   * since Phase 4 prediction, so we must free them here before screenDestroy
-   * invalidates the shared map/bases/pills pointers.
-   * We still must NOT call serverSimDestroy (would double-free map etc.). */
   if (spServerSimActive && !spServerHosted) {
-    /* Destroy bot brains before cleaning up tanks */
     serverSimDestroyBots(spServerSim);
-    /* Free server's tanks — they're separate from the client's predicted
-     * tanks (which are deep copies since Phase 4 prediction).
-     * LGMs are still shared (not deep-copied), so screenDestroy frees them. */
-    {
-      GameSim *gs = serverSimGetGameSim(spServerSim);
-      BYTE i;
-      for (i = 0; i < MAX_TANKS; i++) {
-        if (gs->tanks[i] != NULL) {
-          tankDestroy(gs, &gs->tanks[i]);
-        }
-      }
-    }
     if (spTransportLocalUsed) {
       serverSimUnregisterSubscriber(spServerSim, spHumanSubHandle);
       spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
       clientSimDisconnect(humanSim);
       spTransportLocalUsed = FALSE;
     }
-    serverSimClearActive(spServerSim);
-    free(spServerSim);
+    serverSimDestroy(spServerSim);
     spServerSim = NULL;
     spServerSimActive = FALSE;
   }
