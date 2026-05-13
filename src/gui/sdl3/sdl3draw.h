@@ -40,9 +40,13 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "../../bolo/global.h"
-#include "../../bolo/screen.h"
-#include "../../bolo/client_sim.h"
+#include "global.h"
+#include "viewport_types.h"  /* screen, screenMines, screenGunsight */
+#include "client_enums.h"    /* buildSelect */
+#include "screentank.h"      /* screenTanks, tank */
+#include "screenbullet.h"    /* screenBullets */
+#include "screenlgm.h"       /* screenLgm */
+#include "client_sim.h"
 /* Status / message / HUD renderers extracted in Phase C of
  * plans/ctrailer.md. sdl3draw.h re-exposes them transparently so
  * existing callers compile unchanged. */
@@ -122,7 +126,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
                         screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms,
                         RECT *rcWindow, bool showPillLabels, bool showBaseLabels,
                         int32_t srtDelay, bool isPillView, int edgeX, int edgeY,
-                        bool useCursor, BYTE cursorLeft, BYTE cursorTop, tank *tank);
+                        bool useCursor, BYTE cursorLeft, BYTE cursorTop);
 
 /*********************************************************
 *NAME:          sdl3DrawRedrawAll
@@ -213,7 +217,7 @@ void sdl3DrawStartDelay(RECT *rcWindow, int32_t srtDelay);
 *NAME:          sdl3DrawSetNetFailed
 *PURPOSE:
 *  Call with v=true before sdl3DrawMainScreen when
-*  cs->netStat==netFailed so the overlay is drawn
+*  clientSimGetNetStatus(cs)==netFailed so the overlay is drawn
 *  inside the same frame.  Call with v=false otherwise.
 *********************************************************/
 void sdl3DrawSetNetFailed(bool v);

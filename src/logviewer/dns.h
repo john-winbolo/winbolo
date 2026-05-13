@@ -28,7 +28,7 @@
 #ifndef __DNS_H
 #define __DNS_H
 
-#include "global.h"
+#include "lv_global.h"
 
 /*********************************************************
 *NAME:          lv_dnsCreate

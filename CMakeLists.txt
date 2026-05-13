@@ -18,6 +18,8 @@ endif()
 
 project(winbolo C)
 
+include(${CMAKE_SOURCE_DIR}/cmake/bolo_lib.cmake)
+
 # Enable Objective-C for macOS pinch-to-zoom support (not iOS)
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     enable_language(OBJC)
@@ -371,26 +373,6 @@ function(set_flat_output TARGET OUTDIR)
     endif()
 endfunction()
 
-# ─────────────────────────────────────────────────────────────────────
-# Per-bot C bindings. Each bot may ship its own bot-specific Lua
-# bindings under brains/<bot>/c/*.c (e.g. NewAutopilot's pillcontrib
-# overlay). Only binaries that link luabrainshandler.c need these
-# files — that's where the per-tick registrations happen.
-#
-# CONFIGURE_DEPENDS makes CMake re-glob on every build, so adding a new
-# .c under brains/<bot>/c/ is picked up automatically without a manual
-# reconfigure. Include dirs are derived from the source list so
-# consumers (luabrainshandler.c, braintest_main.c) can #include the
-# bot-specific headers without long relative paths.
-# ─────────────────────────────────────────────────────────────────────
-file(GLOB BOT_C_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/brains/*/c/*.c")
-set(BOT_C_INCLUDE_DIRS "")
-foreach(_bot_c_src ${BOT_C_SOURCES})
-    get_filename_component(_bot_c_dir "${_bot_c_src}" DIRECTORY)
-    list(APPEND BOT_C_INCLUDE_DIRS "${_bot_c_dir}")
-endforeach()
-list(REMOVE_DUPLICATES BOT_C_INCLUDE_DIRS)
-
 # ===========================================================================
 # Platform targets: iOS vs Desktop
 # ===========================================================================
@@ -446,32 +428,26 @@ file(GLOB IOS_DATA_SVG "${CMAKE_SOURCE_DIR}/data/svg/*.png" "${CMAKE_SOURCE_DIR}
 file(GLOB IOS_DATA_UI "${CMAKE_SOURCE_DIR}/data/ui/*.svg")
 file(GLOB IOS_LANG_FILES "${CMAKE_SOURCE_DIR}/data/lang/*.txt")
 
-# Bolo engine sources (matching desktop CLIENT_SOURCES)
+# Bolo engine sources that stay per-target (HAVE_STEAM-divergent).
+# Everything else now lives in bolo_static (added via add_subdirectory
+# below). iOS doesn't define HAVE_STEAM, so PLAYER_FLAG_STEAM_BUILD is
+# never OR'd into selfFlags / clientHints by these two TUs.
 set(IOS_BOLO_SOURCES
-    src/bolo/allience.c src/bolo/bases.c src/bolo/bolo_map.c
-    src/bolo/braincore.c src/bolo/building.c src/bolo/client_sim.c src/bolo/client_sim_control.c src/bolo/client_state.c
-    src/bolo/crc.c src/bolo/debug_file_output.c src/bolo/net_packet_debug.c
-    src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
-    src/bolo/grass.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/labels.c src/bolo/lgm.c
-    src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
-    src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
-    src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
-    src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
-    src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c
-    src/bolo/treegrow.c src/bolo/udppackets.c src/bolo/util.c
-    src/bolo/bot_manager.c
-    src/bolo/bot_worker_pool.c
-    src/bolo/brain_pathfinder.c src/bolo/brain_pathfinder_serial.c src/bolo/brain_worldsim.c src/bolo/brain_overlay.c
-    src/bolo/discovery.c
-    src/bolo/obs_builder.c
+    src/bolo/client_mapload.c
+    src/bolo/transport_udp_client.c
 )
+
+# Build bolo_static for the iOS branch. iOS doesn't set HAVE_ONNXRUNTIME
+# or ENABLE_PILLMASSAGE_BUG, so bolo_static here has the matching
+# minimal feature set.
+add_subdirectory(src/bolo)
+add_subdirectory(brains)
 
 # Server sources needed for single-player mode
 set(IOS_SERVER_SOURCES
     src/server/server_sim.c src/server/servermessages.c
     src/server/server_stubs.c
+    src/server/server_dedicated_log_stubs.c
     src/server/threads.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/mapeditor/mapgen_imgui.cpp
@@ -518,7 +494,6 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
     src/gui/sdl3/map_preview_popup.cpp
 )
-list(APPEND IOS_GUI_SOURCES ${BOT_C_SOURCES})
 
 # Shared mobile UI (touch input, legacy players panel for non-tablet mode)
 set(IOS_MOBILE_SOURCES
@@ -622,12 +597,18 @@ target_include_directories(WinBoloIOS PRIVATE
     src/gui
     src/gui/ios
     src/gui/mobile
-    src/bolo
     src/server
     src/mapeditor
-    ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(WinBoloIOS gui)
+bolo_grant_internal_source_access(WinBoloIOS
+    src/bolo/client_mapload.c
+    src/bolo/transport_udp_client.c
+    src/server/server_sim.c
+    src/server/servermessages.c
+    src/mapeditor/mapeditor_generate.c)
 
+target_link_libraries(WinBoloIOS PRIVATE bolo_static bot_brains_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
     nanosvg stb_image utf8proc zlibstatic
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
@@ -907,22 +888,25 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# bolo_static / server_static — the bulk of the sim and the shared
+# server-peer files. Added here so every desktop target below can link
+# them. Per-target conditional sources (client_mapload, transport_udp_client,
+# nat_portmap, server_sim, servermain, server_frontend_stubs, server_stubs,
+# posix_stubs) stay in their respective *_SOURCES lists.
+# ---------------------------------------------------------------------------
+
+add_subdirectory(src/bolo)
+add_subdirectory(src/server)
+add_subdirectory(brains)
+
+# ---------------------------------------------------------------------------
 # WinBolo Client (cross-platform: Windows, Linux, macOS)
 # ---------------------------------------------------------------------------
 
 set(CLIENT_SOURCES
-    src/bolo/allience.c src/bolo/bases.c src/bolo/bolo_map.c
-    src/bolo/building.c src/bolo/crc.c src/bolo/debug_file_output.c src/bolo/net_packet_debug.c
-    src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
-    src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
-    src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
-    src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
-    src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
-    src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
-    src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c src/bolo/udppackets.c
-    src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_pathfinder_serial.c src/bolo/brain_worldsim.c src/bolo/brain_overlay.c
+    src/bolo/client_mapload.c
+    src/bolo/transport_udp_client.c
+    src/bolo/nat_portmap.c
     src/gui/ui_mode.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
@@ -936,20 +920,10 @@ set(CLIENT_SOURCES
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c src/bolo/client_sim_control.c
-    src/bolo/nat_portmap.c
-    src/bolo/discovery.c
-    src/bolo/bot_manager.c
-    src/bolo/bot_worker_pool.c
-    src/bolo/obs_builder.c
-    src/server/geolookup.c
-    src/server/servermessages.c src/server/threads.c
-    src/server/server_sim.c
-    src/server/server_lifecycle.c
+    src/server/server_dedicated_log_stubs.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
 )
-list(APPEND CLIENT_SOURCES ${BOT_C_SOURCES})
 
 
 # BSD headers (compiled as .c but really just declarations)
@@ -1049,7 +1023,6 @@ endif()
 target_include_directories(WinBolo PRIVATE
     src/gui/sdl3
     src/gui
-    src/bolo
     src/server
     src/mapeditor
     src
@@ -1058,8 +1031,15 @@ target_include_directories(WinBolo PRIVATE
     src/logviewer/platform
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
-    ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(WinBolo gui)
+bolo_grant_internal_source_access(WinBolo
+    src/bolo/client_mapload.c
+    src/bolo/transport_udp_client.c
+    src/mapeditor/mapeditor.c
+    src/mapeditor/mapeditor_export.c
+    src/mapeditor/mapeditor_generate.c
+    src/mapeditor/mapeditor_validate.c)
 
 if(WIN32)
     target_sources(WinBolo PRIVATE
@@ -1104,12 +1084,10 @@ if(HAVE_LIBPLUM)
     target_link_libraries(WinBolo PRIVATE LibPlum::LibPlum)
 endif()
 
-# ONNX Runtime ML brain support (optional)
-if(HAVE_ONNXRUNTIME)
-    target_sources(WinBolo PRIVATE src/bolo/ml_brain.c)
-    target_compile_definitions(WinBolo PRIVATE HAVE_ONNXRUNTIME=1)
-    target_link_libraries(WinBolo PRIVATE onnxruntime::onnxruntime)
-endif()
+# bolo_static contains ml_brain.c unconditionally; when HAVE_ONNXRUNTIME
+# is set the lib was compiled with the real path and PUBLIC-links
+# onnxruntime, so consumers inherit the link without repeating it.
+target_link_libraries(WinBolo PRIVATE bolo_static server_static bot_brains_static)
 
 # Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
 target_sources(WinBolo PRIVATE src/common/sentry_integration.c)
@@ -1236,35 +1214,17 @@ endif()
 # ---------------------------------------------------------------------------
 
 set(SERVER_SOURCES
-    src/bolo/allience.c
-    src/bolo/bases.c src/bolo/bolo_map.c
-    src/bolo/building.c src/bolo/crc.c src/bolo/debug_file_output.c src/bolo/net_packet_debug.c
-    src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
-    src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
-    src/bolo/mines.c src/bolo/minesexp.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
-    src/bolo/brain_data.c src/bolo/client_snapshot.c
-    src/bolo/screenbrainmap.c src/bolo/screenbullet.c src/bolo/screencalc.c
-    src/bolo/shells.c src/bolo/starts.c
-    src/bolo/swamp.c src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c
-    src/bolo/udppackets.c src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_pathfinder_serial.c src/bolo/brain_worldsim.c src/bolo/brain_overlay.c
-    src/server/geolookup.c
-    src/server/servermain.c src/server/servermessages.c
-    src/server/threads.c src/server/server_sim.c
-    src/server/server_lifecycle.c
-    src/server/server_frontend_stubs.c
-    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c src/bolo/client_sim_control.c
+    src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
-    src/bolo/bot_manager.c
-    src/bolo/bot_worker_pool.c
-    src/bolo/obs_builder.c
+    src/server/servermain.c
+    src/server/server_dedicated_log.c
+    src/server/server_frontend_stubs.c
     src/gui/sdl3/luabrainshandler.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
 )
-list(APPEND SERVER_SOURCES ${BOT_C_SOURCES})
 
 
 add_executable(WinBoloDS ${SERVER_SOURCES})
@@ -1279,13 +1239,18 @@ target_compile_definitions(WinBoloDS PRIVATE
 target_include_directories(WinBoloDS PRIVATE
     src/gui/sdl3
     src/gui
-    src/bolo
     src/server
     src/mapeditor
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
-    ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(WinBoloDS runtime_only)
+bolo_grant_internal_source_access(WinBoloDS
+    src/bolo/transport_udp_client.c
+    src/server/servermain.c
+    src/server/server_frontend_stubs.c
+    src/server/server_dedicated_log.c
+    src/mapeditor/mapeditor_generate.c)
 
 if(WIN32)
     target_sources(WinBoloDS PRIVATE
@@ -1311,19 +1276,14 @@ if(TARGET maxminddb)
     target_compile_definitions(WinBoloDS PRIVATE HAVE_MAXMINDDB=1)
 endif()
 
+target_link_libraries(WinBoloDS PRIVATE bolo_static server_static bot_brains_static)
 target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson utf8proc)
 
-# libplum NAT port mapping (optional)
+# libplum NAT port mapping (optional). nat_portmap.c stays per-target
+# so its #ifdef BOLO_PORTMAP block compiles against this binary's view.
 if(HAVE_LIBPLUM)
     target_compile_definitions(WinBoloDS PRIVATE BOLO_PORTMAP)
     target_link_libraries(WinBoloDS PRIVATE LibPlum::LibPlum)
-endif()
-
-# ONNX Runtime ML brain support for server bots (optional)
-if(HAVE_ONNXRUNTIME)
-    target_sources(WinBoloDS PRIVATE src/bolo/ml_brain.c)
-    target_compile_definitions(WinBoloDS PRIVATE HAVE_ONNXRUNTIME=1)
-    target_link_libraries(WinBoloDS PRIVATE onnxruntime::onnxruntime)
 endif()
 
 # Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
@@ -1505,6 +1465,7 @@ target_include_directories(LogViewer PRIVATE
     ${CMAKE_SOURCE_DIR}/src/third_party/tweetnacl
     ${cjson_SOURCE_DIR}
 )
+bolo_apply_include_rules(LogViewer runtime_only)
 
 target_link_libraries(LogViewer PRIVATE
     minizip SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends
@@ -1553,37 +1514,19 @@ endif()
 # ---------------------------------------------------------------------------
 
 set(HEADLESS_SOURCES
-    src/bolo/allience.c src/bolo/bases.c src/bolo/bolo_map.c
-    src/bolo/building.c src/bolo/crc.c src/bolo/debug_file_output.c src/bolo/net_packet_debug.c
-    src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
-    src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
-    src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
-    src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
-    src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
-    src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
-    src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c src/bolo/udppackets.c
-    src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_pathfinder_serial.c src/bolo/brain_worldsim.c src/bolo/brain_overlay.c
+    src/bolo/client_mapload.c
+    src/bolo/transport_udp_client.c
+    src/bolo/nat_portmap.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_main.c src/headless/headless_frontend.c
-    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c src/bolo/client_sim_control.c
-    src/bolo/nat_portmap.c
-    src/bolo/bot_manager.c
-    src/bolo/bot_worker_pool.c
-    src/bolo/obs_builder.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/geolookup.c
-    src/server/servermessages.c src/server/threads.c
-    src/server/server_sim.c
-    src/server/server_lifecycle.c
+    src/server/server_dedicated_log_stubs.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
 )
-list(APPEND HEADLESS_SOURCES ${BOT_C_SOURCES})
 
 
 # BSD headers
@@ -1610,14 +1553,17 @@ target_compile_definitions(WinBoloHeadless PRIVATE
 target_include_directories(WinBoloHeadless PRIVATE
     src/gui/sdl3
     src/gui
-    src/bolo
     src/server
     src/headless
     src/mapeditor
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
-    ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(WinBoloHeadless runtime_only)
+bolo_grant_internal_source_access(WinBoloHeadless
+    src/bolo/client_mapload.c
+    src/bolo/transport_udp_client.c
+    src/mapeditor/mapeditor_generate.c)
 
 if(WIN32)
     target_link_libraries(WinBoloHeadless PRIVATE ws2_32 winmm user32)
@@ -1635,15 +1581,9 @@ if(TARGET maxminddb)
     target_compile_definitions(WinBoloHeadless PRIVATE HAVE_MAXMINDDB=1)
 endif()
 
+target_link_libraries(WinBoloHeadless PRIVATE bolo_static server_static bot_brains_static)
 target_link_libraries(WinBoloHeadless PRIVATE
     SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
-
-# ONNX Runtime ML brain support for headless (optional)
-if(HAVE_ONNXRUNTIME)
-    target_sources(WinBoloHeadless PRIVATE src/bolo/ml_brain.c)
-    target_compile_definitions(WinBoloHeadless PRIVATE HAVE_ONNXRUNTIME=1)
-    target_link_libraries(WinBoloHeadless PRIVATE onnxruntime::onnxruntime)
-endif()
 
 # Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
 target_sources(WinBoloHeadless PRIVATE src/common/sentry_integration.c)
@@ -1686,38 +1626,20 @@ endif()
 # ---------------------------------------------------------------------------
 
 set(GYM_SOURCES
-    src/bolo/allience.c src/bolo/bases.c src/bolo/bolo_map.c
-    src/bolo/building.c src/bolo/crc.c src/bolo/debug_file_output.c src/bolo/net_packet_debug.c
-    src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
-    src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
-    src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
-    src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
-    src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
-    src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
-    src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c src/bolo/udppackets.c
-    src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_pathfinder_serial.c src/bolo/brain_worldsim.c src/bolo/brain_overlay.c
+    src/bolo/client_mapload.c
+    src/bolo/transport_udp_client.c
+    src/bolo/nat_portmap.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_frontend.c
-    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c src/bolo/client_sim_control.c
-    src/bolo/nat_portmap.c
-    src/bolo/bot_manager.c
-    src/bolo/bot_worker_pool.c
-    src/bolo/obs_builder.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/geolookup.c
-    src/server/servermessages.c src/server/threads.c
-    src/server/server_sim.c
-    src/server/server_lifecycle.c
+    src/server/server_dedicated_log_stubs.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
     src/gym/winbolo_gym.c
 )
-list(APPEND GYM_SOURCES ${BOT_C_SOURCES})
 
 
 # BSD headers
@@ -1745,14 +1667,13 @@ target_compile_definitions(winbolo_gym PRIVATE
 target_include_directories(winbolo_gym PRIVATE
     src/gui/sdl3
     src/gui
-    src/bolo
     src/server
     src/headless
     src/mapeditor
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
-    ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(winbolo_gym gym)
 
 if(WIN32)
     target_link_libraries(winbolo_gym PRIVATE ws2_32 winmm user32)
@@ -1770,6 +1691,7 @@ if(TARGET maxminddb)
     target_compile_definitions(winbolo_gym PRIVATE HAVE_MAXMINDDB=1)
 endif()
 
+target_link_libraries(winbolo_gym PRIVATE bolo_static server_static bot_brains_static)
 target_link_libraries(winbolo_gym PRIVATE
     SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
 
@@ -1814,26 +1736,14 @@ endif()
 # ---------------------------------------------------------------------------
 
 set(BRAINTEST_SOURCES
-    src/bolo/allience.c src/bolo/bases.c src/bolo/bolo_map.c
-    src/bolo/building.c src/bolo/crc.c src/bolo/debug_file_output.c src/bolo/net_packet_debug.c
-    src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
-    src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
-    src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
-    src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
-    src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
-    src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
-    src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c src/bolo/udppackets.c
-    src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_pathfinder_serial.c src/bolo/brain_worldsim.c src/bolo/brain_overlay.c
+    src/bolo/client_mapload.c
+    src/bolo/transport_udp_client.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
-    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c src/bolo/client_sim_control.c
-    src/bolo/bot_manager.c
-    src/bolo/bot_worker_pool.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/servermessages.c src/server/server_sim.c src/server/server_stubs.c
+    src/server/server_dedicated_log_stubs.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/braintest/braintest_main.c src/braintest/braintest_frontend.c
     src/braintest/braintest_viz_registry.c
@@ -1849,7 +1759,6 @@ set(BRAINTEST_SOURCES
     src/braintest/braintest_vizdetailwindow.cpp
     src/braintest/braintest_pillcontrib_registry.c
 )
-list(APPEND BRAINTEST_SOURCES ${BOT_C_SOURCES})
 
 # Per-bot BrainTest panel modules. Each bot may ship its own set of
 # C++ panel renderers under brains/<bot>/braintest_panels/*.cpp; they
@@ -1884,13 +1793,12 @@ target_compile_definitions(BrainTest PRIVATE
 target_include_directories(BrainTest PRIVATE
     src/gui/sdl3
     src/gui
-    src/bolo
     src/server
     src/braintest
     src/mapeditor
     ${cjson_SOURCE_DIR}
-    ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(BrainTest braintest)
 
 # braintest_vizwindow.cpp uses Dear ImGui (SDL3 + SDL_Renderer
 # backends). imgui_backends carries the headers + the impl libs.
@@ -1907,6 +1815,7 @@ else()
     target_compile_options(BrainTest PRIVATE -fcommon)
 endif()
 
+target_link_libraries(BrainTest PRIVATE bolo_static bot_brains_static)
 target_link_libraries(BrainTest PRIVATE
     SDL3::SDL3 minizip lua_static
     nanosvg stb_image utf8proc cjson
@@ -1933,34 +1842,21 @@ add_custom_command(TARGET BrainTest POST_BUILD
 # ---------------------------------------------------------------------------
 
 set(MAPEDITOR_SOURCES
-    src/bolo/allience.c src/bolo/bases.c src/bolo/bolo_map.c
-    src/bolo/building.c src/bolo/crc.c src/bolo/debug_file_output.c src/bolo/net_packet_debug.c
-    src/bolo/explosions.c src/bolo/floodfill.c src/bolo/gametype.c src/bolo/global.c
-    src/bolo/grass.c src/bolo/labels.c src/bolo/lgm.c src/bolo/log.c
-    src/bolo/messages.c src/bolo/mines.c src/bolo/minesexp.c
-    src/bolo/gui_message.c
-    src/bolo/pillbox.c src/bolo/players.c src/bolo/playername_validate.c src/bolo/playersrejoin.c src/bolo/rubble.c
-    src/bolo/brain_data.c src/bolo/client_snapshot.c src/bolo/screen.c src/bolo/screenbrainmap.c src/bolo/screenbullet.c
-    src/bolo/screencalc.c src/bolo/screenlgm.c src/bolo/screentank.c src/bolo/scroll.c src/bolo/scroll_item_list.c
-    src/bolo/shells.c src/bolo/sounddist.c src/bolo/starts.c src/bolo/swamp.c
-    src/bolo/tank.c src/bolo/tankexp.c src/bolo/tutorial.c src/bolo/treegrow.c src/bolo/udppackets.c
-    src/bolo/util.c src/bolo/braincore.c src/bolo/brain_pathfinder.c src/bolo/brain_pathfinder_serial.c src/bolo/brain_worldsim.c src/bolo/brain_overlay.c
+    src/bolo/client_mapload.c
+    src/bolo/transport_udp_client.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/gamefront_stubs.c
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
-    src/bolo/transport_local.c src/bolo/transport_udp_common.c src/bolo/transport_udp_client.c src/bolo/transport_udp_server.c src/bolo/client_state.c src/bolo/interpolation.c src/bolo/position_history.c src/bolo/client_sim.c src/bolo/client_sim_control.c
-    src/bolo/bot_manager.c
-    src/bolo/bot_worker_pool.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/servermessages.c src/server/server_sim.c src/server/server_stubs.c
+    src/server/server_dedicated_log_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
     src/mapeditor/mapeditor_main.c
     src/braintest/braintest_frontend.c
 )
-list(APPEND MAPEDITOR_SOURCES ${BOT_C_SOURCES})
 
 file(GLOB MAPEDITOR_BSD_SOURCES src/bsd/*.c)
 list(APPEND MAPEDITOR_SOURCES ${MAPEDITOR_BSD_SOURCES})
@@ -1984,11 +1880,10 @@ target_compile_definitions(MapEditor PRIVATE
 target_include_directories(MapEditor PRIVATE
     src/gui/sdl3
     src/gui
-    src/bolo
     src/server
     src/mapeditor
-    ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(MapEditor mapeditor)
 
 if(WIN32)
     target_sources(MapEditor PRIVATE src/res/mapeditor.rc)
@@ -2002,6 +1897,7 @@ else()
     target_compile_options(MapEditor PRIVATE -fcommon)
 endif()
 
+target_link_libraries(MapEditor PRIVATE bolo_static bot_brains_static)
 target_link_libraries(MapEditor PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
     nanosvg stb_image utf8proc

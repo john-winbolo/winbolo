@@ -26,13 +26,10 @@
 #include "imgui.h"
 
 extern "C" {
-#include "../../bolo/global.h"
-#include "../../bolo/bolo_map.h"
-#include "../../bolo/pillbox.h"
-#include "../../bolo/bases.h"
-#include "../../bolo/starts.h"
-#include "../../bolo/screencalc.h"
-#include "../../bolo/tilenum.h"
+#include "global.h"
+#include "client_mappreview.h"
+#include "screencalc.h"
+#include "tilenum.h"
 #include "../tiles.h"
 #include "map_preview_popup.h"
 #include "macos_pinch.h"
@@ -59,10 +56,7 @@ static SDL_Texture *popupTilesTex    = NULL;  /* tile atlas */
 static SDL_Texture *popupOffscreen   = NULL;  /* offscreen render target */
 static int          popupOffscreenW  = 0;
 static int          popupOffscreenH  = 0;
-static map          popupMap    = NULL;
-static pillboxes    popupPills  = NULL;
-static bases        popupBases  = NULL;
-static starts       popupStarts = NULL;
+static MapPreview  *popupPreview     = NULL;
 static bool         popupDataLoaded  = false;
 
 /* Track last window size for resize detection */
@@ -98,29 +92,29 @@ static const int popupBoatAtlasY[16] = {
 /* Read a neighbour tile for adjacency calculation, treating bases as ROAD
  * and stripping mine variants. Adapted from meNeighbour() in mapeditor.c. */
 static BYTE popupNeighbour(BYTE nx, BYTE ny) {
-    if (basesExistPos(&popupBases, nx, ny)) return ROAD;
-    BYTE t = popupMap->mapItem[nx][ny];
+    if (clientMapPreviewIsBase(popupPreview, nx, ny)) return ROAD;
+    BYTE t = clientMapPreviewGetTerrain(popupPreview, nx, ny);
     if (t >= MINE_START && t <= MINE_END) return (BYTE)(t - MINE_SUBTRACT);
     return t;
 }
 
 /* Adjacency-aware tile calculation. Adapted from meCalcTile() in mapeditor.c. */
 static BYTE popupCalcTile(BYTE xValue, BYTE yValue) {
-    if (pillsExistPos(&popupPills, xValue, yValue)) {
+    if (clientMapPreviewIsPill(popupPreview, xValue, yValue)) {
         static const BYTE pillTileForArmour[16] = {
             PILL_EVIL_0,  PILL_EVIL_1,  PILL_EVIL_2,  PILL_EVIL_3,
             PILL_EVIL_4,  PILL_EVIL_5,  PILL_EVIL_6,  PILL_EVIL_7,
             PILL_EVIL_8,  PILL_EVIL_9,  PILL_EVIL_10, PILL_EVIL_11,
             PILL_EVIL_12, PILL_EVIL_13, PILL_EVIL_14, PILL_EVIL_15
         };
-        BYTE armour = pillsGetArmourPos(&popupPills, xValue, yValue);
+        BYTE armour = clientMapPreviewGetPillArmourAt(popupPreview, xValue, yValue);
         if (armour <= 15) return pillTileForArmour[armour];
         return PILL_EVIL_15;
     }
-    if (basesExistPos(&popupBases, xValue, yValue)) return BASE_NEUTRAL;
-    if (startsExistPos(&popupStarts, xValue, yValue)) return DEEP_SEA_SOLID;
+    if (clientMapPreviewIsBase(popupPreview, xValue, yValue)) return BASE_NEUTRAL;
+    if (clientMapPreviewIsStart(popupPreview, xValue, yValue)) return DEEP_SEA_SOLID;
 
-    BYTE currentPos = popupMap->mapItem[xValue][yValue];
+    BYTE currentPos = clientMapPreviewGetTerrain(popupPreview, xValue, yValue);
     if (currentPos >= MINE_START && currentPos <= MINE_END)
         currentPos = (BYTE)(currentPos - MINE_SUBTRACT);
 
@@ -159,15 +153,17 @@ static void popupRenderStarts(SDL_Renderer *renderer, int screenW, int screenH) 
 
     SDL_SetTextureAlphaMod(popupTilesTex, 200);
 
-    for (BYTE i = 0; i < popupStarts->numStarts; i++) {
-        start *s = &popupStarts->item[i];
-        float dx = (float)((int)s->x * tileSize - camPX) * zf;
-        float dy = (float)((int)s->y * tileSize - camPY) * zf;
+    BYTE numStarts = clientMapPreviewGetStartCount(popupPreview);
+    for (BYTE i = 1; i <= numStarts; i++) {
+        BYTE sx, sy, sdir;
+        if (!clientMapPreviewGetStart(popupPreview, i, &sx, &sy, &sdir)) continue;
+        float dx = (float)((int)sx * tileSize - camPX) * zf;
+        float dy = (float)((int)sy * tileSize - camPY) * zf;
 
         if (dx + scaledTile < 0 || dx > screenW ||
             dy + scaledTile < 0 || dy > screenH) continue;
 
-        int dir = startsConvertDir((s->dir < 16) ? s->dir : 0);
+        int dir = sdir;
         SDL_FRect src = {
             (float)popupBoatAtlasX[dir],
             (float)popupBoatAtlasY[dir],
@@ -242,7 +238,7 @@ static void popupRenderTilesToOffscreen(SDL_Renderer *renderer, int screenW, int
             int mapY = camMY + y;
             if (mapX < 0 || mapX > 255 || mapY < 0 || mapY > 255) continue;
             bool mined = false;
-            BYTE raw = popupMap->mapItem[mapX][mapY];
+            BYTE raw = clientMapPreviewGetTerrain(popupPreview, (BYTE)mapX, (BYTE)mapY);
             if (raw >= MINE_START && raw <= MINE_END) {
                 mined = true;
             } else if (mapX <= MAP_MINE_EDGE_LEFT || mapX >= MAP_MINE_EDGE_RIGHT ||
@@ -275,10 +271,8 @@ static void popupFreeMapData(void) {
     popupOffscreenW = 0;
     popupOffscreenH = 0;
     if (popupDataLoaded) {
-        mapDestroy(&popupMap);
-        pillsDestroy(&popupPills);
-        basesDestroy(&popupBases);
-        startsDestroy(&popupStarts);
+        clientMapPreviewDestroy(popupPreview);
+        popupPreview = NULL;
         popupDataLoaded = false;
     }
 }
@@ -286,13 +280,13 @@ static void popupFreeMapData(void) {
 /* Scan the loaded map data for the actual non-deep-sea bounds, then compute
  * the best zoom level to fit the map content in the given viewport size. */
 static void popupAutoFitZoom(int viewW, int viewH) {
-    if (!popupDataLoaded || !popupMap) return;
+    if (!popupDataLoaded || !popupPreview) return;
 
     /* Find the bounding box of non-deep-sea tiles, pillboxes, bases, starts */
     int minX = 255, minY = 255, maxX = 0, maxY = 0;
     for (int y = 0; y < 256; y++) {
         for (int x = 0; x < 256; x++) {
-            BYTE t = popupMap->mapItem[x][y];
+            BYTE t = clientMapPreviewGetTerrain(popupPreview, (BYTE)x, (BYTE)y);
             if (t != DEEP_SEA) {
                 if (x < minX) minX = x;
                 if (x > maxX) maxX = x;
@@ -302,20 +296,32 @@ static void popupAutoFitZoom(int viewW, int viewH) {
         }
     }
     /* Include pillboxes, bases, starts in bounds */
-    for (BYTE i = 0; i < popupPills->numPills; i++) {
-        int px = popupPills->item[i].x, py = popupPills->item[i].y;
-        if (px < minX) minX = px; if (px > maxX) maxX = px;
-        if (py < minY) minY = py; if (py > maxY) maxY = py;
+    {
+        BYTE n = clientMapPreviewGetPillCount(popupPreview);
+        for (BYTE i = 1; i <= n; i++) {
+            BYTE px, py;
+            if (!clientMapPreviewGetPill(popupPreview, i, &px, &py, NULL, NULL)) continue;
+            if (px < minX) minX = px; if (px > maxX) maxX = px;
+            if (py < minY) minY = py; if (py > maxY) maxY = py;
+        }
     }
-    for (BYTE i = 0; i < popupBases->numBases; i++) {
-        int bx = popupBases->item[i].x, by = popupBases->item[i].y;
-        if (bx < minX) minX = bx; if (bx > maxX) maxX = bx;
-        if (by < minY) minY = by; if (by > maxY) maxY = by;
+    {
+        BYTE n = clientMapPreviewGetBaseCount(popupPreview);
+        for (BYTE i = 1; i <= n; i++) {
+            BYTE bx, by;
+            if (!clientMapPreviewGetBase(popupPreview, i, &bx, &by, NULL)) continue;
+            if (bx < minX) minX = bx; if (bx > maxX) maxX = bx;
+            if (by < minY) minY = by; if (by > maxY) maxY = by;
+        }
     }
-    for (BYTE i = 0; i < popupStarts->numStarts; i++) {
-        int sx = popupStarts->item[i].x, sy = popupStarts->item[i].y;
-        if (sx < minX) minX = sx; if (sx > maxX) maxX = sx;
-        if (sy < minY) minY = sy; if (sy > maxY) maxY = sy;
+    {
+        BYTE n = clientMapPreviewGetStartCount(popupPreview);
+        for (BYTE i = 1; i <= n; i++) {
+            BYTE sx, sy;
+            if (!clientMapPreviewGetStart(popupPreview, i, &sx, &sy, NULL)) continue;
+            if (sx < minX) minX = sx; if (sx > maxX) maxX = sx;
+            if (sy < minY) minY = sy; if (sy > maxY) maxY = sy;
+        }
     }
 
     if (maxX < minX || maxY < minY) {
@@ -489,16 +495,11 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
                     SDL_DestroySurface(sheet);
                 }
             }
-            mapCreate(&popupMap);
-            pillsCreate(&popupPills);
-            basesCreate(&popupBases);
-            startsCreate(&popupStarts);
             if (popupCompressedData) {
-                mapLoadCompressedMap(&popupMap, &popupPills, &popupBases, &popupStarts,
-                                     popupCompressedData, popupCompressedLen);
+                popupPreview = clientMapPreviewLoadFromBuffer(popupCompressedData, popupCompressedLen);
             } else if (popupFilePath) {
-                bool loaded = (mapRead(popupFilePath, &popupMap, &popupPills, &popupBases, &popupStarts) == TRUE);
-                if (!loaded) {
+                popupPreview = clientMapPreviewLoadFromFile(popupFilePath);
+                if (!popupPreview) {
                     /* Fallback: SDL_LoadFile handles iOS/macOS bundle paths */
                     size_t fileSize = 0;
                     void *fileData = SDL_LoadFile(popupFilePath, &fileSize);
@@ -511,14 +512,14 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
                         if (fp) {
                             fwrite(fileData, 1, fileSize, fp);
                             fclose(fp);
-                            mapRead(tmpPath, &popupMap, &popupPills, &popupBases, &popupStarts);
+                            popupPreview = clientMapPreviewLoadFromFile(tmpPath);
                             remove(tmpPath);
                         }
                     }
                     SDL_free(fileData);
                 }
             }
-            popupDataLoaded = true;
+            popupDataLoaded = (popupPreview != NULL);
         }
 
         /* Auto-fit zoom on first frame after data is loaded */

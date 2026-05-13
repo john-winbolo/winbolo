@@ -5,7 +5,7 @@
  * All functions are no-ops; lv_dnsLookup just copies the IP to the host buffer.
  */
 
-#include "global.h"
+#include "lv_global.h"
 #include "dns.h"
 #include <string.h>
 

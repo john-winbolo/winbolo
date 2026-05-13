@@ -26,8 +26,8 @@
 *********************************************************/
 
 /* Includes */
-#include "global.h"
-#include "screencalc.h"
+#include "lv_global.h"
+#include "lv_screencalc.h"
 
 /*********************************************************
 *NAME:          lv_screenCalcRoad

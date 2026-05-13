@@ -27,10 +27,10 @@
 *********************************************************/
 
 #include "global.h"
-#include "screen.h"
 #include "tank.h"
 #include "game_sim.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"
 #include "players.h"
 #include "frontend.h"
 #include "sounddist.h"

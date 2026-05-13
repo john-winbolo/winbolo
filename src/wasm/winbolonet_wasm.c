@@ -8,7 +8,7 @@
  */
 
 #include <string.h>
-#include "../bolo/global.h"
+#include "global.h"
 #include "../winbolonet/winbolonet.h"
 #include "../winbolonet/winbolonetevents.h"
 #include "../winbolonet/winbolonetthread.h"

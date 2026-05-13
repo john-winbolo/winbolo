@@ -29,9 +29,9 @@
 #include "pillbox.h"
 #include "players.h"
 #include "util.h"
-#include "screen.h"
 #include "messages.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"
 #include "control_event.h"
 #include "client_sim_control.h"
 #include "../gui/lang.h"
@@ -649,7 +649,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 clientSimApplyControl(c->clientSim, &evt);
                 /* Show join message in lobby chat */
                 if (c->clientSim->inLobby) {
-                    char joinMsg[64];
+                    char joinMsg[PACKET_MAX_PLAYER_NAME + 16];
                     snprintf(joinMsg, sizeof(joinMsg), "%s has joined.", pName);
                     clientSimAppendLobbyChat(c->clientSim, "***", joinMsg);
                 }
@@ -727,7 +727,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             if (pNum != c->playerNum) {
                 /* Show leave message in lobby chat */
                 if (c->clientSim->inLobby) {
-                    char leaveMsg[64];
+                    char leaveMsg[PACKET_MAX_PLAYER_NAME + 16];
                     snprintf(leaveMsg, sizeof(leaveMsg), "%s has left.", pName);
                     clientSimAppendLobbyChat(c->clientSim, "***", leaveMsg);
                 }
@@ -792,7 +792,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             if (c->clientSim->inLobby) {
                 clientSimAppendLobbyChat(c->clientSim, "Server", rendBuf);
             } else {
-                screenNetStatusMessage(c->clientSim, rendBuf);
+                clientSimNetStatusMessage(c->clientSim, rendBuf);
             }
         }
         break;
@@ -817,7 +817,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                             clientSimAppendLobbyChat(c->clientSim, "Server",
                                                      rendered);
                         } else {
-                            screenNetStatusMessage(c->clientSim, (char *)rendered);
+                            clientSimNetStatusMessage(c->clientSim, (char *)rendered);
                         }
                     }
                 }
@@ -831,7 +831,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 if (c->clientSim->inLobby) {
                     clientSimAppendLobbyChat(c->clientSim, "Server", message);
                 } else {
-                    screenNetStatusMessage(c->clientSim, message);
+                    clientSimNetStatusMessage(c->clientSim, message);
                 }
             } else {
                 /* Player-to-player chat: payload is plain message bytes. */
@@ -840,7 +840,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
                 memcpy(message, buf + PACKET_HEADER_SIZE + 2, msgLen);
                 message[msgLen] = '\0';
-                screenIncomingMessageCS(c->clientSim, fromPlayer, message);
+                clientSimIncomingMessage(c->clientSim, fromPlayer, message);
             }
         }
         break;

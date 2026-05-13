@@ -30,7 +30,7 @@
 #define __WINBOLONET_THREAD_H
 
 #include <string.h>
-#include "../bolo/global.h"
+#include "global.h"
 
 #define IsEmpty(list) ((list) ==NULL)
 #define NonEmpty(list) (!IsEmpty(list))

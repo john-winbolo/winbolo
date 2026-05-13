@@ -189,4 +189,4 @@
 #define   MESSAGE_TIME_LIMIT_EXPIRED "Time Limit has expired. Game is over. Go in peace"
 #define   MESSAGE_TANKSUNK        "Tank Sunk in Deep Sea"
 #define   NETERR_TRACKERDNS       "The tracker hostname lookup failed. Tracker notification disabled"
-#include "../bolo/everard_map.h"
+#include "everard_map.h"

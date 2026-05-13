@@ -30,7 +30,7 @@
 #define __WINBOLONET_EVENT
 
 
-#include "../bolo/global.h"
+#include "global.h"
 #include "winbolonet.h"
 
 

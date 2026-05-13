@@ -17,8 +17,8 @@
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
-#include "../../bolo/global.h"
-#include "../../bolo/screen.h"
+#include "global.h"
+#include "client_enums.h"  /* tankButton + TNONE/TACCEL/... */
 
 #ifdef __cplusplus
 extern "C" {

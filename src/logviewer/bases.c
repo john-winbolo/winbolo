@@ -26,11 +26,11 @@
 *********************************************************/
 
 /* Includes */
-#include "global.h"
-#include "bases.h"
+#include "lv_global.h"
+#include "lv_bases.h"
 #include "backend.h"
-#include "players.h"
-#include "messages.h"
+#include "lv_players.h"
+#include "lv_messages.h"
 #include "../gui/lang.h"
 
 

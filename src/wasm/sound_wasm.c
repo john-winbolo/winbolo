@@ -24,8 +24,8 @@
  * in the browser, not as ~80 MB of WebAudio AudioBuffer copies).
  */
 
-#include "../bolo/global.h"
-#include "../bolo/screen.h"
+#include "global.h"
+#include "client_enums.h"  /* sndEffects */
 #include "../gui/sound.h"
 
 #include <emscripten.h>

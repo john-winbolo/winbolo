@@ -28,8 +28,8 @@
 #ifndef CURRENT_GAMES_H
 #define CURRENT_GAMES_H
 
-#include "../bolo/global.h"
-#include "../bolo/gametype.h"
+#include "global.h"
+#include "gametype.h"
 
 /* Empty / Non Empty / Head / Tail Macros */
 #define IsEmpty(list) ((list) ==NULL)

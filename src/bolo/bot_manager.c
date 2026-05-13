@@ -42,10 +42,11 @@
 #include "allience.h"
 #include "mines.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"
 #include "client_sim_control.h"
 #include "control_event.h"
 #include "transport.h"
-#include "screen.h"
+#include "client_snapshot.h"
 #include "screenbrainmap.h"
 #include "input_packet.h"
 #include "bot_manager.h"
@@ -53,16 +54,15 @@
 #include "brain_worldsim.h"
 #include <lua.h>
 #include <lauxlib.h>   /* luaL_loadstring for botManagerExecLua */
-#include "transport_udp.h"
 #include "../common/wb_log.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 #include "../gui/sdl3/luabrainshandler.h"
 
 /* View size for brain map updates — 15x15 centered on tank */
 #define BOT_VIEW_HALF 7
 
 typedef struct {
-    ClientSim       cs;
+    ClientSim      *cs;
     Transport       transport;
     LuaBrainInstance brain;
     /* Filesystem path to the brain script for this bot. Captured at
@@ -271,16 +271,18 @@ static void botUpdateBrainMap(BotContext *bot, ServerSim *sim) {
     BYTE left, right, top, bottom;
     int x, y;
 
-    if (MY_TANK(&bot->cs) == NULL) {
+    if (MY_TANK(bot->cs) == NULL) {
         return;
     }
 
-    tx = tankGetMX(&MY_TANK(&bot->cs));
-    ty = tankGetMY(&MY_TANK(&bot->cs));
+    tx = tankGetMX(&MY_TANK(bot->cs));
+    ty = tankGetMY(&MY_TANK(bot->cs));
+
+    GameSim *gs = serverSimGetGameSim(sim);
 
     if (bot->ai == aiFull) {
         /* aiFull: refresh full map every tick from server */
-        screenBrainMapFillFromMap(&bot->cs, &sim->sim.mp, &sim->sim.mns);
+        screenBrainMapFillFromMap(bot->cs, &gs->mp, &gs->mns);
         return;
     }
 
@@ -292,9 +294,10 @@ static void botUpdateBrainMap(BotContext *bot, ServerSim *sim) {
     /* Update only the visible rect from server map */
     for (y = top; ; y++) {
         for (x = left; ; x++) {
-            screenBrainMapSetPos(bot->cs.brainMap, (BYTE)x, (BYTE)y,
-                                 mapGetPos(&sim->sim.mp, (BYTE)x, (BYTE)y),
-                                 minesExistPos(&sim->sim.mns, &sim->sim.mp, (BYTE)x, (BYTE)y));
+            screenBrainMapSetPos((BYTE (*)[MAP_ARRAY_SIZE])clientSimGetBrainMap(bot->cs),
+                                 (BYTE)x, (BYTE)y,
+                                 mapGetPos(&gs->mp, (BYTE)x, (BYTE)y),
+                                 minesExistPos(&gs->mns, &gs->mp, (BYTE)x, (BYTE)y));
             if ((BYTE)x == right) break;
         }
         if ((BYTE)y == bottom) break;
@@ -319,9 +322,12 @@ static bool botLoadMapFromServer(BotContext *bot, ServerSim *sim) {
         return false;
     }
 
-    ok = mapLoadCompressedMap(&bot->cs.sim.mp, &bot->cs.sim.pb,
-                              &bot->cs.sim.bs, &bot->cs.sim.ss,
-                              buf, len);
+    {
+        GameSim *gs = clientSimGetGameSim(bot->cs);
+        ok = mapLoadCompressedMap(&gs->mp, &gs->pb,
+                                  &gs->bs, &gs->ss,
+                                  buf, len);
+    }
     free(buf);
     return ok;
 }
@@ -414,20 +420,29 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
         SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
     }
 
-    /* Register the player in the server (creates tank + lgm) */
-    serverSimAddPlayer(sim, playerNum, brainName, false);
-
-    /* Mark as bot in lobby state (must come after serverSimAddPlayer which resets defaults) */
-    sim->lobbyPlayers[playerNum].isBot = true;
-    sim->lobbyPlayers[playerNum].ready = true;  /* Bots are always ready */
-
-    /* Set bot name in transport client array for lobby broadcasts */
-    transportUdpServerSetBotName(playerNum, brainName);
+    {
+        ServerSimBotConfig cfg = {
+            .brainPath   = bot->brainPath,
+            .brainName   = brainName,
+            .ai          = ai,
+            .gameType    = game,
+            .hiddenMines = hiddenMines,
+            .teamNumber  = 0,
+        };
+        if (!serverSimAddBot(sim, playerNum, &cfg)) {
+            return false;
+        }
+    }
 
     /* Create the bot's ClientSim */
-    clientSimCreate(&bot->cs, game, hiddenMines, 0, -1);
-    bot->cs.isBot = true;
-    clientSimSetPlayerNum(&bot->cs, playerNum);
+    bot->cs = clientSimAlloc();
+    if (bot->cs == NULL) {
+        serverSimRemovePlayer(sim, playerNum);
+        return false;
+    }
+    clientSimCreate(bot->cs, game, hiddenMines, 0, -1);
+    clientSimSetIsBot(bot->cs, true);
+    clientSimSetPlayerNum(bot->cs, playerNum);
 
     /* Load map data from the server before tankCreate so the bot's local
      * starts/pills/bases are populated when startsGetStart() runs — without
@@ -435,24 +450,18 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
      * out-params undefined. */
     if (!botLoadMapFromServer(bot, sim)) {
         fprintf(stderr, "botManager: failed to load map for bot %d\n", playerNum);
-        clientSimDestroy(&bot->cs);
+        clientSimDestroy(bot->cs);
+        bot->cs = NULL;
         serverSimRemovePlayer(sim, playerNum);
         return false;
     }
 
-    /* Create a tank at slot 0 for this ClientSim */
-    if (MY_TANK(&bot->cs) != NULL) {
-        tankDestroy(&bot->cs.sim, &MY_TANK(&bot->cs));
-        MY_TANK(&bot->cs) = NULL;
-    }
-    tankCreate(&bot->cs.sim, &MY_TANK(&bot->cs));
-
-    /* Set this bot's identity */
-    playersSetSelf(NULL, &bot->cs.sim, &bot->cs.sim.plyrs, playerNum,
-                   (char *)brainName, TRUE);
+    /* Set this bot's identity (creates the tank and writes the self
+     * record on the bot's local ClientSim) */
+    clientSimSetupSelf(bot->cs, playerNum, brainName, 0, 0);
 
     /* Set AI type on the ClientSim */
-    bot->cs.allowComputerTanks = ai;
+    *clientSimGetAllowComputerTanks(bot->cs) = ai;
 
     /* Create passive transport (does NOT tick the server) */
     bot->transport = transportLocalCreatePassive(sim, playerNum);
@@ -463,7 +472,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
      * dispatcher's self-skip to leave the playersSetSelf record above
      * untouched. */
     bot->controlSub = serverSimRegisterSubscriber(sim, botDeliverControl,
-                                                  &bot->cs);
+                                                  bot->cs);
 
     /* Initialize the brain map (fog-of-war) */
     /* screenBrainMapCreate already called by clientSimCreate,
@@ -474,12 +483,13 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
      * default (host-controlled): BrainTest sets it to true; the release
      * game leaves it false so brains load from stripped opt/ source. */
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
-                                &bot->cs, ai, s_default_debug_mode)) {
+                                bot->cs, ai, s_default_debug_mode)) {
         fprintf(stderr, "botManager: failed to create brain for bot %d\n", playerNum);
         serverSimUnregisterSubscriber(sim, bot->controlSub);
         bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
         transportLocalDestroy(&bot->transport);
-        clientSimDestroy(&bot->cs);
+        clientSimDestroy(bot->cs);
+        bot->cs = NULL;
         serverSimRemovePlayer(sim, playerNum);
         return false;
     }
@@ -573,19 +583,19 @@ static void runBotThinkJobImpl(BotJobCtx *j, BotContext *bot, Uint64 t0) {
         return;
     }
 
-    if (MY_TANK(&bot->cs) != NULL) {
-        MY_TANK(&bot->cs)->newTank = FALSE;
+    if (MY_TANK(bot->cs) != NULL) {
+        MY_TANK(bot->cs)->newTank = FALSE;
     }
 
     /* Build both InputPackets into per-bot scratch — packets are
      * thread-local to this ctx so two workers cannot collide. */
-    bool firstIsGame = (sim->tick % 2) == 0;
-    screenBuildInputPacketCS(&bot->cs, &j->pkt1, 0, FALSE, FALSE,
+    bool firstIsGame = (serverSimGetTick(sim) % 2) == 0;
+    clientBuildInputPacket(bot->cs, &j->pkt1, 0, FALSE, FALSE,
                              TRUE, firstIsGame, bot->playerNum,
-                             sim->tick);
-    screenBuildInputPacketCS(&bot->cs, &j->pkt2, 0, FALSE, FALSE,
+                             serverSimGetTick(sim));
+    clientBuildInputPacket(bot->cs, &j->pkt2, 0, FALSE, FALSE,
                              TRUE, !firstIsGame, bot->playerNum,
-                             sim->tick + 1);
+                             serverSimGetTick(sim) + 1);
     j->hasInput = true;
 }
 
@@ -643,11 +653,13 @@ void botManagerTick(ServerSim *sim, aiType ai) {
      * brain-think stage. */
     Uint64 setupStart = SDL_GetPerformanceCounter();
 
+    GameSim *gs = serverSimGetGameSim(sim);
+
     /* ---- Stage 1: snapshot/sync (serial, on producer thread) ---- */
     for (BYTE i = 0; i < MAX_TANKS; i++) {
         BotContext *bot = &bots[i];
         if (!bot->active) continue;
-        if (sim->sim.tanks[i] == NULL) continue;
+        if (gs->tanks[i] == NULL) continue;
 
         BotJobCtx *j = &s_jobs[i];
         j->bot = bot;
@@ -664,7 +676,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
                                    j->pills, MAX_SNAPSHOT_PILLS,
                                    j->events, MAX_SNAPSHOT_EVENTS);
 
-        clientSimSyncFromSnapshot(&bot->cs, &j->hdr,
+        clientSimSyncFromSnapshot(bot->cs, &j->hdr,
                                   j->tanks, j->hdr.tankCount,
                                   j->shells, j->hdr.shellCount,
                                   j->tkExplosions, j->hdr.tkExplosionCount,
@@ -675,7 +687,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
 
         if (bot->ai == aiFull && bot->brain.isFirst) {
             /* Full map on first tick */
-            screenBrainMapFillFromMap(&bot->cs, &sim->sim.mp, &sim->sim.mns);
+            screenBrainMapFillFromMap(bot->cs, &gs->mp, &gs->mns);
         }
         botUpdateBrainMap(bot, sim);
 
@@ -683,16 +695,19 @@ void botManagerTick(ServerSim *sim, aiType ai) {
          * dead bots here keeps the worker job branch-free on liveness
          * and stops a respawning bot from inheriting another bot's queue
          * slot mid-dispatch. */
-        if (MY_TANK(&bot->cs) != NULL &&
-            tankGetDeathWait(&MY_TANK(&bot->cs)) > 0) {
+        if (MY_TANK(bot->cs) != NULL &&
+            tankGetDeathWait(&MY_TANK(bot->cs)) > 0) {
             continue;
         }
 
         /* Reset key state before brain runs */
-        bot->cs.brainHoldKeys = 0;
-        bot->cs.brainTapKeys = 0;
-        if (bot->cs.brainBuildInfo != NULL) {
-            bot->cs.brainBuildInfo->action = 0;
+        *clientSimGetBrainHoldKeys(bot->cs) = 0;
+        *clientSimGetBrainTapKeys(bot->cs) = 0;
+        {
+            BuildInfo **bi = clientSimGetBrainBuildInfo(bot->cs);
+            if (*bi != NULL) {
+                (*bi)->action = 0;
+            }
         }
 
         s_jobIndices[activeCount++] = i;
@@ -770,11 +785,11 @@ void botManagerTick(ServerSim *sim, aiType ai) {
              * counter — these always go together. */
             bots[i].wasKilled = true;
             bots[i].overrunCount++;
-            if ((sim->tick - bots[i].lastOverrunWarnTick) > 50) {
+            if ((serverSimGetTick(sim) - bots[i].lastOverrunWarnTick) > 50) {
                 WB_LOG_WARN(WB_LOG_CAT_LUA,
                             "bot %d think aborted (budget %.1fms exceeded; overruns=%u)",
                             i, s_lastTargetMs, bots[i].overrunCount);
-                bots[i].lastOverrunWarnTick = sim->tick;
+                bots[i].lastOverrunWarnTick = serverSimGetTick(sim);
             }
             continue;
         }
@@ -793,11 +808,11 @@ void botManagerTick(ServerSim *sim, aiType ai) {
         double ms = bots[i].lastThinkMs;
         if (ms > s_lastTargetMs * 1.5) {
             bots[i].overrunCount++;
-            if ((sim->tick - bots[i].lastOverrunWarnTick) > 50) {
+            if ((serverSimGetTick(sim) - bots[i].lastOverrunWarnTick) > 50) {
                 WB_LOG_WARN(WB_LOG_CAT_LUA,
                             "bot %d think %.1fms over target %.1fms (overruns=%u)",
                             i, ms, s_lastTargetMs, bots[i].overrunCount);
-                bots[i].lastOverrunWarnTick = sim->tick;
+                bots[i].lastOverrunWarnTick = serverSimGetTick(sim);
             }
         }
     }
@@ -835,11 +850,11 @@ void botManagerOnGameStart(ServerSim *sim) {
         }
 
         /* Destroy and recreate the bot's tank */
-        if (MY_TANK(&bot->cs) != NULL) {
-            tankDestroy(&bot->cs.sim, &MY_TANK(&bot->cs));
-            MY_TANK(&bot->cs) = NULL;
+        if (MY_TANK(bot->cs) != NULL) {
+            tankDestroy(clientSimGetGameSim(bot->cs), &MY_TANK(bot->cs));
+            MY_TANK(bot->cs) = NULL;
         }
-        tankCreate(&bot->cs.sim, &MY_TANK(&bot->cs));
+        tankCreate(clientSimGetGameSim(bot->cs), &MY_TANK(bot->cs));
 
         /* Reset brain so full-map fill triggers again for aiFull bots */
         bot->brain.isFirst = true;
@@ -854,11 +869,11 @@ void botManagerSetTeams(ServerSim *sim, const BYTE *teamOf, BYTE numPlayers) {
         for (BYTE j = 0; j < numPlayers; j++) {
             if (i == j || teamOf[i] != teamOf[j]) continue;
 
-            allienceAdd(&sim->sim.plyrs->item[i].allie, j);
+            allienceAdd(&serverSimGetGameSim(sim)->plyrs->item[i].allie, j);
 
             for (BYTE k = 0; k < MAX_TANKS; k++) {
                 if (!bots[k].active) continue;
-                allienceAdd(&bots[k].cs.sim.plyrs->item[i].allie, j);
+                allienceAdd(&clientSimGetGameSim(bots[k].cs)->plyrs->item[i].allie, j);
             }
         }
     }
@@ -874,7 +889,8 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
     serverSimUnregisterSubscriber(sim, bot->controlSub);
     bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
     transportLocalDestroy(&bot->transport);
-    clientSimDestroy(&bot->cs);
+    clientSimDestroy(bot->cs);
+    bot->cs = NULL;
     serverSimRemovePlayer(sim, playerNum);
 
     bot->active = false;

@@ -64,7 +64,7 @@ void randombytes(unsigned char *buf, unsigned long long len) {
                                 const char *value, const char *filePath);
 #endif
 
-#include "../bolo/global.h"
+#include "global.h"
 #include "winbolonet.h"
 #include "http.h"
 

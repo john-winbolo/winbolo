@@ -28,12 +28,14 @@
 #include <string.h>
 #include "game_sim.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"
 #include "bases.h"
 #include "bolo_map.h"
 #include "building.h"
 #include "explosions.h"
 #include "floodfill.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "global.h"
 #include "grass.h"
 #include "labels.h"
@@ -45,7 +47,6 @@
 #include "players.h"
 #include "pillbox.h"
 #include "rubble.h"
-#include "screen.h"
 #include "sounddist.h"
 #include "starts.h"
 #include "swamp.h"
@@ -512,7 +513,6 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
 *********************************************************/
 void lgmNewPrimaryRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE mapY, BYTE action) {
   map *mp = &sim->mp;
-  bool isServer = sim->isServer;
   BYTE pillNum;
   bool isMine;
   BYTE trees;
@@ -1004,7 +1004,7 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
       (*lgman)->numTrees = LGM_GATHER_TREE;
       sim->callbacks.soundDist(sim->callbacks.ctx, farmingTreeNear, bmx, bmy);
     }
-    if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }
+    if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
     break;
   case LGM_ROAD_REQUEST:
 /* HUH?    minesExpAddItem(mp, bmx, bmy); */
@@ -1018,7 +1018,7 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
       sim->callbacks.soundDist(sim->callbacks.ctx, manBuildingNear, bmx, bmy);
 
       lgmCheckRemove(sim, terrain, bmx, bmy);
-      if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }
+      if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
     }
     break;
   case LGM_BUILDING_REQUEST:
@@ -1031,14 +1031,14 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
       (*lgman)->numTrees = 0;
       sim->callbacks.soundDist(sim->callbacks.ctx, manBuildingNear, bmx, bmy);
       lgmCheckRemove(sim, terrain, bmx, bmy);
-      if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }
+      if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
     }
     break;
   case LGM_BOAT_REQUEST:
     if (terrain == RIVER) {
       mapSetPos(sim, mp, bmx, bmy, BOAT, TRUE, FALSE);
       (*lgman)->numTrees = 0;
-      if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }
+      if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
     }
     break;
   case LGM_MINE_REQUEST:
@@ -1054,7 +1054,7 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
         }
         sim->callbacks.soundDist(sim->callbacks.ctx, manLayingMineNear, bmx, bmy);
       }
-      if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }
+      if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
     }
     break;
   case LGM_PILL_REQUEST:
@@ -1093,7 +1093,7 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
       }
     }
     lgmCheckRemove(sim, terrain, bmx, bmy);
-    if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }
+    if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
     break;
   default:
     /* do nothing */
@@ -1121,34 +1121,21 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
 *********************************************************/
 void lgmBackInTank(GameSim *sim, lgm *lgman, tank *tnk, bool sendItems) {
   bool isServer = sim->isServer;
-  BYTE trees;
-  BYTE minesAmount;
-  BYTE pillNum;
+  (void)sendItems;
 
-  minesAmount = trees = 0;
-  pillNum = LGM_NO_PILL;
   if ((*lgman)->numTrees > 0) {
     tankGiveTrees(sim, tnk, (*lgman)->numTrees);
-    trees = (*lgman)->numTrees;
     (*lgman)->numTrees = 0;
   }
   if ((*lgman)->numPills != LGM_NO_PILL) {
     tankPutCarriedPill(tnk, (*lgman)->numPills);
-    pillNum = (*lgman)->numPills;
     (*lgman)->numPills = LGM_NO_PILL;
   }
   if ((*lgman)->numMines > 0) {
-    minesAmount = (*lgman)->numMines;
     tankAddMines(sim, tnk, (*lgman)->numMines);
-    minesAmount = (*lgman)->numMines;
     (*lgman)->numMines = 0;
   }
 
-  if (sendItems == FALSE) {
-    trees = 0;
-    minesAmount = 0;
-    pillNum = LGM_NO_PILL;
-  }
   if (isServer == TRUE) {
     if ((*lgman)->nextAction != LGM_IDLE) {
       /* Server-authoritative: immediately start the queued action */
@@ -1380,7 +1367,7 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
           }
         }
         (*lgman)->numPills = LGM_NO_PILL;
-        if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }
+        if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
       }
       tankGetWorld(tnk, &((*lgman)->destX), &((*lgman)->destY));
 

@@ -35,7 +35,7 @@
 /* Linux */
 #endif
 
-#include "../bolo/global.h"
+#include "global.h"
 
 
 /*********************************************************

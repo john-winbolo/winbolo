@@ -79,12 +79,11 @@
 #include <lauxlib.h>
 
 #include "../../common/wb_log.h"
-#include "../../bolo/global.h"
-#include "../../bolo/brain.h"
-#include "../../bolo/screen.h"
-#include "../../bolo/client_sim.h"
-#include "../../bolo/util.h"
-#include "../../bolo/braincore.h"
+#include "global.h"
+#include "brain.h"
+#include "brain_data.h"
+#include "client_sim.h"
+#include "util.h"
 #include "na_overlay_pillcontrib.h"
 #include "na_threat.h"
 #include "na_shield_stamp.h"
@@ -135,7 +134,6 @@ static char      brainsPaths[LUA_BRAINS_MAX][LUA_BRAINS_PATH_MAX];
 static BrainType brainsTypes[LUA_BRAINS_MAX];    /* LUA or ONNX per entry */
 
 #if defined(HAVE_ONNXRUNTIME) && !defined(__EMSCRIPTEN__)
-#include "../../bolo/ml_brain.h"
 static MLBrainInstance *mlSingletonInst = NULL;  /* Active ONNX brain */
 static ClientSim      *mlSingletonCS   = NULL;   /* ClientSim for ONNX brain */
 #endif
@@ -828,7 +826,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   lua_setglobal(L, "brain");
 
   /* Call brain.open(info) */
-  screenMakeBrainInfoCS(cs, &inst->bInfo, true, aiMode);
+  brainDataMakeInfo(cs, &inst->bInfo, true, aiMode);
   inst->worldPtr = inst->bInfo.theWorld;
   /* Set the map pointer now so Brain.open can pre-warm the edge-cost table
    * via cpf.rebuild_edge_costs() — same map pointer set each tick. */
@@ -836,11 +834,11 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     brainPathfinderSetMap(inst->pathfinder, inst->bInfo.theWorld);
   }
   if (!brainCoreCallMethod(L, &inst->bInfo, "open")) {
-    screenExtractBrainInfoCS(cs, &inst->bInfo);
+    brainDataExtractInfo(cs, &inst->bInfo);
     lua_close(L);
     return false;
   }
-  screenExtractBrainInfoCS(cs, &inst->bInfo);
+  brainDataExtractInfo(cs, &inst->bInfo);
 
   inst->L = L;
   inst->running = true;
@@ -855,11 +853,11 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
   }
 
   /* Reset key state before brain runs (matches bot_manager) */
-  inst->cs->brainHoldKeys = 0;
-  inst->cs->brainTapKeys = 0;
+  *clientSimGetBrainHoldKeys(inst->cs) = 0;
+  *clientSimGetBrainTapKeys(inst->cs) = 0;
 
-  screenMakeBrainInfoCS(inst->cs, &inst->bInfo, inst->isFirst,
-                        inst->cs->allowComputerTanks);
+  brainDataMakeInfo(inst->cs, &inst->bInfo, inst->isFirst,
+                    *clientSimGetAllowComputerTanks(inst->cs));
   inst->isFirst = false;
   inst->bInfo.operation = BRAIN_THINK;
 
@@ -876,7 +874,7 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
    * here so a successful tick clears stale state from a prior abort. */
   inst->wasKilled = false;
   ok = brainCoreCallThink(inst->L, &inst->bInfo, &inst->wasKilled);
-  screenExtractBrainInfoCS(inst->cs, &inst->bInfo);
+  brainDataExtractInfo(inst->cs, &inst->bInfo);
 
   return ok;
 }
@@ -913,12 +911,12 @@ void luaBrainInstanceDestroy(LuaBrainInstance *inst) {
     return;
   }
 
-  screenMakeBrainInfoCS(inst->cs, &inst->bInfo, false,
-                        inst->cs->allowComputerTanks);
+  brainDataMakeInfo(inst->cs, &inst->bInfo, false,
+                    *clientSimGetAllowComputerTanks(inst->cs));
   inst->bInfo.operation = BRAIN_CLOSE;
   inst->worldPtr = inst->bInfo.theWorld;
   brainCoreCallMethod(inst->L, &inst->bInfo, "close");
-  screenExtractBrainInfoCS(inst->cs, &inst->bInfo);
+  brainDataExtractInfo(inst->cs, &inst->bInfo);
 
   brainPathfinderDestroy(inst->pathfinder);
   inst->pathfinder = NULL;
@@ -1283,7 +1281,7 @@ bool luaBrainStart(const char *path, const char *name, ClientSim *cs) {
   clientMutexWaitFor();
   if (!luaBrainInstanceCreate(&singletonInst, path, name,
                               cs,
-                              cs->allowComputerTanks, false)) {
+                              *clientSimGetAllowComputerTanks(cs), false)) {
     clientMutexRelease();
     return false;
   }
@@ -1561,11 +1559,11 @@ bool mlBrainRunSingleton(ClientSim *cs) {
     brainsProcExecuting = true;
 
     /* Reset key state before brain runs (matches Lua path) */
-    cs->brainHoldKeys = 0;
-    cs->brainTapKeys = 0;
+    *clientSimGetBrainHoldKeys(cs) = 0;
+    *clientSimGetBrainTapKeys(cs) = 0;
 
     BrainInfo bi;
-    screenMakeBrainInfoCS(cs, &bi, false, cs->allowComputerTanks);
+    brainDataMakeInfo(cs, &bi, false, *clientSimGetAllowComputerTanks(cs));
     bi.operation = BRAIN_THINK;
 
     bool ok;
@@ -1580,7 +1578,7 @@ bool mlBrainRunSingleton(ClientSim *cs) {
     }
 
     /* Apply outputs and free BrainInfo (same as Lua path) */
-    screenExtractBrainInfoCS(cs, &bi);
+    brainDataExtractInfo(cs, &bi);
 
     brainsProcExecuting = false;
     clientMutexRelease();

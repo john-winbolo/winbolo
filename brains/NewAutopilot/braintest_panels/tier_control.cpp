@@ -35,7 +35,7 @@
 #include "../../../src/braintest/braintest_panel_registry.h"
 
 extern "C" {
-#include "../../../src/bolo/bot_manager.h"
+#include "bot_manager.h"
 }
 
 namespace {

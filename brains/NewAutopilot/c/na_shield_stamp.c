@@ -27,7 +27,7 @@
 
 #include "na_shield_stamp.h"
 #include "na_threat.h"
-#include "../../../src/bolo/bot_manager.h"
+#include "bot_manager.h"
 #include <SDL3/SDL.h>
 #include <lauxlib.h>
 #include <math.h>

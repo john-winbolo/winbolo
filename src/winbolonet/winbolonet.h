@@ -30,7 +30,7 @@
 
 #include <stdio.h>
 #include <string.h>
-#include "../bolo/global.h"
+#include "global.h"
 
 /* Forward declaration — defined in server_sim.h */
 #ifndef BALANCEPROPOSAL_TYPEDEF

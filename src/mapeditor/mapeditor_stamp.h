@@ -17,8 +17,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <SDL3/SDL.h>
-#include "../bolo/global.h"
-#include "../bolo/types.h"
+#include "global.h"
+#include "types.h"
 
 #ifdef __cplusplus
 extern "C" {

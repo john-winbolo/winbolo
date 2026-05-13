@@ -28,8 +28,13 @@
 #ifndef _DRAW_H
 #define _DRAW_H
 
-#include "../bolo/global.h"
-#include "../bolo/screen.h"
+#include "global.h"
+#include "viewport_types.h"  /* screen, screenMines, screenGunsight */
+#include "client_enums.h"    /* buildSelect */
+#include "alliance_enums.h"
+#include "screentank.h"      /* screenTanks, tank */
+#include "screenbullet.h"    /* screenBullets */
+#include "screenlgm.h"       /* screenLgm */
 
 /* Portable RECT definition for non-Windows platforms */
 #ifndef _WIN32

@@ -37,11 +37,10 @@
 #ifndef LUA_BRAINS_HANDLER_H
 #define LUA_BRAINS_HANDLER_H
 
-#include "../../bolo/global.h"
-#include "../../bolo/brain.h"  /* For BrainInfo, aiType */
-#include "../../bolo/brain_pathfinder.h"
-#include "../../bolo/brain_worldsim.h"
-#include "../../bolo/brain_overlay.h"
+#include "global.h"
+#include "brain.h"  /* For BrainInfo, aiType */
+#include "brain_lua_glue.h"  /* BrainPathfinder, BrainWorldSim, brainCore*, mlBrain* */
+#include "brain_overlay.h"
 
 /* Forward declarations */
 struct ClientSim;
