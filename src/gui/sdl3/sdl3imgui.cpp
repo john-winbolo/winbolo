@@ -49,9 +49,9 @@
 
 /* Bolo types (included after SDL3 to avoid #pragma pack conflicts) */
 extern "C" {
-#include "../../bolo/global.h"    /* BYTE, bool, FALSE/TRUE */
-#include "../../bolo/client_sim.h"
-#include "../../bolo/netpacks.h" /* PACKET_MAX_CHAT_MESSAGE */
+#include "global.h"    /* BYTE, bool, FALSE/TRUE */
+#include "client_sim.h"
+#include "wire_limits.h"
 #include "../gamefront.h"
 #include "../lang.h"
 }
@@ -63,12 +63,8 @@ extern "C" {
 #include "wb_theme.h"
 #include "flags.h"
 
-/* Include players.h with C linkage — no #pragma pack inside, safe here */
 extern "C" {
-#include "../../bolo/players.h"
-#include "../../bolo/transport.h"
-#include "../../bolo/transport_udp.h"
-#include "../../bolo/bot_manager.h"
+#include "client_net.h"
 #include "../../server/server_lifecycle.h"
 #include "../../server/threads.h"
 }
@@ -99,8 +95,6 @@ extern "C" int  windowGetDrawTime(void);
 extern "C" int  windowGetSimTime(void);
 extern "C" int  windowGetNetTime(void);
 extern "C" int  windowGetAiTime(void);
-/* gameFrontGetTransport: now provided by gamefront.h */
-extern "C" uint16_t transportUdpClientGetPing(Transport *t);
 /* Dialog helpers — declared without pulling in pragma-pack headers */
 /* gameFrontSetGameOptions: now provided by gamefront.h */
 extern "C" void utilStripName(char *name);
@@ -537,10 +531,10 @@ static void renderSysInfoContent(void) {
          * tick. Take the same mutex serverInstanceTick uses so the
          * snapshot is consistent. Cheap — these are quick reads. */
         threadsWaitForMutex();
-        hasBots = botManagerHasAnyBot();
-        botManagerGetPoolStats(&ps);
+        hasBots = serverSimHasAnyBot(spSim);
+        serverSimGetBotPoolStats(spSim, &ps);
         for (int i = 0; i < MAX_TANKS; i++) {
-            botInfoValid[i] = botManagerGetBotInfo((BYTE)i, &botInfos[i]);
+            botInfoValid[i] = serverSimGetBotInfo(spSim, (BYTE)i, &botInfos[i]);
         }
         serverLifecycleGetTickStats(&tickLast, &tickEwma);
         serverLifecycleGetSimStats(&simLast, &simEwma);
@@ -702,8 +696,7 @@ static void renderNetInfoContent(ClientSim *cs) {
     /* Client in a networked game: prepend player location to port */
     if (clientSimGetNetType(cs) != netSingle) {
         char addr[256];
-        players *plrs = &clientSimGetGameSim(cs)->plyrs;
-        playersGetPlayerLocation(plrs, clientSimGetMyPlayerNum(cs), addr);
+        clientSimGetPlayerLocation(cs, clientSimGetMyPlayerNum(cs), addr);
         netGetOurAddressStr(cs, str);
         const char *portPart = strchr(str, ':');
         if (portPart) {
@@ -718,15 +711,12 @@ static void renderNetInfoContent(ClientSim *cs) {
 
     netGetStats(cs, str, &ping, &ppsec, &numErrors);
     /* Prefer stats from new UDP transport when active */
-    {
-        Transport *tp = gameFrontGetTransport();
-        if (tp) {
-            uint16_t udpPing = transportUdpClientGetPing(tp);
-            if (udpPing > 0) ping = (int)udpPing;
-            int udpErrors = 0;
-            transportUdpClientGetNetStats(tp, &ppsIn, &ppsOut, &bpsIn, &bpsOut, &udpErrors);
-            numErrors = udpErrors;
-        }
+    if (clientSimHasTransport(cs)) {
+        uint16_t udpPing = clientSimGetNetPing(cs);
+        if (udpPing > 0) ping = (int)udpPing;
+        int udpErrors = 0;
+        clientSimGetUdpNetStats(cs, &ppsIn, &ppsOut, &bpsIn, &bpsOut, &udpErrors);
+        numErrors = udpErrors;
     }
     ImGui::Separator();
     ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_STATUS), str);
@@ -837,10 +827,10 @@ static void renderGameInfoContent(ClientSim *cs) {
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMEINFO_NUMPLAYERS, &args));
     }
 
-    gameType *gt = &clientSimGetGameSim(cs)->game;
+    gameType gt = clientSimGetGameType(cs);
     langid gtStr = STR_DLGGAMEINFO_STRICT;
-    if      (*gt == gameOpen)       gtStr = STR_DLGGAMEINFO_OPEN;
-    else if (*gt == gameTournament) gtStr = STR_DLGGAMEINFO_TOURN;
+    if      (gt == gameOpen)       gtStr = STR_DLGGAMEINFO_OPEN;
+    else if (gt == gameTournament) gtStr = STR_DLGGAMEINFO_TOURN;
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_GAMETYPE), langGetText(gtStr));
 
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_HIDDENMINES),
@@ -1118,14 +1108,13 @@ static void renderPlayersPanel(ClientSim *cs) {
     ImGui::Separator();
 
     /* Pre-compute alliance state */
-    players *plrs = &clientSimGetGameSim(cs)->plyrs;
     BYTE self = clientSimGetMyPlayerNum(cs);
     bool hasAllies  = false;
     bool canRequest = false;
     bool isAlly[MAX_PLAYERS] = {};
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (s_playerEnabled[i] && i != self) {
-            isAlly[i] = playersIsAllie(plrs, self, (BYTE)i);
+            isAlly[i] = clientSimIsPlayerAlly(cs, self, (BYTE)i);
             if (isAlly[i]) hasAllies = true;
             else if (s_playerChecked[i]) canRequest = true;
         }
@@ -1395,8 +1384,8 @@ static void renderAllianceRequest(ClientSim *cs) {
         {
             MessageArgs args = {};
             strncpy(args.playerName, s_alliancePlayerName, sizeof(args.playerName) - 1);
-            args.playerFlags = playersGetAccountFlags(&clientSimGetGameSim(cs)->plyrs, s_alliancePlayerNum);
-            playersGetCountryCode(&clientSimGetGameSim(cs)->plyrs, s_alliancePlayerNum, args.playerCountry);
+            args.playerFlags = clientSimGetPlayerAccountFlags(cs, s_alliancePlayerNum);
+            clientSimGetPlayerCountryCode(cs, s_alliancePlayerNum, args.playerCountry);
             ImGui::TextUnformatted(langGetTextFmt(STR_DLGALLIANCE_BLURB, &args));
         }
         ImGui::Spacing();
@@ -2120,14 +2109,13 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALLIES), false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAlliedPlayers(cs);
         if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NEARBY), false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckNearbyPlayers(cs);
         /* Pre-compute alliance state for each player */
-        players *plrs = &clientSimGetGameSim(cs)->plyrs;
         BYTE self = clientSimGetMyPlayerNum(cs);
         bool hasAllies  = false;
         bool canRequest = false;
         bool isAlly[MAX_PLAYERS] = {};
         for (int i = 0; i < MAX_PLAYERS; i++) {
             if (s_playerEnabled[i] && i != self) {
-                isAlly[i] = playersIsAllie(plrs, self, (BYTE)i);
+                isAlly[i] = clientSimIsPlayerAlly(cs, self, (BYTE)i);
                 if (isAlly[i]) {
                     hasAllies = true;
                 } else if (s_playerChecked[i]) {

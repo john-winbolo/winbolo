@@ -24,17 +24,9 @@
 #include "mapview.h"
 #include "tileloader.h"
 #include "../../common/wb_log.h"
-#include "../../bolo/global.h"
-#include "../../bolo/everard_map.h"
-#include "../../bolo/tank.h"
-#include "../../bolo/bot_manager.h"
-#include "../../bolo/players.h"
-#include "../../bolo/bolo_map.h"
-#include "../../bolo/pillbox.h"
-#include "../../bolo/bases.h"
-#include "../../bolo/starts.h"
-#include "../../bolo/allience.h"
-#include "../../bolo/control_event.h"
+#include "global.h"
+#include "everard_map.h"
+#include "control_event.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -148,13 +140,12 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
 
     /* Compute bounding box of map content (non-ocean terrain + pills/bases/starts) */
     {
-        GameSim *gs = serverSimGetGameSim(bg->sim);
         int minX = 255, minY = 255, maxX = 0, maxY = 0;
 
         /* Scan terrain */
         for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
             for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
-                if (mapGetPos(&gs->mp, (BYTE)x, (BYTE)y) != DEEP_SEA) {
+                if (serverSimGetMapTerrain(bg->sim, (BYTE)x, (BYTE)y) != DEEP_SEA) {
                     if (x < minX) minX = x;
                     if (x > maxX) maxX = x;
                     if (y < minY) minY = y;
@@ -163,34 +154,34 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
             }
         }
         /* Include pillboxes */
-        BYTE np = pillsGetNumPills(&gs->pb);
+        BYTE np = serverSimGetPillCount(bg->sim);
         for (BYTE i = 1; i <= np; i++) {
-            pillbox p;
-            pillsGetPill(&gs->pb, &p, i);
-            if (p.x < minX) minX = p.x;
-            if (p.x > maxX) maxX = p.x;
-            if (p.y < minY) minY = p.y;
-            if (p.y > maxY) maxY = p.y;
+            BYTE px, py;
+            if (!serverSimGetPill(bg->sim, i, &px, &py, NULL, NULL, NULL)) continue;
+            if (px < minX) minX = px;
+            if (px > maxX) maxX = px;
+            if (py < minY) minY = py;
+            if (py > maxY) maxY = py;
         }
         /* Include bases */
-        BYTE nb = basesGetNumBases(&gs->bs);
+        BYTE nb = serverSimGetBaseCount(bg->sim);
         for (BYTE i = 1; i <= nb; i++) {
-            base b;
-            basesGetBase(&gs->bs, &b, i);
-            if (b.x < minX) minX = b.x;
-            if (b.x > maxX) maxX = b.x;
-            if (b.y < minY) minY = b.y;
-            if (b.y > maxY) maxY = b.y;
+            BYTE bx, by;
+            if (!serverSimGetBase(bg->sim, i, &bx, &by, NULL)) continue;
+            if (bx < minX) minX = bx;
+            if (bx > maxX) maxX = bx;
+            if (by < minY) minY = by;
+            if (by > maxY) maxY = by;
         }
         /* Include starts */
-        BYTE ns = startsGetNumStarts(&gs->ss);
+        BYTE ns = serverSimGetStartCount(bg->sim);
         for (BYTE i = 1; i <= ns; i++) {
-            start st;
-            startsGetStartStruct(&gs->ss, &st, i);
-            if (st.x < minX) minX = st.x;
-            if (st.x > maxX) maxX = st.x;
-            if (st.y < minY) minY = st.y;
-            if (st.y > maxY) maxY = st.y;
+            BYTE sx, sy;
+            if (!serverSimGetStart(bg->sim, i, &sx, &sy, NULL)) continue;
+            if (sx < minX) minX = sx;
+            if (sx > maxX) maxX = sx;
+            if (sy < minY) minY = sy;
+            if (sy > maxY) maxY = sy;
         }
         /* Add padding (a few tiles of ocean around the content) */
         int pad = 5;
@@ -209,8 +200,8 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
     }
 
     /* Add brain bots with randomized count and teams */
-    if (!botManagerInit(0)) {
-        WB_LOG_ERROR(WB_LOG_CAT_GUI, "[BgGame] botManagerInit failed");
+    if (!serverSimBotPoolInit(0)) {
+        WB_LOG_ERROR(WB_LOG_CAT_GUI, "[BgGame] serverSimBotPoolInit failed");
         SDL_DestroyTexture(bg->tilesTex);
         bg->tilesTex = NULL;
         serverSimDestroy(bg->sim);
@@ -224,7 +215,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         for (BYTE i = 0; i < numBots; i++) {
             char name[32];
             SDL_snprintf(name, sizeof(name), "Bot %d", i + 1);
-            if (botManagerAddBot(bg->sim, i, brainPath, name, aiFull, gameTournament, false)) {
+            if (serverSimCreateBot(bg->sim, i, brainPath, name, aiFull, gameTournament, false)) {
                 bg->numBots++;
             }
         }
@@ -265,7 +256,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
 void bgGameDestroy(BgGame *bg) {
     if (!bg) return;
     if (bg->valid) {
-        botManagerDestroy(bg->sim);
+        serverSimDestroyBots(bg->sim);
     }
     if (bg->tilesTex) {
         SDL_DestroyTexture(bg->tilesTex);
@@ -282,11 +273,11 @@ void bgGameTick(BgGame *bg) {
 
     /* Real-game cadence: bot brains run at 50 Hz (game-ticks only), but
      * the inner sim ticks at 100 Hz (keys-tick + game-tick alternation in
-     * winbolo.c). One botManagerTick produces input packets for both,
+     * winbolo.c). One serverSimBotTick produces input packets for both,
      * so call serverSimTick twice to advance the sim at the right rate.
      * Events from the first tick would be wiped by the second; preserve
      * them so bots see both ticks' events on their next snapshot. */
-    botManagerTick(bg->sim, aiFull);
+    serverSimBotTick(bg->sim, aiFull);
     serverSimTick(bg->sim);
     {
         GameEvent savedEvents[MAX_SNAPSHOT_EVENTS];
@@ -302,15 +293,12 @@ void bgGameTick(BgGame *bg) {
     }
 
     /* Update camera to follow the tracked player (freeze while dead) */
-    GameSim *gs = serverSimGetGameSim(bg->sim);
-    if (bg->cameraPlayer < MAX_TANKS &&
-        gs->tanks[bg->cameraPlayer] != NULL &&
-        tankGetDeathWait(&gs->tanks[bg->cameraPlayer]) == 0) {
-        WORLD wx, wy;
-        if (serverSimGetTankState(bg->sim, bg->cameraPlayer, &wx, &wy)) {
+    if (bg->cameraPlayer < MAX_TANKS) {
+        TankRenderInfo info;
+        if (serverSimGetTankRender(bg->sim, bg->cameraPlayer, &info) && info.alive) {
             /* Smooth camera: lerp toward tank position */
-            bg->viewCenterX = bg->viewCenterX + ((int)wx - (int)bg->viewCenterX) / 8;
-            bg->viewCenterY = bg->viewCenterY + ((int)wy - (int)bg->viewCenterY) / 8;
+            bg->viewCenterX = bg->viewCenterX + ((int)info.world_x - (int)bg->viewCenterX) / 8;
+            bg->viewCenterY = bg->viewCenterY + ((int)info.world_y - (int)bg->viewCenterY) / 8;
         }
     }
 }
@@ -380,11 +368,12 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     if (!bg || !bg->valid) return;
 
     /* Temporarily set the sim's "self" player to the camera player so
-     * basesGetAlliancePos / pillsGetScreenHealth colour bases and pills
-     * correctly from this player's perspective (own = good, enemy = evil). */
-    GameSim *gs = serverSimGetGameSim(bg->sim);
-    BYTE prevSelf = gs->viewPlayer;
-    gs->viewPlayer = bg->cameraPlayer;
+     * base-alliance / pill-screen-health queries colour bases and pills
+     * correctly from this player's perspective (own = good, enemy = evil).
+     * The serverSim wrappers read viewPlayer off the underlying GameSim,
+     * so we still need this mutation around the render. */
+    BYTE prevSelf = serverSimGetViewPlayer(bg->sim);
+    serverSimSetViewPlayer(bg->sim, bg->cameraPlayer);
 
     /* Pick zoom factor so the map content area fits the screen.
      * mapTilesW/H = number of tiles in the bounding box.
@@ -398,11 +387,11 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     if (zf < 1) zf = 1;
 
     MapViewCtx ctx = { renderer, bg->tilesTex, zf, 1 };
-    mapViewRenderCentered(&ctx, gs,
+    mapViewRenderCentered(&ctx, bg->sim,
                           bg->viewCenterX, bg->viewCenterY,
                           0, 0, screenW, screenH, bg->cameraPlayer);
 
-    gs->viewPlayer = prevSelf;
+    serverSimSetViewPlayer(bg->sim, prevSelf);
 
     /* Draw "Map: <name>" next to play/pause button, fading out after 10 seconds */
     bgGameRenderMapName(bg, renderer, screenW, screenH);

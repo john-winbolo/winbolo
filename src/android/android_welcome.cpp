@@ -22,7 +22,7 @@ extern "C" {
 #include "../gui/sdl3/dialogs/imgui_welcome.h"
 #include "../gui/gamefront.h"
 #include "../gui/lang.h"
-#include "../bolo/global.h"
+#include "global.h"
 }
 
 /* Match openingStates enum from gamefront.h */

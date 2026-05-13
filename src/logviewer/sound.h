@@ -29,7 +29,7 @@
 #ifndef _SOUND_H 
 #define _SOUND_H 
 
-#include "global.h"
+#include "lv_global.h"
 #include "backend.h"
 
 /*********************************************************

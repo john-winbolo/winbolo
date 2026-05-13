@@ -31,7 +31,7 @@
 #include <string.h>
 #include "global.h"
 #include "transport.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 
 /* Size of the delayed input queue — must be a power of 2 */
 #define INPUT_QUEUE_SIZE 256

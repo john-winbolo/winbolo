@@ -28,9 +28,9 @@
 
 #include <stdio.h>
 #include <SDL3/SDL.h>
-#include "../bolo/global.h"
-#include "../bolo/client_sim.h"
-#include "../bolo/frontend.h"
+#include "global.h"
+#include "client_sim.h"
+#include "frontend.h"
 
 /* ================================================================== */
 /* Frontend display callbacks (all no-ops in headless mode)            */
@@ -50,10 +50,10 @@ void frontEndPlaySound(ClientSim *cs, sndEffects value) {
 
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
-                            int32_t srtDelay, bool isPillView, tank *tank,
+                            int32_t srtDelay, bool isPillView,
                             int edgeX, int edgeY) {
   (void)cs; (void)value; (void)mineView; (void)tks; (void)gs; (void)sBullet;
-  (void)lgms; (void)srtDelay; (void)isPillView; (void)tank;
+  (void)lgms; (void)srtDelay; (void)isPillView;
   (void)edgeX; (void)edgeY;
 }
 

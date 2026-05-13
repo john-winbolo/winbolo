@@ -22,7 +22,7 @@
 #define MAP_PREVIEW_POPUP_H
 
 #include <SDL3/SDL.h>
-#include "../../bolo/global.h"
+#include "global.h"
 
 #ifdef __cplusplus
 extern "C" {

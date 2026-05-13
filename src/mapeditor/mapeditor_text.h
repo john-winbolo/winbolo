@@ -14,7 +14,7 @@
 #define MAPEDITOR_TEXT_H
 
 #include <stdbool.h>
-#include "../bolo/global.h"
+#include "global.h"
 
 #ifdef __cplusplus
 extern "C" {

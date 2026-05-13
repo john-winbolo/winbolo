@@ -37,20 +37,11 @@
 extern "C" {
 #include "../sdl3draw.h"
 #include "../../gamefront.h"
-#include "../../../bolo/global.h"
-#include "../../../bolo/client_sim.h"
-#include "../../../bolo/transport.h"
-#include "../../../bolo/transport_udp.h"
+#include "global.h"
+#include "client_sim.h"
+#include "client_net.h"
 #include "../../../server/server_lifecycle.h"
-#include "../../../server/server_sim.h"
-#include "../../../bolo/bolo_map.h"
-#include "../../../bolo/pillbox.h"
-#include "../../../bolo/bases.h"
-#include "../../../bolo/starts.h"
-#include "../../../bolo/bot_manager.h"
-#include "../../../bolo/players.h"
-#include "../../../bolo/platform_net.h"
-#include "../../../bolo/lobby_bot_pools.h"
+#include "platform_net.h"
 #include "../flags.h"
 #include "../sdl3imgui.h"
 #include "../minimap_render.h"
@@ -2332,9 +2323,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         }
 
         /* Tick transport to receive lobby packets */
-        Transport *transport = gameFrontGetTransport();
-        if (transport) {
-            transport->tick(transport->ctx);
+        bool hasTransport = clientSimHasTransport(cs);
+        if (hasTransport) {
+            clientSimNetTick(cs);
         }
 
         /* Clear balance proposal when countdown starts */
@@ -2351,9 +2342,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         }
 
         /* Check for server disconnect/shutdown */
-        if (transport) {
-            UdpClientJoinState js = transportUdpClientGetJoinState(transport);
-            if (js == UDP_CLIENT_SERVER_SHUTDOWN || js == UDP_CLIENT_ERROR) {
+        if (hasTransport) {
+            ClientConnectState js = clientSimGetConnectState(cs);
+            if (js == CLIENT_CONNECT_SERVER_SHUTDOWN || js == CLIENT_CONNECT_ERROR) {
                 imguiMessageBoxEx(DIALOG_BOX_TITLE,
                     langGetText(STR_DLGLOBBY_LOSTCONNECTION),
                     IMGUI_MSG_ERROR, IMGUI_MSG_OK);
@@ -2376,9 +2367,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         prevMapDownloadComplete = clientSimIsMapDownloadComplete(cs);
 
         /* Build map preview once download completes */
-        if (clientSimIsMapDownloadComplete(cs) && !mapPreviewBuilt && transport) {
+        if (clientSimIsMapDownloadComplete(cs) && !mapPreviewBuilt && hasTransport) {
             int mapLen = 0;
-            const BYTE *mapData = transportUdpClientGetMapData(transport, &mapLen);
+            const BYTE *mapData = clientSimGetServerMapData(cs, &mapLen);
             if (mapData && mapLen > 0) {
                 mapPreviewTex = buildMapPreview(renderer, mapData, mapLen, &mapBounds);
                 /* Stash for popup decompression */
@@ -2628,13 +2619,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
                                 /* Team */
                                 ImGui::TableSetColumnIndex(2);
-                                if (isMe && transport) {
+                                if (isMe && hasTransport) {
                                     int teamIdx = slot->teamNumber;
                                     ImGui::SetNextItemWidth(-1);
                                     char comboId[16];
                                     SDL_snprintf(comboId, sizeof(comboId), "##team%d", i);
                                     if (ImGui::Combo(comboId, &teamIdx, teamItems, 17)) {
-                                        lobbySendTeamSet(cs, transport, (uint8_t)myPlayerNum, (uint8_t)teamIdx);
+                                        clientSimNetSendTeamSet(cs, (uint8_t)teamIdx);
                                     }
                                 } else {
                                     if (slot->teamNumber > 0) {
@@ -2659,11 +2650,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
                                 /* Action */
                                 ImGui::TableSetColumnIndex(4);
-                                if (slot->isBot && transport) {
+                                if (slot->isBot && hasTransport) {
                                     char btnId[64];
                                     SDL_snprintf(btnId, sizeof(btnId), "%s##%d", langGetText(STR_DLGLOBBY_REMOVE), i);
                                     if (ImGui::SmallButton(btnId)) {
-                                        lobbySendRemoveBot(cs, transport, (uint8_t)i);
+                                        clientSimNetSendRemoveBot(cs, (uint8_t)i);
                                     }
                                 }
                             } else {
@@ -2677,11 +2668,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                 ImGui::TableSetColumnIndex(3);
                                 ImGui::TextDisabled("-");
                                 ImGui::TableSetColumnIndex(4);
-                                if (botsAllowed && transport) {
+                                if (botsAllowed && hasTransport) {
                                     char btnId[64];
                                     SDL_snprintf(btnId, sizeof(btnId), "%s##%d", langGetText(STR_DLGLOBBY_ADDBOT), i);
                                     if (ImGui::SmallButton(btnId)) {
-                                        lobbySendAddBot(cs, transport, -1, 0);
+                                        clientSimNetSendAddBot(cs);
                                     }
                                 }
                             }
@@ -2762,8 +2753,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         }
                         if (ImGui::Button(skipLabel, ImVec2(100 * s, 0))) {
                             clientSimSetMapSkipMyVote(cs, !clientSimIsMapSkipMyVote(cs));
-                            if (transport) {
-                                transportUdpClientSendMapSkipVote(transport);
+                            if (hasTransport) {
+                                clientSimNetSendMapSkipVote(cs);
                             }
                         }
                         if (voted) {
@@ -2828,8 +2819,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             bool sendClicked = ImGui::Button(langGetText(STR_DLGMSG_BUTTON), ImVec2(btnW, 0));
                             if (chatEmpty) ImGui::EndDisabled();
                             if ((sendClicked || enterPressed) &&
-                                !chatEmpty && transport) {
-                                transportUdpClientSendChat(transport, 0xFF, chatInput);
+                                !chatEmpty && hasTransport) {
+                                clientSimNetSendChat(cs, 0xFF, chatInput);
                                 const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
                                 const char *myName = (mySlot && mySlot->connected)
                                     ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
@@ -2860,11 +2851,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 if (!canReady) ImGui::BeginDisabled();
                 const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
                 if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
-                    lobbySendReadyToggle(cs, transport, !myReady);
+                    if (hasTransport) {
+                        clientSimNetSendReady(cs, !myReady);
+                    }
                 }
                 if (!canReady) ImGui::EndDisabled();
 
-                if (myPlayerNum == 0 && transport && !clientSimIsBalanceProposalActive(cs)) {
+                if (myPlayerNum == 0 && hasTransport && !clientSimIsBalanceProposalActive(cs)) {
                     bool hasWbnPlayers = false;
                     uint8_t connectedCount = 0;
                     for (int j = 0; j < 16; j++) {
@@ -2881,20 +2874,20 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         if (connectedCount < 2) ImGui::BeginDisabled();
                         if (ImGui::Button(langGetText(STR_DLGLOBBY_BALANCE_TEAMS), ImVec2(120 * s, 0))) {
                             uint8_t teamSize = (connectedCount > 1) ? (connectedCount / 2) : 1;
-                            transportUdpClientSendBalanceRequest(transport, teamSize);
+                            clientSimNetSendBalanceRequest(cs, teamSize);
                         }
                         if (connectedCount < 2) ImGui::EndDisabled();
                     }
-                } else if (myPlayerNum == 0 && transport && clientSimIsBalanceProposalActive(cs)) {
+                } else if (myPlayerNum == 0 && hasTransport && clientSimIsBalanceProposalActive(cs)) {
                     ImGui::SameLine(0, 20);
                     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
                     if (ImGui::Button(langGetText(STR_DLGLOBBY_APPLY_BALANCE), ImVec2(120 * s, 0))) {
-                        transportUdpClientSendBalanceApply(transport);
+                        clientSimNetSendBalanceApply(cs);
                     }
                     ImGui::PopStyleColor();
                     ImGui::SameLine(0, 8);
                     if (ImGui::Button(langGetText(STR_DLGLOBBY_DISMISS), ImVec2(80 * s, 0))) {
-                        transportUdpClientSendBalanceDismiss(transport);
+                        clientSimNetSendBalanceDismiss(cs);
                     }
                 }
 
@@ -3012,13 +3005,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
                         /* Team */
                         ImGui::TableSetColumnIndex(3);
-                        if (isMe && transport) {
+                        if (isMe && hasTransport) {
                             int teamIdx = slot->teamNumber;
                             ImGui::SetNextItemWidth(-1);
                             char comboId[16];
                             SDL_snprintf(comboId, sizeof(comboId), "##team%d", i);
                             if (ImGui::Combo(comboId, &teamIdx, teamItems, 17)) {
-                                lobbySendTeamSet(cs, transport, (uint8_t)myPlayerNum, (uint8_t)teamIdx);
+                                clientSimNetSendTeamSet(cs, (uint8_t)teamIdx);
                             }
                         } else {
                             if (slot->teamNumber > 0) {
@@ -3043,11 +3036,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
                         /* Action */
                         ImGui::TableSetColumnIndex(5);
-                        if (slot->isBot && transport) {
+                        if (slot->isBot && hasTransport) {
                             char btnId[16];
                             SDL_snprintf(btnId, sizeof(btnId), "Remove##%d", i);
                             if (ImGui::SmallButton(btnId)) {
-                                lobbySendRemoveBot(cs, transport, (uint8_t)i);
+                                clientSimNetSendRemoveBot(cs, (uint8_t)i);
                             }
                         }
                     } else {
@@ -3061,11 +3054,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         ImGui::TableSetColumnIndex(4);
                         ImGui::TextDisabled("-");
                         ImGui::TableSetColumnIndex(5);
-                        if (botsAllowed && transport) {
+                        if (botsAllowed && hasTransport) {
                             char btnId[16];
                             SDL_snprintf(btnId, sizeof(btnId), "Add Bot##%d", i);
                             if (ImGui::SmallButton(btnId)) {
-                                lobbySendAddBot(cs, transport, -1, 0);
+                                clientSimNetSendAddBot(cs);
                             }
                         }
                     }
@@ -3160,8 +3153,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
                 if (ImGui::Button(skipLabel, ImVec2(100 * s, 0))) {
                     clientSimSetMapSkipMyVote(cs, !clientSimIsMapSkipMyVote(cs));
-                    if (transport) {
-                        transportUdpClientSendMapSkipVote(transport);
+                    if (hasTransport) {
+                        clientSimNetSendMapSkipVote(cs);
                     }
                 }
                 if (voted) {
@@ -3215,8 +3208,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             bool sendClicked = ImGui::Button(langGetText(STR_DLGMSG_BUTTON), ImVec2(btnW, 0));
             if (chatEmpty) ImGui::EndDisabled();
             if ((sendClicked || enterPressed) &&
-                !chatEmpty && transport) {
-                transportUdpClientSendChat(transport, 0xFF, chatInput);
+                !chatEmpty && hasTransport) {
+                clientSimNetSendChat(cs, 0xFF, chatInput);
                 const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
                 const char *myName = (mySlot && mySlot->connected)
                     ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
@@ -3238,11 +3231,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             if (!canReady) ImGui::BeginDisabled();
             const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
             if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
-                lobbySendReadyToggle(cs, transport, !myReady);
+                if (hasTransport) {
+                    clientSimNetSendReady(cs, !myReady);
+                }
             }
             if (!canReady) ImGui::EndDisabled();
 
-            if (myPlayerNum == 0 && transport && !clientSimIsBalanceProposalActive(cs)) {
+            if (myPlayerNum == 0 && hasTransport && !clientSimIsBalanceProposalActive(cs)) {
                 bool hasWbnPlayers = false;
                 uint8_t connectedCount = 0;
                 for (int j = 0; j < 16; j++) {
@@ -3259,20 +3254,20 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     if (connectedCount < 2) ImGui::BeginDisabled();
                     if (ImGui::Button(langGetText(STR_DLGLOBBY_BALANCE_TEAMS), ImVec2(120 * s, 0))) {
                         uint8_t teamSize = (connectedCount > 1) ? (connectedCount / 2) : 1;
-                        transportUdpClientSendBalanceRequest(transport, teamSize);
+                        clientSimNetSendBalanceRequest(cs, teamSize);
                     }
                     if (connectedCount < 2) ImGui::EndDisabled();
                 }
-            } else if (myPlayerNum == 0 && transport && clientSimIsBalanceProposalActive(cs)) {
+            } else if (myPlayerNum == 0 && hasTransport && clientSimIsBalanceProposalActive(cs)) {
                 ImGui::SameLine(0, 20);
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_APPLY_BALANCE), ImVec2(120 * s, 0))) {
-                    transportUdpClientSendBalanceApply(transport);
+                    clientSimNetSendBalanceApply(cs);
                 }
                 ImGui::PopStyleColor();
                 ImGui::SameLine(0, 8);
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_DISMISS), ImVec2(80 * s, 0))) {
-                    transportUdpClientSendBalanceDismiss(transport);
+                    clientSimNetSendBalanceDismiss(cs);
                 }
             }
 

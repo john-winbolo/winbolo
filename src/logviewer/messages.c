@@ -27,10 +27,10 @@
 
 
 #include <string.h>
-#include "global.h"
+#include "lv_global.h"
 //#include "frontend.h"
-#include "util.h"
-#include "messages.h"
+#include "lv_util.h"
+#include "lv_messages.h"
 #include "backend.h"
 
 /* Module Variables */

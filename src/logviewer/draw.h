@@ -28,7 +28,7 @@
 #ifndef _DRAW_H
 #define _DRAW_H
 
-#include "global.h"
+#include "lv_global.h"
 #include "backend.h"
 
 /* Size of the message string on the screen */

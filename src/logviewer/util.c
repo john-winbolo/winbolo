@@ -28,8 +28,8 @@
 /* Inludes */
 #include <math.h>
 #include <string.h>
-#include "global.h"
-#include "util.h"
+#include "lv_global.h"
+#include "lv_util.h"
 
 
 /*********************************************************

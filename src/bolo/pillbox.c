@@ -32,15 +32,17 @@
 #include "tank.h"
 #include "tilenum.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "sounddist.h"
 #include "brain_data.h"
 #include "messages.h"
 #include "players.h"
 #include "log.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 #include "pillbox.h"
 #include "game_sim.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"
 #include "../winbolonet/winbolonet.h"
 
 /*********************************************************

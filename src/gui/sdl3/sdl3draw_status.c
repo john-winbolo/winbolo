@@ -39,12 +39,11 @@
 #include "../tiles.h"
 #include "../ui_mode.h"
 #include "../positions.h"
-#include "../../bolo/global.h"
-#include "../../bolo/viewport_types.h"  /* MAIN_SCREEN_SIZE_X/Y */
-#include "../../bolo/screentank.h"
-#include "../../bolo/bases.h"
-#include "../../bolo/pillbox.h"
-#include "../../bolo/tilenum.h"
+#include "global.h"
+#include "viewport_types.h"  /* MAIN_SCREEN_SIZE_X/Y */
+#include "screentank.h"
+#include "alliance_enums.h"
+#include "tilenum.h"
 
 /* Local copies of constants that sdl3draw.c keeps as file-local
  * #defines. Duplicating them is the simplest way to keep this

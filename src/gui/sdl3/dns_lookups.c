@@ -28,10 +28,10 @@
 #endif
 #include <SDL3/SDL.h>
 #include <string.h>
-#include "../../bolo/global.h"
-#include "../../bolo/platform_net.h"
+#include "global.h"
+#include "platform_net.h"
 #include "../dnsLookups.h"
-#include "../../bolo/client_sim.h"
+#include "client_sim.h"
 
 static SDL_Mutex *hDnsMutex = NULL;
 static SDL_Thread *hDnsThread = NULL;

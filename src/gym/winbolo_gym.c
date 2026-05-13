@@ -29,28 +29,26 @@
 
 #include "winbolo_gym.h"
 
-#include "../bolo/global.h"
-#include "../bolo/client_mapload.h"
-#include "../bolo/client_sim.h"
-#include "../bolo/client_snapshot.h"
-#include "../bolo/client_sim_control.h"
-#include "../bolo/control_event.h"
-#include "../bolo/frontend.h"
-#include "../bolo/players.h"
-#include "../bolo/brain.h"
-#include "../bolo/pillbox.h"
-#include "../bolo/bases.h"
-#include "../bolo/transport.h"
-#include "../bolo/input_packet.h"
-#include "../bolo/gui_message.h"
-#include "../bolo/gametype.h"
-#include "../bolo/shells.h"
-#include "../bolo/explosions.h"
-#include "../bolo/lgm.h"
-#include "../bolo/tank.h"
-#include "../bolo/util.h"
-#include "../server/server_sim.h"
-#include "../bolo/brain_worldsim.h"
+#include "global.h"
+#include "client_mapload.h"
+#include "client_sim.h"
+#include "client_sim_control.h"
+#include "control_event.h"
+#include "frontend.h"
+#include "players.h"
+#include "brain.h"
+#include "client_net.h"
+#include "input_packet.h"
+#include "gui_message.h"
+#include "gametype.h"
+#include "shells.h"
+#include "explosions.h"
+#include "lgm.h"
+#include "tank.h"
+#include "util.h"
+#include "server_sim.h"
+#include "game_sim.h"
+#include "brain_worldsim.h"
 
 /* Required by the engine — stub for library mode */
 bool isInMenu = FALSE;
@@ -58,8 +56,7 @@ bool isInMenu = FALSE;
 /* Per-instance game state */
 struct WinBoloGym {
     ServerSim  *serverSim;
-    ClientSim  *clientSim;
-    Transport   transport;
+    ClientSim  *clientSim;       /* transport lives inside clientSim now */
     SubscriberHandle controlSub;
 
     BYTE       *cachedMap;
@@ -122,29 +119,7 @@ static void gymBufferServerEvents(WinBoloGym *g) {
 }
 
 static void gymSyncSnapshot(WinBoloGym *g) {
-    SnapshotHeader snapHdr;
-    TankSnapshot snapTanks[MAX_TANKS];
-    ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-    TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
-    BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
-    PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
-    GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-
-    if (g->transport.getSnapshot(g->transport.ctx, 0,
-                                  &snapHdr, snapTanks, MAX_TANKS,
-                                  snapShells, MAX_SNAPSHOT_SHELLS,
-                                  snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                                  snapBases, MAX_SNAPSHOT_BASES,
-                                  snapPills, MAX_SNAPSHOT_PILLS,
-                                  snapEvents, MAX_SNAPSHOT_EVENTS)) {
-        clientSimSyncFromSnapshot(g->clientSim, &snapHdr,
-                                  snapTanks, snapHdr.tankCount,
-                                  snapShells, snapHdr.shellCount,
-                                  snapTkExplosions, snapHdr.tkExplosionCount,
-                                  snapBases, snapHdr.baseCount,
-                                  snapPills, snapHdr.pillCount,
-                                  snapEvents, snapHdr.reliableEventCount, 0);
-    }
+    clientSimNetSyncSnapshot(g->clientSim);
 }
 
 static void gymSetupGame(WinBoloGym *g) {
@@ -153,15 +128,14 @@ static void gymSetupGame(WinBoloGym *g) {
     serverSimAddPlayer(g->serverSim, 0, "GymAgent", false);
     serverSimGetGameSim(g->serverSim)->viewPlayer = 0;
 
-    g->transport = transportLocalCreate(g->serverSim, 0);
-
     g->clientSim = clientSimAlloc();
+    clientSimConnectLocal(g->clientSim, g->serverSim, 0);
     clientLoadCompressedMap(g->clientSim, g->cachedMap, g->cachedMapLen,
                             "Gym", g->gameMode, false, 0,
                             UNLIMITED_GAME_TIME, "GymAgent", 0, FALSE);
     clientSimSetAiType(g->clientSim, aiYes);
     gymSyncSnapshot(g);
-    clientNetSetupTankGo(g->clientSim);
+    clientSimNetSetupTankGo(g->clientSim);
 
     /* Register the gym client as a control-event subscriber. Placed after
      * clientLoadCompressedMap (which calls clientSimCreate) so myPlayerNum
@@ -191,23 +165,23 @@ static void gymSetupGame(WinBoloGym *g) {
 static void gymTeardownGame(WinBoloGym *g) {
     serverSimUnregisterSubscriber(g->serverSim, g->controlSub);
     g->controlSub = SUBSCRIBER_HANDLE_INVALID;
-    clientSimDestroy(g->clientSim);
+    clientSimDestroy(g->clientSim);  /* also tears down the embedded transport */
     g->clientSim = NULL;
-    transportLocalDestroy(&g->transport);
 }
 
 /* Check win condition: all bases owned by the same alliance, all with
  * armour above capture threshold.  Mirrors serverSimCheckGameWin(). */
 static bool gymCheckGameWin(WinBoloGym *g, bool *agentWon) {
     GameSim *gs = serverSimGetGameSim(g->serverSim);
-    BYTE max = basesGetNumBases(&gs->bs);
+    BYTE max = serverSimGetBaseCount(g->serverSim);
     if (max == 0) return false;
 
     BYTE first = NEUTRAL;
     for (BYTE i = 1; i <= max; i++) {
-        BYTE owner = basesGetBaseOwner(&gs->bs, i);
-        BYTE shellsAmt, minesAmt, armourAmt;
-        basesGetStats(&gs->bs, i, &shellsAmt, &minesAmt, &armourAmt);
+        BYTE owner = 0;
+        BYTE shellsAmt = 0, minesAmt = 0, armourAmt = 0;
+        if (!serverSimGetBase(g->serverSim, i, NULL, NULL, &owner)) continue;
+        serverSimGetBaseStats(g->serverSim, i, &shellsAmt, &minesAmt, &armourAmt);
         if (owner == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) return false;
         if (i == 1) {
             first = owner;
@@ -296,7 +270,7 @@ static void gymMakeBrainInfo(WinBoloGym *g, BrainInfo *bi) {
 
     /* Carried pills */
     {
-        BYTE numPb = pillsGetNumPills(&sim->pb);
+        BYTE numPb = serverSimGetPillCount(g->serverSim);
         BYTE carried = 0;
         for (BYTE pi = 0; pi < numPb; pi++) {
             if ((*sim->pb).item[pi].inTank && (*sim->pb).item[pi].owner == 0)
@@ -366,19 +340,20 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
     numViewRects = 1;
 
     /* Each owned alive pill: 15x15 centered on pill */
-    BYTE np = pillsGetNumPills(&gs->pb);
+    BYTE np = serverSimGetPillCount(g->serverSim);
     for (BYTE pi = 1; pi <= np && numViewRects < MAX_VIEW_RECTS; pi++) {
-        pillbox p;
-        pillsGetPill(&gs->pb, &p, pi);
-        if (p.inTank) continue;
-        if (p.armour == 0) continue;
-        if (p.owner == 0xFF) continue;
+        BYTE px, py, powner, parmour;
+        bool pinTank;
+        if (!serverSimGetPill(g->serverSim, pi, &px, &py, &powner, &parmour, &pinTank)) continue;
+        if (pinTank) continue;
+        if (parmour == 0) continue;
+        if (powner == 0xFF) continue;
         /* Must be owned by self or ally */
-        if (p.owner != selfPlayer && !(alliesBits & (1u << p.owner))) continue;
-        viewRects[numViewRects].left   = (int)p.x - 7;
-        viewRects[numViewRects].top    = (int)p.y - 7;
-        viewRects[numViewRects].right  = (int)p.x + 7;
-        viewRects[numViewRects].bottom = (int)p.y + 7;
+        if (powner != selfPlayer && !(alliesBits & (1u << powner))) continue;
+        viewRects[numViewRects].left   = (int)px - 7;
+        viewRects[numViewRects].top    = (int)py - 7;
+        viewRects[numViewRects].right  = (int)px + 7;
+        viewRects[numViewRects].bottom = (int)py + 7;
         numViewRects++;
     }
 
@@ -527,7 +502,7 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
             int mx = tank_tx - 14 + col;
             int my = tank_ty - 14 + row;
             if (mx >= 0 && mx < 256 && my >= 0 && my < 256) {
-                BYTE raw = mapGetPos(&gs->mp, (BYTE)mx, (BYTE)my);
+                BYTE raw = serverSimGetMapTerrain(g->serverSim, (BYTE)mx, (BYTE)my);
                 BYTE terrain = raw;
                 if (terrain >= MINE_START && terrain <= MINE_END) {
                     terrain -= MINE_SUBTRACT;
@@ -662,45 +637,46 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
     }
 
     /* Pillboxes (global — not view-gated) */
-    np = pillsGetNumPills(&gs->pb);
+    np = serverSimGetPillCount(g->serverSim);
     for (BYTE pi = 1; pi <= np && ne < WBGYM_MAX_ENTITIES; pi++) {
-        pillbox p;
-        pillsGetPill(&gs->pb, &p, pi);
+        BYTE px, py, powner, parmour;
+        bool pinTank;
+        if (!serverSimGetPill(g->serverSim, pi, &px, &py, &powner, &parmour, &pinTank)) continue;
         WinBoloEntity *ent = &obs->entities[ne++];
-        float pwx = (float)p.x * 256.0f + 128.0f; /* center of tile */
-        float pwy = (float)p.y * 256.0f + 128.0f;
+        float pwx = (float)px * 256.0f + 128.0f; /* center of tile */
+        float pwy = (float)py * 256.0f + 128.0f;
         ent->rx = (pwx - self_wx) / 256.0f;
         ent->ry = (pwy - self_wy) / 256.0f;
         ent->type = WBGYM_ENT_PILLBOX;
-        ent->allegiance = (p.owner == 0xFF) ? WBGYM_ALLEG_NEUTRAL
-                        : gymGetAllegiance(p.owner, selfPlayer, alliesBits);
+        ent->allegiance = (powner == 0xFF) ? WBGYM_ALLEG_NEUTRAL
+                        : gymGetAllegiance(powner, selfPlayer, alliesBits);
         ent->direction = 0.0f;
         ent->speed = 0.0f;
-        ent->strength = (float)p.armour / 15.0f;
+        ent->strength = (float)parmour / 15.0f;
         ent->flags = 0;
-        if (p.inTank) ent->flags |= WBGYM_FLAG_IN_TANK;
+        if (pinTank) ent->flags |= WBGYM_FLAG_IN_TANK;
         ent->id = pi - 1; /* 0-based index */
     }
 
     /* Bases (global — not view-gated) */
-    BYTE nb = basesGetNumBases(&gs->bs);
+    BYTE nb = serverSimGetBaseCount(g->serverSim);
     for (BYTE bsi = 1; bsi <= nb && ne < WBGYM_MAX_ENTITIES; bsi++) {
-        base b;
-        basesGetBase(&gs->bs, &b, bsi);
+        BYTE bx, by, bowner;
+        if (!serverSimGetBase(g->serverSim, bsi, &bx, &by, &bowner)) continue;
         WinBoloEntity *ent = &obs->entities[ne++];
-        float bwx = (float)b.x * 256.0f + 128.0f;
-        float bwy = (float)b.y * 256.0f + 128.0f;
+        float bwx = (float)bx * 256.0f + 128.0f;
+        float bwy = (float)by * 256.0f + 128.0f;
         ent->rx = (bwx - self_wx) / 256.0f;
         ent->ry = (bwy - self_wy) / 256.0f;
         ent->type = WBGYM_ENT_BASE;
-        ent->allegiance = (b.owner == 0xFF) ? WBGYM_ALLEG_NEUTRAL
-                        : gymGetAllegiance(b.owner, selfPlayer, alliesBits);
+        ent->allegiance = (bowner == 0xFF) ? WBGYM_ALLEG_NEUTRAL
+                        : gymGetAllegiance(bowner, selfPlayer, alliesBits);
         ent->direction = 0.0f;
         ent->speed = 0.0f;
         /* Base armour from stats */
         {
             BYTE shellsAmt, minesAmt, armourAmt;
-            basesGetStats(&gs->bs, bsi, &shellsAmt, &minesAmt, &armourAmt);
+            serverSimGetBaseStats(g->serverSim, bsi, &shellsAmt, &minesAmt, &armourAmt);
             ent->strength = (float)armourAmt / 90.0f;
         }
         ent->flags = 0;
@@ -729,24 +705,24 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
 
         int self_pills = 0, enemy_pills = 0, ally_pills = 0, total_pills = 0;
         int self_bases = 0, ally_bases = 0, total_bases = 0;
-        np = pillsGetNumPills(&gs->pb);
+        np = serverSimGetPillCount(g->serverSim);
         total_pills = np;
         for (BYTE pi = 1; pi <= np; pi++) {
-            pillbox p;
-            pillsGetPill(&gs->pb, &p, pi);
-            if (p.owner == 0xFF) continue;
-            if (p.owner == selfPlayer) self_pills++;
-            else if (alliesBits & (1u << p.owner)) ally_pills++;
+            BYTE powner;
+            if (!serverSimGetPill(g->serverSim, pi, NULL, NULL, &powner, NULL, NULL)) continue;
+            if (powner == 0xFF) continue;
+            if (powner == selfPlayer) self_pills++;
+            else if (alliesBits & (1u << powner)) ally_pills++;
             else enemy_pills++;
         }
-        nb = basesGetNumBases(&gs->bs);
+        nb = serverSimGetBaseCount(g->serverSim);
         total_bases = nb;
         for (BYTE bsi = 1; bsi <= nb; bsi++) {
-            base b;
-            basesGetBase(&gs->bs, &b, bsi);
-            if (b.owner == 0xFF) continue;
-            if (b.owner == selfPlayer) self_bases++;
-            else if (alliesBits & (1u << b.owner)) ally_bases++;
+            BYTE bowner;
+            if (!serverSimGetBase(g->serverSim, bsi, NULL, NULL, &bowner)) continue;
+            if (bowner == 0xFF) continue;
+            if (bowner == selfPlayer) self_bases++;
+            else if (alliesBits & (1u << bowner)) ally_bases++;
         }
         float tp = total_pills > 0 ? (float)total_pills : 1.0f;
         float tb = total_bases > 0 ? (float)total_bases : 1.0f;
@@ -802,33 +778,33 @@ static void gymBuildObs(WinBoloGym *g, WinBoloObs *obs) {
 
     /* ---- Pillbox list ---- */
     {
-        np = pillsGetNumPills(&gs->pb);
+        np = serverSimGetPillCount(g->serverSim);
         for (BYTE pi = 1; pi <= np && obs->num_pillboxes < WBGYM_MAX_PILLBOXES; pi++) {
-            pillbox p;
-            pillsGetPill(&gs->pb, &p, pi);
+            BYTE px, py, powner, parmour;
+            if (!serverSimGetPill(g->serverSim, pi, &px, &py, &powner, &parmour, NULL)) continue;
             WinBoloPillObs *po = &obs->pillboxes[obs->num_pillboxes];
-            po->tx = p.x;
-            po->ty = p.y;
-            po->armor = p.armour;
-            po->owner = gymGetOwner(p.owner, selfPlayer, alliesBits);
+            po->tx = px;
+            po->ty = py;
+            po->armor = parmour;
+            po->owner = gymGetOwner(powner, selfPlayer, alliesBits);
             obs->num_pillboxes++;
         }
     }
 
     /* ---- Base list ---- */
     {
-        nb = basesGetNumBases(&gs->bs);
+        nb = serverSimGetBaseCount(g->serverSim);
         for (BYTE bsi = 1; bsi <= nb && obs->num_bases < WBGYM_MAX_BASES; bsi++) {
-            base b;
-            basesGetBase(&gs->bs, &b, bsi);
+            BYTE bx, by, bowner;
+            if (!serverSimGetBase(g->serverSim, bsi, &bx, &by, &bowner)) continue;
             WinBoloBaseObs *bo = &obs->bases[obs->num_bases];
-            bo->tx = b.x;
-            bo->ty = b.y;
-            bo->owner = gymGetOwner(b.owner, selfPlayer, alliesBits);
+            bo->tx = bx;
+            bo->ty = by;
+            bo->owner = gymGetOwner(bowner, selfPlayer, alliesBits);
             /* Only expose stocks for friendly/allied bases */
             if (bo->owner == WBGYM_OWNER_SELF || bo->owner == WBGYM_OWNER_ALLY) {
                 BYTE shellsAmt, minesAmt, armourAmt;
-                basesGetStats(&gs->bs, bsi, &shellsAmt, &minesAmt, &armourAmt);
+                serverSimGetBaseStats(g->serverSim, bsi, &shellsAmt, &minesAmt, &armourAmt);
                 bo->shells = shellsAmt;
                 bo->mines = minesAmt;
                 bo->armour = armourAmt;
@@ -1628,8 +1604,8 @@ WBGYM_API void winbolo_step(WinBoloGym *game, const WinBoloAction *action, WinBo
 
     /* Game tick — send input to server and tick */
     game->cachedEventCount = 0;
-    game->transport.sendInput(game->transport.ctx, &pkt);
-    game->transport.tick(game->transport.ctx);
+    clientSimNetSendInput(game->clientSim, &pkt);
+    clientSimNetTick(game->clientSim);
     gymBufferServerEvents(game);
     game->simTickCounter++;
     game->gameTickCount++;
@@ -1640,8 +1616,8 @@ WBGYM_API void winbolo_step(WinBoloGym *game, const WinBoloAction *action, WinBo
     keysPkt.playerNum = 0;
     keysPkt.buttons = pkt.buttons;
 
-    game->transport.recordInput(game->transport.ctx, &keysPkt);
-    game->transport.tick(game->transport.ctx);
+    clientSimNetRecordInput(game->clientSim, &keysPkt);
+    clientSimNetTick(game->clientSim);
     gymBufferServerEvents(game);
     game->simTickCounter++;
 

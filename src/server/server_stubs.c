@@ -12,7 +12,8 @@
  * GNU General Public License for more details.
  */
 
-#include "../bolo/global.h"
+#include <stdint.h>
+#include "global.h"
 #include "server_lifecycle.h"
 
 void serverInstanceRecordProbeReply(const char *reflexiveIp,
@@ -33,3 +34,16 @@ void serverLifecycleGetSimStats(double *outLastMs, double *outEwmaMs) {
   if (outLastMs) *outLastMs = 0.0;
   if (outEwmaMs) *outEwmaMs = 0.0;
 }
+
+/* server_sim.c references these. The real implementations live in
+ * transport_udp_server.c (server_static), which the non-server-static
+ * targets compiling this file (WinBoloIOS, BrainTest, MapEditor,
+ * android main, wasm winbolo) don't link — they don't run a UDP
+ * server, so the calls are dead paths that just need to link. */
+struct ServerSim;
+void transportUdpServerEnforcePing(struct ServerSim *sim) { (void)sim; }
+void transportUdpServerNotifyMapChange(struct ServerSim *sim) { (void)sim; }
+void transportUdpServerBroadcastMapSkipState(struct ServerSim *sim) { (void)sim; }
+void transportUdpServerBroadcastGameOver(struct ServerSim *sim) { (void)sim; }
+uint16_t transportUdpServerGetClientPing(BYTE playerNum) { (void)playerNum; return 0; }
+const char *transportUdpServerGetPlayerName(BYTE playerNum) { (void)playerNum; return ""; }

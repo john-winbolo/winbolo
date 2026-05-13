@@ -12,7 +12,7 @@
  *********************************************************/
 
 #include "mapeditor_validate.h"
-#include "../bolo/bolo_map.h"
+#include "bolo_map.h"
 #include "../gui/lang.h"
 
 #include <stdlib.h>

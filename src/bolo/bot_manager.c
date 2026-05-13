@@ -42,6 +42,8 @@
 #include "allience.h"
 #include "mines.h"
 #include "client_sim.h"
+#include "client_net.h"
+#include "client_sim_internal.h"
 #include "client_sim_control.h"
 #include "control_event.h"
 #include "transport.h"
@@ -53,9 +55,8 @@
 #include "brain_worldsim.h"
 #include <lua.h>
 #include <lauxlib.h>   /* luaL_loadstring for botManagerExecLua */
-#include "transport_udp.h"
 #include "../common/wb_log.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 #include "../gui/sdl3/luabrainshandler.h"
 
 /* View size for brain map updates — 15x15 centered on tank */
@@ -294,7 +295,8 @@ static void botUpdateBrainMap(BotContext *bot, ServerSim *sim) {
     /* Update only the visible rect from server map */
     for (y = top; ; y++) {
         for (x = left; ; x++) {
-            screenBrainMapSetPos(clientSimGetBrainMap(bot->cs), (BYTE)x, (BYTE)y,
+            screenBrainMapSetPos((BYTE (*)[MAP_ARRAY_SIZE])clientSimGetBrainMap(bot->cs),
+                                 (BYTE)x, (BYTE)y,
                                  mapGetPos(&gs->mp, (BYTE)x, (BYTE)y),
                                  minesExistPos(&gs->mns, &gs->mp, (BYTE)x, (BYTE)y));
             if ((BYTE)x == right) break;
@@ -443,9 +445,6 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
             return false;
         }
     }
-
-    /* Set bot name in transport client array for lobby broadcasts */
-    transportUdpServerSetBotName(playerNum, brainName);
 
     /* Create the bot's ClientSim */
     bot->cs = clientSimAlloc();

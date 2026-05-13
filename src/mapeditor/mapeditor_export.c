@@ -11,12 +11,12 @@
  *********************************************************/
 
 #include "mapeditor_export.h"
-#include "../bolo/bolo_map.h"
-#include "../bolo/pillbox.h"
-#include "../bolo/bases.h"
-#include "../bolo/starts.h"
-#include "../bolo/screencalc.h"
-#include "../bolo/tilenum.h"
+#include "bolo_map.h"
+#include "pillbox.h"
+#include "bases.h"
+#include "starts.h"
+#include "screencalc.h"
+#include "tilenum.h"
 #include "../gui/tiles.h"
 #include "../gui/sdl3/minimap_render.h"
 

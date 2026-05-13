@@ -28,7 +28,7 @@
 #ifndef _CLIENT_MUTEX_H
 #define _CLIENT_MUTEX_H
 
-#include "global.h"
+#include "lv_global.h"
 
 
 /*********************************************************

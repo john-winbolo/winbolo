@@ -5,7 +5,7 @@
  * synchronization is needed. All functions are no-ops.
  */
 
-#include "global.h"
+#include "lv_global.h"
 #include "clientmutex.h"
 
 bool lv_clientMutexCreate(void) {

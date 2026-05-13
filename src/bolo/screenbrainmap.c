@@ -33,6 +33,7 @@
 #include "brain.h"
 #include "mines.h"
 #include "client_sim.h"
+#include "game_sim.h"
 #include "screenbrainmap.h"
 
 void screenBrainMapCreate(ClientSim *cs) {

@@ -26,9 +26,9 @@
 *  sound effects and loud sound effects.
 *********************************************************/
 
-#include "global.h"
+#include "lv_global.h"
 #include "backend.h"
-#include "sounddist.h"
+#include "lv_sounddist.h"
 #include "logviewer.h"
 
 void lv_frontEndPlaySound(sndEffects value);

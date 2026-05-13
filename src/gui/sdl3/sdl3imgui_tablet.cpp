@@ -40,10 +40,10 @@
 #include "dialogs/imgui_dialog_utils.h"
 
 extern "C" {
-#include "../../bolo/global.h"
-#include "../../bolo/screentank.h"
-#include "../../bolo/client_sim.h"
-#include "../../bolo/client_render.h"  /* clientRenderFrame */
+#include "global.h"
+#include "screentank.h"
+#include "client_sim.h"
+#include "client_render.h"  /* clientRenderFrame */
 #include "../gamefront.h"
 #include "../tiles.h"
 #include "../ui_mode.h"
@@ -1133,7 +1133,7 @@ static void renderStatusDrawer(ClientSim *cs) {
 
     /* Pillbox status */
     if (ImGui::CollapsingHeader(langGetText(STR_TABLET_PILLBOXES))) {
-      BYTE total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
+      BYTE total = clientSimGetPillCount(cs);
       for (BYTE i = 1; i <= total; i++) {
         pillAlliance pa = clientSimGetPillAlliance(cs, i);
         ImVec4 col;
@@ -1153,7 +1153,7 @@ static void renderStatusDrawer(ClientSim *cs) {
 
     /* Base status */
     if (ImGui::CollapsingHeader(langGetText(STR_TABLET_BASES))) {
-      BYTE total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
+      BYTE total = clientSimGetBaseCount(cs);
       for (BYTE i = 1; i <= total; i++) {
         baseAlliance ba = clientSimGetBaseAlliance(cs, i);
         ImVec4 col;

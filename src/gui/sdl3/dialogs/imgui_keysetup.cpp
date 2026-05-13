@@ -29,7 +29,7 @@
 
 extern "C" {
 #include "../sdl3draw.h"
-#include "../../../bolo/global.h"
+#include "global.h"
 #include "../bg_game.h"
 #include "../input.h"
 #include "../../winbolo.h"

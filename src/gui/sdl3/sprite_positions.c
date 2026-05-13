@@ -25,8 +25,8 @@
 
 #include "sprite_positions.h"
 #include "../tiles.h"
-#include "../../bolo/global.h"   /* SWAMP, FOREST, GRASS, RUBBLE, CRATER, HALFBUILDING */
-#include "../../bolo/tilenum.h"
+#include "global.h"   /* SWAMP, FOREST, GRASS, RUBBLE, CRATER, HALFBUILDING */
+#include "tilenum.h"
 
 #include <string.h>
 
