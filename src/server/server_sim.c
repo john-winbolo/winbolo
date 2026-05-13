@@ -3751,6 +3751,50 @@ void serverSimRenameBotSlot(ServerSim *sim, BYTE slot, const char *name) {
     }
 }
 
+void serverSimPublishLobbySlot(ServerSim *sim, BYTE slot) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySlotEvent(sim, slot, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimPublishLobbyBotBrain(ServerSim *sim, BYTE slot) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyBotBrainEvent(sim, slot, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimPublishLobbyBotConfig(ServerSim *sim, BYTE slot) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyBotConfigEvent(sim, slot, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimPublishLobbyTeamMeta(ServerSim *sim, BYTE teamId) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyTeamMetaEvent(sim, teamId, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimPublishLobbySettings(ServerSim *sim) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySettingsEvent(sim, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+bool serverSimIsAcceptingJoins(const ServerSim *sim) {
+    return sim && sim->allowNewPlayers;
+}
+
 BYTE serverSimGetViewPlayer(const ServerSim *sim) {
     return sim->sim.viewPlayer;
 }

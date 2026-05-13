@@ -79,7 +79,26 @@ void clientSimNetSendLockToggle(ClientSim *cs, bool allow);
 void clientSimNetSendTeamSet(ClientSim *cs, BYTE teamNumber);
 void clientSimNetSendReady(ClientSim *cs, bool ready);
 void clientSimNetSendAddBot(ClientSim *cs);
+/* Add-bot with explicit team, brain, and pool-picked name. The
+ * zero-arg clientSimNetSendAddBot above sends teamNumber=0 / brainPath="" /
+ * botName="" and lets the server pick defaults. */
+void clientSimNetSendAddBotConfigured(ClientSim *cs, BYTE teamNumber,
+                                      const char *brainPath,
+                                      const char *botName);
 void clientSimNetSendRemoveBot(ClientSim *cs, BYTE playerNum);
+void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
+                                    uint8_t difficulty,
+                                    uint8_t personality,
+                                    const char *name);
+void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
+                                      const char *brainPath);
+void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
+                                   uint8_t color, uint8_t namingPool,
+                                   const char *name);
+void clientSimNetSendLobbyTeamClear(ClientSim *cs, BYTE teamId);
+void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
+                                  const uint8_t *value, uint8_t valueLen);
+void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost);
 void clientSimNetSendMapSkipVote(ClientSim *cs);
 void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize);
 void clientSimNetSendBalanceApply(ClientSim *cs);
