@@ -18,6 +18,12 @@
  * transport_udp_client.c / transport_udp_server.c. */
 #define PACKET_MAX_CHAT_MESSAGE 128
 
+/* Max size of player name in join request. Surfaced publicly so the
+ * client-side lobby slot mirror (ClientLobbySlot in client_sim.h) can
+ * size its playerName[] buffer without pulling in the internal
+ * netpacks.h wire-protocol header. */
+#define PACKET_MAX_PLAYER_NAME 64
+
 /* Version string used in info-packet responses and surfaced in the
  * server browser to gate "join" against version-skewed servers.
  * WINBOLO_VERSION is supplied as a compile definition by CMake. */

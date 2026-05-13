@@ -303,8 +303,8 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define BOLO_NEW_MAGIC_0  'W'
 #define BOLO_NEW_MAGIC_1  'B'
 
-/* Max size of player name in join request */
-#define PACKET_MAX_PLAYER_NAME 64
+/* PACKET_MAX_PLAYER_NAME lives in public/wire_limits.h (included above
+ * via the file-top include list) alongside PACKET_MAX_CHAT_MESSAGE. */
 
 /* Map download chunk size — fits comfortably in a UDP datagram */
 #define MAP_DOWNLOAD_CHUNK_SIZE 900

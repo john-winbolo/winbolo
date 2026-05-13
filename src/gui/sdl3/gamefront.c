@@ -289,7 +289,7 @@ static void gameFrontLockToggleCallback(bool allow) {
 void gameFrontUpdateSteamPresence(ClientSim *cs) {
   if (cs == NULL) return;
   char status[256];
-  BYTE numPlayers = playersGetNumPlayers(&clientSimGetGameSim(cs)->plyrs);
+  BYTE numPlayers = clientSimGetNumPlayers(cs);
   snprintf(status, sizeof(status), "On map '%s' - %d player%s",
            clientSimGetMapName(cs), numPlayers, numPlayers == 1 ? "" : "s");
   steam_set_rich_presence("status", status);
@@ -740,8 +740,8 @@ static bool gameFrontDialogs(void) {
       /* Mark both sims so tank.c's tutorial stop logic fires
        * authoritatively on the server and keeps client prediction
        * consistent. */
-      if (spServerSim != NULL) serverSimGetGameSim(spServerSim)->isTutorial = true;
-      if (humanSim != NULL)    clientSimGetGameSim(humanSim)->isTutorial = true;
+      if (spServerSim != NULL) serverSimSetTutorial(spServerSim, true);
+      if (humanSim != NULL)    clientSimSetTutorial(humanSim, true);
       break;
     case openSettings: {
       const DialogBackend *db = dialogBackendGet();
@@ -1091,7 +1091,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           serverSimSetLobbyEnabled(spServerSim, false);
           serverSimStartGame(spServerSim);
           serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
-          serverSimGetGameSim(spServerSim)->viewPlayer = 0;
+          serverSimSetViewPlayer(spServerSim, 0);
           spTransportLocalUsed = TRUE;
           spServerSimActive = TRUE;
           /* Load map/bases/pills on client via compressed map (same as UDP path) */

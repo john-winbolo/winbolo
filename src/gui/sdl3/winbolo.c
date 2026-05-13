@@ -1664,10 +1664,10 @@ bool frontEndTutorial(BYTE pos) {
    * stops offering it (the player can re-enable from Settings). */
   if (tutorialStepIdx == tutorialStepCount - 1) {
     isTutorial = FALSE;
-    if (humanSim) clientSimGetGameSim(humanSim)->isTutorial = false;
+    if (humanSim) clientSimSetTutorial(humanSim, false);
     {
       ServerSim *srv = gameFrontGetServerSim();
-      if (srv) serverSimGetGameSim(srv)->isTutorial = false;
+      if (srv) serverSimSetTutorial(srv, false);
     }
     gameFrontSetShowTutorialButton(false);
   }

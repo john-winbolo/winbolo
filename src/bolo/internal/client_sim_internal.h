@@ -18,8 +18,34 @@
 
 #include <stddef.h>
 #include "client_sim.h"
+#include "game_sim.h"
 #include "viewport.h"
 #include "transport.h"
+#include "client_state.h"
+#include "interpolation.h"
+#include "messages.h"
+#include "scroll.h"
+
+/* Internal helpers relocated from client_sim.h during the public-header
+ * transitive-leak cleanup. These need GameSim's full layout, so they
+ * belong on the internal side. Callers inside src/bolo/ that use these
+ * include this header. */
+#define MY_TANK(cs) (clientSimGetGameSim(cs)->tanks[clientSimGetMyPlayerNum(cs)])
+#define MY_LGM(cs)  (clientSimGetGameSim(cs)->lgmen[clientSimGetMyPlayerNum(cs)])
+
+/* Recover the owning ClientSim from a GameSim* for the frontEnd
+ * active-cs gate. Relies on the "GameSim sim MUST be first member"
+ * invariant declared above (and mirrored in server_sim.h). When the
+ * GameSim belongs to a ServerSim (sim->isServer == true) the cast
+ * would yield a bogus pointer, so we return NULL; the gate then
+ * suppresses safely because NULL never matches the registered active
+ * humanSim. Callers in bolo/<*> with only a GameSim* in scope use this
+ * to feed frontEnd*(cs, ...) calls without having to thread cs
+ * through every signature. */
+static inline struct ClientSim *clientSimFromSim(struct GameSim *sim) {
+    if (sim == NULL || sim->isServer) return NULL;
+    return (struct ClientSim *)sim;
+}
 
 /* Camera / visible-tile state bundled into one struct so viewport math
  * functions in viewport.c can take a ViewPort* without depending on

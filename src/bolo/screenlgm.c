@@ -30,6 +30,7 @@
 #include "lgm.h"
 #include "screenlgm.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"
 
 /* Prototypes */
 

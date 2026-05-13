@@ -26,32 +26,12 @@
 
 #include "global.h"
 #include "platform_net.h"
+#include "client_enums.h"  /* netType, netStatus enums live here now */
 
 #pragma pack(push, 1)
 
 #ifndef _PACKETS_DEFINED
 #define _PACKETS_DEFINED
-
-/* The network type of game being played */
-typedef enum {
-  netNone,   /* Game hasn't Started */
-  netSingle, /* Single-player (non-networked) game */
-  netUdp     /* Networked game */
-} netType;
-
-/* Network status */
-typedef enum {
-  netLobby,          /* In lobby, waiting for ready */
-  netLobbyCountdown, /* Countdown active, game starting soon */
-  netJoining,
-  netRunning,
-  netStartDownload, /* First thing we do */
-  netBaseDownload,  /* 2nd thing */
-  netPillDownload,  /* 3rd thing */
-  netMapDownload,   /* 4th - Map download */
-  netTimeDownload,  /* Final. Get game times */
-  netFailed
-} netStatus;
 
 /* Bolo header packets */
 #ifndef _BOLOHEADER_DEFINED

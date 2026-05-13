@@ -692,8 +692,7 @@ static void renderNetInfoContent(ClientSim *cs) {
     /* Client in a networked game: prepend player location to port */
     if (clientSimGetNetType(cs) != netSingle) {
         char addr[256];
-        players *plrs = &clientSimGetGameSim(cs)->plyrs;
-        playersGetPlayerLocation(plrs, clientSimGetMyPlayerNum(cs), addr);
+        clientSimGetPlayerLocation(cs, clientSimGetMyPlayerNum(cs), addr);
         netGetOurAddressStr(cs, str);
         const char *portPart = strchr(str, ':');
         if (portPart) {
@@ -824,10 +823,10 @@ static void renderGameInfoContent(ClientSim *cs) {
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMEINFO_NUMPLAYERS, &args));
     }
 
-    gameType *gt = &clientSimGetGameSim(cs)->game;
+    gameType gt = clientSimGetGameType(cs);
     langid gtStr = STR_DLGGAMEINFO_STRICT;
-    if      (*gt == gameOpen)       gtStr = STR_DLGGAMEINFO_OPEN;
-    else if (*gt == gameTournament) gtStr = STR_DLGGAMEINFO_TOURN;
+    if      (gt == gameOpen)       gtStr = STR_DLGGAMEINFO_OPEN;
+    else if (gt == gameTournament) gtStr = STR_DLGGAMEINFO_TOURN;
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_GAMETYPE), langGetText(gtStr));
 
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_HIDDENMINES),
@@ -1105,14 +1104,13 @@ static void renderPlayersPanel(ClientSim *cs) {
     ImGui::Separator();
 
     /* Pre-compute alliance state */
-    players *plrs = &clientSimGetGameSim(cs)->plyrs;
     BYTE self = clientSimGetMyPlayerNum(cs);
     bool hasAllies  = false;
     bool canRequest = false;
     bool isAlly[MAX_PLAYERS] = {};
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (s_playerEnabled[i] && i != self) {
-            isAlly[i] = playersIsAllie(plrs, self, (BYTE)i);
+            isAlly[i] = clientSimIsPlayerAlly(cs, self, (BYTE)i);
             if (isAlly[i]) hasAllies = true;
             else if (s_playerChecked[i]) canRequest = true;
         }
@@ -1382,8 +1380,8 @@ static void renderAllianceRequest(ClientSim *cs) {
         {
             MessageArgs args = {};
             strncpy(args.playerName, s_alliancePlayerName, sizeof(args.playerName) - 1);
-            args.playerFlags = playersGetAccountFlags(&clientSimGetGameSim(cs)->plyrs, s_alliancePlayerNum);
-            playersGetCountryCode(&clientSimGetGameSim(cs)->plyrs, s_alliancePlayerNum, args.playerCountry);
+            args.playerFlags = clientSimGetPlayerAccountFlags(cs, s_alliancePlayerNum);
+            clientSimGetPlayerCountryCode(cs, s_alliancePlayerNum, args.playerCountry);
             ImGui::TextUnformatted(langGetTextFmt(STR_DLGALLIANCE_BLURB, &args));
         }
         ImGui::Spacing();
@@ -2107,14 +2105,13 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALLIES), false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAlliedPlayers(cs);
         if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NEARBY), false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckNearbyPlayers(cs);
         /* Pre-compute alliance state for each player */
-        players *plrs = &clientSimGetGameSim(cs)->plyrs;
         BYTE self = clientSimGetMyPlayerNum(cs);
         bool hasAllies  = false;
         bool canRequest = false;
         bool isAlly[MAX_PLAYERS] = {};
         for (int i = 0; i < MAX_PLAYERS; i++) {
             if (s_playerEnabled[i] && i != self) {
-                isAlly[i] = playersIsAllie(plrs, self, (BYTE)i);
+                isAlly[i] = clientSimIsPlayerAlly(cs, self, (BYTE)i);
                 if (isAlly[i]) {
                     hasAllies = true;
                 } else if (s_playerChecked[i]) {

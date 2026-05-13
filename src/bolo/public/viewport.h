@@ -34,9 +34,9 @@
 #include "viewport_types.h"
 #include "client_enums.h"
 #include "types.h"
-#include "scroll.h"
 
 struct GameSim;
+typedef struct ScrollState ScrollState;
 
 typedef struct ViewPort ViewPort;
 

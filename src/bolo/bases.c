@@ -39,6 +39,7 @@
 #include "bases.h"
 #include "game_sim.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"
 #include "server_sim.h"
 
 void basesUpdateTimer(GameSim *sim, int playerNumber){

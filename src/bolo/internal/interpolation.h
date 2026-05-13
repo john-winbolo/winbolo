@@ -58,7 +58,7 @@ typedef struct {
 } InterpPlayer;
 
 /* The full interpolation context for all other players */
-typedef struct {
+typedef struct InterpContext {
   InterpPlayer players[MAX_TANKS];
   BYTE localPlayer;        /* Our own player number (skip interpolation) */
 } InterpContext;

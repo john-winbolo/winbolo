@@ -27,18 +27,26 @@
 
 #include <stdio.h>    /* For FILENAME_MAX */
 #include <time.h>     /* For time_t */
-#include "game_sim.h"
-#include "client_state.h"
-#include "interpolation.h"
+#include "global.h"   /* For PlayerBitMap (via platform_types.h), BYTE, etc. */
 #include "input_packet.h"
-#include "netpacks.h"     /* For PACKET_MAX_PLAYER_NAME */
-#include "client_enums.h" /* For aiType, buildSelect, gameType, labelLen */
+#include "client_enums.h" /* For aiType, buildSelect, gameType, labelLen, netType, netStatus */
 #include "viewport_types.h" /* For screen, screenMines, screenGunsight */
+#include "wire_limits.h"  /* For PACKET_MAX_PLAYER_NAME */
+#include "alliance_enums.h" /* For pillAlliance, baseAlliance */
+#include "screentank.h"     /* For tankAlliance */
 #include "brain.h"  /* For BuildInfo, ObjectInfo */
-#include "players.h" /* For PlayerBitMap, playerNumbers */
-#include "bolo_packets.h" /* For netType, netStatus enums */
-#include "messages.h"     /* For MessageState */
-#include "scroll.h"       /* For ScrollState */
+
+#ifndef GAMESIM_TYPEDEF
+#define GAMESIM_TYPEDEF
+typedef struct GameSim GameSim;
+#endif
+
+/* Forward declarations for state types whose full layout lives in
+ * src/bolo/internal/. External callers reach them only through the
+ * pointer-returning accessors below. */
+typedef struct InterpContext InterpContext;
+typedef struct MessageState  MessageState;
+typedef struct ScrollState   ScrollState;
 
 /* Messages status on/off */
 #define MSG_NEWSWIRE 0
@@ -101,23 +109,9 @@ typedef struct ClientSim ClientSim;
 /* Forward declaration — full definition in client_sim_internal.h */
 struct ViewPort;
 
-/* Access the local player's tank and LGM by server player number */
-#define MY_TANK(cs) (clientSimGetGameSim(cs)->tanks[clientSimGetMyPlayerNum(cs)])
-#define MY_LGM(cs)  (clientSimGetGameSim(cs)->lgmen[clientSimGetMyPlayerNum(cs)])
-
-/* Recover the owning ClientSim from a GameSim* for the frontEnd
- * active-cs gate. Relies on the "GameSim sim MUST be first member"
- * invariant declared above (and mirrored in server_sim.h). When the
- * GameSim belongs to a ServerSim (sim->isServer == true) the cast
- * would yield a bogus pointer, so we return NULL; the gate then
- * suppresses safely because NULL never matches the registered active
- * humanSim. Callers in bolo/<*> with only a GameSim* in scope use this
- * to feed frontEnd*(cs, ...) calls without having to thread cs
- * through every signature. */
-static inline struct ClientSim *clientSimFromSim(struct GameSim *sim) {
-    if (sim == NULL || sim->isServer) return NULL;
-    return (struct ClientSim *)sim;
-}
+/* MY_TANK, MY_LGM, and clientSimFromSim moved to
+ * src/bolo/internal/client_sim_internal.h — they need GameSim's
+ * full layout, which the public header does not expose. */
 
 /*********************************************************
  *NAME:          clientSimAlloc
@@ -271,6 +265,23 @@ BYTE clientSimGetTank256Dir(ClientSim *cs);
 /* Game info (per-instance) */
 bool clientSimGetAllowHiddenMines(ClientSim *cs);
 BYTE clientSimGetNumPlayers(ClientSim *cs);
+
+/* Tutorial-mode flag mirrored on the embedded GameSim. */
+bool clientSimIsTutorial(const ClientSim *cs);
+void clientSimSetTutorial(ClientSim *cs, bool v);
+
+/* Game type (open/tournament/strict) for the running sim — distinct from
+ * clientSimGetLobbyGameType, which reflects the pre-load lobby selection. */
+gameType clientSimGetGameType(const ClientSim *cs);
+
+/* Per-player accessors that forward to the embedded players struct. */
+uint16_t clientSimGetPlayerPing(ClientSim *cs, BYTE playerNum);
+uint8_t  clientSimGetPlayerClientFlags(ClientSim *cs, BYTE playerNum);
+uint8_t  clientSimGetPlayerClientType(ClientSim *cs, BYTE playerNum);
+void     clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest);
+uint8_t  clientSimGetPlayerAccountFlags(ClientSim *cs, BYTE playerNum);
+void     clientSimGetPlayerCountryCode(ClientSim *cs, BYTE playerNum, char *dest);
+bool     clientSimIsPlayerAlly(ClientSim *cs, BYTE playerA, BYTE playerB);
 
 void netGetStats(ClientSim *cs, char *status, int *ping, int *ppsec, int *retrans);
 void netGetServerAddressStr(ClientSim *cs, char *dest);

@@ -48,6 +48,7 @@ extern "C" {
 #include "../../../mapeditor/mapeditor_generate.h"
 #include "../../../mapeditor/mapeditor_maze.h"
 #include "imgui_mapchooser.h"
+#include "../../lang.h"
 }
 #include "../../../mapeditor/mapeditor_imgui.h"
 

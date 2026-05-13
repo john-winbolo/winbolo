@@ -1017,7 +1017,7 @@ static bool fastModeSetupGame(void) {
   serverSimSetLobbyEnabled(fastServerSim, false);
   serverSimStartGame(fastServerSim);
   serverSimAddPlayer(fastServerSim, 0, optName, false);
-  serverSimGetGameSim(fastServerSim)->viewPlayer = 0;
+  serverSimSetViewPlayer(fastServerSim, 0);
 
   transportActive = TRUE;
   playerNum = 0;
@@ -1101,7 +1101,7 @@ static int runFastMode(void) {
   serverSimSetLobbyEnabled(fastServerSim, false);
   serverSimStartGame(fastServerSim);
   serverSimAddPlayer(fastServerSim, 0, optName, false);
-  serverSimGetGameSim(fastServerSim)->viewPlayer = 0;
+  serverSimSetViewPlayer(fastServerSim, 0);
   transportActive = TRUE;
   playerNum = 0;
   humanSim = clientSimAlloc();

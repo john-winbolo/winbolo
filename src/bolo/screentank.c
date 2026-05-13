@@ -34,6 +34,7 @@
 #include "players.h"
 #include "frontend.h"
 #include "client_sim.h"
+#include "game_sim.h"
 
 /*********************************************************
 *NAME:          screenTanksCreate
