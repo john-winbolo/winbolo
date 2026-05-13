@@ -250,6 +250,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/server/threads.c
     ${PROJ_ROOT}/src/server/server_sim.c
     ${PROJ_ROOT}/src/server/server_stubs.c
+    ${PROJ_ROOT}/src/server/server_dedicated_log_stubs.c
     ${PROJ_ROOT}/src/server/posix_stubs.c
 )
 

@@ -466,6 +466,7 @@ add_subdirectory(src/bolo)
 set(IOS_SERVER_SOURCES
     src/server/server_sim.c src/server/servermessages.c
     src/server/server_stubs.c
+    src/server/server_dedicated_log_stubs.c
     src/server/threads.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/mapeditor/mapgen_imgui.cpp
@@ -933,7 +934,7 @@ set(CLIENT_SOURCES
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/server_sim.c
+    src/server/server_dedicated_log_stubs.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
 )
@@ -1225,7 +1226,7 @@ set(SERVER_SOURCES
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/server/servermain.c
-    src/server/server_sim.c
+    src/server/server_dedicated_log.c
     src/server/server_frontend_stubs.c
     src/gui/sdl3/luabrainshandler.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
@@ -1526,7 +1527,7 @@ set(HEADLESS_SOURCES
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_main.c src/headless/headless_frontend.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/server_sim.c
+    src/server/server_dedicated_log_stubs.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
@@ -1636,7 +1637,7 @@ set(GYM_SOURCES
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_frontend.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/server_sim.c
+    src/server/server_dedicated_log_stubs.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
@@ -1747,6 +1748,7 @@ set(BRAINTEST_SOURCES
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/servermessages.c src/server/server_sim.c src/server/server_stubs.c
+    src/server/server_dedicated_log_stubs.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/braintest/braintest_main.c src/braintest/braintest_frontend.c
     src/braintest/braintest_viz_registry.c
@@ -1856,6 +1858,7 @@ set(MAPEDITOR_SOURCES
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/servermessages.c src/server/server_sim.c src/server/server_stubs.c
+    src/server/server_dedicated_log_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
     src/mapeditor/mapeditor_main.c
