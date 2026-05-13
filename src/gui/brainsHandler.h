@@ -28,7 +28,7 @@
 #ifndef BRAINSHANDLER_H
 #define BRAINSHANDLER_H
 
-#include "../bolo/global.h"
+#include "global.h"
 
 struct ClientSim;
 

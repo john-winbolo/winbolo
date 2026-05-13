@@ -26,10 +26,10 @@
 *  (Uses SDL3)
 *********************************************************/
 
-#include "../../bolo/global.h"
+#include "global.h"
 #include <SDL3/SDL.h>
 #include <stdio.h>
-#include "../../bolo/screen.h"
+#include "client_enums.h"  /* sndEffects */
 #include "../sound.h"
 
 #define NUM_SOUNDS 24

@@ -15,7 +15,7 @@
 #include "../imgui_fonts.h"
 
 extern "C" {
-#include "../../bolo/global.h"
+#include "global.h"
 #include "../lang.h"
 }
 

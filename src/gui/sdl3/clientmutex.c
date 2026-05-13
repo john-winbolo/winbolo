@@ -27,7 +27,7 @@
 
 #include <SDL3/SDL.h>
 #include <string.h>
-#include "../../bolo/global.h"
+#include "global.h"
 #include "../clientmutex.h"
 #include "../../server/threads.h"
 

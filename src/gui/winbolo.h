@@ -28,8 +28,7 @@
 #ifndef _WINBOLO_H
 #define _WINBOLO_H
 
-#include "../bolo/global.h"
-#include "../bolo/screen.h"
+#include "global.h"
 #include "input.h"
 
 struct ClientSim;

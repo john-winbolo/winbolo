@@ -49,10 +49,9 @@
 
 /* Bolo types (included after SDL3 to avoid #pragma pack conflicts) */
 extern "C" {
-#include "../../bolo/global.h"    /* BYTE, bool, FALSE/TRUE */
-#include "../../bolo/screen.h"   /* labelLen, lblNone/lblShort/lblLong */
-#include "../../bolo/client_sim.h"
-#include "../../bolo/netpacks.h" /* PACKET_MAX_CHAT_MESSAGE */
+#include "global.h"    /* BYTE, bool, FALSE/TRUE */
+#include "client_sim.h"
+#include "wire_limits.h"
 #include "../gamefront.h"
 #include "../lang.h"
 }
@@ -63,12 +62,8 @@ extern "C" {
 #include "luabrainshandler.h"
 #include "flags.h"
 
-/* Include players.h with C linkage — no #pragma pack inside, safe here */
 extern "C" {
-#include "../../bolo/players.h"
-#include "../../bolo/transport.h"
-#include "../../bolo/transport_udp.h"
-#include "../../bolo/bot_manager.h"
+#include "client_net.h"
 #include "../../server/server_lifecycle.h"
 #include "../../server/threads.h"
 }
@@ -99,11 +94,7 @@ extern "C" int  windowGetDrawTime(void);
 extern "C" int  windowGetSimTime(void);
 extern "C" int  windowGetNetTime(void);
 extern "C" int  windowGetAiTime(void);
-/* gameFrontGetTransport: now provided by gamefront.h */
-extern "C" uint16_t transportUdpClientGetPing(Transport *t);
 /* Dialog helpers — declared without pulling in pragma-pack headers */
-extern "C" void screenGetPlayerNameCS(struct ClientSim *cs, char *dest);
-extern "C" bool screenSetPlayerNameCS(struct ClientSim *cs, char *name);
 /* gameFrontSetGameOptions: now provided by gamefront.h */
 extern "C" void utilStripName(char *name);
 
@@ -111,10 +102,6 @@ extern "C" void utilStripName(char *name);
 extern "C" void windowGetKeys(keyItems *value);
 extern "C" void windowSetKeys(keyItems *value);
 extern "C" void windowKeyPressed(struct ClientSim *cs, int keyCode);
-extern "C" bool screenGetTankAutoSlowdownCS(struct ClientSim *csPtr);
-extern "C" void screenSetTankAutoSlowdownCS(struct ClientSim *csPtr, bool useSlowdown);
-extern "C" bool screenGetTankAutoHideGunsightCS(struct ClientSim *csPtr);
-extern "C" void screenSetTankAutoHideGunsightCS(struct ClientSim *csPtr, bool useAutohide);
 extern "C" void inputTouchSetAbsoluteSteering(bool enabled);
 extern "C" bool inputTouchGetAbsoluteSteering(void);
 
@@ -177,14 +164,6 @@ extern "C" void windowComputeAspectCorrectSize(int actualW, int actualH, int act
 extern "C" void windowNewGame(void);
 extern "C" void windowQuit(void);
 extern "C" void windowSaveMap(struct ClientSim *cs);
-
-/* Backend functions called directly from menu */
-extern "C" void screenRequestAllianceCS(struct ClientSim *csPtr);
-extern "C" void screenLeaveAllianceCS(struct ClientSim *csPtr);
-extern "C" void screenCheckAllNonePlayersCS(struct ClientSim *csPtr, bool isChecked);
-extern "C" void screenCheckAlliedPlayersCS(struct ClientSim *csPtr);
-extern "C" void screenCheckNearbyPlayersCS(struct ClientSim *csPtr);
-extern "C" void screenTogglePlayerCheckStateCS(struct ClientSim *csPtr, BYTE playerNum);
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -546,10 +525,10 @@ static void renderSysInfoContent(void) {
          * tick. Take the same mutex serverInstanceTick uses so the
          * snapshot is consistent. Cheap — these are quick reads. */
         threadsWaitForMutex();
-        hasBots = botManagerHasAnyBot();
-        botManagerGetPoolStats(&ps);
+        hasBots = serverSimHasAnyBot(spSim);
+        serverSimGetBotPoolStats(spSim, &ps);
         for (int i = 0; i < MAX_TANKS; i++) {
-            botInfoValid[i] = botManagerGetBotInfo((BYTE)i, &botInfos[i]);
+            botInfoValid[i] = serverSimGetBotInfo(spSim, (BYTE)i, &botInfos[i]);
         }
         serverLifecycleGetTickStats(&tickLast, &tickEwma);
         serverLifecycleGetSimStats(&simLast, &simEwma);
@@ -709,10 +688,9 @@ static void renderNetInfoContent(ClientSim *cs) {
     ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_SERVER), str);
 
     /* Client in a networked game: prepend player location to port */
-    if (cs->networkGameType != netSingle) {
+    if (clientSimGetNetType(cs) != netSingle) {
         char addr[256];
-        players *plrs = &cs->sim.plyrs;
-        playersGetPlayerLocation(plrs, cs->myPlayerNum, addr);
+        clientSimGetPlayerLocation(cs, clientSimGetMyPlayerNum(cs), addr);
         netGetOurAddressStr(cs, str);
         const char *portPart = strchr(str, ':');
         if (portPart) {
@@ -727,15 +705,12 @@ static void renderNetInfoContent(ClientSim *cs) {
 
     netGetStats(cs, str, &ping, &ppsec, &numErrors);
     /* Prefer stats from new UDP transport when active */
-    {
-        Transport *tp = gameFrontGetTransport();
-        if (tp) {
-            uint16_t udpPing = transportUdpClientGetPing(tp);
-            if (udpPing > 0) ping = (int)udpPing;
-            int udpErrors = 0;
-            transportUdpClientGetNetStats(tp, &ppsIn, &ppsOut, &bpsIn, &bpsOut, &udpErrors);
-            numErrors = udpErrors;
-        }
+    if (clientSimHasTransport(cs)) {
+        uint16_t udpPing = clientSimGetNetPing(cs);
+        if (udpPing > 0) ping = (int)udpPing;
+        int udpErrors = 0;
+        clientSimGetUdpNetStats(cs, &ppsIn, &ppsOut, &bpsIn, &bpsOut, &udpErrors);
+        numErrors = udpErrors;
     }
     ImGui::Separator();
     ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_STATUS), str);
@@ -832,7 +807,7 @@ static void renderNetInfoPanel(ClientSim *cs) {
 static void renderGameInfoContent(ClientSim *cs) {
     char mapName[256];
     mapName[0] = '\0';
-    screenGetMapNameCS(cs, mapName);
+    strcpy(mapName, clientSimGetMapName(cs));
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_MAPNAME), mapName);
     if (strncmp(mapName, "rand_", 5) == 0) {
         ImGui::SameLine();
@@ -842,27 +817,27 @@ static void renderGameInfoContent(ClientSim *cs) {
     }
     {
         MessageArgs args = {};
-        args.number = (int)screenGetNumPlayersCS(cs);
+        args.number = (int)clientSimGetNumPlayers(cs);
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMEINFO_NUMPLAYERS, &args));
     }
 
-    gameType *gt = &cs->sim.game;
+    gameType gt = clientSimGetGameType(cs);
     langid gtStr = STR_DLGGAMEINFO_STRICT;
-    if      (*gt == gameOpen)       gtStr = STR_DLGGAMEINFO_OPEN;
-    else if (*gt == gameTournament) gtStr = STR_DLGGAMEINFO_TOURN;
+    if      (gt == gameOpen)       gtStr = STR_DLGGAMEINFO_OPEN;
+    else if (gt == gameTournament) gtStr = STR_DLGGAMEINFO_TOURN;
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_GAMETYPE), langGetText(gtStr));
 
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_HIDDENMINES),
-                screenGetAllowHiddenMinesCS(cs) ? langGetText(STR_YES) : langGetText(STR_NO));
+                clientSimGetAllowHiddenMines(cs) ? langGetText(STR_YES) : langGetText(STR_NO));
 
-    aiType ai = screenGetAiTypeCS(cs);
+    aiType ai = clientSimGetAiType(cs);
     langid aiStr = STR_NO;
     if      (ai == aiYes)          aiStr = STR_YES;
     else if (ai == aiYesAdvantage) aiStr = STR_DLGGAMEINFO_AIADV;
     else if (ai == aiFull)         aiStr = STR_DLGGAMEINFO_FULLADV;
     ImGui::Text("%s %s", langGetText(STR_DLGGAMEINFO_AILABEL), langGetText(aiStr));
 
-    long timeLeft = screenGetGameTimeLeftCS(cs);
+    long timeLeft = clientSimGetGmeLength(cs);
     if (timeLeft == UNLIMITED_GAME_TIME) {
         ImGui::Text("%s %s", langGetText(STR_DLGGAMEINFO_TIMELIMIT),
                     langGetText(STR_DLGGAMEINFO_UNLIMITED));
@@ -998,10 +973,10 @@ static void renderSendMsgContent(ClientSim *cs) {
     /* "Sending to N player(s)" label */
     int numSend = 0;
     switch (s_sendMsgRecipient) {
-        case kSendAll:      numSend = (int)screenGetNumPlayersCS(cs);     break;
-        case kSendAllies:   numSend = screenNumAlliesCS(cs);              break;
-        case kSendNearby:   numSend = screenNumNearbyTanksCS(cs);         break;
-        case kSendSelected: numSend = screenNumCheckedPlayersCS(cs);      break;
+        case kSendAll:      numSend = (int)clientSimGetNumPlayers(cs);     break;
+        case kSendAllies:   numSend = clientSimGetNumAllies(cs);              break;
+        case kSendNearby:   numSend = clientSimGetNumNearbyTanks(cs);         break;
+        case kSendSelected: numSend = clientSimGetNumCheckedPlayers(cs);      break;
     }
     {
         MessageArgs args = {};
@@ -1038,10 +1013,10 @@ static void renderSendMsgContent(ClientSim *cs) {
 
     if (doSend && s_sendMsgBuf[0] != '\0') {
         switch (s_sendMsgRecipient) {
-            case kSendAll:      screenSendMessageAllPlayersCS(cs, s_sendMsgBuf);  break;
-            case kSendAllies:   screenSendMessageAllAlliesCS(cs, s_sendMsgBuf);   break;
-            case kSendNearby:   screenSendMessageAllNearbyCS(cs, s_sendMsgBuf);   break;
-            case kSendSelected: screenSendMessageAllSelectedCS(cs, s_sendMsgBuf); break;
+            case kSendAll:      clientSimSendMessageAllPlayers(cs, s_sendMsgBuf);  break;
+            case kSendAllies:   clientSimSendMessageAllAllies(cs, s_sendMsgBuf);   break;
+            case kSendNearby:   clientSimSendMessageAllNearby(cs, s_sendMsgBuf);   break;
+            case kSendSelected: clientSimSendMessageAllSelected(cs, s_sendMsgBuf); break;
         }
         s_sendMsgCooldownEnd = SDL_GetTicks() + SEND_MSG_WAIT_MS;
 #if BOLO_MOBILE
@@ -1116,25 +1091,24 @@ static void renderPlayersPanel(ClientSim *cs) {
     }
 
     /* Selection helpers */
-    if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALL)))    screenCheckAllNonePlayersCS(cs, true);
+    if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALL)))    clientSimCheckAllNonePlayers(cs, true);
     ImGui::SameLine();
-    if (ImGui::Button(langGetText(STR_DLGPLAYERS_NONE)))   screenCheckAllNonePlayersCS(cs, false);
+    if (ImGui::Button(langGetText(STR_DLGPLAYERS_NONE)))   clientSimCheckAllNonePlayers(cs, false);
     ImGui::SameLine();
-    if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALLIES))) screenCheckAlliedPlayersCS(cs);
+    if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALLIES))) clientSimCheckAlliedPlayers(cs);
     ImGui::SameLine();
-    if (ImGui::Button(langGetText(STR_DLGPLAYERS_NEARBY))) screenCheckNearbyPlayersCS(cs);
+    if (ImGui::Button(langGetText(STR_DLGPLAYERS_NEARBY))) clientSimCheckNearbyPlayers(cs);
 
     ImGui::Separator();
 
     /* Pre-compute alliance state */
-    players *plrs = &cs->sim.plyrs;
-    BYTE self = cs->myPlayerNum;
+    BYTE self = clientSimGetMyPlayerNum(cs);
     bool hasAllies  = false;
     bool canRequest = false;
     bool isAlly[MAX_PLAYERS] = {};
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (s_playerEnabled[i] && i != self) {
-            isAlly[i] = playersIsAllie(plrs, self, (BYTE)i);
+            isAlly[i] = clientSimIsPlayerAlly(cs, self, (BYTE)i);
             if (isAlly[i]) hasAllies = true;
             else if (s_playerChecked[i]) canRequest = true;
         }
@@ -1199,7 +1173,7 @@ static void renderPlayersPanel(ClientSim *cs) {
             snprintf(checkLabel, sizeof(checkLabel), "##chk%d", i);
             bool checked = s_playerChecked[i];
             if (ImGui::Checkbox(checkLabel, &checked)) {
-                screenTogglePlayerCheckStateCS(cs, (BYTE)i);
+                clientSimTogglePlayerCheckState(cs, (BYTE)i);
             }
             ImGui::SameLine();
         }
@@ -1210,7 +1184,7 @@ static void renderPlayersPanel(ClientSim *cs) {
                               ImGuiSelectableFlags_DontClosePopups,
                               ImVec2(fullWidth - pingWidth - spacing -
                                      (i != self ? ImGui::GetFrameHeight() + spacing : 0), 0))) {
-            if (i != self) screenTogglePlayerCheckStateCS(cs, (BYTE)i);
+            if (i != self) clientSimTogglePlayerCheckState(cs, (BYTE)i);
         }
 
         /* Right-aligned ping */
@@ -1249,11 +1223,11 @@ static void renderPlayersPanel(ClientSim *cs) {
                            SDL_GetTicks() < s_allianceReqCooldownEnd);
         if (hasAllies) {
             if (ImGui::Button(langGetText(STR_LEAVE_ALLIANCE), ImVec2(-1, 0)))
-                screenLeaveAllianceCS(cs);
+                clientSimLeaveAllianceSelf(cs);
         } else {
             if (!canRequest || inCooldown) ImGui::BeginDisabled();
             if (ImGui::Button(langGetText(STR_REQUEST_ALLIANCE), ImVec2(-1, 0))) {
-                screenRequestAllianceCS(cs);
+                clientSimRequestAllianceSelected(cs);
                 s_allianceReqCooldownEnd = SDL_GetTicks() + ALLIANCE_REQ_WAIT_MS;
             }
             if (!canRequest || inCooldown) ImGui::EndDisabled();
@@ -1343,7 +1317,7 @@ static void renderChangeNameModal(ClientSim *cs) {
         ImGui::OpenPopup(title);
         s_showChangeName    = false;
         s_changeNameBuf[0] = '\0';
-        screenGetPlayerNameCS(cs, s_changeNameBuf);
+        clientSimGetPlayerName(cs, s_changeNameBuf);
     }
     if (ImGui::BeginPopupModal(title, nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -1367,7 +1341,7 @@ static void renderChangeNameModal(ClientSim *cs) {
             } else if (s_changeNameBuf[0] == '*') {
                 /* invalid — stay open */
             } else {
-                if (screenSetPlayerNameCS(cs, s_changeNameBuf))
+                if (clientSimSetPlayerName(cs, s_changeNameBuf))
                     ImGui::CloseCurrentPopup();
                 /* else: name in use — stay open */
             }
@@ -1404,8 +1378,8 @@ static void renderAllianceRequest(ClientSim *cs) {
         {
             MessageArgs args = {};
             strncpy(args.playerName, s_alliancePlayerName, sizeof(args.playerName) - 1);
-            args.playerFlags = playersGetAccountFlags(&cs->sim.plyrs, s_alliancePlayerNum);
-            playersGetCountryCode(&cs->sim.plyrs, s_alliancePlayerNum, args.playerCountry);
+            args.playerFlags = clientSimGetPlayerAccountFlags(cs, s_alliancePlayerNum);
+            clientSimGetPlayerCountryCode(cs, s_alliancePlayerNum, args.playerCountry);
             ImGui::TextUnformatted(langGetTextFmt(STR_DLGALLIANCE_BLURB, &args));
         }
         ImGui::Spacing();
@@ -1531,8 +1505,8 @@ static void renderKeySetupModal(ClientSim *cs) {
         ImGui::OpenPopup(title);
         s_showKeySetup = false;
         windowGetKeys(&s_keySetupKeys);
-        s_keySetupAutoSlowdown = screenGetTankAutoSlowdownCS(cs);
-        s_keySetupAutoGunsight = screenGetTankAutoHideGunsightCS(cs);
+        s_keySetupAutoSlowdown = clientSimGetTankAutoSlowdown(cs);
+        s_keySetupAutoGunsight = clientSimGetTankAutoHideGunsight(cs);
         s_keySetupWaiting      = ksNone;
     }
 
@@ -1634,8 +1608,8 @@ static void renderKeySetupModal(ClientSim *cs) {
 
     if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0))) {
         windowSetKeys(&s_keySetupKeys);
-        screenSetTankAutoSlowdownCS(cs, s_keySetupAutoSlowdown);
-        screenSetTankAutoHideGunsightCS(cs, s_keySetupAutoGunsight);
+        clientSimSetTankAutoSlowdown(cs, s_keySetupAutoSlowdown);
+        clientSimSetTankAutoHideGunsight(cs, s_keySetupAutoGunsight);
         s_keySetupWaiting = ksNone;
         ImGui::CloseCurrentPopup();
     }
@@ -1701,7 +1675,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             s_settingsNameBuf[32] = '\0';
             utilStripName(s_settingsNameBuf);
             if (s_settingsNameBuf[0] != '\0' && s_settingsNameBuf[0] != '*') {
-                screenSetPlayerNameCS(cs, s_settingsNameBuf);
+                clientSimSetPlayerName(cs, s_settingsNameBuf);
             }
         }
         ImGui::SameLine();
@@ -1712,7 +1686,7 @@ static void renderSettingsPanel(ClientSim *cs) {
                 s_settingsNameBuf[32] = '\0';
                 utilStripName(s_settingsNameBuf);
                 if (s_settingsNameBuf[0] != '\0' && s_settingsNameBuf[0] != '*') {
-                    screenSetPlayerNameCS(cs, s_settingsNameBuf);
+                    clientSimSetPlayerName(cs, s_settingsNameBuf);
                 }
             }
         }
@@ -2101,8 +2075,8 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::MenuItem(langGetText(STR_MENU_NETSTATUS_MSGS),  nullptr, (bool)showNetworkStatusMessages)) windowMenuNetwork_toggle(cs);
         if (ImGui::MenuItem(langGetText(STR_MENU_NETDEBUG_MSGS),   nullptr, (bool)showNetworkDebugMessages))  windowMenuNetworkDebug_toggle(cs);
         ImGui::Separator();
-        if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     "Ctrl+R"))                                 screenRequestAllianceCS(cs);
-        if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))                                                 screenLeaveAllianceCS(cs);
+        if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     "Ctrl+R"))                                 clientSimRequestAllianceSelected(cs);
+        if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))                                                 clientSimLeaveAllianceSelf(cs);
         ImGui::Separator();
         if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS)))                                                  sdl3ImguiShowSettings();
         ImGui::EndMenu();
@@ -2124,19 +2098,18 @@ static void renderMenuBar(ClientSim *cs) {
         }
 #endif
         ImGui::Separator();
-        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALL),    false, ImGuiSelectableFlags_DontClosePopups))   screenCheckAllNonePlayersCS(cs, true);
-        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NONE),   false, ImGuiSelectableFlags_DontClosePopups))   screenCheckAllNonePlayersCS(cs, false);
-        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALLIES), false, ImGuiSelectableFlags_DontClosePopups))   screenCheckAlliedPlayersCS(cs);
-        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NEARBY), false, ImGuiSelectableFlags_DontClosePopups))   screenCheckNearbyPlayersCS(cs);
+        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALL),    false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAllNonePlayers(cs, true);
+        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NONE),   false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAllNonePlayers(cs, false);
+        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALLIES), false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAlliedPlayers(cs);
+        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NEARBY), false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckNearbyPlayers(cs);
         /* Pre-compute alliance state for each player */
-        players *plrs = &cs->sim.plyrs;
-        BYTE self = cs->myPlayerNum;
+        BYTE self = clientSimGetMyPlayerNum(cs);
         bool hasAllies  = false;
         bool canRequest = false;
         bool isAlly[MAX_PLAYERS] = {};
         for (int i = 0; i < MAX_PLAYERS; i++) {
             if (s_playerEnabled[i] && i != self) {
-                isAlly[i] = playersIsAllie(plrs, self, (BYTE)i);
+                isAlly[i] = clientSimIsPlayerAlly(cs, self, (BYTE)i);
                 if (isAlly[i]) {
                     hasAllies = true;
                 } else if (s_playerChecked[i]) {
@@ -2204,7 +2177,7 @@ static void renderMenuBar(ClientSim *cs) {
                 char selectLabel[64];
                 snprintf(selectLabel, sizeof(selectLabel), "%s##sel%d", label, i);
                 if (ImGui::Selectable(selectLabel, false, ImGuiSelectableFlags_DontClosePopups, ImVec2(fullWidth - rightWidth - spacing, 0))) {
-                    screenTogglePlayerCheckStateCS(cs, (BYTE)i);
+                    clientSimTogglePlayerCheckState(cs, (BYTE)i);
                 }
 
                 /* Right-aligned platform/WBN/Steam icons */
@@ -2240,12 +2213,12 @@ static void renderMenuBar(ClientSim *cs) {
             if (hasAllies) {
                 /* Already in an alliance — show Leave */
                 if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))
-                    screenLeaveAllianceCS(cs);
+                    clientSimLeaveAllianceSelf(cs);
             } else {
                 /* Not in an alliance — show Request */
                 if (!canRequest || inCooldown) ImGui::BeginDisabled();
                 if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE))) {
-                    screenRequestAllianceCS(cs);
+                    clientSimRequestAllianceSelected(cs);
                     s_allianceReqCooldownEnd = SDL_GetTicks() + ALLIANCE_REQ_WAIT_MS;
                 }
                 if (!canRequest || inCooldown) ImGui::EndDisabled();
@@ -2255,7 +2228,7 @@ static void renderMenuBar(ClientSim *cs) {
     }
 
     /* ---- Brains -------------------------------------- */
-    if (ImGui::BeginMenu(langGetText(STR_MENU_BRAINS), screenGetAiTypeCS(cs) != aiNone)) {
+    if (ImGui::BeginMenu(langGetText(STR_MENU_BRAINS), clientSimGetAiType(cs) != aiNone)) {
         bool running = luaBrainIsRunning() != 0;
         int  runIdx  = luaBrainGetRunningIndex();
 
@@ -2323,7 +2296,9 @@ static void renderMenuBar(ClientSim *cs) {
  * ------------------------------------------------------- */
 #ifdef _WIN32
 #include <commctrl.h>  /* SetWindowSubclass */
+#ifdef _MSC_VER
 #pragma comment(lib, "comctl32.lib")
+#endif
 
 #define ASPECT_SUBCLASS_ID 1
 
@@ -2742,7 +2717,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 windowHideMainView_toggle();
                 continue;
             case SDL_SCANCODE_R:
-                screenRequestAllianceCS(cs);
+                clientSimRequestAllianceSelected(cs);
                 continue;
             case SDL_SCANCODE_T:
                 /* Cycle through device resolution presets */
@@ -2801,7 +2776,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             const char *url = ev.drop.data;
             if (strncmp(url, "winbolo://", 10) == 0) {
                 WB_LOG_INFO(WB_LOG_CAT_GUI, "[URL] Received winbolo:// link while running: %s", url);
-                if (cs && cs->netStat == netRunning) {
+                if (cs && clientSimGetNetStatus(cs) == netRunning) {
                     /* In-game: show confirmation popup instead of switching immediately */
                     strncpy(s_joinConfirmUrl, url, sizeof(s_joinConfirmUrl) - 1);
                     s_joinConfirmUrl[sizeof(s_joinConfirmUrl) - 1] = '\0';
@@ -2850,7 +2825,6 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 /* Enforce aspect ratio: adjust height to match width */
                 int w = ev.window.data1;
                 int h = ev.window.data2;
-                int contentH = h - MENU_BAR_HEIGHT;
                 int correctContentH = w * SDL3_SCREEN_H / SDL3_SCREEN_W;
                 int correctH = correctContentH + MENU_BAR_HEIGHT;
                 if (h != correctH) {

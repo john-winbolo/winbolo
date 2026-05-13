@@ -31,15 +31,17 @@
 #include "global.h"
 #include "tank.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "messages.h"
 #include "players.h"
-#include "screen.h"
+#include "brain_data.h"
 #include "log.h"
 #include "../winbolonet/winbolonet.h"
 #include "bases.h"
 #include "game_sim.h"
 #include "client_sim.h"
-#include "../server/server_sim.h"
+#include "client_sim_internal.h"
+#include "server_sim.h"
 
 void basesUpdateTimer(GameSim *sim, int playerNumber){
 	sim->baseTimer[playerNumber]=BASE_TICKS_BETWEEN_REFUEL;
@@ -426,7 +428,7 @@ void basesUpdate(GameSim *sim, tank *tnk) {
 static void basesEmitCaptureMessage(GameSim *sim, struct ClientSim *cs,
                                     BYTE newOwner, BYTE prevOwner) {
   MessageArgs args;
-  BYTE selfPlayer = (cs != NULL) ? cs->myPlayerNum : sim->viewPlayer;
+  BYTE selfPlayer = (cs != NULL) ? clientSimGetMyPlayerNum(cs) : sim->viewPlayer;
   memset(&args, 0, sizeof(args));
   playersMakeMessageName(cs, &sim->plyrs, selfPlayer, newOwner, args.playerName);
   args.playerFlags = playersGetAccountFlags(&sim->plyrs, newOwner);
@@ -1543,7 +1545,7 @@ void basesGetBrainBaseInRect(ClientSim *cs, GameSim *sim, BYTE leftPos, BYTE rig
       } else {
         armour = (BYTE) ((*value)->item[count].armour / 5);
       }
-      screenAddBrainObject(cs, BASES_BRAIN_OBJECT_TYPE, wx, wy, count, armour, owner, 0);
+      brainDataAddObject(cs, BASES_BRAIN_OBJECT_TYPE, wx, wy, count, armour, owner, 0);
     }
     count++;
   }

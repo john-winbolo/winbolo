@@ -29,7 +29,7 @@
 #ifndef __SKINS_H
 #define __SKINS_H
 
-#include "../bolo/global.h"
+#include "global.h"
 
 /* The default skins directory is called skins */
 #define SKIN_DIR_STRING "skins"

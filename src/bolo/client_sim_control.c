@@ -23,6 +23,7 @@
 
 #include <string.h>
 #include "client_sim_control.h"
+#include "client_sim_internal.h"
 #include "players.h"
 
 void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {

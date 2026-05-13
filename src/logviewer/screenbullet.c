@@ -25,8 +25,8 @@
 *  Responsable for Shells tracking/collision detect etc.
 *********************************************************/
 
-#include "global.h"
-#include "screenbullet.h"
+#include "lv_global.h"
+#include "lv_screenbullet.h"
 
 /*********************************************************
 *NAME:          lv_screenBulletsCreate

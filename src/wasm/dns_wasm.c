@@ -3,8 +3,8 @@
  */
 
 #include <string.h>
-#include "../bolo/global.h"
-#include "../bolo/client_sim.h"
+#include "global.h"
+#include "client_sim.h"
 
 bool dnsLookupsCreate(ClientSim *cs)  { (void)cs; return TRUE; }
 void dnsLookupsDestroy(void) { }

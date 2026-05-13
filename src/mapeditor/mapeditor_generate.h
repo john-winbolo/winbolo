@@ -15,8 +15,8 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "../bolo/global.h"
-#include "../bolo/types.h"
+#include "global.h"
+#include "types.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -95,7 +95,7 @@ extern "C" {
 #define MAPGEN_LOCK_F_RIVERS      (1ull << 32)
 #define MAPGEN_LOCK_F_MINES       (1ull << 33)
 
-typedef struct {
+typedef struct MapGenConfig {
     /* Region to generate into (playable area or selection, pre-normalized) */
     int x1, y1, x2, y2;
 
@@ -189,6 +189,19 @@ void mapEditorGenerate(struct mapObj *mp, struct basesObj *bs,
  * non-deep-sea tiles within a search radius). Call after mapEditorGenerate
  * to fix up start directions. */
 void mapGenPointStartsToLand(struct mapObj *mp, struct startsObj *ss);
+
+/* Generate a random map from cfg, return it as a heap-allocated MapPreview
+ * that owns its internal substructs (release with clientMapPreviewDestroy).
+ * If outBuf is non-NULL, also writes the network-compressed serialization
+ * into outBuf[0..outBufCap-1] and stores the byte count in *outCompressedLen;
+ * a value <= 0 there indicates the buffer was too small or compression
+ * failed. Returns NULL (without writing outBuf) on allocation or generation
+ * failure. */
+struct MapPreview;
+struct MapPreview *mapEditorGenerateAsPreview(const MapGenConfig *cfg,
+                                              BYTE *outBuf,
+                                              int outBufCap,
+                                              int *outCompressedLen);
 
 #ifdef __cplusplus
 }

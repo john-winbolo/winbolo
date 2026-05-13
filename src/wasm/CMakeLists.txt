@@ -11,7 +11,7 @@
 #
 # Serve locally with: python3 -m http.server -d build-wasm-game
 
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.18)
 
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE INTERNAL "")
 
@@ -24,6 +24,8 @@ set(CMAKE_CXX_STANDARD 17)
 get_filename_component(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(SRC_ROOT "${REPO_ROOT}/src")
 set(DATA_DIR "${REPO_ROOT}/data")
+
+include(${REPO_ROOT}/cmake/bolo_lib.cmake)
 
 ###
 # Fetch dependencies (same versions as main build)
@@ -109,70 +111,19 @@ target_include_directories(imgui_backends PUBLIC
 target_link_libraries(imgui_backends PUBLIC SDL3::SDL3)
 
 ###
-# Bolo engine sources
+# bolo_static — the bulk of the bolo source set as a single static lib.
+# Only transport_udp_client.c stays per-target (HAVE_STEAM-divergent);
+# client_mapload.c and nat_portmap.c aren't referenced by the wasm build.
 #
+set(WINBOLO_VERSION "1.18")
+set(BOLO_VERSION_MAJOR 1)
+set(BOLO_VERSION_MINOR 1)
+set(BOLO_VERSION_REVISION 8)
+add_subdirectory(${REPO_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
+add_subdirectory(${REPO_ROOT}/brains ${CMAKE_BINARY_DIR}/bot_brains_static)
+
 set(BOLO_SOURCES
-    ${SRC_ROOT}/bolo/allience.c
-    ${SRC_ROOT}/bolo/bases.c
-    ${SRC_ROOT}/bolo/bolo_map.c
-    ${SRC_ROOT}/bolo/building.c
-    ${SRC_ROOT}/bolo/crc.c
-    ${SRC_ROOT}/bolo/debug_file_output.c
-    ${SRC_ROOT}/bolo/net_packet_debug.c
-    ${SRC_ROOT}/bolo/explosions.c
-    ${SRC_ROOT}/bolo/floodfill.c
-    ${SRC_ROOT}/bolo/gametype.c
-    ${SRC_ROOT}/bolo/global.c
-    ${SRC_ROOT}/bolo/grass.c
-    ${SRC_ROOT}/bolo/labels.c
-    ${SRC_ROOT}/bolo/lgm.c
-    ${SRC_ROOT}/bolo/log.c
-    ${SRC_ROOT}/bolo/messages.c
-    ${SRC_ROOT}/bolo/mines.c
-    ${SRC_ROOT}/bolo/minesexp.c
-    ${SRC_ROOT}/bolo/gui_message.c
-    ${SRC_ROOT}/bolo/pillbox.c
-    ${SRC_ROOT}/bolo/players.c
-    ${SRC_ROOT}/bolo/playername_validate.c
-    ${SRC_ROOT}/bolo/playersrejoin.c
-    ${SRC_ROOT}/bolo/rubble.c
-    ${SRC_ROOT}/bolo/screen.c
-    ${SRC_ROOT}/bolo/screenbrainmap.c
-    ${SRC_ROOT}/bolo/screenbullet.c
-    ${SRC_ROOT}/bolo/screencalc.c
-    ${SRC_ROOT}/bolo/screenlgm.c
-    ${SRC_ROOT}/bolo/screentank.c
-    ${SRC_ROOT}/bolo/scroll.c
-    ${SRC_ROOT}/bolo/scroll_item_list.c
-    ${SRC_ROOT}/bolo/shells.c
-    ${SRC_ROOT}/bolo/sounddist.c
-    ${SRC_ROOT}/bolo/starts.c
-    ${SRC_ROOT}/bolo/swamp.c
-    ${SRC_ROOT}/bolo/tank.c
-    ${SRC_ROOT}/bolo/tankexp.c
-    ${SRC_ROOT}/bolo/treegrow.c
-    ${SRC_ROOT}/bolo/udppackets.c
-    ${SRC_ROOT}/bolo/util.c
-    ${SRC_ROOT}/bolo/braincore.c
-    ${SRC_ROOT}/bolo/brain_data.c
-    ${SRC_ROOT}/bolo/brain_overlay.c
-    ${SRC_ROOT}/bolo/brain_pathfinder.c
-    ${SRC_ROOT}/bolo/brain_pathfinder_serial.c
-    ${SRC_ROOT}/bolo/brain_worldsim.c
-    ${SRC_ROOT}/bolo/transport_local.c
-    ${SRC_ROOT}/bolo/transport_udp_common.c
     ${SRC_ROOT}/bolo/transport_udp_client.c
-    ${SRC_ROOT}/bolo/transport_udp_server.c
-    ${SRC_ROOT}/bolo/client_state.c
-    ${SRC_ROOT}/bolo/client_snapshot.c
-    ${SRC_ROOT}/bolo/interpolation.c
-    ${SRC_ROOT}/bolo/position_history.c
-    ${SRC_ROOT}/bolo/client_sim.c
-    ${SRC_ROOT}/bolo/client_sim_control.c
-    ${SRC_ROOT}/bolo/bot_manager.c
-    ${SRC_ROOT}/bolo/bot_worker_pool.c
-    ${SRC_ROOT}/bolo/tutorial.c
-    ${SRC_ROOT}/bolo/discovery.c
 )
 
 # Server modules (used by client too)
@@ -182,6 +133,7 @@ set(SERVER_SOURCES
     ${SRC_ROOT}/server/servermessages.c
     ${SRC_ROOT}/server/server_sim.c
     ${SRC_ROOT}/server/server_stubs.c
+    ${SRC_ROOT}/server/server_dedicated_log_stubs.c
     ${SRC_ROOT}/server/posix_stubs.c
 )
 
@@ -252,18 +204,6 @@ set(WASM_SOURCES
     ${SRC_ROOT}/common/wb_log.c
 )
 
-# Per-bot C bindings under brains/<bot>/c/*.c (e.g. NewAutopilot's
-# pillcontrib overlay). luabrainshandler.c #includes these headers and
-# calls into their per-tick registrations, so they must be compiled in
-# and their directories added to the include path.
-file(GLOB BOT_C_SOURCES CONFIGURE_DEPENDS "${REPO_ROOT}/brains/*/c/*.c")
-set(BOT_C_INCLUDE_DIRS "")
-foreach(_bot_c_src ${BOT_C_SOURCES})
-    get_filename_component(_bot_c_dir "${_bot_c_src}" DIRECTORY)
-    list(APPEND BOT_C_INCLUDE_DIRS "${_bot_c_dir}")
-endforeach()
-list(REMOVE_DUPLICATES BOT_C_INCLUDE_DIRS)
-
 ###
 # Build the WASM executable
 #
@@ -275,21 +215,25 @@ add_executable(winbolo
     ${GUI_SOURCES}
     ${MAPEDITOR_SOURCES}
     ${WASM_SOURCES}
-    ${BOT_C_SOURCES}
 )
 
 target_include_directories(winbolo PRIVATE
     ${SRC_ROOT}/gui/sdl3
     ${SRC_ROOT}/gui
-    ${SRC_ROOT}/bolo
     ${SRC_ROOT}/server
     ${SRC_ROOT}/mapeditor
-    ${BOT_C_INCLUDE_DIRS}
 )
+bolo_apply_include_rules(winbolo gui)
+bolo_grant_internal_source_access(winbolo
+    ${SRC_ROOT}/bolo/transport_udp_client.c
+    ${SRC_ROOT}/server/server_sim.c
+    ${SRC_ROOT}/server/servermessages.c
+    ${SRC_ROOT}/mapeditor/mapeditor_generate.c)
 
 target_compile_definitions(winbolo PRIVATE
     _GNU_SOURCE
     USE_64WITH32
+    HAVE_SCREEN_C=1
     WINBOLO_VERSION="1.18"
     BOLO_VERSION_MAJOR=1
     BOLO_VERSION_MINOR=1
@@ -298,6 +242,7 @@ target_compile_definitions(winbolo PRIVATE
 target_compile_options(winbolo PRIVATE -fno-common -include sys/types.h)
 target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")
 
+target_link_libraries(winbolo PRIVATE bolo_static bot_brains_static)
 target_link_libraries(winbolo PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf

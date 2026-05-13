@@ -21,11 +21,11 @@
  *  reads decisions back out. Pure data shaping; no I/O,
  *  rendering, or network code.
  *
- *  Contents (declared in screen.h):
- *    screenMakeBrainViewDataCS  - terrain rect for the brain's view
- *    screenMakeBrainInfoCS      - populate BrainInfo before think()
- *    screenExtractBrainInfoCS   - read brain decisions back, free buffers
- *    screenAddBrainObject       - append an object to the brain object list
+ *  Contents (declared in brain_data.h):
+ *    brainDataMakeViewData  - terrain rect for the brain's view
+ *    brainDataMakeInfo      - populate BrainInfo before think()
+ *    brainDataExtractInfo   - read brain decisions back, free buffers
+ *    brainDataAddObject     - append an object to the brain object list
  *
  *  Companion file: client_snapshot.c (server snapshot apply +
  *  input packet building).
@@ -49,6 +49,7 @@
 #include "explosions.h"
 #include "screenbullet.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "sounddist.h"
 #include "messages.h"
 #include "grass.h"
@@ -66,21 +67,22 @@
 #include "labels.h"
 #include "players.h"
 #include "screenbrainmap.h"
-#include "screen.h"
+#include "brain_data.h"
 #include "client_state.h"
 #include "interpolation.h"
 #include "util.h"
 #include "client_sim.h"
-#include "../server/server_sim.h"
+#include "client_sim_internal.h"
+#include "server_sim.h"
 #include "../steam/steam_wrapper.h"
 
 /*********************************************************
-*NAME:          screenMakeBrainViewData
+*NAME:          brainDataMakeViewData
 *AUTHOR:        John Morrison
 *CREATION DATE: 25/11/99
 *LAST MODIFIED: 26/11/99
 *PURPOSE:
-*  Makes the view information including base and pills 
+*  Makes the view information including base and pills
 *  for the brain.
 *
 *ARGUMENTS:
@@ -90,26 +92,27 @@
 *  topPos    - top position on the map to get data from
 *  bottomPos - bottom position on the map to get data from
 *********************************************************/
-void screenMakeBrainViewDataCS(ClientSim *cs, BYTE *buff, BYTE leftPos, BYTE rightPos, BYTE topPos, BYTE bottomPos) {
+void brainDataMakeViewData(ClientSim *cs, BYTE *buff, BYTE leftPos, BYTE rightPos, BYTE topPos, BYTE bottomPos) {
   BYTE count1; /* Looping variable */
   BYTE count2; /* Looping variable */
   BYTE pos;    /* Upto position    */
+  GameSim *gs = clientSimGetGameSim(cs);
 
   pos = 0;
   for (count1=topPos;count1<=bottomPos;count1++) {
     for (count2=leftPos;count2<=rightPos;count2++) {
-      if (basesExistPos(&cs->sim.bs, count2, count1) == TRUE) {
+      if (basesExistPos(&gs->bs, count2, count1) == TRUE) {
         buff[pos] = BREFBASE_T;
-      } else if (pillsExistPos(&cs->sim.pb, count2, count1) == TRUE) {
+      } else if (pillsExistPos(&gs->pb, count2, count1) == TRUE) {
         buff[pos] = BPILLBOX_T;
       } else {
-        buff[pos] = mapGetPos(&cs->sim.mp, count2, count1);
+        buff[pos] = mapGetPos(&gs->mp, count2, count1);
         if (buff[pos] == DEEP_SEA) {
           buff[pos] = BDEEPSEA;
         } else if (buff[pos] >= MINE_START && buff[pos] <= MINE_END) {
           buff[pos] = buff[pos] - MINE_SUBTRACT;
         }
-        if (minesExistPos(&cs->sim.mns, &cs->sim.mp, count2, count1) == TRUE) {
+        if (minesExistPos(&gs->mns, &gs->mp, count2, count1) == TRUE) {
           buff[pos] |= TERRAIN_MINE;
         }
       }
@@ -118,7 +121,7 @@ void screenMakeBrainViewDataCS(ClientSim *cs, BYTE *buff, BYTE leftPos, BYTE rig
   }
 }
 /*********************************************************
-*NAME:          screenMakeBrainInfo
+*NAME:          brainDataMakeInfo
 *AUTHOR:        John Morrison
 *CREATION DATE: 25/11/99
 *LAST MODIFIED: 28/11/99
@@ -130,28 +133,29 @@ void screenMakeBrainViewDataCS(ClientSim *cs, BYTE *buff, BYTE leftPos, BYTE rig
 *  first - TRUE if this is the first time we have been
 *          called
 *********************************************************/
-void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiType aiMode) {
+void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType aiMode) {
   BYTE tx;        /* Tank X and Y Co-ordinates */
   BYTE ty;
   BYTE closeBase; /* The closest base to our current position */
+  GameSim *gs = clientSimGetGameSim(csPtr);
 
 
   if (MY_TANK(csPtr) == NULL) {
     return;
   }
-  
+
   tx = tankGetMX(&MY_TANK(csPtr));
   ty = tankGetMY(&MY_TANK(csPtr));
 
   /* Max's */
   value->max_players = MAX_TANKS;//-1; /* FIXME: Huh? */
-  value->max_refbases = basesGetNumBases(&csPtr->sim.bs);//-1;
-  value->max_pillboxes = pillsGetNumPills(&csPtr->sim.pb);//-1;
-  value->player_number = csPtr->myPlayerNum;
-  value->num_players = playersGetNumPlayers(&csPtr->sim.plyrs);
-  value->playernames = playersGetBrainsNamesArray(&csPtr->sim.plyrs);
+  value->max_refbases = basesGetNumBases(&gs->bs);//-1;
+  value->max_pillboxes = pillsGetNumPills(&gs->pb);//-1;
+  value->player_number = clientSimGetMyPlayerNum(csPtr);
+  value->num_players = playersGetNumPlayers(&gs->plyrs);
+  value->playernames = playersGetBrainsNamesArray(&gs->plyrs);
   value->allies = malloc(sizeof(PlayerBitMap));
-  *(value->allies) = playersGetAlliesBitMap(&csPtr->sim.plyrs, csPtr->myPlayerNum);
+  *(value->allies) = playersGetAlliesBitMap(&gs->plyrs, clientSimGetMyPlayerNum(csPtr));
 
   /* Tank */
   tankGetWorld(&MY_TANK(csPtr), &(value->tankx), &(value->tanky));
@@ -162,18 +166,18 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   value->tank_angle = (MY_TANK(csPtr) != NULL) ? (float)MY_TANK(csPtr)->angle : 0.0f;
   value->speed = (BYTE) (tankGetSpeed(&MY_TANK(csPtr)) * 4);
   value->inboat = tankIsOnBoat(&MY_TANK(csPtr));
-  value->hidden = utilIsTankInTrees(&csPtr->sim.mp, &csPtr->sim.pb, &csPtr->sim.bs, value->tankx, value->tanky);
+  value->hidden = utilIsTankInTrees(&gs->mp, &gs->pb, &gs->bs, value->tankx, value->tanky);
 
   tankGetStats(&MY_TANK(csPtr), &(value->shells), &(value->mines), &(value->armour), &(value->trees));
 
 
   /* Count carried pills from pillbox state (server syncs inTank via snapshots/events) */
   {
-    BYTE selfPlayer = csPtr->myPlayerNum;
-    BYTE numPb = pillsGetNumPills(&csPtr->sim.pb);
+    BYTE selfPlayer = clientSimGetMyPlayerNum(csPtr);
+    BYTE numPb = pillsGetNumPills(&gs->pb);
     BYTE carried = 0;
     for (BYTE pi = 0; pi < numPb; pi++) {
-      if ((*csPtr->sim.pb).item[pi].inTank && (*csPtr->sim.pb).item[pi].owner == selfPlayer) {
+      if ((*gs->pb).item[pi].inTank && (*gs->pb).item[pi].owner == selfPlayer) {
         carried++;
       }
     }
@@ -198,18 +202,19 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   value->tankobstructed = tankIsObstructed(&MY_TANK(csPtr));
 
   /* Server tick and assistant message */
-  value->server_tick = csPtr->lastServerTick;
-  value->assistant_msg = csPtr->brainLastAssistMsg;
-  csPtr->brainLastAssistMsg = 0;  /* consume once */
+  value->server_tick = clientSimGetLastServerTick(csPtr);
+  value->assistant_msg = clientSimGetBrainLastAssistMsg(csPtr);
+  clientSimSetBrainLastAssistMsg(csPtr, 0);  /* consume once */
 
   /* Filter brain events based on aiMode */
   {
     int ei;
     int filtered = 0;
-    int evCount = csPtr->brainEventCount;
+    int evCount = clientSimGetBrainEventCount(csPtr);
+    const GameEvent *brainEvents = clientSimGetBrainEvents(csPtr);
     GameEvent *buf = evCount > 0 ? malloc(sizeof(GameEvent) * evCount) : NULL;
     for (ei = 0; ei < evCount; ei++) {
-      GameEvent *e = &csPtr->brainEvents[ei];
+      const GameEvent *e = &brainEvents[ei];
       switch (e->type) {
       case EVENT_PILL_CAPTURED:
       case EVENT_BASE_CAPTURED:
@@ -240,9 +245,9 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
         } else {
           /* Look up base position and check view rect */
           BYTE idx = e->data[0];
-          if (idx < MAX_BASES && csPtr->sim.bs != NULL) {
-            BYTE bx = (*csPtr->sim.bs).item[idx].x;
-            BYTE by = (*csPtr->sim.bs).item[idx].y;
+          if (idx < MAX_BASES && gs->bs != NULL) {
+            BYTE bx = (*gs->bs).item[idx].x;
+            BYTE by = (*gs->bs).item[idx].y;
             if (bx >= value->view_left && bx <= value->view_left + value->view_width &&
                 by >= value->view_top && by <= value->view_top + value->view_height) {
               buf[filtered++] = *e;
@@ -256,18 +261,18 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
     }
     value->events = buf;
     value->num_events = (u_short)filtered;
-    csPtr->brainEventCount = 0;
+    clientSimSetBrainEventCount(csPtr, 0);
   }
 
   /* Base nearby */
-  closeBase = basesGetClosest(&csPtr->sim, value->tankx, value->tanky);
+  closeBase = basesGetClosest(gs, value->tankx, value->tanky);
   if (closeBase == BASE_NOT_FOUND) {
     value->base = NULL;
   } else {
     value->base = (ObjectInfo*) malloc(sizeof(ObjectInfo));
     value->base->object = OBJECT_REFBASE;
     value->base->idnum = closeBase;
-    basesGetBrainBaseItem(&csPtr->sim, closeBase, &(value->base->x), &(value->base->y), &(value->base->info), &(value->base_shells), &(value->base_mines), &(value->base_armour));
+    basesGetBrainBaseItem(gs, closeBase, &(value->base->x), &(value->base->y), &(value->base->info), &(value->base_shells), &(value->base_mines), &(value->base_armour));
     value->base->direction = value->base_armour;
   }
 
@@ -280,11 +285,11 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
 
   /* Pillview — bots always use tank-centered view (no pill view) */
   value->pillview = malloc(sizeof(WORD));
-  if (csPtr->inPillView == TRUE) {
-    *(value->pillview) = pillsGetPillNum(&csPtr->sim.pb, csPtr->pillViewX, csPtr->pillViewY, FALSE, FALSE) -1;
-    value->view_left = csPtr->pillViewX-7;
+  if (clientSimIsInPillView(csPtr) == TRUE) {
+    *(value->pillview) = pillsGetPillNum(&gs->pb, clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr), FALSE, FALSE) -1;
+    value->view_left = clientSimGetPillViewX(csPtr)-7;
     value->view_width = 15;
-    value->view_top = csPtr->pillViewY-7;
+    value->view_top = clientSimGetPillViewY(csPtr)-7;
     value->view_height = 15;
   } else {
     *(value->pillview) = 0x8000;
@@ -295,7 +300,7 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   }
   //value->viewdata = malloc((value->view_width+1) * (value->view_height+1));
   value->viewdata = malloc(30 * 30);
-  screenMakeBrainViewDataCS(csPtr, value->viewdata, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
+  brainDataMakeViewData(csPtr, value->viewdata, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
 
   /* From Bolo Version History:
   Added option to give Brains an advantage to make them more
@@ -310,49 +315,51 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   if (aiMode == aiYesAdvantage || aiMode == aiFull) {
     value->gameinfo.assist_AI = TRUE;
     if (aiMode == aiFull && first == TRUE) {
-      screenBrainMapFillFromMap(csPtr, &csPtr->sim.mp, &csPtr->sim.mns);
+      screenBrainMapFillFromMap(csPtr, &gs->mp, &gs->mns);
     }
-    basesGetBrainBaseInRect(csPtr, &csPtr->sim, 0, 255, 0, 255);
-    pillsGetBrainPillsInRect(csPtr, &csPtr->sim, &csPtr->sim.pb, 0, 255, 0, 255);
-    shellsGetBrainShellsInRect(csPtr, &csPtr->sim, &csPtr->sim.shs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
-    playersGetBrainTanksInRect(csPtr, &csPtr->sim.plyrs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height), value->tankx, value->tanky);
-    playersGetBrainLgmsInRect(csPtr, &csPtr->sim.plyrs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
+    basesGetBrainBaseInRect(csPtr, gs, 0, 255, 0, 255);
+    pillsGetBrainPillsInRect(csPtr, gs, &gs->pb, 0, 255, 0, 255);
+    shellsGetBrainShellsInRect(csPtr, gs, &gs->shs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
+    playersGetBrainTanksInRect(csPtr, &gs->plyrs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height), value->tankx, value->tanky);
+    playersGetBrainLgmsInRect(csPtr, &gs->plyrs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
   } else {
     /* Must be aiYes else we wouldn't be called would we? */
-    basesGetBrainBaseInRect(csPtr, &csPtr->sim, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
-    pillsGetBrainPillsInRect(csPtr, &csPtr->sim, &csPtr->sim.pb, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
-    shellsGetBrainShellsInRect(csPtr, &csPtr->sim, &csPtr->sim.shs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
-    playersGetBrainTanksInRect(csPtr, &csPtr->sim.plyrs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height), value->tankx, value->tanky);
-    playersGetBrainLgmsInRect(csPtr, &csPtr->sim.plyrs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
+    basesGetBrainBaseInRect(csPtr, gs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
+    pillsGetBrainPillsInRect(csPtr, gs, &gs->pb, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
+    shellsGetBrainShellsInRect(csPtr, gs, &gs->shs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
+    playersGetBrainTanksInRect(csPtr, &gs->plyrs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height), value->tankx, value->tanky);
+    playersGetBrainLgmsInRect(csPtr, &gs->plyrs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
   }
   /* Bots have no client-side prediction layer that fills sim.shs, so
    * shellsGetBrainShellsInRect above adds nothing for bot players.
    * Mirror the snapshot shells (now retained for bots — see
-   * screenSyncFromSnapshotCS) into the brain object array so
+   * clientApplySnapshot) into the brain object array so
    * info.objects actually contains type=OBJECT_SHOT entries the
    * brain (and BrainTest's shell-hitbox overlay) can render. */
-  if (csPtr->isBot) {
+  if (clientSimIsBot(csPtr)) {
     BYTE leftPos   = value->view_left;
     BYTE rightPos  = (BYTE)(value->view_left  + value->view_width);
     BYTE topPos    = value->view_top;
     BYTE bottomPos = (BYTE)(value->view_top   + value->view_height);
-    BYTE myPN      = csPtr->myPlayerNum;
-    for (int i = 0; i < csPtr->serverShellCount; i++) {
-      const ShellSnapshot *s = &csPtr->serverShellSnaps[i];
+    BYTE myPN      = clientSimGetMyPlayerNum(csPtr);
+    int shellCount = clientSimGetServerShellCount(csPtr);
+    const ShellSnapshot *shellSnaps = clientSimGetServerShellSnaps(csPtr);
+    for (int i = 0; i < shellCount; i++) {
+      const ShellSnapshot *s = &shellSnaps[i];
       BYTE smx = (BYTE)(s->worldX >> TANK_SHIFT_MAPSIZE);
       BYTE smy = (BYTE)(s->worldY >> TANK_SHIFT_MAPSIZE);
       if (smx < leftPos || smx > rightPos || smy < topPos || smy > bottomPos)
         continue;
       BYTE owner;
       if (s->owner == NEUTRAL) owner = SHELLS_BRAIN_NEUTRAL;
-      else if (playersIsAllie(&csPtr->sim.plyrs, myPN, s->owner) == TRUE)
+      else if (playersIsAllie(&gs->plyrs, myPN, s->owner) == TRUE)
         owner = SHELLS_BRAIN_FRIENDLY;
       else
         owner = SHELLS_BRAIN_HOSTILE;
-      screenAddBrainObject(csPtr, SHELLS_BRAIN_OBJECT_TYPE,
-                           s->worldX, s->worldY, 0,
-                           utilGet16Dir((TURNTYPE)s->angle),
-                           owner, 0);
+      brainDataAddObject(csPtr, SHELLS_BRAIN_OBJECT_TYPE,
+                         s->worldX, s->worldY, 0,
+                         utilGet16Dir((TURNTYPE)s->angle),
+                         owner, 0);
     }
   }
 
@@ -360,11 +367,11 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   *clientSimGetBrainsNumObjects(csPtr) = 0;
 
   /* Message */
-  if (messageIsNewMessage(&csPtr->messages) == TRUE) {
+  if (messageIsNewMessage(clientSimGetMessages(csPtr)) == TRUE) {
     value->message = (MessageInfo*) malloc(sizeof(MessageInfo));
     value->message->receivers = malloc(sizeof(value->message->receivers));
     value->message->message = malloc(512);
-    value->message->sender = messageGetNewMessage(&csPtr->messages, (char *) value->message->message, &(value->message->receivers)); /* FIXME: Second parameter? */
+    value->message->sender = messageGetNewMessage(clientSimGetMessages(csPtr), (char *) value->message->message, &(value->message->receivers)); /* FIXME: Second parameter? */
   } else {
     value->message = NULL;
   }
@@ -390,22 +397,22 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
   value->theWorld = screenBrainMapGetPointer(csPtr);
 
   /* Game Info */
-  strcpy(((char *) &(value->gameinfo.mapname)), csPtr->mapName);
-  value->gameinfo.gametype = gameTypeGet(&csPtr->sim.game);
-  value->gameinfo.start_delay = csPtr->gmeStartDelay;
-  value->gameinfo.time_limit = csPtr->gmeLength;
+  strcpy(((char *) &(value->gameinfo.mapname)), clientSimGetMapName(csPtr));
+  value->gameinfo.gametype = gameTypeGet(&gs->game);
+  value->gameinfo.start_delay = clientSimGetGmeStartDelay(csPtr);
+  value->gameinfo.time_limit = clientSimGetGmeLength(csPtr);
 
-  if (minesGetAllowHiddenMines(&csPtr->sim.mns) == TRUE) {
+  if (minesGetAllowHiddenMines(&gs->mns) == TRUE) {
     value->gameinfo.hidden_mines = GAMEINFO_HIDDENMINES;
   } else {
     value->gameinfo.hidden_mines = GAMEINFO_ALLMINES_VISIBLE;
   }
-  value->gameinfo.gameid.start_time = (unsigned long) csPtr->timeStart;
-  value->gameinfo.gameid.serveraddress = csPtr->serverAddress;
-  value->gameinfo.gameid.serverport = csPtr->serverPort;
+  value->gameinfo.gameid.start_time = (unsigned long) clientSimGetTimeStart(csPtr);
+  value->gameinfo.gameid.serveraddress = clientSimGetServerAddress(csPtr);
+  value->gameinfo.gameid.serverport = clientSimGetServerPort(csPtr);
 }
 /*********************************************************
-*NAME:          screenExtractBrainInfo
+*NAME:          brainDataExtractInfo
 *AUTHOR:        John Morrison
 *CREATION DATE: 26/11/99
 *LAST MODIFIED: 13/12/99
@@ -416,7 +423,7 @@ void screenMakeBrainInfoCS(ClientSim *csPtr, BrainInfo *value, bool first, aiTyp
 *ARGUMENTS:
 *  value - Pointer to the brain info structure
 *********************************************************/
-void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
+void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
   BYTE pillNum;
 
   free(value->allies);
@@ -426,17 +433,18 @@ void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
 
   /* Pill view manipulation */
   if (*(value->pillview) != 0x8000) {
+    GameSim *gs = clientSimGetGameSim(csPtr);
     pillNum = (BYTE) (*(value->pillview));
-    if (pillNum != (pillsGetPillNum(&csPtr->sim.pb, csPtr->pillViewX, csPtr->pillViewY, FALSE, FALSE)-1)) {
-      if (pillsSetView(&csPtr->sim, &csPtr->sim.pb, pillNum, csPtr->myPlayerNum) == TRUE) {
+    if (pillNum != (pillsGetPillNum(&gs->pb, clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr), FALSE, FALSE)-1)) {
+      if (pillsSetView(gs, &gs->pb, pillNum, clientSimGetMyPlayerNum(csPtr)) == TRUE) {
         /* We can set the new view */
         pillbox p;
-        pillsGetPill(&csPtr->sim.pb, &p, (BYTE) (pillNum+ 1));
-        csPtr->inPillView = TRUE;
-        csPtr->pillViewX = p.x;
-        csPtr->pillViewY = p.y;
-        scrollCenterObject(&csPtr->scroll, &csPtr->xOffset, &csPtr->yOffset, csPtr->pillViewX, csPtr->pillViewY);
-        screenReCalcCS(csPtr);
+        pillsGetPill(&gs->pb, &p, (BYTE) (pillNum+ 1));
+        clientSimSetInPillView(csPtr, TRUE);
+        clientSimSetPillViewX(csPtr, p.x);
+        clientSimSetPillViewY(csPtr, p.y);
+        scrollCenterObject(clientSimGetScroll(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), clientSimGetPillViewX(csPtr), clientSimGetPillViewY(csPtr));
+        clientSimRecalc(csPtr);
       }
     }
   }
@@ -459,7 +467,7 @@ void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
 
   /* Build requests are routed through InputPacket so the server sim
    * processes them authoritatively.  brainBuildInfo->action is 1-based
-   * (0=none, 1=BsTrees, 2=BsRoad, ...) and screenBuildInputPacket
+   * (0=none, 1=BsTrees, 2=BsRoad, ...) and clientBuildInputPacket
    * will pick it up and put it in the InputPacket as-is.  The server
    * sim decrements to 0-based before passing to lgmAddRequest. */
   if (value->build->action != 0) {
@@ -467,7 +475,7 @@ void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
       /* Tank is dead, cancel build */
       value->build->action = 0;
     }
-    /* Otherwise leave action set for screenBuildInputPacket to read */
+    /* Otherwise leave action set for clientBuildInputPacket to read */
   }
 
   /* Allies */
@@ -478,19 +486,20 @@ void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
   /* Message Sending */
   if (value->sendmessage[0] != 0) {
     char msg[255];
+    GameSim *gs = clientSimGetGameSim(csPtr);
     utilPtoCString((char *) value->sendmessage, msg);
     if (*(value->messagedest) == 0) {
       /* Its a debug message */
-      clientMessageAdd(&csPtr->messages, AIMessage, langGetText(MESSAGE_AI), msg);
+      clientMessageAdd(clientSimGetMessages(csPtr), AIMessage, langGetText(MESSAGE_AI), msg);
     } else {
       /* Send this message to the appropriate players */
-      playersSendAiMessage(csPtr, &csPtr->sim, &csPtr->sim.plyrs, *(value->messagedest), msg);
+      playersSendAiMessage(csPtr, gs, &gs->plyrs, *(value->messagedest), msg);
     }
     clientSimGetBrainsMessage(csPtr)[0] = '\0';
   }
 }
 /*********************************************************
-*NAME:          screenAddBrainObject
+*NAME:          brainDataAddObject
 *AUTHOR:        John Morrison
 *CREATION DATE: 28/11/99
 *LAST MODIFIED: 28/11/99
@@ -505,7 +514,7 @@ void screenExtractBrainInfoCS(ClientSim *csPtr, BrainInfo *value) {
 *  dir    - Direction of the object
 *  info   - Object info
 *********************************************************/
-void screenAddBrainObject(ClientSim *cs, unsigned short object, WORLD wx, WORLD wy, unsigned short idNum, BYTE dir, BYTE info, BYTE speed) {
+void brainDataAddObject(ClientSim *cs, unsigned short object, WORLD wx, WORLD wy, unsigned short idNum, BYTE dir, BYTE info, BYTE speed) {
   unsigned short *numObjects;
   ObjectInfo *objects;
 

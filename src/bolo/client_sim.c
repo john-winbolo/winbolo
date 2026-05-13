@@ -26,8 +26,10 @@
 #include <string.h>
 #include <time.h>
 #include "client_sim.h"
+#include "client_sim_internal.h"
+#include "client_snapshot.h"
 #include "client_state.h"
-#include "screen.h"
+#include "client_ui_events.h"
 #include "global.h"
 #include "bolo_map.h"
 #include "pillbox.h"
@@ -52,6 +54,8 @@
 #include "screenbrainmap.h"
 #include "util.h"
 #include "netpacks.h"
+#include "transport.h"
+#include "transport_udp.h"
 #include "../gui/lang.h"
 #include "../gui/dnsLookups.h"
 #include "../gui/clientmutex.h"
@@ -104,7 +108,7 @@ static void csCallbackSoundDist(void *ctx, sndEffects value, BYTE mx, BYTE my) {
 
 static void csCallbackCenterTank(void *ctx) {
   ClientSim *cs = (ClientSim *)ctx;
-  screenTankViewCS(cs);
+  clientSimTankView(cs);
 }
 
 static void csCallbackSoundDistShoot(void *ctx, BYTE mx, BYTE my, BYTE owner) {
@@ -132,11 +136,21 @@ static void csCallbackMineVisible(void *ctx, BYTE mx, BYTE my, BYTE sourcePlayer
  * The static globals were removed in the Phase 0 refactor. */
 
 /*********************************************************
+ *NAME:          clientSimAlloc
+ *PURPOSE:
+ *  Heap-allocates a zero-initialised ClientSim. Pairs with
+ *  clientSimDestroy, which frees the returned pointer.
+ *********************************************************/
+ClientSim *clientSimAlloc(void) {
+  return (ClientSim *)calloc(1, sizeof(ClientSim));
+}
+
+/*********************************************************
  *NAME:          clientSimCreate
  *PURPOSE:
  *  Initializes a ClientSim struct with all simulation state.
  *  This is the simulation-only initialization; rendering
- *  setup is handled separately by screenRenderSetup().
+ *  setup is handled separately by viewportInit().
  *
  *ARGUMENTS:
  *  cs         - Pointer to the ClientSim to initialize
@@ -148,8 +162,19 @@ static void csCallbackMineVisible(void *ctx, BYTE mx, BYTE my, BYTE sourcePlayer
 bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDelay, int32_t gmeLen) {
   (void)srtDelay;  /* Used by screen.c for display */
   (void)gmeLen;    /* Used by screen.c for display */
-  
+
+  /* Preserve the transport binding across the wipe. clientSimResetForMapLoad
+   * runs the destroy-internals + clientSimCreate sequence in place to keep
+   * the live transport (and its still-valid map blob) intact; fresh
+   * clientSimAlloc + clientSimCreate callers have zeroed transport fields
+   * anyway, so save/restore is a no-op there. */
+  Transport savedTransport = cs->transport;
+  bool savedHasTransport   = cs->hasTransport;
+  bool savedIsUdpTransport = cs->isUdpTransport;
   memset(cs, 0, sizeof(*cs));
+  cs->transport       = savedTransport;
+  cs->hasTransport    = savedHasTransport;
+  cs->isUdpTransport  = savedIsUdpTransport;
   cs->myPlayerNum = 0;
   cs->sim.viewPlayer = 0;
 
@@ -251,16 +276,40 @@ void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum) {
     }
 }
 
+void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
+                        const char *playerName,
+                        uint8_t clientType, uint8_t clientFlags) {
+    if (MY_TANK(cs) != NULL) {
+        tankDestroy(&cs->sim, &MY_TANK(cs));
+        MY_TANK(cs) = NULL;
+    }
+    tankCreate(&cs->sim, &MY_TANK(cs));
+    playersSetSelf(cs, &cs->sim, &cs->sim.plyrs,
+                   (playerNumbers)playerNum,
+                   (char *)playerName, TRUE);
+    playersSetClientType (&cs->sim.plyrs, playerNum, clientType);
+    playersSetClientFlags(&cs->sim.plyrs, playerNum, clientFlags);
+}
+
 /*********************************************************
  *NAME:          clientSimDestroy
  *PURPOSE:
- *  Cleans up all simulation state in a ClientSim struct.
- *  Rendering cleanup is handled separately by screenRenderDestroy().
+ *  Cleans up all simulation state in a ClientSim struct and
+ *  frees the cs pointer (pairs with clientSimAlloc). Also
+ *  frees the viewport buffers (view/mineView) so the caller
+ *  doesn't need a separate viewportDestroy call.
+ *  Accepts NULL as a no-op.
  *
  *ARGUMENTS:
- *  cs - Pointer to the ClientSim to destroy
+ *  cs - Pointer to the ClientSim to destroy and free
  *********************************************************/
-void clientSimDestroy(ClientSim *cs) {
+/* Tears down all owned simulation state on cs but does NOT free cs
+ * itself or touch the transport binding. Shared by clientSimDestroy
+ * (which then frees the pointer) and clientSimResetForMapLoad (which
+ * keeps the pointer and the transport so the caller can hand the
+ * mid-handshake map blob into clientLoadCompressedMap). */
+static void clientSimDestroyContents(ClientSim *cs) {
+  viewportDestroy(&cs->viewport);
   cs->running = FALSE;
   clientStateDestroy(&cs->clientState);
   tankDestroy(&cs->sim, &MY_TANK(cs));
@@ -285,12 +334,12 @@ void clientSimDestroy(ClientSim *cs) {
   treeGrowDestroy(&cs->sim);
   pillsDestroy(&cs->sim.pb);
   playersDestroy(&cs->sim.plyrs);
-  
+
   if (cs->brainBuildInfo != NULL) {
     free(cs->brainBuildInfo);
     cs->brainBuildInfo = NULL;
   }
-  
+
   cs->sim.mp = NULL;
   cs->sim.bs = NULL;
   cs->sim.pb = NULL;
@@ -310,6 +359,46 @@ void clientSimDestroy(ClientSim *cs) {
   cs->allianceAcceptFunc = NULL;
   cs->allianceLeaveFunc = NULL;
   cs->lockToggleSendFunc = NULL;
+}
+
+void clientSimDestroy(ClientSim *cs) {
+  if (cs == NULL) return;
+  if (cs->hasTransport) {
+    if (cs->isUdpTransport) {
+      transportUdpClientDestroy(&cs->transport);
+    } else {
+      transportLocalDestroy(&cs->transport);
+    }
+    cs->hasTransport = false;
+  }
+  clientSimDestroyContents(cs);
+  free(cs);
+}
+
+/*********************************************************
+ *NAME:          clientSimResetForMapLoad
+ *PURPOSE:
+ *  Returns cs to a freshly-allocated-and-empty state without
+ *  freeing cs or tearing down the transport binding. The
+ *  no-lobby UDP-join path uses this between the join handshake
+ *  and clientLoadCompressedMap: the compressed map blob lives
+ *  inside the transport, so the transport must survive the
+ *  wipe.
+ *
+ *  After the reset, the subsequent setupClientSim ->
+ *  clientSimCreate(cs, ...) re-initialises substructs.
+ *  clientSimCreate preserves cs->transport / hasTransport /
+ *  isUdpTransport across its memset so the connection stays
+ *  intact end-to-end.
+ *
+ *  Callback function pointers (chatSendFunc, etc.) are reset
+ *  to NULL — that matches the prior clientSimDestroy +
+ *  clientSimAlloc behaviour, and every call site already
+ *  re-registers them after the reload.
+ *********************************************************/
+void clientSimResetForMapLoad(ClientSim *cs) {
+  if (cs == NULL) return;
+  clientSimDestroyContents(cs);
 }
 
 /*********************************************************
@@ -392,14 +481,27 @@ void clientSimSyncFromSnapshot(ClientSim *cs, const SnapshotHeader *hdr,
                                const PillSnapshot *pillSnaps, int pillCount,
                                const GameEvent *events, int eventCount,
                                BYTE playerNum) {
-  screenSyncFromSnapshotCS(cs, hdr, tanks, tankCount, shellSnaps, shellCount,
-                           tkExplSnaps, tkExplosionCount,
-                           baseSnaps, baseCount,
-                           pillSnaps, pillCount, events, eventCount, playerNum);
+  clientApplySnapshot(cs, hdr, tanks, tankCount, shellSnaps, shellCount,
+                      tkExplSnaps, tkExplosionCount,
+                      baseSnaps, baseCount,
+                      pillSnaps, pillCount, events, eventCount, playerNum);
+}
+
+void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr) {
+  char topLine[FILENAME_MAX];
+
+  topLine[0] = '\0';
+  playersMakeMessageName(cs, &clientSimGetGameSim(cs)->plyrs, clientSimGetMyPlayerNum(cs), playerNum, topLine);
+
+  if (clientSimIsInLobby(cs) && playerNum < 16) {
+    clientSimAppendLobbyChat(cs, clientSimGetLobbySlot(cs, playerNum)->playerName, messageStr);
+  } else {
+    clientMessageAdd(clientSimGetMessages(cs), (messageType) (playerNum + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  }
 }
 
 void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
-  screenSimDisplayTickCS(cs, isBrain);
+  clientUiOnTick(cs, isBrain);
   basesTickMessageQueue(&cs->sim, cs);
 }
 
@@ -544,6 +646,8 @@ char *clientSimGetBrainsMessage(ClientSim *cs) { return cs->brainsMessage; }
 unsigned short *clientSimGetBrainsNumObjects(ClientSim *cs) { return &cs->brainsNumObjects; }
 ObjectInfo *clientSimGetBrainObjects(ClientSim *cs) { return cs->brainObjects; }
 aiType *clientSimGetAllowComputerTanks(ClientSim *cs) { return &cs->allowComputerTanks; }
+aiType  clientSimGetAiType(ClientSim *cs)              { return *clientSimGetAllowComputerTanks(cs); }
+void    clientSimSetAiType(ClientSim *cs, aiType value) { *clientSimGetAllowComputerTanks(cs) = value; }
 
 /* -------------------------------------------------------
  * Network state accessors (per-instance)
@@ -591,6 +695,27 @@ void clientSimSendChangePlayerName(ClientSim *cs, BYTE playerNum, char *newName)
   }
 }
 
+void clientSimGetPlayerName(ClientSim *csPtr, char *value) {
+  if (clientSimGetGameSim(csPtr)->plyrs == NULL) {
+    strcpy(value, clientSimGetMyLastPlayerName(csPtr));
+  } else {
+    playersGetPlayerName(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), value, FALSE);
+  }
+}
+
+bool clientSimSetPlayerName(ClientSim *csPtr, char *value) {
+  bool returnValue;              /* Value to return */
+
+  utilStripNameReplace(value);
+  returnValue = playersSetPlayerName(csPtr, clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), value, FALSE);
+  if (returnValue == TRUE) {
+    if (clientSimGetNetType(csPtr) != netSingle) {
+      clientSimSendChangePlayerName(csPtr, clientSimGetMyPlayerNum(csPtr), value);
+    }
+  }
+  return returnValue;
+}
+
 void clientSimRequestAlliance(ClientSim *cs, BYTE playerNum, BYTE requestTo) {
   if (cs->allianceRequestFunc != NULL) {
     cs->allianceRequestFunc(requestTo);
@@ -615,6 +740,163 @@ void clientSimSetAllowNewPlayers(ClientSim *cs, bool allow) {
   if (cs->lockToggleSendFunc != NULL) {
     cs->lockToggleSendFunc(allow);
   }
+}
+
+/* High-level send-message wrappers — build the sender topLine, locally
+ * echo into the message ticker, then dispatch through the lower-level
+ * transport / players_send_* fan-out. */
+void clientSimSendMessageAllPlayers(ClientSim *csPtr, char *messageStr) {
+  char topLine[FILENAME_MAX];       /* The message topline */
+
+  topLine[0] = '\0';
+  playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), topLine);
+  clientMessageAdd(clientSimGetMessages(csPtr), (messageType) (clientSimGetMyPlayerNum(csPtr) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  clientSimMessageSendAllPlayers(csPtr, clientSimGetMyPlayerNum(csPtr), messageStr);
+}
+
+void clientSimSendMessageAllAllies(ClientSim *csPtr, char *messageStr) {
+  char topLine[FILENAME_MAX];       /* The message topline */
+
+  topLine[0] = '\0';
+  playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), topLine);
+  clientMessageAdd(clientSimGetMessages(csPtr), (messageType) (clientSimGetMyPlayerNum(csPtr) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  playersSendMessageAllAllies(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), messageStr);
+}
+
+void clientSimSendMessageAllNearby(ClientSim *csPtr, char *messageStr) {
+  char topLine[FILENAME_MAX];       /* The message topline */
+
+  topLine[0] = '\0';
+  playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), topLine);
+  clientMessageAdd(clientSimGetMessages(csPtr), (messageType) (clientSimGetMyPlayerNum(csPtr) + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
+  playersSendMessageAllNearby(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), messageStr);
+}
+
+void clientSimSendMessageAllSelected(ClientSim *csPtr, char *messageStr) {
+  playersSendMessageAllSelected(csPtr, clientSimGetGameSim(csPtr), &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), messageStr);
+}
+
+/* Local-player alliance actions — sugar over the targeted variants. */
+void clientSimLeaveAllianceSelf(ClientSim *csPtr) {
+  clientSimLeaveAlliance(csPtr, clientSimGetMyPlayerNum(csPtr));
+}
+
+void clientSimRequestAllianceSelected(ClientSim *csPtr) {
+  playersRequestAlliance(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr));
+}
+
+/* Players-panel selection helpers — thread gameSim->plyrs + the local
+ * player num through to the underlying players* API. */
+void clientSimTogglePlayerCheckState(ClientSim *csPtr, BYTE playerNum) {
+  playersToggleCheckedState(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), playerNum, FALSE);
+}
+
+void clientSimCheckAllNonePlayers(ClientSim *csPtr, bool isChecked) {
+  playersCheckAllNone(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), isChecked, FALSE);
+}
+
+void clientSimCheckAlliedPlayers(ClientSim *csPtr) {
+  playersCheckAllies(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), FALSE);
+}
+
+void clientSimCheckNearbyPlayers(ClientSim *csPtr) {
+  playersCheckNearbyPlayers(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)), FALSE);
+}
+
+int clientSimGetNumCheckedPlayers(ClientSim *csPtr) {
+  return playersGetNumChecked(&clientSimGetGameSim(csPtr)->plyrs);
+}
+
+int clientSimGetNumAllies(ClientSim *csPtr) {
+  return playersGetNumAllies(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr));
+}
+
+int clientSimGetNumNearbyTanks(ClientSim *csPtr) {
+  return playersNumNearbyPlayers(&clientSimGetGameSim(csPtr)->plyrs, tankGetMX(&MY_TANK(csPtr)), tankGetMY(&MY_TANK(csPtr)));
+}
+
+/* Tank preferences (per-instance) — operate on the local player's tank */
+bool clientSimGetTankAutoSlowdown(ClientSim *cs) {
+  return tankGetAutoSlowdown(&MY_TANK(cs));
+}
+
+void clientSimSetTankAutoSlowdown(ClientSim *cs, bool useSlowdown) {
+  tankSetAutoSlowdown(&MY_TANK(cs), useSlowdown);
+}
+
+bool clientSimGetTankAutoHideGunsight(ClientSim *cs) {
+  return tankGetAutoHideGunsight(&MY_TANK(cs));
+}
+
+void clientSimSetTankAutoHideGunsight(ClientSim *cs, bool useAutohide) {
+  tankSetAutoHideGunsight(&MY_TANK(cs), useAutohide);
+}
+
+void clientSimSetGunsight(ClientSim *cs, bool shown) {
+  tankSetGunsight(&MY_TANK(cs), shown);
+}
+
+BYTE clientSimGetTank256Dir(ClientSim *cs) {
+  return tankGet256Dir(&MY_TANK(cs));
+}
+
+int clientSimGetMyTankDeathWait(ClientSim *cs) {
+  if (cs == NULL) return 0;
+  return tankGetDeathWait(&MY_TANK(cs));
+}
+
+int clientSimGetMyTankLastDeath(ClientSim *cs) {
+  if (cs == NULL) return 0;
+  return tankGetLastTankDeath(&MY_TANK(cs));
+}
+
+/* Game info (per-instance) */
+bool clientSimGetAllowHiddenMines(ClientSim *cs) {
+  return minesGetAllowHiddenMines(&clientSimGetGameSim(cs)->mns);
+}
+
+BYTE clientSimGetNumPlayers(ClientSim *cs) {
+  return playersGetNumPlayers(&clientSimGetGameSim(cs)->plyrs);
+}
+
+bool clientSimIsTutorial(const ClientSim *cs) {
+  return clientSimGetGameSim((ClientSim *)cs)->isTutorial;
+}
+
+void clientSimSetTutorial(ClientSim *cs, bool v) {
+  clientSimGetGameSim(cs)->isTutorial = v;
+}
+
+gameType clientSimGetGameType(const ClientSim *cs) {
+  return clientSimGetGameSim((ClientSim *)cs)->game;
+}
+
+uint16_t clientSimGetPlayerPing(ClientSim *cs, BYTE playerNum) {
+  return playersGetPing(&clientSimGetGameSim(cs)->plyrs, playerNum);
+}
+
+uint8_t clientSimGetPlayerClientFlags(ClientSim *cs, BYTE playerNum) {
+  return playersGetClientFlags(&clientSimGetGameSim(cs)->plyrs, playerNum);
+}
+
+uint8_t clientSimGetPlayerClientType(ClientSim *cs, BYTE playerNum) {
+  return playersGetClientType(&clientSimGetGameSim(cs)->plyrs, playerNum);
+}
+
+void clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest) {
+  playersGetPlayerLocation(&clientSimGetGameSim(cs)->plyrs, playerNum, dest);
+}
+
+uint8_t clientSimGetPlayerAccountFlags(ClientSim *cs, BYTE playerNum) {
+  return playersGetAccountFlags(&clientSimGetGameSim(cs)->plyrs, playerNum);
+}
+
+void clientSimGetPlayerCountryCode(ClientSim *cs, BYTE playerNum, char *dest) {
+  playersGetCountryCode(&clientSimGetGameSim(cs)->plyrs, playerNum, dest);
+}
+
+bool clientSimIsPlayerAlly(ClientSim *cs, BYTE playerA, BYTE playerB) {
+  return playersIsAllie(&clientSimGetGameSim(cs)->plyrs, playerA, playerB);
 }
 
 
@@ -701,4 +983,411 @@ void netProcessedDnsLookup(ClientSim *cs, char *ip, char *host) {
   clientMutexWaitFor();
   playerSetLocation(&cs->sim.plyrs, ip, host);
   clientMutexRelease();
+}
+
+/* ================================================================
+ * Read accessors — see header for the contract.
+ * ================================================================ */
+
+bool clientSimIsRunning(const ClientSim *cs)              { return cs->running; }
+bool clientSimIsBot(const ClientSim *cs)                  { return cs->isBot; }
+bool clientSimIsInPillView(const ClientSim *cs)           { return cs->viewport.inPillView; }
+bool clientSimIsNeedScreenReCalc(const ClientSim *cs)     { return cs->viewport.needRecalc; }
+bool clientSimIsInLobby(const ClientSim *cs)              { return cs->inLobby; }
+bool clientSimIsMapDownloadComplete(const ClientSim *cs)  { return cs->mapDownloadComplete; }
+bool clientSimIsMapSkipAvailable(const ClientSim *cs)     { return cs->mapSkipAvailable; }
+bool clientSimIsMapSkipMyVote(const ClientSim *cs)        { return cs->mapSkipMyVote; }
+bool clientSimIsLobbyHiddenMines(const ClientSim *cs)     { return cs->lobbyHiddenMines; }
+bool clientSimIsBalanceProposalActive(const ClientSim *cs){ return cs->balanceProposalActive; }
+bool clientSimIsLabelOwnTank(const ClientSim *cs)         { return cs->labelOwnTank; }
+
+buildSelect clientSimGetCurrentBuildSelect(const ClientSim *cs) { return cs->currentBuildSelect; }
+gameType    clientSimGetLobbyGameType(const ClientSim *cs)      { return cs->lobbyGameType; }
+labelLen    clientSimGetLabelMessage(const ClientSim *cs)       { return cs->labelMessage; }
+labelLen    clientSimGetLabelTankLabel(const ClientSim *cs)     { return cs->labelTankLabel; }
+
+BYTE     clientSimGetMyPlayerNum(const ClientSim *cs)       { return cs->myPlayerNum; }
+BYTE     clientSimGetXOffset(const ClientSim *cs)           { return cs->viewport.xOffset; }
+BYTE     clientSimGetYOffset(const ClientSim *cs)           { return cs->viewport.yOffset; }
+BYTE     clientSimGetPillViewX(const ClientSim *cs)         { return cs->viewport.pillViewX; }
+BYTE     clientSimGetPillViewY(const ClientSim *cs)         { return cs->viewport.pillViewY; }
+BYTE     clientSimGetPendingBuildAction(const ClientSim *cs){ return cs->pendingBuildAction; }
+BYTE     clientSimGetPendingBuildX(const ClientSim *cs)     { return cs->pendingBuildX; }
+BYTE     clientSimGetPendingBuildY(const ClientSim *cs)     { return cs->pendingBuildY; }
+int      clientSimGetCursorPosX(const ClientSim *cs)        { return cs->viewport.cursorPosX; }
+int      clientSimGetCursorPosY(const ClientSim *cs)        { return cs->viewport.cursorPosY; }
+int      clientSimGetGmeStartDelay(const ClientSim *cs)     { return cs->gmeStartDelay; }
+int      clientSimGetCountdownSeconds(const ClientSim *cs)  { return cs->countdownSeconds; }
+int      clientSimGetServerShellCount(const ClientSim *cs)  { return cs->serverShellCount; }
+int      clientSimGetPredictedShellCount(const ClientSim *cs){ return cs->predictedShellCount; }
+int      clientSimGetBrainEventCount(const ClientSim *cs)   { return cs->brainEventCount; }
+int32_t  clientSimGetGmeLength(const ClientSim *cs)         { return cs->gmeLength; }
+int32_t  clientSimGetLobbyTimeLimit(const ClientSim *cs)    { return cs->lobbyTimeLimit; }
+uint8_t  clientSimGetLobbyAiType(const ClientSim *cs)       { return cs->lobbyAiType; }
+uint8_t  clientSimGetLobbyPillCount(const ClientSim *cs)    { return cs->lobbyPillCount; }
+uint8_t  clientSimGetLobbyBaseCount(const ClientSim *cs)    { return cs->lobbyBaseCount; }
+uint8_t  clientSimGetLobbyStartCount(const ClientSim *cs)   { return cs->lobbyStartCount; }
+uint8_t  clientSimGetBrainLastAssistMsg(const ClientSim *cs){ return cs->brainLastAssistMsg; }
+uint32_t clientSimGetLastServerTick(const ClientSim *cs)    { return cs->lastServerTick; }
+unsigned short clientSimGetServerPort(const ClientSim *cs)  { return cs->serverPort; }
+time_t   clientSimGetTimeStart(const ClientSim *cs)         { return cs->timeStart; }
+
+const char *clientSimGetMapName(const ClientSim *cs)          { return cs->mapName; }
+const char *clientSimGetLobbyChatHistory(const ClientSim *cs) { return cs->lobbyChatHistory; }
+const char *clientSimGetMyLastPlayerName(const ClientSim *cs) { return cs->myLastPlayerName; }
+
+const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n) {
+  if (n >= 16) return NULL;
+  return &cs->lobbySlots[n];
+}
+
+bool clientSimIsMapSkipVote(const ClientSim *cs, BYTE n) {
+  if (n >= 16) return false;
+  return cs->mapSkipVotes[n];
+}
+
+uint8_t clientSimGetBalanceProposal(const ClientSim *cs, BYTE n) {
+  if (n >= 16) return 0;
+  return cs->balanceProposal[n];
+}
+
+BYTE *clientSimGetBrainMap(ClientSim *cs) {
+  return &cs->brainMap[0][0];
+}
+
+const ShellSnapshot *clientSimGetServerShellSnaps(const ClientSim *cs) {
+  return cs->serverShellSnaps;
+}
+
+const PredictedShell *clientSimGetPredictedShells(const ClientSim *cs) {
+  return cs->predictedShells;
+  
+}
+
+const GameEvent *clientSimGetBrainEvents(const ClientSim *cs) {
+  return cs->brainEvents;
+}
+
+struct in_addr clientSimGetServerAddress(const ClientSim *cs) {
+  return cs->serverAddress;
+}
+
+GameSim       *clientSimGetGameSim(ClientSim *cs)    { return &cs->sim; }
+MessageState  *clientSimGetMessages(ClientSim *cs)   { return &cs->messages; }
+ScrollState   *clientSimGetScroll(ClientSim *cs)     { return &cs->scroll; }
+InterpContext *clientSimGetInterpCtx(ClientSim *cs)  { return &cs->interpCtx; }
+screen        *clientSimGetView(ClientSim *cs)       { return &cs->viewport.view; }
+screenMines   *clientSimGetMineView(ClientSim *cs)   { return &cs->viewport.mineView; }
+
+const struct ViewPort *clientSimViewport(const ClientSim *cs)  { return &cs->viewport; }
+struct ViewPort       *clientSimViewportMut(ClientSim *cs)     { return &cs->viewport; }
+
+BYTE *clientSimGetXOffsetPtr(ClientSim *cs)          { return &cs->viewport.xOffset; }
+BYTE *clientSimGetYOffsetPtr(ClientSim *cs)          { return &cs->viewport.yOffset; }
+BYTE *clientSimGetPillViewXPtr(ClientSim *cs)        { return &cs->viewport.pillViewX; }
+BYTE *clientSimGetPillViewYPtr(ClientSim *cs)        { return &cs->viewport.pillViewY; }
+
+char *clientSimGetMapNameMutable(ClientSim *cs)      { return cs->mapName; }
+
+/* ================================================================
+ * Mutators — see header for the contract.
+ * ================================================================ */
+
+void clientSimSetBalanceProposalActive(ClientSim *cs, bool active) {
+  cs->balanceProposalActive = active;
+}
+
+void clientSimClearBalanceProposal(ClientSim *cs) {
+  memset(cs->balanceProposal, 0, sizeof(cs->balanceProposal));
+}
+
+void clientSimSetMapSkipMyVote(ClientSim *cs, bool vote) {
+  cs->mapSkipMyVote = vote;
+}
+
+void clientSimSetXOffset(ClientSim *cs, BYTE v)            { cs->viewport.xOffset = v; }
+void clientSimSetYOffset(ClientSim *cs, BYTE v)            { cs->viewport.yOffset = v; }
+void clientSimSetCursorPosX(ClientSim *cs, int v)          { cs->viewport.cursorPosX = v; }
+void clientSimSetCursorPosY(ClientSim *cs, int v)          { cs->viewport.cursorPosY = v; }
+void clientSimSetNeedScreenReCalc(ClientSim *cs, bool v)   { cs->viewport.needRecalc = v; }
+void clientSimSetInPillView(ClientSim *cs, bool v)         { cs->viewport.inPillView = v; }
+void clientSimSetPillViewX(ClientSim *cs, BYTE v)          { cs->viewport.pillViewX = v; }
+void clientSimSetPillViewY(ClientSim *cs, BYTE v)          { cs->viewport.pillViewY = v; }
+void clientSimSetView(ClientSim *cs, screen v)             { cs->viewport.view = v; }
+void clientSimSetMineView(ClientSim *cs, screenMines v)    { cs->viewport.mineView = v; }
+
+void clientSimSetGmeStartDelay(ClientSim *cs, int v)       { cs->gmeStartDelay = v; }
+void clientSimSetGmeLength(ClientSim *cs, int32_t v)       { cs->gmeLength = v; }
+void clientSimSetTimeStart(ClientSim *cs, time_t v)        { cs->timeStart = v; }
+void clientSimSetRunning(ClientSim *cs, bool v)            { cs->running = v; }
+void clientSimSetLocalTransport(ClientSim *cs, bool isLocal) {
+  clientSimGetGameSim(cs)->isLocalTransport = isLocal;
+}
+
+void clientSimSetCurrentBuildSelect(ClientSim *cs, buildSelect v) {
+  if (v != BsTrees && v != BsRoad && v != BsBuilding && v != BsPillbox && v != BsMine) {
+    return;
+  }
+  cs->currentBuildSelect = v;
+}
+
+void clientSimSetPendingBuild(ClientSim *cs, BYTE action, BYTE x, BYTE y) {
+  cs->pendingBuildAction = action;
+  cs->pendingBuildX = x;
+  cs->pendingBuildY = y;
+}
+
+void clientSimSetBrainLastAssistMsg(ClientSim *cs, uint8_t v) { cs->brainLastAssistMsg = v; }
+void clientSimSetBrainEventCount(ClientSim *cs, int v)        { cs->brainEventCount = v; }
+void clientSimSetLabelMessage(ClientSim *cs, labelLen v)      { cs->labelMessage = v; }
+void clientSimSetLabelTankLabel(ClientSim *cs, labelLen v)    { cs->labelTankLabel = v; }
+void clientSimSetLabelOwnTank(ClientSim *cs, bool v)          { cs->labelOwnTank = v; }
+void clientSimSetMyLastPlayerName(ClientSim *cs, const char *name) {
+  strcpy(cs->myLastPlayerName, name);
+}
+
+void clientSimSetInLobby(ClientSim *cs, bool v)             { cs->inLobby = v; }
+void clientSimSetMapDownloadComplete(ClientSim *cs, bool v) { cs->mapDownloadComplete = v; }
+
+void clientSimSetServerAddress(ClientSim *cs, struct in_addr v) { cs->serverAddress = v; }
+void clientSimSetServerPort(ClientSim *cs, unsigned short v)    { cs->serverPort = v; }
+void clientSimSetIsBot(ClientSim *cs, bool v)                   { cs->isBot = v; }
+
+/* View-control composition helpers. */
+void clientSimTankView(ClientSim *cs) {
+  viewportFollowTank(clientSimViewportMut(cs), clientSimGetScroll(cs), MY_TANK(cs));
+}
+
+void clientSimCenterTank(ClientSim *cs) {
+  viewportCenterOnTank(clientSimViewportMut(cs), clientSimGetScroll(cs), MY_TANK(cs));
+}
+
+void clientSimSetAutoScroll(ClientSim *cs, bool isAuto) {
+  scrollSetScrollType(clientSimGetScroll(cs), isAuto);
+}
+
+void clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown) {
+  switch (msgType) {
+  case MSG_NEWSWIRE:
+    messageSetNewswire(clientSimGetMessages(cs), isShown);
+    break;
+  case MSG_ASSISTANT:
+    messageSetAssistant(clientSimGetMessages(cs), isShown);
+    break;
+  case MSG_AI:
+    messageSetAI(clientSimGetMessages(cs), isShown);
+    break;
+  case MSG_NETSTATUS:
+    messageSetNetStatus(clientSimGetMessages(cs), isShown);
+    break;
+  default:
+    messageSetNetwork(clientSimGetMessages(cs), isShown);
+    break;
+  }
+}
+
+void clientSimNetStatusMessage(ClientSim *cs, char *messageStr) {
+  clientMessageAdd(clientSimGetMessages(cs), networkStatus, (char *) "Network Status", messageStr);
+}
+
+void clientSimSetCursorPos(ClientSim *cs, BYTE posX, BYTE posY) {
+  viewportSetCursor(clientSimViewportMut(cs), posX, posY);
+}
+
+bool clientSimGetCursorPos(ClientSim *cs, BYTE *posX, BYTE *posY) {
+  return viewportGetCursor(clientSimViewport(cs), posX, posY);
+}
+
+void clientSimPillView(ClientSim *cs, int horz, int vert) {
+  viewportPanInPillView(clientSimViewportMut(cs), clientSimGetGameSim(cs),
+                        clientSimGetScroll(cs), MY_TANK(cs), horz, vert);
+}
+
+void clientSimRecalc(ClientSim *cs) {
+  viewportRecalc(clientSimViewportMut(cs));
+}
+
+void clientSimUpdateView(ClientSim *cs, updateType value) {
+  viewportUpdateView(clientSimViewportMut(cs), clientSimGetGameSim(cs),
+                     clientSimGetMyPlayerNum(cs),
+                     (BYTE (*)[MAP_ARRAY_SIZE])clientSimGetBrainMap(cs), value);
+}
+
+void clientSimPanX(ClientSim *cs, int dxTiles) {
+  viewportPanX(clientSimViewportMut(cs), dxTiles);
+}
+
+void clientSimPanY(ClientSim *cs, int dyTiles) {
+  viewportPanY(clientSimViewportMut(cs), dyTiles);
+}
+
+bool clientSimTankIsDead(ClientSim *cs) {
+  bool returnValue;
+  BYTE high, low, health, dummy;
+
+  returnValue = FALSE;
+  tankGetStats(&MY_TANK(cs), &high, &low, &health, &dummy);
+  if (health > TANK_FULL_ARMOUR) {
+    returnValue = TRUE;
+  }
+  return returnValue;
+}
+
+bool clientSimTankScroll(ClientSim *cs) {
+  BYTE x;
+  BYTE y;
+
+  /* Don't scroll the view while in pill view — the view is locked on the pill */
+  if (clientSimIsInPillView(cs) == TRUE) {
+    return FALSE;
+  }
+
+  x = tankGetScreenMX(&MY_TANK(cs));
+  y = tankGetScreenMY(&MY_TANK(cs));
+  return scrollManual(clientSimGetScroll(cs), clientSimGetXOffsetPtr(cs), clientSimGetYOffsetPtr(cs), x, y, (TURNTYPE) tankGetTravelAngel(&MY_TANK(cs)));
+}
+
+void clientSimManMove(ClientSim *cs, buildSelect buildS) {
+  if (tankGetArmour(&MY_TANK(cs)) <= TANK_FULL_ARMOUR && clientSimGetNetStatus(cs) != netFailed) {
+    /* Route build request through InputPacket so the server sim
+     * processes it authoritatively (matches brain build path). */
+    clientSimSetPendingBuild(cs,
+                             (BYTE) buildS + 1,  /* 1-based in InputPacket (0=none) */
+                             (BYTE) (clientSimGetCursorPosX(cs) + clientSimGetXOffset(cs)),
+                             (BYTE) (clientSimGetCursorPosY(cs) + clientSimGetYOffset(cs)));
+  }
+}
+
+/* Alliance accessors. */
+tankAlliance clientSimGetTankAlliance(ClientSim *cs, BYTE playerNum) {
+  return playersScreenAllience(&clientSimGetGameSim(cs)->plyrs, clientSimGetMyPlayerNum(cs), (BYTE) (playerNum - 1));
+}
+
+pillAlliance clientSimGetPillAlliance(ClientSim *cs, BYTE pillNum) {
+  return pillsGetAllianceNum(clientSimGetGameSim(cs), &clientSimGetGameSim(cs)->pb, pillNum);
+}
+
+baseAlliance clientSimGetBaseAlliance(ClientSim *cs, BYTE baseNum) {
+  return basesGetStatusNum(clientSimGetGameSim(cs), baseNum);
+}
+
+BYTE clientSimGetPillNumPos(ClientSim *cs, BYTE mx, BYTE my) {
+  return pillsGetPillNum(&clientSimGetGameSim(cs)->pb, (BYTE) (clientSimGetXOffset(cs) + mx), (BYTE) (clientSimGetYOffset(cs) + my), FALSE, FALSE);
+}
+
+BYTE clientSimGetBaseNumPos(ClientSim *cs, BYTE mx, BYTE my) {
+  return basesGetBaseNum(&clientSimGetGameSim(cs)->bs, (BYTE) (clientSimGetXOffset(cs) + mx), (BYTE) (clientSimGetYOffset(cs) + my));
+}
+
+/* Local tank stat accessors. */
+void clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount) {
+  tankGetStats(&MY_TANK(cs), shellsAmount, minesAmount, armourAmount, treesAmount);
+  if (*armourAmount > TANK_FULL_ARMOUR) {
+    *armourAmount = 0;
+  }
+}
+
+void clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths) {
+  tankGetKillsDeaths(&MY_TANK(cs), kills, deaths);
+}
+
+void clientSimConnectionLost(ClientSim *cs) {
+  lgmConnectionLost(clientSimGetGameSim(cs), &MY_LGM(cs), &MY_TANK(cs), &clientSimGetGameSim(cs)->ss);
+  playersConnectionLost(cs, clientSimGetGameSim(cs), &clientSimGetGameSim(cs)->plyrs, clientSimGetMyPlayerNum(cs));
+}
+
+/* ================================================================
+ * Live-sim map / pill / base / start readers.
+ * ================================================================ */
+
+BYTE clientSimGetMapTerrain(const ClientSim *cs, BYTE x, BYTE y) {
+  return mapGetPos(&clientSimGetGameSim((ClientSim *)cs)->mp, x, y);
+}
+
+bool clientSimMapIsMine(const ClientSim *cs, BYTE x, BYTE y) {
+  return mapIsMine(&clientSimGetGameSim((ClientSim *)cs)->mp, x, y);
+}
+
+bool clientSimPillExistsAt(const ClientSim *cs, BYTE x, BYTE y) {
+  return pillsExistPos(&clientSimGetGameSim((ClientSim *)cs)->pb, x, y);
+}
+
+BYTE clientSimPillGetScreenHealthAt(ClientSim *cs, BYTE x, BYTE y) {
+  GameSim *gs = clientSimGetGameSim(cs);
+  return pillsGetScreenHealth(gs, &gs->pb, x, y);
+}
+
+bool clientSimBaseExistsAt(const ClientSim *cs, BYTE x, BYTE y) {
+  return basesExistPos(&clientSimGetGameSim((ClientSim *)cs)->bs, x, y);
+}
+
+baseAlliance clientSimBaseGetAllianceAt(ClientSim *cs, BYTE x, BYTE y) {
+  return basesGetAlliancePos(clientSimGetGameSim(cs), x, y);
+}
+
+bool clientSimBaseAmOwnerAt(ClientSim *cs, BYTE player, BYTE x, BYTE y) {
+  return basesAmOwner(clientSimGetGameSim(cs), player, x, y);
+}
+
+BYTE clientSimGetPillCount(const ClientSim *cs) {
+  return pillsGetNumPills(&clientSimGetGameSim((ClientSim *)cs)->pb);
+}
+
+BYTE clientSimGetBaseCount(const ClientSim *cs) {
+  return basesGetNumBases(&clientSimGetGameSim((ClientSim *)cs)->bs);
+}
+
+BYTE clientSimGetStartCount(const ClientSim *cs) {
+  return startsGetNumStarts(&clientSimGetGameSim((ClientSim *)cs)->ss);
+}
+
+bool clientSimGetPill(ClientSim *cs, BYTE i,
+                      BYTE *x, BYTE *y, BYTE *owner, BYTE *armour,
+                      bool *inTank) {
+  GameSim *gs = clientSimGetGameSim(cs);
+  pillbox p;
+  BYTE n = pillsGetNumPills(&gs->pb);
+  if (i == 0 || i > n) return false;
+  pillsGetPill(&gs->pb, &p, i);
+  if (x)      *x      = p.x;
+  if (y)      *y      = p.y;
+  if (owner)  *owner  = p.owner;
+  if (armour) *armour = p.armour;
+  if (inTank) *inTank = p.inTank;
+  return true;
+}
+
+bool clientSimGetBase(ClientSim *cs, BYTE i,
+                      BYTE *x, BYTE *y, BYTE *owner) {
+  GameSim *gs = clientSimGetGameSim(cs);
+  base b;
+  BYTE n = basesGetNumBases(&gs->bs);
+  if (i == 0 || i > n) return false;
+  basesGetBase(&gs->bs, &b, i);
+  if (x)     *x     = b.x;
+  if (y)     *y     = b.y;
+  if (owner) *owner = b.owner;
+  return true;
+}
+
+bool clientSimGetBaseStats(ClientSim *cs, BYTE i,
+                           BYTE *shells, BYTE *mines, BYTE *armour) {
+  GameSim *gs = clientSimGetGameSim(cs);
+  BYTE n = basesGetNumBases(&gs->bs);
+  if (i == 0 || i > n) return false;
+  basesGetStats(&gs->bs, i, shells, mines, armour);
+  return true;
+}
+
+bool clientSimGetStart(ClientSim *cs, BYTE i,
+                       BYTE *x, BYTE *y, BYTE *dir) {
+  GameSim *gs = clientSimGetGameSim(cs);
+  start s;
+  BYTE n = startsGetNumStarts(&gs->ss);
+  if (i == 0 || i > n) return false;
+  startsGetStartStruct(&gs->ss, &s, i);
+  if (x)   *x   = s.x;
+  if (y)   *y   = s.y;
+  if (dir) *dir = startsConvertDir((BYTE)((s.dir < 16) ? s.dir : 0));
+  return true;
 }

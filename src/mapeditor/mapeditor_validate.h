@@ -14,8 +14,8 @@
 #ifndef MAPEDITOR_VALIDATE_H
 #define MAPEDITOR_VALIDATE_H
 
-#include "../bolo/global.h"
-#include "../bolo/types.h"
+#include "global.h"
+#include "types.h"
 
 #ifdef __cplusplus
 extern "C" {

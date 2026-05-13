@@ -15,7 +15,7 @@
  */
 
 
-#include "global.h"
+#include "lv_global.h"
 
 /* Add whatever other memory debugging or memory management code here. */
 

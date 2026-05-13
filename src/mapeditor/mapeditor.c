@@ -37,13 +37,13 @@
 #include <stdarg.h>
 #include <math.h>
 
-#include "../bolo/global.h"
-#include "../bolo/bolo_map.h"
-#include "../bolo/pillbox.h"
-#include "../bolo/bases.h"
-#include "../bolo/starts.h"
-#include "../bolo/screencalc.h"
-#include "../bolo/tilenum.h"
+#include "global.h"
+#include "bolo_map.h"
+#include "pillbox.h"
+#include "bases.h"
+#include "starts.h"
+#include "screencalc.h"
+#include "tilenum.h"
 #include "../gui/tiles.h"
 #include "../gui/lang.h"
 #include "../gui/sdl3/minimap_render.h"
@@ -540,14 +540,22 @@ static void mapEditorRebuildMinimap(MapEditorState *ed) {
     static const uint8_t baseCol[3]  = { 50,  50, 255};
     static const uint8_t startCol[3] = { 50, 255,  50};
 
-    minimapRenderPixels(ed->mp, NULL, NULL, NULL,
-                        (uint8_t *)ed->minimapPixels, NULL,
-                        MINIMAP_DARKEN_BORDER | MINIMAP_DARKEN_MINES);
+    {
+        MapPreview *terrainView = clientMapPreviewWrap(ed->mp, NULL, NULL, NULL);
+        minimapRenderPixels(terrainView,
+                            (uint8_t *)ed->minimapPixels, NULL,
+                            MINIMAP_DARKEN_BORDER | MINIMAP_DARKEN_MINES);
+        clientMapPreviewDestroy(terrainView);
+    }
 
     /* Draw unselected objects with editor-specific colours */
-    minimapDrawObjects((uint8_t *)ed->minimapPixels,
-                       ed->bs, ed->pb, ed->ss,
-                       pillCol, baseCol, startCol);
+    {
+        MapPreview *objectsView = clientMapPreviewWrap(NULL, ed->pb, ed->bs, ed->ss);
+        minimapDrawObjects((uint8_t *)ed->minimapPixels,
+                           objectsView,
+                           pillCol, baseCol, startCol);
+        clientMapPreviewDestroy(objectsView);
+    }
 
     /* Overlay selected object in yellow */
     #define ME_MINIMAP_DOT(px, py, cr, cg, cb) do { \

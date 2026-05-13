@@ -36,7 +36,7 @@
 #include "mapeditor_validate.h"
 #include "mapeditor_stats.h"
 #include "mapeditor_stamp.h"
-#include "../bolo/tilenum.h"
+#include "tilenum.h"
 #include "../gui/lang.h"
 #include "../gui/tiles.h"
 #include "../gui/sdl3/minimap_render.h"
@@ -822,7 +822,7 @@ bool mapEditorImguiToolbar(int *activeTool,
  * ------------------------------------------------------- */
 
 #include "mapeditor_undo.h"
-#include "../bolo/types.h"
+#include "types.h"
 
 #define ME_NUM_OWNERS 17
 

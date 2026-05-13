@@ -30,7 +30,7 @@
 #include "bolo_map.h"
 #include "bases.h"
 #include "pillbox.h"
-#include "screen.h"
+#include "client_sim.h"
 #include "mines.h"
 #include "floodfill.h"
 #include "game_sim.h"
@@ -271,6 +271,6 @@ void floodCheckFill(GameSim *sim, BYTE mx, BYTE my) {
     if (below == CRATER || below == MINE_CRATER) {
       floodAddItem(ff, mx, (BYTE) (my+1));
     }
-    if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }
+    if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
   }
 }

@@ -25,7 +25,7 @@
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
-#include "../../../bolo/global.h"
+#include "global.h"
 #include "../../../mapeditor/mapeditor_generate.h"
 
 #ifdef __cplusplus

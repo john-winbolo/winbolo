@@ -12,10 +12,8 @@
 
 extern "C" {
 #include "players_panel.h"
-#include "../bolo/global.h"
-#include "../bolo/screen.h"
-#include "../bolo/players.h"
-#include "../bolo/client_sim.h"
+#include "global.h"
+#include "client_sim.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/lang.h"
 }
@@ -84,19 +82,19 @@ extern "C" void playersPanelRender(ClientSim *cs) {
     /* Selection shortcuts */
     float btnW = 55.0f;
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALL), ImVec2(btnW, 0))) {
-        screenCheckAllNonePlayersCS(cs, true);
+        clientSimCheckAllNonePlayers(cs, true);
     }
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_NONE), ImVec2(btnW, 0))) {
-        screenCheckAllNonePlayersCS(cs, false);
+        clientSimCheckAllNonePlayers(cs, false);
     }
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALLIES), ImVec2(btnW, 0))) {
-        screenCheckAlliedPlayersCS(cs);
+        clientSimCheckAlliedPlayers(cs);
     }
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_NEARBY), ImVec2(btnW, 0))) {
-        screenCheckNearbyPlayersCS(cs);
+        clientSimCheckNearbyPlayers(cs);
     }
 
     ImGui::Separator();
@@ -113,9 +111,9 @@ extern "C" void playersPanelRender(ClientSim *cs) {
 
         if (sPlayerEnabled[i]) {
             /* Refresh ping from engine */
-            uint16_t ping  = playersGetPing(&cs->sim.plyrs, (BYTE)i);
-            uint8_t flags  = playersGetClientFlags(&cs->sim.plyrs, (BYTE)i);
-            uint8_t ctype  = playersGetClientType(&cs->sim.plyrs, (BYTE)i);
+            uint16_t ping  = clientSimGetPlayerPing(cs, (BYTE)i);
+            uint8_t flags  = clientSimGetPlayerClientFlags(cs, (BYTE)i);
+            uint8_t ctype  = clientSimGetPlayerClientType(cs, (BYTE)i);
 
             renderPlayerName(NULL, flags, ctype, "", false);
 
@@ -124,7 +122,7 @@ extern "C" void playersPanelRender(ClientSim *cs) {
             snprintf(checkId, sizeof(checkId), "%s##p%d", label, i);
             bool checked = sPlayerChecked[i];
             if (ImGui::Checkbox(checkId, &checked)) {
-                screenTogglePlayerCheckStateCS(cs, (BYTE)i);
+                clientSimTogglePlayerCheckState(cs, (BYTE)i);
             }
 
             /* Ping on same line, right-aligned */
