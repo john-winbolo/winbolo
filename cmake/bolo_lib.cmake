@@ -39,14 +39,20 @@
 #                  Today sees public/, internal/, and flat src/bolo/ for
 #                  transitional reasons; a future change will tighten this
 #                  to public/ only.
-#   runtime_only - headless / server-only / wasm /
-#                  logviewer runtime binaries that ship parts of the sim but
-#                  no desktop GUI. Same transitional state as gui; same
-#                  future tightening.
+#   runtime_only - headless / server-only / logviewer runtime binaries
+#                  that ship parts of the sim but no desktop GUI. Same
+#                  transitional state as gui; same future tightening.
 #
-# This file is the single point of edit for the future lockdown step. Until
-# then, every profile maps to the same set of include directories, so
-# wiring a target through this function does not change its behavior.
+# This file is the single point of policy for the include-rule lockdown.
+# gui/runtime_only targets see only public/; the four privileged profiles
+# (sim_owner / mapeditor / braintest / gym) see the full tree.
+#
+# After this change, the gui and runtime_only profiles resolve to public/
+# only. The sim_owner, mapeditor, braintest, and gym profiles continue to
+# see the full public + internal + flat tree. The latter four either own
+# the sim (sim_owner), have a privileged scoped exception documented above
+# (mapeditor, braintest, gym), or aren't subject to the asymmetric-runtime
+# bug class this rule protects against.
 
 set(BOLO_PUBLIC_DIR   "${CMAKE_CURRENT_LIST_DIR}/../src/bolo/public")
 set(BOLO_INTERNAL_DIR "${CMAKE_CURRENT_LIST_DIR}/../src/bolo/internal")
@@ -56,13 +62,14 @@ function(bolo_apply_include_rules target profile)
     if(profile STREQUAL "sim_owner"
        OR profile STREQUAL "mapeditor"
        OR profile STREQUAL "braintest"
-       OR profile STREQUAL "gym"
-       OR profile STREQUAL "gui"
-       OR profile STREQUAL "runtime_only")
+       OR profile STREQUAL "gym")
         target_include_directories(${target} PRIVATE
             ${BOLO_PUBLIC_DIR}
             ${BOLO_INTERNAL_DIR}
             ${BOLO_FLAT_DIR})
+    elseif(profile STREQUAL "gui" OR profile STREQUAL "runtime_only")
+        target_include_directories(${target} PRIVATE
+            ${BOLO_PUBLIC_DIR})
     else()
         message(FATAL_ERROR
             "bolo_apply_include_rules: unknown profile '${profile}' for target '${target}'")
