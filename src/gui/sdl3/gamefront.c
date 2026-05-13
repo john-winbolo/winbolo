@@ -60,7 +60,6 @@
 #include "../clientmutex.h"
 #include "../gamefront.h"
 #include "../../server/threads.h"
-#include "bot_manager.h"
 #include "../input.h"
 #include "../lang.h"
 #include "../sound.h"
@@ -502,7 +501,7 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
    * We still must NOT call serverSimDestroy (would double-free map etc.). */
   if (spServerSimActive && !spServerHosted) {
     /* Destroy bot brains before cleaning up tanks */
-    botManagerDestroy(spServerSim);
+    serverSimDestroyBots(spServerSim);
     /* Free server's tanks — they're separate from the client's predicted
      * tanks (which are deep copies since Phase 4 prediction).
      * LGMs are still shared (not deep-copied), so screenDestroy frees them. */
@@ -1151,7 +1150,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                                                         humanSim);
           clientNetSetupTankGo(humanSim);
           /* Destroy background game before adding real bots — bgGameDestroy
-           * calls botManagerDestroy which would wipe bots we add below. */
+           * calls serverSimDestroyBots which would wipe bots we add below. */
           {
             BgGame *sharedBg = bgGameGetShared();
             if (sharedBg != NULL) {
@@ -1160,8 +1159,8 @@ bool gameFrontSetDlgState(openingStates newState) {
             }
           }
           /* Add bot brains for local game if AI is enabled */
-          if (!botManagerInit(0)) {
-            fprintf(stderr, "[gameFront] botManagerInit failed; bots disabled for this session\n");
+          if (!serverSimBotPoolInit(0)) {
+            fprintf(stderr, "[gameFront] serverSimBotPoolInit failed; bots disabled for this session\n");
           } else {
             /* Resolve brain path for lobby "Add Bot" support and initial bots */
             char brainPath[FILENAME_MAX];
@@ -1185,7 +1184,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                 /* Use per-bot brain path if set, otherwise fall back to default */
                 const char *botBrain = gameFrontBotSetupData.bots[bi].brainPath;
                 if (botBrain[0] == '\0') botBrain = brainPath;
-                botManagerAddBot(spServerSim, slot, botBrain, botName, compTanks, gametype, hiddenMines);
+                serverSimCreateBot(spServerSim, slot, botBrain, botName, compTanks, gametype, hiddenMines);
                 /* Apply team number */
                 uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
                 if (team > 0) {

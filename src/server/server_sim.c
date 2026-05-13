@@ -1542,6 +1542,97 @@ void serverSimSetBotAiType(ServerSim *sim, aiType ai) {
     sim->botAiType = ai;
 }
 
+/* Bot pool wrappers — forward to bot_manager.c. Declarations
+ * live in server_sim.h so non-server callers don't include
+ * bot_manager.h directly. */
+
+bool serverSimBotPoolInit(int threads) {
+    return botManagerInit(threads);
+}
+
+void serverSimRequestBotThreads(int total_runners) {
+    botManagerRequestThreads(total_runners);
+}
+
+int serverSimGetBotThreads(void) {
+    return botManagerGetThreads();
+}
+
+int serverSimGetPendingBotThreads(void) {
+    return botManagerGetPendingThreads();
+}
+
+void serverSimSetBotDefaultDebugMode(bool enabled) {
+    botManagerSetDefaultDebugMode(enabled);
+}
+
+void serverSimSetBotPreThinkHook(void (*hook)(int playerNum)) {
+    botManagerSetPreThinkHook(hook);
+}
+
+bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
+                        const char *brainPath, const char *brainName,
+                        aiType ai, gameType game, bool hiddenMines) {
+    return botManagerAddBot(sim, playerNum, brainPath, brainName,
+                            ai, game, hiddenMines);
+}
+
+void serverSimRemoveBot(ServerSim *sim, BYTE playerNum) {
+    botManagerRemoveBot(sim, playerNum);
+}
+
+void serverSimDestroyBots(ServerSim *sim) {
+    botManagerDestroy(sim);
+}
+
+void serverSimOnBotGameStart(ServerSim *sim) {
+    botManagerOnGameStart(sim);
+}
+
+void serverSimSetBotTeams(ServerSim *sim,
+                          const BYTE *teamOf, BYTE numPlayers) {
+    botManagerSetTeams(sim, teamOf, numPlayers);
+}
+
+void serverSimBotTick(ServerSim *sim, aiType ai) {
+    botManagerTick(sim, ai);
+}
+
+BYTE serverSimGetNumBots(ServerSim *sim) {
+    (void)sim;
+    return botManagerGetNumBots();
+}
+
+bool serverSimHasAnyBot(ServerSim *sim) {
+    (void)sim;
+    return botManagerHasAnyBot();
+}
+
+bool serverSimIsBot(ServerSim *sim, BYTE playerNum) {
+    (void)sim;
+    return botManagerIsBot(playerNum);
+}
+
+double serverSimGetBotLastThinkMs(ServerSim *sim, BYTE playerNum) {
+    (void)sim;
+    return botManagerGetLastThinkMs(playerNum);
+}
+
+bool serverSimGetBotInfo(ServerSim *sim, BYTE playerNum, BotInfo *out) {
+    (void)sim;
+    return botManagerGetBotInfo(playerNum, out);
+}
+
+void serverSimGetBotPoolStats(ServerSim *sim, BotPoolStats *out) {
+    (void)sim;
+    botManagerGetPoolStats(out);
+}
+
+bool serverSimToggleAllBrainDebugMode(ServerSim *sim) {
+    (void)sim;
+    return botManagerToggleAllBrainDebugMode();
+}
+
 void serverSimSetBotBrainPath(ServerSim *sim, const char *path) {
     if (path == NULL || path[0] == '\0') {
         sim->botBrainPath[0] = '\0';

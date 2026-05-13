@@ -58,7 +58,6 @@
 #include "client_net.h"
 #include "server_sim.h"
 #include "../../server/threads.h"
-#include "bot_manager.h"
 #include "gui_message.h"
 #include "bolo_map.h"
 #include "../brainsHandler.h"
@@ -667,9 +666,9 @@ static void windowRunGameTick(ClientSim *cs) {
            * the bottom of the loop) doesn't also count it as sim time. */
           {
             ServerSim *serverSim = gameFrontGetServerSim();
-            if (serverSim != NULL && botManagerGetNumBots() > 0) {
+            if (serverSim != NULL && serverSimGetNumBots(serverSim) > 0) {
               DWORD bttick = winboloTimer();
-              botManagerTick(serverSim, clientSimGetAiType(cs));
+              serverSimBotTick(serverSim, clientSimGetAiType(cs));
               DWORD botDur = winboloTimer() - bttick;
               dwSysBrain += botDur;
               ttick += botDur;

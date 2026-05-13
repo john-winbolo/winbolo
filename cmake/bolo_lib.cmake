@@ -11,11 +11,22 @@
 #                  and (transitionally) the flat src/bolo/ directory.
 #   mapeditor    - the standalone map editor binary. Privileged T2 access to
 #                  bolo's internal map-data layouts; never runs the sim.
+#   braintest    - the BrainTest debug visualiser binary. Privileged
+#                  access to bot_manager.h, brain_pathfinder.h,
+#                  brain_overlay.h, braincore.h, and control_event.h
+#                  for live introspection of brain state. The
+#                  asymmetric-runtime bug class doesn't apply: BrainTest
+#                  is a dev tool, not shipped to players, and is the
+#                  only consumer of these introspection getters. The
+#                  exception expires the moment a second consumer needs
+#                  the same access — at which point the right answer is
+#                  to deep-copy the introspected state into a POD on a
+#                  public header.
 #   gui          - the desktop game GUI and any platform-specific GUI binary.
 #                  Today sees public/, internal/, and flat src/bolo/ for
 #                  transitional reasons; a future change will tighten this
 #                  to public/ only.
-#   runtime_only - headless / gym / braintest / server-only / wasm /
+#   runtime_only - headless / gym / server-only / wasm /
 #                  logviewer runtime binaries that ship parts of the sim but
 #                  no desktop GUI. Same transitional state as gui; same
 #                  future tightening.
@@ -31,6 +42,7 @@ set(BOLO_FLAT_DIR     "${CMAKE_CURRENT_LIST_DIR}/../src/bolo")
 function(bolo_apply_include_rules target profile)
     if(profile STREQUAL "sim_owner"
        OR profile STREQUAL "mapeditor"
+       OR profile STREQUAL "braintest"
        OR profile STREQUAL "gui"
        OR profile STREQUAL "runtime_only")
         target_include_directories(${target} PRIVATE

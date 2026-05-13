@@ -66,7 +66,6 @@ extern "C" {
 extern "C" {
 #include "players.h"
 #include "client_net.h"
-#include "bot_manager.h"
 #include "../../server/server_lifecycle.h"
 #include "../../server/threads.h"
 }
@@ -528,10 +527,10 @@ static void renderSysInfoContent(void) {
          * tick. Take the same mutex serverInstanceTick uses so the
          * snapshot is consistent. Cheap — these are quick reads. */
         threadsWaitForMutex();
-        hasBots = botManagerHasAnyBot();
-        botManagerGetPoolStats(&ps);
+        hasBots = serverSimHasAnyBot(spSim);
+        serverSimGetBotPoolStats(spSim, &ps);
         for (int i = 0; i < MAX_TANKS; i++) {
-            botInfoValid[i] = botManagerGetBotInfo((BYTE)i, &botInfos[i]);
+            botInfoValid[i] = serverSimGetBotInfo(spSim, (BYTE)i, &botInfos[i]);
         }
         serverLifecycleGetTickStats(&tickLast, &tickEwma);
         serverLifecycleGetSimStats(&simLast, &simEwma);
