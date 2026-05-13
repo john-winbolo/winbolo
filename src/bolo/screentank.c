@@ -122,7 +122,7 @@ void screenTanksPrepare(ClientSim *cs, screenTanks *value, tank *tnk, BYTE leftP
 *ARGUMENTS:
 *  value - Pointer to the screenTanks data structure
 *********************************************************/
-BYTE screenTanksGetNumEntries(screenTanks *value) {
+BYTE screenTanksGetNumEntries(const screenTanks *value) {
   return ((*value).numTanksScreen);
 }
 
@@ -190,7 +190,7 @@ void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, 
 *  playerNum  - Player Number of this tank
 *  playerName - String to hold the player name
 *********************************************************/
-void screenTanksGetItem(screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, BYTE *playerNum, char *playerName) {
+void screenTanksGetItem(const screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, BYTE *playerNum, char *playerName) {
   itemNum--;
   if (itemNum <= (*value).numTanksScreen) {
     *mx = (*value).pos[itemNum].mx;

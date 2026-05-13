@@ -35,7 +35,7 @@
 struct ClientSim;
 
 void clientRenderFrame(struct ClientSim *cs, updateType value);
-BYTE screenGetPos(screen *value, BYTE xValue, BYTE yValue);
-bool screenIsMine(screenMines *value, BYTE xValue, BYTE yValue);
+BYTE screenGetPos(const screen *value, BYTE xValue, BYTE yValue);
+bool screenIsMine(const screenMines *value, BYTE xValue, BYTE yValue);
 
 #endif /* CLIENT_RENDER_H */

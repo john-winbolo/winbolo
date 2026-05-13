@@ -271,7 +271,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
 *  xValue - The X co-ordinate
 *  yValue - The Y co-ordinate
 *********************************************************/
-BYTE screenGetPos(screen *value,BYTE xValue, BYTE yValue) {
+BYTE screenGetPos(const screen *value,BYTE xValue, BYTE yValue) {
   BYTE returnValue = RIVER; /* Value to return */
 
   if (xValue < MAIN_BACK_BUFFER_SIZE_X && yValue < MAIN_BACK_BUFFER_SIZE_Y) {
@@ -295,7 +295,7 @@ BYTE screenGetPos(screen *value,BYTE xValue, BYTE yValue) {
 *  xValue - The X co-ordinate
 *  yValue - The Y co-ordinate
 *********************************************************/
-bool screenIsMine(screenMines *value,BYTE xValue, BYTE yValue) {
+bool screenIsMine(const screenMines *value,BYTE xValue, BYTE yValue) {
   bool returnValue = FALSE; /* Value to return */
 
   if (xValue <= MAIN_SCREEN_SIZE_X && yValue <= MAIN_SCREEN_SIZE_Y) {

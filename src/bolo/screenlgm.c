@@ -90,7 +90,7 @@ void screenLgmPrepare(ClientSim *cs, screenLgm *value, BYTE leftPos, BYTE rightP
 *ARGUMENTS:
 *  value - Pointer to the screenLgm data structure
 *********************************************************/
-BYTE screenLgmGetNumEntries(screenLgm *value) {
+BYTE screenLgmGetNumEntries(const screenLgm *value) {
   BYTE returnValue; /* Value to return */
   screenLgm q;
 
@@ -170,7 +170,7 @@ void screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE
 *  py         - Y pixel offset
 *  frame      - Frame identifer of the LGM
 *********************************************************/
-void screenLgmGetItem(screenLgm *value, BYTE itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame) {
+void screenLgmGetItem(const screenLgm *value, BYTE itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame) {
   BYTE count;  /* Looping variable */
   screenLgm q; 
 
