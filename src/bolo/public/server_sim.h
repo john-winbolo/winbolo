@@ -1181,6 +1181,23 @@ void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
  * paths in transport_udp_server. */
 void serverSimSetState(ServerSim *sim, ServerState s);
 
+/* Lobby-time game-setting writers. The lobby UI used to poke
+ * serverSimGetGameSim(sim)->game / ->hiddenMines directly; these
+ * keep the field on GameSim opaque. Only meaningful in lobby state. */
+void serverSimSetGameType(ServerSim *sim, gameType gt);
+void serverSimSetHiddenMines(ServerSim *sim, bool hiddenMines);
+
+/* Switch a lobby bot to a new brain script. Updates both the
+ * per-slot brain-path mirror (serverSimSetBotBrainPathFor) and the
+ * bot manager's live state in a single call — these are always
+ * paired at call sites. */
+void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, const char *brainPath);
+
+/* Rename a bot's display name in the players table without
+ * touching alliance/team/transport state. SP-only path used by the
+ * AiConfig "Bot N" rename UI. */
+void serverSimRenameBotSlot(ServerSim *sim, BYTE slot, const char *name);
+
 
 /* viewPlayer — which player perspective the sim renders from. */
 BYTE serverSimGetViewPlayer(const ServerSim *sim);

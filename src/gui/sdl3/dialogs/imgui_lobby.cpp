@@ -143,10 +143,10 @@ static void lobbySendAddBot(ClientSim *cs, Transport *transport,
             snprintf(botName, sizeof(botName), "Bot %d", slot);
         }
 
-        botManagerAddBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
-                         (aiType)serverSimGetBotAiType(sim),
-                         (gameType)clientSimGetLobbyGameType(cs),
-                         clientSimIsLobbyHiddenMines(cs));
+        serverSimCreateBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
+                           (aiType)serverSimGetBotAiType(sim),
+                           (gameType)clientSimGetLobbyGameType(cs),
+                           clientSimIsLobbyHiddenMines(cs));
         /* Mirror the path into the per-bot table so the AiConfig combo
          * reflects "this bot's brain" rather than a global default. */
         serverSimSetBotBrainPathFor(sim, slot, serverSimGetBotBrainPath(sim));
@@ -195,7 +195,7 @@ static void lobbySendRemoveBot(ClientSim *cs, Transport *transport, uint8_t slot
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim) return;
         if (serverSimGetState(sim) != serverStateLobby) return;
-        botManagerRemoveBot(sim, slot);
+        serverSimRemoveBot(sim, slot);
         if (slot < MAX_TANKS) s_botNameOverridden[slot] = false;
         transportUdpServerBroadcastLobbyUpdate(sim, slot);
         return;
@@ -244,13 +244,7 @@ static void lobbySendBotConfig(ClientSim *cs, Transport *transport,
             }
         }
         if (name && name[0] != '\0') {
-            char nameBuf[32];
-            strncpy(nameBuf, name, sizeof(nameBuf) - 1);
-            nameBuf[sizeof(nameBuf) - 1] = '\0';
-            char loc[3] = "??";
-            playersSetPlayer(NULL, &serverSimGetGameSim(sim)->plyrs, NEUTRAL, slot,
-                             nameBuf, loc,
-                             0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
+            serverSimRenameBotSlot(sim, slot, name);
         }
         /* Publish bot config change AND the slot's new state (playerName
          * may have changed). */
@@ -274,9 +268,7 @@ static void lobbySendSetBotBrain(ClientSim *cs, Transport *transport,
         if (!sim || slot >= MAX_TANKS) return;
         if (serverSimGetState(sim) != serverStateLobby) return;
         if (!serverSimGetLobbyPlayer(sim, slot)->isBot) return;
-        serverSimSetBotBrainPathFor(sim, slot, brainPath);
-        botManagerSetBrainPath(slot,
-                               serverSimGetBotBrainPathFor(sim, slot));
+        serverSimSwitchBotBrain(sim, slot, brainPath);
         transportUdpServerBroadcastLobbyBotBrainChg(sim, slot);
         return;
     }
@@ -428,11 +420,11 @@ static void lobbySendSetting(ClientSim *cs, Transport *transport,
                 /* gameType enum is 1..3 (Open / Tournament / Strict).
                  * The wire carries the raw enum value. */
                 if (valueLen == 1 && value[0] >= 1 && value[0] <= 3) {
-                    serverSimGetGameSim(sim)->game = (gameType)value[0];
+                    serverSimSetGameType(sim, (gameType)value[0]);
                 }
                 break;
             case 2 /* LST_HIDDEN_MINES */:
-                if (valueLen == 1) serverSimGetGameSim(sim)->hiddenMines = value[0] != 0;
+                if (valueLen == 1) serverSimSetHiddenMines(sim, value[0] != 0);
                 break;
             case 3 /* LST_AI_POLICY */:
                 if (valueLen == 1 && value[0] <= 3) {

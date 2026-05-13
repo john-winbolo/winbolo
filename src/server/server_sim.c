@@ -3680,6 +3680,32 @@ void serverSimSetState(ServerSim *sim, ServerState s) {
     if (sim) sim->state = s;
 }
 
+void serverSimSetGameType(ServerSim *sim, gameType gt) {
+    if (sim) sim->sim.game = gt;
+}
+
+void serverSimSetHiddenMines(ServerSim *sim, bool hiddenMines) {
+    if (sim) sim->sim.hiddenMines = hiddenMines;
+}
+
+void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, const char *brainPath) {
+    if (!sim || slot >= MAX_TANKS) return;
+    serverSimSetBotBrainPathFor(sim, slot, brainPath);
+    botManagerSetBrainPath(slot, serverSimGetBotBrainPathFor(sim, slot));
+}
+
+void serverSimRenameBotSlot(ServerSim *sim, BYTE slot, const char *name) {
+    if (!sim || slot >= MAX_TANKS || !name) return;
+    {
+        char nameBuf[32];
+        char loc[3] = "??";
+        SDL_strlcpy(nameBuf, name, sizeof(nameBuf));
+        playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, slot,
+                         nameBuf, loc,
+                         0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
+    }
+}
+
 BYTE serverSimGetViewPlayer(const ServerSim *sim) {
     return sim->sim.viewPlayer;
 }
