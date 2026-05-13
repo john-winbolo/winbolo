@@ -65,8 +65,7 @@ extern "C" {
 /* Include players.h with C linkage — no #pragma pack inside, safe here */
 extern "C" {
 #include "players.h"
-#include "transport.h"
-#include "transport_udp.h"
+#include "client_net.h"
 #include "bot_manager.h"
 #include "../../server/server_lifecycle.h"
 #include "../../server/threads.h"
@@ -98,8 +97,6 @@ extern "C" int  windowGetDrawTime(void);
 extern "C" int  windowGetSimTime(void);
 extern "C" int  windowGetNetTime(void);
 extern "C" int  windowGetAiTime(void);
-/* gameFrontGetTransport: now provided by gamefront.h */
-extern "C" uint16_t transportUdpClientGetPing(Transport *t);
 /* Dialog helpers — declared without pulling in pragma-pack headers */
 /* gameFrontSetGameOptions: now provided by gamefront.h */
 extern "C" void utilStripName(char *name);
@@ -712,15 +709,12 @@ static void renderNetInfoContent(ClientSim *cs) {
 
     netGetStats(cs, str, &ping, &ppsec, &numErrors);
     /* Prefer stats from new UDP transport when active */
-    {
-        Transport *tp = gameFrontGetTransport();
-        if (tp) {
-            uint16_t udpPing = transportUdpClientGetPing(tp);
-            if (udpPing > 0) ping = (int)udpPing;
-            int udpErrors = 0;
-            transportUdpClientGetNetStats(tp, &ppsIn, &ppsOut, &bpsIn, &bpsOut, &udpErrors);
-            numErrors = udpErrors;
-        }
+    if (clientSimHasTransport(cs)) {
+        uint16_t udpPing = clientSimGetNetPing(cs);
+        if (udpPing > 0) ping = (int)udpPing;
+        int udpErrors = 0;
+        clientSimGetUdpNetStats(cs, &ppsIn, &ppsOut, &bpsIn, &bpsOut, &udpErrors);
+        numErrors = udpErrors;
     }
     ImGui::Separator();
     ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_STATUS), str);

@@ -54,6 +54,8 @@
 #include "screenbrainmap.h"
 #include "util.h"
 #include "netpacks.h"
+#include "transport.h"
+#include "transport_udp.h"
 #include "../gui/lang.h"
 #include "../gui/dnsLookups.h"
 #include "../gui/clientmutex.h"
@@ -160,8 +162,19 @@ ClientSim *clientSimAlloc(void) {
 bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDelay, int32_t gmeLen) {
   (void)srtDelay;  /* Used by screen.c for display */
   (void)gmeLen;    /* Used by screen.c for display */
-  
+
+  /* Preserve the transport binding across the wipe. clientSimResetForMapLoad
+   * runs the destroy-internals + clientSimCreate sequence in place to keep
+   * the live transport (and its still-valid map blob) intact; fresh
+   * clientSimAlloc + clientSimCreate callers have zeroed transport fields
+   * anyway, so save/restore is a no-op there. */
+  Transport savedTransport = cs->transport;
+  bool savedHasTransport   = cs->hasTransport;
+  bool savedIsUdpTransport = cs->isUdpTransport;
   memset(cs, 0, sizeof(*cs));
+  cs->transport       = savedTransport;
+  cs->hasTransport    = savedHasTransport;
+  cs->isUdpTransport  = savedIsUdpTransport;
   cs->myPlayerNum = 0;
   cs->sim.viewPlayer = 0;
 
@@ -290,8 +303,12 @@ void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
  *ARGUMENTS:
  *  cs - Pointer to the ClientSim to destroy and free
  *********************************************************/
-void clientSimDestroy(ClientSim *cs) {
-  if (cs == NULL) return;
+/* Tears down all owned simulation state on cs but does NOT free cs
+ * itself or touch the transport binding. Shared by clientSimDestroy
+ * (which then frees the pointer) and clientSimResetForMapLoad (which
+ * keeps the pointer and the transport so the caller can hand the
+ * mid-handshake map blob into clientLoadCompressedMap). */
+static void clientSimDestroyContents(ClientSim *cs) {
   viewportDestroy(&cs->viewport);
   cs->running = FALSE;
   clientStateDestroy(&cs->clientState);
@@ -317,12 +334,12 @@ void clientSimDestroy(ClientSim *cs) {
   treeGrowDestroy(&cs->sim);
   pillsDestroy(&cs->sim.pb);
   playersDestroy(&cs->sim.plyrs);
-  
+
   if (cs->brainBuildInfo != NULL) {
     free(cs->brainBuildInfo);
     cs->brainBuildInfo = NULL;
   }
-  
+
   cs->sim.mp = NULL;
   cs->sim.bs = NULL;
   cs->sim.pb = NULL;
@@ -342,8 +359,46 @@ void clientSimDestroy(ClientSim *cs) {
   cs->allianceAcceptFunc = NULL;
   cs->allianceLeaveFunc = NULL;
   cs->lockToggleSendFunc = NULL;
+}
 
+void clientSimDestroy(ClientSim *cs) {
+  if (cs == NULL) return;
+  if (cs->hasTransport) {
+    if (cs->isUdpTransport) {
+      transportUdpClientDestroy(&cs->transport);
+    } else {
+      transportLocalDestroy(&cs->transport);
+    }
+    cs->hasTransport = false;
+  }
+  clientSimDestroyContents(cs);
   free(cs);
+}
+
+/*********************************************************
+ *NAME:          clientSimResetForMapLoad
+ *PURPOSE:
+ *  Returns cs to a freshly-allocated-and-empty state without
+ *  freeing cs or tearing down the transport binding. The
+ *  no-lobby UDP-join path uses this between the join handshake
+ *  and clientLoadCompressedMap: the compressed map blob lives
+ *  inside the transport, so the transport must survive the
+ *  wipe.
+ *
+ *  After the reset, the subsequent setupClientSim ->
+ *  clientSimCreate(cs, ...) re-initialises substructs.
+ *  clientSimCreate preserves cs->transport / hasTransport /
+ *  isUdpTransport across its memset so the connection stays
+ *  intact end-to-end.
+ *
+ *  Callback function pointers (chatSendFunc, etc.) are reset
+ *  to NULL — that matches the prior clientSimDestroy +
+ *  clientSimAlloc behaviour, and every call site already
+ *  re-registers them after the reload.
+ *********************************************************/
+void clientSimResetForMapLoad(ClientSim *cs) {
+  if (cs == NULL) return;
+  clientSimDestroyContents(cs);
 }
 
 /*********************************************************

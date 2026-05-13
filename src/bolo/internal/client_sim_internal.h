@@ -19,6 +19,7 @@
 #include <stddef.h>
 #include "client_sim.h"
 #include "viewport.h"
+#include "transport.h"
 
 /* Camera / visible-tile state bundled into one struct so viewport math
  * functions in viewport.c can take a ViewPort* without depending on
@@ -170,6 +171,18 @@ struct ClientSim {
     /* Steam achievement: rapid death tracking (ACH_RAPID_DEATH) */
     uint32_t deathTimestamps[10];
     uint8_t  deathTimestampIdx;
+
+    /* Transport binding — owned by ClientSim and managed via the
+     * client_net.h API (clientSimConnectUdp / clientSimConnectLocal /
+     * clientSimDisconnect). Embedded by value because the underlying
+     * transport constructors return Transport by value.
+     *
+     * clientSimCreate preserves these three fields across its memset
+     * (save/restore in the function body) so that clientSimResetForMapLoad
+     * can keep the connection alive while wiping map-dependent state. */
+    Transport transport;
+    bool      hasTransport;
+    bool      isUdpTransport;
 };
 
 BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,

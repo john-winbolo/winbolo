@@ -55,8 +55,7 @@
 #include "tutorial.h"
 #include "players.h"
 #include "../../steam/steam_wrapper.h"
-#include "transport.h"
-#include "transport_udp.h"
+#include "client_net.h"
 #include "server_sim.h"
 #include "../../server/threads.h"
 #include "bot_manager.h"
@@ -78,6 +77,10 @@
 #include "dialogs/imgui_messagebox.h"
 #include "tutorial_text.h"
 #include "../../common/sentry_integration.h"
+
+/* humanSim is owned by gamefront.c; declared up here so the timer
+ * callback and main game-tick path can pass it to clientSim* wrappers. */
+extern ClientSim *humanSim;
 
 /* Forward declarations */
 void sdl3MessageHandler(const char *message, const char *title);
@@ -564,7 +567,7 @@ static Uint32 SDLCALL windowGameTimer(void *userdata, SDL_TimerID timerID, Uint3
   (void)userdata;
   (void)timerID;
 
-  if (gameFrontGetTransport() != NULL) {
+  if (clientSimHasTransport(humanSim)) {
     SDL_SetAtomicInt(&needsGameTick, 1);
   }
   return interval;
@@ -581,18 +584,15 @@ static void windowRunGameTick(ClientSim *cs) {
   bool isMine = FALSE;
   bool used = FALSE;
   bool brainRunning;
-  Transport *transport;
 
   brainRunning = brainHandlerIsBrainRunning();
   isShoot = FALSE;
   tb = 0;
 
-  transport = gameFrontGetTransport();
-
   /* Check if the UDP server has disconnected or timed out.
    * Only check for UDP transports (serverSim == NULL means not local). */
-  if (transport != NULL && gameFrontGetServerSim() == NULL &&
-      transportUdpClientGetJoinState(transport) == UDP_CLIENT_SERVER_SHUTDOWN) {
+  if (clientSimHasTransport(cs) && gameFrontGetServerSim() == NULL &&
+      clientSimGetConnectState(cs) == CLIENT_CONNECT_SERVER_SHUTDOWN) {
     clientSimConnectionLost(cs);
     imguiMessageBoxEx(DIALOG_BOX_TITLE,
                       "You have lost your connection to the server.\n"
@@ -611,7 +611,7 @@ static void windowRunGameTick(ClientSim *cs) {
         BYTE myPlayerNum = gameFrontGetPlayerNum();
         if (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown) {
           /* Lobby/countdown: just tick the transport to receive packets */
-          transport->tick(transport->ctx);
+          clientSimNetTick(cs);
           justKeysFlag = !justKeysFlag; /* Alternate to maintain tick cadence */
         } else if (justKeysFlag == TRUE) {
           /* Keys tick */
@@ -629,33 +629,10 @@ static void windowRunGameTick(ClientSim *cs) {
           clientMutexWaitFor();
           clientSimKeysTick(cs, &pkt);
           clientMutexRelease();
-          transport->recordInput(transport->ctx, &pkt);
-          transport->tick(transport->ctx);
+          clientSimNetRecordInput(cs, &pkt);
+          clientSimNetTick(cs);
           clientMutexWaitFor();
-          {
-            SnapshotHeader snapHdr;
-            TankSnapshot snapTanks[MAX_TANKS];
-            ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-            TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
-            BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
-            PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
-            GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-            if (transport->getSnapshot(transport->ctx, myPlayerNum,
-                                       &snapHdr, snapTanks, MAX_TANKS,
-                                       snapShells, MAX_SNAPSHOT_SHELLS,
-                                       snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                                       snapBases, MAX_SNAPSHOT_BASES,
-                                       snapPills, MAX_SNAPSHOT_PILLS,
-                                       snapEvents, MAX_SNAPSHOT_EVENTS)) {
-              clientSimSyncFromSnapshot(cs, &snapHdr, snapTanks, snapHdr.tankCount,
-                                     snapShells, snapHdr.shellCount,
-                                     snapTkExplosions, snapHdr.tkExplosionCount,
-                                     snapBases, snapHdr.baseCount,
-                                     snapPills, snapHdr.pillCount,
-                                     snapEvents, snapHdr.reliableEventCount,
-                                     myPlayerNum);
-            }
-          }
+          clientSimNetSyncSnapshot(cs);
           clientMutexRelease();
           simTickCounter++;
           justKeysFlag = FALSE;
@@ -681,7 +658,7 @@ static void windowRunGameTick(ClientSim *cs) {
           clientMutexWaitFor();
           clientSimGameTick(cs, &pkt, brainRunning);
           clientMutexRelease();
-          transport->sendInput(transport->ctx, &pkt);
+          clientSimNetSendInput(cs, &pkt);
           /* Tick bot brains before the sim tick (local game only).
            * Wall-clock cost feeds dwSysBrain so the System Info "AI Tanks"
            * line reflects bot processing — brainHandlerRun below only
@@ -698,32 +675,9 @@ static void windowRunGameTick(ClientSim *cs) {
               ttick += botDur;
             }
           }
-          transport->tick(transport->ctx);
+          clientSimNetTick(cs);
           clientMutexWaitFor();
-          {
-            SnapshotHeader snapHdr;
-            TankSnapshot snapTanks[MAX_TANKS];
-            ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-            TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
-            BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
-            PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
-            GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-            if (transport->getSnapshot(transport->ctx, myPlayerNum,
-                                       &snapHdr, snapTanks, MAX_TANKS,
-                                       snapShells, MAX_SNAPSHOT_SHELLS,
-                                       snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                                       snapBases, MAX_SNAPSHOT_BASES,
-                                       snapPills, MAX_SNAPSHOT_PILLS,
-                                       snapEvents, MAX_SNAPSHOT_EVENTS)) {
-              clientSimSyncFromSnapshot(cs, &snapHdr, snapTanks, snapHdr.tankCount,
-                                     snapShells, snapHdr.shellCount,
-                                     snapTkExplosions, snapHdr.tkExplosionCount,
-                                     snapBases, snapHdr.baseCount,
-                                     snapPills, snapHdr.pillCount,
-                                     snapEvents, snapHdr.reliableEventCount,
-                                     myPlayerNum);
-            }
-          }
+          clientSimNetSyncSnapshot(cs);
           clientSimDisplayTick(cs, brainRunning);
           clientMutexRelease();
           simTickCounter++;
@@ -775,7 +729,7 @@ static Uint32 SDLCALL windowFrameRateTimer(void *userdata, SDL_TimerID timerID, 
   (void)timerID;
 
   /* Don't run frame logic until a game has actually started */
-  if (gameFrontGetTransport() == NULL) {
+  if (!clientSimHasTransport(humanSim)) {
     return (Uint32)frameRateTime;
   }
 

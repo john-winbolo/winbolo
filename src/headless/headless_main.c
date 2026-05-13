@@ -78,8 +78,7 @@
 #include "brain.h"
 #include "pillbox.h"
 #include "bases.h"
-#include "transport.h"
-#include "transport_udp.h"
+#include "client_net.h"
 #include "gui_message.h"
 #include "server_sim.h"
 #include "../gui/brainsHandler.h"
@@ -128,8 +127,8 @@ static gameType optGameType = gameStrictTournament;
 /* Quit flag for signal handler */
 static volatile bool headlessQuit = FALSE;
 
-/* Transport state */
-static Transport headlessTransport;
+/* Transport state — the Transport handle itself now lives inside
+ * humanSim; this flag only tracks high-level lifecycle gating. */
 static bool transportActive = FALSE;
 static SubscriberHandle headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
 
@@ -1001,28 +1000,7 @@ time_t serverMainGetTicks(void) {
 /* Helper: sync snapshot from transport                                */
 /* ------------------------------------------------------------------ */
 static void headlessSyncSnapshot(void) {
-  SnapshotHeader snapHdr;
-  TankSnapshot snapTanks[MAX_TANKS];
-  ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-  TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
-  BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
-  PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
-  GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-  if (headlessTransport.getSnapshot(headlessTransport.ctx, playerNum,
-                                     &snapHdr, snapTanks, MAX_TANKS,
-                                     snapShells, MAX_SNAPSHOT_SHELLS,
-                                     snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                                     snapBases, MAX_SNAPSHOT_BASES,
-                                     snapPills, MAX_SNAPSHOT_PILLS,
-                                     snapEvents, MAX_SNAPSHOT_EVENTS)) {
-    clientSimSyncFromSnapshot(humanSim, &snapHdr, snapTanks, snapHdr.tankCount,
-                            snapShells, snapHdr.shellCount,
-                            snapTkExplosions, snapHdr.tkExplosionCount,
-                            snapBases, snapHdr.baseCount,
-                            snapPills, snapHdr.pillCount,
-                            snapEvents, snapHdr.reliableEventCount,
-                            playerNum);
-  }
+  clientSimNetSyncSnapshot(humanSim);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1044,13 +1022,12 @@ static bool fastModeSetupGame(void) {
   serverSimAddPlayer(fastServerSim, 0, optName, false);
   serverSimGetGameSim(fastServerSim)->viewPlayer = 0;
 
-  /* Recreate local transport */
-  headlessTransport = transportLocalCreate(fastServerSim, 0);
   transportActive = TRUE;
   playerNum = 0;
 
   /* Reload client sim from cached compressed map */
   humanSim = clientSimAlloc();
+  clientSimConnectLocal(humanSim, fastServerSim, 0);
   clientLoadCompressedMap(humanSim, cachedCompressedMap, cachedCompressedMapLen,
                           "Fast Local", optGameType, false, 0,
                           UNLIMITED_GAME_TIME, optName, 0, FALSE);
@@ -1078,8 +1055,7 @@ static void fastModeTeardownGame(void) {
   brainsHandlerShutdown();
   serverSimUnregisterSubscriber(fastServerSim, headlessControlSub);
   headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
-  clientSimDestroy(humanSim);
-  transportLocalDestroy(&headlessTransport);
+  clientSimDestroy(humanSim);  /* also tears down the embedded transport */
   transportActive = FALSE;
 }
 
@@ -1129,10 +1105,10 @@ static int runFastMode(void) {
   serverSimStartGame(fastServerSim);
   serverSimAddPlayer(fastServerSim, 0, optName, false);
   serverSimGetGameSim(fastServerSim)->viewPlayer = 0;
-  headlessTransport = transportLocalCreate(fastServerSim, 0);
   transportActive = TRUE;
   playerNum = 0;
   humanSim = clientSimAlloc();
+  clientSimConnectLocal(humanSim, fastServerSim, 0);
   clientLoadCompressedMap(humanSim, cachedCompressedMap, cachedCompressedMapLen,
                           "Fast Local", optGameType, false, 0,
                           UNLIMITED_GAME_TIME, optName, 0, FALSE);
@@ -1188,8 +1164,8 @@ static int runFastMode(void) {
         clientBuildInputPacket(humanSim, &pkt, 0, FALSE, FALSE, brainRunning, FALSE, playerNum, simTickCounter);
       }
       clientSimKeysTick(humanSim, &pkt);
-      headlessTransport.sendInput(headlessTransport.ctx, &pkt);
-      headlessTransport.tick(headlessTransport.ctx);
+      clientSimNetSendInput(humanSim, &pkt);
+      clientSimNetTick(humanSim);
       headlessSyncSnapshot();
       simTickCounter++;
       justKeys = FALSE;
@@ -1229,8 +1205,8 @@ static int runFastMode(void) {
         clientBuildInputPacket(humanSim, &pkt, 0, FALSE, FALSE, brainRunning, TRUE, playerNum, simTickCounter);
       }
       clientSimGameTick(humanSim, &pkt, brainRunning);
-      headlessTransport.sendInput(headlessTransport.ctx, &pkt);
-      headlessTransport.tick(headlessTransport.ctx);
+      clientSimNetSendInput(humanSim, &pkt);
+      clientSimNetTick(humanSim);
       headlessSyncSnapshot();
       clientSimDisplayTick(humanSim, brainRunning);
       simTickCounter++;
@@ -1264,8 +1240,7 @@ static int runFastMode(void) {
   brainsHandlerShutdown();
   serverSimUnregisterSubscriber(fastServerSim, headlessControlSub);
   headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
-  clientSimDestroy(humanSim);
-  transportLocalDestroy(&headlessTransport);
+  clientSimDestroy(humanSim);  /* also tears down the embedded transport */
   transportActive = FALSE;
   serverSimDestroy(fastServerSim);
   fastServerSim = NULL;
@@ -1308,12 +1283,11 @@ static int runNetworkMode(void) {
     fprintf(stderr, "Connecting to %s:%u...\n", optServer, optPort);
   }
 
-  headlessTransport = transportUdpClientCreate(humanSim, optServer, optPort, optName, optPassword, "", false,
-                                                optTrackerAddr, optTrackerPort);
-  if (transportUdpClientGetJoinState(&headlessTransport) == UDP_CLIENT_ERROR) {
-    const char *reason = transportUdpClientGetJoinRejectReason(&headlessTransport);
+  clientSimConnectUdp(humanSim, optServer, optPort, optName, optPassword, "", false,
+                      optTrackerAddr, optTrackerPort);
+  if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
+    const char *reason = clientSimGetConnectErrorReason(humanSim);
     fprintf(stderr, "Error: failed to connect: %s\n", reason ? reason : "unknown");
-    transportUdpClientDestroy(&headlessTransport);
     clientSimDestroy(humanSim);
     return 1;
   }
@@ -1321,24 +1295,23 @@ static int runNetworkMode(void) {
   /* Wait for join handshake + map download */
   {
     int joinWaitTicks = 0;
-    while ((transportUdpClientGetJoinState(&headlessTransport) == UDP_CLIENT_JOINING ||
-            transportUdpClientGetJoinState(&headlessTransport) == UDP_CLIENT_DOWNLOADING_MAP) &&
+    while ((clientSimGetConnectState(humanSim) == CLIENT_CONNECT_JOINING ||
+            clientSimGetConnectState(humanSim) == CLIENT_CONNECT_DOWNLOADING_MAP) &&
            joinWaitTicks < 1500) {
-      headlessTransport.tick(headlessTransport.ctx);
+      clientSimNetTick(humanSim);
       SDL_Delay(20);
       joinWaitTicks++;
     }
   }
 
-  if (transportUdpClientGetJoinState(&headlessTransport) != UDP_CLIENT_CONNECTED) {
-    const char *reason = transportUdpClientGetJoinRejectReason(&headlessTransport);
+  if (clientSimGetConnectState(humanSim) != CLIENT_CONNECT_CONNECTED) {
+    const char *reason = clientSimGetConnectErrorReason(humanSim);
     fprintf(stderr, "Error: join failed: %s\n", reason ? reason : "timeout");
-    transportUdpClientDestroy(&headlessTransport);
     clientSimDestroy(humanSim);
     return 1;
   }
 
-  playerNum = transportUdpClientGetPlayerNum(&headlessTransport);
+  playerNum = clientSimGetServerPlayerNum(humanSim);
   transportActive = TRUE;
 
   /* Load map from server */
@@ -1349,30 +1322,30 @@ static int runNetworkMode(void) {
     bool serverHiddenMines;
     int32_t serverStartDelay, serverGameLen;
 
-    mapData = transportUdpClientGetMapData(&headlessTransport, &mapLen);
-    transportUdpClientGetGameSettings(&headlessTransport, &serverGame,
-                                       &serverHiddenMines,
-                                       &serverStartDelay, &serverGameLen);
+    mapData = clientSimGetServerMapData(humanSim, &mapLen);
+    clientSimGetServerGameSettings(humanSim, &serverGame,
+                                   &serverHiddenMines,
+                                   &serverStartDelay, &serverGameLen);
 
     if (mapData != NULL && mapLen > 0) {
       char savedMapName[MAP_STR_SIZE];
       strncpy(savedMapName, clientSimGetMapName(humanSim), MAP_STR_SIZE - 1);
       savedMapName[MAP_STR_SIZE - 1] = '\0';
-      clientSimDestroy(humanSim);
-      humanSim = clientSimAlloc();
+      /* Reset map-dependent state in place; the transport (and the
+       * mapData pointer that lives inside it) survive the reset. */
+      clientSimResetForMapLoad(humanSim);
       if (clientLoadCompressedMap(humanSim, (BYTE *)mapData, mapLen, savedMapName,
                                   serverGame, serverHiddenMines,
                                   serverStartDelay, serverGameLen,
                                   optName, playerNum, FALSE) == FALSE) {
         fprintf(stderr, "Error: failed to load map from server\n");
-        transportUdpClientDestroy(&headlessTransport);
+        clientSimDestroy(humanSim);
         return 1;
       }
       clientSimSetLocalTransport(humanSim, false);
       clientSimSetAiType(humanSim, optAi);
     } else {
       fprintf(stderr, "Error: no map data from server\n");
-      transportUdpClientDestroy(&headlessTransport);
       clientSimDestroy(humanSim);
       return 1;
     }
@@ -1419,7 +1392,7 @@ static int runNetworkMode(void) {
       while ((ttick - oldTick) > GAME_TICK_LENGTH) {
         if (clientSimGetNetStatus(humanSim) == netLobby || clientSimGetNetStatus(humanSim) == netLobbyCountdown) {
           /* Lobby/countdown: just tick the transport to receive packets */
-          headlessTransport.tick(headlessTransport.ctx);
+          clientSimNetTick(humanSim);
           justKeys = !justKeys;
         } else if (justKeys) {
           /* Keys tick */
@@ -1428,8 +1401,8 @@ static int runNetworkMode(void) {
           clientMutexWaitFor();
           clientSimKeysTick(humanSim, &pkt);
           clientMutexRelease();
-          headlessTransport.recordInput(headlessTransport.ctx, &pkt);
-          headlessTransport.tick(headlessTransport.ctx);
+          clientSimNetRecordInput(humanSim, &pkt);
+          clientSimNetTick(humanSim);
           clientMutexWaitFor();
           headlessSyncSnapshot();
           clientMutexRelease();
@@ -1442,8 +1415,8 @@ static int runNetworkMode(void) {
           clientMutexWaitFor();
           clientSimGameTick(humanSim, &pkt, brainRunning);
           clientMutexRelease();
-          headlessTransport.sendInput(headlessTransport.ctx, &pkt);
-          headlessTransport.tick(headlessTransport.ctx);
+          clientSimNetSendInput(humanSim, &pkt);
+          clientSimNetTick(humanSim);
           clientMutexWaitFor();
           headlessSyncSnapshot();
           clientSimDisplayTick(humanSim, brainRunning);
@@ -1462,7 +1435,7 @@ static int runNetworkMode(void) {
 
     /* Brain processing */
     if (used && brainRunning &&
-        transportUdpClientGetJoinState(&headlessTransport) != UDP_CLIENT_SERVER_SHUTDOWN) {
+        clientSimGetConnectState(humanSim) != CLIENT_CONNECT_SERVER_SHUTDOWN) {
       brainHandlerRun();
     }
 
@@ -1482,7 +1455,7 @@ static int runNetworkMode(void) {
     }
 
     /* Check for server disconnect */
-    if (transportUdpClientGetJoinState(&headlessTransport) == UDP_CLIENT_SERVER_SHUTDOWN) {
+    if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_SERVER_SHUTDOWN) {
       fprintf(stderr, "Server disconnected. Exiting.\n");
       break;
     }
@@ -1499,8 +1472,7 @@ static int runNetworkMode(void) {
 
   clientMutexWaitFor();
   brainsHandlerShutdown();
-  clientSimDestroy(humanSim);
-  transportUdpClientDestroy(&headlessTransport);
+  clientSimDestroy(humanSim);  /* also tears down the embedded transport */
   transportActive = FALSE;
   clientMutexRelease();
 

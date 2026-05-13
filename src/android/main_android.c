@@ -22,8 +22,7 @@
 #include "client_snapshot.h"
 #include "client_render.h"
 #include "frontend.h"
-#include "transport.h"
-#include "transport_udp.h"
+#include "client_net.h"
 #include "gui_message.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
@@ -107,34 +106,6 @@ static Uint64 lastFrameTime = 0;
 extern void sdl3MessageHandler(const char *message, const char *title);
 
 /* -------------------------------------------------------
- * Helper: sync snapshot from transport
- * ------------------------------------------------------- */
-static void androidSyncSnapshot(ClientSim *cs, Transport *transport, BYTE myPlayerNum) {
-  SnapshotHeader snapHdr;
-  TankSnapshot snapTanks[MAX_TANKS];
-  ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-  TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
-  BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
-  PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
-  GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-  if (transport->getSnapshot(transport->ctx, myPlayerNum,
-                              &snapHdr, snapTanks, MAX_TANKS,
-                              snapShells, MAX_SNAPSHOT_SHELLS,
-                              snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                              snapBases, MAX_SNAPSHOT_BASES,
-                              snapPills, MAX_SNAPSHOT_PILLS,
-                              snapEvents, MAX_SNAPSHOT_EVENTS)) {
-    clientSimSyncFromSnapshot(cs, &snapHdr, snapTanks, snapHdr.tankCount,
-                            snapShells, snapHdr.shellCount,
-                            snapTkExplosions, snapHdr.tkExplosionCount,
-                            snapBases, snapHdr.baseCount,
-                            snapPills, snapHdr.pillCount,
-                            snapEvents, snapHdr.reliableEventCount,
-                            myPlayerNum);
-  }
-}
-
-/* -------------------------------------------------------
  * windowRunGameTick — game logic using transport
  * ------------------------------------------------------- */
 static void windowRunGameTick(ClientSim *cs) {
@@ -147,14 +118,12 @@ static void windowRunGameTick(ClientSim *cs) {
   bool isMine = FALSE;
   bool used = FALSE;
   bool brainRunning;
-  Transport *transport;
 
   brainRunning = brainHandlerIsBrainRunning();
   isShoot = FALSE;
   tb = 0;
 
-  transport = gameFrontGetTransport();
-  if (transport == NULL || doingTutorial) {
+  if (!clientSimHasTransport(cs) || doingTutorial) {
     return;
   }
 
@@ -170,10 +139,10 @@ static void windowRunGameTick(ClientSim *cs) {
       clientMutexWaitFor();
       clientSimKeysTick(cs, &pkt);
       clientMutexRelease();
-      transport->recordInput(transport->ctx, &pkt);
-      transport->tick(transport->ctx);
+      clientSimNetRecordInput(cs, &pkt);
+      clientSimNetTick(cs);
       clientMutexWaitFor();
-      androidSyncSnapshot(cs, transport, myPlayerNum);
+      clientSimNetSyncSnapshot(cs);
       clientMutexRelease();
       simTickCounter++;
       justKeys = FALSE;
@@ -195,7 +164,7 @@ static void windowRunGameTick(ClientSim *cs) {
       clientMutexWaitFor();
       clientSimGameTick(cs, &pkt, brainRunning);
       clientMutexRelease();
-      transport->sendInput(transport->ctx, &pkt);
+      clientSimNetSendInput(cs, &pkt);
       /* Tick bot brains before the sim tick (local game only) */
       {
         ServerSim *serverSim = gameFrontGetServerSim();
@@ -203,9 +172,9 @@ static void windowRunGameTick(ClientSim *cs) {
           botManagerTick(serverSim, clientSimGetAiType(cs));
         }
       }
-      transport->tick(transport->ctx);
+      clientSimNetTick(cs);
       clientMutexWaitFor();
-      androidSyncSnapshot(cs, transport, myPlayerNum);
+      clientSimNetSyncSnapshot(cs);
       clientSimDisplayTick(cs, brainRunning);
       clientMutexRelease();
       simTickCounter++;
@@ -483,7 +452,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Game tick accumulation (replaces SDL_AddTimer) */
-    if (gameFrontGetTransport() != NULL) {
+    if (clientSimHasTransport(cs)) {
       Uint64 now = SDL_GetTicks();
       double elapsed = (double)(now - lastFrameTime);
       lastFrameTime = now;
