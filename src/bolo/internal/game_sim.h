@@ -54,7 +54,7 @@
 #include "sounddist.h"
 #include "util.h"
 #include "position_history.h"
-#include "../gui/lang.h"
+#include "../../gui/lang.h"
 
 typedef struct GameSimCallbacks {
     void (*messageAdd)(void *ctx, messageType msgType,

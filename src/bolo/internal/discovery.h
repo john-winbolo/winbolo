@@ -26,7 +26,7 @@
 #include "global.h"
 #include "platform_net.h"
 #include "bolo_packets.h"
-#include "../gui/currentgames.h"
+#include "../../gui/currentgames.h"
 
 /*********************************************************
  *NAME:          discoveryFindTrackedGames

@@ -27,7 +27,7 @@
 #define OBS_BUILDER_H
 
 #include "brain.h"
-#include "../gym/winbolo_gym.h"
+#include "../../gym/winbolo_gym.h"
 
 #ifdef __cplusplus
 extern "C" {
