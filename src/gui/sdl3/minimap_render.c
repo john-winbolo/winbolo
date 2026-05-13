@@ -23,6 +23,7 @@
 #include "pillbox.h"
 #include "bases.h"
 #include "starts.h"
+#include "client_mappreview.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -221,56 +222,34 @@ SDL_Texture *minimapFromCompressed(SDL_Renderer *renderer,
                                    const BYTE *compressedData, int dataLen,
                                    MinimapBounds *bounds,
                                    int *outPills, int *outBases, int *outStarts) {
-    map mp;
-    pillboxes pb;
-    bases bs;
-    starts ss;
     SDL_Texture *tex;
 
-    mapCreate(&mp);
-    pillsCreate(&pb);
-    basesCreate(&bs);
-    startsCreate(&ss);
+    MapPreview *mp = clientMapPreviewLoadFromBuffer(compressedData, dataLen);
+    if (!mp) return NULL;
 
-    if (!mapLoadCompressedMap(&mp, &pb, &bs, &ss, (BYTE *)compressedData, dataLen)) {
-        mapDestroy(&mp);
-        pillsDestroy(&pb);
-        basesDestroy(&bs);
-        startsDestroy(&ss);
-        return NULL;
-    }
+    if (outPills)  *outPills  = clientMapPreviewGetPillCount(mp);
+    if (outBases)  *outBases  = clientMapPreviewGetBaseCount(mp);
+    if (outStarts) *outStarts = clientMapPreviewGetStartCount(mp);
 
-    if (outPills)  *outPills  = pillsGetNumPills(&pb);
-    if (outBases)  *outBases  = basesGetNumBases(&bs);
-    if (outStarts) *outStarts = startsGetNumStarts(&ss);
+    tex = minimapCreateTexture(renderer,
+                               clientMapPreviewMap(mp),
+                               clientMapPreviewBases(mp),
+                               clientMapPreviewPills(mp),
+                               clientMapPreviewStarts(mp),
+                               bounds, 0);
 
-    tex = minimapCreateTexture(renderer, mp, bs, pb, ss, bounds, 0);
-
-    mapDestroy(&mp);
-    pillsDestroy(&pb);
-    basesDestroy(&bs);
-    startsDestroy(&ss);
+    clientMapPreviewDestroy(mp);
     return tex;
 }
 
 SDL_Texture *minimapFromFile(SDL_Renderer *renderer, const char *mapPath,
                              MinimapBounds *bounds,
                              int *outPills, int *outBases, int *outStarts) {
-    map mp;
-    pillboxes pb;
-    bases bs;
-    starts ss;
-    bool loaded;
     SDL_Texture *tex;
 
-    mapCreate(&mp);
-    pillsCreate(&pb);
-    basesCreate(&bs);
-    startsCreate(&ss);
-
-    /* Try direct fopen-based mapRead first (desktop) */
-    loaded = (mapRead((char *)mapPath, &mp, &pb, &bs, &ss) == TRUE);
-    if (!loaded) {
+    /* Try direct fopen-based load first (desktop) */
+    MapPreview *mp = clientMapPreviewLoadFromFile(mapPath);
+    if (!mp) {
         /* Try SDL_LoadFile (Android APK) -> temp file -> mapRead */
         size_t fileSize = 0;
         void *fileData = SDL_LoadFile(mapPath, &fileSize);
@@ -283,30 +262,26 @@ SDL_Texture *minimapFromFile(SDL_Renderer *renderer, const char *mapPath,
             if (fp) {
                 fwrite(fileData, 1, fileSize, fp);
                 fclose(fp);
-                loaded = (mapRead(tmpPath, &mp, &pb, &bs, &ss) == TRUE);
+                mp = clientMapPreviewLoadFromFile(tmpPath);
                 remove(tmpPath);
             }
             SDL_free(fileData);
         }
     }
 
-    if (!loaded) {
-        mapDestroy(&mp);
-        pillsDestroy(&pb);
-        basesDestroy(&bs);
-        startsDestroy(&ss);
-        return NULL;
-    }
+    if (!mp) return NULL;
 
-    if (outPills)  *outPills  = pillsGetNumPills(&pb);
-    if (outBases)  *outBases  = basesGetNumBases(&bs);
-    if (outStarts) *outStarts = startsGetNumStarts(&ss);
+    if (outPills)  *outPills  = clientMapPreviewGetPillCount(mp);
+    if (outBases)  *outBases  = clientMapPreviewGetBaseCount(mp);
+    if (outStarts) *outStarts = clientMapPreviewGetStartCount(mp);
 
-    tex = minimapCreateTexture(renderer, mp, bs, pb, ss, bounds, 0);
+    tex = minimapCreateTexture(renderer,
+                               clientMapPreviewMap(mp),
+                               clientMapPreviewBases(mp),
+                               clientMapPreviewPills(mp),
+                               clientMapPreviewStarts(mp),
+                               bounds, 0);
 
-    mapDestroy(&mp);
-    pillsDestroy(&pb);
-    basesDestroy(&bs);
-    startsDestroy(&ss);
+    clientMapPreviewDestroy(mp);
     return tex;
 }

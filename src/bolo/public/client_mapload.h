@@ -38,6 +38,5 @@ bool clientLoadCompressedMap(struct ClientSim *cs, BYTE *buff, int buffLen,
                              int32_t srtDelay, int32_t gmeLen, char *playerName,
                              BYTE playerNum, bool wantFree);
 bool clientSaveMap(struct ClientSim *cs, char *fileName);
-bool clientGenerateMapPreview(char *fileName, BYTE *buff);
 
 #endif /* CLIENT_MAPLOAD_H */

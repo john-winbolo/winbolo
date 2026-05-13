@@ -3467,3 +3467,92 @@ const BalanceProposal *serverSimGetBalanceProposal(const ServerSim *sim) {
 GameSim *serverSimGetGameSim(ServerSim *sim) {
     return &sim->sim;
 }
+
+/* --- Live-sim map / pill / base / start readers --- */
+
+BYTE serverSimGetMapTerrain(const ServerSim *sim, BYTE x, BYTE y) {
+    return mapGetPos(&((ServerSim *)sim)->sim.mp, x, y);
+}
+
+bool serverSimMapIsMine(const ServerSim *sim, BYTE x, BYTE y) {
+    return mapIsMine(&((ServerSim *)sim)->sim.mp, x, y);
+}
+
+bool serverSimPillExistsAt(const ServerSim *sim, BYTE x, BYTE y) {
+    return pillsExistPos(&((ServerSim *)sim)->sim.pb, x, y);
+}
+
+BYTE serverSimPillGetScreenHealthAt(ServerSim *sim, BYTE x, BYTE y) {
+    return pillsGetScreenHealth(&sim->sim, &sim->sim.pb, x, y);
+}
+
+bool serverSimBaseExistsAt(const ServerSim *sim, BYTE x, BYTE y) {
+    return basesExistPos(&((ServerSim *)sim)->sim.bs, x, y);
+}
+
+baseAlliance serverSimBaseGetAllianceAt(ServerSim *sim, BYTE x, BYTE y) {
+    return basesGetAlliancePos(&sim->sim, x, y);
+}
+
+bool serverSimBaseAmOwnerAt(ServerSim *sim, BYTE player, BYTE x, BYTE y) {
+    return basesAmOwner(&sim->sim, player, x, y);
+}
+
+BYTE serverSimGetPillCount(const ServerSim *sim) {
+    return pillsGetNumPills(&((ServerSim *)sim)->sim.pb);
+}
+
+BYTE serverSimGetBaseCount(const ServerSim *sim) {
+    return basesGetNumBases(&((ServerSim *)sim)->sim.bs);
+}
+
+BYTE serverSimGetStartCount(const ServerSim *sim) {
+    return startsGetNumStarts(&((ServerSim *)sim)->sim.ss);
+}
+
+bool serverSimGetPill(ServerSim *sim, BYTE i,
+                      BYTE *x, BYTE *y, BYTE *owner, BYTE *armour,
+                      bool *inTank) {
+    pillbox p;
+    BYTE n = pillsGetNumPills(&sim->sim.pb);
+    if (i == 0 || i > n) return false;
+    pillsGetPill(&sim->sim.pb, &p, i);
+    if (x)      *x      = p.x;
+    if (y)      *y      = p.y;
+    if (owner)  *owner  = p.owner;
+    if (armour) *armour = p.armour;
+    if (inTank) *inTank = p.inTank;
+    return true;
+}
+
+bool serverSimGetBase(ServerSim *sim, BYTE i,
+                      BYTE *x, BYTE *y, BYTE *owner) {
+    base b;
+    BYTE n = basesGetNumBases(&sim->sim.bs);
+    if (i == 0 || i > n) return false;
+    basesGetBase(&sim->sim.bs, &b, i);
+    if (x)     *x     = b.x;
+    if (y)     *y     = b.y;
+    if (owner) *owner = b.owner;
+    return true;
+}
+
+bool serverSimGetBaseStats(ServerSim *sim, BYTE i,
+                           BYTE *shells, BYTE *mines, BYTE *armour) {
+    BYTE n = basesGetNumBases(&sim->sim.bs);
+    if (i == 0 || i > n) return false;
+    basesGetStats(&sim->sim.bs, i, shells, mines, armour);
+    return true;
+}
+
+bool serverSimGetStart(ServerSim *sim, BYTE i,
+                       BYTE *x, BYTE *y, BYTE *dir) {
+    start s;
+    BYTE n = startsGetNumStarts(&sim->sim.ss);
+    if (i == 0 || i > n) return false;
+    startsGetStartStruct(&sim->sim.ss, &s, i);
+    if (x)   *x   = s.x;
+    if (y)   *y   = s.y;
+    if (dir) *dir = startsConvertDir((BYTE)((s.dir < 16) ? s.dir : 0));
+    return true;
+}

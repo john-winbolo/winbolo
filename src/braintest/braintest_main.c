@@ -69,10 +69,6 @@
 #include "tank.h"
 #include "bot_manager.h"
 #include "players.h"
-#include "bolo_map.h"
-#include "pillbox.h"
-#include "bases.h"
-#include "starts.h"
 #include "allience.h"
 #include "control_event.h"
 #include "brain_pathfinder.h"
@@ -1677,12 +1673,11 @@ static bool findBrainScript(const char *base, char *out, size_t outLen) {
 /* ------------------------------------------------------------------ */
 
 static void calcMapBounds(BrainTestApp *app) {
-    GameSim *gs = serverSimGetGameSim(app->sim);
     int minX = 255, minY = 255, maxX = 0, maxY = 0;
 
     for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
         for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
-            if (mapGetPos(&gs->mp, (BYTE)x, (BYTE)y) != DEEP_SEA) {
+            if (serverSimGetMapTerrain(app->sim, (BYTE)x, (BYTE)y) != DEEP_SEA) {
                 if (x < minX) minX = x;
                 if (x > maxX) maxX = x;
                 if (y < minY) minY = y;
@@ -1690,29 +1685,32 @@ static void calcMapBounds(BrainTestApp *app) {
             }
         }
     }
-    BYTE np = pillsGetNumPills(&gs->pb);
+    BYTE np = serverSimGetPillCount(app->sim);
     for (BYTE i = 1; i <= np; i++) {
-        pillbox p; pillsGetPill(&gs->pb, &p, i);
-        if (p.x < minX) minX = p.x;
-        if (p.x > maxX) maxX = p.x;
-        if (p.y < minY) minY = p.y;
-        if (p.y > maxY) maxY = p.y;
+        BYTE px, py;
+        if (!serverSimGetPill(app->sim, i, &px, &py, NULL, NULL, NULL)) continue;
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
     }
-    BYTE nb = basesGetNumBases(&gs->bs);
+    BYTE nb = serverSimGetBaseCount(app->sim);
     for (BYTE i = 1; i <= nb; i++) {
-        base b; basesGetBase(&gs->bs, &b, i);
-        if (b.x < minX) minX = b.x;
-        if (b.x > maxX) maxX = b.x;
-        if (b.y < minY) minY = b.y;
-        if (b.y > maxY) maxY = b.y;
+        BYTE bx, by;
+        if (!serverSimGetBase(app->sim, i, &bx, &by, NULL)) continue;
+        if (bx < minX) minX = bx;
+        if (bx > maxX) maxX = bx;
+        if (by < minY) minY = by;
+        if (by > maxY) maxY = by;
     }
-    BYTE ns = startsGetNumStarts(&gs->ss);
+    BYTE ns = serverSimGetStartCount(app->sim);
     for (BYTE i = 1; i <= ns; i++) {
-        start st; startsGetStartStruct(&gs->ss, &st, i);
-        if (st.x < minX) minX = st.x;
-        if (st.x > maxX) maxX = st.x;
-        if (st.y < minY) minY = st.y;
-        if (st.y > maxY) maxY = st.y;
+        BYTE sx, sy;
+        if (!serverSimGetStart(app->sim, i, &sx, &sy, NULL)) continue;
+        if (sx < minX) minX = sx;
+        if (sx > maxX) maxX = sx;
+        if (sy < minY) minY = sy;
+        if (sy > maxY) maxY = sy;
     }
 
     int pad = 5;

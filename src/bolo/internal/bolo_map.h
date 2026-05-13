@@ -35,11 +35,8 @@
 #define SIZEOFBMAP_START_INFO 3
 #define SIZEOFBMAP_RUN_HEADER 4
 
-/* Map Edges for mines */
-#define MAP_MINE_EDGE_LEFT  20
-#define MAP_MINE_EDGE_RIGHT 236
-#define MAP_MINE_EDGE_TOP  20
-#define MAP_MINE_EDGE_BOTTOM 236
+/* MAP_MINE_EDGE_* moved to global.h (used by map-render UIs that
+ * don't pull bolo_map.h). */
 
 /* Maximums */
 /* Not required

@@ -76,8 +76,6 @@
 #include "frontend.h"
 #include "players.h"
 #include "brain.h"
-#include "pillbox.h"
-#include "bases.h"
 #include "client_net.h"
 #include "gui_message.h"
 #include "server_sim.h"
@@ -334,18 +332,18 @@ static void logStateVerbose(int tickNum) {
   /* Pill views: 15x15 terrain grid centered on each owned pillbox */
   fprintf(f, ",\"pill_views\":[");
   if (fastServerSim != NULL) {
-    GameSim *gs = serverSimGetGameSim(fastServerSim);
     const TERRAIN *world = bi.theWorld;
-    BYTE np = pillsGetNumPills(&gs->pb);
+    BYTE np = serverSimGetPillCount(fastServerSim);
     int first = 1;
     for (BYTE pi = 1; pi <= np; pi++) {
-      pillbox p;
-      pillsGetPill(&gs->pb, &p, pi);
-      if (p.owner != selfPlayer || p.inTank) continue;
+      BYTE px, py, powner;
+      bool pinTank;
+      if (!serverSimGetPill(fastServerSim, pi, &px, &py, &powner, NULL, &pinTank)) continue;
+      if (powner != selfPlayer || pinTank) continue;
       if (!first) fprintf(f, ",");
-      fprintf(f, "{\"id\":%u,\"tx\":%u,\"ty\":%u,\"terrain\":[", (unsigned)pi, (unsigned)p.x, (unsigned)p.y);
-      int pox = (int)p.x - 7;
-      int poy = (int)p.y - 7;
+      fprintf(f, "{\"id\":%u,\"tx\":%u,\"ty\":%u,\"terrain\":[", (unsigned)pi, (unsigned)px, (unsigned)py);
+      int pox = (int)px - 7;
+      int poy = (int)py - 7;
       for (int row = 0; row < 15; row++) {
         if (row > 0) fprintf(f, ",");
         fprintf(f, "[");
@@ -370,17 +368,17 @@ static void logStateVerbose(int tickNum) {
   /* Pillboxes — full data from server sim */
   fprintf(f, ",\"pillboxes\":[");
   if (fastServerSim != NULL) {
-    GameSim *gs = serverSimGetGameSim(fastServerSim);
-    BYTE np = pillsGetNumPills(&gs->pb);
+    BYTE np = serverSimGetPillCount(fastServerSim);
     for (BYTE pi = 1; pi <= np; pi++) {
-      pillbox p;
-      pillsGetPill(&gs->pb, &p, pi);
+      BYTE px, py, powner, parmour;
+      bool pinTank;
+      if (!serverSimGetPill(fastServerSim, pi, &px, &py, &powner, &parmour, &pinTank)) continue;
       if (pi > 1) fprintf(f, ",");
       fprintf(f, "{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u,\"in_tank\":%s}",
-        (unsigned)p.x, (unsigned)p.y,
-        verboseOwnerStr(p.owner, selfPlayer, alliesBits),
-        (unsigned)p.armour,
-        p.inTank ? "true" : "false");
+        (unsigned)px, (unsigned)py,
+        verboseOwnerStr(powner, selfPlayer, alliesBits),
+        (unsigned)parmour,
+        pinTank ? "true" : "false");
     }
   }
   fprintf(f, "]");
@@ -388,16 +386,17 @@ static void logStateVerbose(int tickNum) {
   /* Bases — full data from server sim */
   fprintf(f, ",\"bases\":[");
   if (fastServerSim != NULL) {
-    GameSim *gs = serverSimGetGameSim(fastServerSim);
-    BYTE nb = basesGetNumBases(&gs->bs);
+    BYTE nb = serverSimGetBaseCount(fastServerSim);
     for (BYTE bsi = 1; bsi <= nb; bsi++) {
-      base b;
-      basesGetBase(&gs->bs, &b, bsi);
+      BYTE bx, by, bowner;
+      BYTE bshells, bmines, barmour;
+      if (!serverSimGetBase(fastServerSim, bsi, &bx, &by, &bowner)) continue;
+      serverSimGetBaseStats(fastServerSim, bsi, &bshells, &bmines, &barmour);
       if (bsi > 1) fprintf(f, ",");
       fprintf(f, "{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u,\"shells\":%u,\"mines\":%u}",
-        (unsigned)b.x, (unsigned)b.y,
-        verboseOwnerStr(b.owner, selfPlayer, alliesBits),
-        (unsigned)b.armour, (unsigned)b.shells, (unsigned)b.mines);
+        (unsigned)bx, (unsigned)by,
+        verboseOwnerStr(bowner, selfPlayer, alliesBits),
+        (unsigned)barmour, (unsigned)bshells, (unsigned)bmines);
     }
   }
   fprintf(f, "]");
@@ -407,23 +406,22 @@ static void logStateVerbose(int tickNum) {
     int self_pills = 0, ally_pills = 0, enemy_pills = 0;
     int self_bases = 0, ally_bases = 0, enemy_bases = 0;
     if (fastServerSim != NULL) {
-      GameSim *gs = serverSimGetGameSim(fastServerSim);
-      BYTE np = pillsGetNumPills(&gs->pb);
+      BYTE np = serverSimGetPillCount(fastServerSim);
       for (BYTE pi = 1; pi <= np; pi++) {
-        pillbox p;
-        pillsGetPill(&gs->pb, &p, pi);
-        if (p.owner == 0xFF) { /* neutral — skip */ }
-        else if (p.owner == selfPlayer) self_pills++;
-        else if (alliesBits & (1u << p.owner)) ally_pills++;
+        BYTE powner;
+        if (!serverSimGetPill(fastServerSim, pi, NULL, NULL, &powner, NULL, NULL)) continue;
+        if (powner == 0xFF) { /* neutral — skip */ }
+        else if (powner == selfPlayer) self_pills++;
+        else if (alliesBits & (1u << powner)) ally_pills++;
         else enemy_pills++;
       }
-      BYTE nb = basesGetNumBases(&gs->bs);
+      BYTE nb = serverSimGetBaseCount(fastServerSim);
       for (BYTE bsi = 1; bsi <= nb; bsi++) {
-        base b;
-        basesGetBase(&gs->bs, &b, bsi);
-        if (b.owner == 0xFF) { /* neutral — skip */ }
-        else if (b.owner == selfPlayer) self_bases++;
-        else if (alliesBits & (1u << b.owner)) ally_bases++;
+        BYTE bowner;
+        if (!serverSimGetBase(fastServerSim, bsi, NULL, NULL, &bowner)) continue;
+        if (bowner == 0xFF) { /* neutral — skip */ }
+        else if (bowner == selfPlayer) self_bases++;
+        else if (alliesBits & (1u << bowner)) ally_bases++;
         else enemy_bases++;
       }
     }
@@ -636,31 +634,31 @@ static void logStateBinary(int tickNum) {
 
     /* Channels 5-7: pillboxes, Channel 9: bases (from server sim) */
     if (fastServerSim != NULL) {
-      GameSim *gs = serverSimGetGameSim(fastServerSim);
-      BYTE np = pillsGetNumPills(&gs->pb);
+      BYTE np = serverSimGetPillCount(fastServerSim);
       for (BYTE pi = 1; pi <= np; pi++) {
-        pillbox p;
-        pillsGetPill(&gs->pb, &p, pi);
-        if (p.inTank) continue;
-        int gx = (int)p.x - tank_tx + 14;
-        int gy = (int)p.y - tank_ty + 14;
+        BYTE px, py, powner, parmour;
+        bool pinTank;
+        if (!serverSimGetPill(fastServerSim, pi, &px, &py, &powner, &parmour, &pinTank)) continue;
+        if (pinTank) continue;
+        int gx = (int)px - tank_tx + 14;
+        int gy = (int)py - tank_ty + 14;
         if (gx < 0 || gx >= 29 || gy < 0 || gy >= 29) continue;
-        float intensity = (float)p.armour / 15.0f;
-        if (p.owner == 0xFF) {
+        float intensity = (float)parmour / 15.0f;
+        if (powner == 0xFF) {
           spatial[gy][gx][5] = intensity; /* neutral */
-        } else if (p.owner == selfPlayer) {
+        } else if (powner == selfPlayer) {
           spatial[gy][gx][6] = intensity; /* self */
         } else {
           spatial[gy][gx][7] = intensity; /* enemy */
         }
       }
 
-      BYTE nb = basesGetNumBases(&gs->bs);
+      BYTE nb = serverSimGetBaseCount(fastServerSim);
       for (BYTE bsi = 1; bsi <= nb; bsi++) {
-        base b;
-        basesGetBase(&gs->bs, &b, bsi);
-        int gx = (int)b.x - tank_tx + 14;
-        int gy = (int)b.y - tank_ty + 14;
+        BYTE bx, by;
+        if (!serverSimGetBase(fastServerSim, bsi, &bx, &by, NULL)) continue;
+        int gx = (int)bx - tank_tx + 14;
+        int gy = (int)by - tank_ty + 14;
         if (gx < 0 || gx >= 29 || gy < 0 || gy >= 29) continue;
         spatial[gy][gx][9] = 1.0f;
       }
@@ -692,25 +690,24 @@ static void logStateBinary(int tickNum) {
     int self_pills = 0, enemy_pills = 0, ally_pills = 0, total_pills = 0;
     int self_bases = 0, ally_bases = 0, total_bases = 0;
     if (fastServerSim != NULL) {
-      GameSim *gs = serverSimGetGameSim(fastServerSim);
-      BYTE np = pillsGetNumPills(&gs->pb);
+      BYTE np = serverSimGetPillCount(fastServerSim);
       total_pills = np;
       for (BYTE pi = 1; pi <= np; pi++) {
-        pillbox p;
-        pillsGetPill(&gs->pb, &p, pi);
-        if (p.owner == 0xFF) continue;
-        if (p.owner == selfPlayer) self_pills++;
-        else if (alliesBits & (1u << p.owner)) ally_pills++;
+        BYTE powner;
+        if (!serverSimGetPill(fastServerSim, pi, NULL, NULL, &powner, NULL, NULL)) continue;
+        if (powner == 0xFF) continue;
+        if (powner == selfPlayer) self_pills++;
+        else if (alliesBits & (1u << powner)) ally_pills++;
         else enemy_pills++;
       }
-      BYTE nb = basesGetNumBases(&gs->bs);
+      BYTE nb = serverSimGetBaseCount(fastServerSim);
       total_bases = nb;
       for (BYTE bsi = 1; bsi <= nb; bsi++) {
-        base b;
-        basesGetBase(&gs->bs, &b, bsi);
-        if (b.owner == 0xFF) continue;
-        if (b.owner == selfPlayer) self_bases++;
-        else if (alliesBits & (1u << b.owner)) ally_bases++;
+        BYTE bowner;
+        if (!serverSimGetBase(fastServerSim, bsi, NULL, NULL, &bowner)) continue;
+        if (bowner == 0xFF) continue;
+        if (bowner == selfPlayer) self_bases++;
+        else if (alliesBits & (1u << bowner)) ally_bases++;
       }
     }
     float tp = total_pills > 0 ? (float)total_pills : 1.0f;

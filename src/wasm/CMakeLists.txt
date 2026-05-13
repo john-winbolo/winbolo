@@ -171,6 +171,7 @@ set(BOLO_SOURCES
     ${SRC_ROOT}/bolo/client_sim.c
     ${SRC_ROOT}/bolo/client_net.c
     ${SRC_ROOT}/bolo/client_sim_control.c
+    ${SRC_ROOT}/bolo/client_mappreview.c
     ${SRC_ROOT}/bolo/bot_manager.c
     ${SRC_ROOT}/bolo/bot_worker_pool.c
     ${SRC_ROOT}/bolo/tutorial.c

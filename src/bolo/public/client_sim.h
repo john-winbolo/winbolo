@@ -493,6 +493,35 @@ baseAlliance clientSimGetBaseAlliance(ClientSim *cs, BYTE baseNum);
 BYTE         clientSimGetPillNumPos(ClientSim *cs, BYTE mx, BYTE my);
 BYTE         clientSimGetBaseNumPos(ClientSim *cs, BYTE mx, BYTE my);
 
+/* --- Live-sim map / pill / base / start readers ---
+ * Wrap direct access to the running sim's map / pillboxes / bases /
+ * starts so consumers don't need bolo_map.h / pillbox.h / bases.h /
+ * starts.h. Distinct from clientSimGetLobbyPillCount and friends
+ * (those are pre-load lobby snapshots from the server's map-info
+ * broadcast); these report counts and per-position state from the
+ * live ClientSim. */
+BYTE         clientSimGetMapTerrain(const ClientSim *cs, BYTE x, BYTE y);
+bool         clientSimMapIsMine(const ClientSim *cs, BYTE x, BYTE y);
+bool         clientSimPillExistsAt(const ClientSim *cs, BYTE x, BYTE y);
+BYTE         clientSimPillGetScreenHealthAt(ClientSim *cs, BYTE x, BYTE y);
+bool         clientSimBaseExistsAt(const ClientSim *cs, BYTE x, BYTE y);
+baseAlliance clientSimBaseGetAllianceAt(ClientSim *cs, BYTE x, BYTE y);
+bool         clientSimBaseAmOwnerAt(ClientSim *cs, BYTE player, BYTE x, BYTE y);
+
+BYTE         clientSimGetPillCount(const ClientSim *cs);
+BYTE         clientSimGetBaseCount(const ClientSim *cs);
+BYTE         clientSimGetStartCount(const ClientSim *cs);
+
+bool         clientSimGetPill(ClientSim *cs, BYTE i,
+                              BYTE *x, BYTE *y, BYTE *owner, BYTE *armour,
+                              bool *inTank);
+bool         clientSimGetBase(ClientSim *cs, BYTE i,
+                              BYTE *x, BYTE *y, BYTE *owner);
+bool         clientSimGetBaseStats(ClientSim *cs, BYTE i,
+                                   BYTE *shells, BYTE *mines, BYTE *armour);
+bool         clientSimGetStart(ClientSim *cs, BYTE i,
+                               BYTE *x, BYTE *y, BYTE *dir);
+
 /* Local tank stat accessors. */
 void         clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount);
 void         clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths);
