@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>  /* rand() — used to randomise the default naming pool */
+#include <cfloat>   /* FLT_MAX — unbounded max for window size constraints */
 
 #include <SDL3/SDL.h>
 
@@ -51,6 +52,7 @@ extern "C" {
 #include "../../lang.h"
 #include "imgui_lobby.h"
 #include "imgui_messagebox.h"
+#include "imgui_mapchooser.h"
 }
 #include "../wb_theme.h"
 
@@ -189,6 +191,244 @@ static void lobbySendAddBot(ClientSim *cs,
         }
         clientSimNetSendAddBotConfigured(cs, teamNumber, brainPath, botName);
     }
+}
+
+/* Add-bot debounce — disables the Add Bot button while a previously-sent
+ * request is in flight. Counts current connected lobby slots at click
+ * time, locks the button until either (a) the connected count grows to
+ * the expected value (server acked) or (b) a 2 s timeout elapses (lost
+ * packet / SP path that already returned). Prevents spam-clicks from
+ * pushing past MAX_TANKS or otherwise racing the server.
+ *
+ * Belt-and-suspenders against the lobby-spam crash:
+ *   - s_addBotFrame: ImGui frame number of the last successful send.
+ *     Hard-blocks any second add-bot in the same frame, even if it
+ *     comes from a different button (per-team header + per-row in the
+ *     player table) before the debounce-disabled state can propagate.
+ *   - All loops over MAX_TANKS guard the slot accessor against NULL
+ *     and treat NULL as "not connected" (the SP path can briefly hold
+ *     a partially-initialized slot while serverSimCreateBot is
+ *     allocating the ClientSim). */
+static Uint32 s_addBotSentMs = 0;
+static int    s_addBotExpectedConn = 0;
+static int    s_addBotFrame = -1;
+
+static int lobbyCountConnectedSlots(ClientSim *cs) {
+    int n = 0;
+    if (!cs) return 0;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        const ClientLobbySlot *lp = clientSimGetLobbySlot(cs, (BYTE)i);
+        if (lp && lp->connected) n++;
+    }
+    return n;
+}
+
+static bool lobbyAddBotPending(ClientSim *cs) {
+    if (!cs) return false;
+    /* In the same ImGui frame as the last send, refuse another no matter
+     * what — multiple buttons render before any one's click can update
+     * the disabled state of the others. */
+    if (s_addBotFrame == ImGui::GetFrameCount()) return true;
+    if (s_addBotSentMs == 0) return false;
+    Uint32 now = SDL_GetTicks();
+    if (now - s_addBotSentMs > 2000) {
+        s_addBotSentMs = 0;
+        return false;
+    }
+    if (lobbyCountConnectedSlots(cs) >= s_addBotExpectedConn) {
+        s_addBotSentMs = 0;
+        return false;
+    }
+    return true;
+}
+
+static void lobbySendAddBotDebounced(ClientSim *cs,
+                                     int namingPool, uint8_t teamNumber) {
+    if (!cs) return;
+    /* Drop the call entirely if anything already added a bot this
+     * frame — the visible button was probably stale-clicked. */
+    if (s_addBotFrame == ImGui::GetFrameCount()) return;
+    /* Refuse to push past the 16-slot ceiling regardless of how the
+     * server would otherwise handle it. Keeps the bot pool / subscriber
+     * registry from being torched if MAX_TANKS slots are already in use
+     * and a queued click slips through. */
+    if (lobbyCountConnectedSlots(cs) >= MAX_TANKS) return;
+    s_addBotFrame = ImGui::GetFrameCount();
+    s_addBotSentMs = SDL_GetTicks();
+    s_addBotExpectedConn = lobbyCountConnectedSlots(cs) + 1;
+    lobbySendAddBot(cs, namingPool, teamNumber);
+}
+
+/* ── Map chooser helpers (Phase 1) ─────────────────────────────────
+ * The map chooser is a separate draggable ImGui window opened from the
+ * lobby's Map tab. Phase 1 only wires the UI shell; selection is
+ * local-only (no PACKET_LOBBY_SET_MAP yet — that's Phase 2). The state
+ * persists across re-opens so the user's last tab + position are
+ * remembered for the session.
+ *
+ * State has to be declared before the helpers that reference it.
+ * s_chooseMapPrevName captures the map that was active when the window
+ * opened so Cancel can restore it once Phase 2 wires the map-change
+ * packet. s_chooseMapActiveTab survives across re-opens. */
+static bool             s_chooseMapOpen          = false;
+static MapChooserState  s_chooseMapState         = {};
+static bool             s_chooseMapStateInited   = false;
+static char             s_chooseMapPrevName[128] = "";
+static int              s_chooseMapActiveTab     = 0; /* 0=server 1=upload 2=random */
+
+static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
+    if (!s_chooseMapStateInited) {
+        mapChooserInit(&s_chooseMapState, renderer);
+        /* "Load from device" + "Generate Random Map" exist as dedicated
+         * tabs in this window, so suppress the in-widget buttons that
+         * would duplicate them. */
+        s_chooseMapState.hideExtras = true;
+        /* Keep the map list narrow so the preview can claim most of
+         * the row width. ~300 px fits a column of names comfortably
+         * without crowding the preview. */
+        s_chooseMapState.leftPanelMaxW = 300.0f;
+        s_chooseMapStateInited = true;
+    }
+}
+
+static void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
+    lobbyChooseMapEnsureInit(renderer);
+    /* Snapshot the currently active map so Cancel can restore it once
+     * Phase 2 wires the map-change packet. */
+    const char *cur = cs ? clientSimGetMapName(cs) : "";
+    SDL_strlcpy(s_chooseMapPrevName, cur ? cur : "",
+                sizeof(s_chooseMapPrevName));
+
+    /* Default the chooser's highlighted entry to whatever map is
+     * currently active — so SP (which loads Everard by default) opens
+     * with "Everard Island (Inbuilt)" pre-selected, and subsequent
+     * opens reflect any choice made last time. Falls back to entry 0
+     * (Everard) if the current map isn't in the list. */
+    int matchedIdx = 0;
+    if (cur && cur[0] != '\0') {
+        for (int i = 0; i < s_chooseMapState.numMaps; i++) {
+            if (SDL_strcasecmp(s_chooseMapState.maps[i].name, cur) == 0) {
+                matchedIdx = i;
+                break;
+            }
+        }
+    }
+    if (matchedIdx != s_chooseMapState.selectedIdx) {
+        s_chooseMapState.selectedIdx = matchedIdx;
+        SDL_strlcpy(s_chooseMapState.selectedPath,
+                    s_chooseMapState.maps[matchedIdx].path,
+                    sizeof(s_chooseMapState.selectedPath));
+        SDL_strlcpy(s_chooseMapState.selectedName,
+                    s_chooseMapState.maps[matchedIdx].name,
+                    sizeof(s_chooseMapState.selectedName));
+        s_chooseMapState.randomMapSelected = false;
+    }
+
+    s_chooseMapOpen = true;
+}
+
+static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
+                                       float s, int screenW, int screenH) {
+    if (!s_chooseMapOpen) return;
+    lobbyChooseMapEnsureInit(renderer);
+
+    /* Centered, compact default — sized so the action buttons are
+     * visible without scrolling. First-use-only; user can drag/resize
+     * freely after that and the size sticks for the session. */
+    float defaultW = (float)screenW * 0.55f;
+    float defaultH = (float)screenH * 0.55f;
+    if (defaultW < 600.0f * s) defaultW = 600.0f * s;
+    if (defaultH < 380.0f * s) defaultH = 380.0f * s;
+    /* Cap default at a comfortably tight box so very tall windows
+     * don't get a sprawling preview by default. */
+    if (defaultH > 520.0f * s) defaultH = 520.0f * s;
+    ImGui::SetNextWindowSize(ImVec2(defaultW, defaultH),
+                             ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(
+        ImVec2(((float)screenW - defaultW) * 0.5f,
+               ((float)screenH - defaultH) * 0.5f),
+        ImGuiCond_FirstUseEver);
+    /* Min size keeps the action bar visible; no max — user can drag
+     * the window as large as they like, even past the screen edges. */
+    ImGui::SetNextWindowSizeConstraints(ImVec2(480.0f * s, 320.0f * s),
+                                        ImVec2(FLT_MAX, FLT_MAX));
+
+    bool open = s_chooseMapOpen;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoSavedSettings
+                           | ImGuiWindowFlags_NoCollapse
+                           | ImGuiWindowFlags_NoScrollbar
+                           | ImGuiWindowFlags_NoScrollWithMouse;
+    if (!ImGui::Begin("Choose Map##LobbyMapChooser", &open, flags)) {
+        ImGui::End();
+        if (!open) s_chooseMapOpen = false;
+        return;
+    }
+
+    /* Reserve space at the bottom for the action buttons so the tab
+     * content gets the remaining region.  Compute the per-tab height
+     * inside the tab item so it accounts for the tab-header strip
+     * (otherwise the chooser overflows and forces a window scroll). */
+    float btnBarH = ImGui::GetFrameHeight() + 14.0f * s;
+
+    if (ImGui::BeginTabBar("##MapChooserTabs", ImGuiTabBarFlags_None)) {
+        if (ImGui::BeginTabItem("Server Maps")) {
+            s_chooseMapActiveTab = 0;
+            float availW = ImGui::GetContentRegionAvail().x;
+            float availH = ImGui::GetContentRegionAvail().y - btnBarH;
+            if (availH < 120.0f) availH = 120.0f;
+            /* Phase 1 uses the existing local data/maps/*.map scan as
+             * the source list — fine in SP-host (host == server) and
+             * provides a useful preview in MP too. Phase 3 will replace
+             * with a server-list protocol so pure clients see what the
+             * server actually has. */
+            bool changed = mapChooserRender(&s_chooseMapState, renderer,
+                                            availW, availH, s);
+            if (changed) {
+                /* TODO Phase 2: clientSimNetSendLobbySetMap(cs,
+                 *                                           s_chooseMapState.selectedPath);
+                 * For now the selection is recorded locally — server
+                 * isn't told about it yet. */
+                (void)cs;
+            }
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Upload")) {
+            s_chooseMapActiveTab = 1;
+            ImGui::Spacing();
+            ImGui::TextWrapped(
+                "Upload a local .map file to the server. "
+                "Coming in a follow-up — the upload packet protocol "
+                "isn't wired yet.");
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Random")) {
+            s_chooseMapActiveTab = 2;
+            ImGui::Spacing();
+            ImGui::TextWrapped(
+                "Random map generation — coming soon.");
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+
+    /* Action bar: Cancel restores the prior map (Phase 2 will wire),
+     * Close keeps the current selection. */
+    ImGui::Separator();
+    if (ImGui::Button("Cancel")) {
+        /* TODO Phase 2: re-send s_chooseMapPrevName as a SET_MAP packet
+         * so the broadcast unwinds. For now we just close — phase 1
+         * never sent anything in the first place, so there's nothing to
+         * undo on the server. */
+        s_chooseMapOpen = false;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Close")) {
+        s_chooseMapOpen = false;
+    }
+
+    ImGui::End();
+    /* If the user clicked the title-bar X, ImGui flips `open` to false. */
+    if (!open) s_chooseMapOpen = false;
 }
 
 static void lobbySendRemoveBot(ClientSim *cs, uint8_t slot) {
@@ -422,6 +662,19 @@ static void lobbySendSetting(ClientSim *cs,
                 if (valueLen == 1 && value[0] <= 3) {
                     serverSimSetAiPolicy(sim, value[0]);
                     serverSimSetBotAiType(sim, (aiType)value[0]);
+                    /* Switching to "No computer tanks" should clear every
+                     * existing bot — otherwise the lobby keeps showing
+                     * bots that the host explicitly disabled. Iterate all
+                     * slots (bots can occupy any) and remove unconditionally;
+                     * publish each slot so the UI updates. */
+                    if ((aiType)value[0] == aiNone) {
+                        for (BYTE i = 0; i < MAX_TANKS; i++) {
+                            if (serverSimIsBot(sim, i)) {
+                                serverSimRemoveBot(sim, i);
+                                serverSimPublishLobbySlot(sim, i);
+                            }
+                        }
+                    }
                 }
                 break;
             case 4 /* LST_TIME_LIMIT */: {
@@ -863,7 +1116,11 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
          * that do/don't render an X. */
         if (effectiveHost) {
             const float comboW   = 200.0f * s;
-            const float namingShift = 50.0f * s;
+            /* Gap between the Bot Naming combo and the Add Bot button —
+             * just a normal widget-pair spacing so the dropdown sits
+             * directly next to Add Bot rather than being pushed off to
+             * the middle of the row. */
+            const float namingShift = 6.0f * s;
             const float botBtnW  = 95.0f * s;
             const float xBtnW    = 22.0f * s;
             const float labelW   = ImGui::CalcTextSize("Bot Naming:").x;
@@ -905,7 +1162,21 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                 if (ImGui::BeginCombo(poolId, lobbyBotPoolLabel(curPool))) {
                     for (int p = 0; p < lobbyBotPoolCount(); p++) {
                         bool sel = (p == curPool);
-                        if (ImGui::Selectable(lobbyBotPoolLabel(p), sel)) {
+                        /* Disable pools already claimed by some other
+                         * in_use team — server enforces uniqueness; the
+                         * UI mirrors it so users see what's available. */
+                        bool takenElsewhere = false;
+                        for (int ot = 1; ot < MAX_TANKS; ot++) {
+                            if (ot == teamId) continue;
+                            if (clientSimGetLobbyTeamInUse(cs, (BYTE)ot) &&
+                                clientSimGetLobbyTeamPool(cs, (BYTE)ot) == p) {
+                                takenElsewhere = true;
+                                break;
+                            }
+                        }
+                        ImGuiSelectableFlags flags = takenElsewhere
+                            ? ImGuiSelectableFlags_Disabled : 0;
+                        if (ImGui::Selectable(lobbyBotPoolLabel(p), sel, flags)) {
                             const char *nameForMeta = clientSimGetLobbyTeamInUse(cs, (BYTE)(teamId))
                                 ? clientSimGetLobbyTeamName(cs, (BYTE)(teamId)) : defaultName;
                             lobbySendTeamPool(cs, (uint8_t)teamId,
@@ -924,10 +1195,13 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
              * the overlaid bot-cpu glyph cleanly. */
             bool addBtnClicked = false;
             ImVec2 addBtnPos = ImGui::GetCursorScreenPos();
+            bool addBtnPending = lobbyAddBotPending(cs);
             if (botsAllowed) {
                 char addId[24];
                 SDL_snprintf(addId, sizeof(addId), "##ab%d", teamId);
+                if (addBtnPending) ImGui::BeginDisabled();
                 addBtnClicked = ImGui::Button(addId, ImVec2(botBtnW, 0));
+                if (addBtnPending) ImGui::EndDisabled();
             {
                 float btnH = ImGui::GetFrameHeight();
                 ImDrawList *dl = ImGui::GetWindowDrawList();
@@ -979,7 +1253,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     lobbySendTeamPool(cs, (uint8_t)teamId,
                                       (uint8_t)effectivePool, nameForMeta);
                 }
-                lobbySendAddBot(cs, effectivePool, (uint8_t)teamId);
+                lobbySendAddBotDebounced(cs, effectivePool, (uint8_t)teamId);
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Add a bot to Team %d, named from the selected pool.",
@@ -2054,27 +2328,12 @@ static void renderGameSettingsPanel(ClientSim *cs,
     }
     s_settingsOpen = true;
 
-    /* Read-only mirror at the top-right of the header line for
-     * non-host / non-admin clients when openHost is on. The actual
-     * checkbox toggle lives in the "Other" column further down so
-     * the host has it grouped with the rest of the lobby settings. */
-    if (!clientSimIsSinglePlayer(cs) && clientSimGetLobbyOpenHost(cs)) {
-        bool isHostLocal = (myPlayerNum == 0);
-        bool isAdminLocal = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
-                             (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
-                              & PLAYER_FLAG_ADMIN));
-        if (!isHostLocal && !isAdminLocal) {
-            const char *labelLbl = "All players can change the game settings";
-            ImVec2 winPos  = ImGui::GetWindowPos();
-            float  winRight = winPos.x + ImGui::GetContentRegionMax().x;
-            ImVec2 textSize = ImGui::CalcTextSize(labelLbl);
-            ImVec2 saved = ImGui::GetCursorScreenPos();
-            ImGui::SetCursorScreenPos(
-                ImVec2(winRight - textSize.x - 8.0f * s, headerStart.y));
-            ImGui::TextDisabled("%s", labelLbl);
-            ImGui::SetCursorScreenPos(saved);
-        }
-    }
+    /* The openHost ("Allow all players to change settings") state is
+     * intentionally invisible to regular players — they shouldn't even
+     * know they got their edit access via that particular toggle, only
+     * that the settings happen to be interactable for them. The actual
+     * editable checkbox is rendered for host/admin only in the "Other"
+     * column below. */
 
     /* Settings body uses a smaller font than the rest of the lobby so
      * the 3-column form doesn't dominate the visual hierarchy. */
@@ -2193,9 +2452,11 @@ static void renderGameSettingsPanel(ClientSim *cs,
 
         /* "Allow all players to change settings" — toggles openHost
          * (the same flag that gates per-team manage-bots authority).
-         *   - host / admin sees the checkbox.
-         *   - everyone else sees a read-only label when it's on, so
-         *     they understand why the settings UI is interactable. */
+         * Visible to host / admin only.  Regular players who got their
+         * edit access via this very toggle don't see the control or any
+         * read-only mirror of it — surfacing it would just advertise the
+         * mechanism and tempt them to flip it off (which they can't
+         * anyway, but the absence avoids the noise). */
         if (!clientSimIsSinglePlayer(cs)) {
             bool isHostLocal = (myPlayerNum == 0);
             bool isAdminLocal = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
@@ -2207,9 +2468,6 @@ static void renderGameSettingsPanel(ClientSim *cs,
                                     &oh)) {
                     clientSimNetSendLobbyOpenHost(cs, oh);
                 }
-            } else if (clientSimGetLobbyOpenHost(cs)) {
-                ImGui::TextDisabled(
-                    "All players can change the game settings");
             }
         }
     }
@@ -2220,9 +2478,23 @@ static void renderGameSettingsPanel(ClientSim *cs,
      * adjusting the cursor Y up by ~30px so the panel's overall
      * bottom edge sits 30 pixels higher than it would with default
      * ImGui::Spacing() padding — claws back vertical space for the
-     * teams list below. */
+     * teams list below.
+     *
+     * Styled to match the "Add Team" affordance — translucent
+     * background + dimmed text + reduced frame padding so it reads as
+     * a subtle "collapse" action rather than a primary button. */
     {
         const char *label = "Hide Settings";
+        ImVec4 baseBtn = ImGui::GetStyleColorVec4(ImGuiCol_Button);
+        ImVec4 baseTxt = ImGui::GetStyleColorVec4(ImGuiCol_Text);
+        ImGui::PushStyleColor(ImGuiCol_Button,
+                              ImVec4(baseBtn.x, baseBtn.y, baseBtn.z, baseBtn.w * 0.35f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                              ImVec4(baseBtn.x, baseBtn.y, baseBtn.z, baseBtn.w * 0.65f));
+        ImGui::PushStyleColor(ImGuiCol_Text,
+                              ImVec4(baseTxt.x, baseTxt.y, baseTxt.z, baseTxt.w * 0.65f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                            ImVec2(ImGui::GetStyle().FramePadding.x, 2.0f * s));
         float btnW = ImGui::CalcTextSize(label).x + 16.0f * s;
         float y = ImGui::GetCursorPosY() - 30.0f * s;
         ImGui::SetCursorPosY(y);
@@ -2230,6 +2502,8 @@ static void renderGameSettingsPanel(ClientSim *cs,
         if (ImGui::Button(label)) {
             s_settingsOpen = false;
         }
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(3);
     }
     ImGui::SetWindowFontScale(settingsOldScale);
 }
@@ -2703,9 +2977,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                 if (botsAllowed && hasTransport) {
                                     char btnId[64];
                                     SDL_snprintf(btnId, sizeof(btnId), "%s##%d", langGetText(STR_DLGLOBBY_ADDBOT), i);
+                                    bool pending = lobbyAddBotPending(cs);
+                                    if (pending) ImGui::BeginDisabled();
                                     if (ImGui::SmallButton(btnId)) {
-                                        lobbySendAddBot(cs, -1, 0);
+                                        lobbySendAddBotDebounced(cs, -1, 0);
                                     }
+                                    if (pending) ImGui::EndDisabled();
                                 }
                             }
                         }
@@ -2720,6 +2997,30 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_MAP_TAB))) {
                     activeTab = 1;
                     float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
+
+                    /* "Choose Map" — opens the separate chooser window.
+                     * Host / admin / openHost-allowed only; non-privileged
+                     * clients never see the button (server enforces the
+                     * authority gate when Phase 2 wires the packet). */
+                    {
+                        bool isHostLocal  = (myPlayerNum == 0);
+                        bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
+                            (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
+                             & PLAYER_FLAG_ADMIN));
+                        bool effHostMap = isHostLocal || isAdminLocal ||
+                                          clientSimGetLobbyOpenHost(cs);
+                        if (effHostMap) {
+                            if (ImGui::Button("Choose Map")) {
+                                lobbyChooseMapOpen(cs, renderer);
+                            }
+                            ImGui::Spacing();
+                            /* Adjust remaining tab height for the button
+                             * row we just consumed so the preview below
+                             * keeps its aspect ratio. */
+                            tabH -= ImGui::GetFrameHeightWithSpacing()
+                                  + ImGui::GetStyle().ItemSpacing.y;
+                        }
+                    }
 
                     if (!clientSimIsMapDownloadComplete(cs)) {
                         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DOWNLOADING));
@@ -2976,9 +3277,34 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 bottomH = ImGui::GetTextLineHeightWithSpacing() * 5.0f;
             }
             float spacingH = ImGui::GetStyle().ItemSpacing.y;
-            /* Reserve room for Ready + an optional Balance/Apply/Dismiss
-             * button below the map. Two button rows + a small gap. */
-            float readyAreaH = ImGui::GetFrameHeightWithSpacing() * 2.0f + spacingH;
+            /* Reserve room for the bottom buttons below the map.
+             *   - Always one row for Ready.
+             *   - One extra row for Balance / Apply / Dismiss only when
+             *     it'll actually render: host + transport + at least
+             *     one other WBN-verified player, OR an active balance
+             *     proposal. In SP / LAN that whole branch is skipped,
+             *     so reserving for it pushes Ready below the chat's
+             *     Send button and shrinks the map for no reason. */
+            bool balanceRowReserve = false;
+            if (myPlayerNum == 0 && hasTransport) {
+                if (clientSimIsBalanceProposalActive(cs)) {
+                    balanceRowReserve = true;
+                } else {
+                    int wbnCount = 0;
+                    for (int j = 0; j < 16; j++) {
+                        const ClientLobbySlot *jSlot =
+                            clientSimGetLobbySlot(cs, (BYTE)j);
+                        if (jSlot && jSlot->connected &&
+                            (jSlot->clientFlags & PLAYER_FLAG_WBN_VERIFIED)) {
+                            wbnCount++;
+                        }
+                    }
+                    if (wbnCount >= 1) balanceRowReserve = true;
+                }
+            }
+            float readyAreaH = ImGui::GetFrameHeightWithSpacing()
+                             * (balanceRowReserve ? 2.0f : 1.0f)
+                             + spacingH;
             float mapH = panelH + bottomH + spacingH - readyAreaH - spacingH;
             if (mapH < panelH) mapH = panelH;
 
@@ -3119,9 +3445,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         if (botsAllowed && hasTransport) {
                             char btnId[16];
                             SDL_snprintf(btnId, sizeof(btnId), "Add Bot##%d", i);
+                            bool pending = lobbyAddBotPending(cs);
+                            if (pending) ImGui::BeginDisabled();
                             if (ImGui::SmallButton(btnId)) {
-                                lobbySendAddBot(cs, -1, 0);
+                                lobbySendAddBotDebounced(cs, -1, 0);
                             }
+                            if (pending) ImGui::EndDisabled();
                         }
                     }
                 }
@@ -3290,6 +3619,25 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 if (countdownActive) ImGui::EndDisabled();
             }
 
+            /* "Choose Map" — host / admin / openHost-allowed only. Sits
+             * at the bottom of the MapPanel, under the preview and map
+             * info, so it reads as "change the current map" rather than
+             * a header action. */
+            {
+                bool isHostLocal  = (myPlayerNum == 0);
+                bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
+                    (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
+                     & PLAYER_FLAG_ADMIN));
+                bool effHostMap = isHostLocal || isAdminLocal ||
+                                  clientSimGetLobbyOpenHost(cs);
+                if (effHostMap) {
+                    ImGui::Spacing();
+                    if (ImGui::Button("Choose Map", ImVec2(-1, 0))) {
+                        lobbyChooseMapOpen(cs, renderer);
+                    }
+                }
+            }
+
             ImGui::EndChild(); /* ##MapPanel */
 
             /* Ready / Balance buttons sit directly below MapPanel inside
@@ -3396,6 +3744,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
         ImGui::End(); /* ##LobbyBg */
         ImGui::PopStyleVar(); /* WindowPadding */
+
+        /* Map chooser sub-window (Phase 1). Rendered after the main
+         * lobby End() so it's a top-level ImGui window that the user
+         * can drag around freely. Only renders when s_chooseMapOpen is
+         * true, set by the "Choose Map" button on the Map tab. */
+        lobbyChooseMapRenderWindow(cs, renderer, s, screenW, screenH);
 
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);

@@ -44,6 +44,7 @@
 #include "bot_manager.h"
 #include "log.h"
 #include "playername_validate.h"
+#include "lobby_bot_pools.h"
 #include "../common/wb_log.h"
 
 #ifdef _WIN32
@@ -1001,6 +1002,28 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
                     }
                     p = end;
                 }
+            }
+        }
+        /* -adminfirst — if this player is the only connected client
+         * (server was empty before this join), promote them to admin.
+         * Bots don't count as connected for the empty check; we're
+         * walking playerConnected which currently flags any live slot,
+         * so subtract one for ourselves and require zero others. */
+        if (serverSimGetAdminFirstJoinAfterEmpty(sim) &&
+            !(flags & PLAYER_FLAG_ADMIN)) {
+            int otherConnected = 0;
+            for (BYTE pi = 0; pi < MAX_TANKS; pi++) {
+                if ((int)pi == slot) continue;
+                if (serverSimIsPlayerConnected(sim, pi) &&
+                    !serverSimIsBot(sim, pi)) {
+                    otherConnected++;
+                    break;
+                }
+            }
+            if (otherConnected == 0) {
+                flags |= PLAYER_FLAG_ADMIN;
+                WB_LOG_INFO(WB_LOG_CAT_NET,
+                    "adminfirst: granting ADMIN to first joiner slot=%d", slot);
             }
         }
         playersSetClientFlags(&serverSimGetGameSim(sim)->plyrs, (BYTE)slot, flags);
@@ -3169,6 +3192,18 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                          * snaps every client back to the CLI startup
                          * value. */
                         serverSimSetBotAiType(sim, (aiType)value[0]);
+                        /* Switching to "No computer tanks" must clear
+                         * every existing bot — leaving them around
+                         * contradicts the host's policy choice. */
+                        if ((aiType)value[0] == aiNone) {
+                            for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
+                                if (botManagerIsBot(bi)) {
+                                    botManagerRemoveBot(sim, bi);
+                                    transportUdpServerBroadcastLobbyUpdate(sim, bi);
+                                }
+                            }
+                            transportUdpServerBroadcastLobbyAutoUnready(sim);
+                        }
                     } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
                                            LOBBY_REJECT_INVALID); break; }
                     break;
@@ -3251,6 +3286,36 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             TeamMetadata *t = &(*serverSimGetTeamMetaMut(sim, teamId));
             t->in_use = 1;
             t->color = color;
+            /* Enforce per-team uniqueness on namingPool: if another in_use
+             * team already owns this pool, pick the lowest pool index not
+             * used by any other team. Falls back to the requested value if
+             * every pool is taken (more teams than pools). */
+            {
+                int poolCount = lobbyBotPoolCount();
+                bool poolTaken = false;
+                for (BYTE other = 1; other < MAX_TANKS; other++) {
+                    if (other == teamId) continue;
+                    const TeamMetadata *ot = serverSimGetTeamMeta(sim, other);
+                    if (ot && ot->in_use && ot->namingPool == namingPool) {
+                        poolTaken = true;
+                        break;
+                    }
+                }
+                if (poolTaken && poolCount > 0) {
+                    for (int p = 0; p < poolCount; p++) {
+                        bool used = false;
+                        for (BYTE other = 1; other < MAX_TANKS; other++) {
+                            if (other == teamId) continue;
+                            const TeamMetadata *ot = serverSimGetTeamMeta(sim, other);
+                            if (ot && ot->in_use && ot->namingPool == p) {
+                                used = true;
+                                break;
+                            }
+                        }
+                        if (!used) { namingPool = (uint8_t)p; break; }
+                    }
+                }
+            }
             t->namingPool = namingPool;
             memset(t->name, 0, LOBBY_TEAM_NAME_LEN);
             if (nameLen > 0) {

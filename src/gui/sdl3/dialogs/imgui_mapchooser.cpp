@@ -146,9 +146,11 @@ static void discoverMaps(MapChooserState *state) {
     }
 #endif
 
-    /* Sort maps alphabetically (skip first entry which is always Everard Island) */
-    if (state->numMaps > 2) {
-        std::sort(&state->maps[1], &state->maps[state->numMaps],
+    /* Sort all maps alphabetically — Everard Island (the inbuilt entry
+     * added at index 0) gets sorted in alongside the rest rather than
+     * pinned at the top. */
+    if (state->numMaps > 1) {
+        std::sort(&state->maps[0], &state->maps[state->numMaps],
             [](const MapChooserEntry &a, const MapChooserEntry &b) {
                 return SDL_strcasecmp(a.name, b.name) < 0;
             });
@@ -279,6 +281,18 @@ void mapChooserInit(MapChooserState *state, SDL_Renderer *renderer) {
     mapEditorImguiSetRenderer(renderer);
 
     discoverMaps(state);
+
+    /* Default selection is Everard (the inbuilt map — empty path). The
+     * alphabetical sort in discoverMaps may have moved it from index 0;
+     * find its new position so the highlighted row matches the
+     * "currently selected" name we wrote above. */
+    for (int i = 0; i < state->numMaps; i++) {
+        if (state->maps[i].path[0] == '\0') {
+            state->selectedIdx = i;
+            break;
+        }
+    }
+
     updatePreview(state, renderer);
     state->initialized = true;
 }
@@ -375,10 +389,29 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         }
     }
 
-    /* Layout: left panel + right preview */
-    float previewPanelW = (PREVIEW_SIZE + 40) * (scale > 1.5f ? 0.75f : 1.0f);
-    if (previewPanelW > width * 0.55f) previewPanelW = width * 0.55f;
-    float leftPanelW = width - previewPanelW - 8.0f;
+    /* Layout: left panel (map list) + right preview.
+     * If the caller capped the list width (leftPanelMaxW > 0) it wins —
+     * preview claims the rest of the row. Otherwise fall back to the
+     * legacy "preview is the natural minimap size, list takes the
+     * remainder" split. */
+    float leftPanelW;
+    float previewPanelW;
+    if (state->leftPanelMaxW > 0.0f) {
+        leftPanelW = state->leftPanelMaxW;
+        if (leftPanelW > width * 0.5f) leftPanelW = width * 0.5f;
+        previewPanelW = width - leftPanelW - 8.0f;
+        if (previewPanelW < 100.0f) {
+            /* Window too narrow — fall back to the legacy split so the
+             * preview doesn't disappear entirely. */
+            previewPanelW = (PREVIEW_SIZE + 40) * (scale > 1.5f ? 0.75f : 1.0f);
+            if (previewPanelW > width * 0.55f) previewPanelW = width * 0.55f;
+            leftPanelW = width - previewPanelW - 8.0f;
+        }
+    } else {
+        previewPanelW = (PREVIEW_SIZE + 40) * (scale > 1.5f ? 0.75f : 1.0f);
+        if (previewPanelW > width * 0.55f) previewPanelW = width * 0.55f;
+        leftPanelW = width - previewPanelW - 8.0f;
+    }
 
     /* Left panel */
     ImGui::BeginChild("##MapLeft", ImVec2(leftPanelW, height), ImGuiChildFlags_Borders);
@@ -410,39 +443,71 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
     } else {
         /* --- Normal map list mode --- */
 
-        /* Load from device button */
-        {
-            bool disabled = state->fileDialogPending;
-            if (disabled) ImGui::BeginDisabled();
-            if (ImGui::Button(langGetText(STR_MAPCHOOSER_LOADDEVICE), ImVec2(-1, 0))) {
-                SDL_Window *window = sdl3DrawGetWindow();
-                SDL_DialogFileFilter filters[] = {
-                    { langGetText(STR_MAPCHOOSER_MAPFILES), "map" },
-                    { langGetText(STR_MAPCHOOSER_ALLFILES), "*" },
-                };
-                state->fileDialogPending = true;
-                state->fileDialogGotResult = false;
-                SDL_ShowOpenFileDialog(mapChooserFileDialogCallback, state, window, filters, 2, NULL, false);
+        if (!state->hideExtras) {
+            /* Load from device button */
+            {
+                bool disabled = state->fileDialogPending;
+                if (disabled) ImGui::BeginDisabled();
+                if (ImGui::Button(langGetText(STR_MAPCHOOSER_LOADDEVICE), ImVec2(-1, 0))) {
+                    SDL_Window *window = sdl3DrawGetWindow();
+                    SDL_DialogFileFilter filters[] = {
+                        { langGetText(STR_MAPCHOOSER_MAPFILES), "map" },
+                        { langGetText(STR_MAPCHOOSER_ALLFILES), "*" },
+                    };
+                    state->fileDialogPending = true;
+                    state->fileDialogGotResult = false;
+                    SDL_ShowOpenFileDialog(mapChooserFileDialogCallback, state, window, filters, 2, NULL, false);
+                }
+                if (disabled) ImGui::EndDisabled();
             }
-            if (disabled) ImGui::EndDisabled();
+
+            /* Generate Random Map button */
+            if (ImGui::Button(langGetText(STR_MAPCHOOSER_GENRANDOM), ImVec2(-1, 0))) {
+                state->randomMapSelected = true;
+                state->selectedIdx = MAP_CHOOSER_IDX_RANDOM;
+                SDL_strlcpy(state->selectedName, langGetText(STR_MAPCHOOSER_RANDOMMAP), sizeof(state->selectedName));
+                initGenConfig(state);
+                generateRandomPreview(state, renderer);
+                changed = true;
+            }
+
+            ImGui::Separator();
         }
 
-        /* Generate Random Map button */
-        if (ImGui::Button(langGetText(STR_MAPCHOOSER_GENRANDOM), ImVec2(-1, 0))) {
-            state->randomMapSelected = true;
-            state->selectedIdx = MAP_CHOOSER_IDX_RANDOM;
-            SDL_strlcpy(state->selectedName, langGetText(STR_MAPCHOOSER_RANDOMMAP), sizeof(state->selectedName));
-            initGenConfig(state);
-            generateRandomPreview(state, renderer);
-            changed = true;
+        /* Local search filter — case-insensitive substring match on the
+         * display name. Sits above the list so it stays visible while
+         * the list scrolls. */
+        {
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputTextWithHint("##MapSearch", "Search...",
+                                     state->searchFilter,
+                                     sizeof(state->searchFilter));
         }
-
-        ImGui::Separator();
 
         /* Scrollable map list */
         ImGui::BeginChild("##MapListScroll", ImVec2(0, 0));
 
+        bool hasFilter = state->searchFilter[0] != '\0';
         for (int i = 0; i < state->numMaps; i++) {
+            if (hasFilter) {
+                /* Case-insensitive substring match against the display
+                 * name. SDL has no strcasestr, so do it manually. */
+                const char *hay = state->maps[i].name;
+                const char *needle = state->searchFilter;
+                size_t needleLen = SDL_strlen(needle);
+                bool match = false;
+                for (size_t k = 0; hay[k] != '\0'; k++) {
+                    size_t j;
+                    for (j = 0; j < needleLen; j++) {
+                        char a = hay[k + j];
+                        if (a == '\0') break;
+                        if (SDL_tolower((unsigned char)a)
+                            != SDL_tolower((unsigned char)needle[j])) break;
+                    }
+                    if (j == needleLen) { match = true; break; }
+                }
+                if (!match) continue;
+            }
             bool selected = (i == state->selectedIdx);
             if (ImGui::Selectable(state->maps[i].name, selected)) {
                 if (state->selectedIdx != i) {

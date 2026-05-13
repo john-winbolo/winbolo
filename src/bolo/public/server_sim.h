@@ -1148,6 +1148,12 @@ const BrainList *serverSimGetBrainList(const ServerSim *sim);
 const char *serverSimGetAdminIps(const ServerSim *sim);
 void        serverSimSetAdminIps(ServerSim *sim, const char *csvIps);
 
+/* -adminfirst — when true, the first client to join while no other
+ * players are connected is tagged with PLAYER_FLAG_ADMIN (mirrors the
+ * admin-IP grant, just keyed off connection-order instead of IP). */
+bool        serverSimGetAdminFirstJoinAfterEmpty(const ServerSim *sim);
+void        serverSimSetAdminFirstJoinAfterEmpty(ServerSim *sim, bool v);
+
 /* openHost — when true, any connected client may issue lobby edit
  * commands (add bots, change settings, etc.). */
 bool        serverSimGetOpenHost(const ServerSim *sim);
