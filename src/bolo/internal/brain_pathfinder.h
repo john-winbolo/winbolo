@@ -78,7 +78,7 @@ typedef struct {
 } DijkstraSlate;
 
 /* Per-instance pathfinder state */
-typedef struct {
+typedef struct BrainPathfinder {
   /* Terrain map pointer (set each tick, not owned) */
   const BYTE *map;
 
