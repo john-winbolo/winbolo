@@ -1035,4 +1035,32 @@ const BalanceProposal *serverSimGetBalanceProposal(const ServerSim *sim);
  * const-qualified: callers of GameSim mutate it freely. */
 GameSim *serverSimGetGameSim(ServerSim *sim);
 
+/* --- Live-sim map / pill / base / start readers ---
+ * Server-side perspective of the same map/pill/base/start state
+ * the client-side wrappers expose on client_sim.h. Used by
+ * binaries that own a ServerSim directly (bg_game, braintest,
+ * headless, gym). */
+
+BYTE         serverSimGetMapTerrain(const ServerSim *sim, BYTE x, BYTE y);
+bool         serverSimMapIsMine(const ServerSim *sim, BYTE x, BYTE y);
+bool         serverSimPillExistsAt(const ServerSim *sim, BYTE x, BYTE y);
+BYTE         serverSimPillGetScreenHealthAt(ServerSim *sim, BYTE x, BYTE y);
+bool         serverSimBaseExistsAt(const ServerSim *sim, BYTE x, BYTE y);
+baseAlliance serverSimBaseGetAllianceAt(ServerSim *sim, BYTE x, BYTE y);
+bool         serverSimBaseAmOwnerAt(ServerSim *sim, BYTE player, BYTE x, BYTE y);
+
+BYTE         serverSimGetPillCount(const ServerSim *sim);
+BYTE         serverSimGetBaseCount(const ServerSim *sim);
+BYTE         serverSimGetStartCount(const ServerSim *sim);
+
+bool         serverSimGetPill(ServerSim *sim, BYTE i,
+                              BYTE *x, BYTE *y, BYTE *owner, BYTE *armour,
+                              bool *inTank);
+bool         serverSimGetBase(ServerSim *sim, BYTE i,
+                              BYTE *x, BYTE *y, BYTE *owner);
+bool         serverSimGetBaseStats(ServerSim *sim, BYTE i,
+                                   BYTE *shells, BYTE *mines, BYTE *armour);
+bool         serverSimGetStart(ServerSim *sim, BYTE i,
+                               BYTE *x, BYTE *y, BYTE *dir);
+
 #endif /* SERVER_SIM_H */

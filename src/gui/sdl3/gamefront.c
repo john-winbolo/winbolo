@@ -72,7 +72,6 @@
 #include "bg_game.h"
 
 #include "everard_map.h"
-#include "bolo_map.h"
 #include "platform_net.h"
 #include "playername_validate.h"
 #include "client_net.h"

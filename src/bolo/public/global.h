@@ -100,9 +100,16 @@ void efree(Generic object);
 #define MINE_GRASS 15
 
 /* Mines start at the 10th element */
-#define MINE_START 10 
+#define MINE_START 10
 #define MINE_END 15
 #define MINE_SUBTRACT 8
+
+/* Border zone bounds — outside these tiles, mines are always laid.
+ * Map-render UIs use them to draw the dark border overlay. */
+#define MAP_MINE_EDGE_LEFT   20
+#define MAP_MINE_EDGE_RIGHT  236
+#define MAP_MINE_EDGE_TOP    20
+#define MAP_MINE_EDGE_BOTTOM 236
 
 /* Base Numbers 1-16 instead of "Magic Numbers" */
 #define BASE_0 0

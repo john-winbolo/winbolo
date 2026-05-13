@@ -1245,3 +1245,99 @@ void clientSimConnectionLost(ClientSim *cs) {
   lgmConnectionLost(clientSimGetGameSim(cs), &MY_LGM(cs), &MY_TANK(cs), &clientSimGetGameSim(cs)->ss);
   playersConnectionLost(cs, clientSimGetGameSim(cs), &clientSimGetGameSim(cs)->plyrs, clientSimGetMyPlayerNum(cs));
 }
+
+/* ================================================================
+ * Live-sim map / pill / base / start readers.
+ * ================================================================ */
+
+BYTE clientSimGetMapTerrain(const ClientSim *cs, BYTE x, BYTE y) {
+  return mapGetPos(&clientSimGetGameSim((ClientSim *)cs)->mp, x, y);
+}
+
+bool clientSimMapIsMine(const ClientSim *cs, BYTE x, BYTE y) {
+  return mapIsMine(&clientSimGetGameSim((ClientSim *)cs)->mp, x, y);
+}
+
+bool clientSimPillExistsAt(const ClientSim *cs, BYTE x, BYTE y) {
+  return pillsExistPos(&clientSimGetGameSim((ClientSim *)cs)->pb, x, y);
+}
+
+BYTE clientSimPillGetScreenHealthAt(ClientSim *cs, BYTE x, BYTE y) {
+  GameSim *gs = clientSimGetGameSim(cs);
+  return pillsGetScreenHealth(gs, &gs->pb, x, y);
+}
+
+bool clientSimBaseExistsAt(const ClientSim *cs, BYTE x, BYTE y) {
+  return basesExistPos(&clientSimGetGameSim((ClientSim *)cs)->bs, x, y);
+}
+
+baseAlliance clientSimBaseGetAllianceAt(ClientSim *cs, BYTE x, BYTE y) {
+  return basesGetAlliancePos(clientSimGetGameSim(cs), x, y);
+}
+
+bool clientSimBaseAmOwnerAt(ClientSim *cs, BYTE player, BYTE x, BYTE y) {
+  return basesAmOwner(clientSimGetGameSim(cs), player, x, y);
+}
+
+BYTE clientSimGetPillCount(const ClientSim *cs) {
+  return pillsGetNumPills(&clientSimGetGameSim((ClientSim *)cs)->pb);
+}
+
+BYTE clientSimGetBaseCount(const ClientSim *cs) {
+  return basesGetNumBases(&clientSimGetGameSim((ClientSim *)cs)->bs);
+}
+
+BYTE clientSimGetStartCount(const ClientSim *cs) {
+  return startsGetNumStarts(&clientSimGetGameSim((ClientSim *)cs)->ss);
+}
+
+bool clientSimGetPill(ClientSim *cs, BYTE i,
+                      BYTE *x, BYTE *y, BYTE *owner, BYTE *armour,
+                      bool *inTank) {
+  GameSim *gs = clientSimGetGameSim(cs);
+  pillbox p;
+  BYTE n = pillsGetNumPills(&gs->pb);
+  if (i == 0 || i > n) return false;
+  pillsGetPill(&gs->pb, &p, i);
+  if (x)      *x      = p.x;
+  if (y)      *y      = p.y;
+  if (owner)  *owner  = p.owner;
+  if (armour) *armour = p.armour;
+  if (inTank) *inTank = p.inTank;
+  return true;
+}
+
+bool clientSimGetBase(ClientSim *cs, BYTE i,
+                      BYTE *x, BYTE *y, BYTE *owner) {
+  GameSim *gs = clientSimGetGameSim(cs);
+  base b;
+  BYTE n = basesGetNumBases(&gs->bs);
+  if (i == 0 || i > n) return false;
+  basesGetBase(&gs->bs, &b, i);
+  if (x)     *x     = b.x;
+  if (y)     *y     = b.y;
+  if (owner) *owner = b.owner;
+  return true;
+}
+
+bool clientSimGetBaseStats(ClientSim *cs, BYTE i,
+                           BYTE *shells, BYTE *mines, BYTE *armour) {
+  GameSim *gs = clientSimGetGameSim(cs);
+  BYTE n = basesGetNumBases(&gs->bs);
+  if (i == 0 || i > n) return false;
+  basesGetStats(&gs->bs, i, shells, mines, armour);
+  return true;
+}
+
+bool clientSimGetStart(ClientSim *cs, BYTE i,
+                       BYTE *x, BYTE *y, BYTE *dir) {
+  GameSim *gs = clientSimGetGameSim(cs);
+  start s;
+  BYTE n = startsGetNumStarts(&gs->ss);
+  if (i == 0 || i > n) return false;
+  startsGetStartStruct(&gs->ss, &s, i);
+  if (x)   *x   = s.x;
+  if (y)   *y   = s.y;
+  if (dir) *dir = startsConvertDir((BYTE)((s.dir < 16) ? s.dir : 0));
+  return true;
+}
