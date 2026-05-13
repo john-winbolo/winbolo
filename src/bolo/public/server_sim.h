@@ -794,6 +794,27 @@ void serverSimLobbyCheckAllReady(ServerSim *sim);
 void serverSimStartGame(ServerSim *sim);
 
 /*********************************************************
+ *NAME:          serverSimReapplyTeamAlliances
+ *PURPOSE:
+ *  Runs the team-pair alliance pass over the currently
+ *  connected players: for every pair (a, b) where both
+ *  share the same non-zero lobby teamNumber, mutual-allies
+ *  them via playersAcceptAlliance and publishes a
+ *  CTRL_ALLIANCE_ACCEPT control event.
+ *
+ *  TECH DEBT: serverSimStartGame already calls this pass
+ *  internally. This entry point exists because the SP-host
+ *  flow in gamefront.c currently calls serverSimStartGame
+ *  before the human player and bots have been added /
+ *  before their team numbers are set, then has to re-run
+ *  the pass once the lobby state is populated. A future
+ *  restructure of the SP-host flow (so that players are
+ *  added and teams set before serverSimStartGame is called)
+ *  will let the external call site go away.
+ *********************************************************/
+void serverSimReapplyTeamAlliances(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimResetGameWorld
  *PURPOSE:
  *  Resets the game world using cached map data. Destroys

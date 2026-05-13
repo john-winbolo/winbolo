@@ -2549,8 +2549,28 @@ void serverSimResetGameWorld(ServerSim *sim) {
     playersCreate(&sim->sim.plyrs, TRUE);
 }
 
-void serverSimStartGame(ServerSim *sim) {
+void serverSimReapplyTeamAlliances(ServerSim *sim) {
     BYTE i, j;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        if (sim->lobbyPlayers[i].teamNumber == 0) continue;
+        for (j = i + 1; j < MAX_TANKS; j++) {
+            if (!sim->playerConnected[j]) continue;
+            if (sim->lobbyPlayers[j].teamNumber == sim->lobbyPlayers[i].teamNumber) {
+                ControlEvent allyEvt;
+                playersAcceptAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, j, TRUE);
+                memset(&allyEvt, 0, sizeof(allyEvt));
+                allyEvt.type = CTRL_ALLIANCE_ACCEPT;
+                allyEvt.u.allianceAccept.acceptedBy = i;
+                allyEvt.u.allianceAccept.newMember  = j;
+                serverSimPublishControl(sim, &allyEvt);
+            }
+        }
+    }
+}
+
+void serverSimStartGame(ServerSim *sim) {
+    BYTE i;
     /* Save connected-player state before resetting – resetGameWorld clears
        playerConnected[], but we need it to create tanks below. */
     bool savedConnected[MAX_TANKS];
@@ -2607,22 +2627,7 @@ void serverSimStartGame(ServerSim *sim) {
     }
 
     /* Apply team alliances: players with same non-zero teamNumber become allies */
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->playerConnected[i]) continue;
-        if (sim->lobbyPlayers[i].teamNumber == 0) continue;
-        for (j = i + 1; j < MAX_TANKS; j++) {
-            if (!sim->playerConnected[j]) continue;
-            if (sim->lobbyPlayers[j].teamNumber == sim->lobbyPlayers[i].teamNumber) {
-                ControlEvent allyEvt;
-                playersAcceptAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, j, TRUE);
-                memset(&allyEvt, 0, sizeof(allyEvt));
-                allyEvt.type = CTRL_ALLIANCE_ACCEPT;
-                allyEvt.u.allianceAccept.acceptedBy = i;
-                allyEvt.u.allianceAccept.newMember  = j;
-                serverSimPublishControl(sim, &allyEvt);
-            }
-        }
-    }
+    serverSimReapplyTeamAlliances(sim);
 
     /* Pre-compute start indices for the whole batch so teammates land
      * near each other and rivals don't grab adjacent squares (the tankCreate
