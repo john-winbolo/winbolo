@@ -675,6 +675,52 @@ static void renderBotAiConfig(ClientSim *cs,
  * window. Returns nothing — purely UI. */
 static void renderLockBadge(void);
 
+/* Compact "Allow New Players:  [ ] Now   [ ] During game" row. Host
+ * only and multiplayer only (single-player has no UDP listener). Used
+ * to live inside renderTeamGroupedPlayers; hoisted to the parent so
+ * the PlayerPanel and MapPanel top edges stay aligned. */
+static void renderAllowNewPlayersRow(ClientSim *cs,
+                                     int myPlayerNum, float s) {
+    bool isHost = (myPlayerNum == 0);
+    bool isLocalAdmin = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+                        (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
+                         & PLAYER_FLAG_ADMIN));
+    bool effectiveHost = isHost || clientSimGetLobbyOpenHost(cs) || isLocalAdmin;
+    if (!effectiveHost) return;
+    if (!clientSimHasTransport(cs) || clientSimIsSinglePlayer(cs)) return;
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("Allow New Players:");
+    /* TODO: server's allowNewPlayers state isn't carried by
+     * CTRL_LOBBY_SETTINGS — show the host's last-clicked intent. */
+    bool allowJoin = true;
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Now##allowNow", &allowJoin)) {
+        clientSimNetSendLockToggle(cs, allowJoin);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Accept new join requests right now while the lobby is open.");
+    }
+    bool autoLockLocked = (clientSimGetLobbyServerLocks(cs) & 0x10) != 0;
+    bool duringGame = !clientSimGetLobbyAutoLockOnGameStart(cs);
+    if (autoLockLocked) ImGui::BeginDisabled();
+    ImGui::SameLine();
+    if (ImGui::Checkbox("During game##allowDuring", &duringGame)) {
+        uint8_t v = duringGame ? 0 : 1;  /* invert */
+        lobbySendSetting(cs, 6 /*LST_AUTO_LOCK_ON_GAME*/, &v, 1);
+    }
+    if (autoLockLocked) ImGui::EndDisabled();
+    if (autoLockLocked) {
+        ImGui::SameLine(0.0f, 4.0f * s);
+        renderLockBadge();
+    }
+    if (ImGui::IsItemHovered() && !autoLockLocked) {
+        ImGui::SetTooltip(
+            "Keep accepting new players after the game has started.");
+    }
+}
+
 static void renderTeamGroupedPlayers(ClientSim *cs,
                                      int myPlayerNum, float s, bool isHost) {
     /* Lazy-load the badge / bot-cpu icons. Used to be done inside
@@ -708,93 +754,11 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                           & PLAYER_FLAG_ADMIN));
     bool effectiveHost = isHost || clientSimGetLobbyOpenHost(cs) || isLocalAdmin;
 
-    /* Header: "Add Team" button (host only) and the openHost toggle.
-     * Add Team picks the lowest unused teamId, sends a default-name
-     * TEAM_META. The openHost toggle lets non-host players manage
-     * teams + bots; the wording flips between checked/unchecked
-     * states so each phrasing reads truthfully. */
-    if (effectiveHost) {
-        if (ImGui::Button("+ Add Team")) {
-            for (int t = 1; t < 16; t++) {
-                if (memberCount[t] == 0 && !clientSimGetLobbyTeamInUse(cs, (BYTE)(t))) {
-                    char defaultName[16];
-                    SDL_snprintf(defaultName, sizeof(defaultName), "Team %d", t);
-                    uint8_t color = (uint8_t)((t - 1) & 7);
-                    /* Single-player: write the team metadata directly
-                     * (UDP transport reinterpret would corrupt memory,
-                     * and the wire's TEAM_META has no SP equivalent).
-                     * Multiplayer: existing PACKET_LOBBY_TEAM_META. */
-                    if (clientSimIsSinglePlayer(cs)) {
-                        ServerSim *spSim = gameFrontGetSinglePlayerServerSim();
-                        TeamMetadata *tm = serverSimGetTeamMetaMut(spSim, t);
-                        if (spSim && tm) {
-                            tm->in_use = 1;
-                            tm->color = color;
-                            tm->namingPool = 0;
-                            strncpy(tm->name, defaultName, LOBBY_TEAM_NAME_LEN - 1);
-                            tm->name[LOBBY_TEAM_NAME_LEN - 1] = '\0';
-                            serverSimPublishLobbyTeamMeta(spSim, (uint8_t)t);
-                        }
-                    } else {
-                        clientSimNetSendLobbyTeamMeta(cs, (uint8_t)t,
-                            color, 0 /*pool=classic*/, defaultName);
-                    }
-                    break;
-                }
-            }
-        }
-        /* Compact "Allow new players" group right of "+ Add Team":
-         *   Allow New Players:  [ ] Now   [ ] During game
-         * Multiplayer-only — single-player has no UDP listener and
-         * these controls have no meaning there. */
-        if (clientSimHasTransport(cs) && !clientSimIsSinglePlayer(cs)) {
-            ImGui::SameLine(0.0f, 20.0f * s);
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextDisabled("Allow New Players:");
-            /* TODO: the server's allowNewPlayers state isn't carried
-             * by CTRL_LOBBY_SETTINGS, so we can't read its current
-             * value from the client side. Show the host's last-clicked
-             * intent (defaults to true). Remote admin changes won't
-             * update this checkbox until the field is added to the
-             * lobby settings broadcast. */
-            bool allowJoin = true;
-            ImGui::SameLine();
-            if (ImGui::Checkbox("Now##allowNow", &allowJoin)) {
-                clientSimNetSendLockToggle(cs, allowJoin);
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip(
-                    "Accept new join requests right now while the lobby is open.");
-            }
-            /* "During game" = inverse of autoLockOnGameStart (which
-             * means 'disallow new players once started'). Toggling
-             * this sends LST_AUTO_LOCK_ON_GAME with the inverted bit. */
-            bool autoLockLocked = (clientSimGetLobbyServerLocks(cs) & 0x10) != 0;
-            bool duringGame = !clientSimGetLobbyAutoLockOnGameStart(cs);
-            if (autoLockLocked) ImGui::BeginDisabled();
-            ImGui::SameLine();
-            if (ImGui::Checkbox("During game##allowDuring", &duringGame)) {
-                uint8_t v = duringGame ? 0 : 1;  /* invert */
-                lobbySendSetting(cs,
-                                 6 /*LST_AUTO_LOCK_ON_GAME*/, &v, 1);
-            }
-            if (autoLockLocked) ImGui::EndDisabled();
-            if (autoLockLocked) {
-                ImGui::SameLine(0.0f, 4.0f * s);
-                renderLockBadge();
-            }
-            if (ImGui::IsItemHovered() && !autoLockLocked) {
-                ImGui::SetTooltip(
-                    "Keep accepting new players after the game has started.");
-            }
-        }
-
-        /* (Previously the team list header showed a "The host has
-         * allowed everybody to manage teams." label here.  Removed —
-         * the same info is now surfaced as the right-aligned label on
-         * the Game Settings header.) */
-        ImGui::Spacing();
-    }
+    /* "Allow new players" row is rendered by the caller above the panels
+     * so the PlayerPanel and MapPanel top edges stay aligned in Y.
+     * "+ Add Team" lives in the footer below the teams list (see
+     * the bottom of this function). */
+    (void)effectiveHost;  /* still used by the footer "Add Team" below */
     for (int teamId = 1; teamId < 16; teamId++) {
         /* Teams 1 and 2 are always rendered (the lobby's two default
          * sides) — the host always has somewhere to drop the first
@@ -1586,6 +1550,57 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                 }
             }
             ImGui::EndDragDropTarget();
+        }
+        ImGui::Spacing();
+    }
+
+    /* "Add Team" lives at the bottom of the team list so it reads as
+     * "+ another team after these ones" rather than a header action.
+     * Picks the lowest unused teamId and sends a default-name TEAM_META
+     * (SP path writes the TeamMetadata directly since the wire packet
+     * has no SP equivalent). */
+    if (effectiveHost) {
+        /* Full-width "Add Team" affordance, styled to read as a subtle
+         * "+1 row" prompt rather than a primary action — translucent
+         * background and dimmed text so it doesn't dominate the team
+         * list it sits beneath. */
+        ImVec4 baseBtn = ImGui::GetStyleColorVec4(ImGuiCol_Button);
+        ImVec4 baseTxt = ImGui::GetStyleColorVec4(ImGuiCol_Text);
+        ImGui::PushStyleColor(ImGuiCol_Button,
+                              ImVec4(baseBtn.x, baseBtn.y, baseBtn.z, baseBtn.w * 0.35f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                              ImVec4(baseBtn.x, baseBtn.y, baseBtn.z, baseBtn.w * 0.65f));
+        ImGui::PushStyleColor(ImGuiCol_Text,
+                              ImVec4(baseTxt.x, baseTxt.y, baseTxt.z, baseTxt.w * 0.65f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                            ImVec2(ImGui::GetStyle().FramePadding.x, 2.0f * s));
+        bool addTeamClicked = ImGui::Button("Add Team", ImVec2(-1, 0));
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(3);
+        if (addTeamClicked) {
+            for (int t = 1; t < 16; t++) {
+                if (memberCount[t] == 0 && !clientSimGetLobbyTeamInUse(cs, (BYTE)(t))) {
+                    char defaultName[16];
+                    SDL_snprintf(defaultName, sizeof(defaultName), "Team %d", t);
+                    uint8_t color = (uint8_t)((t - 1) & 7);
+                    if (clientSimIsSinglePlayer(cs)) {
+                        ServerSim *spSim = gameFrontGetSinglePlayerServerSim();
+                        TeamMetadata *tm = serverSimGetTeamMetaMut(spSim, t);
+                        if (spSim && tm) {
+                            tm->in_use = 1;
+                            tm->color = color;
+                            tm->namingPool = 0;
+                            strncpy(tm->name, defaultName, LOBBY_TEAM_NAME_LEN - 1);
+                            tm->name[LOBBY_TEAM_NAME_LEN - 1] = '\0';
+                            serverSimPublishLobbyTeamMeta(spSim, (uint8_t)t);
+                        }
+                    } else {
+                        clientSimNetSendLobbyTeamMeta(cs, (uint8_t)t,
+                            color, 0 /*pool=classic*/, defaultName);
+                    }
+                    break;
+                }
+            }
         }
         ImGui::Spacing();
     }
@@ -2456,6 +2471,35 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), aiTypeStr(clientSimGetLobbyAiType(cs)));
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
 #else
+            /* Leave button sits at the top-left, before the Server: line.
+             * Escape key also opens the leave confirmation popup. Rendered as
+             * a back arrow (left-pointing triangle) drawn into a normal-height
+             * button so it matches Add Team / Ready visually without depending
+             * on geometric-shape glyphs being present in the active font. */
+            float leaveBtnH = ImGui::GetFrameHeight();
+            float leaveBtnW = leaveBtnH * 1.4f;
+            ImVec2 leaveBtnPos = ImGui::GetCursorScreenPos();
+            bool leaveClicked = ImGui::Button("##leave", ImVec2(leaveBtnW, leaveBtnH));
+            {
+                ImDrawList *dl = ImGui::GetWindowDrawList();
+                float cx = leaveBtnPos.x + leaveBtnW * 0.5f;
+                float cy = leaveBtnPos.y + leaveBtnH * 0.5f;
+                float r  = leaveBtnH * 0.28f;
+                ImVec2 p1(cx - r,         cy);
+                ImVec2 p2(cx + r * 0.7f,  cy - r);
+                ImVec2 p3(cx + r * 0.7f,  cy + r);
+                ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+                dl->AddTriangleFilled(p1, p2, p3, col);
+            }
+            if (leaveClicked ||
+                (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
+                 !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
+                char leavePopupId[64];
+                SDL_snprintf(leavePopupId, sizeof(leavePopupId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
+                ImGui::OpenPopup(leavePopupId);
+            }
+            ImGui::SameLine(0, 16);
+            ImGui::AlignTextToFramePadding();
             ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_SERVER), serverStr);
             ImGui::SameLine(0, 16);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_GAME_LBL), gameTypeStr(clientSimGetLobbyGameType(cs)));
@@ -2522,6 +2566,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 /* --- Players tab --- */
                 if (ImGui::BeginTabItem(langGetText(STR_MENU_PLAYERS))) {
                     activeTab = 0;
+                    /* Allow New Players row above the player list (mobile). */
+                    renderAllowNewPlayersRow(cs, myPlayerNum, s);
                     float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
                     ImGui::BeginChild("##PlayerPanel", ImVec2(availW, tabH), ImGuiChildFlags_None);
 
@@ -2910,6 +2956,36 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             float playerPanelW = availW - mapPanelW - 8.0f;
             float panelH = availContentH;
 
+            /* "Allow New Players" row spans the full width above both
+             * panels so PlayerPanel and MapPanel top edges align in Y.
+             * Subtract its actual height (if anything renders) from
+             * panelH so the bottom alignment with the chat row holds. */
+            float beforeAllowY = ImGui::GetCursorPosY();
+            renderAllowNewPlayersRow(cs, myPlayerNum, s);
+            float allowRowH = ImGui::GetCursorPosY() - beforeAllowY;
+            if (allowRowH > 0.0f) {
+                panelH -= allowRowH;
+            }
+
+            /* Bottom row reservation must match what the (now grouped)
+             * left column consumes: ChatBlock height + spacing. Compute
+             * it up front so the right column's MapPanel can grow into
+             * everything except the Ready/Balance footer. */
+            float bottomH = ImGui::GetTextLineHeightWithSpacing() * 8.4f - 20.0f * s;
+            if (bottomH < ImGui::GetTextLineHeightWithSpacing() * 5.0f) {
+                bottomH = ImGui::GetTextLineHeightWithSpacing() * 5.0f;
+            }
+            float spacingH = ImGui::GetStyle().ItemSpacing.y;
+            /* Reserve room for Ready + an optional Balance/Apply/Dismiss
+             * button below the map. Two button rows + a small gap. */
+            float readyAreaH = ImGui::GetFrameHeightWithSpacing() * 2.0f + spacingH;
+            float mapH = panelH + bottomH + spacingH - readyAreaH - spacingH;
+            if (mapH < panelH) mapH = panelH;
+
+            /* Left column — PlayerPanel above ChatBlock, grouped so the
+             * right column can SameLine alongside the whole stack. */
+            ImGui::BeginGroup();
+
             /* Left: Player panel — Layout A team-grouped rendering. */
             ImGui::BeginChild("##PlayerPanel", ImVec2(playerPanelW, panelH), ImGuiChildFlags_None);
 
@@ -3054,10 +3130,58 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
             ImGui::EndChild(); /* ##PlayerPanel */
 
+            ImGui::Spacing();
+
+            /* Left bottom: chat block (label + history + input row),
+             * still in the left column group so it stacks under
+             * PlayerPanel. */
+            ImGui::BeginChild("##ChatBlock", ImVec2(playerPanelW, bottomH), ImGuiChildFlags_None);
+            ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_CHAT));
+            {
+                float inputRowH = ImGui::GetFrameHeightWithSpacing();
+                float chatHeight = ImGui::GetContentRegionAvail().y - inputRowH;
+                if (chatHeight < ImGui::GetTextLineHeightWithSpacing() * 3.4f)
+                    chatHeight = ImGui::GetTextLineHeightWithSpacing() * 3.4f;
+                ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHeight), ImGuiChildFlags_Borders);
+                ImGui::TextUnformatted(clientSimGetLobbyChatHistory(cs));
+                if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
+                    ImGui::SetScrollHereY(1.0f);
+                }
+                ImGui::EndChild();
+            }
+            {
+                float btnW = 60.0f * s;
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - btnW - 8.0f);
+                bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
+                                                      ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::SameLine();
+                bool chatEmpty = (chatInput[0] == '\0');
+                if (chatEmpty) ImGui::BeginDisabled();
+                bool sendClicked = ImGui::Button(langGetText(STR_DLGMSG_BUTTON), ImVec2(btnW, 0));
+                if (chatEmpty) ImGui::EndDisabled();
+                if ((sendClicked || enterPressed) &&
+                    !chatEmpty && hasTransport) {
+                    clientSimNetSendChat(cs, 0xFF, chatInput);
+                    const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
+                    const char *myName = (mySlot && mySlot->connected)
+                        ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
+                    clientSimAppendLobbyChat(cs, myName, chatInput);
+                    chatInput[0] = '\0';
+                }
+            }
+            ImGui::EndChild();
+
+            ImGui::EndGroup(); /* /left column */
+
             ImGui::SameLine(0, 8.0f);
 
+            /* Right column — MapPanel extends down to just above the
+             * Ready/Balance footer, so the map preview's bottom border
+             * sits on the same Y as the Ready button's top. */
+            ImGui::BeginGroup();
+
             /* Right: Map preview + info */
-            ImGui::BeginChild("##MapPanel", ImVec2(mapPanelW, panelH), ImGuiChildFlags_Borders);
+            ImGui::BeginChild("##MapPanel", ImVec2(mapPanelW, mapH), ImGuiChildFlags_Borders);
 
             if (!clientSimIsMapDownloadComplete(cs)) {
                 /* Map downloading - show progress */
@@ -3167,105 +3291,58 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             }
 
             ImGui::EndChild(); /* ##MapPanel */
-        }
 
-        ImGui::Spacing();
-
-        /* --- Chat section --- */
-        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_CHAT));
-        {
-            float chatHeight = ImGui::GetTextLineHeightWithSpacing() * 3.4f;
-            ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHeight), ImGuiChildFlags_Borders);
-            ImGui::TextUnformatted(clientSimGetLobbyChatHistory(cs));
-            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
-                ImGui::SetScrollHereY(1.0f);
-            }
-            ImGui::EndChild();
-        }
-
-        {
-            float btnW = 60.0f * s;
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - btnW - 8.0f);
-            bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
-                                                  ImGuiInputTextFlags_EnterReturnsTrue);
-            ImGui::SameLine();
-            bool chatEmpty = (chatInput[0] == '\0');
-            if (chatEmpty) ImGui::BeginDisabled();
-            bool sendClicked = ImGui::Button(langGetText(STR_DLGMSG_BUTTON), ImVec2(btnW, 0));
-            if (chatEmpty) ImGui::EndDisabled();
-            if ((sendClicked || enterPressed) &&
-                !chatEmpty && hasTransport) {
-                clientSimNetSendChat(cs, 0xFF, chatInput);
+            /* Ready / Balance buttons sit directly below MapPanel inside
+             * the right column group. The MapPanel height was sized so
+             * its bottom border lands just above this footer, aligning
+             * with the top of the Ready button. */
+            {
                 const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
-                const char *myName = (mySlot && mySlot->connected)
-                    ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
-                clientSimAppendLobbyChat(cs, myName, chatInput);
-                chatInput[0] = '\0';
-            }
-        }
+                bool myReady = (mySlot && mySlot->connected) ? mySlot->ready : false;
+                bool canReady = clientSimIsMapDownloadComplete(cs);
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        /* --- Bottom buttons --- */
-        {
-            const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
-            bool myReady = (mySlot && mySlot->connected) ? mySlot->ready : false;
-            bool canReady = clientSimIsMapDownloadComplete(cs);
-
-            if (!canReady) ImGui::BeginDisabled();
-            const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
-            if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
-                if (hasTransport) {
-                    lobbySendReadyToggle(cs, !myReady);
-                }
-            }
-            if (!canReady) ImGui::EndDisabled();
-
-            if (myPlayerNum == 0 && hasTransport && !clientSimIsBalanceProposalActive(cs)) {
-                bool hasWbnPlayers = false;
-                uint8_t connectedCount = 0;
-                for (int j = 0; j < 16; j++) {
-                    const ClientLobbySlot *jSlot = clientSimGetLobbySlot(cs, (BYTE)j);
-                    if (jSlot && jSlot->connected) {
-                        connectedCount++;
-                        if (jSlot->clientFlags & PLAYER_FLAG_WBN_VERIFIED) {
-                            hasWbnPlayers = true;
+                if (myPlayerNum == 0 && hasTransport && !clientSimIsBalanceProposalActive(cs)) {
+                    bool hasWbnPlayers = false;
+                    uint8_t connectedCount = 0;
+                    for (int j = 0; j < 16; j++) {
+                        const ClientLobbySlot *jSlot = clientSimGetLobbySlot(cs, (BYTE)j);
+                        if (jSlot && jSlot->connected) {
+                            connectedCount++;
+                            if (jSlot->clientFlags & PLAYER_FLAG_WBN_VERIFIED) {
+                                hasWbnPlayers = true;
+                            }
                         }
                     }
-                }
-                if (hasWbnPlayers) {
-                    ImGui::SameLine(0, 20);
-                    if (connectedCount < 2) ImGui::BeginDisabled();
-                    if (ImGui::Button(langGetText(STR_DLGLOBBY_BALANCE_TEAMS), ImVec2(120 * s, 0))) {
-                        uint8_t teamSize = (connectedCount > 1) ? (connectedCount / 2) : 1;
-                        clientSimNetSendBalanceRequest(cs, teamSize);
+                    if (hasWbnPlayers) {
+                        if (connectedCount < 2) ImGui::BeginDisabled();
+                        if (ImGui::Button(langGetText(STR_DLGLOBBY_BALANCE_TEAMS), ImVec2(-1, 0))) {
+                            uint8_t teamSize = (connectedCount > 1) ? (connectedCount / 2) : 1;
+                            clientSimNetSendBalanceRequest(cs, teamSize);
+                        }
+                        if (connectedCount < 2) ImGui::EndDisabled();
                     }
-                    if (connectedCount < 2) ImGui::EndDisabled();
+                } else if (myPlayerNum == 0 && hasTransport && clientSimIsBalanceProposalActive(cs)) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
+                    if (ImGui::Button(langGetText(STR_DLGLOBBY_APPLY_BALANCE), ImVec2(-1, 0))) {
+                        clientSimNetSendBalanceApply(cs);
+                    }
+                    ImGui::PopStyleColor();
+                    if (ImGui::Button(langGetText(STR_DLGLOBBY_DISMISS), ImVec2(-1, 0))) {
+                        clientSimNetSendBalanceDismiss(cs);
+                    }
                 }
-            } else if (myPlayerNum == 0 && hasTransport && clientSimIsBalanceProposalActive(cs)) {
-                ImGui::SameLine(0, 20);
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
-                if (ImGui::Button(langGetText(STR_DLGLOBBY_APPLY_BALANCE), ImVec2(120 * s, 0))) {
-                    clientSimNetSendBalanceApply(cs);
-                }
-                ImGui::PopStyleColor();
-                ImGui::SameLine(0, 8);
-                if (ImGui::Button(langGetText(STR_DLGLOBBY_DISMISS), ImVec2(80 * s, 0))) {
-                    clientSimNetSendBalanceDismiss(cs);
-                }
-            }
 
-            ImGui::SameLine(0, 20);
-            if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
-                (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
-                 !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
-                char leavePopupId[64];
-                SDL_snprintf(leavePopupId, sizeof(leavePopupId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
-                ImGui::OpenPopup(leavePopupId);
+                if (!canReady) ImGui::BeginDisabled();
+                const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
+                if (ImGui::Button(readyLabel, ImVec2(-1, 0))) {
+                    if (hasTransport) {
+                        lobbySendReadyToggle(cs, !myReady);
+                    }
+                }
+                if (!canReady) ImGui::EndDisabled();
             }
-        }
+            ImGui::EndGroup(); /* /right column */
+        } /* /desktop layout scope (playerPanelW/mapPanelW) */
 #endif
 
         /* --- Map preview popup --- */

@@ -679,7 +679,7 @@ static bool gameFrontEnterSinglePlayerLobby(void) {
     int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
     if (compLen > 0) {
       clientLoadCompressedMap(humanSim, compressedMap, compLen,
-                              (char *)serverSimGetMapName(spServerSim),
+                              serverSimGetMapName(spServerSim),
                               gametype, hiddenMines, startDelay,
                               timeLen, gameFrontName, 0, FALSE);
     } else {
@@ -1240,7 +1240,8 @@ bool gameFrontSetDlgState(openingStates newState) {
             BYTE compressedMap[65536];
             int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
             if (compLen > 0) {
-              clientLoadCompressedMap(humanSim, compressedMap, compLen, serverSimGetMapName(spServerSim),
+              clientLoadCompressedMap(humanSim, compressedMap, compLen,
+                                     serverSimGetMapName(spServerSim),
                                      gametype, hiddenMines, startDelay,
                                      timeLen, gameFrontName, 0, FALSE);
             } else {
