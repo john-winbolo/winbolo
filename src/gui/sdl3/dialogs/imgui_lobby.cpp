@@ -2611,7 +2611,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                     char comboId[16];
                                     SDL_snprintf(comboId, sizeof(comboId), "##team%d", i);
                                     if (ImGui::Combo(comboId, &teamIdx, teamItems, 17)) {
-                                        clientSimNetSendTeamSet(cs, (uint8_t)teamIdx);
+                                        lobbySendTeamSet(cs, (uint8_t)myPlayerNum, (uint8_t)teamIdx);
                                     }
                                 } else {
                                     if (slot->teamNumber > 0) {
@@ -2640,7 +2640,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                     char btnId[64];
                                     SDL_snprintf(btnId, sizeof(btnId), "%s##%d", langGetText(STR_DLGLOBBY_REMOVE), i);
                                     if (ImGui::SmallButton(btnId)) {
-                                        clientSimNetSendRemoveBot(cs, (uint8_t)i);
+                                        lobbySendRemoveBot(cs, (uint8_t)i);
                                     }
                                 }
                             } else {
@@ -2658,7 +2658,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                     char btnId[64];
                                     SDL_snprintf(btnId, sizeof(btnId), "%s##%d", langGetText(STR_DLGLOBBY_ADDBOT), i);
                                     if (ImGui::SmallButton(btnId)) {
-                                        clientSimNetSendAddBot(cs);
+                                        lobbySendAddBot(cs, -1, 0);
                                     }
                                 }
                             }
@@ -2997,7 +2997,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             char comboId[16];
                             SDL_snprintf(comboId, sizeof(comboId), "##team%d", i);
                             if (ImGui::Combo(comboId, &teamIdx, teamItems, 17)) {
-                                clientSimNetSendTeamSet(cs, (uint8_t)teamIdx);
+                                lobbySendTeamSet(cs, (uint8_t)myPlayerNum, (uint8_t)teamIdx);
                             }
                         } else {
                             if (slot->teamNumber > 0) {
@@ -3026,7 +3026,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             char btnId[16];
                             SDL_snprintf(btnId, sizeof(btnId), "Remove##%d", i);
                             if (ImGui::SmallButton(btnId)) {
-                                clientSimNetSendRemoveBot(cs, (uint8_t)i);
+                                lobbySendRemoveBot(cs, (uint8_t)i);
                             }
                         }
                     } else {
@@ -3044,7 +3044,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             char btnId[16];
                             SDL_snprintf(btnId, sizeof(btnId), "Add Bot##%d", i);
                             if (ImGui::SmallButton(btnId)) {
-                                clientSimNetSendAddBot(cs);
+                                lobbySendAddBot(cs, -1, 0);
                             }
                         }
                     }
