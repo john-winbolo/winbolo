@@ -111,71 +111,18 @@ target_include_directories(imgui_backends PUBLIC
 target_link_libraries(imgui_backends PUBLIC SDL3::SDL3)
 
 ###
-# Bolo engine sources
+# bolo_static — the bulk of the bolo source set as a single static lib.
+# Only transport_udp_client.c stays per-target (HAVE_STEAM-divergent);
+# client_mapload.c and nat_portmap.c aren't referenced by the wasm build.
 #
+set(WINBOLO_VERSION "1.18")
+set(BOLO_VERSION_MAJOR 1)
+set(BOLO_VERSION_MINOR 1)
+set(BOLO_VERSION_REVISION 8)
+add_subdirectory(${REPO_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
+
 set(BOLO_SOURCES
-    ${SRC_ROOT}/bolo/allience.c
-    ${SRC_ROOT}/bolo/bases.c
-    ${SRC_ROOT}/bolo/bolo_map.c
-    ${SRC_ROOT}/bolo/building.c
-    ${SRC_ROOT}/bolo/crc.c
-    ${SRC_ROOT}/bolo/debug_file_output.c
-    ${SRC_ROOT}/bolo/net_packet_debug.c
-    ${SRC_ROOT}/bolo/explosions.c
-    ${SRC_ROOT}/bolo/floodfill.c
-    ${SRC_ROOT}/bolo/gametype.c
-    ${SRC_ROOT}/bolo/global.c
-    ${SRC_ROOT}/bolo/grass.c
-    ${SRC_ROOT}/bolo/labels.c
-    ${SRC_ROOT}/bolo/lgm.c
-    ${SRC_ROOT}/bolo/log.c
-    ${SRC_ROOT}/bolo/messages.c
-    ${SRC_ROOT}/bolo/mines.c
-    ${SRC_ROOT}/bolo/minesexp.c
-    ${SRC_ROOT}/bolo/gui_message.c
-    ${SRC_ROOT}/bolo/pillbox.c
-    ${SRC_ROOT}/bolo/players.c
-    ${SRC_ROOT}/bolo/playername_validate.c
-    ${SRC_ROOT}/bolo/playersrejoin.c
-    ${SRC_ROOT}/bolo/rubble.c
-    ${SRC_ROOT}/bolo/screenbrainmap.c
-    ${SRC_ROOT}/bolo/screenbullet.c
-    ${SRC_ROOT}/bolo/screencalc.c
-    ${SRC_ROOT}/bolo/screenlgm.c
-    ${SRC_ROOT}/bolo/screentank.c
-    ${SRC_ROOT}/bolo/scroll.c
-    ${SRC_ROOT}/bolo/scroll_item_list.c
-    ${SRC_ROOT}/bolo/shells.c
-    ${SRC_ROOT}/bolo/sounddist.c
-    ${SRC_ROOT}/bolo/starts.c
-    ${SRC_ROOT}/bolo/swamp.c
-    ${SRC_ROOT}/bolo/tank.c
-    ${SRC_ROOT}/bolo/tankexp.c
-    ${SRC_ROOT}/bolo/treegrow.c
-    ${SRC_ROOT}/bolo/udppackets.c
-    ${SRC_ROOT}/bolo/util.c
-    ${SRC_ROOT}/bolo/braincore.c
-    ${SRC_ROOT}/bolo/brain_data.c
-    ${SRC_ROOT}/bolo/brain_overlay.c
-    ${SRC_ROOT}/bolo/brain_pathfinder.c
-    ${SRC_ROOT}/bolo/brain_pathfinder_serial.c
-    ${SRC_ROOT}/bolo/brain_worldsim.c
-    ${SRC_ROOT}/bolo/transport_local.c
-    ${SRC_ROOT}/bolo/transport_udp_common.c
     ${SRC_ROOT}/bolo/transport_udp_client.c
-    ${SRC_ROOT}/bolo/transport_udp_server.c
-    ${SRC_ROOT}/bolo/client_state.c
-    ${SRC_ROOT}/bolo/client_snapshot.c
-    ${SRC_ROOT}/bolo/interpolation.c
-    ${SRC_ROOT}/bolo/position_history.c
-    ${SRC_ROOT}/bolo/client_sim.c
-    ${SRC_ROOT}/bolo/client_net.c
-    ${SRC_ROOT}/bolo/client_sim_control.c
-    ${SRC_ROOT}/bolo/client_mappreview.c
-    ${SRC_ROOT}/bolo/bot_manager.c
-    ${SRC_ROOT}/bolo/bot_worker_pool.c
-    ${SRC_ROOT}/bolo/tutorial.c
-    ${SRC_ROOT}/bolo/discovery.c
 )
 
 # Server modules (used by client too)
@@ -301,6 +248,7 @@ target_compile_definitions(winbolo PRIVATE
 target_compile_options(winbolo PRIVATE -fno-common -include sys/types.h)
 target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")
 
+target_link_libraries(winbolo PRIVATE bolo_static)
 target_link_libraries(winbolo PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
