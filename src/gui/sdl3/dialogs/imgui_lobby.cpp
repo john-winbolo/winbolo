@@ -2838,7 +2838,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
                 if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
                     if (hasTransport) {
-                        clientSimNetSendReady(cs, !myReady);
+                        lobbySendReadyToggle(cs, !myReady);
                     }
                 }
                 if (!canReady) ImGui::EndDisabled();
@@ -3218,7 +3218,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
             if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
                 if (hasTransport) {
-                    clientSimNetSendReady(cs, !myReady);
+                    lobbySendReadyToggle(cs, !myReady);
                 }
             }
             if (!canReady) ImGui::EndDisabled();
