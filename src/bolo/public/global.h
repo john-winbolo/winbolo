@@ -263,7 +263,5 @@ void efree(Generic object);
 /* Used to bitmask with a key code to see if it's pressed or not */
 #define PRESSED 0x80
 
-#include "../../server/threads.h"
-
-#endif /* GLOBAL_H */ 
+#endif /* GLOBAL_H */
 

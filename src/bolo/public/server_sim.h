@@ -30,7 +30,14 @@
 #include "gametype.h"          /* gameType enum + brings global.h */
 #include "alliance_enums.h"    /* baseAlliance, pillAlliance */
 #include "screentank.h"        /* tankAlliance */
-#include "../../mapeditor/mapeditor_generate.h"
+
+/* MapGenConfig is defined in src/mapeditor/mapeditor_generate.h.
+ * Forward-declared here so the public server_sim header doesn't
+ * pull the mapeditor subtree into every translation unit that
+ * includes server_sim.h. Callers that build a config and invoke
+ * serverSimEnableRandomMap / serverSimCreateRandomMap include
+ * mapeditor_generate.h directly. */
+struct MapGenConfig;
 
 #ifndef GAMESIM_TYPEDEF
 #define GAMESIM_TYPEDEF
@@ -417,7 +424,7 @@ void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled);
  *  randomMapConfig, and sets randomMapFixedSeed.
  *********************************************************/
 void serverSimEnableRandomMap(ServerSim *sim,
-                              const MapGenConfig *cfg,
+                              const struct MapGenConfig *cfg,
                               bool fixedSeed);
 
 /*********************************************************
@@ -926,7 +933,7 @@ bool serverSimCheckEmptyReset(ServerSim *sim);
  *  map generation instead of loading from disk. Returns
  *  the new ServerSim on success, or NULL on failure.
  *********************************************************/
-ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
+ServerSim *serverSimCreateRandomMap(const struct MapGenConfig *cfg,
                                     gameType game, bool hiddenMines,
                                     int32_t startDelay, int32_t gameLen);
 

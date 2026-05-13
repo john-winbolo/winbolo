@@ -31,6 +31,7 @@
 #include "global.h"
 #include "tank.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "messages.h"
 #include "players.h"
 #include "brain_data.h"

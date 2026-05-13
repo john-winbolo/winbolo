@@ -35,6 +35,7 @@
 #include "explosions.h"
 #include "floodfill.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "global.h"
 #include "grass.h"
 #include "labels.h"

@@ -33,6 +33,7 @@
 #include "screentank.h"
 #include "players.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "client_sim.h"
 #include "game_sim.h"
 

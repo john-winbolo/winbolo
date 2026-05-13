@@ -31,6 +31,7 @@
 #include "allience.h"
 #include "bases.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "global.h"
 #include "labels.h"
 #include "lgm.h"
