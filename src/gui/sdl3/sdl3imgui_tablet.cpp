@@ -1133,7 +1133,7 @@ static void renderStatusDrawer(ClientSim *cs) {
 
     /* Pillbox status */
     if (ImGui::CollapsingHeader(langGetText(STR_TABLET_PILLBOXES))) {
-      BYTE total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
+      BYTE total = clientSimGetPillCount(cs);
       for (BYTE i = 1; i <= total; i++) {
         pillAlliance pa = clientSimGetPillAlliance(cs, i);
         ImVec4 col;
@@ -1153,7 +1153,7 @@ static void renderStatusDrawer(ClientSim *cs) {
 
     /* Base status */
     if (ImGui::CollapsingHeader(langGetText(STR_TABLET_BASES))) {
-      BYTE total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
+      BYTE total = clientSimGetBaseCount(cs);
       for (BYTE i = 1; i <= total; i++) {
         baseAlliance ba = clientSimGetBaseAlliance(cs, i);
         ImVec4 col;

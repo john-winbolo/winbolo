@@ -154,7 +154,7 @@ void windowShowPillLabels_toggle(ClientSim *cs) {
   BYTE count, total;
   showPillLabels = !showPillLabels;
   sdl3DrawSetPillsStatusClear();
-  total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
+  total = clientSimGetPillCount(cs);
   for (count = 1; count <= total; count++) {
     BYTE pillStat = clientSimGetPillAlliance(cs, count);
     sdl3DrawStatusPillbox(count, pillStat, showPillLabels);
@@ -165,7 +165,7 @@ void windowShowBaseLabels_toggle(ClientSim *cs) {
   BYTE count, total;
   showBaseLabels = !showBaseLabels;
   sdl3DrawSetBasesStatusClear();
-  total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
+  total = clientSimGetBaseCount(cs);
   for (count = 1; count <= total; count++) {
     BYTE baseStat = clientSimGetBaseAlliance(cs, count);
     sdl3DrawStatusBase(count, baseStat, showBaseLabels);
