@@ -24,10 +24,13 @@
  *  messages (newswire path debounced via
  *  basesEnqueueCaptureMessage).
  *
- *  Contents (declared in client_snapshot.h):
+ *  Contents:
  *    clientBuildInputPacket  - pack keys/build into an InputPacket
+ *                              (public — declared in client_net.h)
  *    clientApplySnapshot     - apply a server snapshot to the ClientSim
- *    clientNetSetupTankGo    - finalize tank setup after server places it
+ *                              (internal — declared in client_snapshot.h)
+ *    clientSimNetSetupTankGo - finalize tank setup after server places it
+ *                              (public — declared in client_net.h)
  *
  *  Companion file: brain_data.c (Lua-brain data shaping).
  *********************************************************/
@@ -953,7 +956,7 @@ void clientApplySnapshot(ClientSim *csPtr,
 }
 
 /*********************************************************
-*NAME:          clientNetSetupTankGo
+*NAME:          clientSimNetSetupTankGo
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/2/99
 *LAST MODIFIED: 27/11/99
@@ -961,7 +964,7 @@ void clientApplySnapshot(ClientSim *csPtr,
 *  Map download is complete and we are ready to start
 *  playing.
 *********************************************************/
-void clientNetSetupTankGo(ClientSim *csPtr) {
+void clientSimNetSetupTankGo(ClientSim *csPtr) {
   BYTE count;   /* Looping variables */
   BYTE count2;
 

@@ -50,7 +50,6 @@
 #include "client_mapload.h"
 #include "client_render.h"
 #include "client_sim.h"
-#include "client_snapshot.h"
 #include "frontend.h"
 #include "tutorial.h"
 #include "../../steam/steam_wrapper.h"

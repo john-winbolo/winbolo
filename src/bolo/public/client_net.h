@@ -35,6 +35,17 @@ bool clientSimHasTransport(const ClientSim *cs);
 void clientSimNetTick(ClientSim *cs);
 void clientSimNetSendInput(ClientSim *cs, const InputPacket *pkt);
 void clientSimNetRecordInput(ClientSim *cs, const InputPacket *pkt);
+/* Build an InputPacket from key state + flags. Used by platform
+ * frontends ahead of the client-side prediction tick
+ * (clientSimGameTick / clientSimKeysTick) and the send-to-server
+ * step (clientSimNetSendInput) or input record step
+ * (clientSimNetRecordInput). The InputPacket type itself is the
+ * public wire-input format defined in input_packet.h. */
+void clientBuildInputPacket(ClientSim *cs, InputPacket *pkt,
+                            tankButton tb,
+                            bool isShoot, bool isMine,
+                            bool isBrain, bool isGameTick,
+                            BYTE playerNum, uint32_t tick);
 bool clientSimNetGetSnapshot(ClientSim *cs, SnapshotHeader *hdr,
                              TankSnapshot *tanks, int maxTanks,
                              ShellSnapshot *shells, int maxShells,
@@ -43,6 +54,11 @@ bool clientSimNetGetSnapshot(ClientSim *cs, SnapshotHeader *hdr,
                              PillSnapshot *pills, int maxPills,
                              GameEvent *events, int maxEvents);
 bool clientSimNetSyncSnapshot(ClientSim *cs);
+
+/* Finalize the local tank after the server has placed it. Called by
+ * GUI frontends once clientLoadCompressedMap + the first snapshot
+ * have populated the sim. */
+void clientSimNetSetupTankGo(ClientSim *cs);
 
 /* === State queries === */
 ClientConnectState clientSimGetConnectState(const ClientSim *cs);

@@ -31,8 +31,6 @@
 
 struct ClientSim;
 
-void clientBuildInputPacket(struct ClientSim *cs, InputPacket *pkt, tankButton tb, bool isShoot, bool isMine, bool isBrain, bool isGameTick, BYTE playerNum, uint32_t tick);
-
 void clientApplySnapshot(struct ClientSim *cs,
                          const SnapshotHeader *hdr,
                          const TankSnapshot *tanks, int tankCount,
@@ -42,7 +40,5 @@ void clientApplySnapshot(struct ClientSim *cs,
                          const PillSnapshot *pillSnaps, int pillCount,
                          const GameEvent *events, int eventCount,
                          BYTE playerNum);
-
-void clientNetSetupTankGo(struct ClientSim *cs);
 
 #endif /* CLIENT_SNAPSHOT_H */

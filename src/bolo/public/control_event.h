@@ -28,8 +28,8 @@
 #define CONTROL_EVENT_H
 
 #include "global.h"
-#include "netpacks.h"     /* PACKET_MAX_PLAYER_NAME */
-#include "bolo_packets.h" /* netStatus, gameType */
+#include "wire_limits.h"  /* PACKET_MAX_PLAYER_NAME */
+#include "client_enums.h" /* netStatus, gameType */
 #include "client_sim.h"   /* ClientLobbySlot */
 
 typedef enum {

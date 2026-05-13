@@ -21,7 +21,7 @@
 #include "frontend.h"
 #include "players.h"
 #include "client_sim.h"
-#include "client_snapshot.h"
+#include "client_net.h"
 #include "client_render.h"
 #include "input_packet.h"
 #include "transport.h"
