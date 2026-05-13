@@ -25,7 +25,7 @@
 *  Responsible for tracking winbolonetEvents
 *********************************************************/
 
-#include "../bolo/global.h"
+#include "global.h"
 #include "winbolonetevents.h"
 
 winbolonetEvents wbe; /* Winbolo.net Event */

@@ -27,9 +27,9 @@ extern "C" {
 #include "../gui/sdl3/bg_game.h"
 #include "../gui/gamefront.h"
 #include "../gui/lang.h"
-#include "../bolo/global.h"
-#include "../bolo/client_mapload.h"
-#include "../bolo/client_sim.h"
+#include "global.h"
+#include "client_mapload.h"
+#include "client_sim.h"
 
 /* The desktop imgui_gamesetup screen has been removed in favor of the
  * lobby flow. The Android port still uses its own setup dialog (this

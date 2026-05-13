@@ -29,14 +29,13 @@
 #define _DRAW_H
 
 #include <SDL3/SDL.h>
-#include "../../bolo/global.h"
-#include "../../bolo/viewport_types.h"  /* screen, screenMines, screenGunsight */
-#include "../../bolo/client_enums.h"    /* buildSelect */
-#include "../../bolo/bases.h"           /* baseAlliance */
-#include "../../bolo/pillbox.h"         /* pillAlliance */
-#include "../../bolo/screentank.h"      /* screenTanks, tank */
-#include "../../bolo/screenbullet.h"    /* screenBullets */
-#include "../../bolo/screenlgm.h"       /* screenLgm */
+#include "global.h"
+#include "viewport_types.h"  /* screen, screenMines, screenGunsight */
+#include "client_enums.h"    /* buildSelect */
+#include "alliance_enums.h"
+#include "screentank.h"      /* screenTanks, tank */
+#include "screenbullet.h"    /* screenBullets */
+#include "screenlgm.h"       /* screenLgm */
 
 /* Portable RECT definition for non-Windows platforms */
 #ifndef _WIN32

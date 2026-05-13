@@ -16,7 +16,7 @@
 #include <stddef.h>
 #include <SDL3/SDL.h>
 
-#include "../bolo/global.h"
+#include "global.h"
 
 /* Tracker setup stub — not applicable on Android */
 int imguiTrackerSetupShow(void) {

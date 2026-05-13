@@ -54,6 +54,8 @@
 #include "screenbrainmap.h"
 #include "util.h"
 #include "netpacks.h"
+#include "transport.h"
+#include "transport_udp.h"
 #include "../gui/lang.h"
 #include "../gui/dnsLookups.h"
 #include "../gui/clientmutex.h"
@@ -160,8 +162,19 @@ ClientSim *clientSimAlloc(void) {
 bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDelay, int32_t gmeLen) {
   (void)srtDelay;  /* Used by screen.c for display */
   (void)gmeLen;    /* Used by screen.c for display */
-  
+
+  /* Preserve the transport binding across the wipe. clientSimResetForMapLoad
+   * runs the destroy-internals + clientSimCreate sequence in place to keep
+   * the live transport (and its still-valid map blob) intact; fresh
+   * clientSimAlloc + clientSimCreate callers have zeroed transport fields
+   * anyway, so save/restore is a no-op there. */
+  Transport savedTransport = cs->transport;
+  bool savedHasTransport   = cs->hasTransport;
+  bool savedIsUdpTransport = cs->isUdpTransport;
   memset(cs, 0, sizeof(*cs));
+  cs->transport       = savedTransport;
+  cs->hasTransport    = savedHasTransport;
+  cs->isUdpTransport  = savedIsUdpTransport;
   cs->myPlayerNum = 0;
   cs->sim.viewPlayer = 0;
 
@@ -290,8 +303,12 @@ void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
  *ARGUMENTS:
  *  cs - Pointer to the ClientSim to destroy and free
  *********************************************************/
-void clientSimDestroy(ClientSim *cs) {
-  if (cs == NULL) return;
+/* Tears down all owned simulation state on cs but does NOT free cs
+ * itself or touch the transport binding. Shared by clientSimDestroy
+ * (which then frees the pointer) and clientSimResetForMapLoad (which
+ * keeps the pointer and the transport so the caller can hand the
+ * mid-handshake map blob into clientLoadCompressedMap). */
+static void clientSimDestroyContents(ClientSim *cs) {
   viewportDestroy(&cs->viewport);
   cs->running = FALSE;
   clientStateDestroy(&cs->clientState);
@@ -317,12 +334,12 @@ void clientSimDestroy(ClientSim *cs) {
   treeGrowDestroy(&cs->sim);
   pillsDestroy(&cs->sim.pb);
   playersDestroy(&cs->sim.plyrs);
-  
+
   if (cs->brainBuildInfo != NULL) {
     free(cs->brainBuildInfo);
     cs->brainBuildInfo = NULL;
   }
-  
+
   cs->sim.mp = NULL;
   cs->sim.bs = NULL;
   cs->sim.pb = NULL;
@@ -342,8 +359,46 @@ void clientSimDestroy(ClientSim *cs) {
   cs->allianceAcceptFunc = NULL;
   cs->allianceLeaveFunc = NULL;
   cs->lockToggleSendFunc = NULL;
+}
 
+void clientSimDestroy(ClientSim *cs) {
+  if (cs == NULL) return;
+  if (cs->hasTransport) {
+    if (cs->isUdpTransport) {
+      transportUdpClientDestroy(&cs->transport);
+    } else {
+      transportLocalDestroy(&cs->transport);
+    }
+    cs->hasTransport = false;
+  }
+  clientSimDestroyContents(cs);
   free(cs);
+}
+
+/*********************************************************
+ *NAME:          clientSimResetForMapLoad
+ *PURPOSE:
+ *  Returns cs to a freshly-allocated-and-empty state without
+ *  freeing cs or tearing down the transport binding. The
+ *  no-lobby UDP-join path uses this between the join handshake
+ *  and clientLoadCompressedMap: the compressed map blob lives
+ *  inside the transport, so the transport must survive the
+ *  wipe.
+ *
+ *  After the reset, the subsequent setupClientSim ->
+ *  clientSimCreate(cs, ...) re-initialises substructs.
+ *  clientSimCreate preserves cs->transport / hasTransport /
+ *  isUdpTransport across its memset so the connection stays
+ *  intact end-to-end.
+ *
+ *  Callback function pointers (chatSendFunc, etc.) are reset
+ *  to NULL — that matches the prior clientSimDestroy +
+ *  clientSimAlloc behaviour, and every call site already
+ *  re-registers them after the reload.
+ *********************************************************/
+void clientSimResetForMapLoad(ClientSim *cs) {
+  if (cs == NULL) return;
+  clientSimDestroyContents(cs);
 }
 
 /*********************************************************
@@ -785,6 +840,16 @@ BYTE clientSimGetTank256Dir(ClientSim *cs) {
   return tankGet256Dir(&MY_TANK(cs));
 }
 
+int clientSimGetMyTankDeathWait(ClientSim *cs) {
+  if (cs == NULL) return 0;
+  return tankGetDeathWait(&MY_TANK(cs));
+}
+
+int clientSimGetMyTankLastDeath(ClientSim *cs) {
+  if (cs == NULL) return 0;
+  return tankGetLastTankDeath(&MY_TANK(cs));
+}
+
 /* Game info (per-instance) */
 bool clientSimGetAllowHiddenMines(ClientSim *cs) {
   return minesGetAllowHiddenMines(&clientSimGetGameSim(cs)->mns);
@@ -792,6 +857,46 @@ bool clientSimGetAllowHiddenMines(ClientSim *cs) {
 
 BYTE clientSimGetNumPlayers(ClientSim *cs) {
   return playersGetNumPlayers(&clientSimGetGameSim(cs)->plyrs);
+}
+
+bool clientSimIsTutorial(const ClientSim *cs) {
+  return clientSimGetGameSim((ClientSim *)cs)->isTutorial;
+}
+
+void clientSimSetTutorial(ClientSim *cs, bool v) {
+  clientSimGetGameSim(cs)->isTutorial = v;
+}
+
+gameType clientSimGetGameType(const ClientSim *cs) {
+  return clientSimGetGameSim((ClientSim *)cs)->game;
+}
+
+uint16_t clientSimGetPlayerPing(ClientSim *cs, BYTE playerNum) {
+  return playersGetPing(&clientSimGetGameSim(cs)->plyrs, playerNum);
+}
+
+uint8_t clientSimGetPlayerClientFlags(ClientSim *cs, BYTE playerNum) {
+  return playersGetClientFlags(&clientSimGetGameSim(cs)->plyrs, playerNum);
+}
+
+uint8_t clientSimGetPlayerClientType(ClientSim *cs, BYTE playerNum) {
+  return playersGetClientType(&clientSimGetGameSim(cs)->plyrs, playerNum);
+}
+
+void clientSimGetPlayerLocation(ClientSim *cs, BYTE playerNum, char *dest) {
+  playersGetPlayerLocation(&clientSimGetGameSim(cs)->plyrs, playerNum, dest);
+}
+
+uint8_t clientSimGetPlayerAccountFlags(ClientSim *cs, BYTE playerNum) {
+  return playersGetAccountFlags(&clientSimGetGameSim(cs)->plyrs, playerNum);
+}
+
+void clientSimGetPlayerCountryCode(ClientSim *cs, BYTE playerNum, char *dest) {
+  playersGetCountryCode(&clientSimGetGameSim(cs)->plyrs, playerNum, dest);
+}
+
+bool clientSimIsPlayerAlly(ClientSim *cs, BYTE playerA, BYTE playerB) {
+  return playersIsAllie(&clientSimGetGameSim(cs)->plyrs, playerA, playerB);
 }
 
 
@@ -956,6 +1061,7 @@ const ShellSnapshot *clientSimGetServerShellSnaps(const ClientSim *cs) {
 
 const PredictedShell *clientSimGetPredictedShells(const ClientSim *cs) {
   return cs->predictedShells;
+  
 }
 
 const GameEvent *clientSimGetBrainEvents(const ClientSim *cs) {
@@ -1238,4 +1344,100 @@ void clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths) {
 void clientSimConnectionLost(ClientSim *cs) {
   lgmConnectionLost(clientSimGetGameSim(cs), &MY_LGM(cs), &MY_TANK(cs), &clientSimGetGameSim(cs)->ss);
   playersConnectionLost(cs, clientSimGetGameSim(cs), &clientSimGetGameSim(cs)->plyrs, clientSimGetMyPlayerNum(cs));
+}
+
+/* ================================================================
+ * Live-sim map / pill / base / start readers.
+ * ================================================================ */
+
+BYTE clientSimGetMapTerrain(const ClientSim *cs, BYTE x, BYTE y) {
+  return mapGetPos(&clientSimGetGameSim((ClientSim *)cs)->mp, x, y);
+}
+
+bool clientSimMapIsMine(const ClientSim *cs, BYTE x, BYTE y) {
+  return mapIsMine(&clientSimGetGameSim((ClientSim *)cs)->mp, x, y);
+}
+
+bool clientSimPillExistsAt(const ClientSim *cs, BYTE x, BYTE y) {
+  return pillsExistPos(&clientSimGetGameSim((ClientSim *)cs)->pb, x, y);
+}
+
+BYTE clientSimPillGetScreenHealthAt(ClientSim *cs, BYTE x, BYTE y) {
+  GameSim *gs = clientSimGetGameSim(cs);
+  return pillsGetScreenHealth(gs, &gs->pb, x, y);
+}
+
+bool clientSimBaseExistsAt(const ClientSim *cs, BYTE x, BYTE y) {
+  return basesExistPos(&clientSimGetGameSim((ClientSim *)cs)->bs, x, y);
+}
+
+baseAlliance clientSimBaseGetAllianceAt(ClientSim *cs, BYTE x, BYTE y) {
+  return basesGetAlliancePos(clientSimGetGameSim(cs), x, y);
+}
+
+bool clientSimBaseAmOwnerAt(ClientSim *cs, BYTE player, BYTE x, BYTE y) {
+  return basesAmOwner(clientSimGetGameSim(cs), player, x, y);
+}
+
+BYTE clientSimGetPillCount(const ClientSim *cs) {
+  return pillsGetNumPills(&clientSimGetGameSim((ClientSim *)cs)->pb);
+}
+
+BYTE clientSimGetBaseCount(const ClientSim *cs) {
+  return basesGetNumBases(&clientSimGetGameSim((ClientSim *)cs)->bs);
+}
+
+BYTE clientSimGetStartCount(const ClientSim *cs) {
+  return startsGetNumStarts(&clientSimGetGameSim((ClientSim *)cs)->ss);
+}
+
+bool clientSimGetPill(ClientSim *cs, BYTE i,
+                      BYTE *x, BYTE *y, BYTE *owner, BYTE *armour,
+                      bool *inTank) {
+  GameSim *gs = clientSimGetGameSim(cs);
+  pillbox p;
+  BYTE n = pillsGetNumPills(&gs->pb);
+  if (i == 0 || i > n) return false;
+  pillsGetPill(&gs->pb, &p, i);
+  if (x)      *x      = p.x;
+  if (y)      *y      = p.y;
+  if (owner)  *owner  = p.owner;
+  if (armour) *armour = p.armour;
+  if (inTank) *inTank = p.inTank;
+  return true;
+}
+
+bool clientSimGetBase(ClientSim *cs, BYTE i,
+                      BYTE *x, BYTE *y, BYTE *owner) {
+  GameSim *gs = clientSimGetGameSim(cs);
+  base b;
+  BYTE n = basesGetNumBases(&gs->bs);
+  if (i == 0 || i > n) return false;
+  basesGetBase(&gs->bs, &b, i);
+  if (x)     *x     = b.x;
+  if (y)     *y     = b.y;
+  if (owner) *owner = b.owner;
+  return true;
+}
+
+bool clientSimGetBaseStats(ClientSim *cs, BYTE i,
+                           BYTE *shells, BYTE *mines, BYTE *armour) {
+  GameSim *gs = clientSimGetGameSim(cs);
+  BYTE n = basesGetNumBases(&gs->bs);
+  if (i == 0 || i > n) return false;
+  basesGetStats(&gs->bs, i, shells, mines, armour);
+  return true;
+}
+
+bool clientSimGetStart(ClientSim *cs, BYTE i,
+                       BYTE *x, BYTE *y, BYTE *dir) {
+  GameSim *gs = clientSimGetGameSim(cs);
+  start s;
+  BYTE n = startsGetNumStarts(&gs->ss);
+  if (i == 0 || i > n) return false;
+  startsGetStartStruct(&gs->ss, &s, i);
+  if (x)   *x   = s.x;
+  if (y)   *y   = s.y;
+  if (dir) *dir = startsConvertDir((BYTE)((s.dir < 16) ? s.dir : 0));
+  return true;
 }

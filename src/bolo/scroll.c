@@ -37,6 +37,7 @@
 #include "pillbox.h"
 #include "shells.h"
 #include "bases.h"
+#include "game_sim.h"
 
 
 void scrollCreate(ScrollState *ss) {

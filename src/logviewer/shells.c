@@ -26,8 +26,8 @@
 *********************************************************/
 
 #include <memory.h>
-#include "global.h"
-#include "shells.h"
+#include "lv_global.h"
+#include "lv_shells.h"
 
 /*********************************************************
 *NAME:          lv_shellsCreate

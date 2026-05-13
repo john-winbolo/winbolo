@@ -16,14 +16,12 @@
 #include <emscripten.h>
 #include <emscripten/html5.h>
 
-#include "../bolo/client_render.h"
-#include "../bolo/client_sim.h"
-#include "../bolo/client_snapshot.h"
-#include "../bolo/frontend.h"
-#include "../bolo/playername_validate.h"
-#include "../bolo/transport.h"
-#include "../bolo/transport_udp.h"
-#include "../bolo/gui_message.h"
+#include "client_render.h"
+#include "client_sim.h"
+#include "frontend.h"
+#include "playername_validate.h"
+#include "client_net.h"
+#include "gui_message.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../gui/draw.h"
@@ -110,34 +108,6 @@ void sdl3MessageHandler(const char *message, const char *title) {
 }
 
 /* -------------------------------------------------------
- * Helper: sync snapshot from transport
- * ------------------------------------------------------- */
-static void wasmSyncSnapshot(ClientSim *cs, Transport *transport, BYTE myPlayerNum) {
-  SnapshotHeader snapHdr;
-  TankSnapshot snapTanks[MAX_TANKS];
-  ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-  TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
-  BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
-  PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
-  GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-  if (transport->getSnapshot(transport->ctx, myPlayerNum,
-                              &snapHdr, snapTanks, MAX_TANKS,
-                              snapShells, MAX_SNAPSHOT_SHELLS,
-                              snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                              snapBases, MAX_SNAPSHOT_BASES,
-                              snapPills, MAX_SNAPSHOT_PILLS,
-                              snapEvents, MAX_SNAPSHOT_EVENTS)) {
-    clientSimSyncFromSnapshot(cs, &snapHdr, snapTanks, snapHdr.tankCount,
-                            snapShells, snapHdr.shellCount,
-                            snapTkExplosions, snapHdr.tkExplosionCount,
-                            snapBases, snapHdr.baseCount,
-                            snapPills, snapHdr.pillCount,
-                            snapEvents, snapHdr.reliableEventCount,
-                            myPlayerNum);
-  }
-}
-
-/* -------------------------------------------------------
  * windowRunGameTick — game logic using transport
  * ------------------------------------------------------- */
 static void windowRunGameTick(ClientSim *cs) {
@@ -151,14 +121,12 @@ static void windowRunGameTick(ClientSim *cs) {
   bool isMine = FALSE;
   bool used = FALSE;
   bool brainRunning;
-  Transport *transport;
 
   brainRunning = brainHandlerIsBrainRunning();
   isShoot = FALSE;
   tb = 0;
 
-  transport = gameFrontGetTransport();
-  if (transport == NULL || doingTutorial) {
+  if (!clientSimHasTransport(cs) || doingTutorial) {
     return;
   }
 
@@ -176,10 +144,10 @@ static void windowRunGameTick(ClientSim *cs) {
       clientMutexWaitFor();
       clientSimKeysTick(cs, &pkt);
       clientMutexRelease();
-      transport->recordInput(transport->ctx, &pkt);
-      transport->tick(transport->ctx);
+      clientSimNetRecordInput(cs, &pkt);
+      clientSimNetTick(cs);
       clientMutexWaitFor();
-      wasmSyncSnapshot(cs, transport, myPlayerNum);
+      clientSimNetSyncSnapshot(cs);
       clientMutexRelease();
       simTickCounter++;
       justKeys = FALSE;
@@ -199,10 +167,10 @@ static void windowRunGameTick(ClientSim *cs) {
       clientMutexWaitFor();
       clientSimGameTick(cs, &pkt, brainRunning);
       clientMutexRelease();
-      transport->sendInput(transport->ctx, &pkt);
-      transport->tick(transport->ctx);
+      clientSimNetSendInput(cs, &pkt);
+      clientSimNetTick(cs);
       clientMutexWaitFor();
-      wasmSyncSnapshot(cs, transport, myPlayerNum);
+      clientSimNetSyncSnapshot(cs);
       clientSimDisplayTick(cs, brainRunning);
       clientMutexRelease();
       simTickCounter++;
@@ -217,9 +185,9 @@ static void windowRunGameTick(ClientSim *cs) {
     clientMutexWaitFor();
     inBrain = TRUE;
     clientMutexRelease();
-    ttick = winboloTimer();
+    ttick = SDL_GetTicks();
     brainHandlerRun();
-    dwSysBrain += winboloTimer() - ttick;
+    dwSysBrain += SDL_GetTicks() - ttick;
     clientMutexWaitFor();
     inBrain = FALSE;
     clientMutexRelease();
@@ -261,7 +229,7 @@ static void main_loop_iteration(void) {
    *
    * Only MAX_ELAPSED_MS itself is hard-capped — a multi-second tab
    * suspension shouldn't trigger an unbounded catch-up sequence. */
-  if (gameFrontGetTransport() != NULL) {
+  if (clientSimHasTransport(cs)) {
     const double MAX_ELAPSED_MS = 200.0;  /* hard limit on accumulated debt */
     const int    MAX_CATCHUP    = 4;      /* at most 4 sim ticks per render frame */
     double now = emscripten_get_now();
@@ -280,13 +248,13 @@ static void main_loop_iteration(void) {
   }
 
   /* Render */
-  tick = winboloTimer();
+  tick = SDL_GetTicks();
   clientMutexWaitFor();
   if (finishedLoop == FALSE) {
     clientRenderFrame(cs, redraw);
   }
   clientMutexRelease();
-  dwSysFrame += (winboloTimer() - tick);
+  dwSysFrame += (SDL_GetTicks() - tick);
 
   /* ImGui overlay + present */
   sdl3ImguiPumpAndRender(cs);
@@ -333,7 +301,6 @@ int main(int argc, char *argv[]) {
   }
 
   SDL_Init(0);
-  initWinboloTimer();
 
   /* Parse URL query parameters: ?name=Player&zoom=2 */
   {
@@ -358,7 +325,6 @@ int main(int argc, char *argv[]) {
   printf("[WASM] Starting gameFrontStart...\n");
   if (gameFrontStart(cmdLine, &keys, FALSE, NULL) == FALSE) {
     printf("[WASM] gameFrontStart FAILED\n");
-    endWinboloTimer();
     clientMutexDestroy();
     SDL_Quit();
     return 1;
@@ -436,7 +402,7 @@ int main(int argc, char *argv[]) {
 
   guiMessageSetHandler(sdl3MessageHandler);
 
-  oldTick = winboloTimer();
+  oldTick = SDL_GetTicks();
   lastFrameTime = emscripten_get_now();
 
   {
@@ -452,7 +418,6 @@ int main(int argc, char *argv[]) {
 
   /* Cleanup (not reached with simulate_infinite_loop=1) */
   gameFrontEnd(&keys, TRUE, TRUE);
-  endWinboloTimer();
   clientMutexDestroy();
   sdl3ImguiCleanup();
   sdl3DrawCleanup();
@@ -550,7 +515,7 @@ void windowShowPillLabels_toggle(ClientSim *cs) {
   BYTE count, total;
   showPillLabels = !showPillLabels;
   sdl3DrawSetPillsStatusClear();
-  total = pillsGetNumPills(&clientSimGetGameSim(cs)->pb);
+  total = clientSimGetPillCount(cs);
   for (count = 1; count <= total; count++) {
     BYTE pillStat = clientSimGetPillAlliance(cs, count);
     sdl3DrawStatusPillbox(count, pillStat, showPillLabels);
@@ -561,7 +526,7 @@ void windowShowBaseLabels_toggle(ClientSim *cs) {
   BYTE count, total;
   showBaseLabels = !showBaseLabels;
   sdl3DrawSetBasesStatusClear();
-  total = basesGetNumBases(&clientSimGetGameSim(cs)->bs);
+  total = clientSimGetBaseCount(cs);
   for (count = 1; count <= total; count++) {
     BYTE baseStat = clientSimGetBaseAlliance(cs, count);
     sdl3DrawStatusBase(count, baseStat, showBaseLabels);
@@ -657,7 +622,7 @@ void windowAllowPlayerNameChange(bool allow) { (void)allow; }
  * ------------------------------------------------------- */
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
-                            int32_t srtDelay, bool isPillView, tank *tank, int edgeX, int edgeY) {
+                            int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
   if (hideMainView == FALSE && drawBusy == FALSE) {
     BYTE cursorX, cursorY;
     bool showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
@@ -665,7 +630,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
     sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                        NULL, showPillLabels, showBaseLabels,
                        srtDelay, isPillView, edgeX, edgeY,
-                       showCursor, cursorX, cursorY, tank);
+                       showCursor, cursorX, cursorY);
   }
 }
 

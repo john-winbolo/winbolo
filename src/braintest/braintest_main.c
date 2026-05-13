@@ -44,6 +44,11 @@
  *     F                Toggle free camera / follow mode
  *     Left click       Show A* cost + path to clicked tile (magenta)
  *     Right click      Clear click path overlay
+ *
+ *   This file uses bot_manager.h, brain_pathfinder.h,
+ *   brain_overlay.h, braincore.h, and control_event.h directly.
+ *   The "braintest" CMake profile in cmake/bolo_lib.cmake grants
+ *   this access; see the profile's doc-comment for rationale.
  *********************************************************/
 
 #include <SDL3/SDL.h>
@@ -59,25 +64,24 @@
 #include <unistd.h>
 #endif
 
-#include "../bolo/global.h"
-#include "../bolo/everard_map.h"
-#include "../bolo/tank.h"
-#include "../bolo/bot_manager.h"
-#include "../bolo/players.h"
-#include "../bolo/bolo_map.h"
-#include "../bolo/pillbox.h"
-#include "../bolo/bases.h"
-#include "../bolo/starts.h"
-#include "../bolo/allience.h"
-#include "../bolo/control_event.h"
-#include "../bolo/brain_pathfinder.h"
-#include "../bolo/gui_message.h"
-#include "../server/server_sim.h"
+#include "global.h"
+#include "everard_map.h"
+#include "tank.h"
+#include "bot_manager.h"
+#include "players.h"
+#include "allience.h"
+#include "explosions.h"
+#include "minesexp.h"
+#include "control_event.h"
+#include "brain_pathfinder.h"
+#include "gui_message.h"
+#include "server_sim.h"
+#include "game_sim.h"
 #include "../gui/sdl3/mapview.h"
 #include "../gui/sdl3/tileloader.h"
 #include "../gui/sdl3/luabrainshandler.h"
-#include "../bolo/braincore.h"
-#include "../bolo/brain_overlay.h"
+#include "braincore.h"
+#include "brain_overlay.h"
 #include "braintest_viz_registry.h"
 #include "braintest_vizwindow.h"
 #include "braintest_panel_registry.h"
@@ -91,7 +95,7 @@
 #include "braintest_vizdetailwindow.h"
 #include "braintest_pillcontrib_registry.h"
 #include "na_overlay_pillcontrib.h"
-#include "../bolo/brain_pathfinder.h"
+#include "brain_pathfinder.h"
 
 /* Built-in text renderer lives in panelwindow.cpp (needs ImGui). */
 void panelRenderText(int registry_idx, const char *body);
@@ -112,8 +116,8 @@ void gameFrontSetPlayerName(char *pn) { (void)pn; }
 void gameFrontSetAIType(aiType ait) { (void)ait; }
 void gameFrontEnableRejoin(void) {}
 
-time_t windowsGetTicks(void) { return (time_t)winboloTimer(); }
-time_t serverMainGetTicks(void) { return (time_t)winboloTimer(); }
+time_t windowsGetTicks(void) { return (time_t)SDL_GetTicks(); }
+time_t serverMainGetTicks(void) { return (time_t)SDL_GetTicks(); }
 
 /* ------------------------------------------------------------------ */
 /* Configuration                                                       */
@@ -1672,12 +1676,11 @@ static bool findBrainScript(const char *base, char *out, size_t outLen) {
 /* ------------------------------------------------------------------ */
 
 static void calcMapBounds(BrainTestApp *app) {
-    GameSim *gs = serverSimGetGameSim(app->sim);
     int minX = 255, minY = 255, maxX = 0, maxY = 0;
 
     for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
         for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
-            if (mapGetPos(&gs->mp, (BYTE)x, (BYTE)y) != DEEP_SEA) {
+            if (serverSimGetMapTerrain(app->sim, (BYTE)x, (BYTE)y) != DEEP_SEA) {
                 if (x < minX) minX = x;
                 if (x > maxX) maxX = x;
                 if (y < minY) minY = y;
@@ -1685,29 +1688,32 @@ static void calcMapBounds(BrainTestApp *app) {
             }
         }
     }
-    BYTE np = pillsGetNumPills(&gs->pb);
+    BYTE np = serverSimGetPillCount(app->sim);
     for (BYTE i = 1; i <= np; i++) {
-        pillbox p; pillsGetPill(&gs->pb, &p, i);
-        if (p.x < minX) minX = p.x;
-        if (p.x > maxX) maxX = p.x;
-        if (p.y < minY) minY = p.y;
-        if (p.y > maxY) maxY = p.y;
+        BYTE px, py;
+        if (!serverSimGetPill(app->sim, i, &px, &py, NULL, NULL, NULL)) continue;
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
     }
-    BYTE nb = basesGetNumBases(&gs->bs);
+    BYTE nb = serverSimGetBaseCount(app->sim);
     for (BYTE i = 1; i <= nb; i++) {
-        base b; basesGetBase(&gs->bs, &b, i);
-        if (b.x < minX) minX = b.x;
-        if (b.x > maxX) maxX = b.x;
-        if (b.y < minY) minY = b.y;
-        if (b.y > maxY) maxY = b.y;
+        BYTE bx, by;
+        if (!serverSimGetBase(app->sim, i, &bx, &by, NULL)) continue;
+        if (bx < minX) minX = bx;
+        if (bx > maxX) maxX = bx;
+        if (by < minY) minY = by;
+        if (by > maxY) maxY = by;
     }
-    BYTE ns = startsGetNumStarts(&gs->ss);
+    BYTE ns = serverSimGetStartCount(app->sim);
     for (BYTE i = 1; i <= ns; i++) {
-        start st; startsGetStartStruct(&gs->ss, &st, i);
-        if (st.x < minX) minX = st.x;
-        if (st.x > maxX) maxX = st.x;
-        if (st.y < minY) minY = st.y;
-        if (st.y > maxY) maxY = st.y;
+        BYTE sx, sy;
+        if (!serverSimGetStart(app->sim, i, &sx, &sy, NULL)) continue;
+        if (sx < minX) minX = sx;
+        if (sx > maxX) maxX = sx;
+        if (sy < minY) minY = sy;
+        if (sy > maxY) maxY = sy;
     }
 
     int pad = 5;
@@ -3744,7 +3750,7 @@ static void appRender(BrainTestApp *app) {
         gs->viewPlayer = app->followBot;
 
         MapViewCtx ctx = { app->renderer, app->tilesTex, app->zoomFactor, 1 };
-        mapViewRenderCentered(&ctx, gs,
+        mapViewRenderCentered(&ctx, app->sim,
                               app->viewCenterX, app->viewCenterY,
                               0, 0, screenW, screenH, app->followBot);
 
@@ -4200,7 +4206,6 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    initWinboloTimer();
     clientMutexCreate();
     langSetup();
 
@@ -5229,7 +5234,6 @@ int main(int argc, char *argv[]) {
     SDL_DestroyWindow(app.window);
     langCleanup();
     clientMutexDestroy();
-    endWinboloTimer();
     SDL_Quit();
 
     return 0;

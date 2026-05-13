@@ -35,20 +35,20 @@
   #define USING_SDL
 #endif
 
-#include "../bolo/everard_map.h"
+#include "everard_map.h"
 
-#include "../bolo/debug_file_output.h"
+#include "debug_file_output.h"
 #include "geolookup.h"
-#include "../bolo/global.h"
-#include "../bolo/gametype.h"
+#include "global.h"
+#include "gametype.h"
 #include "threads.h"
 #include "../winbolonet/winbolonet.h"
 #include "server_sim.h"
 #include "../mapeditor/mapeditor_generate.h"
-#include "../bolo/log.h"
-#include "../bolo/transport_udp.h"
-#include "../bolo/bot_manager.h"
-#include "../bolo/netpacks.h"  /* LOBBY_LOCK_* bitmask values */
+#include "log.h"
+#include "transport_udp.h"
+#include "bot_manager.h"
+#include "wire_limits.h"  /* LOBBY_LOCK_* bitmask values */
 #include "server_lifecycle.h"
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
@@ -58,11 +58,6 @@
 #ifndef GAME_NUMGAMETICKS_SEC
 #define GAME_NUMGAMETICKS_SEC (1000 / 20)
 #endif
-
-/* From backend.c / timer code */
-void initWinboloTimer(void);
-DWORD winboloTimer(void);
-void endWinboloTimer(void);
 
 /* From servermessages.c — called directly now instead of through servercore wrappers */
 void serverMessageSetQuietMode(ServerSim *sim, bool modeOn);
@@ -433,12 +428,12 @@ void processKeys(bool isQuiet) {
 #ifdef _WIN32
 void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2) {
   DWORD tick;
-  tick = winboloTimer();
+  tick = SDL_GetTicks();
 #else
   Uint32 SDLCALL serverGameTimer(void *userdata, SDL_TimerID timerID, Uint32 interval) {
   (void)userdata; (void)timerID;
   DWORD tick;
-  tick = winboloTimer();
+  tick = SDL_GetTicks();
 #endif
 
   if ((tick - oldTick) > SERVER_TICK_LENGTH) {
@@ -840,7 +835,6 @@ int main(int argc, char **argv) {
   maxPlayers = 0;
 
   alarmRaised = alarmNone;
-  initWinboloTimer();
 #ifdef _WIN32
   /* Set up console ctrl handler */
   SetConsoleCtrlHandler(consoleCtrlHandler, TRUE);
@@ -1187,14 +1181,9 @@ int main(int argc, char **argv) {
           strncat(fileName, ".wbv", sizeof(fileName) - flen - 1);
         }
       }
-      {
-        GameSim *gs = serverSimGetGameSim(serverSim);
-        isLogging = logStart(fileName, serverSim, &gs->mp,
-                             &gs->bs, &gs->pb,
-                             &gs->ss, &gs->plyrs,
-                             (BYTE)ai, (BYTE)maxPlayers,
-                             serverSimHasPassword(serverSim));
-      }
+      isLogging = logStart(fileName, serverSim,
+                           (BYTE)ai, (BYTE)maxPlayers,
+                           serverSimHasPassword(serverSim));
       if (isLogging) {
         fprintf(stderr, "Logging to %s\n", fileName);
       } else {
@@ -1215,14 +1204,9 @@ int main(int argc, char **argv) {
           strncat(fileName, ".wbv", sizeof(fileName) - flen - 1);
         }
       }
-      {
-        GameSim *gs = serverSimGetGameSim(serverSim);
-        isLogging = logStart(fileName, serverSim, &gs->mp,
-                             &gs->bs, &gs->pb,
-                             &gs->ss, &gs->plyrs,
-                             (BYTE)ai, (BYTE)maxPlayers,
-                             serverSimHasPassword(serverSim));
-      }
+      isLogging = logStart(fileName, serverSim,
+                           (BYTE)ai, (BYTE)maxPlayers,
+                           serverSimHasPassword(serverSim));
       if (isLogging) {
         fprintf(stderr, "Logging to %s (lobby)\n", fileName);
         logAddEvent(log_LobbyEnter, 0, 0, 0, 0, 0, NULL);
@@ -1336,10 +1320,10 @@ int main(int argc, char **argv) {
   }
   serverMessageConsoleMessage(serverSim,"Type \"help\" for help, \"quit\" to exit.");
 #ifdef _WIN32
-  oldTick = winboloTimer();
+  oldTick = SDL_GetTicks();
   serverTimerGameID = timeSetEvent(SERVER_TICK_LENGTH, 10, serverGameTimer, 0, TIME_PERIODIC);
 #else
-  oldTick = winboloTimer();
+  oldTick = SDL_GetTicks();
   serverTimerGameID = SDL_AddTimer(SERVER_TICK_LENGTH, serverGameTimer, NULL);
 #endif
 
@@ -1369,7 +1353,6 @@ int main(int argc, char **argv) {
     httpSendLogFile(fileName, key, FALSE);
     httpDestroy();
   }
-  endWinboloTimer();
   geoLookupDestroy();
   serverSimMapDirDestroy(serverSim);
   serverSimDestroy(serverSim);

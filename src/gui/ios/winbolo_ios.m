@@ -18,16 +18,13 @@
 #include <time.h>
 #include <sys/stat.h>
 
-#include "../../bolo/frontend.h"
-#include "../../bolo/players.h"
-#include "../../bolo/client_sim.h"
-#include "../../bolo/client_snapshot.h"
-#include "../../bolo/client_render.h"
-#include "../../bolo/input_packet.h"
-#include "../../bolo/transport.h"
-#include "../../bolo/transport_udp.h"
-#include "../../bolo/bot_manager.h"
-#include "../../bolo/gui_message.h"
+#include "frontend.h"
+#include "client_sim.h"
+#include "client_net.h"
+#include "client_render.h"
+#include "input_packet.h"
+#include "transport.h"
+#include "gui_message.h"
 #include "../../server/server_sim.h"
 #include "../../server/threads.h"
 #include "../brainsHandler.h"
@@ -204,7 +201,6 @@ int main(int argc, char *argv[]) {
         SDL_Log("Base path: %s", basePath);
     }
 
-    initWinboloTimer();
 
     if (clientMutexCreate() == FALSE) {
         SDL_Log("[iOS] Failed to create client mutex");
@@ -216,7 +212,6 @@ int main(int argc, char *argv[]) {
     SDL_Log("[iOS] Starting gameFrontStart...");
     if (gameFrontStart("", &keys, FALSE, NULL) == FALSE) {
         SDL_Log("[iOS] gameFrontStart FAILED");
-        endWinboloTimer();
         clientMutexDestroy();
         SDL_Quit();
         return 1;
@@ -294,7 +289,6 @@ ios_game_start:
         if (lobbyResult == 0) {
             SDL_Log("[iOS] Left lobby, cleaning up");
             gameFrontEnd(&keys, FALSE, TRUE);
-            endWinboloTimer();
             clientMutexDestroy();
             sdl3DrawCleanup();
             soundCleanup();
@@ -304,7 +298,6 @@ ios_game_start:
         if (!gameFrontLoadDeferredMap(&cs)) {
             SDL_Log("[iOS] Failed to load deferred map");
             gameFrontEnd(&keys, FALSE, TRUE);
-            endWinboloTimer();
             clientMutexDestroy();
             sdl3DrawCleanup();
             soundCleanup();
@@ -330,7 +323,7 @@ ios_game_start:
 
     guiMessageSetHandler(sdl3MessageHandler);
 
-    oldTick = winboloTimer();
+    oldTick = SDL_GetTicks();
 
     /* Flush any stale render state left over from the dialog phase.
        The dialog loop destroys textures and restores logical presentation
@@ -441,13 +434,13 @@ ios_game_start:
         }
 
         /* Render */
-        tick = winboloTimer();
+        tick = SDL_GetTicks();
         clientMutexWaitFor();
         if (finishedLoop == FALSE) {
             clientRenderFrame(cs, redraw);
         }
         clientMutexRelease();
-        dwSysFrame += (winboloTimer() - tick);
+        dwSysFrame += (SDL_GetTicks() - tick);
 
         /* Touch overlay (skip in tablet mode — ImGui overlay handles it) */
         if (!uiModeIsTablet()) {
@@ -485,7 +478,6 @@ ios_game_start:
         SDL_Log("[iOS] gameFrontStart failed after leave game");
     }
 
-    endWinboloTimer();
     clientMutexDestroy();
     sdl3DrawCleanup();
     soundCleanup();
@@ -518,7 +510,7 @@ static void windowRunGameTick(ClientSim *cs) {
     /* Check if the UDP server has disconnected or timed out.
      * Only check for UDP transports (serverSim == NULL means not local). */
     if (gameFrontGetServerSim() == NULL &&
-        transportUdpClientGetJoinState(transport) == UDP_CLIENT_SERVER_SHUTDOWN) {
+        clientSimGetConnectState(cs) == CLIENT_CONNECT_SERVER_SHUTDOWN) {
         clientSimConnectionLost(cs);
         imguiMessageBoxEx(DIALOG_BOX_TITLE,
                           langGetText(NETERR_LOSTCONNECTION_RETURN_MENU),
@@ -585,8 +577,8 @@ static void windowRunGameTick(ClientSim *cs) {
             /* Tick bot brains before the sim tick (local game only) */
             {
                 ServerSim *serverSim = gameFrontGetServerSim();
-                if (serverSim != NULL && botManagerGetNumBots() > 0) {
-                    botManagerTick(serverSim, clientSimGetAiType(cs));
+                if (serverSim != NULL && serverSimGetNumBots(serverSim) > 0) {
+                    serverSimBotTick(serverSim, clientSimGetAiType(cs));
                 }
             }
             transport->tick(transport->ctx);
@@ -606,9 +598,9 @@ static void windowRunGameTick(ClientSim *cs) {
         clientMutexWaitFor();
         inBrain = TRUE;
         clientMutexRelease();
-        ttick = winboloTimer();
+        ttick = SDL_GetTicks();
         brainHandlerRun();
-        dwSysBrain += winboloTimer() - ttick;
+        dwSysBrain += SDL_GetTicks() - ttick;
         clientMutexWaitFor();
         inBrain = FALSE;
         clientMutexRelease();
@@ -765,7 +757,7 @@ void windowAllowPlayerNameChange(bool allow) { (void)allow; }
 
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
-                            int32_t srtDelay, bool isPillView, tank *tank, int edgeX, int edgeY) {
+                            int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
     if (hideMainView == FALSE && drawBusy == FALSE) {
         BYTE cursorX, cursorY;
         bool showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
@@ -773,7 +765,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
         sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                            NULL, showPillLabels, showBaseLabels,
                            srtDelay, isPillView, edgeX, edgeY,
-                           showCursor, cursorX, cursorY, tank);
+                           showCursor, cursorX, cursorY);
     }
 }
 

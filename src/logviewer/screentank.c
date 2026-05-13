@@ -26,9 +26,9 @@
 *********************************************************/
 
 #include <string.h>
-#include "global.h"
-#include "labels.h"
-#include "screentank.h"
+#include "lv_global.h"
+#include "lv_labels.h"
+#include "lv_screentank.h"
 //#include "players.h"
 //#include "frontend.h"
 

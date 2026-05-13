@@ -26,14 +26,14 @@
 #ifndef _LOGVIEWER_H
 #define _LOGVIEWER_H
 
-#include "global.h"
+#include "lv_global.h"
 #include "backend.h"
 #include "snapshot.h"
-#include "players.h"
-#include "shells.h"
-#include "bolo_map.h"
-#include "bases.h"
-#include "starts.h"
+#include "lv_players.h"
+#include "lv_shells.h"
+#include "lv_bolo_map.h"
+#include "lv_bases.h"
+#include "lv_starts.h"
 
 /* Forward declarations for SDL types */
 struct SDL_Window;

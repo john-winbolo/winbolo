@@ -67,21 +67,16 @@
 #include <math.h>
 #include "cJSON.h"
 
-#include "../bolo/brain_data.h"
-#include "../bolo/client_mapload.h"
-#include "../bolo/client_sim.h"
-#include "../bolo/client_snapshot.h"
-#include "../bolo/client_sim_control.h"
-#include "../bolo/control_event.h"
-#include "../bolo/frontend.h"
-#include "../bolo/players.h"
-#include "../bolo/brain.h"
-#include "../bolo/pillbox.h"
-#include "../bolo/bases.h"
-#include "../bolo/transport.h"
-#include "../bolo/transport_udp.h"
-#include "../bolo/gui_message.h"
-#include "../server/server_sim.h"
+#include "brain_data.h"
+#include "client_mapload.h"
+#include "client_sim.h"
+#include "control_event.h"
+#include "frontend.h"
+#include "../gui/lang.h"
+#include "brain.h"
+#include "client_net.h"
+#include "gui_message.h"
+#include "server_sim.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../gui/gamefront.h"
@@ -128,14 +123,11 @@ static gameType optGameType = gameStrictTournament;
 /* Quit flag for signal handler */
 static volatile bool headlessQuit = FALSE;
 
-/* Transport state */
-static Transport headlessTransport;
+/* Transport state — the Transport handle itself now lives inside
+ * humanSim; this flag only tracks high-level lifecycle gating. */
 static bool transportActive = FALSE;
 static SubscriberHandle headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
 
-static void headlessDeliverControl(void *ctx, const ControlEvent *evt) {
-    clientSimApplyControl((ClientSim *)ctx, evt);
-}
 static BYTE playerNum = 0;
 static ClientSim *humanSim = NULL;
 
@@ -335,18 +327,18 @@ static void logStateVerbose(int tickNum) {
   /* Pill views: 15x15 terrain grid centered on each owned pillbox */
   fprintf(f, ",\"pill_views\":[");
   if (fastServerSim != NULL) {
-    GameSim *gs = serverSimGetGameSim(fastServerSim);
     const TERRAIN *world = bi.theWorld;
-    BYTE np = pillsGetNumPills(&gs->pb);
+    BYTE np = serverSimGetPillCount(fastServerSim);
     int first = 1;
     for (BYTE pi = 1; pi <= np; pi++) {
-      pillbox p;
-      pillsGetPill(&gs->pb, &p, pi);
-      if (p.owner != selfPlayer || p.inTank) continue;
+      BYTE px, py, powner;
+      bool pinTank;
+      if (!serverSimGetPill(fastServerSim, pi, &px, &py, &powner, NULL, &pinTank)) continue;
+      if (powner != selfPlayer || pinTank) continue;
       if (!first) fprintf(f, ",");
-      fprintf(f, "{\"id\":%u,\"tx\":%u,\"ty\":%u,\"terrain\":[", (unsigned)pi, (unsigned)p.x, (unsigned)p.y);
-      int pox = (int)p.x - 7;
-      int poy = (int)p.y - 7;
+      fprintf(f, "{\"id\":%u,\"tx\":%u,\"ty\":%u,\"terrain\":[", (unsigned)pi, (unsigned)px, (unsigned)py);
+      int pox = (int)px - 7;
+      int poy = (int)py - 7;
       for (int row = 0; row < 15; row++) {
         if (row > 0) fprintf(f, ",");
         fprintf(f, "[");
@@ -371,17 +363,17 @@ static void logStateVerbose(int tickNum) {
   /* Pillboxes — full data from server sim */
   fprintf(f, ",\"pillboxes\":[");
   if (fastServerSim != NULL) {
-    GameSim *gs = serverSimGetGameSim(fastServerSim);
-    BYTE np = pillsGetNumPills(&gs->pb);
+    BYTE np = serverSimGetPillCount(fastServerSim);
     for (BYTE pi = 1; pi <= np; pi++) {
-      pillbox p;
-      pillsGetPill(&gs->pb, &p, pi);
+      BYTE px, py, powner, parmour;
+      bool pinTank;
+      if (!serverSimGetPill(fastServerSim, pi, &px, &py, &powner, &parmour, &pinTank)) continue;
       if (pi > 1) fprintf(f, ",");
       fprintf(f, "{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u,\"in_tank\":%s}",
-        (unsigned)p.x, (unsigned)p.y,
-        verboseOwnerStr(p.owner, selfPlayer, alliesBits),
-        (unsigned)p.armour,
-        p.inTank ? "true" : "false");
+        (unsigned)px, (unsigned)py,
+        verboseOwnerStr(powner, selfPlayer, alliesBits),
+        (unsigned)parmour,
+        pinTank ? "true" : "false");
     }
   }
   fprintf(f, "]");
@@ -389,16 +381,17 @@ static void logStateVerbose(int tickNum) {
   /* Bases — full data from server sim */
   fprintf(f, ",\"bases\":[");
   if (fastServerSim != NULL) {
-    GameSim *gs = serverSimGetGameSim(fastServerSim);
-    BYTE nb = basesGetNumBases(&gs->bs);
+    BYTE nb = serverSimGetBaseCount(fastServerSim);
     for (BYTE bsi = 1; bsi <= nb; bsi++) {
-      base b;
-      basesGetBase(&gs->bs, &b, bsi);
+      BYTE bx, by, bowner;
+      BYTE bshells, bmines, barmour;
+      if (!serverSimGetBase(fastServerSim, bsi, &bx, &by, &bowner)) continue;
+      serverSimGetBaseStats(fastServerSim, bsi, &bshells, &bmines, &barmour);
       if (bsi > 1) fprintf(f, ",");
       fprintf(f, "{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u,\"shells\":%u,\"mines\":%u}",
-        (unsigned)b.x, (unsigned)b.y,
-        verboseOwnerStr(b.owner, selfPlayer, alliesBits),
-        (unsigned)b.armour, (unsigned)b.shells, (unsigned)b.mines);
+        (unsigned)bx, (unsigned)by,
+        verboseOwnerStr(bowner, selfPlayer, alliesBits),
+        (unsigned)barmour, (unsigned)bshells, (unsigned)bmines);
     }
   }
   fprintf(f, "]");
@@ -408,23 +401,22 @@ static void logStateVerbose(int tickNum) {
     int self_pills = 0, ally_pills = 0, enemy_pills = 0;
     int self_bases = 0, ally_bases = 0, enemy_bases = 0;
     if (fastServerSim != NULL) {
-      GameSim *gs = serverSimGetGameSim(fastServerSim);
-      BYTE np = pillsGetNumPills(&gs->pb);
+      BYTE np = serverSimGetPillCount(fastServerSim);
       for (BYTE pi = 1; pi <= np; pi++) {
-        pillbox p;
-        pillsGetPill(&gs->pb, &p, pi);
-        if (p.owner == 0xFF) { /* neutral — skip */ }
-        else if (p.owner == selfPlayer) self_pills++;
-        else if (alliesBits & (1u << p.owner)) ally_pills++;
+        BYTE powner;
+        if (!serverSimGetPill(fastServerSim, pi, NULL, NULL, &powner, NULL, NULL)) continue;
+        if (powner == 0xFF) { /* neutral — skip */ }
+        else if (powner == selfPlayer) self_pills++;
+        else if (alliesBits & (1u << powner)) ally_pills++;
         else enemy_pills++;
       }
-      BYTE nb = basesGetNumBases(&gs->bs);
+      BYTE nb = serverSimGetBaseCount(fastServerSim);
       for (BYTE bsi = 1; bsi <= nb; bsi++) {
-        base b;
-        basesGetBase(&gs->bs, &b, bsi);
-        if (b.owner == 0xFF) { /* neutral — skip */ }
-        else if (b.owner == selfPlayer) self_bases++;
-        else if (alliesBits & (1u << b.owner)) ally_bases++;
+        BYTE bowner;
+        if (!serverSimGetBase(fastServerSim, bsi, NULL, NULL, &bowner)) continue;
+        if (bowner == 0xFF) { /* neutral — skip */ }
+        else if (bowner == selfPlayer) self_bases++;
+        else if (alliesBits & (1u << bowner)) ally_bases++;
         else enemy_bases++;
       }
     }
@@ -637,31 +629,31 @@ static void logStateBinary(int tickNum) {
 
     /* Channels 5-7: pillboxes, Channel 9: bases (from server sim) */
     if (fastServerSim != NULL) {
-      GameSim *gs = serverSimGetGameSim(fastServerSim);
-      BYTE np = pillsGetNumPills(&gs->pb);
+      BYTE np = serverSimGetPillCount(fastServerSim);
       for (BYTE pi = 1; pi <= np; pi++) {
-        pillbox p;
-        pillsGetPill(&gs->pb, &p, pi);
-        if (p.inTank) continue;
-        int gx = (int)p.x - tank_tx + 14;
-        int gy = (int)p.y - tank_ty + 14;
+        BYTE px, py, powner, parmour;
+        bool pinTank;
+        if (!serverSimGetPill(fastServerSim, pi, &px, &py, &powner, &parmour, &pinTank)) continue;
+        if (pinTank) continue;
+        int gx = (int)px - tank_tx + 14;
+        int gy = (int)py - tank_ty + 14;
         if (gx < 0 || gx >= 29 || gy < 0 || gy >= 29) continue;
-        float intensity = (float)p.armour / 15.0f;
-        if (p.owner == 0xFF) {
+        float intensity = (float)parmour / 15.0f;
+        if (powner == 0xFF) {
           spatial[gy][gx][5] = intensity; /* neutral */
-        } else if (p.owner == selfPlayer) {
+        } else if (powner == selfPlayer) {
           spatial[gy][gx][6] = intensity; /* self */
         } else {
           spatial[gy][gx][7] = intensity; /* enemy */
         }
       }
 
-      BYTE nb = basesGetNumBases(&gs->bs);
+      BYTE nb = serverSimGetBaseCount(fastServerSim);
       for (BYTE bsi = 1; bsi <= nb; bsi++) {
-        base b;
-        basesGetBase(&gs->bs, &b, bsi);
-        int gx = (int)b.x - tank_tx + 14;
-        int gy = (int)b.y - tank_ty + 14;
+        BYTE bx, by;
+        if (!serverSimGetBase(fastServerSim, bsi, &bx, &by, NULL)) continue;
+        int gx = (int)bx - tank_tx + 14;
+        int gy = (int)by - tank_ty + 14;
         if (gx < 0 || gx >= 29 || gy < 0 || gy >= 29) continue;
         spatial[gy][gx][9] = 1.0f;
       }
@@ -693,25 +685,24 @@ static void logStateBinary(int tickNum) {
     int self_pills = 0, enemy_pills = 0, ally_pills = 0, total_pills = 0;
     int self_bases = 0, ally_bases = 0, total_bases = 0;
     if (fastServerSim != NULL) {
-      GameSim *gs = serverSimGetGameSim(fastServerSim);
-      BYTE np = pillsGetNumPills(&gs->pb);
+      BYTE np = serverSimGetPillCount(fastServerSim);
       total_pills = np;
       for (BYTE pi = 1; pi <= np; pi++) {
-        pillbox p;
-        pillsGetPill(&gs->pb, &p, pi);
-        if (p.owner == 0xFF) continue;
-        if (p.owner == selfPlayer) self_pills++;
-        else if (alliesBits & (1u << p.owner)) ally_pills++;
+        BYTE powner;
+        if (!serverSimGetPill(fastServerSim, pi, NULL, NULL, &powner, NULL, NULL)) continue;
+        if (powner == 0xFF) continue;
+        if (powner == selfPlayer) self_pills++;
+        else if (alliesBits & (1u << powner)) ally_pills++;
         else enemy_pills++;
       }
-      BYTE nb = basesGetNumBases(&gs->bs);
+      BYTE nb = serverSimGetBaseCount(fastServerSim);
       total_bases = nb;
       for (BYTE bsi = 1; bsi <= nb; bsi++) {
-        base b;
-        basesGetBase(&gs->bs, &b, bsi);
-        if (b.owner == 0xFF) continue;
-        if (b.owner == selfPlayer) self_bases++;
-        else if (alliesBits & (1u << b.owner)) ally_bases++;
+        BYTE bowner;
+        if (!serverSimGetBase(fastServerSim, bsi, NULL, NULL, &bowner)) continue;
+        if (bowner == 0xFF) continue;
+        if (bowner == selfPlayer) self_bases++;
+        else if (alliesBits & (1u << bowner)) ally_bases++;
       }
     }
     float tp = total_pills > 0 ? (float)total_pills : 1.0f;
@@ -990,39 +981,18 @@ void gameFrontEnableRejoin(void) {
 /* ------------------------------------------------------------------ */
 
 time_t windowsGetTicks(void) {
-  return (time_t)winboloTimer();
+  return (time_t)SDL_GetTicks();
 }
 
 time_t serverMainGetTicks(void) {
-  return (time_t)winboloTimer();
+  return (time_t)SDL_GetTicks();
 }
 
 /* ------------------------------------------------------------------ */
 /* Helper: sync snapshot from transport                                */
 /* ------------------------------------------------------------------ */
 static void headlessSyncSnapshot(void) {
-  SnapshotHeader snapHdr;
-  TankSnapshot snapTanks[MAX_TANKS];
-  ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-  TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
-  BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
-  PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
-  GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-  if (headlessTransport.getSnapshot(headlessTransport.ctx, playerNum,
-                                     &snapHdr, snapTanks, MAX_TANKS,
-                                     snapShells, MAX_SNAPSHOT_SHELLS,
-                                     snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                                     snapBases, MAX_SNAPSHOT_BASES,
-                                     snapPills, MAX_SNAPSHOT_PILLS,
-                                     snapEvents, MAX_SNAPSHOT_EVENTS)) {
-    clientSimSyncFromSnapshot(humanSim, &snapHdr, snapTanks, snapHdr.tankCount,
-                            snapShells, snapHdr.shellCount,
-                            snapTkExplosions, snapHdr.tkExplosionCount,
-                            snapBases, snapHdr.baseCount,
-                            snapPills, snapHdr.pillCount,
-                            snapEvents, snapHdr.reliableEventCount,
-                            playerNum);
-  }
+  clientSimNetSyncSnapshot(humanSim);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1042,15 +1012,14 @@ static bool fastModeSetupGame(void) {
   serverSimSetLobbyEnabled(fastServerSim, false);
   serverSimStartGame(fastServerSim);
   serverSimAddPlayer(fastServerSim, 0, optName, false);
-  serverSimGetGameSim(fastServerSim)->viewPlayer = 0;
+  serverSimSetViewPlayer(fastServerSim, 0);
 
-  /* Recreate local transport */
-  headlessTransport = transportLocalCreate(fastServerSim, 0);
   transportActive = TRUE;
   playerNum = 0;
 
   /* Reload client sim from cached compressed map */
   humanSim = clientSimAlloc();
+  clientSimConnectLocal(humanSim, fastServerSim, 0);
   clientLoadCompressedMap(humanSim, cachedCompressedMap, cachedCompressedMapLen,
                           "Fast Local", optGameType, false, 0,
                           UNLIMITED_GAME_TIME, optName, 0, FALSE);
@@ -1058,7 +1027,7 @@ static bool fastModeSetupGame(void) {
 
   /* Sync initial snapshot and place tank */
   headlessSyncSnapshot();
-  clientNetSetupTankGo(humanSim);
+  clientSimNetSetupTankGo(humanSim);
 
   /* Register the headless client as a control-event subscriber. Placed
    * after clientLoadCompressedMap (which calls clientSimCreate) so
@@ -1066,9 +1035,7 @@ static bool fastModeSetupGame(void) {
    * runs. Unregister any prior handle first so a re-setup that skipped
    * the teardown path does not leak a slot. */
   serverSimUnregisterSubscriber(fastServerSim, headlessControlSub);
-  headlessControlSub = serverSimRegisterSubscriber(fastServerSim,
-                                                  headlessDeliverControl,
-                                                  humanSim);
+  headlessControlSub = serverSimRegisterClientSubscriber(fastServerSim, humanSim);
 
   return true;
 }
@@ -1078,8 +1045,7 @@ static void fastModeTeardownGame(void) {
   brainsHandlerShutdown();
   serverSimUnregisterSubscriber(fastServerSim, headlessControlSub);
   headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
-  clientSimDestroy(humanSim);
-  transportLocalDestroy(&headlessTransport);
+  clientSimDestroy(humanSim);  /* also tears down the embedded transport */
   transportActive = FALSE;
 }
 
@@ -1128,24 +1094,22 @@ static int runFastMode(void) {
   serverSimSetLobbyEnabled(fastServerSim, false);
   serverSimStartGame(fastServerSim);
   serverSimAddPlayer(fastServerSim, 0, optName, false);
-  serverSimGetGameSim(fastServerSim)->viewPlayer = 0;
-  headlessTransport = transportLocalCreate(fastServerSim, 0);
+  serverSimSetViewPlayer(fastServerSim, 0);
   transportActive = TRUE;
   playerNum = 0;
   humanSim = clientSimAlloc();
+  clientSimConnectLocal(humanSim, fastServerSim, 0);
   clientLoadCompressedMap(humanSim, cachedCompressedMap, cachedCompressedMapLen,
                           "Fast Local", optGameType, false, 0,
                           UNLIMITED_GAME_TIME, optName, 0, FALSE);
   clientSimSetAiType(humanSim, optAi);
   headlessSyncSnapshot();
-  clientNetSetupTankGo(humanSim);
+  clientSimNetSetupTankGo(humanSim);
 
   /* Register the headless client as a control-event subscriber. Placed
    * after clientLoadCompressedMap so humanSim->myPlayerNum is 0 before
    * sync's self-skip runs. */
-  headlessControlSub = serverSimRegisterSubscriber(fastServerSim,
-                                                  headlessDeliverControl,
-                                                  humanSim);
+  headlessControlSub = serverSimRegisterClientSubscriber(fastServerSim, humanSim);
 
   if (!optQuiet) {
     fprintf(stderr, "Game ready. Entering fast loop.\n");
@@ -1188,8 +1152,8 @@ static int runFastMode(void) {
         clientBuildInputPacket(humanSim, &pkt, 0, FALSE, FALSE, brainRunning, FALSE, playerNum, simTickCounter);
       }
       clientSimKeysTick(humanSim, &pkt);
-      headlessTransport.sendInput(headlessTransport.ctx, &pkt);
-      headlessTransport.tick(headlessTransport.ctx);
+      clientSimNetSendInput(humanSim, &pkt);
+      clientSimNetTick(humanSim);
       headlessSyncSnapshot();
       simTickCounter++;
       justKeys = FALSE;
@@ -1229,8 +1193,8 @@ static int runFastMode(void) {
         clientBuildInputPacket(humanSim, &pkt, 0, FALSE, FALSE, brainRunning, TRUE, playerNum, simTickCounter);
       }
       clientSimGameTick(humanSim, &pkt, brainRunning);
-      headlessTransport.sendInput(headlessTransport.ctx, &pkt);
-      headlessTransport.tick(headlessTransport.ctx);
+      clientSimNetSendInput(humanSim, &pkt);
+      clientSimNetTick(humanSim);
       headlessSyncSnapshot();
       clientSimDisplayTick(humanSim, brainRunning);
       simTickCounter++;
@@ -1264,8 +1228,7 @@ static int runFastMode(void) {
   brainsHandlerShutdown();
   serverSimUnregisterSubscriber(fastServerSim, headlessControlSub);
   headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
-  clientSimDestroy(humanSim);
-  transportLocalDestroy(&headlessTransport);
+  clientSimDestroy(humanSim);  /* also tears down the embedded transport */
   transportActive = FALSE;
   serverSimDestroy(fastServerSim);
   fastServerSim = NULL;
@@ -1301,19 +1264,18 @@ static int runNetworkMode(void) {
   /* Initialize the game engine with dummy params (will be re-created after map load) */
   humanSim = clientSimAlloc();
   clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
-  playersSetMyLastPlayerName(humanSim, optName);
+  clientSimSetMyLastPlayerName(humanSim, optName);
 
   /* Connect to the server via new UDP transport */
   if (!optQuiet) {
     fprintf(stderr, "Connecting to %s:%u...\n", optServer, optPort);
   }
 
-  headlessTransport = transportUdpClientCreate(humanSim, optServer, optPort, optName, optPassword, "", false,
-                                                optTrackerAddr, optTrackerPort);
-  if (transportUdpClientGetJoinState(&headlessTransport) == UDP_CLIENT_ERROR) {
-    const char *reason = transportUdpClientGetJoinRejectReason(&headlessTransport);
+  clientSimConnectUdp(humanSim, optServer, optPort, optName, optPassword, "", false,
+                      optTrackerAddr, optTrackerPort);
+  if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
+    const char *reason = clientSimGetConnectErrorReason(humanSim);
     fprintf(stderr, "Error: failed to connect: %s\n", reason ? reason : "unknown");
-    transportUdpClientDestroy(&headlessTransport);
     clientSimDestroy(humanSim);
     return 1;
   }
@@ -1321,24 +1283,23 @@ static int runNetworkMode(void) {
   /* Wait for join handshake + map download */
   {
     int joinWaitTicks = 0;
-    while ((transportUdpClientGetJoinState(&headlessTransport) == UDP_CLIENT_JOINING ||
-            transportUdpClientGetJoinState(&headlessTransport) == UDP_CLIENT_DOWNLOADING_MAP) &&
+    while ((clientSimGetConnectState(humanSim) == CLIENT_CONNECT_JOINING ||
+            clientSimGetConnectState(humanSim) == CLIENT_CONNECT_DOWNLOADING_MAP) &&
            joinWaitTicks < 1500) {
-      headlessTransport.tick(headlessTransport.ctx);
+      clientSimNetTick(humanSim);
       SDL_Delay(20);
       joinWaitTicks++;
     }
   }
 
-  if (transportUdpClientGetJoinState(&headlessTransport) != UDP_CLIENT_CONNECTED) {
-    const char *reason = transportUdpClientGetJoinRejectReason(&headlessTransport);
+  if (clientSimGetConnectState(humanSim) != CLIENT_CONNECT_CONNECTED) {
+    const char *reason = clientSimGetConnectErrorReason(humanSim);
     fprintf(stderr, "Error: join failed: %s\n", reason ? reason : "timeout");
-    transportUdpClientDestroy(&headlessTransport);
     clientSimDestroy(humanSim);
     return 1;
   }
 
-  playerNum = transportUdpClientGetPlayerNum(&headlessTransport);
+  playerNum = clientSimGetServerPlayerNum(humanSim);
   transportActive = TRUE;
 
   /* Load map from server */
@@ -1349,37 +1310,37 @@ static int runNetworkMode(void) {
     bool serverHiddenMines;
     int32_t serverStartDelay, serverGameLen;
 
-    mapData = transportUdpClientGetMapData(&headlessTransport, &mapLen);
-    transportUdpClientGetGameSettings(&headlessTransport, &serverGame,
-                                       &serverHiddenMines,
-                                       &serverStartDelay, &serverGameLen);
+    mapData = clientSimGetServerMapData(humanSim, &mapLen);
+    clientSimGetServerGameSettings(humanSim, &serverGame,
+                                   &serverHiddenMines,
+                                   &serverStartDelay, &serverGameLen);
 
     if (mapData != NULL && mapLen > 0) {
       char savedMapName[MAP_STR_SIZE];
       strncpy(savedMapName, clientSimGetMapName(humanSim), MAP_STR_SIZE - 1);
       savedMapName[MAP_STR_SIZE - 1] = '\0';
-      clientSimDestroy(humanSim);
-      humanSim = clientSimAlloc();
+      /* Reset map-dependent state in place; the transport (and the
+       * mapData pointer that lives inside it) survive the reset. */
+      clientSimResetForMapLoad(humanSim);
       if (clientLoadCompressedMap(humanSim, (BYTE *)mapData, mapLen, savedMapName,
                                   serverGame, serverHiddenMines,
                                   serverStartDelay, serverGameLen,
                                   optName, playerNum, FALSE) == FALSE) {
         fprintf(stderr, "Error: failed to load map from server\n");
-        transportUdpClientDestroy(&headlessTransport);
+        clientSimDestroy(humanSim);
         return 1;
       }
       clientSimSetLocalTransport(humanSim, false);
       clientSimSetAiType(humanSim, optAi);
     } else {
       fprintf(stderr, "Error: no map data from server\n");
-      transportUdpClientDestroy(&headlessTransport);
       clientSimDestroy(humanSim);
       return 1;
     }
   }
 
   /* Set up tank at start position */
-  clientNetSetupTankGo(humanSim);
+  clientSimNetSetupTankGo(humanSim);
 
   /* Gate lobby vs running: if we received PACKET_LOBBY_STATE during
    * join, stay in lobby state; otherwise proceed to running */
@@ -1406,20 +1367,20 @@ static int runNetworkMode(void) {
   logStateOpen(optLogState);
 
   /* Main game loop */
-  oldTick = winboloTimer();
+  oldTick = SDL_GetTicks();
 
   while (!headlessQuit) {
     brainRunning = brainHandlerIsBrainRunning();
     bool used = FALSE;
 
-    ttick = winboloTimer();
+    ttick = SDL_GetTicks();
 
     /* Process game ticks */
     if ((ttick - oldTick) > GAME_TICK_LENGTH) {
       while ((ttick - oldTick) > GAME_TICK_LENGTH) {
         if (clientSimGetNetStatus(humanSim) == netLobby || clientSimGetNetStatus(humanSim) == netLobbyCountdown) {
           /* Lobby/countdown: just tick the transport to receive packets */
-          headlessTransport.tick(headlessTransport.ctx);
+          clientSimNetTick(humanSim);
           justKeys = !justKeys;
         } else if (justKeys) {
           /* Keys tick */
@@ -1428,8 +1389,8 @@ static int runNetworkMode(void) {
           clientMutexWaitFor();
           clientSimKeysTick(humanSim, &pkt);
           clientMutexRelease();
-          headlessTransport.recordInput(headlessTransport.ctx, &pkt);
-          headlessTransport.tick(headlessTransport.ctx);
+          clientSimNetRecordInput(humanSim, &pkt);
+          clientSimNetTick(humanSim);
           clientMutexWaitFor();
           headlessSyncSnapshot();
           clientMutexRelease();
@@ -1442,8 +1403,8 @@ static int runNetworkMode(void) {
           clientMutexWaitFor();
           clientSimGameTick(humanSim, &pkt, brainRunning);
           clientMutexRelease();
-          headlessTransport.sendInput(headlessTransport.ctx, &pkt);
-          headlessTransport.tick(headlessTransport.ctx);
+          clientSimNetSendInput(humanSim, &pkt);
+          clientSimNetTick(humanSim);
           clientMutexWaitFor();
           headlessSyncSnapshot();
           clientSimDisplayTick(humanSim, brainRunning);
@@ -1462,7 +1423,7 @@ static int runNetworkMode(void) {
 
     /* Brain processing */
     if (used && brainRunning &&
-        transportUdpClientGetJoinState(&headlessTransport) != UDP_CLIENT_SERVER_SHUTDOWN) {
+        clientSimGetConnectState(humanSim) != CLIENT_CONNECT_SERVER_SHUTDOWN) {
       brainHandlerRun();
     }
 
@@ -1482,7 +1443,7 @@ static int runNetworkMode(void) {
     }
 
     /* Check for server disconnect */
-    if (transportUdpClientGetJoinState(&headlessTransport) == UDP_CLIENT_SERVER_SHUTDOWN) {
+    if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_SERVER_SHUTDOWN) {
       fprintf(stderr, "Server disconnected. Exiting.\n");
       break;
     }
@@ -1499,8 +1460,7 @@ static int runNetworkMode(void) {
 
   clientMutexWaitFor();
   brainsHandlerShutdown();
-  clientSimDestroy(humanSim);
-  transportUdpClientDestroy(&headlessTransport);
+  clientSimDestroy(humanSim);  /* also tears down the embedded transport */
   transportActive = FALSE;
   clientMutexRelease();
 
@@ -1538,7 +1498,6 @@ int main(int argc, char *argv[]) {
   wb_log_init("WinBolo", "WinBoloHeadless", "winbolo-headless.log");
   atexit(wb_log_shutdown);
 
-  initWinboloTimer();
 
   if (!clientMutexCreate()) {
     fprintf(stderr, "Error: failed to create client mutex\n");
@@ -1559,7 +1518,6 @@ int main(int argc, char *argv[]) {
     result = runNetworkMode();
   }
 
-  endWinboloTimer();
   clientMutexDestroy();
   langCleanup();
   SDL_Quit();

@@ -14,8 +14,7 @@
 
 extern "C" {
 #include "players_panel.h"
-#include "../../bolo/players.h"
-#include "../../bolo/client_sim.h"
+#include "client_sim.h"
 #include "../sdl3/sdl3imgui.h"
 #include "../lang.h"
 }
@@ -114,10 +113,9 @@ extern "C" void playersPanelRender(void) {
         }
 
         if (sPlayerEnabled[i]) {
-            players *plrs  = &clientSimGetGameSim(humanSim)->plyrs;
-            uint16_t ping  = playersGetPing(plrs, (BYTE)i);
-            uint8_t flags  = playersGetClientFlags(plrs, (BYTE)i);
-            uint8_t ctype  = playersGetClientType(plrs, (BYTE)i);
+            uint16_t ping  = clientSimGetPlayerPing(humanSim, (BYTE)i);
+            uint8_t flags  = clientSimGetPlayerClientFlags(humanSim, (BYTE)i);
+            uint8_t ctype  = clientSimGetPlayerClientType(humanSim, (BYTE)i);
 
             renderPlayerName(NULL, flags, ctype, "", false);
 

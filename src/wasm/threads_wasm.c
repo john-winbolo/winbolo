@@ -5,7 +5,7 @@
  * all game logic runs on the main thread inside emscripten_set_main_loop.
  */
 
-#include "../bolo/global.h"
+#include "global.h"
 #include "../server/threads.h"
 
 bool threadsCreate(bool context)  { (void)context; return TRUE; }

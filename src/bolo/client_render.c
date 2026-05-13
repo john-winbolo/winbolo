@@ -29,6 +29,7 @@
 #include "global.h"
 #include "client_render.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"
 #include "tank.h"
 #include "shells.h"
 #include "explosions.h"
@@ -247,7 +248,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
     }
     explosionsCalcScreenBullets(&clientSimGetGameSim(csPtr)->expl, &sBullets, clientSimGetXOffset(csPtr), (BYTE) (clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X-1), clientSimGetYOffset(csPtr), (BYTE) (clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y-1));
     tkExplosionCalcScreenBullets(&clientSimGetGameSim(csPtr)->tankExplosions, &sBullets, clientSimGetXOffset(csPtr), (BYTE) (clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X-1), clientSimGetYOffset(csPtr), (BYTE) (clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y-1));
-    frontEndDrawMainScreen(csPtr, clientSimGetView(csPtr), clientSimGetMineView(csPtr), &scnTnk, &gs, &sBullets, &lgms, clientSimGetGmeStartDelay(csPtr), clientSimIsInPillView(csPtr), &MY_TANK(csPtr), 0, 0);
+    frontEndDrawMainScreen(csPtr, clientSimGetView(csPtr), clientSimGetMineView(csPtr), &scnTnk, &gs, &sBullets, &lgms, clientSimGetGmeStartDelay(csPtr), clientSimIsInPillView(csPtr), 0, 0);
   }
   screenBulletsDestroy(&sBullets);
   screenLgmDestroy(&lgms);
@@ -270,7 +271,7 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
 *  xValue - The X co-ordinate
 *  yValue - The Y co-ordinate
 *********************************************************/
-BYTE screenGetPos(screen *value,BYTE xValue, BYTE yValue) {
+BYTE screenGetPos(const screen *value,BYTE xValue, BYTE yValue) {
   BYTE returnValue = RIVER; /* Value to return */
 
   if (xValue < MAIN_BACK_BUFFER_SIZE_X && yValue < MAIN_BACK_BUFFER_SIZE_Y) {
@@ -294,7 +295,7 @@ BYTE screenGetPos(screen *value,BYTE xValue, BYTE yValue) {
 *  xValue - The X co-ordinate
 *  yValue - The Y co-ordinate
 *********************************************************/
-bool screenIsMine(screenMines *value,BYTE xValue, BYTE yValue) {
+bool screenIsMine(const screenMines *value,BYTE xValue, BYTE yValue) {
   bool returnValue = FALSE; /* Value to return */
 
   if (xValue <= MAIN_SCREEN_SIZE_X && yValue <= MAIN_SCREEN_SIZE_Y) {

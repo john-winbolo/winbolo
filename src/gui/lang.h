@@ -1171,8 +1171,8 @@
  * ------------------------------------------------------- */
 #ifndef RC_INVOKED
 
-#include "../bolo/global.h"
-#include "../bolo/player_flags.h"
+#include "global.h"
+#include "player_flags.h"
 
 #ifdef __cplusplus
 extern "C" {

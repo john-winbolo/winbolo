@@ -18,13 +18,11 @@
 #include <sys/stat.h>
 
 #include "../common/wb_log.h"
-#include "../bolo/client_sim.h"
-#include "../bolo/client_snapshot.h"
-#include "../bolo/client_render.h"
-#include "../bolo/frontend.h"
-#include "../bolo/transport.h"
-#include "../bolo/transport_udp.h"
-#include "../bolo/gui_message.h"
+#include "client_sim.h"
+#include "client_render.h"
+#include "frontend.h"
+#include "client_net.h"
+#include "gui_message.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../gui/draw.h"
@@ -36,7 +34,6 @@
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/luabrainshandler.h"
-#include "../bolo/bot_manager.h"
 #include "../gui/sdl3/dialog_backend.h"
 #include "touch_input.h"
 #include "players_panel.h"
@@ -107,34 +104,6 @@ static Uint64 lastFrameTime = 0;
 extern void sdl3MessageHandler(const char *message, const char *title);
 
 /* -------------------------------------------------------
- * Helper: sync snapshot from transport
- * ------------------------------------------------------- */
-static void androidSyncSnapshot(ClientSim *cs, Transport *transport, BYTE myPlayerNum) {
-  SnapshotHeader snapHdr;
-  TankSnapshot snapTanks[MAX_TANKS];
-  ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-  TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
-  BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
-  PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
-  GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-  if (transport->getSnapshot(transport->ctx, myPlayerNum,
-                              &snapHdr, snapTanks, MAX_TANKS,
-                              snapShells, MAX_SNAPSHOT_SHELLS,
-                              snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                              snapBases, MAX_SNAPSHOT_BASES,
-                              snapPills, MAX_SNAPSHOT_PILLS,
-                              snapEvents, MAX_SNAPSHOT_EVENTS)) {
-    clientSimSyncFromSnapshot(cs, &snapHdr, snapTanks, snapHdr.tankCount,
-                            snapShells, snapHdr.shellCount,
-                            snapTkExplosions, snapHdr.tkExplosionCount,
-                            snapBases, snapHdr.baseCount,
-                            snapPills, snapHdr.pillCount,
-                            snapEvents, snapHdr.reliableEventCount,
-                            myPlayerNum);
-  }
-}
-
-/* -------------------------------------------------------
  * windowRunGameTick — game logic using transport
  * ------------------------------------------------------- */
 static void windowRunGameTick(ClientSim *cs) {
@@ -147,14 +116,12 @@ static void windowRunGameTick(ClientSim *cs) {
   bool isMine = FALSE;
   bool used = FALSE;
   bool brainRunning;
-  Transport *transport;
 
   brainRunning = brainHandlerIsBrainRunning();
   isShoot = FALSE;
   tb = 0;
 
-  transport = gameFrontGetTransport();
-  if (transport == NULL || doingTutorial) {
+  if (!clientSimHasTransport(cs) || doingTutorial) {
     return;
   }
 
@@ -170,10 +137,10 @@ static void windowRunGameTick(ClientSim *cs) {
       clientMutexWaitFor();
       clientSimKeysTick(cs, &pkt);
       clientMutexRelease();
-      transport->recordInput(transport->ctx, &pkt);
-      transport->tick(transport->ctx);
+      clientSimNetRecordInput(cs, &pkt);
+      clientSimNetTick(cs);
       clientMutexWaitFor();
-      androidSyncSnapshot(cs, transport, myPlayerNum);
+      clientSimNetSyncSnapshot(cs);
       clientMutexRelease();
       simTickCounter++;
       justKeys = FALSE;
@@ -195,17 +162,17 @@ static void windowRunGameTick(ClientSim *cs) {
       clientMutexWaitFor();
       clientSimGameTick(cs, &pkt, brainRunning);
       clientMutexRelease();
-      transport->sendInput(transport->ctx, &pkt);
+      clientSimNetSendInput(cs, &pkt);
       /* Tick bot brains before the sim tick (local game only) */
       {
         ServerSim *serverSim = gameFrontGetServerSim();
-        if (serverSim != NULL && botManagerGetNumBots() > 0) {
-          botManagerTick(serverSim, clientSimGetAiType(cs));
+        if (serverSim != NULL && serverSimGetNumBots(serverSim) > 0) {
+          serverSimBotTick(serverSim, clientSimGetAiType(cs));
         }
       }
-      transport->tick(transport->ctx);
+      clientSimNetTick(cs);
       clientMutexWaitFor();
-      androidSyncSnapshot(cs, transport, myPlayerNum);
+      clientSimNetSyncSnapshot(cs);
       clientSimDisplayTick(cs, brainRunning);
       clientMutexRelease();
       simTickCounter++;
@@ -220,9 +187,9 @@ static void windowRunGameTick(ClientSim *cs) {
     clientMutexWaitFor();
     inBrain = TRUE;
     clientMutexRelease();
-    ttick = winboloTimer();
+    ttick = SDL_GetTicks();
     brainHandlerRun();
-    dwSysBrain += winboloTimer() - ttick;
+    dwSysBrain += SDL_GetTicks() - ttick;
     clientMutexWaitFor();
     inBrain = FALSE;
     clientMutexRelease();
@@ -258,7 +225,6 @@ int main(int argc, char *argv[]) {
   }
 
   SDL_Init(0);
-  initWinboloTimer();
 
   if (clientMutexCreate() == FALSE) {
     WB_LOG_ERROR(WB_LOG_CAT_PLATFORM, "[Android] Failed to create client mutex");
@@ -289,7 +255,6 @@ int main(int argc, char *argv[]) {
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Starting gameFrontStart...");
   if (gameFrontStart(cmdLine, &keys, FALSE, NULL) == FALSE) {
     WB_LOG_ERROR(WB_LOG_CAT_PLATFORM, "[Android] gameFrontStart FAILED");
-    endWinboloTimer();
     clientMutexDestroy();
     SDL_Quit();
     return 1;
@@ -367,7 +332,6 @@ int main(int argc, char *argv[]) {
       /* Player chose to leave or server shut down */
       WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Left lobby, cleaning up");
       gameFrontEnd(&keys, FALSE, TRUE);
-      endWinboloTimer();
       clientMutexDestroy();
       sdl3DrawCleanup();
       soundCleanup();
@@ -378,7 +342,6 @@ int main(int argc, char *argv[]) {
     if (!gameFrontLoadDeferredMap(&cs)) {
       WB_LOG_ERROR(WB_LOG_CAT_PLATFORM, "[Android] Failed to load deferred map");
       gameFrontEnd(&keys, FALSE, TRUE);
-      endWinboloTimer();
       clientMutexDestroy();
       sdl3DrawCleanup();
       soundCleanup();
@@ -405,7 +368,7 @@ int main(int argc, char *argv[]) {
 
   guiMessageSetHandler(sdl3MessageHandler);
 
-  oldTick = winboloTimer();
+  oldTick = SDL_GetTicks();
 
   /* Flush any stale render state left over from the dialog phase.
      The dialog loop destroys textures and restores logical presentation
@@ -483,7 +446,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Game tick accumulation (replaces SDL_AddTimer) */
-    if (gameFrontGetTransport() != NULL) {
+    if (clientSimHasTransport(cs)) {
       Uint64 now = SDL_GetTicks();
       double elapsed = (double)(now - lastFrameTime);
       lastFrameTime = now;
@@ -496,13 +459,13 @@ int main(int argc, char *argv[]) {
     }
 
     /* Render */
-    tick = winboloTimer();
+    tick = SDL_GetTicks();
     clientMutexWaitFor();
     if (finishedLoop == FALSE) {
       clientRenderFrame(cs, redraw);
     }
     clientMutexRelease();
-    dwSysFrame += (winboloTimer() - tick);
+    dwSysFrame += (SDL_GetTicks() - tick);
 
     /* Touch overlay + ImGui + present */
     {
@@ -530,7 +493,6 @@ int main(int argc, char *argv[]) {
 
   /* Cleanup */
   gameFrontEnd(&keys, TRUE, TRUE);
-  endWinboloTimer();
   clientMutexDestroy();
   sdl3ImguiCleanup();
   sdl3DrawCleanup();

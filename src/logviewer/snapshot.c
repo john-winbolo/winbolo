@@ -24,7 +24,7 @@
 *  backwards when fast forward or rewind is pressed.
 *********************************************************/
 
-#include "global.h"
+#include "lv_global.h"
 #include "snapshot.h"
 
 /*

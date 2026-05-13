@@ -26,8 +26,8 @@
 *********************************************************/
 
 /* Includes */
-#include "global.h"
-#include "starts.h"
+#include "lv_global.h"
+#include "lv_starts.h"
 
 /*********************************************************
 *NAME:          lv_startsCreate

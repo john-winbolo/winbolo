@@ -28,10 +28,9 @@
 #ifndef GAMEFRONT_H
 #define GAMEFRONT_H
 
-#include "../bolo/global.h"
-#include "../bolo/client_enums.h"  /* aiType, gameType */
-#include "../bolo/transport.h"
-#include "../server/server_sim.h"
+#include "global.h"
+#include "client_enums.h"  /* aiType, gameType */
+#include "server_sim.h"
 #include "input.h"
 #include "winbolo.h"
 
@@ -708,16 +707,6 @@ void gameFrontShutdownServer(void);
 *  or NULL if not in single-player mode.
 *********************************************************/
 ServerSim *gameFrontGetServerSim(void);
-
-/*********************************************************
-*NAME:          gameFrontGetTransport
-*PURPOSE:
-*  Returns a pointer to the active Transport, or NULL
-*  if using the legacy network path.
-*  Returns local transport for single-player, UDP transport
-*  for networked games using the new protocol.
-*********************************************************/
-Transport *gameFrontGetTransport(void);
 
 /*********************************************************
 *NAME:          gameFrontGetPlayerNum

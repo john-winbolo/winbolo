@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include "explosions.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "gametype.h"
 #include "global.h"
 #include "lgm.h"
@@ -42,6 +43,7 @@
 #include "tank.h"
 #include "game_sim.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"
 #include "tutorial.h"
 #include "../steam/steam_wrapper.h"
 

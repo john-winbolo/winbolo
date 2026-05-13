@@ -35,7 +35,7 @@ typedef SDL_Mutex *HANDLE;
 #endif
 #include <string.h>
 #include <stdlib.h>
-#include "../bolo/global.h"
+#include "global.h"
 #include "http.h"
 #include "winbolonetthread.h"
 

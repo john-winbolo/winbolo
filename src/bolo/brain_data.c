@@ -49,6 +49,7 @@
 #include "explosions.h"
 #include "screenbullet.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "sounddist.h"
 #include "messages.h"
 #include "grass.h"
@@ -71,7 +72,8 @@
 #include "interpolation.h"
 #include "util.h"
 #include "client_sim.h"
-#include "../server/server_sim.h"
+#include "client_sim_internal.h"
+#include "server_sim.h"
 #include "../steam/steam_wrapper.h"
 
 /*********************************************************

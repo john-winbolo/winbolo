@@ -25,7 +25,7 @@
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
-#include "../../server/server_sim.h"
+#include "server_sim.h"
 
 #ifdef __cplusplus
 extern "C" {

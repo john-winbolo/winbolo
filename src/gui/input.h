@@ -27,8 +27,8 @@
 #ifndef _INPUT_H
 #define _INPUT_H
 
-#include "../bolo/global.h"
-#include "../bolo/tank.h"  /* tankButton */
+#include "global.h"
+#include "client_enums.h"  /* tankButton */
 
 /* Typestructure that holds the keys */
 typedef struct {

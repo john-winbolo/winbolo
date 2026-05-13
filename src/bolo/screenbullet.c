@@ -105,7 +105,7 @@ void screenBulletsAddItem(screenBullets *value, BYTE mx, BYTE my, BYTE px, BYTE 
 *ARGUMENTS:
 *  value - Pointer to the screenBullets data structure
 *********************************************************/
-int screenBulletsGetNumEntries(screenBullets *value) {
+int screenBulletsGetNumEntries(const screenBullets *value) {
   int returnValue; /* Value to return */
   screenBullets q;
 
@@ -137,7 +137,7 @@ int screenBulletsGetNumEntries(screenBullets *value) {
 *  py    - Y pixel offset
 *  frame - Frame identifer of the bullet
 *********************************************************/
-void screenBulletsGetItem(screenBullets *value, int itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame) {
+void screenBulletsGetItem(const screenBullets *value, int itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame) {
   int count; /* Looping variable */
   screenBullets q;
 
