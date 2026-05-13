@@ -98,7 +98,7 @@ typedef struct {
   int16_t  num_hits;
 } WSimResult;
 
-typedef struct {
+typedef struct BrainWorldSim {
   const BYTE *map;
   float terrain_speed[16];
 
