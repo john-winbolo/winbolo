@@ -62,9 +62,7 @@ extern "C" {
 #include "luabrainshandler.h"
 #include "flags.h"
 
-/* Include players.h with C linkage — no #pragma pack inside, safe here */
 extern "C" {
-#include "players.h"
 #include "client_net.h"
 #include "../../server/server_lifecycle.h"
 #include "../../server/threads.h"

@@ -1273,7 +1273,7 @@ static int runNetworkMode(void) {
   /* Initialize the game engine with dummy params (will be re-created after map load) */
   humanSim = clientSimAlloc();
   clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
-  playersSetMyLastPlayerName(humanSim, optName);
+  clientSimSetMyLastPlayerName(humanSim, optName);
 
   /* Connect to the server via new UDP transport */
   if (!optQuiet) {

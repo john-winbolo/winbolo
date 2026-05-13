@@ -84,7 +84,6 @@
 #include "brain_data.h"
 #include "client_sim.h"
 #include "util.h"
-#include "braincore.h"
 #include "na_overlay_pillcontrib.h"
 #include "na_threat.h"
 #include "na_shield_stamp.h"
@@ -135,7 +134,6 @@ static char      brainsPaths[LUA_BRAINS_MAX][LUA_BRAINS_PATH_MAX];
 static BrainType brainsTypes[LUA_BRAINS_MAX];    /* LUA or ONNX per entry */
 
 #if defined(HAVE_ONNXRUNTIME) && !defined(__EMSCRIPTEN__)
-#include "ml_brain.h"
 static MLBrainInstance *mlSingletonInst = NULL;  /* Active ONNX brain */
 static ClientSim      *mlSingletonCS   = NULL;   /* ClientSim for ONNX brain */
 #endif

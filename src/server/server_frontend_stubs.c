@@ -67,7 +67,7 @@ void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE a
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) { (void)cs; (void)shells; (void)mines; (void)armour; }
 void screenLgmAddItem(screenLgm *value, BYTE mx, BYTE my, BYTE px, BYTE py, BYTE frame) { (void)value; (void)mx; (void)my; (void)px; (void)py; (void)frame; }
 void frontEndPlaySound(ClientSim *cs, sndEffects value) { (void)cs; (void)value; }
-void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms, int32_t srtDelay, bool isPillView, tank *tank, int edgeX, int edgeY) { (void)cs; (void)value; (void)mineView; (void)tks; (void)gs; (void)sBullet; (void)lgms; (void)srtDelay; (void)isPillView; (void)tank; (void)edgeX; (void)edgeY; }
+void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms, int32_t srtDelay, bool isPillView, int edgeX, int edgeY) { (void)cs; (void)value; (void)mineView; (void)tks; (void)gs; (void)sBullet; (void)lgms; (void)srtDelay; (void)isPillView; (void)edgeX; (void)edgeY; }
 void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) { (void)cs; (void)pillNum; (void)pb; }
 void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) { (void)cs; (void)tankNum; (void)ts; }
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) { (void)cs; (void)baseNum; (void)bs; }

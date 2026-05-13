@@ -868,7 +868,7 @@ bool gameFrontSetDlgState(openingStates newState) {
     gameFrontValidateWbnBeforeJoin();
     humanSim = clientSimAlloc(); clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
     frontEndSetActiveClientSim(humanSim);
-    if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
+    if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
     fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
             gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
     fflush(stderr);
@@ -1088,7 +1088,7 @@ bool gameFrontSetDlgState(openingStates newState) {
               clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
             }
           }
-          if (gameFrontRemeber) playersSetMyLastPlayerName(humanSim, gameFrontName);
+          if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
           /* Set up networking state after ClientSim is fully initialized */
           netSetup(humanSim, netSingle, gameFrontMyUdp, gameFrontUdpAddress, gameFrontTargetUdp,
                    password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,

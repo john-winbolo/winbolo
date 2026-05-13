@@ -19,14 +19,11 @@
 #include <sys/stat.h>
 
 #include "frontend.h"
-#include "players.h"
 #include "client_sim.h"
 #include "client_net.h"
 #include "client_render.h"
 #include "input_packet.h"
 #include "transport.h"
-#include "transport_udp.h"
-#include "bot_manager.h"
 #include "gui_message.h"
 #include "../../server/server_sim.h"
 #include "../../server/threads.h"
@@ -513,7 +510,7 @@ static void windowRunGameTick(ClientSim *cs) {
     /* Check if the UDP server has disconnected or timed out.
      * Only check for UDP transports (serverSim == NULL means not local). */
     if (gameFrontGetServerSim() == NULL &&
-        transportUdpClientGetJoinState(transport) == UDP_CLIENT_SERVER_SHUTDOWN) {
+        clientSimGetConnectState(cs) == CLIENT_CONNECT_SERVER_SHUTDOWN) {
         clientSimConnectionLost(cs);
         imguiMessageBoxEx(DIALOG_BOX_TITLE,
                           langGetText(NETERR_LOSTCONNECTION_RETURN_MENU),
@@ -580,8 +577,8 @@ static void windowRunGameTick(ClientSim *cs) {
             /* Tick bot brains before the sim tick (local game only) */
             {
                 ServerSim *serverSim = gameFrontGetServerSim();
-                if (serverSim != NULL && botManagerGetNumBots() > 0) {
-                    botManagerTick(serverSim, clientSimGetAiType(cs));
+                if (serverSim != NULL && serverSimGetNumBots(serverSim) > 0) {
+                    serverSimBotTick(serverSim, clientSimGetAiType(cs));
                 }
             }
             transport->tick(transport->ctx);
@@ -760,7 +757,7 @@ void windowAllowPlayerNameChange(bool allow) { (void)allow; }
 
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
-                            int32_t srtDelay, bool isPillView, tank *tank, int edgeX, int edgeY) {
+                            int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
     if (hideMainView == FALSE && drawBusy == FALSE) {
         BYTE cursorX, cursorY;
         bool showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
@@ -768,7 +765,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
         sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                            NULL, showPillLabels, showBaseLabels,
                            srtDelay, isPillView, edgeX, edgeY,
-                           showCursor, cursorX, cursorY, tank);
+                           showCursor, cursorX, cursorY);
     }
 }
 

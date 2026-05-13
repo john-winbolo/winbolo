@@ -190,6 +190,19 @@ void mapEditorGenerate(struct mapObj *mp, struct basesObj *bs,
  * to fix up start directions. */
 void mapGenPointStartsToLand(struct mapObj *mp, struct startsObj *ss);
 
+/* Generate a random map from cfg, return it as a heap-allocated MapPreview
+ * that owns its internal substructs (release with clientMapPreviewDestroy).
+ * If outBuf is non-NULL, also writes the network-compressed serialization
+ * into outBuf[0..outBufCap-1] and stores the byte count in *outCompressedLen;
+ * a value <= 0 there indicates the buffer was too small or compression
+ * failed. Returns NULL (without writing outBuf) on allocation or generation
+ * failure. */
+struct MapPreview;
+struct MapPreview *mapEditorGenerateAsPreview(const MapGenConfig *cfg,
+                                              BYTE *outBuf,
+                                              int outBufCap,
+                                              int *outCompressedLen);
+
 #ifdef __cplusplus
 }
 #endif

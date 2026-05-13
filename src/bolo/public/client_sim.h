@@ -262,6 +262,12 @@ void clientSimSetTankAutoHideGunsight(ClientSim *cs, bool useAutohide);
 void clientSimSetGunsight(ClientSim *cs, bool shown);
 BYTE clientSimGetTank256Dir(ClientSim *cs);
 
+/* Death-state queries for the local-player tank. Used by frontends to
+ * decide whether to render death-screen effects without holding a tank
+ * pointer themselves. */
+int  clientSimGetMyTankDeathWait(ClientSim *cs);
+int  clientSimGetMyTankLastDeath(ClientSim *cs);
+
 /* Game info (per-instance) */
 bool clientSimGetAllowHiddenMines(ClientSim *cs);
 BYTE clientSimGetNumPlayers(ClientSim *cs);
