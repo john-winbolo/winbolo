@@ -3747,7 +3747,7 @@ static void appRender(BrainTestApp *app) {
         gs->viewPlayer = app->followBot;
 
         MapViewCtx ctx = { app->renderer, app->tilesTex, app->zoomFactor, 1 };
-        mapViewRenderCentered(&ctx, gs,
+        mapViewRenderCentered(&ctx, app->sim,
                               app->viewCenterX, app->viewCenterY,
                               0, 0, screenW, screenH, app->followBot);
 

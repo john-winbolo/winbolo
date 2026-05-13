@@ -18,23 +18,14 @@
  *   Reusable map view renderer extracted from sdl3draw.c.
  *   Draws tiles, shells, tanks, and LGMs using a
  *   MapViewCtx (renderer + atlas + zoom). Can also build
- *   tile and sprite buffers directly from a GameSim for
- *   the bg_game welcome screen.
+ *   tile and sprite buffers directly from a ServerSim for
+ *   the bg_game welcome screen and braintest.
  *********************************************************/
 
 #include "mapview.h"
 #include "../tiles.h"
 #include "tilenum.h"
-#include "bolo_map.h"
-#include "pillbox.h"
-#include "bases.h"
-#include "mines.h"
-#include "tank.h"
 #include "screencalc.h"
-#include "players.h"
-#include "shells.h"
-#include "explosions.h"
-#include "tankexp.h"
 #include "util.h"
 
 #include <string.h>
@@ -345,32 +336,32 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
 
 /*********************************************************
  * mapViewCalcSquare — adjacency-aware tile calculation
- * from a GameSim. Same logic as screenCalcSquare in
+ * from a ServerSim. Same logic as screenCalcSquare in
  * screen.c but reads from sim instead of module-static cs.
  * Skips the invisiwall mapSetPos mutation (read-only).
  *********************************************************/
 
 /* Read a neighbour tile, treating bases as ROAD and stripping mines. */
-static BYTE mapViewNeighbour(GameSim *sim, BYTE nx, BYTE ny) {
-  if (basesExistPos(&sim->bs, nx, ny) == TRUE) return ROAD;
-  BYTE t = mapGetPos(&sim->mp, nx, ny);
+static BYTE mapViewNeighbour(ServerSim *sim, BYTE nx, BYTE ny) {
+  if (serverSimBaseExistsAt(sim, nx, ny) == TRUE) return ROAD;
+  BYTE t = serverSimGetMapTerrain(sim, nx, ny);
   if (t >= MINE_START && t <= MINE_END) return (BYTE)(t - MINE_SUBTRACT);
   return t;
 }
 
-BYTE mapViewCalcSquare(GameSim *sim, BYTE xValue, BYTE yValue, bool *outMine, BYTE selfPlayer) {
+BYTE mapViewCalcSquare(ServerSim *sim, BYTE xValue, BYTE yValue, bool *outMine, BYTE selfPlayer) {
   BYTE returnValue;
   *outMine = false;
 
   /* Pillbox check */
-  if (pillsExistPos(&sim->pb, xValue, yValue) == TRUE) {
-    returnValue = pillsGetScreenHealth(sim, &sim->pb, xValue, yValue);
+  if (serverSimPillExistsAt(sim, xValue, yValue) == TRUE) {
+    returnValue = serverSimPillGetScreenHealthAt(sim, xValue, yValue);
     return returnValue;
   }
 
   /* Base check */
-  if (basesExistPos(&sim->bs, xValue, yValue) == TRUE) {
-    baseAlliance ba = basesGetAlliancePos(sim, xValue, yValue);
+  if (serverSimBaseExistsAt(sim, xValue, yValue) == TRUE) {
+    baseAlliance ba = serverSimBaseGetAllianceAt(sim, xValue, yValue);
     switch (ba) {
     case baseOwnGood:
     case baseAllieGood:
@@ -380,7 +371,7 @@ BYTE mapViewCalcSquare(GameSim *sim, BYTE xValue, BYTE yValue, bool *outMine, BY
       returnValue = BASE_NEUTRAL;
       break;
     case baseDead:
-      if (selfPlayer != NEUTRAL && basesAmOwner(sim, selfPlayer, xValue, yValue) == TRUE) {
+      if (selfPlayer != NEUTRAL && serverSimBaseAmOwnerAt(sim, selfPlayer, xValue, yValue) == TRUE) {
         returnValue = BASE_GOOD;
       } else {
         returnValue = BASE_EVIL;
@@ -395,11 +386,11 @@ BYTE mapViewCalcSquare(GameSim *sim, BYTE xValue, BYTE yValue, bool *outMine, BY
   }
 
   /* Regular terrain with adjacency */
-  BYTE currentPos = mapGetPos(&sim->mp, xValue, yValue);
+  BYTE currentPos = serverSimGetMapTerrain(sim, xValue, yValue);
 
   /* Mine detection (skip invisiwall mutation) */
-  if (mapIsMine(&sim->mp, xValue, yValue) == TRUE) {
-    if (minesExistPos(&sim->mns, &sim->mp, xValue, yValue) == TRUE) {
+  if (serverSimMapIsMine(sim, xValue, yValue) == TRUE) {
+    if (serverSimMineExistsAt(sim, xValue, yValue) == TRUE) {
       *outMine = true;
     }
     if (currentPos != DEEP_SEA) {
@@ -456,7 +447,7 @@ typedef struct {
   bool mines[MAPVIEW_MAX_TILES_W][MAPVIEW_MAX_TILES_H];
 } MapViewTileBuffer;
 
-static void mapViewBuildTileBuffer(GameSim *sim, MapViewTileBuffer *buf,
+static void mapViewBuildTileBuffer(ServerSim *sim, MapViewTileBuffer *buf,
                                    BYTE camMX, BYTE camMY,
                                    int tilesW, int tilesH, BYTE selfPlayer) {
   for (int x = 0; x < tilesW; x++) {
@@ -472,10 +463,10 @@ static void mapViewBuildTileBuffer(GameSim *sim, MapViewTileBuffer *buf,
 
 /*********************************************************
  * mapViewRenderCentered — all-in-one renderer for bg_game.
- * Computes camera, builds tile buffer from GameSim,
- * builds tanks from GameSim, draws everything.
+ * Computes camera, builds tile buffer from ServerSim,
+ * builds tanks from ServerSim render snapshots, draws everything.
  *********************************************************/
-void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
+void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
                            WORLD centerWX, WORLD centerWY,
                            int originX, int originY,
                            int viewW, int viewH,
@@ -541,16 +532,15 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
     }
   }
 
-  /* Draw tanks directly from GameSim */
+  /* Draw tanks via serverSim render snapshot */
   for (BYTE i = 0; i < MAX_TANKS; i++) {
-    if (sim->tanks[i] == NULL) continue;
-    if (tankGetDeathWait(&sim->tanks[i]) > 0) continue;
-    WORLD twx, twy;
-    tankGetWorld(&sim->tanks[i], &twx, &twy);
+    TankRenderInfo info;
+    if (!serverSimGetTankRender(sim, i, &info)) continue;
+    if (!info.alive) continue;
 
     /* Convert tank world pos to pixel, relative to camera */
-    int tpx = ((int)twx * tileSize >> 8);
-    int tpy = ((int)twy * tileSize >> 8);
+    int tpx = ((int)info.world_x * tileSize >> 8);
+    int tpy = ((int)info.world_y * tileSize >> 8);
     float dx = (float)((tpx - camMX * tileSize) * zf - edgeX + originX - scaledTile / 2);
     float dy = (float)((tpy - camMY * tileSize) * zf - edgeY + originY - scaledTile / 2);
 
@@ -560,16 +550,14 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
 
     /* Determine tank frame: direction (0-15) + colour offset.
        Pick self/allie/evil sprite based on alliance with selfPlayer. */
-    BYTE dir = tankGetDir(&sim->tanks[i]);
-    bool onBoat = tankIsOnBoat(&sim->tanks[i]);
-    tankAlliance al = playersScreenAllience(&sim->plyrs, selfPlayer, i);
+    tankAlliance al = serverSimGetTankAllianceFor(sim, selfPlayer, i);
     BYTE frameBase;
     switch (al) {
-      case tankSelf:  frameBase = onBoat ? TANK_SELFBOAT_0 : TANK_SELF_0; break;
-      case tankAllie: frameBase = onBoat ? TANK_GOODBOAT_0 : TANK_GOOD_0; break;
-      default:        frameBase = onBoat ? TANK_EVILBOAT_0 : TANK_EVIL_0; break;
+      case tankSelf:  frameBase = info.on_boat ? TANK_SELFBOAT_0 : TANK_SELF_0; break;
+      case tankAllie: frameBase = info.on_boat ? TANK_GOODBOAT_0 : TANK_GOOD_0; break;
+      default:        frameBase = info.on_boat ? TANK_EVILBOAT_0 : TANK_EVIL_0; break;
     }
-    BYTE frame = frameBase + dir;
+    BYTE frame = frameBase + info.dir;
 
     /* Look up atlas coords using the same switch as mapViewDrawTanks.
        For efficiency, use the lookup table approach: the tank frame values
@@ -681,11 +669,14 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
   }
 
-  /* Draw shells directly from GameSim */
+  /* Draw shells via serverSim snapshot */
   {
-    shells q = sim->shs;
-    while (q != NULL) {
-      if (!q->shellDead) {
+    enum { kMaxShellRender = 256 };
+    static ShellRender shellBuf[kMaxShellRender];
+    int shellN = serverSimGetShellSnapshot(sim, shellBuf, kMaxShellRender);
+    for (int si = 0; si < shellN; si++) {
+      ShellRender *q = &shellBuf[si];
+      {
         /* Convert shell world coords to pixel position relative to camera */
         int spx = ((int)q->x * tileSize) >> 8;
         int spy = ((int)q->y * tileSize) >> 8;
@@ -710,7 +701,7 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
           case SHELL_DIR13: srcX=SHELL_13_X; srcY=SHELL_13_Y; srcW=SHELL_13_WIDTH; srcH=SHELL_13_HEIGHT; break;
           case SHELL_DIR14: srcX=SHELL_14_X; srcY=SHELL_14_Y; srcW=SHELL_14_WIDTH; srcH=SHELL_14_HEIGHT; break;
           case SHELL_DIR15: srcX=SHELL_15_X; srcY=SHELL_15_Y; srcW=SHELL_15_WIDTH; srcH=SHELL_15_HEIGHT; break;
-          default: goto next_shell;
+          default: continue;
         }
 
         /* Anchor sprite by its TIP pixel (not by center) so the
@@ -742,15 +733,16 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
           SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &sSrc, &sDst);
         }
       }
-      next_shell:
-      q = q->next;
     }
   }
 
-  /* Draw explosions directly from GameSim */
+  /* Draw explosions via serverSim snapshot */
   {
-    explosions q = sim->expl;
-    while (q != NULL) {
+    enum { kMaxExplosionRender = 128 };
+    static ExplosionRender explBuf[kMaxExplosionRender];
+    int explN = serverSimGetExplosionSnapshot(sim, explBuf, kMaxExplosionRender);
+    for (int ei = 0; ei < explN; ei++) {
+      ExplosionRender *q = &explBuf[ei];
       int epx = (int)q->mx * tileSize + (int)q->px;
       int epy = (int)q->my * tileSize + (int)q->py;
       float ex = (float)((epx - camMX * tileSize) * zf - edgeX + originX);
@@ -771,7 +763,7 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
         case 3: srcX=EXPLOSION6_X; srcY=EXPLOSION6_Y; break;
         case 2: srcX=EXPLOSION7_X; srcY=EXPLOSION7_Y; break;
         case 1: srcX=EXPLOSION8_X; srcY=EXPLOSION8_Y; break;
-        default: goto next_explosion;
+        default: continue;
       }
 
       if (ex + scaledTile >= originX && ex <= originX + viewW &&
@@ -780,24 +772,21 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
         SDL_FRect eDst = { ex, ey, (float)scaledTile, (float)scaledTile };
         SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &eSrc, &eDst);
       }
-      next_explosion:
-      q = q->next;
     }
   }
 
-  /* Draw LGMs (builders) directly from GameSim */
+  /* Draw LGMs (builders) via serverSim render snapshot */
   for (BYTE i = 0; i < MAX_TANKS; i++) {
-    lgm *l = &sim->lgmen[i];
-    if (*l == NULL) continue;
-    if ((*l)->inTank || (*l)->isDead) continue;
+    LgmRender lgmInfo;
+    if (!serverSimGetLgmRender(sim, i, &lgmInfo)) continue;
 
-    int lpx = ((int)(*l)->x * tileSize) >> 8;
-    int lpy = ((int)(*l)->y * tileSize) >> 8;
+    int lpx = ((int)lgmInfo.x * tileSize) >> 8;
+    int lpy = ((int)lgmInfo.y * tileSize) >> 8;
     float lx = (float)((lpx - camMX * tileSize) * zf - edgeX + originX);
     float ly = (float)((lpy - camMY * tileSize) * zf - edgeY + originY);
 
     int srcX, srcY, srcW, srcH;
-    switch ((*l)->frame) {
+    switch (lgmInfo.frame) {
       case LGM0:
         srcX=LGM0_X; srcY=LGM0_Y; srcW=LGM_WIDTH; srcH=LGM_HEIGHT; break;
       case LGM1:
@@ -816,10 +805,13 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
     }
   }
 
-  /* Draw tank explosions (flying debris) directly from GameSim */
+  /* Draw tank explosions (flying debris) via serverSim snapshot */
   {
-    tkExplosion q = sim->tankExplosions;
-    while (q != NULL) {
+    enum { kMaxTankExpRender = 64 };
+    static TankExplosionRender tkBuf[kMaxTankExpRender];
+    int tkN = serverSimGetTankExplosionSnapshot(sim, tkBuf, kMaxTankExpRender);
+    for (int ti = 0; ti < tkN; ti++) {
+      TankExplosionRender *q = &tkBuf[ti];
       /* Anchor top-left, matching mapViewDrawShells (the real game's path
          for tank fireballs via screenBullets/SHELL_EXPLOSION1). Centering
          here would offset the head half a tile from the trail explosions
@@ -837,7 +829,6 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
         SDL_FRect tDst = { tx, ty, (float)scaledTile, (float)scaledTile };
         SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &tSrc, &tDst);
       }
-      q = q->next;
     }
   }
 }

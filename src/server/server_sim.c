@@ -3551,3 +3551,73 @@ bool serverSimGetStart(ServerSim *sim, BYTE i,
     if (dir) *dir = startsConvertDir((BYTE)((s.dir < 16) ? s.dir : 0));
     return true;
 }
+
+/* --- Live-sim render-state readers --- */
+
+bool serverSimGetTankRender(ServerSim *sim, BYTE i, TankRenderInfo *out) {
+    if (i >= MAX_TANKS) return false;
+    tank *t = &sim->sim.tanks[i];
+    if (*t == NULL) return false;
+    tankGetWorld(t, &out->world_x, &out->world_y);
+    out->dir     = tankGetDir(t);
+    out->on_boat = tankIsOnBoat(t);
+    out->alive   = (tankGetDeathWait(t) == 0);
+    return true;
+}
+
+tankAlliance serverSimGetTankAllianceFor(ServerSim *sim,
+                                         BYTE selfPlayer,
+                                         BYTE tankNum) {
+    return playersScreenAllience(&sim->sim.plyrs, selfPlayer, tankNum);
+}
+
+int serverSimGetShellSnapshot(ServerSim *sim, ShellRender out[], int cap) {
+    int n = 0;
+    for (shells q = sim->sim.shs; q != NULL && n < cap; q = q->next) {
+        if (q->shellDead) continue;
+        out[n].x     = q->x;
+        out[n].y     = q->y;
+        out[n].angle = q->angle;
+        n++;
+    }
+    return n;
+}
+
+int serverSimGetExplosionSnapshot(ServerSim *sim, ExplosionRender out[], int cap) {
+    int n = 0;
+    for (explosions q = sim->sim.expl; q != NULL && n < cap; q = q->next) {
+        out[n].mx     = q->mx;
+        out[n].my     = q->my;
+        out[n].px     = q->px;
+        out[n].py     = q->py;
+        out[n].length = q->length;
+        n++;
+    }
+    return n;
+}
+
+bool serverSimGetLgmRender(ServerSim *sim, BYTE i, LgmRender *out) {
+    if (i >= MAX_TANKS) return false;
+    lgm *l = &sim->sim.lgmen[i];
+    if (*l == NULL) return false;
+    if ((*l)->inTank || (*l)->isDead) return false;
+    out->x     = (*l)->x;
+    out->y     = (*l)->y;
+    out->frame = (*l)->frame;
+    return true;
+}
+
+int serverSimGetTankExplosionSnapshot(ServerSim *sim,
+                                      TankExplosionRender out[], int cap) {
+    int n = 0;
+    for (tkExplosion q = sim->sim.tankExplosions; q != NULL && n < cap; q = q->next) {
+        out[n].x = q->x;
+        out[n].y = q->y;
+        n++;
+    }
+    return n;
+}
+
+bool serverSimMineExistsAt(ServerSim *sim, BYTE x, BYTE y) {
+    return minesExistPos(&sim->sim.mns, &sim->sim.mp, x, y);
+}
