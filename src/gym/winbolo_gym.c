@@ -32,7 +32,6 @@
 #include "global.h"
 #include "client_mapload.h"
 #include "client_sim.h"
-#include "client_snapshot.h"
 #include "client_sim_control.h"
 #include "control_event.h"
 #include "frontend.h"
@@ -136,7 +135,7 @@ static void gymSetupGame(WinBoloGym *g) {
                             UNLIMITED_GAME_TIME, "GymAgent", 0, FALSE);
     clientSimSetAiType(g->clientSim, aiYes);
     gymSyncSnapshot(g);
-    clientNetSetupTankGo(g->clientSim);
+    clientSimNetSetupTankGo(g->clientSim);
 
     /* Register the gym client as a control-event subscriber. Placed after
      * clientLoadCompressedMap (which calls clientSimCreate) so myPlayerNum

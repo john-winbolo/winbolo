@@ -70,7 +70,6 @@
 #include "brain_data.h"
 #include "client_mapload.h"
 #include "client_sim.h"
-#include "client_snapshot.h"
 #include "client_sim_control.h"
 #include "control_event.h"
 #include "frontend.h"
@@ -1033,7 +1032,7 @@ static bool fastModeSetupGame(void) {
 
   /* Sync initial snapshot and place tank */
   headlessSyncSnapshot();
-  clientNetSetupTankGo(humanSim);
+  clientSimNetSetupTankGo(humanSim);
 
   /* Register the headless client as a control-event subscriber. Placed
    * after clientLoadCompressedMap (which calls clientSimCreate) so
@@ -1112,7 +1111,7 @@ static int runFastMode(void) {
                           UNLIMITED_GAME_TIME, optName, 0, FALSE);
   clientSimSetAiType(humanSim, optAi);
   headlessSyncSnapshot();
-  clientNetSetupTankGo(humanSim);
+  clientSimNetSetupTankGo(humanSim);
 
   /* Register the headless client as a control-event subscriber. Placed
    * after clientLoadCompressedMap so humanSim->myPlayerNum is 0 before
@@ -1350,7 +1349,7 @@ static int runNetworkMode(void) {
   }
 
   /* Set up tank at start position */
-  clientNetSetupTankGo(humanSim);
+  clientSimNetSetupTankGo(humanSim);
 
   /* Gate lobby vs running: if we received PACKET_LOBBY_STATE during
    * join, stay in lobby state; otherwise proceed to running */

@@ -49,7 +49,6 @@
 #include "../../common/wb_log.h"
 #include "client_mapload.h"
 #include "client_sim.h"
-#include "client_snapshot.h"
 #include "client_sim_control.h"
 #include "control_event.h"
 #include "global.h"
@@ -1001,7 +1000,7 @@ bool gameFrontSetDlgState(openingStates newState) {
             returnValue = FALSE;
           } else {
             clientMutexWaitFor();
-            clientNetSetupTankGo(humanSim);
+            clientSimNetSetupTankGo(humanSim);
             clientMutexRelease();
             gameFrontUpdateSteamPresence(humanSim);
             dlgState = openFinished;
@@ -1127,7 +1126,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           spHumanSubHandle = serverSimRegisterSubscriber(spServerSim,
                                                         humanDeliverControl,
                                                         humanSim);
-          clientNetSetupTankGo(humanSim);
+          clientSimNetSetupTankGo(humanSim);
           /* Destroy background game before adding real bots — bgGameDestroy
            * calls serverSimDestroyBots which would wipe bots we add below. */
           {
@@ -2139,7 +2138,7 @@ bool gameFrontLoadDeferredMap(ClientSim **cs) {
   clientSimSetLockToggleSendFunc(*cs, gameFrontLockToggleCallback);
 
   clientMutexWaitFor();
-  clientNetSetupTankGo(*cs);
+  clientSimNetSetupTankGo(*cs);
   clientMutexRelease();
 
   return TRUE;

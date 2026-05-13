@@ -18,7 +18,6 @@
 
 #include "client_render.h"
 #include "client_sim.h"
-#include "client_snapshot.h"
 #include "frontend.h"
 #include "playername_validate.h"
 #include "client_net.h"
