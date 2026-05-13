@@ -36,6 +36,7 @@ add_library(server_static STATIC
     threads.c
     server_lifecycle.c
     server_sim.c
+    transport_udp_server.c
 )
 
 bolo_apply_include_rules(server_static sim_owner)

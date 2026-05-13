@@ -77,7 +77,6 @@ add_library(bolo_static STATIC
     tankexp.c
     transport_local.c
     transport_udp_common.c
-    transport_udp_server.c
     treegrow.c
     tutorial.c
     udppackets.c

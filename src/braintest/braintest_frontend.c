@@ -220,8 +220,3 @@ void threadsReleaseMutex(void) {}
 void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills) {
   (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;
 }
-
-/* geolookup stub (transport_udp.c references this) */
-bool geoLookupCountry(const char *ipStr, char countryCode[3]) {
-  (void)ipStr; countryCode[0] = '\0'; return FALSE;
-}

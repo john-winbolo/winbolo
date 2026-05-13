@@ -36,23 +36,17 @@
 #                  snapshot APIs that the GUI clients already use,
 #                  and gym drops back to runtime_only.
 #   gui          - the desktop game GUI and any platform-specific GUI binary.
-#                  Today sees public/, internal/, and flat src/bolo/ for
-#                  transitional reasons; a future change will tighten this
-#                  to public/ only.
-#   runtime_only - headless / server-only / logviewer runtime binaries
-#                  that ship parts of the sim but no desktop GUI. Same
-#                  transitional state as gui; same future tightening.
+#                  Sees public/ only. Reaching into bolo internals from a
+#                  GUI translation unit is the asymmetric-runtime bug class
+#                  this rule protects against.
+#   runtime_only - headless / server-only / logviewer runtime binaries that
+#                  ship parts of the sim but no desktop GUI. Sees public/
+#                  only. Same rationale as gui.
 #
 # This file is the single point of policy for the include-rule lockdown.
-# gui/runtime_only targets see only public/; the four privileged profiles
-# (sim_owner / mapeditor / braintest / gym) see the full tree.
-#
-# After this change, the gui and runtime_only profiles resolve to public/
-# only. The sim_owner, mapeditor, braintest, and gym profiles continue to
-# see the full public + internal + flat tree. The latter four either own
-# the sim (sim_owner), have a privileged scoped exception documented above
-# (mapeditor, braintest, gym), or aren't subject to the asymmetric-runtime
-# bug class this rule protects against.
+# gui and runtime_only targets see only public/; the four privileged
+# profiles (sim_owner / mapeditor / braintest / gym) see the full tree
+# because they either own the sim or have a documented scoped exception.
 
 set(BOLO_PUBLIC_DIR   "${CMAKE_CURRENT_LIST_DIR}/../src/bolo/public")
 set(BOLO_INTERNAL_DIR "${CMAKE_CURRENT_LIST_DIR}/../src/bolo/internal")
@@ -74,4 +68,28 @@ function(bolo_apply_include_rules target profile)
         message(FATAL_ERROR
             "bolo_apply_include_rules: unknown profile '${profile}' for target '${target}'")
     endif()
+endfunction()
+
+# Grant per-source-file internal/ access on top of a target's
+# profile. Used for source files that are bolo's own internal
+# implementation but happen to be compiled per-target rather
+# than via bolo_static / server_static — typically because of
+# target-divergent compile defs (HAVE_STEAM, BOLO_PORTMAP,
+# HAVE_SCREEN_C) that prevent the file from being precompiled
+# once into a shared static library.
+#
+# The scope is per-source-file, not per-target: other TUs in
+# the same target remain bound by the target's profile, so
+# the lockdown still bites GUI-side code in the same binary.
+#
+# Pass a target name followed by one or more source-file
+# paths (absolute or relative to CMAKE_SOURCE_DIR).
+function(bolo_grant_internal_source_access target)
+    foreach(source IN LISTS ARGN)
+        set_source_files_properties(${source}
+            DIRECTORY ${CMAKE_SOURCE_DIR}
+            TARGET_DIRECTORY ${target}
+            PROPERTIES INCLUDE_DIRECTORIES
+            "${BOLO_PUBLIC_DIR};${BOLO_INTERNAL_DIR};${BOLO_FLAT_DIR}")
+    endforeach()
 endfunction()

@@ -34,12 +34,12 @@
 #include "messages.h"
 #include "util.h"
 #include "game_sim.h"
-#include "../server/geolookup.h"
+#include "geolookup.h"
 #include "server_sim.h"
-#include "../server/server_lifecycle.h"
+#include "server_lifecycle.h"
 #include "control_event.h"
 #include "../winbolonet/winbolonet.h"
-#include "../server/threads.h"
+#include "threads.h"
 #include "sounddist.h"
 #include "bot_manager.h"
 #include "log.h"
@@ -2657,6 +2657,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                                          serverSimGetBotAiType(sim),
                                          gameTypeGet(&serverSimGetGameSim(sim)->game),
                                          serverSimGetGameSim(sim)->hiddenMines)) {
+                        transportUdpServerSetBotName(slot, botName);
                         transportUdpServerBroadcastLobbyUpdate(sim, slot);
                     }
                 }
