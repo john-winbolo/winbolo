@@ -36,7 +36,7 @@
 #include "pillbox.h"
 #include "bases.h"
 #include "players.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 
 /* Log items */
 #define LOG_QUIT 0

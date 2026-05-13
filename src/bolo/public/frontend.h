@@ -33,7 +33,7 @@
 #include "screenbullet.h"
 #include "screenlgm.h"
 #include "types.h"
-#include "../gui/lang.h"
+#include "../../gui/lang.h"
 #include "viewport_types.h"  /* screen, screenMines, screenGunsight */
 #include "client_enums.h"    /* sndEffects */
 #include "bases.h"           /* baseAlliance */

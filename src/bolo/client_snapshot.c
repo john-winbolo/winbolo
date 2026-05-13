@@ -73,7 +73,7 @@
 #include "util.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 #include "../steam/steam_wrapper.h"
 
 /*********************************************************

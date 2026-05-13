@@ -35,7 +35,7 @@
 #include "util.h"
 #include "game_sim.h"
 #include "../server/geolookup.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 #include "../server/server_lifecycle.h"
 #include "control_event.h"
 #include "../winbolonet/winbolonet.h"

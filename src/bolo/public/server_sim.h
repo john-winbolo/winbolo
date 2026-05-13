@@ -29,7 +29,7 @@
 #include "game_sim.h"
 #include "position_history.h"
 #include "input_packet.h"
-#include "../mapeditor/mapeditor_generate.h"
+#include "../../mapeditor/mapeditor_generate.h"
 
 /* Forward decl — full definition in bolo/control_event.h. Kept opaque here so
  * server_sim.h doesn't drag client_sim.h's include closure into every TU. */

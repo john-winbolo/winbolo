@@ -81,7 +81,7 @@
 #include "transport.h"
 #include "transport_udp.h"
 #include "gui_message.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../gui/gamefront.h"

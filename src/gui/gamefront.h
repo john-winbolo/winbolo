@@ -31,7 +31,7 @@
 #include "global.h"
 #include "client_enums.h"  /* aiType, gameType */
 #include "transport.h"
-#include "../server/server_sim.h"
+#include "server_sim.h"
 #include "input.h"
 #include "winbolo.h"
 
