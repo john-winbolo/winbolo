@@ -31,6 +31,7 @@
 
 /* Includes */
 #include "global.h"
+#include "alliance_enums.h"
 #include "types.h"
 #include "tank.h"
 #include "shells.h"
@@ -80,19 +81,6 @@ struct ClientSim;
 
 
 /* Typedefs */
-
-/* Determines the pill type, good, neutral or evil */
-typedef enum {
-  pillDead,
-  pillAllie,
-  pillGood,
-  pillNeutral,
-  pillEvil,
-  pillTankGood,
-  pillTankAllie,
-  pillTankEvil
-} pillAlliance;
-
 
 /* Prototypes */
 

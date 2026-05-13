@@ -42,8 +42,7 @@
 #include "global.h"
 #include "viewport_types.h"  /* MAIN_SCREEN_SIZE_X/Y */
 #include "screentank.h"
-#include "bases.h"
-#include "pillbox.h"
+#include "alliance_enums.h"
 #include "tilenum.h"
 
 /* Local copies of constants that sdl3draw.c keeps as file-local

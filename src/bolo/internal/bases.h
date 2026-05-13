@@ -31,6 +31,7 @@
 
 /* Includes */
 #include "global.h"
+#include "alliance_enums.h"
 #include "types.h"
 
 struct GameSim;
@@ -89,16 +90,6 @@ struct ClientSim;
 #define BASES_BRAIN_NEUTRAL 2
 #define BASES_BRAIN_HOSTILE 1
 #define BASES_BRAIN_OBJECT_TYPE 3
-
-/* Determines the base type, good, netral or evil */
-typedef enum {
-  baseDead,
-  baseOwnGood,
-  baseAllieGood,
-  baseNeutral,
-  baseEvil
-} baseAlliance;
-
 
 /* Prototypes */
 void basesUpdateTimer(struct GameSim *sim, int playerNumber);
