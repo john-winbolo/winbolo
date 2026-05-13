@@ -13,6 +13,7 @@
  */
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "global.h"
 #include "server_lifecycle.h"
 
@@ -45,5 +46,6 @@ void transportUdpServerEnforcePing(struct ServerSim *sim) { (void)sim; }
 void transportUdpServerNotifyMapChange(struct ServerSim *sim) { (void)sim; }
 void transportUdpServerBroadcastMapSkipState(struct ServerSim *sim) { (void)sim; }
 void transportUdpServerBroadcastGameOver(struct ServerSim *sim) { (void)sim; }
+void transportUdpServerSetLock(struct ServerSim *sim, bool locked) { (void)sim; (void)locked; }
 uint16_t transportUdpServerGetClientPing(BYTE playerNum) { (void)playerNum; return 0; }
 const char *transportUdpServerGetPlayerName(BYTE playerNum) { (void)playerNum; return ""; }
