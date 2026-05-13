@@ -1,13 +1,12 @@
 /*
  * wire_limits.h
  *
- * Public size constants for the bolo wire protocol that legitimately
- * surface in GUI code (typically as buffer dimensions for input fields
- * that map onto wire packet payloads). The wire format itself stays
- * internal in netpacks.h / bolo_packets.h; only the payload-cap
- * constants live here.
+ * Public wire-protocol values that legitimately surface in GUI code:
+ * payload-size caps (so input widgets can show the right limit) and
+ * the version string used in compatibility checks. The wire format
+ * itself stays internal in netpacks.h / bolo_packets.h.
  *
- * T4 leaf — no #includes, no behaviour.
+ * No #includes, no behaviour.
  */
 
 #ifndef WIRE_LIMITS_H
@@ -18,5 +17,10 @@
  * the cap as they type. Must match the wire layout in
  * transport_udp_client.c / transport_udp_server.c. */
 #define PACKET_MAX_CHAT_MESSAGE 128
+
+/* Version string used in info-packet responses and surfaced in the
+ * server browser to gate "join" against version-skewed servers.
+ * WINBOLO_VERSION is supplied as a compile definition by CMake. */
+#define STRVER WINBOLO_VERSION
 
 #endif /* WIRE_LIMITS_H */

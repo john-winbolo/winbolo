@@ -289,8 +289,36 @@ static void gameFinderProcess(currentGames *cg, char *buff, int len, char *motd)
 }
 
 
-static void gameFinderProcessBroadcast(INFO_PACKET *info, struct in_addr *pack, BroadcastServerCallback callback, void *userData) {
-  callback(info, pack, userData);
+/* Translate an INFO_PACKET (wire format) into the public DiscoveryServer
+ * POD. addr is the source address from recvfrom — used as a fallback
+ * when the packet's gameid.serveraddress is unset. */
+static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const struct in_addr *addr, DiscoveryServer *out) {
+  memset(out, 0, sizeof(*out));
+  utilPtoCString((char *)info->mapname, out->mapName);
+  out->password = (info->has_password != 0);
+  out->mines = ((info->allow_mines & 0x80) != 0);
+
+  if (info->gameid.serveraddress.s_addr == 0) {
+    SDL_strlcpy(out->address, inet_ntoa(*addr), sizeof(out->address));
+  } else {
+    struct in_addr serverAddr = info->gameid.serveraddress;
+    SDL_strlcpy(out->address, inet_ntoa(serverAddr), sizeof(out->address));
+  }
+  out->port = info->gameid.serverport;
+  out->versionMajor = info->h.versionMajor;
+  out->versionMinor = info->h.versionMinor;
+  out->versionRevision = info->h.versionRevision;
+  out->numPlayers = (BYTE)info->num_players;
+  out->numBases = (BYTE)info->free_bases;
+  out->numPills = (BYTE)info->free_pills;
+  out->game = (gameType)info->gametype;
+  out->ai = (aiType)info->allow_AI;
+}
+
+static void gameFinderProcessBroadcast(INFO_PACKET *info, struct in_addr *pack, DiscoveryServerCallback callback, void *userData) {
+  DiscoveryServer server;
+  discoveryFillServerFromInfoPacket(info, pack, &server);
+  callback(&server, userData);
 }
 
 
@@ -406,7 +434,7 @@ bool discoveryFindTrackedGames(currentGames *cg, char *trackerAddress, unsigned 
   return returnValue;
 }
 
-bool discoveryFindBroadcastGamesAsync(BroadcastServerCallback callback, void *userData) {
+bool discoveryFindBroadcastGamesAsync(DiscoveryServerCallback callback, void *userData) {
   bool returnValue;
   int ret;
   struct sockaddr_in con;
@@ -581,4 +609,100 @@ bool discoveryFindBroadcastGamesAsync(BroadcastServerCallback callback, void *us
   }
   bolo_net_cleanup();
   return returnValue;
+}
+
+bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPingResult *out) {
+  struct sockaddr_in dest;
+  struct sockaddr_in from;
+  socklen_t fromlen;
+  SOCKET sock;
+  BYTE buff[MAX_UDPPACKET_SIZE] = INFOREQUESTHEADER;
+  uint32_t sendTime;
+  int sent;
+  int len;
+
+  if (out == NULL) {
+    return FALSE;
+  }
+  out->rttMs = -2;
+  out->freePills = 0;
+  out->freeBases = 0;
+  out->numPlayers = 0;
+
+  if (bolo_net_init() != 0) {
+    return FALSE;
+  }
+
+  memset(&dest, 0, sizeof(dest));
+  dest.sin_family = AF_INET;
+  dest.sin_port = htons(port);
+  dest.sin_addr.s_addr = inet_addr(address);
+  if (dest.sin_addr.s_addr == INADDR_NONE) {
+    struct hostent *phe = gethostbyname(address);
+    if (phe == NULL) {
+      WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Ping DNS lookup failed for %s", address);
+      bolo_net_cleanup();
+      return FALSE;
+    }
+    dest.sin_addr.s_addr = *((uint32_t *)phe->h_addr_list[0]);
+  }
+
+  sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (sock == INVALID_SOCKET) {
+    bolo_net_cleanup();
+    return FALSE;
+  }
+
+#ifdef _WIN32
+  {
+    DWORD tv = 5000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
+  }
+#else
+  {
+    struct timeval tv;
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
+  }
+#endif
+
+  sendTime = (uint32_t)SDL_GetTicks();
+  sent = sendto(sock, (const char *)buff, BOLOPACKET_REQUEST_SIZE, 0,
+                (struct sockaddr *)&dest, sizeof(dest));
+  WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: sent %d bytes to %s:%u (expected %d)",
+               sent, address, port, BOLOPACKET_REQUEST_SIZE);
+  if (sent != BOLOPACKET_REQUEST_SIZE) {
+    WB_LOG_WARN(WB_LOG_CAT_NET, "ping: sendto failed for %s:%u", address, port);
+    closesocket(sock);
+    bolo_net_cleanup();
+    return FALSE;
+  }
+
+  fromlen = sizeof(from);
+  len = recvfrom(sock, (char *)buff, MAX_UDPPACKET_SIZE, 0,
+                 (struct sockaddr *)&from, &fromlen);
+  closesocket(sock);
+  bolo_net_cleanup();
+
+  if (len < (int)sizeof(INFO_PACKET)) {
+#ifdef _WIN32
+    WB_LOG_DEBUG(WB_LOG_CAT_NET, "ping: %s:%u no response (len=%d, err=%d)", address, port, len, WSAGetLastError());
+#else
+    WB_LOG_DEBUG(WB_LOG_CAT_NET, "ping: %s:%u no response (len=%d, errno=%d)", address, port, len, errno);
+#endif
+    return FALSE;
+  }
+
+  {
+    uint32_t recvTime = (uint32_t)SDL_GetTicks();
+    INFO_PACKET *info = (INFO_PACKET *)buff;
+    out->rttMs = (int)(recvTime - sendTime);
+    out->freePills = info->free_pills;
+    out->freeBases = info->free_bases;
+    out->numPlayers = info->num_players;
+    WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: %s:%u responded in %dms, players=%u",
+                 address, port, out->rttMs, (unsigned)out->numPlayers);
+  }
+  return TRUE;
 }
