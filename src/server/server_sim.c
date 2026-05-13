@@ -2590,6 +2590,51 @@ void serverSimReapplyTeamAlliances(ServerSim *sim) {
     }
 }
 
+void serverSimStartGameInPlace(ServerSim *sim) {
+    BYTE i;
+
+    /* Apply team alliances: players with same non-zero teamNumber become allies */
+    serverSimReapplyTeamAlliances(sim);
+
+    /* Pre-compute start indices for the whole batch so teammates land
+     * near each other (see serverSimStartGame for the rationale). */
+    {
+        BYTE batchTeam[MAX_TANKS];
+        for (i = 0; i < MAX_TANKS; i++) {
+            batchTeam[i] = sim->lobbyPlayers[i].teamNumber;
+        }
+        startsAssignBatch(&sim->sim, &sim->sim.ss,
+                          sim->playerConnected, batchTeam,
+                          sim->sim.pendingStartIdx);
+    }
+
+    /* Create tanks for all connected players */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        if (sim->sim.tanks[i] != NULL) {
+            tankDestroy(&sim->sim, &sim->sim.tanks[i]);
+            sim->sim.tanks[i] = NULL;
+        }
+        if (sim->sim.lgmen[i] != NULL) {
+            lgmDestroy(&sim->sim.lgmen[i]);
+            sim->sim.lgmen[i] = NULL;
+        }
+        tankCreate(&sim->sim, &sim->sim.tanks[i]);
+        sim->sim.lgmen[i] = lgmCreate(i);
+        basesUpdateTimer(&sim->sim, i);
+    }
+
+    sim->state = serverStateRunning;
+
+    /* Layout A: autoLockOnGameStart. Save current allowNewPlayers so
+     * we can restore it when the game ends. */
+    sim->savedAllowNewPlayers = sim->allowNewPlayers;
+    if (sim->autoLockOnGameStart && sim->allowNewPlayers) {
+        sim->allowNewPlayers = FALSE;
+        transportUdpServerSetLock(sim, FALSE);
+    }
+}
+
 void serverSimStartGame(ServerSim *sim) {
     BYTE i;
     /* Save connected-player state before resetting – resetGameWorld clears

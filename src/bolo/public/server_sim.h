@@ -843,6 +843,24 @@ void serverSimStartGame(ServerSim *sim);
 void serverSimReapplyTeamAlliances(ServerSim *sim);
 
 /*********************************************************
+ *NAME:          serverSimStartGameInPlace
+ *PURPOSE:
+ *  Lobby → running transition that does NOT reset the
+ *  game world. The SP-host flow already loaded the map
+ *  and added players in lobby state, so the resetGameWorld
+ *  step in serverSimStartGame would just throw away the
+ *  setup it needs to preserve. This function does the
+ *  "second half": team-alliance pass, start-index batch,
+ *  per-slot tank/LGM creation, state transition, and the
+ *  Layout A autoLockOnGameStart save+lock.
+ *
+ *  Used by gamefront.c when the SP host clicks Start in
+ *  the lobby. Multiplayer goes through serverSimStartGame
+ *  via the countdown path.
+ *********************************************************/
+void serverSimStartGameInPlace(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimResetGameWorld
  *PURPOSE:
  *  Resets the game world using cached map data. Destroys
