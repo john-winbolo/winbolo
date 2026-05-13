@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.18)
 
 # Allow vendored dependencies with older cmake_minimum_required calls
 set(CMAKE_POLICY_VERSION_MINIMUM 3.10 CACHE INTERNAL "")
@@ -153,20 +153,6 @@ target_include_directories(imgui_backends PUBLIC
 target_link_libraries(imgui_backends PUBLIC SDL3::SDL3)
 
 # ---------------------------------------------------------------------------
-# Per-bot Lua C bindings (brains/<bot>/c/*.c — e.g. NewAutopilot's pillcontrib
-# overlay). Mirrors the BOT_C_SOURCES glob in the top-level CMakeLists.txt so
-# luabrainshandler.c can find the bot-specific headers.
-# ---------------------------------------------------------------------------
-
-file(GLOB BOT_C_SOURCES CONFIGURE_DEPENDS "${PROJ_ROOT}/brains/*/c/*.c")
-set(BOT_C_INCLUDE_DIRS "")
-foreach(_bot_c_src ${BOT_C_SOURCES})
-    get_filename_component(_bot_c_dir "${_bot_c_src}" DIRECTORY)
-    list(APPEND BOT_C_INCLUDE_DIRS "${_bot_c_dir}")
-endforeach()
-list(REMOVE_DUPLICATES BOT_C_INCLUDE_DIRS)
-
-# ---------------------------------------------------------------------------
 # Main shared library (SDL3 on Android expects libmain.so)
 # ---------------------------------------------------------------------------
 
@@ -180,6 +166,7 @@ set(BOLO_VERSION_MAJOR 1)
 set(BOLO_VERSION_MINOR 1)
 set(BOLO_VERSION_REVISION 8)
 add_subdirectory(${PROJ_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
+add_subdirectory(${PROJ_ROOT}/brains ${CMAKE_BINARY_DIR}/bot_brains_static)
 
 set(ANDROID_SOURCES
     # Android entry point and frontend
@@ -254,18 +241,22 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/server/posix_stubs.c
 )
 
-add_library(main SHARED ${ANDROID_SOURCES} ${BOT_C_SOURCES})
+add_library(main SHARED ${ANDROID_SOURCES})
 
 target_include_directories(main PRIVATE
     ${PROJ_ROOT}/src/gui/sdl3
     ${PROJ_ROOT}/src/gui/sdl3/dialogs
     ${PROJ_ROOT}/src/gui
     ${PROJ_ROOT}/src/server
-    ${BOT_C_INCLUDE_DIRS}
 )
 bolo_apply_include_rules(main gui)
+bolo_grant_internal_source_access(main
+    ${PROJ_ROOT}/src/bolo/transport_udp_client.c
+    ${PROJ_ROOT}/src/server/server_sim.c
+    ${PROJ_ROOT}/src/server/servermessages.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_generate.c)
 
-target_link_libraries(main PRIVATE bolo_static)
+target_link_libraries(main PRIVATE bolo_static bot_brains_static)
 target_link_libraries(main PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf

@@ -373,26 +373,6 @@ function(set_flat_output TARGET OUTDIR)
     endif()
 endfunction()
 
-# ─────────────────────────────────────────────────────────────────────
-# Per-bot C bindings. Each bot may ship its own bot-specific Lua
-# bindings under brains/<bot>/c/*.c (e.g. NewAutopilot's pillcontrib
-# overlay). Only binaries that link luabrainshandler.c need these
-# files — that's where the per-tick registrations happen.
-#
-# CONFIGURE_DEPENDS makes CMake re-glob on every build, so adding a new
-# .c under brains/<bot>/c/ is picked up automatically without a manual
-# reconfigure. Include dirs are derived from the source list so
-# consumers (luabrainshandler.c, braintest_main.c) can #include the
-# bot-specific headers without long relative paths.
-# ─────────────────────────────────────────────────────────────────────
-file(GLOB BOT_C_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/brains/*/c/*.c")
-set(BOT_C_INCLUDE_DIRS "")
-foreach(_bot_c_src ${BOT_C_SOURCES})
-    get_filename_component(_bot_c_dir "${_bot_c_src}" DIRECTORY)
-    list(APPEND BOT_C_INCLUDE_DIRS "${_bot_c_dir}")
-endforeach()
-list(REMOVE_DUPLICATES BOT_C_INCLUDE_DIRS)
-
 # ===========================================================================
 # Platform targets: iOS vs Desktop
 # ===========================================================================
@@ -461,6 +441,7 @@ set(IOS_BOLO_SOURCES
 # or ENABLE_PILLMASSAGE_BUG, so bolo_static here has the matching
 # minimal feature set.
 add_subdirectory(src/bolo)
+add_subdirectory(brains)
 
 # Server sources needed for single-player mode
 set(IOS_SERVER_SOURCES
@@ -513,7 +494,6 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
     src/gui/sdl3/map_preview_popup.cpp
 )
-list(APPEND IOS_GUI_SOURCES ${BOT_C_SOURCES})
 
 # Shared mobile UI (touch input, legacy players panel for non-tablet mode)
 set(IOS_MOBILE_SOURCES
@@ -619,11 +599,16 @@ target_include_directories(WinBoloIOS PRIVATE
     src/gui/mobile
     src/server
     src/mapeditor
-    ${BOT_C_INCLUDE_DIRS}
 )
 bolo_apply_include_rules(WinBoloIOS gui)
+bolo_grant_internal_source_access(WinBoloIOS
+    src/bolo/client_mapload.c
+    src/bolo/transport_udp_client.c
+    src/server/server_sim.c
+    src/server/servermessages.c
+    src/mapeditor/mapeditor_generate.c)
 
-target_link_libraries(WinBoloIOS PRIVATE bolo_static)
+target_link_libraries(WinBoloIOS PRIVATE bolo_static bot_brains_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
     nanosvg stb_image utf8proc zlibstatic
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
@@ -912,6 +897,7 @@ endif()
 
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
+add_subdirectory(brains)
 
 # ---------------------------------------------------------------------------
 # WinBolo Client (cross-platform: Windows, Linux, macOS)
@@ -938,7 +924,6 @@ set(CLIENT_SOURCES
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
 )
-list(APPEND CLIENT_SOURCES ${BOT_C_SOURCES})
 
 
 # BSD headers (compiled as .c but really just declarations)
@@ -1046,9 +1031,15 @@ target_include_directories(WinBolo PRIVATE
     src/logviewer/platform
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
-    ${BOT_C_INCLUDE_DIRS}
 )
 bolo_apply_include_rules(WinBolo gui)
+bolo_grant_internal_source_access(WinBolo
+    src/bolo/client_mapload.c
+    src/bolo/transport_udp_client.c
+    src/mapeditor/mapeditor.c
+    src/mapeditor/mapeditor_export.c
+    src/mapeditor/mapeditor_generate.c
+    src/mapeditor/mapeditor_validate.c)
 
 if(WIN32)
     target_sources(WinBolo PRIVATE
@@ -1096,7 +1087,7 @@ endif()
 # bolo_static contains ml_brain.c unconditionally; when HAVE_ONNXRUNTIME
 # is set the lib was compiled with the real path and PUBLIC-links
 # onnxruntime, so consumers inherit the link without repeating it.
-target_link_libraries(WinBolo PRIVATE bolo_static server_static)
+target_link_libraries(WinBolo PRIVATE bolo_static server_static bot_brains_static)
 
 # Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
 target_sources(WinBolo PRIVATE src/common/sentry_integration.c)
@@ -1234,7 +1225,6 @@ set(SERVER_SOURCES
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
 )
-list(APPEND SERVER_SOURCES ${BOT_C_SOURCES})
 
 
 add_executable(WinBoloDS ${SERVER_SOURCES})
@@ -1253,9 +1243,14 @@ target_include_directories(WinBoloDS PRIVATE
     src/mapeditor
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
-    ${BOT_C_INCLUDE_DIRS}
 )
 bolo_apply_include_rules(WinBoloDS runtime_only)
+bolo_grant_internal_source_access(WinBoloDS
+    src/bolo/transport_udp_client.c
+    src/server/servermain.c
+    src/server/server_frontend_stubs.c
+    src/server/server_dedicated_log.c
+    src/mapeditor/mapeditor_generate.c)
 
 if(WIN32)
     target_sources(WinBoloDS PRIVATE
@@ -1281,7 +1276,7 @@ if(TARGET maxminddb)
     target_compile_definitions(WinBoloDS PRIVATE HAVE_MAXMINDDB=1)
 endif()
 
-target_link_libraries(WinBoloDS PRIVATE bolo_static server_static)
+target_link_libraries(WinBoloDS PRIVATE bolo_static server_static bot_brains_static)
 target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson utf8proc)
 
 # libplum NAT port mapping (optional). nat_portmap.c stays per-target
@@ -1532,7 +1527,6 @@ set(HEADLESS_SOURCES
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
 )
-list(APPEND HEADLESS_SOURCES ${BOT_C_SOURCES})
 
 
 # BSD headers
@@ -1564,9 +1558,12 @@ target_include_directories(WinBoloHeadless PRIVATE
     src/mapeditor
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
-    ${BOT_C_INCLUDE_DIRS}
 )
 bolo_apply_include_rules(WinBoloHeadless runtime_only)
+bolo_grant_internal_source_access(WinBoloHeadless
+    src/bolo/client_mapload.c
+    src/bolo/transport_udp_client.c
+    src/mapeditor/mapeditor_generate.c)
 
 if(WIN32)
     target_link_libraries(WinBoloHeadless PRIVATE ws2_32 winmm user32)
@@ -1584,7 +1581,7 @@ if(TARGET maxminddb)
     target_compile_definitions(WinBoloHeadless PRIVATE HAVE_MAXMINDDB=1)
 endif()
 
-target_link_libraries(WinBoloHeadless PRIVATE bolo_static server_static)
+target_link_libraries(WinBoloHeadless PRIVATE bolo_static server_static bot_brains_static)
 target_link_libraries(WinBoloHeadless PRIVATE
     SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
 
@@ -1643,7 +1640,6 @@ set(GYM_SOURCES
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
     src/gym/winbolo_gym.c
 )
-list(APPEND GYM_SOURCES ${BOT_C_SOURCES})
 
 
 # BSD headers
@@ -1676,7 +1672,6 @@ target_include_directories(winbolo_gym PRIVATE
     src/mapeditor
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
-    ${BOT_C_INCLUDE_DIRS}
 )
 bolo_apply_include_rules(winbolo_gym gym)
 
@@ -1696,7 +1691,7 @@ if(TARGET maxminddb)
     target_compile_definitions(winbolo_gym PRIVATE HAVE_MAXMINDDB=1)
 endif()
 
-target_link_libraries(winbolo_gym PRIVATE bolo_static server_static)
+target_link_libraries(winbolo_gym PRIVATE bolo_static server_static bot_brains_static)
 target_link_libraries(winbolo_gym PRIVATE
     SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
 
@@ -1764,7 +1759,6 @@ set(BRAINTEST_SOURCES
     src/braintest/braintest_vizdetailwindow.cpp
     src/braintest/braintest_pillcontrib_registry.c
 )
-list(APPEND BRAINTEST_SOURCES ${BOT_C_SOURCES})
 
 # Per-bot BrainTest panel modules. Each bot may ship its own set of
 # C++ panel renderers under brains/<bot>/braintest_panels/*.cpp; they
@@ -1803,7 +1797,6 @@ target_include_directories(BrainTest PRIVATE
     src/braintest
     src/mapeditor
     ${cjson_SOURCE_DIR}
-    ${BOT_C_INCLUDE_DIRS}
 )
 bolo_apply_include_rules(BrainTest braintest)
 
@@ -1822,7 +1815,7 @@ else()
     target_compile_options(BrainTest PRIVATE -fcommon)
 endif()
 
-target_link_libraries(BrainTest PRIVATE bolo_static)
+target_link_libraries(BrainTest PRIVATE bolo_static bot_brains_static)
 target_link_libraries(BrainTest PRIVATE
     SDL3::SDL3 minizip lua_static
     nanosvg stb_image utf8proc cjson
@@ -1864,7 +1857,6 @@ set(MAPEDITOR_SOURCES
     src/mapeditor/mapeditor_main.c
     src/braintest/braintest_frontend.c
 )
-list(APPEND MAPEDITOR_SOURCES ${BOT_C_SOURCES})
 
 file(GLOB MAPEDITOR_BSD_SOURCES src/bsd/*.c)
 list(APPEND MAPEDITOR_SOURCES ${MAPEDITOR_BSD_SOURCES})
@@ -1890,7 +1882,6 @@ target_include_directories(MapEditor PRIVATE
     src/gui
     src/server
     src/mapeditor
-    ${BOT_C_INCLUDE_DIRS}
 )
 bolo_apply_include_rules(MapEditor mapeditor)
 
@@ -1906,7 +1897,7 @@ else()
     target_compile_options(MapEditor PRIVATE -fcommon)
 endif()
 
-target_link_libraries(MapEditor PRIVATE bolo_static)
+target_link_libraries(MapEditor PRIVATE bolo_static bot_brains_static)
 target_link_libraries(MapEditor PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
     nanosvg stb_image utf8proc
