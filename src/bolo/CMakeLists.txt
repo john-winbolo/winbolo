@@ -1,0 +1,125 @@
+# bolo_static — the bulk of the sim runtime in a single static library.
+#
+# 66 of the 69 src/bolo/*.c files compile here. Three stay per-target
+# in each binary's *_SOURCES because they have target-divergent compile
+# defs whose gated code paths can't be archive-dropped (the .o files
+# are always live, so a single shared compile can't satisfy every
+# consumer's view):
+#
+#   client_mapload.c        — HAVE_STEAM gates a PLAYER_FLAG_STEAM_BUILD bit
+#   transport_udp_client.c  — HAVE_STEAM (same flag, JOIN_REQUEST path)
+#   nat_portmap.c           — BOLO_PORTMAP swaps real libplum for no-op stubs
+#
+# Built with the sim_owner include-rule profile, so TUs see public/,
+# internal/, and the flat src/bolo/ tree. Compile defs are inherited
+# from the parent project's variables: WINBOLO_VERSION and
+# BOLO_VERSION_MAJOR/MINOR/REVISION are mandatory; ENABLE_PILLMASSAGE_BUG
+# and HAVE_ONNXRUNTIME flip on optional code paths.
+
+add_library(bolo_static STATIC
+    allience.c
+    bases.c
+    bolo_map.c
+    bot_manager.c
+    bot_worker_pool.c
+    brain_data.c
+    brain_overlay.c
+    brain_pathfinder.c
+    brain_pathfinder_serial.c
+    brain_worldsim.c
+    braincore.c
+    building.c
+    client_mappreview.c
+    client_net.c
+    client_render.c
+    client_sim.c
+    client_sim_control.c
+    client_snapshot.c
+    client_state.c
+    client_ui_events.c
+    crc.c
+    debug_file_output.c
+    discovery.c
+    explosions.c
+    floodfill.c
+    gametype.c
+    global.c
+    grass.c
+    gui_message.c
+    interpolation.c
+    labels.c
+    lgm.c
+    log.c
+    messages.c
+    mines.c
+    minesexp.c
+    ml_brain.c
+    net_packet_debug.c
+    obs_builder.c
+    pillbox.c
+    playername_validate.c
+    players.c
+    playersrejoin.c
+    position_history.c
+    rubble.c
+    screenbrainmap.c
+    screenbullet.c
+    screencalc.c
+    screenlgm.c
+    screentank.c
+    scroll.c
+    scroll_item_list.c
+    shells.c
+    sounddist.c
+    starts.c
+    swamp.c
+    tank.c
+    tankexp.c
+    transport_local.c
+    transport_udp_common.c
+    transport_udp_server.c
+    treegrow.c
+    tutorial.c
+    udppackets.c
+    util.c
+    viewport.c
+)
+
+bolo_apply_include_rules(bolo_static sim_owner)
+
+set_target_properties(bolo_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+target_compile_definitions(bolo_static PRIVATE
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
+
+if(ENABLE_PILLMASSAGE_BUG)
+    target_compile_definitions(bolo_static PRIVATE ENABLE_PILLMASSAGE_BUG)
+endif()
+
+if(HAVE_ONNXRUNTIME)
+    target_compile_definitions(bolo_static PRIVATE HAVE_ONNXRUNTIME=1)
+    target_link_libraries(bolo_static PUBLIC onnxruntime::onnxruntime)
+endif()
+
+# Third-party libs whose headers bolo .c files include. PUBLIC so
+# consumers transitively get the link order without repeating them —
+# every bolo-linking binary links these directly today anyway.
+target_link_libraries(bolo_static PUBLIC
+    SDL3::SDL3
+    lua_static
+    zlibstatic
+    minizip
+    utf8proc
+)
+
+# -fcommon matches the per-target setting every bolo-linking binary
+# uses today. Keeps tentative definitions like debug_file_output.c's
+# `char fileName[2048]` mergeable with the strong definition of the
+# same name in servermain.c (WinBoloDS).
+if(NOT MSVC)
+    target_compile_options(bolo_static PRIVATE -fcommon)
+endif()

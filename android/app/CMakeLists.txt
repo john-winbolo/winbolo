@@ -170,6 +170,17 @@ list(REMOVE_DUPLICATES BOT_C_INCLUDE_DIRS)
 # Main shared library (SDL3 on Android expects libmain.so)
 # ---------------------------------------------------------------------------
 
+# bolo_static covers the bulk of the bolo source set; only the
+# HAVE_STEAM-divergent transport_udp_client.c stays per-target here.
+# client_mapload.c and nat_portmap.c are not referenced in this build —
+# android calls into the sim through its own android_gamesetup path
+# and has no NAT-PMP / UPnP wrapper.
+set(WINBOLO_VERSION "1.18")
+set(BOLO_VERSION_MAJOR 1)
+set(BOLO_VERSION_MINOR 1)
+set(BOLO_VERSION_REVISION 8)
+add_subdirectory(${PROJ_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
+
 set(ANDROID_SOURCES
     # Android entry point and frontend
     ${PROJ_ROOT}/src/android/main_android.c
@@ -183,69 +194,8 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/android/android_dialog_stubs.c
     ${PROJ_ROOT}/src/steam/steam_wrapper_stub.c
 
-    # Bolo engine (same as CLIENT_SOURCES in main CMakeLists.txt)
-    ${PROJ_ROOT}/src/bolo/allience.c
-    ${PROJ_ROOT}/src/bolo/bases.c
-    ${PROJ_ROOT}/src/bolo/bolo_map.c
-    ${PROJ_ROOT}/src/bolo/building.c
-    ${PROJ_ROOT}/src/bolo/crc.c
-    ${PROJ_ROOT}/src/bolo/debug_file_output.c
-    ${PROJ_ROOT}/src/bolo/net_packet_debug.c
-    ${PROJ_ROOT}/src/bolo/explosions.c
-    ${PROJ_ROOT}/src/bolo/floodfill.c
-    ${PROJ_ROOT}/src/bolo/gametype.c
-    ${PROJ_ROOT}/src/bolo/global.c
-    ${PROJ_ROOT}/src/bolo/grass.c
-    ${PROJ_ROOT}/src/bolo/labels.c
-    ${PROJ_ROOT}/src/bolo/lgm.c
-    ${PROJ_ROOT}/src/bolo/log.c
-    ${PROJ_ROOT}/src/bolo/messages.c
-    ${PROJ_ROOT}/src/bolo/mines.c
-    ${PROJ_ROOT}/src/bolo/minesexp.c
-    ${PROJ_ROOT}/src/bolo/gui_message.c
-    ${PROJ_ROOT}/src/bolo/pillbox.c
-    ${PROJ_ROOT}/src/bolo/players.c
-    ${PROJ_ROOT}/src/bolo/playername_validate.c
-    ${PROJ_ROOT}/src/bolo/playersrejoin.c
-    ${PROJ_ROOT}/src/bolo/rubble.c
-    ${PROJ_ROOT}/src/bolo/screenbrainmap.c
-    ${PROJ_ROOT}/src/bolo/screenbullet.c
-    ${PROJ_ROOT}/src/bolo/screencalc.c
-    ${PROJ_ROOT}/src/bolo/screenlgm.c
-    ${PROJ_ROOT}/src/bolo/screentank.c
-    ${PROJ_ROOT}/src/bolo/scroll.c
-    ${PROJ_ROOT}/src/bolo/scroll_item_list.c
-    ${PROJ_ROOT}/src/bolo/shells.c
-    ${PROJ_ROOT}/src/bolo/sounddist.c
-    ${PROJ_ROOT}/src/bolo/starts.c
-    ${PROJ_ROOT}/src/bolo/swamp.c
-    ${PROJ_ROOT}/src/bolo/tank.c
-    ${PROJ_ROOT}/src/bolo/tankexp.c
-    ${PROJ_ROOT}/src/bolo/treegrow.c
-    ${PROJ_ROOT}/src/bolo/udppackets.c
-    ${PROJ_ROOT}/src/bolo/util.c
-    ${PROJ_ROOT}/src/bolo/braincore.c
-    ${PROJ_ROOT}/src/bolo/brain_data.c
-    ${PROJ_ROOT}/src/bolo/brain_overlay.c
-    ${PROJ_ROOT}/src/bolo/brain_pathfinder.c
-    ${PROJ_ROOT}/src/bolo/brain_pathfinder_serial.c
-    ${PROJ_ROOT}/src/bolo/brain_worldsim.c
-    ${PROJ_ROOT}/src/bolo/transport_local.c
-    ${PROJ_ROOT}/src/bolo/transport_udp_common.c
+    # Per-target bolo source (HAVE_STEAM-divergent).
     ${PROJ_ROOT}/src/bolo/transport_udp_client.c
-    ${PROJ_ROOT}/src/bolo/transport_udp_server.c
-    ${PROJ_ROOT}/src/bolo/client_state.c
-    ${PROJ_ROOT}/src/bolo/interpolation.c
-    ${PROJ_ROOT}/src/bolo/position_history.c
-    ${PROJ_ROOT}/src/bolo/client_sim.c
-    ${PROJ_ROOT}/src/bolo/client_net.c
-    ${PROJ_ROOT}/src/bolo/client_sim_control.c
-    ${PROJ_ROOT}/src/bolo/client_mappreview.c
-    ${PROJ_ROOT}/src/bolo/client_snapshot.c
-    ${PROJ_ROOT}/src/bolo/bot_manager.c
-    ${PROJ_ROOT}/src/bolo/bot_worker_pool.c
-    ${PROJ_ROOT}/src/bolo/discovery.c
-    ${PROJ_ROOT}/src/bolo/tutorial.c
 
     # SDL3 GUI (rendering, sound, input, etc.)
     ${PROJ_ROOT}/src/gui/ui_mode.c
@@ -314,6 +264,7 @@ target_include_directories(main PRIVATE
 )
 bolo_apply_include_rules(main gui)
 
+target_link_libraries(main PRIVATE bolo_static)
 target_link_libraries(main PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
