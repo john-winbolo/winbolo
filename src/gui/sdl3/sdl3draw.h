@@ -126,7 +126,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
                         screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms,
                         RECT *rcWindow, bool showPillLabels, bool showBaseLabels,
                         int32_t srtDelay, bool isPillView, int edgeX, int edgeY,
-                        bool useCursor, BYTE cursorLeft, BYTE cursorTop, tank *tank);
+                        bool useCursor, BYTE cursorLeft, BYTE cursorTop);
 
 /*********************************************************
 *NAME:          sdl3DrawRedrawAll

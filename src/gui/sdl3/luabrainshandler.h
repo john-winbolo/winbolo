@@ -39,8 +39,7 @@
 
 #include "global.h"
 #include "brain.h"  /* For BrainInfo, aiType */
-#include "brain_pathfinder.h"
-#include "brain_worldsim.h"
+#include "brain_lua_glue.h"  /* BrainPathfinder, BrainWorldSim, brainCore*, mlBrain* */
 #include "brain_overlay.h"
 
 /* Forward declarations */

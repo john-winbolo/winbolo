@@ -1366,7 +1366,7 @@ void windowStartTutorial(void) {
 
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
-                            int32_t srtDelay, bool isPillView, tank *tank, int edgeX, int edgeY) {
+                            int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
   if (hideMainView == FALSE && drawBusy == FALSE) {
     BYTE cursorX, cursorY;
     bool showCursor;
@@ -1376,7 +1376,7 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
     sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                        NULL, showPillLabels, showBaseLabels,
                        srtDelay, isPillView, edgeX, edgeY,
-                       showCursor, cursorX, cursorY, tank);
+                       showCursor, cursorX, cursorY);
   }
 }
 

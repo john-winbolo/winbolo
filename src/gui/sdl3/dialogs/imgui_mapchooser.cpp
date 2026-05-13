@@ -39,10 +39,6 @@
 extern "C" {
 #include "../sdl3draw.h"
 #include "global.h"
-#include "bolo_map.h"
-#include "pillbox.h"
-#include "bases.h"
-#include "starts.h"
 #include "../minimap_render.h"
 #include "../map_preview_popup.h"
 #include "../../../mapeditor/mapeditor_generate.h"
@@ -205,28 +201,20 @@ static void updatePreview(MapChooserState *state, SDL_Renderer *renderer) {
 static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer) {
     /* Close the popup if it's showing the old random map */
     mapPreviewPopupClose();
-    map mp;
-    pillboxes pb;
-    bases bs;
-    starts ss;
-
-    mapCreate(&mp);
-    pillsCreate(&pb);
-    basesCreate(&bs);
-    startsCreate(&ss);
-
-    /* Clear map to DEEP_SEA */
-    memset((*mp).mapItem, DEEP_SEA, sizeof((*mp).mapItem));
-    pb->numPills = 0;
-    bs->numBases = 0;
-    ss->numStarts = 0;
 
     /* Set region to full playable area */
     state->genConfig.x1 = MAP_MINE_EDGE_LEFT + 1; state->genConfig.y1 = MAP_MINE_EDGE_TOP + 1;
     state->genConfig.x2 = MAP_MINE_EDGE_RIGHT - 1; state->genConfig.y2 = MAP_MINE_EDGE_BOTTOM - 1;
 
-    /* Generate */
-    mapEditorGenerate(mp, bs, pb, ss, &state->genConfig);
+    /* Generate map + compressed serialization in one call. The mapeditor
+     * owns the substruct lifetimes; the returned MapPreview is heap-owned
+     * and read via clientMapPreview* accessors. */
+    BYTE *buf = (BYTE *)SDL_malloc(256 * 1024);
+    int   compressedLen = 0;
+    MapPreview *view = NULL;
+    if (buf) {
+        view = mapEditorGenerateAsPreview(&state->genConfig, buf, 256 * 1024, &compressedLen);
+    }
 
     /* Build preview texture */
     if (state->previewTex) {
@@ -234,34 +222,27 @@ static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer
         state->previewTex = NULL;
     }
 
-    MinimapBounds mb;
-    {
-        MapPreview *view = clientMapPreviewWrap(mp, pb, bs, ss);
+    MinimapBounds mb = {0, 0, 0, 0};
+    if (view) {
         state->previewTex = minimapCreateTexture(renderer, view, &mb, 0);
+        state->previewPills  = clientMapPreviewGetPillCount(view);
+        state->previewBases  = clientMapPreviewGetBaseCount(view);
+        state->previewStarts = clientMapPreviewGetStartCount(view);
         clientMapPreviewDestroy(view);
     }
     state->previewBoundsMinX = mb.minX;
     state->previewBoundsMinY = mb.minY;
     state->previewBoundsMaxX = mb.maxX;
     state->previewBoundsMaxY = mb.maxY;
-    state->previewPills = pb->numPills;
-    state->previewBases = bs->numBases;
-    state->previewStarts = ss->numStarts;
 
     /* Stash compressed map data for popup preview */
     if (state->compressedData) { SDL_free(state->compressedData); state->compressedData = NULL; }
-    {
-        BYTE *buf = (BYTE *)SDL_malloc(256 * 1024);
-        if (buf) {
-            int len = mapSaveCompressedMap(&mp, &pb, &bs, &ss, buf);
-            if (len > 0) {
-                state->compressedData = (BYTE *)SDL_realloc(buf, len);
-                if (!state->compressedData) state->compressedData = buf;
-                state->compressedLen = len;
-            } else {
-                SDL_free(buf);
-            }
-        }
+    if (buf && compressedLen > 0) {
+        state->compressedData = (BYTE *)SDL_realloc(buf, compressedLen);
+        if (!state->compressedData) state->compressedData = buf;
+        state->compressedLen = compressedLen;
+    } else if (buf) {
+        SDL_free(buf);
     }
 
     /* Update seed display */
@@ -269,11 +250,6 @@ static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer
 
     /* Store the seed as the selected path for the caller */
     SDL_snprintf(state->selectedPath, FILENAME_MAX, "randommap:%s", state->genSeedBuf);
-
-    mapDestroy(&mp);
-    pillsDestroy(&pb);
-    basesDestroy(&bs);
-    startsDestroy(&ss);
 }
 
 static void initGenConfig(MapChooserState *state) {

@@ -13,7 +13,10 @@
 #include "mapeditor_generate.h"
 #include "mapeditor_maze.h"
 #include "bolo_map.h"
+#include "pillbox.h"
+#include "bases.h"
 #include "starts.h"
+#include "client_mappreview.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -3814,4 +3817,81 @@ void mapGenPointStartsToLand(struct mapObj *mp, struct startsObj *ss) {
         ss->item[i].dir = 0;
     }
     #undef MGPL_RADIUS
+}
+
+/*---------------------------------------------------------
+ * mapEditorGenerateAsPreview
+ *   Generates a fresh map / pills / bases / starts quartet
+ *   from cfg, optionally serializes the result into outBuf
+ *   via mapSaveCompressedMap, and returns an owning
+ *   MapPreview built by deserializing the same buffer.
+ *
+ *   The local substructs are torn down before return; the
+ *   MapPreview holds its own copies that callers free with
+ *   clientMapPreviewDestroy. Returning the deserialized
+ *   preview (rather than wrapping the local heap structs)
+ *   keeps lifetime simple and reuses the same loader path
+ *   that handles .map files.
+ *---------------------------------------------------------*/
+struct MapPreview *mapEditorGenerateAsPreview(const MapGenConfig *cfg,
+                                              BYTE *outBuf,
+                                              int outBufCap,
+                                              int *outCompressedLen) {
+    if (cfg == NULL) {
+        if (outCompressedLen != NULL) *outCompressedLen = 0;
+        return NULL;
+    }
+
+    map        mp;
+    pillboxes  pb;
+    bases      bs;
+    starts     ss;
+
+    mapCreate(&mp);
+    pillsCreate(&pb);
+    basesCreate(&bs);
+    startsCreate(&ss);
+
+    memset((*mp).mapItem, DEEP_SEA, sizeof((*mp).mapItem));
+    pb->numPills = 0;
+    bs->numBases = 0;
+    ss->numStarts = 0;
+
+    /* Local non-const copy so the generator can mutate its inputs. */
+    MapGenConfig localCfg = *cfg;
+    mapEditorGenerate(mp, bs, pb, ss, &localCfg);
+
+    /* Always serialize — both to populate outBuf for the caller (if
+     * provided) and to drive the MapPreview construction below. Use a
+     * scratch buffer when the caller doesn't provide one. */
+    BYTE  scratch[256 * 1024];
+    BYTE *serBuf  = outBuf;
+    int   serCap  = outBufCap;
+    if (serBuf == NULL || serCap < (int)sizeof(scratch)) {
+        serBuf = scratch;
+        serCap = (int)sizeof(scratch);
+    }
+    int len = mapSaveCompressedMap(&mp, &pb, &bs, &ss, serBuf);
+
+    if (outCompressedLen != NULL) {
+        *outCompressedLen = (outBuf != NULL && serBuf == outBuf) ? len : 0;
+    }
+    if (outBuf != NULL && serBuf != outBuf && len > 0 && len <= outBufCap) {
+        /* Caller provided a buffer smaller than scratch but large enough
+         * for this map — copy the serialized bytes across. */
+        memcpy(outBuf, serBuf, (size_t)len);
+        if (outCompressedLen != NULL) *outCompressedLen = len;
+    }
+
+    MapPreview *preview = NULL;
+    if (len > 0) {
+        preview = clientMapPreviewLoadFromBuffer(serBuf, len);
+    }
+
+    mapDestroy(&mp);
+    pillsDestroy(&pb);
+    basesDestroy(&bs);
+    startsDestroy(&ss);
+
+    return preview;
 }

@@ -55,7 +55,6 @@
 #include "sdl_bmp.h"
 #include "global.h"
 #include "client_sim.h"
-#include "tank.h"
 #include "../gamefront.h"
 #include "tilenum.h"
 #include "../positions.h"
@@ -1147,7 +1146,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
                         screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms,
                         RECT *rcWindow, bool showPillLabels, bool showBaseLabels,
                         int32_t srtDelay, bool isPillView, int edgeX, int edgeY,
-                        bool useCursor, BYTE cursorLeft, BYTE cursorTop, tank *tank) {
+                        bool useCursor, BYTE cursorLeft, BYTE cursorTop) {
   (void)rcWindow;
 
   if (gRenderer == NULL) {
@@ -1311,10 +1310,10 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
           sdl3RenderText(gFontMsg, str, white, tx, ty);
         }
       }
-    } else if (!isPillView && tankGetDeathWait(tank) != 0 &&
-               ((tankGetLastTankDeath(tank) == LAST_DEATH_BY_DEEPSEA && tankGetDeathWait(tank) < STATIC_ON_TICKS_DEEPSEA) ||
-                (tankGetLastTankDeath(tank) == LAST_DEATH_BY_SHELL   && tankGetDeathWait(tank) < STATIC_ON_TICKS_SHELL) ||
-                (tankGetLastTankDeath(tank) == LAST_DEATH_BY_MINES   && tankGetDeathWait(tank) < STATIC_ON_TICKS_MINES))) {
+    } else if (!isPillView && clientSimGetMyTankDeathWait(cs) != 0 &&
+               ((clientSimGetMyTankLastDeath(cs) == LAST_DEATH_BY_DEEPSEA && clientSimGetMyTankDeathWait(cs) < STATIC_ON_TICKS_DEEPSEA) ||
+                (clientSimGetMyTankLastDeath(cs) == LAST_DEATH_BY_SHELL   && clientSimGetMyTankDeathWait(cs) < STATIC_ON_TICKS_SHELL) ||
+                (clientSimGetMyTankLastDeath(cs) == LAST_DEATH_BY_MINES   && clientSimGetMyTankDeathWait(cs) < STATIC_ON_TICKS_MINES))) {
       /* Tank died and is waiting to respawn — draw Bolo-style pixel static noise */
       /* On iOS use half-res texture so static dots appear larger */
 #if defined(__IPHONEOS__)
@@ -1335,8 +1334,8 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         gStaticLast = 0;
       }
       /* Add new static points when the death tick changes */
-      if (tankGetDeathWait(tank) != gStaticLast) {
-        gStaticLast = tankGetDeathWait(tank);
+      if (clientSimGetMyTankDeathWait(cs) != gStaticLast) {
+        gStaticLast = clientSimGetMyTankDeathWait(cs);
         uint32_t *pixels;
         int pitch;
         if (SDL_LockTexture(gStaticTex, NULL, (void **)&pixels, &pitch)) {

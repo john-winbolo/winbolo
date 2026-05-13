@@ -840,6 +840,16 @@ BYTE clientSimGetTank256Dir(ClientSim *cs) {
   return tankGet256Dir(&MY_TANK(cs));
 }
 
+int clientSimGetMyTankDeathWait(ClientSim *cs) {
+  if (cs == NULL) return 0;
+  return tankGetDeathWait(&MY_TANK(cs));
+}
+
+int clientSimGetMyTankLastDeath(ClientSim *cs) {
+  if (cs == NULL) return 0;
+  return tankGetLastTankDeath(&MY_TANK(cs));
+}
+
 /* Game info (per-instance) */
 bool clientSimGetAllowHiddenMines(ClientSim *cs) {
   return minesGetAllowHiddenMines(&clientSimGetGameSim(cs)->mns);
