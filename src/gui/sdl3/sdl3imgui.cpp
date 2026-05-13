@@ -51,7 +51,7 @@
 extern "C" {
 #include "global.h"    /* BYTE, bool, FALSE/TRUE */
 #include "client_sim.h"
-#include "netpacks.h" /* PACKET_MAX_CHAT_MESSAGE */
+#include "wire_limits.h"
 #include "../gamefront.h"
 #include "../lang.h"
 }
