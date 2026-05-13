@@ -1032,6 +1032,16 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     settingsEvt.u.lobbySettings.netStat = netLobby;
                 }
                 settingsEvt.u.lobbySettings.inLobby = true;
+                /* LOBBY_STATE payload pre-dates openHost / autoLockOnGameStart /
+                 * serverLocks, so the wire doesn't carry them. Preserve the
+                 * values already on the clientSim (set by their dedicated
+                 * *_CHG packets) — otherwise the zero-initialized settingsEvt
+                 * would clobber them on every snapshot, causing e.g. the
+                 * "Allow all players to change settings" checkbox to flicker
+                 * off the next time a LOBBY_STATE arrives. */
+                settingsEvt.u.lobbySettings.lobbyOpenHost            = c->clientSim->lobbyOpenHost;
+                settingsEvt.u.lobbySettings.lobbyAutoLockOnGameStart = c->clientSim->lobbyAutoLockOnGameStart;
+                settingsEvt.u.lobbySettings.lobbyServerLocks         = c->clientSim->lobbyServerLocks;
                 clientSimApplyControl(c->clientSim, &settingsEvt);
             }
 
@@ -1328,8 +1338,22 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                         if (vl == 1) c->clientSim->lobbyAiType = v[0];
                         break;
                     case LST_TIME_LIMIT:
-                        /* Bool â€” preserved separately on the client; lobbyTimeLimit
-                         * itself is the tick-encoded length, set via TIME_MINUTES. */
+                        /* The bool toggles whether sim->gameLength is finite,
+                         * but SETTING_CHG only carries the bool — the client's
+                         * lobbyTimeLimit (ticks) is the source of truth for
+                         * the "Game time limit" checkbox. Derive it locally so
+                         * the checkbox doesn't flicker off until the next
+                         * LOBBY_STATE arrives. */
+                        if (vl == 1) {
+                            bool on = v[0] != 0;
+                            if (on) {
+                                if (c->clientSim->lobbyTimeLimit <= 0) {
+                                    c->clientSim->lobbyTimeLimit = 30 * 60 * 50;
+                                }
+                            } else {
+                                c->clientSim->lobbyTimeLimit = UNLIMITED_GAME_TIME;
+                            }
+                        }
                         break;
                     case LST_TIME_MINUTES:
                         if (vl == 2) {
