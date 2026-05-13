@@ -96,7 +96,7 @@ void screenBulletsAddItem(screenBullets *value, BYTE mx, BYTE my, BYTE px, BYTE 
 *ARGUMENTS:
 *  value - Pointer to the screenBullets data structure
 *********************************************************/
-int screenBulletsGetNumEntries(screenBullets *value);
+int screenBulletsGetNumEntries(const screenBullets *value);
 
 /*********************************************************
 *NAME:          screenBulletsDestroy
@@ -128,7 +128,7 @@ void screenBulletsDestroy(screenBullets *value);
 *  py    - Y pixel offset
 *  frame - Frame identifer of the bullet
 *********************************************************/
-void screenBulletsGetItem(screenBullets *value, int itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame);
+void screenBulletsGetItem(const screenBullets *value, int itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame);
 
 #endif /* SCREENBULLETS_H */
 
