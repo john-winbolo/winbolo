@@ -124,7 +124,7 @@ bool clientLoadMap(ClientSim *csPtr, char *fileName, gameType game, bool hiddenM
 }
 
 
-bool clientLoadCompressedMap(ClientSim *csPtr, BYTE *buff, int buffLen, char *mapn, gameType game, bool hiddenMines, int32_t srtDelay, int32_t gmeLen, char *playerName, BYTE playerNum, bool wantFree) {
+bool clientLoadCompressedMap(ClientSim *csPtr, BYTE *buff, int buffLen, const char *mapn, gameType game, bool hiddenMines, int32_t srtDelay, int32_t gmeLen, char *playerName, BYTE playerNum, bool wantFree) {
   bool returnValue;
   bool doneFree = FALSE;
 
