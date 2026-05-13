@@ -41,8 +41,7 @@ extern "C" {
 #endif
 
 #include "global.h"
-#include "bases.h"
-#include "pillbox.h"
+#include "alliance_enums.h"
 #include "screentank.h"
 
 /* -----------------------------------------------------------------

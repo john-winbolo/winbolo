@@ -36,8 +36,7 @@
 #include "../../gui/lang.h"
 #include "viewport_types.h"  /* screen, screenMines, screenGunsight */
 #include "client_enums.h"    /* sndEffects */
-#include "bases.h"           /* baseAlliance */
-#include "pillbox.h"         /* pillAlliance */
+#include "alliance_enums.h"
 #include "players.h"         /* playerNumbers */
 
 
