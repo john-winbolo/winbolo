@@ -769,8 +769,7 @@ static void serverSimLogTick(ServerSim *sim) {
 
     /* Periodic snapshot */
     if ((sim->tick % FULL_SYNC_INTERVAL) == 0) {
-        logWriteSnapshot(sim, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs,
-                         &sim->sim.ss, &sim->sim.plyrs, TRUE);
+        logWriteSnapshot(sim, TRUE);
     }
 
     logWriteTick();
@@ -2408,9 +2407,7 @@ void serverSimReturnToLobby(ServerSim *sim) {
                 strncat(fileName, ".wbv", 512 - flen - 1);
             }
         }
-        isLogging = logStart(fileName, sim, &sim->sim.mp,
-                             &sim->sim.bs, &sim->sim.pb,
-                             &sim->sim.ss, &sim->sim.plyrs,
+        isLogging = logStart(fileName, sim,
                              0, MAX_TANKS, sim->hasPassword);
         if (isLogging) {
             logAddEvent(log_LobbyEnter, 0, 0, 0, 0, 0, NULL);
@@ -2684,9 +2681,7 @@ void serverSimStartGame(ServerSim *sim) {
                 strncat(fileName, ".wbv", 512 - flen - 1);
             }
         }
-        isLogging = logStart(fileName, sim, &sim->sim.mp,
-                             &sim->sim.bs, &sim->sim.pb,
-                             &sim->sim.ss, &sim->sim.plyrs,
+        isLogging = logStart(fileName, sim,
                              0, MAX_TANKS, sim->hasPassword);
         if (isLogging) {
             fprintf(stderr, "Logging to %s\n", fileName);

@@ -31,6 +31,7 @@
 #include "global.h"
 #include "allience.h"
 #include "player_flags.h"
+#include "client_enums.h"
 #include "screentank.h"
 #include "screenlgm.h"
 
@@ -50,29 +51,6 @@ struct ClientSim;
 /* Number of squares a tank must be in to see it in the forests */
 #define MIN_SIGHT_DISTANCE_LEFT -1
 #define MIN_SIGHT_DISTANCE_RIGHT 1
-
-#ifndef _PLAYERNUMBERS_ENUM
-#define _PLAYERNUMBERS_ENUM
-/* Player Numbers */
-typedef enum {
-  player01,
-  player02,
-  player03,
-  player04,
-  player05,
-  player06,
-  player07,
-  player08,
-  player09,
-  player10,
-  player11,
-  player12,
-  player13,
-  player14,
-  player15,
-  player16
-} playerNumbers;
-#endif
 
 /* Brain Stuff */
 #define PLAYERS_BRAIN_OBJECT_TYPE_TANK 0

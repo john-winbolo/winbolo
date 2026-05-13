@@ -25,7 +25,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "global.h"
-#include "types.h"
+#include "client_mappreview.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,16 +42,14 @@ typedef struct {
 void minimapTerrainColor(BYTE terrain, uint8_t *r, uint8_t *g, uint8_t *b);
 
 /* Render a 256x256 minimap into an RGBA pixel buffer.
+ * view: MapPreview that owns or wraps the map/pill/base/start data.
  * pixels: caller-provided, at least MINIMAP_SIZE * MINIMAP_SIZE * 4 bytes, row-major RGBA32.
  * bounds: if non-NULL, filled with bounding box of non-sea terrain.
  * flags: bitmask controlling optional effects. */
 #define MINIMAP_DARKEN_BORDER  (1 << 0)  /* Dim mine border zone */
 #define MINIMAP_DARKEN_MINES   (1 << 1)  /* Slightly darken mined tiles */
 
-void minimapRenderPixels(const struct mapObj *mp,
-                         const struct basesObj *bs,
-                         const struct pillsObj *pb,
-                         const struct startsObj *ss,
+void minimapRenderPixels(const MapPreview *view,
                          uint8_t *pixels,
                          MinimapBounds *bounds,
                          uint32_t flags);
@@ -59,19 +57,14 @@ void minimapRenderPixels(const struct mapObj *mp,
 /* Render object markers (3x3 dots) into an existing pixel buffer.
  * pillColor/baseColor/startColor: RGB triplets. Pass NULL to skip that object type. */
 void minimapDrawObjects(uint8_t *pixels,
-                        const struct basesObj *bs,
-                        const struct pillsObj *pb,
-                        const struct startsObj *ss,
+                        const MapPreview *view,
                         const uint8_t pillColor[3],
                         const uint8_t baseColor[3],
                         const uint8_t startColor[3]);
 
 /* Convenience: render to a new SDL_Texture (256x256 RGBA). Caller owns texture. */
 SDL_Texture *minimapCreateTexture(SDL_Renderer *renderer,
-                                  const struct mapObj *mp,
-                                  const struct basesObj *bs,
-                                  const struct pillsObj *pb,
-                                  const struct startsObj *ss,
+                                  const MapPreview *view,
                                   MinimapBounds *bounds,
                                   uint32_t flags);
 

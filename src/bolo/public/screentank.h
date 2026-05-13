@@ -29,7 +29,7 @@
 #define SCREENTANKS_H
 
 #include "global.h"
-#include "tank.h"
+#include "types.h"  /* tank typedef */
 
 struct ClientSim;
 

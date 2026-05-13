@@ -18,7 +18,7 @@
 #include <SDL3/SDL.h>
 #include <stdbool.h>
 #include "global.h"
-#include "tank.h"  /* tankButton + TNONE/TACCEL/... */
+#include "client_enums.h"  /* tankButton + TNONE/TACCEL/... */
 
 #ifdef __cplusplus
 extern "C" {

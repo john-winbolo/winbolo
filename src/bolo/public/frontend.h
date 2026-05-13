@@ -35,9 +35,8 @@
 #include "types.h"
 #include "../../gui/lang.h"
 #include "viewport_types.h"  /* screen, screenMines, screenGunsight */
-#include "client_enums.h"    /* sndEffects */
+#include "client_enums.h"    /* sndEffects, playerNumbers */
 #include "alliance_enums.h"
-#include "players.h"         /* playerNumbers */
 
 
 /*********************************************************
@@ -245,8 +244,8 @@ void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value);
 *  str         - String identifier of the name
 *  countryCode - 2-letter country code (e.g. "US"), or empty
 *  ping        - Player ping in ms, 0 = unknown
-*  clientType  - ClientType enum (CLIENT_TYPE_*, see players.h)
-*  clientFlags - PLAYER_FLAG_* bits (see players.h)
+*  clientType  - ClientType enum (CLIENT_TYPE_*, see player_flags.h)
+*  clientFlags - PLAYER_FLAG_* bits (see player_flags.h)
 *********************************************************/
 void frontEndSetPlayer(struct ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags);
 

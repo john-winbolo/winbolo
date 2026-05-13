@@ -53,7 +53,6 @@
 #include "client_snapshot.h"
 #include "frontend.h"
 #include "tutorial.h"
-#include "players.h"
 #include "../../steam/steam_wrapper.h"
 #include "client_net.h"
 #include "server_sim.h"

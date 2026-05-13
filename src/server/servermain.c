@@ -1149,14 +1149,9 @@ int main(int argc, char **argv) {
           strncat(fileName, ".wbv", sizeof(fileName) - flen - 1);
         }
       }
-      {
-        GameSim *gs = serverSimGetGameSim(serverSim);
-        isLogging = logStart(fileName, serverSim, &gs->mp,
-                             &gs->bs, &gs->pb,
-                             &gs->ss, &gs->plyrs,
-                             (BYTE)ai, (BYTE)maxPlayers,
-                             serverSimHasPassword(serverSim));
-      }
+      isLogging = logStart(fileName, serverSim,
+                           (BYTE)ai, (BYTE)maxPlayers,
+                           serverSimHasPassword(serverSim));
       if (isLogging) {
         fprintf(stderr, "Logging to %s\n", fileName);
       } else {
@@ -1177,14 +1172,9 @@ int main(int argc, char **argv) {
           strncat(fileName, ".wbv", sizeof(fileName) - flen - 1);
         }
       }
-      {
-        GameSim *gs = serverSimGetGameSim(serverSim);
-        isLogging = logStart(fileName, serverSim, &gs->mp,
-                             &gs->bs, &gs->pb,
-                             &gs->ss, &gs->plyrs,
-                             (BYTE)ai, (BYTE)maxPlayers,
-                             serverSimHasPassword(serverSim));
-      }
+      isLogging = logStart(fileName, serverSim,
+                           (BYTE)ai, (BYTE)maxPlayers,
+                           serverSimHasPassword(serverSim));
       if (isLogging) {
         fprintf(stderr, "Logging to %s (lobby)\n", fileName);
         logAddEvent(log_LobbyEnter, 0, 0, 0, 0, 0, NULL);

@@ -234,11 +234,6 @@ void skinsGetFileName(char *value) { value[0] = '\0'; }
 /* ---- log stubs (log.c requires minizip/zlib) ---- */
 
 #include "log.h"
-#include "bolo_map.h"
-#include "pillbox.h"
-#include "bases.h"
-#include "starts.h"
-#include "players.h"
 
 void logCreate(void) {}
 void logWriteEmpty(void) {}
@@ -250,12 +245,12 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
     (void)itemNum; (void)opt1; (void)opt2; (void)opt3; (void)opt4; (void)short1; (void)words;
 }
 void logDestroy(void) {}
-bool logStart(char *fn, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb, starts *ss, players *plrs, BYTE ai, BYTE maxPlayers, bool usePassword) {
-    (void)fn; (void)ssim; (void)mp; (void)bs; (void)pb; (void)ss; (void)plrs; (void)ai; (void)maxPlayers; (void)usePassword;
+bool logStart(char *fn, ServerSim *ssim, BYTE ai, BYTE maxPlayers, bool usePassword) {
+    (void)fn; (void)ssim; (void)ai; (void)maxPlayers; (void)usePassword;
     return false;
 }
-bool logWriteSnapshot(ServerSim *ssim, map *mp, pillboxes *pb, bases *bs, starts *ss, players *plrs, bool check) {
-    (void)ssim; (void)mp; (void)pb; (void)bs; (void)ss; (void)plrs; (void)check;
+bool logWriteSnapshot(ServerSim *ssim, bool check) {
+    (void)ssim; (void)check;
     return false;
 }
 bool logCheckTankSame(BYTE playerNum, BYTE mx, BYTE my, BYTE pxy, BYTE opt) {

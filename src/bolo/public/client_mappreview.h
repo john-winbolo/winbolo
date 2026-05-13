@@ -58,6 +58,20 @@ MapPreview *clientMapPreviewLoadFromBuffer(const BYTE *data, int len);
 MapPreview *clientMapPreviewLoadFromFile(const char *path);
 
 /*********************************************************
+ *NAME:          clientMapPreviewWrap
+ *PURPOSE:
+ *  Allocates a MapPreview that wraps caller-owned
+ *  T-internal substructs without taking ownership of the
+ *  inner data. The returned handle should be released with
+ *  clientMapPreviewDestroy, which detects the wrap and
+ *  frees only the wrapper itself, not the wrapped pointers.
+ *********************************************************/
+MapPreview *clientMapPreviewWrap(struct mapObj   *mp,
+                                 struct pillsObj *pb,
+                                 struct basesObj *bs,
+                                 struct startsObj *ss);
+
+/*********************************************************
  *NAME:          clientMapPreviewDestroy
  *PURPOSE:
  *  Tears down the four owned substructs and frees the

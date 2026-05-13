@@ -21,7 +21,6 @@
 #include "client_sim_control.h"
 #include "control_event.h"
 #include "global.h"
-#include "players.h"
 #include "platform_net.h"
 #include "client_net.h"
 #include "gui_message.h"

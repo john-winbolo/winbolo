@@ -31,6 +31,7 @@ struct MapPreview {
   pillboxes   pb;
   bases       bs;
   starts      ss;
+  bool        owns;  /* true = destroy frees inner; false = wrapper only */
 };
 
 static MapPreview *clientMapPreviewAlloc(void) {
@@ -40,11 +41,26 @@ static MapPreview *clientMapPreviewAlloc(void) {
   mp->pb = NULL;
   mp->bs = NULL;
   mp->ss = NULL;
+  mp->owns = true;
   mapCreate(&mp->mp);
   pillsCreate(&mp->pb);
   basesCreate(&mp->bs);
   startsCreate(&mp->ss);
   return mp;
+}
+
+MapPreview *clientMapPreviewWrap(struct mapObj   *mp,
+                                 struct pillsObj *pb,
+                                 struct basesObj *bs,
+                                 struct startsObj *ss) {
+  MapPreview *view = (MapPreview *)malloc(sizeof(MapPreview));
+  if (view == NULL) return NULL;
+  view->mp   = (map)mp;
+  view->pb   = (pillboxes)pb;
+  view->bs   = (bases)bs;
+  view->ss   = (starts)ss;
+  view->owns = false;
+  return view;
 }
 
 MapPreview *clientMapPreviewLoadFromBuffer(const BYTE *data, int len) {
@@ -73,10 +89,12 @@ MapPreview *clientMapPreviewLoadFromFile(const char *path) {
 
 void clientMapPreviewDestroy(MapPreview *mp) {
   if (mp == NULL) return;
-  mapDestroy(&mp->mp);
-  pillsDestroy(&mp->pb);
-  basesDestroy(&mp->bs);
-  startsDestroy(&mp->ss);
+  if (mp->owns) {
+    mapDestroy(&mp->mp);
+    pillsDestroy(&mp->pb);
+    basesDestroy(&mp->bs);
+    startsDestroy(&mp->ss);
+  }
   free(mp);
 }
 
