@@ -308,11 +308,6 @@ int roundDouble(double number);
 *********************************************************/
 void utilSpiralOffset(int step, int *dx, int *dy);
 
-/* Timer functions (moved from screen.h) */
-void initWinboloTimer(void);
-DWORD winboloTimer(void);
-void endWinboloTimer(void);
-
 /* Returns the CLIENT_TYPE_* enum value for the platform we're running on. */
 uint8_t bolo_detect_client_type(void);
 

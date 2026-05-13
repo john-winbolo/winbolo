@@ -28,9 +28,6 @@
 /* Inludes */
 #include <math.h>
 #include <string.h>
-#ifdef _WIN32
-#include <WinSock2.h>
-#endif
 #include "global.h"
 #include "tank.h"
 #include "pillbox.h"
@@ -586,41 +583,6 @@ void utilStripName(char *name) {
 int roundDouble(double number)
 {
   return (number >= 0) ? (int)(number + 0.5) : (int)(number - 0.5);
-}
-
-/* --- Timer functions (moved from screen_routing.c) --- */
-
-#ifdef _WIN32
-/* Windows uses timeBeginPeriod/timeGetTime from winmm */
-#else
-#include <sys/time.h>
-static struct timeval start_time;
-#endif
-
-void initWinboloTimer(void) {
-#ifdef _WIN32
-  timeBeginPeriod(1);
-#else
-  gettimeofday(&start_time, NULL);
-#endif
-}
-
-DWORD winboloTimer(void) {
-#ifdef _WIN32
-  return timeGetTime();
-#else
-  struct timeval t;
-  gettimeofday(&t, NULL);
-  return (DWORD)((t.tv_sec - start_time.tv_sec) * 1000000 + (t.tv_usec - start_time.tv_usec)) / 1000;
-#endif
-}
-
-void endWinboloTimer(void) {
-#ifdef _WIN32
-  timeEndPeriod(1);
-#else
-  /* no-op on Linux */
-#endif
 }
 
 /*********************************************************

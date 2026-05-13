@@ -987,11 +987,11 @@ void gameFrontEnableRejoin(void) {
 /* ------------------------------------------------------------------ */
 
 time_t windowsGetTicks(void) {
-  return (time_t)winboloTimer();
+  return (time_t)SDL_GetTicks();
 }
 
 time_t serverMainGetTicks(void) {
-  return (time_t)winboloTimer();
+  return (time_t)SDL_GetTicks();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1377,13 +1377,13 @@ static int runNetworkMode(void) {
   logStateOpen(optLogState);
 
   /* Main game loop */
-  oldTick = winboloTimer();
+  oldTick = SDL_GetTicks();
 
   while (!headlessQuit) {
     brainRunning = brainHandlerIsBrainRunning();
     bool used = FALSE;
 
-    ttick = winboloTimer();
+    ttick = SDL_GetTicks();
 
     /* Process game ticks */
     if ((ttick - oldTick) > GAME_TICK_LENGTH) {
@@ -1508,7 +1508,6 @@ int main(int argc, char *argv[]) {
   wb_log_init("WinBolo", "WinBoloHeadless", "winbolo-headless.log");
   atexit(wb_log_shutdown);
 
-  initWinboloTimer();
 
   if (!clientMutexCreate()) {
     fprintf(stderr, "Error: failed to create client mutex\n");
@@ -1529,7 +1528,6 @@ int main(int argc, char *argv[]) {
     result = runNetworkMode();
   }
 
-  endWinboloTimer();
   clientMutexDestroy();
   langCleanup();
   SDL_Quit();

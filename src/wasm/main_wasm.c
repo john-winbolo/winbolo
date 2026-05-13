@@ -186,9 +186,9 @@ static void windowRunGameTick(ClientSim *cs) {
     clientMutexWaitFor();
     inBrain = TRUE;
     clientMutexRelease();
-    ttick = winboloTimer();
+    ttick = SDL_GetTicks();
     brainHandlerRun();
-    dwSysBrain += winboloTimer() - ttick;
+    dwSysBrain += SDL_GetTicks() - ttick;
     clientMutexWaitFor();
     inBrain = FALSE;
     clientMutexRelease();
@@ -249,13 +249,13 @@ static void main_loop_iteration(void) {
   }
 
   /* Render */
-  tick = winboloTimer();
+  tick = SDL_GetTicks();
   clientMutexWaitFor();
   if (finishedLoop == FALSE) {
     clientRenderFrame(cs, redraw);
   }
   clientMutexRelease();
-  dwSysFrame += (winboloTimer() - tick);
+  dwSysFrame += (SDL_GetTicks() - tick);
 
   /* ImGui overlay + present */
   sdl3ImguiPumpAndRender(cs);
@@ -302,7 +302,6 @@ int main(int argc, char *argv[]) {
   }
 
   SDL_Init(0);
-  initWinboloTimer();
 
   /* Parse URL query parameters: ?name=Player&zoom=2 */
   {
@@ -327,7 +326,6 @@ int main(int argc, char *argv[]) {
   printf("[WASM] Starting gameFrontStart...\n");
   if (gameFrontStart(cmdLine, &keys, FALSE, NULL) == FALSE) {
     printf("[WASM] gameFrontStart FAILED\n");
-    endWinboloTimer();
     clientMutexDestroy();
     SDL_Quit();
     return 1;
@@ -405,7 +403,7 @@ int main(int argc, char *argv[]) {
 
   guiMessageSetHandler(sdl3MessageHandler);
 
-  oldTick = winboloTimer();
+  oldTick = SDL_GetTicks();
   lastFrameTime = emscripten_get_now();
 
   {
@@ -421,7 +419,6 @@ int main(int argc, char *argv[]) {
 
   /* Cleanup (not reached with simulate_infinite_loop=1) */
   gameFrontEnd(&keys, TRUE, TRUE);
-  endWinboloTimer();
   clientMutexDestroy();
   sdl3ImguiCleanup();
   sdl3DrawCleanup();
