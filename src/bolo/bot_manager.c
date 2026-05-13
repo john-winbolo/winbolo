@@ -47,6 +47,7 @@
 #include "control_event.h"
 #include "transport.h"
 #include "client_snapshot.h"
+#include "client_net.h"
 #include "screenbrainmap.h"
 #include "input_packet.h"
 #include "bot_manager.h"

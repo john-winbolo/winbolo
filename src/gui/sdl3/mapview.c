@@ -26,6 +26,7 @@
 #include "../tiles.h"
 #include "tilenum.h"
 #include "screencalc.h"
+#include "client_render.h"
 #include "util.h"
 
 #include <string.h>
@@ -808,11 +809,11 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
         srcX=LGM_HELICOPTER_X; srcY=LGM_HELICOPTER_Y; srcW=TILE_SIZE_X; srcH=TILE_SIZE_Y; break;
     }
 
-    /* Centre the on-foot LGM sprite on its authoritative hit pixel
-     * (l->x, l->y). Sprite-local centre is (LGM_WIDTH/2, LGM_HEIGHT/2)
-     * = (1.5, 2.0) game pixels. Helicopter frame draws full-tile from
-     * its own (0, 0) anchor so no offset there. */
-    if ((*l)->frame == LGM0 || (*l)->frame == LGM1 || (*l)->frame == LGM2) {
+    /* Centre the on-foot LGM sprite on its authoritative hit pixel.
+     * Sprite-local centre is (LGM_WIDTH/2, LGM_HEIGHT/2) = (1.5, 2.0)
+     * game pixels. Helicopter frame draws full-tile from its own
+     * (0, 0) anchor so no offset there. */
+    if (lgmInfo.frame == LGM0 || lgmInfo.frame == LGM1 || lgmInfo.frame == LGM2) {
       lx -= 1.5f * (float)zf;
       ly -= 2.0f * (float)zf;
     }
