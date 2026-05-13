@@ -2286,12 +2286,6 @@ void serverSimAbortCountdown(ServerSim *sim) {
     sim->countdownTicks = 0;
 }
 
-void serverSimClearActive(ServerSim *sim) {
-    if (activeSim == sim) {
-        activeSim = NULL;
-    }
-}
-
 void serverSimClearBalanceProposal(ServerSim *sim) {
     memset(&sim->balanceProposal, 0, sizeof(BalanceProposal));
 }

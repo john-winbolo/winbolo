@@ -741,15 +741,6 @@ void serverSimConsoleMessage(const char *msg);
 void serverSimAbortCountdown(ServerSim *sim);
 
 /*********************************************************
- *NAME:          serverSimClearActive
- *PURPOSE:
- *  Clears the active sim pointer if it matches the given
- *  sim. Call this before freeing a ServerSim that was not
- *  cleaned up via serverSimDestroy.
- *********************************************************/
-void serverSimClearActive(ServerSim *sim);
-
-/*********************************************************
  *NAME:          serverSimClearBalanceProposal
  *PURPOSE:
  *  Zeroes out the WBN team balance proposal — clears
