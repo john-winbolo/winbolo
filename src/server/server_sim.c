@@ -68,11 +68,7 @@
 #include "screenbullet.h"
 #include "../mapeditor/mapeditor_generate.h"
 #include "../common/wb_log.h"
-
-#ifndef HAVE_SCREEN_C
-/* Forward declaration — defined in servermain.c (server target only) */
-void makeLogFileName(char *outFileName, const char *mapName);
-#endif
+#include "server_dedicated_log.h"
 
 /* Viewport culling — margin in map squares beyond the visible 15×15 screen */
 #define SNAPSHOT_SCREEN_SIZE 15
@@ -2301,28 +2297,7 @@ void serverSimConsoleMessage(const char *msg) {
 }
 
 void serverSimEnterGameOver(ServerSim *sim) {
-#ifndef HAVE_SCREEN_C
-    /* Stop log recording and upload (server target only) */
-    {
-        extern bool isLogging;
-        extern bool dontSendLog;
-        extern char fileName[];
-        if (isLogging) {
-            logStop();
-            isLogging = FALSE;
-
-            if (!dontSendLog && winbolonetIsRunning()) {
-                char key[WINBOLONET_KEY_LEN];
-                winboloNetGetServerKey(key);
-                if (key[0] != '\0') {
-                    httpCreate();
-                    httpSendLogFile(fileName, key, FALSE);
-                    httpDestroy();
-                }
-            }
-        }
-    }
-#endif
+    serverDedicatedLogOnEnterGameOver(sim);
 
     if (!sim->lobbyEnabled) {
         /* No lobby — game over means server should shut down */
@@ -2385,45 +2360,7 @@ void serverSimReturnToLobby(ServerSim *sim) {
     serverSimConsoleMessage("Returned to lobby.");
     /* PACKET_LOBBY_STATE broadcast is sent by transport layer */
 
-#ifndef HAVE_SCREEN_C
-    /* Start a new log file for the next round's lobby */
-    if (sim->wantLogging) {
-        extern char fileName[];
-        extern bool isLogging;
-        if (sim->userLogFileName[0] != '\0') {
-            strncpy(fileName, sim->userLogFileName, 512 - 1);
-        } else {
-            makeLogFileName(fileName, sim->mapName);
-        }
-        {
-            size_t flen = strlen(fileName);
-            if (flen <= 4 || strcmp(fileName + flen - 4, ".wbv") != 0) {
-                strncat(fileName, ".wbv", 512 - flen - 1);
-            }
-        }
-        isLogging = logStart(fileName, sim,
-                             0, MAX_TANKS, sim->hasPassword);
-        if (isLogging) {
-            logAddEvent(log_LobbyEnter, 0, 0, 0, 0, 0, NULL);
-            /* Emit join events for players already connected */
-            for (i = 0; i < MAX_TANKS; i++) {
-                if (sim->playerConnected[i]) {
-                    const char *name = transportUdpServerGetPlayerName(i);
-                    if (name != NULL) {
-                        char pstr[256];
-                        int nameLen = (int)strlen(name);
-                        BYTE accountFlags = playersGetAccountFlags(&sim->sim.plyrs, (BYTE)i);
-                        if (nameLen > 255) nameLen = 255;
-                        pstr[0] = (char)nameLen;
-                        memcpy(pstr + 1, name, nameLen);
-                        logAddEvent(log_PlayerJoined, i, '?', '?', accountFlags, 0, pstr);
-                    }
-                }
-            }
-            fprintf(stderr, "Logging to %s (lobby)\n", fileName);
-        }
-    }
-#endif
+    serverDedicatedLogOnReturnToLobby(sim);
 }
 
 void serverSimLobbyCheckAllReady(ServerSim *sim) {
@@ -2660,33 +2597,9 @@ void serverSimStartGame(ServerSim *sim) {
     sim->state = serverStateRunning;
     serverSimConsoleMessage("Game started!");
 
-#ifndef HAVE_SCREEN_C
-    /* Log the lobby-to-game transition; a snapshot will be written
-     * on the first running tick (tick 0 % FULL_SYNC_INTERVAL == 0). */
-    if (sim->wantLogging && logIsRecording()) {
-        logAddEvent(log_LobbyExit, 0, 0, 0, 0, 0, NULL);
-    } else if (sim->wantLogging) {
-        /* Logging was requested but not yet started — start now */
-        extern char fileName[];
-        extern bool isLogging;
-        if (sim->userLogFileName[0] != '\0') {
-            strncpy(fileName, sim->userLogFileName, 512 - 1);
-        } else {
-            makeLogFileName(fileName, sim->mapName);
-        }
-        {
-            size_t flen = strlen(fileName);
-            if (flen <= 4 || strcmp(fileName + flen - 4, ".wbv") != 0) {
-                strncat(fileName, ".wbv", 512 - flen - 1);
-            }
-        }
-        isLogging = logStart(fileName, sim,
-                             0, MAX_TANKS, sim->hasPassword);
-        if (isLogging) {
-            fprintf(stderr, "Logging to %s\n", fileName);
-        }
-    }
-#endif
+    /* A snapshot will be written on the first running tick
+     * (tick 0 % FULL_SYNC_INTERVAL == 0). */
+    serverDedicatedLogOnLobbyExit(sim);
 }
 
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {

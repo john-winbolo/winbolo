@@ -132,6 +132,7 @@ set(SERVER_SOURCES
     ${SRC_ROOT}/server/servermessages.c
     ${SRC_ROOT}/server/server_sim.c
     ${SRC_ROOT}/server/server_stubs.c
+    ${SRC_ROOT}/server/server_dedicated_log_stubs.c
     ${SRC_ROOT}/server/posix_stubs.c
 )
 
@@ -240,6 +241,7 @@ bolo_apply_include_rules(winbolo gui)
 target_compile_definitions(winbolo PRIVATE
     _GNU_SOURCE
     USE_64WITH32
+    HAVE_SCREEN_C=1
     WINBOLO_VERSION="1.18"
     BOLO_VERSION_MAJOR=1
     BOLO_VERSION_MINOR=1

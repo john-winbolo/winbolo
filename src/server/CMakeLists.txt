@@ -1,4 +1,4 @@
-# server_static — four shared server-peer files factored out of the
+# server_static — shared server-peer files factored out of the
 # per-target *_SOURCES lists of the binaries that compile the real
 # server lifecycle today.
 #
@@ -13,22 +13,29 @@
 #      existing partial server source set inline.)
 #   LogViewer, logviewer-wasm — link no bolo or server source.
 #
+# server_sim.c now lives in this library — the previous HAVE_SCREEN_C
+# divergence was lifted into server_dedicated_log.{c,h} so the same
+# server_sim.c body compiles for every consumer. Targets that don't
+# link server_static (iOS / BrainTest / MapEditor / android / wasm)
+# still compile their own copy from their per-target *_SOURCES.
+#
 # Other src/server/*.c files stay per-target:
-#   server_sim.c            — HAVE_SCREEN_C divergence (WinBoloDS
-#                             compiles real log path with symbols
-#                             only in servermain.c; every other target
-#                             defines the macro to no-op them)
-#   servermain.c            — WinBoloDS only
-#   server_frontend_stubs.c — WinBoloDS only
-#   server_stubs.c          — non-lifecycle linkers
-#   posix_stubs.c           — every non-Windows target (incl. LogViewer
-#                             standalone for its WBN http INI shims)
+#   servermain.c               — WinBoloDS only
+#   server_frontend_stubs.c    — WinBoloDS only
+#   server_stubs.c             — non-lifecycle linkers
+#   server_dedicated_log.c     — WinBoloDS only (real log bodies that
+#                                touch servermain.c-owned globals)
+#   server_dedicated_log_stubs.c — every binary other than WinBoloDS
+#                                  (no-op bodies for the same hooks)
+#   posix_stubs.c              — every non-Windows target (incl. LogViewer
+#                                standalone for its WBN http INI shims)
 
 add_library(server_static STATIC
     geolookup.c
     servermessages.c
     threads.c
     server_lifecycle.c
+    server_sim.c
 )
 
 bolo_apply_include_rules(server_static sim_owner)
