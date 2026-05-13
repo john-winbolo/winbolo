@@ -27,7 +27,6 @@
 #include "global.h"
 #include "everard_map.h"
 #include "tank.h"
-#include "bot_manager.h"
 #include "players.h"
 #include "bolo_map.h"
 #include "pillbox.h"
@@ -209,8 +208,8 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
     }
 
     /* Add brain bots with randomized count and teams */
-    if (!botManagerInit(0)) {
-        WB_LOG_ERROR(WB_LOG_CAT_GUI, "[BgGame] botManagerInit failed");
+    if (!serverSimBotPoolInit(0)) {
+        WB_LOG_ERROR(WB_LOG_CAT_GUI, "[BgGame] serverSimBotPoolInit failed");
         SDL_DestroyTexture(bg->tilesTex);
         bg->tilesTex = NULL;
         serverSimDestroy(bg->sim);
@@ -224,7 +223,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         for (BYTE i = 0; i < numBots; i++) {
             char name[32];
             SDL_snprintf(name, sizeof(name), "Bot %d", i + 1);
-            if (botManagerAddBot(bg->sim, i, brainPath, name, aiFull, gameTournament, false)) {
+            if (serverSimCreateBot(bg->sim, i, brainPath, name, aiFull, gameTournament, false)) {
                 bg->numBots++;
             }
         }
@@ -265,7 +264,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
 void bgGameDestroy(BgGame *bg) {
     if (!bg) return;
     if (bg->valid) {
-        botManagerDestroy(bg->sim);
+        serverSimDestroyBots(bg->sim);
     }
     if (bg->tilesTex) {
         SDL_DestroyTexture(bg->tilesTex);
@@ -282,11 +281,11 @@ void bgGameTick(BgGame *bg) {
 
     /* Real-game cadence: bot brains run at 50 Hz (game-ticks only), but
      * the inner sim ticks at 100 Hz (keys-tick + game-tick alternation in
-     * winbolo.c). One botManagerTick produces input packets for both,
+     * winbolo.c). One serverSimBotTick produces input packets for both,
      * so call serverSimTick twice to advance the sim at the right rate.
      * Events from the first tick would be wiped by the second; preserve
      * them so bots see both ticks' events on their next snapshot. */
-    botManagerTick(bg->sim, aiFull);
+    serverSimBotTick(bg->sim, aiFull);
     serverSimTick(bg->sim);
     {
         GameEvent savedEvents[MAX_SNAPSHOT_EVENTS];

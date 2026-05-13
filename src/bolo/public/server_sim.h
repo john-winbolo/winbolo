@@ -227,6 +227,112 @@ typedef struct ServerSimBotConfig {
 bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
                      const ServerSimBotConfig *cfg);
 
+/* Per-bot info populated by serverSimGetBotInfo. POD; no
+ * allocations or ownership. brainName is fixed-size: the
+ * bot's registered display name copied via SDL_strlcpy. */
+typedef struct {
+    bool     isBot;
+    bool     hasBrain;          /* aiFull with a live brain */
+    char     brainName[64];     /* brain identity: basename of the brain
+                                 * script path, with .lua stripped and
+                                 * "init" replaced by the parent directory
+                                 * name (e.g. "NewAutopilot" for
+                                 * brains/NewAutopilot/init.lua) */
+    double   lastThinkMs;       /* most recent brain tick */
+    double   targetMs;          /* target the next tick will use */
+    uint32_t overrunCount;      /* cumulative since session start */
+} BotInfo;
+
+/* Bot pool snapshot populated by serverSimGetBotPoolStats. POD;
+ * no allocations or ownership. */
+typedef struct {
+    int      workerCount;       /* botWorkerPoolGetSize() */
+    int      activeBots;        /* currently-active bot count */
+    double   ewmaSerialMs;      /* serial-stage EWMA */
+    double   currentTargetMs;   /* per-bot budget for next tick */
+    double   lastBrainPhaseMs;  /* wall-clock of last brain dispatch */
+    double   ewmaBrainPhaseMs;  /* EWMA of brain dispatch wall-clock */
+    double   lastSerialMs;      /* last serial-stage cost (ms) */
+    uint32_t totalOverruns;     /* sum of overrunCount across bots */
+} BotPoolStats;
+
+/* Max candidate count for BrainGoalInfo (defined in bot_manager.h,
+ * which is internal-only). Lives here so it can be referenced from
+ * the public surface without exposing bot_manager.h. */
+#define BRAIN_GOAL_MAX_CANDIDATES 32
+
+/*********************************************************
+ * Bot pool wrappers.
+ *
+ * These thin-forward to bot_manager.c, which owns the
+ * process-wide bot pool (workers + per-slot state). Public
+ * surface so non-server callers don't need to include
+ * bot_manager.h. The ServerSim * argument is currently
+ * advisory on the queries — bot state is module-global — but
+ * keeps the signatures stable for the day bot state moves
+ * onto ServerSim.
+ *********************************************************/
+
+/* === Bot pool lifecycle (process-wide) === */
+/* Pool state is module-global, not per-ServerSim. Call once
+ * at startup. `threads` is the total number of concurrent
+ * brain-tick runners including the producer (main) thread;
+ * the pool is sized to threads-1. Pass 0 to auto-size from
+ * logical CPU cores. */
+bool serverSimBotPoolInit(int threads);
+
+/* Request a live resize of the worker pool. Stashes the
+ * value as pending; the next serverSimBotTick applies it. */
+void serverSimRequestBotThreads(int total_runners);
+
+/* Current total runner count (workers + producer). */
+int  serverSimGetBotThreads(void);
+
+/* Pending thread-count request, or -1 if no resize pending. */
+int  serverSimGetPendingBotThreads(void);
+
+/* === Default debug mode for new bots === */
+/* Set the BRAIN_DEBUG_MODE value bots inherit at creation.
+ * Affects bots created AFTER this call. */
+void serverSimSetBotDefaultDebugMode(bool enabled);
+
+/* === Pre-think hook === */
+/* Register a callback invoked just before each bot's brain
+ * runs (with the bot's playerNum) and again with -1 after.
+ * Pass NULL to clear. */
+void serverSimSetBotPreThinkHook(void (*hook)(int playerNum));
+
+/* === Per-sim bot lifecycle === */
+
+/* Create a fully-initialised bot: lobby slot, brain, ClientSim,
+ * transport, map data. Forwards to bot_manager.c. Distinct from
+ * serverSimAddBot, which only registers the lobby slot — the
+ * full constructor calls serverSimAddBot internally. */
+bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
+                        const char *brainPath, const char *brainName,
+                        aiType ai, gameType game, bool hiddenMines);
+
+void serverSimRemoveBot(ServerSim *sim, BYTE playerNum);
+void serverSimDestroyBots(ServerSim *sim);
+void serverSimOnBotGameStart(ServerSim *sim);
+void serverSimSetBotTeams(ServerSim *sim,
+                          const BYTE *teamOf, BYTE numPlayers);
+
+/* === Per-tick bot advance === */
+/* Run brains for one tick. Distinct from serverSimTick
+ * (world step): typical pattern is serverSimBotTick first,
+ * then the world tick. */
+void serverSimBotTick(ServerSim *sim, aiType ai);
+
+/* === Bot queries (POD-returning) === */
+BYTE   serverSimGetNumBots(ServerSim *sim);
+bool   serverSimHasAnyBot(ServerSim *sim);
+bool   serverSimIsBot(ServerSim *sim, BYTE playerNum);
+double serverSimGetBotLastThinkMs(ServerSim *sim, BYTE playerNum);
+bool   serverSimGetBotInfo(ServerSim *sim, BYTE playerNum, BotInfo *out);
+void   serverSimGetBotPoolStats(ServerSim *sim, BotPoolStats *out);
+bool   serverSimToggleAllBrainDebugMode(ServerSim *sim);
+
 /*********************************************************
  *NAME:          serverSimSetTeam
  *PURPOSE:

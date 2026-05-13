@@ -1893,7 +1893,7 @@ target_include_directories(BrainTest PRIVATE
     ${cjson_SOURCE_DIR}
     ${BOT_C_INCLUDE_DIRS}
 )
-bolo_apply_include_rules(BrainTest runtime_only)
+bolo_apply_include_rules(BrainTest braintest)
 
 # braintest_vizwindow.cpp uses Dear ImGui (SDL3 + SDL_Renderer
 # backends). imgui_backends carries the headers + the impl libs.

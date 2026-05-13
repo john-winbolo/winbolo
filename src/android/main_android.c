@@ -35,7 +35,6 @@
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/luabrainshandler.h"
-#include "bot_manager.h"
 #include "../gui/sdl3/dialog_backend.h"
 #include "touch_input.h"
 #include "players_panel.h"
@@ -168,8 +167,8 @@ static void windowRunGameTick(ClientSim *cs) {
       /* Tick bot brains before the sim tick (local game only) */
       {
         ServerSim *serverSim = gameFrontGetServerSim();
-        if (serverSim != NULL && botManagerGetNumBots() > 0) {
-          botManagerTick(serverSim, clientSimGetAiType(cs));
+        if (serverSim != NULL && serverSimGetNumBots(serverSim) > 0) {
+          serverSimBotTick(serverSim, clientSimGetAiType(cs));
         }
       }
       clientSimNetTick(cs);

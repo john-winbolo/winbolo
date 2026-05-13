@@ -44,6 +44,11 @@
  *     F                Toggle free camera / follow mode
  *     Left click       Show A* cost + path to clicked tile (magenta)
  *     Right click      Clear click path overlay
+ *
+ *   This file uses bot_manager.h, brain_pathfinder.h,
+ *   brain_overlay.h, braincore.h, and control_event.h directly.
+ *   The "braintest" CMake profile in cmake/bolo_lib.cmake grants
+ *   this access; see the profile's doc-comment for rationale.
  *********************************************************/
 
 #include <SDL3/SDL.h>

@@ -29,6 +29,7 @@
 #include "client_enums.h"  /* aiType, gameType */
 #include "brain_pathfinder.h"
 #include "brain_overlay.h"
+#include "server_sim.h"    /* BotInfo, BotPoolStats, BRAIN_GOAL_MAX_CANDIDATES */
 
 /* Forward declarations */
 struct ServerSim;
@@ -297,34 +298,9 @@ double botManagerComputePerBotTargetMs(int activeBots);
  *********************************************************/
 void botManagerRecordSerialMs(double ms);
 
-/* Per-bot info populated by botManagerGetBotInfo. POD; no
- * allocations or ownership. brainName is fixed-size: the
- * bot's registered display name copied via SDL_strlcpy. */
-typedef struct {
-    bool     isBot;
-    bool     hasBrain;          /* aiFull with a live brain */
-    char     brainName[64];     /* brain identity: basename of the brain
-                                 * script path, with .lua stripped and
-                                 * "init" replaced by the parent directory
-                                 * name (e.g. "NewAutopilot" for
-                                 * brains/NewAutopilot/init.lua) */
-    double   lastThinkMs;       /* most recent brain tick */
-    double   targetMs;          /* target the next tick will use */
-    uint32_t overrunCount;      /* cumulative since session start */
-} BotInfo;
-
-/* Bot pool snapshot populated by botManagerGetPoolStats. POD;
- * no allocations or ownership. */
-typedef struct {
-    int      workerCount;       /* botWorkerPoolGetSize() */
-    int      activeBots;        /* currently-active bot count */
-    double   ewmaSerialMs;      /* serial-stage EWMA */
-    double   currentTargetMs;   /* per-bot budget for next tick */
-    double   lastBrainPhaseMs;  /* wall-clock of last brain dispatch */
-    double   ewmaBrainPhaseMs;  /* EWMA of brain dispatch wall-clock */
-    double   lastSerialMs;      /* last serial-stage cost (ms) */
-    uint32_t totalOverruns;     /* sum of overrunCount across bots */
-} BotPoolStats;
+/* BotInfo and BotPoolStats are defined in server_sim.h so the
+ * public serverSim wrappers can return them without exposing
+ * this header. */
 
 /*********************************************************
  *NAME:          botManagerHasAnyBot
@@ -439,7 +415,7 @@ bool botManagerToggleAllBrainDebugMode(void);
 /* Goal info for debug viewer (BrainTest)                              */
 /* ------------------------------------------------------------------ */
 
-#define BRAIN_GOAL_MAX_CANDIDATES 32
+/* BRAIN_GOAL_MAX_CANDIDATES is defined in server_sim.h. */
 
 typedef struct {
     char kind[32];          /* goal kind string (e.g. "attack_pill") */
