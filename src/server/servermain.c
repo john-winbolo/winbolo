@@ -1070,6 +1070,16 @@ int main(int argc, char **argv) {
     }
   }
 
+  /* -adminfirst — first player to join while the server has no other
+   * connected players gets PLAYER_FLAG_ADMIN. Re-arms whenever the
+   * server becomes empty again. Convenient for dynamic-IP hosts who
+   * can't pre-whitelist their own address via -admins. */
+  serverSimSetAdminFirstJoinAfterEmpty(serverSim,
+                                       argExist(argc, argv, "adminfirst") == TRUE);
+  if (serverSimGetAdminFirstJoinAfterEmpty(serverSim)) {
+    fprintf(stderr, "  Admin grant on first-join after empty: ENABLED\n");
+  }
+
   statusFile = argExist(argc, argv, "statusFile");
   serverSimSetQuitOnWin(serverSim, argExist(argc, argv, "quitonwin") == TRUE);
   serverSimSetAutoCloseOnEmpty(serverSim, argExist(argc, argv, "autoclose") == TRUE);

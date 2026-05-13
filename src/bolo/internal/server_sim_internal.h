@@ -58,6 +58,13 @@ typedef struct ServerSim {
      * literals; the first '\0' terminates the list. */
     char            adminIps[1024];
 
+    /* -adminfirst CLI flag: when set, the first client to join while no
+     * other players are connected receives PLAYER_FLAG_ADMIN. Re-arms
+     * each time the server becomes empty again. Surfaced separately from
+     * adminIps so dynamic hosts (no static IPs to whitelist) can still
+     * delegate moderation. */
+    bool            adminFirstJoinAfterEmpty;
+
     /* Layout A lobby flags — all persist across rounds. */
     bool     openHost;             /* anyone can edit when true */
     bool     allowNewPlayers;      /* live state — drives PACKET_LOCK_TOGGLE */

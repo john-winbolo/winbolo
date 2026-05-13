@@ -78,6 +78,22 @@ typedef struct {
     int             compressedLen;
 
     bool            initialized;
+
+    /* When true, the widget hides its "Load from device" and "Generate
+     * Random Map" buttons. The lobby's map chooser surfaces those
+     * features as separate tabs, so they'd be duplicated here. */
+    bool            hideExtras;
+
+    /* Optional cap on the left (map list) panel width in pixels. <=0
+     * means "use the default split". Used by the lobby chooser to keep
+     * the list narrow and let the preview claim the rest of the row. */
+    float           leftPanelMaxW;
+
+    /* Local case-insensitive substring filter applied to the map list.
+     * Empty = show everything. Filter is purely client-side — the full
+     * map list is already in memory, so we just hide non-matching rows.
+     * Editable via an InputText above the list. */
+    char            searchFilter[64];
 } MapChooserState;
 
 /* Initialize the map chooser state. Discovers available maps.

@@ -3339,16 +3339,11 @@ static void serverSimSyncSubscriber(
         }
     }
 
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (playersIsInUse(&sim->sim.plyrs, i) == TRUE) {
-            memset(&evt, 0, sizeof(evt));
-            serverSimFillPlayerJoinEvent(sim, i, &evt);
-            deliver(ctx, &evt);
-        }
-    }
-
     /* Layout A initial state — team metadata, bot configs, bot brain
-     * paths, and the brain-list catalogue. */
+     * paths, and the brain-list catalogue.  These must precede
+     * PLAYER_JOIN since the sync-ordering check (see
+     * serverSimSyncOrderingDeliver) asserts that PLAYER_JOIN events
+     * are the last non-PHASE events in the stream. */
     for (i = 1; i < MAX_TANKS; i++) {
         memset(&evt, 0, sizeof(evt));
         serverSimFillLobbyTeamMetaEvent(sim, i, &evt);
@@ -3366,6 +3361,15 @@ static void serverSimSyncSubscriber(
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbyBrainListEvent(sim, &evt);
     deliver(ctx, &evt);
+
+    /* PLAYER_JOIN events go last — see ordering check above. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (playersIsInUse(&sim->sim.plyrs, i) == TRUE) {
+            memset(&evt, 0, sizeof(evt));
+            serverSimFillPlayerJoinEvent(sim, i, &evt);
+            deliver(ctx, &evt);
+        }
+    }
 }
 
 SubscriberHandle serverSimRegisterSubscriber(
@@ -3638,6 +3642,14 @@ void serverSimSetAdminIps(ServerSim *sim, const char *csvIps) {
     if (!sim) return;
     if (csvIps == NULL) { sim->adminIps[0] = '\0'; return; }
     SDL_strlcpy(sim->adminIps, csvIps, sizeof(sim->adminIps));
+}
+
+bool serverSimGetAdminFirstJoinAfterEmpty(const ServerSim *sim) {
+    return sim ? sim->adminFirstJoinAfterEmpty : false;
+}
+
+void serverSimSetAdminFirstJoinAfterEmpty(ServerSim *sim, bool v) {
+    if (sim) sim->adminFirstJoinAfterEmpty = v;
 }
 
 bool serverSimGetOpenHost(const ServerSim *sim) {
