@@ -575,18 +575,10 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   brainsHandlerShutdown();
   if (wasmTransportActive) {
     if (wasmServerSim != NULL) {
-      /* Local transport: free server tanks (the embedded transport is
-       * torn down by clientSimDestroy below) */
-      GameSim *gs = serverSimGetGameSim(wasmServerSim);
-      BYTE i;
-      for (i = 0; i < MAX_TANKS; i++) {
-        if (gs->tanks[i] != NULL) {
-          tankDestroy(gs, &gs->tanks[i]);
-        }
-      }
+      serverSimDestroyBots(wasmServerSim);
       serverSimUnregisterSubscriber(wasmServerSim, wasmControlSub);
       wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
-      free(wasmServerSim);
+      serverSimDestroy(wasmServerSim);
       wasmServerSim = NULL;
     }
     wasmTransportActive = FALSE;
