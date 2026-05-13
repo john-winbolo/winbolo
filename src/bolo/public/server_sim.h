@@ -39,6 +39,11 @@
  * mapeditor_generate.h directly. */
 struct MapGenConfig;
 
+#ifndef CLIENTSIM_TYPEDEF
+#define CLIENTSIM_TYPEDEF
+typedef struct ClientSim ClientSim;
+#endif
+
 #ifndef GAMESIM_TYPEDEF
 #define GAMESIM_TYPEDEF
 typedef struct GameSim GameSim;
@@ -958,6 +963,18 @@ SubscriberHandle serverSimRegisterSubscriber(
     ServerSim *sim,
     void (*deliver)(void *, const struct ControlEvent *),
     void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimRegisterClientSubscriber
+ *PURPOSE:
+ *  Convenience over serverSimRegisterSubscriber for the
+ *  common case of a ClientSim that wants server-published
+ *  ControlEvents applied to it automatically. The apply
+ *  step is handled inside bolo so frontends don't have to
+ *  write a one-line forwarder.
+ *********************************************************/
+SubscriberHandle serverSimRegisterClientSubscriber(ServerSim *sim,
+                                                   ClientSim *cs);
 
 /*********************************************************
  *NAME:          serverSimRequestBalanceProposal

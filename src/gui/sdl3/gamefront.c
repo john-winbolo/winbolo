@@ -49,10 +49,8 @@
 #include "../../common/wb_log.h"
 #include "client_mapload.h"
 #include "client_sim.h"
-#include "client_sim_control.h"
 #include "control_event.h"
 #include "global.h"
-#include "players.h"
 #include "gui_message.h"
 #include "frontend.h"
 #include "../brainsHandler.h"
@@ -227,9 +225,6 @@ ClientSim *humanSim = NULL;
 static ServerSim *spServerSim = NULL;
 static SubscriberHandle spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
 
-static void humanDeliverControl(void *ctx, const ControlEvent *evt) {
-    clientSimApplyControl((ClientSim *)ctx, evt);
-}
 static bool spServerSimActive = FALSE;
 static bool spTransportLocalUsed = FALSE;
 static bool spServerHosted = FALSE;
@@ -1123,9 +1118,7 @@ bool gameFrontSetDlgState(openingStates newState) {
            * branch above) so myPlayerNum is initialized to 0 — matching the
            * SP slot — and the dispatcher's self-skip protects this slot
            * during sync. */
-          spHumanSubHandle = serverSimRegisterSubscriber(spServerSim,
-                                                        humanDeliverControl,
-                                                        humanSim);
+          spHumanSubHandle = serverSimRegisterClientSubscriber(spServerSim, humanSim);
           clientSimNetSetupTankGo(humanSim);
           /* Destroy background game before adding real bots — bgGameDestroy
            * calls serverSimDestroyBots which would wipe bots we add below. */

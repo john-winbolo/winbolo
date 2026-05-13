@@ -62,6 +62,7 @@
 #include "server_sim_internal.h"
 #include "server_lifecycle.h"
 #include "control_event.h"
+#include "client_sim_control.h"
 #include <assert.h>
 #include "interpolation.h"
 #include "position_history.h"
@@ -3179,6 +3180,14 @@ SubscriberHandle serverSimRegisterSubscriber(
     serverSimSyncSubscriber(sim, deliver, ctx);
 
     return SUBSCRIBER_HANDLE_ENCODE(slot, sim->subscriberGen[slot]);
+}
+
+static void serverSimDeliverToClientSim(void *ctx, const struct ControlEvent *evt) {
+    clientSimApplyControl((ClientSim *)ctx, evt);
+}
+
+SubscriberHandle serverSimRegisterClientSubscriber(ServerSim *sim, ClientSim *cs) {
+    return serverSimRegisterSubscriber(sim, serverSimDeliverToClientSim, cs);
 }
 
 void serverSimRequestBalanceProposal(ServerSim *sim,

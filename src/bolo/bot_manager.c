@@ -54,7 +54,6 @@
 #include "brain_worldsim.h"
 #include <lua.h>
 #include <lauxlib.h>   /* luaL_loadstring for botManagerExecLua */
-#include "transport_udp.h"
 #include "../common/wb_log.h"
 #include "server_sim.h"
 #include "../gui/sdl3/luabrainshandler.h"
@@ -434,9 +433,6 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
             return false;
         }
     }
-
-    /* Set bot name in transport client array for lobby broadcasts */
-    transportUdpServerSetBotName(playerNum, brainName);
 
     /* Create the bot's ClientSim */
     bot->cs = clientSimAlloc();

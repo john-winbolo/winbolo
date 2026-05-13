@@ -17,7 +17,6 @@
 
 #include "client_mapload.h"
 #include "client_sim.h"
-#include "client_sim_control.h"
 #include "control_event.h"
 #include "global.h"
 #include "platform_net.h"
@@ -149,9 +148,6 @@ static bool wasmTransportActive = FALSE;
 static BYTE wasmPlayerNum = 0;
 static SubscriberHandle wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
 
-static void wasmDeliverControl(void *ctx, const ControlEvent *evt) {
-    clientSimApplyControl((ClientSim *)ctx, evt);
-}
 ClientSim *humanSim = NULL;
 
 extern bool isTutorial;
@@ -546,9 +542,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
      * after clientLoadCompressedMap (which calls clientSimCreate) so
      * humanSim->myPlayerNum is initialized to 0 — matching the SP
      * slot — before sync's self-skip runs. */
-    wasmControlSub = serverSimRegisterSubscriber(wasmServerSim,
-                                                wasmDeliverControl,
-                                                humanSim);
+    wasmControlSub = serverSimRegisterClientSubscriber(wasmServerSim, humanSim);
     printf("[WASM] Single-player ServerSim ready\n");
   }
 

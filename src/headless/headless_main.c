@@ -70,11 +70,9 @@
 #include "brain_data.h"
 #include "client_mapload.h"
 #include "client_sim.h"
-#include "client_sim_control.h"
 #include "control_event.h"
 #include "frontend.h"
 #include "../gui/lang.h"
-#include "players.h"
 #include "brain.h"
 #include "client_net.h"
 #include "gui_message.h"
@@ -130,9 +128,6 @@ static volatile bool headlessQuit = FALSE;
 static bool transportActive = FALSE;
 static SubscriberHandle headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
 
-static void headlessDeliverControl(void *ctx, const ControlEvent *evt) {
-    clientSimApplyControl((ClientSim *)ctx, evt);
-}
 static BYTE playerNum = 0;
 static ClientSim *humanSim = NULL;
 
@@ -1040,9 +1035,7 @@ static bool fastModeSetupGame(void) {
    * runs. Unregister any prior handle first so a re-setup that skipped
    * the teardown path does not leak a slot. */
   serverSimUnregisterSubscriber(fastServerSim, headlessControlSub);
-  headlessControlSub = serverSimRegisterSubscriber(fastServerSim,
-                                                  headlessDeliverControl,
-                                                  humanSim);
+  headlessControlSub = serverSimRegisterClientSubscriber(fastServerSim, humanSim);
 
   return true;
 }
@@ -1116,9 +1109,7 @@ static int runFastMode(void) {
   /* Register the headless client as a control-event subscriber. Placed
    * after clientLoadCompressedMap so humanSim->myPlayerNum is 0 before
    * sync's self-skip runs. */
-  headlessControlSub = serverSimRegisterSubscriber(fastServerSim,
-                                                  headlessDeliverControl,
-                                                  humanSim);
+  headlessControlSub = serverSimRegisterClientSubscriber(fastServerSim, humanSim);
 
   if (!optQuiet) {
     fprintf(stderr, "Game ready. Entering fast loop.\n");
