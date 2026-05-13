@@ -11,7 +11,7 @@
 #
 # Serve locally with: python3 -m http.server -d build-wasm-game
 
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.18)
 
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE INTERNAL "")
 
@@ -120,6 +120,7 @@ set(BOLO_VERSION_MAJOR 1)
 set(BOLO_VERSION_MINOR 1)
 set(BOLO_VERSION_REVISION 8)
 add_subdirectory(${REPO_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
+add_subdirectory(${REPO_ROOT}/brains ${CMAKE_BINARY_DIR}/bot_brains_static)
 
 set(BOLO_SOURCES
     ${SRC_ROOT}/bolo/transport_udp_client.c
@@ -203,18 +204,6 @@ set(WASM_SOURCES
     ${SRC_ROOT}/common/wb_log.c
 )
 
-# Per-bot C bindings under brains/<bot>/c/*.c (e.g. NewAutopilot's
-# pillcontrib overlay). luabrainshandler.c #includes these headers and
-# calls into their per-tick registrations, so they must be compiled in
-# and their directories added to the include path.
-file(GLOB BOT_C_SOURCES CONFIGURE_DEPENDS "${REPO_ROOT}/brains/*/c/*.c")
-set(BOT_C_INCLUDE_DIRS "")
-foreach(_bot_c_src ${BOT_C_SOURCES})
-    get_filename_component(_bot_c_dir "${_bot_c_src}" DIRECTORY)
-    list(APPEND BOT_C_INCLUDE_DIRS "${_bot_c_dir}")
-endforeach()
-list(REMOVE_DUPLICATES BOT_C_INCLUDE_DIRS)
-
 ###
 # Build the WASM executable
 #
@@ -226,7 +215,6 @@ add_executable(winbolo
     ${GUI_SOURCES}
     ${MAPEDITOR_SOURCES}
     ${WASM_SOURCES}
-    ${BOT_C_SOURCES}
 )
 
 target_include_directories(winbolo PRIVATE
@@ -234,9 +222,13 @@ target_include_directories(winbolo PRIVATE
     ${SRC_ROOT}/gui
     ${SRC_ROOT}/server
     ${SRC_ROOT}/mapeditor
-    ${BOT_C_INCLUDE_DIRS}
 )
 bolo_apply_include_rules(winbolo gui)
+bolo_grant_internal_source_access(winbolo
+    ${SRC_ROOT}/bolo/transport_udp_client.c
+    ${SRC_ROOT}/server/server_sim.c
+    ${SRC_ROOT}/server/servermessages.c
+    ${SRC_ROOT}/mapeditor/mapeditor_generate.c)
 
 target_compile_definitions(winbolo PRIVATE
     _GNU_SOURCE
@@ -250,7 +242,7 @@ target_compile_definitions(winbolo PRIVATE
 target_compile_options(winbolo PRIVATE -fno-common -include sys/types.h)
 target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")
 
-target_link_libraries(winbolo PRIVATE bolo_static)
+target_link_libraries(winbolo PRIVATE bolo_static bot_brains_static)
 target_link_libraries(winbolo PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
