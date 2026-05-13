@@ -805,6 +805,26 @@ else()
     message(STATUS "ONNX Runtime not found — ML brain support disabled")
 endif()
 
+# Helper: copy ONNX Runtime shared library next to an executable target
+function(copy_onnxruntime_to_target _target)
+    if(NOT HAVE_ONNXRUNTIME)
+        return()
+    endif()
+    if(WIN32 AND DEFINED ONNXRUNTIME_DLL)
+        add_custom_command(TARGET ${_target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_DLL}" "$<TARGET_FILE_DIR:${_target}>"
+            COMMENT "Copying ONNX Runtime DLL to ${_target} output directory"
+        )
+    elseif(DEFINED ONNXRUNTIME_LIBDIR)
+        file(GLOB _ORT_ALL_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
+        foreach(_f ${_ORT_ALL_SO})
+            add_custom_command(TARGET ${_target} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_f}" "$<TARGET_FILE_DIR:${_target}>"
+            )
+        endforeach()
+    endif()
+endfunction()
+
 # Sentry crash reporting — optional.
 # Set -DENABLE_SENTRY=OFF to skip entirely.
 # Pass -DSENTRY_DSN="https://key@o0.ingest.sentry.io/0" to enable reporting.
@@ -1147,22 +1167,7 @@ add_custom_command(TARGET WinBolo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3_ttf::SDL3_ttf>" "$<TARGET_FILE_DIR:WinBolo>"
     COMMENT "Copying SDL3 shared libraries to WinBolo output directory"
 )
-# Copy ONNX Runtime shared library if using FetchContent prebuilt
-if(HAVE_ONNXRUNTIME)
-    if(WIN32 AND DEFINED ONNXRUNTIME_DLL)
-        add_custom_command(TARGET WinBolo POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_DLL}" "$<TARGET_FILE_DIR:WinBolo>"
-            COMMENT "Copying ONNX Runtime DLL to WinBolo output directory"
-        )
-    elseif(DEFINED ONNXRUNTIME_LIBDIR)
-        file(GLOB _ORT_ALL_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
-        foreach(_f ${_ORT_ALL_SO})
-            add_custom_command(TARGET WinBolo POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_f}" "$<TARGET_FILE_DIR:WinBolo>"
-            )
-        endforeach()
-    endif()
-endif()
+copy_onnxruntime_to_target(WinBolo)
 # Copy crashpad_handler next to WinBolo executable
 if(HAVE_SENTRY AND TARGET crashpad_handler)
     add_custom_command(TARGET WinBolo POST_BUILD
@@ -1343,6 +1348,7 @@ add_custom_command(TARGET WinBoloDS POST_BUILD
         "$<TARGET_FILE_DIR:WinBoloDS>/Brains/NewAutopilot"
     COMMENT "Copying brain scripts to WinBoloDS output Brains/ directory"
 )
+copy_onnxruntime_to_target(WinBoloDS)
 
 # ---------------------------------------------------------------------------
 # LogViewer (cross-platform: Windows, Linux, macOS)
@@ -1620,6 +1626,7 @@ if(HAVE_SENTRY AND TARGET crashpad_handler)
         COMMENT "Copying crashpad_handler to WinBoloHeadless output directory"
     )
 endif()
+copy_onnxruntime_to_target(WinBoloHeadless)
 
 # ---------------------------------------------------------------------------
 # WinBoloGym shared library (C API for ML training)
@@ -1713,6 +1720,7 @@ add_custom_command(TARGET winbolo_gym POST_BUILD
         "${CMAKE_SOURCE_DIR}/data/lang" "$<TARGET_FILE_DIR:winbolo_gym>/data/lang"
     COMMENT "Copying winbolo_gym lang files to output directory"
 )
+copy_onnxruntime_to_target(winbolo_gym)
 
 # ---------------------------------------------------------------------------
 # gym_batch_test (Phase 0 determinism baseline)
@@ -1835,7 +1843,7 @@ add_custom_command(TARGET BrainTest POST_BUILD
         "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:BrainTest>/data"
     COMMENT "Copying BrainTest data files to output directory"
 )
-
+copy_onnxruntime_to_target(BrainTest)
 
 # ---------------------------------------------------------------------------
 # MapEditor (standalone map editor)
@@ -1945,6 +1953,7 @@ else()
         COMMENT "Copying MapEditor data files to output directory"
     )
 endif()
+copy_onnxruntime_to_target(MapEditor)
 
 # MinGW: statically link the GCC/C++ runtime so the executables don't need
 # libgcc_s_seh-1.dll, libstdc++-6.dll, or libwinpthread-1.dll at runtime.
