@@ -1206,24 +1206,12 @@ bool gameFrontSetDlgState(openingStates newState) {
                   serverSimPublishControl(spServerSim, &slotEvt);
                 }
               }
-              /* Apply team alliances — players with same non-zero team become allies. */
-              for (int a = 0; a < 16; a++) {
-                if (!serverSimIsPlayerConnected(spServerSim, (BYTE)a)) continue;
-                if (serverSimGetLobbyPlayer(spServerSim, (BYTE)a)->teamNumber == 0) continue;
-                for (int b = a + 1; b < 16; b++) {
-                  if (!serverSimIsPlayerConnected(spServerSim, (BYTE)b)) continue;
-                  if (serverSimGetLobbyPlayer(spServerSim, (BYTE)b)->teamNumber == serverSimGetLobbyPlayer(spServerSim, (BYTE)a)->teamNumber) {
-                    GameSim *gs = serverSimGetGameSim(spServerSim);
-                    ControlEvent allyEvt;
-                    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, (BYTE)a, (BYTE)b, TRUE);
-                    memset(&allyEvt, 0, sizeof(allyEvt));
-                    allyEvt.type = CTRL_ALLIANCE_ACCEPT;
-                    allyEvt.u.allianceAccept.acceptedBy = (BYTE)a;
-                    allyEvt.u.allianceAccept.newMember  = (BYTE)b;
-                    serverSimPublishControl(spServerSim, &allyEvt);
-                  }
-                }
-              }
+              /* Apply team alliances — players with same non-zero team become
+               * allies. serverSimStartGame already did this pass when it ran
+               * at the top of this block, but at that point neither the
+               * human player nor the bots had been added yet, so it found
+               * no pairs. Re-run it now that the lobby is populated. */
+              serverSimReapplyTeamAlliances(spServerSim);
             }
           }
           gameFrontUpdateSteamPresence(humanSim);
