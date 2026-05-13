@@ -19,7 +19,7 @@
 #include "position_history.h" /* PosHistory — used by posHistory / lgmPosHistory */
 #include "../../mapeditor/mapeditor_generate.h" /* MapGenConfig — embedded by value in randomMapConfig */
 
-typedef struct ServerSim {
+struct ServerSim {
     GameSim      sim;    /* MUST be first member */
 
     /* Tick state */
@@ -135,7 +135,7 @@ typedef struct ServerSim {
     uint16_t          subscriberGen[MAX_TANKS + 1];
     int               numSubscribers;
     bool              publishing;
-} ServerSim;
+};
 
 BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
                    ServerSim_sim_must_be_first_member);

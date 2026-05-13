@@ -36,7 +36,10 @@
 #include "types.h"
 
 struct GameSim;
+#ifndef SCROLLSTATE_TYPEDEF
+#define SCROLLSTATE_TYPEDEF
 typedef struct ScrollState ScrollState;
+#endif
 
 typedef struct ViewPort ViewPort;
 
