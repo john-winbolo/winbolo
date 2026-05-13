@@ -204,7 +204,6 @@ int main(int argc, char *argv[]) {
         SDL_Log("Base path: %s", basePath);
     }
 
-    initWinboloTimer();
 
     if (clientMutexCreate() == FALSE) {
         SDL_Log("[iOS] Failed to create client mutex");
@@ -216,7 +215,6 @@ int main(int argc, char *argv[]) {
     SDL_Log("[iOS] Starting gameFrontStart...");
     if (gameFrontStart("", &keys, FALSE, NULL) == FALSE) {
         SDL_Log("[iOS] gameFrontStart FAILED");
-        endWinboloTimer();
         clientMutexDestroy();
         SDL_Quit();
         return 1;
@@ -294,7 +292,6 @@ ios_game_start:
         if (lobbyResult == 0) {
             SDL_Log("[iOS] Left lobby, cleaning up");
             gameFrontEnd(&keys, FALSE, TRUE);
-            endWinboloTimer();
             clientMutexDestroy();
             sdl3DrawCleanup();
             soundCleanup();
@@ -304,7 +301,6 @@ ios_game_start:
         if (!gameFrontLoadDeferredMap(&cs)) {
             SDL_Log("[iOS] Failed to load deferred map");
             gameFrontEnd(&keys, FALSE, TRUE);
-            endWinboloTimer();
             clientMutexDestroy();
             sdl3DrawCleanup();
             soundCleanup();
@@ -330,7 +326,7 @@ ios_game_start:
 
     guiMessageSetHandler(sdl3MessageHandler);
 
-    oldTick = winboloTimer();
+    oldTick = SDL_GetTicks();
 
     /* Flush any stale render state left over from the dialog phase.
        The dialog loop destroys textures and restores logical presentation
@@ -441,13 +437,13 @@ ios_game_start:
         }
 
         /* Render */
-        tick = winboloTimer();
+        tick = SDL_GetTicks();
         clientMutexWaitFor();
         if (finishedLoop == FALSE) {
             clientRenderFrame(cs, redraw);
         }
         clientMutexRelease();
-        dwSysFrame += (winboloTimer() - tick);
+        dwSysFrame += (SDL_GetTicks() - tick);
 
         /* Touch overlay (skip in tablet mode — ImGui overlay handles it) */
         if (!uiModeIsTablet()) {
@@ -485,7 +481,6 @@ ios_game_start:
         SDL_Log("[iOS] gameFrontStart failed after leave game");
     }
 
-    endWinboloTimer();
     clientMutexDestroy();
     sdl3DrawCleanup();
     soundCleanup();
@@ -606,9 +601,9 @@ static void windowRunGameTick(ClientSim *cs) {
         clientMutexWaitFor();
         inBrain = TRUE;
         clientMutexRelease();
-        ttick = winboloTimer();
+        ttick = SDL_GetTicks();
         brainHandlerRun();
-        dwSysBrain += winboloTimer() - ttick;
+        dwSysBrain += SDL_GetTicks() - ttick;
         clientMutexWaitFor();
         inBrain = FALSE;
         clientMutexRelease();

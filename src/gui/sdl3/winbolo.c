@@ -270,7 +270,6 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  initWinboloTimer();
 
   if (clientMutexCreate() == FALSE) {
     imguiMessageBoxEx(DIALOG_BOX_TITLE, "Failed to create client mutex",
@@ -279,7 +278,6 @@ int main(int argc, char *argv[]) {
   }
 
   if (gameFrontStart(cmdLine, &keys, FALSE, &cs) == FALSE) {
-    endWinboloTimer();
     clientMutexDestroy();
     SDL_Quit();
     return 1;
@@ -331,7 +329,7 @@ int main(int argc, char *argv[]) {
       soundKeepalive(useSoundKeepalive);
     }
     SDL_Delay(500);
-    oldTick = winboloTimer();
+    oldTick = SDL_GetTicks();
     oldFrameTick = oldTick;
     timerGameID = SDL_AddTimer(GAME_TICK_LENGTH, windowGameTimer, NULL);
     timerFrameID = SDL_AddTimer((Uint32)frameRateTime, windowFrameRateTimer, NULL);
@@ -465,13 +463,13 @@ int main(int argc, char *argv[]) {
            buffering that left stale content in the alternate backbuffer,
            causing a visible "jump-back" flicker. */
         {
-          DWORD tick = winboloTimer();
+          DWORD tick = SDL_GetTicks();
           clientMutexWaitFor();
           if (finishedLoop == FALSE) {
             clientRenderFrame(cs, redraw);
           }
           clientMutexRelease();
-          dwSysFrame += (winboloTimer() - tick);
+          dwSysFrame += (SDL_GetTicks() - tick);
         }
         /* Consume the timer signal so it doesn't accumulate */
         SDL_SetAtomicInt(&needsRedraw, 0);
@@ -536,7 +534,6 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  endWinboloTimer();
   clientMutexDestroy();
   /* Explicit cleanup before SDL_Quit so leak checks see freed memory */
   sdl3ImguiCleanup();
@@ -600,7 +597,7 @@ static void windowRunGameTick(ClientSim *cs) {
     return;
   }
 
-  ttick = winboloTimer();
+  ttick = SDL_GetTicks();
   /* Update the game objects if required */
   if ((ttick - oldTick) > GAME_TICK_LENGTH) {
     while ((ttick - oldTick) > GAME_TICK_LENGTH) {
@@ -660,14 +657,14 @@ static void windowRunGameTick(ClientSim *cs) {
            * Wall-clock cost feeds dwSysBrain so the System Info "AI Tanks"
            * line reflects bot processing — brainHandlerRun below only
            * covers the human's local autopilot. Advance ttick by the same
-           * duration so dwSysGame (computed as winboloTimer() - ttick at
+           * duration so dwSysGame (computed as SDL_GetTicks() - ttick at
            * the bottom of the loop) doesn't also count it as sim time. */
           {
             ServerSim *serverSim = gameFrontGetServerSim();
             if (serverSim != NULL && serverSimGetNumBots(serverSim) > 0) {
-              DWORD bttick = winboloTimer();
+              DWORD bttick = SDL_GetTicks();
               serverSimBotTick(serverSim, clientSimGetAiType(cs));
-              DWORD botDur = winboloTimer() - bttick;
+              DWORD botDur = SDL_GetTicks() - bttick;
               dwSysBrain += botDur;
               ttick += botDur;
             }
@@ -689,16 +686,16 @@ static void windowRunGameTick(ClientSim *cs) {
       }
     }
   }
-  dwSysGame += (winboloTimer() - ttick);
+  dwSysGame += (SDL_GetTicks() - ttick);
 
   /* AI */
   if (used == TRUE && inBrain == FALSE && brainRunning == TRUE && clientSimGetNetStatus(cs) != netFailed) {
     clientMutexWaitFor();
     inBrain = TRUE;
     clientMutexRelease();
-    ttick = winboloTimer();
+    ttick = SDL_GetTicks();
     brainHandlerRun();
-    dwSysBrain += winboloTimer() - ttick;
+    dwSysBrain += SDL_GetTicks() - ttick;
     clientMutexWaitFor();
     inBrain = FALSE;
     clientMutexRelease();
@@ -1385,13 +1382,13 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
 }
 
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
-  DWORD tick = winboloTimer();
+  DWORD tick = SDL_GetTicks();
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (armour > TANK_FULL_ARMOUR) {
     armour = 0;
   }
   sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees);
-  dwSysFrame += (winboloTimer() - tick);
+  dwSysFrame += (SDL_GetTicks() - tick);
 }
 
 void frontEndPlaySound(ClientSim *cs, sndEffects value) {
@@ -1408,78 +1405,78 @@ void windowPlaySound(sndEffects value) {
 }
 
 void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
-  DWORD tick = winboloTimer();
+  DWORD tick = SDL_GetTicks();
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3DrawStatusPillbox(pillNum, pb, showPillLabels);
   sdl3DrawCopyPillsStatus(0, 0);
-  dwSysFrame += (winboloTimer() - tick);
+  dwSysFrame += (SDL_GetTicks() - tick);
 }
 
 void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
-  DWORD tick = winboloTimer();
+  DWORD tick = SDL_GetTicks();
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3DrawStatusTank(tankNum, ts);
   sdl3DrawCopyTanksStatus(0, 0);
-  dwSysFrame += (winboloTimer() - tick);
+  dwSysFrame += (SDL_GetTicks() - tick);
 }
 
 void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (drawBusy == FALSE) {
-    DWORD tick = winboloTimer();
+    DWORD tick = SDL_GetTicks();
     sdl3DrawMessages(0, 0, top, bottom);
-    dwSysFrame += (winboloTimer() - tick);
+    dwSysFrame += (SDL_GetTicks() - tick);
   }
 }
 
 void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (drawBusy == FALSE) {
-    DWORD tick = winboloTimer();
+    DWORD tick = SDL_GetTicks();
     sdl3DrawKillsDeaths(0, 0, kills, deaths);
-    dwSysFrame += (winboloTimer() - tick);
+    dwSysFrame += (SDL_GetTicks() - tick);
   }
 }
 
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
-  DWORD tick = winboloTimer();
+  DWORD tick = SDL_GetTicks();
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3DrawStatusBase(baseNum, bs, showBaseLabels);
   sdl3DrawCopyBasesStatus(0, 0);
-  dwSysFrame += (winboloTimer() - tick);
+  dwSysFrame += (SDL_GetTicks() - tick);
 }
 
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {
-  DWORD tick = winboloTimer();
+  DWORD tick = SDL_GetTicks();
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3DrawStatusBaseBars(0, 0, shells, mines, armour, FALSE);
-  dwSysFrame += (winboloTimer() - tick);
+  dwSysFrame += (SDL_GetTicks() - tick);
 }
 
 void frontEndManStatus(ClientSim *cs, bool isDead, TURNTYPE angle) {
-  DWORD tick = winboloTimer();
+  DWORD tick = SDL_GetTicks();
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   clientMutexWaitFor();
   sdl3DrawSetManStatus(0, 0, isDead, angle);
   clientMutexRelease();
-  dwSysFrame += (winboloTimer() - tick);
+  dwSysFrame += (SDL_GetTicks() - tick);
 }
 
 void frontEndManClear(ClientSim *cs) {
-  DWORD tick = winboloTimer();
+  DWORD tick = SDL_GetTicks();
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   clientMutexWaitFor();
   sdl3DrawSetManClear();
   sdl3DrawCopyManStatus(0, 0);
   clientMutexRelease();
-  dwSysFrame += (winboloTimer() - tick);
+  dwSysFrame += (SDL_GetTicks() - tick);
 }
 
 void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   if (hideMainView == FALSE && drawBusy == FALSE) {
-    DWORD tick = winboloTimer();
+    DWORD tick = SDL_GetTicks();
     sdl3DrawDownloadScreen(cs, NULL, justBlack);
-    dwSysFrame += (winboloTimer() - tick);
+    dwSysFrame += (SDL_GetTicks() - tick);
   }
 }
 
@@ -1674,7 +1671,7 @@ bool frontEndTutorial(BYTE pos) {
   clientMutexWaitFor();
   tutorialServerPaused = FALSE;
   doingTutorial = FALSE;
-  oldTick = winboloTimer();
+  oldTick = SDL_GetTicks();
   ttick = oldTick;
   tutorialStepIdx++;
   return TRUE;

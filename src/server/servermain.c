@@ -58,11 +58,6 @@
 #define GAME_NUMGAMETICKS_SEC (1000 / 20)
 #endif
 
-/* From backend.c / timer code */
-void initWinboloTimer(void);
-DWORD winboloTimer(void);
-void endWinboloTimer(void);
-
 /* From servermessages.c — called directly now instead of through servercore wrappers */
 void serverMessageSetQuietMode(ServerSim *sim, bool modeOn);
 void serverMessagesSetLogFile(ServerSim *sim, char *logFile);
@@ -432,12 +427,12 @@ void processKeys(bool isQuiet) {
 #ifdef _WIN32
 void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2) {
   DWORD tick;
-  tick = winboloTimer();
+  tick = SDL_GetTicks();
 #else
   Uint32 SDLCALL serverGameTimer(void *userdata, SDL_TimerID timerID, Uint32 interval) {
   (void)userdata; (void)timerID;
   DWORD tick;
-  tick = winboloTimer();
+  tick = SDL_GetTicks();
 #endif
 
   if ((tick - oldTick) > SERVER_TICK_LENGTH) {
@@ -839,7 +834,6 @@ int main(int argc, char **argv) {
   maxPlayers = 0;
 
   alarmRaised = alarmNone;
-  initWinboloTimer();
 #ifdef _WIN32
   /* Set up console ctrl handler */
   SetConsoleCtrlHandler(consoleCtrlHandler, TRUE);
@@ -1288,10 +1282,10 @@ int main(int argc, char **argv) {
   }
   serverMessageConsoleMessage(serverSim,"Type \"help\" for help, \"quit\" to exit.");
 #ifdef _WIN32
-  oldTick = winboloTimer();
+  oldTick = SDL_GetTicks();
   serverTimerGameID = timeSetEvent(SERVER_TICK_LENGTH, 10, serverGameTimer, 0, TIME_PERIODIC);
 #else
-  oldTick = winboloTimer();
+  oldTick = SDL_GetTicks();
   serverTimerGameID = SDL_AddTimer(SERVER_TICK_LENGTH, serverGameTimer, NULL);
 #endif
 
@@ -1321,7 +1315,6 @@ int main(int argc, char **argv) {
     httpSendLogFile(fileName, key, FALSE);
     httpDestroy();
   }
-  endWinboloTimer();
   geoLookupDestroy();
   serverSimMapDirDestroy(serverSim);
   serverSimDestroy(serverSim);

@@ -116,8 +116,8 @@ void gameFrontSetPlayerName(char *pn) { (void)pn; }
 void gameFrontSetAIType(aiType ait) { (void)ait; }
 void gameFrontEnableRejoin(void) {}
 
-time_t windowsGetTicks(void) { return (time_t)winboloTimer(); }
-time_t serverMainGetTicks(void) { return (time_t)winboloTimer(); }
+time_t windowsGetTicks(void) { return (time_t)SDL_GetTicks(); }
+time_t serverMainGetTicks(void) { return (time_t)SDL_GetTicks(); }
 
 /* ------------------------------------------------------------------ */
 /* Configuration                                                       */
@@ -4206,7 +4206,6 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    initWinboloTimer();
     clientMutexCreate();
     langSetup();
 
@@ -5235,7 +5234,6 @@ int main(int argc, char *argv[]) {
     SDL_DestroyWindow(app.window);
     langCleanup();
     clientMutexDestroy();
-    endWinboloTimer();
     SDL_Quit();
 
     return 0;

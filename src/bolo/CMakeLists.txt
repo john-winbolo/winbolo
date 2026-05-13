@@ -116,6 +116,14 @@ target_link_libraries(bolo_static PUBLIC
     utf8proc
 )
 
+# Windows system lib that bolo TUs reference: ws2_32 for the sockets
+# called from transport_udp_server.c, transport_udp_common.c, discovery.c.
+# PUBLIC so the consumer link line sees bolo_static.a *before* ws2_32,
+# which MinGW's ld requires for one-pass symbol resolution.
+if(WIN32)
+    target_link_libraries(bolo_static PUBLIC ws2_32)
+endif()
+
 # -fcommon matches the per-target setting every bolo-linking binary
 # uses today. Keeps tentative definitions like debug_file_output.c's
 # `char fileName[2048]` mergeable with the strong definition of the
