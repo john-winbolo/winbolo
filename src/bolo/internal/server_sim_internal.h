@@ -15,6 +15,8 @@
 
 #include <stddef.h>
 #include "server_sim.h"
+#include "game_sim.h"        /* GameSim layout — used by the sim field below */
+#include "position_history.h" /* PosHistory — used by posHistory / lgmPosHistory */
 
 typedef struct ServerSim {
     GameSim      sim;    /* MUST be first member */

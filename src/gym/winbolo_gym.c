@@ -48,6 +48,7 @@
 #include "tank.h"
 #include "util.h"
 #include "server_sim.h"
+#include "game_sim.h"
 #include "brain_worldsim.h"
 
 /* Required by the engine — stub for library mode */
