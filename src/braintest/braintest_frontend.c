@@ -26,6 +26,7 @@
 #include "client_sim.h"
 #include "frontend.h"
 #include "server_sim.h"
+#include "../server/threads.h"
 
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
   (void)cs; (void)shells; (void)mines; (void)armour; (void)trees;

@@ -34,6 +34,7 @@
 #include "viewport.h"
 #include "util.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "players.h"
 #include "messages.h"
 #include "player_flags.h"

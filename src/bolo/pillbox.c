@@ -32,6 +32,7 @@
 #include "tank.h"
 #include "tilenum.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "sounddist.h"
 #include "brain_data.h"
 #include "messages.h"

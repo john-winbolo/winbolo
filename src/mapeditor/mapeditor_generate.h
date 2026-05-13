@@ -95,7 +95,7 @@ extern "C" {
 #define MAPGEN_LOCK_F_RIVERS      (1ull << 32)
 #define MAPGEN_LOCK_F_MINES       (1ull << 33)
 
-typedef struct {
+typedef struct MapGenConfig {
     /* Region to generate into (playable area or selection, pre-normalized) */
     int x1, y1, x2, y2;
 

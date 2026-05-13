@@ -74,6 +74,7 @@
 #include "client_sim_control.h"
 #include "control_event.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "players.h"
 #include "brain.h"
 #include "client_net.h"

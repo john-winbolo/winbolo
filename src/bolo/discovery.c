@@ -39,6 +39,7 @@
 #include "udppackets.h"
 #include "util.h"
 #include "discovery.h"
+#include "../gui/currentgames.h"
 #include "../common/wb_log.h"
 
 /* Used to stop socket blocking */

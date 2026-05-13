@@ -54,11 +54,7 @@ You'll know it when you see it :)
 #include "global.h"
 #include "unzip.h"
 #include "skins.h"
-#ifdef _WIN32
-#include "winutil.h"
-#else
 bool winUtilWBSubDirExist(char *subDirName);
-#endif
 
 #ifdef _WIN32
 #define PATH_SEP '\\'

@@ -50,6 +50,7 @@
 #include "explosions.h"
 #include "screenbullet.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "sounddist.h"
 #include "messages.h"
 #include "grass.h"

@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include "explosions.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "gametype.h"
 #include "global.h"
 #include "lgm.h"

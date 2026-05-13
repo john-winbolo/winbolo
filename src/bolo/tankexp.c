@@ -33,6 +33,7 @@
 #include "util.h"
 #include "messages.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "building.h"
 #include "grass.h"
 #include "rubble.h"
