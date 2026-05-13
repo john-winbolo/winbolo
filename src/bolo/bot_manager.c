@@ -295,7 +295,8 @@ static void botUpdateBrainMap(BotContext *bot, ServerSim *sim) {
     /* Update only the visible rect from server map */
     for (y = top; ; y++) {
         for (x = left; ; x++) {
-            screenBrainMapSetPos(clientSimGetBrainMap(bot->cs), (BYTE)x, (BYTE)y,
+            screenBrainMapSetPos((BYTE (*)[MAP_ARRAY_SIZE])clientSimGetBrainMap(bot->cs),
+                                 (BYTE)x, (BYTE)y,
                                  mapGetPos(&gs->mp, (BYTE)x, (BYTE)y),
                                  minesExistPos(&gs->mns, &gs->mp, (BYTE)x, (BYTE)y));
             if ((BYTE)x == right) break;
