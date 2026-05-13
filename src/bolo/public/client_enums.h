@@ -116,4 +116,42 @@ typedef enum {
 
 #endif
 
+#ifndef _PLAYERNUMBERS_ENUM
+#define _PLAYERNUMBERS_ENUM
+/* Player Numbers */
+typedef enum {
+  player01,
+  player02,
+  player03,
+  player04,
+  player05,
+  player06,
+  player07,
+  player08,
+  player09,
+  player10,
+  player11,
+  player12,
+  player13,
+  player14,
+  player15,
+  player16
+} playerNumbers;
+#endif
+
+#ifndef _TANKBUTTON_ENUM
+#define _TANKBUTTON_ENUM
+typedef enum {
+  TNONE,       /* No Buttons being pressed */
+  TLEFT,       /* Left button is being pressed */
+  TRIGHT,      /* Right button is being pressed */
+  TACCEL,      /* Acellerate Button */
+  TDECEL,      /* Decellerate Button is being pressed */
+  TLEFTACCEL,  /* Left + Accelerate */
+  TRIGHTACCEL, /* Right + Acellerate */
+  TLEFTDECEL,  /* Left + Decellerate */
+  TRIGHTDECEL  /* Right + Decellearate */
+} tankButton;
+#endif
+
 #endif /* CLIENT_ENUMS_H */

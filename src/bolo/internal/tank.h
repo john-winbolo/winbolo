@@ -32,6 +32,7 @@
 /* Includes */
 #include "global.h"
 #include "types.h"
+#include "client_enums.h"
 #include "bolo_map.h"
 #include "bases.h"
 #include "pillbox.h"
@@ -205,18 +206,6 @@ typedef enum {
   TH_KILL_SMALL, /* The tank has been hit, killed and isn't carrying a lot of stuff so a small explosion */
   TH_KILL_BIG    /* The tank has been hit, killed and is carrying a lot of stuff so a big explosion */
 } tankHit;
-
-typedef enum {
-  TNONE,       /* No Buttons being pressed */
-  TLEFT,       /* Left button is being pressed */
-  TRIGHT,      /* Right button is being pressed */
-  TACCEL,      /* Acellerate Button */
-  TDECEL,      /* Decellerate Button is being pressed */
-  TLEFTACCEL,  /* Left + Accelerate */
-  TRIGHTACCEL, /* Right + Acellerate */
-  TLEFTDECEL,  /* Left + Decellerate */
-  TRIGHTDECEL  /* Right + Decellearate */
-} tankButton;
 
 
 

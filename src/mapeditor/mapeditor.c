@@ -540,14 +540,22 @@ static void mapEditorRebuildMinimap(MapEditorState *ed) {
     static const uint8_t baseCol[3]  = { 50,  50, 255};
     static const uint8_t startCol[3] = { 50, 255,  50};
 
-    minimapRenderPixels(ed->mp, NULL, NULL, NULL,
-                        (uint8_t *)ed->minimapPixels, NULL,
-                        MINIMAP_DARKEN_BORDER | MINIMAP_DARKEN_MINES);
+    {
+        MapPreview *terrainView = clientMapPreviewWrap(ed->mp, NULL, NULL, NULL);
+        minimapRenderPixels(terrainView,
+                            (uint8_t *)ed->minimapPixels, NULL,
+                            MINIMAP_DARKEN_BORDER | MINIMAP_DARKEN_MINES);
+        clientMapPreviewDestroy(terrainView);
+    }
 
     /* Draw unselected objects with editor-specific colours */
-    minimapDrawObjects((uint8_t *)ed->minimapPixels,
-                       ed->bs, ed->pb, ed->ss,
-                       pillCol, baseCol, startCol);
+    {
+        MapPreview *objectsView = clientMapPreviewWrap(NULL, ed->pb, ed->bs, ed->ss);
+        minimapDrawObjects((uint8_t *)ed->minimapPixels,
+                           objectsView,
+                           pillCol, baseCol, startCol);
+        clientMapPreviewDestroy(objectsView);
+    }
 
     /* Overlay selected object in yellow */
     #define ME_MINIMAP_DOT(px, py, cr, cg, cb) do { \

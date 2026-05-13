@@ -234,7 +234,11 @@ static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer
     }
 
     MinimapBounds mb;
-    state->previewTex = minimapCreateTexture(renderer, mp, bs, pb, ss, &mb, 0);
+    {
+        MapPreview *view = clientMapPreviewWrap(mp, pb, bs, ss);
+        state->previewTex = minimapCreateTexture(renderer, view, &mb, 0);
+        clientMapPreviewDestroy(view);
+    }
     state->previewBoundsMinX = mb.minX;
     state->previewBoundsMinY = mb.minY;
     state->previewBoundsMaxX = mb.maxX;

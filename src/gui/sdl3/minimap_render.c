@@ -19,11 +19,9 @@
  *********************************************************/
 
 #include "minimap_render.h"
-#include "bolo_map.h"
-#include "pillbox.h"
-#include "bases.h"
-#include "starts.h"
 #include "client_mappreview.h"
+#include "global.h"  /* MAP_MINE_EDGE_*, MINE_START/END/SUBTRACT, terrain constants */
+#include "types.h"   /* struct mapObj/pillsObj/basesObj/startsObj layouts */
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -49,15 +47,16 @@ void minimapTerrainColor(BYTE terrain, uint8_t *r, uint8_t *g, uint8_t *b) {
     }
 }
 
-void minimapRenderPixels(const struct mapObj *mp,
-                         const struct basesObj *bs,
-                         const struct pillsObj *pb,
-                         const struct startsObj *ss,
+void minimapRenderPixels(const MapPreview *view,
                          uint8_t *pixels,
                          MinimapBounds *bounds,
                          uint32_t flags) {
     int minX = MINIMAP_SIZE, minY = MINIMAP_SIZE, maxX = 0, maxY = 0;
     int x, y;
+    const struct mapObj    *mp = clientMapPreviewMap(view);
+    const struct pillsObj  *pb = clientMapPreviewPills(view);
+    const struct basesObj  *bs = clientMapPreviewBases(view);
+    const struct startsObj *ss = clientMapPreviewStarts(view);
 
     for (y = 0; y < MINIMAP_SIZE; y++) {
         for (x = 0; x < MINIMAP_SIZE; x++) {
@@ -111,7 +110,7 @@ void minimapRenderPixels(const struct mapObj *mp,
         static const uint8_t pillCol[3]  = {255, 0, 0};     /* red */
         static const uint8_t baseCol[3]  = {255, 255, 255}; /* white */
         static const uint8_t startCol[3] = {255, 255, 0};   /* yellow */
-        minimapDrawObjects(pixels, bs, pb, ss, pillCol, baseCol, startCol);
+        minimapDrawObjects(pixels, view, pillCol, baseCol, startCol);
     }
 
     if (bounds) {
@@ -123,13 +122,14 @@ void minimapRenderPixels(const struct mapObj *mp,
 }
 
 void minimapDrawObjects(uint8_t *pixels,
-                        const struct basesObj *bs,
-                        const struct pillsObj *pb,
-                        const struct startsObj *ss,
+                        const MapPreview *view,
                         const uint8_t pillColor[3],
                         const uint8_t baseColor[3],
                         const uint8_t startColor[3]) {
     int i, dx, dy;
+    const struct pillsObj  *pb = clientMapPreviewPills(view);
+    const struct basesObj  *bs = clientMapPreviewBases(view);
+    const struct startsObj *ss = clientMapPreviewStarts(view);
 
     if (pillColor && pb) {
         for (i = 0; i < pb->numPills; i++) {
@@ -190,10 +190,7 @@ void minimapDrawObjects(uint8_t *pixels,
 }
 
 SDL_Texture *minimapCreateTexture(SDL_Renderer *renderer,
-                                  const struct mapObj *mp,
-                                  const struct basesObj *bs,
-                                  const struct pillsObj *pb,
-                                  const struct startsObj *ss,
+                                  const MapPreview *view,
                                   MinimapBounds *bounds,
                                   uint32_t flags) {
     uint8_t *pixels;
@@ -203,7 +200,7 @@ SDL_Texture *minimapCreateTexture(SDL_Renderer *renderer,
     pixels = (uint8_t *)malloc(MINIMAP_SIZE * MINIMAP_SIZE * 4);
     if (!pixels) return NULL;
 
-    minimapRenderPixels(mp, bs, pb, ss, pixels, bounds, flags);
+    minimapRenderPixels(view, pixels, bounds, flags);
 
     surface = SDL_CreateSurfaceFrom(
         MINIMAP_SIZE, MINIMAP_SIZE, SDL_PIXELFORMAT_RGBA32,
@@ -231,12 +228,7 @@ SDL_Texture *minimapFromCompressed(SDL_Renderer *renderer,
     if (outBases)  *outBases  = clientMapPreviewGetBaseCount(mp);
     if (outStarts) *outStarts = clientMapPreviewGetStartCount(mp);
 
-    tex = minimapCreateTexture(renderer,
-                               clientMapPreviewMap(mp),
-                               clientMapPreviewBases(mp),
-                               clientMapPreviewPills(mp),
-                               clientMapPreviewStarts(mp),
-                               bounds, 0);
+    tex = minimapCreateTexture(renderer, mp, bounds, 0);
 
     clientMapPreviewDestroy(mp);
     return tex;
@@ -275,12 +267,7 @@ SDL_Texture *minimapFromFile(SDL_Renderer *renderer, const char *mapPath,
     if (outBases)  *outBases  = clientMapPreviewGetBaseCount(mp);
     if (outStarts) *outStarts = clientMapPreviewGetStartCount(mp);
 
-    tex = minimapCreateTexture(renderer,
-                               clientMapPreviewMap(mp),
-                               clientMapPreviewBases(mp),
-                               clientMapPreviewPills(mp),
-                               clientMapPreviewStarts(mp),
-                               bounds, 0);
+    tex = minimapCreateTexture(renderer, mp, bounds, 0);
 
     clientMapPreviewDestroy(mp);
     return tex;

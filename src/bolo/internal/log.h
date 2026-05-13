@@ -31,11 +31,6 @@
 #include <stdio.h>
 #include <string.h>
 #include "global.h"
-#include "bolo_map.h"
-#include "starts.h"
-#include "pillbox.h"
-#include "bases.h"
-#include "players.h"
 #include "server_sim.h"
 
 /* Log items */
@@ -239,17 +234,12 @@ void logDestroy();
 *ARGUMENTS:
 * fileName    - FileName and path of the file to open
 * ssim        - ServerSim (contains GameSim plus server-specific fields)
-* mp          - Map file
-* pb          - Pillboxes
-* bs          - Bases
-* ss          - Starts
-* plrs        - Players
 * ai          - Games AI type
 * maxPlayers  - Maximum number of players allowed in the
 *                game
 * usePassword - Is the game password protected
 *********************************************************/
-bool logStart(char *fileName, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb, starts *ss, players *plrs, BYTE ai, BYTE maxPlayers, bool usePassword);
+bool logStart(char *fileName, ServerSim *ssim, BYTE ai, BYTE maxPlayers, bool usePassword);
 
 /*********************************************************
 *NAME:          logWriteSnapshot
@@ -261,14 +251,9 @@ bool logStart(char *fileName, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb
 *
 *ARGUMENTS:
 * ssim  - ServerSim (contains GameSim plus server-specific fields)
-* mp    - Map file
-* pb    - Pillboxes
-* bs    - Bases
-* ss    - Starts
-* plrs  - Players
 * check - Whether to check if running or not
 *********************************************************/
-bool logWriteSnapshot(ServerSim *ssim, map *mp, pillboxes *pb, bases *bs, starts *ss, players *plrs, bool check);
+bool logWriteSnapshot(ServerSim *ssim, bool check);
 
 /*********************************************************
 *NAME:          logCheckTankSame

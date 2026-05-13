@@ -3,7 +3,7 @@
 
 #include <SDL3/SDL.h>
 #include "global.h"
-#include "tank.h"  /* tankButton */
+#include "client_enums.h"  /* tankButton */
 
 /* Initialize touch input system. Call once after SDL_Init.
    safeLeft/safeTop/safeRight/safeBottom are insets from screen edges
