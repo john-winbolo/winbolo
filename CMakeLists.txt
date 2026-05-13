@@ -1755,7 +1755,7 @@ target_include_directories(winbolo_gym PRIVATE
     src/third_party/tweetnacl
     ${BOT_C_INCLUDE_DIRS}
 )
-bolo_apply_include_rules(winbolo_gym runtime_only)
+bolo_apply_include_rules(winbolo_gym gym)
 
 if(WIN32)
     target_link_libraries(winbolo_gym PRIVATE ws2_32 winmm user32)

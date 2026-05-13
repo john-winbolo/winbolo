@@ -22,11 +22,24 @@
 #                  the same access — at which point the right answer is
 #                  to deep-copy the introspected state into a POD on a
 #                  public header.
+#   gym          - the winbolo_gym ML training harness. Privileged
+#                  access to GameSim layout (game_sim.h) and the
+#                  per-substruct headers (players.h, tank.h,
+#                  shells.h, lgm.h, etc.) for observation and
+#                  reward extraction during reinforcement-learning
+#                  rollouts. The asymmetric-runtime bug class
+#                  doesn't apply: gym is an offline training tool,
+#                  not shipped to players in this form. The
+#                  exception expires the moment gym ships in any
+#                  player-facing distribution — at which point
+#                  the observation builder migrates onto the
+#                  snapshot APIs that the GUI clients already use,
+#                  and gym drops back to runtime_only.
 #   gui          - the desktop game GUI and any platform-specific GUI binary.
 #                  Today sees public/, internal/, and flat src/bolo/ for
 #                  transitional reasons; a future change will tighten this
 #                  to public/ only.
-#   runtime_only - headless / gym / server-only / wasm /
+#   runtime_only - headless / server-only / wasm /
 #                  logviewer runtime binaries that ship parts of the sim but
 #                  no desktop GUI. Same transitional state as gui; same
 #                  future tightening.
@@ -43,6 +56,7 @@ function(bolo_apply_include_rules target profile)
     if(profile STREQUAL "sim_owner"
        OR profile STREQUAL "mapeditor"
        OR profile STREQUAL "braintest"
+       OR profile STREQUAL "gym"
        OR profile STREQUAL "gui"
        OR profile STREQUAL "runtime_only")
         target_include_directories(${target} PRIVATE
