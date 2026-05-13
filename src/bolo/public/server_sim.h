@@ -1216,6 +1216,25 @@ void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, const char *brainPath);
  * AiConfig "Bot N" rename UI. */
 void serverSimRenameBotSlot(ServerSim *sim, BYTE slot, const char *name);
 
+/* SP-host lobby publishers.
+ *
+ * The dedicated server's transportUdpServerBroadcastLobby*Chg
+ * functions do two things: (a) send a UDP packet to all clients,
+ * and (b) publish a control event for in-process subscribers.
+ * Single-player has no UDP clients — these wrappers do just (b),
+ * so the local humanSim picks up the state change through the
+ * subscriber chain set up by serverSimRegisterClientSubscriber. */
+void serverSimPublishLobbySlot(ServerSim *sim, BYTE slot);
+void serverSimPublishLobbyBotBrain(ServerSim *sim, BYTE slot);
+void serverSimPublishLobbyBotConfig(ServerSim *sim, BYTE slot);
+void serverSimPublishLobbyTeamMeta(ServerSim *sim, BYTE teamId);
+void serverSimPublishLobbySettings(ServerSim *sim);
+
+/* SP query: is the server accepting new joins? Mirrors
+ * transportUdpServerIsAcceptingJoins for the in-process case so
+ * the lobby UI doesn't have to branch on transport type. */
+bool serverSimIsAcceptingJoins(const ServerSim *sim);
+
 
 /* viewPlayer — which player perspective the sim renders from. */
 BYTE serverSimGetViewPlayer(const ServerSim *sim);

@@ -40,6 +40,8 @@ extern "C" {
 #include "global.h"
 #include "client_sim.h"
 #include "client_net.h"
+#include "server_sim.h"          /* serverSim* T1 wrappers for SP-host paths */
+#include "lobby_bot_pools.h"     /* lobbyBotPool* — public utility */
 #include "../../../server/server_lifecycle.h"
 #include "platform_net.h"
 #include "../flags.h"
@@ -87,7 +89,7 @@ static bool s_botNameOverridden[MAX_TANKS] = {0};
  * the Transport pointer (used by the multiplayer path).  When the
  * Transport is null and we're not single-player, the call is a no-op.
  */
-static void lobbySendReadyToggle(ClientSim *cs, Transport *transport, bool ready) {
+static void lobbySendReadyToggle(ClientSim *cs, bool ready) {
     if (cs && clientSimIsSinglePlayer(cs)) {
         /* Single-player: skip the multiplayer ready→countdown
          * choreography; clicking the Ready button starts the game
@@ -98,9 +100,7 @@ static void lobbySendReadyToggle(ClientSim *cs, Transport *transport, bool ready
         }
         return;
     }
-    if (transport) {
-        transportUdpClientSendReady(transport, ready);
-    }
+    clientSimNetSendReady(cs, ready);
 }
 
 /* Add Bot. namingPool < 0 means "use the slot's team pool" (multiplayer
@@ -112,7 +112,7 @@ static void lobbySendReadyToggle(ClientSim *cs, Transport *transport, bool ready
  * overrides locally; multiplayer currently ignores them (server-side
  * picks the name and default team — TODO: extend the protocol with a
  * teamId-aware add-bot packet). */
-static void lobbySendAddBot(ClientSim *cs, Transport *transport,
+static void lobbySendAddBot(ClientSim *cs,
                             int namingPool, uint8_t teamNumber) {
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
@@ -156,11 +156,12 @@ static void lobbySendAddBot(ClientSim *cs, Transport *transport,
         /* Bot's name came from the pool — not an override. */
         s_botNameOverridden[slot] = false;
         /* Publish the slot's new state and the bot's brain path. */
-        transportUdpServerBroadcastLobbyUpdate(sim, slot);
-        transportUdpServerBroadcastLobbyBotBrainChg(sim, slot);
+        serverSimPublishLobbySlot(sim, slot);
+        serverSimPublishLobbyBotBrain(sim, slot);
         return;
     }
-    if (transport) {
+    /* MP path */
+    {
         /* Tell the server which brain to assign. Pick the first entry
          * in the catalogue — the host can change it later per-bot via
          * the AiConfig "Bot Code" combo (PACKET_LOBBY_SET_BOT_BRAIN).
@@ -186,39 +187,38 @@ static void lobbySendAddBot(ClientSim *cs, Transport *transport,
             lobbyBotPoolPick(namingPool, usedNames, usedCount,
                              botName, sizeof(botName));
         }
-        transportUdpClientSendAddBot(transport, teamNumber, brainPath, botName);
+        clientSimNetSendAddBotConfigured(cs, teamNumber, brainPath, botName);
     }
 }
 
-static void lobbySendRemoveBot(ClientSim *cs, Transport *transport, uint8_t slot) {
+static void lobbySendRemoveBot(ClientSim *cs, uint8_t slot) {
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim) return;
         if (serverSimGetState(sim) != serverStateLobby) return;
         serverSimRemoveBot(sim, slot);
         if (slot < MAX_TANKS) s_botNameOverridden[slot] = false;
-        transportUdpServerBroadcastLobbyUpdate(sim, slot);
+        serverSimPublishLobbySlot(sim, slot);
         return;
     }
-    if (transport) transportUdpClientSendRemoveBot(transport, slot);
+    clientSimNetSendRemoveBot(cs, slot);
 }
 
 /* Move `targetSlot` to `teamNumber`. The host (or any client with
  * lobbyClientMayEdit authority on the server) can move any player;
  * non-authorised clients can only move themselves. The server gates
  * this — we just send the request. */
-static void lobbySendTeamSet(ClientSim *cs, Transport *transport,
+static void lobbySendTeamSet(ClientSim *cs,
                              uint8_t targetSlot, uint8_t teamNumber) {
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim || targetSlot >= MAX_TANKS) return;
         serverSimSetTeam(sim, targetSlot, teamNumber);
-        transportUdpServerBroadcastLobbyUpdate(sim, targetSlot);
+        serverSimPublishLobbySlot(sim, targetSlot);
         return;
     }
-    if (transport) {
-        transportUdpClientSendTeamSet(transport, targetSlot, teamNumber);
-    }
+    /* MP teamSet: targetSlot == self only for now (server gates anyway). */
+    clientSimNetSendTeamSet(cs, teamNumber);
 }
 
 /* Update a bot's per-slot config (difficulty / personality / name
@@ -226,7 +226,7 @@ static void lobbySendTeamSet(ClientSim *cs, Transport *transport,
  * In single-player we write directly into spServerSim->botConfigs and
  * (if name supplied) update the players struct so the lobby slot's
  * playerName changes as well. */
-static void lobbySendBotConfig(ClientSim *cs, Transport *transport,
+static void lobbySendBotConfig(ClientSim *cs,
                                uint8_t slot,
                                uint8_t difficulty, uint8_t personality,
                                const char *name) {
@@ -248,19 +248,16 @@ static void lobbySendBotConfig(ClientSim *cs, Transport *transport,
         }
         /* Publish bot config change AND the slot's new state (playerName
          * may have changed). */
-        transportUdpServerBroadcastLobbyBotConfigChg(sim, slot);
-        transportUdpServerBroadcastLobbyUpdate(sim, slot);
+        serverSimPublishLobbyBotConfig(sim, slot);
+        serverSimPublishLobbySlot(sim, slot);
         return;
     }
-    if (transport) {
-        transportUdpClientSendLobbyBotConfig(transport, slot,
-            difficulty, personality, name);
-    }
+    clientSimNetSendLobbyBotConfig(cs, slot, difficulty, personality, name);
 }
 
 /* Change which Lua brain script a lobby bot uses. SP path mutates the
  * server sim directly; MP path goes through PACKET_LOBBY_SET_BOT_BRAIN. */
-static void lobbySendSetBotBrain(ClientSim *cs, Transport *transport,
+static void lobbySendSetBotBrain(ClientSim *cs,
                                  uint8_t slot, const char *brainPath) {
     if (!brainPath) brainPath = "";
     if (cs && clientSimIsSinglePlayer(cs)) {
@@ -269,19 +266,16 @@ static void lobbySendSetBotBrain(ClientSim *cs, Transport *transport,
         if (serverSimGetState(sim) != serverStateLobby) return;
         if (!serverSimGetLobbyPlayer(sim, slot)->isBot) return;
         serverSimSwitchBotBrain(sim, slot, brainPath);
-        transportUdpServerBroadcastLobbyBotBrainChg(sim, slot);
+        serverSimPublishLobbyBotBrain(sim, slot);
         return;
     }
-    if (transport) {
-        transportUdpClientSendLobbySetBotBrain(transport, slot, brainPath);
-    }
+    clientSimNetSendLobbySetBotBrain(cs, slot, brainPath);
 }
 
 /* Clear a team's metadata (color/name/pool back to defaults).
  * Mirrors PACKET_LOBBY_TEAM_CLEAR. Only called when the team is
  * empty — caller already gates on memberCount == 0. */
-static void lobbySendTeamClear(ClientSim *cs, Transport *transport,
-                               uint8_t teamId) {
+static void lobbySendTeamClear(ClientSim *cs, uint8_t teamId) {
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
@@ -289,12 +283,10 @@ static void lobbySendTeamClear(ClientSim *cs, Transport *transport,
             TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
             if (t) memset(t, 0, sizeof(*t));
         }
-        transportUdpServerBroadcastLobbyTeamMetaChg(sim, teamId);
+        serverSimPublishLobbyTeamMeta(sim, teamId);
         return;
     }
-    if (transport) {
-        transportUdpClientSendLobbyTeamClear(transport, teamId);
-    }
+    clientSimNetSendLobbyTeamClear(cs, teamId);
 }
 
 /* Update a team's naming pool. Mirrors the per-team naming dropdown
@@ -302,7 +294,7 @@ static void lobbySendTeamClear(ClientSim *cs, Transport *transport,
  * Single-player path mutates spServerSim->teams[teamId] in-place AND
  * re-rolls every bot on the team whose name wasn't manually
  * overridden so the new pool's vibe applies immediately. */
-static void lobbySendTeamPool(ClientSim *cs, Transport *transport,
+static void lobbySendTeamPool(ClientSim *cs,
                               uint8_t teamId, uint8_t namingPool,
                               const char *teamName) {
     if (cs && clientSimIsSinglePlayer(cs)) {
@@ -316,7 +308,7 @@ static void lobbySendTeamPool(ClientSim *cs, Transport *transport,
             strncpy(t->name, teamName, LOBBY_TEAM_NAME_LEN - 1);
             t->name[LOBBY_TEAM_NAME_LEN - 1] = '\0';
         }
-        transportUdpServerBroadcastLobbyTeamMetaChg(sim, teamId);
+        serverSimPublishLobbyTeamMeta(sim, teamId);
 
         /* Rename bots on this team whose names weren't overridden by
          * the host. We pick names sequentially from the new pool,
@@ -339,7 +331,7 @@ static void lobbySendTeamPool(ClientSim *cs, Transport *transport,
             char pickBuf[32];
             lobbyBotPoolPick(namingPool, usedNames, usedCount,
                              pickBuf, sizeof(pickBuf));
-            lobbySendBotConfig(cs, transport, (uint8_t)slot,
+            lobbySendBotConfig(cs, (uint8_t)slot,
                                clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot)),
                                clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)),
                                pickBuf);
@@ -355,7 +347,8 @@ static void lobbySendTeamPool(ClientSim *cs, Transport *transport,
         }
         return;
     }
-    if (transport) {
+    /* MP path. */
+    {
         /* If the client hasn't received the team's actual metadata yet
          * (e.g. fresh join), fall back to a sensible per-teamId default
          * color rather than the zero-initialised value, which would
@@ -366,8 +359,7 @@ static void lobbySendTeamPool(ClientSim *cs, Transport *transport,
         if (!clientSimGetLobbyTeamInUse(cs, (BYTE)(teamId))) {
             color = (uint8_t)((teamId - 1) & 7);
         }
-        transportUdpClientSendLobbyTeamMeta(transport, teamId,
-            color, namingPool, teamName);
+        clientSimNetSendLobbyTeamMeta(cs, teamId, color, namingPool, teamName);
 
         /* The server can't rename existing bots when the pool changes
          * because the per-pool name table lives only on the client
@@ -393,7 +385,7 @@ static void lobbySendTeamPool(ClientSim *cs, Transport *transport,
 
             lobbyBotPoolPick(namingPool, usedNames, usedCount,
                              assigned[slot], sizeof(assigned[slot]));
-            transportUdpClientSendLobbyBotConfig(transport, (uint8_t)slot,
+            clientSimNetSendLobbyBotConfig(cs, (uint8_t)slot,
                 clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot)),
                 clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)),
                 assigned[slot]);
@@ -408,7 +400,7 @@ static void lobbySendTeamPool(ClientSim *cs, Transport *transport,
  * for the single-player path, then re-syncs so the lobby UI's read
  * of cs->lobby* sees the new value on the next frame. Without the
  * sync the checkbox/radio flashes for one frame and reverts. */
-static void lobbySendSetting(ClientSim *cs, Transport *transport,
+static void lobbySendSetting(ClientSim *cs,
                              uint8_t settingType,
                              const uint8_t *value, uint8_t valueLen) {
     if (cs && clientSimIsSinglePlayer(cs)) {
@@ -463,12 +455,10 @@ static void lobbySendSetting(ClientSim *cs, Transport *transport,
                 if (valueLen == 1) serverSimSetAutoLockOnGameStart(sim, value[0] != 0);
                 break;
         }
-        transportUdpServerBroadcastLobbySettingChg(sim, settingType, value, valueLen);
+        serverSimPublishLobbySettings(sim);
         return;
     }
-    if (transport) {
-        transportUdpClientSendLobbySetting(transport, settingType, value, valueLen);
-    }
+    clientSimNetSendLobbySetting(cs, settingType, value, valueLen);
 }
 
 /* Bounding box of interesting (non-sea) terrain in the map preview */
@@ -675,7 +665,7 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
 static int s_expandedBotSlot = -1;
 
 /* Forward decl — defined below the team renderer. */
-static void renderBotAiConfig(ClientSim *cs, Transport *transport,
+static void renderBotAiConfig(ClientSim *cs,
                               int slot, int teamId, float s);
 
 /* ── Layout A — team-grouped player list ──────────────────────────
@@ -685,7 +675,7 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
  * window. Returns nothing — purely UI. */
 static void renderLockBadge(void);
 
-static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
+static void renderTeamGroupedPlayers(ClientSim *cs,
                                      int myPlayerNum, float s, bool isHost) {
     /* Lazy-load the badge / bot-cpu icons. Used to be done inside
      * renderConnectivityBadge, but we now skip that in SP / LAN-only
@@ -743,10 +733,10 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                             tm->namingPool = 0;
                             strncpy(tm->name, defaultName, LOBBY_TEAM_NAME_LEN - 1);
                             tm->name[LOBBY_TEAM_NAME_LEN - 1] = '\0';
-                            transportUdpServerBroadcastLobbyTeamMetaChg(spSim, (uint8_t)t);
+                            serverSimPublishLobbyTeamMeta(spSim, (uint8_t)t);
                         }
-                    } else if (transport) {
-                        transportUdpClientSendLobbyTeamMeta(transport, (uint8_t)t,
+                    } else {
+                        clientSimNetSendLobbyTeamMeta(cs, (uint8_t)t,
                             color, 0 /*pool=classic*/, defaultName);
                     }
                     break;
@@ -757,14 +747,20 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
          *   Allow New Players:  [ ] Now   [ ] During game
          * Multiplayer-only — single-player has no UDP listener and
          * these controls have no meaning there. */
-        if (transport && !clientSimIsSinglePlayer(cs)) {
+        if (clientSimHasTransport(cs) && !clientSimIsSinglePlayer(cs)) {
             ImGui::SameLine(0.0f, 20.0f * s);
             ImGui::AlignTextToFramePadding();
             ImGui::TextDisabled("Allow New Players:");
-            bool allowJoin = transportUdpServerIsAcceptingJoins();
+            /* TODO: the server's allowNewPlayers state isn't carried
+             * by CTRL_LOBBY_SETTINGS, so we can't read its current
+             * value from the client side. Show the host's last-clicked
+             * intent (defaults to true). Remote admin changes won't
+             * update this checkbox until the field is added to the
+             * lobby settings broadcast. */
+            bool allowJoin = true;
             ImGui::SameLine();
             if (ImGui::Checkbox("Now##allowNow", &allowJoin)) {
-                transportUdpClientSendLockToggle(transport, allowJoin);
+                clientSimNetSendLockToggle(cs, allowJoin);
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip(
@@ -779,7 +775,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
             ImGui::SameLine();
             if (ImGui::Checkbox("During game##allowDuring", &duringGame)) {
                 uint8_t v = duringGame ? 0 : 1;  /* invert */
-                lobbySendSetting(cs, transport,
+                lobbySendSetting(cs,
                                  6 /*LST_AUTO_LOCK_ON_GAME*/, &v, 1);
             }
             if (autoLockLocked) ImGui::EndDisabled();
@@ -881,7 +877,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
             char joinId[24];
             SDL_snprintf(joinId, sizeof(joinId), "Join##j%d", teamId);
             if (ImGui::SmallButton(joinId)) {
-                lobbySendTeamSet(cs, transport,
+                lobbySendTeamSet(cs,
                                  (uint8_t)myPlayerNum, (uint8_t)teamId);
             }
             if (ImGui::IsItemHovered()) {
@@ -948,7 +944,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                         if (ImGui::Selectable(lobbyBotPoolLabel(p), sel)) {
                             const char *nameForMeta = clientSimGetLobbyTeamInUse(cs, (BYTE)(teamId))
                                 ? clientSimGetLobbyTeamName(cs, (BYTE)(teamId)) : defaultName;
-                            lobbySendTeamPool(cs, transport, (uint8_t)teamId,
+                            lobbySendTeamPool(cs, (uint8_t)teamId,
                                               (uint8_t)p, nameForMeta);
                         }
                         if (sel) ImGui::SetItemDefaultFocus();
@@ -1016,10 +1012,10 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                     effectivePool = rand() % lobbyBotPoolCount();
                     const char *nameForMeta = clientSimGetLobbyTeamInUse(cs, (BYTE)(teamId))
                         ? clientSimGetLobbyTeamName(cs, (BYTE)(teamId)) : defaultName;
-                    lobbySendTeamPool(cs, transport, (uint8_t)teamId,
+                    lobbySendTeamPool(cs, (uint8_t)teamId,
                                       (uint8_t)effectivePool, nameForMeta);
                 }
-                lobbySendAddBot(cs, transport, effectivePool, (uint8_t)teamId);
+                lobbySendAddBot(cs, effectivePool, (uint8_t)teamId);
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Add a bot to Team %d, named from the selected pool.",
@@ -1051,10 +1047,10 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                         if (clientSimGetLobbySlot(cs, (BYTE)(i))->connected
                             && clientSimGetLobbySlot(cs, (BYTE)(i))->isBot
                             && clientSimGetLobbySlot(cs, (BYTE)(i))->teamNumber == teamId) {
-                            lobbySendRemoveBot(cs, transport, (uint8_t)i);
+                            lobbySendRemoveBot(cs, (uint8_t)i);
                         }
                     }
-                    lobbySendTeamClear(cs, transport, (uint8_t)teamId);
+                    lobbySendTeamClear(cs, (uint8_t)teamId);
                 }
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("Remove Team %d (and its bots).", teamId);
@@ -1531,7 +1527,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                     SDL_snprintf(rbStr, sizeof(rbStr), "##rb%d", i);
                     ImGuiID rbId = ImGui::GetID(rbStr);
                     if (ImGui::CloseButton(rbId, closePos)) {
-                        lobbySendRemoveBot(cs, transport, (uint8_t)i);
+                        lobbySendRemoveBot(cs, (uint8_t)i);
                         if (s_expandedBotSlot == i) s_expandedBotSlot = -1;
                     }
                     if (ImGui::IsItemHovered()) {
@@ -1553,7 +1549,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                      * doesn't disturb the odd/even pattern. */
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, rowStripe);
                     ImGui::TableSetColumnIndex(0);
-                    renderBotAiConfig(cs, transport, i, teamId, s);
+                    renderBotAiConfig(cs, i, teamId, s);
                 }
             }
             ImGui::EndTable();
@@ -1584,7 +1580,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
                     payload->DataSize == (int)sizeof(uint8_t)) {
                     uint8_t fromSlot = *(const uint8_t *)payload->Data;
                     if (fromSlot < MAX_TANKS) {
-                        lobbySendTeamSet(cs, transport,
+                        lobbySendTeamSet(cs,
                                          fromSlot, (uint8_t)teamId);
                     }
                 }
@@ -1615,7 +1611,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs, Transport *transport,
  * Inline panel under an expanded bot row showing the name override
  * with dice-reroll, difficulty dropdown, personality dropdown, and
  * close button. Edits dispatch as PACKET_LOBBY_BOT_CONFIG. */
-static void renderBotAiConfig(ClientSim *cs, Transport *transport,
+static void renderBotAiConfig(ClientSim *cs,
                               int slot, int teamId, float s) {
     if (slot < 0 || slot >= MAX_TANKS) return;
     /* Render the whole AiConfig form at a smaller font so it reads
@@ -1740,19 +1736,19 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
         int pool = (teamId > 0 && teamId < 16) ? clientSimGetLobbyTeamPool(cs, (BYTE)(teamId)) : 0;
         char pickBuf[32];
         lobbyBotPoolPick(pool, usedNames, usedCount, pickBuf, sizeof(pickBuf));
-        lobbySendBotConfig(cs, transport, (uint8_t)slot,
+        lobbySendBotConfig(cs, (uint8_t)slot,
             clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot)), clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)), pickBuf);
         if (slot < MAX_TANKS) s_botNameOverridden[slot] = false;
     }
     if (nameChanged) {
         /* Manual edit — pin the name so a later pool change doesn't
          * overwrite it. */
-        lobbySendBotConfig(cs, transport, (uint8_t)slot,
+        lobbySendBotConfig(cs, (uint8_t)slot,
             clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot)), clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)), nameBuf);
         if (slot < MAX_TANKS) s_botNameOverridden[slot] = true;
     }
     if (pendingBrainPick >= 0 && pendingBrainPick < bl->count) {
-        lobbySendSetBotBrain(cs, transport, (uint8_t)slot,
+        lobbySendSetBotBrain(cs, (uint8_t)slot,
                              bl->entries[pendingBrainPick].path);
     }
 
@@ -1773,7 +1769,7 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
         if (diff < 0 || diff > 2) diff = 1;
         ImGui::SetNextItemWidth(90.0f * s);
         if (ImGui::Combo("##diff", &diff, diffItems, 3)) {
-            lobbySendBotConfig(cs, transport, (uint8_t)slot,
+            lobbySendBotConfig(cs, (uint8_t)slot,
                 (uint8_t)diff, clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)),
                 clientSimGetLobbySlot(cs, (BYTE)(slot))->playerName);
         }
@@ -1789,7 +1785,7 @@ static void renderBotAiConfig(ClientSim *cs, Transport *transport,
         if (pers < 0 || pers > 3) pers = 0;
         ImGui::SetNextItemWidth(110.0f * s);
         if (ImGui::Combo("##pers", &pers, persItems, 4)) {
-            lobbySendBotConfig(cs, transport, (uint8_t)slot,
+            lobbySendBotConfig(cs, (uint8_t)slot,
                 clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot)), (uint8_t)pers,
                 clientSimGetLobbySlot(cs, (BYTE)(slot))->playerName);
         }
@@ -2021,7 +2017,7 @@ static void renderLockBadge(void) {
  * Time Limit). Locked settings render disabled with a lock badge.
  * Edits dispatch as PACKET_LOBBY_SET_SETTING via the new wire
  * commands. Host-only or anyone if openHost. */
-static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
+static void renderGameSettingsPanel(ClientSim *cs,
                                     int myPlayerNum, float s) {
     bool effectiveHost = (myPlayerNum == 0) || clientSimGetLobbyOpenHost(cs) ||
                          (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
@@ -2097,7 +2093,7 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
             bool checked = (clientSimGetLobbyGameType(cs) == (gameType)enumVal);
             if (ImGui::RadioButton(rid, checked) && !checked) {
                 uint8_t v = (uint8_t)enumVal;
-                lobbySendSetting(cs, transport, 1 /*LST_GAME_TYPE*/, &v, 1);
+                lobbySendSetting(cs, 1 /*LST_GAME_TYPE*/, &v, 1);
             }
         }
         if (disable) ImGui::EndDisabled();
@@ -2125,7 +2121,7 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
             bool checked = (clientSimGetLobbyAiType(cs) == (uint8_t)i);
             if (ImGui::RadioButton(rid, checked) && !checked) {
                 uint8_t v = (uint8_t)i;
-                lobbySendSetting(cs, transport, 3 /*LST_AI_POLICY*/, &v, 1);
+                lobbySendSetting(cs, 3 /*LST_AI_POLICY*/, &v, 1);
             }
         }
         if (disable) ImGui::EndDisabled();
@@ -2142,7 +2138,7 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
         if (minesDisabled) ImGui::BeginDisabled();
         if (ImGui::Checkbox("Allow Hidden Mines", &minesV)) {
             uint8_t v = minesV ? 1 : 0;
-            lobbySendSetting(cs, transport, 2 /*LST_HIDDEN_MINES*/, &v, 1);
+            lobbySendSetting(cs, 2 /*LST_HIDDEN_MINES*/, &v, 1);
         }
         if (minesDisabled) ImGui::EndDisabled();
         if (minesLocked) renderLockBadge();
@@ -2153,7 +2149,7 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
         if (timeDisabled) ImGui::BeginDisabled();
         if (ImGui::Checkbox("Game time limit", &timeV)) {
             uint8_t v = timeV ? 1 : 0;
-            lobbySendSetting(cs, transport, 4 /*LST_TIME_LIMIT*/, &v, 1);
+            lobbySendSetting(cs, 4 /*LST_TIME_LIMIT*/, &v, 1);
         }
         if (timeV) {
             int mins = clientSimGetLobbyTimeLimit(cs) > 0
@@ -2167,7 +2163,7 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
                 if (mins > 999) mins = 999;
                 uint8_t v[2] = { (uint8_t)((mins >> 8) & 0xFF),
                                  (uint8_t)(mins & 0xFF) };
-                lobbySendSetting(cs, transport, 5 /*LST_TIME_MINUTES*/, v, 2);
+                lobbySendSetting(cs, 5 /*LST_TIME_MINUTES*/, v, 2);
             }
             ImGui::SameLine();
             ImGui::TextUnformatted("min");
@@ -2194,9 +2190,7 @@ static void renderGameSettingsPanel(ClientSim *cs, Transport *transport,
                 bool oh = clientSimGetLobbyOpenHost(cs);
                 if (ImGui::Checkbox("Allow all players to change settings",
                                     &oh)) {
-                    if (transport) {
-                        transportUdpClientSendLobbyOpenHost(transport, oh);
-                    }
+                    clientSimNetSendLobbyOpenHost(cs, oh);
                 }
             } else if (clientSimGetLobbyOpenHost(cs)) {
                 ImGui::TextDisabled(
@@ -2502,7 +2496,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
         /* Layout A — collapsible game settings panel (radios, checkboxes,
          * lock badges). Edits dispatch via PACKET_LOBBY_SET_SETTING. */
-        renderGameSettingsPanel(cs, transport, myPlayerNum, s);
+        renderGameSettingsPanel(cs, myPlayerNum, s);
         ImGui::Separator();
         ImGui::Spacing();
 
@@ -2537,7 +2531,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                      * compare during the in-progress UI rewrite. */
 #if 1
                     bool isHostHere = (myPlayerNum == 0);
-                    renderTeamGroupedPlayers(cs, transport, myPlayerNum, s, isHostHere);
+                    renderTeamGroupedPlayers(cs, myPlayerNum, s, isHostHere);
                     /* Avoid the legacy table entirely. */
                     if (false) {
 #else
@@ -2925,7 +2919,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 #if 1
             {
                 bool isHostHere = (myPlayerNum == 0);
-                renderTeamGroupedPlayers(cs, transport, myPlayerNum, s, isHostHere);
+                renderTeamGroupedPlayers(cs, myPlayerNum, s, isHostHere);
             }
             if (false) {
 #else
