@@ -21,8 +21,7 @@
 #include "client_snapshot.h"
 #include "frontend.h"
 #include "playername_validate.h"
-#include "transport.h"
-#include "transport_udp.h"
+#include "client_net.h"
 #include "gui_message.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
@@ -110,34 +109,6 @@ void sdl3MessageHandler(const char *message, const char *title) {
 }
 
 /* -------------------------------------------------------
- * Helper: sync snapshot from transport
- * ------------------------------------------------------- */
-static void wasmSyncSnapshot(ClientSim *cs, Transport *transport, BYTE myPlayerNum) {
-  SnapshotHeader snapHdr;
-  TankSnapshot snapTanks[MAX_TANKS];
-  ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-  TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
-  BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
-  PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
-  GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-  if (transport->getSnapshot(transport->ctx, myPlayerNum,
-                              &snapHdr, snapTanks, MAX_TANKS,
-                              snapShells, MAX_SNAPSHOT_SHELLS,
-                              snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                              snapBases, MAX_SNAPSHOT_BASES,
-                              snapPills, MAX_SNAPSHOT_PILLS,
-                              snapEvents, MAX_SNAPSHOT_EVENTS)) {
-    clientSimSyncFromSnapshot(cs, &snapHdr, snapTanks, snapHdr.tankCount,
-                            snapShells, snapHdr.shellCount,
-                            snapTkExplosions, snapHdr.tkExplosionCount,
-                            snapBases, snapHdr.baseCount,
-                            snapPills, snapHdr.pillCount,
-                            snapEvents, snapHdr.reliableEventCount,
-                            myPlayerNum);
-  }
-}
-
-/* -------------------------------------------------------
  * windowRunGameTick — game logic using transport
  * ------------------------------------------------------- */
 static void windowRunGameTick(ClientSim *cs) {
@@ -151,14 +122,12 @@ static void windowRunGameTick(ClientSim *cs) {
   bool isMine = FALSE;
   bool used = FALSE;
   bool brainRunning;
-  Transport *transport;
 
   brainRunning = brainHandlerIsBrainRunning();
   isShoot = FALSE;
   tb = 0;
 
-  transport = gameFrontGetTransport();
-  if (transport == NULL || doingTutorial) {
+  if (!clientSimHasTransport(cs) || doingTutorial) {
     return;
   }
 
@@ -176,10 +145,10 @@ static void windowRunGameTick(ClientSim *cs) {
       clientMutexWaitFor();
       clientSimKeysTick(cs, &pkt);
       clientMutexRelease();
-      transport->recordInput(transport->ctx, &pkt);
-      transport->tick(transport->ctx);
+      clientSimNetRecordInput(cs, &pkt);
+      clientSimNetTick(cs);
       clientMutexWaitFor();
-      wasmSyncSnapshot(cs, transport, myPlayerNum);
+      clientSimNetSyncSnapshot(cs);
       clientMutexRelease();
       simTickCounter++;
       justKeys = FALSE;
@@ -199,10 +168,10 @@ static void windowRunGameTick(ClientSim *cs) {
       clientMutexWaitFor();
       clientSimGameTick(cs, &pkt, brainRunning);
       clientMutexRelease();
-      transport->sendInput(transport->ctx, &pkt);
-      transport->tick(transport->ctx);
+      clientSimNetSendInput(cs, &pkt);
+      clientSimNetTick(cs);
       clientMutexWaitFor();
-      wasmSyncSnapshot(cs, transport, myPlayerNum);
+      clientSimNetSyncSnapshot(cs);
       clientSimDisplayTick(cs, brainRunning);
       clientMutexRelease();
       simTickCounter++;
@@ -261,7 +230,7 @@ static void main_loop_iteration(void) {
    *
    * Only MAX_ELAPSED_MS itself is hard-capped — a multi-second tab
    * suspension shouldn't trigger an unbounded catch-up sequence. */
-  if (gameFrontGetTransport() != NULL) {
+  if (clientSimHasTransport(cs)) {
     const double MAX_ELAPSED_MS = 200.0;  /* hard limit on accumulated debt */
     const int    MAX_CATCHUP    = 4;      /* at most 4 sim ticks per render frame */
     double now = emscripten_get_now();

@@ -23,8 +23,7 @@
 #include "global.h"
 #include "players.h"
 #include "platform_net.h"
-#include "transport.h"
-#include "transport_udp.h"
+#include "client_net.h"
 #include "gui_message.h"
 #include "everard_map.h"
 #include "frontend.h"
@@ -145,9 +144,9 @@ bool wantRejoin;
 bool gameFrontUseUpnp = FALSE;
 bool gameFrontUseNatTraversal = FALSE;
 
-/* Server-authoritative state */
+/* Server-authoritative state — the Transport handle itself now lives
+ * inside humanSim; only high-level lifecycle gating is tracked here. */
 static ServerSim *wasmServerSim = NULL;
-static Transport wasmTransport;
 static bool wasmTransportActive = FALSE;
 static BYTE wasmPlayerNum = 0;
 static SubscriberHandle wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
@@ -367,16 +366,15 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   if (urlNetType == netUdp) {
     /* ---- UDP multiplayer via new transport ---- */
     printf("[WASM] Connecting via UDP transport...\n");
-    wasmTransport = transportUdpClientCreate(humanSim, gameFrontUdpAddress,
-                                              gameFrontTargetUdp,
-                                              gameFrontName, password,
-                                              gameFrontWbnUse ? gameFrontWbnToken : "",
-                                              wantRejoin,
-                                              "", 0);
-    if (transportUdpClientGetJoinState(&wasmTransport) == UDP_CLIENT_ERROR) {
-      const char *reason = transportUdpClientGetJoinRejectReason(&wasmTransport);
+    clientSimConnectUdp(humanSim, gameFrontUdpAddress,
+                        gameFrontTargetUdp,
+                        gameFrontName, password,
+                        gameFrontWbnUse ? gameFrontWbnToken : "",
+                        wantRejoin,
+                        "", 0);
+    if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
+      const char *reason = clientSimGetConnectErrorReason(humanSim);
       printf("[WASM] UDP connect failed: %s\n", reason ? reason : "unknown");
-      transportUdpClientDestroy(&wasmTransport);
       clientSimDestroy(humanSim);
       return FALSE;
     }
@@ -384,24 +382,23 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     /* Wait for join + map download */
     {
       int joinWaitTicks = 0;
-      while ((transportUdpClientGetJoinState(&wasmTransport) == UDP_CLIENT_JOINING ||
-              transportUdpClientGetJoinState(&wasmTransport) == UDP_CLIENT_DOWNLOADING_MAP) &&
+      while ((clientSimGetConnectState(humanSim) == CLIENT_CONNECT_JOINING ||
+              clientSimGetConnectState(humanSim) == CLIENT_CONNECT_DOWNLOADING_MAP) &&
              joinWaitTicks < 1500) {
-        wasmTransport.tick(wasmTransport.ctx);
+        clientSimNetTick(humanSim);
         SDL_Delay(20);
         joinWaitTicks++;
       }
     }
 
-    if (transportUdpClientGetJoinState(&wasmTransport) != UDP_CLIENT_CONNECTED) {
-      const char *reason = transportUdpClientGetJoinRejectReason(&wasmTransport);
+    if (clientSimGetConnectState(humanSim) != CLIENT_CONNECT_CONNECTED) {
+      const char *reason = clientSimGetConnectErrorReason(humanSim);
       printf("[WASM] Join failed: %s\n", reason ? reason : "timeout");
-      transportUdpClientDestroy(&wasmTransport);
       clientSimDestroy(humanSim);
       return FALSE;
     }
 
-    wasmPlayerNum = transportUdpClientGetPlayerNum(&wasmTransport);
+    wasmPlayerNum = clientSimGetServerPlayerNum(humanSim);
     wasmTransportActive = TRUE;
 
     /* Store server address in ClientSim for brain info */
@@ -425,32 +422,32 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       bool serverHiddenMines;
       int32_t serverStartDelay, serverGameLen;
 
-      mapData = transportUdpClientGetMapData(&wasmTransport, &mapLen);
-      transportUdpClientGetGameSettings(&wasmTransport, &serverGame,
-                                         &serverHiddenMines,
-                                         &serverStartDelay, &serverGameLen);
+      mapData = clientSimGetServerMapData(humanSim, &mapLen);
+      clientSimGetServerGameSettings(humanSim, &serverGame,
+                                     &serverHiddenMines,
+                                     &serverStartDelay, &serverGameLen);
 
       if (mapData != NULL && mapLen > 0) {
         char savedMapName[MAP_STR_SIZE];
         strncpy(savedMapName, clientSimGetMapName(humanSim), MAP_STR_SIZE - 1);
         savedMapName[MAP_STR_SIZE - 1] = '\0';
-        clientSimDestroy(humanSim);
-        humanSim = clientSimAlloc();
+        /* Reset map-dependent state in place; the transport (and the
+         * mapData pointer that lives inside it) survive the reset. */
+        clientSimResetForMapLoad(humanSim);
         if (clientLoadCompressedMap(humanSim, (BYTE *)mapData, mapLen, savedMapName,
                                    serverGame, serverHiddenMines,
                                    serverStartDelay, serverGameLen,
                                    gameFrontName, wasmPlayerNum, FALSE) == FALSE) {
           printf("[WASM] Failed to load map from server\n");
-          transportUdpClientDestroy(&wasmTransport);
+          clientSimDisconnect(humanSim);
           wasmTransportActive = FALSE;
           return FALSE;
         }
         clientSimSetLocalTransport(humanSim, false);
       } else {
         printf("[WASM] No map data from server\n");
-        transportUdpClientDestroy(&wasmTransport);
-        wasmTransportActive = FALSE;
         clientSimDestroy(humanSim);
+        wasmTransportActive = FALSE;
         return FALSE;
       }
     }
@@ -490,7 +487,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     serverSimStartGame(wasmServerSim);
     serverSimAddPlayer(wasmServerSim, 0, gameFrontName, false);
     serverSimGetGameSim(wasmServerSim)->viewPlayer = 0;
-    wasmTransport = transportLocalCreate(wasmServerSim, 0);
+    clientSimConnectLocal(humanSim, wasmServerSim, 0);
     wasmTransportActive = TRUE;
     wasmPlayerNum = 0;
 
@@ -500,15 +497,12 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       int compLen = serverSimGetCompressedMap(wasmServerSim, compressedMap);
       printf("[WASM] serverSimGetCompressedMap returned %d bytes\n", compLen);
       if (compLen > 0) {
-        clientSimDestroy(humanSim);
-        humanSim = clientSimAlloc();
         bool mapOk = clientLoadCompressedMap(humanSim, compressedMap, compLen, "Local Game",
                                  gametype, hiddenMines, startDelay,
                                  timeLen, gameFrontName, 0, FALSE);
         printf("[WASM] clientLoadCompressedMap returned %s\n", mapOk ? "TRUE" : "FALSE");
         if (!mapOk) {
           printf("[WASM] Map load failed; humanSim has been destroyed by clientLoadCompressedMap\n");
-          transportLocalDestroy(&wasmTransport);
           wasmTransportActive = FALSE;
           free(wasmServerSim);
           wasmServerSim = NULL;
@@ -516,7 +510,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
         }
       } else {
         printf("[WASM] serverSimGetCompressedMap returned no data\n");
-        transportLocalDestroy(&wasmTransport);
+        clientSimDisconnect(humanSim);
         wasmTransportActive = FALSE;
         free(wasmServerSim);
         wasmServerSim = NULL;
@@ -582,7 +576,8 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   brainsHandlerShutdown();
   if (wasmTransportActive) {
     if (wasmServerSim != NULL) {
-      /* Local transport: free server tanks, then local transport */
+      /* Local transport: free server tanks (the embedded transport is
+       * torn down by clientSimDestroy below) */
       GameSim *gs = serverSimGetGameSim(wasmServerSim);
       BYTE i;
       for (i = 0; i < MAX_TANKS; i++) {
@@ -592,17 +587,13 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
       }
       serverSimUnregisterSubscriber(wasmServerSim, wasmControlSub);
       wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
-      transportLocalDestroy(&wasmTransport);
       free(wasmServerSim);
       wasmServerSim = NULL;
-    } else {
-      /* UDP transport */
-      transportUdpClientDestroy(&wasmTransport);
     }
     wasmTransportActive = FALSE;
   }
   frontEndSetActiveClientSim(NULL);
-  clientSimDestroy(humanSim);
+  clientSimDestroy(humanSim);  /* also tears down the embedded transport */
   humanSim = NULL;
   if (isQuiting == TRUE) {
     sdl3ImguiCleanup();
@@ -730,10 +721,6 @@ bool gameFrontSetupServer(void)               { return FALSE; }
 
 ServerSim *gameFrontGetServerSim(void) {
   return wasmServerSim;
-}
-
-Transport *gameFrontGetTransport(void) {
-  return wasmTransportActive ? &wasmTransport : NULL;
 }
 
 BYTE gameFrontGetPlayerNum(void) {

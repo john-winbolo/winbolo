@@ -40,7 +40,7 @@
 #include "brain.h"
 #include "pillbox.h"
 #include "bases.h"
-#include "transport.h"
+#include "client_net.h"
 #include "input_packet.h"
 #include "gui_message.h"
 #include "gametype.h"
@@ -58,8 +58,7 @@ bool isInMenu = FALSE;
 /* Per-instance game state */
 struct WinBoloGym {
     ServerSim  *serverSim;
-    ClientSim  *clientSim;
-    Transport   transport;
+    ClientSim  *clientSim;       /* transport lives inside clientSim now */
     SubscriberHandle controlSub;
 
     BYTE       *cachedMap;
@@ -122,29 +121,7 @@ static void gymBufferServerEvents(WinBoloGym *g) {
 }
 
 static void gymSyncSnapshot(WinBoloGym *g) {
-    SnapshotHeader snapHdr;
-    TankSnapshot snapTanks[MAX_TANKS];
-    ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-    TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
-    BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
-    PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
-    GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-
-    if (g->transport.getSnapshot(g->transport.ctx, 0,
-                                  &snapHdr, snapTanks, MAX_TANKS,
-                                  snapShells, MAX_SNAPSHOT_SHELLS,
-                                  snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                                  snapBases, MAX_SNAPSHOT_BASES,
-                                  snapPills, MAX_SNAPSHOT_PILLS,
-                                  snapEvents, MAX_SNAPSHOT_EVENTS)) {
-        clientSimSyncFromSnapshot(g->clientSim, &snapHdr,
-                                  snapTanks, snapHdr.tankCount,
-                                  snapShells, snapHdr.shellCount,
-                                  snapTkExplosions, snapHdr.tkExplosionCount,
-                                  snapBases, snapHdr.baseCount,
-                                  snapPills, snapHdr.pillCount,
-                                  snapEvents, snapHdr.reliableEventCount, 0);
-    }
+    clientSimNetSyncSnapshot(g->clientSim);
 }
 
 static void gymSetupGame(WinBoloGym *g) {
@@ -153,9 +130,8 @@ static void gymSetupGame(WinBoloGym *g) {
     serverSimAddPlayer(g->serverSim, 0, "GymAgent", false);
     serverSimGetGameSim(g->serverSim)->viewPlayer = 0;
 
-    g->transport = transportLocalCreate(g->serverSim, 0);
-
     g->clientSim = clientSimAlloc();
+    clientSimConnectLocal(g->clientSim, g->serverSim, 0);
     clientLoadCompressedMap(g->clientSim, g->cachedMap, g->cachedMapLen,
                             "Gym", g->gameMode, false, 0,
                             UNLIMITED_GAME_TIME, "GymAgent", 0, FALSE);
@@ -191,9 +167,8 @@ static void gymSetupGame(WinBoloGym *g) {
 static void gymTeardownGame(WinBoloGym *g) {
     serverSimUnregisterSubscriber(g->serverSim, g->controlSub);
     g->controlSub = SUBSCRIBER_HANDLE_INVALID;
-    clientSimDestroy(g->clientSim);
+    clientSimDestroy(g->clientSim);  /* also tears down the embedded transport */
     g->clientSim = NULL;
-    transportLocalDestroy(&g->transport);
 }
 
 /* Check win condition: all bases owned by the same alliance, all with
@@ -1628,8 +1603,8 @@ WBGYM_API void winbolo_step(WinBoloGym *game, const WinBoloAction *action, WinBo
 
     /* Game tick — send input to server and tick */
     game->cachedEventCount = 0;
-    game->transport.sendInput(game->transport.ctx, &pkt);
-    game->transport.tick(game->transport.ctx);
+    clientSimNetSendInput(game->clientSim, &pkt);
+    clientSimNetTick(game->clientSim);
     gymBufferServerEvents(game);
     game->simTickCounter++;
     game->gameTickCount++;
@@ -1640,8 +1615,8 @@ WBGYM_API void winbolo_step(WinBoloGym *game, const WinBoloAction *action, WinBo
     keysPkt.playerNum = 0;
     keysPkt.buttons = pkt.buttons;
 
-    game->transport.recordInput(game->transport.ctx, &keysPkt);
-    game->transport.tick(game->transport.ctx);
+    clientSimNetRecordInput(game->clientSim, &keysPkt);
+    clientSimNetTick(game->clientSim);
     gymBufferServerEvents(game);
     game->simTickCounter++;
 

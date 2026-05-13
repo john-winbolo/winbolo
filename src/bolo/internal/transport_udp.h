@@ -33,6 +33,7 @@
 #include "transport.h"
 #include "netpacks.h"
 #include "gametype.h"
+#include "client_connect_state.h"
 
 /* Forward declarations */
 struct ClientSim;
@@ -96,15 +97,9 @@ typedef struct {
  * UDP Transport — Client Side
  *********************************************************/
 
-/* State of the client join handshake */
-typedef enum {
-    UDP_CLIENT_DISCONNECTED,
-    UDP_CLIENT_JOINING,
-    UDP_CLIENT_DOWNLOADING_MAP,
-    UDP_CLIENT_CONNECTED,
-    UDP_CLIENT_ERROR,
-    UDP_CLIENT_SERVER_SHUTDOWN
-} UdpClientJoinState;
+/* State of the client join handshake — UdpClientJoinState and
+ * UDP_CLIENT_* values are defined in client_connect_state.h as
+ * aliases for ClientConnectState. */
 
 /* Creates a client-side UDP transport that connects to a server.
  * Returns a Transport struct with sendInput and tick callbacks.

@@ -139,6 +139,17 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
 void clientSimDestroy(ClientSim *cs);
 void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum);
 
+/* Reset all map-dependent state in cs back to a freshly-created
+ * empty configuration, WITHOUT freeing cs or tearing down its
+ * transport binding (clientSimConnectUdp/Local state survives).
+ *
+ * Used by the UDP-join flow: after the join handshake completes,
+ * the empty ClientSim is reset in-place before clientLoadCompressedMap
+ * reads the server's map blob (which lives inside the transport).
+ * Previously this was done by clientSimDestroy + clientSimAlloc,
+ * which dropped the transport and broke the back-pointer chain. */
+void clientSimResetForMapLoad(ClientSim *cs);
+
 /*********************************************************
  *NAME:          clientSimSetupSelf
  *PURPOSE:

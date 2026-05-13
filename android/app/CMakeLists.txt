@@ -238,6 +238,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/bolo/interpolation.c
     ${PROJ_ROOT}/src/bolo/position_history.c
     ${PROJ_ROOT}/src/bolo/client_sim.c
+    ${PROJ_ROOT}/src/bolo/client_net.c
     ${PROJ_ROOT}/src/bolo/client_sim_control.c
     ${PROJ_ROOT}/src/bolo/client_snapshot.c
     ${PROJ_ROOT}/src/bolo/bot_manager.c
