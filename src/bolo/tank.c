@@ -47,7 +47,10 @@
 #include "tutorial.h"
 #include "../steam/steam_wrapper.h"
 
+#ifndef CLIENTSIM_TYPEDEF
+#define CLIENTSIM_TYPEDEF
 typedef struct ClientSim ClientSim;
+#endif
 #include "tankexp.h"
 #include "tilenum.h"
 #include "shells.h"
