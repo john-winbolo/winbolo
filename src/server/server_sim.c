@@ -2350,9 +2350,10 @@ void serverSimEnterGameOver(ServerSim *sim) {
         sim->state = serverStateGameOver;
         sim->countdownTicks = GAMEOVER_HOLD_TICKS;
         serverSimConsoleMessage("Game over! Returning to lobby...");
-        /* PACKET_GAME_OVER broadcast is sent by transport layer
-         * via transportUdpServerBroadcastGameOver() called from
-         * the transport recv/tick path when state changes. */
+        /* CTRL_GAME_PHASE(GAME_OVER) and CTRL_GAME_OVER are published
+         * by the server lifecycle when it observes the state change;
+         * the per-client codec subscriber turns each into the matching
+         * wire packet (PACKET_GAME_OVER). */
     }
 }
 

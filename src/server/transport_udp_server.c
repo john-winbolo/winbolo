@@ -1069,14 +1069,11 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
             evt.type = CTRL_BALANCE_PROPOSAL;
             serverSimPublishControl(sim, &evt);
         }
-    } else if (serverSimGetState(sim) == serverStateRunning) {
-        /* No-lobby mode or mid-game join: send game start signal */
-        uint8_t startBuf[PACKET_HEADER_SIZE];
-        packHeader(startBuf, PACKET_GAME_START,
-                   udpServer.clients[slot].outSequence++);
-        udpSendTo(udpServer.sock, startBuf, sizeof(startBuf),
-                  &udpServer.clients[slot].addr);
     }
+    /* No-lobby and mid-game-join PACKET_GAME_START is emitted by the
+     * subscriber's sync replay: CTRL_GAME_PHASE(RUNNING) flows through
+     * the codec encoder to this client's socket as part of
+     * serverSimRegisterSubscriber above. */
 
     /* Initialize map download and send first batch of chunks */
     serverInitMapDownload(slot);
@@ -1895,35 +1892,11 @@ void transportUdpServerBroadcastLobbyUpdate(ServerSim *sim, BYTE playerNum) {
     }
 }
 
-void transportUdpServerBroadcastCountdown(ServerSim *sim, uint8_t secondsRemaining) {
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
+void transportUdpServerOnGameStart(ServerSim *sim) {
     int i;
-    packHeader(buf, PACKET_COUNTDOWN, 0);
-    buf[PACKET_HEADER_SIZE] = secondsRemaining;
+    (void)sim;
     for (i = 0; i < MAX_TANKS; i++) {
         if (udpServer.clients[i].connected) {
-            udpSendTo(udpServer.sock, buf, sizeof(buf),
-                      &udpServer.clients[i].addr);
-        }
-    }
-    {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_GAME_PHASE;
-        evt.u.gamePhase.phase = CTRL_PHASE_COUNTDOWN;
-        evt.u.gamePhase.countdownSeconds = secondsRemaining;
-        serverSimPublishControl(sim, &evt);
-    }
-}
-
-void transportUdpServerBroadcastGameStart(ServerSim *sim) {
-    uint8_t buf[PACKET_HEADER_SIZE];
-    int i;
-    packHeader(buf, PACKET_GAME_START, 0);
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) {
-            udpSendTo(udpServer.sock, buf, sizeof(buf),
-                      &udpServer.clients[i].addr);
             /* Clients reload the map on game start which wipes their player
                data.  Re-send the player list so names are restored. */
             udpServer.clients[i].needsPlayerList = true;
@@ -1937,37 +1910,6 @@ void transportUdpServerBroadcastGameStart(ServerSim *sim) {
         udpServer.eventQueues[i].ackedSeq = 1;
         udpServer.mapEventQueues[i].nextSeq = 1;
         udpServer.mapEventQueues[i].ackedSeq = 1;
-    }
-    {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_GAME_PHASE;
-        evt.u.gamePhase.phase = CTRL_PHASE_RUNNING;
-        evt.u.gamePhase.countdownSeconds = 0;
-        serverSimPublishControl(sim, &evt);
-    }
-}
-
-void transportUdpServerBroadcastGameOver(ServerSim *sim) {
-    uint8_t buf[PACKET_HEADER_SIZE];
-    int i;
-    packHeader(buf, PACKET_GAME_OVER, 0);
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) {
-            udpSendTo(udpServer.sock, buf, sizeof(buf),
-                      &udpServer.clients[i].addr);
-        }
-    }
-    {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_GAME_PHASE;
-        evt.u.gamePhase.phase = CTRL_PHASE_GAME_OVER;
-        evt.u.gamePhase.countdownSeconds = 0;
-        serverSimPublishControl(sim, &evt);
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_GAME_OVER;
-        serverSimPublishControl(sim, &evt);
     }
 }
 
@@ -2617,7 +2559,12 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     if (serverSimGetState(sim) == serverStateCountdown) {
                         logAddEvent(log_CountdownStart, 0, 0, 0, 0, 0, NULL);
                         uint8_t secs = (uint8_t)((serverSimGetCountdownTicks(sim) + 49) / 50);
-                        transportUdpServerBroadcastCountdown(sim, secs);
+                        ControlEvent evt;
+                        memset(&evt, 0, sizeof(evt));
+                        evt.type = CTRL_GAME_PHASE;
+                        evt.u.gamePhase.phase = CTRL_PHASE_COUNTDOWN;
+                        evt.u.gamePhase.countdownSeconds = secs;
+                        serverSimPublishControl(sim, &evt);
                     }
                 } else if (serverSimGetState(sim) == serverStateCountdown && !ready) {
                     /* Someone unreadied during countdown — revert to lobby */

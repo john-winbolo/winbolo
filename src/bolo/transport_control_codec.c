@@ -139,22 +139,45 @@ static EncodeResult encodeMapSkipState(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
-/* encodeGamePhase produces one of PACKET_COUNTDOWN, PACKET_GAME_START,
- * or PACKET_GAME_OVER based on evt->u.gamePhase.phase. */
+/* encodeGamePhase produces PACKET_COUNTDOWN for the COUNTDOWN phase and
+ * PACKET_GAME_START for RUNNING.  GAME_OVER is owned by encodeGameOver
+ * (via CTRL_GAME_OVER → PACKET_GAME_OVER); the phase encoder returns
+ * SKIP so the GAME_OVER transition isn't sent twice on the wire. */
 static EncodeResult encodeGamePhase(const ControlEvent *evt,
                                     const struct UdpServerClient *recipient,
                                     uint8_t *buf, size_t bufCap,
                                     size_t *outLen) {
-    (void)evt; (void)recipient; (void)buf; (void)bufCap; (void)outLen;
-    return ENCODE_SKIP;
+    (void)recipient;
+    switch (evt->u.gamePhase.phase) {
+        case CTRL_PHASE_COUNTDOWN: {
+            const size_t needed = PACKET_HEADER_SIZE + 1;
+            if (bufCap < needed) return ENCODE_OVERFLOW;
+            packHeader(buf, PACKET_COUNTDOWN, 0);
+            buf[PACKET_HEADER_SIZE] = (uint8_t)evt->u.gamePhase.countdownSeconds;
+            *outLen = needed;
+            return ENCODE_OK;
+        }
+        case CTRL_PHASE_RUNNING: {
+            if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+            packHeader(buf, PACKET_GAME_START, 0);
+            *outLen = PACKET_HEADER_SIZE;
+            return ENCODE_OK;
+        }
+        case CTRL_PHASE_GAME_OVER:
+        default:
+            return ENCODE_SKIP;
+    }
 }
 
 static EncodeResult encodeGameOver(const ControlEvent *evt,
                                    const struct UdpServerClient *recipient,
                                    uint8_t *buf, size_t bufCap,
                                    size_t *outLen) {
-    (void)evt; (void)recipient; (void)buf; (void)bufCap; (void)outLen;
-    return ENCODE_SKIP;
+    (void)evt; (void)recipient;
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_GAME_OVER, 0);
+    *outLen = PACKET_HEADER_SIZE;
+    return ENCODE_OK;
 }
 
 static EncodeResult encodeServerShutdown(const ControlEvent *evt,

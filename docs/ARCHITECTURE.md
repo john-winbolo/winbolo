@@ -439,8 +439,7 @@ both, manually, on the server side**. Forgetting one creates the
 exact asymmetric-runtime bug we're trying to prevent.
 
 Some convenience helpers in `transport_udp_server.c` bundle both
-steps for common shapes (`transportUdpServerBroadcastLobbyUpdate`,
-`transportUdpServerBroadcastCountdown`, `transportUdpServerBroadcastGameStart`).
+steps for common shapes (`transportUdpServerBroadcastLobbyUpdate`).
 Use them when they fit. For anything novel, write both calls
 explicitly and verify the SP-with-bots path and the UDP path both
 end up applying the same change.
