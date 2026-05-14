@@ -197,6 +197,21 @@ static void updatePreview(MapChooserState *state, SDL_Renderer *renderer) {
     state->previewPills = pills;
     state->previewBases = bases;
     state->previewStarts = starts;
+
+    /* Feed the same selection into the interactive widget so its
+     * tile-based preview matches. Inbuilt Everard falls back to the
+     * known path; everything else uses the discovered map path. */
+    if (state->previewView) {
+        if (state->selectedIdx == 0 || state->selectedPath[0] == '\0') {
+            mapPreviewViewLoadFile(state->previewView,
+                                    "data/maps/Everard Island.map");
+        } else {
+            mapPreviewViewLoadFile(state->previewView, state->selectedPath);
+        }
+        mapPreviewViewSetInitialBounds(state->previewView,
+            state->previewBoundsMinX, state->previewBoundsMinY,
+            state->previewBoundsMaxX, state->previewBoundsMaxY);
+    }
 }
 
 /* Generate a random map preview from the current config */
@@ -247,6 +262,16 @@ static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer
         SDL_free(buf);
     }
 
+    /* Mirror into the interactive preview widget. */
+    if (state->previewView && state->compressedData && state->compressedLen > 0) {
+        mapPreviewViewLoadCompressed(state->previewView,
+                                      state->compressedData,
+                                      state->compressedLen);
+        mapPreviewViewSetInitialBounds(state->previewView,
+            state->previewBoundsMinX, state->previewBoundsMinY,
+            state->previewBoundsMaxX, state->previewBoundsMaxY);
+    }
+
     /* Update seed display */
     mapGenConfigToSeed(&state->genConfig, state->genSeedBuf, sizeof(state->genSeedBuf));
 
@@ -279,6 +304,12 @@ void mapChooserInit(MapChooserState *state, SDL_Renderer *renderer) {
 
     /* Ensure the shared generate controls can load lock icons */
     mapEditorImguiSetRenderer(renderer);
+
+    /* Interactive preview widget — same renderer as the lobby's
+     * inline preview. mapChooserDestroy frees it. */
+    state->previewView = mapPreviewViewCreate();
+    state->previewLastW = 0;
+    state->previewLastH = 0;
 
     discoverMaps(state);
 
@@ -533,15 +564,49 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
     ImGui::Text("%s", state->selectedName);
     ImGui::Separator();
 
-    if (!renderPreviewImage(state)) {
-        if (state->randomMapSelected) {
-            ImGui::TextDisabled("%s", langGetText(STR_MAPCHOOSER_CLICKGEN));
-        } else {
-            ImGui::TextDisabled("%s", langGetText(STR_MAPCHOOSER_NOPREVIEW));
+    /* Interactive preview — same widget as the lobby's inline view.
+     * Wheel zoom, drag pan, deep zoom-out falls back to minimap
+     * colours.  Falls through to the static thumbnail (and the
+     * "no preview" placeholder) if the widget isn't ready yet.
+     *
+     * RenderOffscreen lazily parses the source data and flips the
+     * IsReady flag — so we call it unconditionally and then check
+     * for a valid texture, not the other way around. */
+    bool previewShown = false;
+    if (state->previewView) {
+        float availW = ImGui::GetContentRegionAvail().x;
+        float availH = ImGui::GetContentRegionAvail().y
+                     - ImGui::GetTextLineHeightWithSpacing() * 1.5f;
+        if (availW < 64.0f) availW = 64.0f;
+        if (availH < 64.0f) availH = 64.0f;
+        /* mapChooserRender is invoked inside the ImGui frame so we
+         * swap SDL render target mid-frame — same pattern the
+         * chooser already uses for buildPreviewFromMapPath. */
+        mapPreviewViewRenderOffscreen(state->previewView, renderer,
+                                       (int)availW, (int)availH);
+        state->previewLastW = (int)availW;
+        state->previewLastH = (int)availH;
+        SDL_Texture *tex = mapPreviewViewGetTexture(state->previewView);
+        if (tex && mapPreviewViewIsReady(state->previewView)) {
+            ImGui::Image((ImTextureID)tex, ImVec2(availW, availH));
+            MapPreviewInputOpts opts = { true, true, true, false };
+            mapPreviewViewHandleInput(state->previewView,
+                                       ImGui::IsItemHovered(), &opts);
+            previewShown = true;
+        }
+    }
+    if (!previewShown) {
+        if (!renderPreviewImage(state)) {
+            if (state->randomMapSelected) {
+                ImGui::TextDisabled("%s", langGetText(STR_MAPCHOOSER_CLICKGEN));
+            } else {
+                ImGui::TextDisabled("%s", langGetText(STR_MAPCHOOSER_NOPREVIEW));
+            }
         }
     }
 
-    if (state->previewTex) {
+    if (state->previewTex ||
+        (state->previewView && mapPreviewViewIsReady(state->previewView))) {
         MessageArgs args = {};
         args.number = state->previewPills;
         args.number2 = state->previewBases;
@@ -563,6 +628,10 @@ void mapChooserDestroy(MapChooserState *state) {
         SDL_free(state->compressedData);
         state->compressedData = NULL;
         state->compressedLen = 0;
+    }
+    if (state->previewView) {
+        mapPreviewViewDestroy(state->previewView);
+        state->previewView = NULL;
     }
     state->initialized = false;
 }

@@ -27,6 +27,7 @@
 #include <stdbool.h>
 #include "global.h"
 #include "../../../mapeditor/mapeditor_generate.h"
+#include "../map_preview_view.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -94,6 +95,16 @@ typedef struct {
      * map list is already in memory, so we just hide non-matching rows.
      * Editable via an InputText above the list. */
     char            searchFilter[64];
+
+    /* Interactive preview widget — same renderer as the lobby's inline
+     * preview and the modal popup. Loaded with the currently-selected
+     * map's data; provides wheel-zoom / drag-pan / minimap-mode
+     * fall-back at deep zoom-out. */
+    MapPreviewView *previewView;
+    /* Last view size we asked the widget to render at — cached so the
+     * destination Image stays consistent across frames. */
+    int             previewLastW;
+    int             previewLastH;
 } MapChooserState;
 
 /* Initialize the map chooser state. Discovers available maps.
