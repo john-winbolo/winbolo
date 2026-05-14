@@ -1162,23 +1162,28 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
-    case PACKET_COUNTDOWN:
+    case PACKET_COUNTDOWN: {
         /* [header 8] [secondsRemaining 1] */
-        if (len >= PACKET_HEADER_SIZE + 1) {
-            ControlEvent evt = { .type = CTRL_GAME_PHASE };
-            evt.u.gamePhase.phase = CTRL_PHASE_COUNTDOWN;
-            evt.u.gamePhase.countdownSeconds = buf[PACKET_HEADER_SIZE];
-            clientSimApplyControl(c->clientSim, &evt);
+        ControlDecodeFn dec = transportControlCodecDecoder(pktType);
+        if (dec != NULL) {
+            ControlEvent evt;
+            if (dec(buf + PACKET_HEADER_SIZE,
+                    (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
+                clientSimApplyControl(c->clientSim, &evt);
+            }
         }
         break;
+    }
 
-    case PACKET_GAME_START:
+    case PACKET_GAME_START: {
         /* [header 8] */
-        {
-            ControlEvent evt = { .type = CTRL_GAME_PHASE };
-            evt.u.gamePhase.phase = CTRL_PHASE_RUNNING;
-            evt.u.gamePhase.countdownSeconds = 0;
-            clientSimApplyControl(c->clientSim, &evt);
+        ControlDecodeFn dec = transportControlCodecDecoder(pktType);
+        if (dec != NULL) {
+            ControlEvent evt;
+            if (dec(buf + PACKET_HEADER_SIZE,
+                    (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
+                clientSimApplyControl(c->clientSim, &evt);
+            }
         }
         /* Reset input ring so stale inputs from the previous game
          * are not sent as redundant packets in the new game. */
@@ -1196,6 +1201,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * they would overwrite the freshly-loaded new map. */
         c->hasSnapshot = false;
         break;
+    }
 
     case PACKET_GAME_OVER:
         /* [header 8] */
@@ -1264,12 +1270,24 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
 
         {
+            /* Synthesize the matching CTRL_GAME_PHASE(GAME_OVER)
+             * locally so the client's bus sees the same publish
+             * order as the server (PHASE then OVER); the server
+             * encoder skips PACKET_GAME_OVER for the PHASE event so
+             * only the CTRL_GAME_OVER side crosses the wire. */
             ControlEvent phaseEvt = { .type = CTRL_GAME_PHASE };
             phaseEvt.u.gamePhase.phase = CTRL_PHASE_GAME_OVER;
             phaseEvt.u.gamePhase.countdownSeconds = 0;
             clientSimApplyControl(c->clientSim, &phaseEvt);
-            ControlEvent overEvt = { .type = CTRL_GAME_OVER };
-            clientSimApplyControl(c->clientSim, &overEvt);
+
+            ControlDecodeFn dec = transportControlCodecDecoder(pktType);
+            if (dec != NULL) {
+                ControlEvent overEvt;
+                if (dec(buf + PACKET_HEADER_SIZE,
+                        (size_t)(len - PACKET_HEADER_SIZE), &overEvt)) {
+                    clientSimApplyControl(c->clientSim, &overEvt);
+                }
+            }
         }
 
         if (c->clientSim->inLobby) {

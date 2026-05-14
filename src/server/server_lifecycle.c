@@ -204,7 +204,7 @@ void serverInstanceTick(ServerSim *sim) {
       sim1Start = SDL_GetPerformanceCounter();
       serverSimTick(sim);
       sim1End = SDL_GetPerformanceCounter();
-      /* If game ended during this tick, broadcast game-over */
+      /* If game ended during this tick, publish game-over events */
       if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
         if (sim->lobbyEnabled) {
           /* Capture win message now while game state is intact;
@@ -214,7 +214,18 @@ void serverInstanceTick(ServerSim *sim) {
                                    sizeof(sim->pendingWinMessage));
           serverSimSendWbnWinEvents(sim);
         }
-        transportUdpServerBroadcastGameOver(sim);
+        {
+          ControlEvent phaseEvt;
+          ControlEvent overEvt;
+          memset(&phaseEvt, 0, sizeof(phaseEvt));
+          phaseEvt.type = CTRL_GAME_PHASE;
+          phaseEvt.u.gamePhase.phase = CTRL_PHASE_GAME_OVER;
+          phaseEvt.u.gamePhase.countdownSeconds = 0;
+          serverSimPublishControl(sim, &phaseEvt);
+          memset(&overEvt, 0, sizeof(overEvt));
+          overEvt.type = CTRL_GAME_OVER;
+          serverSimPublishControl(sim, &overEvt);
+        }
       }
       if (sim->state == serverStateRunning) {
         transportUdpServerDrainEvents(sim);
@@ -236,7 +247,7 @@ void serverInstanceTick(ServerSim *sim) {
       sim2Start = SDL_GetPerformanceCounter();
       serverSimTick(sim);
       sim2End = SDL_GetPerformanceCounter();
-      /* If game ended during this tick, broadcast game-over */
+      /* If game ended during this tick, publish game-over events */
       if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
         if (sim->lobbyEnabled) {
           serverSimBuildWinMessage(sim,
@@ -244,7 +255,18 @@ void serverInstanceTick(ServerSim *sim) {
                                    sizeof(sim->pendingWinMessage));
           serverSimSendWbnWinEvents(sim);
         }
-        transportUdpServerBroadcastGameOver(sim);
+        {
+          ControlEvent phaseEvt;
+          ControlEvent overEvt;
+          memset(&phaseEvt, 0, sizeof(phaseEvt));
+          phaseEvt.type = CTRL_GAME_PHASE;
+          phaseEvt.u.gamePhase.phase = CTRL_PHASE_GAME_OVER;
+          phaseEvt.u.gamePhase.countdownSeconds = 0;
+          serverSimPublishControl(sim, &phaseEvt);
+          memset(&overEvt, 0, sizeof(overEvt));
+          overEvt.type = CTRL_GAME_OVER;
+          serverSimPublishControl(sim, &overEvt);
+        }
       }
       if (sim->state == serverStateRunning) {
         transportUdpServerDrainEvents(sim);
@@ -285,8 +307,19 @@ void serverInstanceTick(ServerSim *sim) {
     /* Handle state transitions */
     if (preTickState == serverStateCountdown) {
       if (sim->state == serverStateRunning) {
-        /* Countdown finished — game started */
-        transportUdpServerBroadcastGameStart(sim);
+        /* Countdown finished — game started.  Reset per-client and
+         * per-slot transport state before publishing the RUNNING
+         * transition so the codec encodes PACKET_GAME_START against
+         * fresh queues. */
+        transportUdpServerOnGameStart(sim);
+        {
+          ControlEvent evt;
+          memset(&evt, 0, sizeof(evt));
+          evt.type = CTRL_GAME_PHASE;
+          evt.u.gamePhase.phase = CTRL_PHASE_RUNNING;
+          evt.u.gamePhase.countdownSeconds = 0;
+          serverSimPublishControl(sim, &evt);
+        }
         if (botManagerGetNumBots() > 0) {
           botManagerOnGameStart(sim);
         }
@@ -308,7 +341,12 @@ void serverInstanceTick(ServerSim *sim) {
                  sim->countdownTicks % 50 == 0) {
         /* Broadcast countdown tick (once per second) */
         uint8_t secs = (uint8_t)((sim->countdownTicks + 49) / 50);
-        transportUdpServerBroadcastCountdown(sim, secs);
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_GAME_PHASE;
+        evt.u.gamePhase.phase = CTRL_PHASE_COUNTDOWN;
+        evt.u.gamePhase.countdownSeconds = secs;
+        serverSimPublishControl(sim, &evt);
       }
     }
     if (preTickState == serverStateGameOver &&
