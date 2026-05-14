@@ -588,10 +588,20 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         state->previewLastH = (int)availH;
         SDL_Texture *tex = mapPreviewViewGetTexture(state->previewView);
         if (tex && mapPreviewViewIsReady(state->previewView)) {
+            /* Draw the texture, then overlay an InvisibleButton sized
+             * the same way to *claim* the click/drag for this item.
+             * Without that, ImGui::Image is non-interactive — a
+             * drag-pan on it would bubble up to the parent window,
+             * which is now movable, and end up dragging the chooser
+             * window itself instead of panning the map. */
+            ImVec2 imgPos = ImGui::GetCursorScreenPos();
             ImGui::Image((ImTextureID)tex, ImVec2(availW, availH));
+            ImGui::SetCursorScreenPos(imgPos);
+            ImGui::InvisibleButton("##MapPreviewDrag",
+                                    ImVec2(availW, availH));
+            bool hovered = ImGui::IsItemHovered();
             MapPreviewInputOpts opts = { true, true, true, false };
-            mapPreviewViewHandleInput(state->previewView,
-                                       ImGui::IsItemHovered(), &opts);
+            mapPreviewViewHandleInput(state->previewView, hovered, &opts);
             previewShown = true;
         }
     }
