@@ -130,6 +130,15 @@ struct MapChooserState_s {
     void           *listProviderCtx;
     void          (*listProvider)(MapChooserState *state,
                                   const char *relPath, void *ctx);
+
+    /* Optional full-path tooltip prefix shown when the user hovers
+     * the wrapped "maps/<currentDir>" label above the search box.
+     * Empty = no tooltip. The widget appends state->currentDir at
+     * render time so the tooltip stays in sync with folder nav.
+     * Used by the lobby's Upload tab to surface the absolute local
+     * directory (something like "C:/.../winbolo/data/maps"); the
+     * Server Maps tab leaves it empty so no tooltip pops. */
+    char            pathTooltipPrefix[FILENAME_MAX];
 };
 
 /* Initialize the map chooser state. Discovers available maps.

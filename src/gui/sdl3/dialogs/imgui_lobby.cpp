@@ -585,14 +585,80 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     }
 
     const float kEdgeGutter = 15.0f;
+    float lineH = ImGui::GetTextLineHeightWithSpacing();
     float winX = kEdgeGutter;
     float winY = kEdgeGutter;
     float winW = (float)screenW - kEdgeGutter * 2.0f;
-    float winH = (float)screenH * 0.55f - kEdgeGutter;
+    /* Default bottom ends ~3 lines short of the lobby's bottom edge
+     * so the chooser doesn't crowd the chat / ready footer behind it.
+     * (Saved settings only apply on first open; user resizes persist.) */
+    float winH = (float)screenH - kEdgeGutter * 2.0f - lineH * 3.0f;
     if (winW < 480.0f * s) winW = 480.0f * s;
     if (winH < 320.0f * s) winH = 320.0f * s;
+    if (winH > (float)screenH * 0.85f) winH = (float)screenH * 0.85f;
     ImGui::SetNextWindowSize(ImVec2(winW, winH), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(winX, winY),  ImGuiCond_FirstUseEver);
+
+    /* Clamp the window inside the SDL window on every frame so a
+     * lobby resize (or zoom-out via OS window controls) yanks the
+     * chooser back inside. ImGui persists the chooser's pos/size
+     * across frames (NoSavedSettings keeps it in-process only) —
+     * we capture them after Begin and on the NEXT frame, if the
+     * bottom-right corner now overflows the lobby, apply a clamped
+     * SetNextWindowPos with ImGuiCond_Always so the corner snaps
+     * back inside, as close to where the user had dragged it as
+     * possible. Same idea SDL window managers use for "off-screen
+     * recovery". */
+    /* Master toggle for the bottom-right corner clamp. When false
+     * the chooser is allowed to extend past the lobby's bottom-right
+     * (only the top-left is held inside the gutter, so the title bar
+     * can always be grabbed). User asked for this behind a flag so
+     * the previous "snap fully inside on resize" behaviour can be
+     * re-enabled by flipping it back to true. */
+    static const bool kClampBottomRightInside = false;
+
+    static ImVec2 s_lastWinPos(-1.0f, -1.0f);
+    static ImVec2 s_lastWinSize(0.0f, 0.0f);
+    if (s_lastWinPos.x >= 0.0f && s_lastWinSize.x > 0.0f) {
+        /* Step 1 — clamp POSITION so the top-left stays inside the
+         * gutter. Always on: keeps the title bar grabbable even if
+         * the lobby shrinks past where the chooser is sitting.
+         *
+         * When kClampBottomRightInside is OFF the maxX/maxY caps
+         * are skipped so the window may extend past the lobby's
+         * bottom-right; only the < kEdgeGutter floor remains. */
+        ImVec2 newPos = s_lastWinPos;
+        if (kClampBottomRightInside) {
+            float maxX = (float)screenW  - s_lastWinSize.x - kEdgeGutter;
+            float maxY = (float)screenH  - s_lastWinSize.y - kEdgeGutter;
+            if (maxX < kEdgeGutter) maxX = kEdgeGutter;
+            if (maxY < kEdgeGutter) maxY = kEdgeGutter;
+            if (newPos.x > maxX) newPos.x = maxX;
+            if (newPos.y > maxY) newPos.y = maxY;
+        }
+        if (newPos.x < kEdgeGutter) newPos.x = kEdgeGutter;
+        if (newPos.y < kEdgeGutter) newPos.y = kEdgeGutter;
+        if (newPos.x != s_lastWinPos.x || newPos.y != s_lastWinPos.y) {
+            ImGui::SetNextWindowPos(newPos, ImGuiCond_Always);
+        }
+
+        /* Step 2 — clamp SIZE so the bottom-right corner doesn't
+         * extend past the lobby. Gated entirely on
+         * kClampBottomRightInside. */
+        if (kClampBottomRightInside) {
+            ImVec2 newSize = s_lastWinSize;
+            float maxRight  = (float)screenW - kEdgeGutter - newPos.x;
+            float maxBottom = (float)screenH - kEdgeGutter - newPos.y;
+            if (newSize.x > maxRight)  newSize.x = maxRight;
+            if (newSize.y > maxBottom) newSize.y = maxBottom;
+            if (newSize.x < 480.0f * s) newSize.x = 480.0f * s;
+            if (newSize.y < 320.0f * s) newSize.y = 320.0f * s;
+            if (newSize.x != s_lastWinSize.x ||
+                newSize.y != s_lastWinSize.y) {
+                ImGui::SetNextWindowSize(newSize, ImGuiCond_Always);
+            }
+        }
+    }
     /* Min size keeps the action bar visible; no max — user can drag
      * the window as large as they like, even past the screen edges. */
     ImGui::SetNextWindowSizeConstraints(ImVec2(480.0f * s, 320.0f * s),
@@ -608,6 +674,11 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         if (!open) s_chooseMapOpen = false;
         return;
     }
+    /* Snapshot the window's current rect for the next-frame clamp
+     * above. ImGui::GetWindowPos / Size are only valid between Begin
+     * and End. */
+    s_lastWinPos  = ImGui::GetWindowPos();
+    s_lastWinSize = ImGui::GetWindowSize();
 
     /* Reserve space at the bottom for the action buttons so the tab
      * content gets the remaining region.  Compute the per-tab height
@@ -618,23 +689,13 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     if (ImGui::BeginTabBar("##MapChooserTabs", ImGuiTabBarFlags_None)) {
         if (ImGui::BeginTabItem("Server Maps")) {
             s_chooseMapActiveTab = 0;
-            /* Path breadcrumb — mirrors the Upload tab's label so both
-             * tabs read the same way. Shows the server-side path
-             * (always under data/maps) the user is currently
-             * browsing. */
-            char serverPathLine[FILENAME_MAX + 32];
-            if (s_chooseMapState.currentDir[0] != '\0') {
-                SDL_snprintf(serverPathLine, sizeof(serverPathLine),
-                             "Server maps: data/maps/%s",
-                             s_chooseMapState.currentDir);
-            } else {
-                SDL_strlcpy(serverPathLine, "Server maps: data/maps",
-                            sizeof(serverPathLine));
-            }
-            ImGui::Spacing();
-            ImGui::TextDisabled("%s", serverPathLine);
-            ImGui::Separator();
-            ImGui::Spacing();
+            /* Path breadcrumb is now rendered INSIDE the chooser
+             * widget (just above the search), so the separator and
+             * the lobby-side TextDisabled line are gone — saves
+             * three lines of vertical space and the wrapped path
+             * fits the list column directly. No tooltip on Server
+             * Maps — the path always reads "maps/...". */
+            s_chooseMapState.pathTooltipPrefix[0] = '\0';
 
             float availW = ImGui::GetContentRegionAvail().x;
             float availH = ImGui::GetContentRegionAvail().y - btnBarH;
@@ -657,33 +718,26 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         }
         if (ImGui::BeginTabItem("Upload")) {
             s_chooseMapActiveTab = 1;
-            /* Show the local maps directory path so the user knows
-             * where to drop new .map files. SDL_GetCurrentDirectory
-             * returns a malloc'd string we must free; it's NULL on
-             * platforms where cwd is meaningless. */
-            char dirLine[FILENAME_MAX + 32];
+            /* Refresh the tooltip prefix every frame — SDL_GetCurrentDirectory
+             * returns a malloc'd path with a trailing separator; we
+             * trim it and concat /data/maps so the hover label shows
+             * exactly where local .map files should land. SDL returns
+             * NULL on platforms without a meaningful cwd, in which
+             * case the tooltip is suppressed. */
             char *cwd = SDL_GetCurrentDirectory();
             if (cwd) {
-                /* Trim trailing separator if present so the join is
-                 * clean. SDL_GetCurrentDirectory historically returns
-                 * paths with a trailing slash, but normalise either
-                 * way. */
                 size_t cwdLen = SDL_strlen(cwd);
                 while (cwdLen > 0 &&
                        (cwd[cwdLen - 1] == '/' || cwd[cwdLen - 1] == '\\')) {
                     cwd[--cwdLen] = '\0';
                 }
-                SDL_snprintf(dirLine, sizeof(dirLine),
-                             "Local maps: %s/data/maps", cwd);
+                SDL_snprintf(s_chooseMapUploadState.pathTooltipPrefix,
+                             sizeof(s_chooseMapUploadState.pathTooltipPrefix),
+                             "%s/data/maps", cwd);
                 SDL_free(cwd);
             } else {
-                SDL_strlcpy(dirLine, "Local maps: data/maps",
-                            sizeof(dirLine));
+                s_chooseMapUploadState.pathTooltipPrefix[0] = '\0';
             }
-            ImGui::Spacing();
-            ImGui::TextDisabled("%s", dirLine);
-            ImGui::Separator();
-            ImGui::Spacing();
             /* Upload uses its OWN chooser state so its folder + search
              * state stays separate from Server Maps — and so it can
              * keep the legacy local-filesystem scan (listProvider = NULL)

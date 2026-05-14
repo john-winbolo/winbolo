@@ -549,6 +549,37 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             ImGui::Separator();
         }
 
+        /* Path breadcrumb — shown directly above the search field so
+         * the wrapping fits inside the list column. Always reads
+         * "maps/<currentDir>" relative to the data/maps root; the
+         * full local path lives in an optional hover tooltip
+         * (state->pathTooltipPrefix), wired by the lobby's Upload
+         * tab only. TextWrapped so a long folder name doesn't push
+         * the search field off the edge. */
+        {
+            char pathLine[FILENAME_MAX + 16];
+            if (state->currentDir[0] != '\0') {
+                SDL_snprintf(pathLine, sizeof(pathLine), "maps/%s",
+                             state->currentDir);
+            } else {
+                SDL_strlcpy(pathLine, "maps/", sizeof(pathLine));
+            }
+            ImGui::TextWrapped("%s", pathLine);
+            if (state->pathTooltipPrefix[0] != '\0' &&
+                ImGui::IsItemHovered()) {
+                char tipBuf[FILENAME_MAX * 2];
+                if (state->currentDir[0] != '\0') {
+                    SDL_snprintf(tipBuf, sizeof(tipBuf), "%s/%s",
+                                 state->pathTooltipPrefix,
+                                 state->currentDir);
+                } else {
+                    SDL_strlcpy(tipBuf, state->pathTooltipPrefix,
+                                sizeof(tipBuf));
+                }
+                ImGui::SetTooltip("%s", tipBuf);
+            }
+        }
+
         /* Local search filter — case-insensitive substring match on the
          * display name. Sits above the list so it stays visible while
          * the list scrolls. */
