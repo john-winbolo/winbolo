@@ -1090,11 +1090,16 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
     case PACKET_LOBBY_MAP_CHANGE: {
         /* [header 8] – server loaded a new map; reset to re-download */
-        ControlEvent evt = { .type = CTRL_LOBBY_MAP_CHANGE };
-        clientSimApplyControl(c->clientSim, &evt);
-        c->joinState = UDP_CLIENT_JOINING;
-        c->joinAttempts = 0;
-        c->ticksSinceJoinSent = JOIN_RETRY_INTERVAL; /* send immediately */
+        ControlDecodeFn dec = transportControlCodecDecoder(pktType);
+        if (dec != NULL) {
+            ControlEvent evt;
+            if (dec(buf + PACKET_HEADER_SIZE, (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
+                clientSimApplyControl(c->clientSim, &evt);
+                c->joinState = UDP_CLIENT_JOINING;
+                c->joinAttempts = 0;
+                c->ticksSinceJoinSent = JOIN_RETRY_INTERVAL; /* send immediately */
+            }
+        }
         break;
     }
 

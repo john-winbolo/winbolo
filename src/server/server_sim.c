@@ -1489,7 +1489,13 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
                 serverSimMapDirPickRandom(sim);
             }
             serverSimMapSkipVotesReset(sim);
-            transportUdpServerNotifyMapChange(sim);
+            transportUdpServerOnLobbyMapChange(sim);
+            {
+                ControlEvent mapEvt;
+                memset(&mapEvt, 0, sizeof(mapEvt));
+                mapEvt.type = CTRL_LOBBY_MAP_CHANGE;
+                serverSimPublishControl(sim, &mapEvt);
+            }
             {
                 ControlEvent skipEvt;
                 BYTE m;
@@ -2396,7 +2402,13 @@ void serverSimReturnToLobby(ServerSim *sim) {
     /* Regenerate random map between rounds */
     if (sim->randomMapEnabled) {
         serverSimRandomMapRegenerate(sim);
-        transportUdpServerNotifyMapChange(sim);
+        transportUdpServerOnLobbyMapChange(sim);
+        {
+            ControlEvent evt;
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_LOBBY_MAP_CHANGE;
+            serverSimPublishControl(sim, &evt);
+        }
     }
 
     serverSimConsoleMessage("Returned to lobby.");
@@ -2989,7 +3001,13 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
             logAddEvent(log_MapSkipApplied, 0, 0, 0, 0, 0, pstr);
         }
         serverSimMapSkipVotesReset(sim);
-        transportUdpServerNotifyMapChange(sim);
+        transportUdpServerOnLobbyMapChange(sim);
+        {
+            ControlEvent mapEvt;
+            memset(&mapEvt, 0, sizeof(mapEvt));
+            mapEvt.type = CTRL_LOBBY_MAP_CHANGE;
+            serverSimPublishControl(sim, &mapEvt);
+        }
         {
             ControlEvent skipEvt;
             BYTE m;

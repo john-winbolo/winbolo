@@ -329,9 +329,12 @@ void transportUdpServerCheckTimeouts(struct ServerSim *sim);
  * land before the codec encodes PACKET_GAME_START. */
 void transportUdpServerOnGameStart(struct ServerSim *sim);
 
-/* Notify all connected clients that the map has changed, refresh the
- * server's compressed map data, and trigger re-download for each client. */
-void transportUdpServerNotifyMapChange(struct ServerSim *sim);
+/* Refresh the server's compressed map data and re-prime each connected
+ * client for download (resend JOIN_ACCEPT, reset chunk tracking).
+ * Callers run this before publishing CTRL_LOBBY_MAP_CHANGE so the
+ * per-client prep work lands before the codec encodes the
+ * PACKET_LOBBY_MAP_CHANGE notification through the subscriber path. */
+void transportUdpServerOnLobbyMapChange(struct ServerSim *sim);
 
 /* Set a bot's name in the server transport client array so it appears
  * in lobby state/update broadcasts. Call after botManagerAddBot(). */
