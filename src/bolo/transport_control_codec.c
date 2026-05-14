@@ -31,9 +31,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "control_event.h"
 #include "netpacks.h"
+#include "transport_udp_internal.h"
 
 /* ================================================================
  * Encoders — one per ControlEventType variant with a wire form.
@@ -123,8 +125,13 @@ static EncodeResult encodeMapSkipState(const ControlEvent *evt,
                                        const struct UdpServerClient *recipient,
                                        uint8_t *buf, size_t bufCap,
                                        size_t *outLen) {
-    (void)evt; (void)recipient; (void)buf; (void)bufCap; (void)outLen;
-    return ENCODE_SKIP;
+    (void)recipient;
+    const size_t needed = PACKET_HEADER_SIZE + MAX_TANKS;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_MAP_SKIP_STATE, 0);
+    memcpy(buf + PACKET_HEADER_SIZE, evt->u.mapSkipState.votes, MAX_TANKS);
+    *outLen = needed;
+    return ENCODE_OK;
 }
 
 /* encodeGamePhase produces one of PACKET_COUNTDOWN, PACKET_GAME_START,
@@ -202,8 +209,11 @@ static bool decodeBalanceProposal(const uint8_t *buf, size_t len,
 
 static bool decodeMapSkipState(const uint8_t *buf, size_t len,
                                ControlEvent *outEvt) {
-    (void)buf; (void)len; (void)outEvt;
-    return false;
+    if (len < MAX_TANKS) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_MAP_SKIP_STATE;
+    memcpy(outEvt->u.mapSkipState.votes, buf, MAX_TANKS);
+    return true;
 }
 
 static bool decodeCountdown(const uint8_t *buf, size_t len,

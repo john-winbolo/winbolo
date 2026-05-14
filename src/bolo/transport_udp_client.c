@@ -34,6 +34,7 @@
 #include "client_sim_internal.h"
 #include "control_event.h"
 #include "client_sim_control.h"
+#include "transport_control_codec.h"
 #include "../gui/lang.h"
 #include "../gui/winbolo.h"
 #include "../gui/dialogAlliance.h"
@@ -1298,16 +1299,17 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
-    case PACKET_MAP_SKIP_STATE:
+    case PACKET_MAP_SKIP_STATE: {
         /* [header 8] [votes: 16 bytes, one per slot, 0 or 1] */
-        if (len >= PACKET_HEADER_SIZE + MAX_TANKS) {
+        ControlDecodeFn dec = transportControlCodecDecoder(pktType);
+        if (dec != NULL) {
             ControlEvent evt;
-            memset(&evt, 0, sizeof(evt));
-            evt.type = CTRL_MAP_SKIP_STATE;
-            memcpy(evt.u.mapSkipState.votes, buf + PACKET_HEADER_SIZE, MAX_TANKS);
-            clientSimApplyControl(c->clientSim, &evt);
+            if (dec(buf + PACKET_HEADER_SIZE, (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
+                clientSimApplyControl(c->clientSim, &evt);
+            }
         }
         break;
+    }
 
     case PACKET_PUNCH_REQUEST_ACK:
         /* Tracker acked our PUNCH_REQUEST. Status byte at PACKET_HEADER_SIZE

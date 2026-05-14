@@ -2034,30 +2034,6 @@ void transportUdpServerBroadcastBalanceProposal(ServerSim *sim, uint8_t teamForS
     }
 }
 
-void transportUdpServerBroadcastMapSkipState(ServerSim *sim) {
-    uint8_t buf[PACKET_HEADER_SIZE + MAX_TANKS];
-    int i;
-    packHeader(buf, PACKET_MAP_SKIP_STATE, 0);
-    for (i = 0; i < MAX_TANKS; i++) {
-        buf[PACKET_HEADER_SIZE + i] = serverSimIsMapSkipVote(sim, i) ? 1 : 0;
-    }
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) {
-            udpSendTo(udpServer.sock, buf, sizeof(buf),
-                      &udpServer.clients[i].addr);
-        }
-    }
-    {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_MAP_SKIP_STATE;
-        for (i = 0; i < MAX_TANKS; i++) {
-            evt.u.mapSkipState.votes[i] = serverSimIsMapSkipVote(sim, i) ? 1 : 0;
-        }
-        serverSimPublishControl(sim, &evt);
-    }
-}
-
 void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
     if (playerNum >= MAX_TANKS) return;
     strncpy(udpServer.clients[playerNum].playerName, name,
@@ -2837,8 +2813,15 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             /* Wire: [header 8] (no payload — server identifies player by source) */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0) {
+                ControlEvent evt;
+                int i;
                 serverSimMapSkipVoteToggle(sim, (uint8_t)clientIdx);
-                transportUdpServerBroadcastMapSkipState(sim);
+                memset(&evt, 0, sizeof(evt));
+                evt.type = CTRL_MAP_SKIP_STATE;
+                for (i = 0; i < MAX_TANKS; i++) {
+                    evt.u.mapSkipState.votes[i] = serverSimIsMapSkipVote(sim, i) ? 1 : 0;
+                }
+                serverSimPublishControl(sim, &evt);
             }
             break;
         }

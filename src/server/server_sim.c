@@ -1329,7 +1329,14 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     /* Broadcast current skip vote state to the new player — existing votes
      * are preserved since the threshold naturally adjusts with more players. */
     if (sim->lobbyEnabled && sim->state == serverStateLobby && (sim->mapDirCount > 1 || sim->randomMapEnabled)) {
-        transportUdpServerBroadcastMapSkipState(sim);
+        ControlEvent skipEvt;
+        BYTE k;
+        memset(&skipEvt, 0, sizeof(skipEvt));
+        skipEvt.type = CTRL_MAP_SKIP_STATE;
+        for (k = 0; k < MAX_TANKS; k++) {
+            skipEvt.u.mapSkipState.votes[k] = sim->mapSkipVotes[k] ? 1 : 0;
+        }
+        serverSimPublishControl(sim, &skipEvt);
     }
 
     /* Notify in-process subscribers that a player joined. The just-added
@@ -1464,7 +1471,16 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
             }
             serverSimMapSkipVotesReset(sim);
             transportUdpServerNotifyMapChange(sim);
-            transportUdpServerBroadcastMapSkipState(sim);
+            {
+                ControlEvent skipEvt;
+                BYTE m;
+                memset(&skipEvt, 0, sizeof(skipEvt));
+                skipEvt.type = CTRL_MAP_SKIP_STATE;
+                for (m = 0; m < MAX_TANKS; m++) {
+                    skipEvt.u.mapSkipState.votes[m] = sim->mapSkipVotes[m] ? 1 : 0;
+                }
+                serverSimPublishControl(sim, &skipEvt);
+            }
             winbolonetSendMapChange(sim->mapName,
                 basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb),
                 basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb));
@@ -2948,7 +2964,16 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
         }
         serverSimMapSkipVotesReset(sim);
         transportUdpServerNotifyMapChange(sim);
-        transportUdpServerBroadcastMapSkipState(sim);
+        {
+            ControlEvent skipEvt;
+            BYTE m;
+            memset(&skipEvt, 0, sizeof(skipEvt));
+            skipEvt.type = CTRL_MAP_SKIP_STATE;
+            for (m = 0; m < MAX_TANKS; m++) {
+                skipEvt.u.mapSkipState.votes[m] = sim->mapSkipVotes[m] ? 1 : 0;
+            }
+            serverSimPublishControl(sim, &skipEvt);
+        }
         winbolonetSendMapChange(sim->mapName,
             basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb),
             basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb));
