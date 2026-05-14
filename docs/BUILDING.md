@@ -99,10 +99,10 @@ Executables are placed in the `build/` directory:
 To rebuild and run the `baseline` ctest suite in one command — and only run the tests if the build succeeds:
 
 ```bash
-if cmake --build ~/linux-build -j$(nproc); then ctest --test-dir ~/linux-build -R baseline; else echo "build failed"; fi
+if cmake --build ~/linux-build -j$(nproc); then ctest --test-dir ~/linux-build -R baseline -j$(nproc); else echo "build failed"; fi
 ```
 
-The `if` form gates on the build's exit status, so a build failure prints `build failed` and skips the tests rather than running ctest against stale binaries. A test failure reports through ctest as normal.
+The `if` form gates on the build's exit status, so a build failure prints `build failed` and skips the tests rather than running ctest against stale binaries. A test failure reports through ctest as normal. `-j$(nproc)` runs scenarios in parallel — `--fast` scenarios share no state, and UDP scenarios are serialized per-port via CTest `RESOURCE_LOCK`s so different helpers still run concurrently.
 
 ## macOS
 
