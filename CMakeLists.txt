@@ -2069,7 +2069,10 @@ set(_baseline_udp_50003
 set(_baseline_udp_50004 centralize_events_shutdown_udp)
 set(_baseline_udp_50005 centralize_events_alliance_2client_udp)
 set(_baseline_udp_50006 centralize_events_game_over_udp)
-set(_baseline_udp_50007 centralize_events_lobby_smoke_udp)
+set(_baseline_udp_50007
+    centralize_events_lobby_smoke_udp
+    centralize_events_lobby_name_change_udp
+)
 
 foreach(_name IN LISTS _baseline_fast)
     add_test(NAME baseline.${_name}

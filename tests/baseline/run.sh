@@ -600,6 +600,10 @@ dispatch_scenario() {
       run_events_cmd_udp_two_clients_lobby "$name" "$EVERARD_MAP" \
                          "$COMMANDS/centralize_events_lobby_smoke.c1.jsonl" \
                          "$COMMANDS/centralize_events_lobby_smoke.c2.jsonl" ;;
+    centralize_events_lobby_name_change_udp)
+      run_events_cmd_udp_two_clients_lobby "$name" "$EVERARD_MAP" \
+                         "$COMMANDS/centralize_events_lobby_name_change.c1.jsonl" \
+                         "$COMMANDS/centralize_events_lobby_name_change.c2.jsonl" ;;
     centralize_events_game_over_udp)
       run_events_udp_two_clients_ticklimit "$name" "$EVERARD_MAP" \
                          "$BRAINS/sit_and_log.lua" 200 ;;
@@ -658,6 +662,7 @@ for n in centralize_events_teams_fast \
          centralize_events_shutdown_udp \
          centralize_events_alliance_2client_udp \
          centralize_events_lobby_smoke_udp \
+         centralize_events_lobby_name_change_udp \
          centralize_events_game_over_udp; do
   dispatch_scenario "$n" || fail=1
 done
