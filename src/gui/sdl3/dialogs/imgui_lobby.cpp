@@ -1603,6 +1603,15 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("Remove Team %d (and its bots).", teamId);
                 }
+                /* CloseButton uses an explicit screen pos and only calls
+                 * ItemAdd (no ItemSize), so the layout cursor is NOT
+                 * advanced. Without this Dummy the following BeginTable
+                 * starts at the cursor's pre-CloseButton X (right side
+                 * of the header) and renders the entire bot table off
+                 * to the right of the team panel with squished columns.
+                 * The Dummy reserves the X-button's slot in the line so
+                 * the next item line-wraps normally. */
+                ImGui::Dummy(ImVec2(xBtnW, 0));
             } else {
                 /* Hold the slot so + Bot's X position is stable. */
                 ImGui::Dummy(ImVec2(xBtnW, 0));
@@ -3548,16 +3557,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         /* --- Desktop: Players (left) + Map Preview (right) --- */
         {
             float availW = ImGui::GetContentRegionAvail().x - padR;
-            /* Panel reservation: leave room for the chat label + chat
-             * history + chat input + ready/leave button row.
-             * Chat history is 3.4 lines tall (the chat-history child
-             * below) — 15% shorter than the original 4 lines. Reducing
-             * the reservation by the same amount lets the teams + map
-             * panels grow into the freed space and the chat block
-             * naturally slides lower. */
-            float availContentH = ImGui::GetContentRegionAvail().y
-                           - ImGui::GetTextLineHeightWithSpacing() * 8.4f  /* chat + buttons */
-                           - 20.0f * s - padB;
+            /* Total vertical content area before any rendering — used to
+             * fill the lobby so the chat block's bottom sits flush with
+             * the lobby's bottom edge (minus the bottom safe inset). */
+            float fullContentH = ImGui::GetContentRegionAvail().y;
             /* Map panel: scales to ~30% of available width on larger
              * screens, but never shrinks below the natural preview
              * size (so on small windows the map stays readable and
@@ -3565,27 +3568,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             float mapPanelW = ImMax((MAP_PREVIEW_SIZE + 20) * s,
                                     availW * 0.30f);
             float playerPanelW = availW - mapPanelW - 8.0f;
-            float panelH = availContentH;
 
             /* "Allow New Players" row spans the full width above both
-             * panels so PlayerPanel and MapPanel top edges align in Y.
-             * Subtract its actual height (if anything renders) from
-             * panelH so the bottom alignment with the chat row holds. */
+             * panels so PlayerPanel and MapPanel top edges align in Y. */
             float beforeAllowY = ImGui::GetCursorPosY();
             renderAllowNewPlayersRow(cs, myPlayerNum, s);
             float allowRowH = ImGui::GetCursorPosY() - beforeAllowY;
-            if (allowRowH > 0.0f) {
-                panelH -= allowRowH;
-            }
 
-            /* Bottom row reservation must match what the (now grouped)
-             * left column consumes: ChatBlock height + spacing. Compute
-             * it up front so the right column's MapPanel can grow into
-             * everything except the Ready/Balance footer. */
-            float bottomH = ImGui::GetTextLineHeightWithSpacing() * 8.4f - 20.0f * s;
-            if (bottomH < ImGui::GetTextLineHeightWithSpacing() * 5.0f) {
-                bottomH = ImGui::GetTextLineHeightWithSpacing() * 5.0f;
-            }
             float spacingH = ImGui::GetStyle().ItemSpacing.y;
             /* Reserve room for the bottom buttons below the map.
              *   - Always one row for Ready.
@@ -3612,10 +3601,50 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     if (wbnCount >= 1) balanceRowReserve = true;
                 }
             }
-            float readyAreaH = ImGui::GetFrameHeightWithSpacing()
-                             * (balanceRowReserve ? 2.0f : 1.0f)
-                             + spacingH;
-            float mapH = panelH + bottomH + spacingH - readyAreaH - spacingH;
+            /* Reserve EXACTLY the rendered height of the ready footer:
+             *   - one row: FrameHeight
+             *   - two rows: 2*FrameHeight + one ItemSpacing between
+             * (Don't add an extra spacingH on top — the natural
+             * ItemSpacing between MapPanel and the first button row
+             * is already accounted for by ImGui's layout, and the
+             * left column's PlayerPanel→ChatBlock gap matches it.
+             * Over-reserving made MapPanel + Ready end ~2*spacingH
+             * above the chat block's bottom.) */
+            float frameH = ImGui::GetFrameHeight();
+            float readyAreaH = balanceRowReserve
+                             ? (2.0f * frameH + spacingH)
+                             : frameH;
+
+            /* Split the remaining vertical space between PlayerPanel
+             * (top) and ChatBlock (bottom). The chat's bottom edge
+             * sits flush with the lobby's bottom-content edge (minus
+             * the bottom safe inset, used as padding); the right
+             * column (MapPanel + Ready row) fills the same vertical
+             * span so its bottom edge aligns with the chat's.
+             *
+             * Splitting policy:
+             *   - Chat is CAPPED at 5 visible lines (label + ~3.4
+             *     history rows + input row ≈ 5 line heights). Above
+             *     that the chat ends up sparse and the team list
+             *     wants the space more.
+             *   - PlayerPanel takes everything else, so as the
+             *     lobby grows the teams section expands while the
+             *     chat block stays compact. */
+            float lineH = ImGui::GetTextLineHeightWithSpacing();
+            float leftFillH = fullContentH - allowRowH - padB - 6.0f;
+            if (leftFillH < lineH * 12.0f) leftFillH = lineH * 12.0f;
+            /* 7 lines: label (~1) + history (~4) + input row (~1.5) +
+             * internal padding. 5 was too tight — the history child
+             * had only ~2 visible rows and scrollbar showed for any
+             * chat. */
+            float chatCap = lineH * 7.0f;
+            float bottomH = chatCap;
+            if (bottomH > leftFillH - lineH * 6.0f) {
+                bottomH = leftFillH - lineH * 6.0f;
+            }
+            float panelH = leftFillH - bottomH - spacingH;
+            if (panelH < lineH * 4.0f) panelH = lineH * 4.0f;
+            float mapH = leftFillH - readyAreaH;
             if (mapH < panelH) mapH = panelH;
 
             /* Left column — PlayerPanel above ChatBlock, grouped so the
@@ -3857,11 +3886,43 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 ImVec2 uv0((float)bx0 / MAP_PREVIEW_SIZE, (float)by0 / MAP_PREVIEW_SIZE);
                 ImVec2 uv1((float)(bx1 + 1) / MAP_PREVIEW_SIZE, (float)(by1 + 1) / MAP_PREVIEW_SIZE);
 
-                /* Map preview image - fit to available panel width */
+                /* Size the preview square as (M - N) - small margin, where
+                 *   M = total panel inner vertical space available now
+                 *   N = total vertical height of every other thing that
+                 *       will render in this panel (Choose Map button,
+                 *       separator, the 4-line info block, optional
+                 *       Skip Map vote row).
+                 * Pre-measure N so the preview can claim everything else
+                 * deterministically and the panel doesn't end up with
+                 * either dead space or content pushed past the bottom. */
+                bool isHostLocal  = (myPlayerNum == 0);
+                bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
+                    (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
+                     & PLAYER_FLAG_ADMIN));
+                bool effHostMap = isHostLocal || isAdminLocal ||
+                                  clientSimGetLobbyOpenHost(cs);
+                bool skipAvail = clientSimIsMapSkipAvailable(cs)
+                              && clientSimIsInLobby(cs);
+
+                float M       = ImGui::GetContentRegionAvail().y;
+                float lineH   = ImGui::GetTextLineHeightWithSpacing();
+                float frameH  = ImGui::GetFrameHeight();
+                float spcH    = ImGui::GetStyle().ItemSpacing.y;
+
+                float N = 0.0f;
+                /* Choose Map button (right under the preview) */
+                if (effHostMap) N += frameH + spcH;
+                /* Spacing + Separator + Spacing */
+                N += spcH + 1.0f + spcH;
+                /* Map / pillboxes / bases / starts — 4 text rows */
+                N += 4.0f * lineH;
+                /* Skip Map button row (button + same-line votes text) */
+                if (skipAvail) N += spcH + frameH;
+
                 float panelWidth = ImGui::GetContentRegionAvail().x;
-                float previewSize = panelWidth;
-                float availH = ImGui::GetContentRegionAvail().y - ImGui::GetTextLineHeightWithSpacing() * 5;
-                if (availH < previewSize) previewSize = availH;
+                float previewSize = M - N - 6.0f;  /* small breathing room */
+                if (previewSize > panelWidth) previewSize = panelWidth;
+                if (previewSize < 64.0f)     previewSize = 64.0f;
                 /* Center the preview */
                 float offsetX = (panelWidth - previewSize) * 0.5f;
                 if (offsetX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
@@ -3873,6 +3934,15 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     mapPreviewPopupOnClick(popupCompressedData, popupCompressedLen,
                                            mapBounds.minX, mapBounds.minY,
                                            mapBounds.maxX, mapBounds.maxY);
+                }
+
+                /* Choose Map button — sits directly under the preview so
+                 * the "change map" affordance reads as part of the
+                 * preview block rather than as a footer at the bottom. */
+                if (effHostMap) {
+                    if (ImGui::Button("Choose Map", ImVec2(-1, 0))) {
+                        lobbyChooseMapOpen(cs, renderer);
+                    }
                 }
             } else {
                 ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MAP_UNAVAILABLE));
@@ -3929,24 +3999,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 if (countdownActive) ImGui::EndDisabled();
             }
 
-            /* "Choose Map" — host / admin / openHost-allowed only. Sits
-             * at the bottom of the MapPanel, under the preview and map
-             * info, so it reads as "change the current map" rather than
-             * a header action. */
-            {
-                bool isHostLocal  = (myPlayerNum == 0);
-                bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
-                    (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
-                     & PLAYER_FLAG_ADMIN));
-                bool effHostMap = isHostLocal || isAdminLocal ||
-                                  clientSimGetLobbyOpenHost(cs);
-                if (effHostMap) {
-                    ImGui::Spacing();
-                    if (ImGui::Button("Choose Map", ImVec2(-1, 0))) {
-                        lobbyChooseMapOpen(cs, renderer);
-                    }
-                }
-            }
+            /* Choose Map button moved up to sit directly under the
+             * preview image (see the mapPreviewTex branch above). The
+             * pre-measured N height for the preview-sizing math
+             * accounts for it. */
 
             ImGui::EndChild(); /* ##MapPanel */
 

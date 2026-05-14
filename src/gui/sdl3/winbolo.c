@@ -1603,6 +1603,18 @@ void frontEndEnableLeaveAllyMenu(bool enabled) {
  * ------------------------------------------------------- */
 void frontEndRedrawAll(ClientSim *cs) {
   if (!clientSimIsRunning(cs)) return;
+  /* SDL3 renderer (D3D11) is only safe to drive from the main thread.
+   * In hosted / single-player games, serverInstanceTick runs on the
+   * SDL timer thread; adding a bot there triggers a chain
+   *   bot subscriber sync → clientSimApplyControl → playersSetPlayer
+   * which historically called frontEndRedrawAll synchronously. That
+   * landed in SDL_SetRenderTarget on the timer thread mid-D3D11
+   * frame and crashed in D3D11_SetupShaderConstants.
+   *
+   * ImGui's main loop already redraws every frame on the main
+   * thread, so off-thread "force redraw" requests are both unsafe
+   * and redundant — drop them. */
+  if (!SDL_IsMainThread()) return;
   windowRedrawAll(cs);
 }
 
