@@ -34,6 +34,7 @@
 #include "netpacks.h"
 #include "gametype.h"
 #include "client_connect_state.h"
+#include "server_sim.h"      /* SubscriberHandle */
 
 /* Forward declarations */
 struct ClientSim;
@@ -249,6 +250,11 @@ typedef struct {
      * intentional, not a bug. */
     uint8_t clientType;          /* immutable after JOIN_REQUEST */
     uint8_t clientHints;         /* immutable after JOIN_REQUEST; SUPPORTER|STEAM_BUILD only */
+    SubscriberHandle controlSub; /* per-client subscription on the server's
+                                  * control-event bus; the deliver callback
+                                  * encodes via the codec table and unicasts
+                                  * to this client.  SUBSCRIBER_HANDLE_INVALID
+                                  * when no subscription is active. */
 } UdpServerClient;
 
 /* Creates a server-side UDP transport.

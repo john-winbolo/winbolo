@@ -24,6 +24,8 @@
  *    - Periodic ping/pong for latency measurement.
  *********************************************************/
 
+#include <assert.h>
+
 #include "transport_udp_internal.h"
 #include "bases.h"
 #include "pillbox.h"
@@ -38,6 +40,7 @@
 #include "server_sim.h"
 #include "server_lifecycle.h"
 #include "control_event.h"
+#include "transport_control_codec.h"
 #include "../winbolonet/winbolonet.h"
 #include "threads.h"
 #include "sounddist.h"
@@ -376,6 +379,30 @@ static void serverSendNameChangeReject(int clientIdx, uint8_t reasonCode) {
     buf[PACKET_HEADER_SIZE] = reasonCode;
     udpSendTo(udpServer.sock, buf, sizeof(buf),
               &udpServer.clients[clientIdx].addr);
+}
+
+/* Per-client subscriber deliver callback.  Runs each ControlEvent
+ * through the codec table and unicasts the encoded bytes to this
+ * one client.  ENCODE_SKIP is the normal "no wire form for this
+ * recipient" case (also produced by every encoder while the codec
+ * table is still scaffolding).  ENCODE_OVERFLOW means an encoder
+ * exceeded MAX_CONTROL_PACKET — a programmer bug; surface it in
+ * debug builds and silently drop in release. */
+static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
+    UdpServerClient *client = (UdpServerClient *)ctx;
+    uint8_t buf[MAX_CONTROL_PACKET];
+    size_t len = 0;
+    ControlEncodeFn enc;
+    EncodeResult r;
+
+    if (!client->connected) return;
+    enc = transportControlCodecEncoder(evt->type);
+    if (enc == NULL) return;
+    r = enc(evt, client, buf, sizeof(buf), &len);
+    if (r == ENCODE_SKIP) return;
+    assert(r == ENCODE_OK);
+    if (r != ENCODE_OK) return;
+    udpSendTo(udpServer.sock, buf, (int)len, &client->addr);
 }
 
 /* Send a player joined/left notification to all connected clients.
@@ -1013,6 +1040,14 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
             name, slot, udpServer.compressedMapSize);
     serverSendJoinAccept(slot, sim, fromAddr);
 
+    /* Subscribe this client to the server's control-event bus so
+     * future events can be encoded and unicast to it via the codec
+     * table.  Register's sync-replay leaves current state aligned
+     * for the new subscriber. */
+    udpServer.clients[slot].controlSub =
+        serverSimRegisterSubscriber(sim, udpClientDeliverControl,
+                                    &udpServer.clients[slot]);
+
     /* Notify all players about the new player */
     serverBroadcastPlayerEvent(PACKET_PLAYER_JOINED, (uint8_t)slot, name);
     winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
@@ -1356,6 +1391,8 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     serverBroadcastPlayerEvent(PACKET_PLAYER_LEFT,
                                (uint8_t)idx,
                                udpServer.clients[idx].playerName);
+    serverSimUnregisterSubscriber(sim, udpServer.clients[idx].controlSub);
+    udpServer.clients[idx].controlSub = SUBSCRIBER_HANDLE_INVALID;
     udpServer.clients[idx].connected = false;
     udpServer.clients[idx].nameStickySuffix = false;
     memset(udpServer.clients[idx].playerName, 0, PACKET_MAX_PLAYER_NAME);
@@ -1562,6 +1599,7 @@ bool transportUdpServerCreate(unsigned short port,
     for (i = 0; i < MAX_TANKS; i++) {
         udpServer.clients[i].connected = false;
         udpServer.clients[i].nameStickySuffix = false;
+        udpServer.clients[i].controlSub = SUBSCRIBER_HANDLE_INVALID;
         memset(&udpServer.mapDownload[i], 0, sizeof(ClientMapDownload));
     }
 
@@ -1623,10 +1661,18 @@ void transportUdpServerDestroy(void) {
             serverSimPublishControl(serverSimGetActive(), &evt);
         }
     }
-    for (i = 0; i < MAX_TANKS; i++) {
-        udpServer.clients[i].connected = false;
-        udpServer.clients[i].nameStickySuffix = false;
-        serverCleanupMapDownload(i);
+    {
+        ServerSim *activeSim = serverSimGetActive();
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (udpServer.clients[i].connected) {
+                serverSimUnregisterSubscriber(activeSim,
+                                              udpServer.clients[i].controlSub);
+                udpServer.clients[i].controlSub = SUBSCRIBER_HANDLE_INVALID;
+            }
+            udpServer.clients[i].connected = false;
+            udpServer.clients[i].nameStickySuffix = false;
+            serverCleanupMapDownload(i);
+        }
     }
     udpServer.running = false;
 
