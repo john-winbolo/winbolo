@@ -241,12 +241,19 @@ static EncodeResult encodeLobbySettings(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+/* PACKET_LOBBY_MAP_CHANGE wire format: header only (no payload).
+ * The lobbyMapChange union member carries no fields — receipt of
+ * the packet is itself the signal that the server has loaded a new
+ * map and the client should reset and re-download. */
 static EncodeResult encodeLobbyMapChange(const ControlEvent *evt,
                                          const struct UdpServerClient *recipient,
                                          uint8_t *buf, size_t bufCap,
                                          size_t *outLen) {
-    (void)evt; (void)recipient; (void)buf; (void)bufCap; (void)outLen;
-    return ENCODE_SKIP;
+    (void)evt; (void)recipient;
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_LOBBY_MAP_CHANGE, 0);
+    *outLen = PACKET_HEADER_SIZE;
+    return ENCODE_OK;
 }
 
 static EncodeResult encodeBalanceProposal(const ControlEvent *evt,
@@ -463,8 +470,10 @@ static bool decodeLobbySettings(const uint8_t *buf, size_t len,
 
 static bool decodeLobbyMapChange(const uint8_t *buf, size_t len,
                                  ControlEvent *outEvt) {
-    (void)buf; (void)len; (void)outEvt;
-    return false;
+    (void)buf; (void)len;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_MAP_CHANGE;
+    return true;
 }
 
 static bool decodeBalanceProposal(const uint8_t *buf, size_t len,

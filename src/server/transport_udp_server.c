@@ -1775,12 +1775,13 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
     }
 }
 
-void transportUdpServerNotifyMapChange(ServerSim *sim) {
+void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
     int i;
     int mapLen;
-    uint8_t notifyBuf[PACKET_HEADER_SIZE];
 
-    /* 1. Refresh the server's compressed map from the sim */
+    /* Refresh the server's compressed map from the sim so the per-client
+     * map-chunk send loop and any subsequent JOIN_ACCEPT carry the new
+     * compressed size. */
     mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
     if (mapLen <= 0) {
         fprintf(stderr, "[UDP SERVER] Map change: failed to compress new map\n");
@@ -1788,27 +1789,16 @@ void transportUdpServerNotifyMapChange(ServerSim *sim) {
     }
     udpServer.compressedMapSize = (uint32_t)mapLen;
 
-    /* 2. Send PACKET_LOBBY_MAP_CHANGE to all connected clients */
-    packHeader(notifyBuf, PACKET_LOBBY_MAP_CHANGE, 0);
     for (i = 0; i < MAX_TANKS; i++) {
         if (!udpServer.clients[i].connected) continue;
-        udpSendTo(udpServer.sock, notifyBuf, sizeof(notifyBuf),
-                  &udpServer.clients[i].addr);
-
-        /* 3. Re-send join accept so client gets the new map size */
+        /* Re-send JOIN_ACCEPT so the client picks up the new compressed
+         * map size before the LOBBY_MAP_CHANGE notification arrives. */
         serverSendJoinAccept(i, sim, &udpServer.clients[i].addr);
-
-        /* 4. Reset map download tracking and start sending new chunks */
+        /* Reset chunk tracking; subsequent ticks resume sending chunks. */
         serverInitMapDownload(i);
     }
-    {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_LOBBY_MAP_CHANGE;
-        serverSimPublishControl(sim, &evt);
-    }
 
-    fprintf(stderr, "[UDP SERVER] Map change broadcast: %u bytes compressed map\n",
+    fprintf(stderr, "[UDP SERVER] Map change prep: %u bytes compressed map\n",
             udpServer.compressedMapSize);
 }
 
