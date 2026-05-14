@@ -1560,6 +1560,10 @@ static int runFastMode(void) {
   bool justKeys = FALSE;
   bool brainRunning;
   uint32_t simTickCounter = 0;
+  /* Monotonic per-outer-iteration counter. Used as the cmd-stdin
+   * pump reference when the server tick is unavailable (lobby
+   * phase, before any PACKET_GAME_STATE has been observed). */
+  uint32_t pumpTick = 0;
 
   if (!optQuiet) {
     fprintf(stderr, "WinBolo Headless Client (fast local mode)\n");
@@ -1670,6 +1674,7 @@ static int runFastMode(void) {
   /* Fast game loop — no wall-clock gating, tick as fast as possible */
   while (!headlessQuit) {
     brainRunning = !optStdin && brainHandlerIsBrainRunning();
+    pumpTick++;
 
     if (justKeys) {
       /* Keys tick — replay held buttons from last stdin read */
@@ -1705,6 +1710,7 @@ static int runFastMode(void) {
           fastModeSetupGame();
           tickCount = 0;
           simTickCounter = 0;
+          pumpTick = 0;
           justKeys = FALSE;
           stdinButtons = 0;
           verboseNeedMapInit = TRUE;
@@ -1742,12 +1748,14 @@ static int runFastMode(void) {
     }
 
     /* Scripted command stream — dispatch any pending ops whose tick
-     * has arrived. The reference is the server's tick as observed by
-     * the ClientSim, so a single scenario fixture aligns with both
-     * --fast and --server wall-clock dispatch. */
+     * has arrived. Prefer the server's observed tick when snapshots
+     * are flowing; fall back to a local per-iteration counter while
+     * the server tick is still 0 (lobby phase, before any
+     * PACKET_GAME_STATE has arrived) so lobby-mode ops still fire. */
     if (cmdStream != NULL) {
       uint32_t serverTick = clientSimGetLastServerTick(humanSim);
-      if (!cmdStreamPump(serverTick, true)) {
+      uint32_t pumpRef = serverTick > 0 ? serverTick : pumpTick;
+      if (!cmdStreamPump(pumpRef, true)) {
         if (!optQuiet) {
           fprintf(stderr, "cmd-stdin: exit op received.\n");
         }
@@ -1801,6 +1809,10 @@ static int runNetworkMode(void) {
   bool justKeys = FALSE;
   bool brainRunning;
   uint32_t simTickCounter = 0;
+  /* Monotonic per-outer-iteration counter. Used as the cmd-stdin
+   * pump reference when the server tick is unavailable (lobby
+   * phase, before any PACKET_GAME_STATE has been observed). */
+  uint32_t pumpTick = 0;
 
   if (!optQuiet) {
     fprintf(stderr, "WinBolo Headless Client\n");
@@ -1941,6 +1953,7 @@ static int runNetworkMode(void) {
   while (!headlessQuit) {
     brainRunning = brainHandlerIsBrainRunning();
     bool used = FALSE;
+    pumpTick++;
 
     ttick = SDL_GetTicks();
 
@@ -2004,13 +2017,15 @@ static int runNetworkMode(void) {
     }
 
     /* Scripted command stream — fan out to the wire send-wrappers
-     * once the observed server tick has reached each command's
-     * scheduled tick. Polled every outer iteration (cheaper than
-     * gating on `used`, and the early-return when no command is
-     * due makes that cheap). */
+     * once the pump reference has reached each command's scheduled
+     * tick. Prefer the server's observed tick when snapshots are
+     * flowing; fall back to a local per-iteration counter while the
+     * server tick is still 0 (lobby phase, before any
+     * PACKET_GAME_STATE has arrived) so lobby ops still fire. */
     if (cmdStream != NULL) {
       uint32_t serverTick = clientSimGetLastServerTick(humanSim);
-      if (!cmdStreamPump(serverTick, false)) {
+      uint32_t pumpRef = serverTick > 0 ? serverTick : pumpTick;
+      if (!cmdStreamPump(pumpRef, false)) {
         if (!optQuiet) {
           fprintf(stderr, "cmd-stdin: exit op received.\n");
         }

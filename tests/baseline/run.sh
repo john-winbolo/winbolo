@@ -45,19 +45,20 @@ mkdir -p "$ACTUAL"
 COMMANDS="$DIR/commands"
 
 # Diff two JSONL files after normalizing UDP wall-clock jitter:
-# every line has its tick field stripped before the lexical sort, so
-# a CTRL_MAP_SKIP_STATE that lands two ticks earlier or later than
-# the golden run still matches. The set of events (and their order
-# within a tick, modulo lex sort) is the regression target — the
-# precise tick is run-to-run noise on the UDP path. Used only by
-# UDP scenarios; --fast scenarios diff unsorted/unstripped because
-# the in-process pipe is fully deterministic.
+# every line has its tick field stripped and pingMs field zeroed
+# before the lexical sort, so a CTRL_MAP_SKIP_STATE that lands two
+# ticks earlier or later — or a CTRL_LOBBY_SLOT whose ping varies
+# by a millisecond — still matches the golden. The set of events
+# (and their order within a tick, modulo lex sort) is the
+# regression target. Used only by UDP scenarios; --fast scenarios
+# diff unsorted/unstripped because the in-process pipe is fully
+# deterministic.
 diff_sorted() {
   local expected="$1"
   local actual="$2"
   diff -u \
-    <(sed -E 's/"tick":[0-9]+,//' "$expected" | sort) \
-    <(sed -E 's/"tick":[0-9]+,//' "$actual"   | sort)
+    <(sed -E 's/"tick":[0-9]+,//; s/"pingMs":[0-9]+/"pingMs":0/' "$expected" | sort) \
+    <(sed -E 's/"tick":[0-9]+,//; s/"pingMs":[0-9]+/"pingMs":0/' "$actual"   | sort)
 }
 
 run() {
@@ -381,6 +382,83 @@ run_events_cmd_udp_two_clients() {
   return 1
 }
 
+# Two WinBoloHeadless --server clients connected to one WinBoloDS
+# running with the lobby state machine live (no -nolobby). Each
+# client drives its own cmd-stdin to set its team and ready in the
+# lobby; the server auto-starts the countdown once all connected
+# players are ready and naturally transitions to RUNNING when the
+# countdown expires. Scheduled cmd-stdin ops fire against the
+# headless's per-iteration pump-tick fallback while serverTick is
+# still 0 (lobby phase, no game-state snapshots flowing).
+run_events_cmd_udp_two_clients_lobby() {
+  local name="$1"
+  local map="$2"
+  local c1_cmd="$3"
+  local c2_cmd="$4"
+  local port=50007
+  echo -n "  $name ... "
+
+  "$BIN_DS" -map "$map" -port "$port" -gametype open \
+            -nowinbolonet -quiet -threads 1 \
+            -logfile "$ACTUAL/$name.dslog" \
+            > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
+  local ds_pid=$!
+  trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
+
+  sleep 0.5
+
+  # Client 1 first, then a brief delay so it lands in slot 0
+  # deterministically before client 2 joins into slot 1. Distinct
+  # --name args so the server doesn't reject c2 as a duplicate.
+  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
+         --cmd-stdin "$c1_cmd" \
+         --ticks 500 --seed 42 \
+         --log-events "$ACTUAL/${name}_c1.jsonl" --quiet \
+         > "$ACTUAL/${name}_c1.out" 2> "$ACTUAL/${name}_c1.err" &
+  local c1_pid=$!
+  sleep 0.3
+  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
+         --cmd-stdin "$c2_cmd" \
+         --ticks 500 --seed 43 \
+         --log-events "$ACTUAL/${name}_c2.jsonl" --quiet \
+         > "$ACTUAL/${name}_c2.out" 2> "$ACTUAL/${name}_c2.err" &
+  local c2_pid=$!
+
+  trap 'kill "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true; \
+        wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
+
+  local c1_rc=0 c2_rc=0
+  wait "$c1_pid" || c1_rc=$?
+  wait "$c2_pid" || c2_rc=$?
+
+  kill "$ds_pid" 2>/dev/null || true
+  wait "$ds_pid" 2>/dev/null || true
+  trap - EXIT
+
+  if [ "$c1_rc" -ne 0 ] || [ "$c2_rc" -ne 0 ]; then
+    echo "CRASH (c1=$c1_rc c2=$c2_rc)"
+    return 1
+  fi
+
+  local fail=0
+  for which in c1 c2; do
+    if diff_sorted "$EXPECTED/${name}_${which}.jsonl" \
+                   "$ACTUAL/${name}_${which}.jsonl" >/dev/null 2>&1; then
+      :
+    else
+      [ "$fail" -eq 0 ] && echo "DIFF"
+      diff_sorted "$EXPECTED/${name}_${which}.jsonl" \
+                  "$ACTUAL/${name}_${which}.jsonl" 2>&1 | head -40
+      fail=1
+    fi
+  done
+  if [ "$fail" -eq 0 ]; then
+    echo "OK"
+    return 0
+  fi
+  return 1
+}
+
 # Two passive WinBoloHeadless --server clients connected to a WinBoloDS
 # that is configured (via -ticklimit) to end the running game at a fixed
 # tick. The clients use a brain (no cmd-stdin) so they sit idle; their
@@ -513,6 +591,10 @@ dispatch_scenario() {
       run_events_cmd_udp_two_clients "$name" "$EVERARD_MAP" \
                          "$COMMANDS/centralize_events_alliance_2client.c1.jsonl" \
                          "$COMMANDS/centralize_events_alliance_2client.c2.jsonl" ;;
+    centralize_events_lobby_smoke_udp)
+      run_events_cmd_udp_two_clients_lobby "$name" "$EVERARD_MAP" \
+                         "$COMMANDS/centralize_events_lobby_smoke.c1.jsonl" \
+                         "$COMMANDS/centralize_events_lobby_smoke.c2.jsonl" ;;
     centralize_events_game_over_udp)
       run_events_udp_two_clients_ticklimit "$name" "$EVERARD_MAP" \
                          "$BRAINS/sit_and_log.lua" 200 ;;
@@ -570,6 +652,7 @@ for n in centralize_events_teams_fast \
          centralize_events_alliance_leave_udp \
          centralize_events_shutdown_udp \
          centralize_events_alliance_2client_udp \
+         centralize_events_lobby_smoke_udp \
          centralize_events_game_over_udp; do
   dispatch_scenario "$n" || fail=1
 done
