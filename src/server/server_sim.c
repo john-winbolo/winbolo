@@ -2400,7 +2400,8 @@ void serverSimReturnToLobby(ServerSim *sim) {
     }
 
     serverSimConsoleMessage("Returned to lobby.");
-    /* PACKET_LOBBY_STATE broadcast is sent by transport layer */
+    /* Lobby state fan-out happens via the control-event bus — the
+     * caller publishes CTRL_LOBBY_SLOT + CTRL_LOBBY_SETTINGS. */
 
     serverDedicatedLogOnReturnToLobby(sim);
 }

@@ -252,8 +252,9 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_LOBBY_ADD_BOT     132  /* { brainPath } — request server add a bot */
 #define PACKET_LOBBY_REMOVE_BOT  133  /* { playerNum } — request server remove a bot */
 
-/* Lobby packets — Server -> Client */
-#define PACKET_LOBBY_STATE       140  /* Full lobby snapshot: all 16 slots + server state */
+/* Lobby packets — Server -> Client.  Slot 140 (formerly the composite
+ * PACKET_LOBBY_STATE) is retired: slot and settings updates are now
+ * encoded as separate packets via the control-event codec. */
 #define PACKET_LOBBY_UPDATE      141  /* Single-player delta: { playerNum, teamNumber, ready, isBot } */
 #define PACKET_COUNTDOWN         142  /* { secondsRemaining } */
 #define PACKET_GAME_START        143  /* Signal to transition from lobby to game */
@@ -286,6 +287,12 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
  * rejection. Wire format change is unversioned; server and client
  * update in lockstep. */
 #define PACKET_NAME_CHANGE_REJECT   158
+
+/* Server -> Client: lobby-wide settings (map, game type, limits, ...).
+ * Produced by the CTRL_LOBBY_SETTINGS codec encoder; replaces the
+ * settings-tail portion of the legacy composite PACKET_LOBBY_STATE.
+ * Layout matches the per-field shape of serverSimFillLobbySettingsEvent. */
+#define PACKET_LOBBY_SETTINGS       159
 
 #define NAME_REJECT_INVALID         1   /* validator: any *_INVALID_* error */
 #define NAME_REJECT_TAKEN           2   /* duplicate via playerNameCompare */

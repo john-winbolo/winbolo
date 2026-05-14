@@ -321,14 +321,6 @@ BYTE transportUdpServerGetMaxPlayers(void);
  * Disconnects clients that haven't sent packets within CLIENT_TIMEOUT_TICKS. */
 void transportUdpServerCheckTimeouts(struct ServerSim *sim);
 
-/* ---- Lobby broadcast functions ---- */
-
-/* Broadcast full lobby state snapshot to all connected clients. */
-void transportUdpServerBroadcastLobbyState(struct ServerSim *sim);
-
-/* Broadcast a single-player lobby update to all connected clients. */
-void transportUdpServerBroadcastLobbyUpdate(struct ServerSim *sim, BYTE playerNum);
-
 /* Reset per-client and per-slot state for a fresh game.  Marks every
  * connected client as needing a player-list refresh, flags map download
  * complete, and clears reliable / map event queue sequence numbers for

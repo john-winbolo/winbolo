@@ -28,6 +28,24 @@
 #include "server_sim_internal.h"
 #include "server_lifecycle.h"
 
+/* Publish CTRL_LOBBY_SLOT for every connected slot plus
+ * CTRL_LOBBY_SETTINGS — the codec encoder fans each event out as an
+ * individual wire packet to every per-client subscriber. */
+static void publishLobbyStateAll(struct ServerSim *sim) {
+    BYTE k;
+    ControlEvent evt;
+    for (k = 0; k < MAX_TANKS; k++) {
+        if (serverSimIsPlayerConnected(sim, k)) {
+            memset(&evt, 0, sizeof(evt));
+            serverSimFillLobbySlotEvent(sim, k, &evt);
+            serverSimPublishControl(sim, &evt);
+        }
+    }
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySettingsEvent(sim, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
 static char  instanceTrackerAddr[FILENAME_MAX] = "";
 static unsigned short instanceTrackerPort = 0;
 static unsigned short instanceUdpPort = 0;
@@ -375,7 +393,7 @@ void serverInstanceTick(ServerSim *sim) {
           serverSimGetNumPlayers(sim));
       }
       /* Returned to lobby — broadcast full lobby state */
-      transportUdpServerBroadcastLobbyState(sim);
+      publishLobbyStateAll(sim);
       /* Send the win message now that players are back in the lobby */
       if (sim->pendingWinMessage[0] != '\0') {
         transportUdpServerSendServerMessage(sim->pendingWinMessage);
@@ -387,7 +405,7 @@ void serverInstanceTick(ServerSim *sim) {
      * for ping/country updates and state consistency */
     if ((sim->state == serverStateLobby || sim->state == serverStateCountdown) &&
         sim->tick % 25 == 0) {
-      transportUdpServerBroadcastLobbyState(sim);
+      publishLobbyStateAll(sim);
     }
 
     /* Timeout check — not called via transportUdpServerSend() during lobby */
@@ -436,7 +454,7 @@ void serverInstanceTick(ServerSim *sim) {
         serverSimGetNumNeutralPills(sim),
         serverSimGetNumPlayers(sim));
     }
-    transportUdpServerBroadcastLobbyState(sim);
+    publishLobbyStateAll(sim);
   }
 
   threadsReleaseMutex();
