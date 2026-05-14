@@ -200,6 +200,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keysetup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_winbolonet.cpp
     ${PROJ_ROOT}/src/gui/sdl3/map_preview_popup.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/map_preview_view.cpp
     ${PROJ_ROOT}/src/gui/sdl3/minimap_render.c
     ${PROJ_ROOT}/src/gui/sdl3/luabrainshandler.c
     ${PROJ_ROOT}/src/gui/sdl3/cursor.c
