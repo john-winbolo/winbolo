@@ -3652,6 +3652,98 @@ void serverSimSetAdminFirstJoinAfterEmpty(ServerSim *sim, bool v) {
     if (sim) sim->adminFirstJoinAfterEmpty = v;
 }
 
+/* ── Map directory enumeration ──────────────────────────────────────
+ * Implementation notes:
+ *   - Path validation rejects ".." anywhere in the relative path so a
+ *     client can't escape the data/maps sandbox.
+ *   - Uses SDL_GlobDirectory + SDL_GetPathInfo so it works on every
+ *     supported platform (SDL3 handles the platform-specific FS API).
+ *   - Folders sort before files; both groups sort case-insensitive
+ *     alphabetical. Matches the chooser's display order. */
+static bool relPathIsSafe(const char *p) {
+    if (!p) return true; /* NULL = root */
+    /* Reject absolute paths and any ".." segment. */
+    if (p[0] == '/' || p[0] == '\\') return false;
+    if (p[0] != '\0' && (p[1] == ':' || (p[2] == ':' && p[3] != '\0')))
+        return false; /* "C:..." Windows drive */
+    for (const char *s = p; *s;) {
+        if (s[0] == '.' && s[1] == '.' &&
+            (s[2] == '\0' || s[2] == '/' || s[2] == '\\')) {
+            return false;
+        }
+        /* Advance past this segment to the next separator. */
+        while (*s && *s != '/' && *s != '\\') s++;
+        while (*s == '/' || *s == '\\') s++;
+    }
+    return true;
+}
+
+int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
+                              ServerMapEntry *entries, int maxEntries) {
+    (void)sim;
+    if (!entries || maxEntries <= 0) return -1;
+    if (!relPathIsSafe(relPath)) return -1;
+
+    /* Build the on-disk path. Server data/maps root is fixed; the
+     * relative tail comes from the caller. Empty / NULL = root. */
+    char fullPath[FILENAME_MAX];
+    if (!relPath || relPath[0] == '\0') {
+        SDL_strlcpy(fullPath, "data/maps", sizeof(fullPath));
+    } else {
+        SDL_snprintf(fullPath, sizeof(fullPath), "data/maps/%s", relPath);
+    }
+
+    int count = 0;
+    int globCount = 0;
+    char **list = SDL_GlobDirectory(fullPath, NULL, 0, &globCount);
+    if (!list) return 0;
+
+    for (int i = 0; i < globCount && count < maxEntries; i++) {
+        const char *name = list[i];
+        if (!name || name[0] == '.') continue; /* skip dotfiles + . / .. */
+
+        char child[FILENAME_MAX];
+        SDL_snprintf(child, sizeof(child), "%s/%s", fullPath, name);
+
+        SDL_PathInfo info;
+        if (!SDL_GetPathInfo(child, &info)) continue;
+        bool isDir = (info.type == SDL_PATHTYPE_DIRECTORY);
+
+        if (!isDir) {
+            /* Files: only *.map */
+            size_t nlen = SDL_strlen(name);
+            if (nlen <= 4 ||
+                SDL_strcasecmp(name + nlen - 4, ".map") != 0) {
+                continue;
+            }
+        }
+
+        ServerMapEntry *e = &entries[count++];
+        SDL_strlcpy(e->name, name, sizeof(e->name));
+        e->isFolder = isDir;
+    }
+    SDL_free(list);
+
+    /* Sort: folders first, alphabetical within each group. Simple
+     * insertion sort is fine — typical dir < 200 entries. */
+    for (int i = 1; i < count; i++) {
+        ServerMapEntry cur = entries[i];
+        int j = i - 1;
+        while (j >= 0) {
+            const ServerMapEntry *a = &entries[j];
+            bool aFirst;
+            if (a->isFolder != cur.isFolder) aFirst = a->isFolder;
+            else aFirst = SDL_strcasecmp(a->name, cur.name) <= 0;
+            if (aFirst) break;
+            entries[j + 1] = entries[j];
+            j--;
+        }
+        entries[j + 1] = cur;
+    }
+
+    return count;
+}
+
 bool serverSimGetOpenHost(const ServerSim *sim) {
     return sim ? sim->openHost : false;
 }

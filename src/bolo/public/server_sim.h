@@ -1154,6 +1154,32 @@ void        serverSimSetAdminIps(ServerSim *sim, const char *csvIps);
 bool        serverSimGetAdminFirstJoinAfterEmpty(const ServerSim *sim);
 void        serverSimSetAdminFirstJoinAfterEmpty(ServerSim *sim, bool v);
 
+/* ── Server-side map directory enumeration ──────────────────────────
+ *
+ * Lists entries (subdirectories and .map files) at a path relative to
+ * the server's data/maps/ root. Used by the lobby's map chooser so a
+ * connected client can browse the *server's* map library — Phase 3
+ * of the in-lobby map browser; previously the chooser scanned the
+ * client's own filesystem which is wrong in pure-network mode.
+ *
+ * relPath:    Relative to data/maps; "" or NULL = root. ".." segments
+ *             are rejected (escape attempts return -1).
+ * entries:    Caller-allocated output array.
+ * maxEntries: Capacity of entries[]; the function writes at most this
+ *             many; if the directory has more, the extras are dropped
+ *             and the function returns maxEntries.
+ *
+ * Returns the number of entries written, or -1 on validation /
+ * read failure. Folders sort first (alphabetically), then files
+ * (alphabetically). */
+typedef struct {
+    char name[128];
+    bool isFolder;
+} ServerMapEntry;
+
+int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
+                              ServerMapEntry *entries, int maxEntries);
+
 /* openHost — when true, any connected client may issue lobby edit
  * commands (add bots, change settings, etc.). */
 bool        serverSimGetOpenHost(const ServerSim *sim);

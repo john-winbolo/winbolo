@@ -39,11 +39,14 @@ extern "C" {
 #define MAP_CHOOSER_IDX_RANDOM -2
 
 typedef struct {
-    char name[128];           /* Display name (without .map extension) */
-    char path[FILENAME_MAX];  /* Full path (e.g. "data/maps/Foo.map") */
+    char name[128];           /* Display name (without .map extension for files, raw name for folders) */
+    char path[FILENAME_MAX];  /* Full path (e.g. "data/maps/Foo.map" or "data/maps/Uploaded") */
+    bool isFolder;            /* true: directory the user can navigate into */
+    bool isParentUp;          /* true: synthetic ".." entry that pops one level */
 } MapChooserEntry;
 
-typedef struct {
+typedef struct MapChooserState_s MapChooserState;
+struct MapChooserState_s {
     /* Discovered maps */
     MapChooserEntry maps[MAP_CHOOSER_MAX_MAPS];
     int             numMaps;
@@ -80,6 +83,12 @@ typedef struct {
 
     bool            initialized;
 
+    /* Currently-browsed directory (relative path, e.g. "data/maps"
+     * or "data/maps/Uploaded"). Empty = root list which always pins
+     * "Everard Island (inbuilt)" at the top. Folder navigation updates
+     * this and re-runs discoverMaps. */
+    char            currentDir[FILENAME_MAX];
+
     /* When true, the widget hides its "Load from device" and "Generate
      * Random Map" buttons. The lobby's map chooser surfaces those
      * features as separate tabs, so they'd be duplicated here. */
@@ -105,7 +114,23 @@ typedef struct {
      * destination Image stays consistent across frames. */
     int             previewLastW;
     int             previewLastH;
-} MapChooserState;
+    /* Optional pointer to a "maximize" flag the surrounding window
+     * uses. When non-NULL the chooser renders a small maximize /
+     * restore icon at the top-right corner of the preview image and
+     * toggles *maximizePtr on click. NULL = no maximize affordance. */
+    bool           *maximizePtr;
+
+    /* Optional directory-listing callback. When set, the chooser
+     * uses this to populate state->maps for the current `relPath`
+     * (relative to whatever the caller considers the root); when
+     * NULL it falls back to the local SDL_GlobDirectory scan in
+     * `data/maps`. Phase 3 of the in-lobby browser passes a callback
+     * that routes through serverSimEnumerateMapDir so the user
+     * browses the *server's* map library, not the local client's. */
+    void           *listProviderCtx;
+    void          (*listProvider)(MapChooserState *state,
+                                  const char *relPath, void *ctx);
+};
 
 /* Initialize the map chooser state. Discovers available maps.
  * Call once before rendering. */
