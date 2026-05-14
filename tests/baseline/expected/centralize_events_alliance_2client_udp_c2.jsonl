@@ -1,0 +1,4 @@
+{"tick":0,"type":"CTRL_GAME_PHASE","phase":"RUNNING","countdownSeconds":0}
+{"tick":0,"type":"CTRL_MAP_DOWNLOAD_COMPLETE"}
+{"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":0,"name":"HeadlessBot1","country":"","clientType":2,"clientFlags":0,"allies":[]}
+{"tick":84,"type":"CTRL_ALLIANCE_ACCEPT","acceptedBy":1,"newMember":0}

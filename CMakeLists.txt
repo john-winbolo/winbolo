@@ -2032,7 +2032,7 @@ add_custom_target(dist
 
 enable_testing()
 add_test(NAME baseline
-         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
+         COMMAND stdbuf -oL bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
                       $<TARGET_FILE:WinBoloHeadless>
                       $<TARGET_FILE:WinBoloDS>)
 set_tests_properties(baseline PROPERTIES TIMEOUT 120)
