@@ -46,7 +46,8 @@ typedef enum {
     CTRL_MAP_SKIP_STATE,
     CTRL_GAME_PHASE,
     CTRL_GAME_OVER,
-    CTRL_SERVER_SHUTDOWN
+    CTRL_SERVER_SHUTDOWN,
+    CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
 typedef enum {
