@@ -19,6 +19,15 @@
 
 set -e
 
+# --scenario <name> runs exactly one scenario (used by CTest, one entry per
+# scenario). Without it the script runs every scenario with section headers
+# for manual use.
+SCENARIO=""
+if [ "${1:-}" = "--scenario" ]; then
+  SCENARIO="$2"
+  shift 2
+fi
+
 BIN="${1:-$HOME/linux-build/WinBoloHeadless}"
 case "$(basename "$BIN")" in
   winboloheadless) BIN_DS_DEFAULT="$(dirname "$BIN")/winbolods" ;;
@@ -164,44 +173,6 @@ run_events_udp() {
     return 1
   fi
 }
-
-run_all_brains() {
-  local tag="$1"
-  local map="$2"
-  if [ ! -f "$map" ]; then
-    echo "  ERROR: missing map $map" >&2
-    fail=1
-    return 0
-  fi
-  run "${tag}_1bot_idle"  "$map" "$BRAINS/idle.lua"            || fail=1
-  run "${tag}_1bot_sit"   "$map" "$BRAINS/sit_and_log.lua"     || fail=1
-  run "${tag}_1bot_drive" "$map" "$BRAINS/drive_forward.lua"   || fail=1
-  run "${tag}_1bot_shoot" "$map" "$BRAINS/shoot_and_log.lua"   || fail=1
-  run "${tag}_1bot_watch" "$map" "$BRAINS/watch_objects.lua"   || fail=1
-}
-
-fail=0
-
-echo "Everard Island:"
-run_all_brains "everard_island" "$MAPS/Everard Island.map"
-
-echo "Forest Rig:"
-run_all_brains "forest_rig"     "$MAPS/Forest Rig.map"
-
-echo "Slugfest IV:"
-run_all_brains "slugfest_iv"    "$MAPS/Slugfest IV.map"
-
-echo "Dedicated server (Everard Island):"
-run_ds "ds_4bot_melee" 4 ""  || fail=1
-run_ds "ds_2v2_team"   4 "1" || fail=1
-
-echo "Control-event capture (Everard Island):"
-run_events_fast "centralize_events_fast" \
-                "$MAPS/Everard Island.map" \
-                "$BRAINS/sit_and_log.lua" || fail=1
-run_events_udp  "centralize_events_udp" \
-                "$MAPS/Everard Island.map" \
-                "$BRAINS/sit_and_log.lua" || fail=1
 
 # ---------------------------------------------------------------
 # Scripted control-event scenarios (--cmd-stdin / -cmd-stdin).
@@ -410,36 +381,120 @@ run_events_cmd_udp_two_clients() {
   return 1
 }
 
+# Scenario name → helper invocation. The set of names here must stay in
+# sync with CMakeLists.txt's baseline.${name} CTest entries.
+EVERARD_MAP="$MAPS/Everard Island.map"
+FOREST_MAP="$MAPS/Forest Rig.map"
+SLUGFEST_MAP="$MAPS/Slugfest IV.map"
+
+dispatch_scenario() {
+  local name="$1"
+  case "$name" in
+    everard_island_1bot_idle)  run "$name" "$EVERARD_MAP"  "$BRAINS/idle.lua"          ;;
+    everard_island_1bot_sit)   run "$name" "$EVERARD_MAP"  "$BRAINS/sit_and_log.lua"   ;;
+    everard_island_1bot_drive) run "$name" "$EVERARD_MAP"  "$BRAINS/drive_forward.lua" ;;
+    everard_island_1bot_shoot) run "$name" "$EVERARD_MAP"  "$BRAINS/shoot_and_log.lua" ;;
+    everard_island_1bot_watch) run "$name" "$EVERARD_MAP"  "$BRAINS/watch_objects.lua" ;;
+    forest_rig_1bot_idle)      run "$name" "$FOREST_MAP"   "$BRAINS/idle.lua"          ;;
+    forest_rig_1bot_sit)       run "$name" "$FOREST_MAP"   "$BRAINS/sit_and_log.lua"   ;;
+    forest_rig_1bot_drive)     run "$name" "$FOREST_MAP"   "$BRAINS/drive_forward.lua" ;;
+    forest_rig_1bot_shoot)     run "$name" "$FOREST_MAP"   "$BRAINS/shoot_and_log.lua" ;;
+    forest_rig_1bot_watch)     run "$name" "$FOREST_MAP"   "$BRAINS/watch_objects.lua" ;;
+    slugfest_iv_1bot_idle)     run "$name" "$SLUGFEST_MAP" "$BRAINS/idle.lua"          ;;
+    slugfest_iv_1bot_sit)      run "$name" "$SLUGFEST_MAP" "$BRAINS/sit_and_log.lua"   ;;
+    slugfest_iv_1bot_drive)    run "$name" "$SLUGFEST_MAP" "$BRAINS/drive_forward.lua" ;;
+    slugfest_iv_1bot_shoot)    run "$name" "$SLUGFEST_MAP" "$BRAINS/shoot_and_log.lua" ;;
+    slugfest_iv_1bot_watch)    run "$name" "$SLUGFEST_MAP" "$BRAINS/watch_objects.lua" ;;
+
+    ds_4bot_melee)             run_ds "$name" 4 ""  ;;
+    ds_2v2_team)               run_ds "$name" 4 "1" ;;
+
+    centralize_events_fast)    run_events_fast "$name" "$EVERARD_MAP" "$BRAINS/sit_and_log.lua" ;;
+    centralize_events_udp)     run_events_udp  "$name" "$EVERARD_MAP" "$BRAINS/sit_and_log.lua" ;;
+
+    centralize_events_teams_fast)
+      run_events_cmd_fast "$name" "$EVERARD_MAP" \
+                          "$COMMANDS/centralize_events_teams.client.jsonl" ;;
+    centralize_events_alliance_fast)
+      run_events_cmd_fast "$name" "$EVERARD_MAP" \
+                          "$COMMANDS/centralize_events_alliance.client.jsonl" ;;
+    centralize_events_name_change_fast)
+      run_events_cmd_fast "$name" "$EVERARD_MAP" \
+                          "$COMMANDS/centralize_events_name_change.client.jsonl" ;;
+    centralize_events_map_skip_fast)
+      run_events_cmd_fast "$name" "$EVERARD_MAP" \
+                          "$COMMANDS/centralize_events_map_skip.client.jsonl" ;;
+    centralize_events_name_change_udp)
+      run_events_cmd_udp "$name" "$EVERARD_MAP" \
+                         "$COMMANDS/centralize_events_name_change.client.jsonl" ;;
+    centralize_events_map_skip_udp)
+      run_events_cmd_udp "$name" "$EVERARD_MAP" \
+                         "$COMMANDS/centralize_events_map_skip.client.jsonl" ;;
+    centralize_events_alliance_leave_udp)
+      run_events_cmd_udp "$name" "$EVERARD_MAP" \
+                         "$COMMANDS/centralize_events_alliance_leave.client.jsonl" ;;
+    centralize_events_shutdown_udp)
+      run_events_cmd_udp_server_only "$name" "$EVERARD_MAP" \
+                         "$COMMANDS/centralize_events_shutdown.server.jsonl" ;;
+    centralize_events_alliance_2client_udp)
+      run_events_cmd_udp_two_clients "$name" "$EVERARD_MAP" \
+                         "$COMMANDS/centralize_events_alliance_2client.c1.jsonl" \
+                         "$COMMANDS/centralize_events_alliance_2client.c2.jsonl" ;;
+
+    *) echo "unknown scenario: $name" >&2; return 2 ;;
+  esac
+}
+
+# CTest path: dispatch one scenario and propagate its exit code.
+if [ -n "$SCENARIO" ]; then
+  rc=0
+  dispatch_scenario "$SCENARIO" || rc=$?
+  exit $rc
+fi
+
+# Manual path: every scenario, grouped under section headers.
+fail=0
+
+echo "Everard Island:"
+for n in everard_island_1bot_idle everard_island_1bot_sit \
+         everard_island_1bot_drive everard_island_1bot_shoot \
+         everard_island_1bot_watch; do
+  dispatch_scenario "$n" || fail=1
+done
+
+echo "Forest Rig:"
+for n in forest_rig_1bot_idle forest_rig_1bot_sit \
+         forest_rig_1bot_drive forest_rig_1bot_shoot \
+         forest_rig_1bot_watch; do
+  dispatch_scenario "$n" || fail=1
+done
+
+echo "Slugfest IV:"
+for n in slugfest_iv_1bot_idle slugfest_iv_1bot_sit \
+         slugfest_iv_1bot_drive slugfest_iv_1bot_shoot \
+         slugfest_iv_1bot_watch; do
+  dispatch_scenario "$n" || fail=1
+done
+
+echo "Dedicated server (Everard Island):"
+dispatch_scenario ds_4bot_melee || fail=1
+dispatch_scenario ds_2v2_team   || fail=1
+
+echo "Control-event capture (Everard Island):"
+dispatch_scenario centralize_events_fast || fail=1
+dispatch_scenario centralize_events_udp  || fail=1
+
 echo "Scripted control-event scenarios (Everard Island):"
-run_events_cmd_fast "centralize_events_teams_fast" \
-                    "$MAPS/Everard Island.map" \
-                    "$COMMANDS/centralize_events_teams.client.jsonl" || fail=1
-run_events_cmd_fast "centralize_events_alliance_fast" \
-                    "$MAPS/Everard Island.map" \
-                    "$COMMANDS/centralize_events_alliance.client.jsonl" || fail=1
-run_events_cmd_fast "centralize_events_name_change_fast" \
-                    "$MAPS/Everard Island.map" \
-                    "$COMMANDS/centralize_events_name_change.client.jsonl" || fail=1
-run_events_cmd_fast "centralize_events_map_skip_fast" \
-                    "$MAPS/Everard Island.map" \
-                    "$COMMANDS/centralize_events_map_skip.client.jsonl" || fail=1
-run_events_cmd_udp  "centralize_events_name_change_udp" \
-                    "$MAPS/Everard Island.map" \
-                    "$COMMANDS/centralize_events_name_change.client.jsonl" || fail=1
-run_events_cmd_udp  "centralize_events_map_skip_udp" \
-                    "$MAPS/Everard Island.map" \
-                    "$COMMANDS/centralize_events_map_skip.client.jsonl" || fail=1
-run_events_cmd_udp  "centralize_events_alliance_leave_udp" \
-                    "$MAPS/Everard Island.map" \
-                    "$COMMANDS/centralize_events_alliance_leave.client.jsonl" || fail=1
-run_events_cmd_udp_server_only \
-                    "centralize_events_shutdown_udp" \
-                    "$MAPS/Everard Island.map" \
-                    "$COMMANDS/centralize_events_shutdown.server.jsonl" || fail=1
-run_events_cmd_udp_two_clients \
-                    "centralize_events_alliance_2client_udp" \
-                    "$MAPS/Everard Island.map" \
-                    "$COMMANDS/centralize_events_alliance_2client.c1.jsonl" \
-                    "$COMMANDS/centralize_events_alliance_2client.c2.jsonl" || fail=1
+for n in centralize_events_teams_fast \
+         centralize_events_alliance_fast \
+         centralize_events_name_change_fast \
+         centralize_events_map_skip_fast \
+         centralize_events_name_change_udp \
+         centralize_events_map_skip_udp \
+         centralize_events_alliance_leave_udp \
+         centralize_events_shutdown_udp \
+         centralize_events_alliance_2client_udp; do
+  dispatch_scenario "$n" || fail=1
+done
 
 exit $fail
