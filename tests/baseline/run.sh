@@ -381,6 +381,79 @@ run_events_cmd_udp_two_clients() {
   return 1
 }
 
+# Two passive WinBoloHeadless --server clients connected to a WinBoloDS
+# that is configured (via -ticklimit) to end the running game at a fixed
+# tick. The clients use a brain (no cmd-stdin) so they sit idle; their
+# event logs capture the GAME_OVER family of events as the server-driven
+# game-end fires. Server uses -nolobby for the same tick-pump-reference
+# reason as run_events_cmd_udp_two_clients.
+run_events_udp_two_clients_ticklimit() {
+  local name="$1"
+  local map="$2"
+  local brain="$3"
+  local ticklimit="$4"
+  local port=50006
+  echo -n "  $name ... "
+
+  "$BIN_DS" -map "$map" -port "$port" -gametype open -nolobby \
+            -ticklimit "$ticklimit" \
+            -nowinbolonet -quiet -threads 1 \
+            -logfile "$ACTUAL/$name.dslog" \
+            > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
+  local ds_pid=$!
+  trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
+
+  sleep 0.5
+
+  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
+         --brain "$brain" \
+         --ticks 500 --seed 42 \
+         --log-events "$ACTUAL/${name}_c1.jsonl" --quiet \
+         > "$ACTUAL/${name}_c1.out" 2> "$ACTUAL/${name}_c1.err" &
+  local c1_pid=$!
+  sleep 0.3
+  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
+         --brain "$brain" \
+         --ticks 500 --seed 43 \
+         --log-events "$ACTUAL/${name}_c2.jsonl" --quiet \
+         > "$ACTUAL/${name}_c2.out" 2> "$ACTUAL/${name}_c2.err" &
+  local c2_pid=$!
+
+  trap 'kill "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true; \
+        wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
+
+  local c1_rc=0 c2_rc=0
+  wait "$c1_pid" || c1_rc=$?
+  wait "$c2_pid" || c2_rc=$?
+
+  kill "$ds_pid" 2>/dev/null || true
+  wait "$ds_pid" 2>/dev/null || true
+  trap - EXIT
+
+  if [ "$c1_rc" -ne 0 ] || [ "$c2_rc" -ne 0 ]; then
+    echo "CRASH (c1=$c1_rc c2=$c2_rc)"
+    return 1
+  fi
+
+  local fail=0
+  for which in c1 c2; do
+    if diff_sorted "$EXPECTED/${name}_${which}.jsonl" \
+                   "$ACTUAL/${name}_${which}.jsonl" >/dev/null 2>&1; then
+      :
+    else
+      [ "$fail" -eq 0 ] && echo "DIFF"
+      diff_sorted "$EXPECTED/${name}_${which}.jsonl" \
+                  "$ACTUAL/${name}_${which}.jsonl" 2>&1 | head -40
+      fail=1
+    fi
+  done
+  if [ "$fail" -eq 0 ]; then
+    echo "OK"
+    return 0
+  fi
+  return 1
+}
+
 # Scenario name → helper invocation. The set of names here must stay in
 # sync with CMakeLists.txt's baseline.${name} CTest entries.
 EVERARD_MAP="$MAPS/Everard Island.map"
@@ -440,6 +513,9 @@ dispatch_scenario() {
       run_events_cmd_udp_two_clients "$name" "$EVERARD_MAP" \
                          "$COMMANDS/centralize_events_alliance_2client.c1.jsonl" \
                          "$COMMANDS/centralize_events_alliance_2client.c2.jsonl" ;;
+    centralize_events_game_over_udp)
+      run_events_udp_two_clients_ticklimit "$name" "$EVERARD_MAP" \
+                         "$BRAINS/sit_and_log.lua" 200 ;;
 
     *) echo "unknown scenario: $name" >&2; return 2 ;;
   esac
@@ -493,7 +569,8 @@ for n in centralize_events_teams_fast \
          centralize_events_map_skip_udp \
          centralize_events_alliance_leave_udp \
          centralize_events_shutdown_udp \
-         centralize_events_alliance_2client_udp; do
+         centralize_events_alliance_2client_udp \
+         centralize_events_game_over_udp; do
   dispatch_scenario "$n" || fail=1
 done
 

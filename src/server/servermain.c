@@ -552,6 +552,9 @@ void printArgs() {
   fprintf(stderr, "                \"-1\" for no time limit (none if not specified)\n");
   fprintf(stderr, "-ticks <N>    - Exit cleanly after N game-ticks of running play.\n");
   fprintf(stderr, "                \"0\" or omitted means unlimited (default).\n");
+  fprintf(stderr, "-ticklimit <N> - End the current game (transition to GAME_OVER) after N\n");
+  fprintf(stderr, "                game-ticks of running play. Unlike -ticks, the server is\n");
+  fprintf(stderr, "                not asked to exit; in lobby mode the round returns to lobby.\n");
   fprintf(stderr, "<Password>    - Game Password (none if not specified)\n");
   fprintf(stderr, "<tracker>     - Internet tracker to notify. Options:\n");
   fprintf(stderr, "                -tracker alone uses default (%s:%d)\n", DEFAULT_TRACKER_ADDR, DEFAULT_TRACKER_PORT);
@@ -1117,6 +1120,12 @@ int main(int argc, char **argv) {
     int argNum = findArg(argc, argv, "ticks");
     if (argNum != ARG_NOT_FOUND) {
       serverSimSetTickLimit(serverSim, (int32_t)strtoul((char *)argv[argNum], NULL, 0));
+    }
+  }
+  {
+    int argNum = findArg(argc, argv, "ticklimit");
+    if (argNum != ARG_NOT_FOUND) {
+      serverSimSetGameTickLimit(serverSim, (int32_t)strtoul((char *)argv[argNum], NULL, 0));
     }
   }
 

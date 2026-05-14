@@ -213,8 +213,8 @@ void serverInstanceTick(ServerSim *sim) {
                                    sim->pendingWinMessage,
                                    sizeof(sim->pendingWinMessage));
           serverSimSendWbnWinEvents(sim);
-          transportUdpServerBroadcastGameOver(sim);
         }
+        transportUdpServerBroadcastGameOver(sim);
       }
       if (sim->state == serverStateRunning) {
         transportUdpServerDrainEvents(sim);
@@ -243,8 +243,8 @@ void serverInstanceTick(ServerSim *sim) {
                                    sim->pendingWinMessage,
                                    sizeof(sim->pendingWinMessage));
           serverSimSendWbnWinEvents(sim);
-          transportUdpServerBroadcastGameOver(sim);
         }
+        transportUdpServerBroadcastGameOver(sim);
       }
       if (sim->state == serverStateRunning) {
         transportUdpServerDrainEvents(sim);

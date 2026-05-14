@@ -324,6 +324,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->originalGameLength = gameLen;
     sim->tickLimit = 0;
     sim->ticksRun = 0;
+    sim->gameTickLimit = 0;
+    sim->gameTicksRun = 0;
     sim->tick = 0;
     sim->state = serverStateLobby;
     sim->lobbyEnabled = TRUE;
@@ -845,6 +847,23 @@ void serverSimTick(ServerSim *sim) {
             sim->tickLimit = 0;
             mapSetChangeCallback(NULL);
             serverSimConsoleMessage(ticksMsg);
+            serverSimEnterGameOver(sim);
+            sim->tick++;
+            return;
+        }
+    }
+
+    if (sim->gameTickLimit > 0) {
+        sim->gameTicksRun++;
+        if (sim->gameTicksRun >= sim->gameTickLimit) {
+            char gameTicksMsg[64];
+            snprintf(gameTicksMsg, sizeof(gameTicksMsg),
+                     "Game tick limit reached (%d). Ending game.",
+                     (int)sim->gameTickLimit);
+            sim->gameTickLimit = 0;
+            sim->gameTicksRun = 0;
+            mapSetChangeCallback(NULL);
+            serverSimConsoleMessage(gameTicksMsg);
             serverSimEnterGameOver(sim);
             sim->tick++;
             return;
@@ -1746,6 +1765,11 @@ void serverSimSetServerPort(ServerSim *sim, unsigned short port) {
 
 void serverSimSetTickLimit(ServerSim *sim, int32_t ticks) {
     sim->tickLimit = ticks;
+}
+
+void serverSimSetGameTickLimit(ServerSim *sim, int32_t ticks) {
+    sim->gameTickLimit = ticks;
+    sim->gameTicksRun = 0;
 }
 
 void serverSimSetUserLogFileName(ServerSim *sim, const char *name) {

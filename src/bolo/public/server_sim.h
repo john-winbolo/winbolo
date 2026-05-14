@@ -567,6 +567,20 @@ void serverSimSetServerPort(ServerSim *sim, unsigned short port);
 void serverSimSetTickLimit(ServerSim *sim, int32_t ticks);
 
 /*********************************************************
+ *NAME:          serverSimSetGameTickLimit
+ *PURPOSE:
+ *  Ends the current running game after the given number of
+ *  running-state ticks by transitioning to GAME_OVER. 0 = no
+ *  limit. Unlike serverSimSetTickLimit (whose console message
+ *  reads "Exiting" and which in -nolobby mode terminates the
+ *  process via the main loop's GAME_OVER exit gate), this
+ *  limit is intended purely as a game-end signal — the lobby
+ *  return-to-lobby cycle proceeds normally in lobby mode.
+ *  Resets after firing.
+ *********************************************************/
+void serverSimSetGameTickLimit(ServerSim *sim, int32_t ticks);
+
+/*********************************************************
  *NAME:          serverSimSetUserLogFileName
  *PURPOSE:
  *  Copies name into the user log file buffer. NULL or
