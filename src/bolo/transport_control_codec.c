@@ -229,20 +229,30 @@ static bool decodeMapSkipState(const uint8_t *buf, size_t len,
 
 static bool decodeCountdown(const uint8_t *buf, size_t len,
                             ControlEvent *outEvt) {
-    (void)buf; (void)len; (void)outEvt;
-    return false;
+    if (len < 1) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_GAME_PHASE;
+    outEvt->u.gamePhase.phase = CTRL_PHASE_COUNTDOWN;
+    outEvt->u.gamePhase.countdownSeconds = buf[0];
+    return true;
 }
 
 static bool decodeGameStart(const uint8_t *buf, size_t len,
                             ControlEvent *outEvt) {
-    (void)buf; (void)len; (void)outEvt;
-    return false;
+    (void)buf; (void)len;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_GAME_PHASE;
+    outEvt->u.gamePhase.phase = CTRL_PHASE_RUNNING;
+    outEvt->u.gamePhase.countdownSeconds = 0;
+    return true;
 }
 
 static bool decodeGameOver(const uint8_t *buf, size_t len,
                            ControlEvent *outEvt) {
-    (void)buf; (void)len; (void)outEvt;
-    return false;
+    (void)buf; (void)len;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_GAME_OVER;
+    return true;
 }
 
 static bool decodeServerShutdown(const uint8_t *buf, size_t len,

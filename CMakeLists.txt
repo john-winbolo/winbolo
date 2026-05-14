@@ -2068,6 +2068,7 @@ set(_baseline_udp_50003
 )
 set(_baseline_udp_50004 centralize_events_shutdown_udp)
 set(_baseline_udp_50005 centralize_events_alliance_2client_udp)
+set(_baseline_udp_50006 centralize_events_game_over_udp)
 
 foreach(_name IN LISTS _baseline_fast)
     add_test(NAME baseline.${_name}
@@ -2078,7 +2079,7 @@ foreach(_name IN LISTS _baseline_fast)
     set_tests_properties(baseline.${_name} PROPERTIES TIMEOUT 60)
 endforeach()
 
-foreach(_port 50001 50002 50003 50004 50005)
+foreach(_port 50001 50002 50003 50004 50005 50006)
     foreach(_name IN LISTS _baseline_udp_${_port})
         add_test(NAME baseline.${_name}
                  COMMAND stdbuf -oL bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
