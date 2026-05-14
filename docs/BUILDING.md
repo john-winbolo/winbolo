@@ -104,6 +104,28 @@ if cmake --build ~/linux-build -j$(nproc); then ctest --test-dir ~/linux-build -
 
 The `if` form gates on the build's exit status, so a build failure prints `build failed` and skips the tests rather than running ctest against stale binaries. A test failure reports through ctest as normal. `-j$(nproc)` runs scenarios in parallel — `--fast` scenarios share no state, and UDP scenarios are serialized per-port via CTest `RESOURCE_LOCK`s so different helpers still run concurrently.
 
+#### Adding a new baseline scenario
+
+Each scenario is registered in **two places**, which must stay in sync:
+
+1. **`tests/baseline/run.sh`** — add a branch to the `dispatch_scenario` case statement mapping the scenario name to the helper invocation (`run`, `run_ds`, `run_events_fast`, `run_events_udp`, `run_events_cmd_fast`, `run_events_cmd_udp`, `run_events_cmd_udp_server_only`, or `run_events_cmd_udp_two_clients`) with its arguments (map, brain, command file, etc.). Also add the name to the appropriate `for` loop in the manual-mode block at the bottom so `run.sh` with no `--scenario` flag still exercises it.
+2. **`CMakeLists.txt`** — add the scenario name to one of the lists near the `enable_testing()` block:
+   - `_baseline_fast` for `--fast` scenarios (no UDP, parallelize freely).
+   - `_baseline_udp_<port>` matching the hardcoded port in the helper the scenario uses (`run_ds` → 50001, `run_events_udp` → 50002, `run_events_cmd_udp` → 50003, `run_events_cmd_udp_server_only` → 50004, `run_events_cmd_udp_two_clients` → 50005). Same-port scenarios share a `RESOURCE_LOCK` and serialize; different-port scenarios stay concurrent.
+
+Why two places: `run.sh` owns the per-scenario helper args (which CMake doesn't need to know), and `CMakeLists.txt` owns the CTest properties — timeout, resource lock — that `run.sh` can't express. A shared manifest would only deduplicate the name list, at the cost of a parser on both sides, so the names are kept as a small intentional duplication.
+
+After adding a scenario, run it once standalone to capture the golden output under `tests/baseline/expected/`. The exact form depends on the helper:
+
+```bash
+# --fast scenarios capture to expected/<name>.json or expected/<name>.jsonl
+~/linux-build/WinBoloHeadless --fast --map "tests/baseline/maps/<map>" \
+    --brain tests/brains/<brain>.lua --ticks 500 --seed 42 \
+    --log-state tests/baseline/expected/<name>.json --quiet
+```
+
+Re-run `cmake -B ~/linux-build` to pick up the new CTest entry, then `ctest -R baseline.<name>` to verify.
+
 ## macOS
 
 ### Requirements
