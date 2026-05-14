@@ -142,7 +142,7 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
             }
             /* Zoom indicator overlay (bottom-right). */
             char zoomText[16];
-            SDL_snprintf(zoomText, sizeof(zoomText), "%.1fx",
+            SDL_snprintf(zoomText, sizeof(zoomText), "%.2fx",
                          mapPreviewViewGetZoom(g_popupView));
             ImVec2 textSize = ImGui::CalcTextSize(zoomText);
             ImVec2 windowPos = ImGui::GetWindowPos();

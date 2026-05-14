@@ -52,15 +52,21 @@ extern SDL_Surface *tileLoaderBuildSheet(int tileSize);
  * of a full sprite — at 0.0625× the whole 256-tile map fits in 256
  * pixels (1 pixel per tile). 0.5×+ uses the existing tile-sprite
  * renderer. */
+/* Discrete zoom ladder. Sub-1x steps map to specific tile pixel sizes
+ * after ImGui's display-time downscale of the 1x sprite render:
+ *   0.75x → ~12 px/tile (sprite mode)
+ *   0.50x → ~ 8 px/tile (sprite mode)
+ *   0.20x → minimap-colour mode (sprites at that scale are noise)
+ *   0.10x → minimap-colour mode
+ * Above 1x is integer multiples so pixel art stays crisp. */
 static const float kZoomSteps[] = {
-    0.0625f, 0.125f, 0.25f, 0.375f,
-    0.5f, 0.6f, 0.7f, 0.8f, 0.9f,
+    0.1f, 0.2f, 0.5f, 0.75f,
     1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f,
     9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f, 16.0f
 };
-#define ZOOM_STEP_COUNT 25
-#define ZOOM_STEP_1X    9     /* index of 1.0f */
-#define ZOOM_MINIMAP_MAX 0.33f /* < this: minimap-colour mode */
+#define ZOOM_STEP_COUNT 20
+#define ZOOM_STEP_1X    4     /* index of 1.0f */
+#define ZOOM_MINIMAP_MAX 0.33f /* < this: minimap-colour mode (catches 0.2, 0.1) */
 
 /* Boat sprite atlas coords for start position overlays. */
 static const int kBoatAtlasX[16] = {
@@ -626,23 +632,21 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
         }
     }
 
-    /* Sub-1x zoom in sprite mode: 4x oversample.  Combined with a
-     * manual 2:1 bilinear downsample pass below, the bilinear chain
-     * ends up averaging ~16 source pixels per displayed pixel at
-     * zoom 0.5 (4 from each of the two bilinear passes) instead of
-     * 4 from a single pass.  The tile renderer draws at zf=4 to
-     * match — see viewRenderTilesToOffscreen.  Capped at 4096² for
-     * VRAM safety; below the cap quality is maximal.
+    /* Sub-1x zoom in sprite mode: render tiles at native 1x scale
+     * (16 px each) into an offscreen sized at viewW / zoom — i.e.
+     * just big enough that the visible tile count matches what zoom
+     * implies. ImGui's display-time bilinear then downscales the
+     * whole offscreen to viewW. One filter pass, no manual
+     * downsample, no oversampled atlas. Simpler and the tiles stay
+     * crisp at 1x source resolution.
      *
-     * IMPORTANT: clamp PROPORTIONALLY — scaling each axis down by
-     * its own ratio if it exceeded 4096 would drift the offscreen's
-     * aspect ratio away from the display's, and ImGui::Image's
-     * stretch-to-fit would show as "zoom in X but not Y". Scale
-     * both axes by the same factor so the texture aspect matches
-     * the display rect at any zoom level. */
+     * Clamp PROPORTIONALLY at 4096² so texture aspect always matches
+     * the display rect (independent-axis clamping caused stretch).
+     * Above the cap the apparent zoom degrades smoothly — fewer
+     * visible tiles than zoom-level implies, but no aspect distortion. */
     int ofsW = viewW, ofsH = viewH;
     if (v->zoomLevel < 1.0f && v->zoomLevel >= ZOOM_MINIMAP_MAX) {
-        float scale = 4.0f / v->zoomLevel;
+        float scale = 1.0f / v->zoomLevel;
         float fW = (float)viewW * scale;
         float fH = (float)viewH * scale;
         float largest = (fW > fH) ? fW : fH;
@@ -669,14 +673,12 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
     }
 
     if (v->offscreen) {
-        /* Tile atlas filter mode — LINEAR when sub-1x sprite mode so
-         * the 16->64-px tile upscale anti-aliases tile edges; NEAREST
-         * otherwise so pixel art stays crisp at >=1x. */
-        bool subOne = (v->zoomLevel >= ZOOM_MINIMAP_MAX &&
-                       v->zoomLevel < 1.0f);
+        /* Tile atlas stays in NEAREST mode at all zoom levels — tiles
+         * are always drawn 16:16 (zf=1) and we let ImGui's display-
+         * time bilinear handle the final downscale. Keeping the atlas
+         * NEAREST preserves pixel-art crispness when zoom >= 1. */
         if (v->tilesTex) {
-            SDL_SetTextureScaleMode(v->tilesTex,
-                subOne ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+            SDL_SetTextureScaleMode(v->tilesTex, SDL_SCALEMODE_NEAREST);
         }
 
         SDL_SetRenderTarget(renderer, v->offscreen);
@@ -692,51 +694,17 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
             /* tileScale = "tile pixels in offscreen per game pixel".
              * Derived from the *actual* (post-clamp) ofsW so the
              * displayed zoom matches v->zoomLevel even when the
-             * offscreen had to be capped at 4096. For zoom 1.0 this
-             * works out to 1.0 (offscreen at viewW, no oversample);
-             * for sub-1x sprite mode (4x oversample target) it's
-             * close to 4 when uncapped, and lower when clamped. */
+             * offscreen had to be capped at 4096. At zoom >= 1 this
+             * equals floor(zoom); at sub-1x (where ofsW = viewW/zoom)
+             * it works out to 1.0 — tiles at native 16 px each in
+             * the offscreen. */
             float tileScale =
                 (float)ofsW * v->zoomLevel / (float)viewW;
             if (tileScale < 0.5f) tileScale = 0.5f;
             viewRenderTilesToOffscreen(v, renderer, ofsW, ofsH, tileScale);
         }
         SDL_SetRenderTarget(renderer, NULL);
-
-        /* Sub-1x: do one manual 2:1 bilinear downsample pass into
-         * `scratch`. ImGui then bilinearly scales scratch down to
-         * the display size — net effect ~16 source pixels averaged
-         * per output pixel for sub-1x zoom levels. For other modes
-         * we display offscreen directly. */
-        if (subOne) {
-            int s2W = ofsW / 2;
-            int s2H = ofsH / 2;
-            if (s2W < 1) s2W = 1;
-            if (s2H < 1) s2H = 1;
-            if (!v->scratch || v->scratchW != s2W || v->scratchH != s2H) {
-                if (v->scratch) SDL_DestroyTexture(v->scratch);
-                v->scratch = SDL_CreateTexture(renderer,
-                    SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
-                    s2W, s2H);
-                v->scratchW = s2W;
-                v->scratchH = s2H;
-                if (v->scratch) {
-                    SDL_SetTextureScaleMode(v->scratch, SDL_SCALEMODE_LINEAR);
-                }
-            }
-            if (v->scratch) {
-                SDL_SetRenderTarget(renderer, v->scratch);
-                SDL_SetRenderDrawColor(renderer, 0, 0, 64, 255);
-                SDL_RenderClear(renderer);
-                SDL_RenderTexture(renderer, v->offscreen, NULL, NULL);
-                SDL_SetRenderTarget(renderer, NULL);
-                v->displayTex = v->scratch;
-            } else {
-                v->displayTex = v->offscreen;
-            }
-        } else {
-            v->displayTex = v->offscreen;
-        }
+        v->displayTex = v->offscreen;
     }
 }
 
