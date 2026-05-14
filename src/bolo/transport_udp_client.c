@@ -894,8 +894,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
 
     case PACKET_SERVER_SHUTDOWN: {
-        ControlEvent evt = { .type = CTRL_SERVER_SHUTDOWN };
-        clientSimApplyControl(c->clientSim, &evt);
+        ControlDecodeFn dec = transportControlCodecDecoder(pktType);
+        if (dec != NULL) {
+            ControlEvent evt;
+            if (dec(buf + PACKET_HEADER_SIZE, (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
+                clientSimApplyControl(c->clientSim, &evt);
+            }
+        }
         WB_LOG_INFO(WB_LOG_CAT_NET,
             "PACKET_SERVER_SHUTDOWN received -> SERVER_SHUTDOWN");
         c->joinState = UDP_CLIENT_SERVER_SHUTDOWN;
@@ -1288,16 +1293,17 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
     }
 
-    case PACKET_BALANCE_PROPOSAL:
+    case PACKET_BALANCE_PROPOSAL: {
         /* [header 8] [teamForSlot × 16] */
-        if (len >= PACKET_HEADER_SIZE + 16) {
+        ControlDecodeFn dec = transportControlCodecDecoder(pktType);
+        if (dec != NULL) {
             ControlEvent evt;
-            memset(&evt, 0, sizeof(evt));
-            evt.type = CTRL_BALANCE_PROPOSAL;
-            memcpy(evt.u.balanceProposal.teamForSlot, buf + PACKET_HEADER_SIZE, MAX_TANKS);
-            clientSimApplyControl(c->clientSim, &evt);
+            if (dec(buf + PACKET_HEADER_SIZE, (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
+                clientSimApplyControl(c->clientSim, &evt);
+            }
         }
         break;
+    }
 
     case PACKET_MAP_SKIP_STATE: {
         /* [header 8] [votes: 16 bytes, one per slot, 0 or 1] */

@@ -1063,10 +1063,11 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)slot);
         /* Dismiss any pending balance proposal — player composition changed */
         if (serverSimGetBalanceProposal(sim)->pending) {
-            uint8_t zeros[MAX_TANKS];
-            memset(zeros, 0, sizeof(zeros));
+            ControlEvent evt;
             serverSimClearBalanceProposal(sim);
-            transportUdpServerBroadcastBalanceProposal(sim, zeros);
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_BALANCE_PROPOSAL;
+            serverSimPublishControl(sim, &evt);
         }
     } else if (serverSimGetState(sim) == serverStateRunning) {
         /* No-lobby mode or mid-game join: send game start signal */
@@ -1642,24 +1643,17 @@ void transportUdpServerDestroy(void) {
         recvThreadSock = INVALID_SOCKET;
     }
 
-    /* Broadcast shutdown packet to all connected clients before closing */
+    /* Publish first so the per-client subscriber encodes and unicasts
+     * PACKET_SERVER_SHUTDOWN while the socket is still open, then close. */
     if (udpServer.sock != INVALID_SOCKET) {
-        uint8_t shutdownBuf[PACKET_HEADER_SIZE];
-        packHeader(shutdownBuf, PACKET_SERVER_SHUTDOWN, 0);
-        for (i = 0; i < MAX_TANKS; i++) {
-            if (udpServer.clients[i].connected) {
-                udpSendTo(udpServer.sock, shutdownBuf, PACKET_HEADER_SIZE,
-                          &udpServer.clients[i].addr);
-            }
-        }
-        closesocket(udpServer.sock);
-        udpServer.sock = INVALID_SOCKET;
         {
             ControlEvent evt;
             memset(&evt, 0, sizeof(evt));
             evt.type = CTRL_SERVER_SHUTDOWN;
             serverSimPublishControl(serverSimGetActive(), &evt);
         }
+        closesocket(udpServer.sock);
+        udpServer.sock = INVALID_SOCKET;
     }
     {
         ServerSim *activeSim = serverSimGetActive();
@@ -2012,26 +2006,6 @@ void transportUdpServerNotifyMapChange(ServerSim *sim) {
 
     fprintf(stderr, "[UDP SERVER] Map change broadcast: %u bytes compressed map\n",
             udpServer.compressedMapSize);
-}
-
-void transportUdpServerBroadcastBalanceProposal(ServerSim *sim, uint8_t teamForSlot[MAX_TANKS]) {
-    uint8_t buf[PACKET_HEADER_SIZE + MAX_TANKS];
-    int i;
-    packHeader(buf, PACKET_BALANCE_PROPOSAL, 0);
-    memcpy(buf + PACKET_HEADER_SIZE, teamForSlot, MAX_TANKS);
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) {
-            udpSendTo(udpServer.sock, buf, sizeof(buf),
-                      &udpServer.clients[i].addr);
-        }
-    }
-    {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_BALANCE_PROPOSAL;
-        memcpy(evt.u.balanceProposal.teamForSlot, teamForSlot, MAX_TANKS);
-        serverSimPublishControl(sim, &evt);
-    }
 }
 
 void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
@@ -2426,10 +2400,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)clientIdx);
                     /* Dismiss any pending balance proposal — player composition changed */
                     if (serverSimGetBalanceProposal(sim)->pending) {
-                        uint8_t zeros[MAX_TANKS];
-                        memset(zeros, 0, sizeof(zeros));
+                        ControlEvent evt;
                         serverSimClearBalanceProposal(sim);
-                        transportUdpServerBroadcastBalanceProposal(sim, zeros);
+                        memset(&evt, 0, sizeof(evt));
+                        evt.type = CTRL_BALANCE_PROPOSAL;
+                        serverSimPublishControl(sim, &evt);
                     }
                 }
             }
@@ -2802,10 +2777,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             if (clientIdx == 0 && serverSimIsLobbyEnabled(sim) &&
                 serverSimGetState(sim) == serverStateLobby &&
                 serverSimGetBalanceProposal(sim)->pending) {
-                uint8_t zeros[MAX_TANKS];
-                memset(zeros, 0, sizeof(zeros));
+                ControlEvent evt;
                 serverSimClearBalanceProposal(sim);
-                transportUdpServerBroadcastBalanceProposal(sim, zeros);
+                memset(&evt, 0, sizeof(evt));
+                evt.type = CTRL_BALANCE_PROPOSAL;
+                serverSimPublishControl(sim, &evt);
             }
             break;
         }
@@ -3175,10 +3151,11 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
                 transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)i);
                 /* Dismiss any pending balance proposal — player composition changed */
                 if (serverSimGetBalanceProposal(sim)->pending) {
-                    uint8_t zeros[MAX_TANKS];
-                    memset(zeros, 0, sizeof(zeros));
+                    ControlEvent evt;
                     serverSimClearBalanceProposal(sim);
-                    transportUdpServerBroadcastBalanceProposal(sim, zeros);
+                    memset(&evt, 0, sizeof(evt));
+                    evt.type = CTRL_BALANCE_PROPOSAL;
+                    serverSimPublishControl(sim, &evt);
                 }
             }
         }

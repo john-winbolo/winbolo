@@ -117,8 +117,13 @@ static EncodeResult encodeBalanceProposal(const ControlEvent *evt,
                                           const struct UdpServerClient *recipient,
                                           uint8_t *buf, size_t bufCap,
                                           size_t *outLen) {
-    (void)evt; (void)recipient; (void)buf; (void)bufCap; (void)outLen;
-    return ENCODE_SKIP;
+    (void)recipient;
+    const size_t needed = PACKET_HEADER_SIZE + MAX_TANKS;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_BALANCE_PROPOSAL, 0);
+    memcpy(buf + PACKET_HEADER_SIZE, evt->u.balanceProposal.teamForSlot, MAX_TANKS);
+    *outLen = needed;
+    return ENCODE_OK;
 }
 
 static EncodeResult encodeMapSkipState(const ControlEvent *evt,
@@ -156,8 +161,11 @@ static EncodeResult encodeServerShutdown(const ControlEvent *evt,
                                          const struct UdpServerClient *recipient,
                                          uint8_t *buf, size_t bufCap,
                                          size_t *outLen) {
-    (void)evt; (void)recipient; (void)buf; (void)bufCap; (void)outLen;
-    return ENCODE_SKIP;
+    (void)evt; (void)recipient;
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_SERVER_SHUTDOWN, 0);
+    *outLen = PACKET_HEADER_SIZE;
+    return ENCODE_OK;
 }
 
 /* ================================================================
@@ -203,8 +211,11 @@ static bool decodeLobbyMapChange(const uint8_t *buf, size_t len,
 
 static bool decodeBalanceProposal(const uint8_t *buf, size_t len,
                                   ControlEvent *outEvt) {
-    (void)buf; (void)len; (void)outEvt;
-    return false;
+    if (len < MAX_TANKS) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BALANCE_PROPOSAL;
+    memcpy(outEvt->u.balanceProposal.teamForSlot, buf, MAX_TANKS);
+    return true;
 }
 
 static bool decodeMapSkipState(const uint8_t *buf, size_t len,
@@ -236,8 +247,10 @@ static bool decodeGameOver(const uint8_t *buf, size_t len,
 
 static bool decodeServerShutdown(const uint8_t *buf, size_t len,
                                  ControlEvent *outEvt) {
-    (void)buf; (void)len; (void)outEvt;
-    return false;
+    (void)buf; (void)len;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SERVER_SHUTDOWN;
+    return true;
 }
 
 /* ================================================================
