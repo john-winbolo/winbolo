@@ -1,0 +1,3 @@
+{"tick":0,"type":"CTRL_GAME_PHASE","phase":"RUNNING","countdownSeconds":0}
+{"tick":0,"type":"CTRL_MAP_DOWNLOAD_COMPLETE"}
+{"tick":58,"type":"CTRL_MAP_SKIP_STATE","votes":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}

@@ -82,6 +82,12 @@
 #include "../gui/gamefront.h"
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
+#include "cmd_stdin.h"
+/* Internal: scripted command dispatch in --fast mode reaches into
+ * playersAcceptAlliance / playersLeaveAlliance / playersSetPlayerName
+ * the same way transport_udp_server.c's inline packet handlers do. */
+#include "players.h"
+#include "game_sim.h"
 
 /* ------------------------------------------------------------------ */
 /* Globals needed by the game engine                                   */
@@ -114,6 +120,7 @@ static int optTicks = 0; /* 0 = unlimited */
 static char optPassword[256] = "";
 static char optLogState[512] = "";
 static char optLogEvents[512] = "";
+static char optCmdStdin[512] = "";
 static bool optQuiet = FALSE;
 static bool optFast = FALSE;
 static char optMap[512] = "";
@@ -143,6 +150,9 @@ static ClientSim *humanSim = NULL;
 
 /* Fast mode: local server sim */
 static ServerSim *fastServerSim = NULL;
+
+/* Scripted command stream (NULL unless --cmd-stdin was supplied). */
+static CmdStdin *cmdStream = NULL;
 
 /* ------------------------------------------------------------------ */
 /* Signal handler for clean shutdown                                   */
@@ -437,6 +447,232 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
 
   fputs("}\n", f);
   fflush(f);
+}
+
+/* ------------------------------------------------------------------ */
+/* Scripted command dispatch (--cmd-stdin)                             */
+/* ------------------------------------------------------------------ */
+/*
+ * Tick-driven dispatch. Both --fast and --server share the same
+ * command vocabulary (parsed in cmd_stdin.c) but route ops
+ * differently: --fast hits the in-process ServerSim directly,
+ * while --server fans them out through clientSimNetSend* wrappers.
+ *
+ * Ops invalid for the current mode print to stderr and abort the
+ * binary with exit code 2. Silent skip would mask scenario bugs.
+ */
+
+static void cmdAbortBadMode(const CmdLine *cmd, const char *mode) {
+  fprintf(stderr,
+          "cmd-stdin: line %d: op '%s' not valid in %s mode\n",
+          cmd->lineNumber, cmdOpName(cmd->op), mode);
+  exit(2);
+}
+
+/* Build and publish a ControlEvent on the in-process ServerSim
+ * bus. Mirror of the inline pair pattern in
+ * transport_udp_server.c's PACKET_ALLIANCE_* / PACKET_NAME_CHANGE
+ * / PACKET_MAP_SKIP_VOTE handlers. */
+static void cmdFastPublishAllianceRequest(BYTE fromPlayer, BYTE toPlayer) {
+  ControlEvent evt;
+  memset(&evt, 0, sizeof(evt));
+  evt.type = CTRL_ALLIANCE_REQUEST;
+  evt.u.allianceRequest.fromPlayer = fromPlayer;
+  evt.u.allianceRequest.toPlayer   = toPlayer;
+  serverSimPublishControl(fastServerSim, &evt);
+}
+
+static void cmdFastPublishAllianceAccept(BYTE acceptedBy, BYTE newMember) {
+  GameSim *gs = serverSimGetGameSim(fastServerSim);
+  ControlEvent evt;
+  playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, acceptedBy, newMember, TRUE);
+  memset(&evt, 0, sizeof(evt));
+  evt.type = CTRL_ALLIANCE_ACCEPT;
+  evt.u.allianceAccept.acceptedBy = acceptedBy;
+  evt.u.allianceAccept.newMember  = newMember;
+  serverSimPublishControl(fastServerSim, &evt);
+}
+
+static void cmdFastPublishAllianceLeave(BYTE playerNum) {
+  GameSim *gs = serverSimGetGameSim(fastServerSim);
+  ControlEvent evt;
+  playersLeaveAlliance(gs, &gs->plyrs, NEUTRAL, playerNum, TRUE);
+  memset(&evt, 0, sizeof(evt));
+  evt.type = CTRL_ALLIANCE_LEAVE;
+  evt.u.allianceLeave.playerNum = playerNum;
+  serverSimPublishControl(fastServerSim, &evt);
+}
+
+static void cmdFastPublishPlayerName(BYTE playerNum, const char *name) {
+  GameSim *gs = serverSimGetGameSim(fastServerSim);
+  ControlEvent evt;
+  char nameBuf[PACKET_MAX_PLAYER_NAME];
+  strncpy(nameBuf, name, sizeof(nameBuf) - 1);
+  nameBuf[sizeof(nameBuf) - 1] = '\0';
+  playersSetPlayerName(NULL, gs, &gs->plyrs, NEUTRAL, playerNum, nameBuf, TRUE);
+  memset(&evt, 0, sizeof(evt));
+  evt.type = CTRL_PLAYER_NAME;
+  evt.u.playerName.playerNum = playerNum;
+  snprintf(evt.u.playerName.name, PACKET_MAX_PLAYER_NAME, "%s", nameBuf);
+  serverSimPublishControl(fastServerSim, &evt);
+}
+
+static void cmdFastPublishMapSkipState(void) {
+  ControlEvent evt;
+  int i;
+  memset(&evt, 0, sizeof(evt));
+  evt.type = CTRL_MAP_SKIP_STATE;
+  for (i = 0; i < MAX_TANKS; i++) {
+    evt.u.mapSkipState.votes[i] =
+        serverSimIsMapSkipVote(fastServerSim, (BYTE)i) ? 1 : 0;
+  }
+  serverSimPublishControl(fastServerSim, &evt);
+}
+
+/* Dispatch a single cmd in --fast mode. Returns true if the loop
+ * should keep running, false on "exit". */
+static bool cmdDispatchFast(const CmdLine *cmd) {
+  switch (cmd->op) {
+    case CMD_OP_ADD_BOT: {
+      ServerSimBotConfig cfg;
+      char nameBuf[PACKET_MAX_PLAYER_NAME];
+      BYTE slot;
+      memset(&cfg, 0, sizeof(cfg));
+      /* Find the first unconnected slot (1..MAX_TANKS-1 — slot 0
+       * is the local "player"). The scenarios only need a slot to
+       * exist; the bot's brain never runs because we route ops
+       * through serverSimAddBot rather than botManagerAddBot. */
+      for (slot = 1; slot < MAX_TANKS; slot++) {
+        if (!serverSimIsPlayerConnected(fastServerSim, slot)) break;
+      }
+      if (slot >= MAX_TANKS) {
+        fprintf(stderr, "cmd-stdin: line %d: add_bot: no free slot\n",
+                cmd->lineNumber);
+        exit(2);
+      }
+      snprintf(nameBuf, sizeof(nameBuf), "Bot %u", (unsigned)slot);
+      cfg.brainPath  = "(cmd-stdin)";
+      cfg.brainName  = nameBuf;
+      cfg.ai         = optAi;
+      cfg.gameType   = optGameType;
+      cfg.hiddenMines= false;
+      cfg.teamNumber = 0;
+      serverSimAddBot(fastServerSim, slot, &cfg);
+      return true;
+    }
+    case CMD_OP_SET_TEAM:
+      serverSimSetTeam(fastServerSim, cmd->slot, cmd->team);
+      return true;
+    case CMD_OP_SET_READY:
+      serverSimSetReady(fastServerSim, cmd->slot, cmd->ready);
+      return true;
+    case CMD_OP_NAME_CHANGE:
+      cmdFastPublishPlayerName(cmd->slot, cmd->name);
+      return true;
+    case CMD_OP_ALLIANCE_REQUEST:
+      cmdFastPublishAllianceRequest(cmd->from, cmd->to);
+      return true;
+    case CMD_OP_ALLIANCE_ACCEPT:
+      cmdFastPublishAllianceAccept(cmd->from, cmd->to);
+      return true;
+    case CMD_OP_ALLIANCE_LEAVE:
+      cmdFastPublishAllianceLeave(cmd->slot);
+      return true;
+    case CMD_OP_MAP_SKIP_VOTE:
+      serverSimMapSkipVoteToggle(fastServerSim, cmd->slot);
+      cmdFastPublishMapSkipState();
+      return true;
+    case CMD_OP_START_GAME:
+      serverSimStartGame(fastServerSim);
+      return true;
+    case CMD_OP_REAPPLY_ALLIANCES:
+      serverSimReapplyTeamAlliances(fastServerSim);
+      return true;
+    case CMD_OP_SHUTDOWN:
+      /* No symmetric "stop now" path on the in-process sim — the
+       * server is destroyed at process exit. Treat as a no-op. */
+      return true;
+    case CMD_OP_EXIT:
+      return false;
+    default:
+      cmdAbortBadMode(cmd, "--fast");
+      return false;  /* unreachable */
+  }
+}
+
+/* Dispatch a single cmd in --server (network) mode. */
+static bool cmdDispatchServer(const CmdLine *cmd) {
+  BYTE selfSlot = clientSimGetServerPlayerNum(humanSim);
+  switch (cmd->op) {
+    case CMD_OP_ADD_BOT:
+      clientSimNetSendAddBot(humanSim);
+      return true;
+    case CMD_OP_SET_TEAM:
+      if (cmd->slot != selfSlot) {
+        fprintf(stderr,
+                "cmd-stdin: line %d: set_team in --server mode requires slot=%u (own slot)\n",
+                cmd->lineNumber, (unsigned)selfSlot);
+        exit(2);
+      }
+      clientSimNetSendTeamSet(humanSim, cmd->team);
+      return true;
+    case CMD_OP_SET_READY:
+      if (cmd->slot != selfSlot) {
+        fprintf(stderr,
+                "cmd-stdin: line %d: set_ready in --server mode requires slot=%u (own slot)\n",
+                cmd->lineNumber, (unsigned)selfSlot);
+        exit(2);
+      }
+      clientSimNetSendReady(humanSim, cmd->ready);
+      return true;
+    case CMD_OP_NAME_CHANGE:
+      if (cmd->slot != selfSlot) {
+        fprintf(stderr,
+                "cmd-stdin: line %d: name_change in --server mode requires slot=%u (own slot)\n",
+                cmd->lineNumber, (unsigned)selfSlot);
+        exit(2);
+      }
+      clientSimNetSendNameChange(humanSim, cmd->name);
+      return true;
+    case CMD_OP_ALLIANCE_REQUEST:
+      clientSimNetSendAllianceRequest(humanSim, cmd->to);
+      return true;
+    case CMD_OP_ALLIANCE_ACCEPT:
+      clientSimNetSendAllianceAccept(humanSim, cmd->to);
+      return true;
+    case CMD_OP_ALLIANCE_LEAVE:
+      clientSimNetSendAllianceLeave(humanSim);
+      return true;
+    case CMD_OP_MAP_SKIP_VOTE:
+      clientSimNetSendMapSkipVote(humanSim);
+      return true;
+    case CMD_OP_START_GAME:
+    case CMD_OP_REAPPLY_ALLIANCES:
+    case CMD_OP_SHUTDOWN:
+      cmdAbortBadMode(cmd, "--server");
+      return false;  /* unreachable */
+    case CMD_OP_EXIT:
+      return false;
+    default:
+      cmdAbortBadMode(cmd, "--server");
+      return false;  /* unreachable */
+  }
+}
+
+/* Drain commands whose tick has arrived. Returns true if the
+ * loop should keep running, false on "exit". `fastMode` selects
+ * the dispatch table. */
+static bool cmdStreamPump(uint32_t currentTick, bool fastMode) {
+  if (cmdStream == NULL) return true;
+  for (;;) {
+    CmdLine cmd;
+    if (!cmdStdinPeek(cmdStream, &cmd)) return true;     /* EOF */
+    if (cmd.tick > currentTick) return true;             /* not yet due */
+    cmdStdinConsume(cmdStream);
+    bool keepGoing = fastMode ? cmdDispatchFast(&cmd)
+                              : cmdDispatchServer(&cmd);
+    if (!keepGoing) return false;
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1095,6 +1331,8 @@ static void printUsage(const char *prog) {
     "  --log-state FILE  Log verbose JSON state each tick (- for stdout)\n"
     "  --log-state binary  Binary observation frames to stdout (little-endian)\n"
     "  --log-events FILE Log one JSON line per ControlEvent (- for stdout)\n"
+    "  --cmd-stdin FILE  Read scripted commands (JSON-per-line) and dispatch at\n"
+    "                    each command's tick (- for stdin)\n"
     "  --seed N          Seed the RNG with N for reproducible runs\n"
     "  --quiet           Suppress non-error output\n"
     "\n"
@@ -1133,6 +1371,8 @@ static bool parseArgs(int argc, char **argv) {
       strncpy(optLogState, argv[++i], sizeof(optLogState) - 1);
     } else if (strcmp(argv[i], "--log-events") == 0 && i + 1 < argc) {
       strncpy(optLogEvents, argv[++i], sizeof(optLogEvents) - 1);
+    } else if (strcmp(argv[i], "--cmd-stdin") == 0 && i + 1 < argc) {
+      strncpy(optCmdStdin, argv[++i], sizeof(optCmdStdin) - 1);
     } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
       optSeed = (unsigned int)strtoul(argv[++i], NULL, 0);
       optSeedSet = TRUE;
@@ -1263,8 +1503,14 @@ static bool verboseNeedMapInit = TRUE;
 /* Set up the server sim, transport, and client sim from cached map.
  * Called at initial startup and on each reset. */
 static bool fastModeSetupGame(void) {
-  serverSimSetLobbyEnabled(fastServerSim, false);
-  serverSimStartGame(fastServerSim);
+  if (cmdStream != NULL) {
+    /* Scripted scenarios drive the lifecycle explicitly — leave the
+     * sim in lobby state until the cmd stream issues start_game. */
+    serverSimSetLobbyEnabled(fastServerSim, true);
+  } else {
+    serverSimSetLobbyEnabled(fastServerSim, false);
+    serverSimStartGame(fastServerSim);
+  }
   serverSimAddPlayer(fastServerSim, 0, optName, false);
   serverSimSetViewPlayer(fastServerSim, 0);
 
@@ -1329,6 +1575,13 @@ static int runFastMode(void) {
     }
   }
 
+  /* Open scripted command stream first so the later fastModeSetup
+   * branches on cmdStream != NULL and stays in lobby state. */
+  if (optCmdStdin[0] != '\0') {
+    cmdStream = cmdStdinOpen(optCmdStdin);
+    if (cmdStream == NULL) return 1;
+  }
+
   /* Create server sim from map file (first time only — hits disk) */
   fastServerSim = serverSimCreate(optMap, optGameType, false, 0, UNLIMITED_GAME_TIME);
   if (fastServerSim == NULL) {
@@ -1355,9 +1608,15 @@ static int runFastMode(void) {
    * CTRL_LOBBY_SLOT etc. to the new subscriber, and we want those captured. */
   logEventsOpen(optLogEvents);
 
-  /* Initial game setup */
-  serverSimSetLobbyEnabled(fastServerSim, false);
-  serverSimStartGame(fastServerSim);
+  /* Initial game setup. Scripted scenarios (--cmd-stdin) stay in
+   * lobby state so add_bot / set_team / start_game ops can drive
+   * the lifecycle transitions deterministically. */
+  if (cmdStream != NULL) {
+    serverSimSetLobbyEnabled(fastServerSim, true);
+  } else {
+    serverSimSetLobbyEnabled(fastServerSim, false);
+    serverSimStartGame(fastServerSim);
+  }
   serverSimAddPlayer(fastServerSim, 0, optName, false);
   serverSimSetViewPlayer(fastServerSim, 0);
   transportActive = TRUE;
@@ -1482,6 +1741,20 @@ static int runFastMode(void) {
       logStateTick(tickCount);
     }
 
+    /* Scripted command stream — dispatch any pending ops whose tick
+     * has arrived. The reference is the server's tick as observed by
+     * the ClientSim, so a single scenario fixture aligns with both
+     * --fast and --server wall-clock dispatch. */
+    if (cmdStream != NULL) {
+      uint32_t serverTick = clientSimGetLastServerTick(humanSim);
+      if (!cmdStreamPump(serverTick, true)) {
+        if (!optQuiet) {
+          fprintf(stderr, "cmd-stdin: exit op received.\n");
+        }
+        break;
+      }
+    }
+
     /* Check if we've reached the tick limit */
     if (optTicks > 0 && tickCount >= optTicks) {
       if (!optQuiet) {
@@ -1512,6 +1785,8 @@ static int runFastMode(void) {
   free(cachedCompressedMap);
   cachedCompressedMap = NULL;
   logEventsClose();
+  cmdStdinClose(cmdStream);
+  cmdStream = NULL;
 
   return 0;
 }
@@ -1544,6 +1819,13 @@ static int runNetworkMode(void) {
    * captured. Observer is preserved across clientSimResetForMapLoad
    * (see the save/restore block in client_sim.c). */
   logEventsOpen(optLogEvents);
+
+  /* Open scripted command stream (commands queue until each
+   * command's tick has been observed on the wire). */
+  if (optCmdStdin[0] != '\0') {
+    cmdStream = cmdStdinOpen(optCmdStdin);
+    if (cmdStream == NULL) return 1;
+  }
 
   /* Initialize the game engine with dummy params (will be re-created after map load) */
   humanSim = clientSimAlloc();
@@ -1721,6 +2003,21 @@ static int runNetworkMode(void) {
       clientMutexRelease();
     }
 
+    /* Scripted command stream — fan out to the wire send-wrappers
+     * once the observed server tick has reached each command's
+     * scheduled tick. Polled every outer iteration (cheaper than
+     * gating on `used`, and the early-return when no command is
+     * due makes that cheap). */
+    if (cmdStream != NULL) {
+      uint32_t serverTick = clientSimGetLastServerTick(humanSim);
+      if (!cmdStreamPump(serverTick, false)) {
+        if (!optQuiet) {
+          fprintf(stderr, "cmd-stdin: exit op received.\n");
+        }
+        break;
+      }
+    }
+
     /* Check if we've reached the tick limit */
     if (optTicks > 0 && tickCount >= optTicks) {
       if (!optQuiet) {
@@ -1757,6 +2054,8 @@ static int runNetworkMode(void) {
   clientMutexRelease();
 
   logEventsClose();
+  cmdStdinClose(cmdStream);
+  cmdStream = NULL;
 
   return 0;
 }
