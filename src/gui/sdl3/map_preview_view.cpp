@@ -60,7 +60,7 @@ static const float kZoomSteps[] = {
 };
 #define ZOOM_STEP_COUNT 25
 #define ZOOM_STEP_1X    9     /* index of 1.0f */
-#define ZOOM_MINIMAP_MAX 0.5f /* < this: minimap-colour mode */
+#define ZOOM_MINIMAP_MAX 0.4f /* < this: minimap-colour mode */
 
 /* Boat sprite atlas coords for start position overlays. */
 static const int kBoatAtlasX[16] = {
@@ -626,9 +626,9 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
         SDL_SetRenderTarget(renderer, v->offscreen);
         SDL_SetRenderDrawColor(renderer, 0, 0, 64, 255);
         SDL_RenderClear(renderer);
-        /* Below 0.5× game scale, switch to minimap-colour mode —
-         * tile sprites at < 8 px per tile look like noise, so swap in
-         * the per-tile colour rep used by the dedicated 256×256
+        /* Below 0.4× game scale, switch to minimap-colour mode —
+         * tile sprites at < ~6 px per tile look like noise, so swap
+         * in the per-tile colour rep used by the dedicated 256×256
          * minimap. Above that, fall through to the sprite renderer. */
         if (v->zoomLevel < ZOOM_MINIMAP_MAX) {
             viewRenderMinimapToOffscreen(v, renderer, ofsW, ofsH);

@@ -49,7 +49,6 @@ extern "C" {
 #include "../sdl3imgui.h"
 #include "../minimap_render.h"
 #include "../map_preview_popup.h"
-#include "../map_preview_view.h"
 #include "../../lang.h"
 #include "imgui_lobby.h"
 #include "imgui_messagebox.h"
@@ -333,22 +332,21 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     if (!s_chooseMapOpen) return;
     lobbyChooseMapEnsureInit(renderer);
 
-    /* Centered, compact default — sized so the action buttons are
-     * visible without scrolling. First-use-only; user can drag/resize
-     * freely after that and the size sticks for the session. */
-    float defaultW = (float)screenW * 0.55f;
-    float defaultH = (float)screenH * 0.55f;
-    if (defaultW < 600.0f * s) defaultW = 600.0f * s;
-    if (defaultH < 380.0f * s) defaultH = 380.0f * s;
-    /* Cap default at a comfortably tight box so very tall windows
-     * don't get a sprawling preview by default. */
-    if (defaultH > 520.0f * s) defaultH = 520.0f * s;
-    ImGui::SetNextWindowSize(ImVec2(defaultW, defaultH),
-                             ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(
-        ImVec2(((float)screenW - defaultW) * 0.5f,
-               ((float)screenH - defaultH) * 0.5f),
-        ImGuiCond_FirstUseEver);
+    /* Default position + size — applied only on first creation
+     * (FirstUseEver). After that the user can drag / resize freely
+     * and ImGui keeps the manipulated state. Default hugs the top
+     * edge with a 15 px gutter on left/right/top and ends roughly
+     * where the chat box begins in the desktop layout (~55% of
+     * screen height). */
+    const float kEdgeGutter = 15.0f;
+    float winX = kEdgeGutter;
+    float winY = kEdgeGutter;
+    float winW = (float)screenW - kEdgeGutter * 2.0f;
+    float winH = (float)screenH * 0.55f - kEdgeGutter;
+    if (winW < 480.0f * s) winW = 480.0f * s;
+    if (winH < 320.0f * s) winH = 320.0f * s;
+    ImGui::SetNextWindowSize(ImVec2(winW, winH), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(winX, winY),  ImGuiCond_FirstUseEver);
     /* Min size keeps the action bar visible; no max — user can drag
      * the window as large as they like, even past the screen edges. */
     ImGui::SetNextWindowSizeConstraints(ImVec2(480.0f * s, 320.0f * s),
@@ -2563,22 +2561,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         "9", "10", "11", "12", "13", "14", "15", "16"
     };
 
-    /* Map preview texture state — `mapPreviewTex` is the legacy
-     * 256×256 minimap thumbnail (still used for the lobby map panel
-     * fallback and for the popup-bounds calc).  `inlineMapView` is the
-     * new high-quality tile-based widget that renders inline directly
-     * into the MapPanel; see map_preview_view.h. */
-    SDL_Texture     *mapPreviewTex   = NULL;
-    bool             mapPreviewBuilt = false;
-    bool             prevMapDownloadComplete = clientSimIsMapDownloadComplete(cs);
-    MapBounds        mapBounds       = {0, 0, MAP_PREVIEW_SIZE - 1, MAP_PREVIEW_SIZE - 1};
-    MapPreviewView  *inlineMapView   = mapPreviewViewCreate();
-    bool             inlineMapLoaded = false;
-    /* Cached panel size from last frame's MapPanel render — used to
-     * size the widget's offscreen texture before the next frame's
-     * ImGui pass. One frame of lag is invisible at 60 fps. */
-    int              inlineMapPanelW = 512;
-    int              inlineMapPanelH = 384;
+    /* Map preview texture state */
+    SDL_Texture *mapPreviewTex = NULL;
+    bool mapPreviewBuilt = false;
+    bool prevMapDownloadComplete = clientSimIsMapDownloadComplete(cs);
+    MapBounds mapBounds = {0, 0, MAP_PREVIEW_SIZE - 1, MAP_PREVIEW_SIZE - 1};
 
 #if BOLO_MOBILE
     /* Tab state for mobile tabbed layout */
@@ -2644,7 +2631,6 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         /* Reset preview when a map change invalidates the download */
         if (!clientSimIsMapDownloadComplete(cs) && prevMapDownloadComplete) {
             mapPreviewBuilt = false;
-            inlineMapLoaded = false;
             if (mapPreviewTex) {
                 SDL_DestroyTexture(mapPreviewTex);
                 mapPreviewTex = NULL;
@@ -2667,15 +2653,6 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     SDL_memcpy(popupCompressedData, mapData, mapLen);
                     popupCompressedLen = mapLen;
                 }
-                /* Feed the same compressed data into the inline widget
-                 * so it can render the tile-based view in the MapPanel. */
-                if (inlineMapView) {
-                    mapPreviewViewLoadCompressed(inlineMapView, mapData, mapLen);
-                    mapPreviewViewSetInitialBounds(inlineMapView,
-                                                    mapBounds.minX, mapBounds.minY,
-                                                    mapBounds.maxX, mapBounds.maxY);
-                    inlineMapLoaded = true;
-                }
             }
             mapPreviewBuilt = true;
         }
@@ -2684,16 +2661,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
 
-        /* Render popup tiles to offscreen texture before ImGui frame. */
+        /* Render popup tiles to offscreen texture before ImGui frame */
         mapPreviewPopupRenderOffscreen(renderer, winW, winH);
-        /* Render the inline MapPanel view using last frame's panel
-         * size — one frame of lag is invisible at 60 fps and lets us
-         * keep the SDL render-target swap out of the ImGui pass. */
-        if (inlineMapLoaded && inlineMapView) {
-            mapPreviewViewRenderOffscreen(inlineMapView, renderer,
-                                           inlineMapPanelW,
-                                           inlineMapPanelH);
-        }
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
@@ -3549,93 +3518,40 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 float progress = (float)netGetDownloadPos() / 255.0f;
                 ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
                 ImGui::Spacing();
-            } else if (inlineMapLoaded && mapPreviewViewIsReady(inlineMapView)) {
-                /* Inline tile-based preview — same renderer as the
-                 * modal popup, embedded directly in the MapPanel so
-                 * wheel zoom + drag pan work without a click-through.
-                 * The widget rendered into its offscreen texture at
-                 * the cached panel size before NewFrame; we just
-                 * display it here. */
-                float panelWidth = ImGui::GetContentRegionAvail().x;
-                float availH     = ImGui::GetContentRegionAvail().y
-                                 - ImGui::GetTextLineHeightWithSpacing() * 5;
-                float previewSize = panelWidth;
-                if (availH < previewSize) previewSize = availH;
-                if (previewSize < 64.0f) previewSize = 64.0f;
-                float offsetX = (panelWidth - previewSize) * 0.5f;
-                if (offsetX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
-
-                ImVec2 imgTopLeft = ImGui::GetCursorScreenPos();
-                SDL_Texture *tex = mapPreviewViewGetTexture(inlineMapView);
-                if (tex) {
-                    ImGui::Image((ImTextureID)tex,
-                                 ImVec2(previewSize, previewSize));
-                    MapPreviewInputOpts opts = { true, true, true, false };
-                    mapPreviewViewHandleInput(inlineMapView,
-                                               ImGui::IsItemHovered(), &opts);
-                    /* Cache panel size for next frame's offscreen render. */
-                    inlineMapPanelW = (int)previewSize;
-                    inlineMapPanelH = (int)previewSize;
-
-                    /* Top-right "expand" icon button — opens the same
-                     * content in the full-screen modal popup. Rendered
-                     * as an overlay on the image corner. */
-                    if (popupCompressedData) {
-                        ImVec2 saved = ImGui::GetCursorScreenPos();
-                        float btnSz = 22.0f * s;
-                        ImVec2 btnPos(imgTopLeft.x + previewSize - btnSz - 4.0f,
-                                      imgTopLeft.y + 4.0f);
-                        ImGui::SetCursorScreenPos(btnPos);
-                        ImGui::PushStyleColor(ImGuiCol_Button,
-                            ImVec4(0.0f, 0.0f, 0.0f, 0.55f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                            ImVec4(0.2f, 0.2f, 0.2f, 0.80f));
-                        ImGui::PushStyleColor(ImGuiCol_Text,
-                            ImVec4(1.0f, 1.0f, 1.0f, 0.9f));
-                        if (ImGui::Button("\xe2\xa4\xa2##InlineExpand",
-                                          ImVec2(btnSz, btnSz))) {
-                            mapPreviewPopupOpenCompressed(
-                                popupCompressedData, popupCompressedLen,
-                                mapBounds.minX, mapBounds.minY,
-                                mapBounds.maxX, mapBounds.maxY);
-                        }
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("Expand to full-screen view");
-                        }
-                        ImGui::PopStyleColor(3);
-                        ImGui::SetCursorScreenPos(saved);
-                    }
-                }
             } else if (mapPreviewTex) {
-                /* Fallback path — inline widget isn't ready yet, show
-                 * the legacy 256×256 minimap thumbnail. Same UV crop
-                 * to the interesting bounds + click-to-popup. */
+                /* Compute UV coordinates to zoom into the interesting area with padding */
                 int pad = 4;
                 int bx0 = mapBounds.minX - pad; if (bx0 < 0) bx0 = 0;
                 int by0 = mapBounds.minY - pad; if (by0 < 0) by0 = 0;
                 int bx1 = mapBounds.maxX + pad; if (bx1 >= MAP_PREVIEW_SIZE) bx1 = MAP_PREVIEW_SIZE - 1;
                 int by1 = mapBounds.maxY + pad; if (by1 >= MAP_PREVIEW_SIZE) by1 = MAP_PREVIEW_SIZE - 1;
+                /* Make the region square so the preview isn't distorted */
                 int bw = bx1 - bx0;
                 int bh = by1 - by0;
                 if (bw > bh) {
                     int diff = bw - bh;
-                    by0 -= diff / 2; by1 += (diff + 1) / 2;
+                    by0 -= diff / 2;
+                    by1 += (diff + 1) / 2;
                     if (by0 < 0) { by1 -= by0; by0 = 0; }
                     if (by1 >= MAP_PREVIEW_SIZE) { by0 -= (by1 - MAP_PREVIEW_SIZE + 1); by1 = MAP_PREVIEW_SIZE - 1; }
                     if (by0 < 0) by0 = 0;
                 } else if (bh > bw) {
                     int diff = bh - bw;
-                    bx0 -= diff / 2; bx1 += (diff + 1) / 2;
+                    bx0 -= diff / 2;
+                    bx1 += (diff + 1) / 2;
                     if (bx0 < 0) { bx1 -= bx0; bx0 = 0; }
                     if (bx1 >= MAP_PREVIEW_SIZE) { bx0 -= (bx1 - MAP_PREVIEW_SIZE + 1); bx1 = MAP_PREVIEW_SIZE - 1; }
                     if (bx0 < 0) bx0 = 0;
                 }
                 ImVec2 uv0((float)bx0 / MAP_PREVIEW_SIZE, (float)by0 / MAP_PREVIEW_SIZE);
                 ImVec2 uv1((float)(bx1 + 1) / MAP_PREVIEW_SIZE, (float)(by1 + 1) / MAP_PREVIEW_SIZE);
+
+                /* Map preview image - fit to available panel width */
                 float panelWidth = ImGui::GetContentRegionAvail().x;
                 float previewSize = panelWidth;
                 float availH = ImGui::GetContentRegionAvail().y - ImGui::GetTextLineHeightWithSpacing() * 5;
                 if (availH < previewSize) previewSize = availH;
+                /* Center the preview */
                 float offsetX = (panelWidth - previewSize) * 0.5f;
                 if (offsetX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
                 ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(previewSize, previewSize), uv0, uv1);
@@ -3850,10 +3766,6 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         SDL_free(popupCompressedData);
         popupCompressedData = NULL;
         popupCompressedLen = 0;
-    }
-    if (inlineMapView) {
-        mapPreviewViewDestroy(inlineMapView);
-        inlineMapView = NULL;
     }
     mapPreviewPopupDestroy();
 
