@@ -49,28 +49,57 @@
  * sequence numbers. Stubs ignore it and return ENCODE_SKIP.
  * ================================================================ */
 
+/* PACKET_ALLIANCE_UPDATE shares one wire shape across the three
+ * sub-events: [header 8][event 1][fromPlayer 1][toPlayer 1].  For
+ * LEAVE the third byte is unused on the wire and on the decode side. */
+#define ALLIANCE_UPDATE_PAYLOAD 3
+
 static EncodeResult encodeAllianceRequest(const ControlEvent *evt,
                                           const struct UdpServerClient *recipient,
                                           uint8_t *buf, size_t bufCap,
                                           size_t *outLen) {
-    (void)evt; (void)recipient; (void)buf; (void)bufCap; (void)outLen;
-    return ENCODE_SKIP;
+    const size_t needed = PACKET_HEADER_SIZE + ALLIANCE_UPDATE_PAYLOAD;
+    /* Single-target filtering lives in the per-client deliver
+     * callback — the codec stays agnostic to UdpServerClient internals
+     * (forward-declared here on purpose). */
+    (void)recipient;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_ALLIANCE_UPDATE, 0);
+    buf[PACKET_HEADER_SIZE]     = ALLIANCE_EVENT_REQUEST;
+    buf[PACKET_HEADER_SIZE + 1] = evt->u.allianceRequest.fromPlayer;
+    buf[PACKET_HEADER_SIZE + 2] = evt->u.allianceRequest.toPlayer;
+    *outLen = needed;
+    return ENCODE_OK;
 }
 
 static EncodeResult encodeAllianceAccept(const ControlEvent *evt,
                                          const struct UdpServerClient *recipient,
                                          uint8_t *buf, size_t bufCap,
                                          size_t *outLen) {
-    (void)evt; (void)recipient; (void)buf; (void)bufCap; (void)outLen;
-    return ENCODE_SKIP;
+    const size_t needed = PACKET_HEADER_SIZE + ALLIANCE_UPDATE_PAYLOAD;
+    (void)recipient;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_ALLIANCE_UPDATE, 0);
+    buf[PACKET_HEADER_SIZE]     = ALLIANCE_EVENT_ACCEPT;
+    buf[PACKET_HEADER_SIZE + 1] = evt->u.allianceAccept.acceptedBy;
+    buf[PACKET_HEADER_SIZE + 2] = evt->u.allianceAccept.newMember;
+    *outLen = needed;
+    return ENCODE_OK;
 }
 
 static EncodeResult encodeAllianceLeave(const ControlEvent *evt,
                                         const struct UdpServerClient *recipient,
                                         uint8_t *buf, size_t bufCap,
                                         size_t *outLen) {
-    (void)evt; (void)recipient; (void)buf; (void)bufCap; (void)outLen;
-    return ENCODE_SKIP;
+    const size_t needed = PACKET_HEADER_SIZE + ALLIANCE_UPDATE_PAYLOAD;
+    (void)recipient;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_ALLIANCE_UPDATE, 0);
+    buf[PACKET_HEADER_SIZE]     = ALLIANCE_EVENT_LEAVE;
+    buf[PACKET_HEADER_SIZE + 1] = evt->u.allianceLeave.playerNum;
+    buf[PACKET_HEADER_SIZE + 2] = 0; /* unused for leave */
+    *outLen = needed;
+    return ENCODE_OK;
 }
 
 static EncodeResult encodePlayerJoin(const ControlEvent *evt,
@@ -197,15 +226,33 @@ static EncodeResult encodeServerShutdown(const ControlEvent *evt,
  * Three thin decoders for the game-phase wire family
  * (PACKET_COUNTDOWN/GAME_START/GAME_OVER) keep the dispatcher's
  * lookup 1:1 with wire packets. decodeAllianceUpdate is the single
- * entry for PACKET_ALLIANCE_UPDATE; once implemented it will
- * inspect the sub-event byte and produce the matching
- * CTRL_ALLIANCE_REQUEST/ACCEPT/LEAVE event.
+ * entry for PACKET_ALLIANCE_UPDATE; it inspects the sub-event byte
+ * and produces the matching CTRL_ALLIANCE_REQUEST/ACCEPT/LEAVE
+ * event.
  * ================================================================ */
 
 static bool decodeAllianceUpdate(const uint8_t *buf, size_t len,
                                  ControlEvent *outEvt) {
-    (void)buf; (void)len; (void)outEvt;
-    return false;
+    if (len < ALLIANCE_UPDATE_PAYLOAD) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    switch (buf[0]) {
+        case ALLIANCE_EVENT_REQUEST:
+            outEvt->type = CTRL_ALLIANCE_REQUEST;
+            outEvt->u.allianceRequest.fromPlayer = buf[1];
+            outEvt->u.allianceRequest.toPlayer   = buf[2];
+            return true;
+        case ALLIANCE_EVENT_ACCEPT:
+            outEvt->type = CTRL_ALLIANCE_ACCEPT;
+            outEvt->u.allianceAccept.acceptedBy = buf[1];
+            outEvt->u.allianceAccept.newMember  = buf[2];
+            return true;
+        case ALLIANCE_EVENT_LEAVE:
+            outEvt->type = CTRL_ALLIANCE_LEAVE;
+            outEvt->u.allianceLeave.playerNum = buf[1];
+            return true;
+        default:
+            return false;
+    }
 }
 
 static bool decodePlayerJoin(const uint8_t *buf, size_t len,
