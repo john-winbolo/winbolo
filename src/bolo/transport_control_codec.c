@@ -35,6 +35,7 @@
 
 #include "control_event.h"
 #include "netpacks.h"
+#include "player_flags.h"  /* CLIENT_TYPE_COUNT / CLIENT_TYPE_UNKNOWN */
 #include "transport_udp_internal.h"
 
 /* ================================================================
@@ -102,36 +103,142 @@ static EncodeResult encodeAllianceLeave(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+/* PACKET_PLAYER_JOINED wire format:
+ *   [header 8] [pNum 1] [name PACKET_MAX_PLAYER_NAME] [cc 2]
+ *   [clientType 1] [clientFlags 1] [numAllies 1] [ally 1 × numAllies]
+ * The trailing numAllies/allies pair is an additive change from the
+ * pre-codec wire format — receiving clients now have the join's full
+ * alliance bitmap on the wire instead of waiting for PACKET_PLAYER_LIST. */
 static EncodeResult encodePlayerJoin(const ControlEvent *evt,
                                      const struct UdpServerClient *recipient,
                                      uint8_t *buf, size_t bufCap,
                                      size_t *outLen) {
-    (void)evt; (void)recipient; (void)buf; (void)bufCap; (void)outLen;
-    return ENCODE_SKIP;
+    (void)recipient;
+    BYTE numAllies = evt->u.playerJoin.numAllies;
+    if (numAllies > MAX_TANKS) numAllies = MAX_TANKS;
+    const size_t needed = PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME
+                          + 2 + 1 + 1 + 1 + numAllies;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    size_t pos = PACKET_HEADER_SIZE;
+    packHeader(buf, PACKET_PLAYER_JOINED, 0);
+    buf[pos++] = evt->u.playerJoin.playerNum;
+    memset(buf + pos, 0, PACKET_MAX_PLAYER_NAME);
+    {
+        size_t nameLen = strnlen(evt->u.playerJoin.name, PACKET_MAX_PLAYER_NAME - 1);
+        if (nameLen > 0) memcpy(buf + pos, evt->u.playerJoin.name, nameLen);
+    }
+    pos += PACKET_MAX_PLAYER_NAME;
+    buf[pos++] = (uint8_t)evt->u.playerJoin.country[0];
+    buf[pos++] = (uint8_t)evt->u.playerJoin.country[1];
+    buf[pos++] = evt->u.playerJoin.clientType;
+    buf[pos++] = evt->u.playerJoin.clientFlags;
+    buf[pos++] = numAllies;
+    if (numAllies > 0) {
+        memcpy(buf + pos, evt->u.playerJoin.allies, numAllies);
+        pos += numAllies;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
 }
 
+/* PACKET_NAME_CHANGE wire format:
+ *   [header 8] [playerNum 1] [newName PACKET_MAX_PLAYER_NAME (NUL-padded)] */
 static EncodeResult encodePlayerName(const ControlEvent *evt,
                                      const struct UdpServerClient *recipient,
                                      uint8_t *buf, size_t bufCap,
                                      size_t *outLen) {
-    (void)evt; (void)recipient; (void)buf; (void)bufCap; (void)outLen;
-    return ENCODE_SKIP;
+    (void)recipient;
+    const size_t needed = PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_NAME_CHANGE, 0);
+    buf[PACKET_HEADER_SIZE] = evt->u.playerName.playerNum;
+    memset(buf + PACKET_HEADER_SIZE + 1, 0, PACKET_MAX_PLAYER_NAME);
+    {
+        size_t nameLen = strnlen(evt->u.playerName.name, PACKET_MAX_PLAYER_NAME - 1);
+        if (nameLen > 0) {
+            memcpy(buf + PACKET_HEADER_SIZE + 1, evt->u.playerName.name, nameLen);
+        }
+    }
+    *outLen = needed;
+    return ENCODE_OK;
 }
 
+/* PACKET_LOBBY_UPDATE wire format (variable length):
+ *   [header 8] [playerNum 1] [connected 1]
+ *   If connected:
+ *     [nameLen 1] [name nameLen bytes] [teamNumber 1] [ready 1]
+ *     [isBot 1] [pingMs 2 BE] [cc 2] [clientType 1] [clientFlags 1] */
 static EncodeResult encodeLobbySlot(const ControlEvent *evt,
                                     const struct UdpServerClient *recipient,
                                     uint8_t *buf, size_t bufCap,
                                     size_t *outLen) {
-    (void)evt; (void)recipient; (void)buf; (void)bufCap; (void)outLen;
-    return ENCODE_SKIP;
+    (void)recipient;
+    const ClientLobbySlot *slot = &evt->u.lobbySlot.slot;
+    size_t nameLen = 0;
+    if (slot->connected) {
+        nameLen = strnlen(slot->playerName, PACKET_MAX_PLAYER_NAME - 1);
+    }
+    const size_t needed = PACKET_HEADER_SIZE + 1 + 1
+                          + (slot->connected ? (1 + nameLen + 1 + 1 + 1 + 2 + 2 + 1 + 1) : 0);
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    size_t pos = PACKET_HEADER_SIZE;
+    packHeader(buf, PACKET_LOBBY_UPDATE, 0);
+    buf[pos++] = evt->u.lobbySlot.playerNum;
+    buf[pos++] = slot->connected ? 1 : 0;
+    if (slot->connected) {
+        buf[pos++] = (uint8_t)nameLen;
+        if (nameLen > 0) {
+            memcpy(buf + pos, slot->playerName, nameLen);
+            pos += nameLen;
+        }
+        buf[pos++] = slot->teamNumber;
+        buf[pos++] = slot->ready ? 1 : 0;
+        buf[pos++] = slot->isBot ? 1 : 0;
+        buf[pos++] = (uint8_t)(slot->pingMs >> 8);
+        buf[pos++] = (uint8_t)(slot->pingMs & 0xFF);
+        buf[pos++] = (uint8_t)slot->countryCode[0];
+        buf[pos++] = (uint8_t)slot->countryCode[1];
+        buf[pos++] = slot->clientType;
+        buf[pos++] = slot->clientFlags;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
 }
+
+/* PACKET_LOBBY_SETTINGS wire format:
+ *   [header 8] [mapName MAP_STR_SIZE] [gameType 1] [hiddenMines 1]
+ *   [aiType 1] [gameLength 4 BE] [pillCount 1] [baseCount 1]
+ *   [startCount 1] [mapSkipAvailable 1] [netStat 1] [inLobby 1] */
+#define LOBBY_SETTINGS_WIRE_PAYLOAD (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1)
 
 static EncodeResult encodeLobbySettings(const ControlEvent *evt,
                                         const struct UdpServerClient *recipient,
                                         uint8_t *buf, size_t bufCap,
                                         size_t *outLen) {
-    (void)evt; (void)recipient; (void)buf; (void)bufCap; (void)outLen;
-    return ENCODE_SKIP;
+    (void)recipient;
+    const size_t needed = PACKET_HEADER_SIZE + LOBBY_SETTINGS_WIRE_PAYLOAD;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    size_t pos = PACKET_HEADER_SIZE;
+    packHeader(buf, PACKET_LOBBY_SETTINGS, 0);
+    memset(buf + pos, 0, MAP_STR_SIZE);
+    {
+        size_t mapLen = strnlen(evt->u.lobbySettings.mapName, MAP_STR_SIZE - 1);
+        if (mapLen > 0) memcpy(buf + pos, evt->u.lobbySettings.mapName, mapLen);
+    }
+    pos += MAP_STR_SIZE;
+    buf[pos++] = (uint8_t)evt->u.lobbySettings.lobbyGameType;
+    buf[pos++] = evt->u.lobbySettings.lobbyHiddenMines ? 1 : 0;
+    buf[pos++] = evt->u.lobbySettings.lobbyAiType;
+    packU32(buf + pos, (uint32_t)evt->u.lobbySettings.lobbyTimeLimit);
+    pos += 4;
+    buf[pos++] = evt->u.lobbySettings.lobbyPillCount;
+    buf[pos++] = evt->u.lobbySettings.lobbyBaseCount;
+    buf[pos++] = evt->u.lobbySettings.lobbyStartCount;
+    buf[pos++] = evt->u.lobbySettings.mapSkipAvailable ? 1 : 0;
+    buf[pos++] = (uint8_t)evt->u.lobbySettings.netStat;
+    buf[pos++] = evt->u.lobbySettings.inLobby ? 1 : 0;
+    *outLen = pos;
+    return ENCODE_OK;
 }
 
 static EncodeResult encodeLobbyMapChange(const ControlEvent *evt,
@@ -257,20 +364,101 @@ static bool decodeAllianceUpdate(const uint8_t *buf, size_t len,
 
 static bool decodePlayerJoin(const uint8_t *buf, size_t len,
                              ControlEvent *outEvt) {
-    (void)buf; (void)len; (void)outEvt;
-    return false;
+    /* Layout matches encodePlayerJoin's wire format. */
+    const size_t fixedLen = 1 + PACKET_MAX_PLAYER_NAME + 2 + 1 + 1 + 1;
+    if (len < fixedLen) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_PLAYER_JOIN;
+    size_t pos = 0;
+    outEvt->u.playerJoin.playerNum = buf[pos++];
+    memcpy(outEvt->u.playerJoin.name, buf + pos, PACKET_MAX_PLAYER_NAME);
+    outEvt->u.playerJoin.name[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+    pos += PACKET_MAX_PLAYER_NAME;
+    outEvt->u.playerJoin.country[0] = (char)buf[pos++];
+    outEvt->u.playerJoin.country[1] = (char)buf[pos++];
+    outEvt->u.playerJoin.country[2] = '\0';
+    outEvt->u.playerJoin.clientType  = buf[pos++];
+    outEvt->u.playerJoin.clientFlags = buf[pos++];
+    {
+        BYTE numAllies = buf[pos++];
+        if (numAllies > MAX_TANKS) numAllies = MAX_TANKS;
+        if (pos + numAllies > len) return false;
+        outEvt->u.playerJoin.numAllies = numAllies;
+        if (numAllies > 0) {
+            memcpy(outEvt->u.playerJoin.allies, buf + pos, numAllies);
+        }
+    }
+    return true;
 }
 
 static bool decodePlayerName(const uint8_t *buf, size_t len,
                              ControlEvent *outEvt) {
-    (void)buf; (void)len; (void)outEvt;
-    return false;
+    if (len < (size_t)(1 + PACKET_MAX_PLAYER_NAME)) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_PLAYER_NAME;
+    outEvt->u.playerName.playerNum = buf[0];
+    memcpy(outEvt->u.playerName.name, buf + 1, PACKET_MAX_PLAYER_NAME);
+    outEvt->u.playerName.name[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+    return true;
 }
 
 static bool decodeLobbySlot(const uint8_t *buf, size_t len,
                             ControlEvent *outEvt) {
-    (void)buf; (void)len; (void)outEvt;
-    return false;
+    if (len < 2) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_SLOT;
+    size_t pos = 0;
+    BYTE playerNum = buf[pos++];
+    if (playerNum >= MAX_TANKS) return false;
+    outEvt->u.lobbySlot.playerNum = playerNum;
+    ClientLobbySlot *slot = &outEvt->u.lobbySlot.slot;
+    slot->connected = buf[pos++] ? true : false;
+    if (slot->connected) {
+        if (pos + 1 > len) return false;
+        uint8_t nameLen = buf[pos++];
+        if (nameLen > PACKET_MAX_PLAYER_NAME - 1) return false;
+        if (pos + nameLen + 9 > len) return false;
+        if (nameLen > 0) memcpy(slot->playerName, buf + pos, nameLen);
+        slot->playerName[nameLen] = '\0';
+        pos += nameLen;
+        slot->teamNumber = buf[pos++];
+        slot->ready  = buf[pos++] ? true : false;
+        slot->isBot  = buf[pos++] ? true : false;
+        slot->pingMs = (uint16_t)(buf[pos] << 8 | buf[pos + 1]);
+        pos += 2;
+        slot->countryCode[0] = (char)buf[pos++];
+        slot->countryCode[1] = (char)buf[pos++];
+        slot->countryCode[2] = '\0';
+        slot->clientType  = buf[pos++];
+        slot->clientFlags = buf[pos++];
+        if (slot->clientType >= CLIENT_TYPE_COUNT)
+            slot->clientType = CLIENT_TYPE_UNKNOWN;
+    }
+    return true;
+}
+
+static bool decodeLobbySettings(const uint8_t *buf, size_t len,
+                                ControlEvent *outEvt) {
+    if (len < LOBBY_SETTINGS_WIRE_PAYLOAD) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_SETTINGS;
+    size_t pos = 0;
+    strncpy(outEvt->u.lobbySettings.mapName,
+            (const char *)(buf + pos), MAP_STR_SIZE - 1);
+    outEvt->u.lobbySettings.mapName[MAP_STR_SIZE - 1] = '\0';
+    pos += MAP_STR_SIZE;
+    outEvt->u.lobbySettings.lobbyGameType    = (gameType)buf[pos++];
+    outEvt->u.lobbySettings.lobbyHiddenMines = buf[pos++] ? true : false;
+    outEvt->u.lobbySettings.lobbyAiType      = buf[pos++];
+    outEvt->u.lobbySettings.lobbyTimeLimit   = (int32_t)unpackU32(buf + pos);
+    pos += 4;
+    outEvt->u.lobbySettings.lobbyPillCount   = buf[pos++];
+    outEvt->u.lobbySettings.lobbyBaseCount   = buf[pos++];
+    outEvt->u.lobbySettings.lobbyStartCount  = buf[pos++];
+    outEvt->u.lobbySettings.mapSkipAvailable = buf[pos++] ? true : false;
+    outEvt->u.lobbySettings.netStat          = (netStatus)buf[pos++];
+    outEvt->u.lobbySettings.inLobby          = buf[pos++] ? true : false;
+    return true;
 }
 
 static bool decodeLobbyMapChange(const uint8_t *buf, size_t len,
@@ -368,6 +556,7 @@ ControlDecodeFn transportControlCodecDecoder(uint16_t packetType) {
         case PACKET_PLAYER_JOINED:    return decodePlayerJoin;
         case PACKET_NAME_CHANGE:      return decodePlayerName;
         case PACKET_LOBBY_UPDATE:     return decodeLobbySlot;
+        case PACKET_LOBBY_SETTINGS:   return decodeLobbySettings;
         case PACKET_LOBBY_MAP_CHANGE: return decodeLobbyMapChange;
         case PACKET_BALANCE_PROPOSAL: return decodeBalanceProposal;
         case PACKET_MAP_SKIP_STATE:   return decodeMapSkipState;

@@ -1923,7 +1923,7 @@ static int runNetworkMode(void) {
   /* Set up tank at start position */
   clientSimNetSetupTankGo(humanSim);
 
-  /* Gate lobby vs running: if we received PACKET_LOBBY_STATE during
+  /* Gate lobby vs running: if we received CTRL_LOBBY_SETTINGS during
    * join, stay in lobby state; otherwise proceed to running */
   if (clientSimIsInLobby(humanSim)) {
     clientSimSetMapDownloadComplete(humanSim, true);

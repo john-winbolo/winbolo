@@ -888,8 +888,9 @@ bool gameFrontSetDlgState(openingStates newState) {
       returnValue = FALSE;
     } else {
       /* Wait for join handshake. Break early if we enter the lobby
-       * (lobby-enabled servers send PACKET_LOBBY_STATE before map chunks,
-       * so inLobby may become true while map is still downloading). */
+       * (lobby-enabled servers deliver CTRL_LOBBY_SETTINGS via sync
+       * replay before map chunks, so inLobby may become true while
+       * the map is still downloading). */
       int joinWaitTicks = 0;
       while (joinWaitTicks < 1500) {  /* 30 second timeout */
         ClientConnectState js = clientSimGetConnectState(humanSim);

@@ -97,8 +97,8 @@ const char *packetTypeName(uint8_t type) {
     case PACKET_LOBBY_READY:        return "LOBBY_READY";
     case PACKET_LOBBY_ADD_BOT:      return "LOBBY_ADD_BOT";
     case PACKET_LOBBY_REMOVE_BOT:   return "LOBBY_REMOVE_BOT";
-    case PACKET_LOBBY_STATE:        return "LOBBY_STATE";
     case PACKET_LOBBY_UPDATE:       return "LOBBY_UPDATE";
+    case PACKET_LOBBY_SETTINGS:     return "LOBBY_SETTINGS";
     case PACKET_COUNTDOWN:          return "COUNTDOWN";
     case PACKET_GAME_START:         return "GAME_START";
     case PACKET_GAME_OVER:          return "GAME_OVER";
