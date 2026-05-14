@@ -112,6 +112,35 @@ struct MapPreviewView {
     SDL_Texture *scratch;
     int          scratchW;
     int          scratchH;
+
+    /* Pre-rendered map atlas: every visible terrain + mine overlay
+     * tile of the parsed map, laid out at native 16 px/tile into
+     * one big texture. Built once when the map data parses (or when
+     * a Load* invalidates it), then any visible-region blit is a
+     * single SDL_RenderTexture(atlas, srcSubRect, dst) instead of
+     * the previous ~hundreds of per-tile blits. NEAREST scale mode
+     * so zoom>=1 upscale stays crisp.
+     *
+     * Size = (256 tiles × 16 px) per side = 4096 × 4096 RGBA8 →
+     * 64 MB per view. Acceptable for the lobby + popup since only
+     * one or two MapPreviewViews are alive at once. */
+    SDL_Texture *mapAtlas;
+    int          mapAtlasTiles;        /* edge length in tiles (always 256) */
+    int          mapAtlasTilePx;       /* pixels per tile (16 = native) */
+
+    /* Pre-downscaled map atlas, used by the sub-1x sprite path. Same
+     * 4096×4096 RGBA8 backing texture as mapAtlas — allocated ONCE
+     * when the map parses and reused thereafter. On each zoom change
+     * we LINEAR-downscale mapAtlas into the (0,0,scaledEdge,scaledEdge)
+     * sub-rect of this texture; subsequent frames blit a visible
+     * sub-rect 1:1 to the offscreen. The big win vs the old
+     * "oversample → bilinear downscale at view time" path is pan
+     * stability: the bilinear pattern is baked in once per zoom, so
+     * every output pixel always reads the same source pixel and the
+     * map doesn't shimmer / drift as the camera moves. */
+    SDL_Texture *mapAtlasScaled;
+    int          mapAtlasScaledEdge;   /* pixels per side baked at scaledZoom */
+    float        mapAtlasScaledZoom;   /* zoom level currently baked in, or 0 */
     /* Which texture should ImGui display (offscreen for non-sub-1x,
      * scratch for sub-1x sprite mode). */
     SDL_Texture *displayTex;
@@ -351,6 +380,104 @@ static void viewRenderTilesToOffscreen(MapPreviewView *v,
     float edgeX = (camPXf - (float)(camMX * tileSize)) * tileScale;
     float edgeY = (camPYf - (float)(camMY * tileSize)) * tileScale;
 
+    /* Scaled-atlas fast path: when zoom is sub-1x AND we have a
+     * pre-downscaled cache, the offscreen is viewW×viewH (not
+     * oversampled) and we just blit a sub-rect of the cache 1:1.
+     * The cache itself was LINEAR-downscaled once at this zoom by
+     * the caller (RenderOffscreen), so panning never re-runs the
+     * filter — every output pixel always samples the same cached
+     * source pixel. NEAREST scale mode on the cache so the 1:1
+     * blit is a literal copy. */
+    if (v->mapAtlasScaled && v->mapAtlasScaledEdge > 0 &&
+        v->zoomLevel < 1.0f &&
+        v->zoomLevel >= ZOOM_MINIMAP_MAX) {
+        int scaledEdge = v->mapAtlasScaledEdge;
+        /* Camera top-left in scaled-atlas pixel coords. camPXf was
+         * computed above in native (16 px / tile) atlas pixels, so
+         * scale by v->zoomLevel. */
+        float camScaledX = camPXf * v->zoomLevel;
+        float camScaledY = camPYf * v->zoomLevel;
+
+        SDL_SetRenderDrawColor(renderer, 0, 0, 64, 255);
+        SDL_RenderClear(renderer);
+
+        float clipL = (camScaledX < 0.0f) ? -camScaledX : 0.0f;
+        float clipT = (camScaledY < 0.0f) ? -camScaledY : 0.0f;
+        float clipR = (camScaledX + (float)screenW > (float)scaledEdge)
+                      ? (camScaledX + (float)screenW - (float)scaledEdge) : 0.0f;
+        float clipB = (camScaledY + (float)screenH > (float)scaledEdge)
+                      ? (camScaledY + (float)screenH - (float)scaledEdge) : 0.0f;
+        SDL_FRect src = {
+            camScaledX + clipL, camScaledY + clipT,
+            (float)screenW - clipL - clipR,
+            (float)screenH - clipT - clipB
+        };
+        SDL_FRect dst = {
+            clipL, clipT,
+            (float)screenW - clipL - clipR,
+            (float)screenH - clipT - clipB
+        };
+        if (src.w > 0.0f && src.h > 0.0f) {
+            SDL_RenderTexture(renderer, v->mapAtlasScaled, &src, &dst);
+        }
+
+        viewRenderStarts(v, renderer, screenW, screenH, tileScale);
+        return;
+    }
+
+    /* Atlas fast path: pre-rendered map at 16 px/tile means the
+     * visible region is one src sub-rect and the whole panel is one
+     * SDL_RenderTexture call (vs the ~thousands per frame the old
+     * loop did). Atlas is NEAREST so upscaling at zoom >= 1 stays
+     * crisp; at sub-1x with tileScale ≈ 1 the src and dst are the
+     * same size for the visible window so no scaling either. */
+    if (v->mapAtlas) {
+        int atlasPx = v->mapAtlasTiles * v->mapAtlasTilePx;
+        /* Visible source rect in atlas pixels. camPXf/camPYf are
+         * already in 16-px tile-space (atlas's native), so we can
+         * use them directly. Width / height = view in tile-pixels
+         * (screen / tileScale). Clamp to atlas bounds; if the
+         * camera shows off-map area we'll handle it via the clear
+         * colour below. */
+        float srcX = camPXf;
+        float srcY = camPYf;
+        float srcW = (float)screenW / tileScale;
+        float srcH = (float)screenH / tileScale;
+
+        /* Clear with sea colour so off-map regions read like deep
+         * sea even when the camera's been panned past the edge. */
+        SDL_SetRenderDrawColor(renderer, 0, 0, 64, 255);
+        SDL_RenderClear(renderer);
+
+        /* Compute the in-atlas intersection and the matching dst
+         * sub-rect so panning past the edge doesn't sample garbage. */
+        float clipL = (srcX < 0.0f) ? -srcX : 0.0f;
+        float clipT = (srcY < 0.0f) ? -srcY : 0.0f;
+        float clipR = (srcX + srcW > (float)atlasPx)
+                      ? (srcX + srcW - (float)atlasPx) : 0.0f;
+        float clipB = (srcY + srcH > (float)atlasPx)
+                      ? (srcY + srcH - (float)atlasPx) : 0.0f;
+        SDL_FRect src = {
+            srcX + clipL, srcY + clipT,
+            srcW - clipL - clipR,
+            srcH - clipT - clipB
+        };
+        SDL_FRect dst = {
+            clipL * tileScale,
+            clipT * tileScale,
+            (srcW - clipL - clipR) * tileScale,
+            (srcH - clipT - clipB) * tileScale
+        };
+        if (src.w > 0.0f && src.h > 0.0f) {
+            SDL_RenderTexture(renderer, v->mapAtlas, &src, &dst);
+        }
+
+        viewRenderStarts(v, renderer, screenW, screenH, tileScale);
+        return;
+    }
+
+    /* Fallback path (atlas not built yet — e.g. first frame after
+     * data parse): per-tile rasterisation. Same code as before. */
     int tilesW = (int)((float)screenW / scaledTileF) + 3;
     int tilesH = (int)((float)screenH / scaledTileF) + 3;
     if (tilesW > 256) tilesW = 256;
@@ -380,8 +507,6 @@ static void viewRenderTilesToOffscreen(MapPreviewView *v,
         }
     }
 
-    /* Mine overlay — translucent mine sprite on top of mined tiles
-     * AND the border zone the game treats as auto-mined. */
     SDL_SetTextureAlphaMod(v->tilesTex, 180);
     for (int x = 0; x < tilesW; x++) {
         for (int y = 0; y < tilesH; y++) {
@@ -424,6 +549,15 @@ static void viewFreeMapData(MapPreviewView *v) {
     if (v->scratch) { SDL_DestroyTexture(v->scratch); v->scratch = NULL; }
     v->scratchW = 0;
     v->scratchH = 0;
+    if (v->mapAtlas) { SDL_DestroyTexture(v->mapAtlas); v->mapAtlas = NULL; }
+    v->mapAtlasTiles = 0;
+    v->mapAtlasTilePx = 0;
+    if (v->mapAtlasScaled) {
+        SDL_DestroyTexture(v->mapAtlasScaled);
+        v->mapAtlasScaled = NULL;
+    }
+    v->mapAtlasScaledEdge = 0;
+    v->mapAtlasScaledZoom = 0.0f;
     v->displayTex = NULL;
     if (v->dataLoaded && v->preview) {
         clientMapPreviewDestroy(v->preview);
@@ -431,6 +565,98 @@ static void viewFreeMapData(MapPreviewView *v) {
         v->dataLoaded = false;
     }
     v->autoFitDone = false;
+}
+
+/* Build the per-view map atlas. Called once after the map parses
+ * (and reset whenever Load* invalidates v->preview). All terrain
+ * tiles + mine overlay are baked in; start positions stay as
+ * dynamic overlays so they can be toggled / styled separately. */
+static void viewEnsureMapAtlas(MapPreviewView *v, SDL_Renderer *renderer) {
+    if (!v || !v->preview || !v->dataLoaded || !v->tilesTex) return;
+    if (v->mapAtlas) return;
+
+    const int tilesPerSide = 256;
+    const int tilePx       = TILE_SIZE_X;
+    const int atlasPx      = tilesPerSide * tilePx;
+
+    v->mapAtlas = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
+                                     SDL_TEXTUREACCESS_TARGET,
+                                     atlasPx, atlasPx);
+    if (!v->mapAtlas) return;
+    SDL_SetTextureScaleMode(v->mapAtlas, SDL_SCALEMODE_NEAREST);
+    v->mapAtlasTiles  = tilesPerSide;
+    v->mapAtlasTilePx = tilePx;
+
+    /* Companion downscale cache, same backing size — we redraw into
+     * its top-left sub-rect on every zoom change instead of creating
+     * a new texture, so the GPU never sees an allocate / free cycle
+     * mid-frame. The size of the in-use sub-rect is tracked in
+     * mapAtlasScaledEdge. */
+    v->mapAtlasScaled = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
+                                            SDL_TEXTUREACCESS_TARGET,
+                                            atlasPx, atlasPx);
+    if (v->mapAtlasScaled) {
+        SDL_SetTextureScaleMode(v->mapAtlasScaled, SDL_SCALEMODE_NEAREST);
+    }
+    v->mapAtlasScaledEdge = 0;
+    v->mapAtlasScaledZoom = 0.0f;
+
+    SDL_SetTextureScaleMode(v->tilesTex, SDL_SCALEMODE_NEAREST);
+    SDL_SetRenderTarget(renderer, v->mapAtlas);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 64, 255);
+    SDL_RenderClear(renderer);
+
+    /* Terrain pass. */
+    for (int mapY = 0; mapY < tilesPerSide; mapY++) {
+        for (int mapX = 0; mapX < tilesPerSide; mapX++) {
+            BYTE tileNum = viewCalcTile(v, (BYTE)mapX, (BYTE)mapY);
+            SDL_FRect src = {
+                (float)mapViewPosX[tileNum],
+                (float)mapViewPosY[tileNum],
+                (float)tilePx, (float)tilePx
+            };
+            SDL_FRect dst = {
+                (float)(mapX * tilePx),
+                (float)(mapY * tilePx),
+                (float)tilePx, (float)tilePx
+            };
+            SDL_RenderTexture(renderer, v->tilesTex, &src, &dst);
+        }
+    }
+
+    /* Mine-overlay pass: translucent mine sprite on top of mined
+     * tiles AND the auto-mined border zone, matching the live
+     * renderer in viewRenderTilesToOffscreen. */
+    SDL_SetTextureAlphaMod(v->tilesTex, 180);
+    for (int mapY = 0; mapY < tilesPerSide; mapY++) {
+        for (int mapX = 0; mapX < tilesPerSide; mapX++) {
+            bool mined = false;
+            BYTE raw = clientMapPreviewGetTerrain(v->preview,
+                                                   (BYTE)mapX, (BYTE)mapY);
+            if (raw >= MINE_START && raw <= MINE_END) {
+                mined = true;
+            } else if (mapX <= MAP_MINE_EDGE_LEFT ||
+                       mapX >= MAP_MINE_EDGE_RIGHT ||
+                       mapY <= MAP_MINE_EDGE_TOP  ||
+                       mapY >= MAP_MINE_EDGE_BOTTOM) {
+                mined = true;
+            }
+            if (!mined) continue;
+            SDL_FRect src = {
+                (float)MINE_X, (float)MINE_Y,
+                (float)tilePx, (float)tilePx
+            };
+            SDL_FRect dst = {
+                (float)(mapX * tilePx),
+                (float)(mapY * tilePx),
+                (float)tilePx, (float)tilePx
+            };
+            SDL_RenderTexture(renderer, v->tilesTex, &src, &dst);
+        }
+    }
+    SDL_SetTextureAlphaMod(v->tilesTex, 255);
+
+    SDL_SetRenderTarget(renderer, NULL);
 }
 
 static void viewAutoFitZoom(MapPreviewView *v, int viewW, int viewH) {
@@ -613,6 +839,9 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
 
     viewEnsureParsed(v, renderer);
     if (!v->dataLoaded || !v->tilesTex) return;
+    /* Build the per-map atlas the first frame after parse — turns
+     * the per-frame tile loop into a single visible-region blit. */
+    viewEnsureMapAtlas(v, renderer);
 
     /* Auto-fit zoom on first frame after data is loaded. */
     if (!v->autoFitDone) {
@@ -644,8 +873,18 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
      * the display rect (independent-axis clamping caused stretch).
      * Above the cap the apparent zoom degrades smoothly — fewer
      * visible tiles than zoom-level implies, but no aspect distortion. */
+    /* When the scaled-atlas pre-downscale cache is ready, sub-1x
+     * sprite mode no longer needs an oversampled offscreen: we just
+     * blit a viewW×viewH sub-rect of the cache 1:1. Keeps pan stable
+     * (sampling pattern baked at cache build time). If the cache
+     * doesn't exist yet (atlas not built or first frame after Load*)
+     * we fall through to the old oversample-then-bilinear path. */
+    bool subOneSprite = (v->zoomLevel < 1.0f &&
+                         v->zoomLevel >= ZOOM_MINIMAP_MAX);
+    bool useScaledCache = (subOneSprite && v->mapAtlasScaled && v->mapAtlas);
+
     int ofsW = viewW, ofsH = viewH;
-    if (v->zoomLevel < 1.0f && v->zoomLevel >= ZOOM_MINIMAP_MAX) {
+    if (subOneSprite && !useScaledCache) {
         float scale = 1.0f / v->zoomLevel;
         float fW = (float)viewW * scale;
         float fH = (float)viewH * scale;
@@ -661,6 +900,32 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
         if (ofsH < 1) ofsH = 1;
     }
 
+    /* Rebuild the pre-downscaled cache lazily, before binding the
+     * offscreen as the next render target. One LINEAR-sampled blit
+     * of the full mapAtlas into a (scaledEdge × scaledEdge) sub-rect
+     * of mapAtlasScaled — sub-rect addressing means the texture
+     * itself is allocated once and never freed mid-frame. */
+    if (useScaledCache) {
+        int atlasPx = v->mapAtlasTiles * v->mapAtlasTilePx;
+        int scaledEdge = (int)((float)atlasPx * v->zoomLevel + 0.5f);
+        if (scaledEdge < 1) scaledEdge = 1;
+        if (scaledEdge > atlasPx) scaledEdge = atlasPx;
+        if (v->mapAtlasScaledZoom != v->zoomLevel ||
+            v->mapAtlasScaledEdge != scaledEdge) {
+            SDL_SetTextureScaleMode(v->mapAtlas, SDL_SCALEMODE_LINEAR);
+            SDL_SetRenderTarget(renderer, v->mapAtlasScaled);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 64, 255);
+            SDL_RenderClear(renderer);
+            SDL_FRect dst = { 0.0f, 0.0f,
+                              (float)scaledEdge, (float)scaledEdge };
+            SDL_RenderTexture(renderer, v->mapAtlas, NULL, &dst);
+            SDL_SetRenderTarget(renderer, NULL);
+            SDL_SetTextureScaleMode(v->mapAtlas, SDL_SCALEMODE_NEAREST);
+            v->mapAtlasScaledEdge = scaledEdge;
+            v->mapAtlasScaledZoom = v->zoomLevel;
+        }
+    }
+
     if (!v->offscreen || v->offscreenW != ofsW || v->offscreenH != ofsH) {
         if (v->offscreen) SDL_DestroyTexture(v->offscreen);
         v->offscreen = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
@@ -673,10 +938,18 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
     }
 
     if (v->offscreen) {
-        /* Tile atlas stays in NEAREST mode at all zoom levels — tiles
-         * are always drawn 16:16 (zf=1) and we let ImGui's display-
-         * time bilinear handle the final downscale. Keeping the atlas
-         * NEAREST preserves pixel-art crispness when zoom >= 1. */
+        /* Re-assert scale modes EVERY frame. Offscreen uses LINEAR
+         * so the final sub-1x downscale (ImGui Image draws the
+         * 1.33×-or-more oversampled offscreen into the view rect)
+         * averages each output pixel as a 2×2 weighted blend. With
+         * NEAREST at non-integer downscale ratios (0.75x: 1.33:1)
+         * the per-tile sampling phase drifts and identical grass
+         * tiles end up looking different across the map. LINEAR
+         * costs a touch of softness but is consistent everywhere.
+         * Atlas stays NEAREST so pixel art at zoom >= 1 (where the
+         * offscreen ratio is 1:1 and only the atlas blit upscales)
+         * keeps its crisp tile edges. */
+        SDL_SetTextureScaleMode(v->offscreen, SDL_SCALEMODE_LINEAR);
         if (v->tilesTex) {
             SDL_SetTextureScaleMode(v->tilesTex, SDL_SCALEMODE_NEAREST);
         }
