@@ -31,6 +31,15 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         return;
     }
 
+    /* Test-only observer hook (set via clientSimSetControlObserver).
+     * Fires before any state mutation so the observed stream matches
+     * what the dispatcher actually receives, including the self-skip
+     * branch below. The callback gets a const event and returns void —
+     * it cannot influence dispatch. */
+    if (cs->controlObserverCb != NULL) {
+        cs->controlObserverCb(cs->controlObserverCtx, evt);
+    }
+
     /* Self-skip on CTRL_PLAYER_JOIN only: the recipient's own player
      * record is established via the join handshake / snapshot stream
      * and must not be overwritten by sync or live publish with stale
