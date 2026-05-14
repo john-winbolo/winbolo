@@ -345,9 +345,6 @@ void transportUdpServerNotifyMapChange(struct ServerSim *sim);
 /* Broadcast a team balance proposal (one team assignment per slot) to all clients. */
 void transportUdpServerBroadcastBalanceProposal(struct ServerSim *sim, uint8_t teamForSlot[MAX_TANKS]);
 
-/* Broadcast the current map skip vote state (one byte per slot) to all clients. */
-void transportUdpServerBroadcastMapSkipState(struct ServerSim *sim);
-
 /* Set a bot's name in the server transport client array so it appears
  * in lobby state/update broadcasts. Call after botManagerAddBot(). */
 void transportUdpServerSetBotName(BYTE playerNum, const char *name);
