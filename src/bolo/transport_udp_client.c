@@ -846,52 +846,40 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
-    case PACKET_ALLIANCE_UPDATE:
-        /* Alliance update format:
-         *   [header 8] [eventType 1] [fromPlayer 1] [toPlayer 1] */
-        if (len >= PACKET_HEADER_SIZE + 3) {
-            uint8_t eventType = buf[PACKET_HEADER_SIZE];
-            uint8_t fromPlayer = buf[PACKET_HEADER_SIZE + 1];
-            uint8_t toPlayer = buf[PACKET_HEADER_SIZE + 2];
-
-            switch (eventType) {
-            case ALLIANCE_EVENT_REQUEST: {
-                ControlEvent evt = { .type = CTRL_ALLIANCE_REQUEST };
-                evt.u.allianceRequest.fromPlayer = fromPlayer;
-                evt.u.allianceRequest.toPlayer = toPlayer;
+    case PACKET_ALLIANCE_UPDATE: {
+        /* [header 8][event 1][fromPlayer 1][toPlayer 1] */
+        ControlDecodeFn dec = transportControlCodecDecoder(pktType);
+        if (dec != NULL) {
+            ControlEvent evt;
+            if (dec(buf + PACKET_HEADER_SIZE,
+                    (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
                 clientSimApplyControl(c->clientSim, &evt);
-                /* Only show dialog if we are the target */
-                if (toPlayer == c->playerNum) {
+                /* Alliance-request dialog is transport-internal UI:
+                 * the server encoder already filters REQUEST so only
+                 * the target client receives the wire packet, so this
+                 * always fires for "us" here. */
+                if (evt.type == CTRL_ALLIANCE_REQUEST &&
+                    evt.u.allianceRequest.toPlayer == c->playerNum) {
                     char pName[FILENAME_MAX];
-                    playersGetPlayerName(&c->clientSim->sim.plyrs, fromPlayer, pName, FALSE);
+                    playersGetPlayerName(&c->clientSim->sim.plyrs,
+                                         evt.u.allianceRequest.fromPlayer,
+                                         pName, FALSE);
                     if (windowShowAllianceRequest() == TRUE) {
-                        dialogAllianceSetName(pName, fromPlayer);
+                        dialogAllianceSetName(pName,
+                                              evt.u.allianceRequest.fromPlayer);
                     } else {
                         char str[FILENAME_MAX + 64];
                         snprintf(str, sizeof(str),
                                  "You have ignored alliance request from %s",
                                  pName);
-                        clientMessageAdd(&c->clientSim->messages, networkStatus, "Alliance Request", str);
+                        clientMessageAdd(&c->clientSim->messages, networkStatus,
+                                         "Alliance Request", str);
                     }
                 }
-                break;
-            }
-            case ALLIANCE_EVENT_ACCEPT: {
-                ControlEvent evt = { .type = CTRL_ALLIANCE_ACCEPT };
-                evt.u.allianceAccept.acceptedBy = fromPlayer;
-                evt.u.allianceAccept.newMember = toPlayer;
-                clientSimApplyControl(c->clientSim, &evt);
-                break;
-            }
-            case ALLIANCE_EVENT_LEAVE: {
-                ControlEvent evt = { .type = CTRL_ALLIANCE_LEAVE };
-                evt.u.allianceLeave.playerNum = fromPlayer;
-                clientSimApplyControl(c->clientSim, &evt);
-                break;
-            }
             }
         }
         break;
+    }
 
     case PACKET_SERVER_SHUTDOWN: {
         ControlDecodeFn dec = transportControlCodecDecoder(pktType);

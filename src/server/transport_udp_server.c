@@ -396,6 +396,15 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
     EncodeResult r;
 
     if (!client->connected) return;
+
+    /* Per-recipient filtering for single-target variants.  The codec
+     * stays UdpServerClient-agnostic; the slot comparison lives here
+     * where the recipient's player number is in scope. */
+    if (evt->type == CTRL_ALLIANCE_REQUEST &&
+        evt->u.allianceRequest.toPlayer != client->playerNum) {
+        return;
+    }
+
     enc = transportControlCodecEncoder(evt->type);
     if (enc == NULL) return;
     r = enc(evt, client, buf, sizeof(buf), &len);
@@ -2400,26 +2409,15 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 fprintf(stderr, "[UDP SERVER] Alliance request from=%d to=%d connected=%d\n",
                         clientIdx, toPlayer,
                         (toPlayer < MAX_TANKS) ? udpServer.clients[toPlayer].connected : -1);
-                /* Forward as ALLIANCE_UPDATE (REQUEST) to target player only */
                 if (toPlayer < MAX_TANKS &&
                     udpServer.clients[toPlayer].connected) {
-                    uint8_t outBuf[PACKET_HEADER_SIZE + 3];
-                    packHeader(outBuf, PACKET_ALLIANCE_UPDATE, 0);
-                    outBuf[PACKET_HEADER_SIZE] = ALLIANCE_EVENT_REQUEST;
-                    outBuf[PACKET_HEADER_SIZE + 1] = (uint8_t)clientIdx;
-                    outBuf[PACKET_HEADER_SIZE + 2] = toPlayer;
-                    udpSendTo(udpServer.sock, outBuf, sizeof(outBuf),
-                              &udpServer.clients[toPlayer].addr);
-                    fprintf(stderr, "[UDP SERVER] Alliance update forwarded to player %d\n", toPlayer);
+                    ControlEvent reqEvt;
                     logAddEvent(log_AllyRequest, (BYTE)clientIdx, toPlayer, 0, 0, 0, NULL);
-                    {
-                        ControlEvent reqEvt;
-                        memset(&reqEvt, 0, sizeof(reqEvt));
-                        reqEvt.type = CTRL_ALLIANCE_REQUEST;
-                        reqEvt.u.allianceRequest.fromPlayer = (BYTE)clientIdx;
-                        reqEvt.u.allianceRequest.toPlayer   = toPlayer;
-                        serverSimPublishControl(serverSimGetActive(), &reqEvt);
-                    }
+                    memset(&reqEvt, 0, sizeof(reqEvt));
+                    reqEvt.type = CTRL_ALLIANCE_REQUEST;
+                    reqEvt.u.allianceRequest.fromPlayer = (BYTE)clientIdx;
+                    reqEvt.u.allianceRequest.toPlayer   = toPlayer;
+                    serverSimPublishControl(serverSimGetActive(), &reqEvt);
                 }
             }
             break;
@@ -2430,37 +2428,19 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 2) {
                 uint8_t newMember = buf[PACKET_HEADER_SIZE + 1];
-                /* Apply alliance on server-side players struct */
                 ServerSim *ssim = serverSimGetActive();
                 GameSim *gs = serverSimGetGameSim(ssim);
+                ControlEvent acceptEvt;
                 playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL,
                                      (BYTE)clientIdx, newMember, TRUE);
                 winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE,
                                    (BYTE)clientIdx, newMember);
                 logAddEvent(log_AllyAccept, (BYTE)clientIdx, newMember, 0, 0, 0, NULL);
-                {
-                    ControlEvent acceptEvt;
-                    memset(&acceptEvt, 0, sizeof(acceptEvt));
-                    acceptEvt.type = CTRL_ALLIANCE_ACCEPT;
-                    acceptEvt.u.allianceAccept.acceptedBy = (BYTE)clientIdx;
-                    acceptEvt.u.allianceAccept.newMember  = newMember;
-                    serverSimPublishControl(ssim, &acceptEvt);
-                }
-                /* Broadcast ALLIANCE_UPDATE (ACCEPT) to all clients */
-                {
-                    uint8_t outBuf[PACKET_HEADER_SIZE + 3];
-                    int j;
-                    packHeader(outBuf, PACKET_ALLIANCE_UPDATE, 0);
-                    outBuf[PACKET_HEADER_SIZE] = ALLIANCE_EVENT_ACCEPT;
-                    outBuf[PACKET_HEADER_SIZE + 1] = (uint8_t)clientIdx;
-                    outBuf[PACKET_HEADER_SIZE + 2] = newMember;
-                    for (j = 0; j < MAX_TANKS; j++) {
-                        if (udpServer.clients[j].connected) {
-                            udpSendTo(udpServer.sock, outBuf, sizeof(outBuf),
-                                      &udpServer.clients[j].addr);
-                        }
-                    }
-                }
+                memset(&acceptEvt, 0, sizeof(acceptEvt));
+                acceptEvt.type = CTRL_ALLIANCE_ACCEPT;
+                acceptEvt.u.allianceAccept.acceptedBy = (BYTE)clientIdx;
+                acceptEvt.u.allianceAccept.newMember  = newMember;
+                serverSimPublishControl(ssim, &acceptEvt);
             }
             break;
         }
@@ -2468,35 +2448,17 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             /* Wire: [header 8] [playerNum 1] */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 1) {
-                /* Apply on server-side players struct */
-                {
-                    ServerSim *ssim = serverSimGetActive();
-                    GameSim *gs = serverSimGetGameSim(ssim);
-                    ControlEvent leaveEvt;
-                    playersLeaveAlliance(gs, &gs->plyrs, NEUTRAL, (BYTE)clientIdx, TRUE);
-                    memset(&leaveEvt, 0, sizeof(leaveEvt));
-                    leaveEvt.type = CTRL_ALLIANCE_LEAVE;
-                    leaveEvt.u.allianceLeave.playerNum = (BYTE)clientIdx;
-                    serverSimPublishControl(ssim, &leaveEvt);
-                }
+                ServerSim *ssim = serverSimGetActive();
+                GameSim *gs = serverSimGetGameSim(ssim);
+                ControlEvent leaveEvt;
+                playersLeaveAlliance(gs, &gs->plyrs, NEUTRAL, (BYTE)clientIdx, TRUE);
                 winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_LEAVE, TRUE,
                                    (BYTE)clientIdx, WINBOLO_NET_NO_PLAYER);
                 logAddEvent(log_AllyLeave, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
-                /* Broadcast ALLIANCE_UPDATE (LEAVE) to all clients */
-                {
-                    uint8_t outBuf[PACKET_HEADER_SIZE + 3];
-                    int j;
-                    packHeader(outBuf, PACKET_ALLIANCE_UPDATE, 0);
-                    outBuf[PACKET_HEADER_SIZE] = ALLIANCE_EVENT_LEAVE;
-                    outBuf[PACKET_HEADER_SIZE + 1] = (uint8_t)clientIdx;
-                    outBuf[PACKET_HEADER_SIZE + 2] = 0; /* unused for leave */
-                    for (j = 0; j < MAX_TANKS; j++) {
-                        if (udpServer.clients[j].connected) {
-                            udpSendTo(udpServer.sock, outBuf, sizeof(outBuf),
-                                      &udpServer.clients[j].addr);
-                        }
-                    }
-                }
+                memset(&leaveEvt, 0, sizeof(leaveEvt));
+                leaveEvt.type = CTRL_ALLIANCE_LEAVE;
+                leaveEvt.u.allianceLeave.playerNum = (BYTE)clientIdx;
+                serverSimPublishControl(ssim, &leaveEvt);
             }
             break;
         }

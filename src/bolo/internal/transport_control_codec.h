@@ -38,10 +38,10 @@
 
 #include "control_event.h"
 
-/* Encoder result. ENCODE_OK means buf/*outLen are populated and the
- * caller should deliver the bytes. ENCODE_SKIP means this event has
- * no wire form for this recipient (e.g. an alliance request to a
- * non-target client) — not an error. ENCODE_OVERFLOW means the
+/* Encoder result. ENCODE_OK means buf and outLen are populated and
+ * the caller should deliver the bytes. ENCODE_SKIP means this event
+ * has no wire form for this recipient (e.g. an alliance request to
+ * a non-target client) — not an error. ENCODE_OVERFLOW means the
  * encoder needed more than bufCap bytes and is a programmer bug;
  * the caller asserts in debug builds and silently drops in release. */
 typedef enum {
