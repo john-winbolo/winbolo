@@ -1220,6 +1220,7 @@ set(SERVER_SOURCES
     src/server/server_dedicated_log.c
     src/server/server_frontend_stubs.c
     src/gui/sdl3/luabrainshandler.c
+    src/headless/cmd_stdin.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
@@ -1521,6 +1522,7 @@ set(HEADLESS_SOURCES
     src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_main.c src/headless/headless_frontend.c
+    src/headless/cmd_stdin.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_dedicated_log_stubs.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
@@ -1564,6 +1566,11 @@ bolo_grant_internal_source_access(WinBoloHeadless
     src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/mapeditor/mapeditor_generate.c)
+# headless_main.c reaches into the players API for --cmd-stdin's
+# --fast dispatch (mirrors the inline pair pattern that
+# transport_udp_server.c uses for the alliance/name-change packets).
+bolo_grant_internal_source_access(WinBoloHeadless
+    src/headless/headless_main.c)
 
 if(WIN32)
     target_link_libraries(WinBoloHeadless PRIVATE ws2_32 winmm user32)
