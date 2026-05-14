@@ -333,6 +333,83 @@ run_events_cmd_udp_server_only() {
   fi
 }
 
+# Two WinBoloHeadless --server clients connected to one WinBoloDS,
+# each reading its own -cmd-stdin and writing its own log-events.
+# The DS runs with -nolobby so the game is in RUNNING phase from
+# tick 0 — the headless cmd-stdin pump in --server mode keys off
+# the last observed server tick, which only advances once game
+# snapshots flow, so lobby-mode scenarios would deadlock. Diffs
+# each client's capture against its own baseline, sorted to absorb
+# wire ordering jitter.
+run_events_cmd_udp_two_clients() {
+  local name="$1"
+  local map="$2"
+  local c1_cmd="$3"
+  local c2_cmd="$4"
+  local port=50005
+  echo -n "  $name ... "
+
+  "$BIN_DS" -map "$map" -port "$port" -gametype open -nolobby \
+            -nowinbolonet -quiet -threads 1 \
+            -logfile "$ACTUAL/$name.dslog" \
+            > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
+  local ds_pid=$!
+  trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
+
+  sleep 0.5
+
+  # Client 1 first, then a brief delay so it lands in slot 0
+  # deterministically before client 2 joins into slot 1. Distinct
+  # --name args so the server doesn't reject c2 as a duplicate.
+  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
+         --cmd-stdin "$c1_cmd" \
+         --ticks 500 --seed 42 \
+         --log-events "$ACTUAL/${name}_c1.jsonl" --quiet \
+         > "$ACTUAL/${name}_c1.out" 2> "$ACTUAL/${name}_c1.err" &
+  local c1_pid=$!
+  sleep 0.3
+  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
+         --cmd-stdin "$c2_cmd" \
+         --ticks 500 --seed 43 \
+         --log-events "$ACTUAL/${name}_c2.jsonl" --quiet \
+         > "$ACTUAL/${name}_c2.out" 2> "$ACTUAL/${name}_c2.err" &
+  local c2_pid=$!
+
+  trap 'kill "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true; \
+        wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
+
+  local c1_rc=0 c2_rc=0
+  wait "$c1_pid" || c1_rc=$?
+  wait "$c2_pid" || c2_rc=$?
+
+  kill "$ds_pid" 2>/dev/null || true
+  wait "$ds_pid" 2>/dev/null || true
+  trap - EXIT
+
+  if [ "$c1_rc" -ne 0 ] || [ "$c2_rc" -ne 0 ]; then
+    echo "CRASH (c1=$c1_rc c2=$c2_rc)"
+    return 1
+  fi
+
+  local fail=0
+  for which in c1 c2; do
+    if diff_sorted "$EXPECTED/${name}_${which}.jsonl" \
+                   "$ACTUAL/${name}_${which}.jsonl" >/dev/null 2>&1; then
+      :
+    else
+      [ "$fail" -eq 0 ] && echo "DIFF"
+      diff_sorted "$EXPECTED/${name}_${which}.jsonl" \
+                  "$ACTUAL/${name}_${which}.jsonl" 2>&1 | head -40
+      fail=1
+    fi
+  done
+  if [ "$fail" -eq 0 ]; then
+    echo "OK"
+    return 0
+  fi
+  return 1
+}
+
 echo "Scripted control-event scenarios (Everard Island):"
 run_events_cmd_fast "centralize_events_teams_fast" \
                     "$MAPS/Everard Island.map" \
@@ -359,5 +436,10 @@ run_events_cmd_udp_server_only \
                     "centralize_events_shutdown_udp" \
                     "$MAPS/Everard Island.map" \
                     "$COMMANDS/centralize_events_shutdown.server.jsonl" || fail=1
+run_events_cmd_udp_two_clients \
+                    "centralize_events_alliance_2client_udp" \
+                    "$MAPS/Everard Island.map" \
+                    "$COMMANDS/centralize_events_alliance_2client.c1.jsonl" \
+                    "$COMMANDS/centralize_events_alliance_2client.c2.jsonl" || fail=1
 
 exit $fail
