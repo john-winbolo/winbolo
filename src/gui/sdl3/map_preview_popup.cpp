@@ -90,12 +90,15 @@ void mapPreviewPopupOnClickFile(const char *mapPath,
 }
 
 void mapPreviewPopupRenderOffscreen(SDL_Renderer *renderer, int winW, int winH) {
-    if (!g_popupOpen || !g_popupView) return;
-    int viewW = (int)(winW * 0.8f);
-    int viewH = (int)(winH * 0.8f);
-    if (viewW < 1) viewW = 1;
-    if (viewH < 1) viewH = 1;
-    mapPreviewViewRenderOffscreen(g_popupView, renderer, viewW, viewH);
+    /* Intentionally no-op — the popup's offscreen is rendered INSIDE
+     * the modal body (mapPreviewPopupRenderModal) where we know the
+     * actual content rect minus title bar / padding. Sizing the
+     * offscreen with the raw 0.8x window size pre-NewFrame produced a
+     * texture whose aspect ratio didn't match the Image rect once
+     * the title bar was accounted for — ImGui then stretched on one
+     * axis, drifting the displayed zoom away from a perfect square.
+     * Kept as a stub for ABI compatibility with existing callers. */
+    (void)renderer; (void)winW; (void)winH;
 }
 
 void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
@@ -119,8 +122,17 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
             g_popupOpen = false;
             ImGui::CloseCurrentPopup();
         }
+        /* Render the offscreen at the actual content rect size now
+         * that we know it (excludes title bar / window padding). Done
+         * inside the modal — mid-frame SDL_SetRenderTarget is safe
+         * here, same pattern the chooser uses. */
+        ImVec2 contentSize = ImGui::GetContentRegionAvail();
+        if (contentSize.x > 0 && contentSize.y > 0 && g_popupView) {
+            mapPreviewViewRenderOffscreen(g_popupView, renderer,
+                                           (int)contentSize.x,
+                                           (int)contentSize.y);
+        }
         if (mapPreviewViewIsReady(g_popupView)) {
-            ImVec2 contentSize = ImGui::GetContentRegionAvail();
             SDL_Texture *tex = mapPreviewViewGetTexture(g_popupView);
             if (tex) {
                 ImGui::Image((ImTextureID)tex, contentSize);
