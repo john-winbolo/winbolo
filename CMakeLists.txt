@@ -2031,10 +2031,64 @@ add_custom_target(dist
 )
 
 enable_testing()
-add_test(NAME baseline
-         COMMAND stdbuf -oL bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
-                      $<TARGET_FILE:WinBoloHeadless>
-                      $<TARGET_FILE:WinBoloDS>)
-set_tests_properties(baseline PROPERTIES TIMEOUT 120)
+
+# Per-scenario CTest entries. Scenario names must stay in sync with the
+# dispatch_scenario case in tests/baseline/run.sh. --fast scenarios have
+# no shared state and parallelize freely. UDP scenarios share a hardcoded
+# port per helper, so each helper's scenarios get a matching RESOURCE_LOCK
+# — different helpers (different ports) still run concurrently.
+set(_baseline_fast
+    everard_island_1bot_idle
+    everard_island_1bot_sit
+    everard_island_1bot_drive
+    everard_island_1bot_shoot
+    everard_island_1bot_watch
+    forest_rig_1bot_idle
+    forest_rig_1bot_sit
+    forest_rig_1bot_drive
+    forest_rig_1bot_shoot
+    forest_rig_1bot_watch
+    slugfest_iv_1bot_idle
+    slugfest_iv_1bot_sit
+    slugfest_iv_1bot_drive
+    slugfest_iv_1bot_shoot
+    slugfest_iv_1bot_watch
+    centralize_events_fast
+    centralize_events_teams_fast
+    centralize_events_alliance_fast
+    centralize_events_name_change_fast
+    centralize_events_map_skip_fast
+)
+set(_baseline_udp_50001 ds_4bot_melee ds_2v2_team)
+set(_baseline_udp_50002 centralize_events_udp)
+set(_baseline_udp_50003
+    centralize_events_name_change_udp
+    centralize_events_map_skip_udp
+    centralize_events_alliance_leave_udp
+)
+set(_baseline_udp_50004 centralize_events_shutdown_udp)
+set(_baseline_udp_50005 centralize_events_alliance_2client_udp)
+
+foreach(_name IN LISTS _baseline_fast)
+    add_test(NAME baseline.${_name}
+             COMMAND stdbuf -oL bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
+                          --scenario ${_name}
+                          $<TARGET_FILE:WinBoloHeadless>
+                          $<TARGET_FILE:WinBoloDS>)
+    set_tests_properties(baseline.${_name} PROPERTIES TIMEOUT 60)
+endforeach()
+
+foreach(_port 50001 50002 50003 50004 50005)
+    foreach(_name IN LISTS _baseline_udp_${_port})
+        add_test(NAME baseline.${_name}
+                 COMMAND stdbuf -oL bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
+                              --scenario ${_name}
+                              $<TARGET_FILE:WinBoloHeadless>
+                              $<TARGET_FILE:WinBoloDS>)
+        set_tests_properties(baseline.${_name} PROPERTIES
+                             TIMEOUT 60
+                             RESOURCE_LOCK "udp_${_port}")
+    endforeach()
+endforeach()
 
 endif() # iOS vs Desktop
