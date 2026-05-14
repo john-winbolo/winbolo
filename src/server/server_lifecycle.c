@@ -18,6 +18,7 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"
+#include "control_event.h"
 #include "gametype.h"
 #include "nat_portmap.h"
 #include "transport_udp.h"
@@ -272,7 +273,12 @@ void serverInstanceTick(ServerSim *sim) {
 
     /* Check if a balance proposal just completed */
     if (sim->balanceProposal.broadcastNeeded) {
-      transportUdpServerBroadcastBalanceProposal(sim, sim->balanceProposal.teamForSlot);
+      ControlEvent evt;
+      memset(&evt, 0, sizeof(evt));
+      evt.type = CTRL_BALANCE_PROPOSAL;
+      memcpy(evt.u.balanceProposal.teamForSlot,
+             sim->balanceProposal.teamForSlot, MAX_TANKS);
+      serverSimPublishControl(sim, &evt);
       sim->balanceProposal.broadcastNeeded = false;
     }
 

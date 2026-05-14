@@ -342,9 +342,6 @@ void transportUdpServerBroadcastGameOver(struct ServerSim *sim);
  * server's compressed map data, and trigger re-download for each client. */
 void transportUdpServerNotifyMapChange(struct ServerSim *sim);
 
-/* Broadcast a team balance proposal (one team assignment per slot) to all clients. */
-void transportUdpServerBroadcastBalanceProposal(struct ServerSim *sim, uint8_t teamForSlot[MAX_TANKS]);
-
 /* Set a bot's name in the server transport client array so it appears
  * in lobby state/update broadcasts. Call after botManagerAddBot(). */
 void transportUdpServerSetBotName(BYTE playerNum, const char *name);
