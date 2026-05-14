@@ -48,17 +48,22 @@ COMMANDS="$DIR/commands"
 # every line has its tick field stripped and pingMs field zeroed
 # before the lexical sort, so a CTRL_MAP_SKIP_STATE that lands two
 # ticks earlier or later — or a CTRL_LOBBY_SLOT whose ping varies
-# by a millisecond — still matches the golden. The set of events
-# (and their order within a tick, modulo lex sort) is the
-# regression target. Used only by UDP scenarios; --fast scenarios
-# diff unsorted/unstripped because the in-process pipe is fully
-# deterministic.
+# by a millisecond — still matches the golden. The unique set of
+# events is the regression target; sort -u collapses duplicate
+# (untickled) lines because lobby-mode scenarios broadcast the
+# lobby state on a wall-clock cadence, so the multiplicity of
+# identical lobby-state lines varies run-to-run as the pump-tick
+# fallback crosses different positions in the broadcast cycle.
+# Non-lobby UDP scenarios produce one line per event so sort -u
+# is equivalent to sort there. Used only by UDP scenarios; --fast
+# scenarios diff unsorted/unstripped because the in-process pipe
+# is fully deterministic.
 diff_sorted() {
   local expected="$1"
   local actual="$2"
   diff -u \
-    <(sed -E 's/"tick":[0-9]+,//; s/"pingMs":[0-9]+/"pingMs":0/' "$expected" | sort) \
-    <(sed -E 's/"tick":[0-9]+,//; s/"pingMs":[0-9]+/"pingMs":0/' "$actual"   | sort)
+    <(sed -E 's/"tick":[0-9]+,//; s/"pingMs":[0-9]+/"pingMs":0/' "$expected" | sort -u) \
+    <(sed -E 's/"tick":[0-9]+,//; s/"pingMs":[0-9]+/"pingMs":0/' "$actual"   | sort -u)
 }
 
 run() {
