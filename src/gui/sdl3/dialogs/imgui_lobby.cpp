@@ -23,6 +23,7 @@
 #include <cstring>
 #include <cstdlib>  /* rand() — used to randomise the default naming pool */
 #include <cfloat>   /* FLT_MAX — unbounded max for window size constraints */
+#include <algorithm>  /* std::sort — used for chooser list order */
 
 #include <SDL3/SDL.h>
 
@@ -271,22 +272,172 @@ static void lobbySendAddBotDebounced(ClientSim *cs,
  * opened so Cancel can restore it once Phase 2 wires the map-change
  * packet. s_chooseMapActiveTab survives across re-opens. */
 static bool             s_chooseMapOpen          = false;
+/* Two chooser instances: one for the Server Maps tab (routes its
+ * directory listing through serverSimEnumerateMapDir so it reflects
+ * the server's actual map library), one for the Upload tab (always
+ * uses the LOCAL filesystem so the user can browse their own files
+ * before sending them up). Keeping the state separate means each tab
+ * remembers its own folder / selection / search filter independently. */
 static MapChooserState  s_chooseMapState         = {};
+static MapChooserState  s_chooseMapUploadState   = {};
 static bool             s_chooseMapStateInited   = false;
 static char             s_chooseMapPrevName[128] = "";
 static int              s_chooseMapActiveTab     = 0; /* 0=server 1=upload 2=random */
+/* When true, the chooser window is force-sized to almost the full
+ * lobby window — leaving a few chat lines visible at the bottom.
+ * Toggled by the corner icon button, or by pressing Esc while the
+ * chooser window has focus. */
+static bool             s_chooseMapMaximized     = false;
+
+/* listProvider for the Server Maps tab: routes through the in-process
+ * server's directory enumeration so the chooser browses the server's
+ * data/maps tree, not the client's. In SP-host this is essentially the
+ * same on-disk path as the local scan, but the abstraction means MP
+ * support drops in by changing only this function (replace direct
+ * serverSim call with a network request → cached response). */
+static void lobbyServerMapsListProvider(MapChooserState *state,
+                                         const char *relPath, void *ctx) {
+    (void)ctx;
+    state->numMaps = 0;
+    ServerSim *spSim = gameFrontGetServerSim();
+    if (!spSim) {
+        /* Pure network client without a local server — Phase 3
+         * network protocol isn't wired yet, so for now leave the
+         * list empty. (Fallback to local scan would be misleading.) */
+        return;
+    }
+
+    /* Synthetic ".." when not at root. relPath empty / NULL = root. */
+    bool inSub = (relPath && relPath[0] != '\0');
+    if (inSub) {
+        MapChooserEntry *e = &state->maps[state->numMaps++];
+        memset(e, 0, sizeof(*e));
+        SDL_strlcpy(e->name, "[..]", sizeof(e->name));
+        SDL_strlcpy(e->path, relPath, sizeof(e->path));
+        /* Strip trailing path segment so navigating up lands in
+         * the parent directory (not the same one again). */
+        size_t plen = SDL_strlen(e->path);
+        while (plen > 0 && e->path[plen - 1] != '/' &&
+                           e->path[plen - 1] != '\\') {
+            e->path[--plen] = '\0';
+        }
+        if (plen > 0) e->path[plen - 1] = '\0';
+        e->isFolder = true;
+        e->isParentUp = true;
+    } else {
+        /* Pin the inbuilt Everard Island entry at the root level
+         * only — it isn't a real file, so we don't want it showing
+         * up inside arbitrary subfolders. */
+        MapChooserEntry *e = &state->maps[state->numMaps++];
+        memset(e, 0, sizeof(*e));
+        SDL_strlcpy(e->name, langGetText(STR_MAPCHOOSER_EVERARD),
+                    sizeof(e->name));
+        e->path[0] = '\0';  /* empty = inbuilt */
+    }
+
+    ServerMapEntry serverEntries[MAP_CHOOSER_MAX_MAPS];
+    int got = serverSimEnumerateMapDir(spSim,
+        inSub ? relPath : NULL,
+        serverEntries,
+        MAP_CHOOSER_MAX_MAPS - state->numMaps);
+    if (got < 0) return;
+
+    for (int i = 0; i < got && state->numMaps < MAP_CHOOSER_MAX_MAPS; i++) {
+        MapChooserEntry *e = &state->maps[state->numMaps++];
+        memset(e, 0, sizeof(*e));
+        e->isFolder = serverEntries[i].isFolder;
+        if (e->isFolder) {
+            SDL_strlcpy(e->name, serverEntries[i].name, sizeof(e->name));
+            if (inSub) {
+                SDL_snprintf(e->path, sizeof(e->path), "%s/%s",
+                             relPath, serverEntries[i].name);
+            } else {
+                SDL_strlcpy(e->path, serverEntries[i].name, sizeof(e->path));
+            }
+        } else {
+            /* Strip .map for the display name, keep full path. */
+            SDL_strlcpy(e->name, serverEntries[i].name, sizeof(e->name));
+            size_t nlen = SDL_strlen(e->name);
+            if (nlen > 4 &&
+                SDL_strcasecmp(e->name + nlen - 4, ".map") == 0) {
+                e->name[nlen - 4] = '\0';
+            }
+            /* Path is relative to data/maps; prepend the on-disk
+             * root so updatePreview's file load works. */
+            if (inSub) {
+                SDL_snprintf(e->path, sizeof(e->path),
+                             "data/maps/%s/%s",
+                             relPath, serverEntries[i].name);
+            } else {
+                SDL_snprintf(e->path, sizeof(e->path),
+                             "data/maps/%s", serverEntries[i].name);
+            }
+            /* At root we already inserted Everard at index 0 —
+             * skip the on-disk dup if present. */
+            if (!inSub && SDL_strcasecmp(serverEntries[i].name,
+                                          "Everard Island.map") == 0) {
+                state->numMaps--;
+            }
+        }
+    }
+
+    /* Sort to match the chooser's normal order: ".." (if present)
+     * pinned at index 0, then folders first, then files alphabetic
+     * (case-insensitive). The synthetic Everard entry sorts in among
+     * files by name. */
+    int sortFrom = inSub ? 1 : 0;
+    if (state->numMaps - sortFrom > 1) {
+        std::sort(&state->maps[sortFrom],
+                  &state->maps[state->numMaps],
+            [](const MapChooserEntry &a, const MapChooserEntry &b) {
+                if (a.isFolder != b.isFolder) return a.isFolder;
+                return SDL_strcasecmp(a.name, b.name) < 0;
+            });
+    }
+}
 
 static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
     if (!s_chooseMapStateInited) {
         mapChooserInit(&s_chooseMapState, renderer);
+        /* Let the chooser draw the maximize toggle overlay on the
+         * preview image — it knows where the image actually lives,
+         * which the surrounding lobby code doesn't. */
+        s_chooseMapState.maximizePtr = &s_chooseMapMaximized;
+        /* Server Maps tab: list comes from the server (Phase 3). */
+        s_chooseMapState.listProvider = lobbyServerMapsListProvider;
+        s_chooseMapState.listProviderCtx = NULL;
+        /* Initialise the Upload tab's separate state — keeps the
+         * default local-filesystem scan (listProvider NULL). */
+        mapChooserInit(&s_chooseMapUploadState, renderer);
+        s_chooseMapUploadState.maximizePtr = &s_chooseMapMaximized;
         /* "Load from device" + "Generate Random Map" exist as dedicated
          * tabs in this window, so suppress the in-widget buttons that
          * would duplicate them. */
-        s_chooseMapState.hideExtras = true;
+        s_chooseMapState.hideExtras       = true;
+        s_chooseMapUploadState.hideExtras = true;
         /* Keep the map list narrow so the preview can claim most of
          * the row width. ~300 px fits a column of names comfortably
          * without crowding the preview. */
-        s_chooseMapState.leftPanelMaxW = 300.0f;
+        s_chooseMapState.leftPanelMaxW       = 300.0f;
+        s_chooseMapUploadState.leftPanelMaxW = 300.0f;
+        /* Server Maps tab — server-provided list is empty until the
+         * provider runs; force an initial discover so the list is
+         * populated before the first render. (mapChooserInit ran the
+         * legacy SDL_GlobDirectory scan before we wired the provider,
+         * so its results are stale.) */
+        s_chooseMapState.currentDir[0] = '\0';
+        s_chooseMapState.numMaps = 0;
+        lobbyServerMapsListProvider(&s_chooseMapState, "", NULL);
+        /* Land the selection on Everard if it's still entry 0. */
+        if (s_chooseMapState.numMaps > 0) {
+            s_chooseMapState.selectedIdx = 0;
+            SDL_strlcpy(s_chooseMapState.selectedPath,
+                        s_chooseMapState.maps[0].path,
+                        sizeof(s_chooseMapState.selectedPath));
+            SDL_strlcpy(s_chooseMapState.selectedName,
+                        s_chooseMapState.maps[0].name,
+                        sizeof(s_chooseMapState.selectedName));
+        }
         s_chooseMapStateInited = true;
     }
 }
@@ -327,17 +478,112 @@ static void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
     s_chooseMapOpen = true;
 }
 
+/* Maximized chooser — separate ImGui window with its own ID so its
+ * (small amount of) state lives independently of the normal one. X
+ * here just un-maximizes (sets s_chooseMapMaximized = false). The
+ * normal window is hidden while maximized is up. */
+static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
+                                                 SDL_Renderer *renderer,
+                                                 float s,
+                                                 int screenW, int screenH) {
+    (void)cs;
+    const float kEdgeGutter      = 15.0f;
+    const float kMaxBottomGutter = 150.0f;
+    float maxW = (float)screenW - kEdgeGutter * 2.0f;
+    float maxH = (float)screenH - kEdgeGutter - kMaxBottomGutter;
+    if (maxW < 480.0f * s) maxW = 480.0f * s;
+    if (maxH < 320.0f * s) maxH = 320.0f * s;
+    /* Pinned each frame so OS-window resizes are followed. */
+    ImGui::SetNextWindowSize(ImVec2(maxW, maxH), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(kEdgeGutter, kEdgeGutter),
+                            ImGuiCond_Always);
+
+    bool open = true;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoSavedSettings
+                           | ImGuiWindowFlags_NoCollapse
+                           | ImGuiWindowFlags_NoScrollbar
+                           | ImGuiWindowFlags_NoScrollWithMouse
+                           | ImGuiWindowFlags_NoResize
+                           | ImGuiWindowFlags_NoMove;
+    bool visible = ImGui::Begin("Choose Map##LobbyMapChooserMax",
+                                &open, flags);
+    /* X closes the maximized window → restore the normal one. The
+     * dialog remains open the whole time. */
+    if (!open) {
+        s_chooseMapMaximized = false;
+    }
+    if (!visible) {
+        ImGui::End();
+        return;
+    }
+
+    /* Esc — same effect as the X. */
+    if (ImGui::IsWindowFocused() &&
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        s_chooseMapMaximized = false;
+    }
+
+    if (s_chooseMapState.previewView &&
+        mapPreviewViewIsReady(s_chooseMapState.previewView)) {
+        float availW = ImGui::GetContentRegionAvail().x;
+        float availH = ImGui::GetContentRegionAvail().y;
+        if (availW < 64.0f) availW = 64.0f;
+        if (availH < 64.0f) availH = 64.0f;
+        mapPreviewViewRenderOffscreen(s_chooseMapState.previewView,
+                                       renderer,
+                                       (int)availW, (int)availH);
+        SDL_Texture *tex = mapPreviewViewGetTexture(s_chooseMapState.previewView);
+        if (tex) {
+            ImVec2 imgPos = ImGui::GetCursorScreenPos();
+            ImGui::Image((ImTextureID)tex, ImVec2(availW, availH));
+            ImGui::SetCursorScreenPos(imgPos);
+            ImGui::SetNextItemAllowOverlap();
+            ImGui::InvisibleButton("##MapPreviewDragMax",
+                                    ImVec2(availW, availH));
+            bool hovered = ImGui::IsItemHovered();
+            MapPreviewInputOpts opts = { true, true, true, false };
+            mapPreviewViewHandleInput(s_chooseMapState.previewView,
+                                       hovered, &opts);
+
+            /* Zoom indicator — bottom-right corner. */
+            char zoomText[16];
+            SDL_snprintf(zoomText, sizeof(zoomText), "%.2fx",
+                         mapPreviewViewGetZoom(s_chooseMapState.previewView));
+            ImVec2 textSize = ImGui::CalcTextSize(zoomText);
+            float pad = 6.0f;
+            ImVec2 textPos(imgPos.x + availW - textSize.x - pad,
+                           imgPos.y + availH - textSize.y - pad);
+            ImDrawList *dl = ImGui::GetWindowDrawList();
+            ImVec2 bgMin(textPos.x - 4.0f, textPos.y - 2.0f);
+            ImVec2 bgMax(textPos.x + textSize.x + 4.0f,
+                         textPos.y + textSize.y + 2.0f);
+            dl->AddRectFilled(bgMin, bgMax,
+                              IM_COL32(0, 0, 0, 160), 4.0f);
+            dl->AddText(textPos,
+                        IM_COL32(255, 255, 255, 220), zoomText);
+        }
+    }
+
+    ImGui::End();
+}
+
 static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                                        float s, int screenW, int screenH) {
     if (!s_chooseMapOpen) return;
     lobbyChooseMapEnsureInit(renderer);
 
-    /* Default position + size — applied only on first creation
-     * (FirstUseEver). After that the user can drag / resize freely
-     * and ImGui keeps the manipulated state. Default hugs the top
-     * edge with a 15 px gutter on left/right/top and ends roughly
-     * where the chat box begins in the desktop layout (~55% of
-     * screen height). */
+    /* Maximized lives in its own ImGui window with a different ID so
+     * its size/position are independent of the normal window's. Both
+     * windows just hide/show (no destroy/recreate) — ImGui retains
+     * per-window state across frames as long as nothing calls Begin
+     * with the same ID, and our windowmask covers exactly one each
+     * frame. */
+    if (s_chooseMapMaximized) {
+        lobbyChooseMapRenderMaximizedWindow(cs, renderer, s,
+                                             screenW, screenH);
+        return;
+    }
+
     const float kEdgeGutter = 15.0f;
     float winX = kEdgeGutter;
     float winY = kEdgeGutter;
@@ -372,14 +618,32 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     if (ImGui::BeginTabBar("##MapChooserTabs", ImGuiTabBarFlags_None)) {
         if (ImGui::BeginTabItem("Server Maps")) {
             s_chooseMapActiveTab = 0;
+            /* Path breadcrumb — mirrors the Upload tab's label so both
+             * tabs read the same way. Shows the server-side path
+             * (always under data/maps) the user is currently
+             * browsing. */
+            char serverPathLine[FILENAME_MAX + 32];
+            if (s_chooseMapState.currentDir[0] != '\0') {
+                SDL_snprintf(serverPathLine, sizeof(serverPathLine),
+                             "Server maps: data/maps/%s",
+                             s_chooseMapState.currentDir);
+            } else {
+                SDL_strlcpy(serverPathLine, "Server maps: data/maps",
+                            sizeof(serverPathLine));
+            }
+            ImGui::Spacing();
+            ImGui::TextDisabled("%s", serverPathLine);
+            ImGui::Separator();
+            ImGui::Spacing();
+
             float availW = ImGui::GetContentRegionAvail().x;
             float availH = ImGui::GetContentRegionAvail().y - btnBarH;
             if (availH < 120.0f) availH = 120.0f;
-            /* Phase 1 uses the existing local data/maps/*.map scan as
-             * the source list — fine in SP-host (host == server) and
-             * provides a useful preview in MP too. Phase 3 will replace
-             * with a server-list protocol so pure clients see what the
-             * server actually has. */
+            /* Server Maps: routes its directory listing through the
+             * server's serverSimEnumerateMapDir via the listProvider
+             * wired in lobbyChooseMapEnsureInit. In SP-host this is
+             * the local filesystem; in MP (once the network protocol
+             * lands) it'll be the actual server's library. */
             bool changed = mapChooserRender(&s_chooseMapState, renderer,
                                             availW, availH, s);
             if (changed) {
@@ -393,11 +657,42 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         }
         if (ImGui::BeginTabItem("Upload")) {
             s_chooseMapActiveTab = 1;
+            /* Show the local maps directory path so the user knows
+             * where to drop new .map files. SDL_GetCurrentDirectory
+             * returns a malloc'd string we must free; it's NULL on
+             * platforms where cwd is meaningless. */
+            char dirLine[FILENAME_MAX + 32];
+            char *cwd = SDL_GetCurrentDirectory();
+            if (cwd) {
+                /* Trim trailing separator if present so the join is
+                 * clean. SDL_GetCurrentDirectory historically returns
+                 * paths with a trailing slash, but normalise either
+                 * way. */
+                size_t cwdLen = SDL_strlen(cwd);
+                while (cwdLen > 0 &&
+                       (cwd[cwdLen - 1] == '/' || cwd[cwdLen - 1] == '\\')) {
+                    cwd[--cwdLen] = '\0';
+                }
+                SDL_snprintf(dirLine, sizeof(dirLine),
+                             "Local maps: %s/data/maps", cwd);
+                SDL_free(cwd);
+            } else {
+                SDL_strlcpy(dirLine, "Local maps: data/maps",
+                            sizeof(dirLine));
+            }
             ImGui::Spacing();
-            ImGui::TextWrapped(
-                "Upload a local .map file to the server. "
-                "Coming in a follow-up — the upload packet protocol "
-                "isn't wired yet.");
+            ImGui::TextDisabled("%s", dirLine);
+            ImGui::Separator();
+            ImGui::Spacing();
+            /* Upload uses its OWN chooser state so its folder + search
+             * state stays separate from Server Maps — and so it can
+             * keep the legacy local-filesystem scan (listProvider = NULL)
+             * even after Server Maps is wired to read from the server. */
+            float availW = ImGui::GetContentRegionAvail().x;
+            float availH = ImGui::GetContentRegionAvail().y - btnBarH;
+            if (availH < 120.0f) availH = 120.0f;
+            mapChooserRender(&s_chooseMapUploadState, renderer,
+                             availW, availH, s);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Random")) {
@@ -410,23 +705,39 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         ImGui::EndTabBar();
     }
 
-    /* Action bar: Cancel restores the prior map (Phase 2 will wire),
-     * Close keeps the current selection. */
+    /* Action bar: Cancel discards the selection (Phase 2 will wire
+     * the actual server unwind); Set Map applies it. Centered as a
+     * pair. */
     ImGui::Separator();
-    if (ImGui::Button("Cancel")) {
-        /* TODO Phase 2: re-send s_chooseMapPrevName as a SET_MAP packet
-         * so the broadcast unwinds. For now we just close — phase 1
-         * never sent anything in the first place, so there's nothing to
-         * undo on the server. */
-        s_chooseMapOpen = false;
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Close")) {
-        s_chooseMapOpen = false;
+    {
+        const char *cancelLbl = "Cancel";
+        const char *setLbl    = "Set Map";
+        float wCancel = ImGui::CalcTextSize(cancelLbl).x
+                      + ImGui::GetStyle().FramePadding.x * 2.0f;
+        float wSet    = ImGui::CalcTextSize(setLbl).x
+                      + ImGui::GetStyle().FramePadding.x * 2.0f;
+        float gap     = ImGui::GetStyle().ItemSpacing.x;
+        float total   = wCancel + gap + wSet;
+        float startX  = (ImGui::GetContentRegionAvail().x - total) * 0.5f;
+        if (startX > 0.0f) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
+        if (ImGui::Button(cancelLbl)) {
+            /* TODO Phase 2: re-send s_chooseMapPrevName as a SET_MAP
+             * packet so the broadcast unwinds. For now we just close
+             * — phase 1 never sent anything in the first place, so
+             * there's nothing to undo on the server. */
+            s_chooseMapOpen = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(setLbl)) {
+            /* TODO Phase 2: clientSimNetSendLobbySetMap with the
+             * current chooser selection. For now just close. */
+            s_chooseMapOpen = false;
+        }
     }
 
     ImGui::End();
-    /* If the user clicked the title-bar X, ImGui flips `open` to false. */
+    /* X on the normal window closes the dialog. Maximize is handled
+     * by a separate window function above (X there un-maximizes). */
     if (!open) s_chooseMapOpen = false;
 }
 
@@ -3747,8 +4058,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         /* Map chooser sub-window (Phase 1). Rendered after the main
          * lobby End() so it's a top-level ImGui window that the user
          * can drag around freely. Only renders when s_chooseMapOpen is
-         * true, set by the "Choose Map" button on the Map tab. */
-        lobbyChooseMapRenderWindow(cs, renderer, s, screenW, screenH);
+         * true, set by the "Choose Map" button on the Map tab.
+         * Pass the *live* winW/winH (updated each frame from
+         * SDL_GetWindowSize) — screenW/screenH is cached at lobby
+         * entry and doesn't track OS-window resizes. */
+        lobbyChooseMapRenderWindow(cs, renderer, s, winW, winH);
 
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);

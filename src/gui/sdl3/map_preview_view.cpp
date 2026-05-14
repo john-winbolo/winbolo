@@ -60,7 +60,7 @@ static const float kZoomSteps[] = {
 };
 #define ZOOM_STEP_COUNT 25
 #define ZOOM_STEP_1X    9     /* index of 1.0f */
-#define ZOOM_MINIMAP_MAX 0.4f /* < this: minimap-colour mode */
+#define ZOOM_MINIMAP_MAX 0.33f /* < this: minimap-colour mode */
 
 /* Boat sprite atlas coords for start position overlays. */
 static const int kBoatAtlasX[16] = {
@@ -98,6 +98,17 @@ struct MapPreviewView {
     SDL_Texture *offscreen;
     int          offscreenW;
     int          offscreenH;
+
+    /* Intermediate scratch target used in sub-1x sprite mode for one
+     * manual 2:1 bilinear downsample pass — chained with the final
+     * ImGui Image-time downsample, this gives ~16-sample averaging
+     * per output pixel vs the 4-sample bilinear of a single pass. */
+    SDL_Texture *scratch;
+    int          scratchW;
+    int          scratchH;
+    /* Which texture should ImGui display (offscreen for non-sub-1x,
+     * scratch for sub-1x sprite mode). */
+    SDL_Texture *displayTex;
 
     /* Viewport size cache so we can detect resizes between calls. */
     int          lastViewW;
@@ -168,16 +179,17 @@ static BYTE viewCalcTile(MapPreviewView *v, BYTE xValue, BYTE yValue) {
 /* ── Rendering ───────────────────────────────────────────────────── */
 
 static void viewRenderStarts(MapPreviewView *v, SDL_Renderer *renderer,
-                             int screenW, int screenH) {
-    int zf = (int)v->zoomLevel;
-    if (zf < 1) zf = 1;
+                             int screenW, int screenH, float tileScale) {
     int tileSize = TILE_SIZE_X;
-    int scaledTile = tileSize * zf;
+    float scaledTileF = (float)tileSize * tileScale;
+    if (scaledTileF < 1.0f) scaledTileF = 1.0f;
 
     int centerPX = ((int)v->centerX * tileSize) >> 8;
     int centerPY = ((int)v->centerY * tileSize) >> 8;
-    int camPX = centerPX - screenW / (2 * zf);
-    int camPY = centerPY - screenH / (2 * zf);
+    float halfX = (float)screenW / (2.0f * tileScale);
+    float halfY = (float)screenH / (2.0f * tileScale);
+    float camPXf = (float)centerPX - halfX;
+    float camPYf = (float)centerPY - halfY;
 
     SDL_SetTextureAlphaMod(v->tilesTex, 200);
 
@@ -185,16 +197,16 @@ static void viewRenderStarts(MapPreviewView *v, SDL_Renderer *renderer,
     for (BYTE i = 1; i <= numStarts; i++) {
         BYTE sx, sy, sdir;
         if (!clientMapPreviewGetStart(v->preview, i, &sx, &sy, &sdir)) continue;
-        float dx = (float)((int)sx * tileSize - camPX) * zf;
-        float dy = (float)((int)sy * tileSize - camPY) * zf;
-        if (dx + scaledTile < 0 || dx > screenW ||
-            dy + scaledTile < 0 || dy > screenH) continue;
+        float dx = ((float)((int)sx * tileSize) - camPXf) * tileScale;
+        float dy = ((float)((int)sy * tileSize) - camPYf) * tileScale;
+        if (dx + scaledTileF < 0 || dx > screenW ||
+            dy + scaledTileF < 0 || dy > screenH) continue;
         int dir = sdir;
         SDL_FRect src = {
             (float)kBoatAtlasX[dir], (float)kBoatAtlasY[dir],
             (float)tileSize, (float)tileSize
         };
-        SDL_FRect dest = { dx, dy, (float)scaledTile, (float)scaledTile };
+        SDL_FRect dest = { dx, dy, scaledTileF, scaledTileF };
         SDL_RenderTexture(renderer, v->tilesTex, &src, &dest);
     }
 
@@ -305,26 +317,36 @@ static void viewRenderMinimapToOffscreen(MapPreviewView *v,
 
 static void viewRenderTilesToOffscreen(MapPreviewView *v,
                                        SDL_Renderer *renderer,
-                                       int screenW, int screenH) {
-    int zf = (int)v->zoomLevel;
-    if (zf < 1) zf = 1;
+                                       int screenW, int screenH,
+                                       float tileScale) {
+    /* `tileScale` is "offscreen pixels per game pixel" — i.e. how big
+     * each game tile appears in this offscreen. Derived by the caller
+     * from the *actual* post-clamp offscreen size so the apparent
+     * zoom on display matches v->zoomLevel even when ofsW is capped
+     * at 4096. Float-valued because clamps produce non-integer values
+     * (e.g. ofsW=4096 at zoom 0.9 / viewW=1500 → tileScale ≈ 2.46). */
     int tileSize = TILE_SIZE_X;
-    int scaledTile = tileSize * zf;
+    float scaledTileF = (float)tileSize * tileScale;
+    if (scaledTileF < 1.0f) scaledTileF = 1.0f;
 
     int centerPX = ((int)v->centerX * tileSize) >> 8;
     int centerPY = ((int)v->centerY * tileSize) >> 8;
-    int camPX = centerPX - screenW / (2 * zf);
-    int camPY = centerPY - screenH / (2 * zf);
+    /* Camera half-span in tile-pixel units (16 per tile, scale
+     * independent). The offscreen carries scaledTileF pixels per
+     * tile so half-span = screenW / (2 * scaledTileF) tiles, and
+     * each tile = tileSize tile-pixels. */
+    float halfX = (float)screenW / (2.0f * tileScale);
+    float halfY = (float)screenH / (2.0f * tileScale);
+    float camPXf = (float)centerPX - halfX;
+    float camPYf = (float)centerPY - halfY;
 
-    int camMX = camPX / tileSize;
-    int camMY = camPY / tileSize;
-    if (camPX < 0) camMX--;
-    if (camPY < 0) camMY--;
-    int edgeX = (camPX - camMX * tileSize) * zf;
-    int edgeY = (camPY - camMY * tileSize) * zf;
+    int camMX = (int)floorf(camPXf / (float)tileSize);
+    int camMY = (int)floorf(camPYf / (float)tileSize);
+    float edgeX = (camPXf - (float)(camMX * tileSize)) * tileScale;
+    float edgeY = (camPYf - (float)(camMY * tileSize)) * tileScale;
 
-    int tilesW = screenW / scaledTile + 3;
-    int tilesH = screenH / scaledTile + 3;
+    int tilesW = (int)((float)screenW / scaledTileF) + 3;
+    int tilesH = (int)((float)screenH / scaledTileF) + 3;
     if (tilesW > 256) tilesW = 256;
     if (tilesH > 256) tilesH = 256;
 
@@ -344,9 +366,9 @@ static void viewRenderTilesToOffscreen(MapPreviewView *v,
                 (float)tileSize, (float)tileSize
             };
             SDL_FRect dest = {
-                (float)(x * scaledTile - edgeX),
-                (float)(y * scaledTile - edgeY),
-                (float)scaledTile, (float)scaledTile
+                (float)x * scaledTileF - edgeX,
+                (float)y * scaledTileF - edgeY,
+                scaledTileF, scaledTileF
             };
             SDL_RenderTexture(renderer, v->tilesTex, &src, &dest);
         }
@@ -374,9 +396,9 @@ static void viewRenderTilesToOffscreen(MapPreviewView *v,
                     (float)tileSize, (float)tileSize
                 };
                 SDL_FRect dest = {
-                    (float)(x * scaledTile - edgeX),
-                    (float)(y * scaledTile - edgeY),
-                    (float)scaledTile, (float)scaledTile
+                    (float)x * scaledTileF - edgeX,
+                    (float)y * scaledTileF - edgeY,
+                    scaledTileF, scaledTileF
                 };
                 SDL_RenderTexture(renderer, v->tilesTex, &mineSrc, &dest);
             }
@@ -384,7 +406,7 @@ static void viewRenderTilesToOffscreen(MapPreviewView *v,
     }
     SDL_SetTextureAlphaMod(v->tilesTex, 255);
 
-    viewRenderStarts(v, renderer, screenW, screenH);
+    viewRenderStarts(v, renderer, screenW, screenH, tileScale);
 }
 
 /* ── Map data lifecycle ──────────────────────────────────────────── */
@@ -393,6 +415,10 @@ static void viewFreeMapData(MapPreviewView *v) {
     if (v->offscreen) { SDL_DestroyTexture(v->offscreen); v->offscreen = NULL; }
     v->offscreenW = 0;
     v->offscreenH = 0;
+    if (v->scratch) { SDL_DestroyTexture(v->scratch); v->scratch = NULL; }
+    v->scratchW = 0;
+    v->scratchH = 0;
+    v->displayTex = NULL;
     if (v->dataLoaded && v->preview) {
         clientMapPreviewDestroy(v->preview);
         v->preview = NULL;
@@ -536,6 +562,7 @@ extern "C" void mapPreviewViewDestroy(MapPreviewView *v) {
     if (v->compressedData) { SDL_free(v->compressedData); v->compressedData = NULL; }
     if (v->filePath)       { SDL_free(v->filePath);       v->filePath       = NULL; }
     if (v->tilesTex)       { SDL_DestroyTexture(v->tilesTex); v->tilesTex   = NULL; }
+    if (v->scratch)        { SDL_DestroyTexture(v->scratch); v->scratch     = NULL; }
     SDL_free(v);
 }
 
@@ -599,16 +626,35 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
         }
     }
 
-    /* Sub-1x zoom in sprite mode: oversample into a larger offscreen
-     * so the destination Image downscales for crisp tiles. Skipped in
-     * minimap mode (zoom < 0.5) where we want a 1:1 buffer — colour
-     * rects are already at the right pixel density. */
+    /* Sub-1x zoom in sprite mode: 4x oversample.  Combined with a
+     * manual 2:1 bilinear downsample pass below, the bilinear chain
+     * ends up averaging ~16 source pixels per displayed pixel at
+     * zoom 0.5 (4 from each of the two bilinear passes) instead of
+     * 4 from a single pass.  The tile renderer draws at zf=4 to
+     * match — see viewRenderTilesToOffscreen.  Capped at 4096² for
+     * VRAM safety; below the cap quality is maximal.
+     *
+     * IMPORTANT: clamp PROPORTIONALLY — scaling each axis down by
+     * its own ratio if it exceeded 4096 would drift the offscreen's
+     * aspect ratio away from the display's, and ImGui::Image's
+     * stretch-to-fit would show as "zoom in X but not Y". Scale
+     * both axes by the same factor so the texture aspect matches
+     * the display rect at any zoom level. */
     int ofsW = viewW, ofsH = viewH;
     if (v->zoomLevel < 1.0f && v->zoomLevel >= ZOOM_MINIMAP_MAX) {
-        ofsW = (int)(viewW / v->zoomLevel);
-        ofsH = (int)(viewH / v->zoomLevel);
-        if (ofsW > 4096) ofsW = 4096;
-        if (ofsH > 4096) ofsH = 4096;
+        float scale = 4.0f / v->zoomLevel;
+        float fW = (float)viewW * scale;
+        float fH = (float)viewH * scale;
+        float largest = (fW > fH) ? fW : fH;
+        if (largest > 4096.0f) {
+            float cap = 4096.0f / largest;
+            fW *= cap;
+            fH *= cap;
+        }
+        ofsW = (int)fW;
+        ofsH = (int)fH;
+        if (ofsW < 1) ofsW = 1;
+        if (ofsH < 1) ofsH = 1;
     }
 
     if (!v->offscreen || v->offscreenW != ofsW || v->offscreenH != ofsH) {
@@ -623,24 +669,82 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
     }
 
     if (v->offscreen) {
+        /* Tile atlas filter mode — LINEAR when sub-1x sprite mode so
+         * the 16->64-px tile upscale anti-aliases tile edges; NEAREST
+         * otherwise so pixel art stays crisp at >=1x. */
+        bool subOne = (v->zoomLevel >= ZOOM_MINIMAP_MAX &&
+                       v->zoomLevel < 1.0f);
+        if (v->tilesTex) {
+            SDL_SetTextureScaleMode(v->tilesTex,
+                subOne ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+        }
+
         SDL_SetRenderTarget(renderer, v->offscreen);
         SDL_SetRenderDrawColor(renderer, 0, 0, 64, 255);
         SDL_RenderClear(renderer);
-        /* Below 0.4× game scale, switch to minimap-colour mode —
-         * tile sprites at < ~6 px per tile look like noise, so swap
+        /* Below 0.33× game scale, switch to minimap-colour mode —
+         * tile sprites at < ~5 px per tile look like noise, so swap
          * in the per-tile colour rep used by the dedicated 256×256
          * minimap. Above that, fall through to the sprite renderer. */
         if (v->zoomLevel < ZOOM_MINIMAP_MAX) {
             viewRenderMinimapToOffscreen(v, renderer, ofsW, ofsH);
         } else {
-            viewRenderTilesToOffscreen(v, renderer, ofsW, ofsH);
+            /* tileScale = "tile pixels in offscreen per game pixel".
+             * Derived from the *actual* (post-clamp) ofsW so the
+             * displayed zoom matches v->zoomLevel even when the
+             * offscreen had to be capped at 4096. For zoom 1.0 this
+             * works out to 1.0 (offscreen at viewW, no oversample);
+             * for sub-1x sprite mode (4x oversample target) it's
+             * close to 4 when uncapped, and lower when clamped. */
+            float tileScale =
+                (float)ofsW * v->zoomLevel / (float)viewW;
+            if (tileScale < 0.5f) tileScale = 0.5f;
+            viewRenderTilesToOffscreen(v, renderer, ofsW, ofsH, tileScale);
         }
         SDL_SetRenderTarget(renderer, NULL);
+
+        /* Sub-1x: do one manual 2:1 bilinear downsample pass into
+         * `scratch`. ImGui then bilinearly scales scratch down to
+         * the display size — net effect ~16 source pixels averaged
+         * per output pixel for sub-1x zoom levels. For other modes
+         * we display offscreen directly. */
+        if (subOne) {
+            int s2W = ofsW / 2;
+            int s2H = ofsH / 2;
+            if (s2W < 1) s2W = 1;
+            if (s2H < 1) s2H = 1;
+            if (!v->scratch || v->scratchW != s2W || v->scratchH != s2H) {
+                if (v->scratch) SDL_DestroyTexture(v->scratch);
+                v->scratch = SDL_CreateTexture(renderer,
+                    SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
+                    s2W, s2H);
+                v->scratchW = s2W;
+                v->scratchH = s2H;
+                if (v->scratch) {
+                    SDL_SetTextureScaleMode(v->scratch, SDL_SCALEMODE_LINEAR);
+                }
+            }
+            if (v->scratch) {
+                SDL_SetRenderTarget(renderer, v->scratch);
+                SDL_SetRenderDrawColor(renderer, 0, 0, 64, 255);
+                SDL_RenderClear(renderer);
+                SDL_RenderTexture(renderer, v->offscreen, NULL, NULL);
+                SDL_SetRenderTarget(renderer, NULL);
+                v->displayTex = v->scratch;
+            } else {
+                v->displayTex = v->offscreen;
+            }
+        } else {
+            v->displayTex = v->offscreen;
+        }
     }
 }
 
 extern "C" SDL_Texture *mapPreviewViewGetTexture(MapPreviewView *v) {
-    return v ? v->offscreen : NULL;
+    if (!v) return NULL;
+    /* displayTex is the active "after all downsample passes" texture
+     * — scratch in sub-1x sprite mode, offscreen everywhere else. */
+    return v->displayTex ? v->displayTex : v->offscreen;
 }
 
 extern "C" void mapPreviewViewGetTextureSize(const MapPreviewView *v,

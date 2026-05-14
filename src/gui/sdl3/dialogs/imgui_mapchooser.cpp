@@ -90,68 +90,112 @@ static void SDLCALL mapChooserFileDialogCallback(void *userdata, const char *con
     state->fileDialogPending = false;
 }
 
+/* Helpers — check if a path is a directory using SDL3's path-info API. */
+static bool pathIsDirectory(const char *path) {
+    SDL_PathInfo info;
+    if (!SDL_GetPathInfo(path, &info)) return false;
+    return info.type == SDL_PATHTYPE_DIRECTORY;
+}
+
 static void discoverMaps(MapChooserState *state) {
+    /* If the caller wired a list provider (e.g. the lobby in Phase 3
+     * routes through serverSimEnumerateMapDir), defer to it entirely.
+     * The provider is responsible for populating state->maps + setting
+     * isParentUp / isFolder flags. */
+    if (state->listProvider) {
+        state->numMaps = 0;
+        state->listProvider(state, state->currentDir,
+                             state->listProviderCtx);
+        return;
+    }
+
     state->numMaps = 0;
 
-    /* First entry is always "Everard Island (Inbuilt)" */
-    SDL_strlcpy(state->maps[0].name, langGetText(STR_MAPCHOOSER_EVERARD), sizeof(state->maps[0].name));
-    state->maps[0].path[0] = '\0'; /* empty = inbuilt */
-    state->numMaps = 1;
+    /* Source directory — explicit currentDir if set, else default. */
+    const char *dir = (state->currentDir[0] != '\0')
+                        ? state->currentDir
+                        : "data/maps";
+    const char *root = "data/maps";
 
-    const char *dir = "data/maps";
-
-#if defined(__IPHONEOS__)
-    /* SDL_GlobDirectory doesn't work with the iOS app bundle filesystem.
-     * Use opendir/readdir directly instead. */
-    {
-        DIR *d = opendir(dir);
-        if (d) {
-            struct dirent *ent;
-            while ((ent = readdir(d)) != NULL && state->numMaps < MAP_CHOOSER_MAX_MAPS) {
-                size_t len = strlen(ent->d_name);
-                if (len <= 4 || strcasecmp(ent->d_name + len - 4, ".map") != 0) continue;
-                if (SDL_strcasecmp(ent->d_name, "Everard Island.map") == 0) continue;
-
-                MapChooserEntry *e = &state->maps[state->numMaps];
-                SDL_snprintf(e->path, sizeof(e->path), "%s/%s", dir, ent->d_name);
-                SDL_strlcpy(e->name, ent->d_name, sizeof(e->name));
-                size_t nlen = SDL_strlen(e->name);
-                if (nlen > 4 && SDL_strcasecmp(e->name + nlen - 4, ".map") == 0) {
-                    e->name[nlen - 4] = '\0';
-                }
-                state->numMaps++;
-            }
-            closedir(d);
+    /* At the root, the first entry is always "Everard Island (Inbuilt)".
+     * Inside a subfolder, the first entry is a synthetic ".." that
+     * navigates back up. */
+    bool inSubfolder = (SDL_strcasecmp(dir, root) != 0);
+    if (inSubfolder) {
+        MapChooserEntry *e = &state->maps[state->numMaps++];
+        memset(e, 0, sizeof(*e));
+        SDL_strlcpy(e->name, "[..]", sizeof(e->name));
+        /* Parent path = strip last segment from `dir`. */
+        SDL_strlcpy(e->path, dir, sizeof(e->path));
+        size_t plen = SDL_strlen(e->path);
+        while (plen > 0 && e->path[plen - 1] != '/' && e->path[plen - 1] != '\\') {
+            e->path[--plen] = '\0';
         }
-    }
-#else
-    {
-        int count = 0;
-        char **list = SDL_GlobDirectory(dir, "*.map", 0, &count);
-        if (list) {
-            for (int i = 0; i < count && state->numMaps < MAP_CHOOSER_MAX_MAPS; i++) {
-                if (SDL_strcasecmp(list[i], "Everard Island.map") == 0) continue;
-
-                MapChooserEntry *e = &state->maps[state->numMaps];
-                SDL_snprintf(e->path, sizeof(e->path), "%s/%s", dir, list[i]);
-                SDL_strlcpy(e->name, list[i], sizeof(e->name));
-                size_t len = SDL_strlen(e->name);
-                if (len > 4 && SDL_strcasecmp(e->name + len - 4, ".map") == 0) {
-                    e->name[len - 4] = '\0';
-                }
-                state->numMaps++;
-            }
-            SDL_free(list);
+        if (plen > 0) e->path[plen - 1] = '\0'; /* drop separator */
+        if (e->path[0] == '\0') {
+            SDL_strlcpy(e->path, root, sizeof(e->path));
         }
+        e->isFolder = true;
+        e->isParentUp = true;
+    } else {
+        SDL_strlcpy(state->maps[0].name, langGetText(STR_MAPCHOOSER_EVERARD),
+                    sizeof(state->maps[0].name));
+        state->maps[0].path[0] = '\0';   /* empty = inbuilt */
+        state->maps[0].isFolder   = false;
+        state->maps[0].isParentUp = false;
+        state->numMaps = 1;
     }
-#endif
 
-    /* Sort all maps alphabetically — Everard Island (the inbuilt entry
-     * added at index 0) gets sorted in alongside the rest rather than
-     * pinned at the top. */
-    if (state->numMaps > 1) {
-        std::sort(&state->maps[0], &state->maps[state->numMaps],
+    /* Enumerate `dir`. SDL_GlobDirectory returns just basenames; for
+     * each we stat to distinguish folders from .map files.  We don't
+     * filter by "*.map" since folders need to be picked up too. */
+    int count = 0;
+    char **list = SDL_GlobDirectory(dir, NULL, 0, &count);
+    if (list) {
+        for (int i = 0; i < count && state->numMaps < MAP_CHOOSER_MAX_MAPS; i++) {
+            const char *name = list[i];
+            if (name[0] == '.') continue; /* skip dotfiles + . / .. */
+
+            char full[FILENAME_MAX];
+            SDL_snprintf(full, sizeof(full), "%s/%s", dir, name);
+
+            bool isDir = pathIsDirectory(full);
+            if (isDir) {
+                MapChooserEntry *e = &state->maps[state->numMaps++];
+                memset(e, 0, sizeof(*e));
+                SDL_strlcpy(e->name, name, sizeof(e->name));
+                SDL_strlcpy(e->path, full, sizeof(e->path));
+                e->isFolder = true;
+                continue;
+            }
+
+            /* Files: only *.map. Skip the inbuilt Everard duplicate at root. */
+            size_t nlen = SDL_strlen(name);
+            if (nlen <= 4 ||
+                SDL_strcasecmp(name + nlen - 4, ".map") != 0) continue;
+            if (!inSubfolder &&
+                SDL_strcasecmp(name, "Everard Island.map") == 0) continue;
+
+            MapChooserEntry *e = &state->maps[state->numMaps++];
+            memset(e, 0, sizeof(*e));
+            SDL_strlcpy(e->path, full, sizeof(e->path));
+            SDL_strlcpy(e->name, name, sizeof(e->name));
+            size_t dlen = SDL_strlen(e->name);
+            if (dlen > 4 &&
+                SDL_strcasecmp(e->name + dlen - 4, ".map") == 0) {
+                e->name[dlen - 4] = '\0';
+            }
+        }
+        SDL_free(list);
+    }
+
+    /* Sort everything past the synthetic ".." (when present)
+     * alphabetically with folders FIRST so they cluster at the top. */
+    int sortFrom = inSubfolder ? 1 : 0;
+    if (state->numMaps - sortFrom > 1) {
+        std::sort(&state->maps[sortFrom], &state->maps[state->numMaps],
             [](const MapChooserEntry &a, const MapChooserEntry &b) {
+                if (a.isFolder != b.isFolder) return a.isFolder;
                 return SDL_strcasecmp(a.name, b.name) < 0;
             });
     }
@@ -539,12 +583,53 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 }
                 if (!match) continue;
             }
-            bool selected = (i == state->selectedIdx);
-            if (ImGui::Selectable(state->maps[i].name, selected)) {
-                if (state->selectedIdx != i) {
+            /* Display label: folders get a "[Folder] " prefix until a
+             * proper icon lands; the ".." parent entry is rendered as
+             * "[..]" directly. */
+            char labelBuf[160];
+            const MapChooserEntry &ent = state->maps[i];
+            if (ent.isFolder && !ent.isParentUp) {
+                SDL_snprintf(labelBuf, sizeof(labelBuf),
+                             "[Folder] %s##%d", ent.name, i);
+            } else {
+                SDL_snprintf(labelBuf, sizeof(labelBuf), "%s##%d",
+                             ent.name, i);
+            }
+            bool selected = (!ent.isFolder) && (i == state->selectedIdx);
+            if (ImGui::Selectable(labelBuf, selected)) {
+                if (ent.isFolder) {
+                    /* Navigate into / out of a folder — re-scan and
+                     * land the selection on the first FILE entry so
+                     * the preview shows something useful. Clear search
+                     * so the new folder's contents aren't hidden by a
+                     * stale filter. */
+                    SDL_strlcpy(state->currentDir, ent.path,
+                                sizeof(state->currentDir));
+                    discoverMaps(state);
+                    state->searchFilter[0] = '\0';
+                    int firstFile = -1;
+                    for (int j = 0; j < state->numMaps; j++) {
+                        if (!state->maps[j].isFolder) { firstFile = j; break; }
+                    }
+                    state->selectedIdx = (firstFile >= 0) ? firstFile : 0;
+                    if (firstFile >= 0) {
+                        SDL_strlcpy(state->selectedPath,
+                                    state->maps[firstFile].path,
+                                    sizeof(state->selectedPath));
+                        SDL_strlcpy(state->selectedName,
+                                    state->maps[firstFile].name,
+                                    sizeof(state->selectedName));
+                    } else {
+                        state->selectedPath[0] = '\0';
+                        state->selectedName[0] = '\0';
+                    }
+                    updatePreview(state, renderer);
+                    changed = true;
+                } else if (state->selectedIdx != i) {
                     state->selectedIdx = i;
-                    SDL_strlcpy(state->selectedPath, state->maps[i].path, FILENAME_MAX);
-                    SDL_strlcpy(state->selectedName, state->maps[i].name, sizeof(state->selectedName));
+                    SDL_strlcpy(state->selectedPath, ent.path, FILENAME_MAX);
+                    SDL_strlcpy(state->selectedName, ent.name,
+                                sizeof(state->selectedName));
                     updatePreview(state, renderer);
                     changed = true;
                 }
@@ -597,11 +682,77 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             ImVec2 imgPos = ImGui::GetCursorScreenPos();
             ImGui::Image((ImTextureID)tex, ImVec2(availW, availH));
             ImGui::SetCursorScreenPos(imgPos);
+            /* Mark the upcoming InvisibleButton as allow-overlap so the
+             * maximize icon we draw afterwards (covering a small corner
+             * of the same area) can claim its own clicks. Without this,
+             * the InvisibleButton — submitted first and covering the
+             * whole image — wins hit-testing across the entire region
+             * and the maximize button never fires. */
+            ImGui::SetNextItemAllowOverlap();
             ImGui::InvisibleButton("##MapPreviewDrag",
                                     ImVec2(availW, availH));
             bool hovered = ImGui::IsItemHovered();
             MapPreviewInputOpts opts = { true, true, true, false };
             mapPreviewViewHandleInput(state->previewView, hovered, &opts);
+
+            /* Zoom-level indicator — bottom-right corner of the
+             * preview image. Drawn as an overlay so it doesn't
+             * disturb the layout. */
+            {
+                char zoomText[16];
+                SDL_snprintf(zoomText, sizeof(zoomText), "%.2fx",
+                             mapPreviewViewGetZoom(state->previewView));
+                ImVec2 textSize = ImGui::CalcTextSize(zoomText);
+                float pad = 6.0f;
+                ImVec2 textPos(imgPos.x + availW - textSize.x - pad,
+                               imgPos.y + availH - textSize.y - pad);
+                ImDrawList *dl = ImGui::GetWindowDrawList();
+                ImVec2 bgMin(textPos.x - 4.0f, textPos.y - 2.0f);
+                ImVec2 bgMax(textPos.x + textSize.x + 4.0f,
+                             textPos.y + textSize.y + 2.0f);
+                dl->AddRectFilled(bgMin, bgMax,
+                                  IM_COL32(0, 0, 0, 160), 4.0f);
+                dl->AddText(textPos,
+                            IM_COL32(255, 255, 255, 220), zoomText);
+            }
+
+            /* Maximize / restore toggle — top-right corner of the
+             * preview image. Only rendered if the surrounding window
+             * wired up a maximize flag. Translucent black backing so
+             * it stays legible over any map terrain. */
+            if (state->maximizePtr) {
+                bool maxed = *state->maximizePtr;
+                float btnSz = 24.0f;
+                ImVec2 btnPos(imgPos.x + availW - btnSz - 6.0f,
+                              imgPos.y + 6.0f);
+                ImVec2 saved = ImGui::GetCursorScreenPos();
+                ImGui::SetCursorScreenPos(btnPos);
+                ImGui::PushStyleColor(ImGuiCol_Button,
+                    ImVec4(0.0f, 0.0f, 0.0f, 0.55f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                    ImVec4(0.2f, 0.2f, 0.2f, 0.80f));
+                ImGui::PushStyleColor(ImGuiCol_Text,
+                    ImVec4(1.0f, 1.0f, 1.0f, 0.9f));
+                const char *label = maxed
+                    ? "\xe2\xa4\xa6"   /* ⤦ : restore */
+                    : "\xe2\xa4\xa2";  /* ⤢ : maximize */
+                if (ImGui::Button(label, ImVec2(btnSz, btnSz))) {
+                    *state->maximizePtr = !maxed;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(maxed
+                        ? "Restore default size (Esc)"
+                        : "Maximize");
+                }
+                ImGui::PopStyleColor(3);
+                ImGui::SetCursorScreenPos(saved);
+                /* Submit a zero-size dummy so ImGui re-anchors the
+                 * "last item" rect to the restored cursor position
+                 * — silences the SetCursorScreenPos warning about
+                 * extending boundaries without an item. */
+                ImGui::Dummy(ImVec2(0.0f, 0.0f));
+            }
+
             previewShown = true;
         }
     }
