@@ -79,6 +79,69 @@ static SDL_Texture *loadPng(SDL_Renderer *renderer, const char *filename) {
     return tex;
 }
 
+/* Composite the shield logo onto `target` with an additive "sun glint" band
+ * traversing left-to-right at progress `t` in [0,1]. The band is built from
+ * 16 vertical strips of `logo` re-drawn with SDL_BLENDMODE_ADD and Gaussian-
+ * weighted alpha — re-drawing the logo (rather than a plain quad) makes the
+ * additive contribution automatically masked by the logo's own alpha, so
+ * the glint only brightens pixels inside the shield silhouette. */
+static void composeShimmerFrame(SDL_Renderer *r, SDL_Texture *target,
+                                 SDL_Texture *logo, int w, int h, float t) {
+    SDL_Texture *prevTarget = SDL_GetRenderTarget(r);
+
+    SDL_BlendMode prevTexBlend;
+    SDL_GetTextureBlendMode(logo, &prevTexBlend);
+    Uint8 prevR = 255, prevG = 255, prevB = 255;
+    SDL_GetTextureColorMod(logo, &prevR, &prevG, &prevB);
+    Uint8 prevA = 255;
+    SDL_GetTextureAlphaMod(logo, &prevA);
+
+    SDL_SetRenderTarget(r, target);
+    SDL_SetRenderClipRect(r, NULL);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
+    SDL_RenderClear(r);
+
+    /* Pass 1: opaque logo */
+    SDL_SetTextureBlendMode(logo, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureColorMod(logo, 255, 255, 255);
+    SDL_SetTextureAlphaMod(logo, 255);
+    SDL_RenderTexture(r, logo, NULL, NULL);
+
+    /* Pass 2: additive glint band */
+    const int NSTRIPS = 16;
+    const float bandHalfW = (float)w * 0.25f;
+    const float stripW    = (bandHalfW * 2.0f) / (float)NSTRIPS;
+    const float sigma     = bandHalfW * 0.5f;
+    const float centerX   = -bandHalfW + t * ((float)w + 2.0f * bandHalfW);
+
+    SDL_SetTextureBlendMode(logo, SDL_BLENDMODE_ADD);
+    for (int i = 0; i < NSTRIPS; i++) {
+        float offset = ((float)i - (float)(NSTRIPS - 1) * 0.5f) * stripW;
+        float ratio  = offset / sigma;
+        float gauss  = SDL_expf(-ratio * ratio);
+        Uint8 alpha  = (Uint8)(gauss * 200.0f);
+        if (alpha == 0) continue;
+
+        SDL_Rect clip;
+        clip.x = (int)(centerX + offset - stripW * 0.5f);
+        clip.y = 0;
+        clip.w = (int)stripW + 1;
+        clip.h = h;
+        if (clip.x + clip.w <= 0 || clip.x >= w) continue;
+
+        SDL_SetRenderClipRect(r, &clip);
+        SDL_SetTextureAlphaMod(logo, alpha);
+        SDL_RenderTexture(r, logo, NULL, NULL);
+    }
+
+    /* Restore */
+    SDL_SetTextureAlphaMod(logo, prevA);
+    SDL_SetTextureColorMod(logo, prevR, prevG, prevB);
+    SDL_SetTextureBlendMode(logo, prevTexBlend);
+    SDL_SetRenderTarget(r, prevTarget);
+}
+
 extern "C" int imguiWelcomeShow(void) {
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
@@ -126,11 +189,18 @@ extern "C" int imguiWelcomeShow(void) {
     /* Load images */
     SDL_Texture *logoTex = loadPng(renderer, "smalllogo-transparent.png");
 
-    /* Query logo dimensions (scaled) */
+    /* Query logo dimensions. nativeW/H are the texture's pixel size and are
+     * used for the shimmer offscreen target so the SDL render-target pass
+     * is a 1:1 copy of the source — without that, the shimmer texture would
+     * downscale 265→200 in SDL and then ImGui downscales again 200→198.75,
+     * softening the text on the shield and making the logo look subtly
+     * smaller mid-sweep than when displayed directly. */
+    float nativeW = 0.0f, nativeH = 0.0f;
     float logoW = 0.0f, logoH = 0.0f;
     if (logoTex) {
-        SDL_GetTextureSize(logoTex, &logoW, &logoH);
-        logoW *= 0.75f; logoH *= 0.75f;
+        SDL_GetTextureSize(logoTex, &nativeW, &nativeH);
+        logoW = nativeW * 0.75f;
+        logoH = nativeH * 0.75f;
         if (s > 1.05f) { logoW *= s; logoH *= s; }
     }
 
@@ -141,6 +211,19 @@ extern "C" int imguiWelcomeShow(void) {
     int result = RESULT_QUIT;
     bool running = true;
     Uint64 lastTickTime = SDL_GetTicks();
+
+    /* Logo shimmer: a 1.5s "sun glint" sweep, fired on hover entry and on
+     * a 75–105s randomised idle timer. Offscreen target is cached for the
+     * dialog lifetime and recreated on logo size change (e.g. DPI/resize). */
+    const Uint64 SHIMMER_DURATION_MS = 1500;
+    const Uint64 SHIMMER_AUTO_MIN_MS = 75000;
+    const Uint64 SHIMMER_AUTO_MAX_MS = 105000;
+    Uint64 shimmerStartMs    = 0;  /* 0 = idle */
+    Uint64 shimmerNextAutoMs = 0;  /* 0 = needs init */
+    SDL_Texture *shimmerTarget = nullptr;
+    int shimmerTargetW = 0;
+    int shimmerTargetH = 0;
+    bool wasLogoHovered = false;
 
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
@@ -171,6 +254,51 @@ extern "C" int imguiWelcomeShow(void) {
         /* Query actual window size each frame (handles resize) */
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
+
+        /* --- Shimmer state update + offscreen composition --- */
+        Uint64 nowMs = SDL_GetTicks();
+        bool sweeping = (shimmerStartMs != 0) &&
+                        (nowMs - shimmerStartMs < SHIMMER_DURATION_MS);
+        if (shimmerStartMs != 0 && !sweeping) shimmerStartMs = 0;
+
+        if (shimmerNextAutoMs == 0) {
+            Uint32 range = (Uint32)(SHIMMER_AUTO_MAX_MS - SHIMMER_AUTO_MIN_MS);
+            shimmerNextAutoMs = nowMs + SHIMMER_AUTO_MIN_MS +
+                                (Uint64)SDL_rand((Sint32)range);
+        }
+        if (!sweeping && nowMs >= shimmerNextAutoMs) {
+            shimmerStartMs = nowMs;
+            sweeping = true;
+            Uint32 range = (Uint32)(SHIMMER_AUTO_MAX_MS - SHIMMER_AUTO_MIN_MS);
+            shimmerNextAutoMs = nowMs + SHIMMER_AUTO_MIN_MS +
+                                (Uint64)SDL_rand((Sint32)range);
+        }
+
+        ImTextureID logoImageTexID = (ImTextureID)logoTex;
+        if (sweeping && logoTex && logoW > 0.0f && logoH > 0.0f) {
+            int targetW = (int)nativeW;
+            int targetH = (int)nativeH;
+            if (!shimmerTarget ||
+                shimmerTargetW != targetW || shimmerTargetH != targetH) {
+                if (shimmerTarget) SDL_DestroyTexture(shimmerTarget);
+                shimmerTarget = SDL_CreateTexture(renderer,
+                                                  SDL_PIXELFORMAT_RGBA32,
+                                                  SDL_TEXTUREACCESS_TARGET,
+                                                  targetW, targetH);
+                if (shimmerTarget) {
+                    SDL_SetTextureBlendMode(shimmerTarget, SDL_BLENDMODE_BLEND);
+                    shimmerTargetW = targetW;
+                    shimmerTargetH = targetH;
+                }
+            }
+            if (shimmerTarget) {
+                float t = (float)(nowMs - shimmerStartMs) /
+                          (float)SHIMMER_DURATION_MS;
+                composeShimmerFrame(renderer, shimmerTarget, logoTex,
+                                    shimmerTargetW, shimmerTargetH, t);
+                logoImageTexID = (ImTextureID)shimmerTarget;
+            }
+        }
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
@@ -207,7 +335,16 @@ extern "C" int imguiWelcomeShow(void) {
                     restoreX = (float)winW - logoW;
                 float restoreY = restoreMargin;
                 ImGui::SetCursorPos(ImVec2(restoreX, restoreY));
-                ImGui::Image((ImTextureID)logoTex, ImVec2(logoW, logoH));
+                ImGui::Image(logoImageTexID, ImVec2(logoW, logoH));
+
+                /* Hover entry triggers a sweep — edge-detected so a slow
+                 * drag across the logo doesn't fire repeatedly, and a sweep
+                 * already in progress is left alone. */
+                bool isHovered = ImGui::IsItemHovered();
+                if (!sweeping && isHovered && !wasLogoHovered) {
+                    shimmerStartMs = nowMs;
+                }
+                wasLogoHovered = isHovered;
             }
 
             /* Transparent menu buttons below the logo */
@@ -368,6 +505,7 @@ extern "C" int imguiWelcomeShow(void) {
     }
 
     /* Clean up textures */
+    if (shimmerTarget) SDL_DestroyTexture(shimmerTarget);
     if (logoTex) SDL_DestroyTexture(logoTex);
 
     /* Tear down ImGui */
