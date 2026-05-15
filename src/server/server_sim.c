@@ -1381,6 +1381,17 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     }
     logAddEvent(log_PlayerLeaving, playerNum, 0, 0, 0, 0, NULL);
     logAddEvent(log_PlayerQuit, playerNum, 0, 0, 0, 0, NULL);
+
+    /* Publish before clearing the slot — the filler reads the player's
+     * name and country out of sim->sim.plyrs->item[playerNum], which is
+     * still valid here and gets zeroed later in this function. */
+    {
+        ControlEvent leaveEvt;
+        memset(&leaveEvt, 0, sizeof(leaveEvt));
+        serverSimFillPlayerLeaveEvent(sim, playerNum, &leaveEvt);
+        serverSimPublishControl(sim, &leaveEvt);
+    }
+
     sim->playerConnected[playerNum] = FALSE;
     if (sim->sim.tanks[playerNum] != NULL) {
         tankDestroy(&sim->sim, &sim->sim.tanks[playerNum]);
@@ -3142,6 +3153,17 @@ void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
         }
     }
     evt->u.playerJoin.numAllies = numAllies;
+}
+
+void serverSimFillPlayerLeaveEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
+    evt->type = CTRL_PLAYER_LEAVE;
+    evt->u.playerLeave.playerNum = i;
+    memset(evt->u.playerLeave.name, 0, PACKET_MAX_PLAYER_NAME);
+    strncpy(evt->u.playerLeave.name, sim->sim.plyrs->item[i].playerName,
+            PACKET_MAX_PLAYER_NAME - 1);
+    evt->u.playerLeave.country[0] = sim->sim.plyrs->item[i].location[0];
+    evt->u.playerLeave.country[1] = sim->sim.plyrs->item[i].location[1];
+    evt->u.playerLeave.country[2] = '\0';
 }
 
 /* Wrapper used to enforce the documented sync ordering:

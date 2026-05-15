@@ -141,6 +141,31 @@ static EncodeResult encodePlayerJoin(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+/* PACKET_PLAYER_LEFT wire format:
+ *   [header 8] [playerNum 1] [name PACKET_MAX_PLAYER_NAME (NUL-padded)]
+ *   [cc 2] */
+static EncodeResult encodePlayerLeave(const ControlEvent *evt,
+                                      const struct UdpServerClient *recipient,
+                                      uint8_t *buf, size_t bufCap,
+                                      size_t *outLen) {
+    (void)recipient;
+    const size_t needed = PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME + 2;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    size_t pos = PACKET_HEADER_SIZE;
+    packHeader(buf, PACKET_PLAYER_LEFT, 0);
+    buf[pos++] = evt->u.playerLeave.playerNum;
+    memset(buf + pos, 0, PACKET_MAX_PLAYER_NAME);
+    {
+        size_t nameLen = strnlen(evt->u.playerLeave.name, PACKET_MAX_PLAYER_NAME - 1);
+        if (nameLen > 0) memcpy(buf + pos, evt->u.playerLeave.name, nameLen);
+    }
+    pos += PACKET_MAX_PLAYER_NAME;
+    buf[pos++] = (uint8_t)evt->u.playerLeave.country[0];
+    buf[pos++] = (uint8_t)evt->u.playerLeave.country[1];
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
 /* PACKET_NAME_CHANGE wire format:
  *   [header 8] [playerNum 1] [newName PACKET_MAX_PLAYER_NAME (NUL-padded)] */
 static EncodeResult encodePlayerName(const ControlEvent *evt,
@@ -435,6 +460,24 @@ static bool decodePlayerName(const uint8_t *buf, size_t len,
     return true;
 }
 
+static bool decodePlayerLeave(const uint8_t *buf, size_t len,
+                              ControlEvent *outEvt) {
+    /* Layout matches encodePlayerLeave's wire format. */
+    const size_t fixedLen = 1 + PACKET_MAX_PLAYER_NAME + 2;
+    if (len < fixedLen) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_PLAYER_LEAVE;
+    size_t pos = 0;
+    outEvt->u.playerLeave.playerNum = buf[pos++];
+    memcpy(outEvt->u.playerLeave.name, buf + pos, PACKET_MAX_PLAYER_NAME);
+    outEvt->u.playerLeave.name[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+    pos += PACKET_MAX_PLAYER_NAME;
+    outEvt->u.playerLeave.country[0] = (char)buf[pos++];
+    outEvt->u.playerLeave.country[1] = (char)buf[pos++];
+    outEvt->u.playerLeave.country[2] = '\0';
+    return true;
+}
+
 static bool decodeLobbySlot(const uint8_t *buf, size_t len,
                             ControlEvent *outEvt) {
     if (len < 2) return false;
@@ -595,6 +638,7 @@ static const ControlEncodeFn s_encoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_GAME_OVER]          = encodeGameOver,
     [CTRL_SERVER_SHUTDOWN]    = encodeServerShutdown,
     [CTRL_CHAT]               = encodeChat,
+    [CTRL_PLAYER_LEAVE]       = encodePlayerLeave,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -617,6 +661,7 @@ ControlDecodeFn transportControlCodecDecoder(uint16_t packetType) {
         case PACKET_GAME_OVER:        return decodeGameOver;
         case PACKET_SERVER_SHUTDOWN:  return decodeServerShutdown;
         case PACKET_CHAT_BROADCAST:   return decodeChat;
+        case PACKET_PLAYER_LEFT:      return decodePlayerLeave;
         default:                      return NULL;
     }
 }

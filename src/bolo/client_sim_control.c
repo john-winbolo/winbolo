@@ -51,6 +51,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     case CTRL_PLAYER_JOIN:
         if (evt->u.playerJoin.playerNum == cs->myPlayerNum) return;
         break;
+    case CTRL_PLAYER_LEAVE:
+        if (evt->u.playerLeave.playerNum == cs->myPlayerNum) return;
+        break;
     default:
         break;
     }
@@ -199,6 +202,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * (transport_udp_client.c PACKET_CHAT_BROADCAST branch); the
          * bus publish exists so in-process subscribers can observe
          * chat alongside the other control events. */
+        break;
+
+    case CTRL_PLAYER_LEAVE:
+        /* Lobby chat "X has left" rendering stays at the wire boundary
+         * (transport_udp_client.c PACKET_PLAYER_LEFT branch).  Bots and
+         * SP read playerConnected directly, so no in-process state
+         * mutation is needed here — the event exists so replay logs and
+         * other subscribers see leaves alongside joins. */
         break;
     }
 }
