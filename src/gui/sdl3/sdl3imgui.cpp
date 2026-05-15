@@ -2725,7 +2725,8 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
-        /* Ctrl+key shortcuts — only for events on the main window */
+        /* Cmd+key shortcuts (non-macOS — macOS routes these through NSMenu in mac_menubar.mm) */
+#ifndef __APPLE__
         if (ev.type == SDL_EVENT_KEY_DOWN &&
             ev.key.windowID == SDL_GetWindowID(s_window) &&
             (ev.key.mod & KMOD_PRIMARY) != 0) {
@@ -2787,6 +2788,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 break;
             }
         }
+#endif
 
         /* Key capture for the Key Setup modal — intercept before the game sees it. */
         if (s_keySetupWaiting != ksNone && ev.type == SDL_EVENT_KEY_DOWN &&
