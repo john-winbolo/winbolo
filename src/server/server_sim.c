@@ -505,10 +505,12 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
 
     /* Cache the initial map state for between-round resets */
     {
-        /* Oversized for LZW worst-case (incompressible 64KB map can
-         * encode slightly larger than its input). Caller checks the
-         * returned length against MAP_DOWNLOAD_MAX_SIZE before
-         * shipping over the wire. */
+        /* Oversized for RLE worst-case (the function is named
+         * lzwencoding for legacy reasons but the format is actually
+         * RLE per the comment at the top of ecodlzw.c — an
+         * incompressible 64KB map can encode slightly larger than
+         * its input). Caller checks the returned length against
+         * MAP_DOWNLOAD_MAX_SIZE before shipping over the wire. */
         BYTE tempBuf[131072];
         int len = serverSimGetCompressedMap(sim, tempBuf);
         sim->cachedMapData = malloc(len);
@@ -538,10 +540,12 @@ ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, gameType game, boo
 
     /* Cache the initial map state for between-round resets */
     {
-        /* Oversized for LZW worst-case (incompressible 64KB map can
-         * encode slightly larger than its input). Caller checks the
-         * returned length against MAP_DOWNLOAD_MAX_SIZE before
-         * shipping over the wire. */
+        /* Oversized for RLE worst-case (the function is named
+         * lzwencoding for legacy reasons but the format is actually
+         * RLE per the comment at the top of ecodlzw.c — an
+         * incompressible 64KB map can encode slightly larger than
+         * its input). Caller checks the returned length against
+         * MAP_DOWNLOAD_MAX_SIZE before shipping over the wire. */
         BYTE tempBuf[131072];
         int len = serverSimGetCompressedMap(sim, tempBuf);
         sim->cachedMapData = malloc(len);
@@ -559,7 +563,7 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
                                     gameType game, bool hiddenMines,
                                     int32_t startDelay, int32_t gameLen) {
     ServerSim *sim;
-    /* Oversized for LZW worst-case (see comment in serverSimReloadMap). */
+    /* Oversized for RLE worst-case (see comment in serverSimReloadMap). */
     BYTE tempBuf[131072];
     int len;
     char seedStr[64];
@@ -640,7 +644,7 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
  * provenance — those live in the call sites. */
 static bool serverSimApplyRandomMapConfig(ServerSim *sim,
                                           const MapGenConfig *cfg) {
-    /* Oversized for LZW worst-case (see comment in serverSimReloadMap). */
+    /* Oversized for RLE worst-case (see comment in serverSimReloadMap). */
     BYTE tempBuf[131072];
     int len;
     int x, y;
@@ -694,12 +698,12 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
     memcpy(sim->cachedMapData, tempBuf, len);
     sim->cachedMapDataLen = len;
 
-    /* Map name = "rand_<seed>" so UI labels read sensibly. */
-    {
-        char seedStr[64];
-        mapGenConfigToSeed(cfg, seedStr, sizeof(seedStr));
-        snprintf(sim->mapName, MAP_STR_SIZE, "rand_%.30s", seedStr);
-    }
+    /* Build a human-readable map name from the generator type, the
+     * sub-style (Natural only), and a local-timestamp + short
+     * timezone code. Shared with the chooser UI via
+     * mapGenBuildDisplayName so the lobby title and sim->mapName
+     * stay in lockstep. */
+    mapGenBuildDisplayName(cfg, sim->mapName, MAP_STR_SIZE);
 
     /* Reset human ready flags — they need to re-acknowledge the new
      * map. Bots stay ready (no UI to click). */
@@ -741,7 +745,7 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
 }
 
 bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
-    /* Oversized for LZW worst-case (see comment in serverSimReloadMap). */
+    /* Oversized for RLE worst-case (see comment in serverSimReloadMap). */
     BYTE tempBuf[131072];
     int len;
     char msg[256];
@@ -893,7 +897,7 @@ const char *serverSimGetPreviousMapName(const ServerSim *sim) {
 }
 
 bool serverSimRevertPreview(ServerSim *sim) {
-    /* Oversized for LZW worst-case (see comment in serverSimReloadMap). */
+    /* Oversized for RLE worst-case (see comment in serverSimReloadMap). */
     BYTE tempBuf[131072];
     int len;
     if (!sim || !sim->previousMapData) return FALSE;
@@ -3187,7 +3191,7 @@ void serverSimStartGame(ServerSim *sim) {
 }
 
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
-    /* Oversized for LZW worst-case (see comment in serverSimReloadMap). */
+    /* Oversized for RLE worst-case (see comment in serverSimReloadMap). */
     BYTE tempBuf[131072];
     int len;
     BYTE i;

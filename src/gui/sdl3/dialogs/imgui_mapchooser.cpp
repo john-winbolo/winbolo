@@ -509,6 +509,13 @@ static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer
     /* Store the seed as the selected path for the caller */
     SDL_snprintf(state->selectedPath, FILENAME_MAX, "randommap:%s", state->genSeedBuf);
 
+    /* Refresh the chooser title above the preview to match the name
+     * the server will use for this generation. Shared helper
+     * (mapGenBuildDisplayName) so the two stay in sync. */
+    mapGenBuildDisplayName(&state->genConfig,
+                           state->selectedName,
+                           sizeof(state->selectedName));
+
     s_generateInFlight = false;
 }
 
