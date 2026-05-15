@@ -47,6 +47,12 @@
   #define KMOD_PRIMARY_LABEL  "Ctrl+"
 #endif
 
+#ifdef __APPLE__
+  #define IMGUI_PRIMARY_KEY_DOWN()  (ImGui::GetIO().KeySuper)
+#else
+  #define IMGUI_PRIMARY_KEY_DOWN()  (ImGui::GetIO().KeyCtrl)
+#endif
+
 /* Prevent iOS from shifting the entire SDL view when the soft keyboard appears.
  * SDL3's iOS view controller monitors the textInputRect set via
  * SDL_SetTextInputArea() and scrolls the view so the text field stays visible.

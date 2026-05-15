@@ -358,8 +358,13 @@ extern "C" int imguiKeySetupShow(void) {
 
         if (busy) ImGui::EndDisabled();
 
-        /* Also allow Escape to cancel (when not capturing a key) */
-        if (!busy && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        /* Also allow Escape (or Cmd+W / Cmd+.) to cancel (when not capturing a key) */
+        if (!busy && (ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                      (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
+#ifdef __APPLE__
+                      || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
+#endif
+                     )) {
             result = 0;
             running = false;
         }
