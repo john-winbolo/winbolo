@@ -3261,6 +3261,9 @@ void sdl3ImguiShowSettings(void) {
 extern "C" void sdl3ImguiShowAbout(void) {
     s_showAbout = true;
 }
+extern "C" void sdl3ImguiShowChangeName(void) {
+    s_showChangeName = true;
+}
 extern "C" void sdl3ImguiSetFrameRate(int rate) {
     windowSetFrameRate(rate, true);
 }

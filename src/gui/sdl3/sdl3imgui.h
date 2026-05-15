@@ -137,6 +137,7 @@ void sdl3ImguiShowKeySetup(void);
 void sdl3ImguiShowSettings(void);
 
 void sdl3ImguiShowAbout(void);
+void sdl3ImguiShowChangeName(void);
 
 /* Thin int-parameter wrappers used by the native macOS menu bar so the
  * .mm file doesn't need to pull in bolo enum / dialog-utils headers. */
