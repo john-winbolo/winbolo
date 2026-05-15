@@ -24,6 +24,7 @@
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
+#include "dialogs/imgui_dialog_utils.h"
 
 extern "C" {
 #include "global.h"
@@ -476,9 +477,12 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
         ImGui::SetNextWindowPos(ImVec2(displaySize.x * 0.5f, displaySize.y * 0.5f),
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     }
+    static float s_fadeMapPreview = 0.0f;
     bool modalOpen = ImGui::BeginPopupModal("Map Preview##full", &mapPopupOpen,
                                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove);
     if (modalOpen) {
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            imguiPopupFadeAlpha(&s_fadeMapPreview));
         /* Escape key closes the popup */
         if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             mapPopupOpen = false;
@@ -624,6 +628,7 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
             macOSPinchZoomConsume(); /* drain so it doesn't jump when data arrives */
             ImGui::Text("Map preview loading...");
         }
+        ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
     if (!mapPopupOpen && popupDataLoaded) {

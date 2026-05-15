@@ -33,6 +33,11 @@
 extern "C" {
 #endif
 
+#ifndef BRAINWORLDSIM_TYPEDEF
+#define BRAINWORLDSIM_TYPEDEF
+typedef struct BrainWorldSim BrainWorldSim;
+#endif
+
 #define WSIM_MAX_PILLS   16
 #define WSIM_MAX_TANKS    8
 #define WSIM_MAX_PATH   256
@@ -98,7 +103,7 @@ typedef struct {
   int16_t  num_hits;
 } WSimResult;
 
-typedef struct BrainWorldSim {
+struct BrainWorldSim {
   const BYTE *map;
   float terrain_speed[16];
 
@@ -119,7 +124,7 @@ typedef struct BrainWorldSim {
    * checkpoint in brainWorldSimRun. NULL disables polling. void * so
    * this header doesn't pull in SDL3 — the .c file casts on read. */
   void *abort_flag;
-} BrainWorldSim;
+};
 
 /*********************************************************
  * Init (call once before any parallel use)

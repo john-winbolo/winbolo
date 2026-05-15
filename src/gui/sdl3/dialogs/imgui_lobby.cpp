@@ -198,6 +198,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     /* Set up ImGui context */
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -464,6 +465,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 if (ImGui::SmallButton(langGetText(STR_DLGLOBBY_TEST_CONNECTIVITY))) {
                     serverInstanceTriggerManualProbe();
                 }
+                imguiHandOnHover();
                 if (!canTest) ImGui::EndDisabled();
 
                 ManualProbeState mps = serverInstanceGetManualProbeState();
@@ -488,8 +490,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
                 ImGui::Spacing();
 
+                static float s_fadeLobbyPortmap = 0.0f;
                 if (ImGui::BeginPopupModal(popupTitle, nullptr,
                                            ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                        imguiPopupFadeAlpha(&s_fadeLobbyPortmap));
                     ServerPortmapInfo pm2;
                     serverInstanceGetPortmapInfo(&pm2);
                     ImGui::PushTextWrapPos(420.0f * s);
@@ -515,6 +520,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         ImGui::IsKeyPressed(ImGuiKey_Escape)) {
                         ImGui::CloseCurrentPopup();
                     }
+                    imguiHandOnHover();
+                    ImGui::PopStyleVar();
                     ImGui::EndPopup();
                 }
             }
@@ -643,6 +650,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                     if (ImGui::SmallButton(btnId)) {
                                         clientSimNetSendRemoveBot(cs, (uint8_t)i);
                                     }
+                                    imguiHandOnHover();
                                 }
                             } else {
                                 /* Empty slot */
@@ -661,6 +669,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                     if (ImGui::SmallButton(btnId)) {
                                         clientSimNetSendAddBot(cs);
                                     }
+                                    imguiHandOnHover();
                                 }
                             }
                         }
@@ -744,6 +753,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                 clientSimNetSendMapSkipVote(cs);
                             }
                         }
+                        imguiHandOnHover();
                         if (voted) {
                             ImGui::PopStyleColor(3);
                         }
@@ -804,6 +814,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             bool chatEmpty = (chatInput[0] == '\0');
                             if (chatEmpty) ImGui::BeginDisabled();
                             bool sendClicked = ImGui::Button(langGetText(STR_DLGMSG_BUTTON), ImVec2(btnW, 0));
+                            imguiHandOnHover();
                             if (chatEmpty) ImGui::EndDisabled();
                             if ((sendClicked || enterPressed) &&
                                 !chatEmpty && hasTransport) {
@@ -842,6 +853,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         clientSimNetSendReady(cs, !myReady);
                     }
                 }
+                imguiHandOnHover();
                 if (!canReady) ImGui::EndDisabled();
 
                 if (myPlayerNum == 0 && hasTransport && !clientSimIsBalanceProposalActive(cs)) {
@@ -863,6 +875,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             uint8_t teamSize = (connectedCount > 1) ? (connectedCount / 2) : 1;
                             clientSimNetSendBalanceRequest(cs, teamSize);
                         }
+                        imguiHandOnHover();
                         if (connectedCount < 2) ImGui::EndDisabled();
                     }
                 } else if (myPlayerNum == 0 && hasTransport && clientSimIsBalanceProposalActive(cs)) {
@@ -871,11 +884,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     if (ImGui::Button(langGetText(STR_DLGLOBBY_APPLY_BALANCE), ImVec2(120 * s, 0))) {
                         clientSimNetSendBalanceApply(cs);
                     }
+                    imguiHandOnHover();
                     ImGui::PopStyleColor();
                     ImGui::SameLine(0, 8);
                     if (ImGui::Button(langGetText(STR_DLGLOBBY_DISMISS), ImVec2(80 * s, 0))) {
                         clientSimNetSendBalanceDismiss(cs);
                     }
+                    imguiHandOnHover();
                 }
 
                 ImGui::SameLine(0, 20);
@@ -886,6 +901,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     SDL_snprintf(leavePopupId, sizeof(leavePopupId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
                     ImGui::OpenPopup(leavePopupId);
                 }
+                imguiHandOnHover();
             }
         }
 #else
@@ -1002,6 +1018,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             if (ImGui::SmallButton(btnId)) {
                                 clientSimNetSendRemoveBot(cs, (uint8_t)i);
                             }
+                            imguiHandOnHover();
                         }
                     } else {
                         /* Empty slot */
@@ -1020,6 +1037,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             if (ImGui::SmallButton(btnId)) {
                                 clientSimNetSendAddBot(cs);
                             }
+                            imguiHandOnHover();
                         }
                     }
                 }
@@ -1117,6 +1135,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         clientSimNetSendMapSkipVote(cs);
                     }
                 }
+                imguiHandOnHover();
                 if (voted) {
                     ImGui::PopStyleColor(3);
                 }
@@ -1168,6 +1187,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             bool chatEmpty = (chatInput[0] == '\0');
             if (chatEmpty) ImGui::BeginDisabled();
             bool sendClicked = ImGui::Button(langGetText(STR_DLGMSG_BUTTON), ImVec2(btnW, 0));
+            imguiHandOnHover();
             if (chatEmpty) ImGui::EndDisabled();
             if ((sendClicked || enterPressed) &&
                 !chatEmpty && hasTransport) {
@@ -1197,6 +1217,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     clientSimNetSendReady(cs, !myReady);
                 }
             }
+            imguiHandOnHover();
             if (!canReady) ImGui::EndDisabled();
 
             if (myPlayerNum == 0 && hasTransport && !clientSimIsBalanceProposalActive(cs)) {
@@ -1218,6 +1239,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         uint8_t teamSize = (connectedCount > 1) ? (connectedCount / 2) : 1;
                         clientSimNetSendBalanceRequest(cs, teamSize);
                     }
+                    imguiHandOnHover();
                     if (connectedCount < 2) ImGui::EndDisabled();
                 }
             } else if (myPlayerNum == 0 && hasTransport && clientSimIsBalanceProposalActive(cs)) {
@@ -1226,11 +1248,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_APPLY_BALANCE), ImVec2(120 * s, 0))) {
                     clientSimNetSendBalanceApply(cs);
                 }
+                imguiHandOnHover();
                 ImGui::PopStyleColor();
                 ImGui::SameLine(0, 8);
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_DISMISS), ImVec2(80 * s, 0))) {
                     clientSimNetSendBalanceDismiss(cs);
                 }
+                imguiHandOnHover();
             }
 
             ImGui::SameLine(0, 20);
@@ -1241,6 +1265,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 SDL_snprintf(leavePopupId, sizeof(leavePopupId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
                 ImGui::OpenPopup(leavePopupId);
             }
+            imguiHandOnHover();
         }
 #endif
 
@@ -1250,8 +1275,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         /* --- Leave confirmation popup --- */
         char leavePopupModalId[64];
         SDL_snprintf(leavePopupModalId, sizeof(leavePopupModalId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
+        static float s_fadeLobbyLeave = 0.0f;
         if (ImGui::BeginPopupModal(leavePopupModalId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeLobbyLeave));
             ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_LEAVE_BLURB));
             ImGui::Spacing();
             if (ImGui::Button(langGetText(STR_YES), ImVec2(80 * s, 0))) {
@@ -1259,11 +1287,14 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 result = 0;
                 running = false;
             }
+            imguiHandOnHover();
             ImGui::SameLine(0.0f, 8.0f);
             if (ImGui::Button(langGetText(STR_NO), ImVec2(80 * s, 0)) ||
                 ImGui::IsKeyPressed(ImGuiKey_Escape)) {
                 ImGui::CloseCurrentPopup();
             }
+            imguiHandOnHover();
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 

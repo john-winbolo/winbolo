@@ -176,6 +176,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
     /* Set up ImGui context for this dialog */
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -396,12 +397,14 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                 if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0))) {
                     phase = PHASE_GAME_SETUP;
                 }
+                imguiHandOnHover();
                 ImGui::SameLine(0.0f, 8.0f);
                 if (ImGui::Button(langGetText(STR_BACK), ImVec2(btnW, 0)) ||
                     (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
                      !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
                     phase = PHASE_GAME_SETUP;
                 }
+                imguiHandOnHover();
             }
         } else {
             /* ============================================================
@@ -467,6 +470,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                     if (ImGui::SmallButton(langGetText(STR_DLGGAMESETUP_CHANGEMAP))) {
                         phase = PHASE_MAP_CHOOSER;
                     }
+                    imguiHandOnHover();
                     ImGui::EndGroup();
                 }
 
@@ -646,6 +650,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                 if (ImGui::Button(langGetText(STR_DLGGAMESETUP_CHANGEMAP), ImVec2(-1, 0))) {
                     phase = PHASE_MAP_CHOOSER;
                 }
+                imguiHandOnHover();
 
                 ImGui::EndChild(); /* ##MapInfoPanel */
 
@@ -825,6 +830,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                     result = 1;
                     running = false;
                 }
+                imguiHandOnHover();
 
                 ImGui::SameLine(0.0f, 8.0f);
 
@@ -833,6 +839,7 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                      !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
                     running = false;
                 }
+                imguiHandOnHover();
             }
         }
 

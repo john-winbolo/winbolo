@@ -179,7 +179,7 @@ struct tankObj {
   bool newTank;       /* Is this a new tank or not (ie just died */
   bool autoSlowdown;  /* Do we use autoslowdown or not */
   bool autoHideGunsight;  /* Auto show/hide of gunsight enabled/disabled */
-  bool justFired;         /* Did the tank just fire */
+  BYTE justFired;         /* Tick countdown — set to JUST_FIRED_TICKS on shell fire, decremented each tankUpdate. Non-zero means "recently fired" and bypasses tree-hide for pillbox targeting. */
   BYTE tankHitCount;  /* Number of times a tank has been hit to determine if they are cheating */
   WORLD x_prev;       /* World Coordinates at last tick */
   WORLD y_prev;

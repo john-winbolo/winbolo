@@ -21,6 +21,7 @@
 #include "../gui/imgui_theme.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
+#include "../gui/sdl3/dialogs/imgui_dialog_utils.h"
 
 extern "C" {
 #include "../gui/sdl3/sdl3draw.h"
@@ -371,12 +372,14 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                 result = 1;
                 running = false;
             }
+            imguiHandOnHover();
 
             ImGui::SameLine(0.0f, 16.0f * uiScale);
 
             if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH))) {
                 running = false;
             }
+            imguiHandOnHover();
         }
 
         ImGui::EndGroup();
