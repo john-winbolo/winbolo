@@ -3217,6 +3217,9 @@ void sdl3ImguiShowSettings(void) {
 #endif
     }
 }
+extern "C" void sdl3ImguiShowAbout(void) {
+    s_showAbout = true;
+}
 void sdl3ImguiShowPlayersPanel(bool open) {
     s_showPlayersPanel = open;
 #if BOLO_MOBILE
