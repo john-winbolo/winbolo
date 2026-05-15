@@ -441,11 +441,12 @@ set(IOS_BOLO_SOURCES
 # or ENABLE_PILLMASSAGE_BUG, so bolo_static here has the matching
 # minimal feature set.
 add_subdirectory(src/bolo)
+add_subdirectory(src/server)
 add_subdirectory(brains)
 
 # Server sources needed for single-player mode
+# server_sim.c + servermessages.c now come from server_sim_static.
 set(IOS_SERVER_SOURCES
-    src/server/server_sim.c src/server/servermessages.c
     src/server/server_stubs.c
     src/server/server_dedicated_log_stubs.c
     src/server/threads.c
@@ -604,11 +605,9 @@ bolo_apply_include_rules(WinBoloIOS gui)
 bolo_grant_internal_source_access(WinBoloIOS
     src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
-    src/server/server_sim.c
-    src/server/servermessages.c
     src/mapeditor/mapeditor_generate.c)
 
-target_link_libraries(WinBoloIOS PRIVATE bolo_static bot_brains_static)
+target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
     nanosvg stb_image utf8proc zlibstatic
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
@@ -888,11 +887,13 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# bolo_static / server_static — the bulk of the sim and the shared
-# server-peer files. Added here so every desktop target below can link
-# them. Per-target conditional sources (client_mapload, transport_udp_client,
-# nat_portmap, server_sim, servermain, server_frontend_stubs, server_stubs,
-# posix_stubs) stay in their respective *_SOURCES lists.
+# bolo_static / server_sim_static / server_static — the bulk of the sim
+# and the shared server-peer files. Added here so every desktop target
+# below can link them. server_sim_static holds server_sim.c + servermessages.c;
+# server_static (the dedicated-server runtime) PUBLIC-links it.
+# Per-target conditional sources (client_mapload, transport_udp_client,
+# nat_portmap, servermain, server_frontend_stubs, server_stubs, posix_stubs)
+# stay in their respective *_SOURCES lists.
 # ---------------------------------------------------------------------------
 
 add_subdirectory(src/bolo)
@@ -1087,7 +1088,10 @@ endif()
 # bolo_static contains ml_brain.c unconditionally; when HAVE_ONNXRUNTIME
 # is set the lib was compiled with the real path and PUBLIC-links
 # onnxruntime, so consumers inherit the link without repeating it.
-target_link_libraries(WinBolo PRIVATE bolo_static server_static bot_brains_static)
+target_link_libraries(WinBolo PRIVATE
+    bolo_static
+    "$<LINK_GROUP:RESCAN,server_static,server_sim_static>"
+    bot_brains_static)
 
 # Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
 target_sources(WinBolo PRIVATE src/common/sentry_integration.c)
@@ -1277,7 +1281,10 @@ if(TARGET maxminddb)
     target_compile_definitions(WinBoloDS PRIVATE HAVE_MAXMINDDB=1)
 endif()
 
-target_link_libraries(WinBoloDS PRIVATE bolo_static server_static bot_brains_static)
+target_link_libraries(WinBoloDS PRIVATE
+    bolo_static
+    "$<LINK_GROUP:RESCAN,server_static,server_sim_static>"
+    bot_brains_static)
 target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson utf8proc)
 
 # libplum NAT port mapping (optional). nat_portmap.c stays per-target
@@ -1588,7 +1595,10 @@ if(TARGET maxminddb)
     target_compile_definitions(WinBoloHeadless PRIVATE HAVE_MAXMINDDB=1)
 endif()
 
-target_link_libraries(WinBoloHeadless PRIVATE bolo_static server_static bot_brains_static)
+target_link_libraries(WinBoloHeadless PRIVATE
+    bolo_static
+    "$<LINK_GROUP:RESCAN,server_static,server_sim_static>"
+    bot_brains_static)
 target_link_libraries(WinBoloHeadless PRIVATE
     SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
 
@@ -1698,7 +1708,10 @@ if(TARGET maxminddb)
     target_compile_definitions(winbolo_gym PRIVATE HAVE_MAXMINDDB=1)
 endif()
 
-target_link_libraries(winbolo_gym PRIVATE bolo_static server_static bot_brains_static)
+target_link_libraries(winbolo_gym PRIVATE
+    bolo_static
+    "$<LINK_GROUP:RESCAN,server_static,server_sim_static>"
+    bot_brains_static)
 target_link_libraries(winbolo_gym PRIVATE
     SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
 
@@ -1749,7 +1762,7 @@ set(BRAINTEST_SOURCES
     src/gui/sdl3/lang.c
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/servermessages.c src/server/server_sim.c src/server/server_stubs.c
+    src/server/server_stubs.c
     src/server/server_dedicated_log_stubs.c
     src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/braintest/braintest_main.c src/braintest/braintest_frontend.c
@@ -1822,7 +1835,7 @@ else()
     target_compile_options(BrainTest PRIVATE -fcommon)
 endif()
 
-target_link_libraries(BrainTest PRIVATE bolo_static bot_brains_static)
+target_link_libraries(BrainTest PRIVATE bolo_static server_sim_static bot_brains_static)
 target_link_libraries(BrainTest PRIVATE
     SDL3::SDL3 minizip lua_static
     nanosvg stb_image utf8proc cjson
@@ -1857,7 +1870,7 @@ set(MAPEDITOR_SOURCES
     src/gui/sdl3/gamefront_stubs.c
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/servermessages.c src/server/server_sim.c src/server/server_stubs.c
+    src/server/server_stubs.c
     src/server/server_dedicated_log_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
@@ -1904,7 +1917,7 @@ else()
     target_compile_options(MapEditor PRIVATE -fcommon)
 endif()
 
-target_link_libraries(MapEditor PRIVATE bolo_static bot_brains_static)
+target_link_libraries(MapEditor PRIVATE bolo_static server_sim_static bot_brains_static)
 target_link_libraries(MapEditor PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
     nanosvg stb_image utf8proc
