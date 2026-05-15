@@ -394,6 +394,10 @@ const char *clientSimGetMyLastPlayerName(const ClientSim *cs);
 /* Indexed-array accessors (bounds-checked; out-of-range
  * returns NULL for pointer types, false/0 for scalars). */
 const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n);
+
+/* Count of currently-connected lobby slots (humans + bots).
+ * Matches what the lobby UI's player table renders. */
+BYTE clientSimGetLobbyNumConnected(const ClientSim *cs);
 bool                   clientSimIsMapSkipVote(const ClientSim *cs, BYTE n);
 uint8_t                clientSimGetBalanceProposal(const ClientSim *cs, BYTE n);
 
