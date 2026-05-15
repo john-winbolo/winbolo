@@ -174,6 +174,7 @@ extern "C" void imguiSkinsShow(void) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -291,6 +292,7 @@ extern "C" void imguiSkinsShow(void) {
             gameFrontReloadSkins();
             running = false;
         }
+        imguiHandOnHover();
 
         ImGui::SameLine(0.0f, 8.0f);
         if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0)) ||
@@ -299,10 +301,14 @@ extern "C" void imguiSkinsShow(void) {
             skinsLoadSkin(prevSkin);
             running = false;
         }
+        imguiHandOnHover();
 
         /* Error popup */
+        static float s_fadeSkinsErr = 0.0f;
         if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeSkinsErr));
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
             {
@@ -311,7 +317,9 @@ extern "C" void imguiSkinsShow(void) {
                 if (ImGui::Button(okBuf, ImVec2(80, 0))) {
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 

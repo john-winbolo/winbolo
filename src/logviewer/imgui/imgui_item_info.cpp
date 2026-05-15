@@ -13,6 +13,7 @@
 #include "imgui_context.h"
 #include "imgui.h"
 #include "../../gui/lang.h"
+#include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
 
 #include <cstdio>
 #include <cstring>
@@ -194,6 +195,7 @@ void lv_imgui_item_info_window(void) {
             if (ImGui::Button(langGetText(STR_LV_CENTER_ON_MAP), ImVec2(-1, 0))) {
                 lv_screenCentreOnSelectedItem();
             }
+            imguiHandOnHover();
             if (s_in_tank) {
                 ImGui::EndDisabled();
             }
