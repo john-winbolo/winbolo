@@ -47,6 +47,11 @@ extern "C" void clientSimLeaveAllianceSelf(struct ClientSim *cs);
 extern "C" void sdl3ImguiShowKeySetup(void);
 extern "C" void sdl3ImguiShowChangeName(void);
 
+extern "C" void sdl3ImguiShowSendMsg(bool open);
+extern "C" void clientSimCheckAllNonePlayers(struct ClientSim *cs, bool check);
+extern "C" void clientSimCheckAlliedPlayers(struct ClientSim *cs);
+extern "C" void clientSimCheckNearbyPlayers(struct ClientSim *cs);
+
 #define LANG_STR(id) ([NSString stringWithUTF8String:langGetText(id)])
 
 @class WBMenuBridge;
@@ -87,6 +92,11 @@ static void *g_clientSim = NULL;
 - (void)onNetworkDebugMessages:(id)sender;
 - (void)onRequestAlliance:(id)sender;
 - (void)onLeaveAlliance:(id)sender;
+- (void)onShowSendMsg:(id)sender;
+- (void)onSelectAllPlayers:(id)sender;
+- (void)onSelectNonePlayers:(id)sender;
+- (void)onSelectAllies:(id)sender;
+- (void)onSelectNearby:(id)sender;
 @end
 
 @implementation WBMenuBridge
@@ -221,6 +231,26 @@ static void *g_clientSim = NULL;
 - (void)onLeaveAlliance:(id)sender {
     (void)sender;
     if (g_clientSim) clientSimLeaveAllianceSelf((struct ClientSim *)g_clientSim);
+}
+- (void)onShowSendMsg:(id)sender {
+    (void)sender;
+    sdl3ImguiShowSendMsg(true);
+}
+- (void)onSelectAllPlayers:(id)sender {
+    (void)sender;
+    if (g_clientSim) clientSimCheckAllNonePlayers((struct ClientSim *)g_clientSim, true);
+}
+- (void)onSelectNonePlayers:(id)sender {
+    (void)sender;
+    if (g_clientSim) clientSimCheckAllNonePlayers((struct ClientSim *)g_clientSim, false);
+}
+- (void)onSelectAllies:(id)sender {
+    (void)sender;
+    if (g_clientSim) clientSimCheckAlliedPlayers((struct ClientSim *)g_clientSim);
+}
+- (void)onSelectNearby:(id)sender {
+    (void)sender;
+    if (g_clientSim) clientSimCheckNearbyPlayers((struct ClientSim *)g_clientSim);
 }
 @end
 
@@ -613,6 +643,59 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [leaveAllianceItem setTarget:g_bridge];
     [winBoloMenu addItem:leaveAllianceItem];
+
+    /* Players menu — only the static items from the ImGui Players menu in
+     * renderMenuBar(). The dynamic per-player list (alliance indicator,
+     * flag, ping, name) stays in the in-window Players Panel; we don't
+     * replicate it natively. Send Message routes through the wrapper so
+     * macOS opens a real native popout (the wrapper handles desktop vs.
+     * tablet/mobile). */
+    NSMenuItem *playersItem = [mainMenu addItemWithTitle:LANG_STR(STR_MENU_PLAYERS) action:nil keyEquivalent:@""];
+    NSMenu *playersMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_MENU_PLAYERS)];
+    [playersItem setSubmenu:playersMenu];
+
+    /* Send Message — ⇧⌘M (Cmd+M is Window > Minimize per the earlier
+     * collision-resolution decision). */
+    NSMenuItem *sendMsgItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_SEND_MESSAGE)
+        action:@selector(onShowSendMsg:)
+        keyEquivalent:@"m"];
+    [sendMsgItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagShift];
+    [sendMsgItem setTarget:g_bridge];
+    [playersMenu addItem:sendMsgItem];
+
+    [playersMenu addItem:[NSMenuItem separatorItem]];
+
+    /* The ImGui menu uses ImGuiSelectableFlags_DontClosePopups to allow
+     * chaining several Select actions in one open; NSMenu has no
+     * equivalent, so clicking dismisses the menu. Users can re-open it. */
+    NSMenuItem *selectAllItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_SELECT_ALL)
+        action:@selector(onSelectAllPlayers:)
+        keyEquivalent:@""];
+    [selectAllItem setTarget:g_bridge];
+    [playersMenu addItem:selectAllItem];
+
+    NSMenuItem *selectNoneItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_SELECT_NONE)
+        action:@selector(onSelectNonePlayers:)
+        keyEquivalent:@""];
+    [selectNoneItem setTarget:g_bridge];
+    [playersMenu addItem:selectNoneItem];
+
+    NSMenuItem *selectAlliesItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_SELECT_ALLIES)
+        action:@selector(onSelectAllies:)
+        keyEquivalent:@""];
+    [selectAlliesItem setTarget:g_bridge];
+    [playersMenu addItem:selectAlliesItem];
+
+    NSMenuItem *selectNearbyItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_SELECT_NEARBY)
+        action:@selector(onSelectNearby:)
+        keyEquivalent:@""];
+    [selectNearbyItem setTarget:g_bridge];
+    [playersMenu addItem:selectNearbyItem];
 
     /* Window menu — items dispatched through the responder chain to the
      * key NSWindow; no explicit targets. */
