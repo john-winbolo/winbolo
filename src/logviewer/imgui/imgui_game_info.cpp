@@ -19,14 +19,6 @@
 #include <cstring>
 #include <ctime>
 
-/* Windows headers for ShellExecute */
-#ifdef _WIN32
-#include <windows.h>
-#include <shellapi.h>
-#else
-#include <SDL3/SDL.h>
-#endif
-
 /* External functions from backend - using C types directly */
 extern "C" {
     unsigned char lv_screenGetNumPlayers(void);
@@ -295,17 +287,9 @@ void lv_imgui_game_info_window(void) {
         if (s_wbn_key[0] != '\0' && strlen(s_wbn_key) == 32) {
             ImGui::TextUnformatted(langGetText(STR_LV_INFO_WBN_KEY));
             ImGui::SameLine();
-            ImGui::TextLink(s_wbn_key);
-            if (ImGui::IsItemClicked()) {
-                /* Open URL in browser */
-                char url[128];
-                snprintf(url, sizeof(url), "https://www.winbolo.net/gamelog/%s", s_wbn_key);
-#ifdef _WIN32
-                ShellExecuteA(NULL, "open", url, NULL, NULL, SW_SHOW);
-#else
-                SDL_OpenURL(url);
-#endif
-            }
+            char url[128];
+            snprintf(url, sizeof(url), "https://www.winbolo.net/gamelog/%s", s_wbn_key);
+            ImGui::TextLinkOpenURL(s_wbn_key, url);
         }
 
         {

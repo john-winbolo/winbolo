@@ -21,14 +21,6 @@
 #include <cstdlib>
 #include <cstring>
 
-/* Headers for opening URLs */
-#ifdef _WIN32
-#include <windows.h>
-#include <shellapi.h>
-#else
-#include <SDL3/SDL.h>
-#endif
-
 extern "C" {
     #include "logviewer.h"
 
@@ -337,15 +329,7 @@ static void render_about_dialog(void) {
         /* Website link */
         ImGui::TextUnformatted(langGetText(STR_LV_WEBSITE_LBL));
         ImGui::SameLine();
-        ImGui::TextLink(s_website);
-        if (ImGui::IsItemClicked()) {
-            /* Open URL in browser - Windows only for now */
-            #ifdef _WIN32
-            ShellExecuteA(NULL, "open", s_website, NULL, NULL, SW_SHOW);
-            #else
-            SDL_OpenURL(s_website);
-            #endif
-        }
+        ImGui::TextLinkOpenURL(s_website);
 
         ImGui::Separator();
 

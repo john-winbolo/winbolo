@@ -196,6 +196,7 @@ extern "C" void imguiSettingsShow(void) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -844,6 +845,7 @@ extern "C" void imguiSettingsShow(void) {
 
             IMGUI_CHECKVERSION();
             ImGui::CreateContext();
+            imguiRegisterPlatformOpenUrl();
             ImGuiIO &ioNew = ImGui::GetIO();
             ioNew.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
             ioNew.IniFilename = nullptr;
