@@ -3261,6 +3261,21 @@ void sdl3ImguiShowSettings(void) {
 extern "C" void sdl3ImguiShowAbout(void) {
     s_showAbout = true;
 }
+extern "C" void sdl3ImguiSetFrameRate(int rate) {
+    windowSetFrameRate(rate, true);
+}
+extern "C" void sdl3ImguiSetZoom(int zoom) {
+    s_pendingZoom = (BYTE)zoom;
+}
+extern "C" void sdl3ImguiSetMessageLabelLen(ClientSim *cs, int len) {
+    windowSetMessageLabelLen(cs, (labelLen)len);
+}
+extern "C" void sdl3ImguiSetTankLabelLen(ClientSim *cs, int len) {
+    windowSetTankLabelLen(cs, (labelLen)len);
+}
+extern "C" void sdl3ImguiCycleDevicePreset(void) {
+    dialogCycleDevicePreset(sdl3DrawGetWindow());
+}
 void sdl3ImguiShowPlayersPanel(bool open) {
     s_showPlayersPanel = open;
 #if BOLO_MOBILE
