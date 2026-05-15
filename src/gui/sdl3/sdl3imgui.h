@@ -138,6 +138,14 @@ void sdl3ImguiShowSettings(void);
 
 void sdl3ImguiShowAbout(void);
 
+/* Thin int-parameter wrappers used by the native macOS menu bar so the
+ * .mm file doesn't need to pull in bolo enum / dialog-utils headers. */
+void sdl3ImguiSetFrameRate(int rate);
+void sdl3ImguiSetZoom(int zoom);
+void sdl3ImguiSetMessageLabelLen(struct ClientSim *cs, int len);
+void sdl3ImguiSetTankLabelLen(struct ClientSim *cs, int len);
+void sdl3ImguiCycleDevicePreset(void);
+
 /*********************************************************
 *NAME:          sdl3ImguiWantsKeyboard
 *PURPOSE:
