@@ -54,6 +54,7 @@
 #include "tileloader.h"
 #include "sdl_bmp.h"
 #include "global.h"
+#include "client_render.h"
 #include "client_sim.h"
 #include "../gamefront.h"
 #include "tilenum.h"

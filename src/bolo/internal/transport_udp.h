@@ -224,7 +224,7 @@ void transportUdpClientGetGameSettings(Transport *t, gameType *game,
 #define PING_KICK_COUNT         5     /* consecutive pings at kick threshold before kick */
 
 /* Per-client connection info tracked by the server */
-typedef struct {
+typedef struct UdpServerClient {
     struct sockaddr_in addr;
     bool connected;
     uint8_t playerNum;
