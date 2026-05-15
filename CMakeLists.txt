@@ -339,7 +339,9 @@ if(MSVC)
         $<$<COMPILE_LANGUAGE:C,CXX>:/wd4554> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4701>
         $<$<COMPILE_LANGUAGE:C,CXX>:/wd4702> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4996>
         $<$<COMPILE_LANGUAGE:C,CXX>:/guard:cf> $<$<COMPILE_LANGUAGE:C,CXX>:/GL>
-        $<$<AND:$<COMPILE_LANGUAGE:C,CXX>,$<CONFIG:Debug>>:/RTC1>
+        # /RTC1 (Debug runtime checks) is incompatible with /fsanitize=address;
+        # gate it off when ENABLE_ASAN is on so the two don't fight.
+        $<$<AND:$<COMPILE_LANGUAGE:C,CXX>,$<CONFIG:Debug>,$<NOT:$<BOOL:${ENABLE_ASAN}>>>:/RTC1>
     )
     add_link_options(/GUARD:CF /INCREMENTAL:NO /LTCG)
 else()
@@ -349,6 +351,29 @@ else()
         -Wno-sign-compare
         -Wno-implicit-fallthrough
     )
+endif()
+
+# ---------------------------------------------------------------------------
+# AddressSanitizer (opt-in via -DENABLE_ASAN=ON)
+#
+# Instruments allocations to catch heap overflows, use-after-free, and
+# stack/global overflows at the moment of the bad access. Slows the
+# binary ~2-3x. On MinGW the runtime DLL (libasan*.dll, libssp*.dll)
+# must be on PATH or next to the .exe. With MSVC, /RTC1 is incompatible;
+# this block strips it from Debug when ASan is enabled.
+# ---------------------------------------------------------------------------
+
+option(ENABLE_ASAN "Build with AddressSanitizer instrumentation" OFF)
+if(ENABLE_ASAN)
+    if(MSVC)
+        # /RTC1 is gated off above when ENABLE_ASAN is on so the two
+        # don't conflict; just turn ASan on here.
+        add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/fsanitize=address>)
+    else()
+        add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=address)
+    endif()
+    message(STATUS "AddressSanitizer ENABLED")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -900,6 +925,18 @@ add_subdirectory(src/bolo)
 add_subdirectory(src/server)
 add_subdirectory(brains)
 
+# server_static and server_sim_static have a circular dependency that
+# GNU ld resolves with --start-group/--end-group ($<LINK_GROUP:RESCAN>).
+# MSVC's link.exe does multi-pass static-lib resolution natively and
+# also rejects $<LINK_GROUP> for the CXX link language, so emit plain
+# library names there. Use this variable in target_link_libraries
+# wherever both libs are linked together.
+if(MSVC)
+    set(SERVER_LINK_GROUP server_static server_sim_static)
+else()
+    set(SERVER_LINK_GROUP "$<LINK_GROUP:RESCAN,server_static,server_sim_static>")
+endif()
+
 # ---------------------------------------------------------------------------
 # WinBolo Client (cross-platform: Windows, Linux, macOS)
 # ---------------------------------------------------------------------------
@@ -1090,7 +1127,7 @@ endif()
 # onnxruntime, so consumers inherit the link without repeating it.
 target_link_libraries(WinBolo PRIVATE
     bolo_static
-    "$<LINK_GROUP:RESCAN,server_static,server_sim_static>"
+    ${SERVER_LINK_GROUP}
     bot_brains_static)
 
 # Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
@@ -1283,7 +1320,7 @@ endif()
 
 target_link_libraries(WinBoloDS PRIVATE
     bolo_static
-    "$<LINK_GROUP:RESCAN,server_static,server_sim_static>"
+    ${SERVER_LINK_GROUP}
     bot_brains_static)
 target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson utf8proc)
 
@@ -1597,7 +1634,7 @@ endif()
 
 target_link_libraries(WinBoloHeadless PRIVATE
     bolo_static
-    "$<LINK_GROUP:RESCAN,server_static,server_sim_static>"
+    ${SERVER_LINK_GROUP}
     bot_brains_static)
 target_link_libraries(WinBoloHeadless PRIVATE
     SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
@@ -1710,7 +1747,7 @@ endif()
 
 target_link_libraries(winbolo_gym PRIVATE
     bolo_static
-    "$<LINK_GROUP:RESCAN,server_static,server_sim_static>"
+    ${SERVER_LINK_GROUP}
     bot_brains_static)
 target_link_libraries(winbolo_gym PRIVATE
     SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
