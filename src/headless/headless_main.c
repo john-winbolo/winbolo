@@ -83,11 +83,6 @@
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
 #include "cmd_stdin.h"
-/* Internal: scripted command dispatch in --fast mode reaches into
- * playersAcceptAlliance / playersLeaveAlliance / playersSetPlayerName
- * the same way transport_udp_server.c's inline packet handlers do. */
-#include "players.h"
-#include "game_sim.h"
 
 /* ------------------------------------------------------------------ */
 /* Globals needed by the game engine                                   */
@@ -491,10 +486,12 @@ static void cmdAbortBadMode(const CmdLine *cmd, const char *mode) {
   exit(2);
 }
 
-/* Build and publish a ControlEvent on the in-process ServerSim
- * bus. Mirror of the inline pair pattern in
- * transport_udp_server.c's PACKET_ALLIANCE_* / PACKET_NAME_CHANGE
- * / PACKET_MAP_SKIP_VOTE handlers. */
+/* Scripted command dispatch in --fast mode. The alliance/name
+ * helpers go through serverSimAcceptAlliance / serverSimLeaveAlliance /
+ * serverSimSetPlayerName, which do the same mutate-then-publish pair
+ * that transport_udp_server.c's PACKET_ALLIANCE_* / PACKET_NAME_CHANGE
+ * handlers do inline. Alliance-request and map-skip-state have no
+ * server-side mutation, so they just publish. */
 static void cmdFastPublishAllianceRequest(BYTE fromPlayer, BYTE toPlayer) {
   ControlEvent evt;
   memset(&evt, 0, sizeof(evt));
@@ -505,38 +502,15 @@ static void cmdFastPublishAllianceRequest(BYTE fromPlayer, BYTE toPlayer) {
 }
 
 static void cmdFastPublishAllianceAccept(BYTE acceptedBy, BYTE newMember) {
-  GameSim *gs = serverSimGetGameSim(fastServerSim);
-  ControlEvent evt;
-  playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, acceptedBy, newMember, TRUE);
-  memset(&evt, 0, sizeof(evt));
-  evt.type = CTRL_ALLIANCE_ACCEPT;
-  evt.u.allianceAccept.acceptedBy = acceptedBy;
-  evt.u.allianceAccept.newMember  = newMember;
-  serverSimPublishControl(fastServerSim, &evt);
+  serverSimAcceptAlliance(fastServerSim, acceptedBy, newMember);
 }
 
 static void cmdFastPublishAllianceLeave(BYTE playerNum) {
-  GameSim *gs = serverSimGetGameSim(fastServerSim);
-  ControlEvent evt;
-  playersLeaveAlliance(gs, &gs->plyrs, NEUTRAL, playerNum, TRUE);
-  memset(&evt, 0, sizeof(evt));
-  evt.type = CTRL_ALLIANCE_LEAVE;
-  evt.u.allianceLeave.playerNum = playerNum;
-  serverSimPublishControl(fastServerSim, &evt);
+  serverSimLeaveAlliance(fastServerSim, playerNum);
 }
 
 static void cmdFastPublishPlayerName(BYTE playerNum, const char *name) {
-  GameSim *gs = serverSimGetGameSim(fastServerSim);
-  ControlEvent evt;
-  char nameBuf[PACKET_MAX_PLAYER_NAME];
-  strncpy(nameBuf, name, sizeof(nameBuf) - 1);
-  nameBuf[sizeof(nameBuf) - 1] = '\0';
-  playersSetPlayerName(NULL, gs, &gs->plyrs, NEUTRAL, playerNum, nameBuf, TRUE);
-  memset(&evt, 0, sizeof(evt));
-  evt.type = CTRL_PLAYER_NAME;
-  evt.u.playerName.playerNum = playerNum;
-  snprintf(evt.u.playerName.name, PACKET_MAX_PLAYER_NAME, "%s", nameBuf);
-  serverSimPublishControl(fastServerSim, &evt);
+  serverSimSetPlayerName(fastServerSim, playerNum, name);
 }
 
 static void cmdFastPublishMapSkipState(void) {

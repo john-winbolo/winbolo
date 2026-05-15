@@ -1636,11 +1636,6 @@ bolo_grant_internal_source_access(WinBoloHeadless
     src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/mapeditor/mapeditor_generate.c)
-# headless_main.c reaches into the players API for --cmd-stdin's
-# --fast dispatch (mirrors the inline pair pattern that
-# transport_udp_server.c uses for the alliance/name-change packets).
-bolo_grant_internal_source_access(WinBoloHeadless
-    src/headless/headless_main.c)
 
 if(WIN32)
     target_link_libraries(WinBoloHeadless PRIVATE ws2_32 winmm user32)

@@ -3312,6 +3312,53 @@ void serverSimUnregisterSubscriber(ServerSim *sim, SubscriberHandle h) {
     }
 }
 
+void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember) {
+    GameSim *gs;
+    ControlEvent evt;
+    if (sim == NULL) {
+        return;
+    }
+    gs = serverSimGetGameSim(sim);
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, accepter, newMember, TRUE);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_ALLIANCE_ACCEPT;
+    evt.u.allianceAccept.acceptedBy = accepter;
+    evt.u.allianceAccept.newMember  = newMember;
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
+    GameSim *gs;
+    ControlEvent evt;
+    if (sim == NULL) {
+        return;
+    }
+    gs = serverSimGetGameSim(sim);
+    playersLeaveAlliance(gs, &gs->plyrs, NEUTRAL, playerNum, TRUE);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_ALLIANCE_LEAVE;
+    evt.u.allianceLeave.playerNum = playerNum;
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimSetPlayerName(ServerSim *sim, BYTE playerNum, const char *name) {
+    GameSim *gs;
+    ControlEvent evt;
+    char nameBuf[PACKET_MAX_PLAYER_NAME];
+    if (sim == NULL || name == NULL) {
+        return;
+    }
+    gs = serverSimGetGameSim(sim);
+    strncpy(nameBuf, name, sizeof(nameBuf) - 1);
+    nameBuf[sizeof(nameBuf) - 1] = '\0';
+    playersSetPlayerName(NULL, gs, &gs->plyrs, NEUTRAL, playerNum, nameBuf, TRUE);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_PLAYER_NAME;
+    evt.u.playerName.playerNum = playerNum;
+    snprintf(evt.u.playerName.name, PACKET_MAX_PLAYER_NAME, "%s", nameBuf);
+    serverSimPublishControl(sim, &evt);
+}
+
 void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
     ControlSubscriber snapshot[SUBSCRIBER_SLOT_COUNT];
     int snapCount = 0;
