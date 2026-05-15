@@ -276,6 +276,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_ALLIANCE_ACCEPT:       return "CTRL_ALLIANCE_ACCEPT";
     case CTRL_ALLIANCE_LEAVE:        return "CTRL_ALLIANCE_LEAVE";
     case CTRL_PLAYER_JOIN:           return "CTRL_PLAYER_JOIN";
+    case CTRL_PLAYER_LEAVE:          return "CTRL_PLAYER_LEAVE";
     case CTRL_PLAYER_NAME:           return "CTRL_PLAYER_NAME";
     case CTRL_LOBBY_SLOT:            return "CTRL_LOBBY_SLOT";
     case CTRL_LOBBY_SETTINGS:        return "CTRL_LOBBY_SETTINGS";
@@ -286,6 +287,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_GAME_PHASE:            return "CTRL_GAME_PHASE";
     case CTRL_GAME_OVER:             return "CTRL_GAME_OVER";
     case CTRL_SERVER_SHUTDOWN:       return "CTRL_SERVER_SHUTDOWN";
+    case CTRL_CHAT:                  return "CTRL_CHAT";
     default:                         return NULL;
   }
 }
@@ -357,6 +359,15 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       fputc(']', f);
       break;
     }
+
+    case CTRL_PLAYER_LEAVE:
+      fprintf(f, ",\"playerNum\":%u,\"name\":",
+              (unsigned)evt->u.playerLeave.playerNum);
+      logEventsJsonStr(f, evt->u.playerLeave.name, PACKET_MAX_PLAYER_NAME);
+      fprintf(f, ",\"country\":");
+      logEventsJsonStr(f, evt->u.playerLeave.country,
+                       sizeof(evt->u.playerLeave.country));
+      break;
 
     case CTRL_PLAYER_NAME:
       fprintf(f, ",\"playerNum\":%u,\"name\":",
@@ -443,6 +454,17 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
               evt->u.gamePhase.countdownSeconds);
       break;
     }
+
+    case CTRL_CHAT:
+      fprintf(f, ",\"fromPlayer\":%u,\"destPlayer\":%u,\"bodyLen\":%u",
+              (unsigned)evt->u.chat.fromPlayer,
+              (unsigned)evt->u.chat.destPlayer,
+              (unsigned)evt->u.chat.bodyLen);
+      break;
+
+    case CTRL_EVENT_TYPE_COUNT:
+      /* Sentinel — never actually delivered. */
+      break;
   }
 
   fputs("}\n", f);

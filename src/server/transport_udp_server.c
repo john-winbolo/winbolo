@@ -498,33 +498,6 @@ void transportUdpServerSendPeriodicLobbyRefresh(ServerSim *sim) {
     }
 }
 
-/* Send a PACKET_PLAYER_LEFT notification to all connected clients.
- * Layout: [pNum 1][name PACKET_MAX_PLAYER_NAME][cc 2]. */
-static void serverBroadcastPlayerEvent(uint8_t eventType, uint8_t playerNum,
-                                       const char *playerName) {
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME + 2];
-    int i;
-    int pos = PACKET_HEADER_SIZE;
-    int pktLen;
-
-    packHeader(buf, eventType, 0);
-    buf[pos++] = playerNum;
-    memset(buf + pos, 0, PACKET_MAX_PLAYER_NAME);
-    if (playerName != NULL) {
-        strncpy((char *)(buf + pos), playerName, PACKET_MAX_PLAYER_NAME - 1);
-    }
-    pos += PACKET_MAX_PLAYER_NAME;
-    buf[pos++] = (uint8_t)udpServer.clients[playerNum].countryCode[0];
-    buf[pos++] = (uint8_t)udpServer.clients[playerNum].countryCode[1];
-    pktLen = pos;
-
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) {
-            udpSendTo(udpServer.sock, buf, pktLen, &udpServer.clients[i].addr);
-        }
-    }
-}
-
 /* Build and send the join accept packet with game settings and map size */
 static void serverSendJoinAccept(int slot, ServerSim *sim,
                                  const struct sockaddr_in *addr) {
@@ -1455,9 +1428,8 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
                               serverSimGetNumNeutralBases(sim),
                               serverSimGetNumNeutralPills(sim));
 
-    serverBroadcastPlayerEvent(PACKET_PLAYER_LEFT,
-                               (uint8_t)idx,
-                               udpServer.clients[idx].playerName);
+    /* PACKET_PLAYER_LEFT is fanned out by the codec when the outer caller
+     * invokes serverSimRemovePlayer; no hand-built broadcast here. */
     serverSimUnregisterSubscriber(sim, udpServer.clients[idx].controlSub);
     udpServer.clients[idx].controlSub = SUBSCRIBER_HANDLE_INVALID;
     udpServer.clients[idx].connected = false;

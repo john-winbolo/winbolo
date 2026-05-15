@@ -700,22 +700,32 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
-    case PACKET_PLAYER_LEFT:
+    case PACKET_PLAYER_LEFT: {
+        /* Route through the codec so in-process subscribers see the
+         * CTRL_PLAYER_LEAVE event, then keep the "X has left" lobby chat
+         * rendering at the wire boundary — display is the transport's
+         * job, same precedent as the chat-rendering migration. */
+        ControlDecodeFn dec = transportControlCodecDecoder(pktType);
+        if (dec != NULL) {
+            ControlEvent evt;
+            if (dec(buf + PACKET_HEADER_SIZE,
+                    (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
+                clientSimApplyControl(c->clientSim, &evt);
+            }
+        }
         if (len >= PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME) {
             uint8_t pNum = buf[PACKET_HEADER_SIZE];
             char pName[PACKET_MAX_PLAYER_NAME];
             memcpy(pName, buf + PACKET_HEADER_SIZE + 1, PACKET_MAX_PLAYER_NAME);
             pName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
-            if (pNum != c->playerNum) {
-                /* Show leave message in lobby chat */
-                if (c->clientSim->inLobby) {
-                    char leaveMsg[PACKET_MAX_PLAYER_NAME + 16];
-                    snprintf(leaveMsg, sizeof(leaveMsg), "%s has left.", pName);
-                    clientSimAppendLobbyChat(c->clientSim, "***", leaveMsg);
-                }
+            if (pNum != c->playerNum && c->clientSim->inLobby) {
+                char leaveMsg[PACKET_MAX_PLAYER_NAME + 16];
+                snprintf(leaveMsg, sizeof(leaveMsg), "%s has left.", pName);
+                clientSimAppendLobbyChat(c->clientSim, "***", leaveMsg);
             }
         }
         break;
+    }
 
     case PACKET_NAME_CHANGE: {
         ControlDecodeFn dec = transportControlCodecDecoder(pktType);

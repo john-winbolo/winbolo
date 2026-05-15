@@ -48,6 +48,7 @@ typedef enum {
     CTRL_GAME_OVER,
     CTRL_SERVER_SHUTDOWN,
     CTRL_CHAT,
+    CTRL_PLAYER_LEAVE,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -94,6 +95,14 @@ typedef struct ControlEvent {
             BYTE  numAllies;
             BYTE  allies[MAX_TANKS];
         } playerJoin;
+
+        /* CTRL_PLAYER_LEAVE — server announces a player has disconnected.
+         * Wire counterpart is PACKET_PLAYER_LEFT. */
+        struct {
+            BYTE playerNum;
+            char name[PACKET_MAX_PLAYER_NAME];
+            char country[3];            /* 2 chars + NUL */
+        } playerLeave;
 
         /* CTRL_PLAYER_NAME */
         struct {
