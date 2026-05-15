@@ -129,7 +129,11 @@ extern "C" bool inputTouchGetAbsoluteSteering(void);
 #endif
 
 #ifndef MENU_BAR_HEIGHT
-#define MENU_BAR_HEIGHT 22
+  #ifdef __APPLE__
+    #define MENU_BAR_HEIGHT 0
+  #else
+    #define MENU_BAR_HEIGHT 22
+  #endif
 #endif
 
 /* -------------------------------------------------------
@@ -1393,7 +1397,7 @@ static void renderAllianceRequest(ClientSim *cs) {
 
     /* Pin to the top of the status panel (right of the main game view).
      * MAIN_OFFSET_X=81, MAIN_SCREEN_SIZE_X=15, TILE_SIZE_X=16  =>  321 px at zoom 1 */
-    float menuH      = ImGui::GetFrameHeight();
+    float menuH      = (float)MENU_BAR_HEIGHT;
     float statusLeft = (float)(zoomFactor * 321);
     ImGui::SetNextWindowPos(ImVec2(statusLeft, menuH), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_Always);
@@ -3005,7 +3009,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (uiModeIsTablet()) {
         sdl3ImguiTabletOverlay(cs);
     } else {
+#ifndef __APPLE__
         renderMenuBar(cs);
+#endif
     }
 
     /* Detect when a menu-bar dropdown (child menu popup) just closed.
