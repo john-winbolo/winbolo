@@ -2593,6 +2593,9 @@ void sdl3ImguiResetFrameState(void) {
 
 void sdl3ImguiProcessEvents(ClientSim *cs) {
     if (!s_window) return;
+#ifdef __APPLE__
+    mac_menubar_set_clientsim(cs);
+#endif
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
         SDL_Event rawEv = ev;

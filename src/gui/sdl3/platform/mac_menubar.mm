@@ -10,10 +10,26 @@ extern "C" void windowSetQuitting(void);
 extern "C" void sdl3ImguiShowAbout(void);
 extern "C" void sdl3ImguiShowSettings(void);
 
+struct ClientSim;
+extern "C" void windowNewGame(void);
+extern "C" void windowSaveMap(struct ClientSim *cs);
+extern "C" void sdl3ImguiShowGameInfo(bool open);
+extern "C" void sdl3ImguiShowSysInfo(bool open);
+extern "C" void sdl3ImguiShowNetInfo(bool open);
+
+@class WBMenuBridge;
+static WBMenuBridge *g_bridge = nil;
+static void *g_clientSim = NULL;
+
 @interface WBMenuBridge : NSObject
 - (void)onQuit:(id)sender;
 - (void)onAbout:(id)sender;
 - (void)onPreferences:(id)sender;
+- (void)onNewGame:(id)sender;
+- (void)onSaveMap:(id)sender;
+- (void)onShowGameInfo:(id)sender;
+- (void)onShowSysInfo:(id)sender;
+- (void)onShowNetInfo:(id)sender;
 @end
 
 @implementation WBMenuBridge
@@ -29,10 +45,27 @@ extern "C" void sdl3ImguiShowSettings(void);
     (void)sender;
     sdl3ImguiShowSettings();
 }
+- (void)onNewGame:(id)sender {
+    (void)sender;
+    windowNewGame();
+}
+- (void)onSaveMap:(id)sender {
+    (void)sender;
+    if (g_clientSim) windowSaveMap((struct ClientSim *)g_clientSim);
+}
+- (void)onShowGameInfo:(id)sender {
+    (void)sender;
+    sdl3ImguiShowGameInfo(true);
+}
+- (void)onShowSysInfo:(id)sender {
+    (void)sender;
+    sdl3ImguiShowSysInfo(true);
+}
+- (void)onShowNetInfo:(id)sender {
+    (void)sender;
+    sdl3ImguiShowNetInfo(true);
+}
 @end
-
-static WBMenuBridge *g_bridge = nil;
-static void *g_clientSim = NULL;
 
 void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     (void)win;
@@ -106,6 +139,48 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [quitItem setTarget:g_bridge];
     [appMenu addItem:quitItem];
 
+    /* File menu — game lifecycle and pop-out info windows. */
+    NSMenuItem *fileItem = [mainMenu addItemWithTitle:@"File" action:nil keyEquivalent:@""];
+    NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
+    [fileItem setSubmenu:fileMenu];
+
+    NSMenuItem *newGameItem = [[NSMenuItem alloc]
+        initWithTitle:@"New Game"
+        action:@selector(onNewGame:)
+        keyEquivalent:@""];
+    [newGameItem setTarget:g_bridge];
+    [fileMenu addItem:newGameItem];
+
+    NSMenuItem *saveMapItem = [[NSMenuItem alloc]
+        initWithTitle:@"Save Map"
+        action:@selector(onSaveMap:)
+        keyEquivalent:@"s"];
+    [saveMapItem setTarget:g_bridge];
+    [fileMenu addItem:saveMapItem];
+
+    [fileMenu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *gameInfoItem = [[NSMenuItem alloc]
+        initWithTitle:@"Game Info"
+        action:@selector(onShowGameInfo:)
+        keyEquivalent:@""];
+    [gameInfoItem setTarget:g_bridge];
+    [fileMenu addItem:gameInfoItem];
+
+    NSMenuItem *sysInfoItem = [[NSMenuItem alloc]
+        initWithTitle:@"System Info"
+        action:@selector(onShowSysInfo:)
+        keyEquivalent:@""];
+    [sysInfoItem setTarget:g_bridge];
+    [fileMenu addItem:sysInfoItem];
+
+    NSMenuItem *netInfoItem = [[NSMenuItem alloc]
+        initWithTitle:@"Network Info"
+        action:@selector(onShowNetInfo:)
+        keyEquivalent:@""];
+    [netInfoItem setTarget:g_bridge];
+    [fileMenu addItem:netInfoItem];
+
     /* Window menu — items dispatched through the responder chain to the
      * key NSWindow; no explicit targets. */
     NSMenuItem *windowItem = [mainMenu addItemWithTitle:@"Window" action:nil keyEquivalent:@""];
@@ -144,4 +219,8 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [NSApp setWindowsMenu:windowMenu];
 
     [NSApp setMainMenu:mainMenu];
+}
+
+void mac_menubar_set_clientsim(void *clientSim) {
+    g_clientSim = clientSim;
 }
