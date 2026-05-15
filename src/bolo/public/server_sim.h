@@ -194,6 +194,16 @@ ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, gameType game, boo
  *********************************************************/
 bool serverSimReloadMap(ServerSim *sim, const char *mapFileName);
 
+/* Procedural-map preview variant. Regenerates the map from the
+ * given MapGenConfig, stashes the prior committed map for Cancel
+ * roll-back (same mechanism as serverSimReloadMap), refreshes
+ * cachedMapData, and sets mapName to "rand_<seed>". Caller is
+ * responsible for whatever broadcast / publish follows. Only valid
+ * in lobby state. */
+struct MapGenConfig;
+bool serverSimReloadRandomMap(ServerSim *sim,
+                               const struct MapGenConfig *cfg);
+
 /* Lobby preview-map cycle. serverSimReloadMap stashes the prior
  * committed map under the hood; these two close the loop:
  *   - serverSimHasPreviewMap: true if a preview is pending (i.e. a

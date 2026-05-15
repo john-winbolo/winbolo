@@ -280,6 +280,11 @@ static bool             s_chooseMapOpen          = false;
  * remembers its own folder / selection / search filter independently. */
 static MapChooserState  s_chooseMapState         = {};
 static MapChooserState  s_chooseMapUploadState   = {};
+/* Third chooser instance for the Random tab — runs in randomTabOnly
+ * mode so the widget renders generator controls + a live preview.
+ * Config changes ripple to the server via genSeq edge detection. */
+static MapChooserState  s_chooseMapRandomState   = {};
+static uint32_t         s_chooseMapRandomLastSeq = 0;
 static bool             s_chooseMapStateInited   = false;
 static char             s_chooseMapPrevName[128] = "";
 static int              s_chooseMapActiveTab     = 0; /* 0=server 1=upload 2=random */
@@ -606,11 +611,22 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
          * would duplicate them. */
         s_chooseMapState.hideExtras       = true;
         s_chooseMapUploadState.hideExtras = true;
+        /* Random tab — third chooser instance, runs in randomTabOnly
+         * mode so the widget renders generator controls on the left
+         * and the procedural preview on the right. */
+        mapChooserInit(&s_chooseMapRandomState, renderer);
+        s_chooseMapRandomState.maximizePtr   = &s_chooseMapMaximized;
+        s_chooseMapRandomState.hideExtras    = true;
+        s_chooseMapRandomState.randomTabOnly = true;
+        s_chooseMapRandomLastSeq             = 0;
         /* Keep the map list narrow so the preview can claim most of
          * the row width. ~300 px fits a column of names comfortably
-         * without crowding the preview. */
-        s_chooseMapState.leftPanelMaxW       = 300.0f;
-        s_chooseMapUploadState.leftPanelMaxW = 300.0f;
+         * without crowding the preview. The Random tab uses a wider
+         * left panel because the generator controls need more room
+         * than a single column of names. */
+        s_chooseMapState.leftPanelMaxW        = 300.0f;
+        s_chooseMapUploadState.leftPanelMaxW  = 300.0f;
+        s_chooseMapRandomState.leftPanelMaxW  = 360.0f;
         /* Server Maps tab — server-provided list is empty until the
          * provider runs; force an initial discover so the list is
          * populated before the first render. (mapChooserInit ran the
@@ -1036,9 +1052,38 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         }
         if (ImGui::BeginTabItem("Random")) {
             s_chooseMapActiveTab = 2;
-            ImGui::Spacing();
-            ImGui::TextWrapped(
-                "Random map generation — coming soon.");
+            float availW = ImGui::GetContentRegionAvail().x;
+            float availH = ImGui::GetContentRegionAvail().y - btnBarH;
+            if (availH < 120.0f) availH = 120.0f;
+            /* Renders generator controls on the left (where the
+             * other tabs show their file list) and the procedural
+             * preview on the right via the chooser's randomTabOnly
+             * code path. Every config change increments genSeq —
+             * we forward that to the server below so other clients
+             * see the live preview. */
+            mapChooserRender(&s_chooseMapRandomState, renderer,
+                             availW, availH, s);
+            if (cs && s_chooseMapRandomState.genSeq != s_chooseMapRandomLastSeq) {
+                s_chooseMapRandomLastSeq = s_chooseMapRandomState.genSeq;
+                /* selectedPath is "randommap:<seed>" — strip the
+                 * prefix to get the bare seed string the server
+                 * expects in PACKET_LOBBY_PREVIEW_RANDOM. */
+                const char *path = s_chooseMapRandomState.selectedPath;
+                const char *seedStr = path;
+                static const char kPrefix[] = "randommap:";
+                if (strncmp(path, kPrefix, sizeof(kPrefix) - 1) == 0) {
+                    seedStr = path + sizeof(kPrefix) - 1;
+                }
+                if (clientSimIsSinglePlayer(cs)) {
+                    ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+                    if (sim && serverSimReloadRandomMap(sim,
+                            &s_chooseMapRandomState.genConfig)) {
+                        serverSimPublishLobbySettings(sim);
+                    }
+                } else {
+                    clientSimNetSendLobbyPreviewRandom(cs, seedStr);
+                }
+            }
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();

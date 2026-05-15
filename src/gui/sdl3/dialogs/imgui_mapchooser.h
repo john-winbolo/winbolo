@@ -95,6 +95,19 @@ struct MapChooserState_s {
      * features as separate tabs, so they'd be duplicated here. */
     bool            hideExtras;
 
+    /* When true, the widget runs in "random-only" mode: the back
+     * button is hidden, randomMapSelected is treated as always-on,
+     * and config changes increment genSeq so external code can
+     * detect them and forward the seed to the server. Used by the
+     * lobby's Random tab. */
+    bool            randomTabOnly;
+
+    /* Bumps every time the user changes a generator control (i.e.
+     * mapGenImguiControls reports a change and the chooser
+     * regenerates the preview). External code caches the last-seen
+     * value to drive a side-effect like a server-side preview. */
+    uint32_t        genSeq;
+
     /* Optional cap on the left (map list) panel width in pixels. <=0
      * means "use the default split". Used by the lobby chooser to keep
      * the list narrow and let the preview claim the rest of the row. */

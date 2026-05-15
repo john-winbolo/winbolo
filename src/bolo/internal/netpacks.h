@@ -373,6 +373,15 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                                 * needed since the sim is
                                                 * already on the previewed
                                                 * map. */
+#define PACKET_LOBBY_PREVIEW_RANDOM      174  /* { seedLen 1, seed N } —
+                                                * client asks server to
+                                                * regenerate the map from
+                                                * a procedural seed
+                                                * (mapGenConfigToSeed
+                                                * format) and apply it as
+                                                * the current preview.
+                                                * Same stash + broadcast
+                                                * semantics as SET_MAP. */
 
 /* Existing packets get extended payloads (additive, version-bumped):
  *   PACKET_LOBBY_TEAM_SET (130): host can move others, not just self.

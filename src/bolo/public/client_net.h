@@ -106,6 +106,12 @@ void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath);
 void clientSimNetSendLobbyPreviewCancel(ClientSim *cs);
 void clientSimNetSendLobbyPreviewCommit(ClientSim *cs);
 
+/* Procedural-map preview. seedStr is a mapGenConfigToSeed-encoded
+ * string the server decodes back into a MapGenConfig. Server applies
+ * as a preview (stashes previous map, regenerates, broadcasts
+ * MAP_CHANGE). */
+void clientSimNetSendLobbyPreviewRandom(ClientSim *cs, const char *seedStr);
+
 /* Ask the server to list data/maps/<relPath>. Response arrives async
  * via PACKET_LOBBY_MAP_LIST_RSP and is stored on the ClientSim
  * (lobbyMapList* fields). Any lobby client may request — read-only. */
