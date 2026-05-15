@@ -811,6 +811,28 @@ extern "C" bool mapPreviewViewLoadCompressed(MapPreviewView *v,
     return true;
 }
 
+extern "C" bool mapPreviewViewLoadCompressedKeepCamera(MapPreviewView *v,
+                                                        const BYTE *data, int len) {
+    if (!v) return false;
+    /* Snapshot before the reload — LoadCompressed → viewFreeMapData
+     * flips autoFitDone back to false, which would re-fit on the
+     * next render and lose the user's pan/zoom. */
+    int   savedZoomIdx = v->zoomIndex;
+    float savedZoom    = v->zoomLevel;
+    WORLD savedCx      = v->centerX;
+    WORLD savedCy      = v->centerY;
+    bool  hadFit       = v->autoFitDone;
+    if (!mapPreviewViewLoadCompressed(v, data, len)) return false;
+    if (hadFit) {
+        v->zoomIndex   = savedZoomIdx;
+        v->zoomLevel   = savedZoom;
+        v->centerX     = savedCx;
+        v->centerY     = savedCy;
+        v->autoFitDone = true;
+    }
+    return true;
+}
+
 extern "C" bool mapPreviewViewLoadFile(MapPreviewView *v, const char *path) {
     if (!v || !path || path[0] == '\0') return false;
     if (v->compressedData) { SDL_free(v->compressedData); v->compressedData = NULL; v->compressedLen = 0; }

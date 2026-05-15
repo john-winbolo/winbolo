@@ -61,11 +61,12 @@ extern "C" {
 #define MAPGEN_LOCK_BASES        (1u << 2)
 #define MAPGEN_LOCK_PILLS        (1u << 3)
 #define MAPGEN_LOCK_STARTS       (1u << 4)
-/* Tournament-specific (bits 5-8) */
-#define MAPGEN_LOCK_T_SYMMETRY   (1u << 5)
-#define MAPGEN_LOCK_T_LANDMASS   (1u << 6)
-#define MAPGEN_LOCK_T_ROUGHNESS  (1u << 7)
-#define MAPGEN_LOCK_T_ROADS      (1u << 8)
+/* Tournament-specific (bits 5-8, plus bit 34) */
+#define MAPGEN_LOCK_T_SYMMETRY     (1u  << 5)
+#define MAPGEN_LOCK_T_LANDMASS     (1u  << 6)
+#define MAPGEN_LOCK_T_ROUGHNESS    (1u  << 7)
+#define MAPGEN_LOCK_T_ROADS        (1u  << 8)
+#define MAPGEN_LOCK_T_WATERBARRIER (1ull << 34)
 /* Natural-specific (bits 9-22) */
 #define MAPGEN_LOCK_N_STYLE      (1u << 9)
 #define MAPGEN_LOCK_N_GRASS      (1u << 10)
@@ -122,6 +123,14 @@ typedef struct MapGenConfig {
             int landMassPct;      /* 1-25, default 5 */
             int roughness;        /* MAPGEN_ROUGH_* */
             bool includeRoads;
+            /* 0-5: thickness in tiles of the RIVER (shallow-water)
+             * rim painted around every landmass at the end of the
+             * Tournament generator. 0 = leave DEEP_SEA up to the
+             * coast (legacy behaviour). N = N successive 8-neighbour
+             * dilations of "non-deep-sea" — each pass converts one
+             * additional layer of DEEP_SEA tiles touching the
+             * current land+shallow rim to RIVER. */
+            int waterBarrier;
         } tournament;
 
         struct {

@@ -737,16 +737,23 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
         s_chooseMapMaximized = false;
     }
 
-    if (s_chooseMapState.previewView &&
-        mapPreviewViewIsReady(s_chooseMapState.previewView)) {
+    /* Mirror the visible tab — without this we'd always show the
+     * server-list chooser's map even when the user was previewing
+     * a generated map on the Generate tab. */
+    MapChooserState *activeChooser = &s_chooseMapState;
+    if (s_chooseMapActiveTab == 1)      activeChooser = &s_chooseMapUploadState;
+    else if (s_chooseMapActiveTab == 2) activeChooser = &s_chooseMapRandomState;
+
+    if (activeChooser->previewView &&
+        mapPreviewViewIsReady(activeChooser->previewView)) {
         float availW = ImGui::GetContentRegionAvail().x;
         float availH = ImGui::GetContentRegionAvail().y;
         if (availW < 64.0f) availW = 64.0f;
         if (availH < 64.0f) availH = 64.0f;
-        mapPreviewViewRenderOffscreen(s_chooseMapState.previewView,
+        mapPreviewViewRenderOffscreen(activeChooser->previewView,
                                        renderer,
                                        (int)availW, (int)availH);
-        SDL_Texture *tex = mapPreviewViewGetTexture(s_chooseMapState.previewView);
+        SDL_Texture *tex = mapPreviewViewGetTexture(activeChooser->previewView);
         if (tex) {
             ImVec2 imgPos = ImGui::GetCursorScreenPos();
             ImGui::Image((ImTextureID)tex, ImVec2(availW, availH));
@@ -756,13 +763,13 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
                                     ImVec2(availW, availH));
             bool hovered = ImGui::IsItemHovered();
             MapPreviewInputOpts opts = { true, true, true, false };
-            mapPreviewViewHandleInput(s_chooseMapState.previewView,
+            mapPreviewViewHandleInput(activeChooser->previewView,
                                        hovered, &opts);
 
             /* Zoom indicator — bottom-right corner. */
             char zoomText[16];
             SDL_snprintf(zoomText, sizeof(zoomText), "%.2fx",
-                         mapPreviewViewGetZoom(s_chooseMapState.previewView));
+                         mapPreviewViewGetZoom(activeChooser->previewView));
             ImVec2 textSize = ImGui::CalcTextSize(zoomText);
             float pad = 6.0f;
             ImVec2 textPos(imgPos.x + availW - textSize.x - pad,
@@ -1050,7 +1057,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             }
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Random")) {
+        if (ImGui::BeginTabItem("Generate")) {
             s_chooseMapActiveTab = 2;
             float availW = ImGui::GetContentRegionAvail().x;
             float availH = ImGui::GetContentRegionAvail().y - btnBarH;
@@ -1101,7 +1108,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     ImGui::Separator();
     {
         const char *cancelLbl = "Cancel";
-        const char *setLbl    = "Set Map";
+        const char *setLbl    = "Use This Map";
         float wCancel = ImGui::CalcTextSize(cancelLbl).x
                       + ImGui::GetStyle().FramePadding.x * 2.0f;
         float wSet    = ImGui::CalcTextSize(setLbl).x
