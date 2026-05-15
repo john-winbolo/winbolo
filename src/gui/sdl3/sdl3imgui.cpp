@@ -3236,6 +3236,23 @@ void sdl3ImguiShowGameInfo(bool open) {
     s_showGameInfo = open;
 }
 void sdl3ImguiShowSendMsg(bool open) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) {
+        if (open) {
+            if (!s_popSendMsg.open) {
+                popOutCreate(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200);
+            }
+            /* Match the modal-path side effects so the user gets a fresh
+             * cooldown and a focused input regardless of which path opened
+             * Send Message. */
+            s_sendMsgCooldownEnd = 0;
+            s_sendMsgFocusInput  = true;
+        } else {
+            if (s_popSendMsg.open) popOutDestroy(&s_popSendMsg);
+        }
+        return;
+    }
+#endif
     s_showSendMsg = open;
     if (open) {
         /* Reset cooldown so the Send button is always enabled on fresh open */
