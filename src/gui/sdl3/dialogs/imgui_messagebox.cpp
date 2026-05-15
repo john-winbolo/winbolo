@@ -117,6 +117,7 @@ static int renderMessageBoxContent(const char *message, ImguiMsgButtons buttons,
         if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_OK;
         }
+        imguiHandOnHover();
     } else if (buttons == IMGUI_MSG_YES_NO) {
         float totalW = btnW * 2 + spacing;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - totalW) / 2.0f);
@@ -124,10 +125,12 @@ static int renderMessageBoxContent(const char *message, ImguiMsgButtons buttons,
         if (ImGui::Button(langGetText(STR_YES), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_YES;
         }
+        imguiHandOnHover();
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_NO), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_NO;
         }
+        imguiHandOnHover();
     } else { /* IMGUI_MSG_YES_NO_CANCEL */
         float totalW = btnW * 3 + spacing * 2;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - totalW) / 2.0f);
@@ -135,14 +138,17 @@ static int renderMessageBoxContent(const char *message, ImguiMsgButtons buttons,
         if (ImGui::Button(langGetText(STR_YES), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_YES;
         }
+        imguiHandOnHover();
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_NO), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_NO;
         }
+        imguiHandOnHover();
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_CANCEL;
         }
+        imguiHandOnHover();
     }
 
     return result;

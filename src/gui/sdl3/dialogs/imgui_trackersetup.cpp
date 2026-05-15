@@ -166,11 +166,13 @@ extern "C" int imguiTrackerSetupShow(void) {
                 running = false;
             }
         }
+        imguiHandOnHover();
 
         ImGui::SameLine(0.0f, 8.0f);
         if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0))) {
             running = false;
         }
+        imguiHandOnHover();
 
         /* Error popup */
         if (ImGui::BeginPopupModal(errPopupId, nullptr,
@@ -183,6 +185,7 @@ extern "C" int imguiTrackerSetupShow(void) {
                 if (ImGui::Button(okBuf, ImVec2(80, 0))) {
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
             }
             ImGui::EndPopup();
         }

@@ -393,6 +393,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             updatePreview(state, renderer);
             changed = true;
         }
+        imguiHandOnHover();
 
         ImGui::Separator();
 
@@ -424,6 +425,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 state->fileDialogGotResult = false;
                 SDL_ShowOpenFileDialog(mapChooserFileDialogCallback, state, window, filters, 2, NULL, false);
             }
+            imguiHandOnHover();
             if (disabled) ImGui::EndDisabled();
         }
 
@@ -436,6 +438,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             generateRandomPreview(state, renderer);
             changed = true;
         }
+        imguiHandOnHover();
 
         ImGui::Separator();
 

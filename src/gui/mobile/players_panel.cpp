@@ -11,6 +11,7 @@
 #include <cstdio>
 
 #include "imgui.h"
+#include "../sdl3/dialogs/imgui_dialog_utils.h"
 
 extern "C" {
 #include "players_panel.h"
@@ -88,18 +89,22 @@ extern "C" void playersPanelRender(void) {
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALL), ImVec2(btnW, 0))) {
         clientSimCheckAllNonePlayers(humanSim, true);
     }
+    imguiHandOnHover();
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_NONE), ImVec2(btnW, 0))) {
         clientSimCheckAllNonePlayers(humanSim, false);
     }
+    imguiHandOnHover();
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALLIES), ImVec2(btnW, 0))) {
         clientSimCheckAlliedPlayers(humanSim);
     }
+    imguiHandOnHover();
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_NEARBY), ImVec2(btnW, 0))) {
         clientSimCheckNearbyPlayers(humanSim);
     }
+    imguiHandOnHover();
 
     ImGui::Separator();
 

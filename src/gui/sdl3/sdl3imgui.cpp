@@ -815,6 +815,7 @@ static void renderGameInfoContent(ClientSim *cs) {
         if (ImGui::SmallButton(langGetText(STR_DLGGAMEINFO_COPYSEED))) {
             SDL_SetClipboardText(mapName + 5);
         }
+        imguiHandOnHover();
     }
     {
         MessageArgs args = {};
@@ -1010,6 +1011,7 @@ static void renderSendMsgContent(ClientSim *cs) {
                        SDL_GetTicks() < s_sendMsgCooldownEnd);
     if (inCooldown) ImGui::BeginDisabled();
     bool doSend = ImGui::Button(langGetText(STR_DLGMSG_BUTTON)) || (!inCooldown && pressedEnter);
+    imguiHandOnHover();
     if (inCooldown) ImGui::EndDisabled();
 
     if (doSend && s_sendMsgBuf[0] != '\0') {
@@ -1093,12 +1095,16 @@ static void renderPlayersPanel(ClientSim *cs) {
 
     /* Selection helpers */
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALL)))    clientSimCheckAllNonePlayers(cs, true);
+    imguiHandOnHover();
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_NONE)))   clientSimCheckAllNonePlayers(cs, false);
+    imguiHandOnHover();
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALLIES))) clientSimCheckAlliedPlayers(cs);
+    imguiHandOnHover();
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_NEARBY))) clientSimCheckNearbyPlayers(cs);
+    imguiHandOnHover();
 
     ImGui::Separator();
 
@@ -1187,6 +1193,7 @@ static void renderPlayersPanel(ClientSim *cs) {
                                      (i != self ? ImGui::GetFrameHeight() + spacing : 0), 0))) {
             if (i != self) clientSimTogglePlayerCheckState(cs, (BYTE)i);
         }
+        imguiHandOnHover();
 
         /* Right-aligned ping */
         ImGui::SameLine(fullWidth - pingWidth);
@@ -1225,12 +1232,14 @@ static void renderPlayersPanel(ClientSim *cs) {
         if (hasAllies) {
             if (ImGui::Button(langGetText(STR_LEAVE_ALLIANCE), ImVec2(-1, 0)))
                 clientSimLeaveAllianceSelf(cs);
+                imguiHandOnHover();
         } else {
             if (!canRequest || inCooldown) ImGui::BeginDisabled();
             if (ImGui::Button(langGetText(STR_REQUEST_ALLIANCE), ImVec2(-1, 0))) {
                 clientSimRequestAllianceSelected(cs);
                 s_allianceReqCooldownEnd = SDL_GetTicks() + ALLIANCE_REQ_WAIT_MS;
             }
+            imguiHandOnHover();
             if (!canRequest || inCooldown) ImGui::EndDisabled();
         }
     }
@@ -1265,6 +1274,7 @@ static void renderAboutModal(void) {
         ImGui::Spacing();
         if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0)))
             ImGui::CloseCurrentPopup();
+            imguiHandOnHover();
         ImGui::EndPopup();
     }
 }
@@ -1299,11 +1309,13 @@ static void renderJoinConfirmModal(void) {
             gameFrontHandleUrlOpen(s_joinConfirmUrl);
             windowNewGame();
         }
+        imguiHandOnHover();
         ImGui::SameLine(0.0f, 8.0f);
         if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(80, 0)) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             ImGui::CloseCurrentPopup();
         }
+        imguiHandOnHover();
         ImGui::EndPopup();
     }
 }
@@ -1331,8 +1343,10 @@ static void renderChangeNameModal(ClientSim *cs) {
                                       ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::Spacing();
         bool doOK     = ImGui::Button(langGetText(STR_OK),     ImVec2(120, 0)) || enter;
+        imguiHandOnHover();
         ImGui::SameLine();
         bool doCancel = ImGui::Button(langGetText(STR_CANCEL), ImVec2(120, 0));
+        imguiHandOnHover();
 
         if (doOK) {
             s_changeNameBuf[32] = '\0'; /* PLAYER_NAME_LAST - 1 */
@@ -1388,9 +1402,11 @@ static void renderAllianceRequest(ClientSim *cs) {
             clientSimAllianceAccept(cs, s_alliancePlayerNum);
             s_allianceVisible = false;
         }
+        imguiHandOnHover();
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(120, 0)))
             s_allianceVisible = false;
+            imguiHandOnHover();
     }
     ImGui::End();
 }
@@ -1422,6 +1438,7 @@ static void renderPasswordModal(void) {
             gameFrontSetGameOptions(s_passwordBuf, (gameType)1, false, (aiType)0, 0, 0, true);
             ImGui::CloseCurrentPopup();
         }
+        imguiHandOnHover();
         ImGui::EndPopup();
     }
 }
@@ -1491,10 +1508,12 @@ static void keySetupRow(const char *label, KeySetupField field) {
         if (ImGui::SmallButton(langGetText(STR_CANCEL))) {
             s_keySetupWaiting = ksNone;
         }
+        imguiHandOnHover();
     } else {
         if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
             s_keySetupWaiting = field;
         }
+        imguiHandOnHover();
     }
     ImGui::PopID();
 }
@@ -1614,11 +1633,13 @@ static void renderKeySetupModal(ClientSim *cs) {
         s_keySetupWaiting = ksNone;
         ImGui::CloseCurrentPopup();
     }
+    imguiHandOnHover();
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(120, 0))) {
         s_keySetupWaiting = ksNone;
         ImGui::CloseCurrentPopup();
     }
+    imguiHandOnHover();
 
     if (busy) ImGui::EndDisabled();
 
@@ -1657,9 +1678,11 @@ static void renderSettingsPanel(ClientSim *cs) {
             windowSaveMap(cs);
             s_showSettings = false;
         }
+        imguiHandOnHover();
         if (ImGui::Button(langGetText(STR_MENU_LEAVE_GAME), ImVec2(-1, 0))) {
             windowNewGame();
         }
+        imguiHandOnHover();
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
@@ -1690,6 +1713,7 @@ static void renderSettingsPanel(ClientSim *cs) {
                     clientSimSetPlayerName(cs, s_settingsNameBuf);
                 }
             }
+            imguiHandOnHover();
         }
 
         if (!uiModeIsTablet()) {
@@ -1703,6 +1727,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS))) {
                 sdl3ImguiShowKeySetup();
             }
+            imguiHandOnHover();
         }
 #endif
     }
@@ -2180,6 +2205,7 @@ static void renderMenuBar(ClientSim *cs) {
                 if (ImGui::Selectable(selectLabel, false, ImGuiSelectableFlags_DontClosePopups, ImVec2(fullWidth - rightWidth - spacing, 0))) {
                     clientSimTogglePlayerCheckState(cs, (BYTE)i);
                 }
+                imguiHandOnHover();
 
                 /* Right-aligned platform/WBN/Steam icons */
                 ImGui::SameLine(fullWidth - rightWidth);

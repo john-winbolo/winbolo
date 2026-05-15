@@ -169,6 +169,22 @@ static inline bool imguiOpenUrl(const char *url) {
     return SDL_OpenURL(url);
 }
 
+/* Switch to the hand cursor when the most-recently-submitted ImGui item is
+ * hovered. Call immediately after a Button/SmallButton/ImageButton/
+ * ArrowButton or a row-style Selectable. Safe to call on any frame — if the
+ * item is not hovered, this is a no-op.
+ *
+ * Use the convention: clickable buttons and row selectables get the hand
+ * cursor. Skip MenuItem/Checkbox/RadioButton (they have their own
+ * affordances) and dropdown-list Selectables (the popup already implies
+ * clickability). ImGui::TextLinkOpenURL() sets the cursor itself, so don't
+ * follow it with this call. */
+static inline void imguiHandOnHover(void) {
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+}
+
 /* Register Platform_OpenInShellFn on the current ImGui context so that
  * ImGui::TextLinkOpenURL() actually launches the system browser on click.
  * Call once per ImGui::CreateContext(), with that context current. */

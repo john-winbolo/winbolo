@@ -116,10 +116,12 @@ static void keyRow(const char *label, KeySetupField field) {
         if (ImGui::SmallButton(langGetText(STR_CANCEL))) {
             s_waiting = ksNone;
         }
+        imguiHandOnHover();
     } else {
         if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
             s_waiting = field;
         }
+        imguiHandOnHover();
     }
     ImGui::PopID();
 }
@@ -345,12 +347,14 @@ extern "C" int imguiKeySetupShow(void) {
             result = 1;
             running = false;
         }
+        imguiHandOnHover();
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(120, 0))) {
             s_waiting = ksNone;
             result = 0;
             running = false;
         }
+        imguiHandOnHover();
 
         if (busy) ImGui::EndDisabled();
 
