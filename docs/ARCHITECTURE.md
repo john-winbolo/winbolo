@@ -26,7 +26,7 @@ document is the stable reference for the rules themselves.
 | `src/braintest/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — dev visualisation tool, not shipped to players. |
 | `src/gym/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — ML training harness, not shipped in player builds. |
 | `brains/` | T1 + T2 + T3 + T4 | Builds `bot_brains_static` (bot brain implementations — NewAutopilot, ONNX backends). Compiles under the `sim_owner` profile because brain evaluation reads sim state directly. Not a frontend; every binary that ships bots links the same `bot_brains_static`, so the asymmetric-runtime bug class doesn't apply. |
-| `src/server/` | T1 + T2 + T3 + T4 | Co-owner of the sim alongside `src/bolo/`. `server_sim.c`, `servermessages.c`, `transport_udp_server.c`, `server_lifecycle.c`, `threads.c`, and `geolookup.c` are sim implementation; they compile under the `sim_owner` profile via two libraries — `server_sim_static` (sim core, linked by every binary that hosts a sim) and `server_static` (dedicated-server runtime on top of it, linked only by the binaries that run the real lifecycle). The actual dedicated-server frontend is just `servermain.c`, `server_frontend_stubs.c`, and `server_dedicated_log.c`, which follow the standard T1-only frontend rules. |
+| `src/server/` | T1 + T2 + T3 + T4 | Co-owner of the sim alongside `src/bolo/`. Most files compile via two libraries: `server_sim_static` (sim core: `server_sim.c`, `servermessages.c`) and `server_static` (dedicated-server runtime on top of it: `transport_udp_server.c`, `server_lifecycle.c`, `threads.c`, `geolookup.c`). Three more files are per-target sim runtime that ship inside WinBoloDS with T2 access via `bolo_grant_internal_source_access`: `servermain.c` (owns the dedicated-server `main()` and module globals), `server_frontend_stubs.c` (stubs the T2 callbacks bolo's sim TUs expect when there is no UI), and `server_dedicated_log.c` (real bodies for the dedicated-server's replay-log hooks; `server_dedicated_log_stubs.c` is the no-op pair every other binary picks). See "Per-file T2 grants" below for the mechanism. |
 | `src/headless/` | T1 + T3 + T4 | Same as server. |
 | `src/wasm/` | T1 + T3 + T4 | Web build of the desktop client. |
 | `src/android/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
@@ -118,11 +118,11 @@ or `ServerSim` through the public T1 API. Existing frontends are
 `src/gui/sdl3/` (desktop), `src/android/` and `src/ios/` (mobile),
 `src/wasm/` (web), `src/headless/` (no UI), `src/braintest/` (dev
 tool), `src/logviewer/` (replay viewer), and the dedicated-server
-frontend under `src/server/` — specifically `servermain.c`,
-`server_frontend_stubs.c`, and `server_dedicated_log.c`. The other
-`src/server/` translation units (`server_sim.c`, `servermessages.c`,
-`transport_udp_server.c`, `server_lifecycle.c`, `threads.c`,
-`geolookup.c`) are sim implementation, not frontend code.
+binary built from `src/server/`. Note: the dedicated-server binary
+is not a pure T1-only frontend — `servermain.c`,
+`server_frontend_stubs.c`, and `server_dedicated_log.c` are
+per-target sim runtime with T2 access via per-file grant. See the
+`src/server/` table row and "Per-file T2 grants" below.
 
 ### Client
 
@@ -622,6 +622,58 @@ own CMake profile, a documented scope (which T2 headers and why),
 and a written expiry condition (the change of circumstance that
 brings the asymmetric-runtime bug class back into scope). Without
 that, the default answer is "add a T1 accessor".
+
+## Per-file T2 grants
+
+The four privileged profiles above (`sim_owner`, `mapeditor`,
+`braintest`, `gym`) grant T2 access at the directory/target level.
+A finer-grained mechanism — `bolo_grant_internal_source_access` in
+`cmake/bolo_lib.cmake` — grants T2 access at the individual source-
+file level inside a target that is otherwise locked to `public/`.
+
+It exists because some sim source files have to compile per-target
+rather than join `bolo_static` or `server_static`. The reasons fall
+into two categories.
+
+**Compile-def divergence.** A TU has `#ifdef HAVE_STEAM` (or another
+target-specific switch) and its gated code paths can't be archive-
+dropped — every binary's view of the symbol surface must match its
+own defines. Files in this category:
+
+- `src/bolo/transport_udp_client.c` — `HAVE_STEAM` flips the
+  `PLAYER_FLAG_STEAM_BUILD` bit in the JOIN_REQUEST path.
+- `src/bolo/client_mapload.c` — same flag.
+
+**Per-target globals or `main()`.** A TU owns target-specific globals
+or the binary's entry point, so it can't live in a shared archive:
+
+- `src/server/servermain.c` — the dedicated-server `main()` and the
+  module globals it owns.
+- `src/server/server_frontend_stubs.c` — stubs the T2 callbacks
+  bolo's sim TUs expect when there is no UI. Stubbing a T2 function
+  requires its signature visible.
+- `src/server/server_dedicated_log.c` — real bodies for the replay-
+  log hooks; the no-op pair (`server_dedicated_log_stubs.c`) ships
+  in every other binary, so the two can't both link.
+- WinBolo's embedded map editor TUs (`src/mapeditor/mapeditor.c`,
+  `mapeditor_export.c`, `mapeditor_validate.c`) — sim-co-owner files
+  from the editor that need T2 access regardless of which binary
+  they're compiled into.
+
+This is not a third tier of privileged exception. The grants are a
+CMake-level workaround for archive packaging, not an architectural
+relaxation: the files are sim co-owner code that happens to be
+per-target. The asymmetric-runtime bug class doesn't apply because
+each file participates in one binary at a time, and its T2 use is
+internal to the sim it co-owns.
+
+**When NOT to use it.** If a *frontend* TU needs T2 — that's the bug
+class this architecture exists to prevent. Add a T1 accessor instead.
+Recent example: `src/headless/headless_main.c`'s `--cmd-stdin`
+`--fast` dispatch used to be granted access; the fix was to add
+`serverSimAcceptAlliance` / `serverSimLeaveAlliance` /
+`serverSimSetPlayerName` to `server_sim.h`. If a TU could just join
+`bolo_static` or `server_static`, do that instead.
 
 ## Layout on disk
 
