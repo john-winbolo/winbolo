@@ -17,6 +17,10 @@ extern "C" void windowSaveMap(struct ClientSim *cs);
 extern "C" void sdl3ImguiShowGameInfo(bool open);
 extern "C" void sdl3ImguiShowSysInfo(bool open);
 extern "C" void sdl3ImguiShowNetInfo(bool open);
+extern "C" bool sdl3ImguiIsSysInfoOpen(void);
+extern "C" bool sdl3ImguiIsNetInfoOpen(void);
+extern "C" bool sdl3ImguiIsGameInfoOpen(void);
+extern "C" bool sdl3ImguiIsSendMsgOpen(void);
 
 extern "C" void windowSmoothScrolling_toggle(void);
 extern "C" void windowAutomaticScrolling_toggle(struct ClientSim *cs);
@@ -62,10 +66,31 @@ static void *g_clientSim = NULL;
  * walked by mac_menubar_refresh() to mirror in-window state. Submenus
  * cache the NSMenu so the refresh can iterate items by tag rather than
  * caching one pointer per item. */
-static NSMenu     *s_frameRateMenu       = nil;
-static NSMenu     *s_windowSizeMenu      = nil;
-static NSMenuItem *s_smoothScrollingItem = nil;
-static NSMenuItem *s_deviceItem          = nil;
+static NSMenu     *s_frameRateMenu           = nil;
+static NSMenu     *s_windowSizeMenu          = nil;
+static NSMenu     *s_messageLabelsMenu       = nil;
+static NSMenu     *s_tankLabelsMenu          = nil;
+static NSMenuItem *s_smoothScrollingItem     = nil;
+static NSMenuItem *s_deviceItem              = nil;
+static NSMenuItem *s_autoScrollingItem       = nil;
+static NSMenuItem *s_showGunsightItem        = nil;
+static NSMenuItem *s_pillLabelsItem          = nil;
+static NSMenuItem *s_baseLabelsItem          = nil;
+static NSMenuItem *s_hideMainViewItem        = nil;
+static NSMenuItem *s_noOwnLabelItem          = nil;
+static NSMenuItem *s_allowNewPlayersItem     = nil;
+static NSMenuItem *s_soundEffectsItem        = nil;
+static NSMenuItem *s_backgroundSoundItem     = nil;
+static NSMenuItem *s_soundKeepaliveItem      = nil;
+static NSMenuItem *s_newswireMessagesItem    = nil;
+static NSMenuItem *s_assistantMessagesItem   = nil;
+static NSMenuItem *s_aiMessagesItem          = nil;
+static NSMenuItem *s_networkStatusMessagesItem = nil;
+static NSMenuItem *s_networkDebugMessagesItem  = nil;
+static NSMenuItem *s_sysInfoItem             = nil;
+static NSMenuItem *s_netInfoItem             = nil;
+static NSMenuItem *s_gameInfoItem            = nil;
+static NSMenuItem *s_sendMsgItem             = nil;
 
 @interface WBMenuBridge : NSObject
 - (void)onQuit:(id)sender;
@@ -131,15 +156,15 @@ static NSMenuItem *s_deviceItem          = nil;
 }
 - (void)onShowGameInfo:(id)sender {
     (void)sender;
-    sdl3ImguiShowGameInfo(true);
+    sdl3ImguiShowGameInfo(!sdl3ImguiIsGameInfoOpen());
 }
 - (void)onShowSysInfo:(id)sender {
     (void)sender;
-    sdl3ImguiShowSysInfo(true);
+    sdl3ImguiShowSysInfo(!sdl3ImguiIsSysInfoOpen());
 }
 - (void)onShowNetInfo:(id)sender {
     (void)sender;
-    sdl3ImguiShowNetInfo(true);
+    sdl3ImguiShowNetInfo(!sdl3ImguiIsNetInfoOpen());
 }
 - (void)onSmoothScrolling:(id)sender {
     (void)sender;
@@ -243,7 +268,7 @@ static NSMenuItem *s_deviceItem          = nil;
 }
 - (void)onShowSendMsg:(id)sender {
     (void)sender;
-    sdl3ImguiShowSendMsg(true);
+    sdl3ImguiShowSendMsg(!sdl3ImguiIsSendMsgOpen());
 }
 - (void)onSelectAllPlayers:(id)sender {
     (void)sender;
@@ -362,6 +387,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [gameInfoItem setTarget:g_bridge];
     [fileMenu addItem:gameInfoItem];
+    s_gameInfoItem = gameInfoItem;
 
     NSMenuItem *sysInfoItem = [[NSMenuItem alloc]
         initWithTitle:@"System Info"
@@ -369,6 +395,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [sysInfoItem setTarget:g_bridge];
     [fileMenu addItem:sysInfoItem];
+    s_sysInfoItem = sysInfoItem;
 
     NSMenuItem *netInfoItem = [[NSMenuItem alloc]
         initWithTitle:@"Network Info"
@@ -376,6 +403,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [netInfoItem setTarget:g_bridge];
     [fileMenu addItem:netInfoItem];
+    s_netInfoItem = netInfoItem;
 
     /* Edit menu — mirrors the ImGui Edit menu (renderMenuBar() in
      * sdl3imgui.cpp). Titles are localized via langGetText so the native
@@ -472,6 +500,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@"a"];
     [autoScrollItem setTarget:g_bridge];
     [editMenu addItem:autoScrollItem];
+    s_autoScrollingItem = autoScrollItem;
 
     NSMenuItem *showGunsightItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_SHOW_GUNSIGHT)
@@ -479,6 +508,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@"g"];
     [showGunsightItem setTarget:g_bridge];
     [editMenu addItem:showGunsightItem];
+    s_showGunsightItem = showGunsightItem;
 
     /* Message Labels submenu — tag values are labelLen enum members. */
     NSMenuItem *msgLabelsRoot = [editMenu addItemWithTitle:LANG_STR(STR_MENU_MSG_NAMES_SUB) action:nil keyEquivalent:@""];
@@ -492,6 +522,8 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     NSMenuItem *msgLong = [[NSMenuItem alloc] initWithTitle:LANG_STR(STR_LONG) action:@selector(onSetMessageLabel:) keyEquivalent:@""];
     [msgLong setTarget:g_bridge]; [msgLong setTag:2]; /* lblLong */
     [msgLabelsMenu addItem:msgLong];
+
+    s_messageLabelsMenu = msgLabelsMenu;
 
     /* Tank Labels submenu — Cmd+1/2/3 select length; trailing item toggles
      * own-tank label visibility (different action, no tag). */
@@ -513,12 +545,17 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
 
     [tankLabelsMenu addItem:[NSMenuItem separatorItem]];
 
+    /* Sentinel tag so the tank-labels tag-walk in mac_menubar_refresh()
+     * cannot match this sibling toggle (real labelTank values are 0/1/2). */
     NSMenuItem *noOwnLabel = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_NO_OWN_LABEL)
         action:@selector(onLabelOwnTank:)
         keyEquivalent:@""];
-    [noOwnLabel setTarget:g_bridge];
+    [noOwnLabel setTarget:g_bridge]; [noOwnLabel setTag:-1];
     [tankLabelsMenu addItem:noOwnLabel];
+    s_noOwnLabelItem = noOwnLabel;
+
+    s_tankLabelsMenu = tankLabelsMenu;
 
     NSMenuItem *pillLabelsItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_PILLBOX_LABELS)
@@ -526,6 +563,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@"p"];
     [pillLabelsItem setTarget:g_bridge];
     [editMenu addItem:pillLabelsItem];
+    s_pillLabelsItem = pillLabelsItem;
 
     NSMenuItem *baseLabelsItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_BASE_LABELS)
@@ -533,6 +571,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@"b"];
     [baseLabelsItem setTarget:g_bridge];
     [editMenu addItem:baseLabelsItem];
+    s_baseLabelsItem = baseLabelsItem;
 
     [editMenu addItem:[NSMenuItem separatorItem]];
 
@@ -546,6 +585,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [hideMainViewItem setTarget:g_bridge];
     [editMenu addItem:hideMainViewItem];
+    s_hideMainViewItem = hideMainViewItem;
 
     [editMenu addItem:[NSMenuItem separatorItem]];
 
@@ -572,6 +612,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [allowNewPlayersItem setTarget:g_bridge];
     [winBoloMenu addItem:allowNewPlayersItem];
+    s_allowNewPlayersItem = allowNewPlayersItem;
 
     NSMenuItem *setKeysItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_SETKEYS)
@@ -595,6 +636,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [soundEffectsItem setTarget:g_bridge];
     [winBoloMenu addItem:soundEffectsItem];
+    s_soundEffectsItem = soundEffectsItem;
 
     NSMenuItem *backgroundSoundItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_BACKGROUND_SOUND)
@@ -602,6 +644,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [backgroundSoundItem setTarget:g_bridge];
     [winBoloMenu addItem:backgroundSoundItem];
+    s_backgroundSoundItem = backgroundSoundItem;
 
     NSMenuItem *soundKeepaliveItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_SOUND_KEEPALIVE)
@@ -609,6 +652,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [soundKeepaliveItem setTarget:g_bridge];
     [winBoloMenu addItem:soundKeepaliveItem];
+    s_soundKeepaliveItem = soundKeepaliveItem;
 
     [winBoloMenu addItem:[NSMenuItem separatorItem]];
 
@@ -618,6 +662,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [newswireMsgsItem setTarget:g_bridge];
     [winBoloMenu addItem:newswireMsgsItem];
+    s_newswireMessagesItem = newswireMsgsItem;
 
     NSMenuItem *assistantMsgsItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_ASSISTANT_MSGS)
@@ -625,6 +670,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [assistantMsgsItem setTarget:g_bridge];
     [winBoloMenu addItem:assistantMsgsItem];
+    s_assistantMessagesItem = assistantMsgsItem;
 
     NSMenuItem *aiMsgsItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_AI_MSGS)
@@ -632,6 +678,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [aiMsgsItem setTarget:g_bridge];
     [winBoloMenu addItem:aiMsgsItem];
+    s_aiMessagesItem = aiMsgsItem;
 
     NSMenuItem *netStatusMsgsItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_NETSTATUS_MSGS)
@@ -639,6 +686,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [netStatusMsgsItem setTarget:g_bridge];
     [winBoloMenu addItem:netStatusMsgsItem];
+    s_networkStatusMessagesItem = netStatusMsgsItem;
 
     NSMenuItem *netDebugMsgsItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_NETDEBUG_MSGS)
@@ -646,6 +694,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [netDebugMsgsItem setTarget:g_bridge];
     [winBoloMenu addItem:netDebugMsgsItem];
+    s_networkDebugMessagesItem = netDebugMsgsItem;
 
     [winBoloMenu addItem:[NSMenuItem separatorItem]];
 
@@ -682,6 +731,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [sendMsgItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagShift];
     [sendMsgItem setTarget:g_bridge];
     [playersMenu addItem:sendMsgItem];
+    s_sendMsgItem = sendMsgItem;
 
     [playersMenu addItem:[NSMenuItem separatorItem]];
 
@@ -791,5 +841,46 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
 
     if (s_deviceItem && s->deviceLabel[0]) {
         [s_deviceItem setTitle:[NSString stringWithUTF8String:s->deviceLabel]];
+    }
+
+    if (s_autoScrollingItem)         [s_autoScrollingItem         setState:(s->autoScrolling         ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_showGunsightItem)          [s_showGunsightItem          setState:(s->showGunsight          ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_pillLabelsItem)            [s_pillLabelsItem            setState:(s->showPillLabels        ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_baseLabelsItem)            [s_baseLabelsItem            setState:(s->showBaseLabels        ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_hideMainViewItem)          [s_hideMainViewItem          setState:(s->hideMainView          ? NSControlStateValueOn : NSControlStateValueOff)];
+
+    if (s_allowNewPlayersItem)       [s_allowNewPlayersItem       setState:(s->allowNewPlayers       ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_soundEffectsItem)          [s_soundEffectsItem          setState:(s->soundEffects          ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_backgroundSoundItem)       [s_backgroundSoundItem       setState:(s->backgroundSound       ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_soundKeepaliveItem)        [s_soundKeepaliveItem        setState:(s->useSoundKeepalive     ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_newswireMessagesItem)      [s_newswireMessagesItem      setState:(s->newswireMessages      ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_assistantMessagesItem)     [s_assistantMessagesItem     setState:(s->assistantMessages     ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_aiMessagesItem)            [s_aiMessagesItem            setState:(s->aiMessages            ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_networkStatusMessagesItem) [s_networkStatusMessagesItem setState:(s->networkStatusMessages ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_networkDebugMessagesItem)  [s_networkDebugMessagesItem  setState:(s->networkDebugMessages  ? NSControlStateValueOn : NSControlStateValueOff)];
+
+    if (s_sysInfoItem)               [s_sysInfoItem               setState:(s->sysInfoOpen           ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_netInfoItem)               [s_netInfoItem               setState:(s->netInfoOpen           ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_gameInfoItem)              [s_gameInfoItem              setState:(s->gameInfoOpen          ? NSControlStateValueOn : NSControlStateValueOff)];
+
+    if (s_sendMsgItem)               [s_sendMsgItem               setState:(s->sendMsgOpen           ? NSControlStateValueOn : NSControlStateValueOff)];
+
+    if (s_messageLabelsMenu) {
+        for (NSMenuItem *item in [s_messageLabelsMenu itemArray]) {
+            [item setState:(([item tag] == s->labelMsg) ? NSControlStateValueOn : NSControlStateValueOff)];
+        }
+    }
+
+    if (s_tankLabelsMenu) {
+        for (NSMenuItem *item in [s_tankLabelsMenu itemArray]) {
+            [item setState:(([item tag] == s->labelTank) ? NSControlStateValueOn : NSControlStateValueOff)];
+        }
+    }
+
+    /* Override after the tank-labels tag-walk: No Own Label is a sibling
+     * toggle inside the same submenu (sentinel tag -1) and tracks its own
+     * source-of-truth (!labelSelf), not labelTank. */
+    if (s_noOwnLabelItem) {
+        [s_noOwnLabelItem setState:(s->noOwnLabel ? NSControlStateValueOn : NSControlStateValueOff)];
     }
 }
