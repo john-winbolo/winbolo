@@ -136,6 +136,8 @@ void sdl3ImguiShowKeySetup(void);
 *********************************************************/
 void sdl3ImguiShowSettings(void);
 
+void sdl3ImguiShowAbout(void);
+
 /*********************************************************
 *NAME:          sdl3ImguiWantsKeyboard
 *PURPOSE:
