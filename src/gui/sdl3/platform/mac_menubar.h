@@ -18,6 +18,11 @@ struct SDL_Window;
  * pointer through a separate setter once it is live. */
 void mac_menubar_install(struct SDL_Window *win, void *clientSim);
 
+/* Update the ClientSim pointer the menubar trampolines route to.
+ * Safe to call every frame; the value is stashed verbatim. NULL is
+ * acceptable (trampolines that need it will no-op). */
+void mac_menubar_set_clientsim(void *clientSim);
+
 #ifdef __cplusplus
 }
 #endif
