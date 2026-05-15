@@ -547,4 +547,47 @@ static inline bool dialogHandleUrlDropEvent(const SDL_Event *ev) {
     return false;
 }
 
+/* ---------------------------------------------------------------
+ * Standard popup modal fade-in.
+ *
+ * BeginPopupModal otherwise snaps in at full opacity, which feels
+ * abrupt next to the welcome screen's own ~150ms alpha ramp.  Call
+ * this *inside* the popup body and push the returned value as
+ * ImGuiStyleVar_Alpha; pop and EndPopup before exiting the body.
+ * Push and pop must live in the popup window's own scope so the
+ * style-stack stays balanced per-window.
+ *
+ * Phase resets to 0 on the first frame the popup window appears
+ * (detected via IsWindowAppearing, which is window-scoped and works
+ * correctly from inside the body — unlike IsPopupOpen, which is
+ * scoped to the parent ID stack and would always read false here).
+ *
+ * Fade-out isn't supported (BeginPopupModal returns false on the
+ * frame after CloseCurrentPopup, leaving nowhere to draw a ramp-out),
+ * so dismissal stays one-frame snappy.  The body's fade-in covers
+ * the perceived "popping in"; the modal dim-bg remains at full
+ * opacity since it is drawn before the body runs, which is
+ * acceptable.  Usage:
+ *
+ *     static float s_fade = 0.0f;
+ *     if (ImGui::BeginPopupModal(popupId, ...)) {
+ *         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+ *                             imguiPopupFadeAlpha(&s_fade));
+ *         ... body ...
+ *         ImGui::PopStyleVar();
+ *         ImGui::EndPopup();
+ *     }
+ */
+#ifdef __cplusplus
+static inline float imguiPopupFadeAlpha(float *phase,
+                                        float fadeInSec = 0.15f) {
+    if (ImGui::IsWindowAppearing()) {
+        *phase = 0.0f;
+    }
+    const float step = ImGui::GetIO().DeltaTime / fadeInSec;
+    *phase = (*phase + step >= 1.0f) ? 1.0f : *phase + step;
+    return *phase;
+}
+#endif /* __cplusplus */
+
 #endif /* IMGUI_DIALOG_UTILS_H */

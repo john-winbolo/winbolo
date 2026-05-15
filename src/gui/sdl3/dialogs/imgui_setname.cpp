@@ -221,8 +221,11 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
         imguiHandOnHover();
 
         /* Error popup */
+        static float s_fadeSetNameErr = 0.0f;
         if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeSetNameErr));
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
             {
@@ -233,6 +236,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                 }
                 imguiHandOnHover();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 

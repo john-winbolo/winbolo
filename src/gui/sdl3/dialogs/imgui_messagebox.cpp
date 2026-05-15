@@ -283,9 +283,12 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
 
         ImGui::SetNextWindowSizeConstraints(ImVec2(dialogW, 0),
                                             ImVec2(dialogW, FLT_MAX));
+        static float s_fadeMsgBox = 0.0f;
         if (ImGui::BeginPopupModal(popupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize |
                                    ImGuiWindowFlags_NoMove)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeMsgBox));
             /* Centre the modal in the window */
             ImVec2 modalSize = ImGui::GetWindowSize();
             ImGui::SetWindowPos(
@@ -298,6 +301,7 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
                 result = r;
                 ImGui::CloseCurrentPopup();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 

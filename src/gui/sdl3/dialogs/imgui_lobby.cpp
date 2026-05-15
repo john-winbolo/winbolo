@@ -490,8 +490,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
                 ImGui::Spacing();
 
+                static float s_fadeLobbyPortmap = 0.0f;
                 if (ImGui::BeginPopupModal(popupTitle, nullptr,
                                            ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                        imguiPopupFadeAlpha(&s_fadeLobbyPortmap));
                     ServerPortmapInfo pm2;
                     serverInstanceGetPortmapInfo(&pm2);
                     ImGui::PushTextWrapPos(420.0f * s);
@@ -518,6 +521,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         ImGui::CloseCurrentPopup();
                     }
                     imguiHandOnHover();
+                    ImGui::PopStyleVar();
                     ImGui::EndPopup();
                 }
             }
@@ -1271,8 +1275,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         /* --- Leave confirmation popup --- */
         char leavePopupModalId[64];
         SDL_snprintf(leavePopupModalId, sizeof(leavePopupModalId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
+        static float s_fadeLobbyLeave = 0.0f;
         if (ImGui::BeginPopupModal(leavePopupModalId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeLobbyLeave));
             ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_LEAVE_BLURB));
             ImGui::Spacing();
             if (ImGui::Button(langGetText(STR_YES), ImVec2(80 * s, 0))) {
@@ -1287,6 +1294,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 ImGui::CloseCurrentPopup();
             }
             imguiHandOnHover();
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 
