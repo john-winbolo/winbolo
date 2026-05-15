@@ -40,7 +40,9 @@ endif()
 # and Intel Macs. Override on the command line with -DCMAKE_OSX_ARCHITECTURES=arm64
 # for a single-arch build. iOS sets its own architectures via the toolchain.
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_ARCHITECTURES)
-    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS build architectures")
+    # FORCE because CLion / some IDE configures write an empty cache entry
+    # for CMAKE_OSX_ARCHITECTURES, which would otherwise block this default.
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS build architectures" FORCE)
 endif()
 
 set(WINBOLO_VERSION "1.18" CACHE STRING "WinBolo version number")
@@ -229,8 +231,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # Restore try_compile mode now that all probing dependencies are fetched
     set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_saved_try_compile_type}")
 else()
-    # MinGW (MSYS2): vendor freetype so we don't depend on vcpkg or system packages
-    if(MINGW)
+    # MinGW (MSYS2): vendor freetype so we don't depend on vcpkg or system packages.
+    # macOS: vendor freetype so a universal2 (arm64;x86_64) build doesn't link
+    # against an arm64-only Homebrew libfreetype.dylib.
+    if(MINGW OR APPLE)
         set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
         set(SDLTTF_HARFBUZZ OFF CACHE BOOL "" FORCE)
     endif()
