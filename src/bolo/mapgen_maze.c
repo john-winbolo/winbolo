@@ -4,15 +4,16 @@
  */
 
 /*********************************************************
- * Name:          mapeditor_maze.c
+ * Name:          mapgen_maze.c
  * Purpose:
  *   Maze generation algorithm. Produces BUILDING walls,
  *   ROAD corridors, and HALFBUILDING perimeter borders.
- *   Used by both the Generate dialog and the Maze tool.
+ *   Used by both the random-map generator and the Maze
+ *   drawing tool in the map editor.
  *********************************************************/
 
-#include "mapeditor_maze.h"
-#include "mapeditor_generate.h"
+#include "mapgen_maze.h"
+#include "mapgen.h"
 #include <string.h>
 #include <stdlib.h>
 

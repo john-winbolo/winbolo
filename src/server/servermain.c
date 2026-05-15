@@ -44,7 +44,7 @@
 #include "threads.h"
 #include "../winbolonet/winbolonet.h"
 #include "server_sim.h"
-#include "../mapeditor/mapeditor_generate.h"
+#include "mapgen.h"
 #include "log.h"
 #include "transport_udp.h"
 #include "bot_manager.h"

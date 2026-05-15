@@ -223,9 +223,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/sound.c
 
     # Shared map-gen controls used by the map chooser dialog (not the
-    # full map editor — these three files match what the iOS build pulls in).
-    ${PROJ_ROOT}/src/mapeditor/mapeditor_generate.c
-    ${PROJ_ROOT}/src/mapeditor/mapeditor_maze.c
+    # full map editor — this file matches what the iOS build pulls in).
     ${PROJ_ROOT}/src/mapeditor/mapgen_imgui.cpp
 
     # LZW compression
@@ -251,8 +249,7 @@ target_include_directories(main PRIVATE
 )
 bolo_apply_include_rules(main gui)
 bolo_grant_internal_source_access(main
-    ${PROJ_ROOT}/src/bolo/transport_udp_client.c
-    ${PROJ_ROOT}/src/mapeditor/mapeditor_generate.c)
+    ${PROJ_ROOT}/src/bolo/transport_udp_client.c)
 
 target_link_libraries(main PRIVATE bolo_static server_sim_static bot_brains_static)
 target_link_libraries(main PRIVATE

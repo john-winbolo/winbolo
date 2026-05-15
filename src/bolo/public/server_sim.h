@@ -31,12 +31,12 @@
 #include "alliance_enums.h"    /* baseAlliance, pillAlliance */
 #include "screentank.h"        /* tankAlliance */
 
-/* MapGenConfig is defined in src/mapeditor/mapeditor_generate.h.
+/* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
- * pull the mapeditor subtree into every translation unit that
+ * pull the mapgen header into every translation unit that
  * includes server_sim.h. Callers that build a config and invoke
  * serverSimEnableRandomMap / serverSimCreateRandomMap include
- * mapeditor_generate.h directly. */
+ * mapgen.h directly. */
 struct MapGenConfig;
 
 #ifndef CLIENTSIM_TYPEDEF

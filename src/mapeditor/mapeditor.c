@@ -14,8 +14,8 @@
 #include "mapeditor.h"
 #include "../common/wb_log.h"
 #include "mapeditor_imgui.h"
-#include "mapeditor_generate.h"
-#include "mapeditor_maze.h"
+#include "mapgen.h"
+#include "mapgen_maze.h"
 #include "mapeditor_symmetry.h"
 #include "mapeditor_text.h"
 #include "mapeditor_fonts.h"
@@ -1299,7 +1299,7 @@ static void meBuildGenPreview(MapEditorState *ed, int x0, int y0, int x1, int y1
     /* Force no objects for preview */
     tmpCfg.bases = 0; tmpCfg.pills = 0; tmpCfg.starts = 0;
 
-    mapEditorGenerate(tmpMap, &tmpBases, &tmpPills, &tmpStarts, &tmpCfg);
+    mapGenRun(tmpMap, &tmpBases, &tmpPills, &tmpStarts, &tmpCfg);
 
     /* Extract all tiles into preview arrays */
     int count = 0;
@@ -4271,7 +4271,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                 }
 
                 /* Run the generator */
-                mapEditorGenerate(ed->mp, ed->bs, ed->pb, ed->ss, &ed->genConfig);
+                mapGenRun(ed->mp, ed->bs, ed->pb, ed->ss, &ed->genConfig);
 
                 /* Record tile changes with correct new terrain for redo */
                 if (oldTerrain) {
