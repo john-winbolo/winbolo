@@ -45,6 +45,16 @@ endif()
 
 set(WINBOLO_VERSION "1.18" CACHE STRING "WinBolo version number")
 
+execute_process(COMMAND git rev-parse --short HEAD
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                OUTPUT_VARIABLE WINBOLO_GIT_HASH
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET)
+if(NOT WINBOLO_GIT_HASH)
+    set(WINBOLO_GIT_HASH "unknown")
+endif()
+string(TIMESTAMP WINBOLO_BUILD_DATE "%Y-%m-%d")
+
 # Derive network protocol version bytes from WINBOLO_VERSION.
 # Each digit of the version string (skipping dots) becomes one byte.
 # E.g. "1.18" -> MAJOR=0x01, MINOR=0x01, REVISION=0x08.
@@ -621,6 +631,8 @@ target_compile_definitions(WinBoloIOS PRIVATE
     HAVE_SCREEN_C=1
     __IPHONEOS__=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -987,6 +999,8 @@ add_executable(WinBolo ${CLIENT_SOURCES})
 target_compile_definitions(WinBolo PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1157,6 +1171,12 @@ if(HAVE_ONNXRUNTIME)
     elseif(DEFINED ONNXRUNTIME_LIBDIR)
         file(GLOB _ORT_ALL_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
         foreach(_f ${_ORT_ALL_SO})
+            # Skip .dSYM bundles — they are directories, not files, so
+            # copy_if_different fails on them. They are debug symbols that
+            # don't need to ship next to the binary.
+            if(_f MATCHES "\\.dSYM$")
+                continue()
+            endif()
             add_custom_command(TARGET WinBolo POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_f}" "$<TARGET_FILE_DIR:WinBolo>"
             )
@@ -1231,6 +1251,8 @@ add_executable(WinBoloDS ${SERVER_SOURCES})
 target_sources(WinBoloDS PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(WinBoloDS PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1421,6 +1443,8 @@ if(NOT WIN32)
 endif()
 target_compile_definitions(LogViewer PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1545,6 +1569,8 @@ target_sources(WinBoloHeadless PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(WinBoloHeadless PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1659,6 +1685,8 @@ target_compile_definitions(winbolo_gym PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_GYM_EXPORTS=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1785,6 +1813,8 @@ target_sources(BrainTest PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(BrainTest PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1872,6 +1902,8 @@ target_sources(MapEditor PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(MapEditor PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
