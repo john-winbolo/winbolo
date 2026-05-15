@@ -501,7 +501,11 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
 
     /* Cache the initial map state for between-round resets */
     {
-        BYTE tempBuf[65536];
+        /* Oversized for LZW worst-case (incompressible 64KB map can
+         * encode slightly larger than its input). Caller checks the
+         * returned length against MAP_DOWNLOAD_MAX_SIZE before
+         * shipping over the wire. */
+        BYTE tempBuf[131072];
         int len = serverSimGetCompressedMap(sim, tempBuf);
         sim->cachedMapData = malloc(len);
         if (sim->cachedMapData != NULL) {
@@ -530,7 +534,11 @@ ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, gameType game, boo
 
     /* Cache the initial map state for between-round resets */
     {
-        BYTE tempBuf[65536];
+        /* Oversized for LZW worst-case (incompressible 64KB map can
+         * encode slightly larger than its input). Caller checks the
+         * returned length against MAP_DOWNLOAD_MAX_SIZE before
+         * shipping over the wire. */
+        BYTE tempBuf[131072];
         int len = serverSimGetCompressedMap(sim, tempBuf);
         sim->cachedMapData = malloc(len);
         if (sim->cachedMapData != NULL) {
@@ -547,7 +555,8 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
                                     gameType game, bool hiddenMines,
                                     int32_t startDelay, int32_t gameLen) {
     ServerSim *sim;
-    BYTE tempBuf[65536];
+    /* Oversized for LZW worst-case (see comment in serverSimReloadMap). */
+    BYTE tempBuf[131072];
     int len;
     char seedStr[64];
     int x, y;
@@ -627,7 +636,8 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
  * provenance — those live in the call sites. */
 static bool serverSimApplyRandomMapConfig(ServerSim *sim,
                                           const MapGenConfig *cfg) {
-    BYTE tempBuf[65536];
+    /* Oversized for LZW worst-case (see comment in serverSimReloadMap). */
+    BYTE tempBuf[131072];
     int len;
     int x, y;
 
@@ -727,7 +737,8 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
 }
 
 bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
-    BYTE tempBuf[65536];
+    /* Oversized for LZW worst-case (see comment in serverSimReloadMap). */
+    BYTE tempBuf[131072];
     int len;
     char msg[256];
 
@@ -864,7 +875,8 @@ bool serverSimHasPreviewMap(const ServerSim *sim) {
 }
 
 bool serverSimRevertPreview(ServerSim *sim) {
-    BYTE tempBuf[65536];
+    /* Oversized for LZW worst-case (see comment in serverSimReloadMap). */
+    BYTE tempBuf[131072];
     int len;
     if (!sim || !sim->previousMapData) return FALSE;
     if (sim->state != serverStateLobby) return FALSE;
@@ -3005,7 +3017,8 @@ void serverSimStartGame(ServerSim *sim) {
 }
 
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
-    BYTE tempBuf[65536];
+    /* Oversized for LZW worst-case (see comment in serverSimReloadMap). */
+    BYTE tempBuf[131072];
     int len;
     BYTE i;
 

@@ -293,6 +293,13 @@ static int              s_chooseMapActiveTab     = 0; /* 0=server 1=upload 2=ran
  * Toggled by the corner icon button, or by pressing Esc while the
  * chooser window has focus. */
 static bool             s_chooseMapMaximized     = false;
+/* True when the user has fired at least one live-preview from a tab
+ * since opening the chooser (file pick, upload kick, generate config
+ * change). Drives the close-confirmation modal: dismissing the
+ * window with the X (or Esc) while pending opens a "Use This Map /
+ * Cancel / Keep Picking" prompt instead of silently reverting. */
+static bool             s_chooseMapPreviewPending = false;
+static bool             s_chooseMapWantCloseConfirm = false;
 /* Cached ClientSim pointer for the chooser. Captured by
  * lobbyChooseMapOpen so the listProvider (which only gets a void*
  * ctx) can reach into the cs's lobbyMapList* state without each
@@ -690,6 +697,8 @@ static void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
     }
 
     s_chooseMapOpen = true;
+    s_chooseMapPreviewPending   = false;
+    s_chooseMapWantCloseConfirm = false;
 }
 
 /* Maximized chooser — separate ImGui window with its own ID so its
@@ -945,6 +954,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                             sel, (void *)sim, (int)ok);
                         if (ok) {
                             serverSimPublishLobbySettings(sim);
+                            s_chooseMapPreviewPending = true;
                         }
                     } else {
                         const char *relPath = sel;
@@ -957,6 +967,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                             "[LOBBY/CHOOSER] MP server-tab pick rel='%s'",
                             relPath);
                         clientSimNetSendLobbySetMap(cs, relPath);
+                        s_chooseMapPreviewPending = true;
                     }
                 }
             }
@@ -1010,6 +1021,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
                         if (sim && serverSimReloadMap(sim, picked)) {
                             serverSimPublishLobbySettings(sim);
+                            s_chooseMapPreviewPending = true;
                         }
                     } else if (clientSimHasTransport(cs)) {
                         /* MP: stream the file to the server. On
@@ -1024,6 +1036,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                             (upStatus == 1 || upStatus == 2);
                         if (!inFlight) {
                             lobbyUploadKick(cs, picked);
+                            s_chooseMapPreviewPending = true;
                         }
                     }
                 }
@@ -1086,9 +1099,11 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                     if (sim && serverSimReloadRandomMap(sim,
                             &s_chooseMapRandomState.genConfig)) {
                         serverSimPublishLobbySettings(sim);
+                        s_chooseMapPreviewPending = true;
                     }
                 } else {
                     clientSimNetSendLobbyPreviewRandom(cs, seedStr);
+                    s_chooseMapPreviewPending = true;
                 }
             }
             ImGui::EndTabItem();
@@ -1128,6 +1143,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                     clientSimNetSendLobbyPreviewCancel(cs);
                 }
             }
+            s_chooseMapPreviewPending = false;
             s_chooseMapOpen = false;
         }
         ImGui::SameLine();
@@ -1140,27 +1156,80 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                     clientSimNetSendLobbyPreviewCommit(cs);
                 }
             }
+            s_chooseMapPreviewPending = false;
             s_chooseMapOpen = false;
         }
     }
 
-    ImGui::End();
-    /* Title-bar X closes the dialog. Same semantic as Cancel — we
-     * don't want a hidden preview lingering on every client when
-     * the user dismisses without committing. */
+    /* Title-bar X (or Esc). If the user fired at least one live
+     * preview since opening the chooser, route through a 3-way
+     * confirmation instead of silently reverting — they've been
+     * showing this map on every client and may well want to keep
+     * it. With no pending preview, X falls back to the original
+     * cancel-and-close path. */
     if (!open) {
-        if (s_chooseMapOpen && cs) {
-            if (clientSimIsSinglePlayer(cs)) {
-                ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-                if (sim && serverSimRevertPreview(sim)) {
-                    serverSimPublishLobbySettings(sim);
-                }
-            } else {
-                clientSimNetSendLobbyPreviewCancel(cs);
-            }
+        if (s_chooseMapPreviewPending) {
+            s_chooseMapWantCloseConfirm = true;
+        } else {
+            s_chooseMapOpen = false;
         }
-        s_chooseMapOpen = false;
     }
+
+    /* Confirmation popup — opened from the X-close path above and
+     * also from Esc handling (same flag drives both). Three exits:
+     *  - Use This Map → commit preview, close chooser.
+     *  - Cancel       → revert preview to the pre-open map, close.
+     *  - Keep Picking → dismiss the popup, keep the chooser open. */
+    if (s_chooseMapWantCloseConfirm) {
+        ImGui::OpenPopup("##MapPreviewCloseConfirm");
+        s_chooseMapWantCloseConfirm = false;
+    }
+    if (ImGui::BeginPopupModal("##MapPreviewCloseConfirm", NULL,
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::TextUnformatted("You've previewed a different map.");
+        ImGui::TextUnformatted("What would you like to do?");
+        ImGui::Spacing();
+        if (ImGui::Button("Use This Map")) {
+            if (cs) {
+                if (clientSimIsSinglePlayer(cs)) {
+                    ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+                    if (sim) serverSimCommitPreview(sim);
+                } else {
+                    clientSimNetSendLobbyPreviewCommit(cs);
+                }
+            }
+            s_chooseMapPreviewPending = false;
+            s_chooseMapOpen           = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            if (cs) {
+                if (clientSimIsSinglePlayer(cs)) {
+                    ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+                    if (sim && serverSimRevertPreview(sim)) {
+                        serverSimPublishLobbySettings(sim);
+                    }
+                } else {
+                    clientSimNetSendLobbyPreviewCancel(cs);
+                }
+            }
+            s_chooseMapPreviewPending = false;
+            s_chooseMapOpen           = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Keep Picking")) {
+            /* Re-open the chooser window — Begin's `open` flag was
+             * flipped false when the user hit X, so without this
+             * we'd close on the very next frame. */
+            s_chooseMapOpen = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    ImGui::End();
 }
 
 static void lobbySendRemoveBot(ClientSim *cs, uint8_t slot) {

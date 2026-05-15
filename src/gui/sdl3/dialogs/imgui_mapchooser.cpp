@@ -419,6 +419,14 @@ static void updatePreview(MapChooserState *state, SDL_Renderer *renderer) {
     }
 }
 
+/* Reentry guard for generateRandomPreview. Generation is currently
+ * synchronous on the GUI thread, so this can't trip in practice —
+ * but if mapGenImguiControls ever grew a callback that ran during
+ * the generate call (or if generation moves off-thread later), this
+ * keeps the old map texture visible and prevents a double-enter
+ * corrupting the chooser state. */
+static bool s_generateInFlight = false;
+
 /* Generate a random map preview from the current config.
  * When keepCamera is true the interactive preview widget snapshots
  * its zoom/pan across the reload so tweaking a slider doesn't
@@ -426,6 +434,9 @@ static void updatePreview(MapChooserState *state, SDL_Renderer *renderer) {
  * generation (no prior camera worth keeping). */
 static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer,
                                   bool keepCamera) {
+    if (s_generateInFlight) return;
+    s_generateInFlight = true;
+
     /* Close the popup if it's showing the old random map */
     mapPreviewPopupClose();
 
@@ -497,6 +508,8 @@ static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer
 
     /* Store the seed as the selected path for the caller */
     SDL_snprintf(state->selectedPath, FILENAME_MAX, "randommap:%s", state->genSeedBuf);
+
+    s_generateInFlight = false;
 }
 
 static void initGenConfig(MapChooserState *state) {
@@ -744,8 +757,14 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 if (disabled) ImGui::EndDisabled();
             }
 
-            /* Generate Random Map button */
-            if (ImGui::Button(langGetText(STR_MAPCHOOSER_GENRANDOM), ImVec2(-1, 0))) {
+            /* Generate Random Map button — gated on the in-flight
+             * flag so a reentrant call (e.g. ImGui repeated activation
+             * across one frame) can't start a second generate on top
+             * of an already-running one. */
+            if (s_generateInFlight) ImGui::BeginDisabled();
+            bool genClicked = ImGui::Button(langGetText(STR_MAPCHOOSER_GENRANDOM), ImVec2(-1, 0));
+            if (s_generateInFlight) ImGui::EndDisabled();
+            if (genClicked) {
                 state->randomMapSelected = true;
                 state->selectedIdx = MAP_CHOOSER_IDX_RANDOM;
                 SDL_strlcpy(state->selectedName, langGetText(STR_MAPCHOOSER_RANDOMMAP), sizeof(state->selectedName));
