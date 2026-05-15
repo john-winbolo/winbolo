@@ -777,12 +777,25 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
-    case PACKET_CHAT_BROADCAST:
+    case PACKET_CHAT_BROADCAST: {
         /* Chat broadcast — wire format depends on fromPlayer (see netpacks.h):
          *   < MAX_TANKS  : player-to-player chat, payload is plain message
          *   == 0xFF      : server localized, payload is langid + args
          *   == 0xFE      : server raw English (transitional), payload is plain message
-         */
+         *
+         * Route through the codec so in-process subscribers see the
+         * CTRL_CHAT event, then keep the existing fromPlayer-discriminated
+         * display path below — chat rendering stays at the wire boundary. */
+        {
+            ControlDecodeFn dec = transportControlCodecDecoder(pktType);
+            if (dec != NULL) {
+                ControlEvent evt;
+                if (dec(buf + PACKET_HEADER_SIZE,
+                        (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
+                    clientSimApplyControl(c->clientSim, &evt);
+                }
+            }
+        }
         if (len > PACKET_HEADER_SIZE + 2) {
             uint8_t fromPlayer = buf[PACKET_HEADER_SIZE];
             if (fromPlayer == 0xFF) {
@@ -824,6 +837,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             }
         }
         break;
+    }
 
     case PACKET_ALLIANCE_UPDATE: {
         /* [header 8][event 1][fromPlayer 1][toPlayer 1] */

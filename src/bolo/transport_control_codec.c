@@ -334,6 +334,32 @@ static EncodeResult encodeServerShutdown(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+/* PACKET_CHAT_BROADCAST wire format (variable length, three subtypes
+ * discriminated by fromPlayer):
+ *   [header 8] [fromPlayer 1] [destPlayer 1] [body bodyLen]
+ * body is opaque to the codec — raw text when fromPlayer < MAX_TANKS
+ * or == 0xFE, packed langid+args when fromPlayer == 0xFF.  Per-
+ * recipient filtering (broadcast-skip-sender, unicast-only-dest)
+ * lives in udpClientDeliverControl, matching CTRL_ALLIANCE_REQUEST. */
+static EncodeResult encodeChat(const ControlEvent *evt,
+                               const struct UdpServerClient *recipient,
+                               uint8_t *buf, size_t bufCap,
+                               size_t *outLen) {
+    const size_t needed = PACKET_HEADER_SIZE + 2 + evt->u.chat.bodyLen;
+    (void)recipient;
+    if (evt->u.chat.bodyLen > CHAT_BODY_MAX) return ENCODE_OVERFLOW;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_CHAT_BROADCAST, 0);
+    buf[PACKET_HEADER_SIZE]     = evt->u.chat.fromPlayer;
+    buf[PACKET_HEADER_SIZE + 1] = evt->u.chat.destPlayer;
+    if (evt->u.chat.bodyLen > 0) {
+        memcpy(buf + PACKET_HEADER_SIZE + 2, evt->u.chat.body,
+               evt->u.chat.bodyLen);
+    }
+    *outLen = needed;
+    return ENCODE_OK;
+}
+
 /* ================================================================
  * Decoders — keyed by wire packet type.
  *
@@ -530,6 +556,22 @@ static bool decodeServerShutdown(const uint8_t *buf, size_t len,
     return true;
 }
 
+static bool decodeChat(const uint8_t *buf, size_t len,
+                       ControlEvent *outEvt) {
+    if (len < 2) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_CHAT;
+    outEvt->u.chat.fromPlayer = buf[0];
+    outEvt->u.chat.destPlayer = buf[1];
+    {
+        size_t bodyLen = len - 2;
+        if (bodyLen > CHAT_BODY_MAX) bodyLen = CHAT_BODY_MAX;
+        outEvt->u.chat.bodyLen = (uint16_t)bodyLen;
+        if (bodyLen > 0) memcpy(outEvt->u.chat.body, buf + 2, bodyLen);
+    }
+    return true;
+}
+
 /* ================================================================
  * Encoder lookup — indexed by ControlEventType. Variants without
  * a wire form leave NULL slots (CTRL_MAP_DOWNLOAD_COMPLETE is
@@ -552,6 +594,7 @@ static const ControlEncodeFn s_encoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_GAME_PHASE]         = encodeGamePhase,
     [CTRL_GAME_OVER]          = encodeGameOver,
     [CTRL_SERVER_SHUTDOWN]    = encodeServerShutdown,
+    [CTRL_CHAT]               = encodeChat,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -573,6 +616,7 @@ ControlDecodeFn transportControlCodecDecoder(uint16_t packetType) {
         case PACKET_GAME_START:       return decodeGameStart;
         case PACKET_GAME_OVER:        return decodeGameOver;
         case PACKET_SERVER_SHUTDOWN:  return decodeServerShutdown;
+        case PACKET_CHAT_BROADCAST:   return decodeChat;
         default:                      return NULL;
     }
 }
