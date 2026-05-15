@@ -1985,7 +1985,7 @@ static void renderMenuBar(ClientSim *cs) {
     /* ---- File ---------------------------------------- */
     if (ImGui::BeginMenu(langGetText(STR_MENU_FILE))) {
         if (ImGui::MenuItem(langGetText(STR_MENU_NEW)))                       windowNewGame();
-        if (ImGui::MenuItem(langGetText(STR_MENU_SAVE_MAP), "Ctrl+S"))        windowSaveMap(cs);
+        if (ImGui::MenuItem(langGetText(STR_MENU_SAVE_MAP), KMOD_PRIMARY_LABEL "S"))        windowSaveMap(cs);
         ImGui::Separator();
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
@@ -2069,8 +2069,8 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::MenuItem(langGetText(STR_MENU_SMOOTH_SCROLLING), nullptr, (bool)smoothScrollingEnabled)) windowSmoothScrolling_toggle();
 
         ImGui::Separator();
-        if (ImGui::MenuItem(langGetText(STR_MENU_AUTO_SCROLLING), "Ctrl+A", (bool)autoScrollingEnabled)) windowAutomaticScrolling_toggle(cs);
-        if (ImGui::MenuItem(langGetText(STR_MENU_SHOW_GUNSIGHT),  "Ctrl+G", (bool)showGunsight))        windowShowGunsight_toggle(cs);
+        if (ImGui::MenuItem(langGetText(STR_MENU_AUTO_SCROLLING), KMOD_PRIMARY_LABEL "A", (bool)autoScrollingEnabled)) windowAutomaticScrolling_toggle(cs);
+        if (ImGui::MenuItem(langGetText(STR_MENU_SHOW_GUNSIGHT),  KMOD_PRIMARY_LABEL "G", (bool)showGunsight))        windowShowGunsight_toggle(cs);
 
         if (ImGui::BeginMenu(langGetText(STR_MENU_MSG_NAMES_SUB))) {
             if (ImGui::MenuItem(langGetText(STR_SHORT), nullptr, labelMsg == lblShort)) windowSetMessageLabelLen(cs, lblShort);
@@ -2079,17 +2079,17 @@ static void renderMenuBar(ClientSim *cs) {
         }
 
         if (ImGui::BeginMenu(langGetText(STR_MENU_TANK_LABELS_SUB))) {
-            if (ImGui::MenuItem(langGetText(STR_NONE),               "Ctrl+1", labelTank == lblNone))  windowSetTankLabelLen(cs, lblNone);
-            if (ImGui::MenuItem(langGetText(STR_SHORT),              "Ctrl+2", labelTank == lblShort)) windowSetTankLabelLen(cs, lblShort);
-            if (ImGui::MenuItem(langGetText(STR_LONG),               "Ctrl+3", labelTank == lblLong))  windowSetTankLabelLen(cs, lblLong);
+            if (ImGui::MenuItem(langGetText(STR_NONE),               KMOD_PRIMARY_LABEL "1", labelTank == lblNone))  windowSetTankLabelLen(cs, lblNone);
+            if (ImGui::MenuItem(langGetText(STR_SHORT),              KMOD_PRIMARY_LABEL "2", labelTank == lblShort)) windowSetTankLabelLen(cs, lblShort);
+            if (ImGui::MenuItem(langGetText(STR_LONG),               KMOD_PRIMARY_LABEL "3", labelTank == lblLong))  windowSetTankLabelLen(cs, lblLong);
             if (ImGui::MenuItem(langGetText(STR_MENU_NO_OWN_LABEL),  nullptr, !(bool)labelSelf))       windowLabelOwnTank_toggle(cs);
             ImGui::EndMenu();
         }
 
-        if (ImGui::MenuItem(langGetText(STR_MENU_PILLBOX_LABELS), "Ctrl+P", (bool)showPillLabels)) windowShowPillLabels_toggle(cs);
-        if (ImGui::MenuItem(langGetText(STR_MENU_BASE_LABELS),    "Ctrl+B", (bool)showBaseLabels)) windowShowBaseLabels_toggle(cs);
+        if (ImGui::MenuItem(langGetText(STR_MENU_PILLBOX_LABELS), KMOD_PRIMARY_LABEL "P", (bool)showPillLabels)) windowShowPillLabels_toggle(cs);
+        if (ImGui::MenuItem(langGetText(STR_MENU_BASE_LABELS),    KMOD_PRIMARY_LABEL "B", (bool)showBaseLabels)) windowShowBaseLabels_toggle(cs);
         ImGui::Separator();
-        if (ImGui::MenuItem(langGetText(STR_MENU_HIDE_MAIN),      "Ctrl+H", (bool)hideMainView))   windowHideMainView_toggle();
+        if (ImGui::MenuItem(langGetText(STR_MENU_HIDE_MAIN),      KMOD_PRIMARY_LABEL "H", (bool)hideMainView))   windowHideMainView_toggle();
         ImGui::Separator();
         {
             const char *presetLabel = (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets)
@@ -2097,7 +2097,7 @@ static void renderMenuBar(ClientSim *cs) {
             char deviceMenuItem[96];
             SDL_snprintf(deviceMenuItem, sizeof(deviceMenuItem), "%s %s",
                          langGetText(STR_MENU_DEVICE), presetLabel);
-            if (ImGui::MenuItem(deviceMenuItem, "Ctrl+T")) {
+            if (ImGui::MenuItem(deviceMenuItem, KMOD_PRIMARY_LABEL "T")) {
                 dialogCycleDevicePreset(sdl3DrawGetWindow());
             }
         }
@@ -2108,7 +2108,7 @@ static void renderMenuBar(ClientSim *cs) {
     /* ---- WinBolo ------------------------------------- */
     if (ImGui::BeginMenu(langGetText(STR_MENU_WINBOLO))) {
         if (ImGui::MenuItem(langGetText(STR_ALLOW_NEW_PLAYERS),    nullptr, (bool)allowNewPlayers))           windowMenuAllowNewPlayers_toggle(cs);
-        if (ImGui::MenuItem(langGetText(STR_MENU_SETKEYS),         "Ctrl+K"))                                 sdl3ImguiShowKeySetup();
+        if (ImGui::MenuItem(langGetText(STR_MENU_SETKEYS),         KMOD_PRIMARY_LABEL "K"))                                 sdl3ImguiShowKeySetup();
         if (ImGui::MenuItem(langGetText(STR_DLGCHANGENAME_TITLE)))                                            s_showChangeName = true;
         ImGui::Separator();
         if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_EFFECTS),   nullptr, (bool)soundEffects))              windowSoundEffects_toggle();
@@ -2121,7 +2121,7 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::MenuItem(langGetText(STR_MENU_NETSTATUS_MSGS),  nullptr, (bool)showNetworkStatusMessages)) windowMenuNetwork_toggle(cs);
         if (ImGui::MenuItem(langGetText(STR_MENU_NETDEBUG_MSGS),   nullptr, (bool)showNetworkDebugMessages))  windowMenuNetworkDebug_toggle(cs);
         ImGui::Separator();
-        if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     "Ctrl+R"))                                 clientSimRequestAllianceSelected(cs);
+        if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     KMOD_PRIMARY_LABEL "R"))                                 clientSimRequestAllianceSelected(cs);
         if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))                                                 clientSimLeaveAllianceSelf(cs);
         ImGui::Separator();
         if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS)))                                                  sdl3ImguiShowSettings();
@@ -2132,11 +2132,11 @@ static void renderMenuBar(ClientSim *cs) {
     if (ImGui::BeginMenu(langGetText(STR_MENU_PLAYERS))) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
-            if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), "Ctrl+M", s_popSendMsg.open))
+            if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), KMOD_PRIMARY_LABEL "M", s_popSendMsg.open))
                 togglePopOut(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200);
         } else {
 #endif
-            if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), "Ctrl+M")) {
+            if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), KMOD_PRIMARY_LABEL "M")) {
                 s_showSendMsg = !s_showSendMsg;
                 if (s_showSendMsg) s_sendMsgFocusInput = true;
             }
@@ -2716,7 +2716,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         /* Ctrl+key shortcuts — only for events on the main window */
         if (ev.type == SDL_EVENT_KEY_DOWN &&
             ev.key.windowID == SDL_GetWindowID(s_window) &&
-            (ev.key.mod & SDL_KMOD_CTRL) != 0) {
+            (ev.key.mod & KMOD_PRIMARY) != 0) {
             switch (ev.key.scancode) {
             case SDL_SCANCODE_M:
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)

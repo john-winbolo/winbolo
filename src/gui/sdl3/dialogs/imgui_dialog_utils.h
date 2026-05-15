@@ -39,6 +39,14 @@
 #define BOLO_MOBILE 0
 #endif
 
+#ifdef __APPLE__
+  #define KMOD_PRIMARY        SDL_KMOD_GUI
+  #define KMOD_PRIMARY_LABEL  "Cmd+"
+#else
+  #define KMOD_PRIMARY        SDL_KMOD_CTRL
+  #define KMOD_PRIMARY_LABEL  "Ctrl+"
+#endif
+
 /* Prevent iOS from shifting the entire SDL view when the soft keyboard appears.
  * SDL3's iOS view controller monitors the textInputRect set via
  * SDL_SetTextInputArea() and scrolls the view so the text field stays visible.
@@ -486,7 +494,7 @@ static inline void dialogCycleDevicePreset(SDL_Window *win) {
  * Returns true if the event was consumed. */
 static inline bool dialogHandleDevicePresetEvent(SDL_Window *win, const SDL_Event *ev) {
     if (ev->type == SDL_EVENT_KEY_DOWN &&
-        (ev->key.mod & SDL_KMOD_CTRL) &&
+        (ev->key.mod & KMOD_PRIMARY) &&
         ev->key.scancode == SDL_SCANCODE_T) {
         dialogCycleDevicePreset(win);
         return true;
