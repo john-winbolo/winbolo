@@ -3187,14 +3187,52 @@ void sdl3ImguiSetExtraRenderCallback(sdl3ImguiExtraRenderFn fn) {
 }
 
 void sdl3ImguiShowSysInfo(bool open) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) {
+        if (open) {
+            if (!s_popSysInfo.open) {
+                sysInfoGraphReset();
+                popOutCreate(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE), 440, 600);
+            }
+        } else {
+            if (s_popSysInfo.open) popOutDestroy(&s_popSysInfo);
+        }
+        return;
+    }
+#endif
     if (open && !s_showSysInfo) sysInfoGraphReset();
     s_showSysInfo = open;
 }
 void sdl3ImguiShowNetInfo(bool open) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) {
+        if (open) {
+            if (!s_popNetInfo.open) {
+                pingGraphReset();
+                popOutCreate(&s_popNetInfo, langGetText(STR_DLGNETINFO_TITLE), 360, 420);
+            }
+        } else {
+            if (s_popNetInfo.open) popOutDestroy(&s_popNetInfo);
+        }
+        return;
+    }
+#endif
     if (open && !s_showNetInfo) pingGraphReset();
     s_showNetInfo = open;
 }
 void sdl3ImguiShowGameInfo(bool open) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) {
+        if (open) {
+            if (!s_popGameInfo.open) {
+                popOutCreate(&s_popGameInfo, langGetText(STR_DLGGAMEINFO_TITLE), 320, 200);
+            }
+        } else {
+            if (s_popGameInfo.open) popOutDestroy(&s_popGameInfo);
+        }
+        return;
+    }
+#endif
     s_showGameInfo = open;
 }
 void sdl3ImguiShowSendMsg(bool open) {
