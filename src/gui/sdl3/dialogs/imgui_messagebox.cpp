@@ -240,6 +240,24 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
                         result = IMGUI_MSG_RESULT_NO;
                     else
                         result = IMGUI_MSG_RESULT_CANCEL;
+                /* Cmd+W (Mac) / Ctrl+W (other) — same effect as Esc */
+                } else if (k == SDLK_W && (ev.key.mod & KMOD_PRIMARY)) {
+                    if (buttons == IMGUI_MSG_OK)
+                        result = IMGUI_MSG_RESULT_OK;
+                    else if (buttons == IMGUI_MSG_YES_NO)
+                        result = IMGUI_MSG_RESULT_NO;
+                    else
+                        result = IMGUI_MSG_RESULT_CANCEL;
+#ifdef __APPLE__
+                /* Cmd+. — same effect as Esc */
+                } else if (k == SDLK_PERIOD && (ev.key.mod & SDL_KMOD_GUI)) {
+                    if (buttons == IMGUI_MSG_OK)
+                        result = IMGUI_MSG_RESULT_OK;
+                    else if (buttons == IMGUI_MSG_YES_NO)
+                        result = IMGUI_MSG_RESULT_NO;
+                    else
+                        result = IMGUI_MSG_RESULT_CANCEL;
+#endif
                 }
             }
         }
