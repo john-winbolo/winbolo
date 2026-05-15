@@ -138,6 +138,11 @@ struct MapChooserState_s {
      * Toggled by a checkbox under the search input. */
     bool            searchRecursive;
 
+    /* When true, the chooser table shows a "Modified" column with each
+     * file's mtime. Off by default to keep the list narrow; toggled by
+     * a checkbox next to "Search subfolders". */
+    bool            showModifiedColumn;
+
     /* Interactive preview widget — same renderer as the lobby's inline
      * preview and the modal popup. Loaded with the currently-selected
      * map's data; provides wheel-zoom / drag-pan / minimap-mode

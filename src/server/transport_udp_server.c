@@ -3901,7 +3901,15 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     }
                 }
 
-                FILE *fp = fopen(outPath, "wb");
+                /* Write to a TEMPORARY path during preview — only on
+                 * PREVIEW_COMMIT do we move it into data/maps/Uploads/.
+                 * A cancelled upload (or one superseded by picking
+                 * another map) is deleted without ever appearing in
+                 * the maps library. */
+                char tempPath[FILENAME_MAX];
+                SDL_snprintf(tempPath, sizeof(tempPath),
+                             "data/maps/.pending_upload.map");
+                FILE *fp = fopen(tempPath, "wb");
                 bool wrote = false;
                 if (fp) {
                     size_t w = fwrite(udpServer.clientUploadBuf[clientIdx],
@@ -3916,24 +3924,54 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 udpServer.clientUploadHave[clientIdx]   = 0;
                 udpServer.clientUploadTotal[clientIdx]  = 0;
 
-                /* Auto-preview the just-uploaded map. The chooser's
-                 * new pick-to-preview flow means the user already
-                 * intends this map to project to all clients, so we
-                 * stash the previous map and apply the new one
-                 * immediately. The next Cancel rolls back; Set Map
-                 * (PREVIEW_COMMIT) makes it permanent.
-                 *
-                 * If the write failed or the reload rejects the
-                 * bytes (corrupt .map etc.), we just send DONE with
-                 * the reject code and the lobby stays on whatever
-                 * map it was on. */
+                /* Auto-preview the just-uploaded map from the temp
+                 * path. The pendingUpload state on the sim retains
+                 * (tempPath, outPath, relReturn) so PREVIEW_COMMIT
+                 * later moves the file into place and CANCEL deletes
+                 * the temp. If the write failed or the reload rejects
+                 * the bytes (corrupt .map etc.), we just send DONE
+                 * with the reject code and the lobby stays on
+                 * whatever map it was on. */
                 bool previewed = false;
                 if (wrote) {
-                    if (serverSimReloadMap(sim, outPath)) {
+                    if (serverSimReloadMap(sim, tempPath)) {
+                        /* serverSimReloadMap sets sim->mapName from the
+                         * basename of mapFileName — for an upload that
+                         * gives us ".pending_upload", which then ends
+                         * up in every lobby state broadcast and the
+                         * server-browser entry. Override with the name
+                         * the user actually picked (the upload's final
+                         * basename, sans .map) so the broadcast looks
+                         * right even before commit. */
+                        char displayName[MAP_STR_SIZE];
+                        SDL_strlcpy(displayName, finalName,
+                                    sizeof(displayName));
+                        {
+                            size_t dlen = SDL_strlen(displayName);
+                            if (dlen >= 4 &&
+                                SDL_strcasecmp(displayName + dlen - 4,
+                                               ".map") == 0) {
+                                displayName[dlen - 4] = '\0';
+                            }
+                        }
+                        serverSimSetMapName(sim, displayName);
+                        /* Build the rel path for the upcoming reply
+                         * (and for the pendingUpload bookkeeping). */
+                        char relReturnEarly[256];
+                        SDL_snprintf(relReturnEarly, sizeof(relReturnEarly),
+                                     "Uploads/%s", finalName);
+                        serverSimSetPendingUpload(sim, tempPath, outPath,
+                                                  relReturnEarly);
                         transportUdpServerNotifyMapChange(sim);
                         serverSimPublishLobbySettings(sim);
                         previewed = true;
+                    } else {
+                        /* Reload failed — temp file is orphaned, clean it up. */
+                        SDL_RemovePath(tempPath);
                     }
+                } else if (tempPath[0] != '\0') {
+                    /* Write failed mid-way — remove the partial temp. */
+                    SDL_RemovePath(tempPath);
                 }
 
                 /* Reply with DONE. Path returned is "Uploads/<name>"

@@ -106,6 +106,14 @@ static void lobbySendReadyToggle(ClientSim *cs, bool ready) {
     clientSimNetSendReady(cs, ready);
 }
 
+/* Sticky "last picked brain" path. ADD BOT uses this when present
+ * so new bots inherit whatever brain the host last selected (via
+ * the per-bot AiConfig "Bot Code" dropdown), instead of always
+ * falling back to brainList->entries[0]. Empty until the user
+ * picks at least one brain explicitly; falls back to entries[0]
+ * for the first add. Process-scoped. */
+static char s_lastChosenBrainPath[256] = "";
+
 /* Add Bot. namingPool < 0 means "use the slot's team pool" (multiplayer
  * server already picks based on team membership). namingPool >= 0
  * forces a specific pool — used by per-team header "+ Bot" buttons
@@ -165,13 +173,28 @@ static void lobbySendAddBot(ClientSim *cs,
     }
     /* MP path */
     {
-        /* Tell the server which brain to assign. Pick the first entry
-         * in the catalogue — the host can change it later per-bot via
-         * the AiConfig "Bot Code" combo (PACKET_LOBBY_SET_BOT_BRAIN).
-         * Empty string lets the server use its own default. */
+        /* Tell the server which brain to assign. Prefer the sticky
+         * last-picked brain (set whenever the host commits a brain
+         * change from the per-bot AiConfig dropdown) so new bots
+         * inherit the host's current choice. Fall back to the first
+         * catalogue entry when no pick has been made yet. */
         const char *brainPath = "";
         if (cs && clientSimGetLobbyBrainList(cs)->count > 0) {
-            brainPath = clientSimGetLobbyBrainList(cs)->entries[0].path;
+            const BrainList *bl = clientSimGetLobbyBrainList(cs);
+            brainPath = bl->entries[0].path;
+            if (s_lastChosenBrainPath[0] != '\0') {
+                /* Validate the sticky against the current catalogue —
+                 * if a brain dir was removed since the host's last
+                 * pick, fall back to entries[0] instead of a stale
+                 * path the server would reject. */
+                for (int bi = 0; bi < bl->count; bi++) {
+                    if (SDL_strcasecmp(bl->entries[bi].path,
+                                       s_lastChosenBrainPath) == 0) {
+                        brainPath = s_lastChosenBrainPath;
+                        break;
+                    }
+                }
+            }
         }
         /* Pick the bot's name from the chosen pool right here on the
          * client — server doesn't know pool contents (see
@@ -1052,16 +1075,17 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                 const char *statusMsg = "";
                 ImVec4 statusCol(0.8f, 0.8f, 0.8f, 1.0f);
                 switch (upStatus) {
-                    case 0: statusMsg = ""; break;
-                    case 1: statusMsg = "Uploading: announcing..."; break;
-                    case 2: statusMsg = "Uploading: sending chunks..."; break;
-                    case 3:
-                        statusMsg = "Uploaded — previewing on all clients.";
-                        statusCol = ImVec4(0.4f, 0.9f, 0.4f, 1.0f);
-                        break;
+                    /* The in-flight "Uploading: ..." messages flash by
+                     * for a tick or two on a typical map and just feel
+                     * like noise — preview takes over immediately
+                     * after. Only the rejection case still surfaces
+                     * because the user needs to know it failed. */
                     case 4:
                         statusMsg = "Upload rejected by server.";
                         statusCol = ImVec4(0.9f, 0.5f, 0.5f, 1.0f);
+                        break;
+                    default:
+                        statusMsg = "";
                         break;
                 }
                 if (statusMsg[0]) {
@@ -1203,7 +1227,24 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel")) {
+        /* "Go back" label — show the actual previous map name so the
+         * user knows exactly what they're reverting to. SP and MP
+         * both read it from the server sim's previousMapName. */
+        const char *prevName = "previous map";
+        if (cs) {
+            const ServerSim *psim = clientSimIsSinglePlayer(cs)
+                                  ? gameFrontGetSinglePlayerServerSim()
+                                  : gameFrontGetServerSim();
+            if (psim) {
+                const char *n = serverSimGetPreviousMapName(psim);
+                if (n && n[0]) prevName = n;
+            }
+        }
+        char goBackLbl[160];
+        SDL_snprintf(goBackLbl, sizeof(goBackLbl),
+                     "Go back to previous map (%s) and close Choose Map",
+                     prevName);
+        if (ImGui::Button(goBackLbl)) {
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
@@ -1219,7 +1260,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Keep Picking")) {
+        if (ImGui::Button("Keep picking")) {
             /* Re-open the chooser window — Begin's `open` flag was
              * flipped false when the user hit X, so without this
              * we'd close on the very next frame. */
@@ -2847,6 +2888,11 @@ static void renderBotAiConfig(ClientSim *cs,
         if (slot < MAX_TANKS) s_botNameOverridden[slot] = true;
     }
     if (pendingBrainPick >= 0 && pendingBrainPick < bl->count) {
+        /* Stash as the sticky default so subsequent Add Bot clicks
+         * inherit this choice instead of falling back to entries[0]. */
+        SDL_strlcpy(s_lastChosenBrainPath,
+                    bl->entries[pendingBrainPick].path,
+                    sizeof(s_lastChosenBrainPath));
         lobbySendSetBotBrain(cs, (uint8_t)slot,
                              bl->entries[pendingBrainPick].path);
     }
