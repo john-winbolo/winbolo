@@ -2251,6 +2251,10 @@ ServerSim *gameFrontGetServerSim(void) {
   return spServerSimActive ? spServerSim : NULL;
 }
 
+bool gameFrontIsServerHosted(void) {
+  return spServerHosted;
+}
+
 BYTE gameFrontGetPlayerNum(void) {
   if (spServerSimActive && !spServerHosted) return 0;
   if (udpTransportActive) return udpPlayerNum;
