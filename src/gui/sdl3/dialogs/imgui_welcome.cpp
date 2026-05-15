@@ -48,20 +48,6 @@ enum {
     RESULT_QUIT         = -1
 };
 
-/* Try to load a BMP from next to the exe, then from data/ */
-static SDL_Texture *loadBmp(SDL_Renderer *renderer, const char *filename) {
-    SDL_Surface *surf = SDL_LoadBMP(filename);
-    if (!surf) {
-        char path[512];
-        SDL_snprintf(path, sizeof(path), "data/%s", filename);
-        surf = SDL_LoadBMP(path);
-    }
-    if (!surf) return nullptr;
-    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
-    SDL_DestroySurface(surf);
-    return tex;
-}
-
 /* Load a PNG with alpha via SDL_IOFromFile + stb_image.
    SDL_IOFromFile works with Android APK assets, unlike plain fopen. */
 static SDL_Texture *loadPng(SDL_Renderer *renderer, const char *filename) {
@@ -137,18 +123,7 @@ extern "C" int imguiWelcomeShow(void) {
     dialogApplyScaling(s);
 
     /* Load images */
-    SDL_Texture *logoTex     = loadPng(renderer, "smalllogo-transparent.png");
-    /* Icons in the same order as modes[] below. Tutorial is the first
-     * row (no icon yet). */
-    SDL_Texture *btnIcons[7] = {
-        nullptr,  /* tutorial */
-        loadBmp(renderer, "button_practice.bmp"),  /* single player */
-        loadBmp(renderer, "button_internet.bmp"),  /* internet */
-        loadBmp(renderer, "button_lan.bmp"),       /* local */
-        nullptr,  /* map editor */
-        nullptr,  /* log viewer */
-        nullptr,  /* settings */
-    };
+    SDL_Texture *logoTex = loadPng(renderer, "smalllogo-transparent.png");
 
     /* Query logo dimensions (scaled) */
     float logoW = 0.0f, logoH = 0.0f;
@@ -161,13 +136,6 @@ extern "C" int imguiWelcomeShow(void) {
     /* Use shared background game */
     BgGame *bg = bgGameGetShared();
     bool hasBg = (bg != nullptr);
-
-    /* Dialog visibility toggle with animation.
-     * Start minimized when there is a background game to watch;
-     * otherwise start fully visible (e.g. Android where bg may not load). */
-    bool dialogVisible = !hasBg;
-    float dialogAlpha = hasBg ? 0.0f : 1.0f;
-    Uint64 lastFrameTime = SDL_GetTicks();
 
     int result = RESULT_QUIT;
     bool running = true;
@@ -203,23 +171,6 @@ extern "C" int imguiWelcomeShow(void) {
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
 
-        /* Animate dialog alpha */
-        Uint64 now = SDL_GetTicks();
-        float dt = (float)(now - lastFrameTime) / 1000.0f;
-        lastFrameTime = now;
-        if (dt > 0.1f) dt = 0.1f;
-        {
-            float target = dialogVisible ? 1.0f : 0.0f;
-            float speed = 4.0f;
-            if (dialogAlpha < target) {
-                dialogAlpha += speed * dt;
-                if (dialogAlpha > target) dialogAlpha = target;
-            } else if (dialogAlpha > target) {
-                dialogAlpha -= speed * dt;
-                if (dialogAlpha < target) dialogAlpha = target;
-            }
-        }
-
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         dialogOverrideFramebufferScale(renderer);
@@ -237,45 +188,15 @@ extern "C" int imguiWelcomeShow(void) {
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-        /* When dialog is hidden, show restore button in top-right with transparent buttons */
-        if (hasBg && dialogAlpha < 0.01f) {
+        /* Top-right logo + ghost menu column. Logo is purely decorative. */
+        {
             const float restoreMargin = 12.0f * s;
-            float restoreX, restoreY;
 
-            /* Show logo at actual size as the restore button */
             if (logoTex && logoW > 0.0f) {
-                restoreX = (float)winW - logoW - restoreMargin;
-                restoreY = restoreMargin;
+                float restoreX = (float)winW - logoW - restoreMargin;
+                float restoreY = restoreMargin;
                 ImGui::SetCursorPos(ImVec2(restoreX, restoreY));
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.3f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 0.5f));
-
-                if (ImGui::ImageButton("##restoreDialog", (ImTextureID)logoTex,
-                                       ImVec2(logoW, logoH))) {
-                    dialogVisible = true;
-                }
-
-                ImGui::PopStyleColor(3);
-                ImGui::PopStyleVar(1);
-            } else {
-                const float restoreSize = 40.0f * s;
-                restoreX = (float)winW - restoreSize - restoreMargin;
-                restoreY = restoreMargin;
-                ImGui::SetCursorPos(ImVec2(restoreX, restoreY));
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f * s);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.1f, 0.1f, 0.1f, 0.6f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.8f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 0.9f));
-
-                if (ImGui::Button("W##restoreDialog", ImVec2(restoreSize, restoreSize))) {
-                    dialogVisible = true;
-                }
-
-                ImGui::PopStyleColor(3);
-                ImGui::PopStyleVar(2);
+                ImGui::Image((ImTextureID)logoTex, ImVec2(logoW, logoH));
             }
 
             /* Transparent menu buttons below the logo */
@@ -286,8 +207,10 @@ extern "C" int imguiWelcomeShow(void) {
             const float ghostBtnAlpha = 0.6f;
             const float ghostTextAlpha = 0.9f;
 #else
-            const float ghostBtnAlpha = 0.15f;
-            const float ghostTextAlpha = 0.75f;
+            /* Without the background game, buttons need higher base alpha
+             * to stay readable against the solid dark clear color. */
+            const float ghostBtnAlpha = hasBg ? 0.15f : 0.6f;
+            const float ghostTextAlpha = hasBg ? 0.75f : 0.9f;
 #endif
             float logoBottom = (logoTex && logoW > 0.0f) ? restoreMargin + logoH : restoreMargin + 40.0f * s;
             float btnX = (float)winW - miniBtnW - restoreMargin;
@@ -344,142 +267,6 @@ extern "C" int imguiWelcomeShow(void) {
 
             ImGui::PopStyleColor(4);
             ImGui::PopStyleVar(1);
-        }
-
-        /* Centered dialog panel — only when visible or animating */
-        if (dialogAlpha > 0.01f) {
-            float panelW = 500.0f * s, panelH = 570.0f * s;
-            if (panelW > (float)winW * 0.9f) panelW = (float)winW * 0.9f;
-            if (panelH > (float)winH * 0.9f) panelH = (float)winH * 0.9f;
-
-            ImGui::SetNextWindowPos(ImVec2(((float)winW - panelW) * 0.5f, ((float)winH - panelH) * 0.5f));
-            ImGui::SetNextWindowSize(ImVec2(panelW, panelH));
-            ImGui::SetNextWindowBgAlpha(0.7f * dialogAlpha);
-            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, dialogAlpha);
-            ImGui::Begin("##Welcome", nullptr,
-                         ImGuiWindowFlags_NoTitleBar |
-                         ImGuiWindowFlags_NoResize |
-                         ImGuiWindowFlags_NoMove |
-                         ImGuiWindowFlags_NoCollapse |
-                         ImGuiWindowFlags_NoScrollbar);
-
-            /* Hide arrow button — top-right corner */
-            if (hasBg) {
-                const float arrowBtnSize = 24.0f * s;
-                const float arrowMargin = 6.0f * s;
-                ImGui::SetCursorPos(ImVec2(panelW - arrowBtnSize - arrowMargin, arrowMargin));
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f * s);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 0.5f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.4f, 0.4f, 0.4f, 0.6f));
-
-                if (ImGui::Button("##hideDialog", ImVec2(arrowBtnSize, arrowBtnSize))) {
-                    dialogVisible = false;
-                }
-                ImVec2 btnMin = ImGui::GetItemRectMin();
-                ImVec2 btnMax = ImGui::GetItemRectMax();
-                float cx = (btnMin.x + btnMax.x) * 0.5f;
-                float cy = (btnMin.y + btnMax.y) * 0.5f;
-                float sz = 6.0f * s;
-                ImVec2 tri[3] = {
-                    ImVec2(cx + sz, cy),
-                    ImVec2(cx - sz, cy - sz),
-                    ImVec2(cx - sz, cy + sz),
-                };
-                ImU32 arrowCol = IM_COL32(200, 200, 200, (int)(180 * dialogAlpha));
-                ImGui::GetWindowDrawList()->AddTriangleFilled(tri[0], tri[1], tri[2], arrowCol);
-
-                ImGui::PopStyleColor(3);
-                ImGui::PopStyleVar(2);
-            }
-
-            /* Logo banner */
-            ImGui::SetCursorPosY(8.0f * s);
-            if (logoTex && logoW > 0.0f) {
-                ImGui::SetCursorPosX((panelW - logoW) * 0.5f);
-                ImGui::Image((ImTextureID)logoTex, ImVec2(logoW, logoH));
-            } else {
-                ImGui::SetWindowFontScale(2.0f);
-                const char *title = langGetText(STR_MENU_WINBOLO);
-                ImVec2 textSize = ImGui::CalcTextSize(title);
-                ImGui::SetCursorPosX((panelW - textSize.x) * 0.5f);
-                ImGui::Text("%s", title);
-                ImGui::SetWindowFontScale(1.0f);
-            }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            /* Game mode buttons with icons */
-            const float btnW = 220.0f * s;
-            const float btnH = 36.0f * s;
-            const float iconSize = 32.0f * s;
-            const float iconGap = 6.0f * s;
-            const float rowW = iconSize + iconGap + btnW;
-            const float rowStartX = (panelW - rowW) * 0.5f;
-
-            const bool showTutorialMain = gameFrontGetShowTutorialButton();
-            struct { langid labelId; int code; bool show; } modes[] = {
-                { STR_DLGSETTINGS_TUTORIAL, RESULT_TUTORIAL,     showTutorialMain },
-                { STR_DLGWELCOME_SINGLE,    RESULT_SINGLEPLAYER, true },
-                { STR_DLGWELCOME_INTERNET,  RESULT_INTERNET,     true },
-                { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true },
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
-                { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    true },
-                { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    true },
-#endif
-                { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true },
-            };
-            int modeCount = sizeof(modes) / sizeof(modes[0]);
-
-            for (int i = 0; i < modeCount; i++) {
-                if (!modes[i].show) continue;
-                /* Small gap before Map Editor and before Settings */
-                if (modes[i].code == RESULT_MAPEDITOR || modes[i].code == RESULT_SETTINGS) {
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                }
-
-                float rowY = ImGui::GetCursorPosY();
-
-                ImGui::SetCursorPosX(rowStartX);
-                if (btnIcons[i]) {
-                    ImGui::SetCursorPosY(rowY + (btnH - iconSize) * 0.5f);
-                    ImGui::Image((ImTextureID)btnIcons[i], ImVec2(iconSize, iconSize));
-                } else {
-                    ImGui::Dummy(ImVec2(iconSize, iconSize));
-                }
-
-                ImGui::SameLine(0.0f, iconGap);
-                ImGui::SetCursorPosY(rowY);
-                if (ImGui::Button(langGetText(modes[i].labelId), ImVec2(btnW, btnH))) {
-                    result = modes[i].code;
-                    running = false;
-                }
-                ImGui::Spacing();
-            }
-
-
-#if !BOLO_MOBILE
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            /* Quit button — right-aligned */
-            {
-                const float quitW = 120.0f * s;
-                ImGui::SetCursorPosX(panelW - quitW - 16.0f * s);
-                if (ImGui::Button(langGetText(STR_DLGOPENING_BUTTON2), ImVec2(quitW, btnH))) {
-                    result = RESULT_QUIT;
-                    running = false;
-                }
-            }
-#endif
-
-            ImGui::End(); /* ##Welcome panel */
-            ImGui::PopStyleVar(); /* Alpha */
         }
 
         /* Play/Pause button — bottom-left */
@@ -559,9 +346,8 @@ extern "C" int imguiWelcomeShow(void) {
 
         if (hasBg) {
             bgGameRender(bg, renderer, winW, winH);
-            int overlayAlpha = (int)(40.0f + dialogAlpha * 100.0f);
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, (Uint8)overlayAlpha);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 40);
             SDL_FRect overlayRect = { 0, 0, (float)winW, (float)winH };
             SDL_RenderFillRect(renderer, &overlayRect);
         }
@@ -572,9 +358,6 @@ extern "C" int imguiWelcomeShow(void) {
     }
 
     /* Clean up textures */
-    for (int i = 0; i < 4; i++) {
-        if (btnIcons[i]) SDL_DestroyTexture(btnIcons[i]);
-    }
     if (logoTex) SDL_DestroyTexture(logoTex);
 
     /* Tear down ImGui */
