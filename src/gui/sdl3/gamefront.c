@@ -1563,6 +1563,26 @@ bool gameFrontSetupServer(void) {
   serverSimEnterLobby(spServerSim);
   serverSimSetHasPassword(spServerSim, (password[0] != '\0'));
 
+  /* Add bot brains for local game if AI is enabled */
+  if (!serverSimBotPoolInit(0)) {
+    fprintf(stderr, "[gameFront] serverSimBotPoolInit failed; bots disabled for this session\n");
+  } else {
+    /* Resolve brain path for lobby "Add Bot" support and initial bots */
+    char brainPath[FILENAME_MAX];
+    bool haveBrain = false;
+    if (gameFrontBrainPath[0] != '\0') {
+      SDL_strlcpy(brainPath, gameFrontBrainPath, sizeof(brainPath));
+      haveBrain = true;
+    } else if (compTanks != aiNone) {
+      haveBrain = findBrainPath(brainPath, sizeof(brainPath));
+    }
+    /* Set botBrainPath on the ServerSim so lobby Add Bot requests work */
+    if (haveBrain) {
+      serverSimSetBotBrainPath(spServerSim, brainPath);
+      serverSimSetBotAiType(spServerSim, compTanks);
+    }
+  }
+
   memset(&cfg, 0, sizeof(cfg));
   cfg.udpPort         = gameFrontMyUdp;
   cfg.bindAddr        = "";
