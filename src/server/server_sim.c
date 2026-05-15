@@ -346,6 +346,9 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     memset(sim->userLogFileName, 0, sizeof(sim->userLogFileName));
     sim->cachedMapData = NULL;
     sim->cachedMapDataLen = 0;
+    sim->previousMapData = NULL;
+    sim->previousMapDataLen = 0;
+    sim->previousMapName[0] = '\0';
     sim->sim.hiddenMines = hiddenMines;
     sim->sim.isServer = TRUE;
     sim->sim.isLocalTransport = TRUE;
@@ -707,6 +710,200 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
     return TRUE;
 }
 
+bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
+    BYTE tempBuf[65536];
+    int len;
+    char msg[256];
+
+    if (sim == NULL || mapFileName == NULL || mapFileName[0] == '\0') {
+        return FALSE;
+    }
+    if (sim->state != serverStateLobby) {
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "serverSimReloadMap rejected: state=%d (not lobby)",
+            (int)sim->state);
+        return FALSE;
+    }
+
+    /* Stash the currently-committed map as the "previous" snapshot
+     * before we touch the sim. The chooser flow is:
+     *   click row     → serverSimReloadMap (stash + apply preview)
+     *   click row B   → serverSimReloadMap (no re-stash; keep
+     *                    ORIGINAL committed map)
+     *   Cancel        → serverSimRevertPreview (restore original)
+     *   Set Map       → serverSimCommitPreview (free stash)
+     * Keeping the original (not the most-recent preview) lets the
+     * user browse maps with live previews and still roll all the
+     * way back with one Cancel. */
+    if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
+        sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
+        if (sim->previousMapData) {
+            memcpy(sim->previousMapData, sim->cachedMapData,
+                   sim->cachedMapDataLen);
+            sim->previousMapDataLen = sim->cachedMapDataLen;
+            memcpy(sim->previousMapName, sim->mapName,
+                   sizeof(sim->previousMapName));
+        }
+    }
+
+    /* Wipe the existing map/pill/base/start contents before mapRead
+     * touches them. mapRead's RLE-decoder (mapReadRuns) only writes
+     * cells encoded in the new file — any tile NOT included in the
+     * new map's runs would otherwise keep the previous map's value,
+     * so a smaller map would appear "splatted on top of" the larger
+     * one it replaced. Same wipe pattern serverSimRandomMapRegenerate
+     * uses. */
+    {
+        int x, y;
+        memset((*sim->sim.mp).mapItem, DEEP_SEA,
+               sizeof((*sim->sim.mp).mapItem));
+        /* Re-mine the auto-mined border so the loaded map sits on the
+         * correct base terrain. mapRead fills the playable area; we
+         * pre-fill the ring outside MAP_MINE_EDGE_*. */
+        for (x = 0; x < 256; x++) {
+            for (y = 0; y < 256; y++) {
+                if (x <= MAP_MINE_EDGE_LEFT || x >= MAP_MINE_EDGE_RIGHT ||
+                    y <= MAP_MINE_EDGE_TOP  || y >= MAP_MINE_EDGE_BOTTOM) {
+                    (*sim->sim.mp).mapItem[x][y] = DEEP_SEA;
+                }
+            }
+        }
+        sim->sim.pb->numPills = 0;
+        sim->sim.bs->numBases = 0;
+        sim->sim.ss->numStarts = 0;
+    }
+
+    /* mapRead writes IN PLACE into the existing mp / pb / bs / ss
+     * structures — it doesn't reallocate them. So we don't need (and
+     * must not!) stash + free old handles: the "old" and "new"
+     * pointers are the same memory, just with refreshed contents. */
+    if (mapRead((char *)mapFileName,
+                &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
+        WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+            "serverSimReloadMap: mapRead failed for '%s'", mapFileName);
+        return FALSE;
+    }
+
+    basesClearMines(&sim->sim);
+
+    /* Update map name from basename, strip .map suffix. Same logic as
+     * serverSimCreate. */
+    {
+        const char *base = mapFileName;
+        const char *p;
+        for (p = mapFileName; *p; p++) {
+            if (*p == '/' || *p == '\\') {
+                base = p + 1;
+            }
+        }
+        strncpy(sim->mapName, base, MAP_STR_SIZE - 1);
+        sim->mapName[MAP_STR_SIZE - 1] = '\0';
+        {
+            size_t nameLen = strlen(sim->mapName);
+            if (nameLen >= 4 &&
+                strcmp(sim->mapName + nameLen - 4, ".map") == 0) {
+                sim->mapName[nameLen - 4] = '\0';
+            }
+        }
+    }
+
+    /* Refresh cached compressed map — used by between-round resets
+     * (serverSimResetGameWorld) and by the MP map-download path. */
+    len = serverSimGetCompressedMap(sim, tempBuf);
+    if (sim->cachedMapData) free(sim->cachedMapData);
+    sim->cachedMapData = malloc(len);
+    if (sim->cachedMapData == NULL) {
+        sim->cachedMapDataLen = 0;
+        return FALSE;
+    }
+    memcpy(sim->cachedMapData, tempBuf, len);
+    sim->cachedMapDataLen = len;
+
+    /* Random-map provenance no longer applies. */
+    sim->randomMapEnabled = false;
+
+    /* Reset lobby ready state — humans must re-acknowledge the new
+     * map. Bots stay ready (no UI to click). */
+    {
+        int i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (!sim->lobbyPlayers[i].isBot) {
+                sim->lobbyPlayers[i].ready = FALSE;
+            }
+        }
+    }
+
+    snprintf(msg, sizeof(msg), "Map changed to %s", sim->mapName);
+    serverSimConsoleMessage(msg);
+
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "serverSimReloadMap: now '%s' (%d compressed bytes)",
+        sim->mapName, sim->cachedMapDataLen);
+
+    return TRUE;
+}
+
+bool serverSimHasPreviewMap(const ServerSim *sim) {
+    return sim != NULL && sim->previousMapData != NULL;
+}
+
+bool serverSimRevertPreview(ServerSim *sim) {
+    BYTE tempBuf[65536];
+    int len;
+    if (!sim || !sim->previousMapData) return FALSE;
+    if (sim->state != serverStateLobby) return FALSE;
+
+    /* Load the stashed bytes back into the running sim's
+     * mp / pb / bs / ss. mapLoadCompressedMap writes in place, so
+     * (same caveat as serverSimReloadMap) we don't touch the old
+     * pointer values — only their contents. */
+    if (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb,
+                              &sim->sim.bs, &sim->sim.ss,
+                              sim->previousMapData,
+                              sim->previousMapDataLen) == FALSE) {
+        WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+            "serverSimRevertPreview: mapLoadCompressedMap failed");
+        return FALSE;
+    }
+    basesClearMines(&sim->sim);
+
+    /* Restore mapName + refresh cachedMapData from the live sim. */
+    memcpy(sim->mapName, sim->previousMapName, sizeof(sim->mapName));
+    len = serverSimGetCompressedMap(sim, tempBuf);
+    if (sim->cachedMapData) free(sim->cachedMapData);
+    sim->cachedMapData = (BYTE *)malloc(len);
+    if (sim->cachedMapData) {
+        memcpy(sim->cachedMapData, tempBuf, len);
+        sim->cachedMapDataLen = len;
+    } else {
+        sim->cachedMapDataLen = 0;
+    }
+
+    /* Drop the stash — the previously-committed map is now the
+     * committed map again. */
+    free(sim->previousMapData);
+    sim->previousMapData = NULL;
+    sim->previousMapDataLen = 0;
+    sim->previousMapName[0] = '\0';
+
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
+    return TRUE;
+}
+
+void serverSimCommitPreview(ServerSim *sim) {
+    if (!sim || !sim->previousMapData) return;
+    /* Nothing to do for the sim — it's already on the previewed
+     * map. We just free the stash; the previewed map is now the
+     * committed one. */
+    free(sim->previousMapData);
+    sim->previousMapData = NULL;
+    sim->previousMapDataLen = 0;
+    sim->previousMapName[0] = '\0';
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "serverSimCommitPreview: committed '%s'", sim->mapName);
+}
+
 void serverSimDestroy(ServerSim *sim) {
     BYTE count;
 
@@ -756,6 +953,11 @@ void serverSimDestroy(ServerSim *sim) {
         free(sim->cachedMapData);
         sim->cachedMapData = NULL;
         sim->cachedMapDataLen = 0;
+    }
+    if (sim->previousMapData != NULL) {
+        free(sim->previousMapData);
+        sim->previousMapData = NULL;
+        sim->previousMapDataLen = 0;
     }
 
     /* Clear the active sim pointer if it points to this sim */
@@ -3721,6 +3923,7 @@ int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
         ServerMapEntry *e = &entries[count++];
         SDL_strlcpy(e->name, name, sizeof(e->name));
         e->isFolder = isDir;
+        e->modTime  = (int64_t)info.modify_time;
     }
     SDL_free(list);
 
@@ -3741,6 +3944,133 @@ int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
         entries[j + 1] = cur;
     }
 
+    return count;
+}
+
+/* Recursive worker for serverSimSearchMapDir. Walks `fullRoot` and
+ * every nested directory (up to kMaxDepth), appending matching .map
+ * files to `entries` with their path relative to fullRoot. Stops
+ * scanning as soon as the entries array fills up. */
+static void searchDirRecursive(const char *fullRoot,
+                                const char *subRel,
+                                const char *queryLower,
+                                size_t queryLen,
+                                ServerMapEntry *entries,
+                                int maxEntries,
+                                int *count,
+                                int depth) {
+    const int kMaxDepth = 8;
+    if (*count >= maxEntries) return;
+    if (depth > kMaxDepth) return;
+
+    char dirPath[FILENAME_MAX];
+    if (subRel[0] == '\0') {
+        SDL_strlcpy(dirPath, fullRoot, sizeof(dirPath));
+    } else {
+        SDL_snprintf(dirPath, sizeof(dirPath), "%s/%s",
+                     fullRoot, subRel);
+    }
+
+    int globCount = 0;
+    char **list = SDL_GlobDirectory(dirPath, NULL, 0, &globCount);
+    if (!list) return;
+
+    for (int i = 0; i < globCount && *count < maxEntries; i++) {
+        const char *name = list[i];
+        if (!name || name[0] == '.') continue;
+
+        char childPath[FILENAME_MAX];
+        SDL_snprintf(childPath, sizeof(childPath), "%s/%s",
+                     dirPath, name);
+
+        SDL_PathInfo info;
+        if (!SDL_GetPathInfo(childPath, &info)) continue;
+        bool isDir = (info.type == SDL_PATHTYPE_DIRECTORY);
+
+        char rel[256];
+        if (subRel[0] == '\0') {
+            SDL_strlcpy(rel, name, sizeof(rel));
+        } else {
+            SDL_snprintf(rel, sizeof(rel), "%s/%s", subRel, name);
+        }
+
+        if (isDir) {
+            searchDirRecursive(fullRoot, rel, queryLower, queryLen,
+                               entries, maxEntries, count, depth + 1);
+            continue;
+        }
+
+        /* Files: .map only. */
+        size_t nlen = SDL_strlen(name);
+        if (nlen <= 4 ||
+            SDL_strcasecmp(name + nlen - 4, ".map") != 0) continue;
+
+        /* Case-insensitive substring match of query against
+         * basename. queryLen==0 caller is meaningless (search with
+         * empty query is the same as full listing — handled by the
+         * top-level fn before recursing here). */
+        bool match = false;
+        for (size_t k = 0; k + queryLen <= nlen; k++) {
+            size_t m;
+            for (m = 0; m < queryLen; m++) {
+                char hc = name[k + m];
+                if (hc >= 'A' && hc <= 'Z') hc = (char)(hc + 32);
+                if (hc != queryLower[m]) break;
+            }
+            if (m == queryLen) { match = true; break; }
+        }
+        if (!match) continue;
+
+        ServerMapEntry *e = &entries[(*count)++];
+        SDL_strlcpy(e->name, rel, sizeof(e->name));
+        e->isFolder = false;
+        e->modTime  = (int64_t)info.modify_time;
+    }
+    SDL_free(list);
+}
+
+int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
+                           const char *query,
+                           ServerMapEntry *entries, int maxEntries) {
+    (void)sim;
+    if (!entries || maxEntries <= 0) return -1;
+    if (!query || query[0] == '\0') return 0;
+    if (!relPathIsSafe(relPath)) return -1;
+
+    char fullRoot[FILENAME_MAX];
+    if (!relPath || relPath[0] == '\0') {
+        SDL_strlcpy(fullRoot, "data/maps", sizeof(fullRoot));
+    } else {
+        SDL_snprintf(fullRoot, sizeof(fullRoot), "data/maps/%s", relPath);
+    }
+
+    /* Lowercase the query once up front; recursive worker is hot
+     * and we don't want to re-tolower on every byte comparison. */
+    char queryLower[128];
+    size_t qlen = SDL_strlen(query);
+    if (qlen >= sizeof(queryLower)) qlen = sizeof(queryLower) - 1;
+    for (size_t i = 0; i < qlen; i++) {
+        char c = query[i];
+        if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+        queryLower[i] = c;
+    }
+    queryLower[qlen] = '\0';
+
+    int count = 0;
+    searchDirRecursive(fullRoot, "", queryLower, qlen,
+                       entries, maxEntries, &count, 0);
+
+    /* Sort alphabetically by relative path (case-insensitive). */
+    for (int i = 1; i < count; i++) {
+        ServerMapEntry cur = entries[i];
+        int j = i - 1;
+        while (j >= 0 &&
+               SDL_strcasecmp(entries[j].name, cur.name) > 0) {
+            entries[j + 1] = entries[j];
+            j--;
+        }
+        entries[j + 1] = cur;
+    }
     return count;
 }
 

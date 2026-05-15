@@ -231,6 +231,51 @@ void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
   transportUdpClientSendLobbySetBotBrain(&cs->transport, slot, brainPath);
 }
 
+void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbySetMap(&cs->transport, mapRelPath);
+}
+
+void clientSimNetSendLobbyPreviewCancel(ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyPreviewCancel(&cs->transport);
+}
+
+void clientSimNetSendLobbyPreviewCommit(ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyPreviewCommit(&cs->transport);
+}
+
+void clientSimNetSendLobbyMapListRequest(ClientSim *cs,
+                                         const char *relPath) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyMapListRequest(&cs->transport, relPath);
+}
+
+void clientSimNetSendLobbyMapSearchRequest(ClientSim *cs,
+                                           const char *relPath,
+                                           const char *query) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyMapSearchRequest(&cs->transport,
+                                              relPath, query);
+}
+
+void clientSimNetSendLobbyMapUploadBegin(ClientSim *cs,
+                                         uint32_t totalLen,
+                                         const char *name) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyMapUploadBegin(&cs->transport, totalLen, name);
+}
+
+void clientSimNetSendLobbyMapUploadChunk(ClientSim *cs,
+                                         uint32_t offset,
+                                         const uint8_t *data,
+                                         uint16_t dataLen) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyMapUploadChunk(&cs->transport, offset,
+                                            data, dataLen);
+}
+
 void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
                                    uint8_t color, uint8_t namingPool,
                                    const char *name) {

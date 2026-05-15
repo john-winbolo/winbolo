@@ -244,6 +244,44 @@ void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
 void transportUdpClientSendLobbySetBotBrain(Transport *t, uint8_t slot,
                                             const char *brainPath);
 
+/* Swap the current lobby map. Host (or openHost / admin) only.
+ * mapRelPath is relative to the server's data/maps/ root — server
+ * validates against ".." and absolute paths. */
+void transportUdpClientSendLobbySetMap(Transport *t,
+                                       const char *mapRelPath);
+
+/* Lobby preview cycle: SET_MAP and the MAP_UPLOAD flow auto-stash
+ * the previous map on the server. These two complete the cycle. */
+void transportUdpClientSendLobbyPreviewCancel(Transport *t);
+void transportUdpClientSendLobbyPreviewCommit(Transport *t);
+
+/* Ask the server to enumerate data/maps/<relPath>. Empty / NULL =
+ * root. Reply arrives async as PACKET_LOBBY_MAP_LIST_RSP and is
+ * stored on ClientSim's lobbyMapList* fields. */
+void transportUdpClientSendLobbyMapListRequest(Transport *t,
+                                                const char *relPath);
+
+/* Ask the server to recursively search data/maps/<relPath> for .map
+ * files whose basename contains <query> (case-insensitive).
+ * Response arrives async as PACKET_LOBBY_MAP_SEARCH_RSP and is
+ * stored on ClientSim's lobbyMapSearch* fields. */
+void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
+                                                  const char *relPath,
+                                                  const char *query);
+
+/* Chunked map upload. BEGIN announces the file; the server replies
+ * with MAP_UPLOAD_ACK (status 0 = ok) before the client starts
+ * sending CHUNKs. Chunks are 1024-byte max payload with a 32-bit
+ * offset; the final chunk that brings offset+dataLen up to totalLen
+ * triggers MAP_UPLOAD_DONE from the server. */
+void transportUdpClientSendLobbyMapUploadBegin(Transport *t,
+                                                uint32_t totalLen,
+                                                const char *name);
+void transportUdpClientSendLobbyMapUploadChunk(Transport *t,
+                                                uint32_t offset,
+                                                const uint8_t *data,
+                                                uint16_t dataLen);
+
 /* Kick a player out of the lobby. Host action. */
 void transportUdpClientSendLobbyKick(Transport *t, uint8_t slot);
 

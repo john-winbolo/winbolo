@@ -39,10 +39,11 @@ extern "C" {
 #define MAP_CHOOSER_IDX_RANDOM -2
 
 typedef struct {
-    char name[128];           /* Display name (without .map extension for files, raw name for folders) */
-    char path[FILENAME_MAX];  /* Full path (e.g. "data/maps/Foo.map" or "data/maps/Uploaded") */
-    bool isFolder;            /* true: directory the user can navigate into */
-    bool isParentUp;          /* true: synthetic ".." entry that pops one level */
+    char    name[128];           /* Display name (without .map extension for files, raw name for folders) */
+    char    path[FILENAME_MAX];  /* Full path (e.g. "data/maps/Foo.map" or "data/maps/Uploaded") */
+    bool    isFolder;            /* true: directory the user can navigate into */
+    bool    isParentUp;          /* true: synthetic ".." entry that pops one level */
+    int64_t modTime;             /* file mtime, ns since UNIX epoch (SDL_Time); 0 = unknown */
 } MapChooserEntry;
 
 typedef struct MapChooserState_s MapChooserState;
@@ -99,11 +100,30 @@ struct MapChooserState_s {
      * the list narrow and let the preview claim the rest of the row. */
     float           leftPanelMaxW;
 
+    /* User-applied delta to the left/right split, in pixels. The
+     * chooser renders a draggable vertical bar between the list and
+     * the preview; dragging accumulates into this field so the
+     * user's chosen ratio survives across re-opens of the dialog.
+     * 0 = default split from leftPanelMaxW (or the legacy
+     * preview-natural-size fallback). */
+    float           splitDragOffset;
+
     /* Local case-insensitive substring filter applied to the map list.
-     * Empty = show everything. Filter is purely client-side — the full
-     * map list is already in memory, so we just hide non-matching rows.
-     * Editable via an InputText above the list. */
+     * Empty = show everything. When searchRecursive is FALSE the
+     * filter is purely client-side — applied to whatever the
+     * listProvider (or the local glob) returned for the current
+     * folder. When searchRecursive is TRUE the filter becomes a
+     * query parameter: the chooser asks the listProvider's owner
+     * to do a recursive walk and return matching entries from
+     * every subfolder. */
     char            searchFilter[64];
+
+    /* When true and searchFilter is non-empty, the chooser displays
+     * matches from `currentDir` and all subfolders rather than only
+     * the current folder. The "[..]" entry and inbuilt Everard are
+     * hidden in this mode since results may span multiple folders.
+     * Toggled by a checkbox under the search input. */
+    bool            searchRecursive;
 
     /* Interactive preview widget — same renderer as the lobby's inline
      * preview and the modal popup. Loaded with the currently-selected

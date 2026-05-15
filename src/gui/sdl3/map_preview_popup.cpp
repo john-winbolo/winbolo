@@ -41,6 +41,10 @@ extern "C" {
 /* Singleton popup state. */
 static bool             g_popupOpen        = false;
 static MapPreviewView  *g_popupView        = NULL;
+/* Set when the user clicks "Change" — the lobby polls this each
+ * frame via mapPreviewPopupConsumeChangeRequest to know it should
+ * open the Choose Map dialog. */
+static bool             g_changeRequested  = false;
 
 static void ensureView(void) {
     if (!g_popupView) g_popupView = mapPreviewViewCreate();
@@ -122,11 +126,19 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
             g_popupOpen = false;
             ImGui::CloseCurrentPopup();
         }
+        /* Reserve room below the image for the Change / Close button
+         * row. The image fills everything above; the buttons sit on
+         * a single line at the bottom of the modal content. */
+        float btnRowH = ImGui::GetFrameHeightWithSpacing();
+        ImVec2 full = ImGui::GetContentRegionAvail();
+        ImVec2 contentSize(full.x, full.y - btnRowH);
+        if (contentSize.y < 64.0f) contentSize.y = 64.0f;
+
         /* Render the offscreen at the actual content rect size now
-         * that we know it (excludes title bar / window padding). Done
-         * inside the modal — mid-frame SDL_SetRenderTarget is safe
-         * here, same pattern the chooser uses. */
-        ImVec2 contentSize = ImGui::GetContentRegionAvail();
+         * that we know it (excludes title bar / window padding /
+         * button-row reservation). Done inside the modal — mid-frame
+         * SDL_SetRenderTarget is safe here, same pattern the chooser
+         * uses. */
         if (contentSize.x > 0 && contentSize.y > 0 && g_popupView) {
             mapPreviewViewRenderOffscreen(g_popupView, renderer,
                                            (int)contentSize.x,
@@ -140,7 +152,9 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
                 mapPreviewViewHandleInput(g_popupView,
                                           ImGui::IsItemHovered(), &opts);
             }
-            /* Zoom indicator overlay (bottom-right). */
+            /* Zoom indicator overlay — aligned to the bottom-right of
+             * the IMAGE rect, sitting just above the button row so it
+             * doesn't overlap. */
             char zoomText[16];
             SDL_snprintf(zoomText, sizeof(zoomText), "%.2fx",
                          mapPreviewViewGetZoom(g_popupView));
@@ -148,8 +162,11 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
             ImVec2 windowPos = ImGui::GetWindowPos();
             ImVec2 windowSize = ImGui::GetWindowSize();
             float pad = 8.0f;
-            ImVec2 textPos(windowPos.x + windowSize.x - textSize.x - pad - ImGui::GetStyle().WindowPadding.x,
-                          windowPos.y + windowSize.y - textSize.y - pad - ImGui::GetStyle().WindowPadding.y);
+            ImVec2 textPos(
+                windowPos.x + windowSize.x - textSize.x - pad
+                    - ImGui::GetStyle().WindowPadding.x,
+                windowPos.y + windowSize.y - textSize.y - pad
+                    - ImGui::GetStyle().WindowPadding.y - btnRowH);
             ImDrawList *dl = ImGui::GetWindowDrawList();
             ImVec2 bgMin(textPos.x - 4, textPos.y - 2);
             ImVec2 bgMax(textPos.x + textSize.x + 4, textPos.y + textSize.y + 2);
@@ -159,6 +176,36 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
             macOSPinchZoomConsume(); /* drain so it doesn't jump when data arrives */
             ImGui::Text("Map preview loading...");
         }
+
+        /* Button row — centered pair so the action bar reads the same
+         * as the Choose Map dialog's Cancel / Set Map row. */
+        {
+            const char *changeLbl = "Change";
+            const char *closeLbl  = "Close";
+            float wChange = ImGui::CalcTextSize(changeLbl).x
+                          + ImGui::GetStyle().FramePadding.x * 2.0f;
+            float wClose  = ImGui::CalcTextSize(closeLbl).x
+                          + ImGui::GetStyle().FramePadding.x * 2.0f;
+            float gap     = ImGui::GetStyle().ItemSpacing.x;
+            float total   = wChange + gap + wClose;
+            float startX  = (ImGui::GetContentRegionAvail().x - total) * 0.5f;
+            if (startX > 0.0f) {
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
+            }
+            if (ImGui::Button(changeLbl)) {
+                /* Latch the request and close the popup. The lobby's
+                 * frame loop polls mapPreviewPopupConsumeChangeRequest
+                 * and opens its Choose Map dialog on a true return. */
+                g_changeRequested = true;
+                g_popupOpen       = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(closeLbl)) {
+                g_popupOpen = false;
+                ImGui::CloseCurrentPopup();
+            }
+        }
         ImGui::EndPopup();
     }
 }
@@ -167,6 +214,12 @@ void mapPreviewPopupClose(void) {
     if (g_popupOpen) {
         g_popupOpen = false;
     }
+}
+
+bool mapPreviewPopupConsumeChangeRequest(void) {
+    bool v = g_changeRequested;
+    g_changeRequested = false;
+    return v;
 }
 
 void mapPreviewPopupDestroy(void) {

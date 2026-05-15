@@ -483,6 +483,13 @@ void clientSimSetIsBot(ClientSim *cs, bool v);
  * or LAN-only host session. The lobby UI uses these to hide
  * multiplayer-only controls and strip WBN-verified badges. */
 bool clientSimIsSinglePlayer(const ClientSim *cs);
+
+/* True when the active transport is the UDP client (vs the local /
+ * in-process transport used by SP-host and MP-host's own client).
+ * UI code that needs to differentiate "expects a MAP_CHANGE packet"
+ * vs "the server is in-process and there is no packet" should gate
+ * on this. */
+bool clientSimIsUdpTransport(const ClientSim *cs);
 bool clientSimIsLanOnly(const ClientSim *cs);
 void clientSimSetIsSinglePlayer(ClientSim *cs, bool v);
 void clientSimSetIsLanOnly(ClientSim *cs, bool v);
@@ -505,6 +512,50 @@ uint8_t     clientSimGetLobbyBotPersonality(const ClientSim *cs, BYTE slot);
 const char *clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot);
 
 const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs);
+
+/* Server-supplied map directory listing — populated asynchronously
+ * by PACKET_LOBBY_MAP_LIST_RSP after the client sends a
+ * MAP_LIST_REQ. Use the InFlight/Ready/Path triple to coordinate
+ * "we asked, waiting" vs "stale response for a different path"
+ * vs "have a fresh listing". */
+const char *clientSimGetLobbyMapListPath(const ClientSim *cs);
+int         clientSimGetLobbyMapListCount(const ClientSim *cs);
+const char *clientSimGetLobbyMapListName(const ClientSim *cs, int idx);
+bool        clientSimGetLobbyMapListIsFolder(const ClientSim *cs, int idx);
+int64_t     clientSimGetLobbyMapListModTime(const ClientSim *cs, int idx);
+bool        clientSimGetLobbyMapListReady(const ClientSim *cs);
+const char *clientSimGetLobbyMapListReqPath(const ClientSim *cs);
+bool        clientSimGetLobbyMapListInFlight(const ClientSim *cs);
+
+/* Monotonic counter, ticked on every PACKET_LOBBY_MAP_CHANGE the
+ * client receives. UI code can cache the last-seen value to detect
+ * map changes even when the download cycle completes inside a single
+ * render frame (the loopback-host case, where the `complete = false;
+ * ...; true` transition is too short for a frame-edge detector). */
+uint32_t    clientSimGetLobbyMapChangeSeq(const ClientSim *cs);
+
+/* Recursive search cache — populated by PACKET_LOBBY_MAP_SEARCH_RSP.
+ * Same shape as the list cache but names are relative paths from
+ * lobbyMapSearchPath. ReqPath/ReqQuery hold the most recent request
+ * so the chooser can tell whether the cached response matches the
+ * currently-active path/query pair. */
+const char *clientSimGetLobbyMapSearchPath(const ClientSim *cs);
+const char *clientSimGetLobbyMapSearchQuery(const ClientSim *cs);
+int         clientSimGetLobbyMapSearchCount(const ClientSim *cs);
+const char *clientSimGetLobbyMapSearchName(const ClientSim *cs, int idx);
+bool        clientSimGetLobbyMapSearchIsFolder(const ClientSim *cs, int idx);
+int64_t     clientSimGetLobbyMapSearchModTime(const ClientSim *cs, int idx);
+bool        clientSimGetLobbyMapSearchReady(const ClientSim *cs);
+const char *clientSimGetLobbyMapSearchReqPath(const ClientSim *cs);
+const char *clientSimGetLobbyMapSearchReqQuery(const ClientSim *cs);
+bool        clientSimGetLobbyMapSearchInFlight(const ClientSim *cs);
+
+/* Map upload progress reflection. status: 0=idle, 1=announce sent,
+ * 2=ack received (chunks in flight), 3=done, 4=rejected. */
+uint8_t     clientSimGetLobbyMapUploadStatus(const ClientSim *cs);
+uint8_t     clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs);
+const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs);
+void        clientSimResetLobbyMapUpload(ClientSim *cs);
 
 /* Last reject from server (toast pair). Both 0 = no pending message.
  * clientSimClearLobbyLastReject clears both fields atomically after

@@ -321,6 +321,58 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                             *   name N } */
 #define PACKET_LOBBY_KICK           165  /* { slot 1 } */
 #define PACKET_LOBBY_SET_BOT_BRAIN  166  /* { slot 1, pathLen 1, path N } */
+#define PACKET_LOBBY_SET_MAP        167  /* { pathLen 1, path N } —
+                                            * path is relative to the
+                                            * server's data/maps/ root
+                                            * (e.g. "Foo.map" or
+                                            * "subdir/Foo.map"). Server
+                                            * rejects "..", absolute
+                                            * paths, and Windows drive
+                                            * specs before opening the
+                                            * file. */
+#define PACKET_LOBBY_MAP_LIST_REQ   168  /* { pathLen 1, path N } —
+                                            * client asks server to list
+                                            * data/maps/<path>; server
+                                            * replies with MAP_LIST_RSP.
+                                            * Path "" = root. Any client
+                                            * (lobby readers don't need
+                                            * edit authority). */
+#define PACKET_LOBBY_MAP_UPLOAD_BEGIN    169  /* { totalLen 4, nameLen 1, name N }
+                                                * client -> server: announce
+                                                * incoming file. Server
+                                                * allocates a buffer, sends
+                                                * MAP_UPLOAD_ACK. */
+#define PACKET_LOBBY_MAP_UPLOAD_CHUNK    170  /* { offset 4, dataLen 2, data N }
+                                                * client -> server: chunk
+                                                * of the file. Server
+                                                * appends; on offset+dataLen
+                                                * == totalLen finalises
+                                                * the upload. */
+#define PACKET_LOBBY_MAP_SEARCH_REQ      171  /* { pathLen 1, path N,
+                                                *   queryLen 1, query M } —
+                                                * client asks server to
+                                                * recursively walk
+                                                * data/maps/<path> and
+                                                * return .map files whose
+                                                * basename contains
+                                                * <query> (case-insensitive).
+                                                * Replies with MAP_SEARCH_RSP. */
+#define PACKET_LOBBY_PREVIEW_CANCEL      172  /* (no payload) — abandon
+                                                * the currently-previewed
+                                                * map and roll the lobby
+                                                * back to the last
+                                                * committed map. Server
+                                                * re-broadcasts MAP_CHANGE
+                                                * with the prior data. */
+#define PACKET_LOBBY_PREVIEW_COMMIT      173  /* (no payload) — accept
+                                                * the currently-previewed
+                                                * map as the new permanent
+                                                * map. Just frees the
+                                                * server's "previous"
+                                                * snapshot; no broadcast
+                                                * needed since the sim is
+                                                * already on the previewed
+                                                * map. */
 
 /* Existing packets get extended payloads (additive, version-bumped):
  *   PACKET_LOBBY_TEAM_SET (130): host can move others, not just self.
@@ -340,6 +392,34 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                           *             verLen  1, ver  N,
                                           *             pathLen 1, path N } */
 #define PACKET_LOBBY_BOT_BRAIN_CHG  182  /* { slot 1, pathLen 1, path N } */
+#define PACKET_LOBBY_MAP_LIST_RSP   183  /* { pathLen 1, path N, count 1,
+                                            *   for each: nameLen 1, name M,
+                                            *             isFolder 1 } —
+                                            * server's reply to MAP_LIST_REQ.
+                                            * Path is echoed so the client
+                                            * can match request → response
+                                            * if multiple are in flight. */
+#define PACKET_LOBBY_MAP_UPLOAD_ACK 184  /* { status 1 } —
+                                            * server → client: 0 = ok, ready
+                                            * for chunks; non-zero = reject
+                                            * (size too big, name invalid,
+                                            * not in lobby state, etc.). */
+#define PACKET_LOBBY_MAP_UPLOAD_DONE 185 /* { status 1, pathLen 1, path N } —
+                                            * server -> client: upload
+                                            * finalised. On success path is
+                                            * the relative file path under
+                                            * data/maps/ so the client can
+                                            * navigate to it. */
+#define PACKET_LOBBY_MAP_SEARCH_RSP 186  /* { pathLen 1, path N,
+                                            *   queryLen 1, query M,
+                                            *   count 1,
+                                            *   for each: nameLen 1,
+                                            *             name M (relative
+                                            *             path from <path>),
+                                            *             isFolder 1 }.
+                                            * The echoed path+query let the
+                                            * client tell stale replies
+                                            * apart from a current one. */
 
 /* Setting types used inside SET_SETTING / SETTING_CHG payloads.
  * Forward-compat: receivers must skip unknown types via valueLen. */

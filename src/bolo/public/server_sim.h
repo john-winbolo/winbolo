@@ -174,6 +174,43 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
 ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen);
 
 /*********************************************************
+ *NAME:          serverSimReloadMap
+ *PURPOSE:
+ *  In-place swap the current map for the one at mapFileName.
+ *  Reads the new .map file, replaces the running ServerSim's
+ *  mp / pb / bs / ss in place, refreshes the cached compressed
+ *  map blob (used for client downloads and inter-round resets),
+ *  updates the map name, and clears any stale player-ready
+ *  states. Only valid while the sim is in serverStateLobby —
+ *  swapping mid-game would desync clients.
+ *
+ *  On failure (file unreadable, parse error, wrong state) the
+ *  previous map is preserved and the function returns false.
+ *
+ *ARGUMENTS:
+ *  sim         - Running ServerSim (must be in lobby state)
+ *  mapFileName - Path to the .map file to load
+ *RETURNS:      true on successful swap, false otherwise.
+ *********************************************************/
+bool serverSimReloadMap(ServerSim *sim, const char *mapFileName);
+
+/* Lobby preview-map cycle. serverSimReloadMap stashes the prior
+ * committed map under the hood; these two close the loop:
+ *   - serverSimHasPreviewMap: true if a preview is pending (i.e. a
+ *     stash exists), false otherwise.
+ *   - serverSimRevertPreview: load the stashed map back into the
+ *     sim, refresh cachedMapData, drop the stash. Returns false if
+ *     there was nothing to revert or the rollback failed.
+ *   - serverSimCommitPreview: free the stash; the sim already
+ *     reflects the previewed map so no reload is needed.
+ * Caller is responsible for triggering whatever broadcast / re-
+ * download the transport layer needs after a revert (the sim mp /
+ * pb / bs / ss have changed). */
+bool serverSimHasPreviewMap(const ServerSim *sim);
+bool serverSimRevertPreview(ServerSim *sim);
+void serverSimCommitPreview(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimDestroy
  *PURPOSE:
  *  Destroys a ServerSim, frees all owned resources, and
@@ -1173,12 +1210,27 @@ void        serverSimSetAdminFirstJoinAfterEmpty(ServerSim *sim, bool v);
  * read failure. Folders sort first (alphabetically), then files
  * (alphabetically). */
 typedef struct {
-    char name[128];
-    bool isFolder;
+    char    name[128];
+    bool    isFolder;
+    int64_t modTime;   /* file mtime, ns since UNIX epoch (SDL_Time);
+                          0 if unknown. Folders carry the directory
+                          mtime so the table sort still reads sensibly
+                          for them. */
 } ServerMapEntry;
 
 int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
                               ServerMapEntry *entries, int maxEntries);
+
+/* Recursive search variant. Walks data/maps/<relPath> and every
+ * nested directory, returning .map files whose basename contains
+ * `query` (case-insensitive substring) up to maxEntries results.
+ * Each returned entry's `name` is the path relative to relPath
+ * (e.g. "Subdir/Foo.map") and isFolder is always false. relPath
+ * "" or NULL = search the whole library. Empty query returns 0
+ * (caller wanted enumerate, not search). */
+int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
+                           const char *query,
+                           ServerMapEntry *entries, int maxEntries);
 
 /* openHost — when true, any connected client may issue lobby edit
  * commands (add bots, change settings, etc.). */
