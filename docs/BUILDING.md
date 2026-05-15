@@ -137,6 +137,15 @@ cmake -B build -S . -DCMAKE_OSX_ARCHITECTURES=arm64
 cmake -B build -S . -DCMAKE_OSX_ARCHITECTURES=x86_64
 ```
 
+`CMAKE_OSX_ARCHITECTURES` is sticky in the build directory's CMake cache once configured — re-running `cmake -B build -S .` without an override keeps whatever was set the first time. To switch a single-arch build dir back to universal2, either wipe it (`rm -rf build && cmake -B build -S .`) or pass `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` explicitly on the next configure. FetchContent dependencies built from source (SDL3, SDL3_ttf, crashpad) inherit whatever the cache holds.
+
+Verify a finished build is universal with `lipo`:
+
+```bash
+lipo -info build/WinBolo.app/Contents/MacOS/WinBolo
+# Architectures in the fat file: ... are: x86_64 arm64
+```
+
 The minimum macOS deployment target is 11.0 (Big Sur).
 
 ## iOS
