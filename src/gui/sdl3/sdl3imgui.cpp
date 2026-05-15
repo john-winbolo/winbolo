@@ -2981,6 +2981,29 @@ static void populateMacMenuState(MacMenuState *s) {
     s->frameRate       = frameRate;
     s->zoomFactor      = (int)zoomFactor;
     s->smoothScrolling = smoothScrollingEnabled;
+    s->autoScrolling   = autoScrollingEnabled;
+    s->showGunsight    = showGunsight;
+    s->showPillLabels  = showPillLabels;
+    s->showBaseLabels  = showBaseLabels;
+    s->hideMainView    = hideMainView;
+    s->noOwnLabel      = !labelSelf;
+    s->labelMsg        = (int)labelMsg;
+    s->labelTank       = (int)labelTank;
+
+    s->allowNewPlayers       = allowNewPlayers;
+    s->soundEffects          = soundEffects;
+    s->backgroundSound       = backgroundSound;
+    s->useSoundKeepalive     = useSoundKeepalive;
+    s->newswireMessages      = showNewswireMessages;
+    s->assistantMessages     = showAssistantMessages;
+    s->aiMessages            = showAIMessages;
+    s->networkStatusMessages = showNetworkStatusMessages;
+    s->networkDebugMessages  = showNetworkDebugMessages;
+
+    s->sysInfoOpen  = sdl3ImguiIsSysInfoOpen();
+    s->netInfoOpen  = sdl3ImguiIsNetInfoOpen();
+    s->gameInfoOpen = sdl3ImguiIsGameInfoOpen();
+    s->sendMsgOpen  = sdl3ImguiIsSendMsgOpen();
 
     int dispW = 99999, dispH = 99999;
     if (s_window) {
@@ -3250,6 +3273,12 @@ void sdl3ImguiShowSysInfo(bool open) {
     if (open && !s_showSysInfo) sysInfoGraphReset();
     s_showSysInfo = open;
 }
+bool sdl3ImguiIsSysInfoOpen(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) return s_popSysInfo.open;
+#endif
+    return s_showSysInfo;
+}
 void sdl3ImguiShowNetInfo(bool open) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) {
@@ -3267,6 +3296,12 @@ void sdl3ImguiShowNetInfo(bool open) {
     if (open && !s_showNetInfo) pingGraphReset();
     s_showNetInfo = open;
 }
+bool sdl3ImguiIsNetInfoOpen(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) return s_popNetInfo.open;
+#endif
+    return s_showNetInfo;
+}
 void sdl3ImguiShowGameInfo(bool open) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) {
@@ -3281,6 +3316,12 @@ void sdl3ImguiShowGameInfo(bool open) {
     }
 #endif
     s_showGameInfo = open;
+}
+bool sdl3ImguiIsGameInfoOpen(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) return s_popGameInfo.open;
+#endif
+    return s_showGameInfo;
 }
 void sdl3ImguiShowSendMsg(bool open) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
@@ -3310,6 +3351,12 @@ void sdl3ImguiShowSendMsg(bool open) {
         s_showPlayersPanel = false;
 #endif
     }
+}
+bool sdl3ImguiIsSendMsgOpen(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) return s_popSendMsg.open;
+#endif
+    return s_showSendMsg;
 }
 void sdl3ImguiShowSettings(void) {
     s_showSettings = !s_showSettings;

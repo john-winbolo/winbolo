@@ -97,6 +97,16 @@ void sdl3ImguiShowGameInfo(bool open);
 void sdl3ImguiShowSendMsg(bool open);
 void sdl3ImguiShowPlayersPanel(bool open);
 
+/* True iff the corresponding info / send-message popout is currently
+ * open. On desktop the popout lives in its own native window; on the
+ * web / Android / iOS / tablet builds it lives inline in the ImGui
+ * frame. The wrappers above hide that split — these accessors return
+ * the matching open-state from the same branch. */
+bool sdl3ImguiIsSysInfoOpen(void);
+bool sdl3ImguiIsNetInfoOpen(void);
+bool sdl3ImguiIsGameInfoOpen(void);
+bool sdl3ImguiIsSendMsgOpen(void);
+
 /*********************************************************
 *NAME:          sdl3ImguiShowAllianceRequest
 *PURPOSE:

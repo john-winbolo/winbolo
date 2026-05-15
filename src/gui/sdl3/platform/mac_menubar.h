@@ -29,6 +29,7 @@ void mac_menubar_set_clientsim(void *clientSim);
  * sdl3imgui.cpp once per frame and passed to mac_menubar_refresh() to
  * sync NSMenuItem .state / .enabled / .title with the in-window menu. */
 struct MacMenuState {
+    /* Edit menu */
     int  frameRate;        /* current FRAME_RATE_* value; matched against item tag */
     int  zoomFactor;       /* current ZOOM_FACTOR_* value; matched against item tag */
     bool fit1x;            /* whether 1x window size fits on the current display */
@@ -36,7 +37,31 @@ struct MacMenuState {
     bool fit3x;            /* 3x */
     bool fit4x;            /* 4x */
     bool smoothScrolling;
+    bool autoScrolling;
+    bool showGunsight;
+    bool showPillLabels;
+    bool showBaseLabels;
+    bool hideMainView;
+    bool noOwnLabel;       /* !labelSelf — drawn checked when own-tank label is hidden */
+    int  labelMsg;         /* lblShort / lblLong; matched against item tag */
+    int  labelTank;        /* lblNone / lblShort / lblLong; matched against item tag */
     char deviceLabel[64];  /* Full Edit > Device menu item title, e.g. "Device iPhone" */
+    /* WinBolo menu */
+    bool allowNewPlayers;
+    bool soundEffects;
+    bool backgroundSound;
+    bool useSoundKeepalive;
+    bool newswireMessages;
+    bool assistantMessages;
+    bool aiMessages;
+    bool networkStatusMessages;
+    bool networkDebugMessages;
+    /* File menu popouts */
+    bool sysInfoOpen;
+    bool netInfoOpen;
+    bool gameInfoOpen;
+    /* Players menu popouts */
+    bool sendMsgOpen;
 };
 
 /* Push the snapshot into the native menu. Walks cached NSMenuItem
