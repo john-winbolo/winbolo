@@ -76,7 +76,7 @@
 #include "../../winbolonet/winbolonet.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
-#include "../../mapeditor/mapeditor_generate.h"
+#include "mapgen.h"
 /* Forward declaration only — don't include logviewer.h to avoid type conflicts
    between src/logviewer/ and src/bolo/ headers (both define map, bases, etc.) */
 void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
@@ -888,8 +888,9 @@ bool gameFrontSetDlgState(openingStates newState) {
       returnValue = FALSE;
     } else {
       /* Wait for join handshake. Break early if we enter the lobby
-       * (lobby-enabled servers send PACKET_LOBBY_STATE before map chunks,
-       * so inLobby may become true while map is still downloading). */
+       * (lobby-enabled servers deliver CTRL_LOBBY_SETTINGS via sync
+       * replay before map chunks, so inLobby may become true while
+       * the map is still downloading). */
       int joinWaitTicks = 0;
       while (joinWaitTicks < 1500) {  /* 30 second timeout */
         ClientConnectState js = clientSimGetConnectState(humanSim);
@@ -1562,6 +1563,26 @@ bool gameFrontSetupServer(void) {
   serverSimEnterLobby(spServerSim);
   serverSimSetHasPassword(spServerSim, (password[0] != '\0'));
 
+  /* Add bot brains for local game if AI is enabled */
+  if (!serverSimBotPoolInit(0)) {
+    fprintf(stderr, "[gameFront] serverSimBotPoolInit failed; bots disabled for this session\n");
+  } else {
+    /* Resolve brain path for lobby "Add Bot" support and initial bots */
+    char brainPath[FILENAME_MAX];
+    bool haveBrain = false;
+    if (gameFrontBrainPath[0] != '\0') {
+      SDL_strlcpy(brainPath, gameFrontBrainPath, sizeof(brainPath));
+      haveBrain = true;
+    } else if (compTanks != aiNone) {
+      haveBrain = findBrainPath(brainPath, sizeof(brainPath));
+    }
+    /* Set botBrainPath on the ServerSim so lobby Add Bot requests work */
+    if (haveBrain) {
+      serverSimSetBotBrainPath(spServerSim, brainPath);
+      serverSimSetBotAiType(spServerSim, compTanks);
+    }
+  }
+
   memset(&cfg, 0, sizeof(cfg));
   cfg.udpPort         = gameFrontMyUdp;
   cfg.bindAddr        = "";
@@ -2068,6 +2089,10 @@ void gameFrontSaveWindowSettings(void) {
 
 ServerSim *gameFrontGetServerSim(void) {
   return spServerSimActive ? spServerSim : NULL;
+}
+
+bool gameFrontIsServerHosted(void) {
+  return spServerHosted;
 }
 
 BYTE gameFrontGetPlayerNum(void) {

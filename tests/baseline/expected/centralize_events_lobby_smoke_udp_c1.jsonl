@@ -1,0 +1,46 @@
+{"tick":0,"type":"CTRL_LOBBY_SETTINGS","mapName":"Everard Island","lobbyGameType":1,"lobbyHiddenMines":true,"lobbyAiType":0,"lobbyTimeLimit":-1,"lobbyPillCount":16,"lobbyBaseCount":11,"lobbyStartCount":16,"mapSkipAvailable":false,"netStat":0,"inLobby":true}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":0,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":0,"name":"HeadlessBot1","country":"??","clientType":2,"clientFlags":0,"allies":[0]}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":0,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_MAP_DOWNLOAD_COMPLETE"}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":0,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SETTINGS","mapName":"Everard Island","lobbyGameType":1,"lobbyHiddenMines":true,"lobbyAiType":0,"lobbyTimeLimit":-1,"lobbyPillCount":16,"lobbyBaseCount":11,"lobbyStartCount":16,"mapSkipAvailable":false,"netStat":0,"inLobby":true}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"HeadlessBot2","country":"??","clientType":2,"clientFlags":0,"allies":[1]}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":0,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":2,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":2,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SETTINGS","mapName":"Everard Island","lobbyGameType":1,"lobbyHiddenMines":true,"lobbyAiType":0,"lobbyTimeLimit":-1,"lobbyPillCount":16,"lobbyBaseCount":11,"lobbyStartCount":16,"mapSkipAvailable":false,"netStat":0,"inLobby":true}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":2,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SETTINGS","mapName":"Everard Island","lobbyGameType":1,"lobbyHiddenMines":true,"lobbyAiType":0,"lobbyTimeLimit":-1,"lobbyPillCount":16,"lobbyBaseCount":11,"lobbyStartCount":16,"mapSkipAvailable":false,"netStat":0,"inLobby":true}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":2,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SETTINGS","mapName":"Everard Island","lobbyGameType":1,"lobbyHiddenMines":true,"lobbyAiType":0,"lobbyTimeLimit":-1,"lobbyPillCount":16,"lobbyBaseCount":11,"lobbyStartCount":16,"mapSkipAvailable":false,"netStat":0,"inLobby":true}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":2,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SETTINGS","mapName":"Everard Island","lobbyGameType":1,"lobbyHiddenMines":true,"lobbyAiType":0,"lobbyTimeLimit":-1,"lobbyPillCount":16,"lobbyBaseCount":11,"lobbyStartCount":16,"mapSkipAvailable":false,"netStat":0,"inLobby":true}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":2,"ready":true,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":2,"ready":true,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SETTINGS","mapName":"Everard Island","lobbyGameType":1,"lobbyHiddenMines":true,"lobbyAiType":0,"lobbyTimeLimit":-1,"lobbyPillCount":16,"lobbyBaseCount":11,"lobbyStartCount":16,"mapSkipAvailable":false,"netStat":0,"inLobby":true}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":2,"ready":true,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SETTINGS","mapName":"Everard Island","lobbyGameType":1,"lobbyHiddenMines":true,"lobbyAiType":0,"lobbyTimeLimit":-1,"lobbyPillCount":16,"lobbyBaseCount":11,"lobbyStartCount":16,"mapSkipAvailable":false,"netStat":0,"inLobby":true}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":2,"ready":true,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SETTINGS","mapName":"Everard Island","lobbyGameType":1,"lobbyHiddenMines":true,"lobbyAiType":0,"lobbyTimeLimit":-1,"lobbyPillCount":16,"lobbyBaseCount":11,"lobbyStartCount":16,"mapSkipAvailable":false,"netStat":0,"inLobby":true}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":2,"ready":true,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SETTINGS","mapName":"Everard Island","lobbyGameType":1,"lobbyHiddenMines":true,"lobbyAiType":0,"lobbyTimeLimit":-1,"lobbyPillCount":16,"lobbyBaseCount":11,"lobbyStartCount":16,"mapSkipAvailable":false,"netStat":0,"inLobby":true}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":1,"ready":true,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_GAME_PHASE","phase":"COUNTDOWN","countdownSeconds":5}
+{"tick":0,"type":"CTRL_GAME_PHASE","phase":"COUNTDOWN","countdownSeconds":4}
+{"tick":0,"type":"CTRL_GAME_PHASE","phase":"COUNTDOWN","countdownSeconds":3}
+{"tick":0,"type":"CTRL_GAME_PHASE","phase":"COUNTDOWN","countdownSeconds":2}
+{"tick":0,"type":"CTRL_GAME_PHASE","phase":"COUNTDOWN","countdownSeconds":1}
+{"tick":0,"type":"CTRL_ALLIANCE_LEAVE","playerNum":0}
+{"tick":0,"type":"CTRL_ALLIANCE_LEAVE","playerNum":1}
+{"tick":0,"type":"CTRL_GAME_PHASE","phase":"RUNNING","countdownSeconds":0}
+{"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"HeadlessBot2","country":"","clientType":0,"clientFlags":0,"allies":[]}

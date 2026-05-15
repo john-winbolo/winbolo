@@ -34,7 +34,7 @@ bool clientLoadMap(struct ClientSim *cs, char *fileName, gameType game,
                    bool hiddenMines, int32_t srtDelay, int32_t gmeLen,
                    char *playerName, bool wantFree);
 bool clientLoadCompressedMap(struct ClientSim *cs, BYTE *buff, int buffLen,
-                             char *mapn, gameType game, bool hiddenMines,
+                             const char *mapn, gameType game, bool hiddenMines,
                              int32_t srtDelay, int32_t gmeLen, char *playerName,
                              BYTE playerNum, bool wantFree);
 bool clientSaveMap(struct ClientSim *cs, char *fileName);

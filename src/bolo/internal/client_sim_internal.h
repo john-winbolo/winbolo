@@ -209,6 +209,12 @@ struct ClientSim {
     Transport transport;
     bool      hasTransport;
     bool      isUdpTransport;
+
+    /* Read-only ControlEvent observer (test-only — see
+     * clientSimSetControlObserver in client_sim.h). Preserved across
+     * clientSimCreate's memset alongside the transport fields. */
+    ControlObserverCb controlObserverCb;
+    void             *controlObserverCtx;
 };
 
 BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,

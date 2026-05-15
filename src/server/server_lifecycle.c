@@ -18,6 +18,7 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"
+#include "control_event.h"
 #include "gametype.h"
 #include "nat_portmap.h"
 #include "transport_udp.h"
@@ -26,6 +27,24 @@
 #include "threads.h"
 #include "server_sim_internal.h"
 #include "server_lifecycle.h"
+
+/* Publish CTRL_LOBBY_SLOT for every connected slot plus
+ * CTRL_LOBBY_SETTINGS — the codec encoder fans each event out as an
+ * individual wire packet to every per-client subscriber. */
+static void publishLobbyStateAll(struct ServerSim *sim) {
+    BYTE k;
+    ControlEvent evt;
+    for (k = 0; k < MAX_TANKS; k++) {
+        if (serverSimIsPlayerConnected(sim, k)) {
+            memset(&evt, 0, sizeof(evt));
+            serverSimFillLobbySlotEvent(sim, k, &evt);
+            serverSimPublishControl(sim, &evt);
+        }
+    }
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySettingsEvent(sim, &evt);
+    serverSimPublishControl(sim, &evt);
+}
 
 static char  instanceTrackerAddr[FILENAME_MAX] = "";
 static unsigned short instanceTrackerPort = 0;
@@ -203,7 +222,7 @@ void serverInstanceTick(ServerSim *sim) {
       sim1Start = SDL_GetPerformanceCounter();
       serverSimTick(sim);
       sim1End = SDL_GetPerformanceCounter();
-      /* If game ended during this tick, broadcast game-over */
+      /* If game ended during this tick, publish game-over events */
       if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
         if (sim->lobbyEnabled) {
           /* Capture win message now while game state is intact;
@@ -212,7 +231,18 @@ void serverInstanceTick(ServerSim *sim) {
                                    sim->pendingWinMessage,
                                    sizeof(sim->pendingWinMessage));
           serverSimSendWbnWinEvents(sim);
-          transportUdpServerBroadcastGameOver(sim);
+        }
+        {
+          ControlEvent phaseEvt;
+          ControlEvent overEvt;
+          memset(&phaseEvt, 0, sizeof(phaseEvt));
+          phaseEvt.type = CTRL_GAME_PHASE;
+          phaseEvt.u.gamePhase.phase = CTRL_PHASE_GAME_OVER;
+          phaseEvt.u.gamePhase.countdownSeconds = 0;
+          serverSimPublishControl(sim, &phaseEvt);
+          memset(&overEvt, 0, sizeof(overEvt));
+          overEvt.type = CTRL_GAME_OVER;
+          serverSimPublishControl(sim, &overEvt);
         }
       }
       if (sim->state == serverStateRunning) {
@@ -235,14 +265,25 @@ void serverInstanceTick(ServerSim *sim) {
       sim2Start = SDL_GetPerformanceCounter();
       serverSimTick(sim);
       sim2End = SDL_GetPerformanceCounter();
-      /* If game ended during this tick, broadcast game-over */
+      /* If game ended during this tick, publish game-over events */
       if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
         if (sim->lobbyEnabled) {
           serverSimBuildWinMessage(sim,
                                    sim->pendingWinMessage,
                                    sizeof(sim->pendingWinMessage));
           serverSimSendWbnWinEvents(sim);
-          transportUdpServerBroadcastGameOver(sim);
+        }
+        {
+          ControlEvent phaseEvt;
+          ControlEvent overEvt;
+          memset(&phaseEvt, 0, sizeof(phaseEvt));
+          phaseEvt.type = CTRL_GAME_PHASE;
+          phaseEvt.u.gamePhase.phase = CTRL_PHASE_GAME_OVER;
+          phaseEvt.u.gamePhase.countdownSeconds = 0;
+          serverSimPublishControl(sim, &phaseEvt);
+          memset(&overEvt, 0, sizeof(overEvt));
+          overEvt.type = CTRL_GAME_OVER;
+          serverSimPublishControl(sim, &overEvt);
         }
       }
       if (sim->state == serverStateRunning) {
@@ -272,15 +313,31 @@ void serverInstanceTick(ServerSim *sim) {
 
     /* Check if a balance proposal just completed */
     if (sim->balanceProposal.broadcastNeeded) {
-      transportUdpServerBroadcastBalanceProposal(sim, sim->balanceProposal.teamForSlot);
+      ControlEvent evt;
+      memset(&evt, 0, sizeof(evt));
+      evt.type = CTRL_BALANCE_PROPOSAL;
+      memcpy(evt.u.balanceProposal.teamForSlot,
+             sim->balanceProposal.teamForSlot, MAX_TANKS);
+      serverSimPublishControl(sim, &evt);
       sim->balanceProposal.broadcastNeeded = false;
     }
 
     /* Handle state transitions */
     if (preTickState == serverStateCountdown) {
       if (sim->state == serverStateRunning) {
-        /* Countdown finished — game started */
-        transportUdpServerBroadcastGameStart(sim);
+        /* Countdown finished — game started.  Reset per-client and
+         * per-slot transport state before publishing the RUNNING
+         * transition so the codec encodes PACKET_GAME_START against
+         * fresh queues. */
+        transportUdpServerOnGameStart(sim);
+        {
+          ControlEvent evt;
+          memset(&evt, 0, sizeof(evt));
+          evt.type = CTRL_GAME_PHASE;
+          evt.u.gamePhase.phase = CTRL_PHASE_RUNNING;
+          evt.u.gamePhase.countdownSeconds = 0;
+          serverSimPublishControl(sim, &evt);
+        }
         if (botManagerGetNumBots() > 0) {
           botManagerOnGameStart(sim);
         }
@@ -302,7 +359,12 @@ void serverInstanceTick(ServerSim *sim) {
                  sim->countdownTicks % 50 == 0) {
         /* Broadcast countdown tick (once per second) */
         uint8_t secs = (uint8_t)((sim->countdownTicks + 49) / 50);
-        transportUdpServerBroadcastCountdown(sim, secs);
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_GAME_PHASE;
+        evt.u.gamePhase.phase = CTRL_PHASE_COUNTDOWN;
+        evt.u.gamePhase.countdownSeconds = secs;
+        serverSimPublishControl(sim, &evt);
       }
     }
     if (preTickState == serverStateGameOver &&
@@ -314,7 +376,13 @@ void serverInstanceTick(ServerSim *sim) {
       /* Pick next map from rotation if mapdir is configured */
       if (sim->mapDirFiles != NULL) {
         serverSimMapDirPickRandom(sim);
-        transportUdpServerNotifyMapChange(sim);
+        transportUdpServerOnLobbyMapChange(sim);
+        {
+          ControlEvent evt;
+          memset(&evt, 0, sizeof(evt));
+          evt.type = CTRL_LOBBY_MAP_CHANGE;
+          serverSimPublishControl(sim, &evt);
+        }
       }
       /* Re-register with WBN for the new round */
       if (winbolonetIsRunning()) {
@@ -331,7 +399,7 @@ void serverInstanceTick(ServerSim *sim) {
           serverSimGetNumPlayers(sim));
       }
       /* Returned to lobby — broadcast full lobby state */
-      transportUdpServerBroadcastLobbyState(sim);
+      publishLobbyStateAll(sim);
       /* Send the win message now that players are back in the lobby */
       if (sim->pendingWinMessage[0] != '\0') {
         transportUdpServerSendServerMessage(sim->pendingWinMessage);
@@ -339,11 +407,14 @@ void serverInstanceTick(ServerSim *sim) {
       }
     }
 
-    /* Periodic lobby snapshot — twice per second (every 25 ticks)
-     * for ping/country updates and state consistency */
+    /* Periodic lobby snapshot — twice per second (every 25 ticks) for
+     * ping/country updates and state consistency.  Goes through the
+     * wire-only fan-out helper because the refresh is cosmetic data
+     * that in-process subscribers (bots, SP, replay-log) ignore — the
+     * bus would wake them every 25 ticks × MAX_TANKS for nothing. */
     if ((sim->state == serverStateLobby || sim->state == serverStateCountdown) &&
         sim->tick % 25 == 0) {
-      transportUdpServerBroadcastLobbyState(sim);
+      transportUdpServerSendPeriodicLobbyRefresh(sim);
     }
 
     /* Timeout check — not called via transportUdpServerSend() during lobby */
@@ -376,7 +447,13 @@ void serverInstanceTick(ServerSim *sim) {
     /* Pick next map from rotation if mapdir is configured */
     if (sim->mapDirFiles != NULL) {
       serverSimMapDirPickRandom(sim);
-      transportUdpServerNotifyMapChange(sim);
+      transportUdpServerOnLobbyMapChange(sim);
+      {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_LOBBY_MAP_CHANGE;
+        serverSimPublishControl(sim, &evt);
+      }
     }
     /* Re-register with WBN for the new round */
     if (winbolonetIsRunning()) {
@@ -392,7 +469,7 @@ void serverInstanceTick(ServerSim *sim) {
         serverSimGetNumNeutralPills(sim),
         serverSimGetNumPlayers(sim));
     }
-    transportUdpServerBroadcastLobbyState(sim);
+    publishLobbyStateAll(sim);
   }
 
   threadsReleaseMutex();

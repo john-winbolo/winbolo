@@ -42,8 +42,6 @@ void serverLifecycleGetSimStats(double *outLastMs, double *outEwmaMs) {
  * server, so the calls are dead paths that just need to link. */
 struct ServerSim;
 void transportUdpServerEnforcePing(struct ServerSim *sim) { (void)sim; }
-void transportUdpServerNotifyMapChange(struct ServerSim *sim) { (void)sim; }
-void transportUdpServerBroadcastMapSkipState(struct ServerSim *sim) { (void)sim; }
-void transportUdpServerBroadcastGameOver(struct ServerSim *sim) { (void)sim; }
+void transportUdpServerOnLobbyMapChange(struct ServerSim *sim) { (void)sim; }
 uint16_t transportUdpServerGetClientPing(BYTE playerNum) { (void)playerNum; return 0; }
 const char *transportUdpServerGetPlayerName(BYTE playerNum) { (void)playerNum; return ""; }

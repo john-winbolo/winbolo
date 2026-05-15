@@ -166,6 +166,7 @@ set(BOLO_VERSION_MAJOR 1)
 set(BOLO_VERSION_MINOR 1)
 set(BOLO_VERSION_REVISION 8)
 add_subdirectory(${PROJ_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
+add_subdirectory(${PROJ_ROOT}/src/server ${CMAKE_BINARY_DIR}/server_static)
 add_subdirectory(${PROJ_ROOT}/brains ${CMAKE_BINARY_DIR}/bot_brains_static)
 
 set(ANDROID_SOURCES
@@ -222,20 +223,17 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/sound.c
 
     # Shared map-gen controls used by the map chooser dialog (not the
-    # full map editor — these three files match what the iOS build pulls in).
-    ${PROJ_ROOT}/src/mapeditor/mapeditor_generate.c
-    ${PROJ_ROOT}/src/mapeditor/mapeditor_maze.c
+    # full map editor — this file matches what the iOS build pulls in).
     ${PROJ_ROOT}/src/mapeditor/mapgen_imgui.cpp
 
     # LZW compression
     ${PROJ_ROOT}/src/lzw/ecodlzw.c
     ${PROJ_ROOT}/src/lzw/dcodlzw.c
 
-    # Server (for single-player)
+    # Server (for single-player). server_sim.c + servermessages.c
+    # come from server_sim_static.
     ${PROJ_ROOT}/src/server/geolookup.c
-    ${PROJ_ROOT}/src/server/servermessages.c
     ${PROJ_ROOT}/src/server/threads.c
-    ${PROJ_ROOT}/src/server/server_sim.c
     ${PROJ_ROOT}/src/server/server_stubs.c
     ${PROJ_ROOT}/src/server/server_dedicated_log_stubs.c
     ${PROJ_ROOT}/src/server/posix_stubs.c
@@ -251,12 +249,9 @@ target_include_directories(main PRIVATE
 )
 bolo_apply_include_rules(main gui)
 bolo_grant_internal_source_access(main
-    ${PROJ_ROOT}/src/bolo/transport_udp_client.c
-    ${PROJ_ROOT}/src/server/server_sim.c
-    ${PROJ_ROOT}/src/server/servermessages.c
-    ${PROJ_ROOT}/src/mapeditor/mapeditor_generate.c)
+    ${PROJ_ROOT}/src/bolo/transport_udp_client.c)
 
-target_link_libraries(main PRIVATE bolo_static bot_brains_static)
+target_link_libraries(main PRIVATE bolo_static server_sim_static bot_brains_static)
 target_link_libraries(main PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
