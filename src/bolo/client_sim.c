@@ -1154,6 +1154,7 @@ void clientSimSetServerPort(ClientSim *cs, unsigned short v)    { cs->serverPort
 void clientSimSetIsBot(ClientSim *cs, bool v)                   { cs->isBot = v; }
 
 bool clientSimIsSinglePlayer(const ClientSim *cs)               { return cs->isSinglePlayer; }
+bool clientSimIsUdpTransport(const ClientSim *cs)               { return cs && cs->isUdpTransport; }
 bool clientSimIsLanOnly(const ClientSim *cs)                    { return cs->isLanOnly; }
 void clientSimSetIsSinglePlayer(ClientSim *cs, bool v)          { cs->isSinglePlayer = v; }
 void clientSimSetIsLanOnly(ClientSim *cs, bool v)               { cs->isLanOnly = v; }
@@ -1194,6 +1195,80 @@ const char *clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot) {
 
 const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs) {
   return &cs->lobbyBrainList;
+}
+
+const char *clientSimGetLobbyMapListPath(const ClientSim *cs) {
+  return cs->lobbyMapListPath;
+}
+int clientSimGetLobbyMapListCount(const ClientSim *cs) {
+  return cs->lobbyMapListCount;
+}
+const char *clientSimGetLobbyMapListName(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapListCount) return "";
+  return cs->lobbyMapListNames[idx];
+}
+bool clientSimGetLobbyMapListIsFolder(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapListCount) return false;
+  return cs->lobbyMapListIsFolder[idx] != 0;
+}
+int64_t clientSimGetLobbyMapListModTime(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapListCount) return 0;
+  return cs->lobbyMapListModTime[idx];
+}
+bool clientSimGetLobbyMapListReady(const ClientSim *cs) {
+  return cs->lobbyMapListReady;
+}
+const char *clientSimGetLobbyMapListReqPath(const ClientSim *cs) {
+  return cs->lobbyMapListReqPath;
+}
+bool clientSimGetLobbyMapListInFlight(const ClientSim *cs) {
+  return cs->lobbyMapListInFlight;
+}
+uint32_t clientSimGetLobbyMapChangeSeq(const ClientSim *cs) {
+  return cs ? cs->lobbyMapChangeSeq : 0;
+}
+
+const char *clientSimGetLobbyMapSearchPath(const ClientSim *cs) {
+  return cs->lobbyMapSearchPath;
+}
+const char *clientSimGetLobbyMapSearchQuery(const ClientSim *cs) {
+  return cs->lobbyMapSearchQuery;
+}
+int clientSimGetLobbyMapSearchCount(const ClientSim *cs) {
+  return cs->lobbyMapSearchCount;
+}
+const char *clientSimGetLobbyMapSearchName(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapSearchCount) return "";
+  return cs->lobbyMapSearchNames[idx];
+}
+bool clientSimGetLobbyMapSearchIsFolder(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapSearchCount) return false;
+  return cs->lobbyMapSearchIsFolder[idx] != 0;
+}
+int64_t clientSimGetLobbyMapSearchModTime(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapSearchCount) return 0;
+  return cs->lobbyMapSearchModTime[idx];
+}
+bool clientSimGetLobbyMapSearchReady(const ClientSim *cs) {
+  return cs->lobbyMapSearchReady;
+}
+const char *clientSimGetLobbyMapSearchReqPath(const ClientSim *cs) {
+  return cs->lobbyMapSearchReqPath;
+}
+const char *clientSimGetLobbyMapSearchReqQuery(const ClientSim *cs) {
+  return cs->lobbyMapSearchReqQuery;
+}
+bool clientSimGetLobbyMapSearchInFlight(const ClientSim *cs) {
+  return cs->lobbyMapSearchInFlight;
+}
+
+uint8_t  clientSimGetLobbyMapUploadStatus(const ClientSim *cs)     { return cs->lobbyMapUploadStatus; }
+uint8_t  clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs) { return cs->lobbyMapUploadRejectCode; }
+const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs){ return cs->lobbyMapUploadFinalPath; }
+void clientSimResetLobbyMapUpload(ClientSim *cs) {
+  cs->lobbyMapUploadStatus     = 0;
+  cs->lobbyMapUploadRejectCode = 0;
+  cs->lobbyMapUploadFinalPath[0] = '\0';
 }
 
 uint8_t clientSimGetLobbyLastRejectPacket(const ClientSim *cs)  { return cs->lobbyLastRejectPacket; }

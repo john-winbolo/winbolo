@@ -94,6 +94,18 @@ typedef struct ServerSim {
     BYTE        *cachedMapData;      /* Compressed map buffer (malloc'd) */
     int          cachedMapDataLen;   /* Length of compressed data */
 
+    /* Lobby preview-map state. When a player picks a map from the
+     * chooser (Server Maps click OR a completed upload), the server
+     * stashes the prior committed map here before applying the
+     * preview — so Cancel can revert without re-reading from disk.
+     * NULL when no preview is pending; freed on Commit. Stays
+     * preserved across successive previews (we keep the ORIGINAL
+     * committed map, not the most-recent preview, so one Cancel
+     * rolls back to where the user started). */
+    BYTE        *previousMapData;
+    int          previousMapDataLen;
+    char         previousMapName[MAP_STR_SIZE];
+
     /* Info packet fields — stored at creation for server browser responses */
     char         mapName[MAP_STR_SIZE];
     uint32_t     timeCreated;

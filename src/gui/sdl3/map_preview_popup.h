@@ -60,6 +60,12 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer);
  * Frees map data but keeps the tile atlas for fast re-open. */
 void mapPreviewPopupClose(void);
 
+/* Returns true once after the user clicks "Change" inside the popup
+ * (which also closes the popup). The lobby polls this each frame
+ * and, on a true return, opens its Choose Map dialog. The flag is
+ * latched, so a missed poll is fine — the next call still sees it. */
+bool mapPreviewPopupConsumeChangeRequest(void);
+
 /* Call on dialog exit to free all resources. */
 void mapPreviewPopupDestroy(void);
 

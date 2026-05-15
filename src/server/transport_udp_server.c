@@ -223,6 +223,18 @@ static struct {
     /* Game lock — prevents new players from joining */
     bool gameLocked;           /* Server admin lock */
     bool clientLocked[MAX_TANKS]; /* Per-player lock votes */
+
+    /* Per-client map upload state. clientUploadActive=true between
+     * MAP_UPLOAD_BEGIN (after the ACK was sent) and the final
+     * MAP_UPLOAD_DONE. clientUploadBuf grows up to UPLOAD_MAX_BYTES;
+     * server appends each CHUNK at the chunk's offset so out-of-
+     * order delivery still finalises correctly. */
+#define UPLOAD_MAX_BYTES (1u * 1024u * 1024u)
+    bool     clientUploadActive[MAX_TANKS];
+    uint32_t clientUploadTotal[MAX_TANKS];
+    uint32_t clientUploadHave[MAX_TANKS];   /* highest contiguous offset */
+    uint8_t *clientUploadBuf[MAX_TANKS];
+    char     clientUploadName[MAX_TANKS][128];
 } udpServer;
 
 /* Public-address override populated by transportUdpServerSetPublicAddress
@@ -3413,6 +3425,469 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             }
             transportUdpServerBroadcastLobbyBotBrainChg(sim, slot);
             transportUdpServerBroadcastLobbyAutoUnready(sim);
+            break;
+        }
+        case PACKET_LOBBY_SET_MAP: {
+            /* Wire: [header 8] [pathLen 1] [path N]. Host / openHost
+             * / admin only, lobby state only. Path is relative to
+             * data/maps/ — server rejects absolute, Windows drive,
+             * and any ".." segment before opening the file. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 1) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
+                              LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            uint8_t pathLen = buf[PACKET_HEADER_SIZE];
+            if (pathLen == 0 || pathLen > 255 ||
+                len < PACKET_HEADER_SIZE + 1 + pathLen) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
+                              LOBBY_REJECT_INVALID);
+                break;
+            }
+            char relPath[256];
+            memcpy(relPath, buf + PACKET_HEADER_SIZE + 1, pathLen);
+            relPath[pathLen] = '\0';
+
+            /* Path safety: reject absolute paths, Windows drive
+             * specs, and any ".." segment. Mirrors the same check
+             * serverSimEnumerateMapDir uses for directory listing. */
+            bool safe = true;
+            if (relPath[0] == '/' || relPath[0] == '\\') safe = false;
+            else if (relPath[0] != '\0' && relPath[1] == ':') safe = false;
+            else {
+                for (const char *s = relPath; *s;) {
+                    if (s[0] == '.' && s[1] == '.' &&
+                        (s[2] == '\0' || s[2] == '/' || s[2] == '\\')) {
+                        safe = false; break;
+                    }
+                    while (*s && *s != '/' && *s != '\\') s++;
+                    while (*s == '/' || *s == '\\') s++;
+                }
+            }
+            if (!safe) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
+                              LOBBY_REJECT_INVALID);
+                WB_LOG_INFO(WB_LOG_CAT_NET,
+                            "[LOBBY] SET_MAP rejected: unsafe path '%s'",
+                            relPath);
+                break;
+            }
+
+            char fullPath[FILENAME_MAX];
+            SDL_snprintf(fullPath, sizeof(fullPath), "data/maps/%s",
+                         relPath);
+
+            if (!serverSimReloadMap(sim, fullPath)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
+                              LOBBY_REJECT_INVALID);
+                WB_LOG_INFO(WB_LOG_CAT_NET,
+                            "[LOBBY] SET_MAP failed: '%s'", fullPath);
+                break;
+            }
+
+            /* Broadcast: NotifyMapChange forces a re-download for
+             * every connected client (re-sends join accept, resets
+             * map download tracking), and PublishLobbySettings emits
+             * the CTRL_LOBBY_SETTINGS event so the local view's
+             * mapName / pill / base / start counts catch up. */
+            transportUdpServerNotifyMapChange(sim);
+            serverSimPublishLobbySettings(sim);
+            WB_LOG_INFO(WB_LOG_CAT_NET,
+                        "[LOBBY] SET_MAP ok: '%s'", fullPath);
+            break;
+        }
+        case PACKET_LOBBY_PREVIEW_CANCEL: {
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_CANCEL,
+                              LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            if (serverSimRevertPreview(sim)) {
+                transportUdpServerNotifyMapChange(sim);
+                serverSimPublishLobbySettings(sim);
+                WB_LOG_INFO(WB_LOG_CAT_NET,
+                            "[LOBBY] PREVIEW_CANCEL: rolled back");
+            }
+            break;
+        }
+        case PACKET_LOBBY_PREVIEW_COMMIT: {
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_COMMIT,
+                              LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            serverSimCommitPreview(sim);
+            WB_LOG_INFO(WB_LOG_CAT_NET,
+                        "[LOBBY] PREVIEW_COMMIT: kept current map");
+            break;
+        }
+        case PACKET_LOBBY_MAP_LIST_REQ: {
+            /* [header 8] [pathLen 1] [path N] — any lobby client may
+             * ask. Response is sent back to the requester only. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 1) break;
+            uint8_t pathLen = buf[PACKET_HEADER_SIZE];
+            if (pathLen > 255 ||
+                len < PACKET_HEADER_SIZE + 1 + pathLen) break;
+            char relPath[256];
+            memset(relPath, 0, sizeof(relPath));
+            if (pathLen > 0) {
+                memcpy(relPath, buf + PACKET_HEADER_SIZE + 1, pathLen);
+            }
+
+            /* Reject ".." / absolute / drive specs — same shape as
+             * PACKET_LOBBY_SET_MAP above. Unsafe = empty listing. */
+            bool safe = true;
+            if (relPath[0] == '/' || relPath[0] == '\\') safe = false;
+            else if (relPath[0] != '\0' && relPath[1] == ':') safe = false;
+            else {
+                for (const char *s = relPath; *s;) {
+                    if (s[0] == '.' && s[1] == '.' &&
+                        (s[2] == '\0' || s[2] == '/' || s[2] == '\\')) {
+                        safe = false; break;
+                    }
+                    while (*s && *s != '/' && *s != '\\') s++;
+                    while (*s == '/' || *s == '\\') s++;
+                }
+            }
+
+            ServerMapEntry entries[64];
+            int got = -1;
+            if (safe) {
+                got = serverSimEnumerateMapDir(sim,
+                    relPath[0] == '\0' ? NULL : relPath,
+                    entries, 64);
+            }
+            if (got < 0) got = 0;
+
+            /* Build response: [pathLen][path][count]
+             *   per entry [nameLen, name, isFolder, modTime 8 BE] */
+            uint8_t rsp[PACKET_HEADER_SIZE + 1 + 256 + 1
+                        + 64 * (1 + 128 + 1 + 8)];
+            int rpos = PACKET_HEADER_SIZE;
+            packHeader(rsp, PACKET_LOBBY_MAP_LIST_RSP, 0);
+            rsp[rpos++] = pathLen;
+            if (pathLen > 0) {
+                memcpy(rsp + rpos, relPath, pathLen);
+                rpos += pathLen;
+            }
+            int countPos = rpos;
+            rsp[rpos++] = 0; /* count fixed up after the loop */
+            int written = 0;
+            for (int i = 0; i < got; i++) {
+                int nameLen = (int)SDL_strlen(entries[i].name);
+                if (nameLen > 127) nameLen = 127;
+                if (rpos + 1 + nameLen + 1 + 8 > (int)sizeof(rsp)) break;
+                rsp[rpos++] = (uint8_t)nameLen;
+                memcpy(rsp + rpos, entries[i].name, nameLen);
+                rpos += nameLen;
+                rsp[rpos++] = entries[i].isFolder ? 1 : 0;
+                uint64_t mt = (uint64_t)entries[i].modTime;
+                for (int b = 7; b >= 0; b--) {
+                    rsp[rpos++] = (uint8_t)((mt >> (b * 8)) & 0xFF);
+                }
+                written++;
+            }
+            rsp[countPos] = (uint8_t)written;
+            udpSendTo(udpServer.sock, rsp, rpos, fromAddr);
+            break;
+        }
+        case PACKET_LOBBY_MAP_SEARCH_REQ: {
+            /* [header 8] [pathLen 1] [path N] [queryLen 1] [query M].
+             * Recursive search of data/maps/<path> for .map files
+             * whose basename contains <query>. Read-only, so any
+             * connected client may issue (same as MAP_LIST_REQ). */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 2) break;
+            int rpos = PACKET_HEADER_SIZE;
+            uint8_t pathLen = buf[rpos++];
+            if (pathLen > 255 ||
+                rpos + pathLen + 1 > len) break;
+            char relPath[256];
+            memset(relPath, 0, sizeof(relPath));
+            if (pathLen > 0) {
+                memcpy(relPath, buf + rpos, pathLen);
+            }
+            rpos += pathLen;
+            uint8_t qLen = buf[rpos++];
+            if (qLen > 127 || rpos + qLen > len) break;
+            char query[128];
+            memset(query, 0, sizeof(query));
+            if (qLen > 0) {
+                memcpy(query, buf + rpos, qLen);
+            }
+
+            ServerMapEntry entries[64];
+            int got = serverSimSearchMapDir(sim,
+                relPath[0] == '\0' ? NULL : relPath,
+                query, entries, 64);
+            if (got < 0) got = 0;
+
+            /* Response: [pathLen 1] [path N] [queryLen 1] [query M]
+             *           [count 1] [for each: nameLen, name, isFolder,
+             *                              modTime 8 BE] */
+            uint8_t rsp[PACKET_HEADER_SIZE + 1 + 256 + 1 + 128 + 1
+                        + 64 * (1 + 256 + 1 + 8)];
+            packHeader(rsp, PACKET_LOBBY_MAP_SEARCH_RSP, 0);
+            int wpos = PACKET_HEADER_SIZE;
+            rsp[wpos++] = pathLen;
+            if (pathLen > 0) {
+                memcpy(rsp + wpos, relPath, pathLen);
+                wpos += pathLen;
+            }
+            rsp[wpos++] = qLen;
+            if (qLen > 0) {
+                memcpy(rsp + wpos, query, qLen);
+                wpos += qLen;
+            }
+            int countPos = wpos;
+            rsp[wpos++] = 0;
+            int written = 0;
+            for (int i = 0; i < got; i++) {
+                int nameLen = (int)SDL_strlen(entries[i].name);
+                if (nameLen > 127) nameLen = 127;
+                if (wpos + 1 + nameLen + 1 + 8 > (int)sizeof(rsp)) break;
+                rsp[wpos++] = (uint8_t)nameLen;
+                memcpy(rsp + wpos, entries[i].name, nameLen);
+                wpos += nameLen;
+                rsp[wpos++] = entries[i].isFolder ? 1 : 0;
+                uint64_t mt = (uint64_t)entries[i].modTime;
+                for (int b = 7; b >= 0; b--) {
+                    rsp[wpos++] = (uint8_t)((mt >> (b * 8)) & 0xFF);
+                }
+                written++;
+            }
+            rsp[countPos] = (uint8_t)written;
+            udpSendTo(udpServer.sock, rsp, wpos, fromAddr);
+            break;
+        }
+        case PACKET_LOBBY_MAP_UPLOAD_BEGIN: {
+            /* [header 8] [totalLen 4] [nameLen 1] [name N] — only host
+             * / admin / openHost may push files. Server validates the
+             * declared size and name, allocates an upload buffer for
+             * this slot, and ACKs. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 5) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                uint8_t ack[PACKET_HEADER_SIZE + 1];
+                packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_NOT_HOST;
+                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                break;
+            }
+            uint32_t totalLen =
+                ((uint32_t)buf[PACKET_HEADER_SIZE + 0] << 24) |
+                ((uint32_t)buf[PACKET_HEADER_SIZE + 1] << 16) |
+                ((uint32_t)buf[PACKET_HEADER_SIZE + 2] <<  8) |
+                ((uint32_t)buf[PACKET_HEADER_SIZE + 3]);
+            uint8_t nameLen = buf[PACKET_HEADER_SIZE + 4];
+            if (nameLen == 0 || nameLen > 127 ||
+                len < PACKET_HEADER_SIZE + 5 + nameLen ||
+                totalLen == 0 || totalLen > UPLOAD_MAX_BYTES) {
+                uint8_t ack[PACKET_HEADER_SIZE + 1];
+                packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
+                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                break;
+            }
+            char nameBuf[128];
+            memset(nameBuf, 0, sizeof(nameBuf));
+            memcpy(nameBuf, buf + PACKET_HEADER_SIZE + 5, nameLen);
+
+            /* Name safety: must end in ".map", no path separators,
+             * no leading dot. Anything fancier would let a malicious
+             * client write outside data/maps/Uploads/. */
+            bool nameSafe = true;
+            if (nameBuf[0] == '.') nameSafe = false;
+            for (int i = 0; i < nameLen; i++) {
+                char ch = nameBuf[i];
+                if (ch == '/' || ch == '\\' || ch == ':') {
+                    nameSafe = false; break;
+                }
+            }
+            if (nameSafe) {
+                if (nameLen < 4 ||
+                    SDL_strcasecmp(nameBuf + nameLen - 4, ".map") != 0) {
+                    nameSafe = false;
+                }
+            }
+            if (!nameSafe) {
+                uint8_t ack[PACKET_HEADER_SIZE + 1];
+                packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
+                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                break;
+            }
+
+            /* Discard any previous in-flight upload for this client. */
+            if (udpServer.clientUploadBuf[clientIdx]) {
+                free(udpServer.clientUploadBuf[clientIdx]);
+                udpServer.clientUploadBuf[clientIdx] = NULL;
+            }
+            udpServer.clientUploadBuf[clientIdx] = (uint8_t *)malloc(totalLen);
+            if (!udpServer.clientUploadBuf[clientIdx]) {
+                uint8_t ack[PACKET_HEADER_SIZE + 1];
+                packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
+                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                break;
+            }
+            udpServer.clientUploadActive[clientIdx] = true;
+            udpServer.clientUploadTotal[clientIdx]  = totalLen;
+            udpServer.clientUploadHave[clientIdx]   = 0;
+            SDL_strlcpy(udpServer.clientUploadName[clientIdx], nameBuf,
+                        sizeof(udpServer.clientUploadName[clientIdx]));
+
+            uint8_t ack[PACKET_HEADER_SIZE + 1];
+            packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+            ack[PACKET_HEADER_SIZE] = 0;
+            udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+            break;
+        }
+        case PACKET_LOBBY_MAP_UPLOAD_CHUNK: {
+            /* [header 8] [offset 4] [dataLen 2] [data N]. Server
+             * accumulates into the per-client buffer and on completion
+             * writes to data/maps/Uploads/<name>.map, then replies
+             * with MAP_UPLOAD_DONE. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 ||
+                !udpServer.clientUploadActive[clientIdx]) break;
+            if (len < PACKET_HEADER_SIZE + 6) break;
+            uint32_t offset =
+                ((uint32_t)buf[PACKET_HEADER_SIZE + 0] << 24) |
+                ((uint32_t)buf[PACKET_HEADER_SIZE + 1] << 16) |
+                ((uint32_t)buf[PACKET_HEADER_SIZE + 2] <<  8) |
+                ((uint32_t)buf[PACKET_HEADER_SIZE + 3]);
+            uint16_t dataLen =
+                ((uint16_t)buf[PACKET_HEADER_SIZE + 4] << 8) |
+                ((uint16_t)buf[PACKET_HEADER_SIZE + 5]);
+            uint32_t total = udpServer.clientUploadTotal[clientIdx];
+            if (dataLen == 0 || dataLen > 1024 ||
+                offset + dataLen > total ||
+                len < PACKET_HEADER_SIZE + 6 + dataLen) break;
+            memcpy(udpServer.clientUploadBuf[clientIdx] + offset,
+                   buf + PACKET_HEADER_SIZE + 6, dataLen);
+            if (offset + dataLen > udpServer.clientUploadHave[clientIdx]) {
+                udpServer.clientUploadHave[clientIdx] = offset + dataLen;
+            }
+
+            if (udpServer.clientUploadHave[clientIdx] == total) {
+                /* Ensure the destination directory exists before we
+                 * try fopen — SDL_CreateDirectory is a no-op if the
+                 * folder is already there, so the call is safe to
+                 * make every upload. */
+                SDL_CreateDirectory("data/maps/Uploads");
+
+                /* Resolve the final filename. If a file with the
+                 * requested basename already exists we append " (N)"
+                 * before the extension, the way Chrome's download
+                 * manager does — "Foo.map" becomes "Foo (1).map",
+                 * "Foo (2).map", etc. Stops at 999 to avoid a
+                 * runaway loop on a misbehaving server. */
+                const char *origName = udpServer.clientUploadName[clientIdx];
+                char baseName[128];
+                char extName[16];
+                {
+                    const char *dot = strrchr(origName, '.');
+                    if (dot && dot != origName) {
+                        size_t baseLen = (size_t)(dot - origName);
+                        if (baseLen >= sizeof(baseName)) {
+                            baseLen = sizeof(baseName) - 1;
+                        }
+                        memcpy(baseName, origName, baseLen);
+                        baseName[baseLen] = '\0';
+                        SDL_strlcpy(extName, dot, sizeof(extName));
+                    } else {
+                        SDL_strlcpy(baseName, origName, sizeof(baseName));
+                        extName[0] = '\0';
+                    }
+                }
+
+                char finalName[128];
+                char outPath[FILENAME_MAX];
+                SDL_strlcpy(finalName, origName, sizeof(finalName));
+                SDL_snprintf(outPath, sizeof(outPath),
+                             "data/maps/Uploads/%s", finalName);
+                {
+                    SDL_PathInfo info;
+                    for (int n = 1; n < 1000; n++) {
+                        if (!SDL_GetPathInfo(outPath, &info)) break;
+                        SDL_snprintf(finalName, sizeof(finalName),
+                                     "%s (%d)%s", baseName, n, extName);
+                        SDL_snprintf(outPath, sizeof(outPath),
+                                     "data/maps/Uploads/%s", finalName);
+                    }
+                }
+
+                FILE *fp = fopen(outPath, "wb");
+                bool wrote = false;
+                if (fp) {
+                    size_t w = fwrite(udpServer.clientUploadBuf[clientIdx],
+                                      1, total, fp);
+                    fclose(fp);
+                    wrote = (w == total);
+                }
+
+                free(udpServer.clientUploadBuf[clientIdx]);
+                udpServer.clientUploadBuf[clientIdx] = NULL;
+                udpServer.clientUploadActive[clientIdx] = false;
+                udpServer.clientUploadHave[clientIdx]   = 0;
+                udpServer.clientUploadTotal[clientIdx]  = 0;
+
+                /* Auto-preview the just-uploaded map. The chooser's
+                 * new pick-to-preview flow means the user already
+                 * intends this map to project to all clients, so we
+                 * stash the previous map and apply the new one
+                 * immediately. The next Cancel rolls back; Set Map
+                 * (PREVIEW_COMMIT) makes it permanent.
+                 *
+                 * If the write failed or the reload rejects the
+                 * bytes (corrupt .map etc.), we just send DONE with
+                 * the reject code and the lobby stays on whatever
+                 * map it was on. */
+                bool previewed = false;
+                if (wrote) {
+                    if (serverSimReloadMap(sim, outPath)) {
+                        transportUdpServerNotifyMapChange(sim);
+                        serverSimPublishLobbySettings(sim);
+                        previewed = true;
+                    }
+                }
+
+                /* Reply with DONE. Path returned is "Uploads/<name>"
+                 * (relative to data/maps/) so the client can navigate
+                 * to it in its chooser. The name reflects the actual
+                 * on-disk final name after dedup. */
+                char relReturn[256];
+                SDL_snprintf(relReturn, sizeof(relReturn), "Uploads/%s",
+                             finalName);
+                int relLen = (int)SDL_strlen(relReturn);
+                if (relLen > 255) relLen = 255;
+                uint8_t done[PACKET_HEADER_SIZE + 2 + 256];
+                int dpos = PACKET_HEADER_SIZE;
+                packHeader(done, PACKET_LOBBY_MAP_UPLOAD_DONE, 0);
+                done[dpos++] = (wrote && previewed) ? 0 : LOBBY_REJECT_INVALID;
+                done[dpos++] = (uint8_t)relLen;
+                memcpy(done + dpos, relReturn, relLen);
+                dpos += relLen;
+                udpSendTo(udpServer.sock, done, dpos, fromAddr);
+            }
             break;
         }
         case PACKET_LOBBY_KICK: {

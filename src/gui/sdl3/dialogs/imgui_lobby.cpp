@@ -260,17 +260,17 @@ static void lobbySendAddBotDebounced(ClientSim *cs,
     lobbySendAddBot(cs, namingPool, teamNumber);
 }
 
-/* ── Map chooser helpers (Phase 1) ─────────────────────────────────
+/* ── Map chooser helpers ───────────────────────────────────────────
  * The map chooser is a separate draggable ImGui window opened from the
- * lobby's Map tab. Phase 1 only wires the UI shell; selection is
- * local-only (no PACKET_LOBBY_SET_MAP yet — that's Phase 2). The state
+ * lobby's Map tab. Selection triggers PACKET_LOBBY_SET_MAP in MP, or a
+ * direct serverSimReloadMap call when the lobby is SP-host. State
  * persists across re-opens so the user's last tab + position are
  * remembered for the session.
  *
  * State has to be declared before the helpers that reference it.
- * s_chooseMapPrevName captures the map that was active when the window
- * opened so Cancel can restore it once Phase 2 wires the map-change
- * packet. s_chooseMapActiveTab survives across re-opens. */
+ * s_chooseMapPrevName captures the map that was active when the
+ * window opened so Cancel can restore it (no undo packet is wired
+ * yet — the field is reserved for that future work). */
 static bool             s_chooseMapOpen          = false;
 /* Two chooser instances: one for the Server Maps tab (routes its
  * directory listing through serverSimEnumerateMapDir so it reflects
@@ -288,34 +288,192 @@ static int              s_chooseMapActiveTab     = 0; /* 0=server 1=upload 2=ran
  * Toggled by the corner icon button, or by pressing Esc while the
  * chooser window has focus. */
 static bool             s_chooseMapMaximized     = false;
+/* Cached ClientSim pointer for the chooser. Captured by
+ * lobbyChooseMapOpen so the listProvider (which only gets a void*
+ * ctx) can reach into the cs's lobbyMapList* state without each
+ * call site rethreading the pointer. */
+static ClientSim       *s_chooseMapCs             = NULL;
 
-/* listProvider for the Server Maps tab: routes through the in-process
- * server's directory enumeration so the chooser browses the server's
- * data/maps tree, not the client's. In SP-host this is essentially the
- * same on-disk path as the local scan, but the abstraction means MP
- * support drops in by changing only this function (replace direct
- * serverSim call with a network request → cached response). */
-static void lobbyServerMapsListProvider(MapChooserState *state,
-                                         const char *relPath, void *ctx) {
-    (void)ctx;
-    state->numMaps = 0;
-    ServerSim *spSim = gameFrontGetServerSim();
-    if (!spSim) {
-        /* Pure network client without a local server — Phase 3
-         * network protocol isn't wired yet, so for now leave the
-         * list empty. (Fallback to local scan would be misleading.) */
+/* Upload pump state. The Upload tab reads a local .map into
+ * s_uploadBuf and announces it via PACKET_LOBBY_MAP_UPLOAD_BEGIN.
+ * Once the server's MAP_UPLOAD_ACK arrives (status flips to 2 on
+ * the ClientSim), the lobby's frame loop calls lobbyUploadPump
+ * which streams ~8 KB / frame of chunks until totalLen is sent.
+ * On DONE the buffer is freed. */
+static uint8_t         *s_uploadBuf      = NULL;
+static uint32_t         s_uploadTotal    = 0;
+static uint32_t         s_uploadOffset   = 0;
+static bool             s_uploadActive   = false;
+
+static void lobbyUploadFree(void) {
+    if (s_uploadBuf) { SDL_free(s_uploadBuf); s_uploadBuf = NULL; }
+    s_uploadTotal  = 0;
+    s_uploadOffset = 0;
+    s_uploadActive = false;
+}
+
+/* Read `srcPath` into s_uploadBuf and announce the upload to the
+ * server. The server-side path will be data/maps/Uploads/<basename
+ * of srcPath>. Returns silently on any read / size error — the UI
+ * surface for that is the status line that flips to "rejected" once
+ * the server's ACK / DONE lands. */
+static void lobbyUploadKick(ClientSim *cs, const char *srcPath) {
+    if (!cs || !srcPath || srcPath[0] == '\0') return;
+    if (s_uploadActive) return;
+
+    size_t fileLen = 0;
+    void *fileData = SDL_LoadFile(srcPath, &fileLen);
+    if (!fileData || fileLen == 0 || fileLen > 1u * 1024u * 1024u) {
+        if (fileData) SDL_free(fileData);
         return;
     }
 
-    /* Synthetic ".." when not at root. relPath empty / NULL = root. */
+    /* Basename of the local path (drop directory components). */
+    const char *base = srcPath;
+    for (const char *p = srcPath; *p; p++) {
+        if (*p == '/' || *p == '\\') base = p + 1;
+    }
+    char nameBuf[128];
+    SDL_strlcpy(nameBuf, base, sizeof(nameBuf));
+
+    lobbyUploadFree();
+    s_uploadBuf    = (uint8_t *)SDL_malloc(fileLen);
+    if (!s_uploadBuf) { SDL_free(fileData); return; }
+    memcpy(s_uploadBuf, fileData, fileLen);
+    SDL_free(fileData);
+    s_uploadTotal  = (uint32_t)fileLen;
+    s_uploadOffset = 0;
+    s_uploadActive = true;
+
+    clientSimResetLobbyMapUpload(cs);
+    clientSimNetSendLobbyMapUploadBegin(cs, s_uploadTotal, nameBuf);
+}
+
+/* Pump chunks once the server has ACKed. Called every frame from
+ * the lobby loop; no-op when status != 2 (sending). Caps ~8 KB
+ * per frame so a 1 MB upload completes in ~130 frames (~2.5 s at
+ * 50 fps) without blowing the UDP send window. */
+static void lobbyUploadPump(ClientSim *cs) {
+    if (!cs || !s_uploadActive) return;
+    uint8_t st = clientSimGetLobbyMapUploadStatus(cs);
+    if (st == 3 || st == 4) {
+        /* Done or rejected — drop the buffer so the next upload
+         * starts fresh. */
+        lobbyUploadFree();
+        return;
+    }
+    if (st != 2) return; /* still waiting on ACK */
+
+    const uint16_t kChunkSize  = 1024;
+    const int      kPerFrame   = 8;
+    for (int i = 0; i < kPerFrame && s_uploadOffset < s_uploadTotal; i++) {
+        uint32_t remaining = s_uploadTotal - s_uploadOffset;
+        uint16_t cur = (remaining > kChunkSize)
+                       ? kChunkSize : (uint16_t)remaining;
+        clientSimNetSendLobbyMapUploadChunk(cs, s_uploadOffset,
+                                            s_uploadBuf + s_uploadOffset,
+                                            cur);
+        s_uploadOffset += cur;
+    }
+}
+
+/* listProvider for the Server Maps tab. Routes through the server's
+ * directory enumeration so the chooser browses the SERVER's map
+ * library, not the local client's filesystem.
+ *
+ * Two modes:
+ *   - In-process server (single-player host, or a host running the
+ *     UI). Calls serverSimEnumerateMapDir directly — synchronous,
+ *     no network round-trip.
+ *   - Pure network client. Sends PACKET_LOBBY_MAP_LIST_REQ and
+ *     populates state->maps from the cached response on the
+ *     ClientSim. Until the response lands the list shows just the
+ *     synthetic ".." (or the inbuilt Everard at root). */
+static void lobbyServerMapsListProvider(MapChooserState *state,
+                                         const char *relPath, void *ctx) {
+    state->numMaps = 0;
+    ServerSim *spSim = gameFrontGetServerSim();
+    ClientSim *cs = (ClientSim *)ctx;
     bool inSub = (relPath && relPath[0] != '\0');
+
+    /* Recursive-search branch: skip the synthetic "[..]" + Everard
+     * pinning and just populate from a recursive walk. SP routes
+     * directly through serverSimSearchMapDir; MP sends
+     * PACKET_LOBBY_MAP_SEARCH_REQ and reads from the lobbyMapSearch*
+     * cache. */
+    if (state->searchRecursive && state->searchFilter[0] != '\0') {
+        ServerMapEntry hits[MAP_CHOOSER_MAX_MAPS];
+        int got = 0;
+        if (spSim) {
+            got = serverSimSearchMapDir(spSim,
+                inSub ? relPath : NULL,
+                state->searchFilter,
+                hits, MAP_CHOOSER_MAX_MAPS);
+            if (got < 0) got = 0;
+        } else if (cs && clientSimHasTransport(cs)) {
+            const char *want    = inSub ? relPath : "";
+            const char *cachedP = clientSimGetLobbyMapSearchPath(cs);
+            const char *cachedQ = clientSimGetLobbyMapSearchQuery(cs);
+            const char *reqP    = clientSimGetLobbyMapSearchReqPath(cs);
+            const char *reqQ    = clientSimGetLobbyMapSearchReqQuery(cs);
+            bool ready    = clientSimGetLobbyMapSearchReady(cs);
+            bool inFlight = clientSimGetLobbyMapSearchInFlight(cs);
+            bool haveMatch = ready &&
+                (SDL_strcmp(cachedP, want) == 0) &&
+                (SDL_strcmp(cachedQ, state->searchFilter) == 0);
+            bool sameReq = (SDL_strcmp(reqP, want) == 0) &&
+                           (SDL_strcmp(reqQ, state->searchFilter) == 0);
+            if (!haveMatch && !(inFlight && sameReq)) {
+                clientSimNetSendLobbyMapSearchRequest(cs, want,
+                                                      state->searchFilter);
+            }
+            if (haveMatch) {
+                int cnt = clientSimGetLobbyMapSearchCount(cs);
+                for (int i = 0; i < cnt && got < MAP_CHOOSER_MAX_MAPS; i++) {
+                    SDL_strlcpy(hits[got].name,
+                                clientSimGetLobbyMapSearchName(cs, i),
+                                sizeof(hits[got].name));
+                    hits[got].isFolder =
+                        clientSimGetLobbyMapSearchIsFolder(cs, i);
+                    hits[got].modTime =
+                        clientSimGetLobbyMapSearchModTime(cs, i);
+                    got++;
+                }
+            }
+        }
+        for (int i = 0; i < got && state->numMaps < MAP_CHOOSER_MAX_MAPS; i++) {
+            MapChooserEntry *e = &state->maps[state->numMaps++];
+            memset(e, 0, sizeof(*e));
+            e->isFolder = hits[i].isFolder;
+            e->modTime  = hits[i].modTime;
+            /* Display the relative path as the name so the user can
+             * tell duplicates apart by which folder they live in. */
+            SDL_strlcpy(e->name, hits[i].name, sizeof(e->name));
+            size_t dlen = SDL_strlen(e->name);
+            if (dlen > 4 &&
+                SDL_strcasecmp(e->name + dlen - 4, ".map") == 0) {
+                e->name[dlen - 4] = '\0';
+            }
+            /* On-disk path the lobby reload uses. Search returns
+             * paths relative to <relPath>; if relPath is set we
+             * have to re-prepend it. */
+            if (inSub) {
+                SDL_snprintf(e->path, sizeof(e->path),
+                             "data/maps/%s/%s", relPath, hits[i].name);
+            } else {
+                SDL_snprintf(e->path, sizeof(e->path),
+                             "data/maps/%s", hits[i].name);
+            }
+        }
+        return;
+    }
+
+    /* Synthetic ".." or inbuilt Everard, same as before. */
     if (inSub) {
         MapChooserEntry *e = &state->maps[state->numMaps++];
         memset(e, 0, sizeof(*e));
         SDL_strlcpy(e->name, "[..]", sizeof(e->name));
         SDL_strlcpy(e->path, relPath, sizeof(e->path));
-        /* Strip trailing path segment so navigating up lands in
-         * the parent directory (not the same one again). */
         size_t plen = SDL_strlen(e->path);
         while (plen > 0 && e->path[plen - 1] != '/' &&
                            e->path[plen - 1] != '\\') {
@@ -325,27 +483,60 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
         e->isFolder = true;
         e->isParentUp = true;
     } else {
-        /* Pin the inbuilt Everard Island entry at the root level
-         * only — it isn't a real file, so we don't want it showing
-         * up inside arbitrary subfolders. */
         MapChooserEntry *e = &state->maps[state->numMaps++];
         memset(e, 0, sizeof(*e));
         SDL_strlcpy(e->name, langGetText(STR_MAPCHOOSER_EVERARD),
                     sizeof(e->name));
-        e->path[0] = '\0';  /* empty = inbuilt */
+        e->path[0] = '\0';
     }
 
     ServerMapEntry serverEntries[MAP_CHOOSER_MAX_MAPS];
-    int got = serverSimEnumerateMapDir(spSim,
-        inSub ? relPath : NULL,
-        serverEntries,
-        MAP_CHOOSER_MAX_MAPS - state->numMaps);
-    if (got < 0) return;
+    int got = 0;
+    if (spSim) {
+        got = serverSimEnumerateMapDir(spSim,
+            inSub ? relPath : NULL,
+            serverEntries,
+            MAP_CHOOSER_MAX_MAPS - state->numMaps);
+        if (got < 0) got = 0;
+    } else if (cs && clientSimHasTransport(cs)) {
+        /* Network client. Check the cached response: if it matches
+         * the requested path, copy entries. Otherwise (different
+         * path OR no response yet) send a request and surface an
+         * empty listing until the reply lands. The send is gated on
+         * "not already in flight for this path" to avoid spamming
+         * the server every frame while we wait. */
+        const char *cachedPath = clientSimGetLobbyMapListPath(cs);
+        const char *reqPath    = clientSimGetLobbyMapListReqPath(cs);
+        bool ready  = clientSimGetLobbyMapListReady(cs);
+        bool inFlight = clientSimGetLobbyMapListInFlight(cs);
+        const char *want = inSub ? relPath : "";
+
+        bool haveMatch = ready && (SDL_strcmp(cachedPath, want) == 0);
+        bool sameReq   = (SDL_strcmp(reqPath, want) == 0);
+        if (!haveMatch && !(inFlight && sameReq)) {
+            clientSimNetSendLobbyMapListRequest(cs, want);
+        }
+        if (haveMatch) {
+            int cnt = clientSimGetLobbyMapListCount(cs);
+            for (int i = 0; i < cnt &&
+                 got < MAP_CHOOSER_MAX_MAPS - state->numMaps; i++) {
+                SDL_strlcpy(serverEntries[got].name,
+                            clientSimGetLobbyMapListName(cs, i),
+                            sizeof(serverEntries[got].name));
+                serverEntries[got].isFolder =
+                    clientSimGetLobbyMapListIsFolder(cs, i);
+                serverEntries[got].modTime =
+                    clientSimGetLobbyMapListModTime(cs, i);
+                got++;
+            }
+        }
+    }
 
     for (int i = 0; i < got && state->numMaps < MAP_CHOOSER_MAX_MAPS; i++) {
         MapChooserEntry *e = &state->maps[state->numMaps++];
         memset(e, 0, sizeof(*e));
         e->isFolder = serverEntries[i].isFolder;
+        e->modTime  = serverEntries[i].modTime;
         if (e->isFolder) {
             SDL_strlcpy(e->name, serverEntries[i].name, sizeof(e->name));
             if (inSub) {
@@ -403,9 +594,9 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
          * preview image — it knows where the image actually lives,
          * which the surrounding lobby code doesn't. */
         s_chooseMapState.maximizePtr = &s_chooseMapMaximized;
-        /* Server Maps tab: list comes from the server (Phase 3). */
+        /* Server Maps tab: list comes from the server. */
         s_chooseMapState.listProvider = lobbyServerMapsListProvider;
-        s_chooseMapState.listProviderCtx = NULL;
+        s_chooseMapState.listProviderCtx = s_chooseMapCs;
         /* Initialise the Upload tab's separate state — keeps the
          * default local-filesystem scan (listProvider NULL). */
         mapChooserInit(&s_chooseMapUploadState, renderer);
@@ -443,9 +634,16 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
 }
 
 static void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
+    /* Cache the cs for the listProvider before EnsureInit so the
+     * first synchronous discover sees the network ctx. */
+    s_chooseMapCs = cs;
     lobbyChooseMapEnsureInit(renderer);
-    /* Snapshot the currently active map so Cancel can restore it once
-     * Phase 2 wires the map-change packet. */
+    /* Refresh the listProviderCtx every time the chooser opens —
+     * EnsureInit only runs once, but cs may rebind across game
+     * sessions. */
+    s_chooseMapState.listProviderCtx = cs;
+    /* Snapshot the currently active map so Cancel can restore it
+     * once an undo packet exists. */
     const char *cur = cs ? clientSimGetMapName(cs) : "";
     SDL_strlcpy(s_chooseMapPrevName, cur ? cur : "",
                 sizeof(s_chooseMapPrevName));
@@ -707,12 +905,37 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
              * lands) it'll be the actual server's library. */
             bool changed = mapChooserRender(&s_chooseMapState, renderer,
                                             availW, availH, s);
-            if (changed) {
-                /* TODO Phase 2: clientSimNetSendLobbySetMap(cs,
-                 *                                           s_chooseMapState.selectedPath);
-                 * For now the selection is recorded locally — server
-                 * isn't told about it yet. */
-                (void)cs;
+            if (changed && cs) {
+                /* Pick-to-preview: the moment the user clicks a row,
+                 * the map is pushed to the server (SP: in-process
+                 * reload; MP: SET_MAP packet). The server stashes
+                 * the previously-committed map so Cancel can revert.
+                 * Set Map (= PREVIEW_COMMIT) just frees the stash;
+                 * the sim is already on the previewed map. */
+                const char *sel = s_chooseMapState.selectedPath;
+                if (sel && sel[0] != '\0') {
+                    if (clientSimIsSinglePlayer(cs)) {
+                        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+                        bool ok = (sim != NULL) && serverSimReloadMap(sim, sel);
+                        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "[LOBBY/CHOOSER] SP server-tab pick sel='%s' sim=%p reload=%d",
+                            sel, (void *)sim, (int)ok);
+                        if (ok) {
+                            serverSimPublishLobbySettings(sim);
+                        }
+                    } else {
+                        const char *relPath = sel;
+                        static const char kPrefix[] = "data/maps/";
+                        if (strncmp(relPath, kPrefix,
+                                    sizeof(kPrefix) - 1) == 0) {
+                            relPath += sizeof(kPrefix) - 1;
+                        }
+                        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "[LOBBY/CHOOSER] MP server-tab pick rel='%s'",
+                            relPath);
+                        clientSimNetSendLobbySetMap(cs, relPath);
+                    }
+                }
             }
             ImGui::EndTabItem();
         }
@@ -739,14 +962,76 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                 s_chooseMapUploadState.pathTooltipPrefix[0] = '\0';
             }
             /* Upload uses its OWN chooser state so its folder + search
-             * state stays separate from Server Maps — and so it can
-             * keep the legacy local-filesystem scan (listProvider = NULL)
-             * even after Server Maps is wired to read from the server. */
+             * state stays separate from Server Maps. Selecting a row
+             * auto-kicks an upload (no separate button) — the server
+             * stashes the previous map and applies the uploaded one
+             * as a preview; Cancel rolls back, Set Map keeps it. */
             float availW = ImGui::GetContentRegionAvail().x;
-            float availH = ImGui::GetContentRegionAvail().y - btnBarH;
+            /* Reserve one line under the chooser for the upload-
+             * status text. */
+            float reserveBelow = ImGui::GetTextLineHeightWithSpacing() * 1.6f;
+            float availH = ImGui::GetContentRegionAvail().y
+                         - btnBarH - reserveBelow;
             if (availH < 120.0f) availH = 120.0f;
-            mapChooserRender(&s_chooseMapUploadState, renderer,
-                             availW, availH, s);
+            bool uploadChanged = mapChooserRender(&s_chooseMapUploadState,
+                                                   renderer,
+                                                   availW, availH, s);
+            if (uploadChanged && cs) {
+                const char *picked = s_chooseMapUploadState.selectedPath;
+                if (picked && picked[0] != '\0') {
+                    if (clientSimIsSinglePlayer(cs)) {
+                        /* SP host: file is already on the local
+                         * filesystem the server reads from, so
+                         * skip the upload protocol and just load
+                         * it directly as a preview. */
+                        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+                        if (sim && serverSimReloadMap(sim, picked)) {
+                            serverSimPublishLobbySettings(sim);
+                        }
+                    } else if (clientSimHasTransport(cs)) {
+                        /* MP: stream the file to the server. On
+                         * completion the server auto-stashes its
+                         * previous map and reloads with the uploaded
+                         * bytes — the rest of the preview / commit /
+                         * cancel flow then works just like the
+                         * Server Maps tab. */
+                        uint8_t upStatus =
+                            clientSimGetLobbyMapUploadStatus(cs);
+                        bool inFlight =
+                            (upStatus == 1 || upStatus == 2);
+                        if (!inFlight) {
+                            lobbyUploadKick(cs, picked);
+                        }
+                    }
+                }
+            }
+
+            /* Status line under the chooser — only meaningful in MP
+             * (SP loads instantly). Reflects the upload state
+             * machine: 0=idle, 1=announce sent, 2=ack received
+             * (chunks in flight), 3=done, 4=rejected. */
+            if (cs && !clientSimIsSinglePlayer(cs) &&
+                clientSimHasTransport(cs)) {
+                uint8_t upStatus = clientSimGetLobbyMapUploadStatus(cs);
+                const char *statusMsg = "";
+                ImVec4 statusCol(0.8f, 0.8f, 0.8f, 1.0f);
+                switch (upStatus) {
+                    case 0: statusMsg = ""; break;
+                    case 1: statusMsg = "Uploading: announcing..."; break;
+                    case 2: statusMsg = "Uploading: sending chunks..."; break;
+                    case 3:
+                        statusMsg = "Uploaded — previewing on all clients.";
+                        statusCol = ImVec4(0.4f, 0.9f, 0.4f, 1.0f);
+                        break;
+                    case 4:
+                        statusMsg = "Upload rejected by server.";
+                        statusCol = ImVec4(0.9f, 0.5f, 0.5f, 1.0f);
+                        break;
+                }
+                if (statusMsg[0]) {
+                    ImGui::TextColored(statusCol, "%s", statusMsg);
+                }
+            }
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Random")) {
@@ -759,9 +1044,15 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         ImGui::EndTabBar();
     }
 
-    /* Action bar: Cancel discards the selection (Phase 2 will wire
-     * the actual server unwind); Set Map applies it. Centered as a
-     * pair. */
+    /* Action bar: Cancel rolls back the server's preview; Set Map
+     * commits it. Selecting any row already pushed the map to the
+     * server (see Server Maps / Upload tabs above), so by the time
+     * the user reaches this row the lobby is already showing the
+     * previewed map on every client.
+     *   - Cancel  → PACKET_LOBBY_PREVIEW_CANCEL: server reverts to
+     *               the stashed prior committed map.
+     *   - Set Map → PACKET_LOBBY_PREVIEW_COMMIT: server just frees
+     *               the stash; nothing else needs to change. */
     ImGui::Separator();
     {
         const char *cancelLbl = "Cancel";
@@ -775,24 +1066,49 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         float startX  = (ImGui::GetContentRegionAvail().x - total) * 0.5f;
         if (startX > 0.0f) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
         if (ImGui::Button(cancelLbl)) {
-            /* TODO Phase 2: re-send s_chooseMapPrevName as a SET_MAP
-             * packet so the broadcast unwinds. For now we just close
-             * — phase 1 never sent anything in the first place, so
-             * there's nothing to undo on the server. */
+            if (cs) {
+                if (clientSimIsSinglePlayer(cs)) {
+                    ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+                    if (sim && serverSimRevertPreview(sim)) {
+                        serverSimPublishLobbySettings(sim);
+                    }
+                } else {
+                    clientSimNetSendLobbyPreviewCancel(cs);
+                }
+            }
             s_chooseMapOpen = false;
         }
         ImGui::SameLine();
         if (ImGui::Button(setLbl)) {
-            /* TODO Phase 2: clientSimNetSendLobbySetMap with the
-             * current chooser selection. For now just close. */
+            if (cs) {
+                if (clientSimIsSinglePlayer(cs)) {
+                    ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+                    if (sim) serverSimCommitPreview(sim);
+                } else {
+                    clientSimNetSendLobbyPreviewCommit(cs);
+                }
+            }
             s_chooseMapOpen = false;
         }
     }
 
     ImGui::End();
-    /* X on the normal window closes the dialog. Maximize is handled
-     * by a separate window function above (X there un-maximizes). */
-    if (!open) s_chooseMapOpen = false;
+    /* Title-bar X closes the dialog. Same semantic as Cancel — we
+     * don't want a hidden preview lingering on every client when
+     * the user dismisses without committing. */
+    if (!open) {
+        if (s_chooseMapOpen && cs) {
+            if (clientSimIsSinglePlayer(cs)) {
+                ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+                if (sim && serverSimRevertPreview(sim)) {
+                    serverSimPublishLobbySettings(sim);
+                }
+            } else {
+                clientSimNetSendLobbyPreviewCancel(cs);
+            }
+        }
+        s_chooseMapOpen = false;
+    }
 }
 
 static void lobbySendRemoveBot(ClientSim *cs, uint8_t slot) {
@@ -2686,6 +3002,14 @@ static void renderGameSettingsPanel(ClientSim *cs,
                           (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                            & PLAYER_FLAG_ADMIN));
 
+    /* Non-privileged players get nothing — neither the form nor the
+     * CollapsingHeader. The same map / game-type / pill-count /
+     * AI-policy info is already on the lobby's top status bar, so
+     * showing a disabled-out duplicate just clutters the view. */
+    if (!effectiveHost) {
+        return;
+    }
+
     /* Drive the CollapsingHeader's open state explicitly so a "Hide
      * Settings" button at the bottom of the panel can fold it away
      * once the host is happy with the configuration. */
@@ -2695,7 +3019,31 @@ static void renderGameSettingsPanel(ClientSim *cs,
      * right-aligned openHost control can be overlaid on the same
      * line via SetCursorScreenPos. */
     ImVec2 headerStart = ImGui::GetCursorScreenPos();
-    if (!ImGui::CollapsingHeader("Game settings")) {
+    bool headerOpen = ImGui::CollapsingHeader("Game settings");
+
+    /* When the host has flipped on "Allow all players to change
+     * settings", surface that on the header so non-host players
+     * understand why the form is interactive for them. Right-anchored
+     * within the header's row using the captured headerStart Y plus
+     * the row's right edge minus the label width. */
+    if (clientSimGetLobbyOpenHost(cs)) {
+        const char *noteText =
+            "The host has allowed all players to change game settings.";
+        ImVec2 textSize = ImGui::CalcTextSize(noteText);
+        float headerH   = ImGui::GetFrameHeight();
+        float availW    = ImGui::GetWindowContentRegionMax().x
+                        - ImGui::GetWindowContentRegionMin().x;
+        ImVec2 winPos   = ImGui::GetWindowPos();
+        float pad       = ImGui::GetStyle().FramePadding.x;
+        ImVec2 notePos(
+            winPos.x + ImGui::GetWindowContentRegionMin().x + availW
+                - textSize.x - pad,
+            headerStart.y + (headerH - textSize.y) * 0.5f);
+        ImGui::GetWindowDrawList()->AddText(
+            notePos, IM_COL32(180, 180, 180, 220), noteText);
+    }
+
+    if (!headerOpen) {
         s_settingsOpen = false;
         return;
     }
@@ -2940,6 +3288,36 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     bool mapPreviewBuilt = false;
     bool prevMapDownloadComplete = clientSimIsMapDownloadComplete(cs);
     MapBounds mapBounds = {0, 0, MAP_PREVIEW_SIZE - 1, MAP_PREVIEW_SIZE - 1};
+    /* Snapshot of the active map name; used to drop the stale
+     * preview texture as soon as the map identity changes, even
+     * before the UDP MAP_CHANGE re-download cycle arrives. */
+    char prevMapName[128] = {0};
+    {
+        const char *curName = clientSimGetMapName(cs);
+        if (curName) SDL_strlcpy(prevMapName, curName, sizeof(prevMapName));
+    }
+    /* Set when nameChanged fires (the in-process subscriber path,
+     * instantly). Cleared when seqChanged fires (the UDP MAP_CHANGE
+     * packet, a few frames later) — once we have the seq signal we
+     * know the mapDownloadBuf is being reallocated, so the standard
+     * !mapDownloadComplete "Downloading…" gate takes over. While
+     * this is true the preview panel forces the "Downloading…"
+     * placeholder so we don't briefly read "Map unavailable" in the
+     * gap. SP-host never sets this (no transport → can't show a
+     * preview anyway → don't get stuck on "Downloading…"). */
+    bool awaitingMapChangePacket = false;
+    /* Frame counter for the wait safety timeout. If the MAP_CHANGE
+     * packet doesn't arrive within ~1 second of nameChanged firing
+     * (e.g. server-side broadcast missed the host slot), we
+     * force-clear the flag and rebuild from whatever bytes are
+     * currently in the download buffer. */
+    int awaitingFrames = 0;
+    const int kAwaitingMaxFrames = 60;
+    /* Last-seen MAP_CHANGE sequence number; bumps every time the
+     * client receives PACKET_LOBBY_MAP_CHANGE. The "the mapDownload
+     * is being replaced" edge — used together with the boolean
+     * complete-transition edge to drive the texture rebuild. */
+    uint32_t lastMapChangeSeq = clientSimGetLobbyMapChangeSeq(cs);
 
 #if BOLO_MOBILE
     /* Tab state for mobile tabbed layout */
@@ -2976,6 +3354,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             clientSimNetTick(cs);
         }
 
+        /* Pump any in-flight map upload — sends a small batch of
+         * chunks each frame once the server has ACKed BEGIN. No-op
+         * when no upload is active. */
+        if (hasTransport) {
+            lobbyUploadPump(cs);
+        }
+
         /* Clear balance proposal when countdown starts */
         if (clientSimGetCountdownSeconds(cs) > 0 && clientSimIsBalanceProposalActive(cs)) {
             clientSimSetBalanceProposalActive(cs, false);
@@ -3002,24 +3387,146 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             }
         }
 
-        /* Reset preview when a map change invalidates the download */
-        if (!clientSimIsMapDownloadComplete(cs) && prevMapDownloadComplete) {
-            mapPreviewBuilt = false;
-            if (mapPreviewTex) {
-                SDL_DestroyTexture(mapPreviewTex);
-                mapPreviewTex = NULL;
-            }
+        /* Reset preview on either signal:
+         *   1. Map download invalidated (server-driven re-download
+         *      cycle — MP path triggers this via NotifyMapChange).
+         *   2. Map name changed (SP-host Set Map doesn't run the
+         *      download cycle, but the name DOES change; detect that
+         *      so we can drop the stale texture instead of slapping
+         *      a fresh render on top of it). */
+        bool downloadInvalidated =
+            !clientSimIsMapDownloadComplete(cs) && prevMapDownloadComplete;
+        const char *curMapName = clientSimGetMapName(cs);
+        bool nameChanged = (curMapName != NULL) &&
+            SDL_strcmp(prevMapName, curMapName) != 0;
+        /* Sequence-number edge — bumps when the client receives a
+         * MAP_CHANGE packet. Catches the MP-host loopback case
+         * where the !complete-then-complete transition lives inside
+         * a single frame and the boolean edge detector misses it. */
+        uint32_t curMapChangeSeq = clientSimGetLobbyMapChangeSeq(cs);
+        bool seqChanged = (curMapChangeSeq != lastMapChangeSeq);
+        lastMapChangeSeq = curMapChangeSeq;
+
+        /* Tear down the stale texture on ANY signal that the map
+         * identity changed. Without this the user sees the OLD
+         * preview rendered behind the new one when nameChanged
+         * arrives via the in-process subscriber path before the
+         * MAP_CHANGE packet arrives over UDP. The gap between the
+         * texture clear and the rebuild is covered by
+         * awaitingMapChangePacket (when only nameChanged fired) or
+         * by the standard !complete "Downloading…" gate (once
+         * seqChanged / downloadInvalidated fires). */
+        if (downloadInvalidated || seqChanged || nameChanged) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "[LOBBY/PREVIEW] reset: downloadInvalidated=%d seqChanged=%d nameChanged=%d curName='%s' prevName='%s' seq=%u complete=%d hasTransport=%d isSP=%d",
+                (int)downloadInvalidated, (int)seqChanged, (int)nameChanged,
+                curMapName ? curMapName : "(null)",
+                prevMapName,
+                (unsigned)curMapChangeSeq,
+                (int)clientSimIsMapDownloadComplete(cs),
+                (int)hasTransport,
+                cs ? (int)clientSimIsSinglePlayer(cs) : -1);
+            /* Intentionally do NOT destroy mapPreviewTex here — keeping
+             * the OLD preview visible until the rebuild has new bytes
+             * ready avoids a visible flash to "Downloading…" between
+             * the map-change signal and the chunk-redownload finishing.
+             * The rebuild block below atomically destroys-and-replaces
+             * the texture once fresh data is in hand.
+             *
+             * Popup compressed data IS dropped so the big-preview view
+             * doesn't render against stale bytes if the user opens it
+             * during the gap. */
             if (popupCompressedData) { SDL_free(popupCompressedData); popupCompressedData = NULL; popupCompressedLen = 0; }
             mapPreviewPopupClose();
         }
+        /* mapPreviewBuilt — open the rebuild gate ONLY when we have
+         * a real data signal (seq tick OR download-complete edge).
+         * Resetting on nameChanged alone would fire the rebuild path
+         * one frame later against the still-stale mapDownloadBuf and
+         * silently re-render the old map. */
+        if (downloadInvalidated || seqChanged) {
+            mapPreviewBuilt = false;
+            awaitingMapChangePacket = false;
+            awaitingFrames = 0;
+        }
+        /* Safety timeout: if we've been waiting for MAP_CHANGE for
+         * too long (e.g. server forgot to push it for some reason),
+         * force a rebuild from whatever bytes the download buffer
+         * currently holds. Better to show a possibly-stale preview
+         * than to leave the panel stuck on "Downloading…". */
+        if (awaitingMapChangePacket) {
+            awaitingFrames++;
+            if (awaitingFrames > kAwaitingMaxFrames) {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[LOBBY/PREVIEW] awaiting MAP_CHANGE timed out after %d frames; forcing rebuild",
+                    awaitingFrames);
+                awaitingMapChangePacket = false;
+                awaitingFrames = 0;
+                mapPreviewBuilt = false;
+            }
+        }
+        /* nameChanged on a UDP transport raises the wait flag — we
+         * know fresh bytes are coming over the wire but haven't
+         * received the seq tick yet. Local-transport clients (SP
+         * host AND the host's own client in a Local MP game) never
+         * see a MAP_CHANGE packet because there's no UDP socket
+         * round-trip; leaving the flag set would lock the preview
+         * on "Downloading…" forever. Gate on isUdpTransport so the
+         * flag only flips when we're genuinely waiting on the wire.
+         * Local-transport clients open the rebuild gate immediately
+         * since the sim is in-process and the new bytes are
+         * available right now. */
+        if (nameChanged) {
+            bool isUdp = cs && clientSimIsUdpTransport(cs);
+            if (hasTransport && isUdp) {
+                awaitingMapChangePacket = true;
+            } else {
+                mapPreviewBuilt = false;
+            }
+            SDL_strlcpy(prevMapName, curMapName, sizeof(prevMapName));
+        }
         prevMapDownloadComplete = clientSimIsMapDownloadComplete(cs);
 
-        /* Build map preview once download completes */
+        /* Build map preview once download completes. Two data
+         * sources:
+         *   - MP: clientSimGetServerMapData reads the just-downloaded
+         *     bytes from the UDP transport's mapDownloadBuf.
+         *   - SP: there's no UDP transport, so we pull the compressed
+         *     map straight from gameFrontGetSinglePlayerServerSim(). */
         if (clientSimIsMapDownloadComplete(cs) && !mapPreviewBuilt && hasTransport) {
             int mapLen = 0;
             const BYTE *mapData = clientSimGetServerMapData(cs, &mapLen);
+            const char *dataSource = (mapData && mapLen > 0) ? "udp" : "(udp returned null)";
+            BYTE spBuf[65536];
+            if ((!mapData || mapLen <= 0) &&
+                cs && !clientSimIsUdpTransport(cs)) {
+                /* Non-UDP transport (SP host OR MP-host's own client)
+                 * — no UDP buffer to pull from. Read the compressed
+                 * map straight from the in-process ServerSim instead. */
+                ServerSim *spSim = gameFrontGetSinglePlayerServerSim();
+                if (spSim) {
+                    mapLen  = serverSimGetCompressedMap(spSim, spBuf);
+                    mapData = (mapLen > 0) ? spBuf : NULL;
+                    dataSource = "local-direct";
+                }
+            }
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "[LOBBY/PREVIEW] rebuild attempt: source=%s mapLen=%d mapData=%p mapPreviewBuilt(prior)=0 hasTransport=%d",
+                dataSource, mapLen, (const void *)mapData, (int)hasTransport);
             if (mapData && mapLen > 0) {
+                /* Build the NEW texture before destroying the OLD one
+                 * so the display layer (which polls mapPreviewTex) is
+                 * never left looking at a NULL pointer between frames
+                 * — no flicker through "Map unavailable" / "Downloading…"
+                 * placeholders. */
+                SDL_Texture *prev = mapPreviewTex;
                 mapPreviewTex = buildMapPreview(renderer, mapData, mapLen, &mapBounds);
+                if (prev) SDL_DestroyTexture(prev);
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[LOBBY/PREVIEW] rebuild done: tex=%p bounds=(%d..%d, %d..%d)",
+                    (const void *)mapPreviewTex,
+                    mapBounds.minX, mapBounds.maxX,
+                    mapBounds.minY, mapBounds.maxY);
                 /* Stash for popup decompression */
                 if (popupCompressedData) { SDL_free(popupCompressedData); popupCompressedData = NULL; }
                 popupCompressedData = (BYTE *)SDL_malloc(mapLen);
@@ -3186,10 +3693,20 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         renderLobbyRejectToast(cs, s);
 
         /* Layout A — collapsible game settings panel (radios, checkboxes,
-         * lock badges). Edits dispatch via PACKET_LOBBY_SET_SETTING. */
-        renderGameSettingsPanel(cs, myPlayerNum, s);
-        ImGui::Separator();
-        ImGui::Spacing();
+         * lock badges). Edits dispatch via PACKET_LOBBY_SET_SETTING.
+         * Skipped entirely for non-privileged players — the same
+         * info already lives in the top status bar, and the panel
+         * is read-only anyway. */
+        bool gsEffectiveHost = (myPlayerNum == 0)
+            || clientSimGetLobbyOpenHost(cs)
+            || (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+                (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
+                 & PLAYER_FLAG_ADMIN));
+        if (gsEffectiveHost) {
+            renderGameSettingsPanel(cs, myPlayerNum, s);
+            ImGui::Separator();
+            ImGui::Spacing();
+        }
 
         /* Hosted-MP port-mapping status now renders at top-right via
          * renderConnectivityBadge — see the call site in the read-only
@@ -3373,8 +3890,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
                     /* "Choose Map" — opens the separate chooser window.
                      * Host / admin / openHost-allowed only; non-privileged
-                     * clients never see the button (server enforces the
-                     * authority gate when Phase 2 wires the packet). */
+                     * clients never see the button. Server enforces the
+                     * same authority gate on PACKET_LOBBY_SET_MAP. */
                     {
                         bool isHostLocal  = (myPlayerNum == 0);
                         bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
@@ -3395,12 +3912,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         }
                     }
 
-                    if (!clientSimIsMapDownloadComplete(cs)) {
-                        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DOWNLOADING));
-                        ImGui::Spacing();
-                        float progress = (float)netGetDownloadPos() / 255.0f;
-                        ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
-                    } else if (mapPreviewTex) {
+                    /* Prefer the existing texture even while we're
+                     * waiting on fresh bytes — keeps the panel from
+                     * flashing to "Downloading…" between picks when
+                     * an older map is still drawable. The rebuild
+                     * block atomically swaps it for a fresh texture
+                     * once the new bytes arrive. */
+                    if (mapPreviewTex) {
                         int pad = 4;
                         int bx0 = mapBounds.minX - pad; if (bx0 < 0) bx0 = 0;
                         int by0 = mapBounds.minY - pad; if (by0 < 0) by0 = 0;
@@ -3440,6 +3958,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                                    mapBounds.minX, mapBounds.minY,
                                                    mapBounds.maxX, mapBounds.maxY);
                         }
+                    } else if (!clientSimIsMapDownloadComplete(cs) || awaitingMapChangePacket) {
+                        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DOWNLOADING));
+                        ImGui::Spacing();
+                        float progress = (float)netGetDownloadPos() / 255.0f;
+                        ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
                     } else {
                         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MAP_UNAVAILABLE));
                     }
@@ -3687,11 +4210,27 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             float lineH = ImGui::GetTextLineHeightWithSpacing();
             float leftFillH = fullContentH - allowRowH - padB - 6.0f;
             if (leftFillH < lineH * 12.0f) leftFillH = lineH * 12.0f;
-            /* 7 lines: label (~1) + history (~4) + input row (~1.5) +
-             * internal padding. 5 was too tight — the history child
-             * had only ~2 visible rows and scrollbar showed for any
-             * chat. */
-            float chatCap = lineH * 7.0f;
+            /* 7 lines baseline: label (~1) + history (~4) + input row
+             * (~1.5) + internal padding. Grow proportionally when the
+             * lobby window is taller than a "default" of ~25 line
+             * heights — we slide the chat's top up so the user gets a
+             * couple more visible history rows on big screens, while
+             * still keeping the teams panel as the dominant area.
+             *
+             * Growth rate is 15% of the surplus, capped at +5 lines
+             * (so even on a very tall lobby the chat stays well under
+             * half the column). */
+            const float kChatBaseline = 7.0f;
+            const float kChatDefaultH = 25.0f;
+            const float kChatGain     = 0.15f;
+            const float kChatMaxExtra = 5.0f;
+            float chatCap = lineH * kChatBaseline;
+            float surplusLines = (leftFillH / lineH) - kChatDefaultH;
+            if (surplusLines > 0.0f) {
+                float extra = surplusLines * kChatGain;
+                if (extra > kChatMaxExtra) extra = kChatMaxExtra;
+                chatCap += lineH * extra;
+            }
             float bottomH = chatCap;
             if (bottomH > leftFillH - lineH * 6.0f) {
                 bottomH = leftFillH - lineH * 6.0f;
@@ -3905,14 +4444,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             /* Right: Map preview + info */
             ImGui::BeginChild("##MapPanel", ImVec2(mapPanelW, mapH), ImGuiChildFlags_Borders);
 
-            if (!clientSimIsMapDownloadComplete(cs)) {
-                /* Map downloading - show progress */
-                ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DOWNLOADING));
-                ImGui::Spacing();
-                float progress = (float)netGetDownloadPos() / 255.0f;
-                ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
-                ImGui::Spacing();
-            } else if (mapPreviewTex) {
+            /* Prefer the existing texture even while we're waiting on
+             * fresh bytes — the rebuild block above swaps it
+             * atomically once the new map's chunks finish arriving,
+             * so users keep seeing the previously-selected map until
+             * the new one is ready to slot in. */
+            if (mapPreviewTex) {
                 /* Compute UV coordinates to zoom into the interesting area with padding */
                 int pad = 4;
                 int bx0 = mapBounds.minX - pad; if (bx0 < 0) bx0 = 0;
@@ -3998,6 +4535,14 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         lobbyChooseMapOpen(cs, renderer);
                     }
                 }
+            } else if (!clientSimIsMapDownloadComplete(cs) || awaitingMapChangePacket) {
+                /* No texture yet AND we're mid-download — show the
+                 * progress bar so the user knows something's coming. */
+                ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DOWNLOADING));
+                ImGui::Spacing();
+                float progress = (float)netGetDownloadPos() / 255.0f;
+                ImGui::ProgressBar(progress, ImVec2(-1, 20.0f * s));
+                ImGui::Spacing();
             } else {
                 ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MAP_UNAVAILABLE));
             }
@@ -4115,6 +4660,21 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
         /* --- Map preview popup --- */
         mapPreviewPopupRenderModal(renderer);
+        /* If the user clicked "Change" inside the modal, flip to the
+         * Choose Map dialog. Gated on the local edit-authority check
+         * so non-privileged players who somehow saw the popup don't
+         * end up in a no-op chooser they can't apply from. */
+        if (mapPreviewPopupConsumeChangeRequest()) {
+            bool isHostLocal  = (myPlayerNum == 0);
+            bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
+                (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
+                 & PLAYER_FLAG_ADMIN));
+            bool effHostMap = isHostLocal || isAdminLocal ||
+                              clientSimGetLobbyOpenHost(cs);
+            if (effHostMap) {
+                lobbyChooseMapOpen(cs, renderer);
+            }
+        }
 
         /* --- Leave confirmation popup --- */
         char leavePopupModalId[64];

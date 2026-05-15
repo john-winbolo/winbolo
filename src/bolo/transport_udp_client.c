@@ -1291,6 +1291,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         /* [header 8] – server loaded a new map; reset to re-download */
         ControlEvent evt = { .type = CTRL_LOBBY_MAP_CHANGE };
         clientSimApplyControl(c->clientSim, &evt);
+        if (c->clientSim) c->clientSim->lobbyMapChangeSeq++;
         c->joinState = UDP_CLIENT_JOINING;
         c->joinAttempts = 0;
         c->ticksSinceJoinSent = JOIN_RETRY_INTERVAL; /* send immediately */
@@ -1447,6 +1448,154 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             bl->entries[i].path[plen] = '\0';
             pos += plen;
             bl->count++;
+        }
+        break;
+    }
+
+    case PACKET_LOBBY_MAP_LIST_RSP: {
+        /* [header 8] [pathLen 1] [path N] [count 1]
+         * per entry: [nameLen 1][name M][isFolder 1] */
+        if (!c->clientSim) break;
+        if (len < PACKET_HEADER_SIZE + 1) break;
+        int pos = PACKET_HEADER_SIZE;
+        uint8_t plen = buf[pos++];
+        if (pos + plen + 1 > len) break;
+        char rspPath[256];
+        memset(rspPath, 0, sizeof(rspPath));
+        if (plen > 0) {
+            if (plen >= sizeof(rspPath)) plen = (uint8_t)(sizeof(rspPath) - 1);
+            memcpy(rspPath, buf + pos, plen);
+        }
+        pos += plen;
+        uint8_t cnt = buf[pos++];
+        if (cnt > LOBBY_MAP_LIST_MAX) cnt = LOBBY_MAP_LIST_MAX;
+
+        /* Stash the listing on the ClientSim. We always accept even
+         * if the path doesn't match the latest request — the lobby
+         * UI gates on lobbyMapListPath == relPath, so a stale arrival
+         * just sits idle until the user navigates back. */
+        memset(c->clientSim->lobbyMapListPath, 0,
+               sizeof(c->clientSim->lobbyMapListPath));
+        SDL_strlcpy(c->clientSim->lobbyMapListPath, rspPath,
+                    sizeof(c->clientSim->lobbyMapListPath));
+        c->clientSim->lobbyMapListCount = 0;
+        for (int i = 0; i < cnt && pos < len; i++) {
+            if (pos + 1 > len) break;
+            uint8_t nameLen = buf[pos++];
+            if (nameLen >= LOBBY_MAP_LIST_NAME_LEN ||
+                pos + nameLen + 1 + 8 > len) break;
+            int idx = c->clientSim->lobbyMapListCount++;
+            memset(c->clientSim->lobbyMapListNames[idx], 0,
+                   LOBBY_MAP_LIST_NAME_LEN);
+            if (nameLen > 0) {
+                memcpy(c->clientSim->lobbyMapListNames[idx],
+                       buf + pos, nameLen);
+            }
+            pos += nameLen;
+            c->clientSim->lobbyMapListIsFolder[idx] = buf[pos++];
+            uint64_t mt = 0;
+            for (int b = 0; b < 8; b++) {
+                mt = (mt << 8) | buf[pos++];
+            }
+            c->clientSim->lobbyMapListModTime[idx] = (int64_t)mt;
+        }
+        c->clientSim->lobbyMapListReady = true;
+        c->clientSim->lobbyMapListInFlight = false;
+        break;
+    }
+
+    case PACKET_LOBBY_MAP_SEARCH_RSP: {
+        /* [header 8] [pathLen 1] [path N] [queryLen 1] [query M]
+         * [count 1] per entry: [nameLen 1][name M][isFolder 1] */
+        if (!c->clientSim) break;
+        if (len < PACKET_HEADER_SIZE + 1) break;
+        int pos = PACKET_HEADER_SIZE;
+        uint8_t plen = buf[pos++];
+        if (pos + plen + 2 > len) break;
+        char rspPath[256];
+        memset(rspPath, 0, sizeof(rspPath));
+        if (plen > 0) {
+            if (plen >= sizeof(rspPath)) plen = (uint8_t)(sizeof(rspPath) - 1);
+            memcpy(rspPath, buf + pos, plen);
+        }
+        pos += plen;
+        uint8_t qlen = buf[pos++];
+        if (pos + qlen + 1 > len) break;
+        char rspQuery[128];
+        memset(rspQuery, 0, sizeof(rspQuery));
+        if (qlen > 0) {
+            if (qlen >= sizeof(rspQuery)) qlen = (uint8_t)(sizeof(rspQuery) - 1);
+            memcpy(rspQuery, buf + pos, qlen);
+        }
+        pos += qlen;
+        uint8_t cnt = buf[pos++];
+        if (cnt > LOBBY_MAP_LIST_MAX) cnt = LOBBY_MAP_LIST_MAX;
+
+        memset(c->clientSim->lobbyMapSearchPath, 0,
+               sizeof(c->clientSim->lobbyMapSearchPath));
+        SDL_strlcpy(c->clientSim->lobbyMapSearchPath, rspPath,
+                    sizeof(c->clientSim->lobbyMapSearchPath));
+        memset(c->clientSim->lobbyMapSearchQuery, 0,
+               sizeof(c->clientSim->lobbyMapSearchQuery));
+        SDL_strlcpy(c->clientSim->lobbyMapSearchQuery, rspQuery,
+                    sizeof(c->clientSim->lobbyMapSearchQuery));
+        c->clientSim->lobbyMapSearchCount = 0;
+        for (int i = 0; i < cnt && pos < len; i++) {
+            if (pos + 1 > len) break;
+            uint8_t nameLen = buf[pos++];
+            if (nameLen >= LOBBY_MAP_LIST_NAME_LEN ||
+                pos + nameLen + 1 + 8 > len) break;
+            int idx = c->clientSim->lobbyMapSearchCount++;
+            memset(c->clientSim->lobbyMapSearchNames[idx], 0,
+                   LOBBY_MAP_LIST_NAME_LEN);
+            if (nameLen > 0) {
+                memcpy(c->clientSim->lobbyMapSearchNames[idx],
+                       buf + pos, nameLen);
+            }
+            pos += nameLen;
+            c->clientSim->lobbyMapSearchIsFolder[idx] = buf[pos++];
+            uint64_t mt = 0;
+            for (int b = 0; b < 8; b++) {
+                mt = (mt << 8) | buf[pos++];
+            }
+            c->clientSim->lobbyMapSearchModTime[idx] = (int64_t)mt;
+        }
+        c->clientSim->lobbyMapSearchReady = true;
+        c->clientSim->lobbyMapSearchInFlight = false;
+        break;
+    }
+
+    case PACKET_LOBBY_MAP_UPLOAD_ACK: {
+        /* [header 8] [status 1]. 0 = ok, non-zero = reject (out of
+         * lobby, name invalid, file too big). */
+        if (!c->clientSim || len < PACKET_HEADER_SIZE + 1) break;
+        uint8_t status = buf[PACKET_HEADER_SIZE];
+        if (status == 0) {
+            c->clientSim->lobbyMapUploadStatus = 2; /* sending chunks */
+        } else {
+            c->clientSim->lobbyMapUploadStatus = 4; /* rejected */
+            c->clientSim->lobbyMapUploadRejectCode = status;
+        }
+        break;
+    }
+
+    case PACKET_LOBBY_MAP_UPLOAD_DONE: {
+        /* [header 8] [status 1] [pathLen 1] [path N] */
+        if (!c->clientSim || len < PACKET_HEADER_SIZE + 2) break;
+        uint8_t status = buf[PACKET_HEADER_SIZE];
+        uint8_t plen   = buf[PACKET_HEADER_SIZE + 1];
+        if (len < PACKET_HEADER_SIZE + 2 + plen) break;
+        if (status == 0) {
+            memset(c->clientSim->lobbyMapUploadFinalPath, 0,
+                   sizeof(c->clientSim->lobbyMapUploadFinalPath));
+            if (plen > 0 && plen < sizeof(c->clientSim->lobbyMapUploadFinalPath)) {
+                memcpy(c->clientSim->lobbyMapUploadFinalPath,
+                       buf + PACKET_HEADER_SIZE + 2, plen);
+            }
+            c->clientSim->lobbyMapUploadStatus = 3; /* done */
+        } else {
+            c->clientSim->lobbyMapUploadStatus = 4; /* rejected */
+            c->clientSim->lobbyMapUploadRejectCode = status;
         }
         break;
     }
@@ -2321,6 +2470,179 @@ void transportUdpClientSendLobbySetBotBrain(Transport *t, uint8_t slot,
     buf[PACKET_HEADER_SIZE + 1] = (uint8_t)pathLen;
     if (pathLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 2, brainPath, pathLen);
     len = PACKET_HEADER_SIZE + 2 + pathLen;
+    udpClientSendTo(c, buf, len);
+}
+
+void transportUdpClientSendLobbySetMap(Transport *t,
+                                       const char *mapRelPath) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    /* Path length capped at 255 by the 1-byte length prefix. The
+     * 256-byte stack buffer is comfortably below MTU once paired
+     * with the 8-byte header. */
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 256];
+    int pathLen, len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (mapRelPath == NULL) mapRelPath = "";
+
+    pathLen = (int)strlen(mapRelPath);
+    if (pathLen > 255) pathLen = 255;
+
+    packHeader(buf, PACKET_LOBBY_SET_MAP, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = (uint8_t)pathLen;
+    if (pathLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 1, mapRelPath, pathLen);
+    len = PACKET_HEADER_SIZE + 1 + pathLen;
+    udpClientSendTo(c, buf, len);
+}
+
+void transportUdpClientSendLobbyPreviewCancel(Transport *t) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    uint8_t buf[PACKET_HEADER_SIZE];
+    packHeader(buf, PACKET_LOBBY_PREVIEW_CANCEL, c->outSequence++);
+    udpClientSendTo(c, buf, sizeof(buf));
+}
+
+void transportUdpClientSendLobbyPreviewCommit(Transport *t) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    uint8_t buf[PACKET_HEADER_SIZE];
+    packHeader(buf, PACKET_LOBBY_PREVIEW_COMMIT, c->outSequence++);
+    udpClientSendTo(c, buf, sizeof(buf));
+}
+
+void transportUdpClientSendLobbyMapListRequest(Transport *t,
+                                                const char *relPath) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 256];
+    int pathLen, len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (relPath == NULL) relPath = "";
+    pathLen = (int)strlen(relPath);
+    if (pathLen > 255) pathLen = 255;
+
+    packHeader(buf, PACKET_LOBBY_MAP_LIST_REQ, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = (uint8_t)pathLen;
+    if (pathLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 1, relPath, pathLen);
+    len = PACKET_HEADER_SIZE + 1 + pathLen;
+    udpClientSendTo(c, buf, len);
+
+    /* Mirror the requested path on the ClientSim so the lobby UI
+     * can ignore a stale response if the user navigates again
+     * before the previous reply arrives. */
+    if (c->clientSim) {
+        memset(c->clientSim->lobbyMapListReqPath, 0,
+               sizeof(c->clientSim->lobbyMapListReqPath));
+        if (pathLen > 0) {
+            memcpy(c->clientSim->lobbyMapListReqPath, relPath,
+                   (size_t)pathLen);
+        }
+        c->clientSim->lobbyMapListInFlight = true;
+    }
+}
+
+void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
+                                                  const char *relPath,
+                                                  const char *query) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 256 + 1 + 128];
+    int pathLen, qLen, len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (relPath == NULL) relPath = "";
+    if (query == NULL)   query   = "";
+    pathLen = (int)strlen(relPath);
+    if (pathLen > 255) pathLen = 255;
+    qLen = (int)strlen(query);
+    if (qLen > 127) qLen = 127;
+
+    packHeader(buf, PACKET_LOBBY_MAP_SEARCH_REQ, c->outSequence++);
+    int pos = PACKET_HEADER_SIZE;
+    buf[pos++] = (uint8_t)pathLen;
+    if (pathLen > 0) { memcpy(buf + pos, relPath, pathLen); pos += pathLen; }
+    buf[pos++] = (uint8_t)qLen;
+    if (qLen > 0)    { memcpy(buf + pos, query, qLen);     pos += qLen; }
+    len = pos;
+    udpClientSendTo(c, buf, len);
+
+    if (c->clientSim) {
+        memset(c->clientSim->lobbyMapSearchReqPath, 0,
+               sizeof(c->clientSim->lobbyMapSearchReqPath));
+        memset(c->clientSim->lobbyMapSearchReqQuery, 0,
+               sizeof(c->clientSim->lobbyMapSearchReqQuery));
+        if (pathLen > 0) {
+            memcpy(c->clientSim->lobbyMapSearchReqPath, relPath,
+                   (size_t)pathLen);
+        }
+        if (qLen > 0) {
+            memcpy(c->clientSim->lobbyMapSearchReqQuery, query,
+                   (size_t)qLen);
+        }
+        c->clientSim->lobbyMapSearchInFlight = true;
+    }
+}
+
+void transportUdpClientSendLobbyMapUploadBegin(Transport *t,
+                                                uint32_t totalLen,
+                                                const char *name) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255];
+    int nameLen, len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (name == NULL) name = "";
+    nameLen = (int)strlen(name);
+    if (nameLen > 255) nameLen = 255;
+
+    packHeader(buf, PACKET_LOBBY_MAP_UPLOAD_BEGIN, c->outSequence++);
+    /* 4-byte big-endian total length, mirrors how other packets pack
+     * multi-byte fields (e.g. the time-limit setting). */
+    buf[PACKET_HEADER_SIZE + 0] = (uint8_t)((totalLen >> 24) & 0xFF);
+    buf[PACKET_HEADER_SIZE + 1] = (uint8_t)((totalLen >> 16) & 0xFF);
+    buf[PACKET_HEADER_SIZE + 2] = (uint8_t)((totalLen >>  8) & 0xFF);
+    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)( totalLen        & 0xFF);
+    buf[PACKET_HEADER_SIZE + 4] = (uint8_t)nameLen;
+    if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 5, name, nameLen);
+    len = PACKET_HEADER_SIZE + 5 + nameLen;
+    udpClientSendTo(c, buf, len);
+
+    if (c->clientSim) {
+        c->clientSim->lobbyMapUploadStatus = 1; /* announced */
+        c->clientSim->lobbyMapUploadRejectCode = 0;
+        c->clientSim->lobbyMapUploadFinalPath[0] = '\0';
+    }
+}
+
+void transportUdpClientSendLobbyMapUploadChunk(Transport *t,
+                                                uint32_t offset,
+                                                const uint8_t *data,
+                                                uint16_t dataLen) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
+    if (dataLen == 0 || data == NULL) return;
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    /* Cap chunk size at 1024 to stay well below UDP MTU. */
+    if (dataLen > 1024) return;
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + 2 + 1024];
+    int len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    packHeader(buf, PACKET_LOBBY_MAP_UPLOAD_CHUNK, c->outSequence++);
+    buf[PACKET_HEADER_SIZE + 0] = (uint8_t)((offset >> 24) & 0xFF);
+    buf[PACKET_HEADER_SIZE + 1] = (uint8_t)((offset >> 16) & 0xFF);
+    buf[PACKET_HEADER_SIZE + 2] = (uint8_t)((offset >>  8) & 0xFF);
+    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)( offset        & 0xFF);
+    buf[PACKET_HEADER_SIZE + 4] = (uint8_t)((dataLen >> 8) & 0xFF);
+    buf[PACKET_HEADER_SIZE + 5] = (uint8_t)( dataLen       & 0xFF);
+    memcpy(buf + PACKET_HEADER_SIZE + 6, data, dataLen);
+    len = PACKET_HEADER_SIZE + 6 + dataLen;
     udpClientSendTo(c, buf, len);
 }
 
