@@ -21,15 +21,16 @@
 #include "../gui/imgui_theme.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
+#include "../gui/sdl3/dialogs/imgui_dialog_utils.h"
 
 extern "C" {
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/bg_game.h"
 #include "../gui/gamefront.h"
 #include "../gui/lang.h"
-#include "../bolo/global.h"
-#include "../bolo/screen.h"
-#include "../bolo/client_sim.h"
+#include "global.h"
+#include "client_mapload.h"
+#include "client_sim.h"
 #include "../gui/sdl3/dialogs/imgui_gamesetup.h"
 }
 
@@ -259,8 +260,8 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                         gameFrontSetFileName((char *)"");
                     } else {
                         /* Try to load the selected map to validate it */
-                        bool ok = screenLoadMapCS(cs, (char *)mapFiles[i], gameOpen, FALSE, 0,
-                                                UNLIMITED_GAME_TIME, (char *)"Me", TRUE);
+                        bool ok = clientLoadMap(cs, (char *)mapFiles[i], gameOpen, FALSE, 0,
+                                              UNLIMITED_GAME_TIME, (char *)"Me", TRUE);
                         if (ok) {
                             gameFrontSetFileName((char *)mapFiles[i]);
                         } else {
@@ -371,12 +372,14 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                 result = 1;
                 running = false;
             }
+            imguiHandOnHover();
 
             ImGui::SameLine(0.0f, 16.0f * uiScale);
 
             if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH))) {
                 running = false;
             }
+            imguiHandOnHover();
         }
 
         ImGui::EndGroup();

@@ -48,11 +48,10 @@ extern "C" {
 #include "../flags.h"
 #include "../../gamefront.h"
 #include "../../currentgames.h"
-#include "../../../bolo/discovery.h"
-#include "../../../bolo/global.h"
-#include "../../../bolo/gametype.h"
-#include "../../../bolo/netpacks.h"
-#include "../../../bolo/bolo_packets.h"
+#include "discovery.h"
+#include "global.h"
+#include "gametype.h"
+#include "wire_limits.h"
 #include "../../../server/geolookup.h"
 #include "../../lang.h"
 #include "../input_source.h"
@@ -154,7 +153,8 @@ static void resolveCountryCode(ServerEntry &e) {
 }
 
 /* Send an info request to a server and measure RTT.
- * Creates its own UDP socket so it's self-contained and thread-safe. */
+ * Thin wrapper around discoveryPingServer; the bolo helper owns the
+ * socket and the wire-format parsing. */
 static PingResult pingServer(const PingWork &work) {
     PingResult res;
     res.index = work.index;
@@ -163,71 +163,13 @@ static PingResult pingServer(const PingWork &work) {
     res.freeBases = 0;
     res.numPlayers = 0;
 
-    /* Resolve destination address */
-    struct sockaddr_in dest;
-    memset(&dest, 0, sizeof(dest));
-    dest.sin_family = AF_INET;
-    dest.sin_port = htons(work.port);
-    dest.sin_addr.s_addr = inet_addr(work.address);
-    if (dest.sin_addr.s_addr == INADDR_NONE) {
-        struct hostent *phe = gethostbyname(work.address);
-        if (!phe) return res;
-        dest.sin_addr.s_addr = *((uint32_t *)phe->h_addr_list[0]);
+    DiscoveryPingResult dpr;
+    if (discoveryPingServer(work.address, work.port, &dpr)) {
+        res.pingMs    = dpr.rttMs;
+        res.freePills = dpr.freePills;
+        res.freeBases = dpr.freeBases;
+        res.numPlayers = dpr.numPlayers;
     }
-
-    /* Create a temporary UDP socket */
-    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock == INVALID_SOCKET) return res;
-
-    /* Set receive timeout to 5 seconds */
-#ifdef _WIN32
-    DWORD tv = 5000;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
-#else
-    struct timeval tv;
-    tv.tv_sec = 5;
-    tv.tv_usec = 0;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-#endif
-
-    /* Send info request */
-    BYTE buff[MAX_UDPPACKET_SIZE] = INFOREQUESTHEADER;
-    Uint64 sendTime = SDL_GetTicks();
-    int ret = sendto(sock, (const char *)buff, BOLOPACKET_REQUEST_SIZE, 0,
-                     (struct sockaddr *)&dest, sizeof(dest));
-    WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: sent %d bytes to %s:%u (expected %d)",
-            ret, work.address, work.port, BOLOPACKET_REQUEST_SIZE);
-    if (ret != BOLOPACKET_REQUEST_SIZE) {
-        WB_LOG_WARN(WB_LOG_CAT_NET, "ping: sendto failed for %s:%u", work.address, work.port);
-        closesocket(sock);
-        return res;
-    }
-
-    /* Wait for response */
-    struct sockaddr_in from;
-    socklen_t fromlen = sizeof(from);
-    int len = (int)recvfrom(sock, (char *)buff, MAX_UDPPACKET_SIZE, 0,
-                            (struct sockaddr *)&from, &fromlen);
-    closesocket(sock);
-
-    if (len >= (int)sizeof(INFO_PACKET)) {
-        Uint64 recvTime = SDL_GetTicks();
-        res.pingMs = (int)(recvTime - sendTime);
-
-        INFO_PACKET *info = (INFO_PACKET *)buff;
-        res.freePills = info->free_pills;
-        res.freeBases = info->free_bases;
-        res.numPlayers = info->num_players;
-        WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: %s:%u responded in %dms, players=%d",
-                work.address, work.port, res.pingMs, res.numPlayers);
-    } else {
-#ifdef _WIN32
-        WB_LOG_DEBUG(WB_LOG_CAT_NET, "ping: %s:%u no response (len=%d, err=%d)", work.address, work.port, len, WSAGetLastError());
-#else
-        WB_LOG_DEBUG(WB_LOG_CAT_NET, "ping: %s:%u no response (len=%d, errno=%d)", work.address, work.port, len, errno);
-#endif
-    }
-
     return res;
 }
 
@@ -239,40 +181,34 @@ struct BroadcastCbData {
     std::vector<PingResult> *pingResults;
 };
 
-static ServerEntry serverEntryFromInfoPacket(INFO_PACKET *info, struct in_addr *addr) {
+static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     ServerEntry e = {};
     e.pingMs = -1;
     e.freePills = 0;
     e.freeBases = 0;
     e.lobbyStatus = 0;
 
-    utilPtoCString(info->mapname, e.mapName);
-    e.password = (info->has_password != 0);
-    e.mines = ((info->allow_mines & 0x80) != 0);
-
-    if (info->gameid.serveraddress.s_addr == 0) {
-        SDL_strlcpy(e.address, inet_ntoa(*addr), sizeof(e.address));
-    } else {
-        SDL_strlcpy(e.address, inet_ntoa(info->gameid.serveraddress), sizeof(e.address));
-    }
-    e.port = info->gameid.serverport;
-    WB_LOG_TRACE(WB_LOG_CAT_NET, "serverEntryFromInfoPacket: raw serverport=%u e.port=%u", (unsigned)info->gameid.serverport, (unsigned)e.port);
+    SDL_strlcpy(e.address, src->address, sizeof(e.address));
+    e.port = src->port;
+    SDL_strlcpy(e.mapName, src->mapName, sizeof(e.mapName));
     SDL_snprintf(e.version, sizeof(e.version), "%d.%d%d",
-                 info->h.versionMajor, info->h.versionMinor, info->h.versionRevision);
-    e.numPlayers = (BYTE)info->num_players;
-    e.numBases = (BYTE)info->free_bases;
-    e.numPills = (BYTE)info->free_pills;
-    e.game = (gameType)info->gametype;
-    e.ai = (aiType)info->allow_AI;
+                 src->versionMajor, src->versionMinor, src->versionRevision);
+    e.numPlayers = src->numPlayers;
+    e.numBases   = src->numBases;
+    e.numPills   = src->numPills;
+    e.mines      = src->mines;
+    e.game       = src->game;
+    e.ai         = src->ai;
+    e.password   = src->password;
 
     resolveCountryCode(e);
     return e;
 }
 
-extern "C" void broadcastServerCallback(INFO_PACKET *info, struct in_addr *addr, void *userData) {
+extern "C" void broadcastServerCallback(const DiscoveryServer *server, void *userData) {
     BroadcastCbData *cbd = (BroadcastCbData *)userData;
 
-    ServerEntry e = serverEntryFromInfoPacket(info, addr);
+    ServerEntry e = serverEntryFromDiscovery(server);
 
     int idx;
     {
@@ -347,6 +283,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* Set up ImGui context for this dialog */
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
@@ -703,6 +640,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (ImGui::ImageButton("##refreshBtn", (ImTextureID)s_refreshIcon, iconSz)) {
                     doRefresh = true;
                 }
+                imguiHandOnHover();
                 if (wasSearching) ImGui::EndDisabled();
             } else {
                 /* Text fallback when SVG icon is unavailable */
@@ -713,6 +651,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (ImGui::SmallButton(langGetText(STR_DLGBROWSER_REFRESH))) {
                     doRefresh = true;
                 }
+                imguiHandOnHover();
                 if (wasSearching) ImGui::EndDisabled();
             }
             if (doRefresh) {
@@ -745,7 +684,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
                 struct SearchParams { char addr[FILENAME_MAX]; unsigned short port; bool tracker; };
                 SearchParams sp = {};
-                strncpy(sp.addr, tAddr, FILENAME_MAX - 1);
+                snprintf(sp.addr, FILENAME_MAX, "%s", tAddr);
                 sp.port = tPort;
                 sp.tracker = ut;
 
@@ -912,6 +851,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                 }
                             }
                         }
+                        imguiHandOnHover();
                     }
 
                     /* Map name (C string from tracker/broadcast) */
@@ -1065,6 +1005,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     }
                 }
             }
+            imguiHandOnHover();
             if (!hasSelection) ImGui::EndDisabled();
 
             /* Rejoin */
@@ -1092,6 +1033,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     }
                 }
             }
+            imguiHandOnHover();
             if (!hasSelection) ImGui::EndDisabled();
 
             /* New Game */
@@ -1105,6 +1047,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 result = (int)setupState;
                 running = false;
             }
+            imguiHandOnHover();
             if (useTracker && ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", langGetText(STR_DLGBROWSER_NEWGAME_PORTFWD_TIP));
             }
@@ -1115,6 +1058,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 gameFrontGetPlayerName(nameEditBuf);
                 ImGui::OpenPopup(setNamePopupId);
             }
+            imguiHandOnHover();
 
             /* Manual Connect */
             ImGui::SameLine();
@@ -1124,6 +1068,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 result = useTracker ? (int)openInternetManual : (int)openLanManual;
                 running = false;
             }
+            imguiHandOnHover();
 
             /* Cancel - right-aligned */
             ImGui::SameLine(panelW - btnW - 16.0f * s);
@@ -1133,11 +1078,15 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 gameFrontSetDlgState(openWelcome);
                 running = false;
             }
+            imguiHandOnHover();
         }
 
         /* ---- Error popup ---- */
+        static float s_fadeGbErr = 0.0f;
         if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeGbErr));
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
             {
@@ -1146,13 +1095,18 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (ImGui::Button(okBuf, ImVec2(80, 0))) {
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 
         /* ---- Set Player Name popup ---- */
+        static float s_fadeGbSetName = 0.0f;
         if (ImGui::BeginPopupModal(setNamePopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeGbSetName));
             bool wbnActive = gameFrontGetWinbolonetUse();
             ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_PLAYERNAME));
             ImGui::SameLine(120 * s);
@@ -1173,12 +1127,15 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     gameFrontSetPlayerName(nameEditBuf);
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
                 if (wbnActive) ImGui::EndDisabled();
                 ImGui::SameLine(0.0f, 8.0f);
                 if (ImGui::Button(cancelBuf, ImVec2(80 * s, 0))) {
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 

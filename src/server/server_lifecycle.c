@@ -17,14 +17,14 @@
 
 #include <SDL3/SDL.h>
 
-#include "../bolo/global.h"
-#include "../bolo/gametype.h"
-#include "../bolo/nat_portmap.h"
-#include "../bolo/transport_udp.h"
-#include "../bolo/bot_manager.h"
+#include "global.h"
+#include "gametype.h"
+#include "nat_portmap.h"
+#include "transport_udp.h"
+#include "bot_manager.h"
 #include "../winbolonet/winbolonet.h"
 #include "threads.h"
-#include "server_sim.h"
+#include "server_sim_internal.h"
 #include "server_lifecycle.h"
 
 static char  instanceTrackerAddr[FILENAME_MAX] = "";
@@ -301,7 +301,7 @@ void serverInstanceTick(ServerSim *sim) {
                  sim->countdownTicks > 0 &&
                  sim->countdownTicks % 50 == 0) {
         /* Broadcast countdown tick (once per second) */
-        uint8_t secs = (uint8_t)(sim->countdownTicks / 50);
+        uint8_t secs = (uint8_t)((sim->countdownTicks + 49) / 50);
         transportUdpServerBroadcastCountdown(sim, secs);
       }
     }

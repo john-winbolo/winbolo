@@ -28,7 +28,7 @@
 #ifndef _DIALOG_ALLIANCE_H
 #define _DIALOG_ALLIANCE_H
 
-#include "../bolo/global.h"
+#include "global.h"
 
 /*********************************************************
 *NAME:          dialogAllianceCreate

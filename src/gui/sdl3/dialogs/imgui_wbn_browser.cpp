@@ -360,6 +360,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     IMGUI_CHECKVERSION();
     ImGuiContext *dlgCtx = ImGui::CreateContext();
     ImGui::SetCurrentContext(dlgCtx);
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
@@ -857,6 +858,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                 tabs[TAB_SEARCH].fetched = false;
                 triggerFetch(TAB_SEARCH, 1);
             }
+            imguiHandOnHover();
             if (isSearchFetching) ImGui::EndDisabled();
             ImGui::Separator();
         }
@@ -928,6 +930,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                             triggerDownload(e.key);
                         }
                     }
+                    imguiHandOnHover();
 
                     ImGui::TableNextColumn();
                     ImGui::TextUnformatted(e.game_type);
@@ -1067,6 +1070,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                         commentPost = wbn_comments_post_start(e.key, wbnToken,
                                                               commentText, commentRating);
                     }
+                    imguiHandOnHover();
                     if (!canPost) ImGui::EndDisabled();
 
                     if (commentError) {
@@ -1091,6 +1095,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                     if (ImGui::Button(isDownloading ? langGetText(STR_DLGWBN_DOWNLOADING) : langGetText(STR_DLGWBN_VIEWLOG))) {
                         triggerDownload(e.key);
                     }
+                    imguiHandOnHover();
                     if (isDownloading) ImGui::EndDisabled();
                     if (isDownloading) {
                         ImGui::SameLine();
@@ -1115,6 +1120,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             if (ImGui::Button(langGetText(STR_DLGWBN_PREV))) {
                 triggerFetch(currentTab, tab.page - 1);
             }
+            imguiHandOnHover();
             if (isFirst) ImGui::EndDisabled();
 
             ImGui::SameLine();
@@ -1131,6 +1137,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             if (ImGui::Button(langGetText(STR_DLGWBN_NEXT))) {
                 triggerFetch(currentTab, tab.page + 1);
             }
+            imguiHandOnHover();
             if (isLast) ImGui::EndDisabled();
         }
 
@@ -1167,6 +1174,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                         delete s;
                     }, ctx, window, filters, 1, NULL, false);
                 }
+                imguiHandOnHover();
                 ImGui::SameLine();
             }
 #endif
@@ -1176,6 +1184,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             if (ImGui::Button(langGetText(STR_CLOSE))) {
                 running = false;
             }
+            imguiHandOnHover();
         }
 
         ImGui::End(); /* ##WbnBrowser */

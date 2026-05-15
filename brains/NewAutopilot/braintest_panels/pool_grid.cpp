@@ -3,7 +3,7 @@
  *
  * Bot-specific BrainTest panel renderer for NewAutopilot's
  * goal-pool data model. Compiled into BrainTest at build
- * time via brains/<bot>/braintest_panels/*.cpp glob.
+ * time via brains/<bot>/braintest_panels/(*.cpp) glob.
  *
  * Visual layout matches the original optimize-branch
  * braintest_poolwindow.cpp pixel-for-pixel: 2x5 grid for
@@ -327,8 +327,10 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
     }
 
     /* Line 1: marker / id / pos / cost / weighted / staleness */
+    /* ASCII markers (not ▶/⚡) so they render in the default ImGui font.
+     * Without a font that includes U+25B6 / U+26A1 they show as "?". */
     if (r->activeGoal) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1), "\xe2\x96\xb6");
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1), ">");
     } else if (r->winner) {
         ImGui::TextColored(ImVec4(1, 1, 0.4f, 1), "*");
     } else {
@@ -336,7 +338,7 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
     }
     ImGui::SameLine();
     if (r->isOverride) {
-        ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.1f, 1.0f), "\xe2\x9a\xa1");
+        ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.1f, 1.0f), "!");
         ImGui::SameLine();
     }
 

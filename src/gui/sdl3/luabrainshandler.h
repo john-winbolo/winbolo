@@ -37,11 +37,10 @@
 #ifndef LUA_BRAINS_HANDLER_H
 #define LUA_BRAINS_HANDLER_H
 
-#include "../../bolo/global.h"
-#include "../../bolo/brain.h"  /* For BrainInfo, aiType */
-#include "../../bolo/brain_pathfinder.h"
-#include "../../bolo/brain_worldsim.h"
-#include "../../bolo/brain_overlay.h"
+#include "global.h"
+#include "brain.h"  /* For BrainInfo, aiType */
+#include "brain_lua_glue.h"  /* BrainPathfinder, BrainWorldSim, brainCore*, mlBrain* */
+#include "brain_overlay.h"
 
 /* Forward declarations */
 struct ClientSim;
@@ -362,20 +361,34 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
 void luaBrainsSetRunScript(const char *path);
 
 /*********************************************************
-*NAME:          luaBrainsSetPerfLog
+*NAME:          luaBrainsSetProfile
 *PURPOSE:
-*  Enables or disables performance logging (optimize.log)
-*  in the brain. When disabled (default), BRAIN_PERF_LOG
-*  is false and optimize.lua writes nothing. Pass enable=1
-*  to activate via --perf-log in BrainTest.
+*  Two-flag profiling toggle:
+*    profile     — drives BRAIN_PROFILE Lua global. When true,
+*                  the brain emits opt() phase markers and
+*                  populates opt.last_sections so the BrainTest
+*                  Y panel time bar has data.
+*    profile_log — drives BRAIN_PROFILE_LOG. When true, optimize.lua
+*                  flushes per-tick blocks to optimize.log and
+*                  performance.ticks.log. Implies profile.
 *
 *  Threading: set once at startup, before any brain instance
-*  is created. The flag is captured into the per-brain
-*  BRAIN_PERF_LOG Lua global at luaBrainInstanceCreate()
-*  time; modification after the first instance exists has no
+*  is created. Captured into the per-brain Lua globals at
+*  luaBrainInstanceCreate() time; later modification has no
 *  effect on already-created brains.
 *********************************************************/
-void luaBrainsSetPerfLog(int enable);
+void luaBrainsSetProfile(int profile, int profile_log);
+
+/*********************************************************
+*NAME:          luaBrainsSetLogJson
+*PURPOSE:
+*  Drives the BRAIN_LOG_JSON Lua global. When true, the
+*  brain opens its JSONL behavior trace files (brain_p<N>.jsonl,
+*  goal_player<N>.log) and emits per-tick decision events.
+*  Independent of profile/profile-log: behavior trace is about
+*  decisions, not performance.
+*********************************************************/
+void luaBrainsSetLogJson(int enable);
 
 /*********************************************************
 *NAME:          luaBrainInstanceTick

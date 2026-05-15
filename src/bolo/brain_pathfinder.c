@@ -2076,6 +2076,82 @@ float brainPathfinderDijkstraLookupByKind(BrainPathfinder *pf, int kind,
   return COST_INF;
 }
 
+float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
+                                                   int x, int y, int boat,
+                                                   BrainPFTileLookupFn pcontrib_lookup,
+                                                   void *user) {
+  if (!pf) return COST_INF;
+  if (x < 0 || x > 255 || y < 0 || y > 255) return COST_INF;
+  (void)boat;
+
+  int order[DIJKSTRA_NUM_SLATES];
+  int n = slate_indices_by_recency(pf, kind, order);
+
+  DijkstraSlate *chosen = NULL;
+  int chosen_layer = 0;
+  float base_cost = COST_INF;
+  for (int i = 0; i < n; i++) {
+    DijkstraSlate *s = &pf->dij_slates[order[i]];
+    if (!s->g_cost || !s->dir_at) continue;
+    if (x == s->src_x && y == s->src_y) continue;
+    float land = s->g_cost[node_idx(x, y, 0)];
+    float boatv = s->g_cost[node_idx(x, y, 1)];
+    if (land >= COST_INF && boatv >= COST_INF) continue;
+    chosen = s;
+    if (boatv < land) { chosen_layer = 1; base_cost = boatv; }
+    else              { chosen_layer = 0; base_cost = land;  }
+    break;
+  }
+  if (!chosen) return COST_INF;
+  if (!pcontrib_lookup) return base_cost;
+
+  /* Inv-speed tables matching the slate's expansion formula
+   * (line ~1832: inv_spd = next_boat ? boat[t] : foot[t]). */
+  float inv_speed_foot[16];
+  float inv_speed_boat[16];
+  for (int t = 0; t < 16; t++) {
+    float spd = pf->terrain_speed_table[t];
+    inv_speed_foot[t] = 16.0f / fmaxf(spd, 0.1f);
+    float spd_b = is_water_tile(t) ? 16.0f : spd;
+    inv_speed_boat[t] = 16.0f / fmaxf(spd_b, 0.1f);
+  }
+
+  /* Walk parent chain from dest back to source via dir_at. Source tile
+   * has dir_at = 0xFF and contributes 0 to g_cost (no danger added at
+   * start), so we exclude it from the subtraction. */
+  float subtract = 0.0f;
+  float dscale = chosen->danger_scale;
+  int cur = node_idx(x, y, chosen_layer);
+  int cur_boat = chosen_layer;
+  int safety = 2048;
+  while (safety-- > 0) {
+    uint8_t dval = chosen->dir_at[cur];
+    if (dval == 0xFF) break; /* source — exclude */
+
+    int cx = node_x(cur);
+    int cy = node_y(cur);
+    int tile_key = cy * MAP_SIZE + cx;
+    float p = pcontrib_lookup(user, tile_key);
+    if (p > 0.0f) {
+      int tt = pf->map[tile_key] & 0x0F;
+      float inv_spd = cur_boat ? inv_speed_boat[tt] : inv_speed_foot[tt];
+      subtract += p * dscale * inv_spd;
+    }
+
+    int d = dval & 0x07;
+    int parent_boat = (dval & 0x08) ? 1 : 0;
+    int px = cx - DX8[d];
+    int py = cy - DY8[d];
+    if (px < 0 || px > 255 || py < 0 || py > 255) break;
+    cur = node_idx(px, py, parent_boat);
+    cur_boat = parent_boat;
+  }
+
+  float corrected = base_cost - subtract;
+  if (corrected < 0.0f) corrected = 0.0f;
+  return corrected;
+}
+
 /* Trace the Dijkstra parent chain from (dx,dy) back toward the source,
  * find the tank's current position (sx,sy) in the chain, and return
  * the next step from there toward the destination.

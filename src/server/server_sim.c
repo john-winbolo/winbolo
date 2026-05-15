@@ -29,48 +29,47 @@
 /* dirent.h removed — using SDL3 SDL_GlobDirectory for cross-platform directory listing */
 #include <SDL3/SDL.h>
 
-#include "../bolo/global.h"
-#include "../bolo/bolo_map.h"
-#include "../bolo/pillbox.h"
-#include "../bolo/bases.h"
-#include "../bolo/starts.h"
-#include "../bolo/tank.h"
-#include "../bolo/shells.h"
-#include "../bolo/lgm.h"
-#include "../bolo/explosions.h"
-#include "../bolo/mines.h"
-#include "../bolo/minesexp.h"
-#include "../bolo/floodfill.h"
-#include "../bolo/building.h"
-#include "../bolo/rubble.h"
-#include "../bolo/swamp.h"
-#include "../bolo/grass.h"
-#include "../bolo/tankexp.h"
-#include "../bolo/treegrow.h"
-#include "../bolo/gametype.h"
-#include "../bolo/players.h"
-#include "../bolo/log.h"
-#include "../bolo/util.h"
-#include "../bolo/input_packet.h"
-#include "../bolo/messages.h"
-#include "../bolo/sounddist.h"
-#include "../bolo/transport_udp.h"
-#include "../bolo/playersrejoin.h"
-#include "../bolo/bot_manager.h"
+#include "global.h"
+#include "bolo_map.h"
+#include "pillbox.h"
+#include "bases.h"
+#include "starts.h"
+#include "tank.h"
+#include "shells.h"
+#include "lgm.h"
+#include "explosions.h"
+#include "mines.h"
+#include "minesexp.h"
+#include "floodfill.h"
+#include "building.h"
+#include "rubble.h"
+#include "swamp.h"
+#include "grass.h"
+#include "tankexp.h"
+#include "treegrow.h"
+#include "gametype.h"
+#include "players.h"
+#include "log.h"
+#include "util.h"
+#include "input_packet.h"
+#include "messages.h"
+#include "sounddist.h"
+#include "transport_udp.h"
+#include "playersrejoin.h"
+#include "bot_manager.h"
 #include "../winbolonet/winbolonet.h"
 #include "../winbolonet/http.h"
-#include "server_sim.h"
+#include "server_sim_internal.h"
 #include "server_lifecycle.h"
-#include "../bolo/interpolation.h"
-#include "../bolo/position_history.h"
-#include "../bolo/screenbullet.h"
+#include "control_event.h"
+#include "client_sim_control.h"
+#include <assert.h>
+#include "interpolation.h"
+#include "position_history.h"
+#include "screenbullet.h"
 #include "../mapeditor/mapeditor_generate.h"
 #include "../common/wb_log.h"
-
-#ifndef HAVE_SCREEN_C
-/* Forward declaration — defined in servermain.c (server target only) */
-void makeLogFileName(char *outFileName, const char *mapName);
-#endif
+#include "server_dedicated_log.h"
 
 /* Viewport culling — margin in map squares beyond the visible 15×15 screen */
 #define SNAPSHOT_SCREEN_SIZE 15
@@ -314,9 +313,17 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
 
     memset(sim, 0, sizeof(ServerSim));
 
+    /* Sentinel value for "no batch start assigned" — memset gives 0, but 0
+     * is a valid start index, so initialise explicitly. */
+    for (count = 0; count < MAX_TANKS; count++) {
+        sim->sim.pendingStartIdx[count] = MAX_STARTS;
+    }
+
     sim->startDelay = startDelay;
     sim->gameLength = gameLen;
     sim->originalGameLength = gameLen;
+    sim->tickLimit = 0;
+    sim->ticksRun = 0;
     sim->tick = 0;
     sim->state = serverStateLobby;
     sim->lobbyEnabled = TRUE;
@@ -398,18 +405,26 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     }
 }
 
-bool serverSimCreate(ServerSim *sim, char *mapFileName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+    ServerSim *sim;
+
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSim create: map='%s' gameType=%d hiddenMines=%d startDelay=%d gameLen=%d",
         mapFileName ? mapFileName : "(null)",
         (int)game, (int)hiddenMines, (int)startDelay, (int)gameLen);
+
+    sim = (ServerSim *)malloc(sizeof(ServerSim));
+    if (sim == NULL) {
+        return NULL;
+    }
     serverSimInit(sim, game, hiddenMines, startDelay, gameLen);
 
     if (mapRead(mapFileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
         WB_LOG_ERROR(WB_LOG_CAT_SERVER,
             "serverSim create: mapRead failed for '%s'",
             mapFileName ? mapFileName : "(null)");
-        return FALSE;
+        serverSimDestroy(sim);
+        return NULL;
     }
 
     /* Store map name (basename without path or .map extension) for info packet responses */
@@ -446,14 +461,19 @@ bool serverSimCreate(ServerSim *sim, char *mapFileName, gameType game, bool hidd
     }
 
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
-    return TRUE;
+    return sim;
 }
 
-bool serverSimCreateCompressed(ServerSim *sim, BYTE *buff, int buffLen, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+    ServerSim *sim = (ServerSim *)malloc(sizeof(ServerSim));
+    if (sim == NULL) {
+        return NULL;
+    }
     serverSimInit(sim, game, hiddenMines, startDelay, gameLen);
 
     if (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss, buff, buffLen) == FALSE) {
-        return FALSE;
+        serverSimDestroy(sim);
+        return NULL;
     }
 
     basesClearMines(&sim->sim);
@@ -470,17 +490,22 @@ bool serverSimCreateCompressed(ServerSim *sim, BYTE *buff, int buffLen, gameType
     }
 
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
-    return TRUE;
+    return sim;
 }
 
-bool serverSimCreateRandomMap(ServerSim *sim, const MapGenConfig *cfg,
-                              gameType game, bool hiddenMines,
-                              int32_t startDelay, int32_t gameLen) {
+ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
+                                    gameType game, bool hiddenMines,
+                                    int32_t startDelay, int32_t gameLen) {
+    ServerSim *sim;
     BYTE tempBuf[65536];
     int len;
     char seedStr[64];
     int x, y;
 
+    sim = (ServerSim *)malloc(sizeof(ServerSim));
+    if (sim == NULL) {
+        return NULL;
+    }
     serverSimInit(sim, game, hiddenMines, startDelay, gameLen);
 
     /* Clear map to DEEP_SEA */
@@ -533,13 +558,14 @@ bool serverSimCreateRandomMap(ServerSim *sim, const MapGenConfig *cfg,
     len = serverSimGetCompressedMap(sim, tempBuf);
     sim->cachedMapData = malloc(len);
     if (sim->cachedMapData == NULL) {
-        return FALSE;
+        serverSimDestroy(sim);
+        return NULL;
     }
     memcpy(sim->cachedMapData, tempBuf, len);
     sim->cachedMapDataLen = len;
 
     sim->state = sim->lobbyEnabled ? serverStateLobby : serverStateRunning;
-    return TRUE;
+    return sim;
 }
 
 bool serverSimRandomMapRegenerate(ServerSim *sim) {
@@ -634,6 +660,10 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
 void serverSimDestroy(ServerSim *sim) {
     BYTE count;
 
+    if (sim == NULL) {
+        return;
+    }
+
     WB_LOG_INFO(WB_LOG_CAT_SERVER, "serverSim destroy: state=%d", (int)sim->state);
 
     /* Signal the balance thread to stop and wait for it to finish */
@@ -682,6 +712,8 @@ void serverSimDestroy(ServerSim *sim) {
     if (activeSim == sim) {
         activeSim = NULL;
     }
+
+    free(sim);
 }
 
 static void serverSimLogTick(ServerSim *sim) {
@@ -734,8 +766,7 @@ static void serverSimLogTick(ServerSim *sim) {
 
     /* Periodic snapshot */
     if ((sim->tick % FULL_SYNC_INTERVAL) == 0) {
-        logWriteSnapshot(sim, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs,
-                         &sim->sim.ss, &sim->sim.plyrs, TRUE);
+        logWriteSnapshot(sim, TRUE);
     }
 
     logWriteTick();
@@ -798,6 +829,22 @@ void serverSimTick(ServerSim *sim) {
         if (sim->gameLength == 0) {
             mapSetChangeCallback(NULL);
             serverSimConsoleMessage("Game time limit reached.");
+            serverSimEnterGameOver(sim);
+            sim->tick++;
+            return;
+        }
+    }
+
+    if (sim->tickLimit > 0) {
+        sim->ticksRun++;
+        if (sim->ticksRun >= sim->tickLimit) {
+            char ticksMsg[64];
+            snprintf(ticksMsg, sizeof(ticksMsg),
+                     "Reached tick limit (%d). Exiting.",
+                     (int)sim->tickLimit);
+            sim->tickLimit = 0;
+            mapSetChangeCallback(NULL);
+            serverSimConsoleMessage(ticksMsg);
             serverSimEnterGameOver(sim);
             sim->tick++;
             return;
@@ -1284,6 +1331,17 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     if (sim->lobbyEnabled && sim->state == serverStateLobby && (sim->mapDirCount > 1 || sim->randomMapEnabled)) {
         transportUdpServerBroadcastMapSkipState(sim);
     }
+
+    /* Notify in-process subscribers that a player joined. The just-added
+     * player is not yet a subscriber (bot register happens after this in
+     * botManagerAddBot; SP humanSim register happens after this in
+     * gamefront), so this fans out only to peers. */
+    {
+        ControlEvent joinEvt;
+        memset(&joinEvt, 0, sizeof(joinEvt));
+        serverSimFillPlayerJoinEvent(sim, playerNum, &joinEvt);
+        serverSimPublishControl(sim, &joinEvt);
+    }
 }
 
 void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
@@ -1434,6 +1492,258 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         ev.data[0] = playerNum;
         serverSimAddEvent(sim, &ev);
     }
+}
+
+bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
+                     const ServerSimBotConfig *cfg) {
+    if (cfg == NULL || cfg->brainPath == NULL) {
+        return false;
+    }
+    if (playerNum >= MAX_TANKS) {
+        return false;
+    }
+    if (sim->playerConnected[playerNum]) {
+        return false;
+    }
+
+    serverSimAddPlayer(sim, playerNum, cfg->brainName, false);
+
+    sim->lobbyPlayers[playerNum].isBot      = true;
+    sim->lobbyPlayers[playerNum].ready      = true;
+    sim->lobbyPlayers[playerNum].teamNumber = cfg->teamNumber;
+    return true;
+}
+
+void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
+    if (playerNum >= MAX_TANKS) {
+        return;
+    }
+    if (teamNumber > 16) {
+        teamNumber = 1;
+    }
+    sim->lobbyPlayers[playerNum].teamNumber = teamNumber;
+}
+
+void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready) {
+    if (playerNum >= MAX_TANKS) {
+        return;
+    }
+    if (!sim->lobbyEnabled) {
+        return;
+    }
+    sim->lobbyPlayers[playerNum].ready = ready ? TRUE : FALSE;
+}
+
+void serverSimSetBotAiType(ServerSim *sim, aiType ai) {
+    sim->botAiType = ai;
+}
+
+/* Bot pool wrappers — forward to bot_manager.c. Declarations
+ * live in server_sim.h so non-server callers don't include
+ * bot_manager.h directly. */
+
+bool serverSimBotPoolInit(int threads) {
+    return botManagerInit(threads);
+}
+
+void serverSimRequestBotThreads(int total_runners) {
+    botManagerRequestThreads(total_runners);
+}
+
+int serverSimGetBotThreads(void) {
+    return botManagerGetThreads();
+}
+
+int serverSimGetPendingBotThreads(void) {
+    return botManagerGetPendingThreads();
+}
+
+void serverSimSetBotDefaultDebugMode(bool enabled) {
+    botManagerSetDefaultDebugMode(enabled);
+}
+
+void serverSimSetBotPreThinkHook(void (*hook)(int playerNum)) {
+    botManagerSetPreThinkHook(hook);
+}
+
+bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
+                        const char *brainPath, const char *brainName,
+                        aiType ai, gameType game, bool hiddenMines) {
+    return botManagerAddBot(sim, playerNum, brainPath, brainName,
+                            ai, game, hiddenMines);
+}
+
+void serverSimRemoveBot(ServerSim *sim, BYTE playerNum) {
+    botManagerRemoveBot(sim, playerNum);
+}
+
+void serverSimDestroyBots(ServerSim *sim) {
+    botManagerDestroy(sim);
+}
+
+void serverSimOnBotGameStart(ServerSim *sim) {
+    botManagerOnGameStart(sim);
+}
+
+void serverSimSetBotTeams(ServerSim *sim,
+                          const BYTE *teamOf, BYTE numPlayers) {
+    botManagerSetTeams(sim, teamOf, numPlayers);
+}
+
+void serverSimBotTick(ServerSim *sim, aiType ai) {
+    botManagerTick(sim, ai);
+}
+
+BYTE serverSimGetNumBots(ServerSim *sim) {
+    (void)sim;
+    return botManagerGetNumBots();
+}
+
+bool serverSimHasAnyBot(ServerSim *sim) {
+    (void)sim;
+    return botManagerHasAnyBot();
+}
+
+bool serverSimIsBot(ServerSim *sim, BYTE playerNum) {
+    (void)sim;
+    return botManagerIsBot(playerNum);
+}
+
+double serverSimGetBotLastThinkMs(ServerSim *sim, BYTE playerNum) {
+    (void)sim;
+    return botManagerGetLastThinkMs(playerNum);
+}
+
+bool serverSimGetBotInfo(ServerSim *sim, BYTE playerNum, BotInfo *out) {
+    (void)sim;
+    return botManagerGetBotInfo(playerNum, out);
+}
+
+void serverSimGetBotPoolStats(ServerSim *sim, BotPoolStats *out) {
+    (void)sim;
+    botManagerGetPoolStats(out);
+}
+
+bool serverSimToggleAllBrainDebugMode(ServerSim *sim) {
+    (void)sim;
+    return botManagerToggleAllBrainDebugMode();
+}
+
+void serverSimSetBotBrainPath(ServerSim *sim, const char *path) {
+    if (path == NULL || path[0] == '\0') {
+        sim->botBrainPath[0] = '\0';
+        return;
+    }
+    strncpy(sim->botBrainPath, path, sizeof(sim->botBrainPath) - 1);
+    sim->botBrainPath[sizeof(sim->botBrainPath) - 1] = '\0';
+}
+
+void serverSimSetEmptyResetEnabled(ServerSim *sim, bool enabled) {
+    sim->emptyResetEnabled = enabled;
+}
+
+void serverSimSetHasPassword(ServerSim *sim, bool hasPassword) {
+    sim->hasPassword = hasPassword;
+}
+
+void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled) {
+    sim->lobbyEnabled = enabled;
+}
+
+void serverSimEnableRandomMap(ServerSim *sim,
+                              const MapGenConfig *cfg,
+                              bool fixedSeed) {
+    sim->randomMapEnabled = true;
+    if (cfg != NULL) sim->randomMapConfig = *cfg;
+    sim->randomMapFixedSeed = fixedSeed;
+}
+
+void serverSimEnterLobby(ServerSim *sim) {
+    sim->state = serverStateLobby;
+}
+
+void serverSimInstallMapDirList(ServerSim *sim,
+                                char **files, int count) {
+    sim->mapDirFiles = files;
+    sim->mapDirCount = count;
+}
+
+void serverSimPrependEvents(ServerSim *sim,
+                            const GameEvent *events,
+                            uint8_t count) {
+    if (count == 0) return;
+    if ((uint16_t)count + sim->eventCount > MAX_SNAPSHOT_EVENTS) return;
+    memmove(sim->events + count, sim->events,
+            sim->eventCount * sizeof(GameEvent));
+    memcpy(sim->events, events, count * sizeof(GameEvent));
+    sim->eventCount += count;
+}
+
+void serverSimSetAutoCloseOnEmpty(ServerSim *sim, bool enabled) {
+    sim->autoCloseOnEmpty = enabled;
+}
+
+void serverSimSetBalanceBroadcastNeeded(ServerSim *sim, bool needed) {
+    sim->balanceProposal.broadcastNeeded = needed;
+}
+
+void serverSimSetBalanceRequestInFlight(ServerSim *sim, bool inFlight) {
+    sim->balanceProposal.requestInFlight = inFlight;
+}
+
+void serverSimSetEmptyResetMinutes(ServerSim *sim, int minutes) {
+    sim->emptyResetMinutes = minutes;
+}
+
+void serverSimSetMapName(ServerSim *sim, const char *name) {
+    if (name == NULL || name[0] == '\0') {
+        sim->mapName[0] = '\0';
+        return;
+    }
+    strncpy(sim->mapName, name, MAP_STR_SIZE - 1);
+    sim->mapName[MAP_STR_SIZE - 1] = '\0';
+}
+
+void serverSimSetMessageLogFile(ServerSim *sim, const char *path) {
+    if (path == NULL || path[0] == '\0') {
+        sim->serverMessageLogFile[0] = '\0';
+        sim->serverMessageUseLogFile = FALSE;
+        return;
+    }
+    strncpy(sim->serverMessageLogFile, path,
+            sizeof(sim->serverMessageLogFile) - 1);
+    sim->serverMessageLogFile[sizeof(sim->serverMessageLogFile) - 1] = '\0';
+    sim->serverMessageUseLogFile = TRUE;
+}
+
+void serverSimSetQuiet(ServerSim *sim, bool quiet) {
+    sim->isServerQuiet = quiet;
+}
+
+void serverSimSetQuitOnWin(ServerSim *sim, bool enabled) {
+    sim->quitOnWin = enabled;
+}
+
+void serverSimSetServerPort(ServerSim *sim, unsigned short port) {
+    sim->serverPort = port;
+}
+
+void serverSimSetTickLimit(ServerSim *sim, int32_t ticks) {
+    sim->tickLimit = ticks;
+}
+
+void serverSimSetUserLogFileName(ServerSim *sim, const char *name) {
+    if (name == NULL || name[0] == '\0') {
+        sim->userLogFileName[0] = '\0';
+        return;
+    }
+    strncpy(sim->userLogFileName, name,
+            sizeof(sim->userLogFileName) - 1);
+    sim->userLogFileName[sizeof(sim->userLogFileName) - 1] = '\0';
+}
+
+void serverSimSetWantLogging(ServerSim *sim, bool enabled) {
+    sim->wantLogging = enabled;
 }
 
 bool serverSimGetTankState(ServerSim *sim, BYTE playerNum, WORLD *wx, WORLD *wy) {
@@ -1968,10 +2278,13 @@ bool serverSimIsRunning(void) {
     return sim != NULL && sim->state == serverStateRunning;
 }
 
-void serverSimClearActive(ServerSim *sim) {
-    if (activeSim == sim) {
-        activeSim = NULL;
-    }
+void serverSimAbortCountdown(ServerSim *sim) {
+    sim->state = serverStateLobby;
+    sim->countdownTicks = 0;
+}
+
+void serverSimClearBalanceProposal(ServerSim *sim) {
+    memset(&sim->balanceProposal, 0, sizeof(BalanceProposal));
 }
 
 void serverSimConsoleMessage(const char *msg) {
@@ -1985,28 +2298,7 @@ void serverSimConsoleMessage(const char *msg) {
 }
 
 void serverSimEnterGameOver(ServerSim *sim) {
-#ifndef HAVE_SCREEN_C
-    /* Stop log recording and upload (server target only) */
-    {
-        extern bool isLogging;
-        extern bool dontSendLog;
-        extern char fileName[];
-        if (isLogging) {
-            logStop();
-            isLogging = FALSE;
-
-            if (!dontSendLog && winbolonetIsRunning()) {
-                char key[WINBOLONET_KEY_LEN];
-                winboloNetGetServerKey(key);
-                if (key[0] != '\0') {
-                    httpCreate();
-                    httpSendLogFile(fileName, key, FALSE);
-                    httpDestroy();
-                }
-            }
-        }
-    }
-#endif
+    serverDedicatedLogOnEnterGameOver(sim);
 
     if (!sim->lobbyEnabled) {
         /* No lobby — game over means server should shut down */
@@ -2069,47 +2361,7 @@ void serverSimReturnToLobby(ServerSim *sim) {
     serverSimConsoleMessage("Returned to lobby.");
     /* PACKET_LOBBY_STATE broadcast is sent by transport layer */
 
-#ifndef HAVE_SCREEN_C
-    /* Start a new log file for the next round's lobby */
-    if (sim->wantLogging) {
-        extern char fileName[];
-        extern bool isLogging;
-        if (sim->userLogFileName[0] != '\0') {
-            strncpy(fileName, sim->userLogFileName, 512 - 1);
-        } else {
-            makeLogFileName(fileName, sim->mapName);
-        }
-        {
-            size_t flen = strlen(fileName);
-            if (flen <= 4 || strcmp(fileName + flen - 4, ".wbv") != 0) {
-                strncat(fileName, ".wbv", 512 - flen - 1);
-            }
-        }
-        isLogging = logStart(fileName, sim, &sim->sim.mp,
-                             &sim->sim.bs, &sim->sim.pb,
-                             &sim->sim.ss, &sim->sim.plyrs,
-                             0, MAX_TANKS, sim->hasPassword);
-        if (isLogging) {
-            logAddEvent(log_LobbyEnter, 0, 0, 0, 0, 0, NULL);
-            /* Emit join events for players already connected */
-            for (i = 0; i < MAX_TANKS; i++) {
-                if (sim->playerConnected[i]) {
-                    const char *name = transportUdpServerGetPlayerName(i);
-                    if (name != NULL) {
-                        char pstr[256];
-                        int nameLen = (int)strlen(name);
-                        BYTE accountFlags = playersGetAccountFlags(&sim->sim.plyrs, (BYTE)i);
-                        if (nameLen > 255) nameLen = 255;
-                        pstr[0] = (char)nameLen;
-                        memcpy(pstr + 1, name, nameLen);
-                        logAddEvent(log_PlayerJoined, i, '?', '?', accountFlags, 0, pstr);
-                    }
-                }
-            }
-            fprintf(stderr, "Logging to %s (lobby)\n", fileName);
-        }
-    }
-#endif
+    serverDedicatedLogOnReturnToLobby(sim);
 }
 
 void serverSimLobbyCheckAllReady(ServerSim *sim) {
@@ -2229,8 +2481,28 @@ void serverSimResetGameWorld(ServerSim *sim) {
     playersCreate(&sim->sim.plyrs, TRUE);
 }
 
-void serverSimStartGame(ServerSim *sim) {
+void serverSimReapplyTeamAlliances(ServerSim *sim) {
     BYTE i, j;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        if (sim->lobbyPlayers[i].teamNumber == 0) continue;
+        for (j = i + 1; j < MAX_TANKS; j++) {
+            if (!sim->playerConnected[j]) continue;
+            if (sim->lobbyPlayers[j].teamNumber == sim->lobbyPlayers[i].teamNumber) {
+                ControlEvent allyEvt;
+                playersAcceptAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, j, TRUE);
+                memset(&allyEvt, 0, sizeof(allyEvt));
+                allyEvt.type = CTRL_ALLIANCE_ACCEPT;
+                allyEvt.u.allianceAccept.acceptedBy = i;
+                allyEvt.u.allianceAccept.newMember  = j;
+                serverSimPublishControl(sim, &allyEvt);
+            }
+        }
+    }
+}
+
+void serverSimStartGame(ServerSim *sim) {
+    BYTE i;
     /* Save connected-player state before resetting – resetGameWorld clears
        playerConnected[], but we need it to create tanks below. */
     bool savedConnected[MAX_TANKS];
@@ -2277,18 +2549,33 @@ void serverSimStartGame(ServerSim *sim) {
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
         playersLeaveAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, TRUE);
+        {
+            ControlEvent leaveEvt;
+            memset(&leaveEvt, 0, sizeof(leaveEvt));
+            leaveEvt.type = CTRL_ALLIANCE_LEAVE;
+            leaveEvt.u.allianceLeave.playerNum = i;
+            serverSimPublishControl(sim, &leaveEvt);
+        }
     }
 
     /* Apply team alliances: players with same non-zero teamNumber become allies */
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->playerConnected[i]) continue;
-        if (sim->lobbyPlayers[i].teamNumber == 0) continue;
-        for (j = i + 1; j < MAX_TANKS; j++) {
-            if (!sim->playerConnected[j]) continue;
-            if (sim->lobbyPlayers[j].teamNumber == sim->lobbyPlayers[i].teamNumber) {
-                playersAcceptAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, j, TRUE);
-            }
+    serverSimReapplyTeamAlliances(sim);
+
+    /* Pre-compute start indices for the whole batch so teammates land
+     * near each other and rivals don't grab adjacent squares (the tankCreate
+     * loop below runs synchronously, so without a batch pass each player's
+     * per-position checks would be blind to siblings being created in the
+     * same loop). startsGetStart consumes the slot lazily, doing scatter
+     * and direction conversion at consumption time so the per-square nudge
+     * sees siblings already placed earlier in this loop. */
+    {
+        BYTE batchTeam[MAX_TANKS];
+        for (i = 0; i < MAX_TANKS; i++) {
+            batchTeam[i] = sim->lobbyPlayers[i].teamNumber;
         }
+        startsAssignBatch(&sim->sim, &sim->sim.ss,
+                          sim->playerConnected, batchTeam,
+                          sim->sim.pendingStartIdx);
     }
 
     /* Create tanks for all connected players */
@@ -2311,35 +2598,9 @@ void serverSimStartGame(ServerSim *sim) {
     sim->state = serverStateRunning;
     serverSimConsoleMessage("Game started!");
 
-#ifndef HAVE_SCREEN_C
-    /* Log the lobby-to-game transition; a snapshot will be written
-     * on the first running tick (tick 0 % FULL_SYNC_INTERVAL == 0). */
-    if (sim->wantLogging && logIsRecording()) {
-        logAddEvent(log_LobbyExit, 0, 0, 0, 0, 0, NULL);
-    } else if (sim->wantLogging) {
-        /* Logging was requested but not yet started — start now */
-        extern char fileName[];
-        extern bool isLogging;
-        if (sim->userLogFileName[0] != '\0') {
-            strncpy(fileName, sim->userLogFileName, 512 - 1);
-        } else {
-            makeLogFileName(fileName, sim->mapName);
-        }
-        {
-            size_t flen = strlen(fileName);
-            if (flen <= 4 || strcmp(fileName + flen - 4, ".wbv") != 0) {
-                strncat(fileName, ".wbv", 512 - flen - 1);
-            }
-        }
-        isLogging = logStart(fileName, sim, &sim->sim.mp,
-                             &sim->sim.bs, &sim->sim.pb,
-                             &sim->sim.ss, &sim->sim.plyrs,
-                             0, MAX_TANKS, sim->hasPassword);
-        if (isLogging) {
-            fprintf(stderr, "Logging to %s\n", fileName);
-        }
-    }
-#endif
+    /* A snapshot will be written on the first running tick
+     * (tick 0 % FULL_SYNC_INTERVAL == 0). */
+    serverDedicatedLogOnLobbyExit(sim);
 }
 
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
@@ -2508,7 +2769,8 @@ bool serverSimCheckEmptyReset(ServerSim *sim) {
     return FALSE;
 }
 
-bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
+bool serverSimScanMapDir(const char *dirPath,
+                         char ***outFiles, int *outCount) {
     char fullPath[2048];
     char **tempList = NULL;
     int tempCount = 0;
@@ -2578,9 +2840,21 @@ bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
         return FALSE;
     }
 
-    sim->mapDirFiles = tempList;
-    sim->mapDirCount = tempCount;
-    fprintf(stderr, "Map directory: %d valid map(s) loaded from '%s'\n", tempCount, dirPath);
+    *outFiles = tempList;
+    *outCount = tempCount;
+    return TRUE;
+}
+
+bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
+    char **files = NULL;
+    int count = 0;
+    if (!serverSimScanMapDir(dirPath, &files, &count)) {
+        return FALSE;
+    }
+    sim->mapDirFiles = files;
+    sim->mapDirCount = count;
+    fprintf(stderr, "Map directory: %d valid map(s) loaded from '%s'\n",
+            count, dirPath);
     return TRUE;
 }
 
@@ -2695,4 +2969,592 @@ void serverSimMapDirDestroy(ServerSim *sim) {
         sim->mapDirFiles = NULL;
         sim->mapDirCount = 0;
     }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Subscriber registry                                                    */
+/* ---------------------------------------------------------------------- */
+
+#define SUBSCRIBER_SLOT_COUNT (MAX_TANKS + 1)
+#define SUBSCRIBER_HANDLE_ENCODE(slot, gen) (((int)(slot) << 16) | (uint16_t)(gen))
+#define SUBSCRIBER_HANDLE_SLOT(h)           (((h) >> 16) & 0xFFFF)
+#define SUBSCRIBER_HANDLE_GEN(h)            ((uint16_t)((h) & 0xFFFF))
+
+static ControlGamePhase serverPhaseToCtrlPhase(ServerState s) {
+    switch (s) {
+    case serverStateLobby:     return CTRL_PHASE_LOBBY;
+    case serverStateCountdown: return CTRL_PHASE_COUNTDOWN;
+    case serverStateRunning:   return CTRL_PHASE_RUNNING;
+    case serverStateGameOver:  return CTRL_PHASE_GAME_OVER;
+    }
+    return CTRL_PHASE_LOBBY;
+}
+
+static netStatus serverPhaseToNetStat(ServerState s) {
+    switch (s) {
+    case serverStateLobby:     return netLobby;
+    case serverStateCountdown: return netLobbyCountdown;
+    case serverStateRunning:   return netRunning;
+    case serverStateGameOver:  return netLobby;
+    }
+    return netLobby;
+}
+
+void serverSimFillGamePhaseEvent(const ServerSim *sim, ControlEvent *evt) {
+    evt->type = CTRL_GAME_PHASE;
+    evt->u.gamePhase.phase = serverPhaseToCtrlPhase(sim->state);
+    /* countdownTicks is a 50Hz counter; round up so a partial second still
+     * surfaces as 1 rather than 0 to a freshly-synced subscriber. */
+    if (sim->countdownTicks > 0) {
+        evt->u.gamePhase.countdownSeconds = (int)((sim->countdownTicks + 49) / 50);
+    } else {
+        evt->u.gamePhase.countdownSeconds = 0;
+    }
+}
+
+void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
+    evt->type = CTRL_LOBBY_SETTINGS;
+    memset(evt->u.lobbySettings.mapName, 0, MAP_STR_SIZE);
+    snprintf(evt->u.lobbySettings.mapName, MAP_STR_SIZE, "%s", sim->mapName);
+    evt->u.lobbySettings.lobbyGameType    = gameTypeGet(&sim->sim.game);
+    evt->u.lobbySettings.lobbyHiddenMines = sim->sim.hiddenMines ? true : false;
+    evt->u.lobbySettings.lobbyAiType      = (uint8_t)sim->botAiType;
+    evt->u.lobbySettings.lobbyTimeLimit   = sim->gameLength;
+    evt->u.lobbySettings.lobbyPillCount   = pillsGetNumPills(&sim->sim.pb);
+    evt->u.lobbySettings.lobbyBaseCount   = basesGetNumBases(&sim->sim.bs);
+    evt->u.lobbySettings.lobbyStartCount  = startsGetNumStarts(&sim->sim.ss);
+    evt->u.lobbySettings.mapSkipAvailable =
+        (sim->mapDirCount > 1 || sim->randomMapEnabled) ? true : false;
+    evt->u.lobbySettings.netStat          = serverPhaseToNetStat(sim->state);
+    evt->u.lobbySettings.inLobby          = sim->lobbyEnabled ? true : false;
+}
+
+void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
+    ClientLobbySlot slot;
+    memset(&slot, 0, sizeof(slot));
+    slot.connected = sim->playerConnected[i] ? true : false;
+    if (slot.connected) {
+        const char *name = sim->sim.plyrs->item[i].playerName;
+        strncpy(slot.playerName, name, PACKET_MAX_PLAYER_NAME - 1);
+        slot.playerName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+        slot.teamNumber = sim->lobbyPlayers[i].teamNumber;
+        slot.ready      = sim->lobbyPlayers[i].ready;
+        slot.isBot      = sim->lobbyPlayers[i].isBot;
+        slot.pingMs     = sim->playerPing[i];
+        slot.countryCode[0] = sim->sim.plyrs->item[i].location[0];
+        slot.countryCode[1] = sim->sim.plyrs->item[i].location[1];
+        slot.countryCode[2] = '\0';
+        slot.clientType  = playersGetClientType(&sim->sim.plyrs, i);
+        slot.clientFlags = playersGetClientFlags(&sim->sim.plyrs, i);
+    }
+    evt->type = CTRL_LOBBY_SLOT;
+    evt->u.lobbySlot.playerNum = i;
+    evt->u.lobbySlot.slot = slot;
+}
+
+void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
+    PlayerBitMap allies = playersGetAlliesBitMap(&sim->sim.plyrs, i);
+    BYTE numAllies = 0;
+    BYTE bit;
+
+    evt->type = CTRL_PLAYER_JOIN;
+    evt->u.playerJoin.playerNum = i;
+    memset(evt->u.playerJoin.name, 0, PACKET_MAX_PLAYER_NAME);
+    strncpy(evt->u.playerJoin.name, sim->sim.plyrs->item[i].playerName,
+            PACKET_MAX_PLAYER_NAME - 1);
+    evt->u.playerJoin.country[0] = sim->sim.plyrs->item[i].location[0];
+    evt->u.playerJoin.country[1] = sim->sim.plyrs->item[i].location[1];
+    evt->u.playerJoin.country[2] = '\0';
+    evt->u.playerJoin.clientType  = playersGetClientType(&sim->sim.plyrs, i);
+    evt->u.playerJoin.clientFlags = playersGetClientFlags(&sim->sim.plyrs, i);
+    for (bit = 0; bit < MAX_TANKS && numAllies < MAX_TANKS; bit++) {
+        if (allies & ((PlayerBitMap)1u << bit)) {
+            evt->u.playerJoin.allies[numAllies++] = bit;
+        }
+    }
+    evt->u.playerJoin.numAllies = numAllies;
+}
+
+/* Wrapper used to enforce the documented sync ordering:
+ *   CTRL_GAME_PHASE first; CTRL_PLAYER_JOIN events last (a regression
+ *   that reorders sync would silently mis-initialize a subscriber, so
+ *   catch it loudly in debug builds). Asserts compile out under NDEBUG.
+ */
+typedef struct {
+    void (*inner)(void *, const struct ControlEvent *);
+    void *innerCtx;
+    bool sawNonPhase;
+    bool sawPlayerJoin;
+} SyncOrderingCheck;
+
+static void serverSimSyncOrderingDeliver(void *ctx,
+                                         const struct ControlEvent *evt) {
+    SyncOrderingCheck *check = (SyncOrderingCheck *)ctx;
+
+    if (evt->type == CTRL_GAME_PHASE) {
+        assert(!check->sawNonPhase &&
+               "CTRL_GAME_PHASE must be the first event in sync");
+    } else {
+        check->sawNonPhase = true;
+    }
+
+    if (evt->type != CTRL_PLAYER_JOIN) {
+        assert(!check->sawPlayerJoin &&
+               "no non-CTRL_PLAYER_JOIN event may follow "
+               "CTRL_PLAYER_JOIN in sync");
+    } else {
+        check->sawPlayerJoin = true;
+    }
+
+    check->inner(check->innerCtx, evt);
+}
+
+static void serverSimSyncSubscriber(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx) {
+    ControlEvent evt;
+    BYTE i;
+    SyncOrderingCheck check;
+
+    check.inner         = deliver;
+    check.innerCtx      = ctx;
+    check.sawNonPhase   = false;
+    check.sawPlayerJoin = false;
+    deliver = serverSimSyncOrderingDeliver;
+    ctx     = &check;
+
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillGamePhaseEvent(sim, &evt);
+    deliver(ctx, &evt);
+
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySettingsEvent(sim, &evt);
+    deliver(ctx, &evt);
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->playerConnected[i]) {
+            memset(&evt, 0, sizeof(evt));
+            serverSimFillLobbySlotEvent(sim, i, &evt);
+            deliver(ctx, &evt);
+        }
+    }
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (playersIsInUse(&sim->sim.plyrs, i) == TRUE) {
+            memset(&evt, 0, sizeof(evt));
+            serverSimFillPlayerJoinEvent(sim, i, &evt);
+            deliver(ctx, &evt);
+        }
+    }
+}
+
+SubscriberHandle serverSimRegisterSubscriber(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx) {
+    int i;
+    int slot = -1;
+
+    if (sim == NULL || deliver == NULL) {
+        return SUBSCRIBER_HANDLE_INVALID;
+    }
+
+    for (i = 0; i < SUBSCRIBER_SLOT_COUNT; i++) {
+        if (sim->subscribers[i].deliver == NULL) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        return SUBSCRIBER_HANDLE_INVALID;
+    }
+
+    assert(sim->subscriberGen[slot] < UINT16_MAX);
+    sim->subscriberGen[slot]++;
+    sim->subscribers[slot].deliver    = deliver;
+    sim->subscribers[slot].ctx        = ctx;
+    sim->subscribers[slot].generation = sim->subscriberGen[slot];
+    sim->numSubscribers++;
+
+    serverSimSyncSubscriber(sim, deliver, ctx);
+
+    return SUBSCRIBER_HANDLE_ENCODE(slot, sim->subscriberGen[slot]);
+}
+
+static void serverSimDeliverToClientSim(void *ctx, const struct ControlEvent *evt) {
+    clientSimApplyControl((ClientSim *)ctx, evt);
+}
+
+SubscriberHandle serverSimRegisterClientSubscriber(ServerSim *sim, ClientSim *cs) {
+    return serverSimRegisterSubscriber(sim, serverSimDeliverToClientSim, cs);
+}
+
+void serverSimRequestBalanceProposal(ServerSim *sim,
+                                     uint8_t totalPlayers,
+                                     uint8_t teamSize) {
+    winbolonetServerRequestBalance(totalPlayers, teamSize,
+                                   &sim->balanceProposal);
+}
+
+void serverSimUnregisterSubscriber(ServerSim *sim, SubscriberHandle h) {
+    int slot;
+    uint16_t gen;
+
+    if (sim == NULL || h == SUBSCRIBER_HANDLE_INVALID) {
+        return;
+    }
+    slot = SUBSCRIBER_HANDLE_SLOT(h);
+    gen  = SUBSCRIBER_HANDLE_GEN(h);
+    if (slot < 0 || slot >= SUBSCRIBER_SLOT_COUNT) {
+        return;
+    }
+    if (sim->subscribers[slot].deliver == NULL ||
+        sim->subscribers[slot].generation != gen) {
+        return;
+    }
+    sim->subscribers[slot].deliver    = NULL;
+    sim->subscribers[slot].ctx        = NULL;
+    sim->subscribers[slot].generation = 0;
+    if (sim->numSubscribers > 0) {
+        sim->numSubscribers--;
+    }
+}
+
+void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
+    ControlSubscriber snapshot[SUBSCRIBER_SLOT_COUNT];
+    int snapCount = 0;
+    int i;
+
+    if (sim == NULL || evt == NULL) {
+        return;
+    }
+
+    /* Reentrancy guard: a deliver callback that triggers another publish
+     * is a design error. */
+    assert(!sim->publishing);
+
+    /* Server is not a subscriber: double-mutating sim itself would corrupt
+     * already-applied state. */
+    for (i = 0; i < SUBSCRIBER_SLOT_COUNT; i++) {
+        assert(sim->subscribers[i].ctx != sim);
+    }
+
+    sim->publishing = true;
+
+    /* Iterate a snapshot of the active list so a deliver that
+     * registers/unregisters does not corrupt our walk. */
+    for (i = 0; i < SUBSCRIBER_SLOT_COUNT; i++) {
+        if (sim->subscribers[i].deliver != NULL) {
+            snapshot[snapCount++] = sim->subscribers[i];
+        }
+    }
+    for (i = 0; i < snapCount; i++) {
+        snapshot[i].deliver(snapshot[i].ctx, evt);
+    }
+
+    sim->publishing = false;
+}
+
+/*********************************************************
+ * Read accessors.
+ *********************************************************/
+
+bool serverSimBalanceShutdownRequested(const ServerSim *sim) {
+    /* SDL_GetAtomicInt takes a non-const pointer for ABI reasons,
+     * but the operation is a read. Const-cast is the standard
+     * pattern for this SDL API. */
+    return SDL_GetAtomicInt(
+        (SDL_AtomicInt *)&sim->balanceProposal.shutdownFlag) != 0;
+}
+
+bool serverSimIsLobbyEnabled(const ServerSim *sim) {
+    return sim->lobbyEnabled;
+}
+
+bool serverSimHasPassword(const ServerSim *sim) {
+    return sim->hasPassword;
+}
+
+bool serverSimIsRandomMapEnabled(const ServerSim *sim) {
+    return sim->randomMapEnabled;
+}
+
+bool serverSimIsQuiet(const ServerSim *sim) {
+    return sim->isServerQuiet;
+}
+
+bool serverSimGetServerMessageUseLogFile(const ServerSim *sim) {
+    return sim->serverMessageUseLogFile;
+}
+
+ServerState serverSimGetState(const ServerSim *sim) {
+    return sim->state;
+}
+
+aiType serverSimGetBotAiType(const ServerSim *sim) {
+    return sim->botAiType;
+}
+
+uint32_t serverSimGetTick(const ServerSim *sim) {
+    return sim->tick;
+}
+
+uint32_t serverSimGetTimeCreated(const ServerSim *sim) {
+    return sim->timeCreated;
+}
+
+int32_t serverSimGetStartDelay(const ServerSim *sim) {
+    return sim->startDelay;
+}
+
+int32_t serverSimGetGameLength(const ServerSim *sim) {
+    return sim->gameLength;
+}
+
+int32_t serverSimGetCountdownTicks(const ServerSim *sim) {
+    return sim->countdownTicks;
+}
+
+unsigned short serverSimGetServerPort(const ServerSim *sim) {
+    return sim->serverPort;
+}
+
+int serverSimGetMapDirCount(const ServerSim *sim) {
+    return sim->mapDirCount;
+}
+
+uint8_t serverSimGetEventCount(const ServerSim *sim) {
+    return sim->eventCount;
+}
+
+uint16_t serverSimGetMapEventCount(const ServerSim *sim) {
+    return sim->mapEventCount;
+}
+
+const char *serverSimGetMapName(const ServerSim *sim) {
+    return sim->mapName;
+}
+
+const char *serverSimGetBotBrainPath(const ServerSim *sim) {
+    return sim->botBrainPath;
+}
+
+const char *serverSimGetServerMessageLogFile(const ServerSim *sim) {
+    return sim->serverMessageLogFile;
+}
+
+const LobbyPlayer *serverSimGetLobbyPlayer(const ServerSim *sim, BYTE n) {
+    if (n >= MAX_TANKS) return NULL;
+    return &sim->lobbyPlayers[n];
+}
+
+bool serverSimIsPlayerConnected(const ServerSim *sim, BYTE n) {
+    if (n >= MAX_TANKS) return false;
+    return sim->playerConnected[n];
+}
+
+uint32_t serverSimGetLastProcessedInput(const ServerSim *sim, BYTE n) {
+    if (n >= MAX_TANKS) return 0;
+    return sim->lastProcessedInput[n];
+}
+
+bool serverSimIsMapSkipVote(const ServerSim *sim, BYTE n) {
+    if (n >= MAX_TANKS) return false;
+    return sim->mapSkipVotes[n];
+}
+
+char *const *serverSimGetMapDirFiles(const ServerSim *sim) {
+    return sim->mapDirFiles;
+}
+
+const GameEvent *serverSimGetEvents(const ServerSim *sim) {
+    return sim->events;
+}
+
+const GameEvent *serverSimGetMapEvents(const ServerSim *sim) {
+    return sim->mapEvents;
+}
+
+const BalanceProposal *serverSimGetBalanceProposal(const ServerSim *sim) {
+    return &sim->balanceProposal;
+}
+
+GameSim *serverSimGetGameSim(ServerSim *sim) {
+    return &sim->sim;
+}
+
+BYTE serverSimGetViewPlayer(const ServerSim *sim) {
+    return sim->sim.viewPlayer;
+}
+
+void serverSimSetViewPlayer(ServerSim *sim, BYTE playerNum) {
+    sim->sim.viewPlayer = playerNum;
+}
+
+bool serverSimIsTutorial(const ServerSim *sim) {
+    return sim->sim.isTutorial;
+}
+
+void serverSimSetTutorial(ServerSim *sim, bool v) {
+    sim->sim.isTutorial = v;
+}
+
+/* --- Live-sim map / pill / base / start readers --- */
+
+BYTE serverSimGetMapTerrain(const ServerSim *sim, BYTE x, BYTE y) {
+    return mapGetPos(&((ServerSim *)sim)->sim.mp, x, y);
+}
+
+bool serverSimMapIsMine(const ServerSim *sim, BYTE x, BYTE y) {
+    return mapIsMine(&((ServerSim *)sim)->sim.mp, x, y);
+}
+
+bool serverSimPillExistsAt(const ServerSim *sim, BYTE x, BYTE y) {
+    return pillsExistPos(&((ServerSim *)sim)->sim.pb, x, y);
+}
+
+BYTE serverSimPillGetScreenHealthAt(ServerSim *sim, BYTE x, BYTE y) {
+    return pillsGetScreenHealth(&sim->sim, &sim->sim.pb, x, y);
+}
+
+bool serverSimBaseExistsAt(const ServerSim *sim, BYTE x, BYTE y) {
+    return basesExistPos(&((ServerSim *)sim)->sim.bs, x, y);
+}
+
+baseAlliance serverSimBaseGetAllianceAt(ServerSim *sim, BYTE x, BYTE y) {
+    return basesGetAlliancePos(&sim->sim, x, y);
+}
+
+bool serverSimBaseAmOwnerAt(ServerSim *sim, BYTE player, BYTE x, BYTE y) {
+    return basesAmOwner(&sim->sim, player, x, y);
+}
+
+BYTE serverSimGetPillCount(const ServerSim *sim) {
+    return pillsGetNumPills(&((ServerSim *)sim)->sim.pb);
+}
+
+BYTE serverSimGetBaseCount(const ServerSim *sim) {
+    return basesGetNumBases(&((ServerSim *)sim)->sim.bs);
+}
+
+BYTE serverSimGetStartCount(const ServerSim *sim) {
+    return startsGetNumStarts(&((ServerSim *)sim)->sim.ss);
+}
+
+bool serverSimGetPill(ServerSim *sim, BYTE i,
+                      BYTE *x, BYTE *y, BYTE *owner, BYTE *armour,
+                      bool *inTank) {
+    pillbox p;
+    BYTE n = pillsGetNumPills(&sim->sim.pb);
+    if (i == 0 || i > n) return false;
+    pillsGetPill(&sim->sim.pb, &p, i);
+    if (x)      *x      = p.x;
+    if (y)      *y      = p.y;
+    if (owner)  *owner  = p.owner;
+    if (armour) *armour = p.armour;
+    if (inTank) *inTank = p.inTank;
+    return true;
+}
+
+bool serverSimGetBase(ServerSim *sim, BYTE i,
+                      BYTE *x, BYTE *y, BYTE *owner) {
+    base b;
+    BYTE n = basesGetNumBases(&sim->sim.bs);
+    if (i == 0 || i > n) return false;
+    basesGetBase(&sim->sim.bs, &b, i);
+    if (x)     *x     = b.x;
+    if (y)     *y     = b.y;
+    if (owner) *owner = b.owner;
+    return true;
+}
+
+bool serverSimGetBaseStats(ServerSim *sim, BYTE i,
+                           BYTE *shells, BYTE *mines, BYTE *armour) {
+    BYTE n = basesGetNumBases(&sim->sim.bs);
+    if (i == 0 || i > n) return false;
+    basesGetStats(&sim->sim.bs, i, shells, mines, armour);
+    return true;
+}
+
+bool serverSimGetStart(ServerSim *sim, BYTE i,
+                       BYTE *x, BYTE *y, BYTE *dir) {
+    start s;
+    BYTE n = startsGetNumStarts(&sim->sim.ss);
+    if (i == 0 || i > n) return false;
+    startsGetStartStruct(&sim->sim.ss, &s, i);
+    if (x)   *x   = s.x;
+    if (y)   *y   = s.y;
+    if (dir) *dir = startsConvertDir((BYTE)((s.dir < 16) ? s.dir : 0));
+    return true;
+}
+
+/* --- Live-sim render-state readers --- */
+
+bool serverSimGetTankRender(ServerSim *sim, BYTE i, TankRenderInfo *out) {
+    if (i >= MAX_TANKS) return false;
+    tank *t = &sim->sim.tanks[i];
+    if (*t == NULL) return false;
+    tankGetWorld(t, &out->world_x, &out->world_y);
+    out->dir     = tankGetDir(t);
+    out->on_boat = tankIsOnBoat(t);
+    out->alive   = (tankGetDeathWait(t) == 0);
+    return true;
+}
+
+tankAlliance serverSimGetTankAllianceFor(ServerSim *sim,
+                                         BYTE selfPlayer,
+                                         BYTE tankNum) {
+    return playersScreenAllience(&sim->sim.plyrs, selfPlayer, tankNum);
+}
+
+int serverSimGetShellSnapshot(ServerSim *sim, ShellRender out[], int cap) {
+    int n = 0;
+    for (shells q = sim->sim.shs; q != NULL && n < cap; q = q->next) {
+        if (q->shellDead) continue;
+        out[n].x     = q->x;
+        out[n].y     = q->y;
+        out[n].angle = q->angle;
+        n++;
+    }
+    return n;
+}
+
+int serverSimGetExplosionSnapshot(ServerSim *sim, ExplosionRender out[], int cap) {
+    int n = 0;
+    for (explosions q = sim->sim.expl; q != NULL && n < cap; q = q->next) {
+        out[n].mx     = q->mx;
+        out[n].my     = q->my;
+        out[n].px     = q->px;
+        out[n].py     = q->py;
+        out[n].length = q->length;
+        n++;
+    }
+    return n;
+}
+
+bool serverSimGetLgmRender(ServerSim *sim, BYTE i, LgmRender *out) {
+    if (i >= MAX_TANKS) return false;
+    lgm *l = &sim->sim.lgmen[i];
+    if (*l == NULL) return false;
+    if ((*l)->inTank || (*l)->isDead) return false;
+    out->x     = (*l)->x;
+    out->y     = (*l)->y;
+    out->frame = (*l)->frame;
+    return true;
+}
+
+int serverSimGetTankExplosionSnapshot(ServerSim *sim,
+                                      TankExplosionRender out[], int cap) {
+    int n = 0;
+    for (tkExplosion q = sim->sim.tankExplosions; q != NULL && n < cap; q = q->next) {
+        out[n].x = q->x;
+        out[n].y = q->y;
+        n++;
+    }
+    return n;
+}
+
+bool serverSimMineExistsAt(ServerSim *sim, BYTE x, BYTE y) {
+    return minesExistPos(&sim->sim.mns, &sim->sim.mp, x, y);
 }

@@ -534,7 +534,7 @@ static const LangEntry langTable[] = {
     {788,  "Single Player"},
     {789,  "Local"},
     {790,  "Map Editor"},
-    {791,  "WinBolo Log Viewer"},
+    {791,  "Log Viewer"},
     {792,  "Internet"},
     {793,  "Everard Island (Inbuilt)"},
     {794,  "Load a Map"},

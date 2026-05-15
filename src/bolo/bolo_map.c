@@ -36,7 +36,8 @@
 #include "starts.h"
 #include "bases.h"
 #include "game_sim.h"
-#include "screen.h"
+#include "client_enums.h"  /* updateType */
+#include "viewport_types.h"  /* screen */
 #include "players.h"
 #include "messages.h"
 #include "mines.h"

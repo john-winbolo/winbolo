@@ -26,17 +26,17 @@
 *********************************************************/
 
 #include <string.h>
-#include "global.h"
-#include "allience.h"
-#include "labels.h"
-#include "screentank.h"
-#include "screenlgm.h"
+#include "lv_global.h"
+#include "lv_allience.h"
+#include "lv_labels.h"
+#include "lv_screentank.h"
+#include "lv_screenlgm.h"
 #include "backend.h"
-#include "tilenum.h"
-#include "util.h"
-#include "players.h"
-#include "bolo_map.h"
-#include "messages.h"
+#include "lv_tilenum.h"
+#include "lv_util.h"
+#include "lv_players.h"
+#include "lv_bolo_map.h"
+#include "lv_messages.h"
 #include "../gui/lang.h"
 
 

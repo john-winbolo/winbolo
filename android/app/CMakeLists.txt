@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.18)
 
 # Allow vendored dependencies with older cmake_minimum_required calls
 set(CMAKE_POLICY_VERSION_MINIMUM 3.10 CACHE INTERNAL "")
@@ -13,6 +13,8 @@ set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size
 
 # Project root is two levels up from android/app/
 set(PROJ_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+
+include(${PROJ_ROOT}/cmake/bolo_lib.cmake)
 
 # ---------------------------------------------------------------------------
 # Dependencies (FetchContent) — same versions as main CMakeLists.txt
@@ -154,6 +156,18 @@ target_link_libraries(imgui_backends PUBLIC SDL3::SDL3)
 # Main shared library (SDL3 on Android expects libmain.so)
 # ---------------------------------------------------------------------------
 
+# bolo_static covers the bulk of the bolo source set; only the
+# HAVE_STEAM-divergent transport_udp_client.c stays per-target here.
+# client_mapload.c and nat_portmap.c are not referenced in this build —
+# android calls into the sim through its own android_gamesetup path
+# and has no NAT-PMP / UPnP wrapper.
+set(WINBOLO_VERSION "1.18")
+set(BOLO_VERSION_MAJOR 1)
+set(BOLO_VERSION_MINOR 1)
+set(BOLO_VERSION_REVISION 8)
+add_subdirectory(${PROJ_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
+add_subdirectory(${PROJ_ROOT}/brains ${CMAKE_BINARY_DIR}/bot_brains_static)
+
 set(ANDROID_SOURCES
     # Android entry point and frontend
     ${PROJ_ROOT}/src/android/main_android.c
@@ -167,61 +181,8 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/android/android_dialog_stubs.c
     ${PROJ_ROOT}/src/steam/steam_wrapper_stub.c
 
-    # Bolo engine (same as CLIENT_SOURCES in main CMakeLists.txt)
-    ${PROJ_ROOT}/src/bolo/allience.c
-    ${PROJ_ROOT}/src/bolo/bases.c
-    ${PROJ_ROOT}/src/bolo/bolo_map.c
-    ${PROJ_ROOT}/src/bolo/building.c
-    ${PROJ_ROOT}/src/bolo/crc.c
-    ${PROJ_ROOT}/src/bolo/debug_file_output.c
-    ${PROJ_ROOT}/src/bolo/net_packet_debug.c
-    ${PROJ_ROOT}/src/bolo/explosions.c
-    ${PROJ_ROOT}/src/bolo/floodfill.c
-    ${PROJ_ROOT}/src/bolo/gametype.c
-    ${PROJ_ROOT}/src/bolo/global.c
-    ${PROJ_ROOT}/src/bolo/grass.c
-    ${PROJ_ROOT}/src/bolo/labels.c
-    ${PROJ_ROOT}/src/bolo/lgm.c
-    ${PROJ_ROOT}/src/bolo/log.c
-    ${PROJ_ROOT}/src/bolo/messages.c
-    ${PROJ_ROOT}/src/bolo/mines.c
-    ${PROJ_ROOT}/src/bolo/minesexp.c
-    ${PROJ_ROOT}/src/bolo/gui_message.c
-    ${PROJ_ROOT}/src/bolo/pillbox.c
-    ${PROJ_ROOT}/src/bolo/players.c
-    ${PROJ_ROOT}/src/bolo/playername_validate.c
-    ${PROJ_ROOT}/src/bolo/playersrejoin.c
-    ${PROJ_ROOT}/src/bolo/rubble.c
-    ${PROJ_ROOT}/src/bolo/screen.c
-    ${PROJ_ROOT}/src/bolo/screenbrainmap.c
-    ${PROJ_ROOT}/src/bolo/screenbullet.c
-    ${PROJ_ROOT}/src/bolo/screencalc.c
-    ${PROJ_ROOT}/src/bolo/screenlgm.c
-    ${PROJ_ROOT}/src/bolo/screentank.c
-    ${PROJ_ROOT}/src/bolo/scroll.c
-    ${PROJ_ROOT}/src/bolo/scroll_item_list.c
-    ${PROJ_ROOT}/src/bolo/shells.c
-    ${PROJ_ROOT}/src/bolo/sounddist.c
-    ${PROJ_ROOT}/src/bolo/starts.c
-    ${PROJ_ROOT}/src/bolo/swamp.c
-    ${PROJ_ROOT}/src/bolo/tank.c
-    ${PROJ_ROOT}/src/bolo/tankexp.c
-    ${PROJ_ROOT}/src/bolo/treegrow.c
-    ${PROJ_ROOT}/src/bolo/udppackets.c
-    ${PROJ_ROOT}/src/bolo/util.c
-    ${PROJ_ROOT}/src/bolo/braincore.c
-    ${PROJ_ROOT}/src/bolo/brain_pathfinder.c
-    ${PROJ_ROOT}/src/bolo/brain_worldsim.c
-    ${PROJ_ROOT}/src/bolo/transport_local.c
-    ${PROJ_ROOT}/src/bolo/transport_udp_common.c
+    # Per-target bolo source (HAVE_STEAM-divergent).
     ${PROJ_ROOT}/src/bolo/transport_udp_client.c
-    ${PROJ_ROOT}/src/bolo/transport_udp_server.c
-    ${PROJ_ROOT}/src/bolo/client_state.c
-    ${PROJ_ROOT}/src/bolo/interpolation.c
-    ${PROJ_ROOT}/src/bolo/position_history.c
-    ${PROJ_ROOT}/src/bolo/client_sim.c
-    ${PROJ_ROOT}/src/bolo/bot_manager.c
-    ${PROJ_ROOT}/src/bolo/discovery.c
 
     # SDL3 GUI (rendering, sound, input, etc.)
     ${PROJ_ROOT}/src/gui/ui_mode.c
@@ -241,7 +202,9 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keysetup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_deck_pause.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_quickchat.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_winbolonet.cpp
     ${PROJ_ROOT}/src/gui/sdl3/map_preview_popup.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/minimap_render.c
     ${PROJ_ROOT}/src/gui/sdl3/luabrainshandler.c
     ${PROJ_ROOT}/src/gui/sdl3/cursor.c
     ${PROJ_ROOT}/src/gui/sdl3/flags.c
@@ -266,6 +229,12 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/lang.c
     ${PROJ_ROOT}/src/gui/sdl3/sound.c
 
+    # Shared map-gen controls used by the map chooser dialog (not the
+    # full map editor — these three files match what the iOS build pulls in).
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_generate.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_maze.c
+    ${PROJ_ROOT}/src/mapeditor/mapgen_imgui.cpp
+
     # LZW compression
     ${PROJ_ROOT}/src/lzw/ecodlzw.c
     ${PROJ_ROOT}/src/lzw/dcodlzw.c
@@ -276,19 +245,26 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/server/threads.c
     ${PROJ_ROOT}/src/server/server_sim.c
     ${PROJ_ROOT}/src/server/server_stubs.c
+    ${PROJ_ROOT}/src/server/server_dedicated_log_stubs.c
     ${PROJ_ROOT}/src/server/posix_stubs.c
 )
 
 add_library(main SHARED ${ANDROID_SOURCES})
 
 target_include_directories(main PRIVATE
-    ${PROJ_ROOT}/src/bolo
     ${PROJ_ROOT}/src/gui/sdl3
     ${PROJ_ROOT}/src/gui/sdl3/dialogs
     ${PROJ_ROOT}/src/gui
     ${PROJ_ROOT}/src/server
 )
+bolo_apply_include_rules(main gui)
+bolo_grant_internal_source_access(main
+    ${PROJ_ROOT}/src/bolo/transport_udp_client.c
+    ${PROJ_ROOT}/src/server/server_sim.c
+    ${PROJ_ROOT}/src/server/servermessages.c
+    ${PROJ_ROOT}/src/mapeditor/mapeditor_generate.c)
 
+target_link_libraries(main PRIVATE bolo_static bot_brains_static)
 target_link_libraries(main PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf

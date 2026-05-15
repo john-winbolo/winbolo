@@ -8,7 +8,7 @@
  *********************************************************/
 
 #include "na_overlay_pillcontrib.h"
-#include "../../../src/bolo/bot_manager.h"
+#include "bot_manager.h"
 #include <lauxlib.h>
 
 static NaPillContribClearFunc      g_clearCb     = NULL;

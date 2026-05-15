@@ -28,11 +28,11 @@
 
 #include <stdio.h>
 #include <string.h>
-#include "global.h"
-#include "bolo_map.h"
-#include "pillbox.h"
-#include "starts.h"
-#include "bases.h"
+#include "lv_global.h"
+#include "lv_bolo_map.h"
+#include "lv_pillbox.h"
+#include "lv_starts.h"
+#include "lv_bases.h"
 #include "blocks.h"
 
 /* Prototypes */

@@ -24,9 +24,13 @@
  *  messages (newswire path debounced via
  *  basesEnqueueCaptureMessage).
  *
- *  Contents (declared in screen.h):
- *    screenBuildInputPacketCS   - pack keys/build into an InputPacket
- *    screenSyncFromSnapshotCS   - apply a server snapshot to the ClientSim
+ *  Contents:
+ *    clientBuildInputPacket  - pack keys/build into an InputPacket
+ *                              (public — declared in client_net.h)
+ *    clientApplySnapshot     - apply a server snapshot to the ClientSim
+ *                              (internal — declared in client_snapshot.h)
+ *    clientSimNetSetupTankGo - finalize tank setup after server places it
+ *                              (public — declared in client_net.h)
  *
  *  Companion file: brain_data.c (Lua-brain data shaping).
  *********************************************************/
@@ -49,6 +53,7 @@
 #include "explosions.h"
 #include "screenbullet.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "sounddist.h"
 #include "messages.h"
 #include "grass.h"
@@ -66,21 +71,22 @@
 #include "labels.h"
 #include "players.h"
 #include "screenbrainmap.h"
-#include "screen.h"
+#include "client_snapshot.h"
 #include "client_state.h"
 #include "interpolation.h"
 #include "util.h"
 #include "client_sim.h"
-#include "../server/server_sim.h"
+#include "client_sim_internal.h"
+#include "server_sim.h"
 #include "../steam/steam_wrapper.h"
 
 /*********************************************************
-*NAME:          screenBuildInputPacket
+*NAME:          clientBuildInputPacket
 *PURPOSE:
 *  Builds an InputPacket from the current input state.
 *  Handles both keyboard input and brain input.
 *********************************************************/
-void screenBuildInputPacketCS(ClientSim *csPtr, InputPacket *pkt, tankButton tb, bool isShoot, bool isMine, bool isBrain, bool isGameTick, BYTE playerNum, uint32_t tick) {
+void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, bool isShoot, bool isMine, bool isBrain, bool isGameTick, BYTE playerNum, uint32_t tick) {
   memset(pkt, 0, sizeof(InputPacket));
   pkt->tick = tick;
   pkt->playerNum = playerNum;
@@ -141,11 +147,11 @@ void screenBuildInputPacketCS(ClientSim *csPtr, InputPacket *pkt, tankButton tb,
 
     /* Client-side display actions (pill/tank view toggle) */
     if (testkey(*tapKeys, KEY_TankView) || testkey(*holdKeys, KEY_TankView)) {
-      csPtr->inPillView = FALSE;
-      clientCenterTankCS(csPtr);
+      csPtr->viewport.inPillView = FALSE;
+      clientSimCenterTank(csPtr);
     }
     if (testkey(*tapKeys, KEY_PillView) || testkey(*holdKeys, KEY_PillView)) {
-      screenPillViewCS(csPtr, 0, 0);
+      clientSimPillView(csPtr, 0, 0);
     }
 
     /* Clear tap keys after reading — preserve shoot tap on non-game ticks
@@ -194,15 +200,15 @@ void screenBuildInputPacketCS(ClientSim *csPtr, InputPacket *pkt, tankButton tb,
   }
 }
 /*********************************************************
-*NAME:          screenSyncFromSnapshot
+*NAME:          clientApplySnapshot
 *PURPOSE:
-*  Syncs client state from a network snapshot received over
-*  UDP transport. Updates tank positions (own tank via
+*  Applies a server snapshot received over UDP transport
+*  to the ClientSim. Updates tank positions (own tank via
 *  reconciliation, others via interpolation), rebuilds
 *  shells and explosions from snapshot data, and processes
 *  game events (map changes, etc.).
 *********************************************************/
-void screenSyncFromSnapshotCS(ClientSim *csPtr,
+void clientApplySnapshot(ClientSim *csPtr,
                               const SnapshotHeader *hdr,
                               const TankSnapshot *tanks, int tankCount,
                               const ShellSnapshot *shellSnaps, int shellCount,
@@ -275,7 +281,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
         csPtr->clientState.hasPredictedTank = TRUE;
         if (isHuman) {
-          clientCenterTankCS(csPtr);
+          clientSimCenterTank(csPtr);
         }
       } else if (csPtr->clientState.initialized && csPtr->clientState.hasPredictedTank && MY_TANK(csPtr) != NULL) {
         /* Build a temporary tank-like state for reconciliation.
@@ -403,8 +409,8 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
             /* dead→alive: recenter view on respawn */
             csPtr->sim.inStartFind = FALSE;
             if (isHuman) {
-              csPtr->inPillView = FALSE;
-              clientCenterTankCS(csPtr);
+              csPtr->viewport.inPillView = FALSE;
+              clientSimCenterTank(csPtr);
             }
           }
           csPtr->lastServerArmour = tanks[i].armour;
@@ -609,7 +615,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
   csPtr->lastServerTick = hdr->serverTick;
 
   /* Buffer events for brain consumption (accumulate across syncs;
-   * reset happens when the brain consumes them in screenMakeBrainInfoCS) */
+   * reset happens when the brain consumes them in brainDataMakeInfo) */
   if (events != NULL) {
     for (i = 0; i < eventCount; i++) {
       switch (events[i].type) {
@@ -652,7 +658,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         if (csPtr->sim.mp != NULL) {
           mapSetPos(&csPtr->sim, &csPtr->sim.mp, events[i].data[0], events[i].data[1],
                     events[i].data[2], FALSE, TRUE);
-          screenReCalcCS(csPtr);
+          clientSimRecalc(csPtr);
         }
         break;
       case EVENT_SOUND:
@@ -673,7 +679,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         /* data: [soundId, mx, my, hitPlayer] */
         if (isHuman) {
           if (events[i].data[3] == csPtr->myPlayerNum) {
-            frontEndPlaySound(hitTankSelf);
+            frontEndPlaySound(csPtr, hitTankSelf);
           } else {
             clientSoundDist(&csPtr->sim, hitTankNear, events[i].data[1], events[i].data[2]);
           }
@@ -729,18 +735,24 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
       case EVENT_PILL_CAPTURED:
         /* data: [newOwner, previousOwner] */
         if (isHuman) {
-          MessageArgs args;
-          memset(&args, 0, sizeof(args));
-          playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, events[i].data[0], args.playerName);
-          args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[0]);
-          playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
-          if (events[i].data[1] != NEUTRAL) {
-            playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[1], args.otherName, FALSE);
-            args.otherFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[1]);
-            playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[1], args.otherCountry);
-            csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
-          } else {
-            csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
+          BYTE newOwner = events[i].data[0];
+          BYTE prevOwner = events[i].data[1];
+          bool suppressAllied = (prevOwner != NEUTRAL &&
+              playersIsAllie(&csPtr->sim.plyrs, newOwner, prevOwner) == TRUE);
+          if (!suppressAllied) {
+            MessageArgs args;
+            memset(&args, 0, sizeof(args));
+            playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, newOwner, args.playerName);
+            args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, newOwner);
+            playersGetCountryCode(&csPtr->sim.plyrs, newOwner, args.playerCountry);
+            if (prevOwner != NEUTRAL) {
+              playersGetPlayerName(&csPtr->sim.plyrs, prevOwner, args.otherName, FALSE);
+              args.otherFlags = playersGetAccountFlags(&csPtr->sim.plyrs, prevOwner);
+              playersGetCountryCode(&csPtr->sim.plyrs, prevOwner, args.otherCountry);
+              csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
+            } else {
+              csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
+            }
           }
         }
         /* Steam stat: pill captures */
@@ -796,7 +808,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
           BYTE leavePlayer = events[i].data[0];
           if (leavePlayer < MAX_TANKS && csPtr->sim.plyrs != NULL &&
               playersIsInUse(&csPtr->sim.plyrs, leavePlayer) == TRUE) {
-            playersLeaveGame(&csPtr->sim, &csPtr->sim.plyrs, csPtr->myPlayerNum, leavePlayer, FALSE);
+            playersLeaveGame(csPtr, &csPtr->sim, &csPtr->sim.plyrs, csPtr->myPlayerNum, leavePlayer, FALSE);
           }
         }
         break;
@@ -805,10 +817,10 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
         if (isHuman) {
           switch (events[i].data[0]) {
           case SERVER_MSG_GAME_LOCKED:
-            screenNetStatusMessage(csPtr, "This game is now locked to new players (server lock)");
+            clientSimNetStatusMessage(csPtr, "This game is now locked to new players (server lock)");
             break;
           case SERVER_MSG_GAME_UNLOCKED:
-            screenNetStatusMessage(csPtr, "This game is now unlocked to new players (server unlock)");
+            clientSimNetStatusMessage(csPtr, "This game is now unlocked to new players (server unlock)");
             break;
           }
         }
@@ -894,7 +906,7 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
       case EVENT_MINE_VISIBLE:
         /* data: [mx, my, sourcePlayer] — reveal mine at position */
         minesAddItem(&csPtr->sim.mns, events[i].data[0], events[i].data[1]);
-        screenReCalcCS(csPtr);
+        clientSimRecalc(csPtr);
         break;
       default:
         break;
@@ -939,6 +951,37 @@ void screenSyncFromSnapshotCS(ClientSim *csPtr,
 
   /* Invalidate tile cache after applying snapshot state (human only) */
   if (isHuman) {
-    csPtr->needScreenReCalc = TRUE;
+    csPtr->viewport.needRecalc = TRUE;
   }
+}
+
+/*********************************************************
+*NAME:          clientSimNetSetupTankGo
+*AUTHOR:        John Morrison
+*CREATION DATE: 27/2/99
+*LAST MODIFIED: 27/11/99
+*PURPOSE:
+*  Map download is complete and we are ready to start
+*  playing.
+*********************************************************/
+void clientSimNetSetupTankGo(ClientSim *csPtr) {
+  BYTE count;   /* Looping variables */
+  BYTE count2;
+
+  /* The server is authoritative for tank placement: serverSimAddPlayer
+   * has already chosen the start and the first snapshot has copied the
+   * position into MY_TANK. Calling startsGetStart on the client here
+   * would re-pick locally and, if it disagrees with the server (different
+   * sim state at the moment of call), leave the view centered on a spot
+   * the tank jumps away from on the next snapshot. Just centre on the
+   * existing position. */
+  clientSimCenterTank(csPtr);
+
+  for (count = 0; count < MAIN_BACK_BUFFER_SIZE_X; count++) {
+    for (count2 = 0; count2 < MAIN_BACK_BUFFER_SIZE_Y; count2++) {
+      (*clientSimGetMineView(csPtr))->mineItem[count][count2] = FALSE;
+    }
+  }
+
+  clientSimRecalc(csPtr);
 }

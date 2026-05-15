@@ -29,8 +29,8 @@
  *********************************************************/
 
 #include "na_threat.h"
-#include "../../../src/bolo/braincore.h"
-#include "../../../src/bolo/bot_manager.h"
+#include "braincore.h"
+#include "bot_manager.h"
 #include <lauxlib.h>
 #include <math.h>
 #include <string.h>

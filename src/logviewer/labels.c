@@ -26,8 +26,8 @@
 *********************************************************/
 
 #include <string.h>
-#include "global.h"
-#include "labels.h"
+#include "lv_global.h"
+#include "lv_labels.h"
 
 static bool labelOwnTank = TRUE; /* Should own tank be labeled? */
 static labelLen labelMessage = lblShort; /* Should message labels be short? */

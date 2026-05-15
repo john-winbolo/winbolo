@@ -38,8 +38,19 @@ local function debug_mode()
   return _G.BRAIN_DEBUG_MODE
 end
 
-local function perf_log_enabled()
-  return _G.BRAIN_PERF_LOG
+-- Two-flag split:
+--   BRAIN_PROFILE     — measurement on (clock_us markers, opt() emits,
+--                       buffer accumulation, rebuild_sections). Drives
+--                       the BrainTest "Capacity tiers" panel time bar.
+--   BRAIN_PROFILE_LOG — file writes on (optimize.log, opt.append). Implies
+--                       BRAIN_PROFILE on the host side. Off by default in
+--                       --opt mode; on automatically in dev/debug mode.
+local function profile_enabled()
+  return _G.BRAIN_PROFILE
+end
+
+local function profile_log_enabled()
+  return _G.BRAIN_PROFILE_LOG
 end
 
 local function pick_dir()
@@ -58,6 +69,33 @@ local function try_open(dir)
   print(string.format("[optimize] opened %s", path))
 end
 
+-- Per-tick section breakdown for the BrainTest "Capacity tiers" panel.
+-- Populated as a side effect of flush() when perf-log is on. Shape:
+--   { { name = "threat", ms = 0.20, subs = { { name = "pillcontrib export",
+--       ms = 0.15 }, ... } }, ... }
+-- The panel reads this each frame to render the stacked time-bar.
+M.last_sections = {}
+
+-- Auto-attribution for sub-sections emitted by infrastructure callers
+-- (cpathfinder wrappers, etc) that don't know which brain main section
+-- is currently in flight. Brain code calls opt.set_main("steer") at
+-- the entry of each major phase; helpers grab the most recent value
+-- via M.current_main_name() so wrapped calls (e.g. cpf.path_to) emit
+-- "  <last-set-main>/path_to done X". No stack — the user wanted
+-- "whatever main it came from last", which is just an overwrite-style
+-- variable. Early returns don't need cleanup because next tick's
+-- next set_main overwrites.
+local _current_main = nil
+
+function M.set_main(name)
+  if not _G.BRAIN_PROFILE then return end
+  _current_main = name
+end
+
+function M.current_main_name()
+  return _current_main or "?"
+end
+
 function M.set_tick(t)
   tick       = t
   tick_start = clock()
@@ -65,7 +103,7 @@ function M.set_tick(t)
 end
 
 local function log_msg(...)
-  if not perf_log_enabled() then return end
+  if not profile_enabled() then return end
   local elapsed_ms = (clock() - tick_start) * 1000
   local parts = {}
   for i = 1, select("#", ...) do
@@ -74,8 +112,54 @@ local function log_msg(...)
   buffer[#buffer + 1] = string.format("[%.2fms] %s", elapsed_ms, table.concat(parts, ""))
 end
 
+-- Walk the tick's buffer and build a hierarchical section list for the
+-- panel. Lines look like "[0.00ms] <indent><name> done <ms> ms". A
+-- non-indented line is a main section; preceding indented lines roll up
+-- as its `subs`. Subs always appear before their parent in the buffer
+-- because opt() is called when each phase ends — depth-first ordering.
+local function rebuild_sections()
+  M.last_sections = {}
+  -- Three indent levels:
+  --   0 spaces -> main section.    Attaches accumulated `pending_subs`.
+  --   2 spaces -> sub section.     Attaches accumulated `pending_subsubs`.
+  --   4+ spaces -> subsub section. Goes into `pending_subsubs`.
+  -- Order matters: each emitter writes its children BEFORE itself, so by
+  -- the time we see a parent line the kids are already buffered.
+  local pending_subs    = {}
+  local pending_subsubs = {}
+  for i = 1, #buffer do
+    local L = buffer[i]
+    -- Match: "[<elapsed>ms] <indent>(name) done <ms> ms"
+    -- Lua patterns are greedy: `%s*` followed by `(%s*)` would eat all
+    -- the whitespace into the first capture and leave the second empty.
+    -- We anchor on a literal space after the closing bracket and capture
+    -- only the *extra* whitespace as the indent.
+    local indent, name, ms = L:match("^%[[^%]]+%] (%s*)(.-) done%s+([%d.]+)%s+ms")
+    if name and ms and name ~= "" then
+      local ind = #(indent or "")
+      local entry = { name = name, ms = tonumber(ms) or 0 }
+      if ind == 0 then
+        entry.subs = pending_subs
+        pending_subs = {}
+        pending_subsubs = {}  -- defensive: drop any orphans
+        M.last_sections[#M.last_sections + 1] = entry
+      elseif ind <= 2 then
+        entry.subs = pending_subsubs
+        pending_subsubs = {}
+        pending_subs[#pending_subs + 1] = entry
+      else
+        pending_subsubs[#pending_subsubs + 1] = entry
+      end
+    end
+  end
+end
+
 function M.flush()
-  if not perf_log_enabled() or #buffer == 0 then return end
+  -- Profiling-only: parse buffer into last_sections so the panel can
+  -- read it. Skip the file write portion when profile-log is off.
+  if not profile_enabled() or #buffer == 0 then return end
+  rebuild_sections()
+  if not profile_log_enabled() then return end
   if na_opt_log then
     -- Threaded path: build full tick block in memory, enqueue for background write.
     local dir = pick_dir()
@@ -129,7 +213,7 @@ end
 -- both debug and production runs. Only the tick timing log (log_msg/flush)
 -- is suppressed in debug mode since debug overhead skews the measurements.
 function M.append(filename, text)
-  if not perf_log_enabled() then return end
+  if not profile_log_enabled() then return end
   local dir  = pick_dir()
   local path = dir .. "/" .. filename
   if na_opt_log then

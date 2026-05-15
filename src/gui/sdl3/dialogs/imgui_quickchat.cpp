@@ -7,7 +7,7 @@
  * Name:          imgui_quickchat.cpp
  * Purpose:       Gamepad quick-chat preset menu.  Modal
  *                popup with short canned messages — sends
- *                via screenSendMessageAllPlayersCS() (the
+ *                via clientSimSendMessageAllPlayers() (the
  *                same path the free-form Send Message
  *                dialog uses).  Last entry hands off to
  *                the free-form dialog so players can type
@@ -26,8 +26,7 @@
 #include "../sdl3imgui.h"
 
 extern "C" {
-#include "../../../bolo/client_sim.h"
-#include "../../../bolo/screen.h"
+#include "client_sim.h"
 }
 
 static bool s_open        = false;
@@ -44,11 +43,11 @@ bool quickChatIsOpen(void) {
 
 static void quickChatSend(struct ClientSim *cs, const char *msg) {
     if (!cs || !msg || msg[0] == '\0') return;
-    /* screenSendMessageAllPlayersCS takes char* (not const) — copy to a
+    /* clientSimSendMessageAllPlayers takes char* (not const) — copy to a
        local mutable buffer. PACKET_MAX_CHAT_MESSAGE caps wire payload. */
     char buf[256];
     SDL_strlcpy(buf, msg, sizeof(buf));
-    screenSendMessageAllPlayersCS(cs, buf);
+    clientSimSendMessageAllPlayers(cs, buf);
 }
 
 void quickChatRender(struct ClientSim *cs) {

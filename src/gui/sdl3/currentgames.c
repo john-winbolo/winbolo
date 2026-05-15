@@ -25,8 +25,8 @@
 *  Responsable for holding the list of current games
 *********************************************************/
 
-#include "../../bolo/global.h"
-#include "../../bolo/gametype.h"
+#include "global.h"
+#include "gametype.h"
 #include "../currentgames.h"
 
 /*********************************************************

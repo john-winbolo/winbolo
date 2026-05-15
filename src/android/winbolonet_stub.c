@@ -5,7 +5,10 @@
  * on libcurl). Instead we stub out all functions declared in winbolonet.h.
  */
 
-#include "../bolo/global.h"
+#include <stdint.h>
+
+#include "global.h"
+#include "../winbolonet/winbolonet.h"
 
 bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
   (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines; (void)password;
@@ -84,5 +87,14 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
 
 bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorMsg) {
   (void)token; (void)playerNameOut; (void)errorMsg;
+  return FALSE;
+}
+
+void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills) {
+  (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;
+}
+
+bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, BalanceProposal *outProposal) {
+  (void)totalPlayers; (void)teamSize; (void)outProposal;
   return FALSE;
 }

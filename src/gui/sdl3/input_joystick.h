@@ -15,8 +15,8 @@
 #define INPUT_JOYSTICK_H
 
 #include <stdbool.h>
-#include "../../bolo/global.h"
-#include "../../bolo/screen.h"
+#include "global.h"
+#include "client_enums.h"  /* tankButton */
 
 #ifdef __cplusplus
 extern "C" {

@@ -33,11 +33,10 @@
 extern "C" {
 #include "../sdl3draw.h"
 #include "../../gamefront.h"
-#include "../../../bolo/global.h"
-#include "../../../bolo/screen.h"
-#include "../../../bolo/client_sim.h"
-#include "../../../bolo/util.h"
-#include "../../../bolo/playername_validate.h"
+#include "global.h"
+#include "client_sim.h"
+#include "util.h"
+#include "playername_validate.h"
 #include "../../../winbolonet/winbolonet.h"
 #include "../../lang.h"
 #include "imgui_setname.h"
@@ -75,6 +74,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
     /* Set up ImGui context */
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
@@ -91,7 +91,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
     char playerName[PLAYER_NAME_LEN];
     playerName[0] = '\0';
     if (inGame) {
-        screenGetPlayerNameCS(cs, playerName);
+        clientSimGetPlayerName(cs, playerName);
     } else {
         gameFrontGetPlayerName(playerName);
     }
@@ -199,11 +199,11 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
             } else if (inGame) {
                 char oldName[PLAYER_NAME_LEN];
                 oldName[0] = '\0';
-                screenGetPlayerNameCS(cs, oldName);
+                clientSimGetPlayerName(cs, oldName);
                 if (playerNameCompare(oldName, newName) == 0) {
                     running = false;
                 } else {
-                    bool changeOK = screenSetPlayerNameCS(cs, newName);
+                    bool changeOK = clientSimSetPlayerName(cs, newName);
                     if (!changeOK) {
                         errorMsg = langGetText(STR_DLGSETNAME_INUSE_ERR);
                         ImGui::OpenPopup(errPopupId);
@@ -216,6 +216,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                 running = false;
             }
         }
+        imguiHandOnHover();
         if (wbnLocked) ImGui::EndDisabled();
 
         ImGui::SameLine(0.0f, 8.0f);
@@ -224,10 +225,14 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
              !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
             running = false;
         }
+        imguiHandOnHover();
 
         /* Error popup */
+        static float s_fadeSetNameErr = 0.0f;
         if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeSetNameErr));
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
             {
@@ -236,7 +241,9 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                 if (ImGui::Button(okBuf, ImVec2(80, 0))) {
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 

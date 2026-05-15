@@ -23,6 +23,7 @@
  *  src/gui/sdl3/gamefront.c for WinBolo / WinBoloIOS.
  *********************************************************/
 
+#include <stdbool.h>
 #include "../gamefront.h"
 
 void gameFrontGetLanguageCode(char *out, int outSize) {
@@ -37,3 +38,11 @@ void gameFrontGetLanguageCode(char *out, int outSize) {
  * symbols to resolve. -1 means "no saved position", matching gamefront.c. */
 int gameFrontDialogX = -1;
 int gameFrontDialogY = -1;
+
+/* Gamepad / Steam Input stubs — LogViewer and MapEditor don't link the
+ * full SDL3 input stack (input_gamepad.c, imgui_steam_nav.cpp). ui_mode.c
+ * and the shared WBN browser reach for these symbols; on stub-only
+ * targets they behave as "no gamepad / menu set active". */
+bool inputGamepadIsConnected(void) { return false; }
+void imguiSteamNavActivateMenuSet(void) {}
+void imguiSteamNavFeedCurrentContext(void) {}

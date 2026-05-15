@@ -24,10 +24,11 @@
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
+#include "imgui_dialog_utils.h"
 
 extern "C" {
 #include "../../gamefront.h"
-#include "../../../bolo/global.h"
+#include "global.h"
 #include "../../../winbolonet/winbolonet.h"
 #include "../../lang.h"
 #include "imgui_winbolonet.h"
@@ -199,6 +200,7 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
         if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_OUT))) {
             gameFrontClearWinbolonetToken();
         }
+        imguiHandOnHover();
         if (inGame) ImGui::EndDisabled();
     } else {
         ImGui::TextUnformatted(langGetText(STR_DLGWBN_LABEL));
@@ -214,6 +216,7 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
             wbnPassword[0] = '\0';
             ImGui::OpenPopup(langGetText(STR_DLGWBN_SIGNIN_TITLE));
         }
+        imguiHandOnHover();
         if (inGame) ImGui::EndDisabled();
     }
 
@@ -222,8 +225,11 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_Appearing);
 
+    static float s_fadeWbnSignIn = 0.0f;
     if (ImGui::BeginPopupModal(langGetText(STR_DLGWBN_SIGNIN_TITLE), &wbnPopupOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            imguiPopupFadeAlpha(&s_fadeWbnSignIn));
         bool busy = (wbnState == WBN_LOGGING_IN);
 
         ImGui::TextWrapped("%s", langGetText(STR_DLGWBN_SIGNIN_BLURB));
@@ -289,13 +295,16 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
                     wbnStartLogin();
                 }
             }
+            imguiHandOnHover();
             ImGui::SameLine(0.0f, 8.0f);
             if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0))) {
                 ImGui::CloseCurrentPopup();
                 wbnPopupOpen = false;
             }
+            imguiHandOnHover();
         }
 
+        ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
 }

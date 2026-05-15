@@ -304,7 +304,10 @@ local function rebuild_terrain_factors()
   local _t1 = clock_us()
   na_threat.terrain_rebuild()
   local _t2 = clock_us()
-  do
+  -- Gated: in a live game (no --perf-log) this diagnostic line skips
+  -- the file write entirely. Synchronous io.open is multi-hundred-µs
+  -- on Windows and can spike a tick.
+  if BRAIN_PROFILE_LOG then
     local f = io.open((_G.DEBUG_SESSION_DIR or ".") .. "/optimize.log", "a")
     if f then
       f:write(string.format(
@@ -782,7 +785,7 @@ function M.update(state, world, info)
     local _t_stamp = clock_us() - _t_stamp0
     -- Direct diagnostic line: write to optimize.log so we can see the
     -- subsection breakdown without needing print2 enabled.
-    do
+    if BRAIN_PROFILE_LOG then
       local f = io.open((_G.DEBUG_SESSION_DIR or ".") .. "/optimize.log", "a")
       if f then
         f:write(string.format("  [diag] threat REBUILD pills=%d clear=%.2f stamp=%.2f\n",
@@ -796,7 +799,7 @@ function M.update(state, world, info)
     na_threat.apply_occlusion_all(M.pill_contrib,
       _fp_mx, _fp_my, fp_n, _hp_mx, _hp_my, hp_n)
     local _t_occl = clock_us() - _t_occl0
-    do
+    if BRAIN_PROFILE_LOG then
       local f = io.open((_G.DEBUG_SESSION_DIR or ".") .. "/optimize.log", "a")
       if f then
         f:write(string.format("  [diag] threat REBUILD occl=%.2f cov_pass coming\n", _t_occl / 1000))

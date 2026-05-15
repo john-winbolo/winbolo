@@ -36,6 +36,14 @@ int lv_imgui_context_init(SDL_Window* window, SDL_Renderer* renderer) {
         return 0;
     }
     ImGui::SetCurrentContext(g_context);
+
+    /* Route ImGui::TextLinkOpenURL() through SDL_OpenURL so clicked links
+     * launch the system browser. Without this, TextLinkOpenURL renders
+     * but the click does nothing. */
+    ImGui::GetPlatformIO().Platform_OpenInShellFn =
+        [](ImGuiContext *, const char *url) -> bool {
+            return url && *url && SDL_OpenURL(url);
+        };
     
     // Enable docking and multi-viewport for flexible window layout
     ImGuiIO& io = ImGui::GetIO();

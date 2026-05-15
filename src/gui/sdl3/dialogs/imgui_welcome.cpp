@@ -36,6 +36,7 @@ extern "C" {
 #include "imgui_welcome.h"
 #include "../../gamefront.h"
 #include "../../ui_mode.h"
+#include "../../lang.h"
 }
 
 /* Match openingStates enum from gamefront.h */
@@ -49,20 +50,6 @@ enum {
     RESULT_LOGVIEWER    = 21,  /* openLogViewer */
     RESULT_QUIT         = -1
 };
-
-/* Try to load a BMP from next to the exe, then from data/ */
-static SDL_Texture *loadBmp(SDL_Renderer *renderer, const char *filename) {
-    SDL_Surface *surf = SDL_LoadBMP(filename);
-    if (!surf) {
-        char path[512];
-        SDL_snprintf(path, sizeof(path), "data/%s", filename);
-        surf = SDL_LoadBMP(path);
-    }
-    if (!surf) return nullptr;
-    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
-    SDL_DestroySurface(surf);
-    return tex;
-}
 
 /* Load a PNG with alpha via SDL_IOFromFile + stb_image.
    SDL_IOFromFile works with Android APK assets, unlike plain fopen. */
@@ -93,6 +80,69 @@ static SDL_Texture *loadPng(SDL_Renderer *renderer, const char *filename) {
     SDL_DestroySurface(surf);
     stbi_image_free(data);
     return tex;
+}
+
+/* Composite the shield logo onto `target` with an additive "sun glint" band
+ * traversing left-to-right at progress `t` in [0,1]. The band is built from
+ * 16 vertical strips of `logo` re-drawn with SDL_BLENDMODE_ADD and Gaussian-
+ * weighted alpha — re-drawing the logo (rather than a plain quad) makes the
+ * additive contribution automatically masked by the logo's own alpha, so
+ * the glint only brightens pixels inside the shield silhouette. */
+static void composeShimmerFrame(SDL_Renderer *r, SDL_Texture *target,
+                                 SDL_Texture *logo, int w, int h, float t) {
+    SDL_Texture *prevTarget = SDL_GetRenderTarget(r);
+
+    SDL_BlendMode prevTexBlend;
+    SDL_GetTextureBlendMode(logo, &prevTexBlend);
+    Uint8 prevR = 255, prevG = 255, prevB = 255;
+    SDL_GetTextureColorMod(logo, &prevR, &prevG, &prevB);
+    Uint8 prevA = 255;
+    SDL_GetTextureAlphaMod(logo, &prevA);
+
+    SDL_SetRenderTarget(r, target);
+    SDL_SetRenderClipRect(r, NULL);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
+    SDL_RenderClear(r);
+
+    /* Pass 1: opaque logo */
+    SDL_SetTextureBlendMode(logo, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureColorMod(logo, 255, 255, 255);
+    SDL_SetTextureAlphaMod(logo, 255);
+    SDL_RenderTexture(r, logo, NULL, NULL);
+
+    /* Pass 2: additive glint band */
+    const int NSTRIPS = 16;
+    const float bandHalfW = (float)w * 0.25f;
+    const float stripW    = (bandHalfW * 2.0f) / (float)NSTRIPS;
+    const float sigma     = bandHalfW * 0.5f;
+    const float centerX   = -bandHalfW + t * ((float)w + 2.0f * bandHalfW);
+
+    SDL_SetTextureBlendMode(logo, SDL_BLENDMODE_ADD);
+    for (int i = 0; i < NSTRIPS; i++) {
+        float offset = ((float)i - (float)(NSTRIPS - 1) * 0.5f) * stripW;
+        float ratio  = offset / sigma;
+        float gauss  = SDL_expf(-ratio * ratio);
+        Uint8 alpha  = (Uint8)(gauss * 200.0f);
+        if (alpha == 0) continue;
+
+        SDL_Rect clip;
+        clip.x = (int)(centerX + offset - stripW * 0.5f);
+        clip.y = 0;
+        clip.w = (int)stripW + 1;
+        clip.h = h;
+        if (clip.x + clip.w <= 0 || clip.x >= w) continue;
+
+        SDL_SetRenderClipRect(r, &clip);
+        SDL_SetTextureAlphaMod(logo, alpha);
+        SDL_RenderTexture(r, logo, NULL, NULL);
+    }
+
+    /* Restore */
+    SDL_SetTextureAlphaMod(logo, prevA);
+    SDL_SetTextureColorMod(logo, prevR, prevG, prevB);
+    SDL_SetTextureBlendMode(logo, prevTexBlend);
+    SDL_SetRenderTarget(r, prevTarget);
 }
 
 extern "C" int imguiWelcomeShow(void) {
@@ -126,6 +176,7 @@ extern "C" int imguiWelcomeShow(void) {
     /* Set up ImGui context for this dialog */
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
@@ -141,24 +192,20 @@ extern "C" int imguiWelcomeShow(void) {
     dialogApplyScaling(s);
 
     /* Load images */
-    SDL_Texture *logoTex     = loadPng(renderer, "smalllogo-transparent.png");
-    /* Icons in the same order as modes[] below. Tutorial is the first
-     * row (no icon yet). */
-    SDL_Texture *btnIcons[7] = {
-        nullptr,  /* tutorial */
-        loadBmp(renderer, "button_practice.bmp"),  /* single player */
-        loadBmp(renderer, "button_internet.bmp"),  /* internet */
-        loadBmp(renderer, "button_lan.bmp"),       /* local */
-        nullptr,  /* map editor */
-        nullptr,  /* log viewer */
-        nullptr,  /* settings */
-    };
+    SDL_Texture *logoTex = loadPng(renderer, "smalllogo-transparent.png");
 
-    /* Query logo dimensions (scaled) */
+    /* Query logo dimensions. nativeW/H are the texture's pixel size and are
+     * used for the shimmer offscreen target so the SDL render-target pass
+     * is a 1:1 copy of the source — without that, the shimmer texture would
+     * downscale 265→200 in SDL and then ImGui downscales again 200→198.75,
+     * softening the text on the shield and making the logo look subtly
+     * smaller mid-sweep than when displayed directly. */
+    float nativeW = 0.0f, nativeH = 0.0f;
     float logoW = 0.0f, logoH = 0.0f;
     if (logoTex) {
-        SDL_GetTextureSize(logoTex, &logoW, &logoH);
-        logoW *= 0.75f; logoH *= 0.75f;
+        SDL_GetTextureSize(logoTex, &nativeW, &nativeH);
+        logoW = nativeW * 0.75f;
+        logoH = nativeH * 0.75f;
         if (s > 1.05f) { logoW *= s; logoH *= s; }
     }
 
@@ -166,16 +213,22 @@ extern "C" int imguiWelcomeShow(void) {
     BgGame *bg = bgGameGetShared();
     bool hasBg = (bg != nullptr);
 
-    /* Dialog visibility toggle with animation.
-     * Start minimized when there is a background game to watch;
-     * otherwise start fully visible (e.g. Android where bg may not load). */
-    bool dialogVisible = !hasBg;
-    float dialogAlpha = hasBg ? 0.0f : 1.0f;
-    Uint64 lastFrameTime = SDL_GetTicks();
-
     int result = RESULT_QUIT;
     bool running = true;
     Uint64 lastTickTime = SDL_GetTicks();
+
+    /* Logo shimmer: a 1.5s "sun glint" sweep, fired on hover entry and on
+     * a 75–105s randomised idle timer. Offscreen target is cached for the
+     * dialog lifetime and recreated on logo size change (e.g. DPI/resize). */
+    const Uint64 SHIMMER_DURATION_MS = 1500;
+    const Uint64 SHIMMER_AUTO_MIN_MS = 75000;
+    const Uint64 SHIMMER_AUTO_MAX_MS = 105000;
+    Uint64 shimmerStartMs    = 0;  /* 0 = idle */
+    Uint64 shimmerNextAutoMs = 0;  /* 0 = needs init */
+    SDL_Texture *shimmerTarget = nullptr;
+    int shimmerTargetW = 0;
+    int shimmerTargetH = 0;
+    bool wasLogoHovered = false;
 
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
@@ -208,20 +261,48 @@ extern "C" int imguiWelcomeShow(void) {
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
 
-        /* Animate dialog alpha */
-        Uint64 now = SDL_GetTicks();
-        float dt = (float)(now - lastFrameTime) / 1000.0f;
-        lastFrameTime = now;
-        if (dt > 0.1f) dt = 0.1f;
-        {
-            float target = dialogVisible ? 1.0f : 0.0f;
-            float speed = 4.0f;
-            if (dialogAlpha < target) {
-                dialogAlpha += speed * dt;
-                if (dialogAlpha > target) dialogAlpha = target;
-            } else if (dialogAlpha > target) {
-                dialogAlpha -= speed * dt;
-                if (dialogAlpha < target) dialogAlpha = target;
+        /* --- Shimmer state update + offscreen composition --- */
+        Uint64 nowMs = SDL_GetTicks();
+        bool sweeping = (shimmerStartMs != 0) &&
+                        (nowMs - shimmerStartMs < SHIMMER_DURATION_MS);
+        if (shimmerStartMs != 0 && !sweeping) shimmerStartMs = 0;
+
+        if (shimmerNextAutoMs == 0) {
+            Uint32 range = (Uint32)(SHIMMER_AUTO_MAX_MS - SHIMMER_AUTO_MIN_MS);
+            shimmerNextAutoMs = nowMs + SHIMMER_AUTO_MIN_MS +
+                                (Uint64)SDL_rand((Sint32)range);
+        }
+        if (!sweeping && nowMs >= shimmerNextAutoMs) {
+            shimmerStartMs = nowMs;
+            sweeping = true;
+            Uint32 range = (Uint32)(SHIMMER_AUTO_MAX_MS - SHIMMER_AUTO_MIN_MS);
+            shimmerNextAutoMs = nowMs + SHIMMER_AUTO_MIN_MS +
+                                (Uint64)SDL_rand((Sint32)range);
+        }
+
+        ImTextureID logoImageTexID = (ImTextureID)logoTex;
+        if (sweeping && logoTex && logoW > 0.0f && logoH > 0.0f) {
+            int targetW = (int)nativeW;
+            int targetH = (int)nativeH;
+            if (!shimmerTarget ||
+                shimmerTargetW != targetW || shimmerTargetH != targetH) {
+                if (shimmerTarget) SDL_DestroyTexture(shimmerTarget);
+                shimmerTarget = SDL_CreateTexture(renderer,
+                                                  SDL_PIXELFORMAT_RGBA32,
+                                                  SDL_TEXTUREACCESS_TARGET,
+                                                  targetW, targetH);
+                if (shimmerTarget) {
+                    SDL_SetTextureBlendMode(shimmerTarget, SDL_BLENDMODE_BLEND);
+                    shimmerTargetW = targetW;
+                    shimmerTargetH = targetH;
+                }
+            }
+            if (shimmerTarget) {
+                float t = (float)(nowMs - shimmerStartMs) /
+                          (float)SHIMMER_DURATION_MS;
+                composeShimmerFrame(renderer, shimmerTarget, logoTex,
+                                    shimmerTargetW, shimmerTargetH, t);
+                logoImageTexID = (ImTextureID)shimmerTarget;
             }
         }
 
@@ -244,57 +325,47 @@ extern "C" int imguiWelcomeShow(void) {
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-        /* When dialog is hidden, show restore button in top-right with transparent buttons */
-        if (hasBg && dialogAlpha < 0.01f) {
+        /* Top-right logo + ghost menu column. Logo is purely decorative. */
+        {
             const float restoreMargin = 12.0f * s;
-            float restoreX, restoreY;
+            const float miniBtnW      = 180.0f * s;
 
-            /* Show logo at actual size as the restore button */
             if (logoTex && logoW > 0.0f) {
-                restoreX = (float)winW - logoW - restoreMargin;
-                restoreY = restoreMargin;
+                /* Center the logo horizontally over the button column. The
+                 * logo can be wider than miniBtnW, in which case the offset
+                 * goes negative and the logo extends past the column on both
+                 * sides equally — that's the intended look. Only clamp if
+                 * the centred position would extend past the window's right
+                 * edge entirely. */
+                float restoreX = (float)winW - miniBtnW - restoreMargin
+                                 + (miniBtnW - logoW) * 0.5f;
+                if (restoreX + logoW > (float)winW)
+                    restoreX = (float)winW - logoW;
+                float restoreY = restoreMargin;
                 ImGui::SetCursorPos(ImVec2(restoreX, restoreY));
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.3f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 0.5f));
+                ImGui::Image(logoImageTexID, ImVec2(logoW, logoH));
 
-                if (ImGui::ImageButton("##restoreDialog", (ImTextureID)logoTex,
-                                       ImVec2(logoW, logoH))) {
-                    dialogVisible = true;
+                /* Hover entry triggers a sweep — edge-detected so a slow
+                 * drag across the logo doesn't fire repeatedly, and a sweep
+                 * already in progress is left alone. */
+                bool isHovered = ImGui::IsItemHovered();
+                if (!sweeping && isHovered && !wasLogoHovered) {
+                    shimmerStartMs = nowMs;
                 }
-
-                ImGui::PopStyleColor(3);
-                ImGui::PopStyleVar(1);
-            } else {
-                const float restoreSize = 40.0f * s;
-                restoreX = (float)winW - restoreSize - restoreMargin;
-                restoreY = restoreMargin;
-                ImGui::SetCursorPos(ImVec2(restoreX, restoreY));
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f * s);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.1f, 0.1f, 0.1f, 0.6f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.8f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 0.9f));
-
-                if (ImGui::Button("W##restoreDialog", ImVec2(restoreSize, restoreSize))) {
-                    dialogVisible = true;
-                }
-
-                ImGui::PopStyleColor(3);
-                ImGui::PopStyleVar(2);
+                wasLogoHovered = isHovered;
             }
 
             /* Transparent menu buttons below the logo */
-            const float miniBtnW = 180.0f * s;
             const float miniBtnH = 30.0f * s;
             const float miniBtnGap = 4.0f * s;
 #if BOLO_MOBILE
             const float ghostBtnAlpha = 0.6f;
             const float ghostTextAlpha = 0.9f;
 #else
-            const float ghostBtnAlpha = 0.15f;
-            const float ghostTextAlpha = 0.75f;
+            /* Without the background game, buttons need higher base alpha
+             * to stay readable against the solid dark clear color. */
+            const float ghostBtnAlpha = hasBg ? 0.15f : 0.6f;
+            const float ghostTextAlpha = hasBg ? 0.75f : 0.9f;
 #endif
             float logoBottom = (logoTex && logoW > 0.0f) ? restoreMargin + logoH : restoreMargin + 40.0f * s;
             float btnX = (float)winW - miniBtnW - restoreMargin;
@@ -342,6 +413,7 @@ extern "C" int imguiWelcomeShow(void) {
                     result = miniModes[i].code;
                     running = false;
                 }
+                imguiHandOnHover();
                 /* Default keyboard / gamepad focus on Single Player so D-pad
                    navigation lands somewhere sensible (not Quit). */
                 if (miniModes[i].code == RESULT_SINGLEPLAYER) {
@@ -359,148 +431,6 @@ extern "C" int imguiWelcomeShow(void) {
 
             ImGui::PopStyleColor(4);
             ImGui::PopStyleVar(1);
-        }
-
-        /* Centered dialog panel — only when visible or animating */
-        if (dialogAlpha > 0.01f) {
-            float panelW = 500.0f * s, panelH = 570.0f * s;
-            if (panelW > (float)winW * 0.9f) panelW = (float)winW * 0.9f;
-            if (panelH > (float)winH * 0.9f) panelH = (float)winH * 0.9f;
-
-            ImGui::SetNextWindowPos(ImVec2(((float)winW - panelW) * 0.5f, ((float)winH - panelH) * 0.5f));
-            ImGui::SetNextWindowSize(ImVec2(panelW, panelH));
-            ImGui::SetNextWindowBgAlpha(0.7f * dialogAlpha);
-            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, dialogAlpha);
-            ImGui::Begin("##Welcome", nullptr,
-                         ImGuiWindowFlags_NoTitleBar |
-                         ImGuiWindowFlags_NoResize |
-                         ImGuiWindowFlags_NoMove |
-                         ImGuiWindowFlags_NoCollapse |
-                         ImGuiWindowFlags_NoScrollbar);
-
-            /* Hide arrow button — top-right corner */
-            if (hasBg) {
-                const float arrowBtnSize = 24.0f * s;
-                const float arrowMargin = 6.0f * s;
-                ImGui::SetCursorPos(ImVec2(panelW - arrowBtnSize - arrowMargin, arrowMargin));
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f * s);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 0.5f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.4f, 0.4f, 0.4f, 0.6f));
-
-                if (ImGui::Button("##hideDialog", ImVec2(arrowBtnSize, arrowBtnSize))) {
-                    dialogVisible = false;
-                }
-                ImVec2 btnMin = ImGui::GetItemRectMin();
-                ImVec2 btnMax = ImGui::GetItemRectMax();
-                float cx = (btnMin.x + btnMax.x) * 0.5f;
-                float cy = (btnMin.y + btnMax.y) * 0.5f;
-                float sz = 6.0f * s;
-                ImVec2 tri[3] = {
-                    ImVec2(cx + sz, cy),
-                    ImVec2(cx - sz, cy - sz),
-                    ImVec2(cx - sz, cy + sz),
-                };
-                ImU32 arrowCol = IM_COL32(200, 200, 200, (int)(180 * dialogAlpha));
-                ImGui::GetWindowDrawList()->AddTriangleFilled(tri[0], tri[1], tri[2], arrowCol);
-
-                ImGui::PopStyleColor(3);
-                ImGui::PopStyleVar(2);
-            }
-
-            /* Logo banner */
-            ImGui::SetCursorPosY(8.0f * s);
-            if (logoTex && logoW > 0.0f) {
-                ImGui::SetCursorPosX((panelW - logoW) * 0.5f);
-                ImGui::Image((ImTextureID)logoTex, ImVec2(logoW, logoH));
-            } else {
-                ImGui::SetWindowFontScale(2.0f);
-                const char *title = langGetText(STR_MENU_WINBOLO);
-                ImVec2 textSize = ImGui::CalcTextSize(title);
-                ImGui::SetCursorPosX((panelW - textSize.x) * 0.5f);
-                ImGui::Text("%s", title);
-                ImGui::SetWindowFontScale(1.0f);
-            }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            /* Game mode buttons with icons */
-            const float btnW = 220.0f * s;
-            const float btnH = 36.0f * s;
-            const float iconSize = 32.0f * s;
-            const float iconGap = 6.0f * s;
-            const float rowW = iconSize + iconGap + btnW;
-            const float rowStartX = (panelW - rowW) * 0.5f;
-
-            const bool showTutorialMain = gameFrontGetShowTutorialButton();
-            const bool showMapEditorMain = !uiModeIsSteamDeck();
-            struct { langid labelId; int code; bool show; } modes[] = {
-                { STR_DLGSETTINGS_TUTORIAL, RESULT_TUTORIAL,     showTutorialMain },
-                { STR_DLGWELCOME_SINGLE,    RESULT_SINGLEPLAYER, true },
-                { STR_DLGWELCOME_INTERNET,  RESULT_INTERNET,     true },
-                { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true },
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
-                { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    showMapEditorMain },
-                { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    true },
-#endif
-                { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true },
-            };
-            int modeCount = sizeof(modes) / sizeof(modes[0]);
-
-            for (int i = 0; i < modeCount; i++) {
-                if (!modes[i].show) continue;
-                /* Small gap before Map Editor and before Settings */
-                if (modes[i].code == RESULT_MAPEDITOR || modes[i].code == RESULT_SETTINGS) {
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                }
-
-                float rowY = ImGui::GetCursorPosY();
-
-                ImGui::SetCursorPosX(rowStartX);
-                if (btnIcons[i]) {
-                    ImGui::SetCursorPosY(rowY + (btnH - iconSize) * 0.5f);
-                    ImGui::Image((ImTextureID)btnIcons[i], ImVec2(iconSize, iconSize));
-                } else {
-                    ImGui::Dummy(ImVec2(iconSize, iconSize));
-                }
-
-                ImGui::SameLine(0.0f, iconGap);
-                ImGui::SetCursorPosY(rowY);
-                if (ImGui::Button(langGetText(modes[i].labelId), ImVec2(btnW, btnH))) {
-                    result = modes[i].code;
-                    running = false;
-                }
-                /* Default keyboard / gamepad focus on Single Player so D-pad
-                   navigation lands somewhere sensible (not Quit). */
-                if (modes[i].code == RESULT_SINGLEPLAYER) {
-                    ImGui::SetItemDefaultFocus();
-                }
-                ImGui::Spacing();
-            }
-
-
-#if !BOLO_MOBILE
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            /* Quit button — right-aligned */
-            {
-                const float quitW = 120.0f * s;
-                ImGui::SetCursorPosX(panelW - quitW - 16.0f * s);
-                if (ImGui::Button(langGetText(STR_DLGOPENING_BUTTON2), ImVec2(quitW, btnH))) {
-                    result = RESULT_QUIT;
-                    running = false;
-                }
-            }
-#endif
-
-            ImGui::End(); /* ##Welcome panel */
-            ImGui::PopStyleVar(); /* Alpha */
         }
 
         /* Play/Pause button — bottom-left */
@@ -533,6 +463,7 @@ extern "C" int imguiWelcomeShow(void) {
             if (ImGui::Button("##playPause", ImVec2(ppSize, ppSize))) {
                 bg->paused = !bg->paused;
             }
+            imguiHandOnHover();
 
             ImVec2 ppMin = ImGui::GetItemRectMin();
             ImVec2 ppMax = ImGui::GetItemRectMax();
@@ -563,13 +494,63 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PopStyleVar(3);
         }
 
-        /* Version label — bottom-right of screen */
+        /* Version label — bottom-right of screen.
+         * Idle shows "vX.Y"; hovering cross-fades to the full
+         * "vX.Y \xC2\xB7 <sha> \xC2\xB7 <date>" over ~180ms, fading back
+         * out on un-hover. A 1px black drop shadow keeps both forms
+         * legible over varied terrain in the background. */
         {
-            const char *ver = "v" WINBOLO_VERSION;
-            ImVec2 verSize = ImGui::CalcTextSize(ver);
-            ImGui::SetCursorPos(ImVec2((float)winW - verSize.x - 12.0f * s,
-                                       (float)winH - verSize.y - 12.0f * s));
-            ImGui::TextDisabled("%s", ver);
+            char shortVer[32], fullVer[96];
+            SDL_snprintf(shortVer, sizeof(shortVer), "v%s", WINBOLO_VERSION);
+            SDL_snprintf(fullVer, sizeof(fullVer),
+                         "v%s \xC2\xB7 %s \xC2\xB7 %s",
+                         WINBOLO_VERSION, WINBOLO_GIT_HASH, WINBOLO_BUILD_DATE);
+
+            ImVec2 shortSize = ImGui::CalcTextSize(shortVer);
+            ImVec2 fullSize  = ImGui::CalcTextSize(fullVer);
+            const float margin = 12.0f * s;
+
+            /* Anchor the long form's bottom-right corner; the short form
+             * right-aligns to the same edge so the visible right edge of
+             * the text stays still through the cross-fade. */
+            ImGui::SetCursorPos(ImVec2((float)winW - fullSize.x - margin,
+                                       (float)winH - fullSize.y - margin));
+            ImVec2 fullScreen = ImGui::GetCursorScreenPos();
+            const float rightX = fullScreen.x + fullSize.x;
+
+            /* Stable hover hit-rect covers the long form so hover state
+             * doesn't toggle as the text width grows/shrinks mid-fade. */
+            bool hovering = ImGui::IsMouseHoveringRect(
+                fullScreen,
+                ImVec2(rightX, fullScreen.y + fullSize.y));
+
+            static float s_phase = 0.0f;       /* 0 = short, 1 = full */
+            const float FADE_SEC = 0.45f;
+            const float target = hovering ? 1.0f : 0.0f;
+            const float step = ImGui::GetIO().DeltaTime / FADE_SEC;
+            if (s_phase < target) {
+                s_phase = (s_phase + step >= target) ? target : s_phase + step;
+            } else if (s_phase > target) {
+                s_phase = (s_phase - step <= target) ? target : s_phase - step;
+            }
+
+            ImDrawList *dl = ImGui::GetWindowDrawList();
+            const float shortA = 1.0f - s_phase;
+            const float fullA  = s_phase;
+
+            if (shortA > 0.01f) {
+                ImVec2 pos(rightX - shortSize.x, fullScreen.y);
+                dl->AddText(ImVec2(pos.x + 1.0f, pos.y + 1.0f),
+                            IM_COL32(0, 0, 0, (int)(180 * shortA)), shortVer);
+                dl->AddText(pos,
+                            IM_COL32(235, 235, 235, (int)(230 * shortA)), shortVer);
+            }
+            if (fullA > 0.01f) {
+                dl->AddText(ImVec2(fullScreen.x + 1.0f, fullScreen.y + 1.0f),
+                            IM_COL32(0, 0, 0, (int)(180 * fullA)), fullVer);
+                dl->AddText(fullScreen,
+                            IM_COL32(235, 235, 235, (int)(230 * fullA)), fullVer);
+            }
         }
 
         ImGui::End(); /* ##WelcomeBg host */
@@ -581,9 +562,8 @@ extern "C" int imguiWelcomeShow(void) {
 
         if (hasBg) {
             bgGameRender(bg, renderer, winW, winH);
-            int overlayAlpha = (int)(40.0f + dialogAlpha * 100.0f);
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, (Uint8)overlayAlpha);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 40);
             SDL_FRect overlayRect = { 0, 0, (float)winW, (float)winH };
             SDL_RenderFillRect(renderer, &overlayRect);
         }
@@ -594,9 +574,7 @@ extern "C" int imguiWelcomeShow(void) {
     }
 
     /* Clean up textures */
-    for (int i = 0; i < 4; i++) {
-        if (btnIcons[i]) SDL_DestroyTexture(btnIcons[i]);
-    }
+    if (shimmerTarget) SDL_DestroyTexture(shimmerTarget);
     if (logoTex) SDL_DestroyTexture(logoTex);
 
     /* Tear down ImGui */

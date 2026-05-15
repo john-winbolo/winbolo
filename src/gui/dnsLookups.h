@@ -28,7 +28,7 @@
 #ifndef _DNSLOOKUPS_H
 #define _DNSLOOKUPS_H
 
-#include "../bolo/global.h"
+#include "global.h"
 
 #define IsEmpty(list) ((list) ==NULL)
 #define NonEmpty(list) (!IsEmpty(list))

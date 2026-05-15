@@ -34,7 +34,7 @@
 #include "brain.h"
 #include "brain_overlay.h"
 #include "shells.h"
-#include "screen.h"
+#include "client_enums.h"  /* sndEffects */
 #include "util.h"
 #include "braincore.h"
 #include "brain_pathfinder.h"
@@ -935,6 +935,52 @@ static int l_cpf_dijkstra_lookup_by_kind(lua_State *L) {
   return 1;
 }
 
+/* Pcontrib lookup callback: reads pcontrib[tile_key] from the Lua
+ * table at the configured stack index. Numeric value or 0 if absent. */
+typedef struct {
+  lua_State *L;
+  int        table_idx; /* absolute stack index */
+} PcontribLuaCtx;
+
+static float pcontrib_lua_lookup(void *user, int tile_key) {
+  PcontribLuaCtx *ctx = (PcontribLuaCtx *)user;
+  lua_rawgeti(ctx->L, ctx->table_idx, tile_key);
+  float v = 0.0f;
+  if (lua_isnumber(ctx->L, -1)) v = (float)lua_tonumber(ctx->L, -1);
+  lua_pop(ctx->L, 1);
+  return v;
+}
+
+/* cpf_dijkstra_lookup_subtract_by_kind(kind, x, y, boat, pcontrib_table)
+ * Same as lookup_by_kind, but also walks the slate's realized path back
+ * to the source and subtracts pcontrib_table[tile_key] * danger_scale *
+ * inv_speed[tile] at each non-source tile — the exact "as-if-target-
+ * pill-were-dead" cost. pcontrib_table is the per-pill contribution map
+ * the brain already produces in M.pill_contrib. Pass nil to skip the
+ * subtraction (equivalent to lookup_by_kind). Result is clamped >= 0. */
+static int l_cpf_dijkstra_lookup_subtract_by_kind(lua_State *L) {
+  CPF_GET(L);
+  int kind = (int)luaL_checkinteger(L, 1);
+  int x = (int)luaL_checkinteger(L, 2);
+  int y = (int)luaL_checkinteger(L, 3);
+  int boat = (int)luaL_optinteger(L, 4, 0);
+
+  if (lua_isnoneornil(L, 5)) {
+    float c = brainPathfinderDijkstraLookupByKind(pf, kind, x, y, boat);
+    lua_pushnumber(L, (double)c);
+    return 1;
+  }
+
+  luaL_checktype(L, 5, LUA_TTABLE);
+  PcontribLuaCtx ctx;
+  ctx.L = L;
+  ctx.table_idx = 5;
+  float cost = brainPathfinderDijkstraLookupSubtractByKind(
+      pf, kind, x, y, boat, pcontrib_lua_lookup, &ctx);
+  lua_pushnumber(L, (double)cost);
+  return 1;
+}
+
 /* cpf_dijkstra_next_step(kind, sx, sy, dx, dy) → nx, ny or nil */
 static int l_cpf_dijkstra_next_step(lua_State *L) {
   CPF_GET(L);
@@ -1362,6 +1408,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_dijkstra_step",          l_cpf_dijkstra_step },
     { "cpf_dijkstra_cost_at",       l_cpf_dijkstra_cost_at },
     { "cpf_dijkstra_lookup_by_kind", l_cpf_dijkstra_lookup_by_kind },
+    { "cpf_dijkstra_lookup_subtract_by_kind", l_cpf_dijkstra_lookup_subtract_by_kind },
     { "cpf_dijkstra_next_step",     l_cpf_dijkstra_next_step },
     { "cpf_dijkstra_trace_path",    l_cpf_dijkstra_trace_path },
     { "cpf_dijkstra_trace_path_by_kind", l_cpf_dijkstra_trace_path_by_kind },

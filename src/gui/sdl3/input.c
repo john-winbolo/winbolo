@@ -26,9 +26,9 @@
 *********************************************************/
 
 #include <SDL3/SDL.h>
-#include "../../bolo/global.h"
-#include "../../bolo/screen.h"
-#include "../../bolo/client_sim.h"
+#include "global.h"
+#include "client_sim.h"
+#include "client_render.h"
 #include "../gamefront.h"
 #include "../tiles.h"
 #include "input.h"
@@ -111,7 +111,7 @@ bool inputSetup(void) {
 *PURPOSE:
 *  Pure accumulator: feeds pixel deltas (in zoomed pixels)
 *  into the smooth-scroll sub-tile accumulator. Commits
-*  whole-tile crossings to the engine via screenUpdateCS
+*  whole-tile crossings to the engine via clientRenderFrame
 *  and pushes the remainder to sdl3DrawSetDragOffset for
 *  sub-tile rendering.
 *
@@ -127,10 +127,10 @@ static void smoothScrollAccumulate(ClientSim *cs, int dx, int dy) {
 
   if (dx == 0 && dy == 0) {
     if (smoothScrollAccumX != 0 || smoothScrollAccumY != 0) {
-      if (smoothScrollAccumX >  tileW / 2) screenUpdateCS(cs, right);
-      if (smoothScrollAccumX < -tileW / 2) screenUpdateCS(cs, left);
-      if (smoothScrollAccumY >  tileH / 2) screenUpdateCS(cs, down);
-      if (smoothScrollAccumY < -tileH / 2) screenUpdateCS(cs, up);
+      if (smoothScrollAccumX >  tileW / 2) clientRenderFrame(cs, right);
+      if (smoothScrollAccumX < -tileW / 2) clientRenderFrame(cs, left);
+      if (smoothScrollAccumY >  tileH / 2) clientRenderFrame(cs, down);
+      if (smoothScrollAccumY < -tileH / 2) clientRenderFrame(cs, up);
       smoothScrollAccumX = 0;
       smoothScrollAccumY = 0;
       sdl3DrawSetDragOffset(0, 0);
@@ -141,10 +141,10 @@ static void smoothScrollAccumulate(ClientSim *cs, int dx, int dy) {
   smoothScrollAccumX += dx;
   smoothScrollAccumY += dy;
 
-  while (smoothScrollAccumX >= tileW)  { screenUpdateCS(cs, right); smoothScrollAccumX -= tileW; }
-  while (smoothScrollAccumX <= -tileW) { screenUpdateCS(cs, left);  smoothScrollAccumX += tileW; }
-  while (smoothScrollAccumY >= tileH)  { screenUpdateCS(cs, down);  smoothScrollAccumY -= tileH; }
-  while (smoothScrollAccumY <= -tileH) { screenUpdateCS(cs, up);    smoothScrollAccumY += tileH; }
+  while (smoothScrollAccumX >= tileW)  { clientRenderFrame(cs, right); smoothScrollAccumX -= tileW; }
+  while (smoothScrollAccumX <= -tileW) { clientRenderFrame(cs, left);  smoothScrollAccumX += tileW; }
+  while (smoothScrollAccumY >= tileH)  { clientRenderFrame(cs, down);  smoothScrollAccumY -= tileH; }
+  while (smoothScrollAccumY <= -tileH) { clientRenderFrame(cs, up);    smoothScrollAccumY += tileH; }
 
   sdl3DrawSetDragOffset(smoothScrollAccumX, smoothScrollAccumY);
 }
@@ -212,7 +212,7 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
      until the tank's screen position reaches NO_SCROLL_EDGE, at which
      point it clears the flag and resumes tracking. */
   if (dx != 0 || dy != 0) {
-    cs->scroll.autoScrollOverRide = TRUE;
+    clientSimSetAutoScrollOverride(cs, TRUE);
   }
 
   smoothScrollAccumulate(cs, dx, dy);
@@ -278,10 +278,10 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
      Gamepad outranks touch on devices that have both
      (e.g. Steam Deck in dock with touchscreen monitor + pad). */
   if (tb == TNONE && inputGamepadIsConnected()) {
-    tb = inputGamepadGetMovement(screenGetTank256DirCS(cs));
+    tb = inputGamepadGetMovement(clientSimGetTank256Dir(cs));
   }
   if (tb == TNONE && uiModeIsTablet()) {
-    inputTouchSetTankAngle(screenGetTank256DirCS(cs));
+    inputTouchSetTankAngle(clientSimGetTank256Dir(cs));
     tb = inputTouchGetMovement();
   }
 
@@ -289,12 +289,12 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   if (inputGamepadIsConnected()) {
     int delta = inputGamepadGetBuildSelectChange();
     if (delta != 0) {
-      cycleBuildSelectCS(cs, delta);
+      clientSimCycleBuildSelect(cs, delta);
       /* Sync the status-panel's cached gCurrentBuildSelect — the mouse
-         click path does this at sdl3draw.c:589, but cycleBuildSelectCS
-         only updates the ClientSim field. Without this the left-side
-         indent doesn't move when D-pad cycles. */
-      sdl3DrawSelectIndentsOn(getBuildCurrentSelectCS(cs), 0, 0);
+         click path does this at sdl3draw.c:589, but the cycle only
+         updates the ClientSim field. Without this the left-side indent
+         doesn't move when D-pad cycles. */
+      sdl3DrawSelectIndentsOn(clientSimGetCurrentBuildSelect(cs), 0, 0);
     }
 
     if (inputGamepadIsBuildCursorToggleEdge()) {
@@ -313,50 +313,50 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
            player can fire repeated builds at the same spot, mirroring
            how the mouse cursor outline persists between clicks. */
         clientMutexWaitFor();
-        screenManMoveToMapCS(cs, bx, by, getBuildCurrentSelectCS(cs));
+        clientSimManMoveToMap(cs, bx, by, clientSimGetCurrentBuildSelect(cs));
         clientMutexRelease();
       } else {
-        BYTE gsX, gsY;
-        screenGetGunsightTileCS(cs, &gsX, &gsY);
+        BYTE gsX = 0, gsY = 0;
+        clientSimGetGunsightTile(cs, &gsX, &gsY);
         clientMutexWaitFor();
-        screenManMoveToMapCS(cs, gsX, gsY, getBuildCurrentSelectCS(cs));
+        clientSimManMoveToMap(cs, gsX, gsY, clientSimGetCurrentBuildSelect(cs));
         clientMutexRelease();
       }
     }
 
     if (inputGamepadIsViewToggleEdge()) {
       static bool inPillView = false;
-      if (inPillView) { screenTankViewCS(cs); inPillView = false; }
-      else            { screenPillViewCS(cs, 0, 0); inPillView = true; }
+      if (inPillView) { clientSimTankView(cs); inPillView = false; }
+      else            { clientSimPillView(cs, 0, 0); inPillView = true; }
     }
   }
 
   /* Mine laying is now handled via InputPacket — see inputIsMineKeyPressed() */
 
   if (KEY_DOWN(setKeys->kiQuickTree)) {
-    curSelect = getBuildCurrentSelectCS(cs);
+    curSelect = clientSimGetCurrentBuildSelect(cs);
     if (curSelect != BsTrees) {
-      setBuildCurrentSelectCS(cs, BsTrees);
+      clientSimSetCurrentBuildSelect(cs, BsTrees);
     }
   } else if (KEY_DOWN(setKeys->kiQuickRoad)) {
-    curSelect = getBuildCurrentSelectCS(cs);
+    curSelect = clientSimGetCurrentBuildSelect(cs);
     if (curSelect != BsRoad) {
-      setBuildCurrentSelectCS(cs, BsRoad);
+      clientSimSetCurrentBuildSelect(cs, BsRoad);
     }
   } else if (KEY_DOWN(setKeys->kiQuickWall)) {
-    curSelect = getBuildCurrentSelectCS(cs);
+    curSelect = clientSimGetCurrentBuildSelect(cs);
     if (curSelect != BsBuilding) {
-      setBuildCurrentSelectCS(cs, BsBuilding);
+      clientSimSetCurrentBuildSelect(cs, BsBuilding);
     }
   } else if (KEY_DOWN(setKeys->kiQuickPillbox)) {
-    curSelect = getBuildCurrentSelectCS(cs);
+    curSelect = clientSimGetCurrentBuildSelect(cs);
     if (curSelect != BsPillbox) {
-      setBuildCurrentSelectCS(cs, BsPillbox);
+      clientSimSetCurrentBuildSelect(cs, BsPillbox);
     }
   } else if (KEY_DOWN(setKeys->kiQuickMine)) {
-    curSelect = getBuildCurrentSelectCS(cs);
+    curSelect = clientSimGetCurrentBuildSelect(cs);
     if (curSelect != BsMine) {
-      setBuildCurrentSelectCS(cs, BsMine);
+      clientSimSetCurrentBuildSelect(cs, BsMine);
     }
   }
 
@@ -370,11 +370,11 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
       scrollKeyCount = 0;
       bool scrolled = FALSE;
-      if (KEY_DOWN(setKeys->kiScrollUp))    { screenUpdateCS(cs, up);    scrolled = TRUE; }
-      if (KEY_DOWN(setKeys->kiScrollDown))  { screenUpdateCS(cs, down);  scrolled = TRUE; }
-      if (KEY_DOWN(setKeys->kiScrollLeft))  { screenUpdateCS(cs, left);  scrolled = TRUE; }
-      if (KEY_DOWN(setKeys->kiScrollRight)) { screenUpdateCS(cs, right); scrolled = TRUE; }
-      if (scrolled) cs->scroll.autoScrollOverRide = TRUE;
+      if (KEY_DOWN(setKeys->kiScrollUp))    { clientRenderFrame(cs, up);    scrolled = TRUE; }
+      if (KEY_DOWN(setKeys->kiScrollDown))  { clientRenderFrame(cs, down);  scrolled = TRUE; }
+      if (KEY_DOWN(setKeys->kiScrollLeft))  { clientRenderFrame(cs, left);  scrolled = TRUE; }
+      if (KEY_DOWN(setKeys->kiScrollRight)) { clientRenderFrame(cs, right); scrolled = TRUE; }
+      if (scrolled) clientSimSetAutoScrollOverride(cs, TRUE);
     }
   }
 
@@ -423,11 +423,11 @@ void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
     scrollKeyCount = 0;
     bool scrolled = FALSE;
-    if (KEY_DOWN(setKeys->kiScrollUp))    { screenUpdateCS(cs, up);    scrolled = TRUE; }
-    if (KEY_DOWN(setKeys->kiScrollDown))  { screenUpdateCS(cs, down);  scrolled = TRUE; }
-    if (KEY_DOWN(setKeys->kiScrollLeft))  { screenUpdateCS(cs, left);  scrolled = TRUE; }
-    if (KEY_DOWN(setKeys->kiScrollRight)) { screenUpdateCS(cs, right); scrolled = TRUE; }
-    if (scrolled) cs->scroll.autoScrollOverRide = TRUE;
+    if (KEY_DOWN(setKeys->kiScrollUp))    { clientRenderFrame(cs, up);    scrolled = TRUE; }
+    if (KEY_DOWN(setKeys->kiScrollDown))  { clientRenderFrame(cs, down);  scrolled = TRUE; }
+    if (KEY_DOWN(setKeys->kiScrollLeft))  { clientRenderFrame(cs, left);  scrolled = TRUE; }
+    if (KEY_DOWN(setKeys->kiScrollRight)) { clientRenderFrame(cs, right); scrolled = TRUE; }
+    if (scrolled) clientSimSetAutoScrollOverride(cs, TRUE);
   }
 }
 

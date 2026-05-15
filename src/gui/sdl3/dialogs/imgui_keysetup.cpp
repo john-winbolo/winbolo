@@ -32,7 +32,7 @@
 
 extern "C" {
 #include "../sdl3draw.h"
-#include "../../../bolo/global.h"
+#include "global.h"
 #include "../bg_game.h"
 #include "../glyphs.h"
 #include "../input.h"
@@ -139,10 +139,12 @@ static void keyRow(const char *label, KeySetupField field) {
         if (ImGui::SmallButton(langGetText(STR_CANCEL))) {
             s_waiting = ksNone;
         }
+        imguiHandOnHover();
     } else {
         if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
             s_waiting = field;
         }
+        imguiHandOnHover();
     }
     ImGui::PopID();
 }
@@ -182,6 +184,7 @@ extern "C" int imguiKeySetupShow(void) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
@@ -377,12 +380,14 @@ extern "C" int imguiKeySetupShow(void) {
             result = 1;
             running = false;
         }
+        imguiHandOnHover();
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(120, 0))) {
             s_waiting = ksNone;
             result = 0;
             running = false;
         }
+        imguiHandOnHover();
 
         if (busy) ImGui::EndDisabled();
 

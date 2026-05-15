@@ -5,9 +5,8 @@
 
 #include "build_cursor.h"
 
-#include "../../bolo/screen.h"
-#include "../../bolo/tank.h"
-#include "../../bolo/client_sim.h"
+#include "client_render.h"
+#include "client_sim.h"
 #include "../tiles.h"
 #include "sdl3draw.h"
 
@@ -48,16 +47,13 @@ void buildCursorToggle(struct ClientSim *cs) {
   if (!cs) return;
 
   /* Snap to the gunsight tile so the player has a known starting
-     point.  screenGetGunsightTileCS only writes valid coords when
+     point.  clientSimGetGunsightTile only writes valid coords when
      armour <= TANK_FULL_ARMOUR; if our tank is dead the locals stay
      at zero, in which case fall back to the tank's own tile. */
   BYTE gx = 0, gy = 0;
-  screenGetGunsightTileCS(cs, &gx, &gy);
+  clientSimGetGunsightTile(cs, &gx, &gy);
   if (gx == 0 && gy == 0) {
-    if (MY_TANK(cs) != NULL) {
-      gx = tankGetMX(&MY_TANK(cs));
-      gy = tankGetMY(&MY_TANK(cs));
-    } else {
+    if (!clientSimGetMyTankMapPos(cs, &gx, &gy)) {
       gx = 128;
       gy = 128;
     }
@@ -80,34 +76,34 @@ bool buildCursorGetTile(BYTE *mapX, BYTE *mapY) {
    the cursor is within WB_CURSOR_MARGIN_TILES of the visible-area
    edge.  screenLx is the cursor's 1-based screen tile (visible range
    1..MAIN_SCREEN_SIZE_X), so margin=2 means we keep the cursor in the
-   range [margin+1, SCREEN-margin] = [3, 13].  screenUpdateCS clamps
+   range [margin+1, SCREEN-margin] = [3, 13].  clientRenderFrame clamps
    to map bounds; if the offset stops moving the loop breaks so the
    cursor can still reach map-edge tiles without spinning. */
 static void follow_camera(struct ClientSim *cs) {
   for (int i = 0; i < MAIN_SCREEN_SIZE_X; ++i) {
-    int screenLx = (int)s_mapX - (int)cs->xOffset;
+    int screenLx = (int)s_mapX - (int)clientSimGetXOffset(cs);
     if (screenLx < WB_CURSOR_MARGIN_TILES + 1) {
-      BYTE prev = cs->xOffset;
-      screenUpdateCS(cs, left);
-      if (cs->xOffset == prev) break;
+      BYTE prev = clientSimGetXOffset(cs);
+      clientRenderFrame(cs, left);
+      if (clientSimGetXOffset(cs) == prev) break;
     } else if (screenLx > MAIN_SCREEN_SIZE_X - WB_CURSOR_MARGIN_TILES) {
-      BYTE prev = cs->xOffset;
-      screenUpdateCS(cs, right);
-      if (cs->xOffset == prev) break;
+      BYTE prev = clientSimGetXOffset(cs);
+      clientRenderFrame(cs, right);
+      if (clientSimGetXOffset(cs) == prev) break;
     } else {
       break;
     }
   }
   for (int i = 0; i < MAIN_SCREEN_SIZE_Y; ++i) {
-    int screenLy = (int)s_mapY - (int)cs->yOffset;
+    int screenLy = (int)s_mapY - (int)clientSimGetYOffset(cs);
     if (screenLy < WB_CURSOR_MARGIN_TILES + 1) {
-      BYTE prev = cs->yOffset;
-      screenUpdateCS(cs, up);
-      if (cs->yOffset == prev) break;
+      BYTE prev = clientSimGetYOffset(cs);
+      clientRenderFrame(cs, up);
+      if (clientSimGetYOffset(cs) == prev) break;
     } else if (screenLy > MAIN_SCREEN_SIZE_Y - WB_CURSOR_MARGIN_TILES) {
-      BYTE prev = cs->yOffset;
-      screenUpdateCS(cs, down);
-      if (cs->yOffset == prev) break;
+      BYTE prev = clientSimGetYOffset(cs);
+      clientRenderFrame(cs, down);
+      if (clientSimGetYOffset(cs) == prev) break;
     } else {
       break;
     }
@@ -117,8 +113,8 @@ static void follow_camera(struct ClientSim *cs) {
 /* True when the cursor's current absolute tile is within the visible
    15x15 area (1-based screen tile indices 1..MAIN_SCREEN_SIZE_X). */
 static bool cursor_on_screen(struct ClientSim *cs) {
-  int screenLx = (int)s_mapX - (int)cs->xOffset;
-  int screenLy = (int)s_mapY - (int)cs->yOffset;
+  int screenLx = (int)s_mapX - (int)clientSimGetXOffset(cs);
+  int screenLy = (int)s_mapY - (int)clientSimGetYOffset(cs);
   return (screenLx >= 1 && screenLx <= MAIN_SCREEN_SIZE_X &&
           screenLy >= 1 && screenLy <= MAIN_SCREEN_SIZE_Y);
 }
@@ -133,10 +129,7 @@ void buildCursorTick(struct ClientSim *cs, int dxPx, int dyPx) {
      visible reference instead of nudging an invisible reticle around
      the map. */
   if (!cursor_on_screen(cs)) {
-    if (MY_TANK(cs) != NULL) {
-      s_mapX = tankGetMX(&MY_TANK(cs));
-      s_mapY = tankGetMY(&MY_TANK(cs));
-    }
+    clientSimGetMyTankMapPos(cs, &s_mapX, &s_mapY);
     s_subX = 0;
     s_subY = 0;
   }

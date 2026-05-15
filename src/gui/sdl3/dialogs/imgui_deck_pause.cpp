@@ -19,8 +19,10 @@
 #include "../../lang.h"
 #include "../sdl3imgui.h"
 #include "../glyphs.h"
-#include "../../../bolo/client_sim.h"
+extern "C" {
+#include "client_sim.h"
 #include "../../../steam/steam_input_actions.h"
+}
 
 extern "C" void windowSetQuitting(void);
 extern "C" void windowNewGame(void);
@@ -86,7 +88,7 @@ void deckPauseRender(struct ClientSim *cs) {
     /* In the lobby, Players / Send Message / Leave Game don't apply —
        the lobby has its own player list + chat, and there's no game to
        leave.  Collapse to Resume / Settings / Configure Keys / Quit. */
-    const bool inLobby = (cs != nullptr && cs->inLobby);
+    const bool inLobby = (cs != nullptr && clientSimIsInLobby(cs));
 
     /* &s_open gives the modal a title-bar X close button.  ImGui's
        NavCancel does NOT auto-close modals (imgui.cpp line ~14949 — it

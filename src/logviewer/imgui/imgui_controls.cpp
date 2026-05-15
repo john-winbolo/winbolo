@@ -15,6 +15,7 @@
 #include "platform_config.h"
 #include "../../gui/lang.h"
 #include "../../gui/ui_mode.h"
+#include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -133,6 +134,7 @@ void lv_imgui_controls_window(void) {
         if (ImGui::Button(langGetText(STR_LV_REW_BTN), ImVec2(60, 0))) {
             lv_windowRewind();
         }
+        imguiHandOnHover();
         ImGui::SameLine();
 
         /* Play/Pause toggle button */
@@ -140,21 +142,25 @@ void lv_imgui_controls_window(void) {
             if (ImGui::Button(langGetText(STR_LV_PAUSE), ImVec2(50, 0))) {
                 lv_windowPause();
             }
+            imguiHandOnHover();
         } else {
             if (ImGui::Button(langGetText(STR_LV_PLAY_BTN), ImVec2(50, 0))) {
                 lv_windowPlay();
             }
+            imguiHandOnHover();
         }
 
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_LV_STOP), ImVec2(50, 0))) {
             lv_windowStop(0);
         }
+        imguiHandOnHover();
 
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_LV_FWD_BTN), ImVec2(60, 0))) {
             lv_windowFastForward();
         }
+        imguiHandOnHover();
 
         if (controlsDisabled) ImGui::EndDisabled();
 

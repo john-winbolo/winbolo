@@ -25,10 +25,10 @@
 *  Responsable for Lgms on the screen
 *********************************************************/
 
-#include "global.h"
-#include "players.h"
+#include "lv_global.h"
+#include "lv_players.h"
 #include "backend.h"
-#include "screenlgm.h"
+#include "lv_screenlgm.h"
 
 /* Prototypes */
 

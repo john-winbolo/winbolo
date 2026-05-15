@@ -94,7 +94,7 @@ static int renderMessageBoxContent(const char *message, ImguiMsgButtons buttons,
 
     float textRegionW = ImGui::GetContentRegionAvail().x;
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + textRegionW);
-    ImGui::TextWrapped("%s", message ? message : "");
+    imguiTextWrappedWithLinks(message ? message : "");
     ImGui::PopTextWrapPos();
 
     /* Push cursor below the icon if the text was shorter */
@@ -120,6 +120,7 @@ static int renderMessageBoxContent(const char *message, ImguiMsgButtons buttons,
         if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_OK;
         }
+        imguiHandOnHover();
     } else if (buttons == IMGUI_MSG_YES_NO) {
         float totalW = btnW * 2 + spacing;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - totalW) / 2.0f);
@@ -127,10 +128,12 @@ static int renderMessageBoxContent(const char *message, ImguiMsgButtons buttons,
         if (ImGui::Button(langGetText(STR_YES), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_YES;
         }
+        imguiHandOnHover();
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_NO), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_NO;
         }
+        imguiHandOnHover();
     } else { /* IMGUI_MSG_YES_NO_CANCEL */
         float totalW = btnW * 3 + spacing * 2;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - totalW) / 2.0f);
@@ -138,14 +141,17 @@ static int renderMessageBoxContent(const char *message, ImguiMsgButtons buttons,
         if (ImGui::Button(langGetText(STR_YES), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_YES;
         }
+        imguiHandOnHover();
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_NO), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_NO;
         }
+        imguiHandOnHover();
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0))) {
             result = IMGUI_MSG_RESULT_CANCEL;
         }
+        imguiHandOnHover();
     }
 
     return result;
@@ -407,6 +413,7 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
      * This avoids conflicts with any caller context that may be mid-frame. */
     ImGuiContext *msgCtx = ImGui::CreateContext();
     ImGui::SetCurrentContext(msgCtx);
+    imguiRegisterPlatformOpenUrl();
 
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -505,9 +512,12 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
 
         ImGui::SetNextWindowSizeConstraints(ImVec2(dialogW, 0),
                                             ImVec2(dialogW, FLT_MAX));
+        static float s_fadeMsgBox = 0.0f;
         if (ImGui::BeginPopupModal(popupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize |
                                    ImGuiWindowFlags_NoMove)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeMsgBox));
             /* Centre the modal in the window */
             ImVec2 modalSize = ImGui::GetWindowSize();
             ImGui::SetWindowPos(
@@ -520,6 +530,7 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
                 result = r;
                 ImGui::CloseCurrentPopup();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 

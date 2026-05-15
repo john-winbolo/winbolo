@@ -165,7 +165,7 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
   local _tw1 = clock_us()
   local r = wsim.run(C.WSIM_MAX_TICKS)
   local _tw2 = clock_us()
-  if BRAIN_PERF_LOG and (_tw2 - _tw0) > 200 then
+  if BRAIN_PROFILE_LOG and (_tw2 - _tw0) > 200 then
     opt.append("optimize.log", string.format(
       "  [wsim] goal=%s(%d,%d) snap=%.3fms run=%.3fms npath=%d",
       goal.kind, gmx, gmy, (_tw1-_tw0)/1000, (_tw2-_tw1)/1000, #path//2))
@@ -1025,6 +1025,20 @@ local function nearest_hostile_base(world, mx, my)
   return best, best_d
 end
 
+-- Substates during which a fresh attack_pill goal selection should
+-- LOCK ONTO the current pill instead of re-picking from the pool —
+-- protects in-progress takes from being yanked off-target. Hoisted
+-- above eval_attack_tank so the engage-break logic there can read it.
+local LOCK_SUBS = {
+  gather_trees=true, approach=true, build_walls=true,
+  aim=true, detree=true, charge=true, engage=true, rush=true,
+  in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
+  in_range_aim_finetune=true, shoot_pill=true,
+  ws_prebuild=true, ws_prewait=true, ws_advance=true,
+  ws_engage=true, ws_retreat=true, ws_rebuild=true,
+  swerve=true, post_engage=true, loiter=true,
+}
+
 local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
   state.attack_tank_breakdown = nil
 
@@ -1272,8 +1286,30 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
     if b.mx == best_tank.mx and b.my == best_tank.my then win_entry = b; break end
   end
 
+  -- Mid-take engage break: when we're committed to an attack_pill take
+  -- (in any LOCK_SUB substate) and an enemy tank is BOTH (a) within
+  -- shooting range and (b) further from our target pill than we are,
+  -- the situation is unfavourable — the target pill is shooting US, not
+  -- the tank — and we should turn and engage. Drop cost under pool 6's
+  -- mid-take floor (10) and flag the entry so hysteresis (additive +
+  -- multiplicative) is skipped for it. Without the flag, mid-take SW+CM
+  -- penalties would push the cost back over the lock floor.
+  local engage_break_lock = false
+  if state.goal and state.goal.kind == "attack_pill"
+     and LOCK_SUBS[state.goal.substate or ""]
+     and best_tank.dist <= C.TANK_COMBAT_ENGAGE_RANGE then
+    local tank_to_pill = U.mdist(best_tank.mx, best_tank.my,
+                                 state.goal.mx, state.goal.my)
+    local our_to_pill  = U.mdist(tmx, tmy, state.goal.mx, state.goal.my)
+    if tank_to_pill > our_to_pill then
+      best_cost = math.min(best_cost, 9)
+      engage_break_lock = true
+    end
+  end
+
   return {
     cost = best_cost,
+    _engage_break_lock = engage_break_lock or nil,
     goal = { kind = "attack_tank", mx = best_tank.mx, my = best_tank.my,
              wx = U.m2w(best_tank.mx), wy = U.m2w(best_tank.my),
              target_id = best_tank.id,
@@ -1283,8 +1319,9 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
              tank_standoff_deg = win_entry and win_entry.standoff_deg or nil,
              tank_standoff_mx = win_entry and win_entry.standoff_mx or nil,
              tank_standoff_my = win_entry and win_entry.standoff_my or nil, },
-    desc = BRAIN_POOL_VIZ and string.format("attack_tank@(%d,%d) cost=%.0f dist=%d spd=%.1f",
-           best_tank.mx, best_tank.my, best_cost, best_tank.dist, best_tank.speed) or "",
+    desc = BRAIN_POOL_VIZ and string.format("attack_tank@(%d,%d) cost=%.0f dist=%d spd=%.1f%s",
+           best_tank.mx, best_tank.my, best_cost, best_tank.dist, best_tank.speed,
+           engage_break_lock and " [engage-break]" or "") or "",
   }
 end
 
@@ -1518,7 +1555,12 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   end
 
   -- ── Scoring grid ────────────────────────────────────────────────────────
+  -- Capacity tier place_r: cap the heatmap search radius. (2R+1)² tiles
+  -- get scored, so halving R quarters the work.
   local R = C.STRATEGIC_PLACE_SEARCH_RADIUS
+  if state._capacity and state._capacity.place_r and state._capacity.place_r < R then
+    R = state._capacity.place_r
+  end
   local best_score = -math.huge
   local best_mx, best_my = nil, nil
   local all_cands = {}
@@ -1960,18 +2002,7 @@ local POOL_NAMES = {
   [12] = "wait_for_lgm",
 }
 
--- Substates during which a fresh attack_pill goal selection should
--- LOCK ONTO the current pill instead of re-picking from the pool —
--- protects in-progress takes from being yanked off-target.
-local LOCK_SUBS = {
-  gather_trees=true, approach=true, build_walls=true,
-  aim=true, detree=true, charge=true, engage=true, rush=true,
-  in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
-  in_range_aim_finetune=true, shoot_pill=true,
-  ws_prebuild=true, ws_prewait=true, ws_advance=true,
-  ws_engage=true, ws_retreat=true, ws_rebuild=true,
-  swerve=true, post_engage=true, loiter=true,
-}
+-- (LOCK_SUBS defined above eval_attack_tank.)
 
 -- Wall-shield investment substates; gain extra commitment penalty
 -- in goal_selection's hysteresis so we don't abandon a half-built
@@ -2270,7 +2301,7 @@ function M.build_eval_queue(state, world, info)
   -- to optimize.log directly so we don't need print2 enabled.
   if not state._base_in_pool then state._base_in_pool = {} end
   local function _diag_log_first_pool_add(pool_idx, pool_name, id, obj)
-    if not BRAIN_PERF_LOG then return end
+    if not BRAIN_PROFILE_LOG then return end
     local key = pool_idx .. ":" .. id
     if state._base_in_pool[key] then return end
     state._base_in_pool[key] = state.tick or 0
@@ -2583,15 +2614,6 @@ local function get_formula_inner(e)
         e._fin_age or 0, C.WOUNDED_FINISH_DECAY_TICKS or 500,
         _fin_mult)
       or  "1.00 (no wounded pill, or this IS the wounded pill, or HP > threshold, or decayed out)"
-    local _self_dr = e._self_dr or 0
-    local _d_self_dr
-    if _self_dr > 0 then
-      _d_self_dr = string.format("sum of target pill's danger contribution along spot path (HP-independent) = %.0f", _self_dr)
-    elseif e._self_dr_no_path then
-      _d_self_dr = "0 (NO PATH — dijkstra slate hadn't reached best_spot at eval time; trace returned nil)"
-    else
-      _d_self_dr = "0 (no path tile lands inside the target pill's range disk, or no contribution stamped)"
-    end
     local _ammo = e._ammo or 0
     local _sh_now = e._sh_now or 0
     local _sh_end = e._sh_end or 0
@@ -2637,16 +2659,16 @@ local function get_formula_inner(e)
     local _tw = e._travel_wound or 1.0
     local _d_pickup = e._pickup_detail or "(no path captured)"
     f = string.format(
-      "spot{%.0f}@(%d,%d) + pickup{%.0f}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s - self_dr{%.0f} + ammo{%s}"..
-      "||spot cost is NOT scaled by hp or wound"..
-      "|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|self_dr:%s|ammo:%s|spot:%s",
+      "spot{%.0f}@(%d,%d) + pickup{%.0f}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s + ammo{%s}"..
+      "||spot cost is offset-aware (target pill's danger contribution subtracted via load_danger_offset before A*); NOT scaled by hp or wound"..
+      "|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|ammo:%s|spot:%s",
       e._spot, e._spot_mx or 0, e._spot_my or 0,
       e._travel,
       e._spot_mx or 0, e._spot_my or 0, e._mx or 0, e._my or 0,
       _tw,
       e._stale, e._diff, e._anger, e._xfire, e._intcpt,
-      e._hp, _wound_detail, _self_dr, _ammo_str,
-      _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_self_dr, _d_ammo, _d_spot)
+      e._hp, _wound_detail, _ammo_str,
+      _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot)
   elseif p == 7 then
     local _d_threat = string.format(
       "%.2f[threat_val] x %.1f[ATTACK_BASE_THREAT_WEIGHT] = %.0f",
@@ -2702,6 +2724,11 @@ function M.step_eval_queue(state, world, info)
   -- Skip if pathfinder is actively running — cost_to would destroy its state
   local pf = state.pf
   if pf and pf.status == "running" then return end
+
+  -- Capacity tier eval_iv: pop a candidate only every Nth tick when
+  -- throttled. Tier 10 → every tick. Tier 1 → every 5 ticks.
+  local _eval_iv = (state._capacity and state._capacity.eval_iv) or 1
+  if _eval_iv > 1 and ((state.tick or 0) % _eval_iv) ~= 0 then return end
 
   local queue = state.eval_queue
   if not queue then return end
@@ -2783,9 +2810,10 @@ function M.step_eval_queue(state, world, info)
       goto continue
     end
 
-    -- All pools use KIND_NORMAL. Pool 6 (attack_pill) subtracts the target
-    -- pill's own danger contribution along the spot path via self_dr below —
-    -- that correction is more principled than discounting all danger 10x.
+    -- All pools use KIND_NORMAL. Pool 6 (attack_pill) computes spot_cost
+    -- with an offset-aware A* below — the target pill's contribution to
+    -- the danger field is temporarily subtracted via load_danger_offset
+    -- so the spot cost reflects an "as-if-the-pill-were-dead" approach.
     --
     -- Note: capture_pool / CAPTURE_THREAT_WEIGHT used to scale the A*
     -- fallback's danger weighting. With dij-only there's no fallback,
@@ -2843,7 +2871,7 @@ function M.step_eval_queue(state, world, info)
           _t_smart = clock_us() - _ts
           -- Diag: log pool 3 (capture_base) cost lookups so we can see
           -- whether Dijkstra is returning finite values yet.
-          if BRAIN_PERF_LOG and pool_idx == 3 then
+          if BRAIN_PROFILE_LOG and pool_idx == 3 then
             local rc = (raw_cost == math.huge) and "INF" or string.format("%.1f", raw_cost)
             opt.append("optimize.log", string.format(
               "  [diag] update_pool_cache pool=3 id=%s obj=(%d,%d) cheapest_adj=(%s,%s) raw_cost=%s tick=%d",
@@ -2970,11 +2998,6 @@ function M.step_eval_queue(state, world, info)
       -- Extra costs for attack_pill (pool 6)
       local anger_cost, xfire_cost, intcpt_cost, wound_mult = 0, 0, 0, 1.0
       local diff_cost, spot_cost = 0, 0
-      local self_dr = 0  -- self-danger reduction: target pill's contribution
-                         -- along the spot path, scaled by missing HP. Subtracts
-                         -- from the final cost so the bot doesn't get scared off
-                         -- approaching a pill it's about to kill.
-      local _self_dr_no_path = false  -- true when trace_path returned nil
       local ammo_cost = 0  -- shells gate: COST_INF if we can't finish the
                            -- pill, otherwise 25 per shell under SHELLS_LOW
                            -- the take would leave us at.
@@ -3044,6 +3067,8 @@ function M.step_eval_queue(state, world, info)
         elseif _sqdist < 900 then tier_ttl, tier_idx = 150, 2
         else                       tier_ttl, tier_idx = 500, 3
         end
+        local _ttl_mult = (state._capacity and state._capacity.ttl_mult) or 1.0
+        if _ttl_mult ~= 1.0 then tier_ttl = math.floor(tier_ttl * _ttl_mult) end
 
         local needs_eval
         if not dc then
@@ -3080,9 +3105,10 @@ function M.step_eval_queue(state, world, info)
             _spots     = nil
           end
         else
+          local _scan_step = (state._capacity and state._capacity.scan_step) or 5
           diff_score, _spots, best_spot =
             attack.evaluate_pill_difficulty(obj, world, force_detailed,
-                                            5, state.phase, state, tmx, tmy)
+                                            _scan_step, state.phase, state, tmx, tmy)
           diff_cache[dck] = { score = diff_score, spot = best_spot,
                               spots = _spots,  -- nil unless force_detailed
                               mx = obj.mx, my = obj.my,
@@ -3102,11 +3128,15 @@ function M.step_eval_queue(state, world, info)
           spot_found_mx = best_spot.mx
           spot_found_my = best_spot.my
           local _t_spot = clock_us()
-          -- Use KIND_NORMAL (full danger) for the spot — it's a real
-          -- position the tank must navigate to while the pill is still
-          -- alive and shooting.
-          spot_cost = smart_cost(KIND_NORMAL, tmx, tmy, best_spot.mx, best_spot.my,
-                                 boat_flag, shells, trees, mines, armour)
+          -- KIND_NORMAL Dijkstra lookup with target pill subtraction.
+          -- C side walks the slate's parent chain back to source and
+          -- subtracts pcontrib[tile] * danger_scale * inv_speed at each
+          -- non-source tile, returning the exact "as-if-this-pill-were-
+          -- dead" cost. Replaces smart_cost + self_dr walk-and-subtract.
+          local _pck = obj.my * 256 + obj.mx
+          local _pc  = threat.pill_contrib and threat.pill_contrib[_pck]
+          spot_cost = cpf.dijkstra_lookup_subtract_by_kind(
+                        cpf.KIND_NORMAL, best_spot.mx, best_spot.my, boat_flag, _pc)
           if spot_cost >= 1e9 then spot_cost = 500 end
           -- Travel = spot → dead pill (pill will be dead by the time we
           -- reach the spot, so this is a short capture walk).
@@ -3223,63 +3253,13 @@ function M.step_eval_queue(state, world, info)
           goal_spot_path_str = spot_path_str
           goal_spot_path_len = _path_tiles and #_path_tiles // 2 or 0
 
-          -- Self-danger reduction: subtract this pill's own contribution
-          -- to the spot-path cost, scaled linearly by missing HP. At full
-          -- HP we don't discount (pill is healthy and threatening); at 0
-          -- HP we discount fully (pill is about to die). Walks the
-          -- realized Dijkstra path and sums per-tile contributions in
-          -- cost-units (matches Dijkstra step formula:
-          -- danger * danger_scale * 16/speed, with danger_scale=1 here).
-          -- Self-danger reduction applies regardless of pill HP — the bot
-          -- is committed to attacking, so the target pill's contribution
-          -- to its own approach corridor shouldn't bully the planner even
-          -- at full HP. (Earlier this was scaled by missing HP; that
-          -- left the discount off precisely when it mattered most — the
-          -- first attack on a fresh pill.)
-          if spot_cost < 1e9 then
-            local pcontrib = threat.pill_contrib[obj.my * 256 + obj.mx]
-            if pcontrib then
-              -- Walk Dijkstra's parent chain when the slate reached the
-              -- spot; otherwise fall back to the A* search smart_cost
-              -- just ran. cpf.trace_path() returns the most-recent
-              -- cost_to result and stays valid until the next
-              -- cost_to/path_to call — nothing in this candidate's eval
-              -- runs another A* between smart_cost and here.
-              -- Use the multi-slate trace so we land on the same slate
-              -- smart_cost above used (lookup_by_kind walks all slates;
-              -- single-slate trace_path picks "best" which can be a
-              -- newer slate that hasn't reached best_spot yet, returning
-              -- nil even though the cost was found in an older slate).
-              -- No fallback to cpf.trace_path() — that would return
-              -- whatever the LAST cost_to ran (likely a different
-              -- candidate's path) and silently sum unrelated tiles.
-              local path = cpf.dijkstra_trace_path_by_kind(cpf.KIND_NORMAL,
-                                                            best_spot.mx, best_spot.my)
-              if path then
-                for i = 1, #path, 2 do
-                  local nx, ny = path[i], path[i+1]
-                  local k = ny * 256 + nx
-                  local p = pcontrib[k]
-                  if p then
-                    local tt = U.ttype(nx, ny)
-                    local spd = C.TERRAIN_SPEED and C.TERRAIN_SPEED[tt] or 16
-                    if spd <= 0 then spd = 16 end
-                    self_dr = self_dr + p * (16 / spd)
-                  end
-                end
-              else
-                -- Surface the trace failure on the entry so the formula
-                -- breakdown can show "self_dr=0 (no path)" instead of an
-                -- ambiguous 0 that could equally mean "path has no overlap".
-                _self_dr_no_path = true
-              end
-            end
-          end
+          -- (self_dr removed: the offset-aware A* above bakes the
+          -- as-if-pill-dead discount directly into spot_cost.)
         end
         if (_diff_us > 1000 or _spot_us > 1000) then
           if BRAIN_DEBUG_MODE then print2(string.format("  pool6 candidate id=%s diff=%.2fms spot=%.2fms",
                                tostring(id), _diff_us / 1000, _spot_us / 1000)) end
-          if BRAIN_PERF_LOG then opt.append("optimize.log", string.format(
+          if BRAIN_PROFILE_LOG then opt.append("optimize.log", string.format(
             "  [diag] pool6 cand id=%s diff=%.2f spot=%.2f just_evaluated=%s force_detailed=%s",
             tostring(id), _diff_us / 1000, _spot_us / 1000,
             tostring(just_evaluated), tostring(force_detailed))) end
@@ -3377,18 +3357,18 @@ function M.step_eval_queue(state, world, info)
 
       -- Spot cost (path to firing position) stays fixed. A* and other combat
       -- terms scale with hp/wound — a nearly-dead pill is easier to fight
-      -- but still costs the same to reach a good firing spot.
+      -- but still costs the same to reach a good firing spot. spot_cost
+      -- itself is computed via offset-aware A* (target pill's contribution
+      -- subtracted from the danger field), so the "as-if-pill-dead"
+      -- discount is already baked in — no separate self_dr term.
       -- travel (dp, pool 6 only) gets its own wound factor at 2x the wound
       -- discount (clamped to 1): heavily wounded pill → big travel discount,
       -- fresh pill → no discount. Separate from hp*wound to avoid stacking.
-      -- self_dr (pool 6 only) is the linear-by-HP discount on the spot path
-      -- for the target pill's own contribution; subtracted so the bot will
-      -- close in on a pill it's about to kill.
       -- ammo_cost (pool 6 only) is the shells-budget penalty; goes to
       -- COST_INF when we lack the shells to finish the pill at all.
       local travel_wound = (pool_idx == 6) and math.min(1.0, wound_mult * 2) or 1.0
       local combat = (stale_cost + diff_cost + anger_cost + xfire_cost + intcpt_cost) * hp_mult * wound_mult
-      local c = spot_cost + travel * travel_wound + combat * capture_mult + base_extra + threat_cost - self_dr + ammo_cost
+      local c = spot_cost + travel * travel_wound + combat * capture_mult + base_extra + threat_cost + ammo_cost
 
       -- capture_pill: replace flat-multiplier formula with distance^1.5 + danger.
       --   path^1.5 * DIST_SCALE  → cheap nearby, grows fast with distance
@@ -3421,7 +3401,6 @@ function M.step_eval_queue(state, world, info)
         entry._xfire=xfire_cost; entry._intcpt=intcpt_cost; entry._hp=hp_mult
         entry._wound=wound_mult; entry._hpv=obj.health or C.PILLS_MAX_HEALTH
         entry._ttc=_ticks_to_calm; entry._pa=pill_anger
-        entry._self_dr=self_dr
         entry._pickup_detail=goal_pickup_detail
         entry._pickup_path=goal_pickup_path
         entry._spot_method=goal_spot_method
@@ -3429,7 +3408,6 @@ function M.step_eval_queue(state, world, info)
         entry._spot_tick=goal_spot_tick
         entry._spot_path=goal_spot_path_str
         entry._spot_path_len=goal_spot_path_len
-        entry._self_dr_no_path=_self_dr_no_path
         entry._ammo=ammo_cost
         entry._sh_now=info.shells
         entry._sh_end=(info.shells or 0) - (obj.health or 0)
@@ -3473,7 +3451,7 @@ function M.step_eval_queue(state, world, info)
     -- shows up on the per-tick summary). Includes sub-timings for the
     -- 8-neighbor adjacent sweep + smart_cost call so we can identify
     -- which inner step dominates.
-    if BRAIN_PERF_LOG and _t_total > 500 then
+    if BRAIN_PROFILE_LOG and _t_total > 500 then
       opt.append("optimize.log", string.format(
         "  [diag] slow cand pool=%d id=%s total=%.2f raw=%.2f adj=%.2f smart=%.2f diff=%.2f spot=%.2f cost=%.0f obj=(%d,%d) hp=%s",
         pool_idx, tostring(id),
@@ -3549,7 +3527,7 @@ function M.finalize_pools(state, world, info)
     end
   end
 
-  if BRAIN_PERF_LOG then opt(string.format("    fp backfill %.2f ms", (clock_us() - _t0) / 1000)) end
+  if BRAIN_PROFILE then opt(string.format("    fp backfill %.2f ms", (clock_us() - _t0) / 1000)) end
   local _t1 = clock_us()
   -- Fresh cache each cycle (don't carry stale entries from last cycle)
   state.pool_cache = {}
@@ -3729,7 +3707,11 @@ function M.finalize_pools(state, world, info)
       if cur_pill then
         pill  = cur_pill
         pid   = cur_pid
-        pcost = -1  -- sentinel: locked, real cost not relevant
+        -- Soft mid-take lock. 10 is low enough to beat normal alternatives
+        -- (refuel, capture_*, attack_base, attack_pill on a different pill)
+        -- but stays beatable by an attack_tank goal that drops itself
+        -- under 10 — see eval_attack_tank's mid-take engage discount.
+        pcost = 10
       end
     end
     local lm6, lr6 = strategic_location_mult(pill.mx, pill.my, state, world, info, "attack_pill", pill)
@@ -3772,7 +3754,7 @@ function M.finalize_pools(state, world, info)
     pc[7] = nil
   end
 
-  if BRAIN_PERF_LOG then opt(string.format("    fp pool-finalizers %.2f ms", (clock_us() - _t1) / 1000)) end
+  if BRAIN_PROFILE then opt(string.format("    fp pool-finalizers %.2f ms", (clock_us() - _t1) / 1000)) end
   local _t2 = clock_us()
   -- Run cheap evaluators directly
   for _, idx in ipairs(FINALIZE_POOLS) do
@@ -3781,7 +3763,7 @@ function M.finalize_pools(state, world, info)
     if evaluator then
       pc[idx] = evaluator(state, world, info, tmx, tmy, boat, ammo)
     end
-    if BRAIN_PERF_LOG then opt(string.format("    fp eval[%d] %.2f ms", idx, (clock_us() - _te) / 1000)) end
+    if BRAIN_PROFILE then opt(string.format("    fp eval[%d] %.2f ms", idx, (clock_us() - _te) / 1000)) end
   end
 
   -- Summary: which pools got finalized
@@ -3825,7 +3807,7 @@ function M.update_pool_cache(state, world, info)
   -- giving ~49 ticks to process before the next decision.
   local _t_seq0 = clock_us()
   M.step_eval_queue(state, world, info)
-  if BRAIN_PERF_LOG then opt(string.format("  step_eval_queue done %.2f ms", (clock_us() - _t_seq0) / 1000)) end
+  if BRAIN_PROFILE then opt(string.format("  step_eval_queue done %.2f ms", (clock_us() - _t_seq0) / 1000)) end
 
   -- Staged-reveal pass for the pool-6 per-pill candidate overlays.
   -- Iterates the diff cache and emits each pill's spots with a mode
@@ -3878,9 +3860,9 @@ end
 --      applies hysteresis, picks lowest cost winner.
 -- =========================================================================
 local function goal_selection(state, world, info, quiet)
-  local _tgs0 = clock_us()  -- used by gs_diag slow-tick check (BRAIN_PERF_LOG)
+  local _tgs0 = clock_us()  -- used by gs_diag slow-tick check (BRAIN_PROFILE)
   local _tgs_t = 0
-  local _tgs_buf = state._pick_goal_timing  -- non-nil only when BRAIN_PERF_LOG; set by pick_goal
+  local _tgs_buf = state._pick_goal_timing  -- non-nil only when BRAIN_PROFILE; set by pick_goal
   if _tgs_buf then _tgs_t = _tgs0 end
   local function _tgs_log(label)
     if not _tgs_buf then return end
@@ -4212,14 +4194,16 @@ local function goal_selection(state, world, info, quiet)
     local co = state.capture_objective
     local p  = world.pills[co.id]
     if not p or p.owner == "friendly" then
-      print(string.format(TAG .. " CAPTURE: pill #%d captured!", co.id))
+      if BRAIN_DEBUG_MODE then print(string.format(TAG .. " CAPTURE: pill #%d captured!", co.id)) end
       state.command_reply     = string.format(C.BRAIN_NAME .. ": pill #%d captured!", co.id)
       state.capture_objective = nil
     elseif p.health == 0 then
       if not co.kill_tick then
         co.kill_tick = state.tick
-        print(string.format(TAG .. " CAPTURE: pill#%d killed at t=%d — holding %d ticks for shots to clear",
-              co.id, co.kill_tick, C.POST_KILL_WAIT_TICKS))
+        if BRAIN_DEBUG_MODE then
+          print(string.format(TAG .. " CAPTURE: pill#%d killed at t=%d — holding %d ticks for shots to clear",
+                co.id, co.kill_tick, C.POST_KILL_WAIT_TICKS))
+        end
       end
       local ticks_waited = state.tick - co.kill_tick
       if ticks_waited < C.POST_KILL_WAIT_TICKS then
@@ -4251,7 +4235,7 @@ local function goal_selection(state, world, info, quiet)
       local base, bid, bdist, bcands = nearest_where(world.bases, world, tmx, tmy,
         function(b) return b.owner ~= "friendly" end, boat, ammo, state, info, KIND_NORMAL)
       if not base then
-        print(TAG .. " CAPTURE: all bases captured!")
+        if BRAIN_DEBUG_MODE then print(TAG .. " CAPTURE: all bases captured!") end
         state.command_reply = C.BRAIN_NAME .. ": all bases captured!"
         state.base_capture_objective = nil
       else
@@ -4265,12 +4249,16 @@ local function goal_selection(state, world, info, quiet)
       local b = world.bases[bco.id]
       if not b or b.owner == "friendly" then
         if bco.all then
-          print(string.format(TAG .. " CAPTURE: base #%d captured, continuing cb:all", bco.id))
+          if BRAIN_DEBUG_MODE then
+            print(string.format(TAG .. " CAPTURE: base #%d captured, continuing cb:all", bco.id))
+          end
           bco.id = nil; bco.mx = 0; bco.my = 0
           state.pf.status = "idle"
           state.stuck_for = 0
         else
-          print(string.format(TAG .. " CAPTURE: base #%d captured!", bco.id))
+          if BRAIN_DEBUG_MODE then
+            print(string.format(TAG .. " CAPTURE: base #%d captured!", bco.id))
+          end
           state.command_reply = string.format(C.BRAIN_NAME .. ": base #%d captured!", bco.id)
           state.base_capture_objective = nil
         end
@@ -4459,12 +4447,18 @@ local function goal_selection(state, world, info, quiet)
           local loc_adj = C.CAPTURE_PILL_BASE_COST * (lm - 1.0)
           cost = cost + loc_adj
         end
+        -- Mid-take engage-break: hard-cap under pool-6's mid-take floor
+        -- (10) so phase weight / loc_adj can't push it back over.
+        if entry._engage_break_lock then
+          cost = math.min(cost, 9)
+        end
         pool[#pool + 1] = {
           cost = cost, _base_cost = cost,  -- _base_cost preserved for breakdown display
           goal = entry.goal, desc = entry.desc,
           cands = entry.cands, _pill = entry._pill, _pill_id = entry._pill_id,
           phase_weight = pw,
           loc_mult = lm, loc_reason = entry.loc_reason or "",
+          _engage_break_lock = entry._engage_break_lock,
         }
         ::continue_pool::
       end
@@ -4502,7 +4496,12 @@ local function goal_selection(state, world, info, quiet)
     -- base commitment so they aren't swallowed by GOAL_COMMITMENT_CAP.
     local cur_is_attack_tank = (state.goal.kind == "attack_tank")
     for _, c in ipairs(pool) do
-      if HYST_EXEMPT[c.goal.kind] then goto continue_hyst end
+      -- Engage-break: an attack_tank goal that detected a mid-take
+      -- threat (tank in range, further from pill than us) is exempt
+      -- from both additive SW+CM penalty AND the multiplicative ratio
+      -- gate (the gate only fires for entries with c.hysteresis set,
+      -- which we leave nil here).
+      if HYST_EXEMPT[c.goal.kind] or c._engage_break_lock then goto continue_hyst end
       local cg = goal_group(c.goal.kind)
       local effective_commit = commitment
       if cur_is_attack_tank then
@@ -4697,10 +4696,20 @@ local function goal_selection(state, world, info, quiet)
        and C.WSIM_OPENING_ENABLED == false then
       wsim_active = false
     end
+    -- Capacity tier wsim cap: nil = sim every entry (default), integer N =
+    -- sim top-N of the cost-sorted pool only, false = skip entirely.
+    local _wsim_cap = nil
+    if state._capacity then
+      _wsim_cap = state._capacity.wsim
+      if _wsim_cap == false then wsim_active = false end
+    end
     local _tgs_pre_wsim = clock_us()
     _tgs_log("pool_build")
     if wsim_active then
+      local _wsim_done = 0
       for _, c in ipairs(pool) do
+        if _wsim_cap and _wsim_done >= _wsim_cap then break end
+        _wsim_done = _wsim_done + 1
         -- Only sim goals that travel through danger (skip refuel/explore)
         local sim_kinds = { capture_base=true, capture_pill=true,
                             attack_pill=true, attack_base=true,
@@ -4724,7 +4733,7 @@ local function goal_selection(state, world, info, quiet)
           end
           local extra, killed, sdesc, wsim_path, wsim_result = wsim_evaluate_goal(c.goal, world, info, attack_id, spot_x, spot_y)
           -- Debug print: every wsim run, even 0-damage survivors.
-          do
+          if BRAIN_DEBUG_MODE then
             local shot_parts = {}
             if wsim_result and wsim_result.pills then
               for _, ps in ipairs(wsim_result.pills) do
@@ -4782,7 +4791,7 @@ local function goal_selection(state, world, info, quiet)
     end
     local _tgs_post_wsim = clock_us()
     _tgs_log("wsim")
-    if BRAIN_PERF_LOG and (_tgs_post_wsim - _tgs0) > 500 then
+    if BRAIN_PROFILE_LOG and (_tgs_post_wsim - _tgs0) > 500 then
       opt.append("optimize.log", string.format(
         "  [gs_diag] total=%.2fms pre_pool=%.2fms pool_build=%.2fms wsim=%.2fms pool_size=%d",
         (_tgs_post_wsim-_tgs0)/1000, (_tgs_pre_pool-_tgs0)/1000,
@@ -4937,7 +4946,7 @@ local function goal_selection(state, world, info, quiet)
   -- Compare on stable key (kind+target) so wsim tick changes don't spam
   local goal_key = result and string.format("%s@%d,%d", result.kind, result.mx or 0, result.my or 0) or nil
   if goal_key ~= last_strategic_goal then
-    if not quiet then
+    if not quiet and BRAIN_DEBUG_MODE then
       if desc then
         print(TAG .. " GOAL: " .. desc)
       elseif last_strategic_goal then
@@ -5013,7 +5022,7 @@ local function goal_selection(state, world, info, quiet)
     -- needing print2 enabled. Includes which pools had cached winners
     -- so we can see whether pool_cache was empty or just got filtered
     -- out (blocked / cooldown / phase weight zero).
-    if BRAIN_PERF_LOG then
+    if BRAIN_PROFILE_LOG then
       do
         local pc_summary = {}
         local pc = state.pool_cache or {}
@@ -5082,8 +5091,10 @@ function M.pick_goal(state, world, info, quiet)
     end
 
     if arrived then
-      print(string.format(TAG .. " CMD: ARRIVED at %s #%d (%d,%d)",
-            cg.kind, cg.id, cg.mx, cg.my))
+      if BRAIN_DEBUG_MODE then
+        print(string.format(TAG .. " CMD: ARRIVED at %s #%d (%d,%d)",
+              cg.kind, cg.id, cg.mx, cg.my))
+      end
       state.command_reply = string.format(C.BRAIN_NAME .. ": arrived at %s #%d (%d,%d)",
         cg.kind, cg.id, cg.mx, cg.my)
       state.command_goal = nil
@@ -5127,7 +5138,7 @@ function M.pick_goal(state, world, info, quiet)
   end
 
   -- Strategic goal selection (timing buf populated only when perf-log is active)
-  state._pick_goal_timing = _G.BRAIN_PERF_LOG and {} or nil
+  state._pick_goal_timing = _G.BRAIN_PROFILE and {} or nil
   local strategic = goal_selection(state, world, info, quiet)
   if strategic then return strategic end
 

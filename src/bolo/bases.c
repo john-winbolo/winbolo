@@ -31,15 +31,17 @@
 #include "global.h"
 #include "tank.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "messages.h"
 #include "players.h"
-#include "screen.h"
+#include "brain_data.h"
 #include "log.h"
 #include "../winbolonet/winbolonet.h"
 #include "bases.h"
 #include "game_sim.h"
 #include "client_sim.h"
-#include "../server/server_sim.h"
+#include "client_sim_internal.h"
+#include "server_sim.h"
 
 void basesUpdateTimer(GameSim *sim, int playerNumber){
 	sim->baseTimer[playerNumber]=BASE_TICKS_BETWEEN_REFUEL;
@@ -426,7 +428,7 @@ void basesUpdate(GameSim *sim, tank *tnk) {
 static void basesEmitCaptureMessage(GameSim *sim, struct ClientSim *cs,
                                     BYTE newOwner, BYTE prevOwner) {
   MessageArgs args;
-  BYTE selfPlayer = (cs != NULL) ? cs->myPlayerNum : sim->viewPlayer;
+  BYTE selfPlayer = (cs != NULL) ? clientSimGetMyPlayerNum(cs) : sim->viewPlayer;
   memset(&args, 0, sizeof(args));
   playersMakeMessageName(cs, &sim->plyrs, selfPlayer, newOwner, args.playerName);
   args.playerFlags = playersGetAccountFlags(&sim->plyrs, newOwner);
@@ -482,6 +484,11 @@ void basesEnqueueCaptureMessage(GameSim *sim, struct ClientSim *cs,
                                 BYTE newOwner, BYTE prevOwner) {
   if (prevOwner == NEUTRAL) {
     basesEmitCaptureMessage(sim, cs, newOwner, prevOwner);
+    return;
+  }
+
+  /* Allied steals are silent — mirrors the pillbox alliance gate. */
+  if (playersIsAllie(&sim->plyrs, newOwner, prevOwner) == TRUE) {
     return;
   }
 
@@ -554,7 +561,7 @@ void basesUpdateStock(GameSim *sim, BYTE baseNum) {
       /* Update the frontend status as required */
       if (oldArmour == BASE_DEAD && (*value)->item[baseNum].armour > BASE_DEAD) { /* FIXME: Changed to hardcoded value */
         if (isServer == FALSE) {
-          frontEndStatusBase((BYTE) (baseNum+1), (basesGetStatusNum(sim, (BYTE) (baseNum+1))));
+          frontEndStatusBase(clientSimFromSim(sim), (BYTE) (baseNum+1), (basesGetStatusNum(sim, (BYTE) (baseNum+1))));
         }
       }
     }
@@ -817,21 +824,21 @@ void basesRefueling(GameSim *sim, tank *tnk, BYTE baseNum) {
         tankAddArmour(sim, tnk, BASE_ARMOUR_GIVE);
         (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_ARMOUR);
         if (isServer == FALSE) {
-          frontEndUpdateBaseStatusBars(((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
+          frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
         }
       } else if (shellsAmount < TANK_FULL_SHELLS && ((*value)->item[baseNum].shells - BASE_SHELLS_GIVE) >= BASE_MIN_SHELLS) {
         (*value)->item[baseNum].shells -= BASE_SHELLS_GIVE;
         tankAddShells(sim, tnk, BASE_SHELLS_GIVE);
         (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_SHELL);
         if (isServer == FALSE) {
-          frontEndUpdateBaseStatusBars(((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
+          frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
         }
       } else if (mines < TANK_FULL_MINES && ((*value)->item[baseNum].mines - BASE_MINES_GIVE) >= BASE_MIN_MINES) {
         (*value)->item[baseNum].mines -= BASE_MINES_GIVE;
         tankAddMines(sim, tnk, BASE_MINES_GIVE);
         (*value)->item[baseNum].refuelTime = basesHalfTickCalulator(BASES_HALFTICK_TYPE_MINE);
         if (isServer == FALSE) {
-          frontEndUpdateBaseStatusBars(((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
+          frontEndUpdateBaseStatusBars(clientSimFromSim(sim), ((*value)->item[baseNum].shells), ((*value)->item[baseNum].mines), ((*value)->item[baseNum].armour));
         }
       }
       logAddEvent(log_BaseSetStock, baseNum, (*value)->item[baseNum].shells, (*value)->item[baseNum].mines, (*value)->item[baseNum].armour, 0, NULL);
@@ -961,7 +968,7 @@ void basesDamagePos(GameSim *sim, BYTE xValue, BYTE yValue) {
       }
       if ((*value)->item[count].armour <= BASE_DISPLAY_X) {
         if (isServer == FALSE) {
-          frontEndStatusBase((BYTE) (count+1), baseDead);
+          frontEndStatusBase(clientSimFromSim(sim), (BYTE) (count+1), baseDead);
         }
       }
       done = TRUE;
@@ -1374,7 +1381,7 @@ void basesServerRefuel(GameSim *sim, BYTE baseNum, BYTE addAmount) {
       /* Update the frontend status as required */
       if (oldArmour == BASE_DEAD && (*value)->item[baseNum].armour > BASE_DEAD) {
         if (isServer == FALSE) {
-          frontEndStatusBase((BYTE) (baseNum+1), (basesGetStatusNum(sim, (BYTE) (baseNum+1))));
+          frontEndStatusBase(clientSimFromSim(sim), (BYTE) (baseNum+1), (basesGetStatusNum(sim, (BYTE) (baseNum+1))));
         }
       }
     }
@@ -1538,7 +1545,7 @@ void basesGetBrainBaseInRect(ClientSim *cs, GameSim *sim, BYTE leftPos, BYTE rig
       } else {
         armour = (BYTE) ((*value)->item[count].armour / 5);
       }
-      screenAddBrainObject(cs, BASES_BRAIN_OBJECT_TYPE, wx, wy, count, armour, owner, 0);
+      brainDataAddObject(cs, BASES_BRAIN_OBJECT_TYPE, wx, wy, count, armour, owner, 0);
     }
     count++;
   }

@@ -28,11 +28,12 @@
 
 #include "global.h"
 #include "tank.h"
-#include "screen.h"
+#include "client_sim.h"
 #include "explosions.h"
 #include "util.h"
 #include "messages.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "building.h"
 #include "grass.h"
 #include "rubble.h"
@@ -265,9 +266,9 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
         position->y = (WORLD) (position->y + moveY);
         if (sim->isServer == FALSE && position->creator == playerNum) {
           if (testY > my) {
-            screenMoveViewOffsetUpCS((struct ClientSim *)sim, FALSE);
+            clientSimPanY((struct ClientSim *)sim, +1);
           } else if (testY < my) {
-            screenMoveViewOffsetUpCS((struct ClientSim *)sim, TRUE);
+            clientSimPanY((struct ClientSim *)sim, -1);
           } else {
             my = my;
           }
@@ -278,9 +279,9 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
         position->x = (WORLD) (position->x + moveX);
         if (sim->isServer == FALSE && position->creator == playerNum) {
           if (testX > mx) {
-            screenMoveViewOffsetLeftCS((struct ClientSim *)sim, FALSE);
+            clientSimPanX((struct ClientSim *)sim, +1);
           } else if (testX < mx) {
-            screenMoveViewOffsetLeftCS((struct ClientSim *)sim, TRUE);
+            clientSimPanX((struct ClientSim *)sim, -1);
           }
         }
         mx = newmx;
@@ -309,7 +310,7 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
         mapSetPos(sim, mp, mx, my, RIVER, FALSE, FALSE);
         if (!sim->isServer) { sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, mx, my); }
       }
-      if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }
+      if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
     } else {
       /* Remove from data structure */
       needUpdate = FALSE;
@@ -325,7 +326,7 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
         if (currentPos != RIVER && currentPos != DEEP_SEA) {
             mapSetPos(sim, mp, mx, my, CRATER, FALSE, FALSE);
             floodAddItem(&sim->ff, mx, my);
-            if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }
+            if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
         }
         if (sim->isServer) {
           count = 1;
@@ -534,7 +535,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   currentPos = mapGetPos(mp, (BYTE) (mx+moveX), (BYTE) (my+moveY));
   tkExplosionCheckRemove(sim, currentPos, (BYTE) (mx + moveX), (BYTE) (my +moveY));
   if (sim->isServer && pillsExistPos(pb, (BYTE) (mx+moveX), (BYTE) (my + moveY))) {
-    pillsGetDamagePos(pb, (BYTE) (mx+moveX), (BYTE) (my+moveY), TK_DAMAGE, sim->isServer);
+    pillsGetDamagePos(sim, pb, (BYTE) (mx+moveX), (BYTE) (my+moveY), TK_DAMAGE);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA) {
       mapSetPos(sim, mp,(BYTE) (mx+moveX), (BYTE) (my+moveY), CRATER, FALSE, FALSE);
       floodAddItem(&sim->ff, (BYTE) (mx+moveX), (BYTE) (my+moveY));
@@ -552,7 +553,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   currentPos = mapGetPos(mp, (BYTE) (mx+moveX), my);
   tkExplosionCheckRemove(sim, currentPos, (BYTE) (mx + moveX), my);
   if (sim->isServer && pillsExistPos(pb, (BYTE) (mx+moveX), my)) {
-    pillsGetDamagePos(pb, (BYTE) (mx+moveX), my, TK_DAMAGE, sim->isServer);
+    pillsGetDamagePos(sim, pb, (BYTE) (mx+moveX), my, TK_DAMAGE);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA) {
       mapSetPos(sim, mp,(BYTE) (mx+moveX), my, CRATER, FALSE, FALSE);
     floodAddItem(&sim->ff, (BYTE) (mx+moveX), my);
@@ -569,7 +570,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   currentPos = mapGetPos(mp, mx, (BYTE) (my+moveY));
   tkExplosionCheckRemove(sim, currentPos, mx, (BYTE) (my +moveY));
   if (sim->isServer && pillsExistPos(pb, mx, (BYTE) (my + moveY))) {
-    pillsGetDamagePos(pb, mx, (BYTE) (my + moveY), TK_DAMAGE, sim->isServer);
+    pillsGetDamagePos(sim, pb, mx, (BYTE) (my + moveY), TK_DAMAGE);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA) {
       mapSetPos(sim, mp, mx, (BYTE) (my+moveY), CRATER, FALSE, FALSE);
     floodAddItem(&sim->ff, mx, (BYTE) (my+moveY));
@@ -595,14 +596,14 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   currentPos = mapGetPos(mp, mx, my);
   tkExplosionCheckRemove(sim, currentPos, mx, my);
   if (sim->isServer && pillsExistPos(pb, mx, my)) {
-    pillsGetDamagePos(pb, mx, my, TK_DAMAGE, sim->isServer);
+    pillsGetDamagePos(sim, pb, mx, my, TK_DAMAGE);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA) {
       mapSetPos(sim, mp, mx, my, CRATER, FALSE, FALSE);
     floodAddItem(&sim->ff, mx, my);
   }
   if (!sim->isServer) {
     sim->callbacks.soundDist(sim->callbacks.ctx, bigExplosionNear, mx, my);
-    screenReCalcCS((struct ClientSim *)sim);
+    clientSimRecalc((struct ClientSim *)sim);
   }
 }
 

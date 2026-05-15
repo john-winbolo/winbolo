@@ -45,41 +45,22 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
   pf.dest_mx = dest_mx
   pf.dest_my = dest_my
 
-  local function _log(who, mx, my, extra)
-    local f = io.open("pf_next_ms.log", "a")
-    if not f then return end
-    local tmx_l = (info and info.tankx) and (info.tankx >> 8) or -1
-    local tmy_l = (info and info.tanky) and (info.tanky >> 8) or -1
-    local cheb = (mx >= 0 and tmx_l >= 0)
-      and math.max(math.abs(mx - tmx_l), math.abs(my - tmy_l))
-      or -1
-    f:write(string.format(
-      "t=%d who=%s tank=(%d,%d) new=(%d,%d) cheb=%d %s\n",
-      state and state.tick or -1, who, tmx_l, tmy_l, mx, my, cheb, extra or ""))
-    f:close()
-  end
   if status == 1 then
     pf.status  = "done"
     pf.next_mx = nx
     pf.next_my = ny
-    _log("bpc.path_to:done", nx, ny,
-         string.format("dest=(%d,%d)", dest_mx, dest_my))
     pf.age     = 0
   elseif status == 0 then
     pf.status = "running"
     if nx >= 0 then
       pf.next_mx = nx
       pf.next_my = ny
-      _log("bpc.path_to:running", nx, ny,
-           string.format("dest=(%d,%d)", dest_mx, dest_my))
     end
     pf.age = (pf.age or 0) + 1
   else
     pf.status  = "failed"
     pf.next_mx = -1
     pf.next_my = -1
-    _log("bpc.path_to:failed", -1, -1,
-         string.format("dest=(%d,%d)", dest_mx, dest_my))
   end
 
   if (pf.status == "done" or pf.status == "running") and pf.next_mx >= 0 then
