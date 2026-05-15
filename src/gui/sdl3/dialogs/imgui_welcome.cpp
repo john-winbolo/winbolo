@@ -191,16 +191,25 @@ extern "C" int imguiWelcomeShow(void) {
         /* Top-right logo + ghost menu column. Logo is purely decorative. */
         {
             const float restoreMargin = 12.0f * s;
+            const float miniBtnW      = 180.0f * s;
 
             if (logoTex && logoW > 0.0f) {
-                float restoreX = (float)winW - logoW - restoreMargin;
+                /* Center the logo horizontally over the button column. The
+                 * logo can be wider than miniBtnW, in which case the offset
+                 * goes negative and the logo extends past the column on both
+                 * sides equally — that's the intended look. Only clamp if
+                 * the centred position would extend past the window's right
+                 * edge entirely. */
+                float restoreX = (float)winW - miniBtnW - restoreMargin
+                                 + (miniBtnW - logoW) * 0.5f;
+                if (restoreX + logoW > (float)winW)
+                    restoreX = (float)winW - logoW;
                 float restoreY = restoreMargin;
                 ImGui::SetCursorPos(ImVec2(restoreX, restoreY));
                 ImGui::Image((ImTextureID)logoTex, ImVec2(logoW, logoH));
             }
 
             /* Transparent menu buttons below the logo */
-            const float miniBtnW = 180.0f * s;
             const float miniBtnH = 30.0f * s;
             const float miniBtnGap = 4.0f * s;
 #if BOLO_MOBILE
