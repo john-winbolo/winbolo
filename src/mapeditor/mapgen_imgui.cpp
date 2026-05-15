@@ -19,8 +19,8 @@
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 
-#include "mapeditor_generate.h"
-#include "mapeditor_maze.h"
+#include "mapgen.h"
+#include "mapgen_maze.h"
 #include "mapeditor_imgui.h"
 #include "../gui/lang.h"
 

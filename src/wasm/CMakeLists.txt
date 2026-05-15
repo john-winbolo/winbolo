@@ -141,10 +141,9 @@ set(SERVER_SOURCES
 file(GLOB LZW_SOURCES ${SRC_ROOT}/lzw/*.c)
 
 # Map editor sources reachable from shared dialogs (map chooser pulls in
-# the procedural generator + its imgui controls + maze generator).
+# the procedural generator's imgui controls; mapgen.c/mapgen_maze.c come
+# in via bolo_static).
 set(MAPEDITOR_SOURCES
-    ${SRC_ROOT}/mapeditor/mapeditor_generate.c
-    ${SRC_ROOT}/mapeditor/mapeditor_maze.c
     ${SRC_ROOT}/mapeditor/mapgen_imgui.cpp
 )
 
@@ -225,8 +224,7 @@ target_include_directories(winbolo PRIVATE
 )
 bolo_apply_include_rules(winbolo gui)
 bolo_grant_internal_source_access(winbolo
-    ${SRC_ROOT}/bolo/transport_udp_client.c
-    ${SRC_ROOT}/mapeditor/mapeditor_generate.c)
+    ${SRC_ROOT}/bolo/transport_udp_client.c)
 
 target_compile_definitions(winbolo PRIVATE
     _GNU_SOURCE

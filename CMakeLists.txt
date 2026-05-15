@@ -485,7 +485,6 @@ set(IOS_SERVER_SOURCES
     src/server/server_stubs.c
     src/server/server_dedicated_log_stubs.c
     src/server/threads.c
-    src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/mapeditor/mapgen_imgui.cpp
 )
 
@@ -639,8 +638,7 @@ target_include_directories(WinBoloIOS PRIVATE
 bolo_apply_include_rules(WinBoloIOS gui)
 bolo_grant_internal_source_access(WinBoloIOS
     src/bolo/client_mapload.c
-    src/bolo/transport_udp_client.c
-    src/mapeditor/mapeditor_generate.c)
+    src/bolo/transport_udp_client.c)
 
 target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
@@ -967,7 +965,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c
     src/gui/sdl3/tutorial_text.c
     src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c src/gui/sdl3/sound.c
-    src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_dedicated_log_stubs.c
@@ -1090,7 +1088,6 @@ bolo_grant_internal_source_access(WinBolo
     src/bolo/transport_udp_client.c
     src/mapeditor/mapeditor.c
     src/mapeditor/mapeditor_export.c
-    src/mapeditor/mapeditor_generate.c
     src/mapeditor/mapeditor_validate.c)
 
 if(WIN32)
@@ -1285,7 +1282,6 @@ set(SERVER_SOURCES
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
 )
 
 
@@ -1313,8 +1309,7 @@ bolo_grant_internal_source_access(WinBoloDS
     src/bolo/transport_udp_client.c
     src/server/servermain.c
     src/server/server_frontend_stubs.c
-    src/server/server_dedicated_log.c
-    src/mapeditor/mapeditor_generate.c)
+    src/server/server_dedicated_log.c)
 
 if(WIN32)
     target_sources(WinBoloDS PRIVATE
@@ -1593,7 +1588,6 @@ set(HEADLESS_SOURCES
     src/headless/cmd_stdin.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_dedicated_log_stubs.c
-    src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
 )
@@ -1634,8 +1628,7 @@ target_include_directories(WinBoloHeadless PRIVATE
 bolo_apply_include_rules(WinBoloHeadless runtime_only)
 bolo_grant_internal_source_access(WinBoloHeadless
     src/bolo/client_mapload.c
-    src/bolo/transport_udp_client.c
-    src/mapeditor/mapeditor_generate.c)
+    src/bolo/transport_udp_client.c)
 
 if(WIN32)
     target_link_libraries(WinBoloHeadless PRIVATE ws2_32 winmm user32)
@@ -1710,7 +1703,6 @@ set(GYM_SOURCES
     src/headless/headless_frontend.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_dedicated_log_stubs.c
-    src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
     src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
     src/gym/winbolo_gym.c
@@ -1824,7 +1816,6 @@ set(BRAINTEST_SOURCES
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
     src/server/server_dedicated_log_stubs.c
-    src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/braintest/braintest_main.c src/braintest/braintest_frontend.c
     src/braintest/braintest_viz_registry.c
     src/braintest/braintest_vizwindow.cpp
@@ -1934,7 +1925,7 @@ set(MAPEDITOR_SOURCES
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
     src/server/server_dedicated_log_stubs.c
-    src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
     src/mapeditor/mapeditor_main.c
     src/braintest/braintest_frontend.c

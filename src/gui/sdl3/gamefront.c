@@ -76,7 +76,7 @@
 #include "../../winbolonet/winbolonet.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
-#include "../../mapeditor/mapeditor_generate.h"
+#include "mapgen.h"
 /* Forward declaration only — don't include logviewer.h to avoid type conflicts
    between src/logviewer/ and src/bolo/ headers (both define map, bases, etc.) */
 void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,

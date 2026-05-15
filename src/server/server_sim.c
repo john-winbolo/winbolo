@@ -67,7 +67,7 @@
 #include "interpolation.h"
 #include "position_history.h"
 #include "screenbullet.h"
-#include "../mapeditor/mapeditor_generate.h"
+#include "mapgen.h"
 #include "../common/wb_log.h"
 #include "server_dedicated_log.h"
 
@@ -529,7 +529,7 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
     sim->sim.ss->numStarts = 0;
 
     /* Generate the map */
-    mapEditorGenerate(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, cfg);
+    mapGenRun(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, cfg);
 
     /* Run generated objects through the same init path as file-loaded maps
      * (pillsSetPill / basesSetBase / startsSetStart) so game-logic fields
@@ -607,7 +607,7 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
     sim->sim.pb->numPills = 0;
     sim->sim.bs->numBases = 0;
     sim->sim.ss->numStarts = 0;
-    mapEditorGenerate(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, &cfg);
+    mapGenRun(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, &cfg);
 
     /* Run generated objects through the same init path as file-loaded maps */
     {

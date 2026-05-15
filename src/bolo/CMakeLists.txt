@@ -50,6 +50,8 @@ add_library(bolo_static STATIC
     labels.c
     lgm.c
     log.c
+    mapgen.c
+    mapgen_maze.c
     messages.c
     mines.c
     minesexp.c
