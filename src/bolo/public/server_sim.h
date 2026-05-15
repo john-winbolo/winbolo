@@ -1028,6 +1028,22 @@ void serverSimUnregisterSubscriber(ServerSim *sim, SubscriberHandle h);
 void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt);
 
 /*********************************************************
+ *NAME:          serverSimAcceptAlliance
+ *               serverSimLeaveAlliance
+ *               serverSimSetPlayerName
+ *PURPOSE:
+ *  Apply an authoritative state change on the server and
+ *  publish the matching ControlEvent in one call. Wraps the
+ *  inline mutate-then-publish pair used by the UDP server's
+ *  PACKET_ALLIANCE_ACCEPT / PACKET_ALLIANCE_LEAVE /
+ *  PACKET_NAME_CHANGE handlers so callers outside src/bolo/
+ *  do not have to reach into the players sub-system directly.
+ *********************************************************/
+void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember);
+void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum);
+void serverSimSetPlayerName(ServerSim *sim, BYTE playerNum, const char *name);
+
+/*********************************************************
  *NAME:          serverSimFillGamePhaseEvent
  *               serverSimFillLobbySettingsEvent
  *               serverSimFillLobbySlotEvent
