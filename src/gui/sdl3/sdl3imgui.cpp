@@ -251,8 +251,8 @@ static void ensureWbnIconsLoaded(void) {
     if (s_wbnIconsLoaded) return;
     s_wbnIconsLoaded = true;
     SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
-    s_iconGlobe = imguiLoadSvgIcon(r, "data/ui/globe.svg", WBN_ICON_SIZE);
-    s_iconSteam = imguiLoadSvgIcon(r, "data/ui/steam.svg", WBN_ICON_SIZE);
+    s_iconGlobe = imguiLoadSvgIconWhite(r, "data/ui/globe.svg", WBN_ICON_SIZE);
+    s_iconSteam = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
     WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] globe=%p steam=%p s_renderer=%p drawRenderer=%p",
             (void *)s_iconGlobe, (void *)s_iconSteam,
             (void *)s_renderer, (void *)sdl3DrawGetRenderer());
