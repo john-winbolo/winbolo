@@ -32,6 +32,21 @@ extern "C" void sdl3ImguiSetMessageLabelLen(struct ClientSim *cs, int len);
 extern "C" void sdl3ImguiSetTankLabelLen(struct ClientSim *cs, int len);
 extern "C" void sdl3ImguiCycleDevicePreset(void);
 
+extern "C" void windowMenuAllowNewPlayers_toggle(struct ClientSim *cs);
+extern "C" void windowSoundEffects_toggle(void);
+extern "C" void windowBackgroundSoundChange_toggle(void);
+extern "C" void windowSoundKeepalive(void);
+extern "C" void windowMenuNewswire_toggle(struct ClientSim *cs);
+extern "C" void windowMenuAssistant_toggle(struct ClientSim *cs);
+extern "C" void windowMenuAI_toggle(struct ClientSim *cs);
+extern "C" void windowMenuNetwork_toggle(struct ClientSim *cs);
+extern "C" void windowMenuNetworkDebug_toggle(struct ClientSim *cs);
+extern "C" void clientSimRequestAllianceSelected(struct ClientSim *cs);
+extern "C" void clientSimLeaveAllianceSelf(struct ClientSim *cs);
+
+extern "C" void sdl3ImguiShowKeySetup(void);
+extern "C" void sdl3ImguiShowChangeName(void);
+
 #define LANG_STR(id) ([NSString stringWithUTF8String:langGetText(id)])
 
 @class WBMenuBridge;
@@ -59,6 +74,19 @@ static void *g_clientSim = NULL;
 - (void)onSetZoom:(id)sender;
 - (void)onSetMessageLabel:(id)sender;
 - (void)onSetTankLabel:(id)sender;
+- (void)onAllowNewPlayers:(id)sender;
+- (void)onShowKeySetup:(id)sender;
+- (void)onShowChangeName:(id)sender;
+- (void)onSoundEffects:(id)sender;
+- (void)onBackgroundSound:(id)sender;
+- (void)onSoundKeepalive:(id)sender;
+- (void)onNewswireMessages:(id)sender;
+- (void)onAssistantMessages:(id)sender;
+- (void)onAIMessages:(id)sender;
+- (void)onNetworkStatusMessages:(id)sender;
+- (void)onNetworkDebugMessages:(id)sender;
+- (void)onRequestAlliance:(id)sender;
+- (void)onLeaveAlliance:(id)sender;
 @end
 
 @implementation WBMenuBridge
@@ -141,6 +169,58 @@ static void *g_clientSim = NULL;
 - (void)onSetTankLabel:(id)sender {
     NSMenuItem *item = (NSMenuItem *)sender;
     if (g_clientSim) sdl3ImguiSetTankLabelLen((struct ClientSim *)g_clientSim, (int)[item tag]);
+}
+- (void)onAllowNewPlayers:(id)sender {
+    (void)sender;
+    if (g_clientSim) windowMenuAllowNewPlayers_toggle((struct ClientSim *)g_clientSim);
+}
+- (void)onShowKeySetup:(id)sender {
+    (void)sender;
+    sdl3ImguiShowKeySetup();
+}
+- (void)onShowChangeName:(id)sender {
+    (void)sender;
+    sdl3ImguiShowChangeName();
+}
+- (void)onSoundEffects:(id)sender {
+    (void)sender;
+    windowSoundEffects_toggle();
+}
+- (void)onBackgroundSound:(id)sender {
+    (void)sender;
+    windowBackgroundSoundChange_toggle();
+}
+- (void)onSoundKeepalive:(id)sender {
+    (void)sender;
+    windowSoundKeepalive();
+}
+- (void)onNewswireMessages:(id)sender {
+    (void)sender;
+    if (g_clientSim) windowMenuNewswire_toggle((struct ClientSim *)g_clientSim);
+}
+- (void)onAssistantMessages:(id)sender {
+    (void)sender;
+    if (g_clientSim) windowMenuAssistant_toggle((struct ClientSim *)g_clientSim);
+}
+- (void)onAIMessages:(id)sender {
+    (void)sender;
+    if (g_clientSim) windowMenuAI_toggle((struct ClientSim *)g_clientSim);
+}
+- (void)onNetworkStatusMessages:(id)sender {
+    (void)sender;
+    if (g_clientSim) windowMenuNetwork_toggle((struct ClientSim *)g_clientSim);
+}
+- (void)onNetworkDebugMessages:(id)sender {
+    (void)sender;
+    if (g_clientSim) windowMenuNetworkDebug_toggle((struct ClientSim *)g_clientSim);
+}
+- (void)onRequestAlliance:(id)sender {
+    (void)sender;
+    if (g_clientSim) clientSimRequestAllianceSelected((struct ClientSim *)g_clientSim);
+}
+- (void)onLeaveAlliance:(id)sender {
+    (void)sender;
+    if (g_clientSim) clientSimLeaveAllianceSelf((struct ClientSim *)g_clientSim);
 }
 @end
 
@@ -427,6 +507,112 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@"t"];
     [deviceItem setTarget:g_bridge];
     [editMenu addItem:deviceItem];
+
+    /* WinBolo menu — game-state toggles and player commands. Mirrors the
+     * ImGui WinBolo menu in renderMenuBar(). The in-window Settings entry
+     * is intentionally dropped here — App > Preferences (⌘,) opens the
+     * same panel. State sync (checkmarks for the toggles) lands in a
+     * later phase; for now items render unchecked regardless of state. */
+    NSMenuItem *winBoloItem = [mainMenu addItemWithTitle:LANG_STR(STR_MENU_WINBOLO) action:nil keyEquivalent:@""];
+    NSMenu *winBoloMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_MENU_WINBOLO)];
+    [winBoloItem setSubmenu:winBoloMenu];
+
+    NSMenuItem *allowNewPlayersItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_ALLOW_NEW_PLAYERS)
+        action:@selector(onAllowNewPlayers:)
+        keyEquivalent:@""];
+    [allowNewPlayersItem setTarget:g_bridge];
+    [winBoloMenu addItem:allowNewPlayersItem];
+
+    NSMenuItem *setKeysItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_SETKEYS)
+        action:@selector(onShowKeySetup:)
+        keyEquivalent:@"k"];
+    [setKeysItem setTarget:g_bridge];
+    [winBoloMenu addItem:setKeysItem];
+
+    NSMenuItem *changeNameItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_DLGCHANGENAME_TITLE)
+        action:@selector(onShowChangeName:)
+        keyEquivalent:@""];
+    [changeNameItem setTarget:g_bridge];
+    [winBoloMenu addItem:changeNameItem];
+
+    [winBoloMenu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *soundEffectsItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_SOUND_EFFECTS)
+        action:@selector(onSoundEffects:)
+        keyEquivalent:@""];
+    [soundEffectsItem setTarget:g_bridge];
+    [winBoloMenu addItem:soundEffectsItem];
+
+    NSMenuItem *backgroundSoundItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_BACKGROUND_SOUND)
+        action:@selector(onBackgroundSound:)
+        keyEquivalent:@""];
+    [backgroundSoundItem setTarget:g_bridge];
+    [winBoloMenu addItem:backgroundSoundItem];
+
+    NSMenuItem *soundKeepaliveItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_SOUND_KEEPALIVE)
+        action:@selector(onSoundKeepalive:)
+        keyEquivalent:@""];
+    [soundKeepaliveItem setTarget:g_bridge];
+    [winBoloMenu addItem:soundKeepaliveItem];
+
+    [winBoloMenu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *newswireMsgsItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_NEWSWIRE_MSGS)
+        action:@selector(onNewswireMessages:)
+        keyEquivalent:@""];
+    [newswireMsgsItem setTarget:g_bridge];
+    [winBoloMenu addItem:newswireMsgsItem];
+
+    NSMenuItem *assistantMsgsItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_ASSISTANT_MSGS)
+        action:@selector(onAssistantMessages:)
+        keyEquivalent:@""];
+    [assistantMsgsItem setTarget:g_bridge];
+    [winBoloMenu addItem:assistantMsgsItem];
+
+    NSMenuItem *aiMsgsItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_AI_MSGS)
+        action:@selector(onAIMessages:)
+        keyEquivalent:@""];
+    [aiMsgsItem setTarget:g_bridge];
+    [winBoloMenu addItem:aiMsgsItem];
+
+    NSMenuItem *netStatusMsgsItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_NETSTATUS_MSGS)
+        action:@selector(onNetworkStatusMessages:)
+        keyEquivalent:@""];
+    [netStatusMsgsItem setTarget:g_bridge];
+    [winBoloMenu addItem:netStatusMsgsItem];
+
+    NSMenuItem *netDebugMsgsItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_NETDEBUG_MSGS)
+        action:@selector(onNetworkDebugMessages:)
+        keyEquivalent:@""];
+    [netDebugMsgsItem setTarget:g_bridge];
+    [winBoloMenu addItem:netDebugMsgsItem];
+
+    [winBoloMenu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *requestAllianceItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_REQUEST_ALLIANCE)
+        action:@selector(onRequestAlliance:)
+        keyEquivalent:@"r"];
+    [requestAllianceItem setTarget:g_bridge];
+    [winBoloMenu addItem:requestAllianceItem];
+
+    NSMenuItem *leaveAllianceItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LEAVE_ALLIANCE)
+        action:@selector(onLeaveAlliance:)
+        keyEquivalent:@""];
+    [leaveAllianceItem setTarget:g_bridge];
+    [winBoloMenu addItem:leaveAllianceItem];
 
     /* Window menu — items dispatched through the responder chain to the
      * key NSWindow; no explicit targets. */
