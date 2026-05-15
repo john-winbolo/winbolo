@@ -2,6 +2,8 @@
 
 #ifdef __APPLE__
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -22,6 +24,25 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim);
  * Safe to call every frame; the value is stashed verbatim. NULL is
  * acceptable (trampolines that need it will no-op). */
 void mac_menubar_set_clientsim(void *clientSim);
+
+/* Snapshot of UI state that the native menu mirrors. Populated by
+ * sdl3imgui.cpp once per frame and passed to mac_menubar_refresh() to
+ * sync NSMenuItem .state / .enabled / .title with the in-window menu. */
+struct MacMenuState {
+    int  frameRate;        /* current FRAME_RATE_* value; matched against item tag */
+    int  zoomFactor;       /* current ZOOM_FACTOR_* value; matched against item tag */
+    bool fit1x;            /* whether 1x window size fits on the current display */
+    bool fit2x;            /* 2x */
+    bool fit3x;            /* 3x */
+    bool fit4x;            /* 4x */
+    bool smoothScrolling;
+    char deviceLabel[64];  /* Full Edit > Device menu item title, e.g. "Device iPhone" */
+};
+
+/* Push the snapshot into the native menu. Walks cached NSMenuItem
+ * pointers and writes .state / .enabled / .title from `s`. Cheap to
+ * call every frame; NULL is a no-op. */
+void mac_menubar_refresh(const struct MacMenuState *s);
 
 #ifdef __cplusplus
 }

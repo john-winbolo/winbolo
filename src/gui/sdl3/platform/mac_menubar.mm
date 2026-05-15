@@ -58,6 +58,15 @@ extern "C" void clientSimCheckNearbyPlayers(struct ClientSim *cs);
 static WBMenuBridge *g_bridge = nil;
 static void *g_clientSim = NULL;
 
+/* Cached menu / item pointers populated during mac_menubar_install() and
+ * walked by mac_menubar_refresh() to mirror in-window state. Submenus
+ * cache the NSMenu so the refresh can iterate items by tag rather than
+ * caching one pointer per item. */
+static NSMenu     *s_frameRateMenu       = nil;
+static NSMenu     *s_windowSizeMenu      = nil;
+static NSMenuItem *s_smoothScrollingItem = nil;
+static NSMenuItem *s_deviceItem          = nil;
+
 @interface WBMenuBridge : NSObject
 - (void)onQuit:(id)sender;
 - (void)onAbout:(id)sender;
@@ -411,6 +420,8 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [fr10 setTarget:g_bridge]; [fr10 setTag:19]; /* FRAME_RATE_10 */
     [frameRateMenu addItem:fr10];
 
+    s_frameRateMenu = frameRateMenu;
+
     /* Window Size submenu — tag values are ZOOM_FACTOR_* macros. */
     NSMenuItem *windowSizeRoot = [editMenu addItemWithTitle:LANG_STR(STR_MENU_WINDOW_SIZE) action:nil keyEquivalent:@""];
     NSMenu *windowSizeMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_MENU_WINDOW_SIZE)];
@@ -438,6 +449,12 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [zoomCustom setTarget:g_bridge]; [zoomCustom setTag:0]; /* ZOOM_FACTOR_CUSTOM */
     [windowSizeMenu addItem:zoomCustom];
 
+    /* Window Size is the only submenu with explicit per-item .enabled
+     * gating (based on fit1x..fit4x). Turn off AppKit auto-enable so our
+     * flags actually take effect; other submenus keep the default. */
+    [windowSizeMenu setAutoenablesItems:NO];
+    s_windowSizeMenu = windowSizeMenu;
+
     /* Smooth Scrolling — single toggle, no shortcut. */
     NSMenuItem *smoothScrollItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_MENU_SMOOTH_SCROLLING)
@@ -445,6 +462,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [smoothScrollItem setTarget:g_bridge];
     [editMenu addItem:smoothScrollItem];
+    s_smoothScrollingItem = smoothScrollItem;
 
     [editMenu addItem:[NSMenuItem separatorItem]];
 
@@ -537,6 +555,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@"t"];
     [deviceItem setTarget:g_bridge];
     [editMenu addItem:deviceItem];
+    s_deviceItem = deviceItem;
 
     /* WinBolo menu — game-state toggles and player commands. Mirrors the
      * ImGui WinBolo menu in renderMenuBar(). The in-window Settings entry
@@ -739,4 +758,38 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
 
 void mac_menubar_set_clientsim(void *clientSim) {
     g_clientSim = clientSim;
+}
+
+void mac_menubar_refresh(const struct MacMenuState *s) {
+    if (!s) return;
+
+    if (s_smoothScrollingItem) {
+        [s_smoothScrollingItem setState:(s->smoothScrolling ? NSControlStateValueOn : NSControlStateValueOff)];
+    }
+
+    if (s_frameRateMenu) {
+        for (NSMenuItem *item in [s_frameRateMenu itemArray]) {
+            [item setState:(([item tag] == s->frameRate) ? NSControlStateValueOn : NSControlStateValueOff)];
+        }
+    }
+
+    if (s_windowSizeMenu) {
+        for (NSMenuItem *item in [s_windowSizeMenu itemArray]) {
+            NSInteger tag = [item tag];
+            [item setState:((tag == s->zoomFactor) ? NSControlStateValueOn : NSControlStateValueOff)];
+            BOOL enabled = YES;
+            switch (tag) {
+                case 1: enabled = s->fit1x ? YES : NO; break;
+                case 2: enabled = s->fit2x ? YES : NO; break;
+                case 3: enabled = s->fit3x ? YES : NO; break;
+                case 4: enabled = s->fit4x ? YES : NO; break;
+                default: break; /* tag 0 (Custom) and separators stay enabled */
+            }
+            [item setEnabled:enabled];
+        }
+    }
+
+    if (s_deviceItem && s->deviceLabel[0]) {
+        [s_deviceItem setTitle:[NSString stringWithUTF8String:s->deviceLabel]];
+    }
 }

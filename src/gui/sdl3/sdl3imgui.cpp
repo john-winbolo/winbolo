@@ -2972,8 +2972,49 @@ bool sdl3ImguiIsDialogOpen(void) {
            (g && g->OpenPopupStack.Size > 0);
 }
 
+#ifdef __APPLE__
+/* Build a fresh MacMenuState from current globals + display geometry.
+ * Fit1x..fit4x mirror the in-window Window Size enable-gating arithmetic
+ * at line ~2038 above; the device-label format mirrors the in-window
+ * snprintf at line ~2099. */
+static void populateMacMenuState(MacMenuState *s) {
+    s->frameRate       = frameRate;
+    s->zoomFactor      = (int)zoomFactor;
+    s->smoothScrolling = smoothScrollingEnabled;
+
+    int dispW = 99999, dispH = 99999;
+    if (s_window) {
+        SDL_DisplayID dispID = SDL_GetDisplayForWindow(s_window);
+        SDL_Rect usable;
+        if (SDL_GetDisplayUsableBounds(dispID, &usable)) {
+            dispW = usable.w;
+            dispH = usable.h;
+        }
+    }
+    s->fit1x = (1 * SDL3_SCREEN_W <= dispW) && (1 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
+    s->fit2x = (2 * SDL3_SCREEN_W <= dispW) && (2 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
+    s->fit3x = (3 * SDL3_SCREEN_W <= dispW) && (3 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
+    s->fit4x = (4 * SDL3_SCREEN_W <= dispW) && (4 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
+
+    const char *presetLabel =
+        (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets)
+            ? s_devicePresets[g_currentDevicePreset].name
+            : langGetText(STR_MENU_DESKTOP);
+    SDL_snprintf(s->deviceLabel, sizeof s->deviceLabel, "%s %s",
+                 langGetText(STR_MENU_DEVICE), presetLabel);
+}
+#endif
+
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (!s_window || !s_renderer) return;
+
+#ifdef __APPLE__
+    if (!uiModeIsTablet()) {
+        MacMenuState mms = {};
+        populateMacMenuState(&mms);
+        mac_menubar_refresh(&mms);
+    }
+#endif
 
     /* Build the ImGui frame */
     ImGui_ImplSDLRenderer3_NewFrame();
