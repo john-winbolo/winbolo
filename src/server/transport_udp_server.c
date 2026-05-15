@@ -46,6 +46,7 @@
 #include "playername_validate.h"
 #include "lobby_bot_pools.h"
 #include "../common/wb_log.h"
+#include "../mapeditor/mapeditor_generate.h"  /* MapGenConfig, mapGenSeedToConfig */
 
 #ifdef _WIN32
 #define strcasecmp _stricmp
@@ -3529,6 +3530,55 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             serverSimCommitPreview(sim);
             WB_LOG_INFO(WB_LOG_CAT_NET,
                         "[LOBBY] PREVIEW_COMMIT: kept current map");
+            break;
+        }
+        case PACKET_LOBBY_PREVIEW_RANDOM: {
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 1) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
+                              LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            uint8_t seedLen = buf[PACKET_HEADER_SIZE];
+            if (seedLen == 0 || seedLen > 63 ||
+                len < PACKET_HEADER_SIZE + 1 + seedLen) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
+                              LOBBY_REJECT_INVALID);
+                break;
+            }
+            char seedStr[64];
+            memset(seedStr, 0, sizeof(seedStr));
+            memcpy(seedStr, buf + PACKET_HEADER_SIZE + 1, seedLen);
+
+            MapGenConfig cfg;
+            if (!mapGenSeedToConfig(seedStr, &cfg)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
+                              LOBBY_REJECT_INVALID);
+                WB_LOG_INFO(WB_LOG_CAT_NET,
+                            "[LOBBY] PREVIEW_RANDOM rejected: bad seed '%s'",
+                            seedStr);
+                break;
+            }
+            /* Region is whatever the seed encoded — but seeds may
+             * have been generated against a different region, so
+             * pin to the standard playable area. */
+            cfg.x1 = MAP_MINE_EDGE_LEFT + 1;
+            cfg.y1 = MAP_MINE_EDGE_TOP + 1;
+            cfg.x2 = MAP_MINE_EDGE_RIGHT - 1;
+            cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
+
+            if (!serverSimReloadRandomMap(sim, &cfg)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
+                              LOBBY_REJECT_INVALID);
+                break;
+            }
+            transportUdpServerNotifyMapChange(sim);
+            serverSimPublishLobbySettings(sim);
+            WB_LOG_INFO(WB_LOG_CAT_NET,
+                        "[LOBBY] PREVIEW_RANDOM ok: '%s'", seedStr);
             break;
         }
         case PACKET_LOBBY_MAP_LIST_REQ: {

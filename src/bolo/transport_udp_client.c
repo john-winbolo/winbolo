@@ -2514,6 +2514,22 @@ void transportUdpClientSendLobbyPreviewCommit(Transport *t) {
     udpClientSendTo(c, buf, sizeof(buf));
 }
 
+void transportUdpClientSendLobbyPreviewRandom(Transport *t,
+                                              const char *seedStr) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (!seedStr) seedStr = "";
+    int seedLen = (int)strlen(seedStr);
+    if (seedLen > 63) seedLen = 63; /* seed string is ~30 chars max */
+
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 64];
+    packHeader(buf, PACKET_LOBBY_PREVIEW_RANDOM, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = (uint8_t)seedLen;
+    if (seedLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 1, seedStr, seedLen);
+    udpClientSendTo(c, buf, PACKET_HEADER_SIZE + 1 + seedLen);
+}
+
 void transportUdpClientSendLobbyMapListRequest(Transport *t,
                                                 const char *relPath) {
     if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;

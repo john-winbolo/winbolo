@@ -255,6 +255,12 @@ void transportUdpClientSendLobbySetMap(Transport *t,
 void transportUdpClientSendLobbyPreviewCancel(Transport *t);
 void transportUdpClientSendLobbyPreviewCommit(Transport *t);
 
+/* Procedural-map preview. seedStr is a mapGenConfigToSeed-encoded
+ * string the server unpacks back into a MapGenConfig and feeds to
+ * mapEditorGenerate. Auto-stashes the previous map server-side. */
+void transportUdpClientSendLobbyPreviewRandom(Transport *t,
+                                              const char *seedStr);
+
 /* Ask the server to enumerate data/maps/<relPath>. Empty / NULL =
  * root. Reply arrives async as PACKET_LOBBY_MAP_LIST_RSP and is
  * stored on ClientSim's lobbyMapList* fields. */

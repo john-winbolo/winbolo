@@ -246,6 +246,11 @@ void clientSimNetSendLobbyPreviewCommit(ClientSim *cs) {
   transportUdpClientSendLobbyPreviewCommit(&cs->transport);
 }
 
+void clientSimNetSendLobbyPreviewRandom(ClientSim *cs, const char *seedStr) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyPreviewRandom(&cs->transport, seedStr);
+}
+
 void clientSimNetSendLobbyMapListRequest(ClientSim *cs,
                                          const char *relPath) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;

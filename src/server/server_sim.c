@@ -618,30 +618,21 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
     return sim;
 }
 
-bool serverSimRandomMapRegenerate(ServerSim *sim) {
+/* Core "apply MapGenConfig to the running sim" worker shared by
+ * serverSimRandomMapRegenerate (between-round random refresh) and
+ * serverSimReloadRandomMap (preview-cycle pick). Wipes the map,
+ * runs mapEditorGenerate, re-initialises pills/bases/starts, refreshes
+ * cachedMapData, sets mapName from the seed, and clears human ready
+ * flags. Does NOT manage the previousMapData stash or randomMapConfig
+ * provenance — those live in the call sites. */
+static bool serverSimApplyRandomMapConfig(ServerSim *sim,
+                                          const MapGenConfig *cfg) {
     BYTE tempBuf[65536];
     int len;
-    char seedStr[64];
-    char msg[128];
     int x, y;
-    MapGenConfig cfg;
 
-    if (!sim->randomMapEnabled) return FALSE;
-    if (sim->state != serverStateLobby) return FALSE;
-
-    cfg = sim->randomMapConfig;
-
-    if (!sim->randomMapFixedSeed) {
-        /* Generate a new random seed */
-        cfg.seed = (uint32_t)time(NULL) ^ ((uint32_t)clock() << 16);
-        if (cfg.seed == 0) cfg.seed = 1;
-    }
-    /* else: keep the same seed for reproducible maps */
-
-    /* Clear map */
+    /* Wipe map to DEEP_SEA + re-mine the auto-mined border ring. */
     memset((*sim->sim.mp).mapItem, DEEP_SEA, sizeof((*sim->sim.mp).mapItem));
-
-    /* Fill mine border */
     for (x = 0; x < 256; x++) {
         for (y = 0; y < 256; y++) {
             if (x <= MAP_MINE_EDGE_LEFT || x >= MAP_MINE_EDGE_RIGHT ||
@@ -651,13 +642,16 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
         }
     }
 
-    /* Clear and regenerate objects */
-    sim->sim.pb->numPills = 0;
-    sim->sim.bs->numBases = 0;
+    /* Zero object counts + generate. */
+    sim->sim.pb->numPills  = 0;
+    sim->sim.bs->numBases  = 0;
     sim->sim.ss->numStarts = 0;
-    mapEditorGenerate(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, &cfg);
+    mapEditorGenerate(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss,
+                       cfg);
 
-    /* Run generated objects through the same init path as file-loaded maps */
+    /* Run generated objects through the same init path as file-loaded
+     * maps so game-logic fields (coolDown, justStopped, etc.) are
+     * initialised. */
     {
         BYTE i;
         for (i = 0; i < sim->sim.pb->numPills; i++) {
@@ -673,31 +667,28 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
             startsSetStart(&sim->sim.ss, &tmp, (BYTE)(i + 1));
         }
     }
-
     basesClearMines(&sim->sim);
 
-    /* Update cached map */
+    /* Refresh cached compressed map. */
     len = serverSimGetCompressedMap(sim, tempBuf);
     if (sim->cachedMapData) free(sim->cachedMapData);
-    sim->cachedMapData = malloc(len);
+    sim->cachedMapData = (BYTE *)malloc(len);
     if (sim->cachedMapData == NULL) {
+        sim->cachedMapDataLen = 0;
         return FALSE;
     }
     memcpy(sim->cachedMapData, tempBuf, len);
     sim->cachedMapDataLen = len;
 
-    /* Update map name */
-    mapGenConfigToSeed(&cfg, seedStr, sizeof(seedStr));
-    snprintf(sim->mapName, MAP_STR_SIZE, "rand_%.30s", seedStr);
+    /* Map name = "rand_<seed>" so UI labels read sensibly. */
+    {
+        char seedStr[64];
+        mapGenConfigToSeed(cfg, seedStr, sizeof(seedStr));
+        snprintf(sim->mapName, MAP_STR_SIZE, "rand_%.30s", seedStr);
+    }
 
-    /* Store updated config */
-    sim->randomMapConfig = cfg;
-
-    snprintf(msg, sizeof(msg), "Random map regenerated, seed: %s", seedStr);
-    serverSimConsoleMessage(msg);
-
-    /* Reset lobby ready state. Bots stay permanently ready (no UI
-     * to click; set in botManagerAddBot). */
+    /* Reset human ready flags — they need to re-acknowledge the new
+     * map. Bots stay ready (no UI to click). */
     {
         int i;
         for (i = 0; i < MAX_TANKS; i++) {
@@ -706,7 +697,32 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
             }
         }
     }
+    return TRUE;
+}
 
+bool serverSimRandomMapRegenerate(ServerSim *sim) {
+    char seedStr[64];
+    char msg[128];
+    MapGenConfig cfg;
+
+    if (!sim->randomMapEnabled) return FALSE;
+    if (sim->state != serverStateLobby) return FALSE;
+
+    cfg = sim->randomMapConfig;
+    if (!sim->randomMapFixedSeed) {
+        /* Generate a new random seed; keep deterministic if pinned. */
+        cfg.seed = (uint32_t)time(NULL) ^ ((uint32_t)clock() << 16);
+        if (cfg.seed == 0) cfg.seed = 1;
+    }
+
+    if (!serverSimApplyRandomMapConfig(sim, &cfg)) return FALSE;
+
+    /* This call site owns the random-map provenance: update the
+     * stored config and log a between-round regenerate message. */
+    sim->randomMapConfig = cfg;
+    mapGenConfigToSeed(&cfg, seedStr, sizeof(seedStr));
+    snprintf(msg, sizeof(msg), "Random map regenerated, seed: %s", seedStr);
+    serverSimConsoleMessage(msg);
     return TRUE;
 }
 
@@ -888,6 +904,46 @@ bool serverSimRevertPreview(ServerSim *sim) {
 
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
+    return TRUE;
+}
+
+bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {
+    if (!sim || !cfg) return FALSE;
+    if (sim->state != serverStateLobby) {
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "serverSimReloadRandomMap rejected: state=%d",
+            (int)sim->state);
+        return FALSE;
+    }
+
+    /* Stash the previously-committed map before we overwrite anything.
+     * Same idea as serverSimReloadMap — keep the ORIGINAL committed
+     * map across a chain of previews so one Cancel rolls all the
+     * way back. */
+    if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
+        sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
+        if (sim->previousMapData) {
+            memcpy(sim->previousMapData, sim->cachedMapData,
+                   sim->cachedMapDataLen);
+            sim->previousMapDataLen = sim->cachedMapDataLen;
+            memcpy(sim->previousMapName, sim->mapName,
+                   sizeof(sim->previousMapName));
+        }
+    }
+
+    if (!serverSimApplyRandomMapConfig(sim, cfg)) return FALSE;
+
+    {
+        char seedStr[64];
+        char msg[128];
+        mapGenConfigToSeed(cfg, seedStr, sizeof(seedStr));
+        snprintf(msg, sizeof(msg),
+                 "Random preview generated, seed: %s", seedStr);
+        serverSimConsoleMessage(msg);
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "serverSimReloadRandomMap: now '%s' (%d compressed bytes)",
+            sim->mapName, sim->cachedMapDataLen);
+    }
     return TRUE;
 }
 

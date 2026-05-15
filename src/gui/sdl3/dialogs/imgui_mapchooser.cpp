@@ -672,18 +672,29 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
     /* Left panel */
     ImGui::BeginChild("##MapLeft", ImVec2(leftPanelW, height), ImGuiChildFlags_Borders);
 
-    if (state->randomMapSelected) {
-        /* --- Random map generator mode --- */
-
-        /* Back button */
-        if (ImGui::Button(langGetText(STR_MAPCHOOSER_LOADMAP), ImVec2(-1, 0))) {
-            state->randomMapSelected = false;
-            /* Restore the previously selected map preview */
-            updatePreview(state, renderer);
+    if (state->randomMapSelected || state->randomTabOnly) {
+        /* --- Random map generator mode ---
+         *
+         * randomTabOnly clients (lobby's Random tab) skip the
+         * "Back to map list" button — they live inside a separate
+         * tab and there's no list to go back to here. */
+        if (!state->randomTabOnly) {
+            if (ImGui::Button(langGetText(STR_MAPCHOOSER_LOADMAP), ImVec2(-1, 0))) {
+                state->randomMapSelected = false;
+                updatePreview(state, renderer);
+                changed = true;
+            }
+            ImGui::Separator();
+        } else if (!state->randomMapSelected) {
+            /* First render in randomTabOnly mode — bootstrap so the
+             * controls and preview show up immediately. */
+            state->randomMapSelected = true;
+            state->selectedIdx = MAP_CHOOSER_IDX_RANDOM;
+            initGenConfig(state);
+            generateRandomPreview(state, renderer);
+            state->genSeq++;
             changed = true;
         }
-
-        ImGui::Separator();
 
         /* Scrollable generator options */
         ImGui::BeginChild("##GenOptions", ImVec2(0, 0));
@@ -692,6 +703,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
 
         if (mapGenImguiControls(cfg)) {
             generateRandomPreview(state, renderer);
+            state->genSeq++;
             changed = true;
         }
 
