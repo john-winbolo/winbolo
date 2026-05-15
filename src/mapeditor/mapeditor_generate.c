@@ -17,11 +17,13 @@
 #include "bases.h"
 #include "starts.h"
 #include "client_mappreview.h"
+#include <SDL3/SDL.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
 #include <ctype.h>
+#include <time.h>
 
 /* xorshift32 PRNG — deterministic, platform-independent */
 static uint32_t xorshift32(uint32_t *state) {
@@ -117,6 +119,43 @@ static bool hexToBytes(const char *hex, uint8_t *bytes, int count) {
  *   + river(7) + boat(7) + mineDensity(3) + riverCount(3) + cityCount(4)
  *   + mazeCount(3) + bases(5) + pills(5) + starts(5) + seed(32) = 106 bits
  */
+
+void mapGenBuildDisplayName(const MapGenConfig *cfg, char *out, size_t outLen) {
+    if (!out || outLen == 0) return;
+    out[0] = '\0';
+    if (!cfg) return;
+
+    const char *typeName = "Random";
+    char subStyle[24] = "";
+    switch (cfg->genType) {
+        case MAPGEN_TOURNAMENT: typeName = "Tournament"; break;
+        case MAPGEN_NATURAL: {
+            typeName = "Natural";
+            switch (cfg->params.natural.mapStyle) {
+                case MAPGEN_STYLE_OCEAN:       SDL_strlcpy(subStyle, "_Ocean",       sizeof(subStyle)); break;
+                case MAPGEN_STYLE_CONTINENT:   SDL_strlcpy(subStyle, "_Continent",   sizeof(subStyle)); break;
+                case MAPGEN_STYLE_ISLANDS:     SDL_strlcpy(subStyle, "_Islands",     sizeof(subStyle)); break;
+                case MAPGEN_STYLE_ARCHIPELAGO: SDL_strlcpy(subStyle, "_Archipelago", sizeof(subStyle)); break;
+                case MAPGEN_STYLE_INLAND:      SDL_strlcpy(subStyle, "_Inland",      sizeof(subStyle)); break;
+                default: break;
+            }
+            break;
+        }
+        case MAPGEN_MAZE:    typeName = "Maze";    break;
+        case MAPGEN_FRACTAL: typeName = "Fractal"; break;
+        default: break;
+    }
+
+    /* Seed in 8-char hex. The full encoded seed via
+     * mapGenConfigToSeed captures every config parameter and would
+     * be a better unique key, but at 29+ chars (Natural) it
+     * overflows MAP_STR_SIZE once combined with the type prefix.
+     * The raw uint32 cfg->seed is enough to disambiguate
+     * regenerations and easy to read; Copy Seed in the chooser
+     * still surfaces the full encoded form for reproducibility. */
+    SDL_snprintf(out, outLen, "%s%s_%08X",
+                 typeName, subStyle, cfg->seed);
+}
 
 void mapGenConfigToSeed(const MapGenConfig *cfg, char *out, size_t outLen) {
     if (cfg->genType == MAPGEN_TOURNAMENT) {

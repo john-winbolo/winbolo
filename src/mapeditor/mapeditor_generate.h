@@ -189,6 +189,19 @@ void mapGenConfigToSeed(const MapGenConfig *cfg, char *out, size_t outLen);
  * Returns true on success. */
 bool mapGenSeedToConfig(const char *seedStr, MapGenConfig *cfg);
 
+/* Build a human-readable map name from the generator type, sub-style
+ * (Natural only), and the seed (as 8-char hex). Used to label
+ * generated maps consistently across the server's sim->mapName and
+ * the chooser's UI title. Example outputs:
+ *   "Tournament_DEADBEEF"
+ *   "Natural_Ocean_12345678"
+ *   "Maze_A1B2C3D4"
+ *   "Fractal_FF00FF00"
+ * Fits in MAP_STR_SIZE (36) for all generator types. `out` should
+ * be at least 32 bytes. */
+void mapGenBuildDisplayName(const MapGenConfig *cfg,
+                            char *out, size_t outLen);
+
 /* Top-level dispatch: clears the region and calls the appropriate generator stub. */
 void mapEditorGenerate(struct mapObj *mp, struct basesObj *bs,
                        struct pillsObj *pb, struct startsObj *ss,

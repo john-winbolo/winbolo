@@ -107,24 +107,38 @@ void mapPreviewPopupRenderOffscreen(SDL_Renderer *renderer, int winW, int winH) 
 
 void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
     (void)renderer;
-    if (g_popupOpen && !ImGui::IsPopupOpen("Map Preview##full")) {
-        ImGui::OpenPopup("Map Preview##full");
-    }
+    if (!g_popupOpen) return;
+    /* Non-modal so the chat / ready / team UI behind it stays
+     * interactive. Default geometry mirrors the Choose Map dialog
+     * (small top/left gutter, height leaves ~3 chat lines visible
+     * at the bottom) so the popup never covers the chat — but the
+     * user can drag and resize it and the new geometry sticks
+     * across re-opens (ImGui retains per-window state via the
+     * "Map Preview" ID). */
     {
         ImVec2 displaySize = ImGui::GetIO().DisplaySize;
-        ImVec2 popupSize(displaySize.x * 0.8f, displaySize.y * 0.8f);
-        ImGui::SetNextWindowSize(popupSize, ImGuiCond_Always);
-        ImGui::SetNextWindowPos(ImVec2(displaySize.x * 0.5f, displaySize.y * 0.5f),
-                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        const float kGutter = 15.0f;
+        float lineH = ImGui::GetTextLineHeightWithSpacing();
+        float winW = displaySize.x - kGutter * 2.0f;
+        float winH = displaySize.y - kGutter * 2.0f - lineH * 3.0f;
+        if (winW < 320.0f) winW = 320.0f;
+        if (winH < 240.0f) winH = 240.0f;
+        ImGui::SetNextWindowSize(ImVec2(winW, winH),  ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowPos (ImVec2(kGutter, kGutter),
+                                 ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f, 240.0f),
+                                            ImVec2(FLT_MAX, FLT_MAX));
     }
-    bool modalOpen = ImGui::BeginPopupModal("Map Preview##full", &g_popupOpen,
-                               ImGuiWindowFlags_NoScrollbar
-                               | ImGuiWindowFlags_NoScrollWithMouse
-                               | ImGuiWindowFlags_NoMove);
-    if (modalOpen) {
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    bool windowOpen = ImGui::Begin("Map Preview##full", &g_popupOpen,
+                                   ImGuiWindowFlags_NoScrollbar
+                                   | ImGuiWindowFlags_NoScrollWithMouse);
+    if (windowOpen) {
+        /* Esc only closes when this window has focus — without that
+         * guard, hitting Escape anywhere else in the lobby would
+         * close the preview unexpectedly. */
+        if (ImGui::IsWindowFocused() &&
+            ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             g_popupOpen = false;
-            ImGui::CloseCurrentPopup();
         }
         /* Reserve room below the image for the Change / Close button
          * row. The image fills everything above; the buttons sit on
@@ -198,22 +212,37 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
                  * and opens its Choose Map dialog on a true return. */
                 g_changeRequested = true;
                 g_popupOpen       = false;
-                ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
             if (ImGui::Button(closeLbl)) {
                 g_popupOpen = false;
-                ImGui::CloseCurrentPopup();
             }
         }
-        ImGui::EndPopup();
     }
+    ImGui::End();
 }
 
 void mapPreviewPopupClose(void) {
     if (g_popupOpen) {
         g_popupOpen = false;
     }
+}
+
+bool mapPreviewPopupIsOpen(void) {
+    return g_popupOpen;
+}
+
+void mapPreviewPopupRefreshOpen(const BYTE *compressedData, int compressedLen) {
+    if (!g_popupOpen) return;
+    if (!compressedData || compressedLen <= 0) return;
+    ensureView();
+    if (!g_popupView) return;
+    /* Keep the user's current zoom/pan across the in-place reload —
+     * the user opened this popup intentionally and is mid-interaction,
+     * so snapping back to auto-fit would feel jarring. */
+    mapPreviewViewLoadCompressedKeepCamera(g_popupView,
+                                            compressedData,
+                                            compressedLen);
 }
 
 bool mapPreviewPopupConsumeChangeRequest(void) {

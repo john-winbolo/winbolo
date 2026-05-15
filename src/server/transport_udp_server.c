@@ -2032,13 +2032,14 @@ void transportUdpServerNotifyMapChange(ServerSim *sim) {
     int i;
     int mapLen;
     uint8_t notifyBuf[PACKET_HEADER_SIZE];
-    /* Compress into a local oversized scratch buffer first — the LZW
-     * encoder has no internal bound check, and an incompressible
-     * map can encode slightly larger than its 64KB input. Writing
-     * directly into the MAP_DOWNLOAD_MAX_SIZE wire buffer would risk
-     * overrunning it. Validate the result fits the wire size before
-     * copying, otherwise abort the notify (sim's previous map stays
-     * authoritative on the wire). */
+    /* Compress into a local oversized scratch buffer first — the
+     * map RLE encoder (named lzwencoding for legacy reasons, see
+     * ecodlzw.c) has no internal output-bound check, and an
+     * incompressible map can encode slightly larger than its 64KB
+     * input. Writing directly into the MAP_DOWNLOAD_MAX_SIZE wire
+     * buffer would risk overrunning it. Validate the result fits
+     * the wire size before copying, otherwise abort the notify
+     * (sim's previous map stays authoritative on the wire). */
     BYTE scratchMap[131072];
 
     /* 1. Refresh the server's compressed map from the sim */

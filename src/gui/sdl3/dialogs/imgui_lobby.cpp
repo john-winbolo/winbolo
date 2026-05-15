@@ -1242,7 +1242,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         }
         char goBackLbl[160];
         SDL_snprintf(goBackLbl, sizeof(goBackLbl),
-                     "Go back to previous map (%s) and close Choose Map",
+                     "Revert to %s and exit Choose Map",
                      prevName);
         if (ImGui::Button(goBackLbl)) {
             if (cs) {
@@ -3602,9 +3602,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
              *
              * Popup compressed data IS dropped so the big-preview view
              * doesn't render against stale bytes if the user opens it
-             * during the gap. */
+             * during the gap. The popup window itself is NOT closed —
+             * if the user has it open we want it to seamlessly update
+             * to the new map (handled in the rebuild block below via
+             * mapPreviewPopupRefreshOpen). */
             if (popupCompressedData) { SDL_free(popupCompressedData); popupCompressedData = NULL; popupCompressedLen = 0; }
-            mapPreviewPopupClose();
         }
         /* mapPreviewBuilt — open the rebuild gate ONLY when we have
          * a real data signal (seq tick OR download-complete edge).
@@ -3700,6 +3702,14 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 if (popupCompressedData) {
                     SDL_memcpy(popupCompressedData, mapData, mapLen);
                     popupCompressedLen = mapLen;
+                    /* If the user has the big map-preview popup open
+                     * right now, refresh its underlying data in place
+                     * so it seamlessly updates to the new map instead
+                     * of closing on every server-side map change. */
+                    if (mapPreviewPopupIsOpen()) {
+                        mapPreviewPopupRefreshOpen(popupCompressedData,
+                                                    popupCompressedLen);
+                    }
                 }
             }
             mapPreviewBuilt = true;
@@ -4222,6 +4232,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                     ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
                                 clientSimAppendLobbyChat(cs, myName, chatInput);
                                 chatInput[0] = '\0';
+                                /* Re-focus the input so the user can keep
+                                 * typing without clicking back in. Enter
+                                 * within an EnterReturnsTrue input loses
+                                 * focus by default; this restores it. */
+                                ImGui::SetKeyboardFocusHere(-1);
                             }
                         }
 
@@ -4595,6 +4610,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
                     clientSimAppendLobbyChat(cs, myName, chatInput);
                     chatInput[0] = '\0';
+                    /* Restore focus to the input so a stream of chat
+                     * messages doesn't require clicking back in between
+                     * sends. */
+                    ImGui::SetKeyboardFocusHere(-1);
                 }
             }
             ImGui::EndChild();

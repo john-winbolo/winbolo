@@ -640,6 +640,14 @@ static bool gameFrontEnterSinglePlayerLobby(void) {
   } else {
     BYTE emap[6000] = E_MAP;
     spServerSim = serverSimCreateCompressed(emap, 5097, gametype, hiddenMines, startDelay, timeLen);
+    /* serverSimCreateCompressed leaves sim->mapName empty — it
+     * doesn't know what to call the bytes it was handed. We're
+     * loading the embedded Everard map, so stamp the display name
+     * here so the game list / lobby title reads sensibly instead
+     * of a blank "Map: " field. */
+    if (spServerSim) {
+      serverSimSetMapName(spServerSim, "Everard Island");
+    }
   }
   if (spServerSim == NULL) {
     return FALSE;
@@ -1717,6 +1725,14 @@ bool gameFrontSetupServer(void) {
   } else {
     BYTE emap[6000] = E_MAP;
     spServerSim = serverSimCreateCompressed(emap, 5097, gametype, hiddenMines, startDelay, timeLen);
+    /* serverSimCreateCompressed leaves sim->mapName empty — it
+     * doesn't know what to call the bytes it was handed. We're
+     * loading the embedded Everard map, so stamp the display name
+     * here so the game list / lobby title reads sensibly instead
+     * of a blank "Map: " field. */
+    if (spServerSim) {
+      serverSimSetMapName(spServerSim, "Everard Island");
+    }
   }
   if (spServerSim == NULL) {
     return FALSE;
