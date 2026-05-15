@@ -419,8 +419,13 @@ static void updatePreview(MapChooserState *state, SDL_Renderer *renderer) {
     }
 }
 
-/* Generate a random map preview from the current config */
-static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer) {
+/* Generate a random map preview from the current config.
+ * When keepCamera is true the interactive preview widget snapshots
+ * its zoom/pan across the reload so tweaking a slider doesn't
+ * snap the view back to auto-fit. Caller passes false on first
+ * generation (no prior camera worth keeping). */
+static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer,
+                                  bool keepCamera) {
     /* Close the popup if it's showing the old random map */
     mapPreviewPopupClose();
 
@@ -467,14 +472,24 @@ static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer
         SDL_free(buf);
     }
 
-    /* Mirror into the interactive preview widget. */
+    /* Mirror into the interactive preview widget. Live preview
+     * rebuilds (slider tweak, lock toggle, etc.) take the
+     * keep-camera path so the user's zoom/pan survives; the first
+     * generation falls through to SetInitialBounds so it gets a
+     * sensible auto-fit. */
     if (state->previewView && state->compressedData && state->compressedLen > 0) {
-        mapPreviewViewLoadCompressed(state->previewView,
-                                      state->compressedData,
-                                      state->compressedLen);
-        mapPreviewViewSetInitialBounds(state->previewView,
-            state->previewBoundsMinX, state->previewBoundsMinY,
-            state->previewBoundsMaxX, state->previewBoundsMaxY);
+        if (keepCamera) {
+            mapPreviewViewLoadCompressedKeepCamera(state->previewView,
+                                                    state->compressedData,
+                                                    state->compressedLen);
+        } else {
+            mapPreviewViewLoadCompressed(state->previewView,
+                                          state->compressedData,
+                                          state->compressedLen);
+            mapPreviewViewSetInitialBounds(state->previewView,
+                state->previewBoundsMinX, state->previewBoundsMinY,
+                state->previewBoundsMaxX, state->previewBoundsMaxY);
+        }
     }
 
     /* Update seed display */
@@ -691,7 +706,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             state->randomMapSelected = true;
             state->selectedIdx = MAP_CHOOSER_IDX_RANDOM;
             initGenConfig(state);
-            generateRandomPreview(state, renderer);
+            generateRandomPreview(state, renderer, /*keepCamera=*/false);
             state->genSeq++;
             changed = true;
         }
@@ -702,7 +717,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         MapGenConfig *cfg = &state->genConfig;
 
         if (mapGenImguiControls(cfg)) {
-            generateRandomPreview(state, renderer);
+            generateRandomPreview(state, renderer, /*keepCamera=*/true);
             state->genSeq++;
             changed = true;
         }
@@ -735,7 +750,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 state->selectedIdx = MAP_CHOOSER_IDX_RANDOM;
                 SDL_strlcpy(state->selectedName, langGetText(STR_MAPCHOOSER_RANDOMMAP), sizeof(state->selectedName));
                 initGenConfig(state);
-                generateRandomPreview(state, renderer);
+                generateRandomPreview(state, renderer, /*keepCamera=*/false);
                 changed = true;
             }
 

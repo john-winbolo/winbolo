@@ -56,6 +56,14 @@ bool mapPreviewViewLoadCompressed(MapPreviewView *v,
                                   const BYTE *data, int len);
 bool mapPreviewViewLoadFile(MapPreviewView *v, const char *path);
 
+/* Same as LoadCompressed but snapshot/restore the camera so the
+ * caller can swap in regenerated map bytes without the view
+ * snapping back to auto-fit. Use for live-preview rebuilds where
+ * the user's current zoom/pan is the point. Returns false (and
+ * leaves the camera alone) if the underlying load fails. */
+bool mapPreviewViewLoadCompressedKeepCamera(MapPreviewView *v,
+                                            const BYTE *data, int len);
+
 /* Set initial camera centre + zoom from minimap-derived bounds (used
  * by the popup-style "click to open" path). The widget will auto-fit
  * once the underlying map data has parsed; this call is a hint for
