@@ -106,5 +106,42 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [quitItem setTarget:g_bridge];
     [appMenu addItem:quitItem];
 
+    /* Window menu — items dispatched through the responder chain to the
+     * key NSWindow; no explicit targets. */
+    NSMenuItem *windowItem = [mainMenu addItemWithTitle:@"Window" action:nil keyEquivalent:@""];
+    NSMenu *windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
+    [windowItem setSubmenu:windowMenu];
+
+    NSMenuItem *minimizeItem = [[NSMenuItem alloc]
+        initWithTitle:@"Minimize"
+        action:@selector(performMiniaturize:)
+        keyEquivalent:@"m"];
+    [windowMenu addItem:minimizeItem];
+
+    NSMenuItem *zoomItem = [[NSMenuItem alloc]
+        initWithTitle:@"Zoom"
+        action:@selector(performZoom:)
+        keyEquivalent:@""];
+    [windowMenu addItem:zoomItem];
+
+    [windowMenu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *fullScreenItem = [[NSMenuItem alloc]
+        initWithTitle:@"Enter Full Screen"
+        action:@selector(toggleFullScreen:)
+        keyEquivalent:@"f"];
+    [fullScreenItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagControl];
+    [windowMenu addItem:fullScreenItem];
+
+    [windowMenu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *bringAllToFrontItem = [[NSMenuItem alloc]
+        initWithTitle:@"Bring All to Front"
+        action:@selector(arrangeInFront:)
+        keyEquivalent:@""];
+    [windowMenu addItem:bringAllToFrontItem];
+
+    [NSApp setWindowsMenu:windowMenu];
+
     [NSApp setMainMenu:mainMenu];
 }
