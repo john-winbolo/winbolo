@@ -1053,6 +1053,15 @@ const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n) {
   return &cs->lobbySlots[n];
 }
 
+BYTE clientSimGetLobbyNumConnected(const ClientSim *cs) {
+  if (cs == NULL) return 0;
+  BYTE count = 0;
+  for (BYTE i = 0; i < 16; i++) {
+    if (cs->lobbySlots[i].connected) count++;
+  }
+  return count;
+}
+
 bool clientSimIsMapSkipVote(const ClientSim *cs, BYTE n) {
   if (n >= 16) return false;
   return cs->mapSkipVotes[n];

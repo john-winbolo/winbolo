@@ -242,6 +242,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     int result = 0;
     bool running = true;
 
+    /* Track last presence-set player count + map name so Steam rich
+     * presence only gets refreshed when something actually changes
+     * (rather than every frame). The map name has to be watched here
+     * because cs->mapName is empty until the server's lobbySettings
+     * packet arrives — without watching it, we'd publish presence on
+     * frame 0 with an empty map name and never refresh it. Initialise
+     * with a sentinel count so the first iteration always sets presence. */
+    BYTE lastPresenceNumPlayers = 0xFF;
+    char lastPresenceMap[MAP_STR_SIZE] = "";
+
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
         SDL_Event ev;
@@ -262,6 +272,27 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         bool hasTransport = clientSimHasTransport(cs);
         if (hasTransport) {
             clientSimNetTick(cs);
+        }
+
+        /* Refresh Steam rich presence when the lobby connect-count OR
+         * the map name changes (also fires on first frame so the lobby
+         * state is published as soon as the dialog opens). Uses
+         * clientSimGetLobbyNumConnected rather than clientSimGetNumPlayers
+         * because lobby slots track "who's in this lobby" (humans + bots),
+         * while the tank-slot count omits humans without an assigned tank
+         * and lingers on removed bots. The map name is watched separately
+         * because it lands later than the lobby-join (via lobbySettings)
+         * and the count typically isn't changing at that moment. */
+        {
+            BYTE curN = clientSimGetLobbyNumConnected(cs);
+            const char *curMap = clientSimGetMapName(cs);
+            if (curN != lastPresenceNumPlayers ||
+                strncmp(curMap, lastPresenceMap, MAP_STR_SIZE) != 0) {
+                gameFrontSetSteamPresenceLobby(cs);
+                lastPresenceNumPlayers = curN;
+                strncpy(lastPresenceMap, curMap, MAP_STR_SIZE - 1);
+                lastPresenceMap[MAP_STR_SIZE - 1] = '\0';
+            }
         }
 
         /* Clear balance proposal when countdown starts */

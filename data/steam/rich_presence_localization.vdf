@@ -1,10 +1,190 @@
- "lang"
+"lang"
 {
 	"english"
 	{
 		"tokens"
 		{
-			"#StatusWithMap"	"%status%"
+			"#StatusInMenu"            "In main menu"
+			"#StatusInLobbySingular"   "In lobby on %map% — 1 player"
+			"#StatusInLobbyPlural"     "In lobby on %map% — %numplayers% players"
+			"#StatusInGameSolo"        "Playing %map% — solo"
+			"#StatusInGamePlural"      "Playing %map% — %numplayers% players"
+		}
+	}
+	"czech"
+	{
+		"tokens"
+		{
+			"#StatusInMenu"            "V hlavní nabídce"
+			"#StatusInLobbySingular"   "V lobby na mapě %map% — 1 hráč"
+			"#StatusInLobbyPlural"     "V lobby na mapě %map% — %numplayers% hráčů"
+			"#StatusInGameSolo"        "Hraje %map% — samostatně"
+			"#StatusInGamePlural"      "Hraje %map% — %numplayers% hráčů"
+		}
+	}
+	"german"
+	{
+		"tokens"
+		{
+			"#StatusInMenu"            "Im Hauptmenü"
+			"#StatusInLobbySingular"   "In der Lobby auf %map% — 1 Spieler"
+			"#StatusInLobbyPlural"     "In der Lobby auf %map% — %numplayers% Spieler"
+			"#StatusInGameSolo"        "Spielt %map% — allein"
+			"#StatusInGamePlural"      "Spielt %map% — %numplayers% Spieler"
+		}
+	}
+	"spanish"
+	{
+		"tokens"
+		{
+			"#StatusInMenu"            "En el menú principal"
+			"#StatusInLobbySingular"   "En sala en %map% — 1 jugador"
+			"#StatusInLobbyPlural"     "En sala en %map% — %numplayers% jugadores"
+			"#StatusInGameSolo"        "Jugando %map% — solo"
+			"#StatusInGamePlural"      "Jugando %map% — %numplayers% jugadores"
+		}
+	}
+	"french"
+	{
+		"tokens"
+		{
+			"#StatusInMenu"            "Dans le menu principal"
+			"#StatusInLobbySingular"   "Dans le salon sur %map% — 1 joueur"
+			"#StatusInLobbyPlural"     "Dans le salon sur %map% — %numplayers% joueurs"
+			"#StatusInGameSolo"        "Joue à %map% — seul"
+			"#StatusInGamePlural"      "Joue à %map% — %numplayers% joueurs"
+		}
+	}
+	"italian"
+	{
+		"tokens"
+		{
+			"#StatusInMenu"            "Nel menu principale"
+			"#StatusInLobbySingular"   "In lobby su %map% — 1 giocatore"
+			"#StatusInLobbyPlural"     "In lobby su %map% — %numplayers% giocatori"
+			"#StatusInGameSolo"        "Sta giocando %map% — da solo"
+			"#StatusInGamePlural"      "Sta giocando %map% — %numplayers% giocatori"
+		}
+	}
+	"japanese"
+	{
+		"tokens"
+		{
+			"#StatusInMenu"            "メインメニュー"
+			"#StatusInLobbySingular"   "ロビー（マップ：%map%）— 1人"
+			"#StatusInLobbyPlural"     "ロビー（マップ：%map%）— %numplayers%人"
+			"#StatusInGameSolo"        "%map%をプレイ中 — ソロ"
+			"#StatusInGamePlural"      "%map%をプレイ中 — %numplayers%人"
+		}
+	}
+	"koreana"
+	{
+		"tokens"
+		{
+			"#StatusInMenu"            "메인 메뉴"
+			"#StatusInLobbySingular"   "%map% 로비 — 1명"
+			"#StatusInLobbyPlural"     "%map% 로비 — %numplayers%명"
+			"#StatusInGameSolo"        "%map% 플레이 중 — 혼자"
+			"#StatusInGamePlural"      "%map% 플레이 중 — %numplayers%명"
+		}
+	}
+	"dutch"
+	{
+		"tokens"
+		{
+			"#StatusInMenu"            "In hoofdmenu"
+			"#StatusInLobbySingular"   "In lobby op %map% — 1 speler"
+			"#StatusInLobbyPlural"     "In lobby op %map% — %numplayers% spelers"
+			"#StatusInGameSolo"        "Speelt %map% — solo"
+			"#StatusInGamePlural"      "Speelt %map% — %numplayers% spelers"
+		}
+	}
+	"polish"
+	{
+		"tokens"
+		{
+			"#StatusInMenu"            "W menu głównym"
+			"#StatusInLobbySingular"   "W lobby na mapie %map% — 1 gracz"
+			"#StatusInLobbyPlural"     "W lobby na mapie %map% — %numplayers% graczy"
+			"#StatusInGameSolo"        "Gra na %map% — sam"
+			"#StatusInGamePlural"      "Gra na %map% — %numplayers% graczy"
+		}
+	}
+	"brazilian"
+	{
+		"tokens"
+		{
+			"#StatusInMenu"            "No menu principal"
+			"#StatusInLobbySingular"   "No lobby em %map% — 1 jogador"
+			"#StatusInLobbyPlural"     "No lobby em %map% — %numplayers% jogadores"
+			"#StatusInGameSolo"        "Jogando %map% — sozinho"
+			"#StatusInGamePlural"      "Jogando %map% — %numplayers% jogadores"
+		}
+	}
+	"russian"
+	{
+		"tokens"
+		{
+			"#StatusInMenu"            "В главном меню"
+			"#StatusInLobbySingular"   "В лобби на %map% — 1 игрок"
+			"#StatusInLobbyPlural"     "В лобби на %map% — %numplayers% игроков"
+			"#StatusInGameSolo"        "Играет %map% — один"
+			"#StatusInGamePlural"      "Играет %map% — %numplayers% игроков"
+		}
+	}
+	"swedish"
+	{
+		"tokens"
+		{
+			"#StatusInMenu"            "I huvudmenyn"
+			"#StatusInLobbySingular"   "I lobby på %map% — 1 spelare"
+			"#StatusInLobbyPlural"     "I lobby på %map% — %numplayers% spelare"
+			"#StatusInGameSolo"        "Spelar %map% — ensam"
+			"#StatusInGamePlural"      "Spelar %map% — %numplayers% spelare"
+		}
+	}
+	"turkish"
+	{
+		"tokens"
+		{
+			"#StatusInMenu"            "Ana menüde"
+			"#StatusInLobbySingular"   "%map% lobisinde — 1 oyuncu"
+			"#StatusInLobbyPlural"     "%map% lobisinde — %numplayers% oyuncu"
+			"#StatusInGameSolo"        "%map% oynuyor — tek başına"
+			"#StatusInGamePlural"      "%map% oynuyor — %numplayers% oyuncu"
+		}
+	}
+	"ukrainian"
+	{
+		"tokens"
+		{
+			"#StatusInMenu"            "У головному меню"
+			"#StatusInLobbySingular"   "У лобі на %map% — 1 гравець"
+			"#StatusInLobbyPlural"     "У лобі на %map% — %numplayers% гравців"
+			"#StatusInGameSolo"        "Грає %map% — самотньо"
+			"#StatusInGamePlural"      "Грає %map% — %numplayers% гравців"
+		}
+	}
+	"schinese"
+	{
+		"tokens"
+		{
+			"#StatusInMenu"            "主菜单中"
+			"#StatusInLobbySingular"   "在 %map% 大厅 — 1 名玩家"
+			"#StatusInLobbyPlural"     "在 %map% 大厅 — %numplayers% 名玩家"
+			"#StatusInGameSolo"        "正在游玩 %map% — 单人"
+			"#StatusInGamePlural"      "正在游玩 %map% — %numplayers% 名玩家"
+		}
+	}
+	"tchinese"
+	{
+		"tokens"
+		{
+			"#StatusInMenu"            "主選單中"
+			"#StatusInLobbySingular"   "在 %map% 大廳 — 1 名玩家"
+			"#StatusInLobbyPlural"     "在 %map% 大廳 — %numplayers% 名玩家"
+			"#StatusInGameSolo"        "正在遊玩 %map% — 單人"
+			"#StatusInGamePlural"      "正在遊玩 %map% — %numplayers% 名玩家"
 		}
 	}
 }
