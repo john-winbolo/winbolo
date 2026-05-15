@@ -196,6 +196,7 @@ extern "C" void imguiSettingsShow(void) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -435,6 +436,7 @@ extern "C" void imguiSettingsShow(void) {
                         }
                     }
                 }
+                imguiHandOnHover();
             }
             if (wbnActive) ImGui::EndDisabled();
             if (wbnActive) {
@@ -540,10 +542,12 @@ extern "C" void imguiSettingsShow(void) {
                                        iconSz)) {
                     openInfo = true;
                 }
+                imguiHandOnHover();
             } else {
                 if (ImGui::SmallButton("?##langInfoBtn")) {
                     openInfo = true;
                 }
+                imguiHandOnHover();
             }
             if (openInfo) {
                 ImGui::OpenPopup("##LangInfoPopup");
@@ -608,6 +612,7 @@ extern "C" void imguiSettingsShow(void) {
             if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(120, 0))) {
                 showKeySetup = true;
             }
+            imguiHandOnHover();
 #endif
         }
 
@@ -664,6 +669,7 @@ extern "C" void imguiSettingsShow(void) {
                 gameFrontRequestPlayTutorial();
                 running = false;  /* Close settings; openSettings handler routes to openTutorial. */
             }
+            imguiHandOnHover();
             ImGui::SameLine();
             {
                 bool showOnMain = gameFrontGetShowTutorialButton();
@@ -776,6 +782,7 @@ extern "C" void imguiSettingsShow(void) {
             ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             running = false;
         }
+        imguiHandOnHover();
 
         ImGui::End(); /* ##SettingsPanel */
         ImGui::End(); /* ##SettingsBg */
@@ -844,6 +851,7 @@ extern "C" void imguiSettingsShow(void) {
 
             IMGUI_CHECKVERSION();
             ImGui::CreateContext();
+            imguiRegisterPlatformOpenUrl();
             ImGuiIO &ioNew = ImGui::GetIO();
             ioNew.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
             ioNew.IniFilename = nullptr;
