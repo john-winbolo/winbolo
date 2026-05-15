@@ -47,7 +47,10 @@
 #include "tutorial.h"
 #include "../steam/steam_wrapper.h"
 
+#ifndef CLIENTSIM_TYPEDEF
+#define CLIENTSIM_TYPEDEF
 typedef struct ClientSim ClientSim;
+#endif
 #include "tankexp.h"
 #include "tilenum.h"
 #include "shells.h"
@@ -320,7 +323,7 @@ void tankCreate(GameSim *sim, tank *value) {
   (*value)->newTank = TRUE;
   (*value)->autoSlowdown = FALSE;
   (*value)->autoHideGunsight = FALSE;
-  (*value)->justFired = FALSE;
+  (*value)->justFired = 0;
   (*value)->tankHitCount = 0;
   (*value)->firstLeft = 0;
   (*value)->firstRight = 0;
@@ -421,7 +424,7 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
   }
 
   (*value)->obstructed = FALSE;
-  (*value)->justFired = FALSE;
+  if ((*value)->justFired > 0) (*value)->justFired--;
   /* Extract MAP co-ords from WORLD co-ords */
   conv = (*value)->x;
   conv >>= TANK_SHIFT_MAPSIZE;
@@ -451,7 +454,7 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
       frontEndPlaySound(clientSimFromSim(sim), shootSelf);
       frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
     }
-    (*value)->justFired = TRUE;
+    (*value)->justFired = JUST_FIRED_TICKS;
   }
 
 
@@ -2813,7 +2816,7 @@ void tankSetAutoHideGunsight(tank *value, bool useAutohide) {
 *  value - Pointer to the tank structure
 *********************************************************/
 bool tankJustFired(tank *value) {
-  return (*value)->justFired;
+  return (*value)->justFired > 0;
 }
 
 /*********************************************************

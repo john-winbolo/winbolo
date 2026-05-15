@@ -72,6 +72,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
     /* Set up ImGui context */
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -208,6 +209,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                 running = false;
             }
         }
+        imguiHandOnHover();
         if (wbnLocked) ImGui::EndDisabled();
 
         ImGui::SameLine(0.0f, 8.0f);
@@ -216,10 +218,14 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
              !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
             running = false;
         }
+        imguiHandOnHover();
 
         /* Error popup */
+        static float s_fadeSetNameErr = 0.0f;
         if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeSetNameErr));
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
             {
@@ -228,7 +234,9 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                 if (ImGui::Button(okBuf, ImVec2(80, 0))) {
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 

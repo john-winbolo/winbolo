@@ -34,6 +34,11 @@
 extern "C" {
 #endif
 
+#ifndef BRAINPATHFINDER_TYPEDEF
+#define BRAINPATHFINDER_TYPEDEF
+typedef struct BrainPathfinder BrainPathfinder;
+#endif
+
 /* A* open-set heap entry */
 typedef struct {
   float f;
@@ -78,7 +83,7 @@ typedef struct {
 } DijkstraSlate;
 
 /* Per-instance pathfinder state */
-typedef struct BrainPathfinder {
+struct BrainPathfinder {
   /* Terrain map pointer (set each tick, not owned) */
   const BYTE *map;
 
@@ -189,7 +194,7 @@ typedef struct BrainPathfinder {
    * (normal vs lowered-pill-danger). All slates are lazy-allocated on
    * first use (~700 KB each, ~960 KB with exact mode). */
   DijkstraSlate dij_slates[DIJKSTRA_NUM_SLATES];
-} BrainPathfinder;
+};
 
 /*********************************************************
  * Public API

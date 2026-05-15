@@ -44,9 +44,18 @@ typedef struct GameSim GameSim;
 /* Forward declarations for state types whose full layout lives in
  * src/bolo/internal/. External callers reach them only through the
  * pointer-returning accessors below. */
+#ifndef INTERPCONTEXT_TYPEDEF
+#define INTERPCONTEXT_TYPEDEF
 typedef struct InterpContext InterpContext;
+#endif
+#ifndef MESSAGESTATE_TYPEDEF
+#define MESSAGESTATE_TYPEDEF
 typedef struct MessageState  MessageState;
+#endif
+#ifndef SCROLLSTATE_TYPEDEF
+#define SCROLLSTATE_TYPEDEF
 typedef struct ScrollState   ScrollState;
+#endif
 
 /* Messages status on/off */
 #define MSG_NEWSWIRE 0
