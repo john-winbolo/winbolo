@@ -45,6 +45,18 @@ endif()
 
 set(WINBOLO_VERSION "1.18" CACHE STRING "WinBolo version number")
 
+# Global macOS bundle metadata. Set once here so every MACOSX_BUNDLE target
+# (WinBolo, Log Viewer, Map Editor) picks up matching version/copyright keys
+# in its Info.plist, and so the deployment target applies to all of them.
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
+    string(TIMESTAMP _WB_CURRENT_YEAR "%Y")
+    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${WINBOLO_VERSION}")
+    set(MACOSX_BUNDLE_BUNDLE_VERSION       "${WINBOLO_VERSION}")
+    set(MACOSX_BUNDLE_LONG_VERSION_STRING  "${WINBOLO_VERSION}")
+    set(MACOSX_BUNDLE_COPYRIGHT            "Copyright 1998-${_WB_CURRENT_YEAR} John Morrison")
+endif()
+
 execute_process(COMMAND git rev-parse --short HEAD
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
                 OUTPUT_VARIABLE WINBOLO_GIT_HASH
@@ -1465,7 +1477,6 @@ if(WIN32)
 endif()
 
 if(APPLE)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
     set_target_properties(LogViewer PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/src/logviewer/platform/Info.plist"
