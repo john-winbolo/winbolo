@@ -300,6 +300,7 @@ extern "C" int imguiUdpSetupShow(void) {
             showTracker = true;
             ImGui::OpenPopup(langGetText(STR_DLGTRACKER_TITLE));
         }
+        imguiHandOnHover();
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -327,6 +328,7 @@ extern "C" int imguiUdpSetupShow(void) {
                 ImGui::OpenPopup(errPopupId);
             }
         }
+        imguiHandOnHover();
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_JOINBLURB));
         ImGui::SameLine(panelW - btnW - 16.0f * s);
@@ -341,6 +343,7 @@ extern "C" int imguiUdpSetupShow(void) {
                 ImGui::OpenPopup(errPopupId);
             }
         }
+        imguiHandOnHover();
 
         ImGui::TextWrapped("%s", langGetText(STR_DLGTCP_REJOINBLURB));
         ImGui::SameLine(panelW - btnW - 16.0f * s);
@@ -356,6 +359,7 @@ extern "C" int imguiUdpSetupShow(void) {
                 ImGui::OpenPopup(errPopupId);
             }
         }
+        imguiHandOnHover();
 
         ImGui::Spacing();
 
@@ -369,6 +373,7 @@ extern "C" int imguiUdpSetupShow(void) {
                 gameFrontSetDlgState(openWelcome);
                 running = false;
             }
+            imguiHandOnHover();
         }
 
         /* --- Error popup --- */
@@ -379,6 +384,7 @@ extern "C" int imguiUdpSetupShow(void) {
             if (ImGui::Button(langGetText(STR_OK), ImVec2(80, 0))) {
                 ImGui::CloseCurrentPopup();
             }
+            imguiHandOnHover();
             ImGui::EndPopup();
         }
 
@@ -415,10 +421,12 @@ extern "C" int imguiUdpSetupShow(void) {
                                                trackerEnabled);
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
                 ImGui::SameLine(0.0f, 8.0f);
                 if (ImGui::Button(cancelBuf, ImVec2(80, 0))) {
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
             }
             ImGui::EndPopup();
         }

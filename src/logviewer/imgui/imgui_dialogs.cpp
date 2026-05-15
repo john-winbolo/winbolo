@@ -16,6 +16,7 @@
 #include "imgui.h"
 #include "platform_config.h"
 #include "../../gui/lang.h"
+#include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -281,6 +282,7 @@ static void render_team_colours_dialog(void) {
             s_show_team_colours = false;
             ImGui::CloseCurrentPopup();
         }
+        imguiHandOnHover();
         
         ImGui::SameLine();
 
@@ -288,6 +290,7 @@ static void render_team_colours_dialog(void) {
             s_show_team_colours = false;
             ImGui::CloseCurrentPopup();
         }
+        imguiHandOnHover();
 
         ImGui::EndPopup();
     }
@@ -338,6 +341,7 @@ static void render_about_dialog(void) {
             s_show_about = false;
             ImGui::CloseCurrentPopup();
         }
+        imguiHandOnHover();
 
         ImGui::EndPopup();
     }

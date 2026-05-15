@@ -629,6 +629,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (ImGui::ImageButton("##refreshBtn", (ImTextureID)s_refreshIcon, iconSz)) {
                     doRefresh = true;
                 }
+                imguiHandOnHover();
                 if (wasSearching) ImGui::EndDisabled();
             } else {
                 /* Text fallback when SVG icon is unavailable */
@@ -639,6 +640,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (ImGui::SmallButton(langGetText(STR_DLGBROWSER_REFRESH))) {
                     doRefresh = true;
                 }
+                imguiHandOnHover();
                 if (wasSearching) ImGui::EndDisabled();
             }
             if (doRefresh) {
@@ -838,6 +840,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                 }
                             }
                         }
+                        imguiHandOnHover();
                     }
 
                     /* Map name (C string from tracker/broadcast) */
@@ -991,6 +994,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     }
                 }
             }
+            imguiHandOnHover();
             if (!hasSelection) ImGui::EndDisabled();
 
             /* Rejoin */
@@ -1018,6 +1022,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     }
                 }
             }
+            imguiHandOnHover();
             if (!hasSelection) ImGui::EndDisabled();
 
             /* New Game */
@@ -1031,6 +1036,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 result = (int)setupState;
                 running = false;
             }
+            imguiHandOnHover();
             if (useTracker && ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", langGetText(STR_DLGBROWSER_NEWGAME_PORTFWD_TIP));
             }
@@ -1041,6 +1047,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 gameFrontGetPlayerName(nameEditBuf);
                 ImGui::OpenPopup(setNamePopupId);
             }
+            imguiHandOnHover();
 
             /* Manual Connect */
             ImGui::SameLine();
@@ -1050,6 +1057,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 result = useTracker ? (int)openInternetManual : (int)openLanManual;
                 running = false;
             }
+            imguiHandOnHover();
 
             /* Cancel - right-aligned */
             ImGui::SameLine(panelW - btnW - 16.0f * s);
@@ -1059,6 +1067,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 gameFrontSetDlgState(openWelcome);
                 running = false;
             }
+            imguiHandOnHover();
         }
 
         /* ---- Error popup ---- */
@@ -1072,6 +1081,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (ImGui::Button(okBuf, ImVec2(80, 0))) {
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
             }
             ImGui::EndPopup();
         }
@@ -1099,11 +1109,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     gameFrontSetPlayerName(nameEditBuf);
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
                 if (wbnActive) ImGui::EndDisabled();
                 ImGui::SameLine(0.0f, 8.0f);
                 if (ImGui::Button(cancelBuf, ImVec2(80 * s, 0))) {
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
             }
             ImGui::EndPopup();
         }

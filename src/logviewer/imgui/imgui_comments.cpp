@@ -16,6 +16,7 @@
 #include "platform_config.h"
 #include "imgui.h"
 #include "../../gui/lang.h"
+#include "../../gui/sdl3/dialogs/imgui_dialog_utils.h"
 
 #include <cstdio>
 #include <cstring>
@@ -263,6 +264,7 @@ extern "C" void lv_imgui_comments_window(void) {
                 s_post = wbn_comments_post_start(s_wbn_key, wbnToken,
                                                  s_comment_text, s_comment_rating);
             }
+            imguiHandOnHover();
             if (!canPost) ImGui::EndDisabled();
 
             if (s_post) {

@@ -24,6 +24,7 @@
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
+#include "imgui_dialog_utils.h"
 
 extern "C" {
 #include "../../gamefront.h"
@@ -199,6 +200,7 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
         if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_OUT))) {
             gameFrontClearWinbolonetToken();
         }
+        imguiHandOnHover();
         if (inGame) ImGui::EndDisabled();
     } else {
         ImGui::TextUnformatted(langGetText(STR_DLGWBN_LABEL));
@@ -214,6 +216,7 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
             wbnPassword[0] = '\0';
             ImGui::OpenPopup(langGetText(STR_DLGWBN_SIGNIN_TITLE));
         }
+        imguiHandOnHover();
         if (inGame) ImGui::EndDisabled();
     }
 
@@ -289,11 +292,13 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
                     wbnStartLogin();
                 }
             }
+            imguiHandOnHover();
             ImGui::SameLine(0.0f, 8.0f);
             if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0))) {
                 ImGui::CloseCurrentPopup();
                 wbnPopupOpen = false;
             }
+            imguiHandOnHover();
         }
 
         ImGui::EndPopup();

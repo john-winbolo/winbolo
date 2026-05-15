@@ -402,6 +402,7 @@ extern "C" int imguiWelcomeShow(void) {
                     result = miniModes[i].code;
                     running = false;
                 }
+                imguiHandOnHover();
                 if (hovered) {
                     ImGui::PopStyleColor();
                 }
@@ -446,6 +447,7 @@ extern "C" int imguiWelcomeShow(void) {
             if (ImGui::Button("##playPause", ImVec2(ppSize, ppSize))) {
                 bg->paused = !bg->paused;
             }
+            imguiHandOnHover();
 
             ImVec2 ppMin = ImGui::GetItemRectMin();
             ImVec2 ppMax = ImGui::GetItemRectMax();

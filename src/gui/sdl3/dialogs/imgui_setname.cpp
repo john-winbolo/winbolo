@@ -209,6 +209,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                 running = false;
             }
         }
+        imguiHandOnHover();
         if (wbnLocked) ImGui::EndDisabled();
 
         ImGui::SameLine(0.0f, 8.0f);
@@ -217,6 +218,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
              !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
             running = false;
         }
+        imguiHandOnHover();
 
         /* Error popup */
         if (ImGui::BeginPopupModal(errPopupId, nullptr,
@@ -229,6 +231,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                 if (ImGui::Button(okBuf, ImVec2(80, 0))) {
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
             }
             ImGui::EndPopup();
         }
