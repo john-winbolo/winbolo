@@ -79,6 +79,7 @@ extern "C" {
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "dialogs/imgui_dialog_utils.h"
+#include "platform/mac_menubar.h"
 
 extern "C" void windowSetQuitting(void);
 
@@ -2544,6 +2545,10 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
     ImGui::CreateContext();
     s_mainImguiCtx = ImGui::GetCurrentContext();
     imguiRegisterPlatformOpenUrl();
+
+#ifdef __APPLE__
+    mac_menubar_install(s_window, NULL);
+#endif
 
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;

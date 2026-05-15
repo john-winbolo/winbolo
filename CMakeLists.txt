@@ -1025,6 +1025,7 @@ target_compile_definitions(WinBolo PRIVATE
 # macOS trackpad pinch-to-zoom support
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(WinBolo PRIVATE src/gui/sdl3/macos_pinch.m)
+    target_sources(WinBolo PRIVATE src/gui/sdl3/platform/mac_menubar.mm)
     target_link_libraries(WinBolo PRIVATE "-framework AppKit")
 endif()
 
