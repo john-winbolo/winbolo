@@ -1541,8 +1541,12 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
     sdl3ImguiSetPlayer((unsigned char)value, str, cc);
     return;
   }
-  cc[0] = countryCode[0];
-  cc[1] = countryCode[1];
+  /* Defensive: callers may pass "" (a 1-byte string literal) when the
+   * country code is unknown, so reading [1] unconditionally would walk
+   * off the end. Substitute 'X' for missing chars to match the
+   * not-running fallback above. */
+  cc[0] = countryCode[0] ? countryCode[0] : 'X';
+  cc[1] = (countryCode[0] && countryCode[1]) ? countryCode[1] : 'X';
   cc[2] = '\0';
   WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[FLAGS] frontEndSetPlayer: player=%d name='%s' cc='%s' (0x%02X 0x%02X)", (int)value, str, cc, (unsigned char)cc[0], (unsigned char)cc[1]);
   sdl3ImguiSetPlayer((unsigned char)value, str, cc);
