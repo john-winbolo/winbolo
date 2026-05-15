@@ -358,6 +358,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     IMGUI_CHECKVERSION();
     ImGuiContext *dlgCtx = ImGui::CreateContext();
     ImGui::SetCurrentContext(dlgCtx);
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;

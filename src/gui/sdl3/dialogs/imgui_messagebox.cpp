@@ -91,7 +91,7 @@ static int renderMessageBoxContent(const char *message, ImguiMsgButtons buttons,
 
     float textRegionW = ImGui::GetContentRegionAvail().x;
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + textRegionW);
-    ImGui::TextWrapped("%s", message ? message : "");
+    imguiTextWrappedWithLinks(message ? message : "");
     ImGui::PopTextWrapPos();
 
     /* Push cursor below the icon if the text was shorter */
@@ -183,6 +183,7 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
      * This avoids conflicts with any caller context that may be mid-frame. */
     ImGuiContext *msgCtx = ImGui::CreateContext();
     ImGui::SetCurrentContext(msgCtx);
+    imguiRegisterPlatformOpenUrl();
 
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;

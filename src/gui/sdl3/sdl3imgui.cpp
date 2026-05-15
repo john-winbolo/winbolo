@@ -384,6 +384,7 @@ static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h) {
 
     pw->imguiCtx = ImGui::CreateContext();
     ImGui::SetCurrentContext(pw->imguiCtx);
+    imguiRegisterPlatformOpenUrl();
 
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -2496,6 +2497,7 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     s_mainImguiCtx = ImGui::GetCurrentContext();
+    imguiRegisterPlatformOpenUrl();
 
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;

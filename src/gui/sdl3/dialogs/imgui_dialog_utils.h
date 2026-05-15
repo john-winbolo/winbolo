@@ -161,6 +161,99 @@ static inline SDL_Texture *imguiLoadSvgIconWhite(SDL_Renderer *rend, const char 
     return tex;
 }
 
+/* Open a URL in the system browser. Returns true on success.
+ * SDL_OpenURL handles per-platform dispatch (ShellExecuteW on Windows,
+ * xdg-open / open on Linux/macOS, etc.) — no need for our own #ifdef. */
+static inline bool imguiOpenUrl(const char *url) {
+    if (!url || !*url) return false;
+    return SDL_OpenURL(url);
+}
+
+/* Register Platform_OpenInShellFn on the current ImGui context so that
+ * ImGui::TextLinkOpenURL() actually launches the system browser on click.
+ * Call once per ImGui::CreateContext(), with that context current. */
+static inline void imguiRegisterPlatformOpenUrl(void) {
+    ImGui::GetPlatformIO().Platform_OpenInShellFn =
+        [](ImGuiContext *, const char *url) -> bool {
+            return imguiOpenUrl(url);
+        };
+}
+
+/* Render wrapped text with embedded http(s):// URLs auto-linked.
+ * Each URL becomes a hand-cursor link that dispatches through the registered
+ * Platform_OpenInShellFn. Non-URL text wraps via TextWrapped. Explicit '\n'
+ * line breaks in the source string are preserved. URL detection: a run
+ * starting with "http://" or "https://" at the start of a line or after
+ * whitespace/bracket, ending at the next whitespace, then trim trailing
+ * .,;:!?)] '" so "see https://x.com." doesn't pull the period into the link.
+ *
+ * Caveat: lines that contain a URL render without mid-line wrapping (the
+ * link itself is atomic, and prefix/suffix segments emit via TextUnformatted
+ * inside a push/pop wrap pair). Fine for the short tutorial/about lines that
+ * use this today; if a longer URL surfaces, cap dialog width or pre-wrap. */
+static inline void imguiTextWrappedWithLinks(const char *text) {
+    if (!text) text = "";
+
+    const char *lineStart = text;
+    while (*lineStart) {
+        const char *lineEnd = lineStart;
+        while (*lineEnd && *lineEnd != '\n') lineEnd++;
+
+        /* Scan the line for http:// or https:// at a valid boundary */
+        const char *urlStart = nullptr;
+        for (const char *scan = lineStart; scan < lineEnd; scan++) {
+            const size_t remain = (size_t)(lineEnd - scan);
+            bool isHttp  = (remain >= 7 && memcmp(scan, "http://",  7) == 0);
+            bool isHttps = (remain >= 8 && memcmp(scan, "https://", 8) == 0);
+            if (!isHttp && !isHttps) continue;
+            if (scan == lineStart ||
+                (unsigned char)scan[-1] <= ' ' ||
+                scan[-1] == '(' || scan[-1] == '[' || scan[-1] == '<') {
+                urlStart = scan;
+                break;
+            }
+        }
+
+        if (!urlStart) {
+            ImGui::TextWrapped("%.*s", (int)(lineEnd - lineStart), lineStart);
+        } else {
+            const char *urlEnd = urlStart;
+            while (urlEnd < lineEnd && (unsigned char)*urlEnd > ' ') urlEnd++;
+            while (urlEnd > urlStart) {
+                char c = urlEnd[-1];
+                if (c == '.' || c == ',' || c == ';' || c == ':' || c == '!' ||
+                    c == '?' || c == ')' || c == ']' || c == '\'' || c == '"') {
+                    urlEnd--;
+                } else {
+                    break;
+                }
+            }
+
+            ImGui::PushTextWrapPos(0.0f);
+            if (urlStart > lineStart) {
+                ImGui::TextUnformatted(lineStart, urlStart);
+                ImGui::SameLine(0, 0);
+            }
+
+            char urlBuf[512];
+            size_t urlLen = (size_t)(urlEnd - urlStart);
+            if (urlLen >= sizeof(urlBuf)) urlLen = sizeof(urlBuf) - 1;
+            memcpy(urlBuf, urlStart, urlLen);
+            urlBuf[urlLen] = '\0';
+            ImGui::TextLinkOpenURL(urlBuf);
+
+            if (urlEnd < lineEnd) {
+                ImGui::SameLine(0, 0);
+                ImGui::TextUnformatted(urlEnd, lineEnd);
+            }
+            ImGui::PopTextWrapPos();
+        }
+
+        lineStart = lineEnd;
+        if (*lineStart == '\n') lineStart++;
+    }
+}
+
 /* Override DisplayFramebufferScale after ImGui_ImplSDL3_NewFrame().
  * When a logical presentation is active, SDL already maps point-space
  * coordinates to native pixels.  ImGui_ImplSDL3_NewFrame() detects the
