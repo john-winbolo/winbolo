@@ -19,6 +19,13 @@
  *  Dispatcher implementation. Mutates ClientSim game state
  *  only — UI, achievement, transport-internal, and wire-
  *  protocol housekeeping live in their respective callers.
+ *
+ *  All wire decoders in transport_udp_client.c build a
+ *  ControlEvent and route through clientSimApplyControl.
+ *  They do not mutate ClientSim state directly and do not
+ *  call frontEnd* callbacks directly. SP, bots, and network
+ *  converge on this single funnel — see docs/ARCHITECTURE.md
+ *  "Adding a new server event" for the recipe.
  *********************************************************/
 
 #include <string.h>
