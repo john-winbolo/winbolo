@@ -669,8 +669,12 @@ static void windowRunGameTick(ClientSim *cs) {
            * line reflects bot processing — brainHandlerRun below only
            * covers the human's local autopilot. Advance ttick by the same
            * duration so dwSysGame (computed as SDL_GetTicks() - ttick at
-           * the bottom of the loop) doesn't also count it as sim time. */
-          {
+           * the bottom of the loop) doesn't also count it as sim time.
+           * Skip in network-host mode: hostedServerTimerCb already drives
+           * botManagerTick on the timer thread under threadsMutex. Running
+           * it here too races on the same per-bot Lua state and bInfo
+           * buffers (heap-use-after-free caught by ASan). */
+          if (!gameFrontIsServerHosted()) {
             ServerSim *serverSim = gameFrontGetServerSim();
             if (serverSim != NULL && serverSimGetNumBots(serverSim) > 0) {
               DWORD bttick = SDL_GetTicks();
