@@ -276,6 +276,13 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  /* Threads mutex must exist BEFORE gameFrontStart — the menu's
+   * background bot game (bgGameCreate → serverSimCreateBot →
+   * serverSimPublishControl → clientMutexWaitFor → threadsWaitForMutex)
+   * runs during setup dialogs. Without this, SDL_LockMutex silently
+   * no-ops on the NULL handle and the bg game's "lock" is fictional. */
+  threadsCreate(FALSE);
+
   if (gameFrontStart(cmdLine, &keys, FALSE, &cs) == FALSE) {
     clientMutexDestroy();
     SDL_Quit();
@@ -341,7 +348,8 @@ int main(int argc, char *argv[]) {
       bool done = FALSE;
       SDL_Window *sdlWin = sdl3DrawGetWindow();
 
-      threadsCreate(FALSE);
+      /* threadsCreate now runs earlier (right after clientMutexCreate)
+       * so the menu's background bot game sees a real threads mutex. */
 
       /* Flush any stale SDL_QUIT events that may have been queued during
          dialog teardown. Without this, the main loop would exit immediately
