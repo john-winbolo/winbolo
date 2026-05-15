@@ -279,23 +279,64 @@ static void gameFrontLockToggleCallback(bool allow) {
 
 /* -------------------------------------------------------
  * Steam rich presence helpers
+ *
+ * Display tokens (defined in data/steam/rich_presence_localization.vdf):
+ *   #StatusInMenu          — main menu / welcome screen
+ *   #StatusInLobbySingular — in a lobby with 1 player (uses %map%)
+ *   #StatusInLobbyPlural   — in a lobby with N players (uses %map%, %numplayers%)
+ *   #StatusInGameSolo      — playing alone (uses %map%)
+ *   #StatusInGamePlural    — playing with N players (uses %map%, %numplayers%)
  * ------------------------------------------------------- */
-void gameFrontUpdateSteamPresence(ClientSim *cs) {
-  if (cs == NULL) return;
-  char status[256];
-  BYTE numPlayers = clientSimGetNumPlayers(cs);
-  snprintf(status, sizeof(status), "On map '%s' - %d player%s",
-           clientSimGetMapName(cs), numPlayers, numPlayers == 1 ? "" : "s");
-  steam_set_rich_presence("status", status);
-  steam_set_rich_presence("steam_display", "#StatusWithMap");
-
-  /* Set connect string so friends see a "Join Game" button */
+static void gameFrontSetConnectIfAvailable(void) {
   if (udpTransportActive && gameFrontUdpAddress[0] != '\0') {
     char connect[FILENAME_MAX];
     snprintf(connect, sizeof(connect), "+connect %.255s:%u",
              gameFrontUdpAddress, (unsigned)gameFrontTargetUdp);
     steam_set_rich_presence("connect", connect);
   }
+}
+
+void gameFrontUpdateSteamPresence(ClientSim *cs) {
+  if (cs == NULL) return;
+  BYTE numPlayers = clientSimGetNumPlayers(cs);
+  char numStr[16];
+  snprintf(numStr, sizeof(numStr), "%d", (int)numPlayers);
+  steam_set_rich_presence("map", clientSimGetMapName(cs));
+  steam_set_rich_presence("numplayers", numStr);
+  steam_set_rich_presence("steam_display",
+                          numPlayers == 1 ? "#StatusInGameSolo"
+                                          : "#StatusInGamePlural");
+  gameFrontSetConnectIfAvailable();
+}
+
+void gameFrontSetSteamPresenceMenu(void) {
+  steam_clear_rich_presence();
+  steam_set_rich_presence("steam_display", "#StatusInMenu");
+}
+
+void gameFrontSetSteamPresenceLobby(ClientSim *cs) {
+  if (cs == NULL) return;
+  /* clientSimGetNumPlayers counts in-use tank slots, which omits humans
+   * who haven't been assigned a tank yet and lingers on removed bots.
+   * For the lobby, use the connected-lobby-slot count (humans + bots) —
+   * same data the lobby UI's player table renders. */
+  BYTE numPlayers = clientSimGetLobbyNumConnected(cs);
+  char numStr[16];
+  snprintf(numStr, sizeof(numStr), "%d", (int)numPlayers);
+
+  /* Only set "map" when we actually have a name. Steam treats an empty
+   * value as a delete, which would leave "%map%" literal in the rendered
+   * display string while the lobby waits for the server's lobbySettings
+   * packet to populate cs->mapName. */
+  const char *mapName = clientSimGetMapName(cs);
+  if (mapName != NULL && mapName[0] != '\0') {
+    steam_set_rich_presence("map", mapName);
+  }
+  steam_set_rich_presence("numplayers", numStr);
+  steam_set_rich_presence("steam_display",
+                          numPlayers == 1 ? "#StatusInLobbySingular"
+                                          : "#StatusInLobbyPlural");
+  gameFrontSetConnectIfAvailable();
 }
 
 extern bool isTutorial;
@@ -1059,7 +1100,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           spServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
         } else {
           BYTE emap[6000] = E_MAP;
-          spServerSim = serverSimCreateCompressed(emap, 5097, gametype, hiddenMines, startDelay, timeLen);
+          spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen);
         }
         if (spServerSim != NULL) {
           /* Single-player: no lobby, run immediately */
@@ -1552,7 +1593,7 @@ bool gameFrontSetupServer(void) {
     spServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
   } else {
     BYTE emap[6000] = E_MAP;
-    spServerSim = serverSimCreateCompressed(emap, 5097, gametype, hiddenMines, startDelay, timeLen);
+    spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen);
   }
   if (spServerSim == NULL) {
     return FALSE;

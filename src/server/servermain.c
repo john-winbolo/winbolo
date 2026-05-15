@@ -1046,7 +1046,7 @@ int main(int argc, char **argv) {
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-    serverSim = serverSimCreateCompressed(emap, 5097, game, hiddenMines, srtDelay, gmeLen);
+    serverSim = serverSimCreateCompressed(emap, 5097, "Everard Island", game, hiddenMines, srtDelay, gmeLen);
     if (serverSim == NULL) {
       fprintf(stderr, "Error starting server simulation (inbuilt map)\n");
 #ifdef USING_SDL

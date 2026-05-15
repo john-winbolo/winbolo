@@ -4300,12 +4300,11 @@ int main(int argc, char *argv[]) {
     }
     if (!mapLoaded) {
         BYTE emap[6000] = E_MAP;
-        app.sim = serverSimCreateCompressed(emap, 5097, optGame, false, 0, -1);
+        app.sim = serverSimCreateCompressed(emap, 5097, "Everard Island", optGame, false, 0, -1);
         if (app.sim == NULL) {
             fprintf(stderr, "serverSimCreateCompressed failed\n");
             return 1;
         }
-        serverSimSetMapName(app.sim, "Everard Island");
     }
     serverSimSetLobbyEnabled(app.sim, false);
     app.simValid = true;

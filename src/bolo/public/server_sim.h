@@ -148,12 +148,15 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
  *ARGUMENTS:
  *  buff        - Compressed map data
  *  buffLen     - Length of compressed data
+ *  mapName     - Display name for the map (e.g. "Everard Island").
+ *                Stored on the sim so clients can report it in UI
+ *                and Steam rich presence. Pass "" if unknown.
  *  game        - Game type (open/tournament/strict)
  *  hiddenMines - Are hidden mines allowed
  *  startDelay  - Game start delay (in ticks)
  *  gameLen     - Game length in ticks (-1 = unlimited)
  *********************************************************/
-ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen);
+ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, const char *mapName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen);
 
 /*********************************************************
  *NAME:          serverSimDestroy
