@@ -61,7 +61,14 @@ typedef int SubscriberHandle;
  * the same thread (today: the main game-tick thread, which drives both
  * transport_local and transport_udp_*). If a subscriber's deliver callback ever
  * runs on a worker thread, or publish is called from outside the tick thread,
- * add a mutex. */
+ * add a mutex.
+ *
+ * Registration order: a player's own subscriber (bot via botManagerAddBot,
+ * local human via gamefront, per-client UDP via the join handler) must
+ * register AFTER serverSimAddPlayer has published CTRL_PLAYER_JOIN for that
+ * player, so the new player's subscriber doesn't receive its own join. The
+ * dispatcher's self-skip is the second line of defense; registration order
+ * is the primary one. */
 typedef struct {
     void (*deliver)(void *ctx, const struct ControlEvent *evt);
     void *ctx;

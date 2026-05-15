@@ -412,76 +412,134 @@ runtime bug class this architecture exists to prevent: features that
 work over the network but break in SP, or work in SP but break under
 network play, because the broken side never got told.
 
-### Two delivery mechanisms — both must fire
+### One publish, fanned out by subscribers
 
-The codebase moves information between server and consumers through
-two different pipes:
+Server-authoritative state changes flow through one call:
+`serverSimPublishControl(sim, &evt)` (defined in
+`src/server/server_sim.c`). The implementation walks the registered
+subscriber array and invokes each `deliverCb`. Two kinds of
+subscribers are attached:
 
-- **Control events** (`ControlEvent` in `control_event.h`) are an
-  in-process publish/subscribe stream. The server calls
-  `serverSimPublishControl(sim, &evt)`; the implementation walks
-  the registered subscriber array and calls each `deliverCb`.
-  This is what reaches local ClientSims, bots, host UI, etc.
-  It does not touch the network.
+- **In-process subscribers** for every local `ClientSim` (SP humans,
+  bots in the same process), host-side UI surfaces, and replay log
+  writers. They consume the event directly.
+- **A per-client subscriber** registered by the UDP transport in its
+  join handler — `udpClientDeliverControl` in
+  `src/server/transport_udp_server.c`, one per connected remote
+  client. Its deliver callback runs the event through a per-variant
+  codec encoder (`src/bolo/transport_control_codec.c`) that produces
+  the wire bytes, then unicasts them to that one client.
 
-- **Wire packets** (`bolo_packets.h` / `netpacks.h`, both T2 and
-  sim-internal) are the binary network protocol between
-  `client_sim` and `server_sim`. The server transport explicitly
-  builds and broadcasts a UDP packet to each connected remote
-  client. The receiving client decodes it and applies the state
-  change locally (often publishing a local `ControlEvent` to its
-  own in-process subscribers).
+A single publish therefore reaches every audience by construction: a
+publish that reaches one audience reaches the other by definition,
+and the asymmetric-runtime bug class is closed.
 
-These two pipes are not bridged. `serverSimPublishControl` does not
-emit a UDP packet, and a UDP broadcast does not call
-`serverSimPublishControl`. **Adding a server event means wiring up
-both, manually, on the server side**. Forgetting one creates the
-exact asymmetric-runtime bug we're trying to prevent.
+This is foot-gun removal, not compile-time enforcement. The old
+`transportUdpServerBroadcast*` helpers are gone, so the easy copy-
+paste pattern that produced asymmetric runtimes no longer exists.
+But `udpSendTo`, `packHeader`, and the `PACKET_*` constants are
+still reachable inside `transport_udp_server.c`; a contributor could
+still hand-roll a wire-only broadcast. The documented recipe just
+makes it obvious why they shouldn't. This is structurally weaker
+than the include-tier compile-error enforcement that `src/bolo/`'s
+public/internal split provides.
 
-Some convenience helpers in `transport_udp_server.c` bundle both
-steps for common shapes (`transportUdpServerBroadcastLobbyUpdate`).
-Use them when they fit. For anything novel, write both calls
-explicitly and verify the SP-with-bots path and the UDP path both
-end up applying the same change.
+### Where new wire-format code lives
+
+| Packet kind | Lives in |
+| --- | --- |
+| Backed by a `ControlEventType` variant (state changes — joins, leaves, alliances, chat, lobby, phases, balance, shutdown) | `src/bolo/transport_control_codec.c` (encoder + decoder) |
+| Per-tick world snapshot (positions, shells, deltas) | existing snapshot module |
+| Per-client handshake / reliability (JOIN_ACCEPT, JOIN_REJECT, NAME_CHANGE_REJECT, MAP_DOWNLOAD chunks, PONG, PLAYER_LIST resync) | `src/bolo/transport_udp_server.c` / `src/bolo/transport_udp_client.c` |
 
 ### Recipe — adding a new event type
 
 1. **Define the event.** Add a variant to `ControlEventType` in
-   `src/bolo/public/control_event.h`, and add the corresponding
-   union member to `ControlEvent.u` with whatever fields the event
-   carries. If the event needs a typed populate helper, add a
-   `serverSimFill<Name>Event` function on `server_sim.h`.
+   `src/bolo/public/control_event.h` and the corresponding union
+   member to `ControlEvent.u`. If a typed populate helper makes
+   call sites cleaner, add a `serverSimFill<Name>Event` function
+   on `server_sim.h`.
 
-2. **Define the wire packet.** Add a packet-type identifier to the
-   enum in `bolo_packets.h`, add encode/decode helpers, and wire
-   the new packet into the dispatch in `transport_udp_client.c` /
-   `transport_udp_server.c`.
+2. **Define the wire form (if any).** Add an encoder and a decoder
+   in `src/bolo/transport_control_codec.c`. Wire the encoder into
+   `s_encoders[]` (keyed by `ControlEventType`) and the decoder
+   into `transportControlCodecDecoder` (keyed by wire packet type).
+   The encoder receives a per-recipient `UdpServerClient *recipient`
+   it can ignore for fan-to-all variants or use for filtering
+   single-target events — though the established precedent is to
+   keep the codec recipient-agnostic and put the slot check in
+   `udpClientDeliverControl` (`CTRL_ALLIANCE_REQUEST`'s target check
+   lives there).
 
-3. **Server emit — both pipes.** From the server-side handler:
+3. **Publish from the server-side handler:**
    ```c
-   /* In-process: */
+   ControlEvent evt;
+   memset(&evt, 0, sizeof(evt));
+   evt.type = CTRL_<NAME>;
+   /* fill evt.u.<name> ... */
    serverSimPublishControl(sim, &evt);
-
-   /* Network: broadcast the wire packet to every connected client */
-   transportUdpServerBroadcast<EventName>(sim, ...);
    ```
-   If a single helper already does both for the right event shape,
-   call it. Otherwise write both and keep them adjacent so they
-   stay in sync.
+   That is the entire server-side change. The per-client UDP
+   subscribers fan out to remote clients via the codec encoder; the
+   in-process subscribers receive it via the bus walk.
 
-4. **Client receive — close the loop.** On the receiving client, the
-   transport decodes the wire packet and applies the change locally.
-   If the local change needs to fan out to other in-process
-   subscribers (a host-side GUI, a logger, a brain), the receive
-   handler publishes a local `ControlEvent` of the same variant.
-   Subscribers handle the new variant in their `deliverCb` — at a
-   minimum, the `serverSimDeliverToClientSim` switch needs a case.
+4. **Receive on the client.** Wire decoders in
+   `src/bolo/transport_udp_client.c` build a `ControlEvent` and call
+   `clientSimApplyControl(cs, &evt)`. Add a case for the new variant
+   in `clientSimApplyControl` (`src/bolo/client_sim_control.c`) —
+   the dispatcher covers SP, bots, and network in one place.
 
 5. **Send wrapper (if client-originated).** If a *client* needs to
    trigger this event (e.g. a chat message), add a T1 send wrapper
    on `client_net.h` (`clientSimNetSend<Name>`) that builds the wire
    packet internally. Frontends call the wrapper; never build wire
    packets in `src/gui/` or any non-bolo directory.
+
+### Client-side dispatcher rule
+
+Wire decoders in `src/bolo/transport_udp_client.c` never mutate
+`ClientSim` state directly and never call `frontEnd*` callbacks
+directly — they build a `ControlEvent` and route through
+`clientSimApplyControl`. Subscribers, not decoders, are where an
+event is routed onward to UI, brains, or other sinks. The chat-
+rendering migration is the precedent: `CTRL_CHAT` flows through the
+codec, and every subscriber that wants to render or log chat sees
+the same event whether it arrives from the network, an SP send, or
+a bot.
+
+Display side effects that are inherently transport-aware — the
+`PACKET_CHAT_BROADCAST` localized-langid render, the
+`PACKET_PLAYER_LEFT` lobby-chat line, the `PACKET_ALLIANCE_UPDATE`
+request-dialog popup — stay in the wire-client branch around the
+codec call, because they depend on state (peer player records,
+current dialog, render targets) that only exists in the network-
+client runtime. The bus publish reaches subscribers; the wire branch
+handles the transport-aware display.
+
+For single-player and bots the same funnel holds via
+`serverSimDeliverToClientSim` (in `src/server/server_sim.c`) and the
+bot manager's deliver callback — both end in
+`clientSimApplyControl`. SP, bots, and network converge on one
+funnel.
+
+### Load-bearing wire-only exceptions
+
+Three categories of packet stay wire-only by design; the single-
+publish recipe does not apply to them:
+
+- **Periodic lobby refresh.** The 25-tick cosmetic refresh in
+  `src/server/server_lifecycle.c` calls
+  `transportUdpServerSendPeriodicLobbyRefresh`, which drives the
+  same codec encoders the bus path uses but bypasses the bus. It
+  carries ping and country data that bots, SP, and replay logs
+  ignore — publishing it would wake every in-process subscriber
+  400×/sec for nothing.
+- **Per-tick world snapshots.** Tank positions, shells, and per-tick
+  deltas live in the snapshot module, not the codec.
+- **Per-client handshake and reliability.** `JOIN_ACCEPT`,
+  `JOIN_REJECT`, `NAME_CHANGE_REJECT`, `MAP_DOWNLOAD` chunks,
+  `PONG`, and `PLAYER_LIST` resync responses are point-to-point
+  transport mechanics with no in-process audience.
 
 ### Compatibility rules
 
