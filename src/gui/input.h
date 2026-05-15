@@ -30,6 +30,8 @@
 #include "global.h"
 #include "client_enums.h"  /* tankButton */
 
+struct ClientSim;
+
 /* Typestructure that holds the keys */
 typedef struct {
   /* These are SDL_Scancode values */

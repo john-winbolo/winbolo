@@ -82,6 +82,7 @@
 #include "../gui/gamefront.h"
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
+#include "cmd_stdin.h"
 
 /* ------------------------------------------------------------------ */
 /* Globals needed by the game engine                                   */
@@ -94,6 +95,15 @@ bool isInMenu = FALSE;
 static FILE *logFile = NULL;
 static bool logToStdout = FALSE;
 
+/* Control-event logging (parallel to --log-state, distinct stream).
+ * The events log records the ControlEvent stream arriving at the
+ * local ClientSim via clientSimApplyControl, observed through
+ * clientSimSetControlObserver. Used to diff event delivery between
+ * --fast (server-bus → in-process subscriber → ClientSim) and
+ * --server (UDP decoder → ClientSim) modes. */
+static FILE *logEventsFile = NULL;
+static bool  logEventsToStdout = FALSE;
+
 /* Command-line options */
 static char optServer[256] = "";
 static unsigned short optPort = 27500;
@@ -104,6 +114,8 @@ static char optBrain[512] = "";
 static int optTicks = 0; /* 0 = unlimited */
 static char optPassword[256] = "";
 static char optLogState[512] = "";
+static char optLogEvents[512] = "";
+static char optCmdStdin[512] = "";
 static bool optQuiet = FALSE;
 static bool optFast = FALSE;
 static char optMap[512] = "";
@@ -133,6 +145,9 @@ static ClientSim *humanSim = NULL;
 
 /* Fast mode: local server sim */
 static ServerSim *fastServerSim = NULL;
+
+/* Scripted command stream (NULL unless --cmd-stdin was supplied). */
+static CmdStdin *cmdStream = NULL;
 
 /* ------------------------------------------------------------------ */
 /* Signal handler for clean shutdown                                   */
@@ -186,6 +201,474 @@ static void logStateClose(void) {
     fclose(logFile);
   }
   logFile = NULL;
+}
+
+/* ------------------------------------------------------------------ */
+/* Control-event logging                                               */
+/* ------------------------------------------------------------------ */
+/*
+ * Each line is one JSON object per ControlEvent the local ClientSim
+ * receives. Field order is fixed (declaration-order from
+ * control_event.h's union, with tick + type first). Strings are
+ * JSON-escaped; bools are true/false; named enums render as their
+ * symbolic name. This serializer is intentionally local to the test
+ * harness: when the wire codec lands, sharing code would defeat the
+ * purpose of using the goldens to diff in-process vs UDP delivery.
+ */
+
+static void logEventsOpen(const char *path) {
+  if (path[0] == '\0') {
+    return;
+  }
+  if (strcmp(path, "-") == 0) {
+    logEventsToStdout = TRUE;
+    logEventsFile = stdout;
+  } else {
+    logEventsFile = fopen(path, "w");
+    if (logEventsFile == NULL) {
+      fprintf(stderr, "Error: cannot open events log file '%s'\n", path);
+    }
+  }
+}
+
+static void logEventsClose(void) {
+  if (logEventsFile != NULL && !logEventsToStdout) {
+    fclose(logEventsFile);
+  }
+  logEventsFile = NULL;
+}
+
+/* Write a JSON-quoted string. Escapes ", \, and control chars 0x00-0x1F.
+ * maxLen caps the read in case the source field is a fixed-size buffer
+ * that may not be NUL-terminated. */
+static void logEventsJsonStr(FILE *f, const char *s, size_t maxLen) {
+  size_t i;
+  fputc('"', f);
+  for (i = 0; i < maxLen && s[i] != '\0'; i++) {
+    unsigned char c = (unsigned char)s[i];
+    switch (c) {
+      case '"':  fputs("\\\"", f); break;
+      case '\\': fputs("\\\\", f); break;
+      case '\b': fputs("\\b", f);  break;
+      case '\f': fputs("\\f", f);  break;
+      case '\n': fputs("\\n", f);  break;
+      case '\r': fputs("\\r", f);  break;
+      case '\t': fputs("\\t", f);  break;
+      default:
+        if (c < 0x20) {
+          fprintf(f, "\\u%04x", (unsigned)c);
+        } else {
+          fputc((int)c, f);
+        }
+    }
+  }
+  fputc('"', f);
+}
+
+static const char *logEventsTypeName(int type) {
+  switch (type) {
+    case CTRL_ALLIANCE_REQUEST:      return "CTRL_ALLIANCE_REQUEST";
+    case CTRL_ALLIANCE_ACCEPT:       return "CTRL_ALLIANCE_ACCEPT";
+    case CTRL_ALLIANCE_LEAVE:        return "CTRL_ALLIANCE_LEAVE";
+    case CTRL_PLAYER_JOIN:           return "CTRL_PLAYER_JOIN";
+    case CTRL_PLAYER_LEAVE:          return "CTRL_PLAYER_LEAVE";
+    case CTRL_PLAYER_NAME:           return "CTRL_PLAYER_NAME";
+    case CTRL_LOBBY_SLOT:            return "CTRL_LOBBY_SLOT";
+    case CTRL_LOBBY_SETTINGS:        return "CTRL_LOBBY_SETTINGS";
+    case CTRL_LOBBY_MAP_CHANGE:      return "CTRL_LOBBY_MAP_CHANGE";
+    case CTRL_MAP_DOWNLOAD_COMPLETE: return "CTRL_MAP_DOWNLOAD_COMPLETE";
+    case CTRL_BALANCE_PROPOSAL:      return "CTRL_BALANCE_PROPOSAL";
+    case CTRL_MAP_SKIP_STATE:        return "CTRL_MAP_SKIP_STATE";
+    case CTRL_GAME_PHASE:            return "CTRL_GAME_PHASE";
+    case CTRL_GAME_OVER:             return "CTRL_GAME_OVER";
+    case CTRL_SERVER_SHUTDOWN:       return "CTRL_SERVER_SHUTDOWN";
+    case CTRL_CHAT:                  return "CTRL_CHAT";
+    default:                         return NULL;
+  }
+}
+
+static const char *logEventsPhaseName(int phase) {
+  switch (phase) {
+    case CTRL_PHASE_LOBBY:     return "LOBBY";
+    case CTRL_PHASE_COUNTDOWN: return "COUNTDOWN";
+    case CTRL_PHASE_RUNNING:   return "RUNNING";
+    case CTRL_PHASE_GAME_OVER: return "GAME_OVER";
+    default:                   return NULL;
+  }
+}
+
+static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
+  FILE *f = (FILE *)ctx;
+  uint32_t tick;
+  const char *typeName;
+
+  if (f == NULL || evt == NULL) return;
+
+  /* Tick numbers come from the ClientSim's last-server-tick counter,
+   * which both modes agree on (set by snapshot ingestion in --fast
+   * and --server alike). Pre-snapshot events log tick 0. */
+  tick = humanSim != NULL ? clientSimGetLastServerTick(humanSim) : 0;
+  typeName = logEventsTypeName((int)evt->type);
+
+  fputc('{', f);
+  if (typeName != NULL) {
+    fprintf(f, "\"tick\":%u,\"type\":\"%s\"", (unsigned)tick, typeName);
+  } else {
+    fprintf(f, "\"tick\":%u,\"type\":\"UNKNOWN\",\"raw\":%d",
+            (unsigned)tick, (int)evt->type);
+  }
+
+  switch (evt->type) {
+    case CTRL_ALLIANCE_REQUEST:
+      fprintf(f, ",\"fromPlayer\":%u,\"toPlayer\":%u",
+              (unsigned)evt->u.allianceRequest.fromPlayer,
+              (unsigned)evt->u.allianceRequest.toPlayer);
+      break;
+
+    case CTRL_ALLIANCE_ACCEPT:
+      fprintf(f, ",\"acceptedBy\":%u,\"newMember\":%u",
+              (unsigned)evt->u.allianceAccept.acceptedBy,
+              (unsigned)evt->u.allianceAccept.newMember);
+      break;
+
+    case CTRL_ALLIANCE_LEAVE:
+      fprintf(f, ",\"playerNum\":%u",
+              (unsigned)evt->u.allianceLeave.playerNum);
+      break;
+
+    case CTRL_PLAYER_JOIN: {
+      BYTE k;
+      fprintf(f, ",\"playerNum\":%u,\"name\":",
+              (unsigned)evt->u.playerJoin.playerNum);
+      logEventsJsonStr(f, evt->u.playerJoin.name, PACKET_MAX_PLAYER_NAME);
+      fprintf(f, ",\"country\":");
+      logEventsJsonStr(f, evt->u.playerJoin.country,
+                       sizeof(evt->u.playerJoin.country));
+      fprintf(f, ",\"clientType\":%u,\"clientFlags\":%u,\"allies\":[",
+              (unsigned)evt->u.playerJoin.clientType,
+              (unsigned)evt->u.playerJoin.clientFlags);
+      for (k = 0; k < evt->u.playerJoin.numAllies; k++) {
+        fprintf(f, "%s%u", k == 0 ? "" : ",",
+                (unsigned)evt->u.playerJoin.allies[k]);
+      }
+      fputc(']', f);
+      break;
+    }
+
+    case CTRL_PLAYER_LEAVE:
+      fprintf(f, ",\"playerNum\":%u,\"name\":",
+              (unsigned)evt->u.playerLeave.playerNum);
+      logEventsJsonStr(f, evt->u.playerLeave.name, PACKET_MAX_PLAYER_NAME);
+      fprintf(f, ",\"country\":");
+      logEventsJsonStr(f, evt->u.playerLeave.country,
+                       sizeof(evt->u.playerLeave.country));
+      break;
+
+    case CTRL_PLAYER_NAME:
+      fprintf(f, ",\"playerNum\":%u,\"name\":",
+              (unsigned)evt->u.playerName.playerNum);
+      logEventsJsonStr(f, evt->u.playerName.name, PACKET_MAX_PLAYER_NAME);
+      break;
+
+    case CTRL_LOBBY_SLOT: {
+      const ClientLobbySlot *s = &evt->u.lobbySlot.slot;
+      fprintf(f, ",\"playerNum\":%u,\"slot\":{\"connected\":%s,\"playerName\":",
+              (unsigned)evt->u.lobbySlot.playerNum,
+              s->connected ? "true" : "false");
+      logEventsJsonStr(f, s->playerName, PACKET_MAX_PLAYER_NAME);
+      fprintf(f, ",\"teamNumber\":%u,\"ready\":%s,\"isBot\":%s,\"pingMs\":%u",
+              (unsigned)s->teamNumber,
+              s->ready ? "true" : "false",
+              s->isBot ? "true" : "false",
+              (unsigned)s->pingMs);
+      fprintf(f, ",\"countryCode\":");
+      logEventsJsonStr(f, s->countryCode, sizeof(s->countryCode));
+      fprintf(f, ",\"clientFlags\":%u,\"clientType\":%u}",
+              (unsigned)s->clientFlags, (unsigned)s->clientType);
+      break;
+    }
+
+    case CTRL_LOBBY_SETTINGS:
+      fprintf(f, ",\"mapName\":");
+      logEventsJsonStr(f, evt->u.lobbySettings.mapName, MAP_STR_SIZE);
+      fprintf(f, ",\"lobbyGameType\":%d,\"lobbyHiddenMines\":%s"
+                 ",\"lobbyAiType\":%u,\"lobbyTimeLimit\":%d"
+                 ",\"lobbyPillCount\":%u,\"lobbyBaseCount\":%u"
+                 ",\"lobbyStartCount\":%u,\"mapSkipAvailable\":%s"
+                 ",\"netStat\":%d,\"inLobby\":%s",
+              (int)evt->u.lobbySettings.lobbyGameType,
+              evt->u.lobbySettings.lobbyHiddenMines ? "true" : "false",
+              (unsigned)evt->u.lobbySettings.lobbyAiType,
+              (int)evt->u.lobbySettings.lobbyTimeLimit,
+              (unsigned)evt->u.lobbySettings.lobbyPillCount,
+              (unsigned)evt->u.lobbySettings.lobbyBaseCount,
+              (unsigned)evt->u.lobbySettings.lobbyStartCount,
+              evt->u.lobbySettings.mapSkipAvailable ? "true" : "false",
+              (int)evt->u.lobbySettings.netStat,
+              evt->u.lobbySettings.inLobby ? "true" : "false");
+      break;
+
+    case CTRL_LOBBY_MAP_CHANGE:
+    case CTRL_MAP_DOWNLOAD_COMPLETE:
+    case CTRL_GAME_OVER:
+    case CTRL_SERVER_SHUTDOWN:
+      /* No payload fields. */
+      break;
+
+    case CTRL_BALANCE_PROPOSAL: {
+      int k;
+      fprintf(f, ",\"teamForSlot\":[");
+      for (k = 0; k < MAX_TANKS; k++) {
+        fprintf(f, "%s%u", k == 0 ? "" : ",",
+                (unsigned)evt->u.balanceProposal.teamForSlot[k]);
+      }
+      fputc(']', f);
+      break;
+    }
+
+    case CTRL_MAP_SKIP_STATE: {
+      int k;
+      fprintf(f, ",\"votes\":[");
+      for (k = 0; k < MAX_TANKS; k++) {
+        fprintf(f, "%s%u", k == 0 ? "" : ",",
+                (unsigned)evt->u.mapSkipState.votes[k]);
+      }
+      fputc(']', f);
+      break;
+    }
+
+    case CTRL_GAME_PHASE: {
+      const char *phase = logEventsPhaseName((int)evt->u.gamePhase.phase);
+      if (phase != NULL) {
+        fprintf(f, ",\"phase\":\"%s\"", phase);
+      } else {
+        fprintf(f, ",\"phase\":\"UNKNOWN\",\"phaseRaw\":%d",
+                (int)evt->u.gamePhase.phase);
+      }
+      fprintf(f, ",\"countdownSeconds\":%d",
+              evt->u.gamePhase.countdownSeconds);
+      break;
+    }
+
+    case CTRL_CHAT:
+      fprintf(f, ",\"fromPlayer\":%u,\"destPlayer\":%u,\"bodyLen\":%u",
+              (unsigned)evt->u.chat.fromPlayer,
+              (unsigned)evt->u.chat.destPlayer,
+              (unsigned)evt->u.chat.bodyLen);
+      break;
+
+    case CTRL_EVENT_TYPE_COUNT:
+      /* Sentinel — never actually delivered. */
+      break;
+  }
+
+  fputs("}\n", f);
+  fflush(f);
+}
+
+/* ------------------------------------------------------------------ */
+/* Scripted command dispatch (--cmd-stdin)                             */
+/* ------------------------------------------------------------------ */
+/*
+ * Tick-driven dispatch. Both --fast and --server share the same
+ * command vocabulary (parsed in cmd_stdin.c) but route ops
+ * differently: --fast hits the in-process ServerSim directly,
+ * while --server fans them out through clientSimNetSend* wrappers.
+ *
+ * Ops invalid for the current mode print to stderr and abort the
+ * binary with exit code 2. Silent skip would mask scenario bugs.
+ */
+
+static void cmdAbortBadMode(const CmdLine *cmd, const char *mode) {
+  fprintf(stderr,
+          "cmd-stdin: line %d: op '%s' not valid in %s mode\n",
+          cmd->lineNumber, cmdOpName(cmd->op), mode);
+  exit(2);
+}
+
+/* Scripted command dispatch in --fast mode. The alliance/name
+ * helpers go through serverSimAcceptAlliance / serverSimLeaveAlliance /
+ * serverSimSetPlayerName, which do the same mutate-then-publish pair
+ * that transport_udp_server.c's PACKET_ALLIANCE_* / PACKET_NAME_CHANGE
+ * handlers do inline. Alliance-request and map-skip-state have no
+ * server-side mutation, so they just publish. */
+static void cmdFastPublishAllianceRequest(BYTE fromPlayer, BYTE toPlayer) {
+  ControlEvent evt;
+  memset(&evt, 0, sizeof(evt));
+  evt.type = CTRL_ALLIANCE_REQUEST;
+  evt.u.allianceRequest.fromPlayer = fromPlayer;
+  evt.u.allianceRequest.toPlayer   = toPlayer;
+  serverSimPublishControl(fastServerSim, &evt);
+}
+
+static void cmdFastPublishAllianceAccept(BYTE acceptedBy, BYTE newMember) {
+  serverSimAcceptAlliance(fastServerSim, acceptedBy, newMember);
+}
+
+static void cmdFastPublishAllianceLeave(BYTE playerNum) {
+  serverSimLeaveAlliance(fastServerSim, playerNum);
+}
+
+static void cmdFastPublishPlayerName(BYTE playerNum, const char *name) {
+  serverSimSetPlayerName(fastServerSim, playerNum, name);
+}
+
+static void cmdFastPublishMapSkipState(void) {
+  ControlEvent evt;
+  int i;
+  memset(&evt, 0, sizeof(evt));
+  evt.type = CTRL_MAP_SKIP_STATE;
+  for (i = 0; i < MAX_TANKS; i++) {
+    evt.u.mapSkipState.votes[i] =
+        serverSimIsMapSkipVote(fastServerSim, (BYTE)i) ? 1 : 0;
+  }
+  serverSimPublishControl(fastServerSim, &evt);
+}
+
+/* Dispatch a single cmd in --fast mode. Returns true if the loop
+ * should keep running, false on "exit". */
+static bool cmdDispatchFast(const CmdLine *cmd) {
+  switch (cmd->op) {
+    case CMD_OP_ADD_BOT: {
+      ServerSimBotConfig cfg;
+      char nameBuf[PACKET_MAX_PLAYER_NAME];
+      BYTE slot;
+      memset(&cfg, 0, sizeof(cfg));
+      /* Find the first unconnected slot (1..MAX_TANKS-1 — slot 0
+       * is the local "player"). The scenarios only need a slot to
+       * exist; the bot's brain never runs because we route ops
+       * through serverSimAddBot rather than botManagerAddBot. */
+      for (slot = 1; slot < MAX_TANKS; slot++) {
+        if (!serverSimIsPlayerConnected(fastServerSim, slot)) break;
+      }
+      if (slot >= MAX_TANKS) {
+        fprintf(stderr, "cmd-stdin: line %d: add_bot: no free slot\n",
+                cmd->lineNumber);
+        exit(2);
+      }
+      snprintf(nameBuf, sizeof(nameBuf), "Bot %u", (unsigned)slot);
+      cfg.brainPath  = "(cmd-stdin)";
+      cfg.brainName  = nameBuf;
+      cfg.ai         = optAi;
+      cfg.gameType   = optGameType;
+      cfg.hiddenMines= false;
+      cfg.teamNumber = 0;
+      serverSimAddBot(fastServerSim, slot, &cfg);
+      return true;
+    }
+    case CMD_OP_SET_TEAM:
+      serverSimSetTeam(fastServerSim, cmd->slot, cmd->team);
+      return true;
+    case CMD_OP_SET_READY:
+      serverSimSetReady(fastServerSim, cmd->slot, cmd->ready);
+      return true;
+    case CMD_OP_NAME_CHANGE:
+      cmdFastPublishPlayerName(cmd->slot, cmd->name);
+      return true;
+    case CMD_OP_ALLIANCE_REQUEST:
+      cmdFastPublishAllianceRequest(cmd->from, cmd->to);
+      return true;
+    case CMD_OP_ALLIANCE_ACCEPT:
+      cmdFastPublishAllianceAccept(cmd->from, cmd->to);
+      return true;
+    case CMD_OP_ALLIANCE_LEAVE:
+      cmdFastPublishAllianceLeave(cmd->slot);
+      return true;
+    case CMD_OP_MAP_SKIP_VOTE:
+      serverSimMapSkipVoteToggle(fastServerSim, cmd->slot);
+      cmdFastPublishMapSkipState();
+      return true;
+    case CMD_OP_START_GAME:
+      serverSimStartGame(fastServerSim);
+      return true;
+    case CMD_OP_REAPPLY_ALLIANCES:
+      serverSimReapplyTeamAlliances(fastServerSim);
+      return true;
+    case CMD_OP_SHUTDOWN:
+      /* No symmetric "stop now" path on the in-process sim — the
+       * server is destroyed at process exit. Treat as a no-op. */
+      return true;
+    case CMD_OP_EXIT:
+      return false;
+    default:
+      cmdAbortBadMode(cmd, "--fast");
+      return false;  /* unreachable */
+  }
+}
+
+/* Dispatch a single cmd in --server (network) mode. */
+static bool cmdDispatchServer(const CmdLine *cmd) {
+  BYTE selfSlot = clientSimGetServerPlayerNum(humanSim);
+  switch (cmd->op) {
+    case CMD_OP_ADD_BOT:
+      clientSimNetSendAddBot(humanSim);
+      return true;
+    case CMD_OP_SET_TEAM:
+      if (cmd->slot != selfSlot) {
+        fprintf(stderr,
+                "cmd-stdin: line %d: set_team in --server mode requires slot=%u (own slot)\n",
+                cmd->lineNumber, (unsigned)selfSlot);
+        exit(2);
+      }
+      clientSimNetSendTeamSet(humanSim, cmd->team);
+      return true;
+    case CMD_OP_SET_READY:
+      if (cmd->slot != selfSlot) {
+        fprintf(stderr,
+                "cmd-stdin: line %d: set_ready in --server mode requires slot=%u (own slot)\n",
+                cmd->lineNumber, (unsigned)selfSlot);
+        exit(2);
+      }
+      clientSimNetSendReady(humanSim, cmd->ready);
+      return true;
+    case CMD_OP_NAME_CHANGE:
+      if (cmd->slot != selfSlot) {
+        fprintf(stderr,
+                "cmd-stdin: line %d: name_change in --server mode requires slot=%u (own slot)\n",
+                cmd->lineNumber, (unsigned)selfSlot);
+        exit(2);
+      }
+      clientSimNetSendNameChange(humanSim, cmd->name);
+      return true;
+    case CMD_OP_ALLIANCE_REQUEST:
+      clientSimNetSendAllianceRequest(humanSim, cmd->to);
+      return true;
+    case CMD_OP_ALLIANCE_ACCEPT:
+      clientSimNetSendAllianceAccept(humanSim, cmd->to);
+      return true;
+    case CMD_OP_ALLIANCE_LEAVE:
+      clientSimNetSendAllianceLeave(humanSim);
+      return true;
+    case CMD_OP_MAP_SKIP_VOTE:
+      clientSimNetSendMapSkipVote(humanSim);
+      return true;
+    case CMD_OP_START_GAME:
+    case CMD_OP_REAPPLY_ALLIANCES:
+    case CMD_OP_SHUTDOWN:
+      cmdAbortBadMode(cmd, "--server");
+      return false;  /* unreachable */
+    case CMD_OP_EXIT:
+      return false;
+    default:
+      cmdAbortBadMode(cmd, "--server");
+      return false;  /* unreachable */
+  }
+}
+
+/* Drain commands whose tick has arrived. Returns true if the
+ * loop should keep running, false on "exit". `fastMode` selects
+ * the dispatch table. */
+static bool cmdStreamPump(uint32_t currentTick, bool fastMode) {
+  if (cmdStream == NULL) return true;
+  for (;;) {
+    CmdLine cmd;
+    if (!cmdStdinPeek(cmdStream, &cmd)) return true;     /* EOF */
+    if (cmd.tick > currentTick) return true;             /* not yet due */
+    cmdStdinConsume(cmdStream);
+    bool keepGoing = fastMode ? cmdDispatchFast(&cmd)
+                              : cmdDispatchServer(&cmd);
+    if (!keepGoing) return false;
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -843,6 +1326,9 @@ static void printUsage(const char *prog) {
     "  --gametype TYPE   Game type: strict (default), tournament, open\n"
     "  --log-state FILE  Log verbose JSON state each tick (- for stdout)\n"
     "  --log-state binary  Binary observation frames to stdout (little-endian)\n"
+    "  --log-events FILE Log one JSON line per ControlEvent (- for stdout)\n"
+    "  --cmd-stdin FILE  Read scripted commands (JSON-per-line) and dispatch at\n"
+    "                    each command's tick (- for stdin)\n"
     "  --seed N          Seed the RNG with N for reproducible runs\n"
     "  --quiet           Suppress non-error output\n"
     "\n"
@@ -879,6 +1365,10 @@ static bool parseArgs(int argc, char **argv) {
       optTicks = atoi(argv[++i]);
     } else if (strcmp(argv[i], "--log-state") == 0 && i + 1 < argc) {
       strncpy(optLogState, argv[++i], sizeof(optLogState) - 1);
+    } else if (strcmp(argv[i], "--log-events") == 0 && i + 1 < argc) {
+      strncpy(optLogEvents, argv[++i], sizeof(optLogEvents) - 1);
+    } else if (strcmp(argv[i], "--cmd-stdin") == 0 && i + 1 < argc) {
+      strncpy(optCmdStdin, argv[++i], sizeof(optCmdStdin) - 1);
     } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
       optSeed = (unsigned int)strtoul(argv[++i], NULL, 0);
       optSeedSet = TRUE;
@@ -1009,8 +1499,14 @@ static bool verboseNeedMapInit = TRUE;
 /* Set up the server sim, transport, and client sim from cached map.
  * Called at initial startup and on each reset. */
 static bool fastModeSetupGame(void) {
-  serverSimSetLobbyEnabled(fastServerSim, false);
-  serverSimStartGame(fastServerSim);
+  if (cmdStream != NULL) {
+    /* Scripted scenarios drive the lifecycle explicitly — leave the
+     * sim in lobby state until the cmd stream issues start_game. */
+    serverSimSetLobbyEnabled(fastServerSim, true);
+  } else {
+    serverSimSetLobbyEnabled(fastServerSim, false);
+    serverSimStartGame(fastServerSim);
+  }
   serverSimAddPlayer(fastServerSim, 0, optName, false);
   serverSimSetViewPlayer(fastServerSim, 0);
 
@@ -1019,6 +1515,12 @@ static bool fastModeSetupGame(void) {
 
   /* Reload client sim from cached compressed map */
   humanSim = clientSimAlloc();
+  /* Re-install the control-event observer on the fresh ClientSim so a
+   * --stdin reset still captures the post-reset event stream. No-op
+   * when --log-events was not requested (logEventsFile is NULL). */
+  if (logEventsFile != NULL) {
+    clientSimSetControlObserver(humanSim, logEventsDeliverCb, logEventsFile);
+  }
   clientSimConnectLocal(humanSim, fastServerSim, 0);
   clientLoadCompressedMap(humanSim, cachedCompressedMap, cachedCompressedMapLen,
                           "Fast Local", optGameType, false, 0,
@@ -1054,6 +1556,10 @@ static int runFastMode(void) {
   bool justKeys = FALSE;
   bool brainRunning;
   uint32_t simTickCounter = 0;
+  /* Monotonic per-outer-iteration counter. Used as the cmd-stdin
+   * pump reference when the server tick is unavailable (lobby
+   * phase, before any PACKET_GAME_STATE has been observed). */
+  uint32_t pumpTick = 0;
 
   if (!optQuiet) {
     fprintf(stderr, "WinBolo Headless Client (fast local mode)\n");
@@ -1067,6 +1573,13 @@ static int runFastMode(void) {
     if (optTicks > 0) {
       fprintf(stderr, "  Ticks:  %d\n", optTicks);
     }
+  }
+
+  /* Open scripted command stream first so the later fastModeSetup
+   * branches on cmdStream != NULL and stays in lobby state. */
+  if (optCmdStdin[0] != '\0') {
+    cmdStream = cmdStdinOpen(optCmdStdin);
+    if (cmdStream == NULL) return 1;
   }
 
   /* Create server sim from map file (first time only — hits disk) */
@@ -1090,14 +1603,32 @@ static int runFastMode(void) {
     memcpy(cachedCompressedMap, tempMap, cachedCompressedMapLen);
   }
 
-  /* Initial game setup */
-  serverSimSetLobbyEnabled(fastServerSim, false);
-  serverSimStartGame(fastServerSim);
+  /* Open events log before the first ClientSim subscriber registration —
+   * registration triggers a sync pass that fans out CTRL_PLAYER_JOIN /
+   * CTRL_LOBBY_SLOT etc. to the new subscriber, and we want those captured. */
+  logEventsOpen(optLogEvents);
+
+  /* Initial game setup. Scripted scenarios (--cmd-stdin) stay in
+   * lobby state so add_bot / set_team / start_game ops can drive
+   * the lifecycle transitions deterministically. */
+  if (cmdStream != NULL) {
+    serverSimSetLobbyEnabled(fastServerSim, true);
+  } else {
+    serverSimSetLobbyEnabled(fastServerSim, false);
+    serverSimStartGame(fastServerSim);
+  }
   serverSimAddPlayer(fastServerSim, 0, optName, false);
   serverSimSetViewPlayer(fastServerSim, 0);
   transportActive = TRUE;
   playerNum = 0;
   humanSim = clientSimAlloc();
+  /* Attach the control-event observer to humanSim before it joins the
+   * server's subscriber list so register-time sync events are observed.
+   * Survives clientLoadCompressedMap's in-place clientSimCreate via the
+   * save/restore block in client_sim.c. */
+  if (logEventsFile != NULL) {
+    clientSimSetControlObserver(humanSim, logEventsDeliverCb, logEventsFile);
+  }
   clientSimConnectLocal(humanSim, fastServerSim, 0);
   clientLoadCompressedMap(humanSim, cachedCompressedMap, cachedCompressedMapLen,
                           "Fast Local", optGameType, false, 0,
@@ -1139,6 +1670,7 @@ static int runFastMode(void) {
   /* Fast game loop — no wall-clock gating, tick as fast as possible */
   while (!headlessQuit) {
     brainRunning = !optStdin && brainHandlerIsBrainRunning();
+    pumpTick++;
 
     if (justKeys) {
       /* Keys tick — replay held buttons from last stdin read */
@@ -1174,6 +1706,7 @@ static int runFastMode(void) {
           fastModeSetupGame();
           tickCount = 0;
           simTickCounter = 0;
+          pumpTick = 0;
           justKeys = FALSE;
           stdinButtons = 0;
           verboseNeedMapInit = TRUE;
@@ -1210,6 +1743,22 @@ static int runFastMode(void) {
       logStateTick(tickCount);
     }
 
+    /* Scripted command stream — dispatch any pending ops whose tick
+     * has arrived. Prefer the server's observed tick when snapshots
+     * are flowing; fall back to a local per-iteration counter while
+     * the server tick is still 0 (lobby phase, before any
+     * PACKET_GAME_STATE has arrived) so lobby-mode ops still fire. */
+    if (cmdStream != NULL) {
+      uint32_t serverTick = clientSimGetLastServerTick(humanSim);
+      uint32_t pumpRef = serverTick > 0 ? serverTick : pumpTick;
+      if (!cmdStreamPump(pumpRef, true)) {
+        if (!optQuiet) {
+          fprintf(stderr, "cmd-stdin: exit op received.\n");
+        }
+        break;
+      }
+    }
+
     /* Check if we've reached the tick limit */
     if (optTicks > 0 && tickCount >= optTicks) {
       if (!optQuiet) {
@@ -1228,12 +1777,20 @@ static int runFastMode(void) {
   brainsHandlerShutdown();
   serverSimUnregisterSubscriber(fastServerSim, headlessControlSub);
   headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
+  /* Detach observer before tearing down the ClientSim and closing the
+   * file it points at, so no late event can write into a stale FILE. */
+  if (humanSim != NULL) {
+    clientSimSetControlObserver(humanSim, NULL, NULL);
+  }
   clientSimDestroy(humanSim);  /* also tears down the embedded transport */
   transportActive = FALSE;
   serverSimDestroy(fastServerSim);
   fastServerSim = NULL;
   free(cachedCompressedMap);
   cachedCompressedMap = NULL;
+  logEventsClose();
+  cmdStdinClose(cmdStream);
+  cmdStream = NULL;
 
   return 0;
 }
@@ -1248,6 +1805,10 @@ static int runNetworkMode(void) {
   bool justKeys = FALSE;
   bool brainRunning;
   uint32_t simTickCounter = 0;
+  /* Monotonic per-outer-iteration counter. Used as the cmd-stdin
+   * pump reference when the server tick is unavailable (lobby
+   * phase, before any PACKET_GAME_STATE has been observed). */
+  uint32_t pumpTick = 0;
 
   if (!optQuiet) {
     fprintf(stderr, "WinBolo Headless Client\n");
@@ -1261,9 +1822,25 @@ static int runNetworkMode(void) {
     }
   }
 
+  /* Open events log before connect so PACKET_PLAYER_LIST / lobby /
+   * map-download events that arrive during the join handshake are
+   * captured. Observer is preserved across clientSimResetForMapLoad
+   * (see the save/restore block in client_sim.c). */
+  logEventsOpen(optLogEvents);
+
+  /* Open scripted command stream (commands queue until each
+   * command's tick has been observed on the wire). */
+  if (optCmdStdin[0] != '\0') {
+    cmdStream = cmdStdinOpen(optCmdStdin);
+    if (cmdStream == NULL) return 1;
+  }
+
   /* Initialize the game engine with dummy params (will be re-created after map load) */
   humanSim = clientSimAlloc();
   clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+  if (logEventsFile != NULL) {
+    clientSimSetControlObserver(humanSim, logEventsDeliverCb, logEventsFile);
+  }
   clientSimSetMyLastPlayerName(humanSim, optName);
 
   /* Connect to the server via new UDP transport */
@@ -1342,7 +1919,7 @@ static int runNetworkMode(void) {
   /* Set up tank at start position */
   clientSimNetSetupTankGo(humanSim);
 
-  /* Gate lobby vs running: if we received PACKET_LOBBY_STATE during
+  /* Gate lobby vs running: if we received CTRL_LOBBY_SETTINGS during
    * join, stay in lobby state; otherwise proceed to running */
   if (clientSimIsInLobby(humanSim)) {
     clientSimSetMapDownloadComplete(humanSim, true);
@@ -1372,6 +1949,7 @@ static int runNetworkMode(void) {
   while (!headlessQuit) {
     brainRunning = brainHandlerIsBrainRunning();
     bool used = FALSE;
+    pumpTick++;
 
     ttick = SDL_GetTicks();
 
@@ -1434,6 +2012,23 @@ static int runNetworkMode(void) {
       clientMutexRelease();
     }
 
+    /* Scripted command stream — fan out to the wire send-wrappers
+     * once the pump reference has reached each command's scheduled
+     * tick. Prefer the server's observed tick when snapshots are
+     * flowing; fall back to a local per-iteration counter while the
+     * server tick is still 0 (lobby phase, before any
+     * PACKET_GAME_STATE has arrived) so lobby ops still fire. */
+    if (cmdStream != NULL) {
+      uint32_t serverTick = clientSimGetLastServerTick(humanSim);
+      uint32_t pumpRef = serverTick > 0 ? serverTick : pumpTick;
+      if (!cmdStreamPump(pumpRef, false)) {
+        if (!optQuiet) {
+          fprintf(stderr, "cmd-stdin: exit op received.\n");
+        }
+        break;
+      }
+    }
+
     /* Check if we've reached the tick limit */
     if (optTicks > 0 && tickCount >= optTicks) {
       if (!optQuiet) {
@@ -1460,9 +2055,18 @@ static int runNetworkMode(void) {
 
   clientMutexWaitFor();
   brainsHandlerShutdown();
+  /* Detach observer before destroying the ClientSim so a late event
+   * cannot write into a closed FILE. */
+  if (humanSim != NULL) {
+    clientSimSetControlObserver(humanSim, NULL, NULL);
+  }
   clientSimDestroy(humanSim);  /* also tears down the embedded transport */
   transportActive = FALSE;
   clientMutexRelease();
+
+  logEventsClose();
+  cmdStdinClose(cmdStream);
+  cmdStream = NULL;
 
   return 0;
 }

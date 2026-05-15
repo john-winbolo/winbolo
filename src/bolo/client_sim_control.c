@@ -19,6 +19,13 @@
  *  Dispatcher implementation. Mutates ClientSim game state
  *  only — UI, achievement, transport-internal, and wire-
  *  protocol housekeeping live in their respective callers.
+ *
+ *  All wire decoders in transport_udp_client.c build a
+ *  ControlEvent and route through clientSimApplyControl.
+ *  They do not mutate ClientSim state directly and do not
+ *  call frontEnd* callbacks directly. SP, bots, and network
+ *  converge on this single funnel — see docs/ARCHITECTURE.md
+ *  "Adding a new server event" for the recipe.
  *********************************************************/
 
 #include <string.h>
@@ -31,6 +38,15 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         return;
     }
 
+    /* Test-only observer hook (set via clientSimSetControlObserver).
+     * Fires before any state mutation so the observed stream matches
+     * what the dispatcher actually receives, including the self-skip
+     * branch below. The callback gets a const event and returns void —
+     * it cannot influence dispatch. */
+    if (cs->controlObserverCb != NULL) {
+        cs->controlObserverCb(cs->controlObserverCtx, evt);
+    }
+
     /* Self-skip on CTRL_PLAYER_JOIN only: the recipient's own player
      * record is established via the join handshake / snapshot stream
      * and must not be overwritten by sync or live publish with stale
@@ -41,6 +57,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     switch (evt->type) {
     case CTRL_PLAYER_JOIN:
         if (evt->u.playerJoin.playerNum == cs->myPlayerNum) return;
+        break;
+    case CTRL_PLAYER_LEAVE:
+        if (evt->u.playerLeave.playerNum == cs->myPlayerNum) return;
         break;
     default:
         break;
@@ -183,6 +202,21 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     case CTRL_SERVER_SHUTDOWN:
         /* No ClientSim field maps to UDP joinState; that field stays
          * transport-internal per the architectural commitment. */
+        break;
+
+    case CTRL_CHAT:
+        /* Display side effects stay at the wire boundary
+         * (transport_udp_client.c PACKET_CHAT_BROADCAST branch); the
+         * bus publish exists so in-process subscribers can observe
+         * chat alongside the other control events. */
+        break;
+
+    case CTRL_PLAYER_LEAVE:
+        /* Lobby chat "X has left" rendering stays at the wire boundary
+         * (transport_udp_client.c PACKET_PLAYER_LEFT branch).  Bots and
+         * SP read playerConnected directly, so no in-process state
+         * mutation is needed here — the event exists so replay logs and
+         * other subscribers see leaves alongside joins. */
         break;
     }
 }

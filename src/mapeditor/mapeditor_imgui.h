@@ -247,8 +247,8 @@ bool mapEditorImguiValidationErrorModal(int errorCount);
  * hasSelection: true if there's an active selection.
  * selX1..selY2: selection bounds (only valid when hasSelection is true).
  * Returns true if the user clicked Generate. */
-#include "mapeditor_generate.h"
-#include "mapeditor_maze.h"
+#include "mapgen.h"
+#include "mapgen_maze.h"
 #include "mapeditor_text.h"
 /* Render the reusable map-generation controls panel (generator type, seed,
  * type-specific sliders with lock buttons, Randomize/Copy Seed).

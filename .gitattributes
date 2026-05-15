@@ -7,4 +7,5 @@
 # of harness output.
 *.sh                            text eol=lf
 tests/baseline/expected/*.json  text eol=lf
+tests/baseline/expected/*.jsonl text eol=lf
 tests/baseline/expected/*.out   text eol=lf

@@ -29,8 +29,8 @@
 #include "imgui_impl_sdlrenderer3.h"
 
 #include "mapeditor_imgui.h"
-#include "mapeditor_generate.h"
-#include "mapeditor_maze.h"
+#include "mapgen.h"
+#include "mapgen_maze.h"
 #include "mapeditor_text.h"
 #include "mapeditor_fonts.h"
 #include "mapeditor_validate.h"

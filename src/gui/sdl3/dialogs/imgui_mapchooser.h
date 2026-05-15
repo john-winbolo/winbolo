@@ -26,7 +26,7 @@
 #include <SDL3/SDL.h>
 #include <stdbool.h>
 #include "global.h"
-#include "../../../mapeditor/mapeditor_generate.h"
+#include "mapgen.h"
 
 #ifdef __cplusplus
 extern "C" {

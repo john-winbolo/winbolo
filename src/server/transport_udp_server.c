@@ -24,6 +24,8 @@
  *    - Periodic ping/pong for latency measurement.
  *********************************************************/
 
+#include <assert.h>
+
 #include "transport_udp_internal.h"
 #include "bases.h"
 #include "pillbox.h"
@@ -38,6 +40,7 @@
 #include "server_sim.h"
 #include "server_lifecycle.h"
 #include "control_event.h"
+#include "transport_control_codec.h"
 #include "../winbolonet/winbolonet.h"
 #include "threads.h"
 #include "sounddist.h"
@@ -362,6 +365,7 @@ static void serverSendJoinReject(const struct sockaddr_in *addr, langid id,
                 (unsigned)id, argCount);
         return;
     }
+    /* wire-only: per-client handshake (response to a single client's request) */
     udpSendTo(udpServer.sock, buf, pos, addr);
 }
 
@@ -374,40 +378,122 @@ static void serverSendNameChangeReject(int clientIdx, uint8_t reasonCode) {
     if (!udpServer.clients[clientIdx].connected) return;
     packHeader(buf, PACKET_NAME_CHANGE_REJECT, 0);
     buf[PACKET_HEADER_SIZE] = reasonCode;
+    /* wire-only: per-client handshake (response to a single client's request) */
     udpSendTo(udpServer.sock, buf, sizeof(buf),
               &udpServer.clients[clientIdx].addr);
 }
 
-/* Send a player joined/left notification to all connected clients.
- * PLAYER_JOINED layout: [pNum 1][name 32][cc 2][clientType 1][clientFlags 1].
- * PLAYER_LEFT layout:   [pNum 1][name 32][cc 2]. */
-static void serverBroadcastPlayerEvent(uint8_t eventType, uint8_t playerNum,
-                                       const char *playerName) {
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME + 2 + 2];
-    int i;
-    int pos = PACKET_HEADER_SIZE;
-    int pktLen;
+/* Per-client subscriber deliver callback.  Runs each ControlEvent
+ * through the codec table and unicasts the encoded bytes to this
+ * one client.  ENCODE_SKIP is the normal "no wire form for this
+ * recipient" case (also produced by every encoder while the codec
+ * table is still scaffolding).  ENCODE_OVERFLOW means an encoder
+ * exceeded MAX_CONTROL_PACKET — a programmer bug; surface it in
+ * debug builds and silently drop in release. */
+static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
+    UdpServerClient *client = (UdpServerClient *)ctx;
+    uint8_t buf[MAX_CONTROL_PACKET];
+    size_t len = 0;
+    ControlEncodeFn enc;
+    EncodeResult r;
 
-    packHeader(buf, eventType, 0);
-    buf[pos++] = playerNum;
-    memset(buf + pos, 0, PACKET_MAX_PLAYER_NAME);
-    if (playerName != NULL) {
-        strncpy((char *)(buf + pos), playerName, PACKET_MAX_PLAYER_NAME - 1);
-    }
-    pos += PACKET_MAX_PLAYER_NAME;
-    /* Append country code */
-    buf[pos++] = (uint8_t)udpServer.clients[playerNum].countryCode[0];
-    buf[pos++] = (uint8_t)udpServer.clients[playerNum].countryCode[1];
-    if (eventType == PACKET_PLAYER_JOINED) {
-        ServerSim *sim = serverSimGetActive();
-        buf[pos++] = playersGetClientType(&serverSimGetGameSim(sim)->plyrs, playerNum);
-        buf[pos++] = playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs, playerNum);
-    }
-    pktLen = pos;
+    if (!client->connected) return;
 
+    /* Per-recipient filtering for single-target variants.  The codec
+     * stays UdpServerClient-agnostic; the slot comparison lives here
+     * where the recipient's player number is in scope. */
+    if (evt->type == CTRL_ALLIANCE_REQUEST &&
+        evt->u.allianceRequest.toPlayer != client->playerNum) {
+        return;
+    }
+    if (evt->type == CTRL_CHAT) {
+        BYTE from = evt->u.chat.fromPlayer;
+        BYTE dest = evt->u.chat.destPlayer;
+        if (dest == 0xFF) {
+            /* Broadcast: skip the original sender if it's a real player. */
+            if (from < MAX_TANKS && client->playerNum == from) return;
+        } else {
+            /* Unicast: only the addressed slot receives. */
+            if (client->playerNum != dest) return;
+        }
+    }
+
+    enc = transportControlCodecEncoder(evt->type);
+    if (enc == NULL) return;
+    r = enc(evt, client, buf, sizeof(buf), &len);
+    if (r == ENCODE_SKIP) return;
+    assert(r == ENCODE_OK);
+    if (r != ENCODE_OK) return;
+    udpSendTo(udpServer.sock, buf, (int)len, &client->addr);
+}
+
+/* Publish a single CTRL_LOBBY_SLOT — the codec encoder fans out
+ * PACKET_LOBBY_UPDATE to each connected client via its subscriber. */
+static void publishLobbySlot(ServerSim *sim, BYTE slot) {
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySlotEvent(sim, slot, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+/* Publish CTRL_LOBBY_SETTINGS + CTRL_LOBBY_SLOT for every connected
+ * slot — equivalent to the old composite PACKET_LOBBY_STATE broadcast,
+ * but each event flows through the per-variant codec encoder. */
+static void publishLobbyStateAll(ServerSim *sim) {
+    BYTE i;
+    ControlEvent evt;
     for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) {
-            udpSendTo(udpServer.sock, buf, pktLen, &udpServer.clients[i].addr);
+        if (serverSimIsPlayerConnected(sim, i)) {
+            publishLobbySlot(sim, i);
+        }
+    }
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySettingsEvent(sim, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+/* Wire-only fan-out for the cosmetic ping/country refresh fired
+ * every 25 ticks while in lobby/countdown.  Drives the same codec
+ * encoders the bus path uses, but bypasses serverSimPublishControl
+ * so in-process subscribers (bots, SP, replay-log writers) don't
+ * wake up for cosmetic data they ignore.  Remote UDP clients still
+ * receive the same wire packets they would have via the bus path. */
+void transportUdpServerSendPeriodicLobbyRefresh(ServerSim *sim) {
+    uint8_t buf[MAX_CONTROL_PACKET];
+    size_t len;
+    ControlEncodeFn slotEnc = transportControlCodecEncoder(CTRL_LOBBY_SLOT);
+    ControlEncodeFn settingsEnc = transportControlCodecEncoder(CTRL_LOBBY_SETTINGS);
+    BYTE i;
+    int j;
+
+    if (slotEnc != NULL) {
+        for (i = 0; i < MAX_TANKS; i++) {
+            ControlEvent evt;
+            if (!serverSimIsPlayerConnected(sim, i)) continue;
+            memset(&evt, 0, sizeof(evt));
+            serverSimFillLobbySlotEvent(sim, i, &evt);
+            for (j = 0; j < MAX_TANKS; j++) {
+                if (!udpServer.clients[j].connected) continue;
+                if (slotEnc(&evt, &udpServer.clients[j], buf, sizeof(buf), &len) == ENCODE_OK) {
+                    /* wire-only: cosmetic ping/country refresh — remote audiences only */
+                    udpSendTo(udpServer.sock, buf, (int)len,
+                              &udpServer.clients[j].addr);
+                }
+            }
+        }
+    }
+
+    if (settingsEnc != NULL) {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillLobbySettingsEvent(sim, &evt);
+        for (j = 0; j < MAX_TANKS; j++) {
+            if (!udpServer.clients[j].connected) continue;
+            if (settingsEnc(&evt, &udpServer.clients[j], buf, sizeof(buf), &len) == ENCODE_OK) {
+                /* wire-only: cosmetic ping/country refresh — remote audiences only */
+                udpSendTo(udpServer.sock, buf, (int)len,
+                          &udpServer.clients[j].addr);
+            }
         }
     }
 }
@@ -433,6 +519,7 @@ static void serverSendJoinAccept(int slot, ServerSim *sim,
     packU32(acceptBuf + pos, udpServer.compressedMapSize);
     pos += 4;
 
+    /* wire-only: per-client handshake (response to a single client's request) */
     udpSendTo(udpServer.sock, acceptBuf, pos, addr);
 }
 
@@ -465,6 +552,7 @@ static void serverSendMapChunks(int slot) {
                dl->compressedMap + offset, chunkSize);
         pktLen = PACKET_HEADER_SIZE + 4 + chunkSize;
 
+        /* wire-only: per-client reliability (acked / per-tick to one slot) */
         udpSendTo(udpServer.sock, chunkBuf, pktLen, &client->addr);
     }
 
@@ -507,12 +595,9 @@ static void serverCleanupMapDownload(int slot) {
     dl->chunksAcked = 0;
 }
 
-/* Forward declarations for lobby broadcast helpers (defined after serverRecv) */
-static void transportUdpServerSendLobbyStateToClient(ServerSim *sim, int clientIdx);
-void transportUdpServerBroadcastLobbyUpdate(ServerSim *sim, BYTE playerNum);
-static void serverSendServerMessage(langid id, int argCount,
+static void serverSendServerMessage(ServerSim *sim, langid id, int argCount,
                                     const char *const args[]);
-static void serverSendServerEnglishBroadcast(const char *message);
+static void serverSendServerEnglishBroadcast(ServerSim *sim, const char *message);
 
 /* Phase 5 verified-priority preempt — rename `victimSlot` to `chosenName`
  * and broadcast the change to all connected clients.  Sets the
@@ -526,7 +611,6 @@ static void serverPreemptRename(ServerSim *sim, int victimSlot,
                                 const char *incomingCountry) {
     GameSim *gs = serverSimGetGameSim(sim);
     char originalName[PACKET_MAX_PLAYER_NAME];
-    int j;
 
     strncpy(originalName, udpServer.clients[victimSlot].playerName,
             PACKET_MAX_PLAYER_NAME - 1);
@@ -537,44 +621,13 @@ static void serverPreemptRename(ServerSim *sim, int victimSlot,
              PACKET_MAX_PLAYER_NAME, "%s", chosenName);
     udpServer.clients[victimSlot].nameStickySuffix = true;
 
-    /* Update the gameSim player record — same path PACKET_NAME_CHANGE
-     * already uses (transport_udp_server.c PACKET_NAME_CHANGE handler). */
-    {
-        char nameBuf[PACKET_MAX_PLAYER_NAME];
-        strncpy(nameBuf, chosenName, PACKET_MAX_PLAYER_NAME - 1);
-        nameBuf[PACKET_MAX_PLAYER_NAME - 1] = '\0';
-        playersSetPlayerName(NULL, gs, &gs->plyrs, NEUTRAL,
-                             (BYTE)victimSlot, nameBuf, TRUE);
-    }
+    /* Update the gameSim player record and publish the name change —
+     * same path PACKET_NAME_CHANGE uses. */
+    serverSimSetPlayerName(sim, (BYTE)victimSlot, chosenName);
 
-    /* Broadcast PACKET_NAME_CHANGE to all connected clients (including
-     * the victim — they need to update their own record too). */
-    {
-        uint8_t outBuf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME];
-        packHeader(outBuf, PACKET_NAME_CHANGE, 0);
-        outBuf[PACKET_HEADER_SIZE] = (uint8_t)victimSlot;
-        memset(outBuf + PACKET_HEADER_SIZE + 1, 0, PACKET_MAX_PLAYER_NAME);
-        snprintf((char *)(outBuf + PACKET_HEADER_SIZE + 1),
-                 PACKET_MAX_PLAYER_NAME, "%s", chosenName);
-        for (j = 0; j < MAX_TANKS; j++) {
-            if (udpServer.clients[j].connected) {
-                udpSendTo(udpServer.sock, outBuf, sizeof(outBuf),
-                          &udpServer.clients[j].addr);
-            }
-        }
-    }
-    {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_PLAYER_NAME;
-        evt.u.playerName.playerNum = (BYTE)victimSlot;
-        snprintf(evt.u.playerName.name, PACKET_MAX_PLAYER_NAME, "%s", chosenName);
-        serverSimPublishControl(sim, &evt);
-    }
-
-    /* Broadcast a single-slot lobby update so other surfaces (lobby
+    /* Publish a single-slot lobby update so other surfaces (lobby
      * table, players panel) refresh. */
-    transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)victimSlot);
+    publishLobbySlot(sim, (BYTE)victimSlot);
 
     /* Post a newswire announcement. The server's messageAdd callback
      * drops newswire messages today (see server_sim.c:serverSimCbMessageAdd),
@@ -614,7 +667,7 @@ static void serverPreemptRename(ServerSim *sim, int victimSlot,
         const char *renameArgs[2];
         renameArgs[0] = originalName;
         renameArgs[1] = incomingName;
-        serverSendServerMessage(STR_NAME_RENAMED_BY_VERIFIED, 2, renameArgs);
+        serverSendServerMessage(sim, STR_NAME_RENAMED_BY_VERIFIED, 2, renameArgs);
     }
 
     {
@@ -1013,34 +1066,39 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
             name, slot, udpServer.compressedMapSize);
     serverSendJoinAccept(slot, sim, fromAddr);
 
-    /* Notify all players about the new player */
-    serverBroadcastPlayerEvent(PACKET_PLAYER_JOINED, (uint8_t)slot, name);
+    /* Subscribe this client to the server's control-event bus so
+     * future events can be encoded and unicast to it via the codec
+     * table.  Register's sync-replay walks the lobby settings, every
+     * connected slot, and every player-join and feeds them through
+     * the codec encoder to this client's socket — replacing the old
+     * composite PACKET_LOBBY_STATE handshake. */
+    udpServer.clients[slot].controlSub =
+        serverSimRegisterSubscriber(sim, udpClientDeliverControl,
+                                    &udpServer.clients[slot]);
+
     winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
                        (BYTE)slot, WINBOLO_NET_NO_PLAYER);
 
-    /* Send lobby state or game start signal BEFORE map chunks so the
-     * client enters the lobby immediately and downloads the map in the
-     * background (with the lobby progress bar visible). */
     if (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown) {
-        /* Send full lobby snapshot to the joining client */
-        transportUdpServerSendLobbyStateToClient(sim, slot);
-        /* Broadcast lobby update to existing clients about the new player */
-        transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)slot);
+        /* Publish a lobby-slot update for the new player so existing
+         * clients pick up the joiner's team/ready/ping fields (the
+         * CTRL_PLAYER_JOIN already fanned out from serverSimAddPlayer
+         * carries name/country/clientType, but not the lobby-slot
+         * extras). */
+        publishLobbySlot(sim, (BYTE)slot);
         /* Dismiss any pending balance proposal — player composition changed */
         if (serverSimGetBalanceProposal(sim)->pending) {
-            uint8_t zeros[MAX_TANKS];
-            memset(zeros, 0, sizeof(zeros));
+            ControlEvent evt;
             serverSimClearBalanceProposal(sim);
-            transportUdpServerBroadcastBalanceProposal(sim, zeros);
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_BALANCE_PROPOSAL;
+            serverSimPublishControl(sim, &evt);
         }
-    } else if (serverSimGetState(sim) == serverStateRunning) {
-        /* No-lobby mode or mid-game join: send game start signal */
-        uint8_t startBuf[PACKET_HEADER_SIZE];
-        packHeader(startBuf, PACKET_GAME_START,
-                   udpServer.clients[slot].outSequence++);
-        udpSendTo(udpServer.sock, startBuf, sizeof(startBuf),
-                  &udpServer.clients[slot].addr);
     }
+    /* No-lobby and mid-game-join PACKET_GAME_START is emitted by the
+     * subscriber's sync replay: CTRL_GAME_PHASE(RUNNING) flows through
+     * the codec encoder to this client's socket as part of
+     * serverSimRegisterSubscriber above. */
 
     /* Initialize map download and send first batch of chunks */
     serverInitMapDownload(slot);
@@ -1142,6 +1200,7 @@ static void serverHandlePing(const uint8_t *buf, int len,
         packU32(pongBuf + PACKET_HEADER_SIZE, clientTime);
         packU32(pongBuf + PACKET_HEADER_SIZE + 4, now);
     }
+    /* wire-only: per-client handshake (response to a single client's request) */
     udpSendTo(udpServer.sock, pongBuf, sizeof(pongBuf), fromAddr);
 }
 
@@ -1286,14 +1345,15 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     packU32(buf + countsPos + 11, mapEventBaseSeq);
     packU16(buf + countsPos + 15, hdr.mapChecksum);
 
+    /* wire-only: per-tick snapshot — high-volume delta-encoded path with its own reliability discipline */
     udpSendTo(udpServer.sock, buf, pos, &client->addr);
     if (serverSimGetTick(sim) % 50 == 0) {
-        fprintf(stderr, "[UDP SERVER] Send SNAPSHOT to slot %d: tick=%u tanks=%u shells=%u bases=%u pills=%u events=%u(ack=%u next=%u) mapEvts=%u(ack=%u next=%u) len=%d\n",
-                clientIdx, serverSimGetTick(sim), (unsigned)hdr.tankCount, (unsigned)hdr.shellCount,
-                (unsigned)hdr.baseCount,
-                (unsigned)hdr.pillCount, reliableEventCount,
-                evQ->ackedSeq, evQ->nextSeq,
-                mapEventCount, mapQ->ackedSeq, mapQ->nextSeq, pos);
+        WB_LOG_DEBUG(WB_LOG_CAT_NET, "[UDP SERVER] Send SNAPSHOT to slot %d: tick=%u tanks=%u shells=%u bases=%u pills=%u events=%u(ack=%u next=%u) mapEvts=%u(ack=%u next=%u) len=%d",
+                     clientIdx, serverSimGetTick(sim), (unsigned)hdr.tankCount, (unsigned)hdr.shellCount,
+                     (unsigned)hdr.baseCount,
+                     (unsigned)hdr.pillCount, reliableEventCount,
+                     evQ->ackedSeq, evQ->nextSeq,
+                     mapEventCount, mapQ->ackedSeq, mapQ->nextSeq, pos);
     }
 }
 
@@ -1353,9 +1413,10 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
                               serverSimGetNumNeutralBases(sim),
                               serverSimGetNumNeutralPills(sim));
 
-    serverBroadcastPlayerEvent(PACKET_PLAYER_LEFT,
-                               (uint8_t)idx,
-                               udpServer.clients[idx].playerName);
+    /* PACKET_PLAYER_LEFT is fanned out by the codec when the outer caller
+     * invokes serverSimRemovePlayer; no hand-built broadcast here. */
+    serverSimUnregisterSubscriber(sim, udpServer.clients[idx].controlSub);
+    udpServer.clients[idx].controlSub = SUBSCRIBER_HANDLE_INVALID;
     udpServer.clients[idx].connected = false;
     udpServer.clients[idx].nameStickySuffix = false;
     memset(udpServer.clients[idx].playerName, 0, PACKET_MAX_PLAYER_NAME);
@@ -1365,30 +1426,34 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
 /* Send a localized server-originated message to all connected clients
  * via PACKET_CHAT_BROADCAST.  Uses fromPlayer=0xFF, destPlayer=0xFF to
  * mark the localized variant; client decodes langid + args and renders
- * via langGetTextFmt. */
-static void serverSendServerMessage(langid id, int argCount,
+ * via langGetTextFmt.  The packed langid+args payload rides as the
+ * opaque body[] of CTRL_CHAT; the per-client codec encoder fans it out. */
+static void serverSendServerMessage(ServerSim *sim, langid id, int argCount,
                                     const char *const args[]) {
-    /* 8 hdr + 1 from + 1 dest + 2 langid + 1 argCount + 4*(1+64) = 273. */
-    uint8_t outBuf[PACKET_HEADER_SIZE + 2 + 3 + 4 * (1 + PLAYER_NAME_LEN - 1)];
-    int pos = PACKET_HEADER_SIZE;
-    int j;
+    /* Scratch buffer mirrors the wire encoding so we can reuse
+     * packLocalizedPayload; only the bytes after PACKET_HEADER_SIZE+2
+     * become the CTRL_CHAT body. */
+    uint8_t scratch[PACKET_HEADER_SIZE + 2 + 3 + 4 * (1 + PLAYER_NAME_LEN - 1)];
+    int pos = PACKET_HEADER_SIZE + 2;
+    ControlEvent evt;
 
-    packHeader(outBuf, PACKET_CHAT_BROADCAST, 0);
-    outBuf[pos++] = 0xFF;     /* fromPlayer = server localized */
-    outBuf[pos++] = 0xFF;     /* destPlayer  = all */
-    if (!packLocalizedPayload(outBuf, &pos, sizeof(outBuf), id, argCount, args)) {
+    if (!packLocalizedPayload(scratch, &pos, sizeof(scratch), id, argCount, args)) {
         fprintf(stderr,
                 "[UDP SERVER] serverSendServerMessage: pack failed id=%u argc=%d\n",
                 (unsigned)id, argCount);
         return;
     }
 
-    for (j = 0; j < MAX_TANKS; j++) {
-        if (udpServer.clients[j].connected) {
-            udpSendTo(udpServer.sock, outBuf, pos,
-                      &udpServer.clients[j].addr);
-        }
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_CHAT;
+    evt.u.chat.fromPlayer = 0xFF; /* server localized */
+    evt.u.chat.destPlayer = 0xFF; /* broadcast */
+    evt.u.chat.bodyLen = (uint16_t)(pos - (PACKET_HEADER_SIZE + 2));
+    if (evt.u.chat.bodyLen > 0) {
+        memcpy(evt.u.chat.body, scratch + PACKET_HEADER_SIZE + 2,
+               evt.u.chat.bodyLen);
     }
+    serverSimPublishControl(sim, &evt);
 }
 
 /* Send a raw English server-originated message to all connected clients.
@@ -1396,25 +1461,19 @@ static void serverSendServerMessage(langid id, int argCount,
  * server-ops broadcasts (admin "say", lock toggle, ping enforcement)
  * that don't yet have dedicated langids.  As individual messages are
  * localized they should migrate to serverSendServerMessage above. */
-static void serverSendServerEnglishBroadcast(const char *message) {
-    uint8_t outBuf[PACKET_HEADER_SIZE + 2 + 200];
+static void serverSendServerEnglishBroadcast(ServerSim *sim, const char *message) {
+    ControlEvent evt;
     int msgLen = (int)strlen(message);
-    int outLen;
-    int j;
 
     if (msgLen > 200) msgLen = 200;
-    packHeader(outBuf, PACKET_CHAT_BROADCAST, 0);
-    outBuf[PACKET_HEADER_SIZE]     = 0xFE; /* fromPlayer = server raw English */
-    outBuf[PACKET_HEADER_SIZE + 1] = 0xFF; /* destPlayer = all */
-    memcpy(outBuf + PACKET_HEADER_SIZE + 2, message, msgLen);
-    outLen = PACKET_HEADER_SIZE + 2 + msgLen;
 
-    for (j = 0; j < MAX_TANKS; j++) {
-        if (udpServer.clients[j].connected) {
-            udpSendTo(udpServer.sock, outBuf, outLen,
-                      &udpServer.clients[j].addr);
-        }
-    }
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_CHAT;
+    evt.u.chat.fromPlayer = 0xFE; /* server raw English */
+    evt.u.chat.destPlayer = 0xFF; /* broadcast */
+    evt.u.chat.bodyLen = (uint16_t)msgLen;
+    if (msgLen > 0) memcpy(evt.u.chat.body, message, msgLen);
+    serverSimPublishControl(sim, &evt);
 }
 
 void transportUdpServerKickPlayer(ServerSim *sim, const char *playerName) {
@@ -1433,14 +1492,14 @@ void transportUdpServerKickPlayer(ServerSim *sim, const char *playerName) {
             serverSimConsoleMessage(msg);
             /* Send kick message to all clients (including the kicked player) */
             kickArgs[0] = udpServer.clients[i].playerName;
-            serverSendServerMessage(STR_KICK_ANNOUNCE, 1, kickArgs);
+            serverSendServerMessage(sim, STR_KICK_ANNOUNCE, 1, kickArgs);
             serverCleanupMapDownload(i);
             serverDisconnectClient(sim, i, FALSE);
             serverSimRemovePlayer(sim, (BYTE)i);
             /* Broadcast lobby update if in lobby/countdown state */
             if (serverSimIsLobbyEnabled(sim) &&
                 (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown)) {
-                transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)i);
+                publishLobbySlot(sim, (BYTE)i);
             }
             return;
         }
@@ -1477,7 +1536,7 @@ void transportUdpServerEnforcePing(ServerSim *sim) {
                     (int)PING_KICK_THRESHOLD_MS);
                 fprintf(stderr, "[UDP SERVER] %s\n", msg);
                 serverSimConsoleMessage(msg);
-                serverSendServerEnglishBroadcast(msg);
+                serverSendServerEnglishBroadcast(sim, msg);
                 serverCleanupMapDownload(i);
                 serverDisconnectClient(sim, i, FALSE);
                 serverSimRemovePlayer(sim, (BYTE)i);
@@ -1495,7 +1554,7 @@ void transportUdpServerEnforcePing(ServerSim *sim) {
                 snprintf(msg, sizeof(msg),
                          "%s has high ping (%dms) and may be kicked.",
                          client->playerName, ping);
-                serverSendServerEnglishBroadcast(msg);
+                serverSendServerEnglishBroadcast(sim, msg);
                 client->pingWarned = true;
             }
         } else {
@@ -1562,6 +1621,7 @@ bool transportUdpServerCreate(unsigned short port,
     for (i = 0; i < MAX_TANKS; i++) {
         udpServer.clients[i].connected = false;
         udpServer.clients[i].nameStickySuffix = false;
+        udpServer.clients[i].controlSub = SUBSCRIBER_HANDLE_INVALID;
         memset(&udpServer.mapDownload[i], 0, sizeof(ClientMapDownload));
     }
 
@@ -1604,29 +1664,30 @@ void transportUdpServerDestroy(void) {
         recvThreadSock = INVALID_SOCKET;
     }
 
-    /* Broadcast shutdown packet to all connected clients before closing */
+    /* Publish first so the per-client subscriber encodes and unicasts
+     * PACKET_SERVER_SHUTDOWN while the socket is still open, then close. */
     if (udpServer.sock != INVALID_SOCKET) {
-        uint8_t shutdownBuf[PACKET_HEADER_SIZE];
-        packHeader(shutdownBuf, PACKET_SERVER_SHUTDOWN, 0);
-        for (i = 0; i < MAX_TANKS; i++) {
-            if (udpServer.clients[i].connected) {
-                udpSendTo(udpServer.sock, shutdownBuf, PACKET_HEADER_SIZE,
-                          &udpServer.clients[i].addr);
-            }
-        }
-        closesocket(udpServer.sock);
-        udpServer.sock = INVALID_SOCKET;
         {
             ControlEvent evt;
             memset(&evt, 0, sizeof(evt));
             evt.type = CTRL_SERVER_SHUTDOWN;
             serverSimPublishControl(serverSimGetActive(), &evt);
         }
+        closesocket(udpServer.sock);
+        udpServer.sock = INVALID_SOCKET;
     }
-    for (i = 0; i < MAX_TANKS; i++) {
-        udpServer.clients[i].connected = false;
-        udpServer.clients[i].nameStickySuffix = false;
-        serverCleanupMapDownload(i);
+    {
+        ServerSim *activeSim = serverSimGetActive();
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (udpServer.clients[i].connected) {
+                serverSimUnregisterSubscriber(activeSim,
+                                              udpServer.clients[i].controlSub);
+                udpServer.clients[i].controlSub = SUBSCRIBER_HANDLE_INVALID;
+            }
+            udpServer.clients[i].connected = false;
+            udpServer.clients[i].nameStickySuffix = false;
+            serverCleanupMapDownload(i);
+        }
     }
     udpServer.running = false;
 
@@ -1690,6 +1751,7 @@ static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
     pkt.has_password = udpServer.password[0] != '\0' ? 1 : 0;
     pkt.spare2 = 0;
 
+    /* wire-only: tracker / external reply (no in-process audience) */
     udpSendTo(udpServer.sock, (uint8_t *)&pkt, sizeof(pkt), fromAddr);
 
     {
@@ -1711,179 +1773,11 @@ static bool isOldProtocolInfoRequest(const uint8_t *buf, int len) {
            buf[BOLOPACKET_REQUEST_TYPEPOS] == BOLOPACKET_INFOREQUEST;
 }
 
-/* ---- Lobby broadcast helpers ---- */
-
-/* Lobby state wire format (variable length per slot):
- *   [header 8] [serverState 1]
- *   For each of 16 slots:
- *     [connected 1]
- *     If connected:
- *       [nameLen 1] [name nameLen UTF-8 bytes (no NUL)] [teamNumber 1]
- *       [ready 1] [isBot 1] [pingMs 2 (big-endian)] [countryCode 2]
- *       [clientType 1] [clientFlags 1]   (11 + nameLen bytes for the slot)
- *   Game settings tail:
- *     [mapName 36] [gameType 1] [hiddenMines 1] [aiType 1]
- *     [gameLength 4 (big-endian)] [pillCount 1] [baseCount 1] [startCount 1]
- *     [mapSkipAvailable 1]
- * Returns the number of bytes written into buf.
- */
-
-static int serverBuildLobbyStatePayload(ServerSim *sim, uint8_t *buf) {
-    GameSim *gs = serverSimGetGameSim(sim);
-    int pos = 0;
+void transportUdpServerOnGameStart(ServerSim *sim) {
     int i;
-    buf[pos++] = (uint8_t)serverSimGetState(sim);
-    for (i = 0; i < MAX_TANKS; i++) {
-        bool connected = serverSimIsPlayerConnected(sim, i);
-        buf[pos++] = connected ? 1 : 0;
-        if (!connected) {
-            continue;
-        }
-        {
-            const char *name = udpServer.clients[i].playerName;
-            size_t nameLen = strnlen(name, PACKET_MAX_PLAYER_NAME - 1);
-            buf[pos++] = (uint8_t)nameLen;
-            if (nameLen > 0) {
-                memcpy(buf + pos, name, nameLen);
-                pos += (int)nameLen;
-            }
-        }
-        buf[pos++] = serverSimGetLobbyPlayer(sim, i)->teamNumber;
-        buf[pos++] = serverSimGetLobbyPlayer(sim, i)->ready ? 1 : 0;
-        buf[pos++] = serverSimGetLobbyPlayer(sim, i)->isBot ? 1 : 0;
-        /* Ping (big-endian) */
-        buf[pos++] = (uint8_t)(udpServer.clients[i].pingMs >> 8);
-        buf[pos++] = (uint8_t)(udpServer.clients[i].pingMs & 0xFF);
-        /* Country code (2 chars, or zeros if unknown) */
-        buf[pos++] = (uint8_t)udpServer.clients[i].countryCode[0];
-        buf[pos++] = (uint8_t)udpServer.clients[i].countryCode[1];
-        buf[pos++] = playersGetClientType(&gs->plyrs, (BYTE)i);
-        buf[pos++] = playersGetClientFlags(&gs->plyrs, (BYTE)i);
-    }
-    /* Game settings tail */
-    memset(buf + pos, 0, MAP_STR_SIZE);
-    snprintf((char *)(buf + pos), MAP_STR_SIZE, "%s", serverSimGetMapName(sim));
-    pos += MAP_STR_SIZE;
-    buf[pos++] = (uint8_t)gameTypeGet(&gs->game);
-    buf[pos++] = gs->hiddenMines ? 1 : 0;
-    buf[pos++] = (uint8_t)serverSimGetBotAiType(sim);
-    packU32(buf + pos, (uint32_t)serverSimGetGameLength(sim));
-    pos += 4;
-    buf[pos++] = pillsGetNumPills(&gs->pb);
-    buf[pos++] = basesGetNumBases(&gs->bs);
-    buf[pos++] = startsGetNumStarts(&gs->ss);
-    buf[pos++] = (serverSimGetMapDirCount(sim) > 1 || serverSimIsRandomMapEnabled(sim)) ? 1 : 0;
-    return pos;
-}
-
-void transportUdpServerBroadcastLobbyState(ServerSim *sim) {
-    uint8_t buf[PACKET_HEADER_SIZE + LOBBY_STATE_PAYLOAD];
-    int payloadLen;
-    int sendLen;
-    int i;
-    packHeader(buf, PACKET_LOBBY_STATE, 0);
-    payloadLen = serverBuildLobbyStatePayload(sim, buf + PACKET_HEADER_SIZE);
-    sendLen = PACKET_HEADER_SIZE + payloadLen;
+    (void)sim;
     for (i = 0; i < MAX_TANKS; i++) {
         if (udpServer.clients[i].connected) {
-            udpSendTo(udpServer.sock, buf, sendLen,
-                      &udpServer.clients[i].addr);
-        }
-    }
-    {
-        ControlEvent evt;
-        for (i = 0; i < MAX_TANKS; i++) {
-            if (serverSimIsPlayerConnected(sim, i)) {
-                memset(&evt, 0, sizeof(evt));
-                serverSimFillLobbySlotEvent(sim, (BYTE)i, &evt);
-                serverSimPublishControl(sim, &evt);
-            }
-        }
-        memset(&evt, 0, sizeof(evt));
-        serverSimFillLobbySettingsEvent(sim, &evt);
-        serverSimPublishControl(sim, &evt);
-    }
-}
-
-static void transportUdpServerSendLobbyStateToClient(ServerSim *sim, int clientIdx) {
-    uint8_t buf[PACKET_HEADER_SIZE + LOBBY_STATE_PAYLOAD];
-    int payloadLen;
-    packHeader(buf, PACKET_LOBBY_STATE, udpServer.clients[clientIdx].outSequence++);
-    payloadLen = serverBuildLobbyStatePayload(sim, buf + PACKET_HEADER_SIZE);
-    udpSendTo(udpServer.sock, buf, PACKET_HEADER_SIZE + payloadLen,
-              &udpServer.clients[clientIdx].addr);
-}
-
-void transportUdpServerBroadcastLobbyUpdate(ServerSim *sim, BYTE playerNum) {
-    uint8_t buf[PACKET_HEADER_SIZE + LOBBY_UPDATE_PAYLOAD];
-    int pos = PACKET_HEADER_SIZE;
-    bool connected = serverSimIsPlayerConnected(sim, playerNum);
-    int i;
-
-    packHeader(buf, PACKET_LOBBY_UPDATE, 0);
-    buf[pos++] = playerNum;
-    buf[pos++] = connected ? 1 : 0;
-    if (connected) {
-        const char *name = udpServer.clients[playerNum].playerName;
-        size_t nameLen = strnlen(name, PACKET_MAX_PLAYER_NAME - 1);
-        buf[pos++] = (uint8_t)nameLen;
-        if (nameLen > 0) {
-            memcpy(buf + pos, name, nameLen);
-            pos += (int)nameLen;
-        }
-        buf[pos++] = serverSimGetLobbyPlayer(sim, playerNum)->teamNumber;
-        buf[pos++] = serverSimGetLobbyPlayer(sim, playerNum)->ready ? 1 : 0;
-        buf[pos++] = serverSimGetLobbyPlayer(sim, playerNum)->isBot ? 1 : 0;
-        buf[pos++] = (uint8_t)(udpServer.clients[playerNum].pingMs >> 8);
-        buf[pos++] = (uint8_t)(udpServer.clients[playerNum].pingMs & 0xFF);
-        buf[pos++] = (uint8_t)udpServer.clients[playerNum].countryCode[0];
-        buf[pos++] = (uint8_t)udpServer.clients[playerNum].countryCode[1];
-        buf[pos++] = playersGetClientType(&serverSimGetGameSim(sim)->plyrs, playerNum);
-        buf[pos++] = playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs, playerNum);
-    }
-
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) {
-            udpSendTo(udpServer.sock, buf, pos, &udpServer.clients[i].addr);
-        }
-    }
-    {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        serverSimFillLobbySlotEvent(sim, playerNum, &evt);
-        serverSimPublishControl(sim, &evt);
-    }
-}
-
-void transportUdpServerBroadcastCountdown(ServerSim *sim, uint8_t secondsRemaining) {
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
-    int i;
-    packHeader(buf, PACKET_COUNTDOWN, 0);
-    buf[PACKET_HEADER_SIZE] = secondsRemaining;
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) {
-            udpSendTo(udpServer.sock, buf, sizeof(buf),
-                      &udpServer.clients[i].addr);
-        }
-    }
-    {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_GAME_PHASE;
-        evt.u.gamePhase.phase = CTRL_PHASE_COUNTDOWN;
-        evt.u.gamePhase.countdownSeconds = secondsRemaining;
-        serverSimPublishControl(sim, &evt);
-    }
-}
-
-void transportUdpServerBroadcastGameStart(ServerSim *sim) {
-    uint8_t buf[PACKET_HEADER_SIZE];
-    int i;
-    packHeader(buf, PACKET_GAME_START, 0);
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) {
-            udpSendTo(udpServer.sock, buf, sizeof(buf),
-                      &udpServer.clients[i].addr);
             /* Clients reload the map on game start which wipes their player
                data.  Re-send the player list so names are restored. */
             udpServer.clients[i].needsPlayerList = true;
@@ -1898,45 +1792,15 @@ void transportUdpServerBroadcastGameStart(ServerSim *sim) {
         udpServer.mapEventQueues[i].nextSeq = 1;
         udpServer.mapEventQueues[i].ackedSeq = 1;
     }
-    {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_GAME_PHASE;
-        evt.u.gamePhase.phase = CTRL_PHASE_RUNNING;
-        evt.u.gamePhase.countdownSeconds = 0;
-        serverSimPublishControl(sim, &evt);
-    }
 }
 
-void transportUdpServerBroadcastGameOver(ServerSim *sim) {
-    uint8_t buf[PACKET_HEADER_SIZE];
-    int i;
-    packHeader(buf, PACKET_GAME_OVER, 0);
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) {
-            udpSendTo(udpServer.sock, buf, sizeof(buf),
-                      &udpServer.clients[i].addr);
-        }
-    }
-    {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_GAME_PHASE;
-        evt.u.gamePhase.phase = CTRL_PHASE_GAME_OVER;
-        evt.u.gamePhase.countdownSeconds = 0;
-        serverSimPublishControl(sim, &evt);
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_GAME_OVER;
-        serverSimPublishControl(sim, &evt);
-    }
-}
-
-void transportUdpServerNotifyMapChange(ServerSim *sim) {
+void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
     int i;
     int mapLen;
-    uint8_t notifyBuf[PACKET_HEADER_SIZE];
 
-    /* 1. Refresh the server's compressed map from the sim */
+    /* Refresh the server's compressed map from the sim so the per-client
+     * map-chunk send loop and any subsequent JOIN_ACCEPT carry the new
+     * compressed size. */
     mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
     if (mapLen <= 0) {
         fprintf(stderr, "[UDP SERVER] Map change: failed to compress new map\n");
@@ -1944,72 +1808,17 @@ void transportUdpServerNotifyMapChange(ServerSim *sim) {
     }
     udpServer.compressedMapSize = (uint32_t)mapLen;
 
-    /* 2. Send PACKET_LOBBY_MAP_CHANGE to all connected clients */
-    packHeader(notifyBuf, PACKET_LOBBY_MAP_CHANGE, 0);
     for (i = 0; i < MAX_TANKS; i++) {
         if (!udpServer.clients[i].connected) continue;
-        udpSendTo(udpServer.sock, notifyBuf, sizeof(notifyBuf),
-                  &udpServer.clients[i].addr);
-
-        /* 3. Re-send join accept so client gets the new map size */
+        /* Re-send JOIN_ACCEPT so the client picks up the new compressed
+         * map size before the LOBBY_MAP_CHANGE notification arrives. */
         serverSendJoinAccept(i, sim, &udpServer.clients[i].addr);
-
-        /* 4. Reset map download tracking and start sending new chunks */
+        /* Reset chunk tracking; subsequent ticks resume sending chunks. */
         serverInitMapDownload(i);
     }
-    {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_LOBBY_MAP_CHANGE;
-        serverSimPublishControl(sim, &evt);
-    }
 
-    fprintf(stderr, "[UDP SERVER] Map change broadcast: %u bytes compressed map\n",
+    fprintf(stderr, "[UDP SERVER] Map change prep: %u bytes compressed map\n",
             udpServer.compressedMapSize);
-}
-
-void transportUdpServerBroadcastBalanceProposal(ServerSim *sim, uint8_t teamForSlot[MAX_TANKS]) {
-    uint8_t buf[PACKET_HEADER_SIZE + MAX_TANKS];
-    int i;
-    packHeader(buf, PACKET_BALANCE_PROPOSAL, 0);
-    memcpy(buf + PACKET_HEADER_SIZE, teamForSlot, MAX_TANKS);
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) {
-            udpSendTo(udpServer.sock, buf, sizeof(buf),
-                      &udpServer.clients[i].addr);
-        }
-    }
-    {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_BALANCE_PROPOSAL;
-        memcpy(evt.u.balanceProposal.teamForSlot, teamForSlot, MAX_TANKS);
-        serverSimPublishControl(sim, &evt);
-    }
-}
-
-void transportUdpServerBroadcastMapSkipState(ServerSim *sim) {
-    uint8_t buf[PACKET_HEADER_SIZE + MAX_TANKS];
-    int i;
-    packHeader(buf, PACKET_MAP_SKIP_STATE, 0);
-    for (i = 0; i < MAX_TANKS; i++) {
-        buf[PACKET_HEADER_SIZE + i] = serverSimIsMapSkipVote(sim, i) ? 1 : 0;
-    }
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected) {
-            udpSendTo(udpServer.sock, buf, sizeof(buf),
-                      &udpServer.clients[i].addr);
-        }
-    }
-    {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_MAP_SKIP_STATE;
-        for (i = 0; i < MAX_TANKS; i++) {
-            evt.u.mapSkipState.votes[i] = serverSimIsMapSkipVote(sim, i) ? 1 : 0;
-        }
-        serverSimPublishControl(sim, &evt);
-    }
 }
 
 void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
@@ -2222,36 +2031,19 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 int msgLen = len - PACKET_HEADER_SIZE - 1;
                 if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
 
-                /* Build broadcast packet:
-                 *   [header 8] [fromPlayer 1] [destPlayer 1] [message] */
                 {
-                    uint8_t outBuf[PACKET_HEADER_SIZE + 2 + PACKET_MAX_CHAT_MESSAGE];
-                    int outLen;
-                    packHeader(outBuf, PACKET_CHAT_BROADCAST, 0);
-                    outBuf[PACKET_HEADER_SIZE] = (uint8_t)clientIdx;
-                    outBuf[PACKET_HEADER_SIZE + 1] = destPlayer;
-                    memcpy(outBuf + PACKET_HEADER_SIZE + 2,
-                           buf + PACKET_HEADER_SIZE + 1, msgLen);
-                    outLen = PACKET_HEADER_SIZE + 2 + msgLen;
-
-                    if (destPlayer == 0xFF) {
-                        /* Broadcast to all connected clients except sender */
-                        int j;
-                        for (j = 0; j < MAX_TANKS; j++) {
-                            if (udpServer.clients[j].connected && j != clientIdx) {
-                                udpSendTo(udpServer.sock, outBuf, outLen,
-                                          &udpServer.clients[j].addr);
-                            }
-                        }
-                    } else {
-                        /* Send to specific player only */
-                        if (destPlayer < MAX_TANKS &&
-                            udpServer.clients[destPlayer].connected) {
-                            udpSendTo(udpServer.sock, outBuf, outLen,
-                                      &udpServer.clients[destPlayer].addr);
-                        }
+                    ControlEvent evt;
+                    memset(&evt, 0, sizeof(evt));
+                    evt.type = CTRL_CHAT;
+                    evt.u.chat.fromPlayer = (BYTE)clientIdx;
+                    evt.u.chat.destPlayer = destPlayer;
+                    evt.u.chat.bodyLen = (uint16_t)msgLen;
+                    if (msgLen > 0) {
+                        memcpy(evt.u.chat.body,
+                               buf + PACKET_HEADER_SIZE + 1, msgLen);
                     }
-                    /* Log chat message */
+                    serverSimPublishControl(sim, &evt);
+
                     {
                         char pstr[256];
                         int pLen = msgLen;
@@ -2349,40 +2141,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     snprintf(udpServer.clients[clientIdx].playerName,
                              PACKET_MAX_PLAYER_NAME, "%s", newName);
 
-                    /* Update in players struct */
-                    {
-                        ServerSim *ssim = serverSimGetActive();
-                        GameSim *gs = serverSimGetGameSim(ssim);
-                        playersSetPlayerName(NULL, gs, &gs->plyrs, NEUTRAL, (BYTE)clientIdx, newName, TRUE);
-                    }
-
-                    /* Broadcast to all other clients */
-                    {
-                        uint8_t outBuf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME];
-                        packHeader(outBuf, PACKET_NAME_CHANGE, 0);
-                        outBuf[PACKET_HEADER_SIZE] = (uint8_t)clientIdx;
-                        memset(outBuf + PACKET_HEADER_SIZE + 1, 0,
-                               PACKET_MAX_PLAYER_NAME);
-                        snprintf((char *)(outBuf + PACKET_HEADER_SIZE + 1),
-                                 PACKET_MAX_PLAYER_NAME, "%s", newName);
-                        for (j = 0; j < MAX_TANKS; j++) {
-                            if (udpServer.clients[j].connected &&
-                                j != clientIdx) {
-                                udpSendTo(udpServer.sock, outBuf,
-                                          sizeof(outBuf),
-                                          &udpServer.clients[j].addr);
-                            }
-                        }
-                    }
-                    {
-                        ControlEvent evt;
-                        memset(&evt, 0, sizeof(evt));
-                        evt.type = CTRL_PLAYER_NAME;
-                        evt.u.playerName.playerNum = (BYTE)clientIdx;
-                        snprintf(evt.u.playerName.name,
-                                 PACKET_MAX_PLAYER_NAME, "%s", newName);
-                        serverSimPublishControl(serverSimGetActive(), &evt);
-                    }
+                    /* Update the players struct and publish CTRL_PLAYER_NAME. */
+                    serverSimSetPlayerName(serverSimGetActive(),
+                                           (BYTE)clientIdx, newName);
                 }
             }
             break;
@@ -2401,13 +2162,14 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 /* Broadcast lobby update if in lobby/countdown state */
                 if (serverSimIsLobbyEnabled(sim) &&
                     (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown)) {
-                    transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)clientIdx);
+                    publishLobbySlot(sim, (BYTE)clientIdx);
                     /* Dismiss any pending balance proposal — player composition changed */
                     if (serverSimGetBalanceProposal(sim)->pending) {
-                        uint8_t zeros[MAX_TANKS];
-                        memset(zeros, 0, sizeof(zeros));
+                        ControlEvent evt;
                         serverSimClearBalanceProposal(sim);
-                        transportUdpServerBroadcastBalanceProposal(sim, zeros);
+                        memset(&evt, 0, sizeof(evt));
+                        evt.type = CTRL_BALANCE_PROPOSAL;
+                        serverSimPublishControl(sim, &evt);
                     }
                 }
             }
@@ -2427,19 +2189,19 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                          udpServer.clients[clientIdx].playerName,
                          allow ? "allowing" : "not allowing");
                 serverSimConsoleMessage(msg);
-                serverSendServerEnglishBroadcast(msg);
+                serverSendServerEnglishBroadcast(sim, msg);
 
                 /* Check if consensus lock state changed */
                 {
                     bool nowLocked = serverClientsAllLocked();
                     if (nowLocked && !wasLocked) {
-                        serverSendServerEnglishBroadcast(
+                        serverSendServerEnglishBroadcast(sim,
                             "This game is now locked to new players (client lock)");
                         serverSimConsoleMessage(
                             "Game locked by client consensus.");
                         winboloNetSendLock(TRUE);
                     } else if (!nowLocked && wasLocked) {
-                        serverSendServerEnglishBroadcast(
+                        serverSendServerEnglishBroadcast(sim,
                             "This game is now unlocked to new players (client unlock)");
                         serverSimConsoleMessage(
                             "Game unlocked by client consensus.");
@@ -2461,26 +2223,15 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 fprintf(stderr, "[UDP SERVER] Alliance request from=%d to=%d connected=%d\n",
                         clientIdx, toPlayer,
                         (toPlayer < MAX_TANKS) ? udpServer.clients[toPlayer].connected : -1);
-                /* Forward as ALLIANCE_UPDATE (REQUEST) to target player only */
                 if (toPlayer < MAX_TANKS &&
                     udpServer.clients[toPlayer].connected) {
-                    uint8_t outBuf[PACKET_HEADER_SIZE + 3];
-                    packHeader(outBuf, PACKET_ALLIANCE_UPDATE, 0);
-                    outBuf[PACKET_HEADER_SIZE] = ALLIANCE_EVENT_REQUEST;
-                    outBuf[PACKET_HEADER_SIZE + 1] = (uint8_t)clientIdx;
-                    outBuf[PACKET_HEADER_SIZE + 2] = toPlayer;
-                    udpSendTo(udpServer.sock, outBuf, sizeof(outBuf),
-                              &udpServer.clients[toPlayer].addr);
-                    fprintf(stderr, "[UDP SERVER] Alliance update forwarded to player %d\n", toPlayer);
+                    ControlEvent reqEvt;
                     logAddEvent(log_AllyRequest, (BYTE)clientIdx, toPlayer, 0, 0, 0, NULL);
-                    {
-                        ControlEvent reqEvt;
-                        memset(&reqEvt, 0, sizeof(reqEvt));
-                        reqEvt.type = CTRL_ALLIANCE_REQUEST;
-                        reqEvt.u.allianceRequest.fromPlayer = (BYTE)clientIdx;
-                        reqEvt.u.allianceRequest.toPlayer   = toPlayer;
-                        serverSimPublishControl(serverSimGetActive(), &reqEvt);
-                    }
+                    memset(&reqEvt, 0, sizeof(reqEvt));
+                    reqEvt.type = CTRL_ALLIANCE_REQUEST;
+                    reqEvt.u.allianceRequest.fromPlayer = (BYTE)clientIdx;
+                    reqEvt.u.allianceRequest.toPlayer   = toPlayer;
+                    serverSimPublishControl(serverSimGetActive(), &reqEvt);
                 }
             }
             break;
@@ -2491,37 +2242,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 2) {
                 uint8_t newMember = buf[PACKET_HEADER_SIZE + 1];
-                /* Apply alliance on server-side players struct */
-                ServerSim *ssim = serverSimGetActive();
-                GameSim *gs = serverSimGetGameSim(ssim);
-                playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL,
-                                     (BYTE)clientIdx, newMember, TRUE);
+                serverSimAcceptAlliance(serverSimGetActive(),
+                                        (BYTE)clientIdx, newMember);
                 winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE,
                                    (BYTE)clientIdx, newMember);
                 logAddEvent(log_AllyAccept, (BYTE)clientIdx, newMember, 0, 0, 0, NULL);
-                {
-                    ControlEvent acceptEvt;
-                    memset(&acceptEvt, 0, sizeof(acceptEvt));
-                    acceptEvt.type = CTRL_ALLIANCE_ACCEPT;
-                    acceptEvt.u.allianceAccept.acceptedBy = (BYTE)clientIdx;
-                    acceptEvt.u.allianceAccept.newMember  = newMember;
-                    serverSimPublishControl(ssim, &acceptEvt);
-                }
-                /* Broadcast ALLIANCE_UPDATE (ACCEPT) to all clients */
-                {
-                    uint8_t outBuf[PACKET_HEADER_SIZE + 3];
-                    int j;
-                    packHeader(outBuf, PACKET_ALLIANCE_UPDATE, 0);
-                    outBuf[PACKET_HEADER_SIZE] = ALLIANCE_EVENT_ACCEPT;
-                    outBuf[PACKET_HEADER_SIZE + 1] = (uint8_t)clientIdx;
-                    outBuf[PACKET_HEADER_SIZE + 2] = newMember;
-                    for (j = 0; j < MAX_TANKS; j++) {
-                        if (udpServer.clients[j].connected) {
-                            udpSendTo(udpServer.sock, outBuf, sizeof(outBuf),
-                                      &udpServer.clients[j].addr);
-                        }
-                    }
-                }
             }
             break;
         }
@@ -2529,35 +2254,10 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             /* Wire: [header 8] [playerNum 1] */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 1) {
-                /* Apply on server-side players struct */
-                {
-                    ServerSim *ssim = serverSimGetActive();
-                    GameSim *gs = serverSimGetGameSim(ssim);
-                    ControlEvent leaveEvt;
-                    playersLeaveAlliance(gs, &gs->plyrs, NEUTRAL, (BYTE)clientIdx, TRUE);
-                    memset(&leaveEvt, 0, sizeof(leaveEvt));
-                    leaveEvt.type = CTRL_ALLIANCE_LEAVE;
-                    leaveEvt.u.allianceLeave.playerNum = (BYTE)clientIdx;
-                    serverSimPublishControl(ssim, &leaveEvt);
-                }
+                serverSimLeaveAlliance(serverSimGetActive(), (BYTE)clientIdx);
                 winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_LEAVE, TRUE,
                                    (BYTE)clientIdx, WINBOLO_NET_NO_PLAYER);
                 logAddEvent(log_AllyLeave, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
-                /* Broadcast ALLIANCE_UPDATE (LEAVE) to all clients */
-                {
-                    uint8_t outBuf[PACKET_HEADER_SIZE + 3];
-                    int j;
-                    packHeader(outBuf, PACKET_ALLIANCE_UPDATE, 0);
-                    outBuf[PACKET_HEADER_SIZE] = ALLIANCE_EVENT_LEAVE;
-                    outBuf[PACKET_HEADER_SIZE + 1] = (uint8_t)clientIdx;
-                    outBuf[PACKET_HEADER_SIZE + 2] = 0; /* unused for leave */
-                    for (j = 0; j < MAX_TANKS; j++) {
-                        if (udpServer.clients[j].connected) {
-                            udpSendTo(udpServer.sock, outBuf, sizeof(outBuf),
-                                      &udpServer.clients[j].addr);
-                        }
-                    }
-                }
             }
             break;
         }
@@ -2599,7 +2299,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 if (teamNum <= 16) {
                     serverSimSetTeam(sim, (BYTE)clientIdx, teamNum);
                     logAddEvent(log_TeamSet, (BYTE)clientIdx, teamNum, 0, 0, 0, NULL);
-                    transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)clientIdx);
+                    publishLobbySlot(sim, (BYTE)clientIdx);
                 }
             }
             break;
@@ -2614,13 +2314,18 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 if (serverSimGetState(sim) == serverStateLobby) {
                     serverSimSetReady(sim, (BYTE)clientIdx, ready);
                     logAddEvent(ready ? log_PlayerReady : log_PlayerUnready, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
-                    transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)clientIdx);
+                    publishLobbySlot(sim, (BYTE)clientIdx);
                     serverSimLobbyCheckAllReady(sim);
                     /* If all-ready check triggered countdown, broadcast it */
                     if (serverSimGetState(sim) == serverStateCountdown) {
                         logAddEvent(log_CountdownStart, 0, 0, 0, 0, 0, NULL);
                         uint8_t secs = (uint8_t)((serverSimGetCountdownTicks(sim) + 49) / 50);
-                        transportUdpServerBroadcastCountdown(sim, secs);
+                        ControlEvent evt;
+                        memset(&evt, 0, sizeof(evt));
+                        evt.type = CTRL_GAME_PHASE;
+                        evt.u.gamePhase.phase = CTRL_PHASE_COUNTDOWN;
+                        evt.u.gamePhase.countdownSeconds = secs;
+                        serverSimPublishControl(sim, &evt);
                     }
                 } else if (serverSimGetState(sim) == serverStateCountdown && !ready) {
                     /* Someone unreadied during countdown — revert to lobby */
@@ -2629,7 +2334,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     logAddEvent(log_PlayerUnready, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
                     logAddEvent(log_CountdownCancel, 0, 0, 0, 0, 0, NULL);
                     serverSimConsoleMessage("Countdown cancelled — player unreadied.");
-                    transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)clientIdx);
+                    publishLobbySlot(sim, (BYTE)clientIdx);
                 }
             }
             break;
@@ -2658,7 +2363,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                                          gameTypeGet(&serverSimGetGameSim(sim)->game),
                                          serverSimGetGameSim(sim)->hiddenMines)) {
                         transportUdpServerSetBotName(slot, botName);
-                        transportUdpServerBroadcastLobbyUpdate(sim, slot);
+                        publishLobbySlot(sim, slot);
                     }
                 }
             }
@@ -2673,7 +2378,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 uint8_t targetSlot = buf[PACKET_HEADER_SIZE];
                 if (targetSlot < MAX_TANKS && botManagerIsBot(targetSlot)) {
                     botManagerRemoveBot(sim, targetSlot);
-                    transportUdpServerBroadcastLobbyUpdate(sim, targetSlot);
+                    publishLobbySlot(sim, targetSlot);
                 }
             }
             break;
@@ -2713,7 +2418,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                         }
                         /* Broadcast updated flags so other clients see WBN badge */
                         if (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown) {
-                            transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)clientIdx);
+                            publishLobbySlot(sim, (BYTE)clientIdx);
                         }
                     } else {
                         fprintf(stderr, "[UDP SERVER] Player %d WBN re-auth failed: %s\n",
@@ -2769,7 +2474,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 }
                 serverSimClearBalanceProposal(sim);
                 logAddEvent(log_BalanceApplied, 0, 0, 0, 0, 0, NULL);
-                transportUdpServerBroadcastLobbyState(sim);
+                publishLobbyStateAll(sim);
                 serverSimConsoleMessage("Team balance applied");
             }
             break;
@@ -2780,10 +2485,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             if (clientIdx == 0 && serverSimIsLobbyEnabled(sim) &&
                 serverSimGetState(sim) == serverStateLobby &&
                 serverSimGetBalanceProposal(sim)->pending) {
-                uint8_t zeros[MAX_TANKS];
-                memset(zeros, 0, sizeof(zeros));
+                ControlEvent evt;
                 serverSimClearBalanceProposal(sim);
-                transportUdpServerBroadcastBalanceProposal(sim, zeros);
+                memset(&evt, 0, sizeof(evt));
+                evt.type = CTRL_BALANCE_PROPOSAL;
+                serverSimPublishControl(sim, &evt);
             }
             break;
         }
@@ -2791,8 +2497,15 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             /* Wire: [header 8] (no payload — server identifies player by source) */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0) {
+                ControlEvent evt;
+                int i;
                 serverSimMapSkipVoteToggle(sim, (uint8_t)clientIdx);
-                transportUdpServerBroadcastMapSkipState(sim);
+                memset(&evt, 0, sizeof(evt));
+                evt.type = CTRL_MAP_SKIP_STATE;
+                for (i = 0; i < MAX_TANKS; i++) {
+                    evt.u.mapSkipState.votes[i] = serverSimIsMapSkipVote(sim, i) ? 1 : 0;
+                }
+                serverSimPublishControl(sim, &evt);
             }
             break;
         }
@@ -2906,8 +2619,8 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
     if (!udpServer.running) return;
     if (serverSimGetEventCount(sim) == 0 && serverSimGetMapEventCount(sim) == 0) return;
 
-    fprintf(stderr, "[UDP SERVER] Enqueuing %d events + %d map events from tick=%u\n",
-            serverSimGetEventCount(sim), serverSimGetMapEventCount(sim), serverSimGetTick(sim));
+    WB_LOG_DEBUG(WB_LOG_CAT_NET, "[UDP SERVER] Enqueuing %d events + %d map events from tick=%u",
+                 serverSimGetEventCount(sim), serverSimGetMapEventCount(sim), serverSimGetTick(sim));
 
     for (c = 0; c < MAX_TANKS; c++) {
         ClientEventQueue *cq;
@@ -3107,6 +2820,7 @@ void transportUdpServerSend(ServerSim *sim) {
             packHeader(plBuf, PACKET_PLAYER_LIST, 0);
             plBuf[PACKET_HEADER_SIZE] = plCount;
             if (plCount > 0) {
+                /* wire-only: per-client handshake (response to a single client's request) */
                 udpSendTo(udpServer.sock, plBuf, plPos,
                           &udpServer.clients[i].addr);
             }
@@ -3143,13 +2857,14 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
             /* Broadcast lobby update if in lobby/countdown state */
             if (serverSimIsLobbyEnabled(sim) &&
                 (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown)) {
-                transportUdpServerBroadcastLobbyUpdate(sim, (BYTE)i);
+                publishLobbySlot(sim, (BYTE)i);
                 /* Dismiss any pending balance proposal — player composition changed */
                 if (serverSimGetBalanceProposal(sim)->pending) {
-                    uint8_t zeros[MAX_TANKS];
-                    memset(zeros, 0, sizeof(zeros));
+                    ControlEvent evt;
                     serverSimClearBalanceProposal(sim);
-                    transportUdpServerBroadcastBalanceProposal(sim, zeros);
+                    memset(&evt, 0, sizeof(evt));
+                    evt.type = CTRL_BALANCE_PROPOSAL;
+                    serverSimPublishControl(sim, &evt);
                 }
             }
         }
@@ -3223,8 +2938,13 @@ void transportUdpServerSendServerMessage(const char *message) {
     /* Public API: external callers (servermain console "say", saveMap
      * announcement, server_lifecycle pendingWinMessage) pass arbitrary
      * pre-rendered English strings.  These don't have dedicated langids
-     * yet, so route through the legacy English passthrough wire format. */
-    serverSendServerEnglishBroadcast(message);
+     * yet, so route through the legacy English passthrough wire format.
+     * Sim handle comes from serverSimGetActive() — the public signature
+     * doesn't carry it, matching the pattern other public entry points
+     * in this TU use when they need the active sim. */
+    ServerSim *sim = serverSimGetActive();
+    if (sim == NULL) return;
+    serverSendServerEnglishBroadcast(sim, message);
 }
 
 void transportUdpServerPrintStatus(bool toFile) {

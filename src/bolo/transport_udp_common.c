@@ -22,6 +22,7 @@
  *********************************************************/
 
 #include "transport_udp_internal.h"
+#include "../common/wb_log.h"
 
 /* ================================================================
  * Serialization helpers — pack/unpack structs to/from wire format
@@ -97,8 +98,8 @@ const char *packetTypeName(uint8_t type) {
     case PACKET_LOBBY_READY:        return "LOBBY_READY";
     case PACKET_LOBBY_ADD_BOT:      return "LOBBY_ADD_BOT";
     case PACKET_LOBBY_REMOVE_BOT:   return "LOBBY_REMOVE_BOT";
-    case PACKET_LOBBY_STATE:        return "LOBBY_STATE";
     case PACKET_LOBBY_UPDATE:       return "LOBBY_UPDATE";
+    case PACKET_LOBBY_SETTINGS:     return "LOBBY_SETTINGS";
     case PACKET_COUNTDOWN:          return "COUNTDOWN";
     case PACKET_GAME_START:         return "GAME_START";
     case PACKET_GAME_OVER:          return "GAME_OVER";
@@ -348,9 +349,9 @@ void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
                const struct sockaddr_in *addr) {
     uint8_t pktType = getPacketType(buf, len);
     if (pktType != PACKET_STATE_SNAPSHOT && pktType != PACKET_PONG && pktType != PACKET_INPUT) {
-        fprintf(stderr, "[UDP SEND] %s (%u) len=%d to %s:%u\n",
-                packetTypeName(pktType), pktType, len,
-                inet_ntoa(addr->sin_addr), ntohs(addr->sin_port));
+        WB_LOG_DEBUG(WB_LOG_CAT_NET, "[UDP SEND] %s (%u) len=%d to %s:%u",
+                     packetTypeName(pktType), pktType, len,
+                     inet_ntoa(addr->sin_addr), ntohs(addr->sin_port));
     }
     sendto(sock, (const char *)buf, len, 0,
            (const struct sockaddr *)addr, sizeof(*addr));
