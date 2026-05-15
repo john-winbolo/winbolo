@@ -1363,12 +1363,12 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     /* wire-only: per-tick snapshot — high-volume delta-encoded path with its own reliability discipline */
     udpSendTo(udpServer.sock, buf, pos, &client->addr);
     if (serverSimGetTick(sim) % 50 == 0) {
-        fprintf(stderr, "[UDP SERVER] Send SNAPSHOT to slot %d: tick=%u tanks=%u shells=%u bases=%u pills=%u events=%u(ack=%u next=%u) mapEvts=%u(ack=%u next=%u) len=%d\n",
-                clientIdx, serverSimGetTick(sim), (unsigned)hdr.tankCount, (unsigned)hdr.shellCount,
-                (unsigned)hdr.baseCount,
-                (unsigned)hdr.pillCount, reliableEventCount,
-                evQ->ackedSeq, evQ->nextSeq,
-                mapEventCount, mapQ->ackedSeq, mapQ->nextSeq, pos);
+        WB_LOG_DEBUG(WB_LOG_CAT_NET, "[UDP SERVER] Send SNAPSHOT to slot %d: tick=%u tanks=%u shells=%u bases=%u pills=%u events=%u(ack=%u next=%u) mapEvts=%u(ack=%u next=%u) len=%d",
+                     clientIdx, serverSimGetTick(sim), (unsigned)hdr.tankCount, (unsigned)hdr.shellCount,
+                     (unsigned)hdr.baseCount,
+                     (unsigned)hdr.pillCount, reliableEventCount,
+                     evQ->ackedSeq, evQ->nextSeq,
+                     mapEventCount, mapQ->ackedSeq, mapQ->nextSeq, pos);
     }
 }
 
@@ -2662,8 +2662,8 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
     if (!udpServer.running) return;
     if (serverSimGetEventCount(sim) == 0 && serverSimGetMapEventCount(sim) == 0) return;
 
-    fprintf(stderr, "[UDP SERVER] Enqueuing %d events + %d map events from tick=%u\n",
-            serverSimGetEventCount(sim), serverSimGetMapEventCount(sim), serverSimGetTick(sim));
+    WB_LOG_DEBUG(WB_LOG_CAT_NET, "[UDP SERVER] Enqueuing %d events + %d map events from tick=%u",
+                 serverSimGetEventCount(sim), serverSimGetMapEventCount(sim), serverSimGetTick(sim));
 
     for (c = 0; c < MAX_TANKS; c++) {
         ClientEventQueue *cq;
