@@ -621,24 +621,9 @@ static void serverPreemptRename(ServerSim *sim, int victimSlot,
              PACKET_MAX_PLAYER_NAME, "%s", chosenName);
     udpServer.clients[victimSlot].nameStickySuffix = true;
 
-    /* Update the gameSim player record — same path PACKET_NAME_CHANGE
-     * already uses (transport_udp_server.c PACKET_NAME_CHANGE handler). */
-    {
-        char nameBuf[PACKET_MAX_PLAYER_NAME];
-        strncpy(nameBuf, chosenName, PACKET_MAX_PLAYER_NAME - 1);
-        nameBuf[PACKET_MAX_PLAYER_NAME - 1] = '\0';
-        playersSetPlayerName(NULL, gs, &gs->plyrs, NEUTRAL,
-                             (BYTE)victimSlot, nameBuf, TRUE);
-    }
-
-    {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_PLAYER_NAME;
-        evt.u.playerName.playerNum = (BYTE)victimSlot;
-        snprintf(evt.u.playerName.name, PACKET_MAX_PLAYER_NAME, "%s", chosenName);
-        serverSimPublishControl(sim, &evt);
-    }
+    /* Update the gameSim player record and publish the name change —
+     * same path PACKET_NAME_CHANGE uses. */
+    serverSimSetPlayerName(sim, (BYTE)victimSlot, chosenName);
 
     /* Publish a single-slot lobby update so other surfaces (lobby
      * table, players panel) refresh. */
@@ -2156,22 +2141,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     snprintf(udpServer.clients[clientIdx].playerName,
                              PACKET_MAX_PLAYER_NAME, "%s", newName);
 
-                    /* Update in players struct */
-                    {
-                        ServerSim *ssim = serverSimGetActive();
-                        GameSim *gs = serverSimGetGameSim(ssim);
-                        playersSetPlayerName(NULL, gs, &gs->plyrs, NEUTRAL, (BYTE)clientIdx, newName, TRUE);
-                    }
-
-                    {
-                        ControlEvent evt;
-                        memset(&evt, 0, sizeof(evt));
-                        evt.type = CTRL_PLAYER_NAME;
-                        evt.u.playerName.playerNum = (BYTE)clientIdx;
-                        snprintf(evt.u.playerName.name,
-                                 PACKET_MAX_PLAYER_NAME, "%s", newName);
-                        serverSimPublishControl(serverSimGetActive(), &evt);
-                    }
+                    /* Update the players struct and publish CTRL_PLAYER_NAME. */
+                    serverSimSetPlayerName(serverSimGetActive(),
+                                           (BYTE)clientIdx, newName);
                 }
             }
             break;
@@ -2270,19 +2242,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 2) {
                 uint8_t newMember = buf[PACKET_HEADER_SIZE + 1];
-                ServerSim *ssim = serverSimGetActive();
-                GameSim *gs = serverSimGetGameSim(ssim);
-                ControlEvent acceptEvt;
-                playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL,
-                                     (BYTE)clientIdx, newMember, TRUE);
+                serverSimAcceptAlliance(serverSimGetActive(),
+                                        (BYTE)clientIdx, newMember);
                 winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE,
                                    (BYTE)clientIdx, newMember);
                 logAddEvent(log_AllyAccept, (BYTE)clientIdx, newMember, 0, 0, 0, NULL);
-                memset(&acceptEvt, 0, sizeof(acceptEvt));
-                acceptEvt.type = CTRL_ALLIANCE_ACCEPT;
-                acceptEvt.u.allianceAccept.acceptedBy = (BYTE)clientIdx;
-                acceptEvt.u.allianceAccept.newMember  = newMember;
-                serverSimPublishControl(ssim, &acceptEvt);
             }
             break;
         }
@@ -2290,17 +2254,10 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             /* Wire: [header 8] [playerNum 1] */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 1) {
-                ServerSim *ssim = serverSimGetActive();
-                GameSim *gs = serverSimGetGameSim(ssim);
-                ControlEvent leaveEvt;
-                playersLeaveAlliance(gs, &gs->plyrs, NEUTRAL, (BYTE)clientIdx, TRUE);
+                serverSimLeaveAlliance(serverSimGetActive(), (BYTE)clientIdx);
                 winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_LEAVE, TRUE,
                                    (BYTE)clientIdx, WINBOLO_NET_NO_PLAYER);
                 logAddEvent(log_AllyLeave, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
-                memset(&leaveEvt, 0, sizeof(leaveEvt));
-                leaveEvt.type = CTRL_ALLIANCE_LEAVE;
-                leaveEvt.u.allianceLeave.playerNum = (BYTE)clientIdx;
-                serverSimPublishControl(ssim, &leaveEvt);
             }
             break;
         }
