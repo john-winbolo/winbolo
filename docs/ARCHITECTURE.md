@@ -25,7 +25,7 @@ document is the stable reference for the rules themselves.
 | `src/mapeditor/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — full T2 access for map-data editing. |
 | `src/braintest/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — dev visualisation tool, not shipped to players. |
 | `src/gym/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — ML training harness, not shipped in player builds. |
-| `src/server/` | T1 + T3 + T4 | Runs the sim; no internal access. T3 is reachable but not for drawing — server should not include T3 headers. |
+| `src/server/` | T1 + T2 + T3 + T4 | Co-owner of the sim alongside `src/bolo/`. `server_sim.c`, `servermessages.c`, `transport_udp_server.c`, `server_lifecycle.c`, `threads.c`, and `geolookup.c` are sim implementation; they compile under the `sim_owner` profile via two libraries — `server_sim_static` (sim core, linked by every binary that hosts a sim) and `server_static` (dedicated-server runtime on top of it, linked only by the binaries that run the real lifecycle). The actual dedicated-server frontend is just `servermain.c`, `server_frontend_stubs.c`, and `server_dedicated_log.c`, which follow the standard T1-only frontend rules. |
 | `src/headless/` | T1 + T3 + T4 | Same as server. |
 | `src/wasm/` | T1 + T3 + T4 | Web build of the desktop client. |
 | `src/android/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
@@ -116,7 +116,12 @@ A frontend is any binary outside `src/bolo/` that drives a `ClientSim`
 or `ServerSim` through the public T1 API. Existing frontends are
 `src/gui/sdl3/` (desktop), `src/android/` and `src/ios/` (mobile),
 `src/wasm/` (web), `src/headless/` (no UI), `src/braintest/` (dev
-tool), and `src/server/` (dedicated server).
+tool), and the dedicated-server frontend under `src/server/` —
+specifically `servermain.c`, `server_frontend_stubs.c`, and
+`server_dedicated_log.c`. The other `src/server/` translation units
+(`server_sim.c`, `servermessages.c`, `transport_udp_server.c`,
+`server_lifecycle.c`, `threads.c`, `geolookup.c`) are sim
+implementation, not frontend code.
 
 ### Client
 

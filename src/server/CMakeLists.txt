@@ -1,28 +1,36 @@
-# server_static — shared server-peer files factored out of the
-# per-target *_SOURCES lists of the binaries that compile the real
-# server lifecycle today.
+# Two libraries under src/server/:
 #
-# Linked by 4 targets:
-#   WinBolo, WinBoloDS, WinBoloHeadless, winbolo_gym
+#   server_sim_static  — the server-side sim core (server_sim.c and the
+#                        message helpers in servermessages.c). Linked by
+#                        every binary that hosts a sim, including the
+#                        in-process single-player builds (WinBoloIOS,
+#                        BrainTest, MapEditor, android main, wasm
+#                        winbolo). Replaces the per-target inline
+#                        compilation of these two files those binaries
+#                        used to do, which also drops the matching
+#                        per-file bolo_grant_internal_source_access
+#                        entries.
 #
-# NOT linked by:
-#   WinBoloIOS, BrainTest, MapEditor, android main, wasm winbolo
-#     (these use server_stubs.c in place of the real server_lifecycle.c.
-#      server_stubs.c only stubs the lifecycle API and not threads /
-#      servermessages / geolookup, so those five targets keep their
-#      existing partial server source set inline.)
-#   LogViewer, logviewer-wasm — link no bolo or server source.
+#   server_static      — the full dedicated-server runtime on top of
+#                        the sim: transport_udp_server.c + server_lifecycle.c
+#                        + threads.c + geolookup.c. PUBLIC-links
+#                        server_sim_static so consumers don't have to
+#                        list both. Linked by the four binaries that run
+#                        the real dedicated-server lifecycle: WinBolo,
+#                        WinBoloDS, WinBoloHeadless, winbolo_gym.
+#                        EXCLUDE_FROM_ALL so platforms that only need
+#                        server_sim_static (iOS, BrainTest, MapEditor,
+#                        android, wasm) don't pay to build the dedicated-
+#                        server bits.
 #
-# server_sim.c now lives in this library — the previous HAVE_SCREEN_C
-# divergence was lifted into server_dedicated_log.{c,h} so the same
-# server_sim.c body compiles for every consumer. Targets that don't
-# link server_static (iOS / BrainTest / MapEditor / android / wasm)
-# still compile their own copy from their per-target *_SOURCES.
-#
-# Other src/server/*.c files stay per-target:
+# Files that stay per-target:
 #   servermain.c               — WinBoloDS only
 #   server_frontend_stubs.c    — WinBoloDS only
-#   server_stubs.c             — non-lifecycle linkers
+#   server_stubs.c             — non-server_static linkers (iOS,
+#                                BrainTest, MapEditor, android, wasm)
+#                                — stubs the transportUdpServer* and
+#                                serverLifecycle* symbols those binaries
+#                                don't pull in via server_static
 #   server_dedicated_log.c     — WinBoloDS only (real log bodies that
 #                                touch servermain.c-owned globals)
 #   server_dedicated_log_stubs.c — every binary other than WinBoloDS
@@ -30,12 +38,29 @@
 #   posix_stubs.c              — every non-Windows target (incl. LogViewer
 #                                standalone for its WBN http INI shims)
 
-add_library(server_static STATIC
-    geolookup.c
+add_library(server_sim_static STATIC
+    server_sim.c
     servermessages.c
+)
+
+bolo_apply_include_rules(server_sim_static sim_owner)
+
+set_target_properties(server_sim_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# server_sim.c references winbolonet.h / http.h transitively through
+# bolo_static's link surface; PUBLIC so consumers don't need to add
+# bolo_static separately when they link server_sim_static.
+target_link_libraries(server_sim_static PUBLIC bolo_static)
+
+if(NOT MSVC)
+    target_compile_options(server_sim_static PRIVATE -fcommon)
+endif()
+
+
+add_library(server_static STATIC EXCLUDE_FROM_ALL
+    geolookup.c
     threads.c
     server_lifecycle.c
-    server_sim.c
     transport_udp_server.c
 )
 
@@ -59,10 +84,16 @@ if(TARGET maxminddb)
     target_link_libraries(server_static PUBLIC maxminddb)
 endif()
 
-# server TUs include bolo internal headers and reference bolo symbols
-# (tankCreate, clientSimGetGameSim, etc.). PUBLIC so consumers don't
-# need to add bolo_static separately when they link server_static.
-target_link_libraries(server_static PUBLIC bolo_static)
+# server_sim.c calls transportUdpServerEnforcePing /
+# serverLifecycleGetTickStats / etc.; transport_udp_server.c and
+# server_lifecycle.c call serverSimXyz. The two archives form a cycle
+# that single-pass ld can't resolve. Consumers that link server_static
+# must wrap it with server_sim_static in a $<LINK_GROUP:RESCAN,...>
+# group — see the four desktop binaries (WinBolo, WinBoloDS,
+# WinBoloHeadless, winbolo_gym). PRIVATE so the dep doesn't auto-
+# propagate to consumers in the wrong order: explicit grouping at
+# the consume site is what makes the cycle resolvable.
+target_link_libraries(server_static PRIVATE server_sim_static)
 
 if(NOT MSVC)
     target_compile_options(server_static PRIVATE -fcommon)
