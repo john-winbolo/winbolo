@@ -864,6 +864,14 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             if (prevRecursive != state->searchRecursive) {
                 toggleChanged = true;
             }
+            /* "Modified at" toggle — controls whether the table renders
+             * the Modified column. Off by default so the list stays
+             * compact; hover gives a tooltip explaining the trade. */
+            ImGui::SameLine();
+            ImGui::Checkbox("Modified at", &state->showModifiedColumn);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Show file modification times in a second column.");
+            }
         }
         /* Stale-state safety net: in non-recursive mode the legacy
          * enumerate populates state->maps with basenames only — no
@@ -903,7 +911,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                                    | ImGuiTableFlags_SortTristate
                                    | ImGuiTableFlags_BordersInnerH
                                    | ImGuiTableFlags_BordersInnerV;
-        if (ImGui::BeginTable("##MapTable", 2, tableFlags)) {
+        const int kNumCols = state->showModifiedColumn ? 2 : 1;
+        if (ImGui::BeginTable("##MapTable", kNumCols, tableFlags)) {
             ImGui::TableSetupColumn("Name",
                 ImGuiTableColumnFlags_WidthStretch
                 | ImGuiTableColumnFlags_PreferSortAscending, 1.0f,
@@ -911,10 +920,12 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             /* "YYYY-MM-DD HH:MM" plus a few pixels of padding — at the
              * default font size 130 px clears the trailing minutes
              * with a touch of breathing room so nothing clips. */
-            ImGui::TableSetupColumn("Modified",
-                ImGuiTableColumnFlags_WidthFixed
-                | ImGuiTableColumnFlags_PreferSortDescending, 130.0f,
-                1 /* user_id 1 = modified column */);
+            if (state->showModifiedColumn) {
+                ImGui::TableSetupColumn("Modified",
+                    ImGuiTableColumnFlags_WidthFixed
+                    | ImGuiTableColumnFlags_PreferSortDescending, 130.0f,
+                    1 /* user_id 1 = modified column */);
+            }
             ImGui::TableSetupScrollFreeze(0, 1);
             ImGui::TableHeadersRow();
 
@@ -1074,20 +1085,23 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                  * gives us a calendar struct in local time which we
                  * render as "YYYY-MM-DD HH:MM". A zero/unknown
                  * modTime shows a dim "—" so the column doesn't
-                 * read as broken. */
-                ImGui::TableSetColumnIndex(1);
-                if (ent.modTime > 0) {
-                    SDL_DateTime dt;
-                    if (SDL_TimeToDateTime((SDL_Time)ent.modTime,
-                                           &dt, true)) {
-                        ImGui::Text("%04d-%02d-%02d %02d:%02d",
-                                    dt.year, dt.month, dt.day,
-                                    dt.hour, dt.minute);
+                 * read as broken. Only rendered when the user has
+                 * toggled the "Modified at" checkbox on. */
+                if (state->showModifiedColumn) {
+                    ImGui::TableSetColumnIndex(1);
+                    if (ent.modTime > 0) {
+                        SDL_DateTime dt;
+                        if (SDL_TimeToDateTime((SDL_Time)ent.modTime,
+                                               &dt, true)) {
+                            ImGui::Text("%04d-%02d-%02d %02d:%02d",
+                                        dt.year, dt.month, dt.day,
+                                        dt.hour, dt.minute);
+                        } else {
+                            ImGui::TextDisabled("-");
+                        }
                     } else {
                         ImGui::TextDisabled("-");
                     }
-                } else {
-                    ImGui::TextDisabled("-");
                 }
 
                 if (clicked) {
