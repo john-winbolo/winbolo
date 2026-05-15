@@ -466,7 +466,7 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
     return sim;
 }
 
-ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, const char *mapName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
     ServerSim *sim = (ServerSim *)malloc(sizeof(ServerSim));
     if (sim == NULL) {
         return NULL;
@@ -476,6 +476,11 @@ ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, gameType game, boo
     if (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss, buff, buffLen) == FALSE) {
         serverSimDestroy(sim);
         return NULL;
+    }
+
+    if (mapName != NULL && mapName[0] != '\0') {
+        strncpy(sim->mapName, mapName, MAP_STR_SIZE - 1);
+        sim->mapName[MAP_STR_SIZE - 1] = '\0';
     }
 
     basesClearMines(&sim->sim);

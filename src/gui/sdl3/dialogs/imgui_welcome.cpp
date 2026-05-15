@@ -212,6 +212,11 @@ extern "C" int imguiWelcomeShow(void) {
     bool running = true;
     Uint64 lastTickTime = SDL_GetTicks();
 
+    /* Show "In main menu" in the Steam friends list while the welcome
+     * dialog is up. Cleared / overwritten when the user enters a lobby
+     * or starts a game. */
+    gameFrontSetSteamPresenceMenu();
+
     /* Logo shimmer: a 1.5s "sun glint" sweep, fired on hover entry and on
      * a 75–105s randomised idle timer. Offscreen target is cached for the
      * dialog lifetime and recreated on logo size change (e.g. DPI/resize). */
