@@ -193,5 +193,12 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         /* No ClientSim field maps to UDP joinState; that field stays
          * transport-internal per the architectural commitment. */
         break;
+
+    case CTRL_CHAT:
+        /* Display side effects stay at the wire boundary
+         * (transport_udp_client.c PACKET_CHAT_BROADCAST branch); the
+         * bus publish exists so in-process subscribers can observe
+         * chat alongside the other control events. */
+        break;
     }
 }

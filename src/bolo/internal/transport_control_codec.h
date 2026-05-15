@@ -65,9 +65,9 @@ typedef bool (*ControlDecodeFn)(const uint8_t *buf, size_t len,
                                 ControlEvent *outEvt);
 
 /* Stack-allocation upper bound for any single ControlEvent's wire
- * encoding. The widest variant fits well below this; sized to give
- * call sites a fixed buffer they can keep on the stack. */
-#define MAX_CONTROL_PACKET 256
+ * encoding. Sized for the chat-localized worst case (8 hdr + 1 from +
+ * 1 dest + CHAT_BODY_MAX body = 282 bytes), rounded up for headroom. */
+#define MAX_CONTROL_PACKET 320
 
 /* Returns the encoder for the given variant, or NULL if the
  * variant has no wire form (CTRL_MAP_DOWNLOAD_COMPLETE is

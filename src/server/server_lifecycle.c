@@ -407,11 +407,14 @@ void serverInstanceTick(ServerSim *sim) {
       }
     }
 
-    /* Periodic lobby snapshot — twice per second (every 25 ticks)
-     * for ping/country updates and state consistency */
+    /* Periodic lobby snapshot — twice per second (every 25 ticks) for
+     * ping/country updates and state consistency.  Goes through the
+     * wire-only fan-out helper because the refresh is cosmetic data
+     * that in-process subscribers (bots, SP, replay-log) ignore — the
+     * bus would wake them every 25 ticks × MAX_TANKS for nothing. */
     if ((sim->state == serverStateLobby || sim->state == serverStateCountdown) &&
         sim->tick % 25 == 0) {
-      publishLobbyStateAll(sim);
+      transportUdpServerSendPeriodicLobbyRefresh(sim);
     }
 
     /* Timeout check — not called via transportUdpServerSend() during lobby */
