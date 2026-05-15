@@ -1071,8 +1071,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         }
 
         /* ---- Error popup ---- */
+        static float s_fadeGbErr = 0.0f;
         if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeGbErr));
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
             {
@@ -1083,12 +1086,16 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 }
                 imguiHandOnHover();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 
         /* ---- Set Player Name popup ---- */
+        static float s_fadeGbSetName = 0.0f;
         if (ImGui::BeginPopupModal(setNamePopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeGbSetName));
             bool wbnActive = gameFrontGetWinbolonetUse();
             ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_PLAYERNAME));
             ImGui::SameLine(120 * s);
@@ -1117,6 +1124,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 }
                 imguiHandOnHover();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 

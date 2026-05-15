@@ -1264,9 +1264,12 @@ static void renderAboutModal(void) {
         ImGui::OpenPopup(title);
         s_showAbout = false;
     }
+    static float s_fadeAbout = 0.0f;
     if (ImGui::BeginPopupModal(title, nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            imguiPopupFadeAlpha(&s_fadeAbout));
+        if (s_closeAllPopups) { ImGui::PopStyleVar(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
         ImGui::TextUnformatted(langGetText(STR_DLGABOUT_VERSION));
         ImGui::TextUnformatted(langGetText(STR_DLGABOUT_COPYRIGHT));
         ImGui::Separator();
@@ -1275,6 +1278,7 @@ static void renderAboutModal(void) {
         if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0)))
             ImGui::CloseCurrentPopup();
             imguiHandOnHover();
+        ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
 }
@@ -1290,9 +1294,12 @@ static void renderJoinConfirmModal(void) {
         ImGui::OpenPopup(title);
         s_showJoinConfirm = false;
     }
+    static float s_fadeJoinConfirm = 0.0f;
     if (ImGui::BeginPopupModal(title, nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            imguiPopupFadeAlpha(&s_fadeJoinConfirm));
+        if (s_closeAllPopups) { ImGui::PopStyleVar(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
         ImGui::TextUnformatted(langGetText(STR_DLGJOIN_BLURB));
         ImGui::Spacing();
         if (s_joinConfirmPort > 0) {
@@ -1316,6 +1323,7 @@ static void renderJoinConfirmModal(void) {
             ImGui::CloseCurrentPopup();
         }
         imguiHandOnHover();
+        ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
 }
@@ -1332,9 +1340,12 @@ static void renderChangeNameModal(ClientSim *cs) {
         s_changeNameBuf[0] = '\0';
         clientSimGetPlayerName(cs, s_changeNameBuf);
     }
+    static float s_fadeChangeName = 0.0f;
     if (ImGui::BeginPopupModal(title, nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            imguiPopupFadeAlpha(&s_fadeChangeName));
+        if (s_closeAllPopups) { ImGui::PopStyleVar(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
         ImGui::TextUnformatted(langGetText(STR_DLGSETNAME_BLURB));
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(0);
         ImGui::SetNextItemWidth(300);
@@ -1362,6 +1373,7 @@ static void renderChangeNameModal(ClientSim *cs) {
             }
         }
         if (doCancel) ImGui::CloseCurrentPopup();
+        ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
 }
@@ -1422,9 +1434,12 @@ static void renderPasswordModal(void) {
         s_showPasswordOpen  = false;
         s_passwordBuf[0]   = '\0';
     }
+    static float s_fadePassword = 0.0f;
     if (ImGui::BeginPopupModal(title, nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            imguiPopupFadeAlpha(&s_fadePassword));
+        if (s_closeAllPopups) { ImGui::PopStyleVar(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
         ImGui::TextUnformatted(langGetText(STR_DLGPASSWORD_BLURB));
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(0);
         ImGui::SetNextItemWidth(270);
@@ -1439,6 +1454,7 @@ static void renderPasswordModal(void) {
             ImGui::CloseCurrentPopup();
         }
         imguiHandOnHover();
+        ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
 }
@@ -1538,12 +1554,15 @@ static void renderKeySetupModal(ClientSim *cs) {
 
     /* ImGuiWindowFlags_NoMove so the user cannot accidentally drag it off-screen */
     bool open = true;
+    static float s_fadeKeySetup = 0.0f;
     if (!ImGui::BeginPopupModal(title, &open,
                                 ImGuiWindowFlags_NoResize |
                                 ImGuiWindowFlags_NoMove)) {
         return;
     }
-    if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                        imguiPopupFadeAlpha(&s_fadeKeySetup));
+    if (s_closeAllPopups) { ImGui::PopStyleVar(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
 
     /* While this modal is open ALL keyboard/mouse events are consumed by ImGui
      * (BeginPopupModal sets WantCaptureKeyboard + WantCaptureMouse).
@@ -1643,6 +1662,7 @@ static void renderKeySetupModal(ClientSim *cs) {
 
     if (busy) ImGui::EndDisabled();
 
+    ImGui::PopStyleVar();
     ImGui::EndPopup();
 }
 

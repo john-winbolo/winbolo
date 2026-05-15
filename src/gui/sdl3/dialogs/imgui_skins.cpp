@@ -304,8 +304,11 @@ extern "C" void imguiSkinsShow(void) {
         imguiHandOnHover();
 
         /* Error popup */
+        static float s_fadeSkinsErr = 0.0f;
         if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeSkinsErr));
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
             {
@@ -316,6 +319,7 @@ extern "C" void imguiSkinsShow(void) {
                 }
                 imguiHandOnHover();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 

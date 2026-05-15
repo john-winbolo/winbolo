@@ -225,8 +225,11 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_Appearing);
 
+    static float s_fadeWbnSignIn = 0.0f;
     if (ImGui::BeginPopupModal(langGetText(STR_DLGWBN_SIGNIN_TITLE), &wbnPopupOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            imguiPopupFadeAlpha(&s_fadeWbnSignIn));
         bool busy = (wbnState == WBN_LOGGING_IN);
 
         ImGui::TextWrapped("%s", langGetText(STR_DLGWBN_SIGNIN_BLURB));
@@ -301,6 +304,7 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
             imguiHandOnHover();
         }
 
+        ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
 }

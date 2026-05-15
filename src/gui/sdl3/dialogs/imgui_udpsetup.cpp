@@ -377,20 +377,27 @@ extern "C" int imguiUdpSetupShow(void) {
         }
 
         /* --- Error popup --- */
+        static float s_fadeUdpErr = 0.0f;
         if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeUdpErr));
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
             if (ImGui::Button(langGetText(STR_OK), ImVec2(80, 0))) {
                 ImGui::CloseCurrentPopup();
             }
             imguiHandOnHover();
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 
         /* --- Tracker Config popup --- */
+        static float s_fadeUdpTracker = 0.0f;
         if (ImGui::BeginPopupModal(langGetText(STR_DLGTRACKER_TITLE), nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeUdpTracker));
             ImGui::TextUnformatted(langGetText(STR_DLGTRACKER_TRACKERADDRESS));
             ImGui::SameLine(120 * s);
             ImGui::SetNextItemWidth(160 * s);
@@ -428,6 +435,7 @@ extern "C" int imguiUdpSetupShow(void) {
                 }
                 imguiHandOnHover();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 

@@ -175,8 +175,11 @@ extern "C" int imguiTrackerSetupShow(void) {
         imguiHandOnHover();
 
         /* Error popup */
+        static float s_fadeTrackerErr = 0.0f;
         if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeTrackerErr));
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
             {
@@ -187,6 +190,7 @@ extern "C" int imguiTrackerSetupShow(void) {
                 }
                 imguiHandOnHover();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 
