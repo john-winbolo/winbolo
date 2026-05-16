@@ -911,6 +911,19 @@ void serverSimLobbyCheckAllReady(ServerSim *sim);
 void serverSimStartGame(ServerSim *sim);
 
 /*********************************************************
+ *NAME:          serverSimStartGameInPlace
+ *PURPOSE:
+ *  Lobby → running transition that keeps the world intact:
+ *  reapplies team alliances, batch-assigns start slots,
+ *  creates tanks for all connected players, flips state to
+ *  serverStateRunning, and (when autoLockOnGameStart is set)
+ *  toggles allowNewPlayers off for the duration of the game.
+ *  Used by the SP-host path where the world is already loaded
+ *  and no resetGameWorld is needed.
+ *********************************************************/
+void serverSimStartGameInPlace(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimReapplyTeamAlliances
  *PURPOSE:
  *  Runs the team-pair alliance pass over the currently
@@ -1296,6 +1309,7 @@ void serverSimSetGameLength(ServerSim *sim, int32_t ticks);
  * keep the field on GameSim opaque. Only meaningful in lobby state. */
 void serverSimSetGameType(ServerSim *sim, gameType gt);
 void serverSimSetHiddenMines(ServerSim *sim, bool hiddenMines);
+void serverSimSetState(ServerSim *sim, ServerState s);
 
 /* Switch a lobby bot to a new brain script. Updates both the
  * per-slot brain-path mirror (serverSimSetBotBrainPathFor) and the
