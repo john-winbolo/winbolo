@@ -6,7 +6,7 @@
  */
 
 #include "global.h"
-#include "../server/threads.h"
+#include "threads.h"
 
 bool threadsCreate(bool context)  { (void)context; return TRUE; }
 void threadsDestroy(void)         { }
