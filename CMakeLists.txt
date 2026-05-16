@@ -2071,6 +2071,29 @@ add_custom_target(dist
     VERBATIM
 )
 
+# ---------------------------------------------------------------------------
+# macOS code-signing + notarization + stapling
+# (cmake --build <dir> --target sign_macos)
+# ---------------------------------------------------------------------------
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_custom_target(sign_macos
+        COMMAND "${CMAKE_SOURCE_DIR}/scripts/sign_macos.sh" "${CMAKE_BINARY_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        COMMENT "Sign + notarize + staple all .app bundles (requires Developer ID cert)"
+        VERBATIM
+        USES_TERMINAL
+    )
+
+    add_custom_target(package_macos
+        COMMAND "${CMAKE_SOURCE_DIR}/scripts/package_macos.sh" "${CMAKE_BINARY_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        DEPENDS sign_macos
+        COMMENT "Bundle signed apps + WinBoloDS into a notarized DMG (requires create-dmg)"
+        VERBATIM
+        USES_TERMINAL
+    )
+endif()
+
 enable_testing()
 add_test(NAME baseline
          COMMAND bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
