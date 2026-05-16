@@ -26,6 +26,11 @@
 #ifndef GAME_SIM_H
 #define GAME_SIM_H
 
+#ifndef GAMESIM_TYPEDEF
+#define GAMESIM_TYPEDEF
+typedef struct GameSim GameSim;
+#endif
+
 /* The game timer is 20 milliseconds between events the game_tick_length is half this */
 #define GAME_TICK_LENGTH 10
 #define GAME_NUMTOTALTICKS_SEC (1000 / GAME_TICK_LENGTH)
@@ -73,7 +78,7 @@ typedef struct GameSimCallbacks {
     void *ctx;  /* opaque pointer: ClientSim* or ServerSim* */
 } GameSimCallbacks;
 
-typedef struct GameSim {
+struct GameSim {
     /* Core game objects — identical types in client and server */
     map         mp;
     bases       bs;
@@ -117,6 +122,12 @@ typedef struct GameSim {
     /* Whether the UI is in a menu (engine checks this during tick) */
     bool        isInMenu;
 
+    /* When TRUE, tankUpdate returns early so shell, mine and timer
+     * progression freezes. The frontend toggles this around modal
+     * tutorial dialogs so the world doesn't drift while the player
+     * reads a message. */
+    bool        paused;
+
     /* True when this sim is driving the built-in tutorial. The server
      * uses it to halt the player's tank at each tutorial trigger row;
      * the client uses it to gate the frontEndTutorial dialog sequence.
@@ -155,7 +166,7 @@ typedef struct GameSim {
      * consumption so siblings already created in the batch loop are
      * visible during the per-square nudge. */
     BYTE        pendingStartIdx[MAX_TANKS];
-} GameSim;
+};
 
 /*********************************************************
  * Utility functions for shared code that needs to look up

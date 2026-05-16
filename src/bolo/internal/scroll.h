@@ -34,6 +34,11 @@
 #include "game_sim.h"
 #include "scroll_item_list.h"
 
+#ifndef SCROLLSTATE_TYPEDEF
+#define SCROLLSTATE_TYPEDEF
+typedef struct ScrollState ScrollState;
+#endif
+
 /* Defines */
 
 /* Center Offset from left edge of the screen is 4 map units */
@@ -45,7 +50,7 @@
 #define NO_SCROLL_EDGE 2
 
 /* Per-instance scroll state (moved from module-level globals) */
-typedef struct ScrollState {
+struct ScrollState {
   bool autoScroll;
   BYTE scrollX, scrollY;
   BYTE xPositive, yPositive;
@@ -53,7 +58,7 @@ typedef struct ScrollState {
   bool mods;
   bool stickyX, stickyXDir, stickyY, stickyYDir;
   ScrollItemList itemList;
-} ScrollState;
+};
 
 /* Prototypes */
 

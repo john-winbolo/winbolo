@@ -1,0 +1,7 @@
+# centralize_events_name_change scenario (--fast and UDP).
+# Local player renames itself. --fast routes through
+# playersSetPlayerName + publish; --server routes through
+# clientSimNetSendNameChange which the UDP server handler
+# validates and republishes as CTRL_PLAYER_NAME.
+{"tick": 30, "op": "name_change", "slot": 0, "name": "Renamed"}
+{"tick": 80, "op": "exit"}

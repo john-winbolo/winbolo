@@ -17,9 +17,9 @@
 #include "server_sim.h"
 #include "game_sim.h"        /* GameSim layout — used by the sim field below */
 #include "position_history.h" /* PosHistory — used by posHistory / lgmPosHistory */
-#include "../../mapeditor/mapeditor_generate.h" /* MapGenConfig — embedded by value in randomMapConfig */
+#include "mapgen.h" /* MapGenConfig — embedded by value in randomMapConfig */
 
-typedef struct ServerSim {
+struct ServerSim {
     GameSim      sim;    /* MUST be first member */
 
     /* Tick state */
@@ -28,58 +28,13 @@ typedef struct ServerSim {
     int32_t      gameLength;
     int32_t      tickLimit;          /* 0 = unlimited; counts running game-ticks */
     int32_t      ticksRun;           /* Running-state tick counter */
+    int32_t      gameTickLimit;      /* 0 = unlimited; ends the running game when reached (no loop exit). */
+    int32_t      gameTicksRun;       /* Running-state tick counter paired with gameTickLimit; resets each game. */
 
     /* Server state machine */
     ServerState  state;
     bool         lobbyEnabled;       /* false = no-lobby mode (skip lobby, play immediately) */
     LobbyPlayer  lobbyPlayers[MAX_TANKS];
-
-    /* ── Lobby Layout A — auto-ally team metadata + bot configs ────
-     * teams[] is presentation: name, color, naming pool — keyed by
-     * teamNumber 1..MAX_TANKS-1. teams[0] is reserved for "Unassigned"
-     * and never has metadata. Persists across rounds with the rest of
-     * the lobby state. */
-    TeamMetadata    teams[MAX_TANKS];
-    LobbyBotConfig  botConfigs[MAX_TANKS];
-
-    /* Per-bot brain path. Empty = "use the global botBrainPath". The
-     * lobby AiConfig dropdown writes here via
-     * PACKET_LOBBY_SET_BOT_BRAIN so different bots in the same lobby
-     * can run different brains. */
-    char            botBrainPaths[MAX_TANKS][260];
-
-    /* Discovered brain codebases under brains/ — sent to clients via
-     * PACKET_LOBBY_BRAIN_LIST so the AiConfig combo can list them. */
-    BrainList       brainList;
-
-    /* Admin IPs (-admins CLI flag). When a client connects from any of
-     * these IPs, the server tags them with PLAYER_FLAG_ADMIN and grants
-     * them host-level lobby authority. Comma-separated string of IPv4
-     * literals; the first '\0' terminates the list. */
-    char            adminIps[1024];
-
-    /* -adminfirst CLI flag: when set, the first client to join while no
-     * other players are connected receives PLAYER_FLAG_ADMIN. Re-arms
-     * each time the server becomes empty again. Surfaced separately from
-     * adminIps so dynamic hosts (no static IPs to whitelist) can still
-     * delegate moderation. */
-    bool            adminFirstJoinAfterEmpty;
-
-    /* Layout A lobby flags — all persist across rounds. */
-    bool     openHost;             /* anyone can edit when true */
-    bool     allowNewPlayers;      /* live state — drives PACKET_LOCK_TOGGLE */
-    bool     autoLockOnGameStart;  /* if true, set allowNewPlayers=false on game start */
-    bool     savedAllowNewPlayers; /* what allowNewPlayers was before autoLockOnGameStart fired */
-    uint16_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
-
-    /* Game-settings mirrors — needed for live mid-lobby change broadcasts.
-     * The authoritative values live in GameSim/serverSim CLI args; these
-     * track the most recently broadcast value so we can detect/refuse
-     * locked changes and emit SETTING_CHG diffs cleanly. */
-    uint8_t  aiPolicy;             /* mirrors aiType passed at create */
-    bool     timeLimit;            /* derived from gameLength != UNLIMITED */
-    uint16_t timeMinutes;          /* user-facing minutes (display + edit) */
-
     int32_t      countdownTicks;     /* Countdown timer (in ticks) */
     int32_t      originalGameLength; /* Cached for reset between rounds */
     bool         hadPlayersEver;     /* For auto-close detection */
@@ -93,33 +48,6 @@ typedef struct ServerSim {
     /* Map reload — cached compressed map for between-round resets */
     BYTE        *cachedMapData;      /* Compressed map buffer (malloc'd) */
     int          cachedMapDataLen;   /* Length of compressed data */
-
-    /* Lobby preview-map state. When a player picks a map from the
-     * chooser (Server Maps click OR a completed upload), the server
-     * stashes the prior committed map here before applying the
-     * preview — so Cancel can revert without re-reading from disk.
-     * NULL when no preview is pending; freed on Commit. Stays
-     * preserved across successive previews (we keep the ORIGINAL
-     * committed map, not the most-recent preview, so one Cancel
-     * rolls back to where the user started). */
-    BYTE        *previousMapData;
-    int          previousMapDataLen;
-    char         previousMapName[MAP_STR_SIZE];
-
-    /* Pending upload state. When a remote client finishes uploading a
-     * map (PACKET_LOBBY_MAP_UPLOAD_DONE), the bytes are written to a
-     * temp path and the sim is reloaded from it for preview. We hold
-     * onto the (temp -> final) pair until the host commits or cancels
-     * the preview — only on commit do we move the temp file into the
-     * data/maps/Uploads/ directory. On cancel (or when the user picks
-     * a different map mid-preview) the temp file is deleted, so a
-     * rejected upload never pollutes the maps library.
-     * pendingUploadActive == false when no upload preview is in
-     * flight; the path fields are then empty strings. */
-    char         pendingUploadTempPath[FILENAME_MAX];
-    char         pendingUploadFinalPath[FILENAME_MAX];
-    char         pendingUploadRelPath[256];   /* "Uploads/<name>" — for the client reply */
-    bool         pendingUploadActive;
 
     /* Info packet fields — stored at creation for server browser responses */
     char         mapName[MAP_STR_SIZE];
@@ -209,7 +137,7 @@ typedef struct ServerSim {
     uint16_t          subscriberGen[MAX_TANKS + 1];
     int               numSubscribers;
     bool              publishing;
-} ServerSim;
+};
 
 BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
                    ServerSim_sim_must_be_first_member);

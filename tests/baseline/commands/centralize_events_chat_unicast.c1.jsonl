@@ -1,0 +1,12 @@
+# centralize_events_chat_unicast_3client_udp — client 1 (slot 0).
+# DS runs with -nolobby so game is in RUNNING phase from tick 0;
+# scheduled ops fire against server game ticks (no pump-tick
+# fallback needed). c1 sends a unicast chat to slot 2 (c3); the
+# server-side unicast filter at transport_udp_server.c excludes
+# everyone except the addressed slot, so c2 never sees it.
+#
+# Tick must land after all three joins complete on the server.
+# c1 observes c3's CTRL_PLAYER_JOIN at ~server-tick 110 (0.6s of
+# join staggers at 50Hz), so anything before ~150 races c3's join
+# and the chat fans out to a not-yet-connected c3.
+{"tick": 300, "op": "chat", "dest": 2, "body": "hi c3 from c1"}

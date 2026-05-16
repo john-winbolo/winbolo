@@ -111,6 +111,7 @@ extern "C" int imguiUdpSetupShow(void) {
     /* Set up ImGui context for this dialog */
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -299,6 +300,7 @@ extern "C" int imguiUdpSetupShow(void) {
             showTracker = true;
             ImGui::OpenPopup(langGetText(STR_DLGTRACKER_TITLE));
         }
+        imguiHandOnHover();
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -326,6 +328,7 @@ extern "C" int imguiUdpSetupShow(void) {
                 ImGui::OpenPopup(errPopupId);
             }
         }
+        imguiHandOnHover();
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_JOINBLURB));
         ImGui::SameLine(panelW - btnW - 16.0f * s);
@@ -340,6 +343,7 @@ extern "C" int imguiUdpSetupShow(void) {
                 ImGui::OpenPopup(errPopupId);
             }
         }
+        imguiHandOnHover();
 
         ImGui::TextWrapped("%s", langGetText(STR_DLGTCP_REJOINBLURB));
         ImGui::SameLine(panelW - btnW - 16.0f * s);
@@ -355,6 +359,7 @@ extern "C" int imguiUdpSetupShow(void) {
                 ImGui::OpenPopup(errPopupId);
             }
         }
+        imguiHandOnHover();
 
         ImGui::Spacing();
 
@@ -368,22 +373,31 @@ extern "C" int imguiUdpSetupShow(void) {
                 gameFrontSetDlgState(openWelcome);
                 running = false;
             }
+            imguiHandOnHover();
         }
 
         /* --- Error popup --- */
+        static float s_fadeUdpErr = 0.0f;
         if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeUdpErr));
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
             if (ImGui::Button(langGetText(STR_OK), ImVec2(80, 0))) {
                 ImGui::CloseCurrentPopup();
             }
+            imguiHandOnHover();
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 
         /* --- Tracker Config popup --- */
+        static float s_fadeUdpTracker = 0.0f;
         if (ImGui::BeginPopupModal(langGetText(STR_DLGTRACKER_TITLE), nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeUdpTracker));
             ImGui::TextUnformatted(langGetText(STR_DLGTRACKER_TRACKERADDRESS));
             ImGui::SameLine(120 * s);
             ImGui::SetNextItemWidth(160 * s);
@@ -414,11 +428,14 @@ extern "C" int imguiUdpSetupShow(void) {
                                                trackerEnabled);
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
                 ImGui::SameLine(0.0f, 8.0f);
                 if (ImGui::Button(cancelBuf, ImVec2(80, 0))) {
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 

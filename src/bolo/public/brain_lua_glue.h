@@ -37,8 +37,14 @@ struct lua_State;
 struct ClientSim;
 
 /* Opaque pointer types — full definitions live in the internal headers. */
+#ifndef BRAINPATHFINDER_TYPEDEF
+#define BRAINPATHFINDER_TYPEDEF
 typedef struct BrainPathfinder BrainPathfinder;
+#endif
+#ifndef BRAINWORLDSIM_TYPEDEF
+#define BRAINWORLDSIM_TYPEDEF
 typedef struct BrainWorldSim   BrainWorldSim;
+#endif
 typedef struct MLBrainInstance MLBrainInstance;
 
 /* ---- Pathfinder lifecycle (brain_pathfinder.c) ---- */

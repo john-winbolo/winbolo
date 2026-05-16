@@ -97,19 +97,6 @@ struct ClientSim {
     /* Is this a bot ClientSim? (bot sims must not trigger frontend UI calls) */
     bool        isBot;
 
-    /* Single-player session — the local spServerSim runs in-process via
-     * transport_local. Lobby UI hides multiplayer-only controls (Allow
-     * new players / Disallow once started) and routes setting changes
-     * directly to the server instead of through the UDP packet path. */
-    bool        isSinglePlayer;
-    /* LAN-only host session — set by gamefront when "Host LAN game"
-     * was chosen. Mirrors gameFrontIsLanOnly. The lobby UI uses this
-     * (and isSinglePlayer) to hide WBN-derived badges and skip the
-     * connectivity test. Server-side, the cfg flags are already
-     * forced off in gameFrontSetupServer so this is presentation-
-     * only on the client. */
-    bool        isLanOnly;
-
     /* Brain state (per-instance, moved from static globals in client_sim.c) */
     uint32_t    brainHoldKeys;
     uint32_t    brainTapKeys;
@@ -193,104 +180,6 @@ struct ClientSim {
     uint8_t  balanceProposal[16];      /* Proposed team per slot (0 = none) */
     bool     balanceProposalActive;    /* TRUE if a proposal is being displayed */
 
-    /* ── Layout A lobby state (client-side mirror of server) ──────
-     * Populated from PACKET_LOBBY_*_CHG broadcasts. The team metadata
-     * table starts zeroed (in_use=0 → "Team N" defaults); each
-     * TEAM_META_CHG broadcast updates one entry. Bot configs same
-     * shape, indexed by slot. */
-    uint8_t  lobbyTeamInUse[16];
-    uint8_t  lobbyTeamColor[16];
-    uint8_t  lobbyTeamPool[16];
-    char     lobbyTeamName[16][32];     /* LOBBY_TEAM_NAME_LEN */
-
-    uint8_t  lobbyBotDifficulty[16];
-    uint8_t  lobbyBotPersonality[16];
-
-    /* Per-bot brain path (full wire path like "Brains/NewAutopilot/init.lua").
-     * Empty when the slot is using whatever the server's global botBrainPath
-     * was at bot-create time. Drives the "Bot Code" combo in the lobby's
-     * AiConfig form. */
-    char     lobbyBotBrain[16][256];
-
-    /* Brain codebases the server has on disk — populated from
-     * PACKET_LOBBY_BRAIN_LIST on join. Used as the option list for the
-     * AiConfig "Bot Code" combo. */
-    BrainList lobbyBrainList;
-
-    /* Server-side map directory listing — populated from
-     * PACKET_LOBBY_MAP_LIST_RSP. The chooser's listProvider sends a
-     * PACKET_LOBBY_MAP_LIST_REQ each time the user navigates into a
-     * folder; the latest response lives here. lobbyMapListPath echoes
-     * the requested path so the client can ignore stale responses
-     * if it has navigated away. */
-#define LOBBY_MAP_LIST_MAX 64
-#define LOBBY_MAP_LIST_NAME_LEN 128
-    char     lobbyMapListPath[256];
-    int      lobbyMapListCount;
-    char     lobbyMapListNames[LOBBY_MAP_LIST_MAX][LOBBY_MAP_LIST_NAME_LEN];
-    uint8_t  lobbyMapListIsFolder[LOBBY_MAP_LIST_MAX];
-    int64_t  lobbyMapListModTime[LOBBY_MAP_LIST_MAX];
-    bool     lobbyMapListReady;     /* true once a response arrives */
-    /* Most-recently requested path (set when the client sends
-     * MAP_LIST_REQ; cleared when the matching response arrives). The
-     * lobby's listProvider compares this against the current relPath
-     * to decide whether to re-issue a request on path change. */
-    char     lobbyMapListReqPath[256];
-    bool     lobbyMapListInFlight; /* true after send, false on response */
-
-    /* Monotonic counter incremented whenever the client receives a
-     * PACKET_LOBBY_MAP_CHANGE (i.e. the server told us to invalidate
-     * and re-download the map). UI poll-and-compare against a cached
-     * last-seen value to detect map changes even when the download
-     * + completion happen inside a single render frame (MP-host
-     * loopback case — the `mapDownloadComplete = false; ...; true`
-     * transition never lives long enough for a frame-boundary edge
-     * detector to catch). */
-    uint32_t lobbyMapChangeSeq;
-
-    /* Recursive search results — populated by PACKET_LOBBY_MAP_SEARCH_RSP.
-     * Same shape as the list cache but the names are RELATIVE PATHS
-     * from lobbyMapSearchPath (so a file in a subfolder reads as
-     * "Subdir/Foo.map" rather than just "Foo.map"). The query and
-     * path together form the cache key — a list listing for path X
-     * and a search for query="foo" in path X are different
-     * responses, stored side-by-side. */
-    char     lobbyMapSearchPath[256];
-    char     lobbyMapSearchQuery[128];
-    int      lobbyMapSearchCount;
-    char     lobbyMapSearchNames[LOBBY_MAP_LIST_MAX][LOBBY_MAP_LIST_NAME_LEN];
-    uint8_t  lobbyMapSearchIsFolder[LOBBY_MAP_LIST_MAX];
-    int64_t  lobbyMapSearchModTime[LOBBY_MAP_LIST_MAX];
-    bool     lobbyMapSearchReady;
-    char     lobbyMapSearchReqPath[256];
-    char     lobbyMapSearchReqQuery[128];
-    bool     lobbyMapSearchInFlight;
-
-    /* Upload progress — driven by the Upload tab and the
-     * PACKET_LOBBY_MAP_UPLOAD_ACK/DONE handlers. status: 0=idle,
-     * 1=announce-sent, 2=ack-received-sending-chunks, 3=done,
-     * 4=rejected. */
-    uint8_t  lobbyMapUploadStatus;
-    uint8_t  lobbyMapUploadRejectCode; /* server's reject byte, if any */
-    char     lobbyMapUploadFinalPath[256]; /* server-relative path */
-
-    /* Winbolo.net preview result — driven by
-     * PACKET_LOBBY_PREVIEW_WBN_DONE. status: 0=idle,
-     * 1=in-flight, 2=ok, 3=error. errMsg is the server-supplied
-     * message when status == 3. */
-    uint8_t  lobbyWbnPreviewStatus;
-    char     lobbyWbnPreviewErrMsg[128];
-    char     lobbyWbnPreviewFinalPath[256];
-
-    bool     lobbyOpenHost;
-    bool     lobbyAutoLockOnGameStart;
-    uint16_t lobbyServerLocks;
-
-    /* Most recent server reject — surfaced via toast/log when set.
-     * lobbyLastRejectPacket is set to 0 when no pending message. */
-    uint8_t  lobbyLastRejectPacket;
-    uint8_t  lobbyLastRejectReason;
-
     /* Steam achievement: first capture tracking (per-game) */
     bool     hasAnyBaseCaptured;
     bool     hasAnyPillCaptured;
@@ -320,6 +209,12 @@ struct ClientSim {
     Transport transport;
     bool      hasTransport;
     bool      isUdpTransport;
+
+    /* Read-only ControlEvent observer (test-only — see
+     * clientSimSetControlObserver in client_sim.h). Preserved across
+     * clientSimCreate's memset alongside the transport fields. */
+    ControlObserverCb controlObserverCb;
+    void             *controlObserverCtx;
 };
 
 BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,

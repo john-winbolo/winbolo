@@ -31,6 +31,11 @@
 #include <stdio.h>
 #include "global.h"
 
+#ifndef MESSAGESTATE_TYPEDEF
+#define MESSAGESTATE_TYPEDEF
+typedef struct MessageState MessageState;
+#endif
+
 /* Message String Macros */
 #define MESSAGE_QUOTES "\""
 
@@ -99,7 +104,7 @@ typedef enum {
 #define MESSAGE_LINE_BYTES (MESSAGE_WIDTH * 4 + 1)
 
 /* Per-instance message state (moved from module-level globals) */
-typedef struct MessageState {
+struct MessageState {
   /* Canonical state: one Unicode codepoint per visible cell. */
   uint32_t topCells[MESSAGE_WIDTH];
   uint32_t bottomCells[MESSAGE_WIDTH];
@@ -125,7 +130,7 @@ typedef struct MessageState {
   bool    showNetStat;
   BYTE    messageTime;
   BYTE    lastMessage;
-} MessageState;
+};
 
 /* Prototypes */
 

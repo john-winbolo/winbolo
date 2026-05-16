@@ -276,13 +276,6 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  /* Threads mutex must exist BEFORE gameFrontStart — the menu's
-   * background bot game (bgGameCreate → serverSimCreateBot →
-   * serverSimPublishControl → clientMutexWaitFor → threadsWaitForMutex)
-   * runs during setup dialogs. Without this, SDL_LockMutex silently
-   * no-ops on the NULL handle and the bg game's "lock" is fictional. */
-  threadsCreate(FALSE);
-
   if (gameFrontStart(cmdLine, &keys, FALSE, &cs) == FALSE) {
     clientMutexDestroy();
     SDL_Quit();
@@ -348,8 +341,7 @@ int main(int argc, char *argv[]) {
       bool done = FALSE;
       SDL_Window *sdlWin = sdl3DrawGetWindow();
 
-      /* threadsCreate now runs earlier (right after clientMutexCreate)
-       * so the menu's background bot game sees a real threads mutex. */
+      threadsCreate(FALSE);
 
       /* Flush any stale SDL_QUIT events that may have been queued during
          dialog teardown. Without this, the main loop would exit immediately
@@ -412,31 +404,19 @@ int main(int argc, char *argv[]) {
 
         SDL_SetWindowSize(sdlWin, targetW, targetH);
 
-        /* Restore saved window position from preferences, but only
-         * if it actually lives on the monitor the user is currently
-         * working on (the dialog's display). A saved position on a
-         * different monitor would yank the window away to where the
-         * user wasn't looking — disorienting. In that case fall back
-         * to centering on the current monitor. */
+        /* Restore saved window position from preferences, but ensure it's on this monitor */
         {
           int savedX, savedY;
           windowGetSavedPosition(&savedX, &savedY);
-          int savedCenterX = savedX + targetW / 2;
-          int savedCenterY = savedY + targetH / 2;
-          bool savedIsOnThisMonitor =
-              (savedX >= 0 && savedY >= 0) &&
-              (savedCenterX >= usable.x && savedCenterX < usable.x + usable.w) &&
-              (savedCenterY >= usable.y && savedCenterY < usable.y + usable.h);
-          if (savedIsOnThisMonitor) {
-            /* Clamp inside the monitor in case the saved geometry
-             * sticks off an edge after a resolution change. */
+          if (savedX >= 0 && savedY >= 0) {
+            /* Clamp position to keep window on the target monitor */
             if (savedX + targetW > usable.x + usable.w) savedX = usable.x + usable.w - targetW;
             if (savedY + targetH > usable.y + usable.h) savedY = usable.y + usable.h - targetH;
             if (savedX < usable.x) savedX = usable.x;
             if (savedY < usable.y) savedY = usable.y;
             SDL_SetWindowPosition(sdlWin, savedX, savedY);
           } else {
-            /* Center on the dialog's monitor. */
+            /* Center on the dialog's monitor */
             int centeredX = usable.x + (usable.w - targetW) / 2;
             int centeredY = usable.y + (usable.h - targetH) / 2;
             SDL_SetWindowPosition(sdlWin, centeredX, centeredY);
@@ -672,26 +652,13 @@ static void windowRunGameTick(ClientSim *cs) {
           clientSimGameTick(cs, &pkt, brainRunning);
           clientMutexRelease();
           clientSimNetSendInput(cs, &pkt);
-          /* Tick bot brains before the sim tick (local game only).
-           * Wall-clock cost feeds dwSysBrain so the System Info "AI Tanks"
-           * line reflects bot processing — brainHandlerRun below only
-           * covers the human's local autopilot. Advance ttick by the same
-           * duration so dwSysGame (computed as SDL_GetTicks() - ttick at
-           * the bottom of the loop) doesn't also count it as sim time.
-           * Skip in network-host mode: hostedServerTimerCb already drives
-           * botManagerTick on the timer thread under threadsMutex. Running
-           * it here too races on the same per-bot Lua state and bInfo
-           * buffers (heap-use-after-free caught by ASan). */
-          if (!gameFrontIsServerHosted()) {
-            ServerSim *serverSim = gameFrontGetServerSim();
-            if (serverSim != NULL && serverSimGetNumBots(serverSim) > 0) {
-              DWORD bttick = SDL_GetTicks();
-              serverSimBotTick(serverSim, clientSimGetAiType(cs));
-              DWORD botDur = SDL_GetTicks() - bttick;
-              dwSysBrain += botDur;
-              ttick += botDur;
-            }
-          }
+          /* Bot brains tick on the server timer thread (hostedServerTimerCb
+           * -> serverInstanceTick -> botManagerTick) for both single-player
+           * and listen-server, under threadsMutex. The System Info "AI
+           * Tanks" line reads wall-clock bot cost from
+           * serverSimGetBotPoolStats().lastBrainPhaseMs (see sdl3imgui.cpp)
+           * rather than dwSysBrain, so there is no main-thread accounting
+           * to do here. */
           clientSimNetTick(cs);
           clientMutexWaitFor();
           clientSimNetSyncSnapshot(cs);
@@ -874,19 +841,8 @@ void windowSetCustomSize(int w, int h) {
 
 static SDL_Rect getDefaultDisplayBounds(void) {
     SDL_Rect bounds = {0, 0, 1920, 1080};
-    /* Prefer the display the user is currently working on — query the
-     * global mouse position and look up its containing display.  This
-     * runs before any WinBolo window exists, so SDL_GetGlobalMouseState
-     * returns the desktop cursor position regardless of focus.  Falls
-     * back to the primary display when the mouse position can't be
-     * resolved (no displays connected, headless, etc). */
-    SDL_DisplayID dispID = 0;
-    float gx = 0.0f, gy = 0.0f;
-    SDL_GetGlobalMouseState(&gx, &gy);
-    SDL_Point p = { (int)gx, (int)gy };
-    dispID = SDL_GetDisplayForPoint(&p);
-    if (!dispID) dispID = SDL_GetPrimaryDisplay();
-    if (dispID) SDL_GetDisplayUsableBounds(dispID, &bounds);
+    SDL_DisplayID primary = SDL_GetPrimaryDisplay();
+    if (primary) SDL_GetDisplayUsableBounds(primary, &bounds);
     return bounds;
 }
 
@@ -1526,12 +1482,6 @@ void frontEndGameOver(ClientSim *cs) {
 }
 
 void frontEndSetActiveClientSim(struct ClientSim *cs) {
-  /* When the active UI ClientSim changes, wipe every slot in the
-   * shared player-roster statics. They're a single per-process view
-   * of "who is in the game", so leaving stale entries from the
-   * previously-active sim (notably the bg_game menu bots that each
-   * registered as control-event subscribers) makes phantom
-   * "Bot N (??)" rows linger in the in-game Players panel. */
   if (cs != s_activeUiCs) {
     for (BYTE i = 0; i < MAX_TANKS; i++) {
       sdl3ImguiClearPlayer(i);
@@ -1619,18 +1569,6 @@ void frontEndEnableLeaveAllyMenu(bool enabled) {
  * ------------------------------------------------------- */
 void frontEndRedrawAll(ClientSim *cs) {
   if (!clientSimIsRunning(cs)) return;
-  /* SDL3 renderer (D3D11) is only safe to drive from the main thread.
-   * In hosted / single-player games, serverInstanceTick runs on the
-   * SDL timer thread; adding a bot there triggers a chain
-   *   bot subscriber sync → clientSimApplyControl → playersSetPlayer
-   * which historically called frontEndRedrawAll synchronously. That
-   * landed in SDL_SetRenderTarget on the timer thread mid-D3D11
-   * frame and crashed in D3D11_SetupShaderConstants.
-   *
-   * ImGui's main loop already redraws every frame on the main
-   * thread, so off-thread "force redraw" requests are both unsafe
-   * and redundant — drop them. */
-  if (!SDL_IsMainThread()) return;
   windowRedrawAll(cs);
 }
 
@@ -1699,7 +1637,10 @@ bool frontEndTutorial(BYTE pos) {
   doingTutorial = TRUE;
   /* Freeze the server sim's tankUpdate before we release the mutex so
    * the tank doesn't drift forward while the modal is up. */
-  tutorialServerPaused = TRUE;
+  {
+    ServerSim *srv = gameFrontGetServerSim();
+    if (srv) serverSimSetPaused(srv, TRUE);
+  }
   clientMutexRelease();
   for (i = 0; i < TUTORIAL_MAX_MSGS; i++) {
     uint16_t mid = tutorialSteps[tutorialStepIdx].msgs[i];
@@ -1725,7 +1666,10 @@ bool frontEndTutorial(BYTE pos) {
     gameFrontSetShowTutorialButton(false);
   }
   clientMutexWaitFor();
-  tutorialServerPaused = FALSE;
+  {
+    ServerSim *srv = gameFrontGetServerSim();
+    if (srv) serverSimSetPaused(srv, FALSE);
+  }
   doingTutorial = FALSE;
   oldTick = SDL_GetTicks();
   ttick = oldTick;
