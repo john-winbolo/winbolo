@@ -294,6 +294,55 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
  * Layout matches the per-field shape of serverSimFillLobbySettingsEvent. */
 #define PACKET_LOBBY_SETTINGS       159
 
+/* ── Lobby Layout A — Client → Server (160-174) ─────────────────── */
+#define PACKET_LOBBY_SET_SETTING    160  /* { settingType 1, valueLen 1, value N } */
+#define PACKET_LOBBY_OPEN_HOST      161  /* { bool 1 } */
+#define PACKET_LOBBY_TEAM_META      162  /* { teamId 1, color 1, namingPool 1,
+                                          *   nameLen 1, name N } */
+#define PACKET_LOBBY_TEAM_CLEAR     163  /* { teamId 1 } */
+#define PACKET_LOBBY_BOT_CONFIG     164  /* { slot 1, difficulty 1,
+                                          *   personality 1, nameLen 1,
+                                          *   name N } */
+#define PACKET_LOBBY_KICK           165  /* { slot 1 } */
+#define PACKET_LOBBY_SET_BOT_BRAIN  166  /* { slot 1, pathLen 1, path N } */
+#define PACKET_LOBBY_SET_MAP        167  /* { pathLen 1, path N } */
+#define PACKET_LOBBY_MAP_LIST_REQ   168  /* { pathLen 1, path N } */
+#define PACKET_LOBBY_MAP_UPLOAD_BEGIN  169  /* { totalLen 4, nameLen 1, name N } */
+#define PACKET_LOBBY_MAP_UPLOAD_CHUNK  170  /* { offset 4, dataLen 2, data N } */
+#define PACKET_LOBBY_MAP_SEARCH_REQ    171  /* { pathLen 1, path N, queryLen 1, query M } */
+#define PACKET_LOBBY_PREVIEW_CANCEL    172  /* (no payload) */
+#define PACKET_LOBBY_PREVIEW_COMMIT    173  /* (no payload) */
+#define PACKET_LOBBY_PREVIEW_RANDOM    174  /* { seedLen 1, seed N } */
+
+/* ── Lobby Layout A — Server → Client (175-186) ─────────────────── */
+#define PACKET_LOBBY_SETTING_CHG    175  /* echo of CLIENT SET_SETTING */
+#define PACKET_LOBBY_OPEN_HOST_CHG  176  /* { bool 1 } */
+#define PACKET_LOBBY_TEAM_META_CHG  177  /* same payload as TEAM_META */
+#define PACKET_LOBBY_BOT_CONFIG_CHG 178  /* same payload as BOT_CONFIG */
+#define PACKET_LOBBY_REJECT         179  /* { origPacket 1, reasonCode 1 } */
+#define PACKET_LOBBY_AUTO_UNREADY   180  /* (empty payload) */
+#define PACKET_LOBBY_BRAIN_LIST     181  /* { count 1, for each: nameLen 1, name,
+                                          *   verLen 1, ver, pathLen 1, path } */
+#define PACKET_LOBBY_BOT_BRAIN_CHG  182  /* { slot 1, pathLen 1, path N } */
+#define PACKET_LOBBY_MAP_LIST_RSP   183  /* server reply to MAP_LIST_REQ */
+#define PACKET_LOBBY_MAP_UPLOAD_ACK 184  /* { status 1 } */
+#define PACKET_LOBBY_MAP_UPLOAD_DONE 185 /* { status 1, pathLen 1, path N } */
+#define PACKET_LOBBY_MAP_SEARCH_RSP 186  /* server reply to MAP_SEARCH_REQ */
+
+/* Setting types used inside SET_SETTING / SETTING_CHG payloads.
+ * Forward-compat: receivers must skip unknown types via valueLen. */
+#define LST_GAME_TYPE          1   /* 1 byte enum: open|tournament|strict */
+#define LST_HIDDEN_MINES       2   /* 1 byte bool */
+#define LST_AI_POLICY          3   /* 1 byte enum: none|allow|advantage|full */
+#define LST_TIME_LIMIT         4   /* 1 byte bool */
+#define LST_TIME_MINUTES       5   /* 2 bytes uint16 BE */
+#define LST_AUTO_LOCK_ON_GAME  6   /* 1 byte bool */
+
+/* Reject reason codes for PACKET_LOBBY_REJECT. */
+#define LOBBY_REJECT_NOT_HOST   1   /* sender lacks authority */
+#define LOBBY_REJECT_LOCKED     2   /* setting is in serverLocks bitmask */
+#define LOBBY_REJECT_INVALID    3   /* malformed payload / out-of-range value */
+
 #define NAME_REJECT_INVALID         1   /* validator: any *_INVALID_* error */
 #define NAME_REJECT_TAKEN           2   /* duplicate via playerNameCompare */
 #define NAME_REJECT_RESERVED_PREFIX 3   /* leading '*' */

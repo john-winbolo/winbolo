@@ -177,11 +177,42 @@ void transportUdpClientSendTeamSet(Transport *t, uint8_t teamNumber);
 /* Send ready/unready to server. */
 void transportUdpClientSendReady(Transport *t, bool ready);
 
-/* Request server add a bot. */
-void transportUdpClientSendAddBot(Transport *t);
+/* Request server add a bot. teamNumber=0/brainPath=NULL/botName=NULL
+ * lets the server pick defaults; non-default values configure the new
+ * bot at create time. */
+void transportUdpClientSendAddBot(Transport *t, uint8_t teamNumber,
+                                  const char *brainPath,
+                                  const char *botName);
 
 /* Request server remove a bot at the given slot. */
 void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum);
+
+/* ── Layout A lobby commands — Client → Server ───────────────────── */
+void transportUdpClientSendLobbySetting(Transport *t, uint8_t settingType,
+                                        const uint8_t *value, uint8_t valueLen);
+void transportUdpClientSendLobbyOpenHost(Transport *t, bool openHost);
+void transportUdpClientSendLobbyTeamMeta(Transport *t, uint8_t teamId,
+                                         uint8_t color, uint8_t namingPool,
+                                         const char *name);
+void transportUdpClientSendLobbyTeamClear(Transport *t, uint8_t teamId);
+void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
+                                          uint8_t difficulty, uint8_t personality,
+                                          const char *name);
+void transportUdpClientSendLobbySetBotBrain(Transport *t, uint8_t slot,
+                                            const char *brainPath);
+void transportUdpClientSendLobbySetMap(Transport *t, const char *mapRelPath);
+void transportUdpClientSendLobbyPreviewCancel(Transport *t);
+void transportUdpClientSendLobbyPreviewCommit(Transport *t);
+void transportUdpClientSendLobbyPreviewRandom(Transport *t, const char *seedStr);
+void transportUdpClientSendLobbyMapListRequest(Transport *t, const char *relPath);
+void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
+                                                 const char *relPath,
+                                                 const char *query);
+void transportUdpClientSendLobbyMapUploadBegin(Transport *t, uint32_t totalLen,
+                                               const char *name);
+void transportUdpClientSendLobbyMapUploadChunk(Transport *t, uint32_t offset,
+                                               const uint8_t *data,
+                                               uint16_t dataLen);
 
 /* Re-authenticate WBN token after lobby reset between rounds. */
 void transportUdpClientSendWbnReauth(Transport *t);
