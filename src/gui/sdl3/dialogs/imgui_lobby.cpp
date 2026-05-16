@@ -24,6 +24,12 @@
 #include <cstdlib>  /* rand() — used to randomise the default naming pool */
 #include <cfloat>   /* FLT_MAX — unbounded max for window size constraints */
 #include <algorithm>  /* std::sort — used for chooser list order */
+#include <atomic>
+#include <mutex>
+#include <thread>
+#include <string>
+#include <vector>
+#include <map>
 
 #include <SDL3/SDL.h>
 
@@ -54,6 +60,8 @@ extern "C" {
 #include "imgui_lobby.h"
 #include "imgui_messagebox.h"
 #include "imgui_mapchooser.h"
+#include "../../../winbolonet/http.h"
+#include "cJSON.h"
 }
 #include "../wb_theme.h"
 
@@ -308,9 +316,13 @@ static MapChooserState  s_chooseMapUploadState   = {};
  * Config changes ripple to the server via genSeq edge detection. */
 static MapChooserState  s_chooseMapRandomState   = {};
 static uint32_t         s_chooseMapRandomLastSeq = 0;
+/* Fourth chooser instance for the Winbolo.net Maps tab — same widget
+ * the Upload / Server Maps tabs use, with a listProvider that fetches
+ * folders from /api/v1/maps/{id} instead of from a local directory. */
+static MapChooserState  s_chooseMapWbnState      = {};
 static bool             s_chooseMapStateInited   = false;
 static char             s_chooseMapPrevName[128] = "";
-static int              s_chooseMapActiveTab     = 0; /* 0=server 1=upload 2=random */
+static int              s_chooseMapActiveTab     = 0; /* 0=server 1=upload 2=random 3=wbn */
 /* When true, the chooser window is force-sized to almost the full
  * lobby window — leaving a few chat lines visible at the bottom.
  * Toggled by the corner icon button, or by pressing Esc while the
@@ -412,7 +424,7 @@ static void lobbyUploadPump(ClientSim *cs) {
     }
 }
 
-/* listProvider for the Server Maps tab. Routes through the server's
+/* enumerate for the Server Maps provider. Routes through the server's
  * directory enumeration so the chooser browses the SERVER's map
  * library, not the local client's filesystem.
  *
@@ -481,9 +493,37 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
             memset(e, 0, sizeof(*e));
             e->isFolder = hits[i].isFolder;
             e->modTime  = hits[i].modTime;
-            /* Display the relative path as the name so the user can
-             * tell duplicates apart by which folder they live in. */
-            SDL_strlcpy(e->name, hits[i].name, sizeof(e->name));
+            /* Split the hit's relative path into folder + basename. The
+             * row shows just the basename; the enclosing folder lives
+             * in crumbsPath so the hover tooltip + preview breadcrumb
+             * both surface it. */
+            const char *hitPath = hits[i].name;
+            const char *base    = SDL_strrchr(hitPath, '/');
+            if (base) {
+                size_t folderLen = (size_t)(base - hitPath);
+                if (folderLen >= sizeof(e->crumbsPath)) {
+                    folderLen = sizeof(e->crumbsPath) - 1;
+                }
+                /* Prepend relPath when we're searching a subfolder so
+                 * the crumb reads relative to data/maps, not the
+                 * already-narrowed search root. */
+                if (inSub) {
+                    SDL_snprintf(e->crumbsPath, sizeof(e->crumbsPath),
+                                 "%s/%.*s", relPath,
+                                 (int)folderLen, hitPath);
+                } else {
+                    SDL_strlcpy(e->crumbsPath, hitPath,
+                                folderLen + 1);
+                }
+                base++;
+            } else {
+                base = hitPath;
+                if (inSub) {
+                    SDL_strlcpy(e->crumbsPath, relPath,
+                                sizeof(e->crumbsPath));
+                }
+            }
+            SDL_strlcpy(e->name, base, sizeof(e->name));
             size_t dlen = SDL_strlen(e->name);
             if (dlen > 4 &&
                 SDL_strcasecmp(e->name + dlen - 4, ".map") == 0) {
@@ -494,12 +534,18 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
              * have to re-prepend it. */
             if (inSub) {
                 SDL_snprintf(e->path, sizeof(e->path),
-                             "data/maps/%s/%s", relPath, hits[i].name);
+                             "data/maps/%s/%s", relPath, hitPath);
             } else {
                 SDL_snprintf(e->path, sizeof(e->path),
-                             "data/maps/%s", hits[i].name);
+                             "data/maps/%s", hitPath);
             }
         }
+        /* Aggregate the unique folders the file rows reference and
+         * prepend them as folder rows. The Server Maps tab's
+         * currentDir is data/maps-relative (no prefix), so we pass
+         * "" — the folder row's `path` becomes the bare crumb and a
+         * click sets currentDir to that. */
+        mapChooserEmitFolderRowsForSearchHits(state, "");
         return;
     }
 
@@ -622,6 +668,1246 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
     }
 }
 
+/* onSelect for the Server Maps provider. Click-to-preview: the moment
+ * the user picks a row the map is pushed to the server. SP runs it
+ * in-process; MP sends SET_MAP and the server stashes the previous
+ * map so Cancel can revert. Set Map (PREVIEW_COMMIT) just frees the
+ * stash. ctx is the ClientSim*. */
+static void lobbyServerMapsOnSelect(MapChooserState *state, void *ctx) {
+    ClientSim *cs = (ClientSim *)ctx;
+    if (!cs) return;
+    const char *sel = state->selectedPath;
+    if (!sel || !sel[0]) return;
+    if (clientSimIsSinglePlayer(cs)) {
+        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+        if (sim && serverSimReloadMap(sim, sel)) {
+            serverSimPublishLobbySettings(sim);
+            s_chooseMapPreviewPending = true;
+        }
+    } else {
+        const char *relPath = sel;
+        static const char kPrefix[] = "data/maps/";
+        if (strncmp(relPath, kPrefix, sizeof(kPrefix) - 1) == 0) {
+            relPath += sizeof(kPrefix) - 1;
+        }
+        clientSimNetSendLobbySetMap(cs, relPath);
+        s_chooseMapPreviewPending = true;
+    }
+}
+
+/* onFolderJump for the Server Maps provider. The chooser prepends a
+ * "Maps" root label to every breadcrumb (crumbsRootLabel), so strip
+ * it back off before setting the dir. Bare "Maps" means "root" → "". */
+static void lobbyServerMapsOnFolderJump(MapChooserState *state,
+                                         const char *jumpPath, void *ctx) {
+    (void)ctx;
+    const char *jp = jumpPath;
+    if (SDL_strncmp(jp, "Maps/", 5) == 0) {
+        jp += 5;
+    } else if (SDL_strcasecmp(jp, "Maps") == 0) {
+        jp = "";
+    }
+    SDL_strlcpy(state->currentDir, jp, sizeof(state->currentDir));
+}
+
+/* No tooltip on the Server Maps path label — the path always reads
+ * "maps/..." which is already self-describing. */
+static void lobbyServerMapsTooltipPrefix(MapChooserState *state, void *ctx) {
+    (void)ctx;
+    state->pathTooltipPrefix[0] = '\0';
+}
+
+/* onSelect for the Upload provider. SP loads the file directly (it's
+ * already on the local fs the server reads from); MP streams it via
+ * the upload protocol (gated on not-already-in-flight). ctx is cs. */
+static void lobbyUploadOnSelect(MapChooserState *state, void *ctx) {
+    ClientSim *cs = (ClientSim *)ctx;
+    if (!cs) return;
+    const char *picked = state->selectedPath;
+    if (!picked || !picked[0]) return;
+    if (clientSimIsSinglePlayer(cs)) {
+        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+        if (sim && serverSimReloadMap(sim, picked)) {
+            serverSimPublishLobbySettings(sim);
+            s_chooseMapPreviewPending = true;
+        }
+    } else if (clientSimHasTransport(cs)) {
+        uint8_t upStatus = clientSimGetLobbyMapUploadStatus(cs);
+        bool inFlight = (upStatus == 1 || upStatus == 2);
+        if (!inFlight) {
+            lobbyUploadKick(cs, picked);
+            s_chooseMapPreviewPending = true;
+        }
+    }
+}
+
+/* Tooltip on the Upload path label = absolute on-disk dir under cwd.
+ * SDL_GetCurrentDirectory returns a malloc'd path with a trailing
+ * separator; trim it and concat /data/maps so the hover label shows
+ * exactly where local .map files should land. SDL returns NULL on
+ * platforms without a meaningful cwd, in which case suppress the
+ * tooltip. */
+static void lobbyUploadTooltipPrefix(MapChooserState *state, void *ctx) {
+    (void)ctx;
+    char *cwd = SDL_GetCurrentDirectory();
+    if (cwd) {
+        size_t cwdLen = SDL_strlen(cwd);
+        while (cwdLen > 0 &&
+               (cwd[cwdLen - 1] == '/' || cwd[cwdLen - 1] == '\\')) {
+            cwd[--cwdLen] = '\0';
+        }
+        SDL_snprintf(state->pathTooltipPrefix,
+                     sizeof(state->pathTooltipPrefix),
+                     "%s/data/maps", cwd);
+        SDL_free(cwd);
+    } else {
+        state->pathTooltipPrefix[0] = '\0';
+    }
+}
+
+/* MP-only rejection footer. SP loads instantly; in-flight "Uploading…"
+ * messages flash for a tick before preview takes over and just feel
+ * like noise — only the rejection surfaces because the user needs
+ * to know it failed. */
+static void lobbyUploadStatusFooter(MapChooserState *state, void *ctx) {
+    (void)state;
+    ClientSim *cs = (ClientSim *)ctx;
+    if (!cs) return;
+    if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
+        clientSimGetLobbyMapUploadStatus(cs) == 4) {
+        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f),
+                           "Upload rejected by server.");
+    }
+}
+
+/* onFolderJump for the Upload provider. Upload's currentDir is the
+ * absolute on-disk path (e.g. "data/maps/Sub"), and the breadcrumb
+ * strips "data/maps/" before rendering and prepends "Maps". Reverse
+ * both. Bare "Maps" lands at data/maps itself. */
+static void lobbyUploadOnFolderJump(MapChooserState *state,
+                                     const char *jumpPath, void *ctx) {
+    (void)ctx;
+    const char *jp = jumpPath;
+    if (SDL_strncmp(jp, "Maps/", 5) == 0) {
+        jp += 5;
+    } else if (SDL_strcasecmp(jp, "Maps") == 0) {
+        jp = "";
+    }
+    static const char kRoot[]     = "data/maps/";
+    static const char kRootBare[] = "data/maps";
+    if (jp[0] == '\0') {
+        SDL_strlcpy(state->currentDir, kRootBare, sizeof(state->currentDir));
+    } else if (strncmp(jp, kRoot, sizeof(kRoot) - 1) == 0 ||
+               SDL_strcasecmp(jp, kRootBare) == 0) {
+        SDL_strlcpy(state->currentDir, jp, sizeof(state->currentDir));
+    } else {
+        SDL_snprintf(state->currentDir, sizeof(state->currentDir),
+                     "data/maps/%s", jp);
+    }
+}
+
+/* ── Winbolo.net Maps tab — state and async folder fetch ─────────
+ * The tab browses the WBN REST catalogue. Folder listings and
+ * search results are fetched on a detached std::thread; the UI
+ * thread renders from a mutex-guarded parsed snapshot. Picking a
+ * map sends PACKET_LOBBY_PREVIEW_WBN to the host, which downloads
+ * server-side (see transport_udp_server.c's wbnDownloadWorker).
+ * The preview itself rolls in over the normal MAP_CHANGE flow —
+ * no client-side download or local file write here. */
+
+struct WbnMapsCrumb { int id; std::string name; };
+/* Forward declare so WbnMapsEntry can carry the parent folder id. */
+struct WbnMapsFolder { int id; std::string name; int count; };
+struct WbnMapsEntry  {
+    int id;
+    std::string name;
+    float rating;     /* < 0 = none */
+    int numRatings;
+    std::string owner;
+    std::string folderName;   /* search results only: full slash-
+                               * separated path joined from the
+                               * response's path[] array (root
+                               * "Collections" crumb stripped) */
+    int         folderId = 0; /* search results only: leaf folder id */
+    int64_t     uploadedNs = 0; /* response's "uploaded" timestamp
+                                 * parsed to ns since UNIX epoch, or
+                                 * 0 if missing/unparseable. Used as
+                                 * the row's modTime so the "Created"
+                                 * column lights up. */
+};
+
+static std::mutex                s_wbnMapsMutex;
+static std::atomic<bool>         s_wbnMapsFetching{false};
+static std::atomic<uint32_t>     s_wbnMapsFetchSeq{0}; /* invalidates late results */
+static int                       s_wbnMapsCurrentFolderId = 0;       /* 0 = root collection */
+static std::string               s_wbnMapsCurrentPath;               /* canonical friendly path of cached folder */
+static std::vector<WbnMapsCrumb> s_wbnMapsCrumbs;
+static std::vector<WbnMapsFolder>s_wbnMapsSubfolders;
+static std::vector<WbnMapsEntry> s_wbnMapsEntries;
+static std::string               s_wbnMapsError;
+static bool                      s_wbnMapsHasData = false;
+/* Path → folder ID. Built up as folders are fetched: each response's
+ * subfolders[] gives us (childName, childId) pairs which combine
+ * with the parent path to form each child's full friendly path.
+ * "" maps to 0 (the root collection). */
+static std::map<std::string,int> s_wbnPathToId;
+
+/* Separate search-result cache so clearing the recursive-search
+ * checkbox doesn't blow away the folder listing the user was just
+ * browsing. Populated by wbnMapsParseSearchJson when the search
+ * branch fires. */
+static std::string                s_wbnSearchQuery;     /* last query we got results for */
+static std::vector<WbnMapsEntry>  s_wbnSearchResults;
+static bool                       s_wbnSearchHasData = false;
+static std::atomic<bool>          s_wbnSearchFetching{false};
+static std::atomic<uint32_t>      s_wbnSearchFetchSeq{0};
+static std::string                s_wbnSearchError;
+
+/* Extract an int from a cJSON node that may be either a JSON
+ * number or a JSON string. The WBN root listing returns id and
+ * count as quoted strings ("355"); deeper folder listings return
+ * them as bare numbers (3837). Accept both so the same parse
+ * works at every level. Returns 0 when the node is missing or
+ * not parseable. */
+static int wbnJsonInt(const cJSON *node) {
+    if (!node) return 0;
+    if (cJSON_IsNumber(node)) return node->valueint;
+    if (cJSON_IsString(node) && node->valuestring) {
+        return SDL_atoi(node->valuestring);
+    }
+    return 0;
+}
+
+/* Parse a "YYYY-MM-DD HH:MM:SS" timestamp (UTC, the format the WBN
+ * REST API uses for upload times) into SDL_Time = ns since the UNIX
+ * epoch. Returns 0 on missing/malformed input so callers can flag
+ * the row's modTime as unknown. */
+static int64_t wbnParseUploadedToNs(const char *s) {
+    if (!s) return 0;
+    int Y = 0, M = 0, D = 0, h = 0, m = 0, sec = 0;
+    if (SDL_sscanf(s, "%d-%d-%d %d:%d:%d",
+                   &Y, &M, &D, &h, &m, &sec) < 5) {
+        return 0;
+    }
+    if (Y < 1970 || M < 1 || M > 12 || D < 1 || D > 31) return 0;
+    /* Compute days since UNIX epoch (1970-01-01) via the proleptic
+     * Gregorian calendar — algorithm from "Date Algorithms" by
+     * Howard Hinnant, treats March as the first month so leap-day
+     * lands at the end of the year. Avoids mktime which uses the
+     * local timezone (we want UTC to match the API's wall-clock
+     * timestamps). */
+    int y = Y - (M <= 2 ? 1 : 0);
+    int era = (y >= 0 ? y : y - 399) / 400;
+    unsigned yoe = (unsigned)(y - era * 400);
+    unsigned mp  = (unsigned)(M + (M > 2 ? -3 : 9));
+    unsigned doy = (153 * mp + 2) / 5 + (unsigned)D - 1;
+    unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    int64_t days = (int64_t)era * 146097 + (int64_t)doe - 719468;
+    int64_t secs = days * 86400 + (int64_t)h * 3600
+                 + (int64_t)m * 60 + sec;
+    return secs * 1000000000LL;
+}
+
+static void wbnMapsParseFolderJson(const char *json) {
+    cJSON *root = cJSON_Parse(json);
+    if (!root) {
+        std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
+        s_wbnMapsError = "Bad response from WinBolo.net";
+        s_wbnMapsHasData = false;
+        return;
+    }
+    std::vector<WbnMapsCrumb>  crumbs;
+    std::vector<WbnMapsFolder> subs;
+    std::vector<WbnMapsEntry>  entries;
+    cJSON *folderId = cJSON_GetObjectItemCaseSensitive(root, "id");
+    cJSON *path     = cJSON_GetObjectItemCaseSensitive(root, "path");
+    if (cJSON_IsArray(path)) {
+        cJSON *it = nullptr;
+        cJSON_ArrayForEach(it, path) {
+            WbnMapsCrumb c;
+            cJSON *cid = cJSON_GetObjectItemCaseSensitive(it, "id");
+            cJSON *cnm = cJSON_GetObjectItemCaseSensitive(it, "name");
+            c.id = wbnJsonInt(cid);
+            c.name = cJSON_IsString(cnm) && cnm->valuestring
+                       ? cnm->valuestring : "";
+            crumbs.push_back(std::move(c));
+        }
+    }
+    cJSON *subfolders = cJSON_GetObjectItemCaseSensitive(root, "subfolders");
+    if (cJSON_IsArray(subfolders)) {
+        cJSON *it = nullptr;
+        cJSON_ArrayForEach(it, subfolders) {
+            WbnMapsFolder f;
+            cJSON *id = cJSON_GetObjectItemCaseSensitive(it, "id");
+            cJSON *nm = cJSON_GetObjectItemCaseSensitive(it, "name");
+            cJSON *ct = cJSON_GetObjectItemCaseSensitive(it, "count");
+            f.id    = wbnJsonInt(id);
+            f.name  = cJSON_IsString(nm) && nm->valuestring
+                        ? nm->valuestring : "";
+            f.count = wbnJsonInt(ct);
+            subs.push_back(std::move(f));
+        }
+    }
+    cJSON *maps = cJSON_GetObjectItemCaseSensitive(root, "maps");
+    if (cJSON_IsArray(maps)) {
+        cJSON *it = nullptr;
+        cJSON_ArrayForEach(it, maps) {
+            WbnMapsEntry e;
+            cJSON *id = cJSON_GetObjectItemCaseSensitive(it, "id");
+            cJSON *nm = cJSON_GetObjectItemCaseSensitive(it, "name");
+            cJSON *rt = cJSON_GetObjectItemCaseSensitive(it, "rating");
+            cJSON *nr = cJSON_GetObjectItemCaseSensitive(it, "num_ratings");
+            cJSON *up = cJSON_GetObjectItemCaseSensitive(it, "uploaded");
+            e.id         = wbnJsonInt(id);
+            e.name       = cJSON_IsString(nm) && nm->valuestring
+                             ? nm->valuestring : "";
+            e.rating     = cJSON_IsNumber(rt) ? (float)rt->valuedouble : -1.0f;
+            e.numRatings = wbnJsonInt(nr);
+            e.uploadedNs = (cJSON_IsString(up) && up->valuestring)
+                ? wbnParseUploadedToNs(up->valuestring) : 0;
+            entries.push_back(std::move(e));
+        }
+    }
+    int newFolderId = wbnJsonInt(folderId);
+    cJSON_Delete(root);
+
+    /* Build canonical friendly path from crumbs (skip the root
+     * collection crumb — its id is null in the JSON). Joined with
+     * "/" so it matches what the chooser stores in currentDir for
+     * filesystem-shaped tabs.  e.g. "Collections" → ""
+     *      "Collections / ClassicMap's Maps" → "ClassicMap's Maps"
+     *      "Collections / ClassicMap's Maps / classics-popular"
+     *        → "ClassicMap's Maps/classics-popular"  */
+    std::string canonicalPath;
+    for (const auto &c : crumbs) {
+        if (c.id == 0 && c.name == "Collections") continue;
+        if (!canonicalPath.empty()) canonicalPath += '/';
+        canonicalPath += c.name;
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
+        s_wbnMapsCrumbs        = std::move(crumbs);
+        s_wbnMapsSubfolders    = subs;          /* copy — also used below */
+        s_wbnMapsEntries       = std::move(entries);
+        s_wbnMapsCurrentFolderId = newFolderId;
+        s_wbnMapsCurrentPath   = canonicalPath;
+        s_wbnMapsError.clear();
+        s_wbnMapsHasData       = true;
+
+        /* Stamp every (path, id) pair we now know — current folder
+         * and each subfolder — so the listProvider can resolve
+         * any seen path back to a numeric ID for fetching. */
+        s_wbnPathToId[canonicalPath] = newFolderId;
+        for (const auto &f : subs) {
+            std::string childPath = canonicalPath.empty()
+                ? f.name : (canonicalPath + "/" + f.name);
+            s_wbnPathToId[childPath] = f.id;
+        }
+    }
+    /* Log the first few subfolders so we can confirm what the
+     * API is actually returning for id/count without dumping a
+     * 250-entry blob. Drops the mutex first since this can be
+     * chatty. */
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        "[WBN-TAB] parsed folder id=%d path='%s' subs=%zu entries=%zu",
+        newFolderId, canonicalPath.c_str(),
+        subs.size(), entries.size());
+    for (size_t i = 0; i < subs.size() && i < 6; i++) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            "[WBN-TAB]   sub[%zu] id=%d count=%d name='%s'",
+            i, subs[i].id, subs[i].count, subs[i].name.c_str());
+    }
+}
+
+static void wbnMapsParseSearchJson(const char *json, const char *query) {
+    cJSON *root = cJSON_Parse(json);
+    if (!root) {
+        std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
+        s_wbnSearchError = "Bad search response from WinBolo.net";
+        return;
+    }
+    std::vector<WbnMapsEntry> entries;
+    cJSON *results = cJSON_GetObjectItemCaseSensitive(root, "results");
+    if (cJSON_IsArray(results)) {
+        cJSON *it = nullptr;
+        cJSON_ArrayForEach(it, results) {
+            WbnMapsEntry e;
+            cJSON *id = cJSON_GetObjectItemCaseSensitive(it, "id");
+            cJSON *nm = cJSON_GetObjectItemCaseSensitive(it, "name");
+            cJSON *rt = cJSON_GetObjectItemCaseSensitive(it, "rating");
+            cJSON *nr = cJSON_GetObjectItemCaseSensitive(it, "num_ratings");
+            cJSON *ow = cJSON_GetObjectItemCaseSensitive(it, "owner");
+            cJSON *pa = cJSON_GetObjectItemCaseSensitive(it, "path");
+            cJSON *up = cJSON_GetObjectItemCaseSensitive(it, "uploaded");
+            e.id         = wbnJsonInt(id);
+            e.name       = cJSON_IsString(nm) && nm->valuestring
+                             ? nm->valuestring : "";
+            e.rating     = cJSON_IsNumber(rt) ? (float)rt->valuedouble : -1.0f;
+            e.numRatings = wbnJsonInt(nr);
+            e.owner      = cJSON_IsString(ow) && ow->valuestring
+                             ? ow->valuestring : "";
+            e.uploadedNs = (cJSON_IsString(up) && up->valuestring)
+                ? wbnParseUploadedToNs(up->valuestring) : 0;
+            /* /maps/search returns a "path" array of breadcrumb
+             * segments (root → leaf), each {id, name}. Join the
+             * segment names with '/' for folderName (skipping the
+             * synthetic "Collections" root crumb whose id is null);
+             * folderId = the leaf folder's id (the actual enclosing
+             * folder). Each prefix gets stamped into s_wbnPathToId
+             * just below so breadcrumb clicks navigate without a
+             * second round-trip. */
+            if (cJSON_IsArray(pa)) {
+                cJSON *seg = nullptr;
+                cJSON_ArrayForEach(seg, pa) {
+                    cJSON *sid = cJSON_GetObjectItemCaseSensitive(seg, "id");
+                    cJSON *snm = cJSON_GetObjectItemCaseSensitive(seg, "name");
+                    int    segId = wbnJsonInt(sid);
+                    const char *segName =
+                        cJSON_IsString(snm) && snm->valuestring
+                            ? snm->valuestring : "";
+                    if (segId == 0 &&
+                        SDL_strcasecmp(segName, "Collections") == 0)
+                        continue;
+                    if (!e.folderName.empty()) e.folderName += '/';
+                    e.folderName += segName;
+                    e.folderId = segId;
+                }
+            }
+            entries.push_back(std::move(e));
+        }
+    }
+    /* Walk the path[] arrays a second time to stamp every prefix
+     * (not just the leaf) into s_wbnPathToId — breadcrumb buttons
+     * under the preview let the user click any segment, so each
+     * intermediate "Collections/X" → folderId must resolve too. */
+    std::vector<std::pair<std::string,int>> prefixIds;
+    if (cJSON_IsArray(results)) {
+        cJSON *it = nullptr;
+        cJSON_ArrayForEach(it, results) {
+            cJSON *pa = cJSON_GetObjectItemCaseSensitive(it, "path");
+            if (!cJSON_IsArray(pa)) continue;
+            std::string acc;
+            cJSON *seg = nullptr;
+            cJSON_ArrayForEach(seg, pa) {
+                cJSON *sid = cJSON_GetObjectItemCaseSensitive(seg, "id");
+                cJSON *snm = cJSON_GetObjectItemCaseSensitive(seg, "name");
+                int segId = wbnJsonInt(sid);
+                const char *segName =
+                    cJSON_IsString(snm) && snm->valuestring
+                        ? snm->valuestring : "";
+                if (segId == 0 &&
+                    SDL_strcasecmp(segName, "Collections") == 0)
+                    continue;
+                if (!acc.empty()) acc += '/';
+                acc += segName;
+                if (segId > 0) prefixIds.emplace_back(acc, segId);
+            }
+        }
+    }
+    cJSON_Delete(root);
+    {
+        std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
+        for (const auto &p : prefixIds) {
+            s_wbnPathToId[p.first] = p.second;
+        }
+        s_wbnSearchResults  = std::move(entries);
+        s_wbnSearchQuery    = query ? query : "";
+        s_wbnSearchHasData  = true;
+        s_wbnSearchError.clear();
+    }
+}
+
+/* ── SP-host WBN map fetch ───────────────────────────────────────
+ * Single-player host has no UDP server to delegate the download
+ * to, so this client process does the fetch itself on a worker
+ * thread (mirrors the server's PREVIEW_WBN handler) and then
+ * applies the bytes to the local SP ServerSim on the main thread
+ * via spWbnPoll. Same pendingUpload semantics: scratch file
+ * lives at .pending_upload.map until the user commits via Set
+ * Map, at which point serverSimCommitPendingUpload moves it into
+ * data/maps/Winbolo.net Downloads/. Cancel-on-supersede uses
+ * the http.c cancellable API so rapid map clicks abort the
+ * in-flight curl call. */
+struct SpWbnResult {
+    uint32_t mapId;
+    int      httpStatus; /* 200 ok; -2 cancelled */
+    std::string mapName;
+    std::vector<uint8_t> bytes;
+    std::string err;
+    bool     valid;
+};
+
+static std::mutex          s_spWbnMutex;
+static std::atomic<bool>   s_spWbnFetching{false};
+static std::atomic<uint32_t> s_spWbnFetchSeq{0};
+static volatile int        s_spWbnCancel = 0; /* CURLOPT_XFERINFO sink */
+static SpWbnResult         s_spWbnResult;
+
+static void spWbnSubmit(uint32_t mapId) {
+    /* Supersede any in-flight call. The cancel flag aborts curl;
+     * the seq bump invalidates the completion. */
+    s_spWbnCancel = 1;
+    uint32_t seq = ++s_spWbnFetchSeq;
+    /* Drop any undrained previous result. */
+    {
+        std::lock_guard<std::mutex> lk(s_spWbnMutex);
+        s_spWbnResult = SpWbnResult{};
+    }
+    std::thread([mapId, seq]() {
+        /* Wait briefly for previous thread to clear the fetching
+         * flag — both threads race the same flag. */
+        for (int i = 0; i < 50 && s_spWbnFetching.load(); i++) {
+            SDL_Delay(10);
+        }
+        s_spWbnFetching.store(true);
+        s_spWbnCancel = 0; /* reset for this attempt */
+
+        SpWbnResult out;
+        out.mapId = mapId;
+
+        char infoPath[64];
+        SDL_snprintf(infoPath, sizeof(infoPath), "maps/info/%u",
+                     (unsigned)mapId);
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[WBN-SP] info fetch: /api/v1/%s", infoPath);
+        char *infoJson = nullptr;
+        int infoStatus = wbn_api_get(infoPath, &infoJson);
+        if (seq != s_spWbnFetchSeq.load()) {
+            free(infoJson);
+            s_spWbnFetching.store(false);
+            return;
+        }
+        if (infoStatus == 200 && infoJson) {
+            cJSON *root = cJSON_Parse(infoJson);
+            if (root) {
+                cJSON *nm = cJSON_GetObjectItemCaseSensitive(root, "name");
+                if (cJSON_IsString(nm) && nm->valuestring) {
+                    out.mapName = nm->valuestring;
+                }
+                cJSON_Delete(root);
+            }
+        }
+        free(infoJson);
+        if (out.mapName.empty()) {
+            char fallback[32];
+            SDL_snprintf(fallback, sizeof(fallback), "wbn_%u",
+                         (unsigned)mapId);
+            out.mapName = fallback;
+        }
+
+        char filePath[64];
+        SDL_snprintf(filePath, sizeof(filePath), "maps/file/%u",
+                     (unsigned)mapId);
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[WBN-SP] file fetch: /api/v1/%s", filePath);
+        uint8_t *bytes = nullptr;
+        size_t   bytesLen = 0;
+        int dlStatus = wbn_api_download_to_memory_cancellable(
+            filePath, &bytes, &bytesLen, &s_spWbnCancel);
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[WBN-SP] file fetch result: /api/v1/%s -> %d (%zu bytes)",
+                    filePath, dlStatus, bytesLen);
+
+        if (seq != s_spWbnFetchSeq.load() || dlStatus == -2) {
+            free(bytes);
+            s_spWbnFetching.store(false);
+            return;
+        }
+        out.httpStatus = dlStatus;
+        if (dlStatus == 200 && bytes) {
+            out.bytes.assign(bytes, bytes + bytesLen);
+        } else if (dlStatus == -1) {
+            out.err = "Network error fetching map";
+        } else {
+            char msg[64];
+            SDL_snprintf(msg, sizeof(msg),
+                         "WBN returned HTTP %d", dlStatus);
+            out.err = msg;
+        }
+        free(bytes);
+        out.valid = true;
+        {
+            std::lock_guard<std::mutex> lk(s_spWbnMutex);
+            s_spWbnResult = std::move(out);
+        }
+        s_spWbnFetching.store(false);
+    }).detach();
+}
+
+/* Main-thread completion handler for SP picks. Drains the result
+ * and applies it to the local sim via the same scratch-file +
+ * pendingUpload flow the dedicated server uses. Called once per
+ * frame while the WBN tab is visible. */
+static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
+    if (!cs) return;
+    SpWbnResult res;
+    {
+        std::lock_guard<std::mutex> lk(s_spWbnMutex);
+        if (!s_spWbnResult.valid) return;
+        res = std::move(s_spWbnResult);
+        s_spWbnResult = SpWbnResult{};
+    }
+    if (res.httpStatus != 200 || res.bytes.empty()) {
+        clientSimSetLobbyWbnPreviewStatus(cs, 3);
+        clientSimSetLobbyWbnPreviewErrMsg(cs,
+            res.err.empty() ? "Map download failed" : res.err.c_str());
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "[WBN-SP] fetch failed: %s",
+                    res.err.empty() ? "(unknown)" : res.err.c_str());
+        return;
+    }
+
+    /* Sanitise & ensure .map extension. Used for both the SP
+     * commit target and the upload name announced to the server
+     * in MP. */
+    auto sanitise = [](std::string &s){
+        for (auto &c : s) {
+            unsigned char u = (unsigned char)c;
+            if (u < 0x20 || c == '/' || c == '\\' || c == ':' ||
+                c == '*' || c == '?' || c == '"' || c == '<' ||
+                c == '>' || c == '|') c = '_';
+        }
+        if (s.empty()) s = "wbnmap";
+    };
+    sanitise(res.mapName);
+    std::string safeName = res.mapName;
+    if (safeName.size() < 4 ||
+        SDL_strcasecmp(safeName.c_str() + safeName.size() - 4, ".map") != 0) {
+        safeName += ".map";
+    }
+
+    /* Stash a copy of the downloaded bytes at a stable preview
+     * path so the WBN chooser's right-side preview can show the
+     * map. The chooser's row carries a synthetic "wbn:<id>" path
+     * which isn't a real file, so without this the preview pane
+     * stays at "No preview available" even after a successful
+     * download. The file is overwritten on every WBN pick. */
+    {
+        const char *previewPath = "data/maps/.wbn_preview.map";
+        FILE *pp = fopen(previewPath, "wb");
+        if (pp) {
+            fwrite(res.bytes.data(), 1, res.bytes.size(), pp);
+            fclose(pp);
+            /* displayName drops the trailing .map for the panel
+             * title — matches the other tabs. */
+            std::string displayName = res.mapName;
+            if (displayName.size() >= 4 &&
+                SDL_strcasecmp(displayName.c_str() + displayName.size() - 4,
+                                ".map") == 0) {
+                displayName.resize(displayName.size() - 4);
+            }
+            mapChooserSetSelectedFile(&s_chooseMapWbnState, renderer,
+                                      previewPath, displayName.c_str());
+        }
+    }
+
+    /* MP host: pump the bytes through the normal upload protocol.
+     * The server-side UPLOAD_DONE handler then previews them and
+     * (on commit) writes to data/maps/Uploads/<name>.map with
+     * the existing " (N)" dedup — same path as a manual upload. */
+    if (!clientSimIsSinglePlayer(cs)) {
+        if (s_uploadActive) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "[WBN-MP] another upload is in flight; ignoring pick");
+            return;
+        }
+        if (res.bytes.size() > 1u * 1024u * 1024u) {
+            clientSimSetLobbyWbnPreviewStatus(cs, 3);
+            clientSimSetLobbyWbnPreviewErrMsg(cs,
+                "Map exceeds 1MB upload cap");
+            return;
+        }
+        lobbyUploadFree();
+        s_uploadBuf = (uint8_t *)SDL_malloc(res.bytes.size());
+        if (!s_uploadBuf) {
+            clientSimSetLobbyWbnPreviewStatus(cs, 3);
+            clientSimSetLobbyWbnPreviewErrMsg(cs,
+                "Out of memory queuing upload");
+            return;
+        }
+        memcpy(s_uploadBuf, res.bytes.data(), res.bytes.size());
+        s_uploadTotal  = (uint32_t)res.bytes.size();
+        s_uploadOffset = 0;
+        s_uploadActive = true;
+        clientSimResetLobbyMapUpload(cs);
+        clientSimNetSendLobbyMapUploadBegin(cs, s_uploadTotal,
+                                             safeName.c_str());
+        clientSimSetLobbyWbnPreviewStatus(cs, 2);
+        s_chooseMapPreviewPending = true;
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            "[WBN-MP] uploading '%s' (%u bytes)",
+            safeName.c_str(), (unsigned)s_uploadTotal);
+        return;
+    }
+
+    /* SP host: apply directly to the in-process sim. */
+    ServerSim *sim = gameFrontGetSinglePlayerServerSim();
+    if (!sim) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "[WBN-SP] no SP sim — dropping result");
+        return;
+    }
+
+    /* Write to the shared scratch path the upload flow uses — same
+     * temp file is fine since SP only has one in-flight at a time. */
+    const char *tempPath = "data/maps/.pending_upload.map";
+    FILE *fp = fopen(tempPath, "wb");
+    bool wrote = false;
+    if (fp) {
+        size_t w = fwrite(res.bytes.data(), 1, res.bytes.size(), fp);
+        fclose(fp);
+        wrote = (w == res.bytes.size());
+    }
+    if (!wrote) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "[WBN-SP] failed to write scratch %s", tempPath);
+        clientSimSetLobbyWbnPreviewStatus(cs, 3);
+        return;
+    }
+
+    if (!serverSimReloadMap(sim, tempPath)) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "[WBN-SP] serverSimReloadMap rejected bytes");
+        SDL_RemovePath(tempPath);
+        clientSimSetLobbyWbnPreviewStatus(cs, 3);
+        return;
+    }
+
+    /* Override the auto-detected ".pending_upload" name. */
+    char displayName[MAP_STR_SIZE];
+    SDL_strlcpy(displayName, safeName.c_str(), sizeof(displayName));
+    {
+        size_t dlen = SDL_strlen(displayName);
+        if (dlen >= 4 &&
+            SDL_strcasecmp(displayName + dlen - 4, ".map") == 0) {
+            displayName[dlen - 4] = '\0';
+        }
+    }
+    serverSimSetMapName(sim, displayName);
+
+    /* Commit target lives alongside any other user upload — same
+     * Uploads/ directory the Upload tab uses, so the on-disk
+     * library only has one place for "maps the user put here".
+     * WBN-origin maps are indistinguishable from manual uploads
+     * once committed. */
+    char finalPath[FILENAME_MAX];
+    SDL_snprintf(finalPath, sizeof(finalPath),
+                 "data/maps/Uploads/%s", safeName.c_str());
+    char relPath[256];
+    SDL_snprintf(relPath, sizeof(relPath),
+                 "Uploads/%s", safeName.c_str());
+    serverSimSetPendingUpload(sim, tempPath, finalPath, relPath);
+    serverSimPublishLobbySettings(sim);
+
+    clientSimSetLobbyWbnPreviewStatus(cs, 2);
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "[WBN-SP] applied '%s' (%zu bytes); will commit to %s",
+                displayName, res.bytes.size(), finalPath);
+    s_chooseMapPreviewPending = true;
+}
+
+static void wbnMapsKickFolderFetch(int folderId) {
+    if (s_wbnMapsFetching.exchange(true)) return; /* one at a time */
+    uint32_t seq = ++s_wbnMapsFetchSeq;
+    std::thread([folderId, seq]() {
+        char path[64];
+        if (folderId > 0) SDL_snprintf(path, sizeof(path), "maps/%d", folderId);
+        else              SDL_strlcpy(path, "maps", sizeof(path));
+        const char *base = httpGetBaseUrl();
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[WBN-TAB] folder fetch: %s/api/v1/%s",
+                    (base && *base) ? base : "(no base)", path);
+        char *resp = nullptr;
+        int status = wbn_api_get(path, &resp);
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[WBN-TAB] folder fetch result: %s/api/v1/%s -> %d",
+                    (base && *base) ? base : "(no base)", path, status);
+        if (seq == s_wbnMapsFetchSeq.load()) {
+            if (status == 200 && resp) {
+                wbnMapsParseFolderJson(resp);
+            } else {
+                std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
+                char err[512];
+                SDL_snprintf(err, sizeof(err),
+                             "Folder fetch failed (HTTP %d) for %s/api/v1/%s",
+                             status,
+                             (base && *base) ? base : "(no base)",
+                             path);
+                s_wbnMapsError = err;
+            }
+        }
+        free(resp);
+        s_wbnMapsFetching.store(false);
+    }).detach();
+}
+
+static void wbnMapsKickSearchFetch(const char *queryRaw) {
+    if (!queryRaw || !*queryRaw) return;
+    if (s_wbnSearchFetching.exchange(true)) return;
+    uint32_t seq = ++s_wbnSearchFetchSeq;
+    std::string qcopy = queryRaw;
+    /* Very basic URL-encode of space and a few common specials so
+     * typical map titles work without pulling in a full encoder. */
+    std::string enc;
+    enc.reserve(qcopy.size() * 3);
+    for (unsigned char c : qcopy) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+            c == '.' || c == '~') {
+            enc.push_back((char)c);
+        } else {
+            char hex[4];
+            SDL_snprintf(hex, sizeof(hex), "%%%02X", c);
+            enc.append(hex);
+        }
+    }
+    std::string path = "maps/search?name=" + enc;
+    std::thread([path, qcopy, seq]() {
+        const char *base = httpGetBaseUrl();
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[WBN-TAB] search fetch: %s/api/v1/%s",
+                    (base && *base) ? base : "(no base)", path.c_str());
+        char *resp = nullptr;
+        int status = wbn_api_get(path.c_str(), &resp);
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[WBN-TAB] search fetch result: %s/api/v1/%s -> %d",
+                    (base && *base) ? base : "(no base)", path.c_str(),
+                    status);
+        if (seq == s_wbnSearchFetchSeq.load()) {
+            if (status == 200 && resp) {
+                /* Dump the first ~600 chars of the raw response
+                 * so we can see exactly what shape the search
+                 * endpoint returns (folder fields might differ
+                 * from the /maps/<id> shape we modelled on). */
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[WBN-TAB] search raw response (first 600c): %.600s",
+                    resp);
+                wbnMapsParseSearchJson(resp, qcopy.c_str());
+            } else {
+                std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
+                char err[512];
+                SDL_snprintf(err, sizeof(err),
+                             "Search failed (HTTP %d) for %s/api/v1/%s",
+                             status,
+                             (base && *base) ? base : "(no base)",
+                             path.c_str());
+                s_wbnSearchError = err;
+            }
+        }
+        free(resp);
+        s_wbnSearchFetching.store(false);
+    }).detach();
+}
+
+/* listProvider for the Winbolo.net Maps tab. The chooser hands us
+ * relPath (the chooser's currentDir — a friendly slash-separated
+ * path like "ClassicMap's Maps/classics-popular"). We:
+ *   - resolve it to a numeric folder ID via s_wbnPathToId,
+ *   - kick a fetch if the cache doesn't already hold that folder,
+ *   - populate state->maps[] from whatever's currently cached
+ *     (synchronous return; the next frame will pick up fresh data).
+ *
+ * Map rows are emitted with a synthetic "wbn:<id>" path which the
+ * lobby's click handler parses to trigger the download/upload flow.
+ * Sub-folder rows use the friendly child path so a click writes
+ * that back into state->currentDir and the cycle repeats. */
+static void wbnMapsListProvider(MapChooserState *state,
+                                const char *relPath, void *ctx) {
+    (void)ctx;
+    state->numMaps = 0;
+    if (!relPath) relPath = "";
+
+    /* Recursive-search branch: when the user has "Search subfolders"
+     * checked and typed a non-empty query, ignore relPath entirely
+     * and hit /api/v1/maps/search. Results aren't scoped to the
+     * current folder (the WBN endpoint is catalogue-wide). The
+     * folder cache stays intact so clearing the search restores
+     * the user's place. */
+    if (state->searchRecursive && state->searchFilter[0] != '\0') {
+        std::string query;
+        std::vector<WbnMapsEntry> results;
+        bool hasResults  = false;
+        bool srchInFlight = s_wbnSearchFetching.load();
+        std::string srchErr;
+        {
+            std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
+            query       = s_wbnSearchQuery;
+            results     = s_wbnSearchResults;
+            hasResults  = s_wbnSearchHasData;
+            srchErr     = s_wbnSearchError;
+        }
+        /* Kick a fetch if the query changed. Throttled per query
+         * string — typing fast doesn't pile up requests. */
+        static std::string s_wbnSearchLastReq;
+        if (!srchInFlight &&
+            (!hasResults || query != state->searchFilter) &&
+            s_wbnSearchLastReq != state->searchFilter) {
+            s_wbnSearchLastReq = state->searchFilter;
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "[WBN-TAB] provider kicking search for '%s'",
+                state->searchFilter);
+            wbnMapsKickSearchFetch(state->searchFilter);
+        } else if (hasResults && query == state->searchFilter) {
+            s_wbnSearchLastReq.clear();
+        }
+
+        /* Throttled log so we can confirm the branch is running
+         * and inspect the first few search hits for folder info. */
+        static int s_wbnSrchLogTick = 0;
+        if (++s_wbnSrchLogTick % 60 == 1) {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "[WBN-TAB] search branch filter='%s' recursive=%d "
+                "cached='%s' has=%d inFlight=%d hits=%zu err='%s'",
+                state->searchFilter,
+                (int)state->searchRecursive,
+                query.c_str(), (int)hasResults, (int)srchInFlight,
+                results.size(), srchErr.c_str());
+            for (size_t i = 0; i < results.size() && i < 4; i++) {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[WBN-TAB]   hit[%zu] id=%d folder=(id=%d name='%s') name='%s'",
+                    i, results[i].id, results[i].folderId,
+                    results[i].folderName.c_str(),
+                    results[i].name.c_str());
+            }
+        }
+
+        /* Only show results when they match the current query —
+         * stale results from a previous query would be misleading. */
+        if (hasResults && query == state->searchFilter) {
+            for (const auto &m : results) {
+                if (state->numMaps >= MAP_CHOOSER_MAX_MAPS) break;
+                MapChooserEntry *e = &state->maps[state->numMaps++];
+                memset(e, 0, sizeof(*e));
+                SDL_strlcpy(e->name, m.name.c_str(), sizeof(e->name));
+                SDL_snprintf(e->path, sizeof(e->path), "wbn:%d", m.id);
+                e->isFolder = false;
+                e->modTime  = m.uploadedNs;
+                /* /maps/search responses now include the full path
+                 * hierarchy for each hit (see wbnMapsParseSearchJson)
+                 * so the enclosing-folder breadcrumb is available
+                 * synchronously — no per-row /maps/info round-trip. */
+                if (!m.folderName.empty()) {
+                    SDL_strlcpy(e->crumbsPath, m.folderName.c_str(),
+                                sizeof(e->crumbsPath));
+                }
+            }
+        }
+        /* Roll up the unique enclosing folders into folder rows pinned
+         * at the top of the list, matching the Server Maps / Upload
+         * tabs. Empty prefix because the WBN tab's currentDir is the
+         * same friendly-path scheme crumbsPath already uses. */
+        mapChooserEmitFolderRowsForSearchHits(state, "");
+        /* Re-anchor by selectedPath — the rebuild + folder-reorder
+         * shuffles row indices, and a stale selectedIdx would point
+         * the breadcrumb at the wrong row's crumbsPath. */
+        if (state->selectedPath[0] != '\0') {
+            for (int i = 0; i < state->numMaps; i++) {
+                if (SDL_strcmp(state->maps[i].path,
+                               state->selectedPath) == 0) {
+                    state->selectedIdx = i;
+                    break;
+                }
+            }
+        }
+        return;
+    }
+
+    /* Resolve target folder ID and snapshot current cache. */
+    int targetId = 0;
+    int cachedId = -1;
+    std::string cachedPath;
+    std::vector<WbnMapsFolder> subs;
+    std::vector<WbnMapsEntry>  entries;
+    bool hasData = false;
+    std::string errMsg;
+    {
+        std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
+        auto it = s_wbnPathToId.find(relPath);
+        if (it != s_wbnPathToId.end()) targetId = it->second;
+        cachedId   = s_wbnMapsCurrentFolderId;
+        cachedPath = s_wbnMapsCurrentPath;
+        subs       = s_wbnMapsSubfolders;
+        entries    = s_wbnMapsEntries;
+        hasData    = s_wbnMapsHasData;
+        errMsg     = s_wbnMapsError;
+    }
+
+    /* Kick a fetch if the cache doesn't match what the chooser
+     * currently wants. Tracks the most recently-requested ID so
+     * rapid folder clicks while one is in flight don't pile up. */
+    static int s_wbnMapsLastRequested = -2;
+    bool cacheMatches = hasData && (cachedPath == relPath);
+    bool inFlight = s_wbnMapsFetching.load();
+    static int s_wbnLogTick = 0;
+    if (++s_wbnLogTick % 60 == 1) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            "[WBN-TAB] provider relPath='%s' targetId=%d "
+            "cached=(id=%d path='%s' has=%d) match=%d inFlight=%d "
+            "lastReq=%d subs=%zu entries=%zu err='%s'",
+            relPath, targetId,
+            cachedId, cachedPath.c_str(), (int)hasData,
+            (int)cacheMatches, (int)inFlight,
+            s_wbnMapsLastRequested,
+            subs.size(), entries.size(),
+            errMsg.c_str());
+    }
+    if (!cacheMatches && !inFlight) {
+        if (s_wbnMapsLastRequested != targetId) {
+            s_wbnMapsLastRequested = targetId;
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "[WBN-TAB] provider kicking fetch for folderId=%d "
+                "(relPath='%s')", targetId, relPath);
+            wbnMapsKickFolderFetch(targetId);
+        }
+    } else if (cacheMatches) {
+        s_wbnMapsLastRequested = -2;
+    }
+
+    /* Synthetic "[..]" entry — points at the parent friendly path.
+     * Skipped at the root (empty relPath). The chooser hides this
+     * row automatically when searchRecursive is on. */
+    if (relPath[0] != '\0' && state->numMaps < MAP_CHOOSER_MAX_MAPS) {
+        MapChooserEntry *e = &state->maps[state->numMaps++];
+        memset(e, 0, sizeof(*e));
+        SDL_strlcpy(e->name, "[..]", sizeof(e->name));
+        const char *lastSep = nullptr;
+        for (const char *p = relPath; *p; p++) {
+            if (*p == '/' || *p == '\\') lastSep = p;
+        }
+        if (lastSep) {
+            size_t plen = (size_t)(lastSep - relPath);
+            if (plen >= sizeof(e->path)) plen = sizeof(e->path) - 1;
+            memcpy(e->path, relPath, plen);
+            e->path[plen] = '\0';
+        } else {
+            e->path[0] = '\0';
+        }
+        e->isFolder   = true;
+        e->isParentUp = true;
+    }
+
+    /* Only surface entries from a matching cache, else the user
+     * would see the previous folder's contents while the new fetch
+     * is in flight (visually identical to "no entries yet"). */
+    if (!cacheMatches) return;
+
+    /* Sub-folders first, then maps. Normally we filter empty
+     * folders (count == 0) so users don't follow dead ends — but
+     * the WBN API currently returns 0 for every folder, so if
+     * every count is zero treat the field as unreliable and show
+     * them all. Once the API returns real counts the filter takes
+     * over automatically. */
+    bool anyCountKnown = false;
+    for (const auto &f : subs) {
+        if (f.count > 0) { anyCountKnown = true; break; }
+    }
+    for (const auto &f : subs) {
+        if (anyCountKnown && f.count <= 0) continue;
+        if (state->numMaps >= MAP_CHOOSER_MAX_MAPS) break;
+        MapChooserEntry *e = &state->maps[state->numMaps++];
+        memset(e, 0, sizeof(*e));
+        SDL_strlcpy(e->name, f.name.c_str(), sizeof(e->name));
+        if (relPath[0] != '\0') {
+            SDL_snprintf(e->path, sizeof(e->path), "%s/%s",
+                         relPath, f.name.c_str());
+        } else {
+            SDL_strlcpy(e->path, f.name.c_str(), sizeof(e->path));
+        }
+        e->isFolder = true;
+    }
+    for (const auto &m : entries) {
+        if (state->numMaps >= MAP_CHOOSER_MAX_MAPS) break;
+        MapChooserEntry *e = &state->maps[state->numMaps++];
+        memset(e, 0, sizeof(*e));
+        SDL_strlcpy(e->name, m.name.c_str(), sizeof(e->name));
+        SDL_snprintf(e->path, sizeof(e->path), "wbn:%d", m.id);
+        e->isFolder = false;
+        e->modTime  = m.uploadedNs;
+        /* crumbsPath = the current folder. ent.path is the opaque
+         * "wbn:<id>" handle so the breadcrumb's path-fallback skips
+         * it; without this, the preview-side breadcrumb would either
+         * display only the root label or, worse, the persistent
+         * activeCrumbsPath from a previous folder. */
+        if (relPath && relPath[0] != '\0') {
+            SDL_strlcpy(e->crumbsPath, relPath, sizeof(e->crumbsPath));
+        }
+    }
+
+    /* The WBN tab re-runs this provider every frame to pick up async
+     * cache updates, so maps[] is rebuilt under the chooser's feet.
+     * selectedIdx is a positional index — when the array re-lays
+     * out (search results landing, folder rows reordering to the
+     * top), it can end up pointing at a different row, and the
+     * preview-breadcrumb code would read that wrong row's
+     * crumbsPath. Re-anchor by selectedPath so the row identity
+     * follows the user's click instead of its array slot. */
+    if (state->selectedPath[0] != '\0') {
+        for (int i = 0; i < state->numMaps; i++) {
+            if (SDL_strcmp(state->maps[i].path,
+                           state->selectedPath) == 0) {
+                state->selectedIdx = i;
+                break;
+            }
+        }
+    }
+}
+
+/* onSelect for the WBN provider. Synthetic "wbn:<id>" paths only —
+ * anything else is a folder click the chooser handled internally.
+ * Submitting the id kicks the SP-side download worker (which also
+ * routes through MP upload when the host is a network server). */
+static void lobbyWbnMapsOnSelect(MapChooserState *state, void *ctx) {
+    ClientSim *cs = (ClientSim *)ctx;
+    if (!cs) return;
+    const char *sel = state->selectedPath;
+    static const char kPrefix[] = "wbn:";
+    if (!sel || strncmp(sel, kPrefix, sizeof(kPrefix) - 1) != 0) return;
+    uint32_t mapId = (uint32_t)SDL_atoi(sel + sizeof(kPrefix) - 1);
+    if (mapId > 0) {
+        clientSimSetLobbyWbnPreviewStatus(cs, 1);
+        spWbnSubmit(mapId);
+    }
+}
+
+/* onFolderJump for the WBN provider. The chooser prepends "Maps" as
+ * the clickable root indicator. "Maps" alone (or "Maps/") jumps back
+ * to the WBN catalogue root; anything else is a friendly path the
+ * provider resolves via s_wbnPathToId on the next frame. */
+static void lobbyWbnMapsOnFolderJump(MapChooserState *state,
+                                      const char *jumpPath, void *ctx) {
+    (void)ctx;
+    const char *jp = jumpPath;
+    if (SDL_strncmp(jp, "Maps/", 5) == 0) {
+        jp += 5;
+    } else if (SDL_strcasecmp(jp, "Maps") == 0) {
+        jp = "";
+    }
+    SDL_strlcpy(state->currentDir, jp, sizeof(state->currentDir));
+}
+
+/* WBN tick: drain any completed background download. Always called
+ * on the UI thread; SP applies bytes in-process, MP feeds them into
+ * the regular MAP_UPLOAD protocol. */
+static void lobbyWbnMapsTick(MapChooserState *state, SDL_Renderer *renderer,
+                              void *ctx) {
+    (void)state;
+    ClientSim *cs = (ClientSim *)ctx;
+    if (cs) spWbnPoll(cs, renderer);
+}
+
+/* Tooltip on the WBN path label = the WBN host URL so the user can
+ * tell at a glance which server the catalogue is coming from. */
+static void lobbyWbnMapsTooltipPrefix(MapChooserState *state, void *ctx) {
+    (void)ctx;
+    const char *wbnHost = httpGetBaseUrl();
+    SDL_strlcpy(state->pathTooltipPrefix,
+                (wbnHost && *wbnHost) ? wbnHost : "winbolo.net",
+                sizeof(state->pathTooltipPrefix));
+}
+
+/* WBN footer: two failure modes. spWbnPoll surfaces HTTP download
+ * errors via the lobby preview-status field; the MP upload path can
+ * reject the bytes after the download lands (same shape as Upload). */
+static void lobbyWbnMapsStatusFooter(MapChooserState *state, void *ctx) {
+    (void)state;
+    ClientSim *cs = (ClientSim *)ctx;
+    if (!cs) return;
+    if (clientSimGetLobbyWbnPreviewStatus(cs) == 3) {
+        const char *m = clientSimGetLobbyWbnPreviewErrMsg(cs);
+        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f),
+                           "%s", m && *m ? m : "Download failed");
+    } else if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
+               clientSimGetLobbyMapUploadStatus(cs) == 4) {
+        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f),
+                           "Upload rejected by server.");
+    }
+}
+
+/* Shared per-tab render helper. Manages the chooser-area size,
+ * refreshes the tooltip prefix, runs a per-frame enumerate when the
+ * provider asks for it, hands the widget the supplied render slot,
+ * drains breadcrumb-click jumps, and renders the provider's status
+ * footer. The tab body is reduced to BeginTabItem / call / EndTabItem. */
+/* Clears the chooser's selection + preview state. Used when the user
+ * switches tabs (each tab has its own state, and the preview from a
+ * prior visit is misleading after switching back) and on folder-jump
+ * resets. */
+static void lobbyMapTabClearSelection(MapChooserState *state) {
+    state->selectedIdx         = -1;
+    state->selectedPath[0]     = '\0';
+    state->selectedName[0]     = '\0';
+    state->activeCrumbsPath[0] = '\0';
+    if (state->previewTex) {
+        SDL_DestroyTexture(state->previewTex);
+        state->previewTex = NULL;
+    }
+    state->previewPills  = 0;
+    state->previewBases  = 0;
+    state->previewStarts = 0;
+}
+
+static void lobbyRenderMapTab(MapChooserState *state, SDL_Renderer *renderer,
+                               float s) {
+    if (state->provider.tick) {
+        state->provider.tick(state, renderer, state->provider.ctx);
+    }
+    if (state->provider.refreshTooltipPrefix) {
+        state->provider.refreshTooltipPrefix(state, state->provider.ctx);
+    }
+
+    /* Chooser fills the entire body region. The provider's status
+     * footer is rendered OUTSIDE this helper, immediately above the
+     * action buttons (see lobbyRenderActiveTabFooter), so the
+     * chooser's bottom border can extend flush against the action
+     * bar without leaving an idle reservation gap. */
+    float availW = ImGui::GetContentRegionAvail().x;
+    float availH = ImGui::GetContentRegionAvail().y;
+    if (availH < 120.0f) availH = 120.0f;
+
+    if (state->provider.refreshEveryFrame) {
+        mapChooserRefresh(state);
+    }
+    mapChooserRender(state, renderer, availW, availH, s);
+
+    char jumpPath[FILENAME_MAX];
+    if (mapChooserConsumeFolderJump(state, jumpPath, sizeof(jumpPath))) {
+        if (state->provider.onFolderJump) {
+            state->provider.onFolderJump(state, jumpPath,
+                                          state->provider.ctx);
+        }
+        state->searchFilter[0]     = '\0';
+        state->searchRecursive     = false;
+        state->selectedIdx         = -1;
+        state->selectedPath[0]     = '\0';
+        state->selectedName[0]     = '\0';
+        state->activeCrumbsPath[0] = '\0';
+        /* Refresh the listing for the new folder. WBN re-runs the
+         * provider each frame so this is a no-op there, but Server
+         * Maps and Upload only refresh on user actions — without this
+         * the row list would stay on the previous folder until the
+         * user clicked or typed. */
+        mapChooserRefresh(state);
+    }
+
+}
+
+/* Dispatch the active tab's status footer (called outside the body
+ * child, just before the action bar). Looks up the active state via
+ * s_chooseMapActiveTab and invokes its provider hook if set. */
+static void lobbyRenderActiveTabFooter(void) {
+    MapChooserState *st = nullptr;
+    switch (s_chooseMapActiveTab) {
+        case 0: st = &s_chooseMapState;       break;
+        case 1: st = &s_chooseMapUploadState; break;
+        case 3: st = &s_chooseMapWbnState;    break;
+        default: return;  /* Generate tab — no footer. */
+    }
+    if (st && st->provider.renderStatusFooter) {
+        st->provider.renderStatusFooter(st, st->provider.ctx);
+    }
+}
+
 static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
     if (!s_chooseMapStateInited) {
         mapChooserInit(&s_chooseMapState, renderer);
@@ -629,13 +1915,25 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
          * preview image — it knows where the image actually lives,
          * which the surrounding lobby code doesn't. */
         s_chooseMapState.maximizePtr = &s_chooseMapMaximized;
-        /* Server Maps tab: list comes from the server. */
-        s_chooseMapState.listProvider = lobbyServerMapsListProvider;
-        s_chooseMapState.listProviderCtx = s_chooseMapCs;
-        /* Initialise the Upload tab's separate state — keeps the
-         * default local-filesystem scan (listProvider NULL). */
+        /* Server Maps provider: list comes from the server. */
+        s_chooseMapState.provider.enumerate            = lobbyServerMapsListProvider;
+        s_chooseMapState.provider.onSelect             = lobbyServerMapsOnSelect;
+        s_chooseMapState.provider.onFolderJump         = lobbyServerMapsOnFolderJump;
+        s_chooseMapState.provider.refreshTooltipPrefix = lobbyServerMapsTooltipPrefix;
+        s_chooseMapState.provider.ctx                  = s_chooseMapCs;
+        SDL_strlcpy(s_chooseMapState.crumbsRootLabel, "Maps",
+                    sizeof(s_chooseMapState.crumbsRootLabel));
+        /* Upload provider: local-filesystem scan via the chooser's
+         * built-in helper. */
         mapChooserInit(&s_chooseMapUploadState, renderer);
         s_chooseMapUploadState.maximizePtr = &s_chooseMapMaximized;
+        s_chooseMapUploadState.provider.enumerate            = mapChooserLocalFsEnumerate;
+        s_chooseMapUploadState.provider.onSelect             = lobbyUploadOnSelect;
+        s_chooseMapUploadState.provider.onFolderJump         = lobbyUploadOnFolderJump;
+        s_chooseMapUploadState.provider.refreshTooltipPrefix = lobbyUploadTooltipPrefix;
+        s_chooseMapUploadState.provider.renderStatusFooter   = lobbyUploadStatusFooter;
+        SDL_strlcpy(s_chooseMapUploadState.crumbsRootLabel, "Maps",
+                    sizeof(s_chooseMapUploadState.crumbsRootLabel));
         /* "Load from device" + "Generate Random Map" exist as dedicated
          * tabs in this window, so suppress the in-widget buttons that
          * would duplicate them. */
@@ -657,14 +1955,29 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapState.leftPanelMaxW        = 300.0f;
         s_chooseMapUploadState.leftPanelMaxW  = 300.0f;
         s_chooseMapRandomState.leftPanelMaxW  = 360.0f;
-        /* Server Maps tab — server-provided list is empty until the
-         * provider runs; force an initial discover so the list is
-         * populated before the first render. (mapChooserInit ran the
-         * legacy SDL_GlobDirectory scan before we wired the provider,
-         * so its results are stale.) */
-        s_chooseMapState.currentDir[0] = '\0';
-        s_chooseMapState.numMaps = 0;
-        lobbyServerMapsListProvider(&s_chooseMapState, "", NULL);
+        /* WBN provider — walks the WBN HTTP catalogue. refreshEveryFrame
+         * because the listing lands asynchronously on a worker thread;
+         * the tab needs to surface cache updates without user action. */
+        mapChooserInit(&s_chooseMapWbnState, renderer);
+        s_chooseMapWbnState.maximizePtr      = &s_chooseMapMaximized;
+        s_chooseMapWbnState.hideExtras       = true;
+        s_chooseMapWbnState.leftPanelMaxW    = 300.0f;
+        s_chooseMapWbnState.provider.enumerate            = wbnMapsListProvider;
+        s_chooseMapWbnState.provider.onSelect             = lobbyWbnMapsOnSelect;
+        s_chooseMapWbnState.provider.onFolderJump         = lobbyWbnMapsOnFolderJump;
+        s_chooseMapWbnState.provider.refreshTooltipPrefix = lobbyWbnMapsTooltipPrefix;
+        s_chooseMapWbnState.provider.renderStatusFooter   = lobbyWbnMapsStatusFooter;
+        s_chooseMapWbnState.provider.tick                 = lobbyWbnMapsTick;
+        s_chooseMapWbnState.provider.refreshEveryFrame    = true;
+        SDL_strlcpy(s_chooseMapWbnState.crumbsRootLabel, "Maps",
+                    sizeof(s_chooseMapWbnState.crumbsRootLabel));
+        /* Force an initial discover for each provider — mapChooserInit
+         * ran discoverMaps before the providers were wired, so the
+         * states landed empty. */
+        s_chooseMapState.currentDir[0]       = '\0';
+        s_chooseMapUploadState.currentDir[0] = '\0';
+        mapChooserRefresh(&s_chooseMapState);
+        mapChooserRefresh(&s_chooseMapUploadState);
         /* Land the selection on Everard if it's still entry 0. */
         if (s_chooseMapState.numMaps > 0) {
             s_chooseMapState.selectedIdx = 0;
@@ -680,14 +1993,16 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
 }
 
 static void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
-    /* Cache the cs for the listProvider before EnsureInit so the
-     * first synchronous discover sees the network ctx. */
+    /* Cache the cs for providers before EnsureInit so the first
+     * synchronous discover sees the network ctx. */
     s_chooseMapCs = cs;
     lobbyChooseMapEnsureInit(renderer);
-    /* Refresh the listProviderCtx every time the chooser opens —
-     * EnsureInit only runs once, but cs may rebind across game
-     * sessions. */
-    s_chooseMapState.listProviderCtx = cs;
+    /* Refresh each provider's cs ctx every time the chooser opens —
+     * EnsureInit only runs once, but cs rebinds across game sessions.
+     * All three providers use cs as ctx in their onSelect path. */
+    s_chooseMapState.provider.ctx        = cs;
+    s_chooseMapUploadState.provider.ctx  = cs;
+    s_chooseMapWbnState.provider.ctx     = cs;
     /* Snapshot the currently active map so Cancel can restore it
      * once an undo packet exists. */
     const char *cur = cs ? clientSimGetMapName(cs) : "";
@@ -775,6 +2090,7 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
     MapChooserState *activeChooser = &s_chooseMapState;
     if (s_chooseMapActiveTab == 1)      activeChooser = &s_chooseMapUploadState;
     else if (s_chooseMapActiveTab == 2) activeChooser = &s_chooseMapRandomState;
+    else if (s_chooseMapActiveTab == 3) activeChooser = &s_chooseMapWbnState;
 
     if (activeChooser->previewView &&
         mapPreviewViewIsReady(activeChooser->previewView)) {
@@ -933,171 +2249,43 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     s_lastWinPos  = ImGui::GetWindowPos();
     s_lastWinSize = ImGui::GetWindowSize();
 
-    /* Reserve space at the bottom for the action buttons so the tab
-     * content gets the remaining region.  Compute the per-tab height
-     * inside the tab item so it accounts for the tab-header strip
-     * (otherwise the chooser overflows and forces a window scroll). */
+    /* Action bar height (Separator + button row) — reserved AT THE
+     * WINDOW LEVEL via a child container around the tab bar so the
+     * tab content fills its area down to its own bottom border. The
+     * old approach subtracted btnBarH inside each tab item, which
+     * left a gap of dead space between the chooser's bottom border
+     * and the buttons. */
     float btnBarH = ImGui::GetFrameHeight() + 14.0f * s;
+    ImGui::BeginChild("##MapChooserBody",
+                      ImVec2(0.0f, -btnBarH),
+                      ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar);
 
+    /* Tab switch detection. Clearing the new tab's preview on entry
+     * stops the prior visit's stale selection from showing through. */
+    static int s_lastActiveTab = -1;
+    int activeTabBefore = s_chooseMapActiveTab;
     if (ImGui::BeginTabBar("##MapChooserTabs", ImGuiTabBarFlags_None)) {
         if (ImGui::BeginTabItem("Server Maps")) {
             s_chooseMapActiveTab = 0;
-            /* Path breadcrumb is now rendered INSIDE the chooser
-             * widget (just above the search), so the separator and
-             * the lobby-side TextDisabled line are gone — saves
-             * three lines of vertical space and the wrapped path
-             * fits the list column directly. No tooltip on Server
-             * Maps — the path always reads "maps/...". */
-            s_chooseMapState.pathTooltipPrefix[0] = '\0';
-
-            float availW = ImGui::GetContentRegionAvail().x;
-            float availH = ImGui::GetContentRegionAvail().y - btnBarH;
-            if (availH < 120.0f) availH = 120.0f;
-            /* Server Maps: routes its directory listing through the
-             * server's serverSimEnumerateMapDir via the listProvider
-             * wired in lobbyChooseMapEnsureInit. In SP-host this is
-             * the local filesystem; in MP (once the network protocol
-             * lands) it'll be the actual server's library. */
-            bool changed = mapChooserRender(&s_chooseMapState, renderer,
-                                            availW, availH, s);
-            if (changed && cs) {
-                /* Pick-to-preview: the moment the user clicks a row,
-                 * the map is pushed to the server (SP: in-process
-                 * reload; MP: SET_MAP packet). The server stashes
-                 * the previously-committed map so Cancel can revert.
-                 * Set Map (= PREVIEW_COMMIT) just frees the stash;
-                 * the sim is already on the previewed map. */
-                const char *sel = s_chooseMapState.selectedPath;
-                if (sel && sel[0] != '\0') {
-                    if (clientSimIsSinglePlayer(cs)) {
-                        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-                        bool ok = (sim != NULL) && serverSimReloadMap(sim, sel);
-                        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                            "[LOBBY/CHOOSER] SP server-tab pick sel='%s' sim=%p reload=%d",
-                            sel, (void *)sim, (int)ok);
-                        if (ok) {
-                            serverSimPublishLobbySettings(sim);
-                            s_chooseMapPreviewPending = true;
-                        }
-                    } else {
-                        const char *relPath = sel;
-                        static const char kPrefix[] = "data/maps/";
-                        if (strncmp(relPath, kPrefix,
-                                    sizeof(kPrefix) - 1) == 0) {
-                            relPath += sizeof(kPrefix) - 1;
-                        }
-                        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                            "[LOBBY/CHOOSER] MP server-tab pick rel='%s'",
-                            relPath);
-                        clientSimNetSendLobbySetMap(cs, relPath);
-                        s_chooseMapPreviewPending = true;
-                    }
-                }
+            if (s_lastActiveTab != 0 && activeTabBefore != 0) {
+                lobbyMapTabClearSelection(&s_chooseMapState);
             }
+            lobbyRenderMapTab(&s_chooseMapState, renderer, s);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Upload")) {
             s_chooseMapActiveTab = 1;
-            /* Refresh the tooltip prefix every frame — SDL_GetCurrentDirectory
-             * returns a malloc'd path with a trailing separator; we
-             * trim it and concat /data/maps so the hover label shows
-             * exactly where local .map files should land. SDL returns
-             * NULL on platforms without a meaningful cwd, in which
-             * case the tooltip is suppressed. */
-            char *cwd = SDL_GetCurrentDirectory();
-            if (cwd) {
-                size_t cwdLen = SDL_strlen(cwd);
-                while (cwdLen > 0 &&
-                       (cwd[cwdLen - 1] == '/' || cwd[cwdLen - 1] == '\\')) {
-                    cwd[--cwdLen] = '\0';
-                }
-                SDL_snprintf(s_chooseMapUploadState.pathTooltipPrefix,
-                             sizeof(s_chooseMapUploadState.pathTooltipPrefix),
-                             "%s/data/maps", cwd);
-                SDL_free(cwd);
-            } else {
-                s_chooseMapUploadState.pathTooltipPrefix[0] = '\0';
+            if (s_lastActiveTab != 1 && activeTabBefore != 1) {
+                lobbyMapTabClearSelection(&s_chooseMapUploadState);
             }
-            /* Upload uses its OWN chooser state so its folder + search
-             * state stays separate from Server Maps. Selecting a row
-             * auto-kicks an upload (no separate button) — the server
-             * stashes the previous map and applies the uploaded one
-             * as a preview; Cancel rolls back, Set Map keeps it. */
-            float availW = ImGui::GetContentRegionAvail().x;
-            /* Reserve one line under the chooser for the upload-
-             * status text. */
-            float reserveBelow = ImGui::GetTextLineHeightWithSpacing() * 1.6f;
-            float availH = ImGui::GetContentRegionAvail().y
-                         - btnBarH - reserveBelow;
-            if (availH < 120.0f) availH = 120.0f;
-            bool uploadChanged = mapChooserRender(&s_chooseMapUploadState,
-                                                   renderer,
-                                                   availW, availH, s);
-            if (uploadChanged && cs) {
-                const char *picked = s_chooseMapUploadState.selectedPath;
-                if (picked && picked[0] != '\0') {
-                    if (clientSimIsSinglePlayer(cs)) {
-                        /* SP host: file is already on the local
-                         * filesystem the server reads from, so
-                         * skip the upload protocol and just load
-                         * it directly as a preview. */
-                        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-                        if (sim && serverSimReloadMap(sim, picked)) {
-                            serverSimPublishLobbySettings(sim);
-                            s_chooseMapPreviewPending = true;
-                        }
-                    } else if (clientSimHasTransport(cs)) {
-                        /* MP: stream the file to the server. On
-                         * completion the server auto-stashes its
-                         * previous map and reloads with the uploaded
-                         * bytes — the rest of the preview / commit /
-                         * cancel flow then works just like the
-                         * Server Maps tab. */
-                        uint8_t upStatus =
-                            clientSimGetLobbyMapUploadStatus(cs);
-                        bool inFlight =
-                            (upStatus == 1 || upStatus == 2);
-                        if (!inFlight) {
-                            lobbyUploadKick(cs, picked);
-                            s_chooseMapPreviewPending = true;
-                        }
-                    }
-                }
-            }
-
-            /* Status line under the chooser — only meaningful in MP
-             * (SP loads instantly). Reflects the upload state
-             * machine: 0=idle, 1=announce sent, 2=ack received
-             * (chunks in flight), 3=done, 4=rejected. */
-            if (cs && !clientSimIsSinglePlayer(cs) &&
-                clientSimHasTransport(cs)) {
-                uint8_t upStatus = clientSimGetLobbyMapUploadStatus(cs);
-                const char *statusMsg = "";
-                ImVec4 statusCol(0.8f, 0.8f, 0.8f, 1.0f);
-                switch (upStatus) {
-                    /* The in-flight "Uploading: ..." messages flash by
-                     * for a tick or two on a typical map and just feel
-                     * like noise — preview takes over immediately
-                     * after. Only the rejection case still surfaces
-                     * because the user needs to know it failed. */
-                    case 4:
-                        statusMsg = "Upload rejected by server.";
-                        statusCol = ImVec4(0.9f, 0.5f, 0.5f, 1.0f);
-                        break;
-                    default:
-                        statusMsg = "";
-                        break;
-                }
-                if (statusMsg[0]) {
-                    ImGui::TextColored(statusCol, "%s", statusMsg);
-                }
-            }
+            lobbyRenderMapTab(&s_chooseMapUploadState, renderer, s);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Generate")) {
             s_chooseMapActiveTab = 2;
             float availW = ImGui::GetContentRegionAvail().x;
-            float availH = ImGui::GetContentRegionAvail().y - btnBarH;
+            float availH = ImGui::GetContentRegionAvail().y;
             if (availH < 120.0f) availH = 120.0f;
             /* Renders generator controls on the left (where the
              * other tabs show their file list) and the procedural
@@ -1132,8 +2320,24 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             }
             ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("Winbolo.net Maps")) {
+            s_chooseMapActiveTab = 3;
+            if (s_lastActiveTab != 3 && activeTabBefore != 3) {
+                lobbyMapTabClearSelection(&s_chooseMapWbnState);
+            }
+            lobbyRenderMapTab(&s_chooseMapWbnState, renderer, s);
+
+            ImGui::EndTabItem();
+        }
         ImGui::EndTabBar();
     }
+    s_lastActiveTab = s_chooseMapActiveTab;
+    ImGui::EndChild(); /* ##MapChooserBody */
+
+    /* Status footer for the active tab, rendered between the chooser
+     * body and the action bar so the chooser's bottom border sits
+     * flush against the buttons when no footer is visible. */
+    lobbyRenderActiveTabFooter();
 
     /* Action bar: Cancel rolls back the server's preview; Set Map
      * commits it. Selecting any row already pushed the map to the
@@ -3356,6 +4560,12 @@ static void renderGameSettingsPanel(ClientSim *cs,
                                     &oh)) {
                     clientSimNetSendLobbyOpenHost(cs, oh);
                 }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "When on, every connected player can edit lobby\n"
+                        "settings — including changing the map, adding\n"
+                        "or removing bots, and switching teams.");
+                }
             }
         }
     }
@@ -4845,19 +6055,21 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 #endif
 
         /* --- Map preview popup --- */
-        mapPreviewPopupRenderModal(renderer);
-        /* If the user clicked "Change" inside the modal, flip to the
-         * Choose Map dialog. Gated on the local edit-authority check
-         * so non-privileged players who somehow saw the popup don't
-         * end up in a no-op chooser they can't apply from. */
-        if (mapPreviewPopupConsumeChangeRequest()) {
+        {
+            /* Local edit-authority — drives both whether the "Change"
+             * button renders inside the popup and whether the chooser
+             * actually opens on a Change request. "Allow players to
+             * change game settings" (openHost) extends this beyond
+             * the host slot to every connected player. */
             bool isHostLocal  = (myPlayerNum == 0);
-            bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
+            bool isAdminLocal = (cs && myPlayerNum < MAX_TANKS &&
                 (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
                  & PLAYER_FLAG_ADMIN));
             bool effHostMap = isHostLocal || isAdminLocal ||
-                              clientSimGetLobbyOpenHost(cs);
-            if (effHostMap) {
+                              (cs && clientSimGetLobbyOpenHost(cs));
+            mapPreviewPopupSetShowChange(effHostMap);
+            mapPreviewPopupRenderModal(renderer);
+            if (mapPreviewPopupConsumeChangeRequest() && effHostMap) {
                 lobbyChooseMapOpen(cs, renderer);
             }
         }
