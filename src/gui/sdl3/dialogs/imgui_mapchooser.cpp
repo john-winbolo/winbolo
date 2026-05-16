@@ -27,7 +27,14 @@
 #include <ctime>
 #include <cmath>
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <map>
+#include <mutex>
 #include <string>
+#include <thread>
+#include <vector>
 #if defined(__IPHONEOS__)
 #include <dirent.h>
 #endif
@@ -49,7 +56,312 @@ extern "C" {
 }
 #include "../../../mapeditor/mapeditor_imgui.h"
 
+extern "C" {
+#include "../../../third_party/stb/stb_image_write.h"
+#include "../../../third_party/stb/stb_image.h"
+}
+
 #define PREVIEW_SIZE 256
+
+/* ─── Per-row thumbnail cache ───────────────────────────────────────
+ * Disk-cached at data/preview_cache/<hash>.png. On a cache miss, the
+ * provider's generatePreview hook is invoked on a single worker
+ * thread; on success the PNG is written to disk and the UI thread
+ * decodes it into an SDL_Texture next frame. Live across the dialog
+ * lifetime; textures are owned here and reset on shutdown.
+ *
+ * The cache is provider-agnostic — keyed by the entry's `path`
+ * field — so all three tabs reuse the same code. */
+namespace {
+
+constexpr const char *kCacheDir = "data/preview_cache";
+
+enum PreviewState {
+    PrevNotRequested = 0,
+    PrevInFlight,
+    PrevReady,
+    PrevFailed,
+};
+
+struct PreviewEntry {
+    PreviewState  state = PrevNotRequested;
+    SDL_Texture  *tex   = nullptr;
+    /* On-disk filename derived from path+mtime — stashed so PollDisk
+     * can reload the PNG without re-hashing. Empty when the entry
+     * was created via the warm-start disk path that already loaded
+     * the texture inline. */
+    std::string   cacheFile;
+};
+
+struct PreviewRequest {
+    std::string         key;          /* entry->path (unadorned, for provider) */
+    std::string         compositeKey; /* path|mtime (in-memory map key) */
+    std::string         cacheFile;    /* full path under kCacheDir */
+    MapFsProvider       provider;     /* captured by value — function ptrs + ctx */
+};
+
+static std::mutex                       gCacheMutex;
+static std::map<std::string, PreviewEntry> gCache;          /* key → state/tex */
+static std::deque<PreviewRequest>       gRequestQueue;
+static std::condition_variable          gQueueCv;
+static std::atomic<bool>                gWorkerRun{false};
+static std::thread                      gWorker;
+
+/* djb2 of the path mixed with the entry's modTime. Including mtime
+ * invalidates the cache automatically when a local .map is edited in
+ * place. WBN rows have mtime=0 (or the upload timestamp, which is
+ * also stable) so the hash is just the path-derived value there. */
+static std::string hashKeyToFilename(const std::string &key,
+                                      int64_t modTime) {
+    uint64_t h = 5381;
+    for (char c : key) h = ((h << 5) + h) + (unsigned char)c;
+    uint64_t m = (uint64_t)modTime;
+    for (int i = 0; i < 8; i++) {
+        h = ((h << 5) + h) + (unsigned char)(m & 0xFF);
+        m >>= 8;
+    }
+    char buf[32];
+    SDL_snprintf(buf, sizeof(buf), "%016llx.png",
+                 (unsigned long long)h);
+    return std::string(buf);
+}
+
+static std::string cachePathFor(const std::string &key, int64_t modTime) {
+    std::string s = kCacheDir;
+    s += '/';
+    s += hashKeyToFilename(key, modTime);
+    return s;
+}
+
+/* Try to decode the cached PNG into an SDL_Texture. Returns nullptr
+ * on missing file or any decode error (caller treats both as "miss"
+ * and either re-requests generation or marks failed). */
+static SDL_Texture *loadCachedTexture(SDL_Renderer *renderer,
+                                      const std::string &cacheFile) {
+    int w = 0, h = 0, ch = 0;
+    unsigned char *rgba = stbi_load(cacheFile.c_str(), &w, &h, &ch, 4);
+    if (!rgba) return nullptr;
+    SDL_Surface *surf = SDL_CreateSurfaceFrom(
+        w, h, SDL_PIXELFORMAT_RGBA32, rgba, w * 4);
+    SDL_Texture *tex = surf ? SDL_CreateTextureFromSurface(renderer, surf) : nullptr;
+    if (surf) SDL_DestroySurface(surf);
+    stbi_image_free(rgba);
+    return tex;
+}
+
+static void writeCachePng(const std::string &cacheFile,
+                          const MapPreviewPixels &pix) {
+    /* Ensure the dir exists — idempotent. */
+    SDL_CreateDirectory(kCacheDir);
+    /* TODO: crop the image to the smallest rect enclosing all
+     * non-deep-water tiles before writing, so each row's thumbnail
+     * focuses on the interesting part of the map. (Skipped for v1.) */
+    stbi_write_png(cacheFile.c_str(), pix.w, pix.h, 4,
+                   pix.pixels, pix.w * 4);
+}
+
+static void workerThreadMain(void) {
+    while (gWorkerRun.load()) {
+        PreviewRequest req;
+        {
+            std::unique_lock<std::mutex> lk(gCacheMutex);
+            gQueueCv.wait(lk, [] {
+                return !gWorkerRun.load() || !gRequestQueue.empty();
+            });
+            if (!gWorkerRun.load()) return;
+            req = std::move(gRequestQueue.front());
+            gRequestQueue.pop_front();
+        }
+
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            "[PREVIEW-WORKER] >>> key='%s' gen=%p ctx=%p",
+            req.key.c_str(),
+            (void *)(uintptr_t)req.provider.generatePreview,
+            req.provider.ctx);
+        bool ok = false;
+        MapPreviewPixels buf = {0, 0, nullptr};
+        if (req.provider.generatePreview) {
+            ok = req.provider.generatePreview(req.key.c_str(), &buf,
+                                              req.provider.ctx);
+        } else {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "[PREVIEW-WORKER]     NO GEN HOOK — skipping");
+        }
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            "[PREVIEW-WORKER] <<< key='%s' ok=%d w=%d h=%d pixels=%p",
+            req.key.c_str(), (int)ok, buf.w, buf.h, (void *)buf.pixels);
+        if (ok && buf.pixels && buf.w > 0 && buf.h > 0) {
+            writeCachePng(req.cacheFile, buf);
+            SDL_free(buf.pixels);
+        } else if (buf.pixels) {
+            SDL_free(buf.pixels);
+        }
+
+        /* Either way the UI thread re-checks the disk on the next
+         * mapPreviewCacheGet call. Mark the in-memory state Ready or
+         * Failed so we don't re-enqueue infinitely. */
+        std::lock_guard<std::mutex> lk(gCacheMutex);
+        auto it = gCache.find(req.compositeKey);
+        if (it != gCache.end()) {
+            it->second.state = ok ? PrevReady : PrevFailed;
+        }
+    }
+}
+
+static void cacheStartWorker(void) {
+    if (gWorkerRun.load()) return;
+    gWorkerRun.store(true);
+    gWorker = std::thread(workerThreadMain);
+}
+
+static void cacheStopWorker(void) {
+    if (!gWorkerRun.load()) return;
+    gWorkerRun.store(false);
+    {
+        std::lock_guard<std::mutex> lk(gCacheMutex);
+        gRequestQueue.clear();
+    }
+    gQueueCv.notify_all();
+    if (gWorker.joinable()) gWorker.join();
+}
+
+}  /* anonymous namespace */
+
+/* Public: look up (and lazily request) a thumbnail texture for
+ * `key`. Returns nullptr while the cache is still building it; the
+ * caller (row renderer) just skips drawing the image that frame
+ * and tries again next frame. Always cheap — no work happens on the
+ * UI thread beyond a small map lookup + occasional PNG decode. */
+/* Compose the in-memory cache key from path + mtime. Including mtime
+ * means editing a .map invalidates its thumbnail automatically: the
+ * new composite key misses both the in-memory map and the disk file
+ * (which is also derived from mtime via cachePathFor). */
+static std::string composeCacheKey(const char *path, int64_t modTime) {
+    std::string s = path ? path : "";
+    s += '|';
+    char buf[24];
+    SDL_snprintf(buf, sizeof(buf), "%lld", (long long)modTime);
+    s += buf;
+    return s;
+}
+
+static SDL_Texture *mapPreviewCacheGet(SDL_Renderer *renderer,
+                                        const char *key,
+                                        int64_t modTime,
+                                        const MapFsProvider *provider) {
+    if (!key || !*key || !provider) return nullptr;
+    cacheStartWorker();
+
+    std::string k = composeCacheKey(key, modTime);
+    {
+        std::lock_guard<std::mutex> lk(gCacheMutex);
+        auto it = gCache.find(k);
+        if (it != gCache.end()) {
+            /* Throttled log so frame-loop spam stays sane; one line
+             * per second per (key, state) is plenty to see the flow. */
+            static int s_hitTick = 0;
+            if (++s_hitTick % 60 == 1) {
+                const char *stateName =
+                    it->second.state == PrevReady     ? "READY"     :
+                    it->second.state == PrevInFlight  ? "INFLIGHT"  :
+                    it->second.state == PrevFailed    ? "FAILED"    :
+                                                         "?";
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[CACHE-HIT mem] key='%s' state=%s tex=%p",
+                    key, stateName, (void *)it->second.tex);
+            }
+            return it->second.tex;  /* nullptr while InFlight/Failed */
+        }
+    }
+
+    /* Not seen this entry yet — try disk first (warm-start path). */
+    std::string cacheFile = cachePathFor(key, modTime);
+    SDL_Texture *tex = loadCachedTexture(renderer, cacheFile);
+    if (tex) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            "[CACHE-HIT disk] key='%s' file='%s' tex=%p",
+            key, cacheFile.c_str(), (void *)tex);
+        std::lock_guard<std::mutex> lk(gCacheMutex);
+        PreviewEntry e;
+        e.state     = PrevReady;
+        e.tex       = tex;
+        e.cacheFile = cacheFile;
+        gCache[k]   = std::move(e);
+        return tex;
+    }
+
+    /* Disk miss — enqueue a generation request. Worker fills the PNG
+     * on disk; the next mapPreviewCacheGet call for this key picks
+     * it up via the disk path above. */
+    if (!provider->generatePreview) {
+        std::lock_guard<std::mutex> lk(gCacheMutex);
+        PreviewEntry e;
+        e.state = PrevFailed;
+        gCache[k] = std::move(e);
+        return nullptr;
+    }
+    {
+        std::lock_guard<std::mutex> lk(gCacheMutex);
+        PreviewEntry e;
+        e.state     = PrevInFlight;
+        e.tex       = nullptr;
+        e.cacheFile = cacheFile;
+        gCache[k]   = std::move(e);
+
+        PreviewRequest req;
+        /* The generatePreview hook gets the unadorned path — it
+         * doesn't need to know about the cache key composition. */
+        req.key          = key;
+        req.compositeKey = k;
+        req.cacheFile    = cacheFile;
+        req.provider     = *provider;
+        gRequestQueue.push_back(std::move(req));
+    }
+    gQueueCv.notify_one();
+    return nullptr;
+}
+
+/* Worker wrote a PNG to disk for an InFlight entry — poll for those
+ * and upgrade them to Ready (with a decoded texture). Called from
+ * the row-render loop so promotions piggy-back the natural traffic
+ * rather than running a separate timer. */
+static void mapPreviewCachePollDisk(SDL_Renderer *renderer) {
+    /* Snapshot pending keys + their on-disk paths. Stash the cache
+     * filename per entry so we can reload without recomputing the
+     * hash (we'd need the mtime, which the in-memory key encodes
+     * but is awkward to parse back out). */
+    std::vector<std::pair<std::string, std::string>> readyKeys;
+    {
+        std::lock_guard<std::mutex> lk(gCacheMutex);
+        for (auto &kv : gCache) {
+            if (kv.second.state == PrevReady && !kv.second.tex
+                && !kv.second.cacheFile.empty()) {
+                readyKeys.emplace_back(kv.first, kv.second.cacheFile);
+            }
+        }
+    }
+    for (const auto &kf : readyKeys) {
+        SDL_Texture *tex = loadCachedTexture(renderer, kf.second);
+        std::lock_guard<std::mutex> lk(gCacheMutex);
+        auto it = gCache.find(kf.first);
+        if (it != gCache.end()) it->second.tex = tex;
+    }
+}
+
+/* Drop all in-memory textures + cancel pending work. Called from
+ * mapChooserDestroy on the last surviving state. Doesn't touch the
+ * on-disk PNGs — those are intentionally persistent. */
+static void mapPreviewCacheShutdown(SDL_Renderer * /*renderer*/) {
+    cacheStopWorker();
+    std::lock_guard<std::mutex> lk(gCacheMutex);
+    for (auto &kv : gCache) {
+        if (kv.second.tex) {
+            SDL_DestroyTexture(kv.second.tex);
+            kv.second.tex = nullptr;
+        }
+    }
+    gCache.clear();
+}
 
 /* Build a minimap preview texture from a .map file path.
  * Delegates to the shared minimap renderer. */
@@ -180,6 +492,104 @@ static void discoverMapsRecursive(MapChooserState *state,
         }
     }
     SDL_free(list);
+}
+
+/* Lazily-loaded SVG icons for the list / grid view toggle. Cached
+ * for the lifetime of the renderer they were uploaded against; we
+ * track the renderer to invalidate cleanly if it ever changes. */
+static SDL_Texture *s_iconListView = nullptr;
+static SDL_Texture *s_iconGridView = nullptr;
+static SDL_Texture *s_iconFolder   = nullptr;
+static SDL_Renderer *s_iconsRenderer = nullptr;
+
+static void loadViewModeIconsOnce(SDL_Renderer *renderer, int sizePx) {
+    if (s_iconsRenderer == renderer &&
+        s_iconListView && s_iconGridView && s_iconFolder)
+        return;
+    if (s_iconsRenderer != renderer) {
+        if (s_iconListView) { SDL_DestroyTexture(s_iconListView); s_iconListView = nullptr; }
+        if (s_iconGridView) { SDL_DestroyTexture(s_iconGridView); s_iconGridView = nullptr; }
+        if (s_iconFolder)   { SDL_DestroyTexture(s_iconFolder);   s_iconFolder   = nullptr; }
+        s_iconsRenderer = renderer;
+    }
+    if (!s_iconListView) {
+        s_iconListView = imguiLoadSvgIconWhite(renderer,
+            "data/ui/list-view.svg", sizePx);
+        if (!s_iconListView) {
+            char buf[FILENAME_MAX];
+            const char *base = SDL_GetBasePath();
+            if (base) {
+                SDL_snprintf(buf, sizeof(buf),
+                             "%sdata/ui/list-view.svg", base);
+                s_iconListView = imguiLoadSvgIconWhite(renderer, buf, sizePx);
+            }
+        }
+    }
+    if (!s_iconGridView) {
+        s_iconGridView = imguiLoadSvgIconWhite(renderer,
+            "data/ui/grid-view.svg", sizePx);
+        if (!s_iconGridView) {
+            char buf[FILENAME_MAX];
+            const char *base = SDL_GetBasePath();
+            if (base) {
+                SDL_snprintf(buf, sizeof(buf),
+                             "%sdata/ui/grid-view.svg", base);
+                s_iconGridView = imguiLoadSvgIconWhite(renderer, buf, sizePx);
+            }
+        }
+    }
+    if (!s_iconFolder) {
+        /* Folder icon is rendered at the row's text height; pick a
+         * size matching that rather than the toggle's iconPx. */
+        int folderPx = (int)ImGui::GetTextLineHeight();
+        if (folderPx < 12) folderPx = 12;
+        s_iconFolder = imguiLoadSvgIconWhite(renderer,
+            "data/ui/icon-folder.svg", folderPx);
+        if (!s_iconFolder) {
+            char buf[FILENAME_MAX];
+            const char *base = SDL_GetBasePath();
+            if (base) {
+                SDL_snprintf(buf, sizeof(buf),
+                             "%sdata/ui/icon-folder.svg", base);
+                s_iconFolder = imguiLoadSvgIconWhite(renderer, buf, folderPx);
+            }
+        }
+    }
+}
+
+/* Render the list/grid view-mode toggle as two SVG icon buttons.
+ * Mutates state->viewMode. The grid view isn't implemented yet —
+ * the click is captured but the row layout still draws as a list.
+ * Falls back to text labels when the SVG files can't be loaded. */
+static void renderViewModeToggle(MapChooserState *state,
+                                  SDL_Renderer *renderer) {
+    const int iconPx = (int)(ImGui::GetFrameHeight() - 6.0f);
+    loadViewModeIconsOnce(renderer, iconPx);
+
+    auto drawBtn = [&](const char *id, SDL_Texture *icon,
+                        const char *fallback, int mode,
+                        const char *tooltip) {
+        bool active = (state->viewMode == mode);
+        if (active) {
+            ImGui::PushStyleColor(ImGuiCol_Button,
+                ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        }
+        bool clicked = false;
+        if (icon) {
+            ImVec2 sz((float)iconPx, (float)iconPx);
+            clicked = ImGui::ImageButton(id, (ImTextureID)icon, sz);
+        } else {
+            clicked = ImGui::Button(fallback);
+        }
+        if (active) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
+        if (clicked) state->viewMode = mode;
+    };
+
+    drawBtn("##mcViewList", s_iconListView, "List", 0, "List view");
+    ImGui::SameLine();
+    drawBtn("##mcViewGrid", s_iconGridView, "Grid", 1,
+            "Grid view (coming soon)");
 }
 
 /* Render a "/" -separated path as a row of clickable segment
@@ -843,6 +1253,13 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
      * for whichever row is hovered this frame. -1 means none. */
     state->lastHoveredIdx = -1;
 
+    /* Promote any thumbnail that the worker thread finished writing
+     * to disk since the last frame. Cheap when nothing's pending. */
+    /* Always poll — both grid view (inline thumbs) and list view
+     * (hover-preview tooltips) need cache-ready promotions. Cheap
+     * when nothing's pending. */
+    mapPreviewCachePollDisk(renderer);
+
     /* Handle file dialog result */
     if (state->fileDialogGotResult) {
         state->fileDialogGotResult = false;
@@ -1145,6 +1562,196 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                                    | ImGuiTableFlags_SortTristate
                                    | ImGuiTableFlags_BordersInnerH
                                    | ImGuiTableFlags_BordersInnerV;
+        /* List / grid view-mode toggle, directly above the
+         * list/grid area. */
+        renderViewModeToggle(state, renderer);
+
+        /* Grid view branches off here entirely — a flowable
+         * thumbnail layout. List view continues into the table
+         * block below. */
+        if (state->viewMode == 1) {
+            const float kCellThumb = 256.0f;
+            const float kCellPad   = 6.0f;
+            const float kCellW     = kCellThumb + kCellPad * 2.0f;
+            const float kLabelH    = ImGui::GetTextLineHeightWithSpacing();
+            const float kCellH     = kCellThumb + kCellPad * 2.0f + kLabelH;
+
+            ImGui::BeginChild("##MapGridScroll", ImVec2(0.0f, 0.0f),
+                              ImGuiChildFlags_None,
+                              ImGuiWindowFlags_HorizontalScrollbar);
+            float availW = ImGui::GetContentRegionAvail().x;
+            float curX   = 0.0f;
+            ImGuiStyle &style = ImGui::GetStyle();
+            float gap = style.ItemSpacing.x;
+
+            for (int i = 0; i < state->numMaps; i++) {
+                const MapChooserEntry &ent = state->maps[i];
+                if (hasFilter) {
+                    /* Same case-insensitive substring check the
+                     * list view applies. */
+                    const char *hay = ent.name;
+                    size_t needleLen = SDL_strlen(state->searchFilter);
+                    bool match = false;
+                    for (size_t k = 0; hay[k] != '\0'; k++) {
+                        size_t j;
+                        for (j = 0; j < needleLen; j++) {
+                            char a = hay[k + j];
+                            if (a == '\0') break;
+                            if (SDL_tolower((unsigned char)a)
+                                != SDL_tolower((unsigned char)
+                                state->searchFilter[j])) break;
+                        }
+                        if (j == needleLen) { match = true; break; }
+                    }
+                    if (!match) continue;
+                }
+                if (!state->searchRecursive && !ent.isParentUp) {
+                    if (SDL_strchr(ent.name, '/') ||
+                        SDL_strchr(ent.name, '\\')) continue;
+                }
+
+                /* Wrap to a new row when the next cell would
+                 * overflow horizontally. curX == 0 means we're
+                 * already at the left edge. */
+                if (curX > 0.0f && curX + kCellW > availW) {
+                    ImGui::NewLine();
+                    curX = 0.0f;
+                }
+                if (curX > 0.0f) {
+                    ImGui::SameLine();
+                }
+
+                ImVec2 cellStart = ImGui::GetCursorScreenPos();
+                char id[32];
+                SDL_snprintf(id, sizeof(id), "##gcell%d", i);
+                bool selected = (!ent.isFolder) &&
+                                (i == state->selectedIdx);
+                bool clicked = ImGui::Selectable(id, selected, 0,
+                    ImVec2(kCellW, kCellH));
+                bool cellHovered = ImGui::IsItemHovered();
+
+                /* Draw the thumbnail centred in the top portion of
+                 * the cell. Folder cells use the folder icon as a
+                 * larger glyph; file cells pull from the preview
+                 * cache. Parent-up cells get a "[..]" placeholder. */
+                ImDrawList *dl = ImGui::GetWindowDrawList();
+                ImVec2 imgTL(cellStart.x + kCellPad,
+                              cellStart.y + kCellPad);
+                ImVec2 imgBR(imgTL.x + kCellThumb,
+                              imgTL.y + kCellThumb);
+
+                if (ent.isParentUp) {
+                    /* Centred "[..]" text inside the thumb area. */
+                    const char *upLbl = "[..]";
+                    ImVec2 ts = ImGui::CalcTextSize(upLbl);
+                    dl->AddText(
+                        ImVec2(imgTL.x + (kCellThumb - ts.x) * 0.5f,
+                               imgTL.y + (kCellThumb - ts.y) * 0.5f),
+                        ImGui::GetColorU32(ImGuiCol_Text), upLbl);
+                } else if (ent.isFolder) {
+                    if (s_iconFolder) {
+                        float fs = kCellThumb * 0.7f;
+                        ImVec2 ftl(imgTL.x + (kCellThumb - fs) * 0.5f,
+                                    imgTL.y + (kCellThumb - fs) * 0.5f);
+                        dl->AddImage((ImTextureID)s_iconFolder, ftl,
+                            ImVec2(ftl.x + fs, ftl.y + fs));
+                    }
+                } else if (state->provider.generatePreview &&
+                           ent.path[0] != '\0') {
+                    SDL_Texture *thumb = mapPreviewCacheGet(renderer,
+                        ent.path, ent.modTime, &state->provider);
+                    if (thumb) {
+                        float texW = 0.0f, texH = 0.0f;
+                        SDL_GetTextureSize(thumb, &texW, &texH);
+                        float scale = 1.0f;
+                        if (texW > 0.0f && texH > 0.0f) {
+                            float maxDim = (texW > texH) ? texW : texH;
+                            scale = kCellThumb / maxDim;
+                        }
+                        float drawW = texW * scale;
+                        float drawH = texH * scale;
+                        ImVec2 t(imgTL.x + (kCellThumb - drawW) * 0.5f,
+                                  imgTL.y + (kCellThumb - drawH) * 0.5f);
+                        dl->AddImage((ImTextureID)thumb, t,
+                            ImVec2(t.x + drawW, t.y + drawH));
+                    }
+                }
+
+                /* Label below the thumb. Centred + truncated to
+                 * cell width. */
+                {
+                    const char *lbl = ent.name;
+                    ImVec2 ts = ImGui::CalcTextSize(lbl);
+                    float lx = cellStart.x +
+                               (kCellW - ts.x) * 0.5f;
+                    if (lx < cellStart.x + kCellPad)
+                        lx = cellStart.x + kCellPad;
+                    ImVec2 lpos(lx, cellStart.y + kCellPad
+                                     + kCellThumb + 2.0f);
+                    /* PushClipRect bounds the text to the cell. */
+                    ImVec2 clipMin(cellStart.x + kCellPad, lpos.y);
+                    ImVec2 clipMax(cellStart.x + kCellW - kCellPad,
+                                    cellStart.y + kCellH - kCellPad);
+                    dl->PushClipRect(clipMin, clipMax, true);
+                    dl->AddText(lpos,
+                        ImGui::GetColorU32(ImGuiCol_Text), lbl);
+                    dl->PopClipRect();
+                }
+
+                /* No hover tooltip in grid view — the inline
+                 * thumbnail already shows the preview at full size,
+                 * so a popup would be redundant. */
+                (void)cellHovered;
+
+                /* Click handling: same logic as list view —
+                 * folders navigate, files select + onSelect. */
+                if (clicked) {
+                    if (ent.isFolder) {
+                        SDL_strlcpy(state->currentDir, ent.path,
+                                    sizeof(state->currentDir));
+                        discoverMaps(state);
+                        state->searchFilter[0] = '\0';
+                        int firstFile = -1;
+                        for (int j = 0; j < state->numMaps; j++) {
+                            if (!state->maps[j].isFolder) {
+                                firstFile = j; break;
+                            }
+                        }
+                        state->selectedIdx = (firstFile >= 0) ? firstFile : 0;
+                        if (firstFile >= 0) {
+                            SDL_strlcpy(state->selectedPath,
+                                state->maps[firstFile].path,
+                                sizeof(state->selectedPath));
+                            SDL_strlcpy(state->selectedName,
+                                state->maps[firstFile].name,
+                                sizeof(state->selectedName));
+                        } else {
+                            state->selectedPath[0] = '\0';
+                            state->selectedName[0] = '\0';
+                        }
+                        updatePreview(state, renderer);
+                        changed = true;
+                    } else if (state->selectedIdx != i) {
+                        state->selectedIdx = i;
+                        SDL_strlcpy(state->selectedPath, ent.path,
+                                    FILENAME_MAX);
+                        SDL_strlcpy(state->selectedName, ent.name,
+                                    sizeof(state->selectedName));
+                        updatePreview(state, renderer);
+                        changed = true;
+                        if (state->provider.onSelect) {
+                            state->provider.onSelect(state,
+                                state->provider.ctx);
+                        }
+                    }
+                }
+
+                curX += kCellW + gap;
+            }
+            ImGui::EndChild();
+        } else
+        /* ── List view (the original table) ──────────────── */
+        if (true) {
         const int kNumCols = state->showModifiedColumn ? 2 : 1;
         if (ImGui::BeginTable("##MapTable", kNumCols, tableFlags)) {
             ImGui::TableSetupColumn("Name",
@@ -1252,20 +1859,22 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                     if (!match) continue;
                 }
 
+                /* List view rows are name-only; preview lives in
+                 * the hover tooltip below, and the grid view (a
+                 * separate code path above) is what shows inline
+                 * thumbnails. Default row height suffices. */
                 ImGui::TableNextRow();
 
                 /* Column 0 — selectable name, spans the row so a
-                 * click anywhere on the line picks the entry.
-                 * Folders show a "[Folder] " prefix until a proper
-                 * icon lands; the synthetic parent reads as "[..]". */
+                 * click anywhere on the line picks the entry. The
+                 * synthetic parent reads as "[..]"; other folder
+                 * rows get a small folder icon overlaid before the
+                 * name (drawn after the Selectable below). */
                 ImGui::TableSetColumnIndex(0);
                 char displayBuf[160];
-                if (ent.isFolder && !ent.isParentUp) {
-                    SDL_snprintf(displayBuf, sizeof(displayBuf),
-                                 "[Folder] %s", ent.name);
-                } else {
-                    SDL_strlcpy(displayBuf, ent.name, sizeof(displayBuf));
-                }
+                bool wantFolderIcon = ent.isFolder && !ent.isParentUp
+                                    && s_iconFolder != nullptr;
+                SDL_strlcpy(displayBuf, ent.name, sizeof(displayBuf));
                 /* ImGui clips text to the cell width automatically,
                  * so a long name silently truncates and a hover
                  * tooltip with the full name kicks in below. */
@@ -1273,6 +1882,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 SDL_snprintf(selId, sizeof(selId), "##sel%d", i);
                 bool selected = (!ent.isFolder) &&
                                 (i == state->selectedIdx);
+                ImVec2 rowStart = ImGui::GetCursorScreenPos();
                 bool clicked = ImGui::Selectable(selId, selected,
                     ImGuiSelectableFlags_SpanAllColumns);
                 /* Capture the Selectable's hover rect for the row
@@ -1281,61 +1891,56 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                  * right side of short rows. */
                 bool rowHovered = ImGui::IsItemHovered();
                 ImGui::SameLine(0.0f, 0.0f);
+                /* For folder rows, advance the cursor past the
+                 * icon + a 4 px breathing gap before drawing the
+                 * name. Using cursor positioning instead of leading
+                 * spaces keeps the gap consistent across fonts. */
+                if (wantFolderIcon) {
+                    float iconSz = ImGui::GetTextLineHeight();
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX()
+                                          + iconSz + 8.0f);
+                }
                 ImGui::TextUnformatted(displayBuf);
+                /* Folder icon drawn directly into the space we just
+                 * skipped, at row baseline. */
+                if (wantFolderIcon) {
+                    float iconSz = ImGui::GetTextLineHeight();
+                    ImVec2 iconPos(rowStart.x + 2.0f,
+                                   rowStart.y);
+                    ImGui::GetWindowDrawList()->AddImage(
+                        (ImTextureID)s_iconFolder,
+                        iconPos,
+                        ImVec2(iconPos.x + iconSz,
+                               iconPos.y + iconSz));
+                }
                 if (rowHovered) {
-                    static int s_hoverLogTick = 0;
-                    if (++s_hoverLogTick % 60 == 1) {
-                        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                            "[CHOOSER-HOVER] idx=%d name='%s' crumbs='%s' "
-                            "rootLbl='%s' searchRec=%d filter='%s'",
-                            i, ent.name, ent.crumbsPath,
-                            state->crumbsRootLabel,
-                            (int)state->searchRecursive,
-                            state->searchFilter);
-                    }
                     state->lastHoveredIdx = i;
-                    /* Tooltip is only useful in recursive-search mode
-                     * — that's where a row's enclosing folder isn't
-                     * already implied by the current directory.  In
-                     * normal folder browsing every row lives in the
-                     * folder the user just navigated to, so the
-                     * "in <folder>" line would be redundant. */
-                    bool tooltipMode = state->searchRecursive &&
-                                        state->searchFilter[0] != '\0';
-                    if (tooltipMode && !ent.isParentUp) {
-                        ImGui::BeginTooltip();
-                        /* Full path = <crumbsRootLabel>/<crumbsPath>/<name>.
-                         * Falls back to just the displayBuf when the row
-                         * has no folder context (root-level hits). */
-                        char fullPath[FILENAME_MAX];
-                        const char *root = state->crumbsRootLabel;
-                        const char *crumbs = ent.crumbsPath;
-                        if (root[0] != '\0' && crumbs[0] != '\0') {
-                            SDL_snprintf(fullPath, sizeof(fullPath),
-                                         "%s / %s / %s",
-                                         root, crumbs, ent.name);
-                        } else if (root[0] != '\0') {
-                            SDL_snprintf(fullPath, sizeof(fullPath),
-                                         "%s / %s", root, ent.name);
-                        } else if (crumbs[0] != '\0') {
-                            SDL_snprintf(fullPath, sizeof(fullPath),
-                                         "%s / %s", crumbs, ent.name);
-                        } else {
-                            SDL_strlcpy(fullPath, displayBuf, sizeof(fullPath));
-                        }
-                        ImGui::TextUnformatted(fullPath);
-                        if (ent.modTime > 0) {
-                            SDL_DateTime dt;
-                            if (SDL_TimeToDateTime((SDL_Time)ent.modTime,
-                                                   &dt, true)) {
-                                ImGui::TextDisabled(
-                                    "Created: %04d-%02d-%02d %02d:%02d",
-                                    dt.year, dt.month, dt.day,
-                                    dt.hour, dt.minute);
-                            }
-                        }
-                        ImGui::EndTooltip();
+                    /* Throttled log so we can see WHICH rows fire
+                     * hover and how often — diagnose missed hovers
+                     * vs boundary double-fires. */
+                    static int s_rowHvrTick = 0;
+                    if (++s_rowHvrTick % 30 == 1) {
+                        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "[ROW-HOVER] idx=%d name='%s' "
+                            "isFolder=%d isParentUp=%d",
+                            i, ent.name,
+                            (int)ent.isFolder, (int)ent.isParentUp);
                     }
+                    /* Hover tooltip — two cases share one popup:
+                     *   - In recursive-search mode, surface the
+                     *     enclosing folder so the user can tell hits
+                     *     in different folders apart.
+                     *   - In list view on any file row, also include
+                     *     a large preview image when the cache has
+                     *     one for this row. Free since we already
+                     *     generated the bytes for the inline thumb. */
+                    /* Don't open the tooltip inline — at a row-row
+                     * boundary, both adjacent Selectables briefly
+                     * report hovered=true and we'd stack two popups.
+                     * Just record this iteration's index in
+                     * state->lastHoveredIdx; the LAST iteration to
+                     * set it wins, and the tooltip is rendered once
+                     * after the table loop finishes. */
                 }
 
                 /* Column 1 — formatted mtime. SDL_TimeToDateTime
@@ -1408,6 +2013,79 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             }
             ImGui::EndTable();
         }
+
+        /* Hover tooltip — one popup per frame, shown for whichever
+         * row was the last to report itself hovered. Two adjacent
+         * Selectables touching at a pixel boundary both fire
+         * IsItemHovered briefly, so we defer the BeginTooltip until
+         * after the loop and let the later row win. */
+        {
+            static int s_postHvrTick = 0;
+            if (++s_postHvrTick % 30 == 1) {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[POST-LOOP-HOVER] lastHoveredIdx=%d numMaps=%d",
+                    state->lastHoveredIdx, state->numMaps);
+            }
+        }
+        if (state->lastHoveredIdx >= 0 &&
+            state->lastHoveredIdx < state->numMaps) {
+            const MapChooserEntry &ent =
+                state->maps[state->lastHoveredIdx];
+            bool searchMode = state->searchRecursive &&
+                               state->searchFilter[0] != '\0';
+            bool fileRow    = !ent.isFolder && !ent.isParentUp
+                              && ent.path[0] != '\0';
+            SDL_Texture *hoverTex = nullptr;
+            if (fileRow && state->provider.generatePreview) {
+                hoverTex = mapPreviewCacheGet(renderer,
+                    ent.path, ent.modTime, &state->provider);
+            }
+            bool showTooltip = (searchMode && !ent.isParentUp)
+                               || hoverTex != nullptr;
+            if (showTooltip) {
+                ImGui::BeginTooltip();
+                char fullPath[FILENAME_MAX];
+                const char *root = state->crumbsRootLabel;
+                const char *crumbs = ent.crumbsPath;
+                if (root[0] != '\0' && crumbs[0] != '\0') {
+                    SDL_snprintf(fullPath, sizeof(fullPath),
+                                 "%s / %s / %s", root, crumbs, ent.name);
+                } else if (root[0] != '\0') {
+                    SDL_snprintf(fullPath, sizeof(fullPath),
+                                 "%s / %s", root, ent.name);
+                } else if (crumbs[0] != '\0') {
+                    SDL_snprintf(fullPath, sizeof(fullPath),
+                                 "%s / %s", crumbs, ent.name);
+                } else {
+                    SDL_strlcpy(fullPath, ent.name, sizeof(fullPath));
+                }
+                ImGui::TextUnformatted(fullPath);
+                if (ent.modTime > 0) {
+                    SDL_DateTime dt;
+                    if (SDL_TimeToDateTime((SDL_Time)ent.modTime,
+                                           &dt, true)) {
+                        ImGui::TextDisabled(
+                            "Created: %04d-%02d-%02d %02d:%02d",
+                            dt.year, dt.month, dt.day,
+                            dt.hour, dt.minute);
+                    }
+                }
+                if (hoverTex) {
+                    float texW = 0.0f, texH = 0.0f;
+                    SDL_GetTextureSize(hoverTex, &texW, &texH);
+                    const float kHoverMax = 512.0f;
+                    float scale = 1.0f;
+                    if (texW > 0.0f && texH > 0.0f) {
+                        float maxDim = (texW > texH) ? texW : texH;
+                        if (maxDim > kHoverMax) scale = kHoverMax / maxDim;
+                    }
+                    ImGui::Image((ImTextureID)hoverTex,
+                        ImVec2(texW * scale, texH * scale));
+                }
+                ImGui::EndTooltip();
+            }
+        }
+        } /* end list-view branch */
     }
 
     ImGui::EndChild(); /* ##MapLeft */
@@ -1701,20 +2379,6 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 SDL_strlcpy(tmp, state->crumbsRootLabel, sizeof(tmp));
             }
             SDL_strlcpy(crumbsRendered, tmp, sizeof(crumbsRendered));
-        }
-        static int s_crumbLogTick = 0;
-        if (++s_crumbLogTick % 60 == 1) {
-            const char *entPath = (state->selectedIdx >= 0 &&
-                state->selectedIdx < state->numMaps)
-                ? state->maps[state->selectedIdx].path : "(none)";
-            const char *entCrumbs = (state->selectedIdx >= 0 &&
-                state->selectedIdx < state->numMaps)
-                ? state->maps[state->selectedIdx].crumbsPath : "(none)";
-            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                "[CHOOSER-CRUMB] selIdx=%d path='%s' entCrumbs='%s' "
-                "rendered='%s' activeStored='%s'",
-                state->selectedIdx, entPath, entCrumbs,
-                crumbsRendered, state->activeCrumbsPath);
         }
         if (crumbsRendered[0] != '\0') {
             /* Right-anchored on the same Y line as the stats. */

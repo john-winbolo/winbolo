@@ -87,6 +87,16 @@ typedef struct MapChooserState_s MapChooserState;
  *                   the user moving the mouse. Set for the WBN
  *                   provider (network fetch lands on a worker thread).
  */
+/* Per-row preview buffer. The cache hands ownership of the
+ * malloc'd pixel buffer to the caller; the provider's
+ * generatePreview implementation fills this in. Pixels are RGBA32,
+ * row-major, width*height*4 bytes. The cache disposes of `pixels`
+ * with SDL_free when it's done. */
+typedef struct {
+    int      w, h;
+    uint8_t *pixels;
+} MapPreviewPixels;
+
 typedef struct MapFsProvider_s MapFsProvider;
 struct MapFsProvider_s {
     void *ctx;
@@ -95,6 +105,18 @@ struct MapFsProvider_s {
     void (*onSelect)(MapChooserState *state, void *ctx);
     void (*onFolderJump)(MapChooserState *state, const char *jumpPath,
                           void *ctx);
+    /* Optional. Called on the preview-cache worker thread (NOT the
+     * UI thread) when an on-screen row needs its thumbnail built and
+     * the disk cache doesn't already have one for this key. Must be
+     * thread-safe — no ImGui, no SDL_Renderer/SDL_Texture work.
+     * `entryPath` is the entry's `path` field (e.g. "data/maps/foo.map"
+     * for Upload/Server, "wbn:298" for WBN). On success, fill outBuf
+     * with malloc'd (SDL_malloc) RGBA pixels and return true; the
+     * cache then writes a PNG to disk and creates the texture on
+     * the UI thread next frame. Return false to mark this key as
+     * unavailable (the cache won't retry). */
+    bool (*generatePreview)(const char *entryPath,
+                            MapPreviewPixels *outBuf, void *ctx);
     /* Optional. Called once per frame before the chooser renders;
      * the implementation writes state->pathTooltipPrefix (the hover
      * tooltip on the path label above the search box) to whatever
@@ -266,6 +288,15 @@ struct MapChooserState_s {
      * tab, so a row in the Uploads folder reads "Maps / Uploads"
      * instead of just "Uploads". Empty = no prefix. */
     char            crumbsRootLabel[64];
+
+    /* List vs grid view selector.
+     *   0 = list — vertical table of names; hover pops a preview
+     *       tooltip on file rows (lazily generated + cached).
+     *   1 = grid — flow layout of preview thumbnails with names
+     *       below, packed as many across as the panel width fits.
+     * The user toggles via two SVG icon buttons at the top of the
+     * chooser panel. */
+    int             viewMode;
 };
 
 /* Initialize the map chooser state. Discovers available maps.

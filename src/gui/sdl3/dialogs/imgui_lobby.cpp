@@ -55,6 +55,17 @@ extern "C" {
 #include "../flags.h"
 #include "../sdl3imgui.h"
 #include "../minimap_render.h"
+#include "../../../bolo/public/client_mappreview.h"
+#include <errno.h>
+
+/* stb_image entry points used by lobbyWbnGeneratePreview (defined in
+ * src/third_party/stb/stb_image_impl.c). Declared at file scope so
+ * they're visible to provider code earlier in the file. */
+extern "C" {
+    unsigned char *stbi_load_from_memory(const unsigned char *, int,
+                                         int *, int *, int *, int);
+    void stbi_image_free(void *);
+}
 #include "../map_preview_popup.h"
 #include "../../lang.h"
 #include "imgui_lobby.h"
@@ -710,6 +721,47 @@ static void lobbyServerMapsOnFolderJump(MapChooserState *state,
     SDL_strlcpy(state->currentDir, jp, sizeof(state->currentDir));
 }
 
+/* generatePreview for the Server Maps provider. Runs on the
+ * preview-cache worker thread. TODO: ask the server (or SP-host
+ * ServerSim) for the compressed map bytes for `entryPath`, then
+ * rasterise via minimapRenderPixels — the same code the Upload
+ * provider uses. For SP-host this could just call
+ * clientMapPreviewLoadFromFile on the resolved on-disk path; for
+ * MP we'd need a new packet (e.g. PACKET_LOBBY_MAP_PREVIEW_REQ /
+ * _DONE) so the server streams the compressed bytes back without
+ * triggering a full SET_MAP. Returning false marks the row
+ * unavailable; the cache won't retry. */
+static bool lobbyServerMapsGeneratePreview(const char *entryPath,
+                                            MapPreviewPixels *outBuf,
+                                            void *ctx) {
+    (void)outBuf; (void)ctx;
+    /* TODO: server-side preview generation. The Server Maps tab
+     * must NOT side-step the server even in SP-host mode — the
+     * server might be on the other side of the world in MP, and
+     * the architecture should be the same in both cases.
+     *
+     * Planned flow:
+     *   1. Client sends PACKET_LOBBY_MAP_PREVIEW_REQ{relPath}.
+     *   2. Server has its own data/preview_cache/<hash>.png mirror
+     *      keyed by relPath + mtime. If the PNG exists, send it.
+     *   3. Cache miss: server reads the .map, runs the same
+     *      minimapRenderPixels rasterizer the client uses, writes
+     *      the PNG, sends it.
+     *   4. Server -> client: PACKET_LOBBY_MAP_PREVIEW_DONE{relPath,
+     *      png_bytes}.
+     *   5. Provider's generatePreview here just queues the request
+     *      (via clientSim) and returns false the first time; on the
+     *      response arrival the cached entry is invalidated so the
+     *      next render-frame retries and finds the bytes.
+     *
+     * Until that's wired, mark every request Failed so we don't
+     * spam the queue. */
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        "[SM-PREVIEW] stub: server-side preview protocol not wired yet for '%s'",
+        entryPath ? entryPath : "(null)");
+    return false;
+}
+
 /* No tooltip on the Server Maps path label — the path always reads
  * "maps/..." which is already self-describing. */
 static void lobbyServerMapsTooltipPrefix(MapChooserState *state, void *ctx) {
@@ -763,6 +815,85 @@ static void lobbyUploadTooltipPrefix(MapChooserState *state, void *ctx) {
     } else {
         state->pathTooltipPrefix[0] = '\0';
     }
+}
+
+/* generatePreview for the Upload provider. Runs on the chooser's
+ * preview-cache worker thread. Loads the .map file from disk and
+ * rasterises a 256x256 minimap via the shared renderer. The
+ * resulting pixels are handed to the cache, which writes the PNG
+ * to data/preview_cache/<hash>.png. */
+static bool lobbyUploadGeneratePreview(const char *entryPath,
+                                        MapPreviewPixels *outBuf,
+                                        void *ctx) {
+    (void)ctx;
+    if (!entryPath || !*entryPath || !outBuf) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            "[UPL-PREVIEW] reject: null/empty path");
+        return false;
+    }
+    /* --- Diagnostic: open the file ourselves first so we can isolate
+     *     fopen failures from map-format failures. Logs errno + a
+     *     hexdump of the first 12 bytes (which should read BMAPBOLO
+     *     + version + counts).  --- */
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        "[UPL-PREVIEW] enter path='%s'", entryPath);
+    FILE *fp = fopen(entryPath, "rb");
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        "[UPL-PREVIEW] fopen='%s' fp=%p errno=%d",
+        entryPath, (void *)fp, errno);
+    if (fp) {
+        unsigned char hdr[12] = {0};
+        size_t r = fread(hdr, 1, sizeof(hdr), fp);
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            "[UPL-PREVIEW]   first %zu bytes: "
+            "%02x %02x %02x %02x %02x %02x %02x %02x  "
+            "ver=%u pills=%u bases=%u starts=%u",
+            r,
+            hdr[0], hdr[1], hdr[2], hdr[3],
+            hdr[4], hdr[5], hdr[6], hdr[7],
+            hdr[8], hdr[9], hdr[10], hdr[11]);
+        fclose(fp);
+    } else {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            "[UPL-PREVIEW]   fopen failed, skipping load");
+        return false;
+    }
+
+    /* Real load via the shared API used by the preview pane. */
+    MapPreview *mp = clientMapPreviewLoadFromFile(entryPath);
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        "[UPL-PREVIEW] clientMapPreviewLoadFromFile -> %p", (void *)mp);
+    if (!mp) {
+        /* Retry with backslashes in case the bolo mapRead path
+         * is sensitive to separator style on Windows. */
+#if defined(_WIN32)
+        char winPath[FILENAME_MAX];
+        SDL_strlcpy(winPath, entryPath, sizeof(winPath));
+        for (char *p = winPath; *p; p++) if (*p == '/') *p = '\\';
+        mp = clientMapPreviewLoadFromFile(winPath);
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            "[UPL-PREVIEW] retry winPath='%s' -> %p",
+            winPath, (void *)mp);
+#endif
+        if (!mp) return false;
+    }
+    size_t bufSz = MINIMAP_SIZE * MINIMAP_SIZE * 4;
+    uint8_t *pixels = (uint8_t *)SDL_malloc(bufSz);
+    if (!pixels) {
+        clientMapPreviewDestroy(mp);
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            "[UPL-PREVIEW] SDL_malloc failed");
+        return false;
+    }
+    minimapRenderPixels(mp, pixels, NULL, 0);
+    clientMapPreviewDestroy(mp);
+    outBuf->w      = MINIMAP_SIZE;
+    outBuf->h      = MINIMAP_SIZE;
+    outBuf->pixels = pixels;
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        "[UPL-PREVIEW] OK path='%s' w=%d h=%d",
+        entryPath, outBuf->w, outBuf->h);
+    return true;
 }
 
 /* MP-only rejection footer. SP loads instantly; in-flight "Uploading…"
@@ -1786,6 +1917,58 @@ static void lobbyWbnMapsOnFolderJump(MapChooserState *state,
     SDL_strlcpy(state->currentDir, jp, sizeof(state->currentDir));
 }
 
+/* generatePreview for the WBN provider. Runs on the chooser's
+ * preview-cache worker thread. Hits /api/v1/maps/img/<id>, decodes
+ * the response (any format stbi understands — PNG today) and hands
+ * the RGBA pixels off to the cache. */
+static bool lobbyWbnGeneratePreview(const char *entryPath,
+                                     MapPreviewPixels *outBuf,
+                                     void *ctx) {
+    (void)ctx;
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        "[WBN-PREVIEW] enter path='%s'", entryPath ? entryPath : "(null)");
+    if (!entryPath || !outBuf) return false;
+    static const char kPrefix[] = "wbn:";
+    if (SDL_strncmp(entryPath, kPrefix, sizeof(kPrefix) - 1) != 0) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            "[WBN-PREVIEW]   not a wbn: key, skipping");
+        return false;
+    }
+    int mapId = SDL_atoi(entryPath + sizeof(kPrefix) - 1);
+    if (mapId <= 0) return false;
+    char apiPath[64];
+    SDL_snprintf(apiPath, sizeof(apiPath), "maps/img/%d", mapId);
+    uint8_t *imgBytes = NULL;
+    size_t   imgLen   = 0;
+    int status = wbn_api_download_to_memory(apiPath, &imgBytes, &imgLen);
+    if (status != 200 || !imgBytes || imgLen == 0) {
+        if (imgBytes) free(imgBytes);
+        return false;
+    }
+    int w = 0, h = 0, ch = 0;
+    uint8_t *decoded = stbi_load_from_memory(imgBytes,
+                                              (int)imgLen,
+                                              &w, &h, &ch, 4);
+    free(imgBytes);
+    if (!decoded || w <= 0 || h <= 0) {
+        if (decoded) stbi_image_free(decoded);
+        return false;
+    }
+    /* Copy into an SDL_malloc'd buffer so the cache can SDL_free it. */
+    size_t bufSz = (size_t)w * (size_t)h * 4;
+    uint8_t *pixels = (uint8_t *)SDL_malloc(bufSz);
+    if (!pixels) {
+        stbi_image_free(decoded);
+        return false;
+    }
+    memcpy(pixels, decoded, bufSz);
+    stbi_image_free(decoded);
+    outBuf->w      = w;
+    outBuf->h      = h;
+    outBuf->pixels = pixels;
+    return true;
+}
+
 /* WBN tick: drain any completed background download. Always called
  * on the UI thread; SP applies bytes in-process, MP feeds them into
  * the regular MAP_UPLOAD protocol. */
@@ -1920,6 +2103,7 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapState.provider.onSelect             = lobbyServerMapsOnSelect;
         s_chooseMapState.provider.onFolderJump         = lobbyServerMapsOnFolderJump;
         s_chooseMapState.provider.refreshTooltipPrefix = lobbyServerMapsTooltipPrefix;
+        s_chooseMapState.provider.generatePreview      = lobbyServerMapsGeneratePreview;
         s_chooseMapState.provider.ctx                  = s_chooseMapCs;
         SDL_strlcpy(s_chooseMapState.crumbsRootLabel, "Maps",
                     sizeof(s_chooseMapState.crumbsRootLabel));
@@ -1932,6 +2116,7 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapUploadState.provider.onFolderJump         = lobbyUploadOnFolderJump;
         s_chooseMapUploadState.provider.refreshTooltipPrefix = lobbyUploadTooltipPrefix;
         s_chooseMapUploadState.provider.renderStatusFooter   = lobbyUploadStatusFooter;
+        s_chooseMapUploadState.provider.generatePreview      = lobbyUploadGeneratePreview;
         SDL_strlcpy(s_chooseMapUploadState.crumbsRootLabel, "Maps",
                     sizeof(s_chooseMapUploadState.crumbsRootLabel));
         /* "Load from device" + "Generate Random Map" exist as dedicated
@@ -1968,6 +2153,7 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapWbnState.provider.refreshTooltipPrefix = lobbyWbnMapsTooltipPrefix;
         s_chooseMapWbnState.provider.renderStatusFooter   = lobbyWbnMapsStatusFooter;
         s_chooseMapWbnState.provider.tick                 = lobbyWbnMapsTick;
+        s_chooseMapWbnState.provider.generatePreview      = lobbyWbnGeneratePreview;
         s_chooseMapWbnState.provider.refreshEveryFrame    = true;
         SDL_strlcpy(s_chooseMapWbnState.crumbsRootLabel, "Maps",
                     sizeof(s_chooseMapWbnState.crumbsRootLabel));
