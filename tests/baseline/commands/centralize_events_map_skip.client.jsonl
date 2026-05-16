@@ -1,0 +1,7 @@
+# centralize_events_map_skip scenario (--fast and UDP).
+# Local player toggles its map-skip vote. --fast routes through
+# serverSimMapSkipVoteToggle + publish; --server routes through
+# clientSimNetSendMapSkipVote which the UDP server handler
+# toggles and broadcasts CTRL_MAP_SKIP_STATE for.
+{"tick": 30, "op": "map_skip_vote", "slot": 0}
+{"tick": 80, "op": "exit"}

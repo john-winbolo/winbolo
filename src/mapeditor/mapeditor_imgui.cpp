@@ -29,8 +29,8 @@
 #include "imgui_impl_sdlrenderer3.h"
 
 #include "mapeditor_imgui.h"
-#include "mapeditor_generate.h"
-#include "mapeditor_maze.h"
+#include "mapgen.h"
+#include "mapgen_maze.h"
 #include "mapeditor_text.h"
 #include "mapeditor_fonts.h"
 #include "mapeditor_validate.h"
@@ -2644,7 +2644,7 @@ int mapEditorImguiStampLibrary(StampLibrary *lib, void *rendererPtr,
                 else fname = s_stampImportPath;
 
                 char destPath[512];
-                snprintf(destPath, sizeof(destPath), "%s/%s", userDir, fname);
+                snprintf(destPath, sizeof(destPath), "%.255s/%.255s", userDir, fname);
 
                 /* Copy file */
                 FILE *src = fopen(s_stampImportPath, "rb");

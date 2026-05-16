@@ -50,6 +50,8 @@ add_library(bolo_static STATIC
     labels.c
     lgm.c
     log.c
+    mapgen.c
+    mapgen_maze.c
     messages.c
     mines.c
     minesexp.c
@@ -75,6 +77,7 @@ add_library(bolo_static STATIC
     swamp.c
     tank.c
     tankexp.c
+    transport_control_codec.c
     transport_local.c
     transport_udp_common.c
     treegrow.c

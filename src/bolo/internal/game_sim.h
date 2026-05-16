@@ -122,6 +122,12 @@ struct GameSim {
     /* Whether the UI is in a menu (engine checks this during tick) */
     bool        isInMenu;
 
+    /* When TRUE, tankUpdate returns early so shell, mine and timer
+     * progression freezes. The frontend toggles this around modal
+     * tutorial dialogs so the world doesn't drift while the player
+     * reads a message. */
+    bool        paused;
+
     /* True when this sim is driving the built-in tutorial. The server
      * uses it to halt the player's tank at each tutorial trigger row;
      * the client uses it to gate the frontEndTutorial dialog sequence.

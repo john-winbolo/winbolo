@@ -34,6 +34,7 @@
 #include "netpacks.h"
 #include "gametype.h"
 #include "client_connect_state.h"
+#include "server_sim.h"      /* SubscriberHandle */
 
 /* Forward declarations */
 struct ClientSim;
@@ -223,7 +224,7 @@ void transportUdpClientGetGameSettings(Transport *t, gameType *game,
 #define PING_KICK_COUNT         5     /* consecutive pings at kick threshold before kick */
 
 /* Per-client connection info tracked by the server */
-typedef struct {
+typedef struct UdpServerClient {
     struct sockaddr_in addr;
     bool connected;
     uint8_t playerNum;
@@ -249,6 +250,11 @@ typedef struct {
      * intentional, not a bug. */
     uint8_t clientType;          /* immutable after JOIN_REQUEST */
     uint8_t clientHints;         /* immutable after JOIN_REQUEST; SUPPORTER|STEAM_BUILD only */
+    SubscriberHandle controlSub; /* per-client subscription on the server's
+                                  * control-event bus; the deliver callback
+                                  * encodes via the codec table and unicasts
+                                  * to this client.  SUBSCRIBER_HANDLE_INVALID
+                                  * when no subscription is active. */
 } UdpServerClient;
 
 /* Creates a server-side UDP transport.
@@ -315,32 +321,25 @@ BYTE transportUdpServerGetMaxPlayers(void);
  * Disconnects clients that haven't sent packets within CLIENT_TIMEOUT_TICKS. */
 void transportUdpServerCheckTimeouts(struct ServerSim *sim);
 
-/* ---- Lobby broadcast functions ---- */
+/* Reset per-client and per-slot state for a fresh game.  Marks every
+ * connected client as needing a player-list refresh, flags map download
+ * complete, and clears reliable / map event queue sequence numbers for
+ * all slots.  Callers run this on the countdown→running transition
+ * before publishing the CTRL_GAME_PHASE(RUNNING) event so the resets
+ * land before the codec encodes PACKET_GAME_START. */
+void transportUdpServerOnGameStart(struct ServerSim *sim);
 
-/* Broadcast full lobby state snapshot to all connected clients. */
-void transportUdpServerBroadcastLobbyState(struct ServerSim *sim);
+/* Refresh the server's compressed map data and re-prime each connected
+ * client for download (resend JOIN_ACCEPT, reset chunk tracking).
+ * Callers run this before publishing CTRL_LOBBY_MAP_CHANGE so the
+ * per-client prep work lands before the codec encodes the
+ * PACKET_LOBBY_MAP_CHANGE notification through the subscriber path. */
+void transportUdpServerOnLobbyMapChange(struct ServerSim *sim);
 
-/* Broadcast a single-player lobby update to all connected clients. */
-void transportUdpServerBroadcastLobbyUpdate(struct ServerSim *sim, BYTE playerNum);
-
-/* Broadcast countdown seconds remaining to all connected clients. */
-void transportUdpServerBroadcastCountdown(struct ServerSim *sim, uint8_t secondsRemaining);
-
-/* Broadcast game start signal to all connected clients. */
-void transportUdpServerBroadcastGameStart(struct ServerSim *sim);
-
-/* Broadcast game over signal to all connected clients. */
-void transportUdpServerBroadcastGameOver(struct ServerSim *sim);
-
-/* Notify all connected clients that the map has changed, refresh the
- * server's compressed map data, and trigger re-download for each client. */
-void transportUdpServerNotifyMapChange(struct ServerSim *sim);
-
-/* Broadcast a team balance proposal (one team assignment per slot) to all clients. */
-void transportUdpServerBroadcastBalanceProposal(struct ServerSim *sim, uint8_t teamForSlot[MAX_TANKS]);
-
-/* Broadcast the current map skip vote state (one byte per slot) to all clients. */
-void transportUdpServerBroadcastMapSkipState(struct ServerSim *sim);
+/* Wire-only fan-out for the periodic lobby refresh — drives the codec
+ * encoders directly so cosmetic ping/country updates don't wake the
+ * in-process control-event bus.  Called from server_lifecycle.c. */
+void transportUdpServerSendPeriodicLobbyRefresh(struct ServerSim *sim);
 
 /* Set a bot's name in the server transport client array so it appears
  * in lobby state/update broadcasts. Call after botManagerAddBot(). */

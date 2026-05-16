@@ -67,7 +67,7 @@
 #include "interpolation.h"
 #include "position_history.h"
 #include "screenbullet.h"
-#include "../mapeditor/mapeditor_generate.h"
+#include "mapgen.h"
 #include "../common/wb_log.h"
 #include "server_dedicated_log.h"
 
@@ -324,6 +324,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->originalGameLength = gameLen;
     sim->tickLimit = 0;
     sim->ticksRun = 0;
+    sim->gameTickLimit = 0;
+    sim->gameTicksRun = 0;
     sim->tick = 0;
     sim->state = serverStateLobby;
     sim->lobbyEnabled = TRUE;
@@ -464,7 +466,7 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
     return sim;
 }
 
-ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, const char *mapName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
     ServerSim *sim = (ServerSim *)malloc(sizeof(ServerSim));
     if (sim == NULL) {
         return NULL;
@@ -474,6 +476,11 @@ ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, gameType game, boo
     if (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss, buff, buffLen) == FALSE) {
         serverSimDestroy(sim);
         return NULL;
+    }
+
+    if (mapName != NULL && mapName[0] != '\0') {
+        strncpy(sim->mapName, mapName, MAP_STR_SIZE - 1);
+        sim->mapName[MAP_STR_SIZE - 1] = '\0';
     }
 
     basesClearMines(&sim->sim);
@@ -527,7 +534,7 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
     sim->sim.ss->numStarts = 0;
 
     /* Generate the map */
-    mapEditorGenerate(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, cfg);
+    mapGenRun(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, cfg);
 
     /* Run generated objects through the same init path as file-loaded maps
      * (pillsSetPill / basesSetBase / startsSetStart) so game-logic fields
@@ -605,7 +612,7 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
     sim->sim.pb->numPills = 0;
     sim->sim.bs->numBases = 0;
     sim->sim.ss->numStarts = 0;
-    mapEditorGenerate(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, &cfg);
+    mapGenRun(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, &cfg);
 
     /* Run generated objects through the same init path as file-loaded maps */
     {
@@ -845,6 +852,23 @@ void serverSimTick(ServerSim *sim) {
             sim->tickLimit = 0;
             mapSetChangeCallback(NULL);
             serverSimConsoleMessage(ticksMsg);
+            serverSimEnterGameOver(sim);
+            sim->tick++;
+            return;
+        }
+    }
+
+    if (sim->gameTickLimit > 0) {
+        sim->gameTicksRun++;
+        if (sim->gameTicksRun >= sim->gameTickLimit) {
+            char gameTicksMsg[64];
+            snprintf(gameTicksMsg, sizeof(gameTicksMsg),
+                     "Game tick limit reached (%d). Ending game.",
+                     (int)sim->gameTickLimit);
+            sim->gameTickLimit = 0;
+            sim->gameTicksRun = 0;
+            mapSetChangeCallback(NULL);
+            serverSimConsoleMessage(gameTicksMsg);
             serverSimEnterGameOver(sim);
             sim->tick++;
             return;
@@ -1329,7 +1353,14 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     /* Broadcast current skip vote state to the new player — existing votes
      * are preserved since the threshold naturally adjusts with more players. */
     if (sim->lobbyEnabled && sim->state == serverStateLobby && (sim->mapDirCount > 1 || sim->randomMapEnabled)) {
-        transportUdpServerBroadcastMapSkipState(sim);
+        ControlEvent skipEvt;
+        BYTE k;
+        memset(&skipEvt, 0, sizeof(skipEvt));
+        skipEvt.type = CTRL_MAP_SKIP_STATE;
+        for (k = 0; k < MAX_TANKS; k++) {
+            skipEvt.u.mapSkipState.votes[k] = sim->mapSkipVotes[k] ? 1 : 0;
+        }
+        serverSimPublishControl(sim, &skipEvt);
     }
 
     /* Notify in-process subscribers that a player joined. The just-added
@@ -1355,6 +1386,17 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     }
     logAddEvent(log_PlayerLeaving, playerNum, 0, 0, 0, 0, NULL);
     logAddEvent(log_PlayerQuit, playerNum, 0, 0, 0, 0, NULL);
+
+    /* Publish before clearing the slot — the filler reads the player's
+     * name and country out of sim->sim.plyrs->item[playerNum], which is
+     * still valid here and gets zeroed later in this function. */
+    {
+        ControlEvent leaveEvt;
+        memset(&leaveEvt, 0, sizeof(leaveEvt));
+        serverSimFillPlayerLeaveEvent(sim, playerNum, &leaveEvt);
+        serverSimPublishControl(sim, &leaveEvt);
+    }
+
     sim->playerConnected[playerNum] = FALSE;
     if (sim->sim.tanks[playerNum] != NULL) {
         tankDestroy(&sim->sim, &sim->sim.tanks[playerNum]);
@@ -1463,8 +1505,23 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
                 serverSimMapDirPickRandom(sim);
             }
             serverSimMapSkipVotesReset(sim);
-            transportUdpServerNotifyMapChange(sim);
-            transportUdpServerBroadcastMapSkipState(sim);
+            transportUdpServerOnLobbyMapChange(sim);
+            {
+                ControlEvent mapEvt;
+                memset(&mapEvt, 0, sizeof(mapEvt));
+                mapEvt.type = CTRL_LOBBY_MAP_CHANGE;
+                serverSimPublishControl(sim, &mapEvt);
+            }
+            {
+                ControlEvent skipEvt;
+                BYTE m;
+                memset(&skipEvt, 0, sizeof(skipEvt));
+                skipEvt.type = CTRL_MAP_SKIP_STATE;
+                for (m = 0; m < MAX_TANKS; m++) {
+                    skipEvt.u.mapSkipState.votes[m] = sim->mapSkipVotes[m] ? 1 : 0;
+                }
+                serverSimPublishControl(sim, &skipEvt);
+            }
             winbolonetSendMapChange(sim->mapName,
                 basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb),
                 basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb));
@@ -1730,6 +1787,11 @@ void serverSimSetServerPort(ServerSim *sim, unsigned short port) {
 
 void serverSimSetTickLimit(ServerSim *sim, int32_t ticks) {
     sim->tickLimit = ticks;
+}
+
+void serverSimSetGameTickLimit(ServerSim *sim, int32_t ticks) {
+    sim->gameTickLimit = ticks;
+    sim->gameTicksRun = 0;
 }
 
 void serverSimSetUserLogFileName(ServerSim *sim, const char *name) {
@@ -2310,9 +2372,10 @@ void serverSimEnterGameOver(ServerSim *sim) {
         sim->state = serverStateGameOver;
         sim->countdownTicks = GAMEOVER_HOLD_TICKS;
         serverSimConsoleMessage("Game over! Returning to lobby...");
-        /* PACKET_GAME_OVER broadcast is sent by transport layer
-         * via transportUdpServerBroadcastGameOver() called from
-         * the transport recv/tick path when state changes. */
+        /* CTRL_GAME_PHASE(GAME_OVER) and CTRL_GAME_OVER are published
+         * by the server lifecycle when it observes the state change;
+         * the per-client codec subscriber turns each into the matching
+         * wire packet (PACKET_GAME_OVER). */
     }
 }
 
@@ -2355,11 +2418,18 @@ void serverSimReturnToLobby(ServerSim *sim) {
     /* Regenerate random map between rounds */
     if (sim->randomMapEnabled) {
         serverSimRandomMapRegenerate(sim);
-        transportUdpServerNotifyMapChange(sim);
+        transportUdpServerOnLobbyMapChange(sim);
+        {
+            ControlEvent evt;
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_LOBBY_MAP_CHANGE;
+            serverSimPublishControl(sim, &evt);
+        }
     }
 
     serverSimConsoleMessage("Returned to lobby.");
-    /* PACKET_LOBBY_STATE broadcast is sent by transport layer */
+    /* Lobby state fan-out happens via the control-event bus — the
+     * caller publishes CTRL_LOBBY_SLOT + CTRL_LOBBY_SETTINGS. */
 
     serverDedicatedLogOnReturnToLobby(sim);
 }
@@ -2947,8 +3017,23 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
             logAddEvent(log_MapSkipApplied, 0, 0, 0, 0, 0, pstr);
         }
         serverSimMapSkipVotesReset(sim);
-        transportUdpServerNotifyMapChange(sim);
-        transportUdpServerBroadcastMapSkipState(sim);
+        transportUdpServerOnLobbyMapChange(sim);
+        {
+            ControlEvent mapEvt;
+            memset(&mapEvt, 0, sizeof(mapEvt));
+            mapEvt.type = CTRL_LOBBY_MAP_CHANGE;
+            serverSimPublishControl(sim, &mapEvt);
+        }
+        {
+            ControlEvent skipEvt;
+            BYTE m;
+            memset(&skipEvt, 0, sizeof(skipEvt));
+            skipEvt.type = CTRL_MAP_SKIP_STATE;
+            for (m = 0; m < MAX_TANKS; m++) {
+                skipEvt.u.mapSkipState.votes[m] = sim->mapSkipVotes[m] ? 1 : 0;
+            }
+            serverSimPublishControl(sim, &skipEvt);
+        }
         winbolonetSendMapChange(sim->mapName,
             basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb),
             basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb));
@@ -3073,6 +3158,17 @@ void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
         }
     }
     evt->u.playerJoin.numAllies = numAllies;
+}
+
+void serverSimFillPlayerLeaveEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
+    evt->type = CTRL_PLAYER_LEAVE;
+    evt->u.playerLeave.playerNum = i;
+    memset(evt->u.playerLeave.name, 0, PACKET_MAX_PLAYER_NAME);
+    strncpy(evt->u.playerLeave.name, sim->sim.plyrs->item[i].playerName,
+            PACKET_MAX_PLAYER_NAME - 1);
+    evt->u.playerLeave.country[0] = sim->sim.plyrs->item[i].location[0];
+    evt->u.playerLeave.country[1] = sim->sim.plyrs->item[i].location[1];
+    evt->u.playerLeave.country[2] = '\0';
 }
 
 /* Wrapper used to enforce the documented sync ordering:
@@ -3219,6 +3315,53 @@ void serverSimUnregisterSubscriber(ServerSim *sim, SubscriberHandle h) {
     if (sim->numSubscribers > 0) {
         sim->numSubscribers--;
     }
+}
+
+void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember) {
+    GameSim *gs;
+    ControlEvent evt;
+    if (sim == NULL) {
+        return;
+    }
+    gs = serverSimGetGameSim(sim);
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, accepter, newMember, TRUE);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_ALLIANCE_ACCEPT;
+    evt.u.allianceAccept.acceptedBy = accepter;
+    evt.u.allianceAccept.newMember  = newMember;
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
+    GameSim *gs;
+    ControlEvent evt;
+    if (sim == NULL) {
+        return;
+    }
+    gs = serverSimGetGameSim(sim);
+    playersLeaveAlliance(gs, &gs->plyrs, NEUTRAL, playerNum, TRUE);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_ALLIANCE_LEAVE;
+    evt.u.allianceLeave.playerNum = playerNum;
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimSetPlayerName(ServerSim *sim, BYTE playerNum, const char *name) {
+    GameSim *gs;
+    ControlEvent evt;
+    char nameBuf[PACKET_MAX_PLAYER_NAME];
+    if (sim == NULL || name == NULL) {
+        return;
+    }
+    gs = serverSimGetGameSim(sim);
+    strncpy(nameBuf, name, sizeof(nameBuf) - 1);
+    nameBuf[sizeof(nameBuf) - 1] = '\0';
+    playersSetPlayerName(NULL, gs, &gs->plyrs, NEUTRAL, playerNum, nameBuf, TRUE);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_PLAYER_NAME;
+    evt.u.playerName.playerNum = playerNum;
+    snprintf(evt.u.playerName.name, PACKET_MAX_PLAYER_NAME, "%s", nameBuf);
+    serverSimPublishControl(sim, &evt);
 }
 
 void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
@@ -3398,6 +3541,10 @@ bool serverSimIsTutorial(const ServerSim *sim) {
 
 void serverSimSetTutorial(ServerSim *sim, bool v) {
     sim->sim.isTutorial = v;
+}
+
+void serverSimSetPaused(ServerSim *sim, bool paused) {
+    sim->sim.paused = paused;
 }
 
 /* --- Live-sim map / pill / base / start readers --- */

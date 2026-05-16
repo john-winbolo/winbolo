@@ -211,11 +211,6 @@ bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, Bala
   return FALSE;
 }
 
-/* threads stubs (clientmutex.c references these) */
-void threadsWaitForMutex(void) {}
-bool threadsTryWaitForMutex(void) { return TRUE; }
-void threadsReleaseMutex(void) {}
-
 /* winbolonet stub (server_sim.c references this) */
 void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills) {
   (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;

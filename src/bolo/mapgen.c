@@ -4,14 +4,14 @@
  */
 
 /*********************************************************
- * Name:          mapeditor_generate.c
+ * Name:          mapgen.c
  * Purpose:
  *   Procedural map generation framework. Provides default
  *   configs, PRNG, and dispatch to generator stubs.
  *********************************************************/
 
-#include "mapeditor_generate.h"
-#include "mapeditor_maze.h"
+#include "mapgen.h"
+#include "mapgen_maze.h"
 #include "bolo_map.h"
 #include "pillbox.h"
 #include "bases.h"
@@ -3598,9 +3598,9 @@ static void mapGenFractal(struct mapObj *mp, struct basesObj *bs,
     free(heights);
 }
 
-void mapEditorGenerate(struct mapObj *mp, struct basesObj *bs,
-                       struct pillsObj *pb, struct startsObj *ss,
-                       const MapGenConfig *cfg) {
+void mapGenRun(struct mapObj *mp, struct basesObj *bs,
+               struct pillsObj *pb, struct startsObj *ss,
+               const MapGenConfig *cfg) {
     uint32_t rng = cfg->seed;
     /* Ensure seed is nonzero for xorshift */
     if (rng == 0) rng = 1;
@@ -3820,7 +3820,7 @@ void mapGenPointStartsToLand(struct mapObj *mp, struct startsObj *ss) {
 }
 
 /*---------------------------------------------------------
- * mapEditorGenerateAsPreview
+ * mapGenRunAsPreview
  *   Generates a fresh map / pills / bases / starts quartet
  *   from cfg, optionally serializes the result into outBuf
  *   via mapSaveCompressedMap, and returns an owning
@@ -3833,10 +3833,10 @@ void mapGenPointStartsToLand(struct mapObj *mp, struct startsObj *ss) {
  *   keeps lifetime simple and reuses the same loader path
  *   that handles .map files.
  *---------------------------------------------------------*/
-struct MapPreview *mapEditorGenerateAsPreview(const MapGenConfig *cfg,
-                                              BYTE *outBuf,
-                                              int outBufCap,
-                                              int *outCompressedLen) {
+struct MapPreview *mapGenRunAsPreview(const MapGenConfig *cfg,
+                                      BYTE *outBuf,
+                                      int outBufCap,
+                                      int *outCompressedLen) {
     if (cfg == NULL) {
         if (outCompressedLen != NULL) *outCompressedLen = 0;
         return NULL;
@@ -3859,7 +3859,7 @@ struct MapPreview *mapEditorGenerateAsPreview(const MapGenConfig *cfg,
 
     /* Local non-const copy so the generator can mutate its inputs. */
     MapGenConfig localCfg = *cfg;
-    mapEditorGenerate(mp, bs, pb, ss, &localCfg);
+    mapGenRun(mp, bs, pb, ss, &localCfg);
 
     /* Always serialize — both to populate outBuf for the caller (if
      * provided) and to drive the MapPreview construction below. Use a

@@ -17,7 +17,7 @@
 #include "server_sim.h"
 #include "game_sim.h"        /* GameSim layout — used by the sim field below */
 #include "position_history.h" /* PosHistory — used by posHistory / lgmPosHistory */
-#include "../../mapeditor/mapeditor_generate.h" /* MapGenConfig — embedded by value in randomMapConfig */
+#include "mapgen.h" /* MapGenConfig — embedded by value in randomMapConfig */
 
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
@@ -28,6 +28,8 @@ struct ServerSim {
     int32_t      gameLength;
     int32_t      tickLimit;          /* 0 = unlimited; counts running game-ticks */
     int32_t      ticksRun;           /* Running-state tick counter */
+    int32_t      gameTickLimit;      /* 0 = unlimited; ends the running game when reached (no loop exit). */
+    int32_t      gameTicksRun;       /* Running-state tick counter paired with gameTickLimit; resets each game. */
 
     /* Server state machine */
     ServerState  state;

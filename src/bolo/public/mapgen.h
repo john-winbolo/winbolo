@@ -4,14 +4,15 @@
  */
 
 /*********************************************************
- * Name:          mapeditor_generate.h
+ * Name:          mapgen.h
  * Purpose:
- *   Procedural map generation framework for the map
- *   editor. Defines the config struct and dispatch API.
+ *   Procedural map generation framework. Defines the
+ *   config struct and dispatch API used by the sim, the
+ *   GUI map-chooser, and the map editor.
  *********************************************************/
 
-#ifndef MAPEDITOR_GENERATE_H
-#define MAPEDITOR_GENERATE_H
+#ifndef MAPGEN_H
+#define MAPGEN_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -181,12 +182,12 @@ void mapGenConfigToSeed(const MapGenConfig *cfg, char *out, size_t outLen);
 bool mapGenSeedToConfig(const char *seedStr, MapGenConfig *cfg);
 
 /* Top-level dispatch: clears the region and calls the appropriate generator stub. */
-void mapEditorGenerate(struct mapObj *mp, struct basesObj *bs,
-                       struct pillsObj *pb, struct startsObj *ss,
-                       const MapGenConfig *cfg);
+void mapGenRun(struct mapObj *mp, struct basesObj *bs,
+               struct pillsObj *pb, struct startsObj *ss,
+               const MapGenConfig *cfg);
 
 /* Orient all starts toward the nearest land mass (center-of-mass of
- * non-deep-sea tiles within a search radius). Call after mapEditorGenerate
+ * non-deep-sea tiles within a search radius). Call after mapGenRun
  * to fix up start directions. */
 void mapGenPointStartsToLand(struct mapObj *mp, struct startsObj *ss);
 
@@ -198,13 +199,13 @@ void mapGenPointStartsToLand(struct mapObj *mp, struct startsObj *ss);
  * failed. Returns NULL (without writing outBuf) on allocation or generation
  * failure. */
 struct MapPreview;
-struct MapPreview *mapEditorGenerateAsPreview(const MapGenConfig *cfg,
-                                              BYTE *outBuf,
-                                              int outBufCap,
-                                              int *outCompressedLen);
+struct MapPreview *mapGenRunAsPreview(const MapGenConfig *cfg,
+                                      BYTE *outBuf,
+                                      int outBufCap,
+                                      int *outCompressedLen);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* MAPEDITOR_GENERATE_H */
+#endif /* MAPGEN_H */
