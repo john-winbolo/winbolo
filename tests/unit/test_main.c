@@ -25,7 +25,7 @@ typedef struct {
 static const UnitTestEntry s_tests[] = {
     { "transport_local_passive_threads", run_transport_local_passive_threads },
     { "sp_subscriber_delivery",          run_sp_subscriber_delivery          },
-    { "sp_input_to_shot_baseline",       run_sp_input_to_shot_baseline       },
+    { "active_local_input_to_shot",      run_active_local_input_to_shot      },
     { "sp_shoot_through_timer",          run_sp_shoot_through_timer          },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
