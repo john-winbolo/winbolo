@@ -284,6 +284,11 @@ struct ClientSim {
 
     bool     lobbyOpenHost;
     bool     lobbyAutoLockOnGameStart;
+    bool     lobbyRanked;  /* server flagged this as a ranked game:
+                            * bots are forbidden, game type "Open" is
+                            * forbidden. Mirrored on every client so
+                            * they can render the ranked badge / lock
+                            * affordance. Toggle is host/admin only. */
     uint16_t lobbyServerLocks;
 
     /* Most recent server reject — surfaced via toast/log when set.

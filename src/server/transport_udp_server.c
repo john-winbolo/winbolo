@@ -3188,6 +3188,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 case LST_TIME_LIMIT:        lockBit = LOBBY_LOCK_TIME_LIMIT; break;
                 case LST_TIME_MINUTES:      lockBit = LOBBY_LOCK_TIME_LIMIT; break;
                 case LST_AUTO_LOCK_ON_GAME: lockBit = LOBBY_LOCK_AUTO_LOCK_ON_GAME; break;
+                case LST_RANKED:            lockBit = 0; break;  /* no server-lock for ranked */
                 default:                    lockBit = 0xFFFF; break;  /* unknown */
             }
             if (lockBit == 0xFFFF) {
@@ -3208,6 +3209,14 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                      * gameStrictTournament=3. The wire carries the raw enum
                      * value (matches the LOBBY_STATE pack format). */
                     if (valueLen == 1 && value[0] >= 1 && value[0] <= 3) {
+                        /* Ranked games forbid the "Open" type — every
+                         * tank must start with the same loadout. */
+                        if (serverSimGetRanked(sim) &&
+                            (gameType)value[0] == gameOpen) {
+                            lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                                          LOBBY_REJECT_INVALID);
+                            break;
+                        }
                         serverSimGetGameSim(sim)->game = (gameType)value[0];
                     } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
                                            LOBBY_REJECT_INVALID); break; }
@@ -3217,6 +3226,14 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     break;
                 case LST_AI_POLICY:
                     if (valueLen == 1 && value[0] <= 3) {
+                        /* Ranked games forbid any AI policy other
+                         * than "none". */
+                        if (serverSimGetRanked(sim) &&
+                            (aiType)value[0] != aiNone) {
+                            lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                                          LOBBY_REJECT_INVALID);
+                            break;
+                        }
                         serverSimSetAiPolicy(sim, value[0]);
                         /* botAiType is the field packed into LOBBY_STATE
                          * and gates the AddBot handler. Keep it in sync
@@ -3271,6 +3288,29 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     break;
                 case LST_AUTO_LOCK_ON_GAME:
                     if (valueLen == 1) serverSimSetAutoLockOnGameStart(sim, value[0] != 0);
+                    break;
+                case LST_RANKED:
+                    if (valueLen == 1) {
+                        bool r = value[0] != 0;
+                        serverSimSetRanked(sim, r);
+                        if (r) {
+                            /* Force AI policy to "none" and clear any
+                             * bots that were already in the lobby. */
+                            serverSimSetAiPolicy(sim, (uint8_t)aiNone);
+                            serverSimSetBotAiType(sim, aiNone);
+                            for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
+                                if (botManagerIsBot(bi)) {
+                                    botManagerRemoveBot(sim, bi);
+                                    transportUdpServerBroadcastLobbyUpdate(sim, bi);
+                                }
+                            }
+                            /* Force game type away from Open if it
+                             * was set there. Default to Tournament. */
+                            if (serverSimGetGameSim(sim)->game == gameOpen) {
+                                serverSimGetGameSim(sim)->game = gameTournament;
+                            }
+                        }
+                    }
                     break;
             }
 
@@ -3742,6 +3782,47 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             }
             rsp[countPos] = (uint8_t)written;
             udpSendTo(udpServer.sock, rsp, wpos, fromAddr);
+            break;
+        }
+        case PACKET_LOBBY_SET_PASSWORD: {
+            /* [header 8] [pwLen 1] [pw N] — host-only setter for the
+             * runtime password. pwLen 0 clears. We accept this both
+             * in lobby and during play (changing mid-game just gates
+             * new joiners; already-connected clients stay put). The
+             * password text never echoes — only the hasPassword bool
+             * propagates via the next lobby-state broadcast. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 ||
+                len < PACKET_HEADER_SIZE + 1) break;
+            /* Host slot OR admin-flagged players only — openHost
+             * does NOT grant this. Allowing arbitrary connected
+             * players to set/change a password would let them lock
+             * the host out of their own server. */
+            bool isHost  = (clientIdx == 0);
+            bool isAdmin = serverSimIsPlayerConnected(sim, clientIdx) &&
+                (playersGetClientFlags(
+                    &serverSimGetGameSim(sim)->plyrs,
+                    (BYTE)clientIdx) & PLAYER_FLAG_ADMIN);
+            if (!isHost && !isAdmin) break;
+            int rpos = PACKET_HEADER_SIZE;
+            uint8_t pwLen = buf[rpos++];
+            if (pwLen >= MAP_STR_SIZE ||
+                rpos + pwLen > len) break;
+            memset(udpServer.password, 0, MAP_STR_SIZE);
+            if (pwLen > 0) {
+                memcpy(udpServer.password, buf + rpos, pwLen);
+                udpServer.password[pwLen] = '\0';
+            }
+            serverSimSetHasPassword(sim, udpServer.password[0] != '\0');
+            /* Rebroadcast lobby state so every connected client's
+             * has_password mirror updates. */
+            if (serverSimGetState(sim) == serverStateLobby ||
+                serverSimGetState(sim) == serverStateCountdown) {
+                transportUdpServerBroadcastLobbyState(sim);
+            }
+            WB_LOG_INFO(WB_LOG_CAT_NET,
+                "lobby: password %s by slot %d",
+                pwLen > 0 ? "set" : "cleared", clientIdx);
             break;
         }
         case PACKET_LOBBY_MAP_PREVIEW_REQ: {

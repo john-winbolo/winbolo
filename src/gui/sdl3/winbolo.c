@@ -553,6 +553,13 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  /* Stop the hosted-server tick timer BEFORE we tear down the
+   * mutex it grabs — otherwise SDL_Quit waits for the timer thread,
+   * the timer fires hostedServerTimerCb one last time, and
+   * threadsReleaseMutex hits "mutex not owned by this thread"
+   * because clientMutexDestroy already nuked the mutex. */
+  gameFrontShutdownServer();
+
   clientMutexDestroy();
   /* Explicit cleanup before SDL_Quit so leak checks see freed memory */
   sdl3ImguiCleanup();

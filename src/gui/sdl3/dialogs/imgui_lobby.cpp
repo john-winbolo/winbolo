@@ -2645,24 +2645,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        /* "Go back" label — show the actual previous map name so the
-         * user knows exactly what they're reverting to. SP and MP
-         * both read it from the server sim's previousMapName. */
-        const char *prevName = "previous map";
-        if (cs) {
-            const ServerSim *psim = clientSimIsSinglePlayer(cs)
-                                  ? gameFrontGetSinglePlayerServerSim()
-                                  : gameFrontGetServerSim();
-            if (psim) {
-                const char *n = serverSimGetPreviousMapName(psim);
-                if (n && n[0]) prevName = n;
-            }
-        }
-        char goBackLbl[160];
-        SDL_snprintf(goBackLbl, sizeof(goBackLbl),
-                     "Revert to %s and exit Choose Map",
-                     prevName);
-        if (ImGui::Button(goBackLbl)) {
+        if (ImGui::Button("Revert and Close")) {
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
@@ -2967,6 +2950,24 @@ static void lobbySendSetting(ClientSim *cs,
             case 6 /* LST_AUTO_LOCK_ON_GAME */:
                 if (valueLen == 1) serverSimSetAutoLockOnGameStart(sim, value[0] != 0);
                 break;
+            case 7 /* LST_RANKED */:
+                if (valueLen == 1) {
+                    bool r = value[0] != 0;
+                    serverSimSetRanked(sim, r);
+                    if (r) {
+                        serverSimSetAiPolicy(sim, 0 /* aiNone */);
+                        serverSimSetBotAiType(sim, aiNone);
+                        for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
+                            if (serverSimIsBot(sim, bi)) {
+                                serverSimRemoveBot(sim, bi);
+                            }
+                        }
+                        if (clientSimGetLobbyGameType(cs) == gameOpen) {
+                            serverSimSetGameType(sim, gameTournament);
+                        }
+                    }
+                }
+                break;
         }
         serverSimPublishLobbySettings(sim);
         return;
@@ -3199,11 +3200,14 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                         (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                          & PLAYER_FLAG_ADMIN));
     bool effectiveHost = isHost || clientSimGetLobbyOpenHost(cs) || isLocalAdmin;
-    if (!effectiveHost) return;
+    /* Row stays visible to non-host players too so they can see the
+     * Ranked Game indicator — but the "Allow New Players" controls
+     * and the Ranked toggle itself stay disabled for them. */
     if (!clientSimHasTransport(cs) || clientSimIsSinglePlayer(cs)) return;
 
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("Allow New Players:");
+    if (!effectiveHost) ImGui::BeginDisabled();
     /* TODO: server's allowNewPlayers state isn't carried by
      * CTRL_LOBBY_SETTINGS — show the host's last-clicked intent. */
     bool allowJoin = true;
@@ -3231,6 +3235,34 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
     if (ImGui::IsItemHovered() && !autoLockLocked) {
         ImGui::SetTooltip(
             "Keep accepting new players after the game has started.");
+    }
+    if (!effectiveHost) ImGui::EndDisabled();
+
+    /* "Ranked game" — sits to the right of the Allow-New-Players
+     * controls so it's prominent on the lobby's top row. Visible to
+     * every player so newcomers can see whether they're walking into
+     * a ranked match; only host / admin / openHost-empowered players
+     * can toggle. Server enforces the actual bots-off / no-Open-type
+     * constraints regardless of who tries to flip the related
+     * controls. Toggling the flag also clears everyone's ready bit
+     * via the existing auto-unready broadcast path. */
+    {
+        ImGui::SameLine(0.0f, 16.0f * s);
+        bool rankedV   = clientSimGetLobbyRanked(cs);
+        bool canToggle = effectiveHost;
+        if (!canToggle) ImGui::BeginDisabled();
+        if (ImGui::Checkbox("Ranked game##ranked", &rankedV)) {
+            uint8_t v = rankedV ? 1 : 0;
+            lobbySendSetting(cs, 7 /*LST_RANKED*/, &v, 1);
+        }
+        if (!canToggle) ImGui::EndDisabled();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Ranked games forbid bots and force the tournament\n"
+                "game type — no \"Open\" pre-armed mode. Toggling\n"
+                "this resets every player's ready state so the host\n"
+                "can confirm the new configuration.");
+        }
     }
 }
 
@@ -4661,6 +4693,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
             "Tournament (free ammo early)",
             "Strict Tournament (no free ammo)",
         };
+        bool rankedNow = clientSimGetLobbyRanked(cs);
         for (int i = 0; i < 3; i++) {
             /* gameType enum is 1-based (gameOpen=1, gameTournament=2,
              * gameStrictTournament=3), so the array index → enum
@@ -4668,6 +4701,9 @@ static void renderGameSettingsPanel(ClientSim *cs,
              * read the wrong row as "checked" — Open showed as
              * Unknown, Tournament showed as Open, etc. */
             int enumVal = i + 1;
+            /* Ranked games forbid the "Open" type — grey it out. */
+            bool optDisabled = rankedNow && (gameType)enumVal == gameOpen;
+            if (optDisabled) ImGui::BeginDisabled();
             char rid[80];
             SDL_snprintf(rid, sizeof(rid), "%s##gt%d", items[i], i);
             bool checked = (clientSimGetLobbyGameType(cs) == (gameType)enumVal);
@@ -4675,6 +4711,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
                 uint8_t v = (uint8_t)enumVal;
                 lobbySendSetting(cs, 1 /*LST_GAME_TYPE*/, &v, 1);
             }
+            if (optDisabled) ImGui::EndDisabled();
         }
         if (disable) ImGui::EndDisabled();
     }
@@ -4685,7 +4722,10 @@ static void renderGameSettingsPanel(ClientSim *cs,
     {
         ImGui::Text("Computer Players");
         if (aiLocked) renderLockBadge();
-        bool disable = !effectiveHost || aiLocked;
+        /* Ranked games force "No computer tanks" — disable the
+         * whole AI block since none of the alternatives are valid. */
+        bool disable = !effectiveHost || aiLocked
+                        || clientSimGetLobbyRanked(cs);
         if (disable) ImGui::BeginDisabled();
         const char *items[] = {
             "No computer tanks",
@@ -4723,6 +4763,36 @@ static void renderGameSettingsPanel(ClientSim *cs,
         if (minesDisabled) ImGui::EndDisabled();
         if (minesLocked) renderLockBadge();
 
+        /* "Allow all players to change settings" — toggles openHost
+         * (the same flag that gates per-team manage-bots authority).
+         * Visible to host / admin only. Regular players who got their
+         * edit access via this very toggle don't see the control or
+         * any read-only mirror of it — surfacing it would just
+         * advertise the mechanism and tempt them to flip it off
+         * (which they can't anyway, but the absence avoids the
+         * noise). Sits next to "Allow Hidden Mines" so the related
+         * authority-gating controls cluster together at the top of
+         * the Other column. */
+        if (!clientSimIsSinglePlayer(cs)) {
+            bool isHostLocal = (myPlayerNum == 0);
+            bool isAdminLocal = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+                                 (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
+                                  & PLAYER_FLAG_ADMIN));
+            if (isHostLocal || isAdminLocal) {
+                bool oh = clientSimGetLobbyOpenHost(cs);
+                if (ImGui::Checkbox("Allow all players to change settings",
+                                    &oh)) {
+                    clientSimNetSendLobbyOpenHost(cs, oh);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "When on, every connected player can edit lobby\n"
+                        "settings — including changing the map, adding\n"
+                        "or removing bots, and switching teams.");
+                }
+            }
+        }
+
         bool timeLocked = (clientSimGetLobbyServerLocks(cs) & 0x08) != 0;
         bool timeV = clientSimGetLobbyTimeLimit(cs) > 0;
         bool timeDisabled = !effectiveHost || timeLocked;
@@ -4751,50 +4821,81 @@ static void renderGameSettingsPanel(ClientSim *cs,
         if (timeDisabled) ImGui::EndDisabled();
         if (timeLocked) renderLockBadge();
 
+        /* Password protection — host or admin only (NOT openHost;
+         * we don't want random connected players to be able to lock
+         * the host out of their own server). MP only — SP has no
+         * remote clients to keep out. */
+        if (!clientSimIsSinglePlayer(cs)) {
+            bool isHostLocal  = (myPlayerNum == 0);
+            bool isAdminLocal = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+                                 (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
+                                  & PLAYER_FLAG_ADMIN));
+            if (isHostLocal || isAdminLocal) {
+                /* Two pieces of UI state, both UI-layer-owned (the
+                 * server never echoes the password value, so we
+                 * can't reconstruct them from sim state):
+                 *   s_pwOn   — the "Password" checkbox's intent.
+                 *              Toggled directly by the click,
+                 *              persists across frames.
+                 *   s_pwBuf  — the typed password. When the user
+                 *              unchecks we wipe it AND clear the
+                 *              server-side value. */
+                static char s_pwBuf[200] = {0};
+                static bool s_pwOn       = false;
+
+                if (ImGui::Checkbox("Password", &s_pwOn)) {
+                    if (!s_pwOn) {
+                        s_pwBuf[0] = '\0';
+                        clientSimNetSendLobbySetPassword(cs, "");
+                    }
+                    /* Checking with an empty buffer doesn't send
+                     * anything yet — wait for the user to type. */
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "When on, new clients must supply the\n"
+                        "password to join. Already-connected players\n"
+                        "are unaffected.");
+                }
+                if (s_pwOn) {
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(180.0f * s);
+                    if (ImGui::InputText("##serverpw", s_pwBuf,
+                                         sizeof(s_pwBuf),
+                                         ImGuiInputTextFlags_Password |
+                                         ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        clientSimNetSendLobbySetPassword(cs, s_pwBuf);
+                    }
+                    /* Send on blur too so the host doesn't have to
+                     * remember to hit Enter. ImGui surfaces this via
+                     * IsItemDeactivatedAfterEdit. */
+                    if (ImGui::IsItemDeactivatedAfterEdit()) {
+                        clientSimNetSendLobbySetPassword(cs, s_pwBuf);
+                    }
+                }
+            }
+        }
+
         /* "Allow new players" / "Disallow new players once game has
          * started" moved to the team-list header (right of "+ Add Team")
          * so all join-related controls live in one row. See
          * renderTeamGroupedPlayers. */
 
-        /* "Allow all players to change settings" — toggles openHost
-         * (the same flag that gates per-team manage-bots authority).
-         * Visible to host / admin only.  Regular players who got their
-         * edit access via this very toggle don't see the control or any
-         * read-only mirror of it — surfacing it would just advertise the
-         * mechanism and tempt them to flip it off (which they can't
-         * anyway, but the absence avoids the noise). */
-        if (!clientSimIsSinglePlayer(cs)) {
-            bool isHostLocal = (myPlayerNum == 0);
-            bool isAdminLocal = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
-                                 (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
-                                  & PLAYER_FLAG_ADMIN));
-            if (isHostLocal || isAdminLocal) {
-                bool oh = clientSimGetLobbyOpenHost(cs);
-                if (ImGui::Checkbox("Allow all players to change settings",
-                                    &oh)) {
-                    clientSimNetSendLobbyOpenHost(cs, oh);
-                }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip(
-                        "When on, every connected player can edit lobby\n"
-                        "settings — including changing the map, adding\n"
-                        "or removing bots, and switching teams.");
-                }
-            }
-        }
     }
 
     ImGui::Columns(1);
+    /* Restore the larger lobby-font scale before the Hide button so
+     * its text isn't shrunk to the 0.85x the columns body uses. The
+     * game-settings section's content auto-sizes to fit the columns
+     * above — no explicit padding under it. */
+    ImGui::SetWindowFontScale(settingsOldScale);
 
-    /* Right-aligned "Hide Settings" button. Positioned by directly
-     * adjusting the cursor Y up by ~30px so the panel's overall
-     * bottom edge sits 30 pixels higher than it would with default
-     * ImGui::Spacing() padding — claws back vertical space for the
-     * teams list below.
-     *
-     * Styled to match the "Add Team" affordance — translucent
-     * background + dimmed text + reduced frame padding so it reads as
-     * a subtle "collapse" action rather than a primary button. */
+    /* "Hide Settings" — temporarily disabled. The form itself is
+     * collapsible via its CollapsingHeader's chevron, so the
+     * standalone button was redundant. Keeping the code in a
+     * commented block so it's easy to restore if the section
+     * tries to grow back. */
+#if 0
     {
         const char *label = "Hide Settings";
         ImVec4 baseBtn = ImGui::GetStyleColorVec4(ImGuiCol_Button);
@@ -4807,17 +4908,17 @@ static void renderGameSettingsPanel(ClientSim *cs,
                               ImVec4(baseTxt.x, baseTxt.y, baseTxt.z, baseTxt.w * 0.65f));
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
                             ImVec2(ImGui::GetStyle().FramePadding.x, 2.0f * s));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                            ImVec2(ImGui::GetStyle().ItemSpacing.x, 0.0f));
         float btnW = ImGui::CalcTextSize(label).x + 16.0f * s;
-        float y = ImGui::GetCursorPosY() - 30.0f * s;
-        ImGui::SetCursorPosY(y);
         ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - btnW);
         if (ImGui::Button(label)) {
             s_settingsOpen = false;
         }
-        ImGui::PopStyleVar();
+        ImGui::PopStyleVar(2);
         ImGui::PopStyleColor(3);
     }
-    ImGui::SetWindowFontScale(settingsOldScale);
+#endif
 }
 
 extern "C" int imguiLobbyShow(ClientSim *cs) {

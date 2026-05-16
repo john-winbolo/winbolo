@@ -70,6 +70,9 @@ typedef struct ServerSim {
     bool     allowNewPlayers;      /* live state — drives PACKET_LOCK_TOGGLE */
     bool     autoLockOnGameStart;  /* if true, set allowNewPlayers=false on game start */
     bool     savedAllowNewPlayers; /* what allowNewPlayers was before autoLockOnGameStart fired */
+    bool     ranked;               /* LST_RANKED — server enforces bots-off and
+                                    * rejects gameType=Open while true. Toggle-on
+                                    * also removes existing bots from teams. */
     uint16_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
 
     /* Game-settings mirrors — needed for live mid-lobby change broadcasts.

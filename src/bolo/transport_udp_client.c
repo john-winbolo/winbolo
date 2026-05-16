@@ -1041,6 +1041,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                  * off the next time a LOBBY_STATE arrives. */
                 settingsEvt.u.lobbySettings.lobbyOpenHost            = c->clientSim->lobbyOpenHost;
                 settingsEvt.u.lobbySettings.lobbyAutoLockOnGameStart = c->clientSim->lobbyAutoLockOnGameStart;
+                settingsEvt.u.lobbySettings.lobbyRanked              = c->clientSim->lobbyRanked;
                 settingsEvt.u.lobbySettings.lobbyServerLocks         = c->clientSim->lobbyServerLocks;
                 clientSimApplyControl(c->clientSim, &settingsEvt);
             }
@@ -1366,7 +1367,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     case LST_AUTO_LOCK_ON_GAME:
                         if (vl == 1) c->clientSim->lobbyAutoLockOnGameStart = v[0] != 0;
                         break;
-                    default: /* unknown setting type â€” ignore (forward-compat) */ break;
+                    case LST_RANKED:
+                        if (vl == 1) c->clientSim->lobbyRanked = v[0] != 0;
+                        break;
+                    default: /* unknown setting type — ignore (forward-compat) */ break;
                 }
             }
         }
@@ -2387,6 +2391,26 @@ void transportUdpClientSendLobbyOpenHost(Transport *t, bool openHost) {
     packHeader(buf, PACKET_LOBBY_OPEN_HOST, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = openHost ? 1 : 0;
     udpClientSendTo(c, buf, sizeof(buf));
+}
+
+void transportUdpClientSendLobbySetPassword(Transport *t, const char *pw) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    int pwLen = pw ? (int)strlen(pw) : 0;
+    /* Match the server-side buffer ceiling (MAP_STR_SIZE - 1) so the
+     * receiver doesn't have to truncate. 255 covers the 1-byte pwLen
+     * field anyway. */
+    if (pwLen > 200) pwLen = 200;
+
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 200];
+    packHeader(buf, PACKET_LOBBY_SET_PASSWORD, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = (uint8_t)pwLen;
+    if (pwLen > 0) {
+        memcpy(buf + PACKET_HEADER_SIZE + 1, pw, (size_t)pwLen);
+    }
+    udpClientSendTo(c, buf, PACKET_HEADER_SIZE + 1 + pwLen);
 }
 
 void transportUdpClientSendLobbyTeamMeta(Transport *t, uint8_t teamId,

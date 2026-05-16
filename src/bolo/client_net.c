@@ -300,6 +300,11 @@ void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
   transportUdpClientSendLobbySetting(&cs->transport, settingType, value, valueLen);
 }
 
+void clientSimNetSendLobbySetPassword(ClientSim *cs, const char *pw) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbySetPassword(&cs->transport, pw);
+}
+
 void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
   transportUdpClientSendLobbyOpenHost(&cs->transport, openHost);

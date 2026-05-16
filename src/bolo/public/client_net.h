@@ -143,6 +143,12 @@ void clientSimNetSendLobbyTeamClear(ClientSim *cs, BYTE teamId);
 void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
                                   const uint8_t *value, uint8_t valueLen);
 void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost);
+
+/* Host- or admin-only: set or clear the server password. NULL or
+ * empty pw clears. Server replies by broadcasting a fresh lobby
+ * state so has_password updates on every client. The password text
+ * itself is never echoed to other clients. */
+void clientSimNetSendLobbySetPassword(ClientSim *cs, const char *pw);
 void clientSimNetSendMapSkipVote(ClientSim *cs);
 void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize);
 void clientSimNetSendBalanceApply(ClientSim *cs);

@@ -127,6 +127,7 @@ typedef struct ControlEvent {
             /* Layout A flags */
             bool     lobbyOpenHost;
             bool     lobbyAutoLockOnGameStart;
+            bool     lobbyRanked;
             uint16_t lobbyServerLocks;
         } lobbySettings;
 

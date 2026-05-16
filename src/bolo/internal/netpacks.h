@@ -464,6 +464,20 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                                 err 1 } 1=not-found
                                               2=too-large 3=internal */
 
+#define PACKET_LOBBY_SET_PASSWORD      193  /* client(host) → server
+                                              { pwLen 1, pw N }
+                                              pwLen 0 clears the
+                                              password. Server stores
+                                              the new value, updates
+                                              its hasPassword flag,
+                                              and rebroadcasts the
+                                              lobby state so all
+                                              clients see the
+                                              password lock indicator
+                                              flip. Password text is
+                                              never echoed to other
+                                              clients. */
+
 /* Setting types used inside SET_SETTING / SETTING_CHG payloads.
  * Forward-compat: receivers must skip unknown types via valueLen. */
 #define LST_GAME_TYPE          1   /* 1 byte enum: open|tournament|strict */
@@ -472,6 +486,13 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define LST_TIME_LIMIT         4   /* 1 byte bool */
 #define LST_TIME_MINUTES       5   /* 2 bytes uint16 BE */
 #define LST_AUTO_LOCK_ON_GAME  6   /* 1 byte bool */
+#define LST_RANKED             7   /* 1 byte bool. When true the server
+                                    * forces ai=none, refuses game_type
+                                    * Open, and removes any existing
+                                    * bots. The client mirrors the
+                                    * value so every viewer sees the
+                                    * ranked badge — toggle is still
+                                    * host/admin only. */
 /* allowNewPlayers stays on PACKET_LOCK_TOGGLE — not duplicated here.
  * serverLocks is read-only (CLI on bolod) — no SET_SETTING for it. */
 
