@@ -131,6 +131,7 @@ static const char *getPreferenceFilePath(void) {
 static bool gameFrontDialogs(void);
 typedef void (*ServerFinisherFn)(void);
 static void gameFrontFinishSinglePlayer(void);
+static void gameFrontFinishSinglePlayerLobby(void);
 static bool gameFrontStartServerSim(ServerSim *sim,
                                     const ServerInstanceConfig *cfg,
                                     ServerFinisherFn finisher);
@@ -711,17 +712,13 @@ static bool gameFrontDialogs(void) {
     case openInternetSetup:
     case openLanSetup:
     case openUdpSetup: {
-      const DialogBackend *db = dialogBackendGet();
-      openingStates prev = dlgState;
-      if (db->gameSetupShow(humanSim)) {
-        gameFrontSetDlgState(openFinished);
-      } else {
-        /* Go back to the parent dialog, not the welcome screen */
-        if (prev == openInternetSetup) dlgState = openInternet;
-        else if (prev == openLanSetup) dlgState = openLan;
-        else if (prev == openUdpSetup) dlgState = openUdp;
-        else dlgState = openWelcome;
-      }
+      /* The gamesetup dialog was retired — settings the user used to
+       * configure here now live in the lobby and are edited inline
+       * before clicking Start.  All paths transition straight to
+       * openFinished, which creates the ServerSim with default
+       * settings and runs the appropriate finisher (lobby host, SP
+       * lobby, or tutorial). */
+      gameFrontSetDlgState(openFinished);
       break;
     }
     case openInternet: {
@@ -1142,8 +1139,11 @@ bool gameFrontSetDlgState(openingStates newState) {
            * because gameFrontFinishSinglePlayer registers the subscriber. */
           clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
 
+          /* Tutorial path skips the lobby; normal SP enters the lobby
+           * where the host edits settings before clicking Start. */
           if (!gameFrontStartServerSim(spServerSim, &cfg,
-                                       gameFrontFinishSinglePlayer)) {
+                                       isTutorial ? gameFrontFinishSinglePlayer
+                                                  : gameFrontFinishSinglePlayerLobby)) {
             /* gameFrontStartServerSim may have run the finisher before
              * SDL_AddTimer failed (finisher succeeded but timer didn't);
              * unwind everything the finisher would have set so gameFrontEnd
@@ -1634,6 +1634,38 @@ static void gameFrontFinishSinglePlayer(void) {
   serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
   serverSimSetViewPlayer(spServerSim, 0);
   spHumanSubHandle = serverSimRegisterClientSubscriber(spServerSim, humanSim);
+  spServerSimActive = TRUE;
+}
+
+/* Single-player lobby finisher — sets the sim to lobby state with
+ * slot 0 occupied by the human, registers humanSim as a subscriber
+ * (mirrors gameFrontFinishSinglePlayer), and pre-populates the bot
+ * brain path so the lobby's Add Bot button works without further
+ * configuration.  Called from gameFrontStartServerSim after
+ * serverInstanceStartup succeeds. */
+static void gameFrontFinishSinglePlayerLobby(void) {
+  serverSimSetLobbyEnabled(spServerSim, true);
+  serverSimSetState(spServerSim, serverStateLobby);
+  serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
+  serverSimSetViewPlayer(spServerSim, 0);
+  spHumanSubHandle = serverSimRegisterClientSubscriber(spServerSim, humanSim);
+
+  /* Pre-populate the lobby's bot brain path so Add Bot works
+   * without further configuration.  Host can override per-bot. */
+  {
+    char brainPath[FILENAME_MAX] = "";
+    if (gameFrontBrainPath[0] != '\0') {
+      SDL_strlcpy(brainPath, gameFrontBrainPath, sizeof(brainPath));
+    } else {
+      findBrainPath(brainPath, sizeof(brainPath));
+    }
+    if (brainPath[0] != '\0') {
+      serverSimSetBotBrainPath(spServerSim, brainPath);
+    }
+    serverSimSetBotAiType(spServerSim,
+                          (compTanks == aiNone) ? aiFull : compTanks);
+  }
+
   spServerSimActive = TRUE;
 }
 
