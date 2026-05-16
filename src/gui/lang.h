@@ -1167,6 +1167,14 @@
 #define STR_MENU_OPEN_MAP_EDITOR            1254
 #define STR_MENU_OPEN_LOG_VIEWER            1255
 
+/* macOS Log Viewer app-menu items — mirror the WinBolo About/Hide/Quit
+ * trio but with "Log Viewer" wording so the standalone Log Viewer.app's
+ * app menu reads correctly. Embedded Log Viewer reuses WinBolo's app
+ * menu so these are not surfaced there. */
+#define STR_MENU_ABOUT_LV                   1256
+#define STR_MENU_HIDE_LV                    1257
+#define STR_MENU_QUIT_LV                    1258
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821

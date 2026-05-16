@@ -763,6 +763,9 @@ static bool gameFrontDialogs(void) {
     case openLogViewer: {
       WbnBrowserResult wbnResult = imguiWbnBrowserShow(sdl3DrawGetWindow(),
                                                        sdl3DrawGetRenderer());
+      /* The LogViewer NSMenu install/uninstall lives inside logViewerRun
+       * itself — its save/restore stack swaps WinBolo's menu out on
+       * entry and restores it on exit, so no wrapping is needed here. */
       switch (wbnResult.action) {
       case WBN_BROWSER_PLAY_FILE:
         logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), wbnResult.filePath, true);

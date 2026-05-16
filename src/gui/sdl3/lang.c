@@ -1074,6 +1074,13 @@ static const LangEntry langTable[] = {
     {1254, "Open Map Editor"},
     {1255, "Open Log Viewer"},
 
+    /* macOS Log Viewer app-menu items — mirrored by
+     * src/logviewer/platform/mac_menubar.mm in the standalone Log
+     * Viewer.app only. */
+    {1256, "About Log Viewer"},
+    {1257, "Hide Log Viewer"},
+    {1258, "Quit Log Viewer"},
+
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
      * time by tutorialResolveText() when uiModeIsTablet() is true. */
