@@ -573,7 +573,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [appItem setSubmenu:appMenu];
 
     NSMenuItem *aboutItem = [[NSMenuItem alloc]
-        initWithTitle:@"About WinBolo"
+        initWithTitle:LANG_STR(STR_MENU_ABOUT_APP)
         action:@selector(onAbout:)
         keyEquivalent:@""];
     [aboutItem setTarget:g_bridge];
@@ -582,7 +582,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [appMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *prefsItem = [[NSMenuItem alloc]
-        initWithTitle:@"Preferences…"
+        initWithTitle:LANG_STR(STR_MENU_PREFERENCES)
         action:@selector(onPreferences:)
         keyEquivalent:@","];
     [prefsItem setTarget:g_bridge];
@@ -590,9 +590,9 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
 
     [appMenu addItem:[NSMenuItem separatorItem]];
 
-    NSMenu *servicesMenu = [[NSMenu alloc] initWithTitle:@"Services"];
+    NSMenu *servicesMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_MENU_SERVICES)];
     NSMenuItem *servicesItem = [[NSMenuItem alloc]
-        initWithTitle:@"Services" action:nil keyEquivalent:@""];
+        initWithTitle:LANG_STR(STR_MENU_SERVICES) action:nil keyEquivalent:@""];
     [servicesItem setSubmenu:servicesMenu];
     [appMenu addItem:servicesItem];
     [NSApp setServicesMenu:servicesMenu];
@@ -600,20 +600,20 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [appMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *hideItem = [[NSMenuItem alloc]
-        initWithTitle:@"Hide WinBolo"
+        initWithTitle:LANG_STR(STR_MENU_HIDE_APP)
         action:@selector(hide:)
         keyEquivalent:@"h"];
     [appMenu addItem:hideItem];
 
     NSMenuItem *hideOthersItem = [[NSMenuItem alloc]
-        initWithTitle:@"Hide Others"
+        initWithTitle:LANG_STR(STR_MENU_HIDE_OTHERS)
         action:@selector(hideOtherApplications:)
         keyEquivalent:@"h"];
     [hideOthersItem setKeyEquivalentModifierMask:NSEventModifierFlagOption | NSEventModifierFlagCommand];
     [appMenu addItem:hideOthersItem];
 
     NSMenuItem *showAllItem = [[NSMenuItem alloc]
-        initWithTitle:@"Show All"
+        initWithTitle:LANG_STR(STR_MENU_SHOW_ALL)
         action:@selector(unhideAllApplications:)
         keyEquivalent:@""];
     [appMenu addItem:showAllItem];
@@ -621,26 +621,26 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [appMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *quitItem = [[NSMenuItem alloc]
-        initWithTitle:@"Quit WinBolo"
+        initWithTitle:LANG_STR(STR_MENU_QUIT_APP)
         action:@selector(onQuit:)
         keyEquivalent:@"q"];
     [quitItem setTarget:g_bridge];
     [appMenu addItem:quitItem];
 
     /* File menu — game lifecycle and pop-out info windows. */
-    NSMenuItem *fileItem = [mainMenu addItemWithTitle:@"File" action:nil keyEquivalent:@""];
-    NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
+    NSMenuItem *fileItem = [mainMenu addItemWithTitle:LANG_STR(STR_MENU_FILE) action:nil keyEquivalent:@""];
+    NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_MENU_FILE)];
     [fileItem setSubmenu:fileMenu];
 
     NSMenuItem *newGameItem = [[NSMenuItem alloc]
-        initWithTitle:@"New Game"
+        initWithTitle:LANG_STR(STR_MENU_NEW)
         action:@selector(onNewGame:)
         keyEquivalent:@""];
     [newGameItem setTarget:g_bridge];
     [fileMenu addItem:newGameItem];
 
     NSMenuItem *saveMapItem = [[NSMenuItem alloc]
-        initWithTitle:@"Save Map"
+        initWithTitle:LANG_STR(STR_MENU_SAVE_MAP)
         action:@selector(onSaveMap:)
         keyEquivalent:@"s"];
     [saveMapItem setTarget:g_bridge];
@@ -649,7 +649,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [fileMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *gameInfoItem = [[NSMenuItem alloc]
-        initWithTitle:@"Game Info"
+        initWithTitle:LANG_STR(STR_DLGGAMEINFO_TITLE)
         action:@selector(onShowGameInfo:)
         keyEquivalent:@""];
     [gameInfoItem setTarget:g_bridge];
@@ -657,7 +657,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     s_gameInfoItem = gameInfoItem;
 
     NSMenuItem *sysInfoItem = [[NSMenuItem alloc]
-        initWithTitle:@"System Info"
+        initWithTitle:LANG_STR(STR_DLGSYSINFO_TITLE)
         action:@selector(onShowSysInfo:)
         keyEquivalent:@""];
     [sysInfoItem setTarget:g_bridge];
@@ -665,7 +665,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     s_sysInfoItem = sysInfoItem;
 
     NSMenuItem *netInfoItem = [[NSMenuItem alloc]
-        initWithTitle:@"Network Info"
+        initWithTitle:LANG_STR(STR_DLGNETINFO_TITLE)
         action:@selector(onShowNetInfo:)
         keyEquivalent:@""];
     [netInfoItem setTarget:g_bridge];
@@ -1079,18 +1079,18 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
 
     /* Window menu — items dispatched through the responder chain to the
      * key NSWindow; no explicit targets. */
-    NSMenuItem *windowItem = [mainMenu addItemWithTitle:@"Window" action:nil keyEquivalent:@""];
-    NSMenu *windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
+    NSMenuItem *windowItem = [mainMenu addItemWithTitle:LANG_STR(STR_MENU_WINDOW) action:nil keyEquivalent:@""];
+    NSMenu *windowMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_MENU_WINDOW)];
     [windowItem setSubmenu:windowMenu];
 
     NSMenuItem *minimizeItem = [[NSMenuItem alloc]
-        initWithTitle:@"Minimize"
+        initWithTitle:LANG_STR(STR_MENU_MINIMIZE)
         action:@selector(performMiniaturize:)
         keyEquivalent:@"m"];
     [windowMenu addItem:minimizeItem];
 
     NSMenuItem *zoomItem = [[NSMenuItem alloc]
-        initWithTitle:@"Zoom"
+        initWithTitle:LANG_STR(STR_MENU_ZOOM)
         action:@selector(performZoom:)
         keyEquivalent:@""];
     [windowMenu addItem:zoomItem];
@@ -1098,7 +1098,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [windowMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *fullScreenItem = [[NSMenuItem alloc]
-        initWithTitle:@"Enter Full Screen"
+        initWithTitle:LANG_STR(STR_MENU_ENTER_FULL_SCREEN)
         action:@selector(toggleFullScreen:)
         keyEquivalent:@"f"];
     [fullScreenItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagControl];
@@ -1107,7 +1107,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [windowMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *bringAllToFrontItem = [[NSMenuItem alloc]
-        initWithTitle:@"Bring All to Front"
+        initWithTitle:LANG_STR(STR_MENU_BRING_ALL_TO_FRONT)
         action:@selector(arrangeInFront:)
         keyEquivalent:@""];
     [windowMenu addItem:bringAllToFrontItem];

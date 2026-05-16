@@ -1147,6 +1147,21 @@
 #define STR_DLGSYSINFO_BOTPREP              1237
 #define STR_DLGSYSINFO_BRAIN_OVERRUNS       1238
 
+/* macOS native menu — App / File / Window menu items mirrored by
+ * src/gui/sdl3/platform/mac_menubar.mm. Not used by the in-window menu. */
+#define STR_MENU_ABOUT_APP                  1239
+#define STR_MENU_PREFERENCES                1240
+#define STR_MENU_SERVICES                   1241
+#define STR_MENU_HIDE_APP                   1242
+#define STR_MENU_HIDE_OTHERS                1243
+#define STR_MENU_SHOW_ALL                   1244
+#define STR_MENU_QUIT_APP                   1245
+#define STR_MENU_WINDOW                     1246
+#define STR_MENU_MINIMIZE                   1247
+#define STR_MENU_ZOOM                       1248
+#define STR_MENU_ENTER_FULL_SCREEN          1249
+#define STR_MENU_BRING_ALL_TO_FRONT         1250
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821
