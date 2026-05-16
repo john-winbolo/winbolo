@@ -129,6 +129,11 @@ static const char *getPreferenceFilePath(void) {
 
 /* Forward declarations */
 static bool gameFrontDialogs(void);
+typedef void (*ServerFinisherFn)(void);
+static void gameFrontFinishSinglePlayer(void);
+static bool gameFrontStartServerSim(ServerSim *sim,
+                                    const ServerInstanceConfig *cfg,
+                                    ServerFinisherFn finisher);
 extern void sdl3MessageHandler(const char *message, const char *title);
 
 /* Find the brain script — try several paths */
@@ -226,8 +231,6 @@ static ServerSim *spServerSim = NULL;
 static SubscriberHandle spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
 
 static bool spServerSimActive = FALSE;
-static bool spTransportLocalUsed = FALSE;
-static bool spServerHosted = FALSE;
 static SDL_TimerID hostedServerTimerID = 0;
 
 static Uint32 SDLCALL hostedServerTimerCb(void *userdata, SDL_TimerID id, Uint32 interval) {
@@ -235,9 +238,11 @@ static Uint32 SDLCALL hostedServerTimerCb(void *userdata, SDL_TimerID id, Uint32
   /* Read spServerSim under the mutex so a concurrent shutdown can NULL
    * it out without us racing with a freed pointer cached on this stack
    * frame.  serverInstanceTick re-takes the mutex internally; the
-   * threading mutex is recursive on both Windows and SDL3. */
+   * threading mutex is recursive on both Windows and SDL3.  Single
+   * non-NULL check covers both SP and listen-server now that both go
+   * through this timer. */
   threadsWaitForMutex();
-  if (spServerHosted && spServerSim != NULL) {
+  if (spServerSim != NULL) {
     serverInstanceTick(spServerSim);
   }
   threadsReleaseMutex();
@@ -527,17 +532,16 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
     useAutohide = clientSimGetTankAutoHideGunsight(humanSim);
   }
   brainsHandlerShutdown();
-  if (spServerSimActive && !spServerHosted) {
-    serverSimDestroyBots(spServerSim);
-    if (spTransportLocalUsed) {
+  if (spServerSimActive) {
+    /* Unregister the SP humanSim subscriber before gameFrontShutdownServer
+     * destroys the ServerSim's subscriber registry.  The hostedServer-only
+     * path skips this (no subscriber was registered) by leaving the handle
+     * at SUBSCRIBER_HANDLE_INVALID and short-circuiting here. */
+    if (spHumanSubHandle != SUBSCRIBER_HANDLE_INVALID) {
       serverSimUnregisterSubscriber(spServerSim, spHumanSubHandle);
       spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
       clientSimDisconnect(humanSim);
-      spTransportLocalUsed = FALSE;
     }
-    serverSimDestroy(spServerSim);
-    spServerSim = NULL;
-    spServerSimActive = FALSE;
   }
   if (udpTransportActive) {
     clientSimSetChatSendFunc(humanSim, NULL);
@@ -565,10 +569,13 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
     soundCleanup();
     langCleanup();
   }
-  if (isServer == TRUE) {
-    gameFrontShutdownServer();
-    isServer = FALSE;
-  }
+  /* Single shutdown path for both SP and listen-server: the timer is
+   * removed, ownership of spServerSim is transferred under threadsMutex
+   * so any in-flight hostedServerTimerCb bails, then serverInstanceShutdown
+   * tears down whatever acceptRemoteClients set up (a no-op in SP).
+   * gameFrontShutdownServer no-ops when spServerSimActive is FALSE. */
+  gameFrontShutdownServer();
+  isServer = FALSE;
   clientMutexRelease();
   threadsDestroy();
 }
@@ -1103,17 +1110,54 @@ bool gameFrontSetDlgState(openingStates newState) {
           spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen);
         }
         if (spServerSim != NULL) {
-          /* Single-player: no lobby, run immediately */
-          serverSimSetLobbyEnabled(spServerSim, false);
-          serverSimStartGame(spServerSim);
-          serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
-          serverSimSetViewPlayer(spServerSim, 0);
-          spTransportLocalUsed = TRUE;
-          spServerSimActive = TRUE;
-          /* Load map/bases/pills on client via compressed map (same as UDP path) */
+          /* Single-player runs through the same serverInstanceStartup +
+           * timer-thread ticking path as the host, so SP and listen-server
+           * share one shutdown path and the bot tick is owned by the
+           * timer thread only.  acceptRemoteClients=false short-circuits
+           * the UDP server / WBN / tracker / NAT-portmap bring-up. */
+          ServerInstanceConfig cfg;
+          memset(&cfg, 0, sizeof(cfg));
+          cfg.udpPort             = gameFrontMyUdp;
+          cfg.bindAddr            = "";
+          cfg.password            = password;
+          cfg.maxPlayers          = MAX_TANKS;
+          cfg.acceptRemoteClients = false;
+          cfg.useWbn              = false;
+          cfg.compTanks           = (BYTE)compTanks;
+          cfg.useTracker          = false;
+          cfg.trackerAddr         = gameFrontTrackerAddr;
+          cfg.trackerPort         = gameFrontTrackerPort;
+          cfg.useNatKeepalive     = false;
+          cfg.useNatPortmap       = false;
+
+          /* humanSim must exist before the finisher registers it as a
+           * client subscriber. */
           humanSim = clientSimAlloc();
-          clientSimConnectLocal(humanSim, spServerSim, 0);
+          clientSimConnectLocalPassive(humanSim, spServerSim, 0);
           frontEndSetActiveClientSim(humanSim);
+          /* clientSimCreate initializes myPlayerNum to 0 (the SP slot) so
+           * the subscriber dispatcher's self-skip protects this slot during
+           * the snapshot sync the finisher's CTRL_PLAYER_JOIN broadcast
+           * would otherwise feed it. Called here, before the finisher,
+           * because gameFrontFinishSinglePlayer registers the subscriber. */
+          clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
+
+          if (!gameFrontStartServerSim(spServerSim, &cfg,
+                                       gameFrontFinishSinglePlayer)) {
+            /* gameFrontStartServerSim may have run the finisher before
+             * SDL_AddTimer failed (finisher succeeded but timer didn't);
+             * unwind everything the finisher would have set so gameFrontEnd
+             * sees a clean slate. */
+            clientSimDisconnect(humanSim);
+            frontEndSetActiveClientSim(NULL);
+            clientSimDestroy(humanSim);
+            humanSim = NULL;
+            serverSimDestroy(spServerSim);
+            spServerSim = NULL;
+            spServerSimActive = FALSE;
+            spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
+            returnValue = FALSE;
+          } else {
           {
             BYTE compressedMap[65536];
             int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
@@ -1121,9 +1165,11 @@ bool gameFrontSetDlgState(openingStates newState) {
               clientLoadCompressedMap(humanSim, compressedMap, compLen, serverSimGetMapName(spServerSim),
                                      gametype, hiddenMines, startDelay,
                                      timeLen, gameFrontName, 0, FALSE);
-            } else {
-              clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
             }
+            /* else: clientSimCreate above already initialized the empty
+             * client; serverSimGetCompressedMap failure is fatal for the
+             * map data, but we keep the client alive for the lobby/error
+             * UI to drain. */
           }
           if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
           /* Set up networking state after ClientSim is fully initialized */
@@ -1155,12 +1201,6 @@ bool gameFrontSetDlgState(openingStates newState) {
                                    snapPills, snapHdr.pillCount,
                                    snapEvents, snapHdr.reliableEventCount, 0);
           }
-          /* Register humanSim as a control-event subscriber. Placed after
-           * clientSimCreate (run from the clientLoadCompressedMap / else
-           * branch above) so myPlayerNum is initialized to 0 — matching the
-           * SP slot — and the dispatcher's self-skip protects this slot
-           * during sync. */
-          spHumanSubHandle = serverSimRegisterClientSubscriber(spServerSim, humanSim);
           clientSimNetSetupTankGo(humanSim);
           /* Destroy background game before adding real bots — bgGameDestroy
            * calls serverSimDestroyBots which would wipe bots we add below. */
@@ -1229,6 +1269,7 @@ bool gameFrontSetDlgState(openingStates newState) {
             }
           }
           gameFrontUpdateSteamPresence(humanSim);
+          } /* end "gameFrontStartServerSim succeeded" */
         } else {
           if (spServerSim != NULL) {
             free(spServerSim);
@@ -1545,7 +1586,6 @@ void gameFrontShutdownServer(void) {
   threadsWaitForMutex();
   toFree = spServerSim;
   spServerSim = NULL;
-  spServerHosted = FALSE;
   spServerSimActive = FALSE;
   threadsReleaseMutex();
 
@@ -1565,7 +1605,6 @@ bool gameFrontPreferencesExist(void) {
   return FALSE;
 }
 
-typedef void (*ServerFinisherFn)(void);
 
 static void gameFrontFinishLobbyHost(void) {
   serverSimSetLobbyEnabled(spServerSim, true);
@@ -1574,7 +1613,19 @@ static void gameFrontFinishLobbyHost(void) {
   serverSimSetHasPassword(spServerSim, (password[0] != '\0'));
   isServer = TRUE;
   spServerSimActive = TRUE;
-  spServerHosted = TRUE;
+}
+
+/* Single-player finisher — no lobby, runs immediately with the human in
+ * slot 0.  Called from gameFrontStartServerSim after serverInstanceStartup
+ * succeeds, so the timer-thread tick is registered for SP too and the
+ * main thread no longer needs to drive serverSimBotTick. */
+static void gameFrontFinishSinglePlayer(void) {
+  serverSimSetLobbyEnabled(spServerSim, false);
+  serverSimStartGame(spServerSim);
+  serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
+  serverSimSetViewPlayer(spServerSim, 0);
+  spHumanSubHandle = serverSimRegisterClientSubscriber(spServerSim, humanSim);
+  spServerSimActive = TRUE;
 }
 
 static bool gameFrontStartServerSim(ServerSim *sim,
@@ -2141,12 +2192,7 @@ ServerSim *gameFrontGetServerSim(void) {
   return spServerSimActive ? spServerSim : NULL;
 }
 
-bool gameFrontIsServerHosted(void) {
-  return spServerHosted;
-}
-
 BYTE gameFrontGetPlayerNum(void) {
-  if (spServerSimActive && !spServerHosted) return 0;
   if (udpTransportActive) return udpPlayerNum;
   return 0;
 }
