@@ -34,8 +34,6 @@ const TutorialStep tutorialSteps[] = {
 const int tutorialStepCount =
     (int)(sizeof(tutorialSteps) / sizeof(tutorialSteps[0]));
 
-bool tutorialServerPaused = FALSE;
-
 bool tutorialIsStopPos(BYTE pos) {
     int i;
     for (i = 0; i < tutorialStepCount; i++) {

@@ -1127,6 +1127,10 @@ void serverSimSetViewPlayer(ServerSim *sim, BYTE playerNum);
 bool serverSimIsTutorial(const ServerSim *sim);
 void serverSimSetTutorial(ServerSim *sim, bool v);
 
+/* Pause flag on the embedded GameSim. Unlocked: caller must hold
+ * threadsMutex. */
+void serverSimSetPaused(ServerSim *sim, bool paused);
+
 /* --- Live-sim map / pill / base / start readers ---
  * Server-side perspective of the same map/pill/base/start state
  * the client-side wrappers expose on client_sim.h. Used by
