@@ -140,8 +140,8 @@ bool lv_playersSetPlayerName(BYTE playerNum, char *playerName) {
   {
     MessageArgs args = {0};
     lv_labelMakeMessage(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location);
-    snprintf(args.otherName, sizeof(args.otherName), "%s", label);
-    snprintf(args.playerName, sizeof(args.playerName), "%s", playerName);
+    snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, label);
+    snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, playerName);
     lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CHANGENAME, &args);
   }
 
@@ -640,7 +640,7 @@ void lv_playersLeaveGame(BYTE playerNum, bool announce) {
       name[0] = '\0';
       lv_playersMakeMessageName(playerNum, name);
       MessageArgs args = {0};
-      snprintf(args.playerName, sizeof(args.playerName), "%s", name);
+      snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
       lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
     }
   }

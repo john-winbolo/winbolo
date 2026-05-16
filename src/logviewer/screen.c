@@ -630,7 +630,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       }
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", name);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_JOINED, &args);
       }
       if (opt1 < MAX_TANKS) {
@@ -645,7 +645,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersLeaveGame(opt1, TRUE);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
       }
       if (opt1 < MAX_TANKS) {
@@ -678,7 +678,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
       }
       break;
@@ -702,8 +702,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt2, mem);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
-        snprintf(args.otherName, sizeof(args.otherName), "%s", mem);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
+        snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, mem);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_REQUEST, &args);
       }
       break;
@@ -715,8 +715,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt2, mem);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
-        snprintf(args.otherName, sizeof(args.otherName), "%s", mem);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
+        snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, mem);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_ACCEPT, &args);
       }
       break;
@@ -726,7 +726,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_LEAVE, &args);
       }
       break;
@@ -836,8 +836,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, name);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", name);
-        snprintf(args.string1, sizeof(args.string1), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
+        snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_ALL, &args);
       }
       break;
@@ -851,9 +851,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt2, name2);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", name);
-        snprintf(args.otherName, sizeof(args.otherName), "%s", name2);
-        snprintf(args.string1, sizeof(args.string1), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
+        snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, name2);
+        snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_PLAYERS, &args);
       }
       break;
@@ -863,7 +863,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_utilPtoCString(mem, str);
       {
         MessageArgs args = {0};
-        snprintf(args.string1, sizeof(args.string1), "%s", str);
+        snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
         lv_messageAdd(networkMessage, MESSAGE_NETSERVER, STR_LV_MSG_SERVER, &args);
       }
       break;
@@ -945,13 +945,13 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, mem);
       if (opt1 == opt2 || opt2 == NEUTRAL) {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", mem);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, mem);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_DIED, &args);
       } else {
         MessageArgs args = {0};
         lv_playersGetPlayerName(opt2, str);
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
-        snprintf(args.otherName, sizeof(args.otherName), "%s", mem);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
+        snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, mem);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_KILLED, &args);
       }
       if (opt1 < MAX_TANKS) g_lv->deaths[opt1]++;
@@ -970,7 +970,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_REJOINED, &args);
       }
       if (opt1 < MAX_TANKS) {
@@ -984,7 +984,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_LEAVING, &args);
       }
       if (opt1 < MAX_TANKS) {
@@ -1034,7 +1034,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_READY, &args);
       }
       break;
@@ -1043,7 +1043,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_UNREADY, &args);
       }
       break;
@@ -1053,7 +1053,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         if (opt2 == 0) {
           lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_LEFT_TEAM, &args);
         } else {
@@ -1073,7 +1073,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MAP_SKIP_VOTE, &args);
       }
       break;
@@ -1083,7 +1083,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_utilPtoCString(mem, str);
       {
         MessageArgs args = {0};
-        snprintf(args.string1, sizeof(args.string1), "%s", str);
+        snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
         lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_MAP_SKIPPED, &args);
       }
       break;
