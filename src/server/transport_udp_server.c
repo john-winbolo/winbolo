@@ -47,6 +47,7 @@
 #include "lobby_bot_pools.h"
 #include "../common/wb_log.h"
 #include "../mapeditor/mapeditor_generate.h"  /* MapGenConfig, mapGenSeedToConfig */
+#include <SDL3/SDL.h>
 
 #ifdef _WIN32
 #define strcasecmp _stricmp
@@ -1565,6 +1566,7 @@ void transportUdpServerEnforcePing(ServerSim *sim) {
         }
     }
 }
+
 
 bool transportUdpServerCreate(unsigned short port,
                               const char *addrToUse,
@@ -4495,7 +4497,80 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
 }
 
 /* Combined receive + tick + send (for callers that don't need split) */
+/* Helper: copy the currently-loaded compressed map into
+ * data/maps/Recently Played/<name>.map with " (N)" dedup. Runs
+ * at game-start so the lobby's final map becomes a permanent
+ * game-history entry. Best-effort; failures are logged only. */
+static void transportUdpServerSaveToRecentlyPlayed(ServerSim *sim) {
+    if (!sim) return;
+    const char *name = serverSimGetMapName(sim);
+    if (!name || !*name) return;
+
+    BYTE scratch[131072];
+    int mapLen = serverSimGetCompressedMap(sim, scratch);
+    if (mapLen <= 0) return;
+
+    /* Ensure parent dir exists */
+    SDL_CreateDirectory("data/maps/Recently Played");
+
+    char base[128];
+    SDL_strlcpy(base, name, sizeof(base));
+    /* Strip a trailing .map if mapName happens to include it */
+    {
+        size_t bl = SDL_strlen(base);
+        if (bl >= 4 && SDL_strcasecmp(base + bl - 4, ".map") == 0) {
+            base[bl - 4] = '\0';
+        }
+    }
+    /* Sanitize separators/control chars from the on-disk name. */
+    for (char *p = base; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c < 0x20 || c == '/' || c == '\\' || c == ':' ||
+            c == '*' || c == '?' || c == '"' || c == '<' ||
+            c == '>' || c == '|') *p = '_';
+    }
+    if (base[0] == '\0') SDL_strlcpy(base, "map", sizeof(base));
+
+    char path[FILENAME_MAX];
+    SDL_snprintf(path, sizeof(path),
+                 "data/maps/Recently Played/%s.map", base);
+    {
+        SDL_PathInfo info;
+        for (int n = 1; n < 1000; n++) {
+            if (!SDL_GetPathInfo(path, &info)) break;
+            SDL_snprintf(path, sizeof(path),
+                         "data/maps/Recently Played/%s (%d).map",
+                         base, n);
+        }
+    }
+    FILE *fp = fopen(path, "wb");
+    if (!fp) {
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "Recently Played save: cannot open '%s'", path);
+        return;
+    }
+    size_t w = fwrite(scratch, 1, (size_t)mapLen, fp);
+    fclose(fp);
+    if (w != (size_t)mapLen) {
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "Recently Played save: short write to '%s' (%zu/%d)",
+            path, w, mapLen);
+    } else {
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "Recently Played save: '%s' (%d bytes)", path, mapLen);
+    }
+}
+
 void transportUdpServerTick(ServerSim *sim) {
+    /* Detect lobby -> non-lobby (game launch) edge so the active
+     * map is snapshotted into the Recently Played cache. */
+    static ServerState prevState = serverStateLobby;
+    ServerState curState = serverSimGetState(sim);
+    if (prevState == serverStateLobby && curState != serverStateLobby) {
+        transportUdpServerSaveToRecentlyPlayed(sim);
+    }
+    prevState = curState;
+
     if (recvThread) {
         transportUdpServerDrainRecvQueue(sim);
     } else {
