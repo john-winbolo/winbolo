@@ -2183,7 +2183,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_stubs.c
     tests/unit/test_transport_local_passive_threads.c
     tests/unit/test_sp_subscriber_delivery.c
-    tests/unit/test_sp_input_to_shot_baseline.c
+    tests/unit/test_active_local_input_to_shot.c
     tests/unit/test_sp_shoot_through_timer.c
     # transport_udp_client.c stays per-target because of HAVE_STEAM
     # gating (it's excluded from bolo_static for that reason). Linked
@@ -2243,7 +2243,7 @@ set_flat_output(WinBoloUnitTests "${CMAKE_BINARY_DIR}")
 set(_unit_test_names
     transport_local_passive_threads
     sp_subscriber_delivery
-    sp_input_to_shot_baseline
+    active_local_input_to_shot
     sp_shoot_through_timer
 )
 foreach(_name IN LISTS _unit_test_names)

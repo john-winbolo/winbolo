@@ -87,7 +87,7 @@ int run_sp_shoot_through_timer(void) {
     SDL_Delay(50);
 
     /* Warmup inputs to fill the jitter buffer / advance the server's
-     * input pointer past 0, mirroring test_sp_input_to_shot_baseline. */
+     * input pointer past 0, mirroring test_active_local_input_to_shot. */
     uint32_t input_tick;
     for (input_tick = 1; input_tick <= WARMUP_INPUTS; input_tick++) {
         InputPacket pkt;

@@ -1,20 +1,12 @@
 /*
- * SP input-to-shot tick-count baseline.
+ * Active local-transport input-to-shot regression.
  *
- * Drives a ServerSim + ClientSim wired together with the active
- * transport_local — the same shape SP uses today. Sends warmup
- * inputs to fill the server's jitter buffer, then a FIRE input,
- * then ticks the active transport (which advances serverSimTick
- * inside localTick) until a shell appears in the server's shell
- * snapshot. Records the tick count.
- *
- * Captured BEFORE the SP → passive-local unification. After the
- * unification the server's tick lives on the host timer thread,
- * so the same fire input takes ~1 more sim tick to be observed
- * server-side. EXPECTED_TICKS_TO_SHELL is the captured pre-shift
- * value — Phase 6 should adjust it once the latency change lands.
- *
- * This is a measured number, not a derived bound.
+ * Constructs ServerSim + ClientSim wired via the active variant
+ * (clientSimConnectLocal — the path gym, headless, and wasm use),
+ * drives ticks single-threaded through clientSimNetTick, sends a
+ * FIRE input, and counts ticks until a shell appears server-side.
+ * Asserts the tick count stays at or below EXPECTED_TICKS_TO_SHELL;
+ * bumps of this value need an explanation.
  */
 
 #include <stdint.h>
@@ -29,14 +21,14 @@
 #include "input_packet.h"
 #include "test_harness.h"
 
-/* Allow a generous ceiling — the SP fire-to-shell path empirically
+/* Allow a generous ceiling — the fire-to-shell path empirically
  * lands in single digits today, but the test's job is to record the
  * actual count, not assert a tight bound. */
 #define EXPECTED_TICKS_TO_SHELL 12
 
 #define WARMUP_TICKS 4
 
-int run_sp_input_to_shot_baseline(void) {
+int run_active_local_input_to_shot(void) {
     ServerSim *sim = ut_make_running_sim("Shooter");
     UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed returned NULL");
 
@@ -90,13 +82,13 @@ int run_sp_input_to_shot_baseline(void) {
     }
 
     fprintf(stderr,
-            "  input-to-shell baseline: %d ticks (cap %d)\n",
+            "  input-to-shell: %d ticks (cap %d)\n",
             ticks_to_shell, EXPECTED_TICKS_TO_SHELL);
 
     UT_ASSERT_MSG(ticks_to_shell > 0,
                   "no shell observed within tick budget");
     UT_ASSERT_MSG(ticks_to_shell <= EXPECTED_TICKS_TO_SHELL,
-                  "baseline shifted: %d > EXPECTED %d (update after Phase 6)",
+                  "ticks-to-shell increased: %d > EXPECTED %d",
                   ticks_to_shell, EXPECTED_TICKS_TO_SHELL);
 
     clientSimDestroy(cs);
