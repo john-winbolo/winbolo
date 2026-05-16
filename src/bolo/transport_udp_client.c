@@ -1151,6 +1151,305 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
     }
 
+    /* ── Layout A lobby — server → client broadcasts ─────────────── */
+    case PACKET_LOBBY_SETTING_CHG:
+        /* [header 8] [settingType 1] [valueLen 1] [value valueLen] */
+        if (len >= PACKET_HEADER_SIZE + 2) {
+            uint8_t st = buf[PACKET_HEADER_SIZE];
+            uint8_t vl = buf[PACKET_HEADER_SIZE + 1];
+            const uint8_t *v = buf + PACKET_HEADER_SIZE + 2;
+            if (len >= PACKET_HEADER_SIZE + 2 + vl && vl <= 32) {
+                switch (st) {
+                    case LST_GAME_TYPE:
+                        if (vl == 1) c->clientSim->lobbyGameType = (gameType)v[0];
+                        break;
+                    case LST_HIDDEN_MINES:
+                        if (vl == 1) c->clientSim->lobbyHiddenMines = v[0] != 0;
+                        break;
+                    case LST_AI_POLICY:
+                        if (vl == 1) c->clientSim->lobbyAiType = v[0];
+                        break;
+                    case LST_TIME_LIMIT:
+                        if (vl == 1) {
+                            bool on = v[0] != 0;
+                            if (on) {
+                                if (c->clientSim->lobbyTimeLimit <= 0) {
+                                    c->clientSim->lobbyTimeLimit = 30 * 60 * 50;
+                                }
+                            } else {
+                                c->clientSim->lobbyTimeLimit = UNLIMITED_GAME_TIME;
+                            }
+                        }
+                        break;
+                    case LST_TIME_MINUTES:
+                        if (vl == 2) {
+                            uint16_t mins = (uint16_t)((v[0] << 8) | v[1]);
+                            c->clientSim->lobbyTimeLimit =
+                                (int32_t)mins * 60 * 50;
+                        }
+                        break;
+                    case LST_AUTO_LOCK_ON_GAME:
+                        if (vl == 1) c->clientSim->lobbyAutoLockOnGameStart = v[0] != 0;
+                        break;
+                    default: /* unknown setting type — ignore (forward-compat) */ break;
+                }
+            }
+        }
+        break;
+
+    case PACKET_LOBBY_OPEN_HOST_CHG:
+        if (len >= PACKET_HEADER_SIZE + 1) {
+            c->clientSim->lobbyOpenHost = buf[PACKET_HEADER_SIZE] != 0;
+        }
+        break;
+
+    case PACKET_LOBBY_TEAM_META_CHG:
+        /* [header 8] [teamId 1] [color 1] [namingPool 1] [nameLen 1] [name N] */
+        if (len >= PACKET_HEADER_SIZE + 4) {
+            uint8_t teamId  = buf[PACKET_HEADER_SIZE + 0];
+            uint8_t color   = buf[PACKET_HEADER_SIZE + 1];
+            uint8_t pool    = buf[PACKET_HEADER_SIZE + 2];
+            uint8_t nameLen = buf[PACKET_HEADER_SIZE + 3];
+            if (teamId > 0 && teamId < 16 && nameLen <= 31 &&
+                len >= PACKET_HEADER_SIZE + 4 + nameLen) {
+                c->clientSim->lobbyTeamColor[teamId] = color;
+                c->clientSim->lobbyTeamPool[teamId]  = pool;
+                memset(c->clientSim->lobbyTeamName[teamId], 0, 32);
+                if (nameLen > 0) {
+                    memcpy(c->clientSim->lobbyTeamName[teamId],
+                           buf + PACKET_HEADER_SIZE + 4, nameLen);
+                }
+                c->clientSim->lobbyTeamInUse[teamId] =
+                    (nameLen > 0 || color != 0 || pool != 0) ? 1 : 0;
+            }
+        }
+        break;
+
+    case PACKET_LOBBY_BOT_CONFIG_CHG:
+        /* [header 8] [slot 1] [difficulty 1] [personality 1]
+         *   [nameLen 1] [name N]. */
+        if (len >= PACKET_HEADER_SIZE + 4) {
+            uint8_t slot = buf[PACKET_HEADER_SIZE + 0];
+            uint8_t diff = buf[PACKET_HEADER_SIZE + 1];
+            uint8_t pers = buf[PACKET_HEADER_SIZE + 2];
+            if (slot < 16) {
+                c->clientSim->lobbyBotDifficulty[slot]  = diff;
+                c->clientSim->lobbyBotPersonality[slot] = pers;
+            }
+        }
+        break;
+
+    case PACKET_LOBBY_BRAIN_LIST: {
+        /* [header 8] [count 1]
+         * per entry: [nameLen 1][name][verLen 1][ver][pathLen 1][path] */
+        if (len < PACKET_HEADER_SIZE + 1) break;
+        int pos = PACKET_HEADER_SIZE;
+        uint8_t cnt = buf[pos++];
+        BrainList *bl = &c->clientSim->lobbyBrainList;
+        memset(bl, 0, sizeof(*bl));
+        if (cnt > BRAIN_LIST_MAX) cnt = BRAIN_LIST_MAX;
+        for (int i = 0; i < cnt && pos < len; i++) {
+            if (pos + 1 > len) break;
+            uint8_t nlen = buf[pos++];
+            if (nlen >= BRAIN_LIST_NAME_LEN || pos + nlen > len) break;
+            memcpy(bl->entries[i].name, buf + pos, nlen);
+            bl->entries[i].name[nlen] = '\0';
+            pos += nlen;
+            if (pos + 1 > len) break;
+            uint8_t vlen = buf[pos++];
+            if (vlen >= BRAIN_LIST_VER_LEN || pos + vlen > len) break;
+            memcpy(bl->entries[i].version, buf + pos, vlen);
+            bl->entries[i].version[vlen] = '\0';
+            pos += vlen;
+            if (pos + 1 > len) break;
+            uint8_t plen = buf[pos++];
+            if (plen >= BRAIN_LIST_PATH_LEN || pos + plen > len) break;
+            memcpy(bl->entries[i].path, buf + pos, plen);
+            bl->entries[i].path[plen] = '\0';
+            pos += plen;
+            bl->count++;
+        }
+        break;
+    }
+
+    case PACKET_LOBBY_MAP_LIST_RSP: {
+        /* [header 8] [pathLen 1] [path N] [count 1]
+         * per entry: [nameLen 1][name M][isFolder 1][modTime 8 BE] */
+        if (!c->clientSim) break;
+        if (len < PACKET_HEADER_SIZE + 1) break;
+        int pos = PACKET_HEADER_SIZE;
+        uint8_t plen = buf[pos++];
+        if (pos + plen + 1 > len) break;
+        char rspPath[256];
+        memset(rspPath, 0, sizeof(rspPath));
+        if (plen > 0) {
+            if (plen >= sizeof(rspPath)) plen = (uint8_t)(sizeof(rspPath) - 1);
+            memcpy(rspPath, buf + pos, plen);
+        }
+        pos += plen;
+        uint8_t cnt = buf[pos++];
+        if (cnt > LOBBY_MAP_LIST_MAX) cnt = LOBBY_MAP_LIST_MAX;
+
+        memset(c->clientSim->lobbyMapListPath, 0,
+               sizeof(c->clientSim->lobbyMapListPath));
+        SDL_strlcpy(c->clientSim->lobbyMapListPath, rspPath,
+                    sizeof(c->clientSim->lobbyMapListPath));
+        c->clientSim->lobbyMapListCount = 0;
+        for (int i = 0; i < cnt && pos < len; i++) {
+            if (pos + 1 > len) break;
+            uint8_t nameLen = buf[pos++];
+            if (nameLen >= LOBBY_MAP_LIST_NAME_LEN ||
+                pos + nameLen + 1 + 8 > len) break;
+            int idx = c->clientSim->lobbyMapListCount++;
+            memset(c->clientSim->lobbyMapListNames[idx], 0,
+                   LOBBY_MAP_LIST_NAME_LEN);
+            if (nameLen > 0) {
+                memcpy(c->clientSim->lobbyMapListNames[idx],
+                       buf + pos, nameLen);
+            }
+            pos += nameLen;
+            c->clientSim->lobbyMapListIsFolder[idx] = buf[pos++];
+            uint64_t mt = 0;
+            for (int b = 0; b < 8; b++) {
+                mt = (mt << 8) | buf[pos++];
+            }
+            c->clientSim->lobbyMapListModTime[idx] = (int64_t)mt;
+        }
+        c->clientSim->lobbyMapListReady = true;
+        c->clientSim->lobbyMapListInFlight = false;
+        break;
+    }
+
+    case PACKET_LOBBY_MAP_SEARCH_RSP: {
+        /* [header 8] [pathLen 1] [path N] [queryLen 1] [query M]
+         * [count 1] per entry: [nameLen 1][name M][isFolder 1][modTime 8 BE] */
+        if (!c->clientSim) break;
+        if (len < PACKET_HEADER_SIZE + 1) break;
+        int pos = PACKET_HEADER_SIZE;
+        uint8_t plen = buf[pos++];
+        if (pos + plen + 2 > len) break;
+        char rspPath[256];
+        memset(rspPath, 0, sizeof(rspPath));
+        if (plen > 0) {
+            if (plen >= sizeof(rspPath)) plen = (uint8_t)(sizeof(rspPath) - 1);
+            memcpy(rspPath, buf + pos, plen);
+        }
+        pos += plen;
+        uint8_t qlen = buf[pos++];
+        if (pos + qlen + 1 > len) break;
+        char rspQuery[128];
+        memset(rspQuery, 0, sizeof(rspQuery));
+        if (qlen > 0) {
+            if (qlen >= sizeof(rspQuery)) qlen = (uint8_t)(sizeof(rspQuery) - 1);
+            memcpy(rspQuery, buf + pos, qlen);
+        }
+        pos += qlen;
+        uint8_t cnt = buf[pos++];
+        if (cnt > LOBBY_MAP_LIST_MAX) cnt = LOBBY_MAP_LIST_MAX;
+
+        memset(c->clientSim->lobbyMapSearchPath, 0,
+               sizeof(c->clientSim->lobbyMapSearchPath));
+        SDL_strlcpy(c->clientSim->lobbyMapSearchPath, rspPath,
+                    sizeof(c->clientSim->lobbyMapSearchPath));
+        memset(c->clientSim->lobbyMapSearchQuery, 0,
+               sizeof(c->clientSim->lobbyMapSearchQuery));
+        SDL_strlcpy(c->clientSim->lobbyMapSearchQuery, rspQuery,
+                    sizeof(c->clientSim->lobbyMapSearchQuery));
+        c->clientSim->lobbyMapSearchCount = 0;
+        for (int i = 0; i < cnt && pos < len; i++) {
+            if (pos + 1 > len) break;
+            uint8_t nameLen = buf[pos++];
+            if (nameLen >= LOBBY_MAP_LIST_NAME_LEN ||
+                pos + nameLen + 1 + 8 > len) break;
+            int idx = c->clientSim->lobbyMapSearchCount++;
+            memset(c->clientSim->lobbyMapSearchNames[idx], 0,
+                   LOBBY_MAP_LIST_NAME_LEN);
+            if (nameLen > 0) {
+                memcpy(c->clientSim->lobbyMapSearchNames[idx],
+                       buf + pos, nameLen);
+            }
+            pos += nameLen;
+            c->clientSim->lobbyMapSearchIsFolder[idx] = buf[pos++];
+            uint64_t mt = 0;
+            for (int b = 0; b < 8; b++) {
+                mt = (mt << 8) | buf[pos++];
+            }
+            c->clientSim->lobbyMapSearchModTime[idx] = (int64_t)mt;
+        }
+        c->clientSim->lobbyMapSearchReady = true;
+        c->clientSim->lobbyMapSearchInFlight = false;
+        break;
+    }
+
+    case PACKET_LOBBY_MAP_UPLOAD_ACK: {
+        /* [header 8] [status 1]. 0 = ok, non-zero = reject. */
+        if (!c->clientSim || len < PACKET_HEADER_SIZE + 1) break;
+        uint8_t status = buf[PACKET_HEADER_SIZE];
+        if (status == 0) {
+            c->clientSim->lobbyMapUploadStatus = 2;
+        } else {
+            c->clientSim->lobbyMapUploadStatus = 4;
+            c->clientSim->lobbyMapUploadRejectCode = status;
+        }
+        break;
+    }
+
+    case PACKET_LOBBY_MAP_UPLOAD_DONE: {
+        /* [header 8] [status 1] [pathLen 1] [path N] */
+        if (!c->clientSim || len < PACKET_HEADER_SIZE + 2) break;
+        uint8_t status = buf[PACKET_HEADER_SIZE];
+        uint8_t plen   = buf[PACKET_HEADER_SIZE + 1];
+        if (len < PACKET_HEADER_SIZE + 2 + plen) break;
+        if (status == 0) {
+            memset(c->clientSim->lobbyMapUploadFinalPath, 0,
+                   sizeof(c->clientSim->lobbyMapUploadFinalPath));
+            if (plen > 0 && plen < sizeof(c->clientSim->lobbyMapUploadFinalPath)) {
+                memcpy(c->clientSim->lobbyMapUploadFinalPath,
+                       buf + PACKET_HEADER_SIZE + 2, plen);
+            }
+            c->clientSim->lobbyMapUploadStatus = 3;
+        } else {
+            c->clientSim->lobbyMapUploadStatus = 4;
+            c->clientSim->lobbyMapUploadRejectCode = status;
+        }
+        break;
+    }
+
+    case PACKET_LOBBY_BOT_BRAIN_CHG: {
+        /* [header 8] [slot 1] [pathLen 1] [path N]. */
+        if (len < PACKET_HEADER_SIZE + 2) break;
+        uint8_t slot = buf[PACKET_HEADER_SIZE + 0];
+        uint8_t plen = buf[PACKET_HEADER_SIZE + 1];
+        if (slot >= MAX_TANKS) break;
+        if (plen >= sizeof(c->clientSim->lobbyBotBrain[0])) break;
+        if (len < PACKET_HEADER_SIZE + 2 + plen) break;
+        memset(c->clientSim->lobbyBotBrain[slot], 0,
+               sizeof(c->clientSim->lobbyBotBrain[slot]));
+        if (plen > 0) {
+            memcpy(c->clientSim->lobbyBotBrain[slot],
+                   buf + PACKET_HEADER_SIZE + 2, plen);
+        }
+        break;
+    }
+
+    case PACKET_LOBBY_REJECT:
+        /* [header 8] [origPacket 1] [reasonCode 1] */
+        if (len >= PACKET_HEADER_SIZE + 2) {
+            c->clientSim->lobbyLastRejectPacket = buf[PACKET_HEADER_SIZE];
+            c->clientSim->lobbyLastRejectReason = buf[PACKET_HEADER_SIZE + 1];
+        }
+        break;
+
+    case PACKET_LOBBY_AUTO_UNREADY:
+        /* No payload. Server cleared everyone's ready flag. */
+        {
+            int i;
+            for (i = 0; i < MAX_TANKS; i++) {
+                c->clientSim->lobbySlots[i].ready = false;
+            }
+        }
+        break;
+
     case PACKET_PUNCH_REQUEST_ACK:
         /* Tracker acked our PUNCH_REQUEST. Status byte at PACKET_HEADER_SIZE
          * could drive UX someday; for now just consume so it doesn't fall
@@ -1744,14 +2043,31 @@ void transportUdpClientSendReady(Transport *t, bool ready) {
     udpClientSendTo(c, buf, sizeof(buf));
 }
 
-void transportUdpClientSendAddBot(Transport *t) {
+void transportUdpClientSendAddBot(Transport *t, uint8_t teamNumber,
+                                  const char *brainPath,
+                                  const char *botName) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE];
+    uint8_t buf[PACKET_HEADER_SIZE + 3 + BRAIN_LIST_PATH_LEN +
+                PACKET_MAX_PLAYER_NAME];
 
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
+    if (brainPath == NULL) brainPath = "";
+    if (botName   == NULL) botName   = "";
+    int pathLen = (int)strlen(brainPath);
+    int nameLen = (int)strlen(botName);
+    if (pathLen >= BRAIN_LIST_PATH_LEN)    pathLen = BRAIN_LIST_PATH_LEN - 1;
+    if (nameLen >= PACKET_MAX_PLAYER_NAME) nameLen = PACKET_MAX_PLAYER_NAME - 1;
+    if (nameLen > 31)                      nameLen = 31;
+
+    int pos = PACKET_HEADER_SIZE;
     packHeader(buf, PACKET_LOBBY_ADD_BOT, c->outSequence++);
-    udpClientSendTo(c, buf, sizeof(buf));
+    buf[pos++] = teamNumber;
+    buf[pos++] = (uint8_t)pathLen;
+    if (pathLen > 0) { memcpy(buf + pos, brainPath, pathLen); pos += pathLen; }
+    buf[pos++] = (uint8_t)nameLen;
+    if (nameLen > 0) { memcpy(buf + pos, botName, nameLen); pos += nameLen; }
+    udpClientSendTo(c, buf, pos);
 }
 
 void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum) {
@@ -1818,4 +2134,285 @@ void transportUdpClientSendMapSkipVote(Transport *t) {
 
     packHeader(buf, PACKET_MAP_SKIP_VOTE, c->outSequence++);
     udpClientSendTo(c, buf, sizeof(buf));
+}
+
+/* ── Layout A lobby commands — Client → Server ───────────────────── */
+
+void transportUdpClientSendLobbySetting(Transport *t,
+                                        uint8_t settingType,
+                                        const uint8_t *value, uint8_t valueLen) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 2 + 32];
+    int len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (valueLen > 32) valueLen = 32;
+    if (valueLen > 0 && value == NULL) return;
+
+    packHeader(buf, PACKET_LOBBY_SET_SETTING, c->outSequence++);
+    buf[PACKET_HEADER_SIZE]     = settingType;
+    buf[PACKET_HEADER_SIZE + 1] = valueLen;
+    if (valueLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 2, value, valueLen);
+    len = PACKET_HEADER_SIZE + 2 + valueLen;
+    udpClientSendTo(c, buf, len);
+}
+
+void transportUdpClientSendLobbyOpenHost(Transport *t, bool openHost) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 1];
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    packHeader(buf, PACKET_LOBBY_OPEN_HOST, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = openHost ? 1 : 0;
+    udpClientSendTo(c, buf, sizeof(buf));
+}
+
+void transportUdpClientSendLobbyTeamMeta(Transport *t, uint8_t teamId,
+                                         uint8_t color, uint8_t namingPool,
+                                         const char *name) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + 31];
+    int nameLen, len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (name == NULL) name = "";
+
+    nameLen = (int)strlen(name);
+    if (nameLen > 31) nameLen = 31;
+
+    packHeader(buf, PACKET_LOBBY_TEAM_META, c->outSequence++);
+    buf[PACKET_HEADER_SIZE + 0] = teamId;
+    buf[PACKET_HEADER_SIZE + 1] = color;
+    buf[PACKET_HEADER_SIZE + 2] = namingPool;
+    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)nameLen;
+    if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 4, name, nameLen);
+    len = PACKET_HEADER_SIZE + 4 + nameLen;
+    udpClientSendTo(c, buf, len);
+}
+
+void transportUdpClientSendLobbyTeamClear(Transport *t, uint8_t teamId) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 1];
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    packHeader(buf, PACKET_LOBBY_TEAM_CLEAR, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = teamId;
+    udpClientSendTo(c, buf, sizeof(buf));
+}
+
+void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
+                                          uint8_t difficulty, uint8_t personality,
+                                          const char *name) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + 31];
+    int nameLen, len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (name == NULL) name = "";
+
+    nameLen = (int)strlen(name);
+    if (nameLen > 31) nameLen = 31;
+
+    packHeader(buf, PACKET_LOBBY_BOT_CONFIG, c->outSequence++);
+    buf[PACKET_HEADER_SIZE + 0] = slot;
+    buf[PACKET_HEADER_SIZE + 1] = difficulty;
+    buf[PACKET_HEADER_SIZE + 2] = personality;
+    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)nameLen;
+    if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 4, name, nameLen);
+    len = PACKET_HEADER_SIZE + 4 + nameLen;
+    udpClientSendTo(c, buf, len);
+}
+
+void transportUdpClientSendLobbySetBotBrain(Transport *t, uint8_t slot,
+                                            const char *brainPath) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 2 + BRAIN_LIST_PATH_LEN];
+    int pathLen, len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (brainPath == NULL) brainPath = "";
+
+    pathLen = (int)strlen(brainPath);
+    if (pathLen >= BRAIN_LIST_PATH_LEN) pathLen = BRAIN_LIST_PATH_LEN - 1;
+
+    packHeader(buf, PACKET_LOBBY_SET_BOT_BRAIN, c->outSequence++);
+    buf[PACKET_HEADER_SIZE + 0] = slot;
+    buf[PACKET_HEADER_SIZE + 1] = (uint8_t)pathLen;
+    if (pathLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 2, brainPath, pathLen);
+    len = PACKET_HEADER_SIZE + 2 + pathLen;
+    udpClientSendTo(c, buf, len);
+}
+
+void transportUdpClientSendLobbySetMap(Transport *t,
+                                       const char *mapRelPath) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 256];
+    int pathLen, len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (mapRelPath == NULL) mapRelPath = "";
+
+    pathLen = (int)strlen(mapRelPath);
+    if (pathLen > 255) pathLen = 255;
+
+    packHeader(buf, PACKET_LOBBY_SET_MAP, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = (uint8_t)pathLen;
+    if (pathLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 1, mapRelPath, pathLen);
+    len = PACKET_HEADER_SIZE + 1 + pathLen;
+    udpClientSendTo(c, buf, len);
+}
+
+void transportUdpClientSendLobbyPreviewCancel(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    uint8_t buf[PACKET_HEADER_SIZE];
+    packHeader(buf, PACKET_LOBBY_PREVIEW_CANCEL, c->outSequence++);
+    udpClientSendTo(c, buf, sizeof(buf));
+}
+
+void transportUdpClientSendLobbyPreviewCommit(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    uint8_t buf[PACKET_HEADER_SIZE];
+    packHeader(buf, PACKET_LOBBY_PREVIEW_COMMIT, c->outSequence++);
+    udpClientSendTo(c, buf, sizeof(buf));
+}
+
+void transportUdpClientSendLobbyPreviewRandom(Transport *t,
+                                              const char *seedStr) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (!seedStr) seedStr = "";
+    int seedLen = (int)strlen(seedStr);
+    if (seedLen > 63) seedLen = 63;
+
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 64];
+    packHeader(buf, PACKET_LOBBY_PREVIEW_RANDOM, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = (uint8_t)seedLen;
+    if (seedLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 1, seedStr, seedLen);
+    udpClientSendTo(c, buf, PACKET_HEADER_SIZE + 1 + seedLen);
+}
+
+void transportUdpClientSendLobbyMapListRequest(Transport *t,
+                                                const char *relPath) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 256];
+    int pathLen, len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (relPath == NULL) relPath = "";
+    pathLen = (int)strlen(relPath);
+    if (pathLen > 255) pathLen = 255;
+
+    packHeader(buf, PACKET_LOBBY_MAP_LIST_REQ, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = (uint8_t)pathLen;
+    if (pathLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 1, relPath, pathLen);
+    len = PACKET_HEADER_SIZE + 1 + pathLen;
+    udpClientSendTo(c, buf, len);
+
+    if (c->clientSim) {
+        memset(c->clientSim->lobbyMapListReqPath, 0,
+               sizeof(c->clientSim->lobbyMapListReqPath));
+        if (pathLen > 0) {
+            memcpy(c->clientSim->lobbyMapListReqPath, relPath,
+                   (size_t)pathLen);
+        }
+        c->clientSim->lobbyMapListInFlight = true;
+    }
+}
+
+void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
+                                                  const char *relPath,
+                                                  const char *query) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 256 + 1 + 128];
+    int pathLen, qLen, len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (relPath == NULL) relPath = "";
+    if (query == NULL)   query   = "";
+    pathLen = (int)strlen(relPath);
+    if (pathLen > 255) pathLen = 255;
+    qLen = (int)strlen(query);
+    if (qLen > 127) qLen = 127;
+
+    packHeader(buf, PACKET_LOBBY_MAP_SEARCH_REQ, c->outSequence++);
+    int pos = PACKET_HEADER_SIZE;
+    buf[pos++] = (uint8_t)pathLen;
+    if (pathLen > 0) { memcpy(buf + pos, relPath, pathLen); pos += pathLen; }
+    buf[pos++] = (uint8_t)qLen;
+    if (qLen > 0)    { memcpy(buf + pos, query, qLen);     pos += qLen; }
+    len = pos;
+    udpClientSendTo(c, buf, len);
+
+    if (c->clientSim) {
+        memset(c->clientSim->lobbyMapSearchReqPath, 0,
+               sizeof(c->clientSim->lobbyMapSearchReqPath));
+        memset(c->clientSim->lobbyMapSearchReqQuery, 0,
+               sizeof(c->clientSim->lobbyMapSearchReqQuery));
+        if (pathLen > 0) {
+            memcpy(c->clientSim->lobbyMapSearchReqPath, relPath,
+                   (size_t)pathLen);
+        }
+        if (qLen > 0) {
+            memcpy(c->clientSim->lobbyMapSearchReqQuery, query,
+                   (size_t)qLen);
+        }
+        c->clientSim->lobbyMapSearchInFlight = true;
+    }
+}
+
+void transportUdpClientSendLobbyMapUploadBegin(Transport *t,
+                                                uint32_t totalLen,
+                                                const char *name) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255];
+    int nameLen, len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (name == NULL) name = "";
+    nameLen = (int)strlen(name);
+    if (nameLen > 255) nameLen = 255;
+
+    packHeader(buf, PACKET_LOBBY_MAP_UPLOAD_BEGIN, c->outSequence++);
+    buf[PACKET_HEADER_SIZE + 0] = (uint8_t)((totalLen >> 24) & 0xFF);
+    buf[PACKET_HEADER_SIZE + 1] = (uint8_t)((totalLen >> 16) & 0xFF);
+    buf[PACKET_HEADER_SIZE + 2] = (uint8_t)((totalLen >>  8) & 0xFF);
+    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)( totalLen        & 0xFF);
+    buf[PACKET_HEADER_SIZE + 4] = (uint8_t)nameLen;
+    if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 5, name, nameLen);
+    len = PACKET_HEADER_SIZE + 5 + nameLen;
+    udpClientSendTo(c, buf, len);
+
+    if (c->clientSim) {
+        c->clientSim->lobbyMapUploadStatus = 1;
+        c->clientSim->lobbyMapUploadRejectCode = 0;
+        c->clientSim->lobbyMapUploadFinalPath[0] = '\0';
+    }
+}
+
+void transportUdpClientSendLobbyMapUploadChunk(Transport *t,
+                                                uint32_t offset,
+                                                const uint8_t *data,
+                                                uint16_t dataLen) {
+    if (dataLen == 0 || data == NULL) return;
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    if (dataLen > 1024) return;
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + 2 + 1024];
+    int len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    packHeader(buf, PACKET_LOBBY_MAP_UPLOAD_CHUNK, c->outSequence++);
+    buf[PACKET_HEADER_SIZE + 0] = (uint8_t)((offset >> 24) & 0xFF);
+    buf[PACKET_HEADER_SIZE + 1] = (uint8_t)((offset >> 16) & 0xFF);
+    buf[PACKET_HEADER_SIZE + 2] = (uint8_t)((offset >>  8) & 0xFF);
+    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)( offset        & 0xFF);
+    buf[PACKET_HEADER_SIZE + 4] = (uint8_t)((dataLen >> 8) & 0xFF);
+    buf[PACKET_HEADER_SIZE + 5] = (uint8_t)( dataLen       & 0xFF);
+    memcpy(buf + PACKET_HEADER_SIZE + 6, data, dataLen);
+    len = PACKET_HEADER_SIZE + 6 + dataLen;
+    udpClientSendTo(c, buf, len);
 }

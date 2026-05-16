@@ -132,6 +132,45 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->mapSkipAvailable = evt->u.lobbySettings.mapSkipAvailable;
         cs->netStat          = evt->u.lobbySettings.netStat;
         cs->inLobby          = evt->u.lobbySettings.inLobby;
+        cs->lobbyOpenHost            = evt->u.lobbySettings.lobbyOpenHost;
+        cs->lobbyAutoLockOnGameStart = evt->u.lobbySettings.lobbyAutoLockOnGameStart;
+        cs->lobbyServerLocks         = evt->u.lobbySettings.lobbyServerLocks;
+        break;
+
+    case CTRL_LOBBY_TEAM_META: {
+        uint8_t t = evt->u.lobbyTeamMeta.teamId;
+        if (t == 0 || t >= MAX_TANKS) break;
+        cs->lobbyTeamInUse[t] = evt->u.lobbyTeamMeta.in_use;
+        cs->lobbyTeamColor[t] = evt->u.lobbyTeamMeta.color;
+        cs->lobbyTeamPool[t]  = evt->u.lobbyTeamMeta.namingPool;
+        strncpy(cs->lobbyTeamName[t], evt->u.lobbyTeamMeta.name,
+                sizeof(cs->lobbyTeamName[t]) - 1);
+        cs->lobbyTeamName[t][sizeof(cs->lobbyTeamName[t]) - 1] = '\0';
+        break;
+    }
+
+    case CTRL_LOBBY_BOT_CONFIG: {
+        uint8_t s = evt->u.lobbyBotConfig.slot;
+        if (s >= MAX_TANKS) break;
+        cs->lobbyBotDifficulty[s]  = evt->u.lobbyBotConfig.difficulty;
+        cs->lobbyBotPersonality[s] = evt->u.lobbyBotConfig.personality;
+        /* Bot display name flows through the lobbySlot path; the
+         * name field on this event is informational and ignored here
+         * to avoid stomping the slot's playerName on a partial mirror. */
+        break;
+    }
+
+    case CTRL_LOBBY_BOT_BRAIN: {
+        uint8_t s = evt->u.lobbyBotBrain.slot;
+        if (s >= MAX_TANKS) break;
+        strncpy(cs->lobbyBotBrain[s], evt->u.lobbyBotBrain.path,
+                sizeof(cs->lobbyBotBrain[s]) - 1);
+        cs->lobbyBotBrain[s][sizeof(cs->lobbyBotBrain[s]) - 1] = '\0';
+        break;
+    }
+
+    case CTRL_LOBBY_BRAIN_LIST:
+        cs->lobbyBrainList = evt->u.lobbyBrainList.list;
         break;
 
     case CTRL_LOBBY_MAP_CHANGE:
