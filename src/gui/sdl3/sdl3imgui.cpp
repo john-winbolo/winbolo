@@ -3053,6 +3053,32 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->hasAllies  = hasAllies;
     s->canRequest = canRequest;
     s->inCooldown = sdl3ImguiAllianceReqInCooldown();
+
+    /* Per-slot snapshot — uses the fresh ping accessor (the s_playerPing
+     * cache is updated only when the server pushes; the accessor includes
+     * unflushed local timing). Stale slot rows in the native menu are
+     * cheap (one drawRect per refresh), so we fill all 16 unconditionally
+     * and let mac_menubar_refresh() decide between view + numeric title. */
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        struct MacPlayerSlot *p = &s->players[i];
+        p->enabled = s_playerEnabled[i];
+        p->checked = s_playerChecked[i];
+        if (p->enabled) {
+            memcpy(p->name, s_playerName[i], sizeof p->name);
+            p->name[sizeof p->name - 1] = '\0';
+            memcpy(p->country, s_playerCountry[i], sizeof p->country);
+            p->country[sizeof p->country - 1] = '\0';
+            p->pflags = (int)s_playerFlags[i];
+            p->ptype  = (int)s_playerClientType[i];
+            p->ping   = cs ? (int)clientSimGetPlayerPing(cs, (BYTE)i) : 0;
+        } else {
+            p->name[0]    = '\0';
+            p->country[0] = '\0';
+            p->pflags     = 0;
+            p->ptype      = 0;
+            p->ping       = 0;
+        }
+    }
 }
 #endif
 
