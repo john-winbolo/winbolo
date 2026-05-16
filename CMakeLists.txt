@@ -2183,6 +2183,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_transport_local_passive_threads.c
     tests/unit/test_sp_subscriber_delivery.c
     tests/unit/test_sp_input_to_shot_baseline.c
+    tests/unit/test_sp_shoot_through_timer.c
     # transport_udp_client.c stays per-target because of HAVE_STEAM
     # gating (it's excluded from bolo_static for that reason). Linked
     # here without HAVE_STEAM so client_net.c's transportUdpClient*
@@ -2194,7 +2195,19 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Lifting threads.{c,h} into its own small static library is a
     # plausible follow-up; intentionally out of scope here.
     src/server/threads.c
-    src/server/server_stubs.c
+    # server_lifecycle.c is compiled in to give the SP-through-timer
+    # test the real serverInstanceStartup / serverInstanceTick /
+    # serverInstanceShutdown bodies. acceptRemoteClients=false short-
+    # circuits every UDP / WBN / tracker / NAT path, so the
+    # transportUdpServer* / winbolonet* / natPortMap* references it
+    # leaves behind only need link-only stubs (added below in
+    # test_stubs.c) rather than the full server_static runtime.
+    src/server/server_lifecycle.c
+    # server_stubs.c (transportUdpServer* / serverLifecycle* stubs)
+    # is intentionally NOT linked here: server_lifecycle.c provides
+    # the real serverLifecycleGetTickStats / GetSimStats /
+    # serverInstanceRecordProbeReply bodies, and the remaining UDP
+    # stubs that file would contribute live in test_stubs.c instead.
     src/server/server_dedicated_log_stubs.c
     src/lzw/dcodlzw.c
     src/lzw/ecodlzw.c
@@ -2240,6 +2253,7 @@ set(_unit_test_names
     transport_local_passive_threads
     sp_subscriber_delivery
     sp_input_to_shot_baseline
+    sp_shoot_through_timer
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
