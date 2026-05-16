@@ -1177,7 +1177,10 @@ bool gameFrontSetDlgState(openingStates newState) {
                    password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,
                    gameFrontTrackerEnabled, wantRejoin, gameFrontWbnUse,
                    gameFrontWbnToken);
-          /* Sync tank state from initial snapshot */
+          /* Sync tank state from initial snapshot. Lock so the snapshot is
+           * built and applied atomically against the host timer thread,
+           * which is already ticking spServerSim. */
+          threadsWaitForMutex();
           {
             SnapshotHeader snapHdr;
             TankSnapshot snapTanks[MAX_TANKS];
@@ -1201,6 +1204,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                                    snapPills, snapHdr.pillCount,
                                    snapEvents, snapHdr.reliableEventCount, 0);
           }
+          threadsReleaseMutex();
           clientSimNetSetupTankGo(humanSim);
           /* Destroy background game before adding real bots — bgGameDestroy
            * calls serverSimDestroyBots which would wipe bots we add below. */
@@ -1211,7 +1215,11 @@ bool gameFrontSetDlgState(openingStates newState) {
               bgGameSetShared(NULL);
             }
           }
-          /* Add bot brains for local game if AI is enabled */
+          /* Add bot brains for local game if AI is enabled.
+           * Serialise bot-pool init, serverSimCreateBot / serverSimSetTeam
+           * and the reapply-alliances pass against the host timer thread,
+           * which is already calling serverInstanceTick on spServerSim. */
+          threadsWaitForMutex();
           if (!serverSimBotPoolInit(0)) {
             fprintf(stderr, "[gameFront] serverSimBotPoolInit failed; bots disabled for this session\n");
           } else {
@@ -1268,6 +1276,7 @@ bool gameFrontSetDlgState(openingStates newState) {
               serverSimReapplyTeamAlliances(spServerSim);
             }
           }
+          threadsReleaseMutex();
           gameFrontUpdateSteamPresence(humanSim);
           } /* end "gameFrontStartServerSim succeeded" */
         } else {
