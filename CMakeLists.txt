@@ -2169,12 +2169,9 @@ endforeach()
 # without the SDL3 GUI. Each test is a registered name dispatched from
 # tests/unit/test_main.c; CTest entries below run them one at a time.
 #
-# Link surface mirrors BrainTest's minus the UI bits, plus the real
-# src/server/threads.c (BrainTest uses no-op threadsXxx stubs because it
-# is single-threaded; these tests exercise the cross-thread paths). The
-# WinBoloUnitTests target sees the same sim-owner include profile as
-# BrainTest so test_sp_subscriber_delivery.c can pull GameSim's full
-# layout from game_sim.h.
+# Uses the `unittests` privileged include profile defined in
+# cmake/bolo_lib.cmake; scope and expiry documented in
+# docs/ARCHITECTURE.md.
 # ---------------------------------------------------------------------------
 set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_main.c
@@ -2187,6 +2184,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # here without HAVE_STEAM so client_net.c's transportUdpClient*
     # references resolve — the tests never run the UDP code path.
     src/bolo/transport_udp_client.c
+    # threads.{c,h} is compiled per-target here rather than linked
+    # from server_static so the test binary doesn't drag in the
+    # dedicated-server runtime (UDP server, lifecycle, geolookup).
+    # Lifting threads.{c,h} into its own small static library is a
+    # plausible follow-up; intentionally out of scope here.
     src/server/threads.c
     src/server/server_stubs.c
     src/server/server_dedicated_log_stubs.c
@@ -2208,13 +2210,12 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
 
 target_include_directories(WinBoloUnitTests PRIVATE
     src/gui/sdl3
-    src/gui
     src/server
     src
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${cjson_SOURCE_DIR}
 )
-bolo_apply_include_rules(WinBoloUnitTests sim_owner)
+bolo_apply_include_rules(WinBoloUnitTests unittests)
 
 target_link_libraries(WinBoloUnitTests PRIVATE
     bolo_static server_sim_static bot_brains_static

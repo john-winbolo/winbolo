@@ -35,6 +35,24 @@
 #                  the observation builder migrates onto the
 #                  snapshot APIs that the GUI clients already use,
 #                  and gym drops back to runtime_only.
+#   unittests    - the WinBoloUnitTests binary. Privileged access
+#                  to bolo T2 for invariant checks: transport.h
+#                  (passive transport_local queue mechanics under
+#                  cross-thread access), game_sim.h + players.h
+#                  (subscriber-dispatch test reads the client's
+#                  player table back through &cs->sim.plyrs after
+#                  CTRL_PLAYER_NAME delivery). The asymmetric-
+#                  runtime bug class doesn't apply: the tests are
+#                  not shipped to players, have a single consumer
+#                  (CTest), and aren't a runtime peer of the
+#                  GUI / server / mobile / wasm clients. The
+#                  exception expires once T1 accessors expose the
+#                  passive-transport queue state and the
+#                  subscriber-side player view the tests currently
+#                  reach T2 to observe; at that point the tests
+#                  migrate to T1+T3+T4 (the default tests/ row in
+#                  ARCHITECTURE.md's "Who may include what" table)
+#                  and this profile is removed.
 #   gui          - the desktop game GUI and any platform-specific GUI binary.
 #                  Sees public/ only. Reaching into bolo internals from a
 #                  GUI translation unit is the asymmetric-runtime bug class
@@ -44,9 +62,10 @@
 #                  only. Same rationale as gui.
 #
 # This file is the single point of policy for the include-rule lockdown.
-# gui and runtime_only targets see only public/; the four privileged
-# profiles (sim_owner / mapeditor / braintest / gym) see the full tree
-# because they either own the sim or have a documented scoped exception.
+# gui and runtime_only targets see only public/; the five privileged
+# profiles (sim_owner / mapeditor / braintest / gym / unittests) see the
+# full tree because they either own the sim or have a documented scoped
+# exception.
 
 set(BOLO_PUBLIC_DIR   "${CMAKE_CURRENT_LIST_DIR}/../src/bolo/public")
 set(BOLO_INTERNAL_DIR "${CMAKE_CURRENT_LIST_DIR}/../src/bolo/internal")
@@ -56,7 +75,8 @@ function(bolo_apply_include_rules target profile)
     if(profile STREQUAL "sim_owner"
        OR profile STREQUAL "mapeditor"
        OR profile STREQUAL "braintest"
-       OR profile STREQUAL "gym")
+       OR profile STREQUAL "gym"
+       OR profile STREQUAL "unittests")
         target_include_directories(${target} PRIVATE
             ${BOLO_PUBLIC_DIR}
             ${BOLO_INTERNAL_DIR}
