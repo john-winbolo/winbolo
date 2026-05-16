@@ -58,6 +58,10 @@ extern "C" void clientSimCheckAlliedPlayers(struct ClientSim *cs);
 extern "C" void clientSimCheckNearbyPlayers(struct ClientSim *cs);
 extern "C" void clientSimTogglePlayerCheckState(struct ClientSim *cs, unsigned char playerNum);
 
+extern "C" void sdl3ImguiStopBrain(void);
+extern "C" void sdl3ImguiStartBrain(int idx, struct ClientSim *cs);
+extern "C" void sdl3ImguiShowBrainSettings(void);
+
 #define LANG_STR(id) ([NSString stringWithUTF8String:langGetText(id)])
 
 @class WBMenuBridge;
@@ -97,6 +101,17 @@ static NSMenuItem *s_winboloRequestAllianceItem = nil;
 static NSMenuItem *s_winboloLeaveAllianceItem   = nil;
 static NSMenuItem *s_playersRequestAllianceItem = nil;
 static NSMenuItem *s_playersLeaveAllianceItem   = nil;
+
+/* Brains menu — the parent item drives enable-gating on aiActive, and the
+ * submenu is rebuilt whenever brainCount or brainSettingsShown changes.
+ * The Manual item is permanent at index 0; the Settings item is alloced
+ * once but only attached when a Lua brain is running. */
+static NSMenuItem *s_brainsParentItem  = nil;
+static NSMenu     *s_brainsMenu        = nil;
+static NSMenuItem *s_brainManualItem   = nil;
+static NSMenuItem *s_brainSettingsItem = nil;
+static int  s_lastBrainCount           = -1;   /* force rebuild on first refresh */
+static BOOL s_lastBrainSettingsShown   = NO;
 
 /* Per-slot NSMenuItem + custom view caches for the rich player rows in
  * the Players menu. Items are created up-front in mac_menubar_install();
@@ -221,6 +236,9 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onSelectNonePlayers:(id)sender;
 - (void)onSelectAllies:(id)sender;
 - (void)onSelectNearby:(id)sender;
+- (void)onBrainManual:(id)sender;
+- (void)onBrainItem:(id)sender;
+- (void)onBrainSettings:(id)sender;
 @end
 
 @implementation WBMenuBridge
@@ -379,6 +397,18 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onSelectNearby:(id)sender {
     (void)sender;
     if (g_clientSim) clientSimCheckNearbyPlayers((struct ClientSim *)g_clientSim);
+}
+- (void)onBrainManual:(id)sender {
+    (void)sender;
+    sdl3ImguiStopBrain();
+}
+- (void)onBrainItem:(id)sender {
+    NSMenuItem *item = (NSMenuItem *)sender;
+    sdl3ImguiStartBrain((int)item.tag, (struct ClientSim *)g_clientSim);
+}
+- (void)onBrainSettings:(id)sender {
+    (void)sender;
+    sdl3ImguiShowBrainSettings();
 }
 @end
 
@@ -1077,6 +1107,39 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [playersMenu addItem:playersLeaveAllianceItem];
     s_playersLeaveAllianceItem = playersLeaveAllianceItem;
 
+    /* Brains menu — top-level, between Players and Window. Mirrors the
+     * in-window Brains menu in renderMenuBar(). The submenu is built with
+     * just the permanent Manual item; mac_menubar_refresh() rebuilds the
+     * dynamic brain list and adds/removes the Settings entry. The parent
+     * is enabled-gated on aiActive (refresh decides). */
+    NSMenuItem *brainsItem = [mainMenu addItemWithTitle:LANG_STR(STR_MENU_BRAINS) action:nil keyEquivalent:@""];
+    NSMenu *brainsMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_MENU_BRAINS)];
+    [brainsItem setSubmenu:brainsMenu];
+    /* Brains menu items are explicitly gated; AppKit auto-enable would
+     * second-guess the Manual checkmark and rebuilt brain rows. */
+    [brainsMenu setAutoenablesItems:NO];
+
+    NSMenuItem *brainManualItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_MANUAL)
+        action:@selector(onBrainManual:)
+        keyEquivalent:@""];
+    [brainManualItem setTarget:g_bridge];
+    [brainsMenu addItem:brainManualItem];
+
+    /* Pre-allocated Settings item — added/removed by refresh based on
+     * brainSettingsShown so the brain Settings entry only surfaces while
+     * a Lua brain is running. */
+    NSMenuItem *brainSettingsItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MENU_SETTINGS)
+        action:@selector(onBrainSettings:)
+        keyEquivalent:@""];
+    [brainSettingsItem setTarget:g_bridge];
+
+    s_brainsParentItem  = brainsItem;
+    s_brainsMenu        = brainsMenu;
+    s_brainManualItem   = brainManualItem;
+    s_brainSettingsItem = brainSettingsItem;
+
     /* Window menu — items dispatched through the responder chain to the
      * key NSWindow; no explicit targets. */
     NSMenuItem *windowItem = [mainMenu addItemWithTitle:LANG_STR(STR_MENU_WINDOW) action:nil keyEquivalent:@""];
@@ -1230,6 +1293,68 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
                 [item setTitle:[NSString stringWithFormat:@"%d", i + 1]];
             }
             [item setEnabled:NO];
+        }
+    }
+
+    /* Brains submenu — parent enable, Manual checkmark, and a delta-driven
+     * rebuild of the dynamic brain list + Settings entry. Per-frame work
+     * is one int compare, one BOOL compare, and a title-equality check
+     * per brain item; the heavy rebuild only fires when the brain count
+     * or Settings visibility actually changes. */
+    if (s_brainsParentItem) {
+        [s_brainsParentItem setEnabled:(s->aiActive ? YES : NO)];
+    }
+    if (s_brainManualItem) {
+        [s_brainManualItem setState:(!s->brainRunning ? NSControlStateValueOn : NSControlStateValueOff)];
+    }
+
+    BOOL countChanged    = (s_lastBrainCount != s->brainCount);
+    BOOL settingsChanged = (s_lastBrainSettingsShown != (s->brainSettingsShown ? YES : NO));
+
+    if (s_brainsMenu && (countChanged || settingsChanged)) {
+        /* Drop everything after Manual (index 0) — brain rows, separators,
+         * and the Settings entry. The Settings item itself is retained by
+         * s_brainSettingsItem, so removal is safe. */
+        while ([s_brainsMenu numberOfItems] > 1) {
+            [s_brainsMenu removeItemAtIndex:1];
+        }
+
+        if (s->brainCount > 0) {
+            [s_brainsMenu addItem:[NSMenuItem separatorItem]];
+            for (int i = 0; i < s->brainCount; i++) {
+                NSMenuItem *bi = [[NSMenuItem alloc]
+                    initWithTitle:[NSString stringWithUTF8String:s->brainNames[i]]
+                    action:@selector(onBrainItem:)
+                    keyEquivalent:@""];
+                [bi setTag:i];
+                [bi setTarget:g_bridge];
+                [s_brainsMenu addItem:bi];
+            }
+        }
+
+        if (s->brainSettingsShown) {
+            [s_brainsMenu addItem:[NSMenuItem separatorItem]];
+            [s_brainsMenu addItem:s_brainSettingsItem];
+        }
+
+        s_lastBrainCount         = s->brainCount;
+        s_lastBrainSettingsShown = s->brainSettingsShown ? YES : NO;
+    }
+
+    /* Per-frame: refresh titles + checkmarks on existing brain rows. Names
+     * can change if luaBrainLoadBrains rescans, and the running-brain
+     * checkmark mirrors brainRunIdx. */
+    if (s_brainsMenu && s->brainCount > 0) {
+        for (NSMenuItem *it in [s_brainsMenu itemArray]) {
+            if (it.action != @selector(onBrainItem:)) continue;
+            NSInteger tag = it.tag;
+            if (tag < 0 || tag >= s->brainCount) continue;
+            NSString *currentTitle = [NSString stringWithUTF8String:s->brainNames[(int)tag]];
+            if (![it.title isEqualToString:currentTitle]) {
+                [it setTitle:currentTitle];
+            }
+            BOOL active = s->brainRunning && (tag == s->brainRunIdx);
+            [it setState:(active ? NSControlStateValueOn : NSControlStateValueOff)];
         }
     }
 }

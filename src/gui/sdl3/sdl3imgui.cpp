@@ -3079,6 +3079,26 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
             p->ping       = 0;
         }
     }
+
+    /* Brains submenu snapshot — parent is enabled-gated on aiActive (so
+     * the menu is visible-but-disabled until an AI tank is in play); the
+     * brain list is capped at 16 entries (mac_menubar refresh sizes its
+     * NSMenuItem cache to match). The Settings entry is only meaningful
+     * for Lua brains — ONNX brains have no set_setting hook. */
+    s->aiActive           = cs ? (clientSimGetAiType(cs) != aiNone) : false;
+    s->brainRunning       = luaBrainIsRunning();
+    s->brainRunIdx        = luaBrainGetRunningIndex();
+    s->brainSettingsShown = s->brainRunning && !mlBrainSingletonIsRunning();
+
+    int totalBrains = luaBrainGetNum();
+    int snapCount   = (totalBrains > 16) ? 16 : totalBrains;
+    s->brainCount   = snapCount;
+    for (int i = 0; i < snapCount; i++) {
+        const char *name = luaBrainGetName(i);
+        const char *src  = name ? name : "?";
+        strncpy(s->brainNames[i], src, sizeof s->brainNames[i] - 1);
+        s->brainNames[i][sizeof s->brainNames[i] - 1] = '\0';
+    }
 }
 #endif
 
@@ -3444,6 +3464,39 @@ extern "C" void sdl3ImguiSetTankLabelLen(ClientSim *cs, int len) {
 extern "C" void sdl3ImguiCycleDevicePreset(void) {
     dialogCycleDevicePreset(sdl3DrawGetWindow());
 }
+
+/* Brain-control trampolines for the macOS native Brains menu.
+ * Encapsulate the luaBrain/mlBrain split + s_brainSettings ownership so
+ * the .mm shim stays data-driven (via MacMenuState) and doesn't need to
+ * link against the brain handler. Mirrors the in-window Brains menu at
+ * renderMenuBar() above. */
+extern "C" void sdl3ImguiStopBrain(void) {
+    if (luaBrainIsRunning()) {
+        luaBrainStop();
+        mlBrainStopSingleton();
+    }
+}
+extern "C" void sdl3ImguiStartBrain(int idx, ClientSim *cs) {
+    if (idx < 0 || idx >= luaBrainGetNum()) return;
+    const char *path = luaBrainGetPath(idx);
+    const char *name = luaBrainGetName(idx);
+    if (!path) return;
+    if (luaBrainGetType(idx) == BRAIN_TYPE_ONNX) {
+        mlBrainStartSingleton(path, name ? name : "", cs);
+    } else {
+        luaBrainStart(path, name ? name : "", cs);
+    }
+    luaBrainFreeSettings(s_brainSettings);
+    s_brainSettings      = nullptr;
+    s_brainSettingsCount = 0;
+    s_brainSettingsOpen  = false;
+}
+extern "C" void sdl3ImguiShowBrainSettings(void) {
+    luaBrainFreeSettings(s_brainSettings);
+    s_brainSettings      = luaBrainGetSettings(&s_brainSettingsCount);
+    s_brainSettingsOpen  = true;
+}
+
 void sdl3ImguiShowPlayersPanel(bool open) {
     s_showPlayersPanel = open;
 #if BOLO_MOBILE
