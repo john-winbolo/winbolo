@@ -225,6 +225,7 @@ Note: The WASM builds do not use libcurl (network features use platform stubs).
 | `BrainTest` | Brain debug viewer | Windows, Linux, macOS |
 | `WinBoloIOS` | iOS app bundle | iOS |
 | `dist` | Distribution zip | All desktop |
+| `sign_macos` | Sign + notarize + staple app bundles | macOS |
 
 ## Optional features
 
@@ -326,6 +327,81 @@ cd android
 ```
 
 Ensure `SENTRY_AUTH_TOKEN` is set in the environment or in `~/.sentryclirc` so the plugin can authenticate.
+
+## Signing and notarization (macOS)
+
+For a build that runs on machines other than the one that built it, the three macOS app bundles (`WinBolo.app`, `MapEditor.app`, `Log Viewer.app`) need to be code-signed with a Developer ID Application certificate, notarized by Apple, and stapled so Gatekeeper accepts them offline. The `sign_macos` target runs all three steps.
+
+### One-time setup
+
+1. **Apple Developer Program membership** ($99/yr).
+
+2. **Install a "Developer ID Application" certificate** in your login keychain (Apple Developer portal → Certificates → Developer ID Application). Verify with:
+
+   ```bash
+   security find-identity -p codesigning -v
+   ```
+
+   You should see at least one `Developer ID Application: <Your Name> (TEAMID)` entry.
+
+3. **Generate an app-specific password** at [appleid.apple.com](https://appleid.apple.com/) → *Sign-In and Security* → *App-Specific Passwords*. Then stash it in the keychain as a `notarytool` profile:
+
+   ```bash
+   xcrun notarytool store-credentials winbolo-notary \
+       --apple-id "your@apple.id" \
+       --team-id  "YOURTEAMID" \
+       --password "xxxx-xxxx-xxxx-xxxx"
+   ```
+
+   The profile name `winbolo-notary` matches the script's default; override with `APPLE_NOTARY_PROFILE` if you want a different name.
+
+### Signing a build
+
+After a normal build, run:
+
+```bash
+cmake --build build --target sign_macos
+```
+
+Or invoke the script directly with an alternate build directory:
+
+```bash
+scripts/sign_macos.sh build
+```
+
+For each `.app` in the build directory, the script:
+
+1. Runs `codesign` with `--options runtime` (hardened runtime), `--timestamp`, `--deep`, and the entitlements at `src/gui/sdl3/platform/winbolo.entitlements`.
+2. Verifies the signature with `codesign --verify --deep --strict`.
+3. Zips the bundle and submits it to Apple via `xcrun notarytool submit --wait` (typically 1–5 minutes per bundle).
+4. Staples the notarization ticket with `xcrun stapler staple` and runs `spctl --assess` to confirm Gatekeeper accepts it.
+
+The script auto-detects the first `Developer ID Application` identity from the keychain. To force a specific identity, set:
+
+```bash
+export APPLE_DEVELOPER_ID_APPLICATION="Developer ID Application: Your Name (TEAMID)"
+```
+
+### Entitlements
+
+The bundles request only two entitlements (defined in `src/gui/sdl3/platform/winbolo.entitlements`):
+
+- `com.apple.security.network.client` — outbound connections to trackers and peers.
+- `com.apple.security.network.server` — listening UDP socket for inbound peer traffic.
+
+No audio-input, file-access, or JIT entitlements are requested.
+
+### Troubleshooting
+
+- **"No Developer ID Application certificate found"** — the certificate isn't installed, or it's in a non-default keychain. Re-check `security find-identity -p codesigning -v`.
+- **Notarization rejected** — fetch the detailed log from Apple's notary service:
+
+  ```bash
+  xcrun notarytool log <submission-id> --keychain-profile winbolo-notary
+  ```
+
+  The submission ID is printed at the top of the `notarytool submit` output. Common causes are unsigned dylibs inside the bundle (the `codesign --verify` step normally catches these first) or a missing hardened-runtime flag on a nested binary.
+- **`spctl --assess` fails after stapling** — the staple succeeded but Gatekeeper still rejects. Almost always means the bundle was modified after stapling; rebuild and re-run `sign_macos`.
 
 ## Uploading debug symbols to Sentry
 
