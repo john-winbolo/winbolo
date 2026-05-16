@@ -107,13 +107,23 @@ static std::condition_variable          gQueueCv;
 static std::atomic<bool>                gWorkerRun{false};
 static std::thread                      gWorker;
 
-/* djb2 of the path mixed with the entry's modTime. Including mtime
- * invalidates the cache automatically when a local .map is edited in
- * place. WBN rows have mtime=0 (or the upload timestamp, which is
- * also stable) so the hash is just the path-derived value there. */
-static std::string hashKeyToFilename(const std::string &key,
+/* djb2 of the path mixed with the entry's modTime and the provider's
+ * cache-scope namespace. Mixing mtime invalidates the cache when a
+ * local .map is edited in place. Mixing scope keeps identically-named
+ * maps on different sources (Upload vs server vs winbolo.net) from
+ * contaminating each other. WBN rows have mtime=0 (or the upload
+ * timestamp, which is also stable) so the hash is dominated by
+ * path + scope there. */
+static std::string hashKeyToFilename(const char *scope,
+                                      const std::string &key,
                                       int64_t modTime) {
     uint64_t h = 5381;
+    if (scope) {
+        for (const char *s = scope; *s; s++) {
+            h = ((h << 5) + h) + (unsigned char)*s;
+        }
+        h = ((h << 5) + h) + '|';
+    }
     for (char c : key) h = ((h << 5) + h) + (unsigned char)c;
     uint64_t m = (uint64_t)modTime;
     for (int i = 0; i < 8; i++) {
@@ -126,10 +136,12 @@ static std::string hashKeyToFilename(const std::string &key,
     return std::string(buf);
 }
 
-static std::string cachePathFor(const std::string &key, int64_t modTime) {
+static std::string cachePathFor(const char *scope,
+                                 const std::string &key,
+                                 int64_t modTime) {
     std::string s = kCacheDir;
     s += '/';
-    s += hashKeyToFilename(key, modTime);
+    s += hashKeyToFilename(scope, key, modTime);
     return s;
 }
 
@@ -153,9 +165,26 @@ static void writeCachePng(const std::string &cacheFile,
                           const MapPreviewPixels &pix) {
     /* Ensure the dir exists — idempotent. */
     SDL_CreateDirectory(kCacheDir);
-    /* TODO: crop the image to the smallest rect enclosing all
-     * non-deep-water tiles before writing, so each row's thumbnail
-     * focuses on the interesting part of the map. (Skipped for v1.) */
+
+    /* Post-process: knock out deep-water pixels (RGB 0,0,80 from
+     * minimapTerrainColor's DEEP_SEA case, plus 0,0,255 as a
+     * common alternative deep-water shade some sources may emit)
+     * by setting alpha=0. The cropped/transparent preview reads
+     * as the interesting part of the map against whatever the
+     * row/cell background is. Mutates pix.pixels in place — the
+     * worker frees the buffer right after writing. */
+    if (pix.pixels && pix.w > 0 && pix.h > 0) {
+        size_t n = (size_t)pix.w * (size_t)pix.h;
+        uint8_t *p = pix.pixels;
+        for (size_t i = 0; i < n; i++, p += 4) {
+            if (p[0] == 0 && p[1] == 0 && (p[2] == 80 || p[2] == 255)) {
+                p[3] = 0;
+            }
+        }
+    }
+    /* TODO: also crop the image to the smallest rect enclosing the
+     * remaining opaque pixels before writing, so each row's
+     * thumbnail focuses on the interesting part of the map. */
     stbi_write_png(cacheFile.c_str(), pix.w, pix.h, 4,
                    pix.pixels, pix.w * 4);
 }
@@ -232,12 +261,14 @@ static void cacheStopWorker(void) {
  * caller (row renderer) just skips drawing the image that frame
  * and tries again next frame. Always cheap — no work happens on the
  * UI thread beyond a small map lookup + occasional PNG decode. */
-/* Compose the in-memory cache key from path + mtime. Including mtime
- * means editing a .map invalidates its thumbnail automatically: the
- * new composite key misses both the in-memory map and the disk file
- * (which is also derived from mtime via cachePathFor). */
-static std::string composeCacheKey(const char *path, int64_t modTime) {
-    std::string s = path ? path : "";
+/* Compose the in-memory cache key from scope + path + mtime. Scope
+ * (provider->cacheScope) keeps cross-source name collisions apart;
+ * mtime auto-invalidates when a local .map is edited. */
+static std::string composeCacheKey(const char *scope, const char *path,
+                                    int64_t modTime) {
+    std::string s = scope ? scope : "";
+    s += '|';
+    s += path ? path : "";
     s += '|';
     char buf[24];
     SDL_snprintf(buf, sizeof(buf), "%lld", (long long)modTime);
@@ -252,7 +283,7 @@ static SDL_Texture *mapPreviewCacheGet(SDL_Renderer *renderer,
     if (!key || !*key || !provider) return nullptr;
     cacheStartWorker();
 
-    std::string k = composeCacheKey(key, modTime);
+    std::string k = composeCacheKey(provider->cacheScope, key, modTime);
     {
         std::lock_guard<std::mutex> lk(gCacheMutex);
         auto it = gCache.find(k);
@@ -275,7 +306,7 @@ static SDL_Texture *mapPreviewCacheGet(SDL_Renderer *renderer,
     }
 
     /* Not seen this entry yet — try disk first (warm-start path). */
-    std::string cacheFile = cachePathFor(key, modTime);
+    std::string cacheFile = cachePathFor(provider->cacheScope, key, modTime);
     SDL_Texture *tex = loadCachedTexture(renderer, cacheFile);
     if (tex) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
@@ -1622,6 +1653,18 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 }
 
                 ImVec2 cellStart = ImGui::GetCursorScreenPos();
+                /* Subtle highlight backdrop for provider-pinned
+                 * cells. Drawn BEFORE the Selectable so the
+                 * Selectable's hover/active colour still wins on
+                 * top — the tint is just an ambient cue. */
+                if (ent.highlighted) {
+                    ImGui::GetWindowDrawList()->AddRectFilled(
+                        cellStart,
+                        ImVec2(cellStart.x + kCellW,
+                               cellStart.y + kCellH),
+                        IM_COL32(255, 215, 80, 28),
+                        3.0f);
+                }
                 char id[32];
                 SDL_snprintf(id, sizeof(id), "##gcell%d", i);
                 bool selected = (!ent.isFolder) &&
@@ -1864,6 +1907,14 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                  * separate code path above) is what shows inline
                  * thumbnails. Default row height suffices. */
                 ImGui::TableNextRow();
+                /* Subtle highlight tint for provider-pinned rows.
+                 * TableSetBgColor paints the row background on top
+                 * of the alternating RowBg. ~12 alpha keeps it
+                 * unobtrusive while still readable as "featured". */
+                if (ent.highlighted) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                        IM_COL32(255, 215, 80, 28));
+                }
 
                 /* Column 0 — selectable name, spans the row so a
                  * click anywhere on the line picks the entry. The
