@@ -1158,126 +1158,126 @@ bool gameFrontSetDlgState(openingStates newState) {
             spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
             returnValue = FALSE;
           } else {
-          {
-            BYTE compressedMap[65536];
-            int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
-            if (compLen > 0) {
-              clientLoadCompressedMap(humanSim, compressedMap, compLen, serverSimGetMapName(spServerSim),
-                                     gametype, hiddenMines, startDelay,
-                                     timeLen, gameFrontName, 0, FALSE);
+            {
+              BYTE compressedMap[65536];
+              int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
+              if (compLen > 0) {
+                clientLoadCompressedMap(humanSim, compressedMap, compLen, serverSimGetMapName(spServerSim),
+                                       gametype, hiddenMines, startDelay,
+                                       timeLen, gameFrontName, 0, FALSE);
+              }
+              /* else: clientSimCreate above already initialized the empty
+               * client; serverSimGetCompressedMap failure is fatal for the
+               * map data, but we keep the client alive for the lobby/error
+               * UI to drain. */
             }
-            /* else: clientSimCreate above already initialized the empty
-             * client; serverSimGetCompressedMap failure is fatal for the
-             * map data, but we keep the client alive for the lobby/error
-             * UI to drain. */
-          }
-          if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
-          /* Set up networking state after ClientSim is fully initialized */
-          netSetup(humanSim, netSingle, gameFrontMyUdp, gameFrontUdpAddress, gameFrontTargetUdp,
-                   password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,
-                   gameFrontTrackerEnabled, wantRejoin, gameFrontWbnUse,
-                   gameFrontWbnToken);
-          /* Sync tank state from initial snapshot. Lock so the snapshot is
-           * built and applied atomically against the host timer thread,
-           * which is already ticking spServerSim. */
-          threadsWaitForMutex();
-          {
-            SnapshotHeader snapHdr;
-            TankSnapshot snapTanks[MAX_TANKS];
-            ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-            TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
-            BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
-            PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
-            GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-            serverSimBuildSnapshot(spServerSim, 0, &snapHdr,
-                                   snapTanks, MAX_TANKS,
-                                   snapShells, MAX_SNAPSHOT_SHELLS,
-                                   snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                                   snapBases, MAX_SNAPSHOT_BASES,
-                                   snapPills, MAX_SNAPSHOT_PILLS,
-                                   snapEvents, MAX_SNAPSHOT_EVENTS,
-                                   false);
-            clientSimSyncFromSnapshot(humanSim, &snapHdr, snapTanks, snapHdr.tankCount,
-                                   snapShells, snapHdr.shellCount,
-                                   snapTkExplosions, snapHdr.tkExplosionCount,
-                                   snapBases, snapHdr.baseCount,
-                                   snapPills, snapHdr.pillCount,
-                                   snapEvents, snapHdr.reliableEventCount, 0);
-          }
-          threadsReleaseMutex();
-          clientSimNetSetupTankGo(humanSim);
-          /* Destroy background game before adding real bots — bgGameDestroy
-           * calls serverSimDestroyBots which would wipe bots we add below. */
-          {
-            BgGame *sharedBg = bgGameGetShared();
-            if (sharedBg != NULL) {
-              bgGameDestroy(sharedBg);
-              bgGameSetShared(NULL);
+            if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
+            /* Set up networking state after ClientSim is fully initialized */
+            netSetup(humanSim, netSingle, gameFrontMyUdp, gameFrontUdpAddress, gameFrontTargetUdp,
+                     password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,
+                     gameFrontTrackerEnabled, wantRejoin, gameFrontWbnUse,
+                     gameFrontWbnToken);
+            /* Sync tank state from initial snapshot. Lock so the snapshot is
+             * built and applied atomically against the host timer thread,
+             * which is already ticking spServerSim. */
+            threadsWaitForMutex();
+            {
+              SnapshotHeader snapHdr;
+              TankSnapshot snapTanks[MAX_TANKS];
+              ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
+              TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
+              BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
+              PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
+              GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
+              serverSimBuildSnapshot(spServerSim, 0, &snapHdr,
+                                     snapTanks, MAX_TANKS,
+                                     snapShells, MAX_SNAPSHOT_SHELLS,
+                                     snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
+                                     snapBases, MAX_SNAPSHOT_BASES,
+                                     snapPills, MAX_SNAPSHOT_PILLS,
+                                     snapEvents, MAX_SNAPSHOT_EVENTS,
+                                     false);
+              clientSimSyncFromSnapshot(humanSim, &snapHdr, snapTanks, snapHdr.tankCount,
+                                     snapShells, snapHdr.shellCount,
+                                     snapTkExplosions, snapHdr.tkExplosionCount,
+                                     snapBases, snapHdr.baseCount,
+                                     snapPills, snapHdr.pillCount,
+                                     snapEvents, snapHdr.reliableEventCount, 0);
             }
-          }
-          /* Add bot brains for local game if AI is enabled.
-           * Serialise bot-pool init, serverSimCreateBot / serverSimSetTeam
-           * and the reapply-alliances pass against the host timer thread,
-           * which is already calling serverInstanceTick on spServerSim. */
-          threadsWaitForMutex();
-          if (!serverSimBotPoolInit(0)) {
-            fprintf(stderr, "[gameFront] serverSimBotPoolInit failed; bots disabled for this session\n");
-          } else {
-            /* Resolve brain path for lobby "Add Bot" support and initial bots */
-            char brainPath[FILENAME_MAX];
-            bool haveBrain = false;
-            if (gameFrontBrainPath[0] != '\0') {
-              SDL_strlcpy(brainPath, gameFrontBrainPath, sizeof(brainPath));
-              haveBrain = true;
-            } else if (compTanks != aiNone) {
-              haveBrain = findBrainPath(brainPath, sizeof(brainPath));
+            threadsReleaseMutex();
+            clientSimNetSetupTankGo(humanSim);
+            /* Destroy background game before adding real bots — bgGameDestroy
+             * calls serverSimDestroyBots which would wipe bots we add below. */
+            {
+              BgGame *sharedBg = bgGameGetShared();
+              if (sharedBg != NULL) {
+                bgGameDestroy(sharedBg);
+                bgGameSetShared(NULL);
+              }
             }
-            /* Set botBrainPath on the ServerSim so lobby Add Bot requests work */
-            if (haveBrain) {
-              serverSimSetBotBrainPath(spServerSim, brainPath);
-              serverSimSetBotAiType(spServerSim, compTanks);
-            }
-            if (compTanks != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
-              for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS; bi++) {
-                BYTE slot = (BYTE)(bi + 1);
-                char botName[32];
-                snprintf(botName, sizeof(botName), "Bot %d", slot);
-                /* Use per-bot brain path if set, otherwise fall back to default */
-                const char *botBrain = gameFrontBotSetupData.bots[bi].brainPath;
-                if (botBrain[0] == '\0') botBrain = brainPath;
-                serverSimCreateBot(spServerSim, slot, botBrain, botName, compTanks, gametype, hiddenMines);
-                /* Apply team number */
-                uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
-                if (team > 0) {
-                  serverSimSetTeam(spServerSim, slot, team);
+            /* Add bot brains for local game if AI is enabled.
+             * Serialise bot-pool init, serverSimCreateBot / serverSimSetTeam
+             * and the reapply-alliances pass against the host timer thread,
+             * which is already calling serverInstanceTick on spServerSim. */
+            threadsWaitForMutex();
+            if (!serverSimBotPoolInit(0)) {
+              fprintf(stderr, "[gameFront] serverSimBotPoolInit failed; bots disabled for this session\n");
+            } else {
+              /* Resolve brain path for lobby "Add Bot" support and initial bots */
+              char brainPath[FILENAME_MAX];
+              bool haveBrain = false;
+              if (gameFrontBrainPath[0] != '\0') {
+                SDL_strlcpy(brainPath, gameFrontBrainPath, sizeof(brainPath));
+                haveBrain = true;
+              } else if (compTanks != aiNone) {
+                haveBrain = findBrainPath(brainPath, sizeof(brainPath));
+              }
+              /* Set botBrainPath on the ServerSim so lobby Add Bot requests work */
+              if (haveBrain) {
+                serverSimSetBotBrainPath(spServerSim, brainPath);
+                serverSimSetBotAiType(spServerSim, compTanks);
+              }
+              if (compTanks != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
+                for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS; bi++) {
+                  BYTE slot = (BYTE)(bi + 1);
+                  char botName[32];
+                  snprintf(botName, sizeof(botName), "Bot %d", slot);
+                  /* Use per-bot brain path if set, otherwise fall back to default */
+                  const char *botBrain = gameFrontBotSetupData.bots[bi].brainPath;
+                  if (botBrain[0] == '\0') botBrain = brainPath;
+                  serverSimCreateBot(spServerSim, slot, botBrain, botName, compTanks, gametype, hiddenMines);
+                  /* Apply team number */
+                  uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
+                  if (team > 0) {
+                    serverSimSetTeam(spServerSim, slot, team);
+                    {
+                      ControlEvent slotEvt;
+                      memset(&slotEvt, 0, sizeof(slotEvt));
+                      serverSimFillLobbySlotEvent(spServerSim, slot, &slotEvt);
+                      serverSimPublishControl(spServerSim, &slotEvt);
+                    }
+                  }
+                }
+                /* Apply human player team number */
+                if (gameFrontBotSetupData.playerTeamNumber > 0) {
+                  serverSimSetTeam(spServerSim, 0, gameFrontBotSetupData.playerTeamNumber);
                   {
                     ControlEvent slotEvt;
                     memset(&slotEvt, 0, sizeof(slotEvt));
-                    serverSimFillLobbySlotEvent(spServerSim, slot, &slotEvt);
+                    serverSimFillLobbySlotEvent(spServerSim, 0, &slotEvt);
                     serverSimPublishControl(spServerSim, &slotEvt);
                   }
                 }
+                /* Apply team alliances — players with same non-zero team become
+                 * allies. serverSimStartGame already did this pass when it ran
+                 * at the top of this block, but at that point neither the
+                 * human player nor the bots had been added yet, so it found
+                 * no pairs. Re-run it now that the lobby is populated. */
+                serverSimReapplyTeamAlliances(spServerSim);
               }
-              /* Apply human player team number */
-              if (gameFrontBotSetupData.playerTeamNumber > 0) {
-                serverSimSetTeam(spServerSim, 0, gameFrontBotSetupData.playerTeamNumber);
-                {
-                  ControlEvent slotEvt;
-                  memset(&slotEvt, 0, sizeof(slotEvt));
-                  serverSimFillLobbySlotEvent(spServerSim, 0, &slotEvt);
-                  serverSimPublishControl(spServerSim, &slotEvt);
-                }
-              }
-              /* Apply team alliances — players with same non-zero team become
-               * allies. serverSimStartGame already did this pass when it ran
-               * at the top of this block, but at that point neither the
-               * human player nor the bots had been added yet, so it found
-               * no pairs. Re-run it now that the lobby is populated. */
-              serverSimReapplyTeamAlliances(spServerSim);
             }
-          }
-          threadsReleaseMutex();
-          gameFrontUpdateSteamPresence(humanSim);
+            threadsReleaseMutex();
+            gameFrontUpdateSteamPresence(humanSim);
           } /* end "gameFrontStartServerSim succeeded" */
         } else {
           if (spServerSim != NULL) {
