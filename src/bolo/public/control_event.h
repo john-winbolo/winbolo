@@ -31,6 +31,11 @@
 #include "wire_limits.h"  /* PACKET_MAX_PLAYER_NAME */
 #include "client_enums.h" /* netStatus, gameType */
 #include "client_sim.h"   /* ClientLobbySlot */
+#include "brain_list.h"   /* BrainList for CTRL_LOBBY_BRAIN_LIST */
+
+#ifndef LOBBY_TEAM_NAME_LEN
+#define LOBBY_TEAM_NAME_LEN 32
+#endif
 
 typedef enum {
     CTRL_ALLIANCE_REQUEST,
@@ -49,6 +54,12 @@ typedef enum {
     CTRL_SERVER_SHUTDOWN,
     CTRL_CHAT,
     CTRL_PLAYER_LEAVE,
+    /* Lobby state-change variants — per-team metadata, per-bot config,
+     * per-bot brain path, brain-list catalogue. */
+    CTRL_LOBBY_TEAM_META,
+    CTRL_LOBBY_BOT_CONFIG,
+    CTRL_LOBBY_BOT_BRAIN,
+    CTRL_LOBBY_BRAIN_LIST,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -129,6 +140,10 @@ typedef struct ControlEvent {
             bool     mapSkipAvailable;
             netStatus netStat;
             bool     inLobby;
+            /* Layout A flags */
+            bool     lobbyOpenHost;
+            bool     lobbyAutoLockOnGameStart;
+            uint16_t lobbyServerLocks;
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */
@@ -179,6 +194,41 @@ typedef struct ControlEvent {
             uint16_t bodyLen;
             uint8_t  body[CHAT_BODY_MAX];
         } chat;
+
+        /* CTRL_LOBBY_TEAM_META — per-team presentation (name, color,
+         * naming pool, in_use). teamId 0 is the unassigned sentinel
+         * and is never carried by this event. */
+        struct {
+            uint8_t teamId;        /* 1..MAX_TANKS-1 */
+            uint8_t in_use;
+            uint8_t color;
+            uint8_t namingPool;
+            char    name[LOBBY_TEAM_NAME_LEN];
+        } lobbyTeamMeta;
+
+        /* CTRL_LOBBY_BOT_CONFIG — per-bot difficulty/personality +
+         * the display name pulled from the players table at fill
+         * time. (Name is informational here — players.c remains the
+         * source of truth via CTRL_PLAYER_NAME / lobbySlot.) */
+        struct {
+            uint8_t slot;
+            uint8_t difficulty;
+            uint8_t personality;
+            char    name[PACKET_MAX_PLAYER_NAME];
+        } lobbyBotConfig;
+
+        /* CTRL_LOBBY_BOT_BRAIN — per-bot brain script path. Empty
+         * path means "fall back to the server's global bot brain". */
+        struct {
+            uint8_t slot;
+            char    path[BRAIN_LIST_PATH_LEN];
+        } lobbyBotBrain;
+
+        /* CTRL_LOBBY_BRAIN_LIST — server's discovered brain catalogue,
+         * used to populate the AiConfig combobox. */
+        struct {
+            BrainList list;
+        } lobbyBrainList;
     } u;
 } ControlEvent;
 
