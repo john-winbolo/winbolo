@@ -27,6 +27,7 @@
 #include <ctime>
 #include <cmath>
 #include <algorithm>
+#include <string>
 #if defined(__IPHONEOS__)
 #include <dirent.h>
 #endif
@@ -97,7 +98,7 @@ static bool pathIsDirectory(const char *path) {
     return info.type == SDL_PATHTYPE_DIRECTORY;
 }
 
-/* Recursive walker for the local Upload-tab case (no listProvider).
+/* Recursive walker for the local-fs provider (Upload tab).
  * Appends every .map file in `dir` and its subdirectories whose
  * basename contains `queryLower` (case-insensitive substring) to
  * state->maps, with `name` set to the basename and `path` set to
@@ -164,18 +165,214 @@ static void discoverMapsRecursive(MapChooserState *state,
         MapChooserEntry *e = &state->maps[state->numMaps++];
         memset(e, 0, sizeof(*e));
         SDL_strlcpy(e->path, full, sizeof(e->path));
-        /* Display name = relative-path-from-search-root, with the
-         * trailing .map stripped — keeps the folder context visible
-         * in the table so the user can tell duplicates apart. */
-        SDL_strlcpy(e->name, rel, sizeof(e->name));
+        /* Display name = basename only (without .map); the enclosing
+         * folder lives in crumbsPath for the hover tooltip and the
+         * preview-side breadcrumb. */
+        SDL_strlcpy(e->name, name, sizeof(e->name));
         e->modTime = (int64_t)pi.modify_time;
         size_t dlen = SDL_strlen(e->name);
         if (dlen > 4 &&
             SDL_strcasecmp(e->name + dlen - 4, ".map") == 0) {
             e->name[dlen - 4] = '\0';
         }
+        if (subRel[0] != '\0') {
+            SDL_strlcpy(e->crumbsPath, subRel, sizeof(e->crumbsPath));
+        }
     }
     SDL_free(list);
+}
+
+/* Render a "/" -separated path as a row of clickable segment
+ * buttons. Each click latches the prefix up to and including that
+ * segment into state->pendingJumpPath for the tab-side consumer.
+ *
+ * `rightAnchor` flips the layout from left-flush (the path label
+ * above the search box) to right-flush (the breadcrumb under the
+ * preview) and shares the colour + hover-underline treatment between
+ * both call sites. Caller is responsible for placing the cursor on
+ * the right line before invoking. */
+static void renderBreadcrumbSegments(MapChooserState *state,
+                                      const char *crumbsPath,
+                                      bool rightAnchor) {
+    if (!crumbsPath || crumbsPath[0] == '\0') return;
+
+    const char *kSep = " / ";
+    float sepW = ImGui::CalcTextSize(kSep).x;
+
+    char segBuf[FILENAME_MAX];
+    SDL_strlcpy(segBuf, crumbsPath, sizeof(segBuf));
+    const char *segs[32];
+    int numSegs = 0;
+    char *p = segBuf;
+    segs[numSegs++] = p;
+    while (*p && numSegs < 32) {
+        if (*p == '/') {
+            *p = '\0';
+            segs[numSegs++] = p + 1;
+        }
+        p++;
+    }
+
+    if (rightAnchor) {
+        float totalW = 0.0f;
+        for (int k = 0; k < numSegs; k++) {
+            if (k > 0) totalW += sepW;
+            totalW += ImGui::CalcTextSize(segs[k]).x;
+        }
+        float avail = ImGui::GetContentRegionAvail().x;
+        if (avail > totalW) {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX()
+                                  + (avail - totalW));
+        }
+    }
+
+    std::string prefix;
+    for (int k = 0; k < numSegs; k++) {
+        if (k > 0) {
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::TextUnformatted(kSep);
+            ImGui::SameLine(0.0f, 0.0f);
+        }
+        if (!prefix.empty()) prefix += '/';
+        prefix += segs[k];
+
+        /* Last segment = the current folder. Render it as plain text:
+         * clicking it would just reload the same folder, and the link
+         * styling falsely implies "go somewhere else". */
+        bool isLast = (k == numSegs - 1);
+        if (!isLast) {
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                ImVec4(0.45f, 0.70f, 1.0f, 1.0f));
+        }
+        ImGui::TextUnformatted(segs[k]);
+        if (!isLast) {
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                ImDrawList *dl = ImGui::GetWindowDrawList();
+                ImVec2 a = ImGui::GetItemRectMin();
+                ImVec2 b = ImGui::GetItemRectMax();
+                dl->AddLine(ImVec2(a.x, b.y - 1.0f),
+                            ImVec2(b.x, b.y - 1.0f),
+                            IM_COL32(115, 178, 255, 255));
+            }
+            if (ImGui::IsItemClicked()) {
+                SDL_strlcpy(state->pendingJumpPath, prefix.c_str(),
+                            sizeof(state->pendingJumpPath));
+            }
+        }
+    }
+}
+
+/* Post-pass for the recursive-search modes: scan the file rows the
+ * caller just appended, collect each unique enclosing folder, and
+ * push a folder row for it at the top of the list. The folder row's
+ * path is the on-disk (or server-relative) prefix the caller passes
+ * via `pathPrefix` joined with the relative folder — clicking it
+ * navigates the chooser into that folder via the normal folder-click
+ * flow. `pathPrefix` ends with no trailing slash; "" means the relPath
+ * convention is the same as the crumbsPath. */
+void mapChooserEmitFolderRowsForSearchHits(MapChooserState *state,
+                                            const char *pathPrefix) {
+    /* Snapshot the existing entries so we can rewrite the list in
+     * folder-first order without losing the file rows. */
+    int origCount = state->numMaps;
+    if (origCount <= 0) return;
+
+    /* Lowercase the active query once; folder leaf-segment match
+     * filters out aggregated parents that don't share the query the
+     * file rows did (e.g. searching "Andromeda" shouldn't surface
+     * "Canuck's Maps" as a folder result just because a hit lives
+     * inside). Empty query (defensive — caller wouldn't normally
+     * invoke us then) skips the filter. */
+    const char *q = state->searchFilter;
+    char qlow[64];
+    size_t qlen = SDL_strlen(q);
+    if (qlen >= sizeof(qlow)) qlen = sizeof(qlow) - 1;
+    for (size_t k = 0; k < qlen; k++) {
+        char c = q[k];
+        if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+        qlow[k] = c;
+    }
+    qlow[qlen] = '\0';
+
+    /* Collect unique non-empty crumbsPath values whose LEAF segment
+     * contains the query (case-insensitive substring). */
+    char folders[MAP_CHOOSER_MAX_MAPS][FILENAME_MAX];
+    int  numFolders = 0;
+    for (int i = 0; i < origCount; i++) {
+        const char *c = state->maps[i].crumbsPath;
+        if (c[0] == '\0') continue;
+        const char *lastSep = SDL_strrchr(c, '/');
+        const char *leaf = lastSep ? lastSep + 1 : c;
+        if (qlen > 0) {
+            size_t llen = SDL_strlen(leaf);
+            bool match = false;
+            for (size_t k = 0; k + qlen <= llen; k++) {
+                size_t m;
+                for (m = 0; m < qlen; m++) {
+                    char hc = leaf[k + m];
+                    if (hc >= 'A' && hc <= 'Z') hc = (char)(hc + 32);
+                    if (hc != qlow[m]) break;
+                }
+                if (m == qlen) { match = true; break; }
+            }
+            if (!match) continue;
+        }
+        bool dup = false;
+        for (int j = 0; j < numFolders; j++) {
+            if (SDL_strcasecmp(folders[j], c) == 0) { dup = true; break; }
+        }
+        if (!dup) {
+            SDL_strlcpy(folders[numFolders++], c, sizeof(folders[0]));
+            if (numFolders >= MAP_CHOOSER_MAX_MAPS) break;
+        }
+    }
+    if (numFolders == 0) return;
+
+    /* Sort folder list alphabetically (case-insensitive). */
+    for (int i = 1; i < numFolders; i++) {
+        char tmp[FILENAME_MAX];
+        SDL_strlcpy(tmp, folders[i], sizeof(tmp));
+        int j = i - 1;
+        while (j >= 0 && SDL_strcasecmp(folders[j], tmp) > 0) {
+            SDL_strlcpy(folders[j + 1], folders[j], sizeof(folders[0]));
+            j--;
+        }
+        SDL_strlcpy(folders[j + 1], tmp, sizeof(folders[0]));
+    }
+
+    /* Stash the original file rows, then rewrite numMaps = 0 and
+     * push folder rows first, file rows after. */
+    MapChooserEntry saved[MAP_CHOOSER_MAX_MAPS];
+    for (int i = 0; i < origCount; i++) saved[i] = state->maps[i];
+    state->numMaps = 0;
+
+    for (int i = 0; i < numFolders && state->numMaps < MAP_CHOOSER_MAX_MAPS; i++) {
+        MapChooserEntry *e = &state->maps[state->numMaps++];
+        memset(e, 0, sizeof(*e));
+        e->isFolder = true;
+        /* Display name = the last path segment of the folder. */
+        const char *lastSep = SDL_strrchr(folders[i], '/');
+        SDL_strlcpy(e->name, lastSep ? lastSep + 1 : folders[i],
+                    sizeof(e->name));
+        /* `path` drives folder-click navigation (sets state->currentDir).
+         * Prepend the caller-supplied prefix so the click jumps to the
+         * right place under the tab's own currentDir convention. */
+        if (pathPrefix && pathPrefix[0] != '\0') {
+            SDL_snprintf(e->path, sizeof(e->path), "%s/%s",
+                         pathPrefix, folders[i]);
+        } else {
+            SDL_strlcpy(e->path, folders[i], sizeof(e->path));
+        }
+        /* crumbsPath on the folder row itself so its hover/breadcrumb
+         * shows where it lives, not just the leaf name. */
+        SDL_strlcpy(e->crumbsPath, folders[i], sizeof(e->crumbsPath));
+    }
+
+    for (int i = 0; i < origCount && state->numMaps < MAP_CHOOSER_MAX_MAPS; i++) {
+        state->maps[state->numMaps++] = saved[i];
+    }
 }
 
 /* Normalise backslashes to forward slashes in every entry's display
@@ -217,28 +414,16 @@ static void normaliseAndDedupe(MapChooserState *state) {
     state->numMaps = writeIdx;
 }
 
-static void discoverMaps(MapChooserState *state) {
-    /* If the caller wired a list provider, defer to it entirely.
-     * The provider is responsible for populating state->maps + setting
-     * isParentUp / isFolder flags. The provider also handles the
-     * recursive-search case: it reads state->searchRecursive +
-     * state->searchFilter and routes to a recursive network call
-     * when appropriate. */
-    if (state->listProvider) {
-        state->numMaps = 0;
-        state->listProvider(state, state->currentDir,
-                             state->listProviderCtx);
-        normaliseAndDedupe(state);
-        return;
-    }
+void mapChooserLocalFsEnumerate(MapChooserState *state,
+                                 const char *relPath, void *ctx) {
+    (void)ctx;
 
-    /* Recursive-search shortcut for the local (Upload) case. Skips
-     * the synthetic ".." / inbuilt Everard since results span
-     * multiple folders. */
+    /* Recursive-search shortcut for the local-fs case. Skips the
+     * synthetic ".." / inbuilt Everard since results span multiple
+     * folders. */
     if (state->searchRecursive && state->searchFilter[0] != '\0') {
-        state->numMaps = 0;
-        const char *root = (state->currentDir[0] != '\0')
-                            ? state->currentDir : "data/maps";
+        const char *root = (relPath && relPath[0] != '\0')
+                            ? relPath : "data/maps";
         char qlow[64];
         size_t qlen = SDL_strlen(state->searchFilter);
         if (qlen >= sizeof(qlow)) qlen = sizeof(qlow) - 1;
@@ -249,16 +434,15 @@ static void discoverMaps(MapChooserState *state) {
         }
         qlow[qlen] = '\0';
         discoverMapsRecursive(state, root, "", qlow, qlen, 0);
-        normaliseAndDedupe(state);
+        /* `root` is the on-disk parent (e.g. "data/maps"); folder rows
+         * need that prefix so a click sets currentDir to the absolute
+         * path the local-fs provider expects. */
+        mapChooserEmitFolderRowsForSearchHits(state, root);
         return;
     }
 
-    state->numMaps = 0;
-
-    /* Source directory — explicit currentDir if set, else default. */
-    const char *dir = (state->currentDir[0] != '\0')
-                        ? state->currentDir
-                        : "data/maps";
+    /* Source directory — explicit relPath if set, else default. */
+    const char *dir  = (relPath && relPath[0] != '\0') ? relPath : "data/maps";
     const char *root = "data/maps";
 
     /* At the root, the first entry is always "Everard Island (Inbuilt)".
@@ -269,13 +453,12 @@ static void discoverMaps(MapChooserState *state) {
         MapChooserEntry *e = &state->maps[state->numMaps++];
         memset(e, 0, sizeof(*e));
         SDL_strlcpy(e->name, "[..]", sizeof(e->name));
-        /* Parent path = strip last segment from `dir`. */
         SDL_strlcpy(e->path, dir, sizeof(e->path));
         size_t plen = SDL_strlen(e->path);
         while (plen > 0 && e->path[plen - 1] != '/' && e->path[plen - 1] != '\\') {
             e->path[--plen] = '\0';
         }
-        if (plen > 0) e->path[plen - 1] = '\0'; /* drop separator */
+        if (plen > 0) e->path[plen - 1] = '\0';
         if (e->path[0] == '\0') {
             SDL_strlcpy(e->path, root, sizeof(e->path));
         }
@@ -290,24 +473,16 @@ static void discoverMaps(MapChooserState *state) {
         state->numMaps = 1;
     }
 
-    /* Enumerate `dir`. SDL_GlobDirectory returns just basenames; for
-     * each we stat to distinguish folders from .map files.  We don't
-     * filter by "*.map" since folders need to be picked up too. */
     int count = 0;
     char **list = SDL_GlobDirectory(dir, NULL, 0, &count);
     if (list) {
         for (int i = 0; i < count && state->numMaps < MAP_CHOOSER_MAX_MAPS; i++) {
             const char *name = list[i];
-            if (name[0] == '.') continue; /* skip dotfiles + . / .. */
+            if (name[0] == '.') continue;
 
             char full[FILENAME_MAX];
             SDL_snprintf(full, sizeof(full), "%s/%s", dir, name);
 
-            /* One stat per entry: SDL_PathInfo gives us isDir AND
-             * modify_time in a single syscall, so we use it instead
-             * of pathIsDirectory. modify_time is SDL_Time = Sint64
-             * ns since the UNIX epoch, which the table view formats
-             * into a "YYYY-MM-DD HH:MM" cell. */
             SDL_PathInfo pi;
             if (!SDL_GetPathInfo(full, &pi)) continue;
             bool isDir = (pi.type == SDL_PATHTYPE_DIRECTORY);
@@ -322,7 +497,6 @@ static void discoverMaps(MapChooserState *state) {
                 continue;
             }
 
-            /* Files: only *.map. Skip the inbuilt Everard duplicate at root. */
             size_t nlen = SDL_strlen(name);
             if (nlen <= 4 ||
                 SDL_strcasecmp(name + nlen - 4, ".map") != 0) continue;
@@ -343,8 +517,8 @@ static void discoverMaps(MapChooserState *state) {
         SDL_free(list);
     }
 
-    /* Sort everything past the synthetic ".." (when present)
-     * alphabetically with folders FIRST so they cluster at the top. */
+    /* Folders first, then files, alphabetical within each group;
+     * preserve the pinned ".." / Everard at index 0. */
     int sortFrom = inSubfolder ? 1 : 0;
     if (state->numMaps - sortFrom > 1) {
         std::sort(&state->maps[sortFrom], &state->maps[state->numMaps],
@@ -353,13 +527,36 @@ static void discoverMaps(MapChooserState *state) {
                 return SDL_strcasecmp(a.name, b.name) < 0;
             });
     }
+}
 
-    /* Final pass: normalise backslashes to forward slashes in every
-     * entry's name and path, then squash any duplicates the
-     * normalisation reveals. Same-file rows with mixed-separator
-     * paths (some platforms return them that way) now collapse to a
-     * single entry. */
+void mapChooserRefresh(MapChooserState *state);
+
+static void discoverMaps(MapChooserState *state) {
+    state->numMaps = 0;
+    if (state->provider.enumerate) {
+        state->provider.enumerate(state, state->currentDir,
+                                   state->provider.ctx);
+    }
     normaliseAndDedupe(state);
+
+    /* Re-anchor selection by path. Providers that rebuild maps[]
+     * (especially WBN, which runs every frame to pick up async cache
+     * updates) shuffle row indices, and a stale selectedIdx would
+     * point the breadcrumb + preview at a different row than the one
+     * the user clicked. */
+    if (state->selectedPath[0] != '\0') {
+        for (int i = 0; i < state->numMaps; i++) {
+            if (SDL_strcmp(state->maps[i].path,
+                           state->selectedPath) == 0) {
+                state->selectedIdx = i;
+                break;
+            }
+        }
+    }
+}
+
+void mapChooserRefresh(MapChooserState *state) {
+    if (state) discoverMaps(state);
 }
 
 static void updatePreview(MapChooserState *state, SDL_Renderer *renderer) {
@@ -385,7 +582,13 @@ static void updatePreview(MapChooserState *state, SDL_Renderer *renderer) {
 
     int pills = 0, bases = 0, starts = 0;
 
-    if (state->selectedIdx == 0 || state->selectedPath[0] == '\0') {
+    /* Inbuilt Everard is selected when the active path is empty.
+     * The legacy form also keyed off selectedIdx == 0, but with
+     * the WBN tab populating maps[0] with a real catalogue entry
+     * that test misfired (clicking the first WBN row would render
+     * Everard instead of a "loading" state).  Empty-path is the
+     * canonical inbuilt marker and is enough. */
+    if (state->selectedPath[0] == '\0') {
         /* Inbuilt Everard Island */
         state->previewTex = buildEverardPreview(renderer,
             &state->previewBoundsMinX, &state->previewBoundsMinY,
@@ -407,7 +610,7 @@ static void updatePreview(MapChooserState *state, SDL_Renderer *renderer) {
      * tile-based preview matches. Inbuilt Everard falls back to the
      * known path; everything else uses the discovered map path. */
     if (state->previewView) {
-        if (state->selectedIdx == 0 || state->selectedPath[0] == '\0') {
+        if (state->selectedPath[0] == '\0') {
             mapPreviewViewLoadFile(state->previewView,
                                     "data/maps/Everard Island.map");
         } else {
@@ -636,6 +839,10 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                       float width, float height, float scale) {
     bool changed = false;
 
+    /* Reset hover-row tracking; the row render block re-sets this
+     * for whichever row is hovered this frame. -1 means none. */
+    state->lastHoveredIdx = -1;
+
     /* Handle file dialog result */
     if (state->fileDialogGotResult) {
         state->fileDialogGotResult = false;
@@ -783,22 +990,42 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             ImGui::Separator();
         }
 
-        /* Path breadcrumb — shown directly above the search field so
-         * the wrapping fits inside the list column. Always reads
-         * "maps/<currentDir>" relative to the data/maps root; the
-         * full local path lives in an optional hover tooltip
-         * (state->pathTooltipPrefix), wired by the lobby's Upload
-         * tab only. TextWrapped so a long folder name doesn't push
-         * the search field off the edge. */
+        /* Path breadcrumb above the search field — shares its
+         * renderer with the right-anchored breadcrumb under the
+         * preview, so segments are clickable here too. The pieces:
+         *   - state->crumbsRootLabel ("Maps" on all tabs today)
+         *   - state->currentDir, stripped of any "data/maps[/]" prefix
+         *     so Upload's absolute path matches the Server / WBN
+         *     conventions before the root label is prepended.
+         * Full absolute path lives in the hover tooltip
+         * (pathTooltipPrefix) for callers that want one. */
         {
-            char pathLine[FILENAME_MAX + 16];
-            if (state->currentDir[0] != '\0') {
-                SDL_snprintf(pathLine, sizeof(pathLine), "maps/%s",
-                             state->currentDir);
-            } else {
-                SDL_strlcpy(pathLine, "maps/", sizeof(pathLine));
+            const char *rel = state->currentDir;
+            static const char kRoot[]     = "data/maps/";
+            static const char kRootBare[] = "data/maps";
+            if (SDL_strncmp(rel, kRoot, sizeof(kRoot) - 1) == 0) {
+                rel += sizeof(kRoot) - 1;
+            } else if (SDL_strcasecmp(rel, kRootBare) == 0) {
+                rel = "";
             }
-            ImGui::TextWrapped("%s", pathLine);
+            char pathLine[FILENAME_MAX + 64];
+            if (state->crumbsRootLabel[0] != '\0' && rel[0] != '\0') {
+                SDL_snprintf(pathLine, sizeof(pathLine), "%s/%s",
+                             state->crumbsRootLabel, rel);
+            } else if (state->crumbsRootLabel[0] != '\0') {
+                SDL_strlcpy(pathLine, state->crumbsRootLabel,
+                            sizeof(pathLine));
+            } else if (rel[0] != '\0') {
+                SDL_snprintf(pathLine, sizeof(pathLine), "maps/%s", rel);
+            } else {
+                SDL_strlcpy(pathLine, "maps", sizeof(pathLine));
+            }
+
+            renderBreadcrumbSegments(state, pathLine, false);
+
+            /* Tooltip on hover anywhere over the breadcrumb row —
+             * uses the last-drawn item's rect as a proxy since each
+             * segment is its own item. */
             if (state->pathTooltipPrefix[0] != '\0' &&
                 ImGui::IsItemHovered()) {
                 char tipBuf[FILENAME_MAX * 2];
@@ -871,11 +1098,11 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             if (prevRecursive != state->searchRecursive) {
                 toggleChanged = true;
             }
-            /* "Modified at" toggle — controls whether the table renders
+            /* "Created at" toggle — controls whether the table renders
              * the Modified column. Off by default so the list stays
              * compact; hover gives a tooltip explaining the trade. */
             ImGui::SameLine();
-            ImGui::Checkbox("Modified at", &state->showModifiedColumn);
+            ImGui::Checkbox("Created at", &state->showModifiedColumn);
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Show file modification times in a second column.");
             }
@@ -928,7 +1155,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
              * default font size 130 px clears the trailing minutes
              * with a touch of breathing room so nothing clips. */
             if (state->showModifiedColumn) {
-                ImGui::TableSetupColumn("Modified",
+                ImGui::TableSetupColumn("Created",
                     ImGuiTableColumnFlags_WidthFixed
                     | ImGuiTableColumnFlags_PreferSortDescending, 130.0f,
                     1 /* user_id 1 = modified column */);
@@ -1048,40 +1275,63 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                                 (i == state->selectedIdx);
                 bool clicked = ImGui::Selectable(selId, selected,
                     ImGuiSelectableFlags_SpanAllColumns);
+                /* Capture the Selectable's hover rect for the row
+                 * tooltip below — IsItemHovered after the text would
+                 * only fire on the narrow text strip, missing the
+                 * right side of short rows. */
+                bool rowHovered = ImGui::IsItemHovered();
                 ImGui::SameLine(0.0f, 0.0f);
                 ImGui::TextUnformatted(displayBuf);
-                if (ImGui::IsItemHovered()) {
-                    /* Two reasons to show a tooltip:
-                     *   1. The name overflowed the column and got
-                     *      clipped — show the full name.
-                     *   2. The entry is a search hit from a
-                     *      subfolder (its `name` includes a path
-                     *      separator because the recursive walker
-                     *      stores the relative path under the
-                     *      search root). Show the parent folder so
-                     *      the user can tell duplicates apart. */
-                    float textW = ImGui::CalcTextSize(displayBuf).x;
-                    float cellW = ImGui::GetContentRegionAvail().x;
-                    bool nameClipped   = (textW > cellW);
-                    bool fromSubfolder = (SDL_strchr(ent.name, '/')  != NULL ||
-                                          SDL_strchr(ent.name, '\\') != NULL);
-                    if (nameClipped || fromSubfolder) {
+                if (rowHovered) {
+                    static int s_hoverLogTick = 0;
+                    if (++s_hoverLogTick % 60 == 1) {
+                        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                            "[CHOOSER-HOVER] idx=%d name='%s' crumbs='%s' "
+                            "rootLbl='%s' searchRec=%d filter='%s'",
+                            i, ent.name, ent.crumbsPath,
+                            state->crumbsRootLabel,
+                            (int)state->searchRecursive,
+                            state->searchFilter);
+                    }
+                    state->lastHoveredIdx = i;
+                    /* Tooltip is only useful in recursive-search mode
+                     * — that's where a row's enclosing folder isn't
+                     * already implied by the current directory.  In
+                     * normal folder browsing every row lives in the
+                     * folder the user just navigated to, so the
+                     * "in <folder>" line would be redundant. */
+                    bool tooltipMode = state->searchRecursive &&
+                                        state->searchFilter[0] != '\0';
+                    if (tooltipMode && !ent.isParentUp) {
                         ImGui::BeginTooltip();
-                        ImGui::TextUnformatted(displayBuf);
-                        if (fromSubfolder && ent.path[0] != '\0') {
-                            /* Parent folder = strip the trailing
-                             * filename segment from the on-disk path. */
-                            char folder[FILENAME_MAX];
-                            SDL_strlcpy(folder, ent.path, sizeof(folder));
-                            size_t flen = SDL_strlen(folder);
-                            while (flen > 0 &&
-                                   folder[flen - 1] != '/' &&
-                                   folder[flen - 1] != '\\') {
-                                folder[--flen] = '\0';
-                            }
-                            if (flen > 0) folder[flen - 1] = '\0';
-                            if (folder[0] != '\0') {
-                                ImGui::TextDisabled("in %s", folder);
+                        /* Full path = <crumbsRootLabel>/<crumbsPath>/<name>.
+                         * Falls back to just the displayBuf when the row
+                         * has no folder context (root-level hits). */
+                        char fullPath[FILENAME_MAX];
+                        const char *root = state->crumbsRootLabel;
+                        const char *crumbs = ent.crumbsPath;
+                        if (root[0] != '\0' && crumbs[0] != '\0') {
+                            SDL_snprintf(fullPath, sizeof(fullPath),
+                                         "%s / %s / %s",
+                                         root, crumbs, ent.name);
+                        } else if (root[0] != '\0') {
+                            SDL_snprintf(fullPath, sizeof(fullPath),
+                                         "%s / %s", root, ent.name);
+                        } else if (crumbs[0] != '\0') {
+                            SDL_snprintf(fullPath, sizeof(fullPath),
+                                         "%s / %s", crumbs, ent.name);
+                        } else {
+                            SDL_strlcpy(fullPath, displayBuf, sizeof(fullPath));
+                        }
+                        ImGui::TextUnformatted(fullPath);
+                        if (ent.modTime > 0) {
+                            SDL_DateTime dt;
+                            if (SDL_TimeToDateTime((SDL_Time)ent.modTime,
+                                                   &dt, true)) {
+                                ImGui::TextDisabled(
+                                    "Created: %04d-%02d-%02d %02d:%02d",
+                                    dt.year, dt.month, dt.day,
+                                    dt.hour, dt.minute);
                             }
                         }
                         ImGui::EndTooltip();
@@ -1093,7 +1343,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                  * render as "YYYY-MM-DD HH:MM". A zero/unknown
                  * modTime shows a dim "—" so the column doesn't
                  * read as broken. Only rendered when the user has
-                 * toggled the "Modified at" checkbox on. */
+                 * toggled the "Created at" checkbox on. */
                 if (state->showModifiedColumn) {
                     ImGui::TableSetColumnIndex(1);
                     if (ent.modTime > 0) {
@@ -1145,6 +1395,14 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                                     sizeof(state->selectedName));
                         updatePreview(state, renderer);
                         changed = true;
+                        /* Hand off to the provider for tab-specific
+                         * follow-up (push to server, queue upload,
+                         * kick a WBN download, …). selectedPath /
+                         * selectedName are already populated. */
+                        if (state->provider.onSelect) {
+                            state->provider.onSelect(state,
+                                state->provider.ctx);
+                        }
                     }
                 }
             }
@@ -1303,6 +1561,18 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         if (!renderPreviewImage(state)) {
             if (state->randomMapSelected) {
                 ImGui::TextDisabled("%s", langGetText(STR_MAPCHOOSER_CLICKGEN));
+            } else if (strncmp(state->selectedPath, "wbn:", 4) == 0) {
+                /* WBN download in progress — selectedPath is the
+                 * synthetic "wbn:<id>" placeholder until spWbnPoll
+                 * lands the bytes on disk and flips selectedPath
+                 * to .wbn_preview.map.  Render a tiny rotating
+                 * spinner glyph so the user sees activity rather
+                 * than "no preview". */
+                double t = ImGui::GetTime() * 8.0;
+                const char *frames[] = {"|", "/", "-", "\\"};
+                int idx = ((int)t) & 3;
+                ImGui::TextDisabled("%s  Loading preview...",
+                                     frames[idx]);
             } else {
                 ImGui::TextDisabled("%s", langGetText(STR_MAPCHOOSER_NOPREVIEW));
             }
@@ -1316,11 +1586,172 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         args.number2 = state->previewBases;
         args.number3 = state->previewStarts;
         ImGui::TextUnformatted(langGetTextFmt(STR_MAPCHOOSER_STATS, &args));
+
+        /* Right-anchored breadcrumb of buttons on the same Y line
+         * as the stats. Source priority:
+         *   1. The selected entry's explicit crumbsPath (set e.g.
+         *      by the WBN tab after /maps/info/<id> resolves).
+         *   2. The path-shaped parent of the selected entry —
+         *      strip "data/maps/" prefix and drop the basename,
+         *      so "data/maps/Uploads/Foo.map" → "Uploads".
+         *   3. state->activeCrumbsPath — the most recent value
+         *      we showed; survives selectedIdx flips during
+         *      async file-swap callers like mapChooserSetSelectedFile.
+         * Click on a segment jumps to that prefix.  Slash sep
+         * renders as plain text so the line reads as a path. */
+        char crumbsRendered[FILENAME_MAX] = {0};
+        if (state->selectedIdx >= 0 &&
+            state->selectedIdx < state->numMaps) {
+            const MapChooserEntry *ent =
+                &state->maps[state->selectedIdx];
+            if (ent->crumbsPath[0] != '\0') {
+                SDL_strlcpy(crumbsRendered, ent->crumbsPath,
+                            sizeof(crumbsRendered));
+            } else if (!ent->isParentUp &&
+                       ent->path[0] != '\0' &&
+                       strncmp(ent->path, "wbn:", 4) != 0 &&
+                       strncmp(ent->path, "randommap:", 10) != 0) {
+                /* Filesystem fallback. Folders show their own
+                 * path; files show their enclosing folder.
+                 *   data/maps/Uploads/Foo.map → "Uploads"
+                 *   data/maps/Foo.map         → "data/maps"
+                 *   data/maps/Uploads (folder) → "Uploads"
+                 *   data/maps (folder root)   → "data/maps"  */
+                char tmp[FILENAME_MAX];
+                SDL_strlcpy(tmp, ent->path, sizeof(tmp));
+                for (char *p = tmp; *p; p++) if (*p == '\\') *p = '/';
+                /* If it's a file, drop the basename so we display
+                 * the enclosing folder. Folders keep their path. */
+                if (!ent->isFolder) {
+                    char *lastSep = strrchr(tmp, '/');
+                    if (lastSep) *lastSep = '\0';
+                }
+                /* Strip the on-disk root so the breadcrumb reads
+                 * relative to data/maps; if nothing's left, fall
+                 * back to "data/maps" so root-level files still
+                 * surface a path indicator. */
+                const char *rel = tmp;
+                static const char kRoot[] = "data/maps/";
+                static const char kRootBare[] = "data/maps";
+                if (strncmp(rel, kRoot, sizeof(kRoot) - 1) == 0) {
+                    rel += sizeof(kRoot) - 1;
+                } else if (SDL_strcasecmp(rel, kRootBare) == 0) {
+                    rel = "";
+                }
+                if (rel[0] == '\0') {
+                    /* When the tab supplies a crumbsRootLabel the
+                     * label itself IS the root indicator — adding
+                     * "data/maps" on top would render as e.g.
+                     * "Maps / data / maps". Leave empty so only the
+                     * label appears. */
+                    if (state->crumbsRootLabel[0] == '\0') {
+                        SDL_strlcpy(crumbsRendered, kRootBare,
+                                    sizeof(crumbsRendered));
+                    }
+                } else {
+                    SDL_strlcpy(crumbsRendered, rel,
+                                sizeof(crumbsRendered));
+                }
+            }
+        }
+        if (crumbsRendered[0] != '\0') {
+            /* Sync into the persistent slot. The fallback case
+             * below uses it when selection has been flipped to
+             * -1 (e.g. mapChooserSetSelectedFile post-download). */
+            SDL_strlcpy(state->activeCrumbsPath, crumbsRendered,
+                        sizeof(state->activeCrumbsPath));
+        } else if (state->activeCrumbsPath[0] != '\0' &&
+                   state->selectedIdx < 0) {
+            /* Custom-file mode: show the breadcrumb we last had. */
+            SDL_strlcpy(crumbsRendered, state->activeCrumbsPath,
+                        sizeof(crumbsRendered));
+        } else if (state->currentDir[0] != '\0') {
+            /* No selection AND no active breadcrumb (e.g. just after
+             * a breadcrumb-jump cleared selectedIdx) — fall back to
+             * the current folder, same source the upper path label
+             * uses. Strip the local "data/maps[/]" prefix so the
+             * Upload tab's absolute currentDir lines up with the
+             * relative scheme Server Maps / WBN already use. */
+            const char *rel = state->currentDir;
+            static const char kRoot[]     = "data/maps/";
+            static const char kRootBare[] = "data/maps";
+            if (strncmp(rel, kRoot, sizeof(kRoot) - 1) == 0) {
+                rel += sizeof(kRoot) - 1;
+            } else if (SDL_strcasecmp(rel, kRootBare) == 0) {
+                rel = "";
+            }
+            if (rel[0] != '\0') {
+                SDL_strlcpy(crumbsRendered, rel, sizeof(crumbsRendered));
+            }
+        }
+        /* Tab-supplied root label (e.g. "Maps" for the Server Maps
+         * tab) gets prepended so the breadcrumb reads as a path from
+         * the tab's root rather than starting at the first subfolder.
+         * Stored unprefixed in activeCrumbsPath so the prefix doesn't
+         * compound across frames. The leaf-jump click target below
+         * strips the same prefix back off before handing pendingJumpPath
+         * to the tab. When crumbsRendered is empty (root) and a label
+         * is set, the label alone IS the breadcrumb. */
+        if (state->crumbsRootLabel[0] != '\0') {
+            char tmp[FILENAME_MAX];
+            if (crumbsRendered[0] != '\0') {
+                SDL_snprintf(tmp, sizeof(tmp), "%s/%s",
+                             state->crumbsRootLabel, crumbsRendered);
+            } else {
+                SDL_strlcpy(tmp, state->crumbsRootLabel, sizeof(tmp));
+            }
+            SDL_strlcpy(crumbsRendered, tmp, sizeof(crumbsRendered));
+        }
+        static int s_crumbLogTick = 0;
+        if (++s_crumbLogTick % 60 == 1) {
+            const char *entPath = (state->selectedIdx >= 0 &&
+                state->selectedIdx < state->numMaps)
+                ? state->maps[state->selectedIdx].path : "(none)";
+            const char *entCrumbs = (state->selectedIdx >= 0 &&
+                state->selectedIdx < state->numMaps)
+                ? state->maps[state->selectedIdx].crumbsPath : "(none)";
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "[CHOOSER-CRUMB] selIdx=%d path='%s' entCrumbs='%s' "
+                "rendered='%s' activeStored='%s'",
+                state->selectedIdx, entPath, entCrumbs,
+                crumbsRendered, state->activeCrumbsPath);
+        }
+        if (crumbsRendered[0] != '\0') {
+            /* Right-anchored on the same Y line as the stats. */
+            ImGui::SameLine();
+            renderBreadcrumbSegments(state, crumbsRendered, true);
+        }
     }
 
     ImGui::EndChild(); /* ##MapPreview */
 
     return changed;
+}
+
+bool mapChooserConsumeFolderJump(MapChooserState *state,
+                                  char *outPath, size_t outPathSz) {
+    if (!state || state->pendingJumpPath[0] == '\0') return false;
+    if (outPath && outPathSz > 0) {
+        SDL_strlcpy(outPath, state->pendingJumpPath, outPathSz);
+    }
+    state->pendingJumpPath[0] = '\0';
+    return true;
+}
+
+void mapChooserSetSelectedFile(MapChooserState *state,
+                                SDL_Renderer *renderer,
+                                const char *path,
+                                const char *displayName) {
+    if (!state || !path) return;
+    SDL_strlcpy(state->selectedPath, path, sizeof(state->selectedPath));
+    if (displayName) {
+        SDL_strlcpy(state->selectedName, displayName,
+                    sizeof(state->selectedName));
+    }
+    /* Selecting a "custom" file the chooser didn't list itself.
+     * selectedIdx = -1 is the existing convention for that. */
+    state->selectedIdx = -1;
+    updatePreview(state, renderer);
 }
 
 void mapChooserDestroy(MapChooserState *state) {

@@ -449,9 +449,62 @@ static inline void dialogHandleWindowMoveResize(SDL_Window *win, const SDL_Event
     }
 }
 
-/* Restore dialog window position if we have a saved one */
+/* Restore dialog window position if we have a saved one.
+ *
+ * On the very first dialog of the process we cross-check the saved
+ * position against the user's current mouse-monitor: if they don't
+ * agree (or no position was saved), drop the saved value and centre
+ * the window on whichever display the mouse currently lives on.
+ * Subsequent dialogs in the same session use the saved position
+ * verbatim so the user's manual placement is preserved as they tab
+ * between dialogs.
+ *
+ * Reason: WinBolo's window is created (hidden) on SDL's default
+ * display — typically the primary — and a saved position from a
+ * previous session sticks the dialog there even when the user has
+ * since moved to a different monitor. Following the mouse on launch
+ * brings the dialog to where the user is looking. */
 static inline void dialogRestorePosition(SDL_Window *win) {
-    if (win && gameFrontDialogX >= 0 && gameFrontDialogY >= 0) {
+    if (!win) return;
+    static bool s_firstCallThisProcess = true;
+    bool firstCall = s_firstCallThisProcess;
+    s_firstCallThisProcess = false;
+
+    if (firstCall) {
+        float gx = 0.0f, gy = 0.0f;
+        SDL_GetGlobalMouseState(&gx, &gy);
+        SDL_Point mp = { (int)gx, (int)gy };
+        SDL_DisplayID mouseDisp = SDL_GetDisplayForPoint(&mp);
+
+        bool savedOnMouseDisp = false;
+        if (gameFrontDialogX >= 0 && gameFrontDialogY >= 0 && mouseDisp) {
+            int winW = 0, winH = 0;
+            SDL_GetWindowSize(win, &winW, &winH);
+            SDL_Point savedCenter = {
+                gameFrontDialogX + winW / 2,
+                gameFrontDialogY + winH / 2
+            };
+            SDL_DisplayID savedDisp = SDL_GetDisplayForPoint(&savedCenter);
+            savedOnMouseDisp = (savedDisp != 0 && savedDisp == mouseDisp);
+        }
+
+        if (savedOnMouseDisp) {
+            SDL_SetWindowPosition(win, gameFrontDialogX, gameFrontDialogY);
+        } else if (mouseDisp) {
+            SDL_Rect b = {0, 0, 0, 0};
+            if (SDL_GetDisplayUsableBounds(mouseDisp, &b)
+                && b.w > 0 && b.h > 0) {
+                int winW = 0, winH = 0;
+                SDL_GetWindowSize(win, &winW, &winH);
+                int cx = b.x + (b.w - winW) / 2;
+                int cy = b.y + (b.h - winH) / 2;
+                SDL_SetWindowPosition(win, cx, cy);
+            }
+        }
+        return;
+    }
+
+    if (gameFrontDialogX >= 0 && gameFrontDialogY >= 0) {
         SDL_SetWindowPosition(win, gameFrontDialogX, gameFrontDialogY);
     }
 }
