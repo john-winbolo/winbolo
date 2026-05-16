@@ -2263,6 +2263,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_sp_subscriber_delivery.c
     tests/unit/test_active_local_input_to_shot.c
     tests/unit/test_sp_shoot_through_timer.c
+    tests/unit/test_ini_reader_writer.c
     # transport_udp_client.c stays per-target because of HAVE_STEAM
     # gating (it's excluded from bolo_static for that reason). Linked
     # here without HAVE_STEAM so client_net.c's transportUdpClient*
@@ -2323,6 +2324,9 @@ set(_unit_test_names
     sp_subscriber_delivery
     active_local_input_to_shot
     sp_shoot_through_timer
+    ini_writer_persistence
+    ini_writer_insertion_point
+    ini_writer_security
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
