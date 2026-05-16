@@ -1130,3 +1130,17 @@ STR_DLGSYSINFO_BRAIN=Brain
 STR_DLGSYSINFO_SIMULATION=Симуляція
 STR_DLGSYSINFO_BOTPREP=Підготовка ботів
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Перевищення Brain
+
+# macOS App menu and Window menu items
+STR_MENU_ABOUT_APP=Про WinBolo
+STR_MENU_PREFERENCES=Параметри…
+STR_MENU_SERVICES=Служби
+STR_MENU_HIDE_APP=Сховати WinBolo
+STR_MENU_HIDE_OTHERS=Сховати інші
+STR_MENU_SHOW_ALL=Показати всі
+STR_MENU_QUIT_APP=Завершити WinBolo
+STR_MENU_WINDOW=Вікно
+STR_MENU_MINIMIZE=Мінімізувати
+STR_MENU_ZOOM=Масштаб
+STR_MENU_ENTER_FULL_SCREEN=Перейти на весь екран
+STR_MENU_BRING_ALL_TO_FRONT=Перенести все на передній план
