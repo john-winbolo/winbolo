@@ -44,14 +44,14 @@
 #include "threads.h"
 #include "../winbolonet/winbolonet.h"
 #include "server_sim.h"
-#include "../mapeditor/mapeditor_generate.h"
+#include "mapgen.h"
 #include "log.h"
 #include "transport_udp.h"
 #include "bot_manager.h"
-#include "wire_limits.h"  /* LOBBY_LOCK_* bitmask values */
 #include "server_lifecycle.h"
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
+#include "../headless/cmd_stdin.h"
 
 /* Constants previously from backend.h */
 #define GAME_TICK_LENGTH 10
@@ -414,12 +414,88 @@ void processKeys(bool isQuiet) {
 #endif
 
 /*********************************************************
+ * Scripted command dispatch (-cmd-stdin).
+ *
+ * Reads JSON-per-line commands from FILE and dispatches at
+ * each command's tick (server-side serverSimGetTick). Used by
+ * the centralize test harness to drive server-originated
+ * events deterministically: start_game, reapply_alliances,
+ * shutdown, exit. Client-originated ops (add_bot, set_team,
+ * etc.) error out — those belong on WinBoloHeadless --cmd-stdin.
+ *
+ * Replaces processKeys when -cmd-stdin is supplied; the two
+ * are mutually exclusive (so the stdin-reader thread on
+ * Windows and the select() on Linux are not contested).
+ *********************************************************/
+static void processCmdStdin(CmdStdin *cs) {
+    while (1) {
+        if (alarmRaised == alarmInterrupt) break;
+        if (serverSimGetState(serverSim) == serverStateGameOver &&
+            !serverSimIsLobbyEnabled(serverSim)) {
+            break;
+        }
+
+        CmdLine cmd;
+        if (!cmdStdinPeek(cs, &cmd)) {
+            /* EOF — keep the server running until SIGINT or game-over
+             * matches the processKeys quiet path. The scenario fixture
+             * is expected to supply an explicit exit/shutdown op once
+             * its goldens have been written. */
+#ifdef _WIN32
+            Sleep(50);
+#else
+            SDL_Delay(50);
+#endif
+            continue;
+        }
+
+        uint32_t serverTick = serverSimGetTick(serverSim);
+        if (cmd.tick > serverTick) {
+#ifdef _WIN32
+            Sleep(10);
+#else
+            SDL_Delay(10);
+#endif
+            continue;
+        }
+
+        cmdStdinConsume(cs);
+        bool keepGoing = true;
+        threadsWaitForMutex();
+        switch (cmd.op) {
+            case CMD_OP_START_GAME:
+                serverSimStartGame(serverSim);
+                break;
+            case CMD_OP_REAPPLY_ALLIANCES:
+                serverSimReapplyTeamAlliances(serverSim);
+                break;
+            case CMD_OP_SHUTDOWN:
+            case CMD_OP_EXIT:
+                /* Both paths break the main loop. The cleanup code
+                 * in main() runs serverInstanceShutdown which, via
+                 * transportUdpServerStop, publishes
+                 * CTRL_SERVER_SHUTDOWN to connected clients. */
+                keepGoing = false;
+                break;
+            default:
+                fprintf(stderr,
+                        "cmd-stdin: line %d: op '%s' not valid in WinBoloDS mode\n",
+                        cmd.lineNumber, cmdOpName(cmd.op));
+                threadsReleaseMutex();
+                exit(2);
+        }
+        threadsReleaseMutex();
+        if (!keepGoing) break;
+    }
+}
+
+/*********************************************************
 *NAME:          serverGameTimer
 *AUTHOR:        John Morrison
 *CREATION DATE: 24/11/98
 *LAST MODIFIED: 20/3/99
 *PURPOSE:
-* The Game Timer. If there are no events to prcess this 
+* The Game Timer. If there are no events to prcess this
 * routine is called. If the elapsed
 *
 *ARGUMENTS:
@@ -476,6 +552,9 @@ void printArgs() {
   fprintf(stderr, "                \"-1\" for no time limit (none if not specified)\n");
   fprintf(stderr, "-ticks <N>    - Exit cleanly after N game-ticks of running play.\n");
   fprintf(stderr, "                \"0\" or omitted means unlimited (default).\n");
+  fprintf(stderr, "-ticklimit <N> - End the current game (transition to GAME_OVER) after N\n");
+  fprintf(stderr, "                game-ticks of running play. Unlike -ticks, the server is\n");
+  fprintf(stderr, "                not asked to exit; in lobby mode the round returns to lobby.\n");
   fprintf(stderr, "<Password>    - Game Password (none if not specified)\n");
   fprintf(stderr, "<tracker>     - Internet tracker to notify. Options:\n");
   fprintf(stderr, "                -tracker alone uses default (%s:%d)\n", DEFAULT_TRACKER_ADDR, DEFAULT_TRACKER_PORT);
@@ -967,7 +1046,7 @@ int main(int argc, char **argv) {
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-    serverSim = serverSimCreateCompressed(emap, 5097, game, hiddenMines, srtDelay, gmeLen);
+    serverSim = serverSimCreateCompressed(emap, 5097, "Everard Island", game, hiddenMines, srtDelay, gmeLen);
     if (serverSim == NULL) {
       fprintf(stderr, "Error starting server simulation (inbuilt map)\n");
 #ifdef USING_SDL
@@ -1026,58 +1105,11 @@ int main(int argc, char **argv) {
     serverMessageConsoleMessage(serverSim, "Geo lookup database not found — country codes will be XX.\n");
   }
 
-  /* Layout A lobby — admin-only --lock-* CLI flags. Sets the
-   * serverLocks bitmask exposed in PACKET_LOBBY_STATE. Hosts can't
-   * change locks at runtime; only the admin/operator running bolod
-   * sets them. Clients render matching settings disabled with a
-   * lock badge. */
-  {
-    uint16_t locks = 0;
-    if (argExist(argc, argv, "lock-game-type"))     locks |= LOBBY_LOCK_GAME_TYPE;
-    if (argExist(argc, argv, "lock-ai-policy"))     locks |= LOBBY_LOCK_AI_POLICY;
-    if (argExist(argc, argv, "lock-mines"))         locks |= LOBBY_LOCK_MINES;
-    if (argExist(argc, argv, "lock-time-limit"))    locks |= LOBBY_LOCK_TIME_LIMIT;
-    if (argExist(argc, argv, "lock-auto-lock"))     locks |= LOBBY_LOCK_AUTO_LOCK_ON_GAME;
-    serverSimSetServerLocks(serverSim, locks);
-    if (locks) {
-      fprintf(stderr, "  Server locks (admin):");
-      if (locks & LOBBY_LOCK_GAME_TYPE)         fprintf(stderr, " game-type");
-      if (locks & LOBBY_LOCK_AI_POLICY)         fprintf(stderr, " ai-policy");
-      if (locks & LOBBY_LOCK_MINES)             fprintf(stderr, " mines");
-      if (locks & LOBBY_LOCK_TIME_LIMIT)        fprintf(stderr, " time-limit");
-      if (locks & LOBBY_LOCK_AUTO_LOCK_ON_GAME) fprintf(stderr, " auto-lock");
-      fprintf(stderr, "\n");
-    }
-  }
-
   useAddr = NULL;
   httpSetAltIpAddress("");
   if (argExist(argc, argv, "addr") == TRUE) {
     useAddr = (char *) argv[findArg(argc, argv, "addr")];
     httpSetAltIpAddress(useAddr);
-  }
-
-  /* -admins <comma-separated-ips> — clients connecting from any of
-   * these IPs are tagged with PLAYER_FLAG_ADMIN and get host-level
-   * lobby authority (settings, teams, bot control). The host (slot 0)
-   * always retains authority regardless. */
-  serverSimSetAdminIps(serverSim, "");
-  if (argExist(argc, argv, "admins")) {
-    int argNum = findArg(argc, argv, "admins");
-    if (argNum != ARG_NOT_FOUND) {
-      serverSimSetAdminIps(serverSim, (char *)argv[argNum]);
-      fprintf(stderr, "  Admin IPs: %s\n", serverSimGetAdminIps(serverSim));
-    }
-  }
-
-  /* -adminfirst — first player to join while the server has no other
-   * connected players gets PLAYER_FLAG_ADMIN. Re-arms whenever the
-   * server becomes empty again. Convenient for dynamic-IP hosts who
-   * can't pre-whitelist their own address via -admins. */
-  serverSimSetAdminFirstJoinAfterEmpty(serverSim,
-                                       argExist(argc, argv, "adminfirst") == TRUE);
-  if (serverSimGetAdminFirstJoinAfterEmpty(serverSim)) {
-    fprintf(stderr, "  Admin grant on first-join after empty: ENABLED\n");
   }
 
   statusFile = argExist(argc, argv, "statusFile");
@@ -1088,6 +1120,12 @@ int main(int argc, char **argv) {
     int argNum = findArg(argc, argv, "ticks");
     if (argNum != ARG_NOT_FOUND) {
       serverSimSetTickLimit(serverSim, (int32_t)strtoul((char *)argv[argNum], NULL, 0));
+    }
+  }
+  {
+    int argNum = findArg(argc, argv, "ticklimit");
+    if (argNum != ARG_NOT_FOUND) {
+      serverSimSetGameTickLimit(serverSim, (int32_t)strtoul((char *)argv[argNum], NULL, 0));
     }
   }
 
@@ -1145,15 +1183,16 @@ int main(int argc, char **argv) {
   serverSimSetHasPassword(serverSim, pass[0] != '\0');
   {
     ServerInstanceConfig instCfg;
-    instCfg.udpPort      = port;
-    instCfg.bindAddr     = useAddr;
-    instCfg.password     = pass;
-    instCfg.maxPlayers   = (BYTE)maxPlayers;
-    instCfg.useWbn       = (argExist(argc, argv, "nowinbolonet") == FALSE);
-    instCfg.compTanks    = (BYTE)ai;
-    instCfg.useTracker   = sTrackerUse;
-    instCfg.trackerAddr  = sTrackerAddr;
-    instCfg.trackerPort  = sTrackerPort;
+    instCfg.udpPort             = port;
+    instCfg.bindAddr            = useAddr;
+    instCfg.password            = pass;
+    instCfg.maxPlayers          = (BYTE)maxPlayers;
+    instCfg.acceptRemoteClients = TRUE;
+    instCfg.useWbn              = (argExist(argc, argv, "nowinbolonet") == FALSE);
+    instCfg.compTanks           = (BYTE)ai;
+    instCfg.useTracker          = sTrackerUse;
+    instCfg.trackerAddr         = sTrackerAddr;
+    instCfg.trackerPort         = sTrackerPort;
     {
       bool natPunchOptOut = (argExist(argc, argv, "no-natpunch") == TRUE);
       instCfg.useNatPortmap   = (argExist(argc, argv, "upnp") == TRUE);
@@ -1337,7 +1376,35 @@ int main(int argc, char **argv) {
   serverTimerGameID = SDL_AddTimer(SERVER_TICK_LENGTH, serverGameTimer, NULL);
 #endif
 
-  processKeys(isQuiet);
+  {
+    CmdStdin *cmdStream = NULL;
+    int cmdArg = findArg(argc, argv, "cmd-stdin");
+    if (cmdArg != ARG_NOT_FOUND) {
+      cmdStream = cmdStdinOpen((char *)argv[cmdArg]);
+      if (cmdStream == NULL) {
+        fprintf(stderr, "Error: failed to open -cmd-stdin file '%s'\n",
+                (char *)argv[cmdArg]);
+#ifdef _WIN32
+        timeKillEvent(serverTimerGameID);
+#else
+        SDL_RemoveTimer(serverTimerGameID);
+#endif
+        threadsDestroy();
+        serverInstanceShutdown(serverSim);
+        serverSimDestroy(serverSim);
+#ifdef USING_SDL
+        SDL_Quit();
+#endif
+        return 0;
+      }
+    }
+    if (cmdStream != NULL) {
+      processCmdStdin(cmdStream);
+      cmdStdinClose(cmdStream);
+    } else {
+      processKeys(isQuiet);
+    }
+  }
 
 #ifdef _WIN32
   timeKillEvent(serverTimerGameID);

@@ -33,13 +33,4 @@ extern const int          tutorialStepCount;
 /* Returns TRUE if `pos` is one of the tutorial's stop rows. */
 bool tutorialIsStopPos(BYTE pos);
 
-/* Cross-thread freeze flag. The client-side dialog sequencer sets this
- * TRUE just before showing each modal message and FALSE after it closes;
- * the server-side tankUpdate skips physics while it is TRUE, so the
- * tank (and anything else ticking through tankUpdate) stays frozen for
- * the duration of the dialog. Plain bool — reads and writes of a bool
- * are atomic on every supported target, and a one-tick lag either way
- * is harmless. */
-extern bool tutorialServerPaused;
-
 #endif

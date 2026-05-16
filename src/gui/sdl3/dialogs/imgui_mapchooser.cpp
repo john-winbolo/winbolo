@@ -49,8 +49,8 @@ extern "C" {
 #include "global.h"
 #include "../minimap_render.h"
 #include "../map_preview_popup.h"
-#include "../../../mapeditor/mapeditor_generate.h"
-#include "../../../mapeditor/mapeditor_maze.h"
+#include "mapgen.h"
+#include "mapgen_maze.h"
 #include "imgui_mapchooser.h"
 #include "../../lang.h"
 }

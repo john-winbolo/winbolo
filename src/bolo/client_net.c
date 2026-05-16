@@ -54,6 +54,16 @@ bool clientSimConnectLocal(ClientSim *cs, struct ServerSim *sim, BYTE playerNum)
   return true;
 }
 
+bool clientSimConnectLocalPassive(ClientSim *cs, struct ServerSim *sim, BYTE playerNum) {
+  if (cs == NULL) return false;
+  clientSimTeardownTransport(cs);
+  cs->transport = transportLocalCreatePassive(sim, playerNum);
+  cs->hasTransport = true;
+  cs->isUdpTransport = false;
+  clientSimSetLocalTransport(cs, true);
+  return true;
+}
+
 void clientSimDisconnect(ClientSim *cs) {
   if (cs == NULL) return;
   clientSimTeardownTransport(cs);
@@ -191,7 +201,7 @@ void clientSimNetSendLockToggle(ClientSim *cs, bool allow) {
 
 void clientSimNetSendTeamSet(ClientSim *cs, BYTE teamNumber) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendTeamSet(&cs->transport, cs->myPlayerNum, teamNumber);
+  transportUdpClientSendTeamSet(&cs->transport, teamNumber);
 }
 
 void clientSimNetSendReady(ClientSim *cs, bool ready) {
@@ -201,108 +211,12 @@ void clientSimNetSendReady(ClientSim *cs, bool ready) {
 
 void clientSimNetSendAddBot(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendAddBot(&cs->transport, 0, NULL, NULL);
-}
-
-void clientSimNetSendAddBotConfigured(ClientSim *cs, BYTE teamNumber,
-                                      const char *brainPath,
-                                      const char *botName) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendAddBot(&cs->transport, teamNumber, brainPath, botName);
+  transportUdpClientSendAddBot(&cs->transport);
 }
 
 void clientSimNetSendRemoveBot(ClientSim *cs, BYTE playerNum) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
   transportUdpClientSendRemoveBot(&cs->transport, playerNum);
-}
-
-void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
-                                    uint8_t difficulty,
-                                    uint8_t personality,
-                                    const char *name) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyBotConfig(&cs->transport, slot,
-                                       difficulty, personality, name);
-}
-
-void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
-                                      const char *brainPath) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbySetBotBrain(&cs->transport, slot, brainPath);
-}
-
-void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbySetMap(&cs->transport, mapRelPath);
-}
-
-void clientSimNetSendLobbyPreviewCancel(ClientSim *cs) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyPreviewCancel(&cs->transport);
-}
-
-void clientSimNetSendLobbyPreviewCommit(ClientSim *cs) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyPreviewCommit(&cs->transport);
-}
-
-void clientSimNetSendLobbyPreviewRandom(ClientSim *cs, const char *seedStr) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyPreviewRandom(&cs->transport, seedStr);
-}
-
-void clientSimNetSendLobbyMapListRequest(ClientSim *cs,
-                                         const char *relPath) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyMapListRequest(&cs->transport, relPath);
-}
-
-void clientSimNetSendLobbyMapSearchRequest(ClientSim *cs,
-                                           const char *relPath,
-                                           const char *query) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyMapSearchRequest(&cs->transport,
-                                              relPath, query);
-}
-
-void clientSimNetSendLobbyMapUploadBegin(ClientSim *cs,
-                                         uint32_t totalLen,
-                                         const char *name) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyMapUploadBegin(&cs->transport, totalLen, name);
-}
-
-void clientSimNetSendLobbyMapUploadChunk(ClientSim *cs,
-                                         uint32_t offset,
-                                         const uint8_t *data,
-                                         uint16_t dataLen) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyMapUploadChunk(&cs->transport, offset,
-                                            data, dataLen);
-}
-
-void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
-                                   uint8_t color, uint8_t namingPool,
-                                   const char *name) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyTeamMeta(&cs->transport, teamId, color,
-                                      namingPool, name);
-}
-
-void clientSimNetSendLobbyTeamClear(ClientSim *cs, BYTE teamId) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyTeamClear(&cs->transport, teamId);
-}
-
-void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
-                                  const uint8_t *value, uint8_t valueLen) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbySetting(&cs->transport, settingType, value, valueLen);
-}
-
-void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyOpenHost(&cs->transport, openHost);
 }
 
 void clientSimNetSendMapSkipVote(ClientSim *cs) {

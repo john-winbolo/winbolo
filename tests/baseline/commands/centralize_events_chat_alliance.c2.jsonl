@@ -1,0 +1,4 @@
+# centralize_events_chat_alliance_3client_udp — client 2 (slot 1).
+# Passive witness. Will see whatever alliance events are broadcast
+# (CTRL_ALLIANCE_ACCEPT and friends fan out to all clients so each
+# UI can recolor team membership) but should see zero CTRL_CHAT.

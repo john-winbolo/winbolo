@@ -128,6 +128,23 @@ based on my testing.
 /* It takes 10 game ticks for the tank to reload */
 #define TANK_RELOAD_TIME 13
 
+/* Game ticks the `justFired` flag stays non-zero after firing a shell.
+   Used by pillbox targeting (pillbox.c pillsUpdate) to defeat the tree-hide
+   exemption — a tank that just fired from inside trees is still visible
+   to pillboxes for this many ticks.
+
+   Minimum value of 101 derived from the pill's reload cycle:
+     - Tick T:    tank fires, pill enters outer block, justSeen=FALSE → sets
+                  justSeen=TRUE and reload=0 (no shot yet).
+     - Tick T+1..T+99: pill reload climbs from 1 to 99 (outer block skipped).
+     - Tick T+100: pill reload reaches 100 (= PILLBOX_ATTACK_NORMAL = speed).
+                  Outer block re-enters. Needs target visible again.
+                  With JUST_FIRED_TICKS=100, justFired hits 0 exactly here →
+                  pill skips → justSeen reset → no retaliation.
+                  101 leaves justFired=1 on T+100, so pill sees target,
+                  justSeen=TRUE → FIRE. */
+#define JUST_FIRED_TICKS 101
+
 /* Time it takes for the tank to lose some stuff in water */
 #define TANK_WATER_TIME 15
 

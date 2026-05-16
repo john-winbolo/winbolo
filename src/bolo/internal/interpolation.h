@@ -25,6 +25,11 @@
 
 #include "global.h"
 
+#ifndef INTERPCONTEXT_TYPEDEF
+#define INTERPCONTEXT_TYPEDEF
+typedef struct InterpContext InterpContext;
+#endif
+
 /* A snapshot of one player's tank state at a point in time.
  * Named InterpSnapshot to distinguish from the wire-format
  * TankSnapshot in input_packet.h. */
@@ -58,10 +63,10 @@ typedef struct {
 } InterpPlayer;
 
 /* The full interpolation context for all other players */
-typedef struct InterpContext {
+struct InterpContext {
   InterpPlayer players[MAX_TANKS];
   BYTE localPlayer;        /* Our own player number (skip interpolation) */
-} InterpContext;
+};
 
 /*********************************************************
 *NAME:          interpCreate

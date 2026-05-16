@@ -28,6 +28,11 @@ bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
                          bool wantRejoin, const char *trackerAddr,
                          unsigned short trackerPort);
 bool clientSimConnectLocal(ClientSim *cs, struct ServerSim *sim, BYTE playerNum);
+/* Like clientSimConnectLocal, but constructs the local transport in
+ * passive mode — the transport's tick path will NOT drive
+ * serverSimTick. The caller is responsible for stepping the ServerSim
+ * itself (e.g. via a host-side timer/finisher). */
+bool clientSimConnectLocalPassive(ClientSim *cs, struct ServerSim *sim, BYTE playerNum);
 void clientSimDisconnect(ClientSim *cs);
 bool clientSimHasTransport(const ClientSim *cs);
 
@@ -79,70 +84,7 @@ void clientSimNetSendLockToggle(ClientSim *cs, bool allow);
 void clientSimNetSendTeamSet(ClientSim *cs, BYTE teamNumber);
 void clientSimNetSendReady(ClientSim *cs, bool ready);
 void clientSimNetSendAddBot(ClientSim *cs);
-/* Add-bot with explicit team, brain, and pool-picked name. The
- * zero-arg clientSimNetSendAddBot above sends teamNumber=0 / brainPath="" /
- * botName="" and lets the server pick defaults. */
-void clientSimNetSendAddBotConfigured(ClientSim *cs, BYTE teamNumber,
-                                      const char *brainPath,
-                                      const char *botName);
 void clientSimNetSendRemoveBot(ClientSim *cs, BYTE playerNum);
-void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
-                                    uint8_t difficulty,
-                                    uint8_t personality,
-                                    const char *name);
-void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
-                                      const char *brainPath);
-/* Host (or openHost / admin) only — swap the running lobby map.
- * mapRelPath is relative to data/maps/ (e.g. "Foo.map" or
- * "subdir/Foo.map"). Server rejects "..", absolute paths, and
- * Windows drive letters before opening the file. */
-void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath);
-
-/* Lobby preview cycle. SET_MAP and a completed upload auto-stash
- * the previous committed map; these two close the loop:
- *   - Cancel: roll back to the stashed map (server re-broadcasts).
- *   - Commit: free the stash; the sim already shows the previewed
- *             map, so no further broadcast is needed. */
-void clientSimNetSendLobbyPreviewCancel(ClientSim *cs);
-void clientSimNetSendLobbyPreviewCommit(ClientSim *cs);
-
-/* Procedural-map preview. seedStr is a mapGenConfigToSeed-encoded
- * string the server decodes back into a MapGenConfig. Server applies
- * as a preview (stashes previous map, regenerates, broadcasts
- * MAP_CHANGE). */
-void clientSimNetSendLobbyPreviewRandom(ClientSim *cs, const char *seedStr);
-
-/* Ask the server to list data/maps/<relPath>. Response arrives async
- * via PACKET_LOBBY_MAP_LIST_RSP and is stored on the ClientSim
- * (lobbyMapList* fields). Any lobby client may request — read-only. */
-void clientSimNetSendLobbyMapListRequest(ClientSim *cs,
-                                         const char *relPath);
-
-/* Recursive search variant. Response stored on lobbyMapSearch*. */
-void clientSimNetSendLobbyMapSearchRequest(ClientSim *cs,
-                                           const char *relPath,
-                                           const char *query);
-
-/* Map upload: BEGIN announces a file with its byte length and
- * server-relative name (e.g. "Uploaded/Foo.map"); CHUNK delivers
- * data segments at the given offset (1024-byte cap). Server
- * acknowledges BEGIN with MAP_UPLOAD_ACK and the final chunk with
- * MAP_UPLOAD_DONE — both update lobbyMapUploadStatus on the
- * ClientSim. */
-void clientSimNetSendLobbyMapUploadBegin(ClientSim *cs,
-                                         uint32_t totalLen,
-                                         const char *name);
-void clientSimNetSendLobbyMapUploadChunk(ClientSim *cs,
-                                         uint32_t offset,
-                                         const uint8_t *data,
-                                         uint16_t dataLen);
-void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
-                                   uint8_t color, uint8_t namingPool,
-                                   const char *name);
-void clientSimNetSendLobbyTeamClear(ClientSim *cs, BYTE teamId);
-void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
-                                  const uint8_t *value, uint8_t valueLen);
-void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost);
 void clientSimNetSendMapSkipVote(ClientSim *cs);
 void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize);
 void clientSimNetSendBalanceApply(ClientSim *cs);
