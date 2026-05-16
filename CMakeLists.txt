@@ -480,11 +480,11 @@ add_subdirectory(src/server)
 add_subdirectory(brains)
 
 # Server sources needed for single-player mode
-# server_sim.c + servermessages.c now come from server_sim_static.
+# server_sim.c + servermessages.c now come from server_sim_static;
+# threads.c comes from threads_static.
 set(IOS_SERVER_SOURCES
     src/server/server_stubs.c
     src/server/server_dedicated_log_stubs.c
-    src/server/threads.c
     src/mapeditor/mapgen_imgui.cpp
 )
 
@@ -640,7 +640,7 @@ bolo_grant_internal_source_access(WinBoloIOS
     src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c)
 
-target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static)
+target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
     nanosvg stb_image utf8proc zlibstatic
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
@@ -2170,8 +2170,9 @@ endforeach()
 
 # ---------------------------------------------------------------------------
 # WinBoloUnitTests — in-process tests of bolo_static / server_sim_static
-# without the SDL3 GUI. Each test is a registered name dispatched from
-# tests/unit/test_main.c; CTest entries below run them one at a time.
+# / server_static without the SDL3 GUI. Each test is a registered name
+# dispatched from tests/unit/test_main.c; CTest entries below run them
+# one at a time.
 #
 # Uses the `unittests` privileged include profile defined in
 # cmake/bolo_lib.cmake; scope and expiry documented in
@@ -2189,25 +2190,15 @@ set(WINBOLO_UNITTESTS_SOURCES
     # here without HAVE_STEAM so client_net.c's transportUdpClient*
     # references resolve — the tests never run the UDP code path.
     src/bolo/transport_udp_client.c
-    # threads.{c,h} is compiled per-target here rather than linked
-    # from server_static so the test binary doesn't drag in the
-    # dedicated-server runtime (UDP server, lifecycle, geolookup).
-    # Lifting threads.{c,h} into its own small static library is a
-    # plausible follow-up; intentionally out of scope here.
-    src/server/threads.c
-    # server_lifecycle.c is compiled in to give the SP-through-timer
-    # test the real serverInstanceStartup / serverInstanceTick /
-    # serverInstanceShutdown bodies. acceptRemoteClients=false short-
-    # circuits every UDP / WBN / tracker / NAT path, so the
-    # transportUdpServer* / winbolonet* / natPortMap* references it
-    # leaves behind only need link-only stubs (added below in
-    # test_stubs.c) rather than the full server_static runtime.
-    src/server/server_lifecycle.c
     # server_stubs.c (transportUdpServer* / serverLifecycle* stubs)
-    # is intentionally NOT linked here: server_lifecycle.c provides
-    # the real serverLifecycleGetTickStats / GetSimStats /
-    # serverInstanceRecordProbeReply bodies, and the remaining UDP
-    # stubs that file would contribute live in test_stubs.c instead.
+    # is intentionally NOT linked here: server_static (linked below)
+    # provides the real transport_udp_server.c and server_lifecycle.c
+    # bodies, and stubbing them too would collide at link time. The
+    # client-side hooks server_lifecycle.c still references but
+    # server_static doesn't own (winbolonet* in src/winbolonet/,
+    # natPortMap* in src/bolo/nat_portmap.c) stay stubbed in
+    # test_stubs.c — acceptRemoteClients=false keeps them off the
+    # tick-time call paths.
     src/server/server_dedicated_log_stubs.c
     src/lzw/dcodlzw.c
     src/lzw/ecodlzw.c
@@ -2235,7 +2226,7 @@ target_include_directories(WinBoloUnitTests PRIVATE
 bolo_apply_include_rules(WinBoloUnitTests unittests)
 
 target_link_libraries(WinBoloUnitTests PRIVATE
-    bolo_static server_sim_static bot_brains_static
+    bolo_static ${SERVER_LINK_GROUP} bot_brains_static
     SDL3::SDL3 minizip lua_static cjson utf8proc)
 
 if(WIN32)

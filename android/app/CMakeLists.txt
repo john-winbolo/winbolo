@@ -231,9 +231,8 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/lzw/dcodlzw.c
 
     # Server (for single-player). server_sim.c + servermessages.c
-    # come from server_sim_static.
+    # come from server_sim_static; threads.c comes from threads_static.
     ${PROJ_ROOT}/src/server/geolookup.c
-    ${PROJ_ROOT}/src/server/threads.c
     ${PROJ_ROOT}/src/server/server_stubs.c
     ${PROJ_ROOT}/src/server/server_dedicated_log_stubs.c
     ${PROJ_ROOT}/src/server/posix_stubs.c
@@ -251,7 +250,7 @@ bolo_apply_include_rules(main gui)
 bolo_grant_internal_source_access(main
     ${PROJ_ROOT}/src/bolo/transport_udp_client.c)
 
-target_link_libraries(main PRIVATE bolo_static server_sim_static bot_brains_static)
+target_link_libraries(main PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(main PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
