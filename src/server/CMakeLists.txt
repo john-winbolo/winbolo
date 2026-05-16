@@ -56,7 +56,7 @@ else()
     add_library(threads_static STATIC threads.c)
 endif()
 
-bolo_apply_include_rules(threads_static sim_owner)
+bolo_apply_include_rules(threads_static runtime_only)
 
 set_target_properties(threads_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
