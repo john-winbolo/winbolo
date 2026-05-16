@@ -1833,8 +1833,38 @@ static void wbnMapsListProvider(MapChooserState *state,
     for (const auto &f : subs) {
         if (f.count > 0) { anyCountKnown = true; break; }
     }
+    /* At the WBN root, pin folders 60 ("ClassicMap's Maps") and 61
+     * ("classics-popular") to the top so the curated entry points
+     * the community uses most are immediately visible. Anywhere
+     * deeper the API's natural order is preserved. */
+    auto isPinnedAtRoot = [&](int fid) {
+        if (relPath[0] != '\0') return false;
+        return fid == 60 || fid == 61;
+    };
+    auto emitSubfolderRow = [&](const WbnMapsFolder &f) {
+        if (state->numMaps >= MAP_CHOOSER_MAX_MAPS) return;
+        MapChooserEntry *e = &state->maps[state->numMaps++];
+        memset(e, 0, sizeof(*e));
+        SDL_strlcpy(e->name, f.name.c_str(), sizeof(e->name));
+        if (relPath[0] != '\0') {
+            SDL_snprintf(e->path, sizeof(e->path), "%s/%s",
+                         relPath, f.name.c_str());
+        } else {
+            SDL_strlcpy(e->path, f.name.c_str(), sizeof(e->path));
+        }
+        e->isFolder    = true;
+        e->highlighted = isPinnedAtRoot(f.id);
+    };
+    /* First pass: pinned folders. */
     for (const auto &f : subs) {
         if (anyCountKnown && f.count <= 0) continue;
+        if (!isPinnedAtRoot(f.id)) continue;
+        emitSubfolderRow(f);
+    }
+    /* Second pass: everything else, original order. */
+    for (const auto &f : subs) {
+        if (anyCountKnown && f.count <= 0) continue;
+        if (isPinnedAtRoot(f.id)) continue;
         if (state->numMaps >= MAP_CHOOSER_MAX_MAPS) break;
         MapChooserEntry *e = &state->maps[state->numMaps++];
         memset(e, 0, sizeof(*e));
@@ -2104,6 +2134,7 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapState.provider.onFolderJump         = lobbyServerMapsOnFolderJump;
         s_chooseMapState.provider.refreshTooltipPrefix = lobbyServerMapsTooltipPrefix;
         s_chooseMapState.provider.generatePreview      = lobbyServerMapsGeneratePreview;
+        s_chooseMapState.provider.cacheScope           = "server";
         s_chooseMapState.provider.ctx                  = s_chooseMapCs;
         SDL_strlcpy(s_chooseMapState.crumbsRootLabel, "Maps",
                     sizeof(s_chooseMapState.crumbsRootLabel));
@@ -2117,6 +2148,7 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapUploadState.provider.refreshTooltipPrefix = lobbyUploadTooltipPrefix;
         s_chooseMapUploadState.provider.renderStatusFooter   = lobbyUploadStatusFooter;
         s_chooseMapUploadState.provider.generatePreview      = lobbyUploadGeneratePreview;
+        s_chooseMapUploadState.provider.cacheScope           = "upload";
         SDL_strlcpy(s_chooseMapUploadState.crumbsRootLabel, "Maps",
                     sizeof(s_chooseMapUploadState.crumbsRootLabel));
         /* "Load from device" + "Generate Random Map" exist as dedicated
@@ -2154,6 +2186,7 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapWbnState.provider.renderStatusFooter   = lobbyWbnMapsStatusFooter;
         s_chooseMapWbnState.provider.tick                 = lobbyWbnMapsTick;
         s_chooseMapWbnState.provider.generatePreview      = lobbyWbnGeneratePreview;
+        s_chooseMapWbnState.provider.cacheScope           = "wbn";
         s_chooseMapWbnState.provider.refreshEveryFrame    = true;
         SDL_strlcpy(s_chooseMapWbnState.crumbsRootLabel, "Maps",
                     sizeof(s_chooseMapWbnState.crumbsRootLabel));

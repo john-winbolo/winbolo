@@ -50,6 +50,11 @@ typedef struct {
                                   * Used by the WBN tab to surface the catalogue
                                   * folder a search result lives in, with no impact
                                   * on the row's name or path. Empty = no hint. */
+    bool    highlighted;         /* Optional: provider marks the row
+                                  * as "featured" / pinned. The chooser
+                                  * paints a subtle background tint
+                                  * so the user notices it among the
+                                  * surrounding entries. */
     char    crumbsPath[FILENAME_MAX]; /* Optional: slash-separated friendly
                                        * folder path (e.g. "Collections/
                                        * Tournament Maps"). The chooser
@@ -117,6 +122,14 @@ struct MapFsProvider_s {
      * unavailable (the cache won't retry). */
     bool (*generatePreview)(const char *entryPath,
                             MapPreviewPixels *outBuf, void *ctx);
+    /* Cache namespace identifier. The thumbnail cache mixes this in
+     * with path + mtime when forming both the in-memory key and the
+     * on-disk filename, so identically-named maps on different
+     * sources (e.g. a "Fun Map.map" that exists in Upload, on the
+     * server, AND on winbolo.net) don't cross-contaminate each
+     * other's previews. Set per provider: e.g. "upload", "server",
+     * "wbn". Empty/NULL collapses to the legacy global namespace. */
+    const char *cacheScope;
     /* Optional. Called once per frame before the chooser renders;
      * the implementation writes state->pathTooltipPrefix (the hover
      * tooltip on the path label above the search box) to whatever
