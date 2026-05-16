@@ -500,6 +500,11 @@ void clientSimSetIsLanOnly(ClientSim *cs, bool v);
  * ──────────────────────────────────────────────────────────────── */
 bool        clientSimGetLobbyOpenHost(const ClientSim *cs);
 bool        clientSimGetLobbyAutoLockOnGameStart(const ClientSim *cs);
+/* Ranked-game flag (LST_RANKED). When true, the server forbids bots
+ * and the "Open" game type, and removes any existing bots. UI is
+ * visible to every player (so they can see the ranked badge) but
+ * only host/admin may toggle. */
+bool        clientSimGetLobbyRanked(const ClientSim *cs);
 uint16_t    clientSimGetLobbyServerLocks(const ClientSim *cs);
 
 uint8_t     clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId);

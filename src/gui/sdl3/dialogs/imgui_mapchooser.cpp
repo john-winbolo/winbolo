@@ -91,6 +91,16 @@ struct PreviewEntry {
      * was created via the warm-start disk path that already loaded
      * the texture inline. */
     std::string   cacheFile;
+    /* Bounding box of opaque (non-transparent) pixels in the cached
+     * texture, computed once when the texture is decoded. Lets the
+     * hover-preview popup crop water away without storing a second
+     * cached image. Values are pixel coordinates in the texture, and
+     * texW/texH carry the full image size so UVs can be scaled.
+     * If cropMaxX < cropMinX the texture is all-transparent and
+     * crop == full. */
+    int           texW = 0, texH = 0;
+    int           cropMinX = 0, cropMinY = 0;
+    int           cropMaxX = 0, cropMaxY = 0;
 };
 
 struct PreviewRequest {
@@ -147,18 +157,46 @@ static std::string cachePathFor(const char *scope,
 
 /* Try to decode the cached PNG into an SDL_Texture. Returns nullptr
  * on missing file or any decode error (caller treats both as "miss"
- * and either re-requests generation or marks failed). */
-static SDL_Texture *loadCachedTexture(SDL_Renderer *renderer,
-                                      const std::string &cacheFile) {
+ * and either re-requests generation or marks failed). On success,
+ * fills outEntry's tex, texW/H, and cropMinX..cropMaxY — scans the
+ * alpha channel of the just-decoded buffer to find the bounding box
+ * of opaque pixels so the list-view hover popup can crop water
+ * away without keeping a second cached image. */
+static bool loadCachedTexture(SDL_Renderer *renderer,
+                              const std::string &cacheFile,
+                              PreviewEntry *outEntry) {
     int w = 0, h = 0, ch = 0;
     unsigned char *rgba = stbi_load(cacheFile.c_str(), &w, &h, &ch, 4);
-    if (!rgba) return nullptr;
+    if (!rgba) return false;
     SDL_Surface *surf = SDL_CreateSurfaceFrom(
         w, h, SDL_PIXELFORMAT_RGBA32, rgba, w * 4);
     SDL_Texture *tex = surf ? SDL_CreateTextureFromSurface(renderer, surf) : nullptr;
     if (surf) SDL_DestroySurface(surf);
+    if (!tex) { stbi_image_free(rgba); return false; }
+
+    /* Scan alpha for opaque-pixel bbox. minX > maxX afterwards means
+     * "all transparent" — caller treats that as crop=full. */
+    int minX = w, minY = h, maxX = -1, maxY = -1;
+    for (int y = 0; y < h; y++) {
+        const unsigned char *row = rgba + (size_t)y * w * 4;
+        for (int x = 0; x < w; x++) {
+            if (row[x * 4 + 3] != 0) {
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+    }
     stbi_image_free(rgba);
-    return tex;
+    outEntry->tex      = tex;
+    outEntry->texW     = w;
+    outEntry->texH     = h;
+    outEntry->cropMinX = minX;
+    outEntry->cropMinY = minY;
+    outEntry->cropMaxX = maxX;
+    outEntry->cropMaxY = maxY;
+    return true;
 }
 
 static void writeCachePng(const std::string &cacheFile,
@@ -243,6 +281,15 @@ static void cacheStopWorker(void) {
     if (gWorker.joinable()) gWorker.join();
 }
 
+/* Static guard whose destructor stops + joins the worker at program
+ * exit. Without this, gWorker's own ~thread() runs while joinable
+ * and std::terminate fires — which is the crash users see when they
+ * close the lobby and quit before any explicit cache-shutdown call
+ * had a chance to fire. Declared AFTER gWorker so static destruction
+ * order (LIFO) tears down the guard first. */
+struct WorkerGuard { ~WorkerGuard() { cacheStopWorker(); } };
+static WorkerGuard gWorkerGuard;
+
 }  /* anonymous namespace */
 
 /* Public: look up (and lazily request) a thumbnail texture for
@@ -283,15 +330,13 @@ static SDL_Texture *mapPreviewCacheGet(SDL_Renderer *renderer,
 
     /* Not seen this entry yet — try disk first (warm-start path). */
     std::string cacheFile = cachePathFor(provider->cacheScope, key, modTime);
-    SDL_Texture *tex = loadCachedTexture(renderer, cacheFile);
-    if (tex) {
+    PreviewEntry warm;
+    if (loadCachedTexture(renderer, cacheFile, &warm)) {
         std::lock_guard<std::mutex> lk(gCacheMutex);
-        PreviewEntry e;
-        e.state     = PrevReady;
-        e.tex       = tex;
-        e.cacheFile = cacheFile;
-        gCache[k]   = std::move(e);
-        return tex;
+        warm.state     = PrevReady;
+        warm.cacheFile = cacheFile;
+        gCache[k]      = std::move(warm);
+        return gCache[k].tex;
     }
 
     /* Disk miss — enqueue a generation request. Worker fills the PNG
@@ -325,6 +370,56 @@ static SDL_Texture *mapPreviewCacheGet(SDL_Renderer *renderer,
     return nullptr;
 }
 
+/* Companion to mapPreviewCacheGet that also reports the opaque-pixel
+ * bounding box as UV0/UV1 + cropped pixel dimensions, so the caller
+ * (list-view hover popup) can render only the interesting part of
+ * the map without keeping a second cached image. Returns nullptr if
+ * the texture isn't ready or the entry has no bounds yet. */
+static SDL_Texture *mapPreviewCacheGetCropped(SDL_Renderer *renderer,
+                                               const char *key,
+                                               int64_t modTime,
+                                               const MapFsProvider *provider,
+                                               ImVec2 *outUV0,
+                                               ImVec2 *outUV1,
+                                               int *outCropW,
+                                               int *outCropH) {
+    SDL_Texture *tex = mapPreviewCacheGet(renderer, key, modTime, provider);
+    if (!tex) return nullptr;
+    std::lock_guard<std::mutex> lk(gCacheMutex);
+    std::string k = composeCacheKey(provider->cacheScope, key, modTime);
+    auto it = gCache.find(k);
+    if (it == gCache.end() || it->second.texW <= 0 || it->second.texH <= 0) {
+        if (outUV0) *outUV0 = ImVec2(0.0f, 0.0f);
+        if (outUV1) *outUV1 = ImVec2(1.0f, 1.0f);
+        if (outCropW) *outCropW = 0;
+        if (outCropH) *outCropH = 0;
+        return tex;
+    }
+    int w = it->second.texW;
+    int h = it->second.texH;
+    int x0 = it->second.cropMinX;
+    int y0 = it->second.cropMinY;
+    int x1 = it->second.cropMaxX;
+    int y1 = it->second.cropMaxY;
+    if (x1 < x0 || y1 < y0) {
+        /* All-transparent — fall back to the full image. */
+        x0 = 0; y0 = 0; x1 = w - 1; y1 = h - 1;
+    }
+    /* Single-pixel padding so the cropped rect doesn't visually
+     * touch the popup border. */
+    if (x0 > 0)        x0--;
+    if (y0 > 0)        y0--;
+    if (x1 < w - 1)    x1++;
+    if (y1 < h - 1)    y1++;
+    if (outUV0) *outUV0 = ImVec2((float)x0 / (float)w,
+                                  (float)y0 / (float)h);
+    if (outUV1) *outUV1 = ImVec2((float)(x1 + 1) / (float)w,
+                                  (float)(y1 + 1) / (float)h);
+    if (outCropW) *outCropW = x1 - x0 + 1;
+    if (outCropH) *outCropH = y1 - y0 + 1;
+    return tex;
+}
+
 /* Worker wrote a PNG to disk for an InFlight entry — poll for those
  * and upgrade them to Ready (with a decoded texture). Called from
  * the row-render loop so promotions piggy-back the natural traffic
@@ -345,10 +440,21 @@ static void mapPreviewCachePollDisk(SDL_Renderer *renderer) {
         }
     }
     for (const auto &kf : readyKeys) {
-        SDL_Texture *tex = loadCachedTexture(renderer, kf.second);
+        PreviewEntry tmp;
+        if (!loadCachedTexture(renderer, kf.second, &tmp)) {
+            continue;
+        }
         std::lock_guard<std::mutex> lk(gCacheMutex);
         auto it = gCache.find(kf.first);
-        if (it != gCache.end()) it->second.tex = tex;
+        if (it != gCache.end()) {
+            it->second.tex      = tmp.tex;
+            it->second.texW     = tmp.texW;
+            it->second.texH     = tmp.texH;
+            it->second.cropMinX = tmp.cropMinX;
+            it->second.cropMinY = tmp.cropMinY;
+            it->second.cropMaxX = tmp.cropMaxX;
+            it->second.cropMaxY = tmp.cropMaxY;
+        }
     }
 }
 
@@ -2041,9 +2147,12 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             bool fileRow    = !ent.isFolder && !ent.isParentUp
                               && ent.path[0] != '\0';
             SDL_Texture *hoverTex = nullptr;
+            ImVec2 hoverUV0(0.0f, 0.0f), hoverUV1(1.0f, 1.0f);
+            int hoverCropW = 0, hoverCropH = 0;
             if (fileRow && state->provider.generatePreview) {
-                hoverTex = mapPreviewCacheGet(renderer,
-                    ent.path, ent.modTime, &state->provider);
+                hoverTex = mapPreviewCacheGetCropped(renderer,
+                    ent.path, ent.modTime, &state->provider,
+                    &hoverUV0, &hoverUV1, &hoverCropW, &hoverCropH);
             }
             bool showTooltip = (searchMode && !ent.isParentUp)
                                || hoverTex != nullptr;
@@ -2097,15 +2206,26 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                     }
                 }
                 if (hoverTex) {
-                    float texW = 0.0f, texH = 0.0f;
-                    SDL_GetTextureSize(hoverTex, &texW, &texH);
+                    /* Use the cropped bbox the cache computed at
+                     * decode time so the popup focuses on the
+                     * interesting part of the map. Fall back to
+                     * the full texture if no bbox was recorded
+                     * (all-transparent / mid-load). */
+                    float drawW = (float)hoverCropW;
+                    float drawH = (float)hoverCropH;
+                    if (drawW <= 0.0f || drawH <= 0.0f) {
+                        float tw = 0.0f, th = 0.0f;
+                        SDL_GetTextureSize(hoverTex, &tw, &th);
+                        drawW = tw; drawH = th;
+                    }
                     float scale = 1.0f;
-                    if (texW > 0.0f && texH > 0.0f) {
-                        float maxDim = (texW > texH) ? texW : texH;
+                    if (drawW > 0.0f && drawH > 0.0f) {
+                        float maxDim = (drawW > drawH) ? drawW : drawH;
                         if (maxDim > kHoverMaxDim) scale = kHoverMaxDim / maxDim;
                     }
                     ImGui::Image((ImTextureID)hoverTex,
-                        ImVec2(texW * scale, texH * scale));
+                        ImVec2(drawW * scale, drawH * scale),
+                        hoverUV0, hoverUV1);
                 }
                 ImGui::PopTextWrapPos();
                 ImGui::EndTooltip();

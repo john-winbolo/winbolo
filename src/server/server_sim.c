@@ -386,6 +386,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->allowNewPlayers     = TRUE;   /* lobby starts open */
     sim->autoLockOnGameStart = FALSE;
     sim->savedAllowNewPlayers = TRUE;
+    sim->ranked              = FALSE;
     sim->serverLocks         = 0;
 
     /* Mirror gameType + hiddenMines + time fields so the lobby change
@@ -3639,6 +3640,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.inLobby          = sim->lobbyEnabled ? true : false;
     evt->u.lobbySettings.lobbyOpenHost            = sim->openHost;
     evt->u.lobbySettings.lobbyAutoLockOnGameStart = sim->autoLockOnGameStart;
+    evt->u.lobbySettings.lobbyRanked              = sim->ranked;
     evt->u.lobbySettings.lobbyServerLocks         = sim->serverLocks;
 }
 
@@ -4399,6 +4401,14 @@ bool serverSimGetAutoLockOnGameStart(const ServerSim *sim) {
 
 void serverSimSetAutoLockOnGameStart(ServerSim *sim, bool v) {
     if (sim) sim->autoLockOnGameStart = v;
+}
+
+bool serverSimGetRanked(const ServerSim *sim) {
+    return sim ? sim->ranked : false;
+}
+
+void serverSimSetRanked(ServerSim *sim, bool v) {
+    if (sim) sim->ranked = v;
 }
 
 uint8_t serverSimGetAiPolicy(const ServerSim *sim) {

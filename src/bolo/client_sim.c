@@ -1161,6 +1161,7 @@ void clientSimSetIsLanOnly(ClientSim *cs, bool v)               { cs->isLanOnly 
 
 bool     clientSimGetLobbyOpenHost(const ClientSim *cs)              { return cs->lobbyOpenHost; }
 bool     clientSimGetLobbyAutoLockOnGameStart(const ClientSim *cs)   { return cs->lobbyAutoLockOnGameStart; }
+bool     clientSimGetLobbyRanked(const ClientSim *cs)                { return cs ? cs->lobbyRanked : false; }
 uint16_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
 
 uint8_t clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId) {

@@ -225,6 +225,11 @@ void transportUdpClientSendLobbySetting(Transport *t, uint8_t settingType,
 /* Toggle the openHost flag (host-only). */
 void transportUdpClientSendLobbyOpenHost(Transport *t, bool openHost);
 
+/* Set / clear the server password (host-only). Empty / NULL pw
+ * clears. Server stores the new value and rebroadcasts lobby
+ * state so all clients' has_password mirror flips. */
+void transportUdpClientSendLobbySetPassword(Transport *t, const char *pw);
+
 /* Set a team's metadata. Single packet handles create + rename +
  * recolor + naming-pool change. teamId in 1..MAX_TANKS-1. */
 void transportUdpClientSendLobbyTeamMeta(Transport *t, uint8_t teamId,

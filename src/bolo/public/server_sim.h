@@ -1289,6 +1289,16 @@ void        serverSimSetServerLocks(ServerSim *sim, uint16_t locks);
 bool        serverSimGetAutoLockOnGameStart(const ServerSim *sim);
 void        serverSimSetAutoLockOnGameStart(ServerSim *sim, bool v);
 
+/* Ranked-game flag. Setting it true also flips ai=none. The server's
+ * LST_GAME_TYPE handler refuses to switch to gameOpen while ranked,
+ * and the LST_AI_POLICY handler refuses anything but aiNone. Existing
+ * bot slots are NOT removed by this setter — the LST_RANKED packet
+ * handler in the transport layer does that explicitly when the toggle
+ * flips on, and it also resets every player's ready bit so the host
+ * can confirm the new configuration. */
+bool        serverSimGetRanked(const ServerSim *sim);
+void        serverSimSetRanked(ServerSim *sim, bool v);
+
 /* Cached game-settings mirrors. authoritative state lives in GameSim;
  * these expose the most-recently-broadcast value for lock checks and
  * SETTING_CHG diffs. */

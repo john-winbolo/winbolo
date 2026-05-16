@@ -115,6 +115,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->inLobby          = evt->u.lobbySettings.inLobby;
         cs->lobbyOpenHost            = evt->u.lobbySettings.lobbyOpenHost;
         cs->lobbyAutoLockOnGameStart = evt->u.lobbySettings.lobbyAutoLockOnGameStart;
+        cs->lobbyRanked              = evt->u.lobbySettings.lobbyRanked;
         cs->lobbyServerLocks         = evt->u.lobbySettings.lobbyServerLocks;
         break;
 
