@@ -13,7 +13,7 @@
 #include "frontend.h"
 #include "server_sim.h"
 #include "luabrainshandler.h"
-#include "../../src/gui/lang.h"
+#include "lang_message.h"
 
 bool isInMenu = FALSE;
 
@@ -23,6 +23,9 @@ bool isInMenu = FALSE;
  * (brain_data.c, client_sim.c, players.c, etc.). Return a fixed
  * placeholder so anything that actually reaches a message render in
  * the tests sees a non-NULL string rather than crashing. */
+char       *langGetText(langid id);
+const char *langGetTextFmt(langid id, const MessageArgs *args);
+
 static char s_lang_placeholder[] = "?";
 
 char *langGetText(langid id) {
