@@ -77,6 +77,7 @@
 #include "gui_message.h"
 #include "server_sim.h"
 #include "game_sim.h"
+#include "../server/threads.h"
 #include "../gui/sdl3/mapview.h"
 #include "../gui/sdl3/tileloader.h"
 #include "../gui/sdl3/luabrainshandler.h"
@@ -4206,6 +4207,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    threadsCreate(FALSE);
     clientMutexCreate();
     langSetup();
 
@@ -5233,6 +5235,7 @@ int main(int argc, char *argv[]) {
     SDL_DestroyWindow(app.window);
     langCleanup();
     clientMutexDestroy();
+    threadsDestroy();
     SDL_Quit();
 
     return 0;

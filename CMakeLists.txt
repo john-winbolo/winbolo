@@ -480,11 +480,11 @@ add_subdirectory(src/server)
 add_subdirectory(brains)
 
 # Server sources needed for single-player mode
-# server_sim.c + servermessages.c now come from server_sim_static.
+# server_sim.c + servermessages.c now come from server_sim_static;
+# threads.c comes from threads_static.
 set(IOS_SERVER_SOURCES
     src/server/server_stubs.c
     src/server/server_dedicated_log_stubs.c
-    src/server/threads.c
     src/mapeditor/mapgen_imgui.cpp
 )
 
@@ -640,7 +640,7 @@ bolo_grant_internal_source_access(WinBoloIOS
     src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c)
 
-target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static)
+target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
     nanosvg stb_image utf8proc zlibstatic
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
@@ -1888,7 +1888,7 @@ else()
     target_compile_options(BrainTest PRIVATE -fcommon)
 endif()
 
-target_link_libraries(BrainTest PRIVATE bolo_static server_sim_static bot_brains_static)
+target_link_libraries(BrainTest PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(BrainTest PRIVATE
     SDL3::SDL3 minizip lua_static
     nanosvg stb_image utf8proc cjson
@@ -1972,7 +1972,7 @@ else()
     target_compile_options(MapEditor PRIVATE -fcommon)
 endif()
 
-target_link_libraries(MapEditor PRIVATE bolo_static server_sim_static bot_brains_static)
+target_link_libraries(MapEditor PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(MapEditor PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
     nanosvg stb_image utf8proc
@@ -2141,6 +2141,10 @@ set(_baseline_udp_50007
     centralize_events_lobby_smoke_udp
     centralize_events_lobby_name_change_udp
 )
+set(_baseline_udp_50008
+    centralize_events_chat_unicast_3client_udp
+    centralize_events_chat_alliance_3client_udp
+)
 
 foreach(_name IN LISTS _baseline_fast)
     add_test(NAME baseline.${_name}
@@ -2151,7 +2155,7 @@ foreach(_name IN LISTS _baseline_fast)
     set_tests_properties(baseline.${_name} PROPERTIES TIMEOUT 60)
 endforeach()
 
-foreach(_port 50001 50002 50003 50004 50005 50006 50007)
+foreach(_port 50001 50002 50003 50004 50005 50006 50007 50008)
     foreach(_name IN LISTS _baseline_udp_${_port})
         add_test(NAME baseline.${_name}
                  COMMAND stdbuf -oL bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
@@ -2162,6 +2166,90 @@ foreach(_port 50001 50002 50003 50004 50005 50006 50007)
                              TIMEOUT 60
                              RESOURCE_LOCK "udp_${_port}")
     endforeach()
+endforeach()
+
+# ---------------------------------------------------------------------------
+# WinBoloUnitTests — in-process tests of bolo_static / server_sim_static
+# / server_static without the SDL3 GUI. Each test is a registered name
+# dispatched from tests/unit/test_main.c; CTest entries below run them
+# one at a time.
+#
+# Uses the `unittests` privileged include profile defined in
+# cmake/bolo_lib.cmake; scope and expiry documented in
+# docs/ARCHITECTURE.md.
+# ---------------------------------------------------------------------------
+set(WINBOLO_UNITTESTS_SOURCES
+    tests/unit/test_main.c
+    tests/unit/test_stubs.c
+    tests/unit/test_transport_local_passive_threads.c
+    tests/unit/test_sp_subscriber_delivery.c
+    tests/unit/test_active_local_input_to_shot.c
+    tests/unit/test_sp_shoot_through_timer.c
+    # transport_udp_client.c stays per-target because of HAVE_STEAM
+    # gating (it's excluded from bolo_static for that reason). Linked
+    # here without HAVE_STEAM so client_net.c's transportUdpClient*
+    # references resolve — the tests never run the UDP code path.
+    src/bolo/transport_udp_client.c
+    # server_stubs.c (transportUdpServer* / serverLifecycle* stubs)
+    # is intentionally NOT linked here: server_static (linked below)
+    # provides the real transport_udp_server.c and server_lifecycle.c
+    # bodies, and stubbing them too would collide at link time. The
+    # client-side hooks server_lifecycle.c still references but
+    # server_static doesn't own (winbolonet* in src/winbolonet/,
+    # natPortMap* in src/bolo/nat_portmap.c) stay stubbed in
+    # test_stubs.c — acceptRemoteClients=false keeps them off the
+    # tick-time call paths.
+    src/server/server_dedicated_log_stubs.c
+    src/lzw/dcodlzw.c
+    src/lzw/ecodlzw.c
+)
+
+add_executable(WinBoloUnitTests ${WINBOLO_UNITTESTS_SOURCES})
+target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c)
+target_compile_definitions(WinBoloUnitTests PRIVATE
+    HAVE_SCREEN_C=1
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
+
+target_include_directories(WinBoloUnitTests PRIVATE
+    src/gui/sdl3
+    src/server
+    src
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${cjson_SOURCE_DIR}
+)
+bolo_apply_include_rules(WinBoloUnitTests unittests)
+
+target_link_libraries(WinBoloUnitTests PRIVATE
+    bolo_static ${SERVER_LINK_GROUP} bot_brains_static
+    SDL3::SDL3 minizip lua_static cjson utf8proc)
+
+if(WIN32)
+    target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
+    target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
+else()
+    target_sources(WinBoloUnitTests PRIVATE src/server/posix_stubs.c)
+    target_link_libraries(WinBoloUnitTests PRIVATE ${MATH_LIB} pthread)
+    target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
+endif()
+
+set_flat_output(WinBoloUnitTests "${CMAKE_BINARY_DIR}")
+
+set(_unit_test_names
+    transport_local_passive_threads
+    sp_subscriber_delivery
+    active_local_input_to_shot
+    sp_shoot_through_timer
+)
+foreach(_name IN LISTS _unit_test_names)
+    add_test(NAME unit.${_name}
+             COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
+    set_tests_properties(unit.${_name} PROPERTIES TIMEOUT 60)
 endforeach()
 
 endif() # iOS vs Desktop

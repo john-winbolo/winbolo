@@ -34,6 +34,7 @@ static const char *kOpNames[CMD_OP__COUNT] = {
   "alliance_accept",
   "alliance_leave",
   "map_skip_vote",
+  "chat",
   "start_game",
   "reapply_alliances",
   "shutdown",
@@ -157,6 +158,7 @@ static void parseOneLine(const char *origLine, int lineNumber, CmdLine *out) {
   bool haveOp   = false;
   bool haveSlot = false, haveTeam = false, haveReady = false;
   bool haveFrom = false, haveTo = false, haveName = false;
+  bool haveDest = false, haveBody = false;
 
   const char *p = skipWs(buf);
   if (*p != '{') fatalParseError(lineNumber, origLine, "expected '{'");
@@ -242,6 +244,20 @@ static void parseOneLine(const char *origLine, int lineNumber, CmdLine *out) {
         fatalParseError(lineNumber, origLine, "malformed name string");
       }
       haveName = true;
+    } else if (strcmp(key, "dest") == 0) {
+      uint64_t v;
+      if (!parseUint(&p, &v) || v > 255) {
+        fatalParseError(lineNumber, origLine, "dest must be 0..255");
+      }
+      out->dest = (BYTE)v;
+      haveDest = true;
+    } else if (strcmp(key, "body") == 0) {
+      if (*p != '"') fatalParseError(lineNumber, origLine, "body must be string");
+      p++;
+      if (!parseStringBody(&p, out->body, sizeof(out->body))) {
+        fatalParseError(lineNumber, origLine, "malformed body string");
+      }
+      haveBody = true;
     } else {
       char msg[96];
       snprintf(msg, sizeof(msg), "unknown key '%s'", key);
@@ -290,6 +306,11 @@ static void parseOneLine(const char *origLine, int lineNumber, CmdLine *out) {
     case CMD_OP_MAP_SKIP_VOTE:
       if (!haveSlot) {
         fatalParseError(lineNumber, origLine, "alliance_leave/map_skip_vote needs slot");
+      }
+      break;
+    case CMD_OP_CHAT:
+      if (!haveDest || !haveBody) {
+        fatalParseError(lineNumber, origLine, "chat needs dest + body");
       }
       break;
     default:

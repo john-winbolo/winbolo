@@ -46,6 +46,9 @@ struct ServerSim;
  * getSnapshot:   Retrieve the latest snapshot from the server.
  *                Returns TRUE if new state is available.
  *                Fills header, tank/shell/explosion/event arrays.
+ *                Precondition: caller holds threadsMutex (e.g. via
+ *                clientMutexWaitFor). Implementations may read shared
+ *                server state without taking the lock themselves.
  * ctx:           Opaque pointer to implementation data.
  *********************************************************/
 typedef struct {

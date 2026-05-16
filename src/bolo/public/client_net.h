@@ -28,6 +28,11 @@ bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
                          bool wantRejoin, const char *trackerAddr,
                          unsigned short trackerPort);
 bool clientSimConnectLocal(ClientSim *cs, struct ServerSim *sim, BYTE playerNum);
+/* Like clientSimConnectLocal, but constructs the local transport in
+ * passive mode — the transport's tick path will NOT drive
+ * serverSimTick. The caller is responsible for stepping the ServerSim
+ * itself (e.g. via a host-side timer/finisher). */
+bool clientSimConnectLocalPassive(ClientSim *cs, struct ServerSim *sim, BYTE playerNum);
 void clientSimDisconnect(ClientSim *cs);
 bool clientSimHasTransport(const ClientSim *cs);
 

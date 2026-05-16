@@ -2627,7 +2627,7 @@ int mapEditorImguiStampLibrary(StampLibrary *lib, void *rendererPtr,
                 else fname = s_stampImportPath;
 
                 char destPath[512];
-                snprintf(destPath, sizeof(destPath), "%s/%s", userDir, fname);
+                snprintf(destPath, sizeof(destPath), "%.255s/%.255s", userDir, fname);
 
                 /* Copy file */
                 FILE *src = fopen(s_stampImportPath, "rb");

@@ -26,20 +26,21 @@ document is the stable reference for the rules themselves.
 | `src/braintest/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — dev visualisation tool, not shipped to players. |
 | `src/gym/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — ML training harness, not shipped in player builds. |
 | `brains/` | T1 + T2 + T3 + T4 | Builds `bot_brains_static` (bot brain implementations — NewAutopilot, ONNX backends). Compiles under the `sim_owner` profile because brain evaluation reads sim state directly. Not a frontend; every binary that ships bots links the same `bot_brains_static`, so the asymmetric-runtime bug class doesn't apply. |
-| `src/server/` | T1 + T2 + T3 + T4 | Co-owner of the sim alongside `src/bolo/`. Most files compile via two libraries: `server_sim_static` (sim core: `server_sim.c`, `servermessages.c`) and `server_static` (dedicated-server runtime on top of it: `transport_udp_server.c`, `server_lifecycle.c`, `threads.c`, `geolookup.c`). Three more files are per-target sim runtime that ship inside WinBoloDS with T2 access via `bolo_grant_internal_source_access`: `servermain.c` (owns the dedicated-server `main()` and module globals), `server_frontend_stubs.c` (stubs the T2 callbacks bolo's sim TUs expect when there is no UI), and `server_dedicated_log.c` (real bodies for the dedicated-server's replay-log hooks; `server_dedicated_log_stubs.c` is the no-op pair every other binary picks). See "Per-file T2 grants" below for the mechanism. |
+| `src/server/` | T1 + T2 + T3 + T4 | Co-owner of the sim alongside `src/bolo/`. Most files compile via three libraries: `server_sim_static` (sim core: `server_sim.c`, `servermessages.c`); `server_static` (dedicated-server runtime on top of it: `transport_udp_server.c`, `server_lifecycle.c`, `geolookup.c`, plus `threads_static` PUBLIC-linked); and `threads_static` (the SDL-mutex thread manager — `threads.c` on every platform except Emscripten, where `threads_wasm.c` substitutes single-threaded no-ops with the same symbol surface). `threads_static` is consumed by every binary that ticks a sim, not only the dedicated server: in-process single-player builds (WinBoloIOS, android main, wasm winbolo, WinBoloUnitTests) link it directly; the four dedicated-server binaries get it transitively through `server_static`. Three more files are per-target sim runtime that ship inside WinBoloDS with T2 access via `bolo_grant_internal_source_access`: `servermain.c` (owns the dedicated-server `main()` and module globals), `server_frontend_stubs.c` (stubs the T2 callbacks bolo's sim TUs expect when there is no UI), and `server_dedicated_log.c` (real bodies for the dedicated-server's replay-log hooks; `server_dedicated_log_stubs.c` is the no-op pair every other binary picks). See "Per-file T2 grants" below for the mechanism. |
 | `src/headless/` | T1 + T3 + T4 | Same as server. |
 | `src/wasm/` | T1 + T3 + T4 | Web build of the desktop client. |
 | `src/android/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
 | `src/ios/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
 | `src/logviewer/` | T1 + T3 + T4 | Replays recorded games; uses T3 for the playback render path. |
+| `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. |
 | `tests/`, `tools/` | T1 + T3 + T4 (by default) | Not currently wired through a profile. Tests that legitimately need T2 belong inside `src/bolo/tests/` and link against bolo's own target. |
 
 **The enforced rule of thumb is two-tier**: outside `src/bolo/`, you get
 everything in `public/` (T1 + T3 + T4) and nothing in `internal/` (T2).
 The T3-vs-T4 distinction and the "don't use T3 in non-renderers" guidance
-are policy enforced by review, not by the build. The three privileged
-exceptions (`mapeditor`, `braintest`, `gym`) get full T2 access via
-dedicated CMake profiles.
+are policy enforced by review, not by the build. The four privileged
+exceptions (`mapeditor`, `braintest`, `gym`, `tests/unit/`) get full
+T2 access via dedicated CMake profiles.
 
 ## What clients must do
 
@@ -71,8 +72,8 @@ break on another (server, headless, gym, brain test, Android, WASM)
 because the broken client did not run the same code path.
 
 1. **Do not include T2 headers from outside `src/bolo/`** (the
-   privileged exceptions — `mapeditor`, `braintest`, `gym` — are
-   bounded by the scopes listed below). If you find yourself
+   privileged exceptions — `mapeditor`, `braintest`, `gym`,
+   `tests/unit/` — are bounded by the scopes listed below). If you find yourself
    reaching for `tank.h`, `players.h`, `game_sim.h`, or anything
    in the T2 list, the answer is to add a T1 accessor on the sim,
    not to add another include exception.
@@ -90,9 +91,9 @@ because the broken client did not run the same code path.
    client's copy of the world drifts from every other client's
    copy.
 
-4. **Do not introduce new T2 exceptions casually.** The three
-   exceptions that exist today (`mapeditor`, `braintest`, `gym`)
-   each carry a documented scope and expiry condition — see the
+4. **Do not introduce new T2 exceptions casually.** The four
+   exceptions that exist today (`mapeditor`, `braintest`, `gym`,
+   `tests/unit/`) each carry a documented scope and expiry condition — see the
    "Privileged exceptions" section below. `src/server/`,
    `src/headless/`, `src/wasm/`, `src/android/`, and `src/ios/`
    all run the sim and all participate in this bug class. A new
@@ -615,6 +616,28 @@ distribution. At that point the observation builder migrates
 onto the snapshot APIs the GUI clients already use, and gym
 drops back to the standard public-only access.
 
+### `tests/unit/`
+
+The `WinBoloUnitTests` binary exercises in-process invariants
+that aren't reachable through T1 today — passive transport
+queue mechanics under cross-thread access, subscriber-side
+ClientSim state after a control-event publish. It is not
+shipped to players, has a single consumer (CTest), and is not
+a runtime peer of the GUI / server / mobile / wasm clients, so
+the asymmetric-runtime bug class does not apply.
+
+Scope: `transport.h` (the passive `transport_local` queue
+indices the concurrency test asserts on), `game_sim.h` plus
+`players.h` (the subscriber-dispatch test reads the client's
+player table back through `&cs->sim.plyrs` after
+`CTRL_PLAYER_NAME` delivery).
+
+**Expires** the moment T1 accessors expose the passive
+transport's queue state and the subscriber-side player view
+the tests currently reach T2 to observe. At that point the
+tests migrate to T1+T3+T4 (the default `tests/` row in "Who
+may include what" above) and this profile is removed.
+
 ### Adding a new exception
 
 A new exception requires the same structure: a directory with its
@@ -625,8 +648,8 @@ that, the default answer is "add a T1 accessor".
 
 ## Per-file T2 grants
 
-The four privileged profiles above (`sim_owner`, `mapeditor`,
-`braintest`, `gym`) grant T2 access at the directory/target level.
+The five privileged profiles above (`sim_owner`, `mapeditor`,
+`braintest`, `gym`, `unittests`) grant T2 access at the directory/target level.
 A finer-grained mechanism — `bolo_grant_internal_source_access` in
 `cmake/bolo_lib.cmake` — grants T2 access at the individual source-
 file level inside a target that is otherwise locked to `public/`.
@@ -690,10 +713,11 @@ src/bolo/           — sim .c files only (no headers)
 
 External targets get `src/bolo/public/` on their include path —
 that single directory contains T1, T3, and T4 headers, so any
-target with `public/` on its path can see all three. The three
-privileged profiles (`mapeditor`, `braintest`, `gym`) additionally
-get `internal/` and the flat `src/bolo/` directory. `src/bolo/`'s
-own target (`sim_owner` profile) has all three on its include path
+target with `public/` on its path can see all three. The four
+privileged profiles (`mapeditor`, `braintest`, `gym`, `unittests`)
+additionally get `internal/` and the flat `src/bolo/` directory.
+`src/bolo/`'s own target (`sim_owner` profile) has all three on
+its include path
 so internal-to-bolo includes can stay short (`#include "tank.h"`,
 not `#include "internal/tank.h"`).
 

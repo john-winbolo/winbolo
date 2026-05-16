@@ -718,17 +718,6 @@ void gameFrontShutdownServer(void);
 ServerSim *gameFrontGetServerSim(void);
 
 /*********************************************************
-*NAME:          gameFrontIsServerHosted
-*PURPOSE:
-*  True when the local ServerSim is being driven by the
-*  hosted-server timer thread (network host mode). False
-*  for single-player, where the main thread drives the
-*  sim. Callers use this to avoid double-ticking the sim
-*  from the main thread when the timer thread already is.
-*********************************************************/
-bool gameFrontIsServerHosted(void);
-
-/*********************************************************
 *NAME:          gameFrontGetPlayerNum
 *PURPOSE:
 *  Returns the local player's slot number.
