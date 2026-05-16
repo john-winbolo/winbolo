@@ -652,22 +652,13 @@ static void windowRunGameTick(ClientSim *cs) {
           clientSimGameTick(cs, &pkt, brainRunning);
           clientMutexRelease();
           clientSimNetSendInput(cs, &pkt);
-          /* Tick bot brains before the sim tick (local game only).
-           * Wall-clock cost feeds dwSysBrain so the System Info "AI Tanks"
-           * line reflects bot processing — brainHandlerRun below only
-           * covers the human's local autopilot. Advance ttick by the same
-           * duration so dwSysGame (computed as SDL_GetTicks() - ttick at
-           * the bottom of the loop) doesn't also count it as sim time. */
-          {
-            ServerSim *serverSim = gameFrontGetServerSim();
-            if (serverSim != NULL && serverSimGetNumBots(serverSim) > 0) {
-              DWORD bttick = SDL_GetTicks();
-              serverSimBotTick(serverSim, clientSimGetAiType(cs));
-              DWORD botDur = SDL_GetTicks() - bttick;
-              dwSysBrain += botDur;
-              ttick += botDur;
-            }
-          }
+          /* Bot brains tick on the server timer thread (hostedServerTimerCb
+           * -> serverInstanceTick -> botManagerTick) for both single-player
+           * and listen-server, under threadsMutex. The System Info "AI
+           * Tanks" line reads wall-clock bot cost from
+           * serverSimGetBotPoolStats().lastBrainPhaseMs (see sdl3imgui.cpp)
+           * rather than dwSysBrain, so there is no main-thread accounting
+           * to do here. */
           clientSimNetTick(cs);
           clientMutexWaitFor();
           clientSimNetSyncSnapshot(cs);
@@ -1512,8 +1503,12 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
     sdl3ImguiSetPlayer((unsigned char)value, str, cc);
     return;
   }
-  cc[0] = countryCode[0];
-  cc[1] = countryCode[1];
+  /* Defensive: callers may pass "" (a 1-byte string literal) when the
+   * country code is unknown, so reading [1] unconditionally would walk
+   * off the end. Substitute 'X' for missing chars to match the
+   * not-running fallback above. */
+  cc[0] = countryCode[0] ? countryCode[0] : 'X';
+  cc[1] = (countryCode[0] && countryCode[1]) ? countryCode[1] : 'X';
   cc[2] = '\0';
   WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[FLAGS] frontEndSetPlayer: player=%d name='%s' cc='%s' (0x%02X 0x%02X)", (int)value, str, cc, (unsigned char)cc[0], (unsigned char)cc[1]);
   sdl3ImguiSetPlayer((unsigned char)value, str, cc);
@@ -1642,7 +1637,10 @@ bool frontEndTutorial(BYTE pos) {
   doingTutorial = TRUE;
   /* Freeze the server sim's tankUpdate before we release the mutex so
    * the tank doesn't drift forward while the modal is up. */
-  tutorialServerPaused = TRUE;
+  {
+    ServerSim *srv = gameFrontGetServerSim();
+    if (srv) serverSimSetPaused(srv, TRUE);
+  }
   clientMutexRelease();
   for (i = 0; i < TUTORIAL_MAX_MSGS; i++) {
     uint16_t mid = tutorialSteps[tutorialStepIdx].msgs[i];
@@ -1668,7 +1666,10 @@ bool frontEndTutorial(BYTE pos) {
     gameFrontSetShowTutorialButton(false);
   }
   clientMutexWaitFor();
-  tutorialServerPaused = FALSE;
+  {
+    ServerSim *srv = gameFrontGetServerSim();
+    if (srv) serverSimSetPaused(srv, FALSE);
+  }
   doingTutorial = FALSE;
   oldTick = SDL_GetTicks();
   ttick = oldTick;

@@ -34,6 +34,19 @@
 SDL_Mutex *hMutexHandle = NULL;
 bool threadStarted = FALSE;
 
+/* SDL3's SDL_CreateMutex on Windows returns an SRW-based mutex that is not
+ * recursive. Several call paths in the server nest acquires on the same
+ * thread (the host/SP timer callback wraps serverInstanceTick which has its
+ * own acquire/release pair; the passive local transport self-locks on the
+ * thread that already holds the server lock; sim setters lock while callers
+ * already hold). Track the owning thread plus a depth count so the
+ * underlying SDL_Mutex is acquired only on the outermost lock and released
+ * only on the outermost unlock. Reads of mutexOwner outside the lock are
+ * safe because only the owning thread writes its own ID, and it writes
+ * while holding the lock. */
+static SDL_ThreadID mutexOwner = 0;
+static unsigned     mutexDepth = 0;
+
 /*********************************************************
 *NAME:          threadsCreate
 *AUTHOR:        John Morrison
@@ -81,6 +94,8 @@ void threadsDestroy(void) {
   }
   threadStarted = FALSE;
   serverSimConsoleMessage("Thread Manager Shutdown");
+  mutexOwner = 0;
+  mutexDepth = 0;
   SDL_DestroyMutex(hMutexHandle);
   hMutexHandle = NULL;
    
@@ -98,11 +113,28 @@ void threadsDestroy(void) {
 *
 *********************************************************/
 void threadsWaitForMutex(void) {
+  SDL_ThreadID me = SDL_GetCurrentThreadID();
+  if (mutexOwner == me) {
+    mutexDepth++;
+    return;
+  }
   SDL_LockMutex(hMutexHandle);
+  mutexOwner = me;
+  mutexDepth = 1;
 }
 
 bool threadsTryWaitForMutex(void) {
-  return SDL_TryLockMutex(hMutexHandle);
+  SDL_ThreadID me = SDL_GetCurrentThreadID();
+  if (mutexOwner == me) {
+    mutexDepth++;
+    return true;
+  }
+  if (SDL_TryLockMutex(hMutexHandle)) {
+    mutexOwner = me;
+    mutexDepth = 1;
+    return true;
+  }
+  return false;
 }
 
 /*********************************************************
@@ -117,6 +149,12 @@ bool threadsTryWaitForMutex(void) {
 *
 *********************************************************/
 void threadsReleaseMutex(void) {
+  if (mutexDepth > 1) {
+    mutexDepth--;
+    return;
+  }
+  mutexOwner = 0;
+  mutexDepth = 0;
   SDL_UnlockMutex(hMutexHandle);
 }
 

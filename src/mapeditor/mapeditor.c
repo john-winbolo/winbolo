@@ -14,8 +14,8 @@
 #include "mapeditor.h"
 #include "../common/wb_log.h"
 #include "mapeditor_imgui.h"
-#include "mapeditor_generate.h"
-#include "mapeditor_maze.h"
+#include "mapgen.h"
+#include "mapgen_maze.h"
 #include "mapeditor_symmetry.h"
 #include "mapeditor_text.h"
 #include "mapeditor_fonts.h"
@@ -663,12 +663,6 @@ static void meBresenhamLine(int x0, int y0, int x1, int y1,
     }
 }
 
-/* Callback: paint a tile with the active terrain (undo-aware) */
-static void mePaintTileCallback(int x, int y, void *ud) {
-    MapEditorState *ed = (MapEditorState *)ud;
-    meSetTile(ed, x, y, meEffectiveTerrainAt(ed, x, y));
-}
-
 /* Paint a brush-sized stamp centered on (cx, cy). */
 static void meBrushStamp(MapEditorState *ed, int cx, int cy) {
     int size = ME_BRUSH_SIZES[ed->brushSize];
@@ -1302,7 +1296,7 @@ static void meBuildGenPreview(MapEditorState *ed, int x0, int y0, int x1, int y1
     /* Force no objects for preview */
     tmpCfg.bases = 0; tmpCfg.pills = 0; tmpCfg.starts = 0;
 
-    mapEditorGenerate(tmpMap, &tmpBases, &tmpPills, &tmpStarts, &tmpCfg);
+    mapGenRun(tmpMap, &tmpBases, &tmpPills, &tmpStarts, &tmpCfg);
 
     /* Extract all tiles into preview arrays */
     int count = 0;
@@ -2917,20 +2911,26 @@ static void meCenterMapContents(MapEditorState *ed) {
     /* Include objects in bounding box */
     for (int i = 0; i < ed->pb->numPills; i++) {
         int x = ed->pb->item[i].x, y = ed->pb->item[i].y;
-        if (x < minX) minX = x; if (y < minY) minY = y;
-        if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
         found = true;
     }
     for (int i = 0; i < ed->bs->numBases; i++) {
         int x = ed->bs->item[i].x, y = ed->bs->item[i].y;
-        if (x < minX) minX = x; if (y < minY) minY = y;
-        if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
         found = true;
     }
     for (int i = 0; i < ed->ss->numStarts; i++) {
         int x = ed->ss->item[i].x, y = ed->ss->item[i].y;
-        if (x < minX) minX = x; if (y < minY) minY = y;
-        if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
         found = true;
     }
 
@@ -4332,7 +4332,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                 }
 
                 /* Run the generator */
-                mapEditorGenerate(ed->mp, ed->bs, ed->pb, ed->ss, &ed->genConfig);
+                mapGenRun(ed->mp, ed->bs, ed->pb, ed->ss, &ed->genConfig);
 
                 /* Record tile changes with correct new terrain for redo */
                 if (oldTerrain) {

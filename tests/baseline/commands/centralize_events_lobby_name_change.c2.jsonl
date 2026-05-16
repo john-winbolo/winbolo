@@ -1,0 +1,14 @@
+# centralize_events_lobby_name_change_udp — client 2 (slot 1).
+# Joins after a short delay so client 1 lands in slot 0 first.
+# Ops fire against the per-iteration pump-tick fallback while
+# serverTick is still 0 (lobby phase). c2 renames in lobby
+# (after c1's rename, before either client has readied), then
+# readies BEFORE c1 — see c1's stream for the readiness order.
+#
+# The rename mirrors c1's: today the server filters out the
+# renamer when broadcasting PACKET_NAME_CHANGE, so c2's golden
+# will NOT contain a CTRL_PLAYER_NAME entry for its own rename
+# — but it WILL contain one for c1's rename above.
+{"tick": 100,  "op": "set_team",    "slot": 1, "team": 2}
+{"tick": 700,  "op": "name_change", "slot": 1, "name": "Renamed2"}
+{"tick": 2000, "op": "set_ready",   "slot": 1, "ready": true}

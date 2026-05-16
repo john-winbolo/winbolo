@@ -1,0 +1,20 @@
+# centralize_events_lobby_name_change_udp — client 1 (slot 0).
+# DS runs with the lobby state machine live. The headless's
+# cmd-stdin pump falls back to a per-iteration counter while
+# serverTick is still 0, so these lobby ops fire on wall-clock
+# cadence (~1ms per pump tick).
+#
+# Sequencing mirrors centralize_events_lobby_smoke_udp: both
+# clients set team early, the rename fires in lobby phase well
+# before either client readies, and c1 readies LAST so its
+# ready is the trigger that tips serverSimLobbyCheckAllReady
+# over — not c1 readying alone before c2 has joined.
+#
+# The rename is the gate target: today the server filters out
+# the renamer when broadcasting PACKET_NAME_CHANGE
+# (transport_udp_server.c renamer-exclusion check), so c1's
+# golden will NOT contain a CTRL_PLAYER_NAME entry for its own
+# rename — but it WILL contain one for c2's rename below.
+{"tick": 100,  "op": "set_team",    "slot": 0, "team": 1}
+{"tick": 500,  "op": "name_change", "slot": 0, "name": "Renamed1"}
+{"tick": 4000, "op": "set_ready",   "slot": 0, "ready": true}

@@ -54,6 +54,16 @@ bool clientSimConnectLocal(ClientSim *cs, struct ServerSim *sim, BYTE playerNum)
   return true;
 }
 
+bool clientSimConnectLocalPassive(ClientSim *cs, struct ServerSim *sim, BYTE playerNum) {
+  if (cs == NULL) return false;
+  clientSimTeardownTransport(cs);
+  cs->transport = transportLocalCreatePassive(sim, playerNum);
+  cs->hasTransport = true;
+  cs->isUdpTransport = false;
+  clientSimSetLocalTransport(cs, true);
+  return true;
+}
+
 void clientSimDisconnect(ClientSim *cs) {
   if (cs == NULL) return;
   clientSimTeardownTransport(cs);

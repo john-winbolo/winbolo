@@ -167,14 +167,20 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
    * runs the destroy-internals + clientSimCreate sequence in place to keep
    * the live transport (and its still-valid map blob) intact; fresh
    * clientSimAlloc + clientSimCreate callers have zeroed transport fields
-   * anyway, so save/restore is a no-op there. */
+   * anyway, so save/restore is a no-op there. The test-only control-event
+   * observer is preserved on the same principle — it represents an external
+   * party watching events, with a lifetime independent of map reloads. */
   Transport savedTransport = cs->transport;
   bool savedHasTransport   = cs->hasTransport;
   bool savedIsUdpTransport = cs->isUdpTransport;
+  ControlObserverCb savedObserverCb  = cs->controlObserverCb;
+  void             *savedObserverCtx = cs->controlObserverCtx;
   memset(cs, 0, sizeof(*cs));
-  cs->transport       = savedTransport;
-  cs->hasTransport    = savedHasTransport;
-  cs->isUdpTransport  = savedIsUdpTransport;
+  cs->transport          = savedTransport;
+  cs->hasTransport       = savedHasTransport;
+  cs->isUdpTransport     = savedIsUdpTransport;
+  cs->controlObserverCb  = savedObserverCb;
+  cs->controlObserverCtx = savedObserverCtx;
   cs->myPlayerNum = 0;
   cs->sim.viewPlayer = 0;
 
@@ -664,6 +670,12 @@ void clientSimSetAllianceAcceptFunc(ClientSim *cs, NetAllianceAcceptFunc func) {
 void clientSimSetAllianceLeaveFunc(ClientSim *cs, NetAllianceLeaveFunc func) { cs->allianceLeaveFunc = func; }
 void clientSimSetLockToggleSendFunc(ClientSim *cs, NetLockToggleSendFunc func) { cs->lockToggleSendFunc = func; }
 
+void clientSimSetControlObserver(ClientSim *cs, ControlObserverCb cb, void *ctx) {
+  if (cs == NULL) return;
+  cs->controlObserverCb  = cb;
+  cs->controlObserverCtx = ctx;
+}
+
 void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message) {
   size_t histLen = strlen(cs->lobbyChatHistory);
   size_t needed = strlen(name) + 2 + strlen(message) + 2; /* "name: message\n" */
@@ -1039,6 +1051,15 @@ const char *clientSimGetMyLastPlayerName(const ClientSim *cs) { return cs->myLas
 const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n) {
   if (n >= 16) return NULL;
   return &cs->lobbySlots[n];
+}
+
+BYTE clientSimGetLobbyNumConnected(const ClientSim *cs) {
+  if (cs == NULL) return 0;
+  BYTE count = 0;
+  for (BYTE i = 0; i < 16; i++) {
+    if (cs->lobbySlots[i].connected) count++;
+  }
+  return count;
 }
 
 bool clientSimIsMapSkipVote(const ClientSim *cs, BYTE n) {

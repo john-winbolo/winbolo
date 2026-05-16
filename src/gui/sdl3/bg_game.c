@@ -108,12 +108,11 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         /* Fall back to embedded Everard Island */
         BYTE emap[6000] = E_MAP;
         WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Falling back to embedded Everard Island");
-        bg->sim = serverSimCreateCompressed(emap, 5097, gameTournament, false, 0, -1);
+        bg->sim = serverSimCreateCompressed(emap, 5097, "Everard Island", gameTournament, false, 0, -1);
         if (bg->sim == NULL) {
             WB_LOG_ERROR(WB_LOG_CAT_GUI, "[BgGame] serverSimCreateCompressed also failed");
             return false;
         }
-        serverSimSetMapName(bg->sim, "Everard Island");
     }
     /* bg_game is a local headless sim — no lobby, run immediately */
     serverSimSetLobbyEnabled(bg->sim, false);

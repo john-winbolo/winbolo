@@ -31,12 +31,12 @@
 #include "alliance_enums.h"    /* baseAlliance, pillAlliance */
 #include "screentank.h"        /* tankAlliance */
 
-/* MapGenConfig is defined in src/mapeditor/mapeditor_generate.h.
+/* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
- * pull the mapeditor subtree into every translation unit that
+ * pull the mapgen header into every translation unit that
  * includes server_sim.h. Callers that build a config and invoke
  * serverSimEnableRandomMap / serverSimCreateRandomMap include
- * mapeditor_generate.h directly. */
+ * mapgen.h directly. */
 struct MapGenConfig;
 
 #ifndef CLIENTSIM_TYPEDEF
@@ -61,7 +61,14 @@ typedef int SubscriberHandle;
  * the same thread (today: the main game-tick thread, which drives both
  * transport_local and transport_udp_*). If a subscriber's deliver callback ever
  * runs on a worker thread, or publish is called from outside the tick thread,
- * add a mutex. */
+ * add a mutex.
+ *
+ * Registration order: a player's own subscriber (bot via botManagerAddBot,
+ * local human via gamefront, per-client UDP via the join handler) must
+ * register AFTER serverSimAddPlayer has published CTRL_PLAYER_JOIN for that
+ * player, so the new player's subscriber doesn't receive its own join. The
+ * dispatcher's self-skip is the second line of defense; registration order
+ * is the primary one. */
 typedef struct {
     void (*deliver)(void *ctx, const struct ControlEvent *evt);
     void *ctx;
@@ -141,12 +148,15 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
  *ARGUMENTS:
  *  buff        - Compressed map data
  *  buffLen     - Length of compressed data
+ *  mapName     - Display name for the map (e.g. "Everard Island").
+ *                Stored on the sim so clients can report it in UI
+ *                and Steam rich presence. Pass "" if unknown.
  *  game        - Game type (open/tournament/strict)
  *  hiddenMines - Are hidden mines allowed
  *  startDelay  - Game start delay (in ticks)
  *  gameLen     - Game length in ticks (-1 = unlimited)
  *********************************************************/
-ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen);
+ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, const char *mapName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen);
 
 /*********************************************************
  *NAME:          serverSimDestroy
@@ -565,6 +575,20 @@ void serverSimSetServerPort(ServerSim *sim, unsigned short port);
  *  Sets the running-tick limit. 0 = unlimited.
  *********************************************************/
 void serverSimSetTickLimit(ServerSim *sim, int32_t ticks);
+
+/*********************************************************
+ *NAME:          serverSimSetGameTickLimit
+ *PURPOSE:
+ *  Ends the current running game after the given number of
+ *  running-state ticks by transitioning to GAME_OVER. 0 = no
+ *  limit. Unlike serverSimSetTickLimit (whose console message
+ *  reads "Exiting" and which in -nolobby mode terminates the
+ *  process via the main loop's GAME_OVER exit gate), this
+ *  limit is intended purely as a game-end signal — the lobby
+ *  return-to-lobby cycle proceeds normally in lobby mode.
+ *  Resets after firing.
+ *********************************************************/
+void serverSimSetGameTickLimit(ServerSim *sim, int32_t ticks);
 
 /*********************************************************
  *NAME:          serverSimSetUserLogFileName
@@ -1007,10 +1031,27 @@ void serverSimUnregisterSubscriber(ServerSim *sim, SubscriberHandle h);
 void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt);
 
 /*********************************************************
+ *NAME:          serverSimAcceptAlliance
+ *               serverSimLeaveAlliance
+ *               serverSimSetPlayerName
+ *PURPOSE:
+ *  Apply an authoritative state change on the server and
+ *  publish the matching ControlEvent in one call. Wraps the
+ *  inline mutate-then-publish pair used by the UDP server's
+ *  PACKET_ALLIANCE_ACCEPT / PACKET_ALLIANCE_LEAVE /
+ *  PACKET_NAME_CHANGE handlers so callers outside src/bolo/
+ *  do not have to reach into the players sub-system directly.
+ *********************************************************/
+void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember);
+void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum);
+void serverSimSetPlayerName(ServerSim *sim, BYTE playerNum, const char *name);
+
+/*********************************************************
  *NAME:          serverSimFillGamePhaseEvent
  *               serverSimFillLobbySettingsEvent
  *               serverSimFillLobbySlotEvent
  *               serverSimFillPlayerJoinEvent
+ *               serverSimFillPlayerLeaveEvent
  *PURPOSE:
  *  Populate a ControlEvent of the corresponding type from
  *  the current ServerSim state. Used by both the initial
@@ -1021,6 +1062,7 @@ void serverSimFillGamePhaseEvent(const ServerSim *sim, struct ControlEvent *evt)
 void serverSimFillLobbySettingsEvent(ServerSim *sim, struct ControlEvent *evt);
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
 void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
+void serverSimFillPlayerLeaveEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
 
 /*********************************************************
  * Read accessors.
@@ -1084,6 +1126,10 @@ void serverSimSetViewPlayer(ServerSim *sim, BYTE playerNum);
 /* Tutorial-mode flag mirrored on the embedded GameSim. */
 bool serverSimIsTutorial(const ServerSim *sim);
 void serverSimSetTutorial(ServerSim *sim, bool v);
+
+/* Pause flag on the embedded GameSim. Unlocked: caller must hold
+ * threadsMutex. */
+void serverSimSetPaused(ServerSim *sim, bool paused);
 
 /* --- Live-sim map / pill / base / start readers ---
  * Server-side perspective of the same map/pill/base/start state

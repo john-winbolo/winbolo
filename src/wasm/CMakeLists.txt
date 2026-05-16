@@ -120,18 +120,18 @@ set(BOLO_VERSION_MAJOR 1)
 set(BOLO_VERSION_MINOR 1)
 set(BOLO_VERSION_REVISION 8)
 add_subdirectory(${REPO_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
+add_subdirectory(${REPO_ROOT}/src/server ${CMAKE_BINARY_DIR}/server_static)
 add_subdirectory(${REPO_ROOT}/brains ${CMAKE_BINARY_DIR}/bot_brains_static)
 
 set(BOLO_SOURCES
     ${SRC_ROOT}/bolo/transport_udp_client.c
 )
 
-# Server modules (used by client too)
-# threads.c is replaced by threads_wasm.c in WASM_SOURCES
+# Server modules (used by client too).
+# server_sim.c + servermessages.c come from server_sim_static.
+# threads.c (or threads_wasm.c here) comes from threads_static.
 set(SERVER_SOURCES
     ${SRC_ROOT}/server/geolookup.c
-    ${SRC_ROOT}/server/servermessages.c
-    ${SRC_ROOT}/server/server_sim.c
     ${SRC_ROOT}/server/server_stubs.c
     ${SRC_ROOT}/server/server_dedicated_log_stubs.c
     ${SRC_ROOT}/server/posix_stubs.c
@@ -141,10 +141,9 @@ set(SERVER_SOURCES
 file(GLOB LZW_SOURCES ${SRC_ROOT}/lzw/*.c)
 
 # Map editor sources reachable from shared dialogs (map chooser pulls in
-# the procedural generator + its imgui controls + maze generator).
+# the procedural generator's imgui controls; mapgen.c/mapgen_maze.c come
+# in via bolo_static).
 set(MAPEDITOR_SOURCES
-    ${SRC_ROOT}/mapeditor/mapeditor_generate.c
-    ${SRC_ROOT}/mapeditor/mapeditor_maze.c
     ${SRC_ROOT}/mapeditor/mapgen_imgui.cpp
 )
 
@@ -196,7 +195,6 @@ set(WASM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/gamefront_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/clientmutex_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/dns_wasm.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/threads_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/server_stubs_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sound_wasm.c
     ${SRC_ROOT}/steam/steam_wrapper_stub.c
@@ -225,10 +223,7 @@ target_include_directories(winbolo PRIVATE
 )
 bolo_apply_include_rules(winbolo gui)
 bolo_grant_internal_source_access(winbolo
-    ${SRC_ROOT}/bolo/transport_udp_client.c
-    ${SRC_ROOT}/server/server_sim.c
-    ${SRC_ROOT}/server/servermessages.c
-    ${SRC_ROOT}/mapeditor/mapeditor_generate.c)
+    ${SRC_ROOT}/bolo/transport_udp_client.c)
 
 target_compile_definitions(winbolo PRIVATE
     _GNU_SOURCE
@@ -242,7 +237,7 @@ target_compile_definitions(winbolo PRIVATE
 target_compile_options(winbolo PRIVATE -fno-common -include sys/types.h)
 target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")
 
-target_link_libraries(winbolo PRIVATE bolo_static bot_brains_static)
+target_link_libraries(winbolo PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(winbolo PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf

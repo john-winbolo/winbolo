@@ -46,8 +46,17 @@ typedef enum {
     CTRL_MAP_SKIP_STATE,
     CTRL_GAME_PHASE,
     CTRL_GAME_OVER,
-    CTRL_SERVER_SHUTDOWN
+    CTRL_SERVER_SHUTDOWN,
+    CTRL_CHAT,
+    CTRL_PLAYER_LEAVE,
+    CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
+
+/* Body capacity for CTRL_CHAT.  Worst case is the localized server
+ * message: 2 langid + 1 argCount + 4 * (1 lenByte + (PLAYER_NAME_LEN-1)
+ * name bytes) = 263 bytes; rounded up for headroom. fromPlayer and
+ * destPlayer are separate struct fields, not part of body[]. */
+#define CHAT_BODY_MAX 272
 
 typedef enum {
     CTRL_PHASE_LOBBY,
@@ -86,6 +95,14 @@ typedef struct ControlEvent {
             BYTE  numAllies;
             BYTE  allies[MAX_TANKS];
         } playerJoin;
+
+        /* CTRL_PLAYER_LEAVE — server announces a player has disconnected.
+         * Wire counterpart is PACKET_PLAYER_LEFT. */
+        struct {
+            BYTE playerNum;
+            char name[PACKET_MAX_PLAYER_NAME];
+            char country[3];            /* 2 chars + NUL */
+        } playerLeave;
 
         /* CTRL_PLAYER_NAME */
         struct {
@@ -149,6 +166,19 @@ typedef struct ControlEvent {
         struct {
             uint8_t _unused;
         } serverShutdown;
+
+        /* CTRL_CHAT — server-fanned PACKET_CHAT_BROADCAST.  fromPlayer
+         * discriminates the body interpretation: 0..MAX_TANKS-1 = real
+         * player chat (raw text), 0xFE = server raw English, 0xFF =
+         * server localized (packed langid+args).  body[] is opaque to
+         * the codec; consumers interpret it according to fromPlayer.
+         * destPlayer is 0xFF for broadcast or a slot index for unicast. */
+        struct {
+            BYTE     fromPlayer;
+            BYTE     destPlayer;
+            uint16_t bodyLen;
+            uint8_t  body[CHAT_BODY_MAX];
+        } chat;
     } u;
 } ControlEvent;
 

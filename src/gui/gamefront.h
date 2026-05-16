@@ -708,6 +708,15 @@ void gameFrontHandleUrlOpen(char *url);
  * Called after joining a game or exiting the lobby. */
 void gameFrontUpdateSteamPresence(struct ClientSim *cs);
 
+/* Set Steam rich presence for the main menu / welcome screen.
+ * Clears any stale map/numplayers/connect tokens. */
+void gameFrontSetSteamPresenceMenu(void);
+
+/* Set Steam rich presence for the lobby screen.
+ * Includes map name, player count, and a connect string so
+ * friends can join the same lobby via Steam. */
+void gameFrontSetSteamPresenceLobby(struct ClientSim *cs);
+
 /*********************************************************
 *NAME:          gameFrontReloadSkins
 *AUTHOR:        John Morrison
