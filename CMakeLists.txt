@@ -2164,4 +2164,82 @@ foreach(_port 50001 50002 50003 50004 50005 50006 50007)
     endforeach()
 endforeach()
 
+# ---------------------------------------------------------------------------
+# WinBoloUnitTests — in-process tests of bolo_static / server_sim_static
+# without the SDL3 GUI. Each test is a registered name dispatched from
+# tests/unit/test_main.c; CTest entries below run them one at a time.
+#
+# Link surface mirrors BrainTest's minus the UI bits, plus the real
+# src/server/threads.c (BrainTest uses no-op threadsXxx stubs because it
+# is single-threaded; these tests exercise the cross-thread paths). The
+# WinBoloUnitTests target sees the same sim-owner include profile as
+# BrainTest so test_sp_subscriber_delivery.c can pull GameSim's full
+# layout from game_sim.h.
+# ---------------------------------------------------------------------------
+set(WINBOLO_UNITTESTS_SOURCES
+    tests/unit/test_main.c
+    tests/unit/test_stubs.c
+    tests/unit/test_transport_local_passive_threads.c
+    tests/unit/test_sp_subscriber_delivery.c
+    tests/unit/test_sp_input_to_shot_baseline.c
+    # transport_udp_client.c stays per-target because of HAVE_STEAM
+    # gating (it's excluded from bolo_static for that reason). Linked
+    # here without HAVE_STEAM so client_net.c's transportUdpClient*
+    # references resolve — the tests never run the UDP code path.
+    src/bolo/transport_udp_client.c
+    src/server/threads.c
+    src/server/server_stubs.c
+    src/server/server_dedicated_log_stubs.c
+    src/lzw/dcodlzw.c
+    src/lzw/ecodlzw.c
+)
+
+add_executable(WinBoloUnitTests ${WINBOLO_UNITTESTS_SOURCES})
+target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c)
+target_compile_definitions(WinBoloUnitTests PRIVATE
+    HAVE_SCREEN_C=1
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
+
+target_include_directories(WinBoloUnitTests PRIVATE
+    src/gui/sdl3
+    src/gui
+    src/server
+    src
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${cjson_SOURCE_DIR}
+)
+bolo_apply_include_rules(WinBoloUnitTests sim_owner)
+
+target_link_libraries(WinBoloUnitTests PRIVATE
+    bolo_static server_sim_static bot_brains_static
+    SDL3::SDL3 minizip lua_static cjson utf8proc)
+
+if(WIN32)
+    target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
+    target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
+else()
+    target_sources(WinBoloUnitTests PRIVATE src/server/posix_stubs.c)
+    target_link_libraries(WinBoloUnitTests PRIVATE ${MATH_LIB} pthread)
+    target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
+endif()
+
+set_flat_output(WinBoloUnitTests "${CMAKE_BINARY_DIR}")
+
+set(_unit_test_names
+    transport_local_passive_threads
+    sp_subscriber_delivery
+    sp_input_to_shot_baseline
+)
+foreach(_name IN LISTS _unit_test_names)
+    add_test(NAME unit.${_name}
+             COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
+    set_tests_properties(unit.${_name} PROPERTIES TIMEOUT 60)
+endforeach()
+
 endif() # iOS vs Desktop
