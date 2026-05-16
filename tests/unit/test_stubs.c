@@ -2,8 +2,8 @@
  * Stub implementations of frontend / WinBoloNet / DNS / dialog
  * callbacks for the WinBoloUnitTests binary. Same surface as
  * braintest_frontend.c minus the threads stubs — the unit-test
- * binary links the real src/server/threads.c so cross-thread tests
- * actually serialise on a recursive SDL mutex.
+ * binary links threads_static so cross-thread tests actually
+ * serialise on a recursive SDL mutex.
  */
 
 #include <stdio.h>
@@ -270,14 +270,11 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
   (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;
 }
 
-/* server_lifecycle.c is compiled into the unit-test binary so the
- * SP-through-timer test can drive the real serverInstanceStartup /
- * Tick / Shutdown. server_static (transport_udp_server.c, the real
- * winbolonet TUs, libplum-backed nat_portmap.c) is NOT linked — the
- * test runs with acceptRemoteClients=false and useWbn / useTracker /
- * useNatPortmap all false, which short-circuits every UDP / WBN /
- * NAT path inside serverInstanceTick + Shutdown.  These link-only
- * stubs cover the references server_lifecycle.c still emits. */
+/* Stubbed because server_lifecycle.c references these but they live
+ * outside server_static (per-target client networking dependencies:
+ * winbolonet.c with its libcurl + tweetnacl chain, nat_portmap.c with
+ * libplum). acceptRemoteClients=false makes the call paths unreachable
+ * at test runtime. */
 
 bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, BYTE ai,
                             bool mines, bool password, BYTE numBases, BYTE numPills,
@@ -310,50 +307,3 @@ void natPortMapRequest(unsigned short internalPort, NatPortMap *out) {
 
 void natPortMapRelease(NatPortMap *map)       { (void)map; }
 void natPortMapRenewIfNeeded(NatPortMap *map) { (void)map; }
-
-bool transportUdpServerCreate(unsigned short port, const char *addrToUse, ServerSim *sim,
-                              const char *password, BYTE maxPlayers) {
-  (void)port; (void)addrToUse; (void)sim; (void)password; (void)maxPlayers;
-  return FALSE;
-}
-
-void transportUdpServerDestroy(void) {}
-void transportUdpServerCheckTimeouts(ServerSim *sim) { (void)sim; }
-void transportUdpServerDrainEvents(ServerSim *sim) { (void)sim; }
-void transportUdpServerDrainPunchQueue(void) {}
-void transportUdpServerDrainRecvQueue(ServerSim *sim) { (void)sim; }
-bool transportUdpServerHasRecvThread(void) { return FALSE; }
-void transportUdpServerOnGameStart(ServerSim *sim) { (void)sim; }
-void transportUdpServerRecv(ServerSim *sim) { (void)sim; }
-void transportUdpServerSend(ServerSim *sim) { (void)sim; }
-
-void transportUdpServerSendNatKeepalive(ServerSim *sim, const char *trackerAddr,
-                                        unsigned short trackerPort) {
-  (void)sim; (void)trackerAddr; (void)trackerPort;
-}
-
-void transportUdpServerSendPeriodicLobbyRefresh(ServerSim *sim) { (void)sim; }
-
-void transportUdpServerSendPunchProbe(const char *trackerAddr, unsigned short trackerPort) {
-  (void)trackerAddr; (void)trackerPort;
-}
-
-void transportUdpServerSendServerMessage(const char *message) { (void)message; }
-
-void transportUdpServerSendTrackerUpdate(ServerSim *sim, const char *trackerAddr,
-                                         unsigned short trackerPort) {
-  (void)sim; (void)trackerAddr; (void)trackerPort;
-}
-
-void transportUdpServerSetPublicAddress(const char *externalIp, unsigned short externalPort) {
-  (void)externalIp; (void)externalPort;
-}
-
-/* server_sim.c (in server_sim_static) calls these from the running-tick
- * path; previously satisfied by server_stubs.c, dropped from the link
- * line here because that file's serverLifecycle* stubs collide with
- * the real bodies in server_lifecycle.c. */
-void transportUdpServerEnforcePing(ServerSim *sim) { (void)sim; }
-void transportUdpServerOnLobbyMapChange(ServerSim *sim) { (void)sim; }
-uint16_t transportUdpServerGetClientPing(BYTE playerNum) { (void)playerNum; return 0; }
-const char *transportUdpServerGetPlayerName(BYTE playerNum) { (void)playerNum; return ""; }

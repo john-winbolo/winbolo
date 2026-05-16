@@ -129,7 +129,7 @@ set(BOLO_SOURCES
 
 # Server modules (used by client too).
 # server_sim.c + servermessages.c come from server_sim_static.
-# threads.c is replaced by threads_wasm.c in WASM_SOURCES.
+# threads.c (or threads_wasm.c here) comes from threads_static.
 set(SERVER_SOURCES
     ${SRC_ROOT}/server/geolookup.c
     ${SRC_ROOT}/server/server_stubs.c
@@ -195,7 +195,6 @@ set(WASM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/gamefront_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/clientmutex_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/dns_wasm.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/threads_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/server_stubs_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sound_wasm.c
     ${SRC_ROOT}/steam/steam_wrapper_stub.c
@@ -238,7 +237,7 @@ target_compile_definitions(winbolo PRIVATE
 target_compile_options(winbolo PRIVATE -fno-common -include sys/types.h)
 target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")
 
-target_link_libraries(winbolo PRIVATE bolo_static server_sim_static bot_brains_static)
+target_link_libraries(winbolo PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(winbolo PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
