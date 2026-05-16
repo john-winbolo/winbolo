@@ -56,6 +56,7 @@ extern "C" void sdl3ImguiShowSendMsg(bool open);
 extern "C" void clientSimCheckAllNonePlayers(struct ClientSim *cs, bool check);
 extern "C" void clientSimCheckAlliedPlayers(struct ClientSim *cs);
 extern "C" void clientSimCheckNearbyPlayers(struct ClientSim *cs);
+extern "C" void clientSimTogglePlayerCheckState(struct ClientSim *cs, unsigned char playerNum);
 
 #define LANG_STR(id) ([NSString stringWithUTF8String:langGetText(id)])
 
@@ -96,6 +97,90 @@ static NSMenuItem *s_winboloRequestAllianceItem = nil;
 static NSMenuItem *s_winboloLeaveAllianceItem   = nil;
 static NSMenuItem *s_playersRequestAllianceItem = nil;
 static NSMenuItem *s_playersLeaveAllianceItem   = nil;
+
+/* Per-slot NSMenuItem + custom view caches for the rich player rows in
+ * the Players menu. Items are created up-front in mac_menubar_install();
+ * views are lazily allocated the first time a slot becomes occupied. */
+@class WBPlayerSlotView;
+static NSMenuItem      *s_playerSlotItems[16] = {nil};
+static WBPlayerSlotView *s_playerSlotViews[16] = {nil};
+
+/* Lazily-populated cache of NSImages loaded from data/<subdir>/<name>.svg
+ * (NSImage on macOS 11+ reads SVG natively). Base entries are keyed
+ * "<subdir>/<name>"; tinted-ui variants pin an extra "#R,G,B,A" suffix so
+ * a mode flip (labelColor changes from black-ish to white-ish) lands in
+ * a different cache slot and the previous entry is GC'd by NSCache. */
+static NSCache<NSString *, NSImage *> *g_iconCache = nil;
+
+static NSImage *macMenubarLoadSvg(NSString *subdir, NSString *basename) {
+    if (!subdir || !basename) return nil;
+    if (!g_iconCache) g_iconCache = [[NSCache alloc] init];
+    NSString *key = [NSString stringWithFormat:@"%@/%@", subdir, basename];
+    NSImage *cached = [g_iconCache objectForKey:key];
+    if (cached) return cached;
+    NSString *resPath = [[NSBundle mainBundle] resourcePath];
+    if (!resPath) return nil;
+    NSString *path = [NSString stringWithFormat:@"%@/data/%@/%@.svg", resPath, subdir, basename];
+    NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
+    if (img) [g_iconCache setObject:img forKey:key];
+    return img;
+}
+
+static NSImage *macMenubarFlagIcon(const char *countryCode) {
+    NSString *base = nil;
+    if (countryCode && countryCode[0] != '\0') {
+        char buf[3] = { countryCode[0], (countryCode[1] ? countryCode[1] : '\0'), '\0' };
+        base = [[NSString stringWithUTF8String:buf] lowercaseString];
+    }
+    NSImage *img = base ? macMenubarLoadSvg(@"flags", base) : nil;
+    if (!img) img = macMenubarLoadSvg(@"flags", @"xx");
+    return img;
+}
+
+static NSString *macMenubarPlatformBasename(int clientType) {
+    switch (clientType) {
+        case 1: return @"windows";    /* CLIENT_TYPE_WINDOWS */
+        case 2: return @"linux";      /* CLIENT_TYPE_LINUX */
+        case 3: return @"mac";        /* CLIENT_TYPE_MACOS */
+        case 4: return @"ios";        /* CLIENT_TYPE_IOS */
+        case 5: return @"android";    /* CLIENT_TYPE_ANDROID */
+        case 6: return @"steam-deck"; /* CLIENT_TYPE_STEAMDECK */
+        case 7: return @"globe";      /* CLIENT_TYPE_WEB → globe */
+        default: return @"globe";     /* CLIENT_TYPE_UNKNOWN */
+    }
+}
+
+/* Return a copy of data/ui/<basename>.svg with every non-transparent
+ * pixel replaced by `tint` (alpha preserved). Mirrors the SDL path's
+ * imguiLoadSvgIconWhite trick: the SVG's authored fill is discarded and
+ * only its alpha mask survives, so monochrome AND multi-colour icons
+ * resolve to a clean coloured silhouette. Required because most ui SVGs
+ * are authored black-on-transparent and would render near-invisible
+ * against a dark menu background. Result is cached per (basename, RGBA);
+ * a system appearance flip produces a different RGBA key and rebuilds. */
+static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
+    if (!basename || !tint) return nil;
+    NSColor *rgb = [tint colorUsingColorSpace:[NSColorSpace deviceRGBColorSpace]];
+    if (!rgb) return macMenubarLoadSvg(@"ui", basename);
+    if (!g_iconCache) g_iconCache = [[NSCache alloc] init];
+    NSString *key = [NSString stringWithFormat:@"ui-tinted/%@#%.3f,%.3f,%.3f,%.3f",
+                     basename, rgb.redComponent, rgb.greenComponent,
+                     rgb.blueComponent, rgb.alphaComponent];
+    NSImage *cached = [g_iconCache objectForKey:key];
+    if (cached) return cached;
+    NSImage *base = macMenubarLoadSvg(@"ui", basename);
+    if (!base) return nil;
+    NSImage *out = [[NSImage alloc] initWithSize:base.size];
+    [out lockFocus];
+    [rgb set];
+    NSRect r = NSMakeRect(0, 0, base.size.width, base.size.height);
+    NSRectFill(r);
+    [base drawInRect:r fromRect:NSZeroRect
+           operation:NSCompositingOperationDestinationIn fraction:1.0];
+    [out unlockFocus];
+    [g_iconCache setObject:out forKey:key];
+    return out;
+}
 
 @interface WBMenuBridge : NSObject
 - (void)onQuit:(id)sender;
@@ -295,6 +380,179 @@ static NSMenuItem *s_playersLeaveAllianceItem   = nil;
     (void)sender;
     if (g_clientSim) clientSimCheckNearbyPlayers((struct ClientSim *)g_clientSim);
 }
+@end
+
+/* Custom view used as the .view of each occupied Players-menu slot row.
+ * Draws checkmark, flag, platform icon, optional WBN/Steam badges, name,
+ * and a colour-coded ping. -mouseUp: toggles the slot's selection state
+ * and dismisses the menu, matching the in-window Players panel's
+ * click-to-toggle UX. */
+@interface WBPlayerSlotView : NSView {
+    NSImage  *_flagImage;          /* full-colour, drawn as-is */
+    NSString *_platformBasename;   /* ui-icon name; tinted at draw time */
+    BOOL      _platformGold;       /* verified && supporter → gold tint */
+    BOOL      _hasWbn;             /* draw globe.svg tinted */
+    BOOL      _hasSteam;           /* draw steam.svg tinted */
+    NSString *_name;
+    NSString *_pingText;
+    NSColor  *_pingColor;
+    BOOL      _checked;
+}
+@property (nonatomic) NSInteger slotIndex;
+- (void)setFromSlot:(const struct MacPlayerSlot *)slot;
+@end
+
+@implementation WBPlayerSlotView
+
+- (void)setFromSlot:(const struct MacPlayerSlot *)slot {
+    if (!slot) return;
+    BOOL verified  = (slot->pflags & 0x01) != 0;  /* PLAYER_FLAG_WBN_VERIFIED */
+    BOOL linked    = (slot->pflags & 0x02) != 0;  /* PLAYER_FLAG_WBN_STEAM_LINKED */
+    BOOL supporter = (slot->pflags & 0x04) != 0;  /* PLAYER_FLAG_SUPPORTER */
+    _flagImage        = macMenubarFlagIcon(slot->country);
+    _platformBasename = macMenubarPlatformBasename(slot->ptype);
+    _platformGold     = (verified && supporter) ? YES : NO;
+    _hasWbn           = verified ? YES : NO;
+    _hasSteam         = linked   ? YES : NO;
+    _name             = slot->name[0] ? [NSString stringWithUTF8String:slot->name] : @"";
+    int ping = slot->ping;
+    if (ping <= 0) {
+        _pingText  = @"---";
+        _pingColor = [NSColor colorWithCalibratedWhite:0.5 alpha:1.0];
+    } else {
+        _pingText = [NSString stringWithFormat:@"%d", ping];
+        if (ping < 50)       _pingColor = [NSColor colorWithCalibratedRed:0.0 green:0.9 blue:0.0 alpha:1.0];
+        else if (ping < 150) _pingColor = [NSColor colorWithCalibratedRed:0.9 green:0.9 blue:0.0 alpha:1.0];
+        else                 _pingColor = [NSColor colorWithCalibratedRed:0.9 green:0.0 blue:0.0 alpha:1.0];
+    }
+    _checked = slot->checked ? YES : NO;
+    [self setNeedsDisplay:YES];
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+    (void)dirtyRect;
+    NSRect bounds = self.bounds;
+    BOOL highlighted = self.enclosingMenuItem.isHighlighted;
+
+    if (highlighted) {
+        [[NSColor selectedMenuItemColor] set];
+        NSRectFill(bounds);
+    }
+
+    NSColor *textColor = highlighted ? [NSColor selectedMenuItemTextColor] : [NSColor labelColor];
+    /* Icons authored in data/ui/*.svg are mostly black on transparent;
+     * rendering them as-is washes out against the menu background (and
+     * goes near-invisible in dark mode). Force them to the menu's text
+     * colour so they read with the same contrast as the row's text. */
+    NSColor *iconTint  = textColor;
+    NSColor *goldTint  = [NSColor colorWithCalibratedRed:1.00 green:0.84 blue:0.20 alpha:1.0];
+    NSFont  *font      = [NSFont menuFontOfSize:0];
+    CGFloat  lineH     = font.pointSize + 4.0;
+    CGFloat  midY      = NSMidY(bounds);
+
+    CGFloat x = 6.0;
+
+    /* Checkmark column (fixed ~14pt — keeps following icons aligned). */
+    if (_checked) {
+        NSDictionary *attrs = @{NSFontAttributeName: font,
+                                NSForegroundColorAttributeName: textColor};
+        NSString *check = @"✓";
+        NSSize sz = [check sizeWithAttributes:attrs];
+        [check drawAtPoint:NSMakePoint(x, midY - sz.height * 0.5) withAttributes:attrs];
+    }
+    x += 14.0;
+
+    /* Flag 16x11. */
+    if (_flagImage) {
+        [_flagImage drawInRect:NSMakeRect(x, midY - 5.5, 16.0, 11.0)
+                     fromRect:NSZeroRect
+                    operation:NSCompositingOperationSourceOver
+                     fraction:1.0];
+    }
+    x += 16.0 + 4.0;
+
+    /* Platform icon 14x14. Gold-tinted for verified supporters (held
+     * constant across highlight so the supporter cue stays distinct);
+     * otherwise tracks the row's text colour. */
+    if (_platformBasename) {
+        NSImage *platform = macMenubarTintedUiIcon(_platformBasename,
+                                                   _platformGold ? goldTint : iconTint);
+        if (platform) {
+            [platform drawInRect:NSMakeRect(x, midY - 7.0, 14.0, 14.0)
+                       fromRect:NSZeroRect
+                      operation:NSCompositingOperationSourceOver
+                       fraction:1.0];
+        }
+    }
+    x += 14.0 + 4.0;
+
+    /* WBN globe — only when WBN_VERIFIED. */
+    if (_hasWbn) {
+        NSImage *wbn = macMenubarTintedUiIcon(@"globe", iconTint);
+        if (wbn) {
+            [wbn drawInRect:NSMakeRect(x, midY - 7.0, 14.0, 14.0)
+                  fromRect:NSZeroRect
+                 operation:NSCompositingOperationSourceOver
+                  fraction:1.0];
+        }
+        x += 14.0 + 4.0;
+    }
+
+    /* Steam logo — only when WBN_STEAM_LINKED. */
+    if (_hasSteam) {
+        NSImage *steam = macMenubarTintedUiIcon(@"steam", iconTint);
+        if (steam) {
+            [steam drawInRect:NSMakeRect(x, midY - 7.0, 14.0, 14.0)
+                    fromRect:NSZeroRect
+                   operation:NSCompositingOperationSourceOver
+                    fraction:1.0];
+        }
+        x += 14.0 + 4.0;
+    }
+
+    CGFloat rightReserve = 50.0;
+    CGFloat rightPad     = 6.0;
+
+    /* Name — flexible width, truncated tail if too long. */
+    if (_name.length > 0) {
+        NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
+        ps.lineBreakMode = NSLineBreakByTruncatingTail;
+        NSDictionary *attrs = @{NSFontAttributeName: font,
+                                NSForegroundColorAttributeName: textColor,
+                                NSParagraphStyleAttributeName: ps};
+        CGFloat nameW = bounds.size.width - rightReserve - rightPad - x;
+        if (nameW < 0) nameW = 0;
+        NSRect r = NSMakeRect(x, midY - lineH * 0.5, nameW, lineH);
+        [_name drawInRect:r withAttributes:attrs];
+    }
+
+    /* Ping — right-aligned, colour-coded (overridden to the menu's
+     * selection text colour when the row is highlighted, so the colour
+     * cue stays legible). */
+    if (_pingText.length > 0) {
+        NSColor *pColor = highlighted ? [NSColor selectedMenuItemTextColor] : _pingColor;
+        NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
+        ps.alignment = NSTextAlignmentRight;
+        NSDictionary *attrs = @{NSFontAttributeName: font,
+                                NSForegroundColorAttributeName: pColor,
+                                NSParagraphStyleAttributeName: ps};
+        NSRect r = NSMakeRect(bounds.size.width - rightReserve - rightPad,
+                              midY - lineH * 0.5,
+                              rightReserve,
+                              lineH);
+        [_pingText drawInRect:r withAttributes:attrs];
+    }
+}
+
+- (void)mouseUp:(NSEvent *)event {
+    (void)event;
+    if (g_clientSim) {
+        clientSimTogglePlayerCheckState((struct ClientSim *)g_clientSim,
+                                        (unsigned char)self.slotIndex);
+    }
+    [self.enclosingMenuItem.menu cancelTracking];
+}
+
 @end
 
 void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
@@ -783,6 +1041,23 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
 
     [playersMenu addItem:[NSMenuItem separatorItem]];
 
+    /* 16 player slots — each frame mac_menubar_refresh() decides whether
+     * to attach a rich WBPlayerSlotView (occupied slot) or restore the
+     * disabled numeric placeholder (empty slot). The placeholders keep
+     * the menu's vertical footprint stable while empty. */
+    for (int i = 0; i < 16; i++) {
+        NSMenuItem *slot = [[NSMenuItem alloc]
+            initWithTitle:[NSString stringWithFormat:@"%d", i + 1]
+            action:nil
+            keyEquivalent:@""];
+        [slot setEnabled:NO];
+        [playersMenu addItem:slot];
+        s_playerSlotItems[i] = slot;
+        s_playerSlotViews[i] = nil;
+    }
+
+    [playersMenu addItem:[NSMenuItem separatorItem]];
+
     /* No accelerator — WinBolo > Request Alliance owns Cmd+R. The two
      * Request items share the same selector and trampoline; AppKit
      * dispatches by selector so firing either one routes identically. */
@@ -928,4 +1203,33 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
     if (s_winboloLeaveAllianceItem)   [s_winboloLeaveAllianceItem   setEnabled:canLeave];
     if (s_playersRequestAllianceItem) [s_playersRequestAllianceItem setEnabled:canRequest];
     if (s_playersLeaveAllianceItem)   [s_playersLeaveAllianceItem   setEnabled:canLeave];
+
+    /* Per-slot view swap. Occupied slots get a WBPlayerSlotView assigned
+     * (lazily allocated on first use); empty slots have their view torn
+     * down so the numeric placeholder title renders again. The view
+     * itself is responsible for redrawing on data changes — setFromSlot:
+     * marks it dirty. */
+    for (int i = 0; i < 16; i++) {
+        NSMenuItem *item = s_playerSlotItems[i];
+        if (!item) continue;
+        const struct MacPlayerSlot *slot = &s->players[i];
+        if (slot->enabled) {
+            if (!s_playerSlotViews[i]) {
+                WBPlayerSlotView *v = [[WBPlayerSlotView alloc] initWithFrame:NSMakeRect(0, 0, 280, 22)];
+                v.slotIndex = i;
+                s_playerSlotViews[i] = v;
+            }
+            [s_playerSlotViews[i] setFromSlot:slot];
+            if (item.view != s_playerSlotViews[i]) {
+                [item setView:s_playerSlotViews[i]];
+            }
+            [item setEnabled:YES];
+        } else {
+            if (item.view != nil) {
+                [item setView:nil];
+                [item setTitle:[NSString stringWithFormat:@"%d", i + 1]];
+            }
+            [item setEnabled:NO];
+        }
+    }
 }

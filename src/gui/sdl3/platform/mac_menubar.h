@@ -10,6 +10,20 @@ extern "C" {
 
 struct SDL_Window;
 
+/* Per-player slot state mirrored into the native Players menu. Populated
+ * each frame from the in-window caches; mac_menubar_refresh() swaps a
+ * rich custom view in/out depending on `enabled` and updates the view's
+ * contents (checkmark, flag, platform/WBN/Steam icons, name, ping). */
+struct MacPlayerSlot {
+    bool enabled;          /* whether slot is occupied */
+    bool checked;          /* selection state */
+    int  pflags;           /* PLAYER_FLAG_* bits */
+    int  ptype;            /* ClientType enum value */
+    int  ping;             /* fresh ping in ms (0 = unknown) */
+    char name[33];         /* player name (null-terminated) */
+    char country[3];       /* ISO 3166-1 alpha-2 (null-terminated) */
+};
+
 /* Build and install the native macOS NSMenu on NSApp.mainMenu.
  * Safe to call once after the main SDL_Window and ImGui context exist.
  * `win` is the main game window (saved for future menu items that need
@@ -67,6 +81,10 @@ struct MacMenuState {
     bool canRequest;       /* any unallied, checked peer eligible to request */
     bool hasAllies;        /* self has at least one current ally */
     bool inCooldown;       /* request cooldown window currently active */
+    /* Per-player slots — 16 fixed entries, indexed by player number.
+     * mac_menubar_refresh() reads `enabled` to swap the slot's NSMenuItem
+     * between a numeric "1".."16" placeholder and a rich WBPlayerSlotView. */
+    struct MacPlayerSlot players[16];
 };
 
 /* Push the snapshot into the native menu. Walks cached NSMenuItem
