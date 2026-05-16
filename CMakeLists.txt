@@ -1026,6 +1026,9 @@ target_compile_definitions(WinBolo PRIVATE
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(WinBolo PRIVATE src/gui/sdl3/macos_pinch.m)
     target_sources(WinBolo PRIVATE src/gui/sdl3/platform/mac_menubar.mm)
+    # Embedded Log Viewer reuses WinBolo's window — the LogViewer NSMenu
+    # shim is linked in so gamefront.c can swap menu bars on entry/exit.
+    target_sources(WinBolo PRIVATE src/logviewer/platform/mac_menubar.mm)
     target_link_libraries(WinBolo PRIVATE "-framework AppKit")
 endif()
 
@@ -1519,9 +1522,11 @@ if(MATH_LIB)
     target_link_libraries(LogViewer PRIVATE ${MATH_LIB})
 endif()
 
-# macOS trackpad pinch-to-zoom support
+# macOS trackpad pinch-to-zoom support, plus native NSMenu shim for the
+# standalone Log Viewer.app menu bar.
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(LogViewer PRIVATE src/gui/sdl3/macos_pinch.m)
+    target_sources(LogViewer PRIVATE src/logviewer/platform/mac_menubar.mm)
     target_link_libraries(LogViewer PRIVATE "-framework AppKit")
 endif()
 
