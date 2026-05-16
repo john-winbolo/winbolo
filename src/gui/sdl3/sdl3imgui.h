@@ -108,6 +108,24 @@ bool sdl3ImguiIsGameInfoOpen(void);
 bool sdl3ImguiIsSendMsgOpen(void);
 
 /*********************************************************
+*NAME:          sdl3ImguiAllianceReqInCooldown
+*PURPOSE:
+*  Is an alliance-request cooldown currently active? Mirrors
+*  the in-window Players menu's gating so the native macOS
+*  menu items grey out identically.
+*********************************************************/
+bool sdl3ImguiAllianceReqInCooldown(void);
+
+/*********************************************************
+*NAME:          sdl3ImguiNoteAllianceRequested
+*PURPOSE:
+*  Mark an alliance request as just-fired. Starts the
+*  standard cooldown window; the matching menu items will
+*  report inCooldown=true until it elapses.
+*********************************************************/
+void sdl3ImguiNoteAllianceRequested(void);
+
+/*********************************************************
 *NAME:          sdl3ImguiShowAllianceRequest
 *PURPOSE:
 *  Open the "Alliance Request" modal.  playerName is the

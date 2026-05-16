@@ -62,6 +62,11 @@ struct MacMenuState {
     bool gameInfoOpen;
     /* Players menu popouts */
     bool sendMsgOpen;
+    /* Alliance gating — mirrors the in-window Players menu's pre-compute
+     * so the native Request/Leave Alliance items grey out identically. */
+    bool canRequest;       /* any unallied, checked peer eligible to request */
+    bool hasAllies;        /* self has at least one current ally */
+    bool inCooldown;       /* request cooldown window currently active */
 };
 
 /* Push the snapshot into the native menu. Walks cached NSMenuItem

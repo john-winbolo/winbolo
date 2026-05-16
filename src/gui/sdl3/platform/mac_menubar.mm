@@ -47,6 +47,7 @@ extern "C" void windowMenuNetwork_toggle(struct ClientSim *cs);
 extern "C" void windowMenuNetworkDebug_toggle(struct ClientSim *cs);
 extern "C" void clientSimRequestAllianceSelected(struct ClientSim *cs);
 extern "C" void clientSimLeaveAllianceSelf(struct ClientSim *cs);
+extern "C" void sdl3ImguiNoteAllianceRequested(void);
 
 extern "C" void sdl3ImguiShowKeySetup(void);
 extern "C" void sdl3ImguiShowChangeName(void);
@@ -91,6 +92,10 @@ static NSMenuItem *s_sysInfoItem             = nil;
 static NSMenuItem *s_netInfoItem             = nil;
 static NSMenuItem *s_gameInfoItem            = nil;
 static NSMenuItem *s_sendMsgItem             = nil;
+static NSMenuItem *s_winboloRequestAllianceItem = nil;
+static NSMenuItem *s_winboloLeaveAllianceItem   = nil;
+static NSMenuItem *s_playersRequestAllianceItem = nil;
+static NSMenuItem *s_playersLeaveAllianceItem   = nil;
 
 @interface WBMenuBridge : NSObject
 - (void)onQuit:(id)sender;
@@ -260,6 +265,10 @@ static NSMenuItem *s_sendMsgItem             = nil;
 }
 - (void)onRequestAlliance:(id)sender {
     (void)sender;
+    /* Set the cooldown before firing — mirrors the in-window menu's
+     * order at sdl3imgui.cpp:~2272-2274 so a request that fails (no
+     * eligible targets, network drop) still triggers the cooldown. */
+    sdl3ImguiNoteAllianceRequested();
     if (g_clientSim) clientSimRequestAllianceSelected((struct ClientSim *)g_clientSim);
 }
 - (void)onLeaveAlliance:(id)sender {
@@ -605,6 +614,8 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     NSMenuItem *winBoloItem = [mainMenu addItemWithTitle:LANG_STR(STR_MENU_WINBOLO) action:nil keyEquivalent:@""];
     NSMenu *winBoloMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_MENU_WINBOLO)];
     [winBoloItem setSubmenu:winBoloMenu];
+    /* Honour our explicit .enabled flags on Request / Leave Alliance. */
+    [winBoloMenu setAutoenablesItems:NO];
 
     NSMenuItem *allowNewPlayersItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_ALLOW_NEW_PLAYERS)
@@ -704,6 +715,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@"r"];
     [requestAllianceItem setTarget:g_bridge];
     [winBoloMenu addItem:requestAllianceItem];
+    s_winboloRequestAllianceItem = requestAllianceItem;
 
     NSMenuItem *leaveAllianceItem = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_LEAVE_ALLIANCE)
@@ -711,6 +723,7 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [leaveAllianceItem setTarget:g_bridge];
     [winBoloMenu addItem:leaveAllianceItem];
+    s_winboloLeaveAllianceItem = leaveAllianceItem;
 
     /* Players menu — only the static items from the ImGui Players menu in
      * renderMenuBar(). The dynamic per-player list (alliance indicator,
@@ -721,6 +734,8 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     NSMenuItem *playersItem = [mainMenu addItemWithTitle:LANG_STR(STR_MENU_PLAYERS) action:nil keyEquivalent:@""];
     NSMenu *playersMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_MENU_PLAYERS)];
     [playersItem setSubmenu:playersMenu];
+    /* Honour our explicit .enabled flags on Request / Leave Alliance. */
+    [playersMenu setAutoenablesItems:NO];
 
     /* Send Message — ⇧⌘M (Cmd+M is Window > Minimize per the earlier
      * collision-resolution decision). */
@@ -765,6 +780,27 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
         keyEquivalent:@""];
     [selectNearbyItem setTarget:g_bridge];
     [playersMenu addItem:selectNearbyItem];
+
+    [playersMenu addItem:[NSMenuItem separatorItem]];
+
+    /* No accelerator — WinBolo > Request Alliance owns Cmd+R. The two
+     * Request items share the same selector and trampoline; AppKit
+     * dispatches by selector so firing either one routes identically. */
+    NSMenuItem *playersRequestAllianceItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_REQUEST_ALLIANCE)
+        action:@selector(onRequestAlliance:)
+        keyEquivalent:@""];
+    [playersRequestAllianceItem setTarget:g_bridge];
+    [playersMenu addItem:playersRequestAllianceItem];
+    s_playersRequestAllianceItem = playersRequestAllianceItem;
+
+    NSMenuItem *playersLeaveAllianceItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_LEAVE_ALLIANCE)
+        action:@selector(onLeaveAlliance:)
+        keyEquivalent:@""];
+    [playersLeaveAllianceItem setTarget:g_bridge];
+    [playersMenu addItem:playersLeaveAllianceItem];
+    s_playersLeaveAllianceItem = playersLeaveAllianceItem;
 
     /* Window menu — items dispatched through the responder chain to the
      * key NSWindow; no explicit targets. */
@@ -883,4 +919,13 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
     if (s_noOwnLabelItem) {
         [s_noOwnLabelItem setState:(s->noOwnLabel ? NSControlStateValueOn : NSControlStateValueOff)];
     }
+
+    /* Alliance gating — same predicate on both Request items (WinBolo
+     * and Players menus) so they enable/disable in lockstep. */
+    BOOL canRequest = (s->canRequest && !s->inCooldown && !s->hasAllies) ? YES : NO;
+    BOOL canLeave   = s->hasAllies ? YES : NO;
+    if (s_winboloRequestAllianceItem) [s_winboloRequestAllianceItem setEnabled:canRequest];
+    if (s_winboloLeaveAllianceItem)   [s_winboloLeaveAllianceItem   setEnabled:canLeave];
+    if (s_playersRequestAllianceItem) [s_playersRequestAllianceItem setEnabled:canRequest];
+    if (s_playersLeaveAllianceItem)   [s_playersLeaveAllianceItem   setEnabled:canLeave];
 }

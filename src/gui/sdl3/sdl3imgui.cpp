@@ -342,6 +342,14 @@ static bool   s_sendMsgFocusInput = false; /* Set true to focus the text input n
 static Uint64 s_allianceReqCooldownEnd = 0; /* SDL_GetTicks() value; 0 = not in cooldown */
 #define ALLIANCE_REQ_WAIT_MS 5000
 
+bool sdl3ImguiAllianceReqInCooldown(void) {
+    return (s_allianceReqCooldownEnd != 0 && SDL_GetTicks() < s_allianceReqCooldownEnd);
+}
+
+void sdl3ImguiNoteAllianceRequested(void) {
+    s_allianceReqCooldownEnd = SDL_GetTicks() + ALLIANCE_REQ_WAIT_MS;
+}
+
 /* -------------------------------------------------------
  * Pop-out window support (desktop only)
  * Each pop-out gets its own SDL_Window + SDL_Renderer +
@@ -2979,7 +2987,7 @@ bool sdl3ImguiIsDialogOpen(void) {
  * Fit1x..fit4x mirror the in-window Window Size enable-gating arithmetic
  * at line ~2038 above; the device-label format mirrors the in-window
  * snprintf at line ~2099. */
-static void populateMacMenuState(MacMenuState *s) {
+static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->frameRate       = frameRate;
     s->zoomFactor      = (int)zoomFactor;
     s->smoothScrolling = smoothScrollingEnabled;
@@ -3027,6 +3035,24 @@ static void populateMacMenuState(MacMenuState *s) {
             : langGetText(STR_MENU_DESKTOP);
     SDL_snprintf(s->deviceLabel, sizeof s->deviceLabel, "%s %s",
                  langGetText(STR_MENU_DEVICE), presetLabel);
+
+    /* Alliance gating — mirrors the in-window Players menu pre-compute
+     * at line ~2157. NULL cs leaves both predicates false, so the native
+     * Request/Leave Alliance items render disabled during bring-up. */
+    bool hasAllies = false, canRequest = false;
+    if (cs) {
+        BYTE self = clientSimGetMyPlayerNum(cs);
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            if (s_playerEnabled[i] && i != self) {
+                bool ally = clientSimIsPlayerAlly(cs, self, (BYTE)i);
+                if (ally) hasAllies = true;
+                else if (s_playerChecked[i]) canRequest = true;
+            }
+        }
+    }
+    s->hasAllies  = hasAllies;
+    s->canRequest = canRequest;
+    s->inCooldown = sdl3ImguiAllianceReqInCooldown();
 }
 #endif
 
@@ -3036,7 +3062,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 #ifdef __APPLE__
     if (!uiModeIsTablet()) {
         MacMenuState mms = {};
-        populateMacMenuState(&mms);
+        populateMacMenuState(&mms, cs);
         mac_menubar_refresh(&mms);
     }
 #endif
