@@ -642,6 +642,9 @@ static bool cmdDispatchServer(const CmdLine *cmd) {
     case CMD_OP_MAP_SKIP_VOTE:
       clientSimNetSendMapSkipVote(humanSim);
       return true;
+    case CMD_OP_CHAT:
+      clientSimNetSendChat(humanSim, cmd->dest, cmd->body);
+      return true;
     case CMD_OP_START_GAME:
     case CMD_OP_REAPPLY_ALLIANCES:
     case CMD_OP_SHUTDOWN:

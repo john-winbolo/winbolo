@@ -1,0 +1,7 @@
+# centralize_events_chat_alliance_3client_udp — client 3 (slot 2).
+# Accepts c1's alliance request, then sends a unicast chat back to
+# slot 0 (c1). Accept lands at tick 200 — after c1's tick-100
+# request has propagated through the server — so the server-side
+# alliance state mutates before the chat sends fire.
+{"tick": 200, "op": "alliance_accept", "from": 2, "to": 0}
+{"tick": 400, "op": "chat", "dest": 0, "body": "hi ally c1 from c3"}

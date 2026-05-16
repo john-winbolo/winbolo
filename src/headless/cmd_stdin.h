@@ -51,6 +51,7 @@ typedef enum {
   CMD_OP_ALLIANCE_ACCEPT,
   CMD_OP_ALLIANCE_LEAVE,
   CMD_OP_MAP_SKIP_VOTE,
+  CMD_OP_CHAT,
   CMD_OP_START_GAME,
   CMD_OP_REAPPLY_ALLIANCES,
   CMD_OP_SHUTDOWN,
@@ -61,13 +62,15 @@ typedef enum {
 typedef struct CmdLine {
   uint32_t tick;
   CmdOp    op;
-  BYTE     slot;                          /* set_team / set_ready / name_change */
-  BYTE     team;                          /* set_team */
-  bool     ready;                         /* set_ready */
-  BYTE     from;                          /* alliance_request / alliance_accept */
-  BYTE     to;                            /* alliance_request / alliance_accept */
-  char     name[PACKET_MAX_PLAYER_NAME];  /* name_change */
-  int      lineNumber;                    /* 1-based, for error messages */
+  BYTE     slot;                              /* set_team / set_ready / name_change */
+  BYTE     team;                              /* set_team */
+  bool     ready;                             /* set_ready */
+  BYTE     from;                              /* alliance_request / alliance_accept */
+  BYTE     to;                                /* alliance_request / alliance_accept */
+  BYTE     dest;                              /* chat — 0xFF broadcast, else slot */
+  char     name[PACKET_MAX_PLAYER_NAME];      /* name_change */
+  char     body[PACKET_MAX_CHAT_MESSAGE + 1]; /* chat */
+  int      lineNumber;                        /* 1-based, for error messages */
 } CmdLine;
 
 typedef struct CmdStdin CmdStdin;

@@ -1183,15 +1183,16 @@ int main(int argc, char **argv) {
   serverSimSetHasPassword(serverSim, pass[0] != '\0');
   {
     ServerInstanceConfig instCfg;
-    instCfg.udpPort      = port;
-    instCfg.bindAddr     = useAddr;
-    instCfg.password     = pass;
-    instCfg.maxPlayers   = (BYTE)maxPlayers;
-    instCfg.useWbn       = (argExist(argc, argv, "nowinbolonet") == FALSE);
-    instCfg.compTanks    = (BYTE)ai;
-    instCfg.useTracker   = sTrackerUse;
-    instCfg.trackerAddr  = sTrackerAddr;
-    instCfg.trackerPort  = sTrackerPort;
+    instCfg.udpPort             = port;
+    instCfg.bindAddr            = useAddr;
+    instCfg.password            = pass;
+    instCfg.maxPlayers          = (BYTE)maxPlayers;
+    instCfg.acceptRemoteClients = TRUE;
+    instCfg.useWbn              = (argExist(argc, argv, "nowinbolonet") == FALSE);
+    instCfg.compTanks           = (BYTE)ai;
+    instCfg.useTracker          = sTrackerUse;
+    instCfg.trackerAddr         = sTrackerAddr;
+    instCfg.trackerPort         = sTrackerPort;
     {
       bool natPunchOptOut = (argExist(argc, argv, "no-natpunch") == TRUE);
       instCfg.useNatPortmap   = (argExist(argc, argv, "upnp") == TRUE);
