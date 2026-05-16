@@ -1144,3 +1144,10 @@ STR_MENU_MINIMIZE=縮到最小
 STR_MENU_ZOOM=縮放
 STR_MENU_ENTER_FULL_SCREEN=進入全螢幕
 STR_MENU_BRING_ALL_TO_FRONT=將全部移至最前
+
+# macOS Dock menu — welcome-screen actions exposed via the Dock right-click
+STR_MENU_FIND_INTERNET_GAME=尋找網際網路遊戲…
+STR_MENU_FIND_LAN_GAME=尋找區域網路遊戲…
+STR_MENU_JOIN_BY_ADDRESS=依位址加入…
+STR_MENU_OPEN_MAP_EDITOR=開啟地圖編輯器
+STR_MENU_OPEN_LOG_VIEWER=開啟日誌檢視器

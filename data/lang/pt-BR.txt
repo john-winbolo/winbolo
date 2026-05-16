@@ -1144,3 +1144,10 @@ STR_MENU_MINIMIZE=Minimizar
 STR_MENU_ZOOM=Zoom
 STR_MENU_ENTER_FULL_SCREEN=Usar tela inteira
 STR_MENU_BRING_ALL_TO_FRONT=Trazer tudo para frente
+
+# macOS Dock menu — welcome-screen actions exposed via the Dock right-click
+STR_MENU_FIND_INTERNET_GAME=Procurar partida na Internet…
+STR_MENU_FIND_LAN_GAME=Procurar partida na LAN…
+STR_MENU_JOIN_BY_ADDRESS=Entrar por endereço…
+STR_MENU_OPEN_MAP_EDITOR=Abrir editor de mapas
+STR_MENU_OPEN_LOG_VIEWER=Abrir visualizador de logs

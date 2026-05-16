@@ -1161,6 +1161,11 @@
 #define STR_MENU_ZOOM                       1248
 #define STR_MENU_ENTER_FULL_SCREEN          1249
 #define STR_MENU_BRING_ALL_TO_FRONT         1250
+#define STR_MENU_FIND_INTERNET_GAME         1251
+#define STR_MENU_FIND_LAN_GAME              1252
+#define STR_MENU_JOIN_BY_ADDRESS            1253
+#define STR_MENU_OPEN_MAP_EDITOR            1254
+#define STR_MENU_OPEN_LOG_VIEWER            1255
 
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820

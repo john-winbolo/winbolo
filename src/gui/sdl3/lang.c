@@ -1068,6 +1068,11 @@ static const LangEntry langTable[] = {
     {1248, "Zoom"},
     {1249, "Enter Full Screen"},
     {1250, "Bring All to Front"},
+    {1251, "Find Internet Game…"},
+    {1252, "Find LAN Game…"},
+    {1253, "Join by Address…"},
+    {1254, "Open Map Editor"},
+    {1255, "Open Log Viewer"},
 
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display

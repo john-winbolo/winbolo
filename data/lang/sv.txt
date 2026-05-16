@@ -1144,3 +1144,10 @@ STR_MENU_MINIMIZE=Minimera
 STR_MENU_ZOOM=Zooma
 STR_MENU_ENTER_FULL_SCREEN=Gå till helskärm
 STR_MENU_BRING_ALL_TO_FRONT=Flytta alla till framsidan
+
+# macOS Dock menu — welcome-screen actions exposed via the Dock right-click
+STR_MENU_FIND_INTERNET_GAME=Hitta internetspel…
+STR_MENU_FIND_LAN_GAME=Hitta LAN-spel…
+STR_MENU_JOIN_BY_ADDRESS=Anslut via adress…
+STR_MENU_OPEN_MAP_EDITOR=Öppna kartredigerare
+STR_MENU_OPEN_LOG_VIEWER=Öppna loggvisare

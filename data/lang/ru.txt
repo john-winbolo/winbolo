@@ -1142,3 +1142,10 @@ STR_MENU_MINIMIZE=В Dock
 STR_MENU_ZOOM=Масштаб
 STR_MENU_ENTER_FULL_SCREEN=Войти в полноэкранный режим
 STR_MENU_BRING_ALL_TO_FRONT=Перенести все на передний план
+
+# macOS Dock menu — welcome-screen actions exposed via the Dock right-click
+STR_MENU_FIND_INTERNET_GAME=Найти игру в интернете…
+STR_MENU_FIND_LAN_GAME=Найти игру в локальной сети…
+STR_MENU_JOIN_BY_ADDRESS=Подключиться по адресу…
+STR_MENU_OPEN_MAP_EDITOR=Открыть редактор карт
+STR_MENU_OPEN_LOG_VIEWER=Открыть просмотр логов

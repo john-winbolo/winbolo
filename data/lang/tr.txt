@@ -1144,3 +1144,10 @@ STR_MENU_MINIMIZE=Simge Durumuna Küçült
 STR_MENU_ZOOM=Zoom
 STR_MENU_ENTER_FULL_SCREEN=Tam Ekrana Gir
 STR_MENU_BRING_ALL_TO_FRONT=Tümünü Öne Getir
+
+# macOS Dock menu — welcome-screen actions exposed via the Dock right-click
+STR_MENU_FIND_INTERNET_GAME=İnternet Oyunu Bul…
+STR_MENU_FIND_LAN_GAME=LAN Oyunu Bul…
+STR_MENU_JOIN_BY_ADDRESS=Adres ile Katıl…
+STR_MENU_OPEN_MAP_EDITOR=Harita Düzenleyiciyi Aç
+STR_MENU_OPEN_LOG_VIEWER=Günlük Görüntüleyiciyi Aç

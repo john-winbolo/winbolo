@@ -499,6 +499,28 @@ void gameFrontRequestPlayTutorial(void);
 bool gameFrontConsumePlayTutorialRequest(void);
 
 /*********************************************************
+*NAME:          gameFrontRequestTransition
+*PURPOSE:
+* Posts a state transition the welcome dialog will pick up on
+* its next poll iteration and treat as if the equivalent ghost
+* button was clicked. Used by host-OS shims (e.g. the macOS
+* Dock menu) to trigger welcome-screen actions from outside the
+* in-window UI. Must be called from the main thread — the
+* welcome loop reads the channel on the same thread.
+*********************************************************/
+void gameFrontRequestTransition(openingStates s);
+bool gameFrontConsumeRequestedTransition(openingStates *out);
+
+/*********************************************************
+*NAME:          gameFrontIsAtWelcome
+*PURPOSE:
+* TRUE while gameFrontDialogs() is sitting inside the
+* welcomeShow() poll loop. Lets host-OS menus dim items
+* that only make sense from the welcome screen.
+*********************************************************/
+bool gameFrontIsAtWelcome(void);
+
+/*********************************************************
 *NAME:          gameFrontSetupServer
 *AUTHOR:        John Morrison
 *CREATION DATE: 3/11/99

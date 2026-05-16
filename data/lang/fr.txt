@@ -1144,3 +1144,10 @@ STR_MENU_MINIMIZE=Placer dans le Dock
 STR_MENU_ZOOM=Zoom
 STR_MENU_ENTER_FULL_SCREEN=Passer en mode plein écran
 STR_MENU_BRING_ALL_TO_FRONT=Tout ramener au premier plan
+
+# macOS Dock menu — welcome-screen actions exposed via the Dock right-click
+STR_MENU_FIND_INTERNET_GAME=Trouver une partie Internet…
+STR_MENU_FIND_LAN_GAME=Trouver une partie LAN…
+STR_MENU_JOIN_BY_ADDRESS=Rejoindre par adresse…
+STR_MENU_OPEN_MAP_EDITOR=Ouvrir l'éditeur de carte
+STR_MENU_OPEN_LOG_VIEWER=Ouvrir la visionneuse de log

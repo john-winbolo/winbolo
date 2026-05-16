@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#import <objc/runtime.h>
 
 #include <SDL3/SDL.h>
 
@@ -61,6 +62,10 @@ extern "C" void clientSimTogglePlayerCheckState(struct ClientSim *cs, unsigned c
 extern "C" void sdl3ImguiStopBrain(void);
 extern "C" void sdl3ImguiStartBrain(int idx, struct ClientSim *cs);
 extern "C" void sdl3ImguiShowBrainSettings(void);
+
+extern "C" {
+#include "../../gamefront.h"
+}
 
 #define LANG_STR(id) ([NSString stringWithUTF8String:langGetText(id)])
 
@@ -239,6 +244,12 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onBrainManual:(id)sender;
 - (void)onBrainItem:(id)sender;
 - (void)onBrainSettings:(id)sender;
+- (void)onDockSinglePlayer:(id)sender;
+- (void)onDockFindInternet:(id)sender;
+- (void)onDockFindLan:(id)sender;
+- (void)onDockJoinByAddress:(id)sender;
+- (void)onDockOpenMapEditor:(id)sender;
+- (void)onDockOpenLogViewer:(id)sender;
 @end
 
 @implementation WBMenuBridge
@@ -409,6 +420,30 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onBrainSettings:(id)sender {
     (void)sender;
     sdl3ImguiShowBrainSettings();
+}
+- (void)onDockSinglePlayer:(id)sender {
+    (void)sender;
+    gameFrontRequestTransition(openSetup);
+}
+- (void)onDockFindInternet:(id)sender {
+    (void)sender;
+    gameFrontRequestTransition(openInternet);
+}
+- (void)onDockFindLan:(id)sender {
+    (void)sender;
+    gameFrontRequestTransition(openLan);
+}
+- (void)onDockJoinByAddress:(id)sender {
+    (void)sender;
+    gameFrontRequestTransition(openUdp);
+}
+- (void)onDockOpenMapEditor:(id)sender {
+    (void)sender;
+    gameFrontRequestTransition(openMapEditor);
+}
+- (void)onDockOpenLogViewer:(id)sender {
+    (void)sender;
+    gameFrontRequestTransition(openLogViewer);
 }
 @end
 
@@ -584,6 +619,73 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 }
 
 @end
+
+/* Dock-menu items are welcome-screen state transitions. Outside the
+ * welcome screen they would silently no-op (the pending channel is only
+ * consumed by the welcome loop), so render them dimmed instead. The
+ * menu is rebuilt on every right-click of the Dock icon, so the
+ * enabled bits track gameFrontIsAtWelcome() with zero refresh cost. */
+static NSMenu *macMenubarBuildDockMenu(void) {
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
+    [menu setAutoenablesItems:NO];
+    BOOL enabled = gameFrontIsAtWelcome() ? YES : NO;
+
+    NSMenuItem *(^addItem)(langid, SEL) = ^NSMenuItem *(langid str, SEL sel) {
+        NSMenuItem *it = [[NSMenuItem alloc]
+            initWithTitle:LANG_STR(str)
+                   action:sel
+            keyEquivalent:@""];
+        [it setTarget:g_bridge];
+        [it setEnabled:enabled];
+        [menu addItem:it];
+        return it;
+    };
+
+    addItem(STR_DLGWELCOME_SINGLE,        @selector(onDockSinglePlayer:));
+    addItem(STR_MENU_FIND_INTERNET_GAME,  @selector(onDockFindInternet:));
+    addItem(STR_MENU_FIND_LAN_GAME,       @selector(onDockFindLan:));
+    addItem(STR_MENU_JOIN_BY_ADDRESS,     @selector(onDockJoinByAddress:));
+    [menu addItem:[NSMenuItem separatorItem]];
+    addItem(STR_MENU_OPEN_MAP_EDITOR,     @selector(onDockOpenMapEditor:));
+    addItem(STR_MENU_OPEN_LOG_VIEWER,     @selector(onDockOpenLogViewer:));
+
+    return menu;
+}
+
+/* SDL3 installs its own NSApp delegate (SDL3AppDelegate) and reuses
+ * the static across re-init paths, so swapping NSApp.delegate to a
+ * proxy is fragile — SDL3 holds no strong ref to the original and the
+ * weak NSApp.delegate slot then races our proxy's lifetime. Inject
+ * the dock-menu hook directly onto SDL3's existing delegate class via
+ * the Objective-C runtime instead: one new method, zero replacements,
+ * no impact on SDL3's own lifecycle handlers. */
+static NSMenu *macMenubarDockMenuIMP(id self, SEL _cmd, NSApplication *sender) {
+    (void)self;
+    (void)_cmd;
+    (void)sender;
+    return macMenubarBuildDockMenu();
+}
+
+static void macMenubarInstallDockMenu(void) {
+    id delegate = [NSApp delegate];
+    if (!delegate) return;
+    Class cls = object_getClass(delegate);
+    if (!cls) return;
+    /* Use class_replaceMethod so a future SDL3 update that ships its
+     * own applicationDockMenu: doesn't silently win. The signature
+     * "@@:@" matches -(NSMenu *) applicationDockMenu:(NSApplication *). */
+    class_replaceMethod(cls,
+                        @selector(applicationDockMenu:),
+                        (IMP)macMenubarDockMenuIMP,
+                        "@@:@");
+}
+
+void mac_menubar_install_dock_menu(void) {
+    if (g_bridge == nil) {
+        g_bridge = [[WBMenuBridge alloc] init];
+    }
+    macMenubarInstallDockMenu();
+}
 
 void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     (void)win;
@@ -1178,6 +1280,8 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [NSApp setWindowsMenu:windowMenu];
 
     [NSApp setMainMenu:mainMenu];
+
+    macMenubarInstallDockMenu();
 }
 
 void mac_menubar_set_clientsim(void *clientSim) {
