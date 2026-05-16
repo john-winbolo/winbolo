@@ -1261,6 +1261,19 @@ int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
                            const char *query,
                            ServerMapEntry *entries, int maxEntries);
 
+/* Read the on-disk .map file at data/maps/<relPath> into a heap
+ * buffer. Returns true and fills outBytes (malloc'd; caller frees
+ * with free()) + outLen on success. The client preview-fetch path
+ * calls this from the server's REQ handler, then streams the bytes
+ * back in chunks. Implementation rejects path traversal and any
+ * relPath that doesn't resolve to a regular file.
+ *
+ * Used by the Server Maps preview protocol: server sources the
+ * bytes, client rasterises them locally with the same renderer it
+ * uses for the Upload tab. */
+bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
+                           uint8_t **outBytes, size_t *outLen);
+
 /* openHost — when true, any connected client may issue lobby edit
  * commands (add bots, change settings, etc.). */
 bool        serverSimGetOpenHost(const ServerSim *sim);

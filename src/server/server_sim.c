@@ -4336,6 +4336,47 @@ int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
     return count;
 }
 
+bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
+                           uint8_t **outBytes, size_t *outLen) {
+    (void)sim;
+    if (!outBytes || !outLen) return false;
+    *outBytes = NULL;
+    *outLen   = 0;
+    if (!relPath || !*relPath) return false;
+    if (!relPathIsSafe(relPath)) return false;
+
+    char fullPath[FILENAME_MAX];
+    SDL_snprintf(fullPath, sizeof(fullPath), "data/maps/%s", relPath);
+    /* Must resolve to a regular file — folders, missing entries
+     * etc. return false so the caller can respond with NOT_FOUND. */
+    SDL_PathInfo info;
+    if (!SDL_GetPathInfo(fullPath, &info)) return false;
+    if (info.type != SDL_PATHTYPE_FILE) return false;
+
+    FILE *fp = fopen(fullPath, "rb");
+    if (!fp) return false;
+    if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return false; }
+    long sz = ftell(fp);
+    if (sz <= 0 || sz > 1024 * 1024) {
+        /* 1 MiB ceiling — Bolo .maps are always small (a few KB).
+         * Anything bigger is corrupt or hostile. */
+        fclose(fp);
+        return false;
+    }
+    if (fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return false; }
+    uint8_t *buf = (uint8_t *)malloc((size_t)sz);
+    if (!buf) { fclose(fp); return false; }
+    size_t got = fread(buf, 1, (size_t)sz, fp);
+    fclose(fp);
+    if (got != (size_t)sz) {
+        free(buf);
+        return false;
+    }
+    *outBytes = buf;
+    *outLen   = (size_t)sz;
+    return true;
+}
+
 bool serverSimGetOpenHost(const ServerSim *sim) {
     return sim ? sim->openHost : false;
 }
