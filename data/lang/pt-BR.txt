@@ -1130,3 +1130,17 @@ STR_DLGSYSINFO_BRAIN=Brain
 STR_DLGSYSINFO_SIMULATION=Simulação
 STR_DLGSYSINFO_BOTPREP=Prep. de bots
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Estouros de brain
+
+# macOS App menu and Window menu items
+STR_MENU_ABOUT_APP=Sobre o WinBolo
+STR_MENU_PREFERENCES=Preferências…
+STR_MENU_SERVICES=Serviços
+STR_MENU_HIDE_APP=Ocultar WinBolo
+STR_MENU_HIDE_OTHERS=Ocultar outros
+STR_MENU_SHOW_ALL=Mostrar tudo
+STR_MENU_QUIT_APP=Encerrar WinBolo
+STR_MENU_WINDOW=Janela
+STR_MENU_MINIMIZE=Minimizar
+STR_MENU_ZOOM=Zoom
+STR_MENU_ENTER_FULL_SCREEN=Usar tela inteira
+STR_MENU_BRING_ALL_TO_FRONT=Trazer tudo para frente
