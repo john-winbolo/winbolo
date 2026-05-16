@@ -1029,6 +1029,10 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # Embedded Log Viewer reuses WinBolo's window — the LogViewer NSMenu
     # shim is linked in so gamefront.c can swap menu bars on entry/exit.
     target_sources(WinBolo PRIVATE src/logviewer/platform/mac_menubar.mm)
+    # Same story for the embedded Map Editor entry from the welcome
+    # screen — the editor swaps WinBolo's menu out and restores it on
+    # exit via its own NSMenu shim.
+    target_sources(WinBolo PRIVATE src/mapeditor/platform/mac_menubar.mm)
     target_link_libraries(WinBolo PRIVATE "-framework AppKit")
 endif()
 
@@ -1956,9 +1960,12 @@ target_link_libraries(MapEditor PRIVATE
     nanosvg stb_image utf8proc
 )
 
-# macOS trackpad pinch-to-zoom support
+# macOS trackpad pinch-to-zoom support, plus native NSMenu shim for the
+# Map Editor's menu bar (used by both the standalone MapEditor.app and
+# the embedded entry from WinBolo's welcome screen).
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(MapEditor PRIVATE src/gui/sdl3/macos_pinch.m)
+    target_sources(MapEditor PRIVATE src/mapeditor/platform/mac_menubar.mm)
     target_link_libraries(MapEditor PRIVATE "-framework AppKit")
 endif()
 
@@ -1984,6 +1991,33 @@ add_custom_command(TARGET MapEditor POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3_ttf::SDL3_ttf>" "$<TARGET_FILE_DIR:MapEditor>"
     COMMENT "Copying SDL3 and SDL3_ttf shared libraries to MapEditor output directory"
 )
+
+# bot_brains_static pulls in onnxruntime, so MapEditor inherits the
+# dylib dependency. Mirror the WinBolo POST_BUILD copy step so the
+# .app bundle ships with the dylib next to the executable — without
+# this, launching the standalone MapEditor.app fails at dyld load
+# time with "Library not loaded: @rpath/libonnxruntime.*.dylib".
+if(HAVE_ONNXRUNTIME)
+    if(WIN32 AND DEFINED ONNXRUNTIME_DLL)
+        add_custom_command(TARGET MapEditor POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_DLL}" "$<TARGET_FILE_DIR:MapEditor>"
+            COMMENT "Copying ONNX Runtime DLL to MapEditor output directory"
+        )
+    elseif(DEFINED ONNXRUNTIME_LIBDIR)
+        file(GLOB _ORT_ALL_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
+        foreach(_f ${_ORT_ALL_SO})
+            # Skip .dSYM bundles — they are directories, not files, so
+            # copy_if_different fails on them. They are debug symbols that
+            # don't need to ship next to the binary.
+            if(_f MATCHES "\\.dSYM$")
+                continue()
+            endif()
+            add_custom_command(TARGET MapEditor POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_f}" "$<TARGET_FILE_DIR:MapEditor>"
+            )
+        endforeach()
+    endif()
+endif()
 if(APPLE)
     add_custom_command(TARGET MapEditor POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory

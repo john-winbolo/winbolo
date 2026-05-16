@@ -24,6 +24,9 @@
 #include "mapeditor_undo.h"
 #include "mapeditor_export.h"
 #include "macos_pinch.h"
+#ifdef __APPLE__
+#include "platform/mac_menubar.h"
+#endif
 
 #if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__) && !defined(__IPHONEOS__)
 #include <SDL3_ttf/SDL_ttf.h>
@@ -3135,6 +3138,15 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     /* Initialize ImGui */
     mapEditorImguiInit(window, renderer);
 
+#ifdef __APPLE__
+    /* Install the native NSMenu after ImGui + window are up. The shim
+     * saves any previously-installed mainMenu so embedded entry from
+     * WinBolo (which has its own NSMenu installed) restores cleanly on
+     * exit. Standalone has no prior mainMenu — the shim builds a
+     * "Map Editor" app menu with Quit/Hide instead. */
+    me_mac_menubar_install(window);
+#endif
+
     /* macOS trackpad pinch-to-zoom */
     macOSPinchZoomInit();
 
@@ -3954,6 +3966,44 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
         /* Menu bar */
         MapEditorMenuAction menuAction;
+#ifdef __APPLE__
+        /* On macOS the menu lives in the system menu bar via the
+         * NSMenu shim. Push state in (enable gates, checkmarks,
+         * Recent/Zoom contents, scope labels) and drain any clicks
+         * the user made between frames into `menuAction`. The
+         * in-window mapEditorImguiMenuBar is a no-op on Apple. */
+        {
+            struct MeMenuState mes;
+            memset(&mes, 0, sizeof(mes));
+            mes.fromMainMenu     = ed->fromMainMenu;
+            mes.canUndo          = undoCanUndo(&ed->undoStack);
+            mes.canRedo          = undoCanRedo(&ed->undoStack);
+            mes.hasSelection     = ed->hasSelection;
+            mes.showGrid         = ed->showGrid;
+            mes.showMines        = ed->showMines;
+            mes.showPillRanges   = ed->showPillRanges;
+            mes.showTerrain      = ed->showTerrain;
+            mes.showTools        = ed->showTools;
+            mes.showInspector    = ed->showInspector;
+            mes.showObjects      = ed->showObjects;
+            mes.showOverview     = ed->showOverview;
+            mes.showStats        = ed->showStatsPanel;
+            mes.showStampLibrary = ed->showStampLibrary;
+            int nRecent = ed->numRecentFiles;
+            if (nRecent > (int)(sizeof(mes.recentFiles) / sizeof(mes.recentFiles[0]))) {
+                nRecent = (int)(sizeof(mes.recentFiles) / sizeof(mes.recentFiles[0]));
+            }
+            mes.numRecent = nRecent;
+            for (int i = 0; i < nRecent; i++) {
+                mes.recentFiles[i] = ed->recentFiles[i];
+            }
+            mes.zoomStepIndex  = ed->zoomStepIndex;
+            mes.zoomStepCount  = (int)ZOOM_STEP_COUNT;
+            mes.zoomStepValues = zoomSteps;
+            me_mac_menubar_refresh(&mes);
+            me_mac_menubar_consume_actions(&menuAction);
+        }
+#else
         mapEditorImguiMenuBar(&menuAction, ed->recentFiles, ed->numRecentFiles,
                               ed->showGrid, ed->showMines, ed->showPillRanges,
                               ed->dirty,
@@ -3966,6 +4016,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                               ed->fromMainMenu,
                               ed->zoomStepIndex, (int)ZOOM_STEP_COUNT,
                               zoomSteps);
+#endif
 
         /* Handle menu actions */
         if (menuAction.wantNew) {
@@ -4030,6 +4081,16 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         if (menuAction.togglePillRanges) {
             ed->showPillRanges = !ed->showPillRanges;
         }
+        /* Window submenu toggles — populated only by the macOS NSMenu
+         * shim. The in-window ImGui menu mutates show* directly via
+         * the &ed->showX pointers passed into mapEditorImguiMenuBar. */
+        if (menuAction.wantToggleTerrain)      ed->showTerrain      = !ed->showTerrain;
+        if (menuAction.wantToggleTools)        ed->showTools        = !ed->showTools;
+        if (menuAction.wantToggleInspector)    ed->showInspector    = !ed->showInspector;
+        if (menuAction.wantToggleObjects)      ed->showObjects      = !ed->showObjects;
+        if (menuAction.wantToggleOverview)     ed->showOverview     = !ed->showOverview;
+        if (menuAction.wantToggleStats)        ed->showStatsPanel   = !ed->showStatsPanel;
+        if (menuAction.wantToggleStampLibrary) ed->showStampLibrary = !ed->showStampLibrary;
         if (menuAction.wantZoomIn) {
             if (ed->zoomStepIndex < (int)ZOOM_STEP_COUNT - 1) ed->zoomStepIndex++;
             ed->zoomLevel = zoomSteps[ed->zoomStepIndex];
@@ -4575,6 +4636,11 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     imageImportFree(&ed->imageImportCfg);
     validateResultFree(&ed->lastValidation);
     macOSPinchZoomDestroy();
+#ifdef __APPLE__
+    /* Restore the previously-installed NSMenu (WinBolo's, when embedded;
+     * empty stub when standalone since the process is exiting). */
+    me_mac_menubar_uninstall();
+#endif
     mapEditorImguiShutdown();
     undoStackClear(&ed->undoStack);
     if (ed->offscreenTex) SDL_DestroyTexture(ed->offscreenTex);

@@ -1175,6 +1175,13 @@
 #define STR_MENU_HIDE_LV                    1257
 #define STR_MENU_QUIT_LV                    1258
 
+/* macOS Map Editor app-menu items — same idea as the Log Viewer trio.
+ * Standalone MapEditor.app shows these; embedded reuses WinBolo's
+ * app menu. About is not wired (no in-app About dialog exists yet)
+ * so STR_MENU_ABOUT_ME has no companion menu item for now. */
+#define STR_MENU_HIDE_ME                    1259
+#define STR_MENU_QUIT_ME                    1260
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821
