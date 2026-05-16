@@ -1565,6 +1565,31 @@ bool gameFrontPreferencesExist(void) {
   return FALSE;
 }
 
+typedef void (*ServerFinisherFn)(void);
+
+static void gameFrontFinishLobbyHost(void) {
+  serverSimSetLobbyEnabled(spServerSim, true);
+  serverSimSetEmptyResetEnabled(spServerSim, true);
+  serverSimEnterLobby(spServerSim);
+  serverSimSetHasPassword(spServerSim, (password[0] != '\0'));
+  isServer = TRUE;
+  spServerSimActive = TRUE;
+  spServerHosted = TRUE;
+}
+
+static bool gameFrontStartServerSim(ServerSim *sim,
+                                    const ServerInstanceConfig *cfg,
+                                    ServerFinisherFn finisher) {
+  if (!serverInstanceStartup(sim, cfg)) return false;
+  finisher();
+  hostedServerTimerID = SDL_AddTimer(SERVER_TICK_LENGTH, hostedServerTimerCb, NULL);
+  if (hostedServerTimerID == 0) {
+    serverInstanceShutdown(sim);
+    return false;
+  }
+  return true;
+}
+
 bool gameFrontSetupServer(void) {
   ServerInstanceConfig cfg;
 
@@ -1598,11 +1623,6 @@ bool gameFrontSetupServer(void) {
   if (spServerSim == NULL) {
     return FALSE;
   }
-
-  serverSimSetLobbyEnabled(spServerSim, true);
-  serverSimSetEmptyResetEnabled(spServerSim, true);
-  serverSimEnterLobby(spServerSim);
-  serverSimSetHasPassword(spServerSim, (password[0] != '\0'));
 
   /* Add bot brains for local game if AI is enabled */
   if (!serverSimBotPoolInit(0)) {
@@ -1638,23 +1658,11 @@ bool gameFrontSetupServer(void) {
   cfg.useNatKeepalive     = gameFrontUseNatTraversal;
   cfg.useNatPortmap       = gameFrontUseUpnp;
 
-  if (!serverInstanceStartup(spServerSim, &cfg)) {
+  if (!gameFrontStartServerSim(spServerSim, &cfg, gameFrontFinishLobbyHost)) {
     serverSimDestroy(spServerSim);
     spServerSim = NULL;
     return FALSE;
   }
-
-  hostedServerTimerID = SDL_AddTimer(SERVER_TICK_LENGTH, hostedServerTimerCb, NULL);
-  if (hostedServerTimerID == 0) {
-    serverInstanceShutdown(spServerSim);
-    serverSimDestroy(spServerSim);
-    spServerSim = NULL;
-    return FALSE;
-  }
-
-  spServerSimActive = TRUE;
-  spServerHosted = TRUE;
-  isServer = TRUE;
   return TRUE;
 }
 
