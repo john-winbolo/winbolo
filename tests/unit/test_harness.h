@@ -41,6 +41,7 @@
 int run_transport_local_passive_threads(void);
 int run_sp_subscriber_delivery(void);
 int run_sp_input_to_shot_baseline(void);
+int run_sp_shoot_through_timer(void);
 
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map
  * with one player added at slot 0. Caller is responsible for
