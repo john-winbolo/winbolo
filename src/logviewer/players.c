@@ -217,10 +217,10 @@ void lv_playersSetPlayer(BYTE playerNum, char *playerName, char *location, BYTE 
      * the sentence goes around it. */
     MessageArgs args = {0};
     if (plrs.item[playerNum].location[0] == '[') {
-      snprintf(args.string1, sizeof(args.string1), "%s %s",
+      snprintf(args.string1, sizeof(args.string1), "%.31s %.31s",
                plrs.item[playerNum].playerName, plrs.item[playerNum].location);
     } else {
-      snprintf(args.string1, sizeof(args.string1), "%s@%s",
+      snprintf(args.string1, sizeof(args.string1), "%.31s@%.31s",
                plrs.item[playerNum].playerName, plrs.item[playerNum].location);
     }
     lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_HAS_JOINED, &args);

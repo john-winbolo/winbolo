@@ -660,12 +660,6 @@ static void meBresenhamLine(int x0, int y0, int x1, int y1,
     }
 }
 
-/* Callback: paint a tile with the active terrain (undo-aware) */
-static void mePaintTileCallback(int x, int y, void *ud) {
-    MapEditorState *ed = (MapEditorState *)ud;
-    meSetTile(ed, x, y, meEffectiveTerrainAt(ed, x, y));
-}
-
 /* Paint a brush-sized stamp centered on (cx, cy). */
 static void meBrushStamp(MapEditorState *ed, int cx, int cy) {
     int size = ME_BRUSH_SIZES[ed->brushSize];
@@ -2914,20 +2908,26 @@ static void meCenterMapContents(MapEditorState *ed) {
     /* Include objects in bounding box */
     for (int i = 0; i < ed->pb->numPills; i++) {
         int x = ed->pb->item[i].x, y = ed->pb->item[i].y;
-        if (x < minX) minX = x; if (y < minY) minY = y;
-        if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
         found = true;
     }
     for (int i = 0; i < ed->bs->numBases; i++) {
         int x = ed->bs->item[i].x, y = ed->bs->item[i].y;
-        if (x < minX) minX = x; if (y < minY) minY = y;
-        if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
         found = true;
     }
     for (int i = 0; i < ed->ss->numStarts; i++) {
         int x = ed->ss->item[i].x, y = ed->ss->item[i].y;
-        if (x < minX) minX = x; if (y < minY) minY = y;
-        if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
         found = true;
     }
 
