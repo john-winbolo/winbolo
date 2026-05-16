@@ -1095,7 +1095,7 @@ static void generateRandomPreview(MapChooserState *state, SDL_Renderer *renderer
     int   compressedLen = 0;
     MapPreview *view = NULL;
     if (buf) {
-        view = mapEditorGenerateAsPreview(&state->genConfig, buf, 256 * 1024, &compressedLen);
+        view = mapGenRunAsPreview(&state->genConfig, buf, 256 * 1024, &compressedLen);
     }
 
     /* Build preview texture */

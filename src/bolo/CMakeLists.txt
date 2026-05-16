@@ -23,6 +23,7 @@ add_library(bolo_static STATIC
     bot_manager.c
     bot_worker_pool.c
     brain_data.c
+    brain_list.c
     brain_overlay.c
     brain_pathfinder.c
     brain_pathfinder_serial.c
@@ -49,6 +50,7 @@ add_library(bolo_static STATIC
     interpolation.c
     labels.c
     lgm.c
+    lobby_bot_pools.c
     log.c
     mapgen.c
     mapgen_maze.c

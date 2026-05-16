@@ -115,6 +115,14 @@ typedef struct {
  * libplum's worker thread. */
 void serverInstanceGetPortmapInfo(ServerPortmapInfo *out);
 
+/* Whether the running server instance is firing NAT-keepalive "punch"
+ * packets at the public tracker (i.e. the equivalent of NOT passing
+ * -no-natpunch). FALSE when no instance is running, when keepalive is
+ * disabled via gameFront / CLI override, or when the tracker itself
+ * is off. Read by the lobby UI so it can hide the "Checking server
+ * reachability..." badge for LAN hosts and other no-punch configs. */
+bool serverInstanceIsNatPunchActive(void);
+
 /* Called from the recv path when a PACKET_PUNCH_PROBE_REPLY arrives.
  * The reflexive address is what the tracker sees as our external
  * IP:port — used to detect symmetric NAT and confirm bidirectional
