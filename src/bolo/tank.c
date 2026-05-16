@@ -413,13 +413,10 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
   BYTE bmx;                   /* Map x and y co-ords as bytes */
   BYTE bmy;
 
-  /* Tutorial freeze: while a tutorial dialog is up the client has set
-   * tutorialServerPaused, so skip all server-side physics. The
-   * unmodified tick state is then replayed to the client in snapshots,
-   * keeping everything (tank, shells, timers via tankUpdate) stationary
-   * until the dialog closes. Client-side (prediction) still runs so
-   * the UI stays responsive. */
-  if (isServer && tutorialServerPaused) {
+  /* Pause gate: freezes tank movement plus the shell, mine and timer
+   * work that ticks through tankUpdate so the world holds still while
+   * a tutorial dialog is up. */
+  if (sim->paused) {
     return;
   }
 

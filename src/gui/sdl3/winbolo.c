@@ -1650,7 +1650,10 @@ bool frontEndTutorial(BYTE pos) {
   doingTutorial = TRUE;
   /* Freeze the server sim's tankUpdate before we release the mutex so
    * the tank doesn't drift forward while the modal is up. */
-  tutorialServerPaused = TRUE;
+  {
+    ServerSim *srv = gameFrontGetServerSim();
+    if (srv) serverSimSetPaused(srv, TRUE);
+  }
   clientMutexRelease();
   for (i = 0; i < TUTORIAL_MAX_MSGS; i++) {
     uint16_t mid = tutorialSteps[tutorialStepIdx].msgs[i];
@@ -1676,7 +1679,10 @@ bool frontEndTutorial(BYTE pos) {
     gameFrontSetShowTutorialButton(false);
   }
   clientMutexWaitFor();
-  tutorialServerPaused = FALSE;
+  {
+    ServerSim *srv = gameFrontGetServerSim();
+    if (srv) serverSimSetPaused(srv, FALSE);
+  }
   doingTutorial = FALSE;
   oldTick = SDL_GetTicks();
   ttick = oldTick;
