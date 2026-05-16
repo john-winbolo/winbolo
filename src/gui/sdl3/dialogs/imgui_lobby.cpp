@@ -734,31 +734,83 @@ static void lobbyServerMapsOnFolderJump(MapChooserState *state,
 static bool lobbyServerMapsGeneratePreview(const char *entryPath,
                                             MapPreviewPixels *outBuf,
                                             void *ctx) {
-    (void)outBuf; (void)ctx;
-    /* TODO: server-side preview generation. The Server Maps tab
-     * must NOT side-step the server even in SP-host mode — the
-     * server might be on the other side of the world in MP, and
-     * the architecture should be the same in both cases.
-     *
-     * Planned flow:
-     *   1. Client sends PACKET_LOBBY_MAP_PREVIEW_REQ{relPath}.
-     *   2. Server has its own data/preview_cache/<hash>.png mirror
-     *      keyed by relPath + mtime. If the PNG exists, send it.
-     *   3. Cache miss: server reads the .map, runs the same
-     *      minimapRenderPixels rasterizer the client uses, writes
-     *      the PNG, sends it.
-     *   4. Server -> client: PACKET_LOBBY_MAP_PREVIEW_DONE{relPath,
-     *      png_bytes}.
-     *   5. Provider's generatePreview here just queues the request
-     *      (via clientSim) and returns false the first time; on the
-     *      response arrival the cached entry is invalidated so the
-     *      next render-frame retries and finds the bytes.
-     *
-     * Until that's wired, mark every request Failed so we don't
-     * spam the queue. */
+    if (!entryPath || !*entryPath || !outBuf) return false;
+    ClientSim *cs = (ClientSim *)ctx;
+
+    /* The server is authoritative for what bytes a map file
+     * contains, even when "server" == in-process serverSim. In
+     * SP-host we ask the local serverSim for the bytes (it's the
+     * one with the path-safety checks); in MP we'd send a
+     * PACKET_LOBBY_MAP_PREVIEW_REQ packet. Either way the bytes
+     * round-trip through the server API rather than the chooser
+     * fs-walking the local data/maps/ directly — that way one
+     * day a remote server with a different map library can swap
+     * in transparently. The actual rasterisation happens on the
+     * client (no server-side renderer dep). */
+
+    /* entryPath comes in as "data/maps/<rel>" — the chooser keys
+     * by that string for cache identity. Strip the prefix to get
+     * the relPath the server API expects. */
+    const char *relPath = entryPath;
+    static const char kPrefix[] = "data/maps/";
+    if (SDL_strncmp(entryPath, kPrefix, sizeof(kPrefix) - 1) == 0) {
+        relPath += sizeof(kPrefix) - 1;
+    }
+
+    /* Any time we have a local ServerSim (SP, or host running the
+     * UI), short-circuit through its API — matches the pattern
+     * lobbyServerMapsListProvider uses. Pure network clients fall
+     * through to the MP path below. */
+    ServerSim *sim = gameFrontGetServerSim();
+    if (sim) {
+        uint8_t *mapBytes = NULL;
+        size_t   mapLen   = 0;
+        if (!serverSimReadMapFile(sim, relPath, &mapBytes, &mapLen)) {
+            return false;
+        }
+        /* clientMapPreviewLoadFromBuffer expects the runtime
+         * compressed format (basesCompressData + lzw-encoded map
+         * tiles); we have the raw BMAPBOLO file bytes. mapRead is
+         * the right parser, and it only knows how to read from a
+         * FILE*, so spill the bytes to a worker-private temp file
+         * and call clientMapPreviewLoadFromFile. The worker is
+         * single-threaded, so one well-known temp name is safe. */
+        const char *tmpPath = "data/preview_cache/.sm_tmp_load.map";
+        SDL_CreateDirectory("data/preview_cache");
+        FILE *fp = fopen(tmpPath, "wb");
+        if (!fp) { free(mapBytes); return false; }
+        size_t wrote = fwrite(mapBytes, 1, mapLen, fp);
+        fclose(fp);
+        free(mapBytes);
+        if (wrote != mapLen) {
+            SDL_RemovePath(tmpPath);
+            return false;
+        }
+        MapPreview *mp = clientMapPreviewLoadFromFile(tmpPath);
+        SDL_RemovePath(tmpPath);
+        if (!mp) return false;
+        size_t bufSz = MINIMAP_SIZE * MINIMAP_SIZE * 4;
+        uint8_t *pixels = (uint8_t *)SDL_malloc(bufSz);
+        if (!pixels) {
+            clientMapPreviewDestroy(mp);
+            return false;
+        }
+        minimapRenderPixels(mp, pixels, NULL, 0);
+        clientMapPreviewDestroy(mp);
+        outBuf->w      = MINIMAP_SIZE;
+        outBuf->h      = MINIMAP_SIZE;
+        outBuf->pixels = pixels;
+        return true;
+    }
+
+    /* MP client. The PACKET_LOBBY_MAP_PREVIEW_REQ / BEGIN / CHUNK
+     * packets are defined and the server-side handler is in place
+     * (transport_udp_server.c) — what's still missing is the
+     * client-side transport receive logic that assembles chunks
+     * and invokes mapPreviewCacheDeliverFromMapBytes. Until that
+     * lands, MP clients see no preview on Server Maps. */
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-        "[SM-PREVIEW] stub: server-side preview protocol not wired yet for '%s'",
-        entryPath ? entryPath : "(null)");
+        "[SM-PREVIEW] MP path not yet wired for '%s'", entryPath);
     return false;
 }
 
@@ -826,63 +878,13 @@ static bool lobbyUploadGeneratePreview(const char *entryPath,
                                         MapPreviewPixels *outBuf,
                                         void *ctx) {
     (void)ctx;
-    if (!entryPath || !*entryPath || !outBuf) {
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-            "[UPL-PREVIEW] reject: null/empty path");
-        return false;
-    }
-    /* --- Diagnostic: open the file ourselves first so we can isolate
-     *     fopen failures from map-format failures. Logs errno + a
-     *     hexdump of the first 12 bytes (which should read BMAPBOLO
-     *     + version + counts).  --- */
-    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-        "[UPL-PREVIEW] enter path='%s'", entryPath);
-    FILE *fp = fopen(entryPath, "rb");
-    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-        "[UPL-PREVIEW] fopen='%s' fp=%p errno=%d",
-        entryPath, (void *)fp, errno);
-    if (fp) {
-        unsigned char hdr[12] = {0};
-        size_t r = fread(hdr, 1, sizeof(hdr), fp);
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-            "[UPL-PREVIEW]   first %zu bytes: "
-            "%02x %02x %02x %02x %02x %02x %02x %02x  "
-            "ver=%u pills=%u bases=%u starts=%u",
-            r,
-            hdr[0], hdr[1], hdr[2], hdr[3],
-            hdr[4], hdr[5], hdr[6], hdr[7],
-            hdr[8], hdr[9], hdr[10], hdr[11]);
-        fclose(fp);
-    } else {
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-            "[UPL-PREVIEW]   fopen failed, skipping load");
-        return false;
-    }
-
-    /* Real load via the shared API used by the preview pane. */
+    if (!entryPath || !*entryPath || !outBuf) return false;
     MapPreview *mp = clientMapPreviewLoadFromFile(entryPath);
-    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-        "[UPL-PREVIEW] clientMapPreviewLoadFromFile -> %p", (void *)mp);
-    if (!mp) {
-        /* Retry with backslashes in case the bolo mapRead path
-         * is sensitive to separator style on Windows. */
-#if defined(_WIN32)
-        char winPath[FILENAME_MAX];
-        SDL_strlcpy(winPath, entryPath, sizeof(winPath));
-        for (char *p = winPath; *p; p++) if (*p == '/') *p = '\\';
-        mp = clientMapPreviewLoadFromFile(winPath);
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-            "[UPL-PREVIEW] retry winPath='%s' -> %p",
-            winPath, (void *)mp);
-#endif
-        if (!mp) return false;
-    }
+    if (!mp) return false;
     size_t bufSz = MINIMAP_SIZE * MINIMAP_SIZE * 4;
     uint8_t *pixels = (uint8_t *)SDL_malloc(bufSz);
     if (!pixels) {
         clientMapPreviewDestroy(mp);
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-            "[UPL-PREVIEW] SDL_malloc failed");
         return false;
     }
     minimapRenderPixels(mp, pixels, NULL, 0);
@@ -890,9 +892,6 @@ static bool lobbyUploadGeneratePreview(const char *entryPath,
     outBuf->w      = MINIMAP_SIZE;
     outBuf->h      = MINIMAP_SIZE;
     outBuf->pixels = pixels;
-    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-        "[UPL-PREVIEW] OK path='%s' w=%d h=%d",
-        entryPath, outBuf->w, outBuf->h);
     return true;
 }
 
@@ -1955,13 +1954,9 @@ static bool lobbyWbnGeneratePreview(const char *entryPath,
                                      MapPreviewPixels *outBuf,
                                      void *ctx) {
     (void)ctx;
-    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-        "[WBN-PREVIEW] enter path='%s'", entryPath ? entryPath : "(null)");
     if (!entryPath || !outBuf) return false;
     static const char kPrefix[] = "wbn:";
     if (SDL_strncmp(entryPath, kPrefix, sizeof(kPrefix) - 1) != 0) {
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-            "[WBN-PREVIEW]   not a wbn: key, skipping");
         return false;
     }
     int mapId = SDL_atoi(entryPath + sizeof(kPrefix) - 1);

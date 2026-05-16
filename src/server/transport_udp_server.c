@@ -3744,6 +3744,90 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             udpSendTo(udpServer.sock, rsp, wpos, fromAddr);
             break;
         }
+        case PACKET_LOBBY_MAP_PREVIEW_REQ: {
+            /* [header 8] [pathLen 1] [path N]. Reads data/maps/<path>
+             * from the server's filesystem and streams the bytes back
+             * in chunks. Client rasterises locally — server has no
+             * dep on a renderer or image encoder, and the protocol
+             * is the same shape in SP-host (loopback) and MP. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                len < PACKET_HEADER_SIZE + 1) break;
+            int rpos = PACKET_HEADER_SIZE;
+            uint8_t pathLen = buf[rpos++];
+            if (pathLen == 0 || pathLen > 255 ||
+                rpos + pathLen > len) break;
+            char relPath[256];
+            memset(relPath, 0, sizeof(relPath));
+            memcpy(relPath, buf + rpos, pathLen);
+
+            uint8_t *mapBytes = NULL;
+            size_t   mapLen   = 0;
+            bool ok = serverSimReadMapFile(sim, relPath,
+                                            &mapBytes, &mapLen);
+            if (!ok) {
+                uint8_t err[PACKET_HEADER_SIZE + 1 + 256 + 1];
+                packHeader(err, PACKET_LOBBY_MAP_PREVIEW_ERR, 0);
+                int wpos = PACKET_HEADER_SIZE;
+                err[wpos++] = pathLen;
+                memcpy(err + wpos, relPath, pathLen);
+                wpos += pathLen;
+                err[wpos++] = 1;  /* not-found / unreadable */
+                udpSendTo(udpServer.sock, err, wpos, fromAddr);
+                break;
+            }
+
+            /* Monotonic per-(client) sequence so the receiver can
+             * tell stale chunks from a prior request for the same
+             * path apart from current ones. udpServer is a single
+             * global so a process-wide counter is fine; collisions
+             * across long sessions wrap around harmlessly. */
+            static uint8_t s_previewSeq = 0;
+            uint8_t seq = ++s_previewSeq;
+
+            /* BEGIN announces the total transfer size + the seq
+             * id. Sent first; chunks reference seq + offset. */
+            {
+                uint8_t hdr[PACKET_HEADER_SIZE + 1 + 256 + 1 + 4];
+                packHeader(hdr, PACKET_LOBBY_MAP_PREVIEW_BEGIN, 0);
+                int wpos = PACKET_HEADER_SIZE;
+                hdr[wpos++] = pathLen;
+                memcpy(hdr + wpos, relPath, pathLen);
+                wpos += pathLen;
+                hdr[wpos++] = seq;
+                uint32_t total = (uint32_t)mapLen;
+                hdr[wpos++] = (uint8_t)((total >> 24) & 0xFF);
+                hdr[wpos++] = (uint8_t)((total >> 16) & 0xFF);
+                hdr[wpos++] = (uint8_t)((total >>  8) & 0xFF);
+                hdr[wpos++] = (uint8_t)( total        & 0xFF);
+                udpSendTo(udpServer.sock, hdr, wpos, fromAddr);
+            }
+
+            /* Stream chunks. ~1200 bytes per chunk keeps each UDP
+             * datagram comfortably under the typical 1400-byte
+             * Ethernet MTU after header / IP / UDP overhead. */
+            const size_t kChunkBytes = 1200;
+            uint8_t chunk[PACKET_HEADER_SIZE + 1 + 4 + 2 + 1200];
+            for (size_t off = 0; off < mapLen; off += kChunkBytes) {
+                size_t n = mapLen - off;
+                if (n > kChunkBytes) n = kChunkBytes;
+                packHeader(chunk, PACKET_LOBBY_MAP_PREVIEW_CHUNK, 0);
+                int wpos = PACKET_HEADER_SIZE;
+                chunk[wpos++] = seq;
+                uint32_t o = (uint32_t)off;
+                chunk[wpos++] = (uint8_t)((o >> 24) & 0xFF);
+                chunk[wpos++] = (uint8_t)((o >> 16) & 0xFF);
+                chunk[wpos++] = (uint8_t)((o >>  8) & 0xFF);
+                chunk[wpos++] = (uint8_t)( o        & 0xFF);
+                chunk[wpos++] = (uint8_t)((n >>  8) & 0xFF);
+                chunk[wpos++] = (uint8_t)( n        & 0xFF);
+                memcpy(chunk + wpos, mapBytes + off, n);
+                wpos += (int)n;
+                udpSendTo(udpServer.sock, chunk, wpos, fromAddr);
+            }
+            free(mapBytes);
+            break;
+        }
         case PACKET_LOBBY_MAP_UPLOAD_BEGIN: {
             /* [header 8] [totalLen 4] [nameLen 1] [name N] — only host
              * / admin / openHost may push files. Server validates the

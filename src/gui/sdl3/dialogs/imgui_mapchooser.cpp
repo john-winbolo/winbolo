@@ -202,23 +202,12 @@ static void workerThreadMain(void) {
             gRequestQueue.pop_front();
         }
 
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-            "[PREVIEW-WORKER] >>> key='%s' gen=%p ctx=%p",
-            req.key.c_str(),
-            (void *)(uintptr_t)req.provider.generatePreview,
-            req.provider.ctx);
         bool ok = false;
         MapPreviewPixels buf = {0, 0, nullptr};
         if (req.provider.generatePreview) {
             ok = req.provider.generatePreview(req.key.c_str(), &buf,
                                               req.provider.ctx);
-        } else {
-            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                "[PREVIEW-WORKER]     NO GEN HOOK — skipping");
         }
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-            "[PREVIEW-WORKER] <<< key='%s' ok=%d w=%d h=%d pixels=%p",
-            req.key.c_str(), (int)ok, buf.w, buf.h, (void *)buf.pixels);
         if (ok && buf.pixels && buf.w > 0 && buf.h > 0) {
             writeCachePng(req.cacheFile, buf);
             SDL_free(buf.pixels);
@@ -288,19 +277,6 @@ static SDL_Texture *mapPreviewCacheGet(SDL_Renderer *renderer,
         std::lock_guard<std::mutex> lk(gCacheMutex);
         auto it = gCache.find(k);
         if (it != gCache.end()) {
-            /* Throttled log so frame-loop spam stays sane; one line
-             * per second per (key, state) is plenty to see the flow. */
-            static int s_hitTick = 0;
-            if (++s_hitTick % 60 == 1) {
-                const char *stateName =
-                    it->second.state == PrevReady     ? "READY"     :
-                    it->second.state == PrevInFlight  ? "INFLIGHT"  :
-                    it->second.state == PrevFailed    ? "FAILED"    :
-                                                         "?";
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "[CACHE-HIT mem] key='%s' state=%s tex=%p",
-                    key, stateName, (void *)it->second.tex);
-            }
             return it->second.tex;  /* nullptr while InFlight/Failed */
         }
     }
@@ -309,9 +285,6 @@ static SDL_Texture *mapPreviewCacheGet(SDL_Renderer *renderer,
     std::string cacheFile = cachePathFor(provider->cacheScope, key, modTime);
     SDL_Texture *tex = loadCachedTexture(renderer, cacheFile);
     if (tex) {
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-            "[CACHE-HIT disk] key='%s' file='%s' tex=%p",
-            key, cacheFile.c_str(), (void *)tex);
         std::lock_guard<std::mutex> lk(gCacheMutex);
         PreviewEntry e;
         e.state     = PrevReady;
@@ -1966,17 +1939,6 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 }
                 if (rowHovered) {
                     state->lastHoveredIdx = i;
-                    /* Throttled log so we can see WHICH rows fire
-                     * hover and how often — diagnose missed hovers
-                     * vs boundary double-fires. */
-                    static int s_rowHvrTick = 0;
-                    if (++s_rowHvrTick % 30 == 1) {
-                        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                            "[ROW-HOVER] idx=%d name='%s' "
-                            "isFolder=%d isParentUp=%d",
-                            i, ent.name,
-                            (int)ent.isFolder, (int)ent.isParentUp);
-                    }
                     /* Hover tooltip — two cases share one popup:
                      *   - In recursive-search mode, surface the
                      *     enclosing folder so the user can tell hits
@@ -2070,14 +2032,6 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
          * Selectables touching at a pixel boundary both fire
          * IsItemHovered briefly, so we defer the BeginTooltip until
          * after the loop and let the later row win. */
-        {
-            static int s_postHvrTick = 0;
-            if (++s_postHvrTick % 30 == 1) {
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "[POST-LOOP-HOVER] lastHoveredIdx=%d numMaps=%d",
-                    state->lastHoveredIdx, state->numMaps);
-            }
-        }
         if (state->lastHoveredIdx >= 0 &&
             state->lastHoveredIdx < state->numMaps) {
             const MapChooserEntry &ent =
@@ -2094,23 +2048,44 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             bool showTooltip = (searchMode && !ent.isParentUp)
                                || hoverTex != nullptr;
             if (showTooltip) {
+                /* Cap the tooltip body width to roughly the preview
+                 * image's own width + padding so the popup stays
+                 * compact. The breadcrumb wraps to fit. */
+                const float kHoverMaxDim = 256.0f;
+                const float kHoverPopupW = 260.0f;
+                ImGui::SetNextWindowSizeConstraints(
+                    ImVec2(0.0f, 0.0f),
+                    ImVec2(kHoverPopupW, FLT_MAX));
                 ImGui::BeginTooltip();
-                char fullPath[FILENAME_MAX];
-                const char *root = state->crumbsRootLabel;
-                const char *crumbs = ent.crumbsPath;
-                if (root[0] != '\0' && crumbs[0] != '\0') {
-                    SDL_snprintf(fullPath, sizeof(fullPath),
-                                 "%s / %s / %s", root, crumbs, ent.name);
-                } else if (root[0] != '\0') {
-                    SDL_snprintf(fullPath, sizeof(fullPath),
-                                 "%s / %s", root, ent.name);
-                } else if (crumbs[0] != '\0') {
-                    SDL_snprintf(fullPath, sizeof(fullPath),
-                                 "%s / %s", crumbs, ent.name);
+                ImGui::PushTextWrapPos(kHoverPopupW - 8.0f);
+
+                /* Show the breadcrumb path ONLY in search-subfolders
+                 * mode, where the row's enclosing folder isn't
+                 * already implied by the current directory. In a
+                 * normal folder browse it'd just be redundant. */
+                if (searchMode) {
+                    char fullPath[FILENAME_MAX];
+                    const char *root = state->crumbsRootLabel;
+                    const char *crumbs = ent.crumbsPath;
+                    if (root[0] != '\0' && crumbs[0] != '\0') {
+                        SDL_snprintf(fullPath, sizeof(fullPath),
+                                     "%s / %s / %s",
+                                     root, crumbs, ent.name);
+                    } else if (root[0] != '\0') {
+                        SDL_snprintf(fullPath, sizeof(fullPath),
+                                     "%s / %s", root, ent.name);
+                    } else if (crumbs[0] != '\0') {
+                        SDL_snprintf(fullPath, sizeof(fullPath),
+                                     "%s / %s", crumbs, ent.name);
+                    } else {
+                        SDL_strlcpy(fullPath, ent.name, sizeof(fullPath));
+                    }
+                    ImGui::TextWrapped("%s", fullPath);
                 } else {
-                    SDL_strlcpy(fullPath, ent.name, sizeof(fullPath));
+                    /* Outside of search, just the bare name — the
+                     * preview image makes the row identifiable. */
+                    ImGui::TextWrapped("%s", ent.name);
                 }
-                ImGui::TextUnformatted(fullPath);
                 if (ent.modTime > 0) {
                     SDL_DateTime dt;
                     if (SDL_TimeToDateTime((SDL_Time)ent.modTime,
@@ -2124,15 +2099,15 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 if (hoverTex) {
                     float texW = 0.0f, texH = 0.0f;
                     SDL_GetTextureSize(hoverTex, &texW, &texH);
-                    const float kHoverMax = 512.0f;
                     float scale = 1.0f;
                     if (texW > 0.0f && texH > 0.0f) {
                         float maxDim = (texW > texH) ? texW : texH;
-                        if (maxDim > kHoverMax) scale = kHoverMax / maxDim;
+                        if (maxDim > kHoverMaxDim) scale = kHoverMaxDim / maxDim;
                     }
                     ImGui::Image((ImTextureID)hoverTex,
                         ImVec2(texW * scale, texH * scale));
                 }
+                ImGui::PopTextWrapPos();
                 ImGui::EndTooltip();
             }
         }
