@@ -2233,6 +2233,63 @@ ServerSim *gameFrontGetServerSim(void) {
   return spServerSimActive ? spServerSim : NULL;
 }
 
+ServerSim *gameFrontGetSinglePlayerServerSim(void) {
+  return spServerSim;
+}
+
+bool gameFrontStartSinglePlayerGame(ClientSim *cs) {
+  BYTE i, j;
+  if (cs == NULL || spServerSim == NULL) return FALSE;
+  if (serverSimGetState(spServerSim) != serverStateLobby) return FALSE;
+
+  /* Apply team alliances on both sims AND publish them through the
+   * control-event dispatcher so every subscribed in-process bot also
+   * learns about the alliance — without the publish the bot's
+   * cs->sim.plyrs has no alliance bits set and the brain happily
+   * shoots its teammates. Mirrors the serverSimStartGame loop in the
+   * multiplayer path; we just skip the resetGameWorld dance because
+   * the world is already fresh from gameFrontEnterSinglePlayerLobby.
+   * serverSimStartGameInPlace does the team-alliance reapply + tank
+   * creation + state transition + Layout A autoLock in one call;
+   * client-side alliance state arrives through the
+   * serverSimRegisterClientSubscriber wire-up set up at lobby entry. */
+  serverSimStartGameInPlace(spServerSim);
+
+  /* Sync tank state from the first running-state snapshot so the
+   * client view picks up the freshly created tanks. */
+  {
+    SnapshotHeader snapHdr;
+    TankSnapshot snapTanks[MAX_TANKS];
+    ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
+    TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
+    BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
+    PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
+    GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
+    serverSimBuildSnapshot(spServerSim, 0, &snapHdr,
+                           snapTanks, MAX_TANKS,
+                           snapShells, MAX_SNAPSHOT_SHELLS,
+                           snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
+                           snapBases, MAX_SNAPSHOT_BASES,
+                           snapPills, MAX_SNAPSHOT_PILLS,
+                           snapEvents, MAX_SNAPSHOT_EVENTS,
+                           false);
+    clientSimSyncFromSnapshot(cs, &snapHdr, snapTanks, snapHdr.tankCount,
+                              snapShells, snapHdr.shellCount,
+                              snapTkExplosions, snapHdr.tkExplosionCount,
+                              snapBases, snapHdr.baseCount,
+                              snapPills, snapHdr.pillCount,
+                              snapEvents, snapHdr.reliableEventCount, 0);
+  }
+  clientSimNetSetupTankGo(cs);
+
+  /* Flip lobby flags so winbolo.c's main loop exits the lobby on
+   * the next iteration and hands off to the in-game loop. */
+  clientSimSetInLobby(cs, false);
+  clientSimSetNetStatus(cs, netRunning);
+  gameFrontUpdateSteamPresence(cs);
+  return TRUE;
+}
+
 BYTE gameFrontGetPlayerNum(void) {
   if (udpTransportActive) return udpPlayerNum;
   return 0;
