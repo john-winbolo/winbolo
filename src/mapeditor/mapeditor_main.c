@@ -19,6 +19,7 @@
 #include <time.h>
 
 #include "../common/wb_log.h"
+#include "../server/threads.h"
 #ifdef _WIN32
 #include <process.h>
 #define getpid _getpid
@@ -88,6 +89,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    threadsCreate(FALSE);
+
     /* Create window */
     SDL_Window *window = SDL_CreateWindow("WinBolo Map Editor",
                                           DEFAULT_WINDOW_W, DEFAULT_WINDOW_H,
@@ -123,6 +126,7 @@ int main(int argc, char *argv[]) {
     TTF_Quit();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+    threadsDestroy();
     SDL_Quit();
     return 0;
 }

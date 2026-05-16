@@ -1888,7 +1888,7 @@ else()
     target_compile_options(BrainTest PRIVATE -fcommon)
 endif()
 
-target_link_libraries(BrainTest PRIVATE bolo_static server_sim_static bot_brains_static)
+target_link_libraries(BrainTest PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(BrainTest PRIVATE
     SDL3::SDL3 minizip lua_static
     nanosvg stb_image utf8proc cjson
@@ -1972,7 +1972,7 @@ else()
     target_compile_options(MapEditor PRIVATE -fcommon)
 endif()
 
-target_link_libraries(MapEditor PRIVATE bolo_static server_sim_static bot_brains_static)
+target_link_libraries(MapEditor PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(MapEditor PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
     nanosvg stb_image utf8proc
