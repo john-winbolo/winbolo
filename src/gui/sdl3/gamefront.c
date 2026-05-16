@@ -2099,15 +2099,27 @@ void gameFrontFlushWindowSettings(void) {
   s_windowSettingsDirty = false;
 }
 
+/* Throttle state shared with gameFrontPumpDirty: the pump is the consume
+ * point for s_windowSettingsDirty, so the last drag/resize burst doesn't
+ * get silently dropped when its events fall inside the 500ms window. */
+static Uint64 s_lastWindowWriteTime = 0;
+
 void gameFrontSaveWindowSettings(void) {
-  static Uint64 lastWriteTime = 0;
   Uint64 now = SDL_GetTicks();
-  if (now - lastWriteTime < 500) {
+  if (now - s_lastWindowWriteTime < 500) {
     s_windowSettingsDirty = true;
     return;
   }
   gameFrontFlushWindowSettings();
-  lastWriteTime = now;
+  s_lastWindowWriteTime = now;
+}
+
+void gameFrontPumpDirty(void) {
+  if (!s_windowSettingsDirty) return;
+  Uint64 now = SDL_GetTicks();
+  if (now - s_lastWindowWriteTime < 500) return;
+  gameFrontFlushWindowSettings();
+  s_lastWindowWriteTime = now;
 }
 
 ServerSim *gameFrontGetServerSim(void) {

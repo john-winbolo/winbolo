@@ -411,6 +411,18 @@ void gameFrontPutPrefs(keyItems *keys);
 void gameFrontSaveWindowSettings(void);
 
 /*********************************************************
+*NAME:          gameFrontPumpDirty
+*PURPOSE:
+* Consume point for the debounce dirty flag set by
+* gameFrontSaveWindowSettings. Call once per frame from
+* the main event/render loop — when a window-move/resize
+* burst settles inside the 500ms throttle window, this is
+* what flushes the trailing event so the final position
+* survives. Cheap when nothing is dirty.
+*********************************************************/
+void gameFrontPumpDirty(void);
+
+/*********************************************************
 *NAME:          gameFrontSetRemeber
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/4/99

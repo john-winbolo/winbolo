@@ -2962,6 +2962,12 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
            using SDL_GetRenderLogicalPresentationRect for resizable window support */
         sdl3DrawHandleEvent(cs, &rawEv);
     }
+
+    /* Consume the window-settings dirty flag: the throttle in
+     * gameFrontSaveWindowSettings drops moves/resizes that arrive inside
+     * its 500ms window. Pumping each frame guarantees the trailing
+     * event in a drag burst eventually flushes once idle. */
+    gameFrontPumpDirty();
 }
 
 void sdl3ImguiForwardEvent(const void *event) {
