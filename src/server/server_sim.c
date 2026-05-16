@@ -1110,6 +1110,25 @@ bool serverSimCommitPendingUpload(ServerSim *sim) {
                 }
             }
         }
+        /* Ensure the parent directory exists — WBN downloads land
+         * under "data/maps/Winbolo.net Downloads/" which isn't
+         * shipped, and even Uploads/ may have been removed by a
+         * user. SDL_CreateDirectory is best-effort and idempotent. */
+        {
+            const char *fslash = strrchr(finalPath, '/');
+#if defined(_WIN32)
+            const char *fbslash = strrchr(finalPath, '\\');
+            if (fbslash && (!fslash || fbslash > fslash)) fslash = fbslash;
+#endif
+            if (fslash && fslash != finalPath) {
+                char parentDir[FILENAME_MAX];
+                size_t plen = (size_t)(fslash - finalPath);
+                if (plen >= sizeof(parentDir)) plen = sizeof(parentDir) - 1;
+                memcpy(parentDir, finalPath, plen);
+                parentDir[plen] = '\0';
+                SDL_CreateDirectory(parentDir);
+            }
+        }
         /* SDL doesn't have a rename helper; do copy + delete. */
         FILE *src = fopen(sim->pendingUploadTempPath, "rb");
         FILE *dst = src ? fopen(finalPath, "wb") : NULL;
