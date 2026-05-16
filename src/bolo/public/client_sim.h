@@ -557,6 +557,13 @@ uint8_t     clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs);
 const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs);
 void        clientSimResetLobbyMapUpload(ClientSim *cs);
 
+/* Winbolo.net preview reflection. status: 0=idle, 1=in-flight,
+ * 2=ok, 3=error. errMsg is server-supplied when status == 3. */
+uint8_t     clientSimGetLobbyWbnPreviewStatus(const ClientSim *cs);
+const char *clientSimGetLobbyWbnPreviewErrMsg(const ClientSim *cs);
+void        clientSimSetLobbyWbnPreviewStatus(ClientSim *cs, uint8_t status);
+void        clientSimSetLobbyWbnPreviewErrMsg(ClientSim *cs, const char *msg);
+
 /* Last reject from server (toast pair). Both 0 = no pending message.
  * clientSimClearLobbyLastReject clears both fields atomically after
  * the toast has been rendered. */

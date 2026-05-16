@@ -1271,6 +1271,24 @@ void clientSimResetLobbyMapUpload(ClientSim *cs) {
   cs->lobbyMapUploadFinalPath[0] = '\0';
 }
 
+uint8_t clientSimGetLobbyWbnPreviewStatus(const ClientSim *cs) {
+  return cs ? cs->lobbyWbnPreviewStatus : 0;
+}
+const char *clientSimGetLobbyWbnPreviewErrMsg(const ClientSim *cs) {
+  return cs ? cs->lobbyWbnPreviewErrMsg : "";
+}
+void clientSimSetLobbyWbnPreviewStatus(ClientSim *cs, uint8_t status) {
+  if (!cs) return;
+  cs->lobbyWbnPreviewStatus = status;
+  if (status != 3) cs->lobbyWbnPreviewErrMsg[0] = '\0';
+}
+void clientSimSetLobbyWbnPreviewErrMsg(ClientSim *cs, const char *msg) {
+  if (!cs) return;
+  if (!msg) msg = "";
+  SDL_strlcpy(cs->lobbyWbnPreviewErrMsg, msg,
+              sizeof(cs->lobbyWbnPreviewErrMsg));
+}
+
 uint8_t clientSimGetLobbyLastRejectPacket(const ClientSim *cs)  { return cs->lobbyLastRejectPacket; }
 uint8_t clientSimGetLobbyLastRejectReason(const ClientSim *cs)  { return cs->lobbyLastRejectReason; }
 void    clientSimClearLobbyLastReject(ClientSim *cs) {

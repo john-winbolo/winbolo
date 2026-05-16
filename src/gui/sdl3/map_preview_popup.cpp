@@ -45,6 +45,9 @@ static MapPreviewView  *g_popupView        = NULL;
  * frame via mapPreviewPopupConsumeChangeRequest to know it should
  * open the Choose Map dialog. */
 static bool             g_changeRequested  = false;
+/* Controls whether the "Change" button renders. Lobby sets this
+ * per-frame based on local edit authority (host / admin / openHost). */
+static bool             g_showChangeButton = true;
 
 static void ensureView(void) {
     if (!g_popupView) g_popupView = mapPreviewViewCreate();
@@ -196,24 +199,29 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
         {
             const char *changeLbl = "Change";
             const char *closeLbl  = "Close";
-            float wChange = ImGui::CalcTextSize(changeLbl).x
-                          + ImGui::GetStyle().FramePadding.x * 2.0f;
+            float wChange = g_showChangeButton
+                ? ImGui::CalcTextSize(changeLbl).x
+                  + ImGui::GetStyle().FramePadding.x * 2.0f
+                : 0.0f;
             float wClose  = ImGui::CalcTextSize(closeLbl).x
                           + ImGui::GetStyle().FramePadding.x * 2.0f;
-            float gap     = ImGui::GetStyle().ItemSpacing.x;
+            float gap     = g_showChangeButton
+                ? ImGui::GetStyle().ItemSpacing.x : 0.0f;
             float total   = wChange + gap + wClose;
             float startX  = (ImGui::GetContentRegionAvail().x - total) * 0.5f;
             if (startX > 0.0f) {
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
             }
-            if (ImGui::Button(changeLbl)) {
-                /* Latch the request and close the popup. The lobby's
-                 * frame loop polls mapPreviewPopupConsumeChangeRequest
-                 * and opens its Choose Map dialog on a true return. */
-                g_changeRequested = true;
-                g_popupOpen       = false;
+            if (g_showChangeButton) {
+                if (ImGui::Button(changeLbl)) {
+                    /* Latch the request and close the popup. The lobby's
+                     * frame loop polls mapPreviewPopupConsumeChangeRequest
+                     * and opens its Choose Map dialog on a true return. */
+                    g_changeRequested = true;
+                    g_popupOpen       = false;
+                }
+                ImGui::SameLine();
             }
-            ImGui::SameLine();
             if (ImGui::Button(closeLbl)) {
                 g_popupOpen = false;
             }
@@ -243,6 +251,10 @@ void mapPreviewPopupRefreshOpen(const BYTE *compressedData, int compressedLen) {
     mapPreviewViewLoadCompressedKeepCamera(g_popupView,
                                             compressedData,
                                             compressedLen);
+}
+
+void mapPreviewPopupSetShowChange(bool show) {
+    g_showChangeButton = show;
 }
 
 bool mapPreviewPopupConsumeChangeRequest(void) {

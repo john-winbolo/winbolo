@@ -274,6 +274,14 @@ struct ClientSim {
     uint8_t  lobbyMapUploadRejectCode; /* server's reject byte, if any */
     char     lobbyMapUploadFinalPath[256]; /* server-relative path */
 
+    /* Winbolo.net preview result — driven by
+     * PACKET_LOBBY_PREVIEW_WBN_DONE. status: 0=idle,
+     * 1=in-flight, 2=ok, 3=error. errMsg is the server-supplied
+     * message when status == 3. */
+    uint8_t  lobbyWbnPreviewStatus;
+    char     lobbyWbnPreviewErrMsg[128];
+    char     lobbyWbnPreviewFinalPath[256];
+
     bool     lobbyOpenHost;
     bool     lobbyAutoLockOnGameStart;
     uint16_t lobbyServerLocks;

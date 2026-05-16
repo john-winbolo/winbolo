@@ -430,6 +430,10 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                             * client tell stale replies
                                             * apart from a current one. */
 
+/* IDs 187/188 are reserved (removed PACKET_LOBBY_PREVIEW_WBN /
+ * _DONE pair — WBN map fetch now happens client-side and is
+ * delivered to the server via the regular MAP_UPLOAD protocol). */
+
 /* Setting types used inside SET_SETTING / SETTING_CHG payloads.
  * Forward-compat: receivers must skip unknown types via valueLen. */
 #define LST_GAME_TYPE          1   /* 1 byte enum: open|tournament|strict */

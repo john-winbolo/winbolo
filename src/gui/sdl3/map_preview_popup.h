@@ -77,6 +77,11 @@ void mapPreviewPopupRefreshOpen(const BYTE *compressedData, int compressedLen);
  * latched, so a missed poll is fine — the next call still sees it. */
 bool mapPreviewPopupConsumeChangeRequest(void);
 
+/* When false, the "Change" button is hidden from the popup
+ * footer — for lobby viewers without map-edit authority. Default
+ * is true (legacy behaviour). Set per-frame from the lobby. */
+void mapPreviewPopupSetShowChange(bool show);
+
 /* Call on dialog exit to free all resources. */
 void mapPreviewPopupDestroy(void);
 
