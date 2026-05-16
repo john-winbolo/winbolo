@@ -1081,6 +1081,11 @@ static const LangEntry langTable[] = {
     {1257, "Hide Log Viewer"},
     {1258, "Quit Log Viewer"},
 
+    /* macOS Map Editor app-menu items — surfaced only by the standalone
+     * MapEditor.app via src/mapeditor/platform/mac_menubar.mm. */
+    {1259, "Hide Map Editor"},
+    {1260, "Quit Map Editor"},
+
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
      * time by tutorialResolveText() when uiModeIsTablet() is true. */

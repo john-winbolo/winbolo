@@ -77,6 +77,19 @@ typedef struct {
     bool wantZoomIn;
     bool wantZoomOut;
     bool wantZoomSet;
+    /* Window submenu toggles — set by the macOS NSMenu trampolines. The
+     * in-window ImGui menu mutates *showX directly via ImGui::MenuItem's
+     * bool pointer; that's synchronous and doesn't need a flag. Async
+     * NSMenu callbacks can't safely mutate the editor's bool members
+     * across threads/frames, so they set these flags and mapeditor.c
+     * flips the matching show* boolean once per frame. */
+    bool wantToggleTerrain;
+    bool wantToggleTools;
+    bool wantToggleInspector;
+    bool wantToggleObjects;
+    bool wantToggleOverview;
+    bool wantToggleStats;
+    bool wantToggleStampLibrary;
     int  zoomSetIndex;      /* target zoom step when wantZoomSet is true */
     int  openRecentIndex;   /* -1 = none, else index into recent files */
 } MapEditorMenuAction;
