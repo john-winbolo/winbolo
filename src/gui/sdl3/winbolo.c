@@ -652,26 +652,13 @@ static void windowRunGameTick(ClientSim *cs) {
           clientSimGameTick(cs, &pkt, brainRunning);
           clientMutexRelease();
           clientSimNetSendInput(cs, &pkt);
-          /* Tick bot brains before the sim tick (local game only).
-           * Wall-clock cost feeds dwSysBrain so the System Info "AI Tanks"
-           * line reflects bot processing — brainHandlerRun below only
-           * covers the human's local autopilot. Advance ttick by the same
-           * duration so dwSysGame (computed as SDL_GetTicks() - ttick at
-           * the bottom of the loop) doesn't also count it as sim time.
-           * Skip in network-host mode: hostedServerTimerCb already drives
-           * botManagerTick on the timer thread under threadsMutex. Running
-           * it here too races on the same per-bot Lua state and bInfo
-           * buffers (heap-use-after-free caught by ASan). */
-          if (!gameFrontIsServerHosted()) {
-            ServerSim *serverSim = gameFrontGetServerSim();
-            if (serverSim != NULL && serverSimGetNumBots(serverSim) > 0) {
-              DWORD bttick = SDL_GetTicks();
-              serverSimBotTick(serverSim, clientSimGetAiType(cs));
-              DWORD botDur = SDL_GetTicks() - bttick;
-              dwSysBrain += botDur;
-              ttick += botDur;
-            }
-          }
+          /* Bot brains tick on the server timer thread (hostedServerTimerCb
+           * -> serverInstanceTick -> botManagerTick) for both single-player
+           * and listen-server, under threadsMutex. The System Info "AI
+           * Tanks" line reads wall-clock bot cost from
+           * serverSimGetBotPoolStats().lastBrainPhaseMs (see sdl3imgui.cpp)
+           * rather than dwSysBrain, so there is no main-thread accounting
+           * to do here. */
           clientSimNetTick(cs);
           clientMutexWaitFor();
           clientSimNetSyncSnapshot(cs);
