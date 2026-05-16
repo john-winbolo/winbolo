@@ -1144,3 +1144,10 @@ STR_MENU_MINIMIZE=최소화
 STR_MENU_ZOOM=확대/축소
 STR_MENU_ENTER_FULL_SCREEN=전체 화면 시작
 STR_MENU_BRING_ALL_TO_FRONT=모두 앞으로 가져오기
+
+# macOS Dock menu — welcome-screen actions exposed via the Dock right-click
+STR_MENU_FIND_INTERNET_GAME=인터넷 게임 찾기…
+STR_MENU_FIND_LAN_GAME=LAN 게임 찾기…
+STR_MENU_JOIN_BY_ADDRESS=주소로 참가…
+STR_MENU_OPEN_MAP_EDITOR=맵 에디터 열기
+STR_MENU_OPEN_LOG_VIEWER=로그 뷰어 열기

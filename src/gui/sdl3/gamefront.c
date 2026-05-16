@@ -197,6 +197,18 @@ static char gameFrontLanguageCode[32] = "";
  * settings → tutorial transitions in one menu cycle. */
 static bool gameFrontPlayTutorialRequested = FALSE;
 
+/* Pending state-machine transition posted from outside the welcome
+ * loop (host-OS menus). Read by the welcome dialog at the top of each
+ * poll iteration. Single-threaded: setters and consumers all run on
+ * the main thread (AppKit menu actions land on the same thread the
+ * welcome loop pumps SDL events on), so no atomics are needed. */
+static bool          gameFrontPendingTransitionSet = FALSE;
+static openingStates gameFrontPendingTransition    = openWelcome;
+
+/* TRUE while gameFrontDialogs() is sitting inside welcomeShow(). The
+ * macOS Dock menu reads this to dim items outside the welcome screen. */
+static bool gameFrontAtWelcome = FALSE;
+
 /* Winbolo.net settings */
 char gameFrontWbnToken[FILENAME_MAX];
 char gameFrontWbnTokenExpiry[FILENAME_MAX];
@@ -409,6 +421,17 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
         OKStart = FALSE;
       }
     }
+
+#if defined(__APPLE__) && !defined(BOLO_MOBILE)
+    /* Install only the Dock-icon menu now so it is live during the
+     * welcome screen. The full menu bar comes later via
+     * mac_menubar_install() from sdl3ImguiSetup when a game starts —
+     * pre-game dialogs intentionally have no menu bar of their own. */
+    if (OKStart) {
+      extern void mac_menubar_install_dock_menu(void);
+      mac_menubar_install_dock_menu();
+    }
+#endif
 
     if (soundSetup() == FALSE) {
       /* Sound failure is non-fatal — disable sound */
@@ -630,7 +653,9 @@ static bool gameFrontDialogs(void) {
       break;
     case openWelcome: {
       const DialogBackend *db = dialogBackendGet();
+      gameFrontAtWelcome = TRUE;
       int result = db->welcomeShow();
+      gameFrontAtWelcome = FALSE;
       if (result < 0) {
         done = TRUE;
         userQuit = TRUE;
@@ -1370,6 +1395,22 @@ bool gameFrontConsumePlayTutorialRequest(void) {
   bool was = gameFrontPlayTutorialRequested;
   gameFrontPlayTutorialRequested = FALSE;
   return was;
+}
+
+void gameFrontRequestTransition(openingStates s) {
+  gameFrontPendingTransition    = s;
+  gameFrontPendingTransitionSet = TRUE;
+}
+
+bool gameFrontConsumeRequestedTransition(openingStates *out) {
+  if (!gameFrontPendingTransitionSet) return FALSE;
+  if (out) *out = gameFrontPendingTransition;
+  gameFrontPendingTransitionSet = FALSE;
+  return TRUE;
+}
+
+bool gameFrontIsAtWelcome(void) {
+  return gameFrontAtWelcome;
 }
 
 void gameFrontGetTrackerOptions(char *address, unsigned short *port, bool *enabled) {

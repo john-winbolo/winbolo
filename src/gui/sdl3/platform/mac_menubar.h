@@ -34,6 +34,13 @@ struct MacPlayerSlot {
  * pointer through a separate setter once it is live. */
 void mac_menubar_install(struct SDL_Window *win, void *clientSim);
 
+/* Install only the macOS Dock-icon menu (no main menu-bar items).
+ * Safe to call as soon as NSApp.delegate exists — typically right
+ * after sdl3DrawSetup so the Dock menu is live from the welcome
+ * screen, well before mac_menubar_install() is called from
+ * sdl3ImguiSetup at game start. Idempotent. */
+void mac_menubar_install_dock_menu(void);
+
 /* Update the ClientSim pointer the menubar trampolines route to.
  * Safe to call every frame; the value is stashed verbatim. NULL is
  * acceptable (trampolines that need it will no-op). */
