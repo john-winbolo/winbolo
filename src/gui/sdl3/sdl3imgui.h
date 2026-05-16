@@ -176,6 +176,35 @@ void sdl3ImguiSetTankLabelLen(struct ClientSim *cs, int len);
 void sdl3ImguiCycleDevicePreset(void);
 
 /*********************************************************
+*NAME:          sdl3ImguiStopBrain
+*PURPOSE:
+*  Stop whichever brain (Lua or ONNX) is currently running.
+*  No-op if none is running. Called from the macOS native
+*  Brains > Manual menu item.
+*********************************************************/
+void sdl3ImguiStopBrain(void);
+
+/*********************************************************
+*NAME:          sdl3ImguiStartBrain
+*PURPOSE:
+*  Start the brain at index `idx`. Routes to luaBrainStart()
+*  for Lua brains and mlBrainStartSingleton() for ONNX brains;
+*  also resets the brain-settings descriptor so a re-open of
+*  the Settings dialog rebuilds it for the new brain. No-op
+*  if idx is out of range or the brain has no path.
+*********************************************************/
+void sdl3ImguiStartBrain(int idx, struct ClientSim *cs);
+
+/*********************************************************
+*NAME:          sdl3ImguiShowBrainSettings
+*PURPOSE:
+*  Open the brain-settings dialog. Re-fetches the settings
+*  descriptor so values reflect the currently-running brain.
+*  Called from the macOS native Brains > Settings menu item.
+*********************************************************/
+void sdl3ImguiShowBrainSettings(void);
+
+/*********************************************************
 *NAME:          sdl3ImguiWantsKeyboard
 *PURPOSE:
 *  Returns true when ImGui has an active text input widget

@@ -85,6 +85,17 @@ struct MacMenuState {
      * mac_menubar_refresh() reads `enabled` to swap the slot's NSMenuItem
      * between a numeric "1".."16" placeholder and a rich WBPlayerSlotView. */
     struct MacPlayerSlot players[16];
+    /* Brains submenu — data-driven; item count and names change at runtime.
+     * The Manual entry is always present; the Settings entry is added only
+     * when a Lua brain is running (ONNX has no settings). The parent menu
+     * is enabled-gated on aiActive so the user sees the Brains title even
+     * when the local tank is not an AI. */
+    bool aiActive;             /* clientSimGetAiType(cs) != aiNone — parent enable */
+    bool brainRunning;         /* luaBrainIsRunning() */
+    int  brainRunIdx;          /* luaBrainGetRunningIndex(); -1 if none */
+    int  brainCount;           /* min(luaBrainGetNum(), 16) — snapshot cap */
+    bool brainSettingsShown;   /* brainRunning && !mlBrainSingletonIsRunning() */
+    char brainNames[16][64];   /* first brainCount entries valid; trailing entries undefined */
 };
 
 /* Push the snapshot into the native menu. Walks cached NSMenuItem
