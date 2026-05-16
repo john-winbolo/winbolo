@@ -49,6 +49,7 @@ static void publishLobbyStateAll(struct ServerSim *sim) {
 static char  instanceTrackerAddr[FILENAME_MAX] = "";
 static unsigned short instanceTrackerPort = 0;
 static unsigned short instanceUdpPort = 0;
+static bool  instanceAcceptRemoteClients = FALSE;
 static bool  instanceUseTracker = FALSE;
 static bool  instanceUseWbn = FALSE;
 static bool  instanceUseNatKeepalive = FALSE;
@@ -126,13 +127,17 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   const char *bindAddr = (cfg->bindAddr != NULL) ? cfg->bindAddr : "";
   const char *password = (cfg->password != NULL) ? cfg->password : "";
 
-  if (transportUdpServerCreate(cfg->udpPort, bindAddr, sim,
-                               password, cfg->maxPlayers) == FALSE) {
-    return FALSE;
+  instanceAcceptRemoteClients = cfg->acceptRemoteClients;
+
+  if (cfg->acceptRemoteClients) {
+    if (transportUdpServerCreate(cfg->udpPort, bindAddr, sim,
+                                 password, cfg->maxPlayers) == FALSE) {
+      return FALSE;
+    }
   }
 
-  instanceUseWbn = cfg->useWbn;
-  if (cfg->useWbn) {
+  instanceUseWbn = cfg->acceptRemoteClients && cfg->useWbn;
+  if (instanceUseWbn) {
     winbolonetCreateServer(sim->mapName, cfg->udpPort,
                            (BYTE)gameTypeGet(&sim->sim.game),
                            cfg->compTanks,
@@ -148,22 +153,29 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
     }
   }
 
-  instanceUseTracker = cfg->useTracker;
-  if (cfg->useTracker && cfg->trackerAddr != NULL) {
-    strncpy(instanceTrackerAddr, cfg->trackerAddr, FILENAME_MAX - 1);
-    instanceTrackerAddr[FILENAME_MAX - 1] = '\0';
+  if (cfg->acceptRemoteClients) {
+    instanceUseTracker = cfg->useTracker;
+    if (cfg->useTracker && cfg->trackerAddr != NULL) {
+      strncpy(instanceTrackerAddr, cfg->trackerAddr, FILENAME_MAX - 1);
+      instanceTrackerAddr[FILENAME_MAX - 1] = '\0';
+    } else {
+      instanceTrackerAddr[0] = '\0';
+    }
+    instanceTrackerPort = cfg->trackerPort;
+    instanceUseNatKeepalive = cfg->useNatKeepalive;
   } else {
+    instanceUseTracker = FALSE;
     instanceTrackerAddr[0] = '\0';
+    instanceTrackerPort = 0;
+    instanceUseNatKeepalive = FALSE;
   }
-  instanceTrackerPort = cfg->trackerPort;
-  instanceUseNatKeepalive = cfg->useNatKeepalive;
   instanceUdpPort = cfg->udpPort;
 
   trackerTime = 5500;
   wbnTime = 0;
   natKeepaliveTime = 0;
 
-  instanceUseNatPortmap = cfg->useNatPortmap;
+  instanceUseNatPortmap = cfg->acceptRemoteClients && cfg->useNatPortmap;
   memset(&instancePortMap, 0, sizeof(instancePortMap));
   natPortmapWaitTicks = 0;
   natPortmapNotified  = FALSE;
@@ -176,7 +188,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   probeReflexivePort   = 0;
   manualProbeState     = MANUAL_PROBE_IDLE;
   manualProbeWaitTicks = 0;
-  if (cfg->useNatPortmap) {
+  if (instanceUseNatPortmap) {
     natPortMapRequest(cfg->udpPort, &instancePortMap);
   }
   return TRUE;
@@ -246,7 +258,9 @@ void serverInstanceTick(ServerSim *sim) {
         }
       }
       if (sim->state == serverStateRunning) {
-        transportUdpServerDrainEvents(sim);
+        if (instanceAcceptRemoteClients) {
+          transportUdpServerDrainEvents(sim);
+        }
       }
     }
     if (sim->state == serverStateRunning) {
@@ -287,7 +301,9 @@ void serverInstanceTick(ServerSim *sim) {
         }
       }
       if (sim->state == serverStateRunning) {
-        transportUdpServerDrainEvents(sim);
+        if (instanceAcceptRemoteClients) {
+          transportUdpServerDrainEvents(sim);
+        }
         /* Prepend tick 1's events before tick 2's events */
         if (savedCount > 0 && savedCount + sim->eventCount <= MAX_SNAPSHOT_EVENTS) {
           memmove(sim->events + savedCount, sim->events,
@@ -304,7 +320,9 @@ void serverInstanceTick(ServerSim *sim) {
     serverLifecycleRecordSimMs(simMs);
     /* Send snapshots only if still running */
     if (sim->state == serverStateRunning) {
-      transportUdpServerSend(sim);
+      if (instanceAcceptRemoteClients) {
+        transportUdpServerSend(sim);
+      }
     }
   } else {
     /* Lobby/countdown/gameover: single tick for state machine processing */
@@ -550,8 +568,11 @@ void serverInstanceShutdown(ServerSim *sim) {
   if (instanceUseWbn) {
     winbolonetDestroy(TRUE);
   }
-  transportUdpServerDestroy();
+  if (instanceAcceptRemoteClients) {
+    transportUdpServerDestroy();
+  }
   botManagerDestroy(sim);
+  instanceAcceptRemoteClients = FALSE;
   instanceUseWbn = FALSE;
   instanceUseTracker = FALSE;
   instanceUseNatKeepalive = FALSE;

@@ -1625,17 +1625,18 @@ bool gameFrontSetupServer(void) {
   }
 
   memset(&cfg, 0, sizeof(cfg));
-  cfg.udpPort         = gameFrontMyUdp;
-  cfg.bindAddr        = "";
-  cfg.password        = password;
-  cfg.maxPlayers      = MAX_TANKS;
-  cfg.useWbn          = gameFrontWbnUse;
-  cfg.compTanks       = (BYTE)compTanks;
-  cfg.useTracker      = gameFrontTrackerEnabled;
-  cfg.trackerAddr     = gameFrontTrackerAddr;
-  cfg.trackerPort     = gameFrontTrackerPort;
-  cfg.useNatKeepalive = gameFrontUseNatTraversal;
-  cfg.useNatPortmap   = gameFrontUseUpnp;
+  cfg.udpPort             = gameFrontMyUdp;
+  cfg.bindAddr            = "";
+  cfg.password            = password;
+  cfg.maxPlayers          = MAX_TANKS;
+  cfg.acceptRemoteClients = true;
+  cfg.useWbn              = gameFrontWbnUse;
+  cfg.compTanks           = (BYTE)compTanks;
+  cfg.useTracker          = gameFrontTrackerEnabled;
+  cfg.trackerAddr         = gameFrontTrackerAddr;
+  cfg.trackerPort         = gameFrontTrackerPort;
+  cfg.useNatKeepalive     = gameFrontUseNatTraversal;
+  cfg.useNatPortmap       = gameFrontUseUpnp;
 
   if (!serverInstanceStartup(spServerSim, &cfg)) {
     serverSimDestroy(spServerSim);
