@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 #include <pwd.h>
 #include <unistd.h>
 #include "global.h"
@@ -113,8 +114,13 @@ DWORD GetPrivateProfileString(const char *section, const char *key,
     if (line[0] == '[') {
       char *end = strchr(line + 1, ']');
       if (end) {
-        *end = '\0';
-        strncpy(curSection, line + 1, sizeof(curSection) - 1);
+        /* Bounded copy + explicit NUL: strncpy(... sizeof-1) leaves
+         * curSection un-terminated when the section name reaches its
+         * cap, which would make the next strcmp read past the buffer. */
+        size_t slen = (size_t)(end - (line + 1));
+        if (slen >= sizeof(curSection)) slen = sizeof(curSection) - 1;
+        memcpy(curSection, line + 1, slen);
+        curSection[slen] = '\0';
       }
       continue;
     }
@@ -135,6 +141,21 @@ DWORD GetPrivateProfileString(const char *section, const char *key,
   strncpy(out, defaultVal ? defaultVal : "", outSize - 1);
   out[outSize - 1] = '\0';
   return (DWORD)strlen(out);
+}
+
+/* Reject any byte that would let a value spill out of its own
+ * key=value line on read-back. Win32's INI API has the same
+ * constraint in practice. Used in WritePrivateProfileString so a
+ * value sourced from the network (WBN auth token, winbolo:// URL
+ * fields) can't inject synthetic keys or section headers. */
+static int hasIniMetachars(const char *s, int rejectEquals, int rejectBrackets) {
+  if (!s) return 0;
+  for (; *s; s++) {
+    if (*s == '\n' || *s == '\r') return 1;
+    if (rejectEquals && *s == '=') return 1;
+    if (rejectBrackets && (*s == '[' || *s == ']')) return 1;
+  }
+  return 0;
 }
 
 /* Free a dynamic line array. */
@@ -181,6 +202,19 @@ int WritePrivateProfileString(const char *section, const char *key,
   int sectionFound = 0;
   int keyFound = 0;
   int i;
+
+  if (!section || !key || !filePath) return 0;
+  /* Win32 treats value=NULL as "delete this key". We do not implement
+   * deletion (no caller needs it); treat NULL as the empty string so we
+   * never strlen(NULL). */
+  if (!value) value = "";
+
+  /* Reject control bytes that would let untrusted values break out of
+   * their own key=value line. Section/key are normally compile-time
+   * literals; value carries network-sourced data (WBN token, URL fields). */
+  if (hasIniMetachars(section, 0, 1)) return 0;
+  if (hasIniMetachars(key, 1, 0))     return 0;
+  if (hasIniMetachars(value, 0, 0))   return 0;
 
   /* Read whole file, stripping CR/LF from each line up-front. Stripping
    * here (not inside the find loop) is load-bearing: the previous
@@ -282,15 +316,53 @@ int WritePrivateProfileString(const char *section, const char *key,
     }
   }
 
-  fp = fopen(filePath, "w");
+  /* Write to a sibling temp file then rename(2) over the target.
+   * Two reasons: atomic on POSIX within one filesystem, so a crash
+   * mid-write can't leave a truncated prefs file; and we can set
+   * mode 0600 on the temp before rename, so the auth token in this
+   * file is never world-readable even on a shared host. */
+  char tmpPath[FILENAME_MAX];
+  int n = snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", filePath);
+  if (n < 0 || n >= (int)sizeof(tmpPath)) {
+    freeLineArray(lines, lineCount);
+    return 0;
+  }
+
+  /* Open via open()+fdopen so we set 0600 at creation, not after.
+   * O_TRUNC is fine because we own the temp name. */
+  int fd = open(tmpPath, O_CREAT | O_WRONLY | O_TRUNC, 0600);
+  if (fd < 0) {
+    freeLineArray(lines, lineCount);
+    return 0;
+  }
+  fp = fdopen(fd, "w");
   if (!fp) {
+    close(fd);
+    unlink(tmpPath);
     freeLineArray(lines, lineCount);
     return 0;
   }
   for (i = 0; i < lineCount; i++) {
-    fprintf(fp, "%s\n", lines[i]);
+    if (fprintf(fp, "%s\n", lines[i]) < 0) {
+      fclose(fp);
+      unlink(tmpPath);
+      freeLineArray(lines, lineCount);
+      return 0;
+    }
   }
-  fclose(fp);
+  if (fflush(fp) != 0 || fclose(fp) != 0) {
+    unlink(tmpPath);
+    freeLineArray(lines, lineCount);
+    return 0;
+  }
+  /* Defensive: re-assert 0600 in case an old temp inode survived
+   * with a wider mode (umask races on first creation, etc). */
+  chmod(tmpPath, 0600);
+  if (rename(tmpPath, filePath) != 0) {
+    unlink(tmpPath);
+    freeLineArray(lines, lineCount);
+    return 0;
+  }
   freeLineArray(lines, lineCount);
   return 1;
 }
