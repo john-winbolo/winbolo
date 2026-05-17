@@ -652,20 +652,28 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     brainCoreRegisterWorldSim(L, &inst->worldsim);
   }
 
-  /* Overlay bindings intentionally NOT registered under the SDL3 game
-   * client. The buffer would fill with thousands of viz.* commands per
-   * tick (every brain HUD/marker/standoff draw), but no rendering path
-   * in src/gui/sdl3 reads it — only BrainTest's renderer does. Leaving
-   * `overlay_text` et al. as nil makes viz.lua's wrappers short-circuit
-   * via their `if not overlay_text then return end` guard, killing the
-   * per-tick Lua-boundary-crossing cost.
+  /* Overlay bindings ARE registered on both hosts. BrainTest uses
+   * this code path (it links luaBrainInstanceCreate, not a parallel
+   * variant), so omitting the bindings left every brain's viz.* call
+   * short-circuited at the Lua wrapper (`if not overlay_text then
+   * return end`) — V-dialog rows toggled but no map overlays drew.
    *
-   * The buffer struct is still initialized (and destroyed in the close
-   * path) so botManagerGetOverlayCmds() returns a valid empty buffer
-   * to any caller that polls it. */
+   * The per-tick cost the previous "omit the binding" path was
+   * avoiding is now killed at the Lua layer instead: in the release
+   * client (debug_mode == false) we set _BT_VIZ_SUPPRESS_ALL=true,
+   * which makes viz.is_on() return false for every id except
+   * hud_resources. The brain's viz wrappers gate every draw call on
+   * viz.is_on, so suppressed draws never reach the C closure — same
+   * effective cost as before, without BrainTest collateral damage. */
   overlayCmdBufferInit(&inst->overlay);
   inst->overlayPtr = &inst->overlay;
-  /* brainCoreRegisterOverlay(L, &inst->overlayPtr) intentionally omitted */
+  brainCoreRegisterOverlay(L, &inst->overlayPtr);
+
+  /* Release-client suppression: makes viz.is_on() report off for
+   * everything except hud_resources, so viz.* draw calls early-return
+   * at the Lua layer before crossing into the C overlay closures. */
+  lua_pushboolean(L, !debug_mode);
+  lua_setglobal(L, "_BT_VIZ_SUPPRESS_ALL");
 
   /* braintest_viz_register binding so brains can populate the V
    * dialog rows. Routes to a callback BrainTest sets at startup;
