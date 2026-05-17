@@ -1130,3 +1130,29 @@ STR_DLGSYSINFO_BRAIN=Brain
 STR_DLGSYSINFO_SIMULATION=Simülasyon
 STR_DLGSYSINFO_BOTPREP=Bot hazırlık
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Brain aşımları
+
+# macOS App menu and Window menu items
+STR_MENU_ABOUT_APP=WinBolo Hakkında
+STR_MENU_PREFERENCES=Tercihler…
+STR_MENU_SERVICES=Servisler
+STR_MENU_HIDE_APP=WinBolo'yu Gizle
+STR_MENU_HIDE_OTHERS=Diğerlerini Gizle
+STR_MENU_SHOW_ALL=Tümünü Göster
+STR_MENU_QUIT_APP=WinBolo'dan Çık
+STR_MENU_ABOUT_LV=Günlük Görüntüleyici Hakkında
+STR_MENU_HIDE_LV=Günlük Görüntüleyici'yi Gizle
+STR_MENU_QUIT_LV=Günlük Görüntüleyici'den Çık
+STR_MENU_HIDE_ME=Harita Düzenleyici'yi Gizle
+STR_MENU_QUIT_ME=Harita Düzenleyici'den Çık
+STR_MENU_WINDOW=Pencere
+STR_MENU_MINIMIZE=Simge Durumuna Küçült
+STR_MENU_ZOOM=Zoom
+STR_MENU_ENTER_FULL_SCREEN=Tam Ekrana Gir
+STR_MENU_BRING_ALL_TO_FRONT=Tümünü Öne Getir
+
+# macOS Dock menu — welcome-screen actions exposed via the Dock right-click
+STR_MENU_FIND_INTERNET_GAME=İnternet Oyunu Bul…
+STR_MENU_FIND_LAN_GAME=LAN Oyunu Bul…
+STR_MENU_JOIN_BY_ADDRESS=Adres ile Katıl…
+STR_MENU_OPEN_MAP_EDITOR=Harita Düzenleyiciyi Aç
+STR_MENU_OPEN_LOG_VIEWER=Günlük Görüntüleyiciyi Aç

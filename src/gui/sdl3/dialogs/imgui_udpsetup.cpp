@@ -368,8 +368,12 @@ extern "C" int imguiUdpSetupShow(void) {
             float cancelX = panelW - btnW - 16.0f * s;
             ImGui::SetCursorPosX(cancelX);
             if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0)) ||
-                (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
-                 !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
+                ((ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                  (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
+#ifdef __APPLE__
+                  || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
+#endif
+                 ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
                 gameFrontSetDlgState(openWelcome);
                 running = false;
             }

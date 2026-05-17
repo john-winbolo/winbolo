@@ -159,6 +159,15 @@ cmake -B build -S . -DCMAKE_OSX_ARCHITECTURES=arm64
 cmake -B build -S . -DCMAKE_OSX_ARCHITECTURES=x86_64
 ```
 
+`CMAKE_OSX_ARCHITECTURES` is sticky in the build directory's CMake cache once configured — re-running `cmake -B build -S .` without an override keeps whatever was set the first time. To switch a single-arch build dir back to universal2, either wipe it (`rm -rf build && cmake -B build -S .`) or pass `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` explicitly on the next configure. FetchContent dependencies built from source (SDL3, SDL3_ttf, crashpad) inherit whatever the cache holds.
+
+Verify a finished build is universal with `lipo`:
+
+```bash
+lipo -info build/WinBolo.app/Contents/MacOS/WinBolo
+# Architectures in the fat file: ... are: x86_64 arm64
+```
+
 The minimum macOS deployment target is 11.0 (Big Sur).
 
 ## iOS
@@ -238,6 +247,8 @@ Note: The WASM builds do not use libcurl (network features use platform stubs).
 | `BrainTest` | Brain debug viewer | Windows, Linux, macOS |
 | `WinBoloIOS` | iOS app bundle | iOS |
 | `dist` | Distribution zip | All desktop |
+| `sign_macos` | Sign + notarize + staple app bundles and the WinBoloDS binary | macOS |
+| `package_macos` | Bundle signed apps + WinBoloDS into a notarized DMG | macOS |
 
 ## Optional features
 
@@ -339,6 +350,127 @@ cd android
 ```
 
 Ensure `SENTRY_AUTH_TOKEN` is set in the environment or in `~/.sentryclirc` so the plugin can authenticate.
+
+## Signing and notarization (macOS)
+
+For a build that runs on machines other than the one that built it, the three macOS app bundles (`WinBolo.app`, `MapEditor.app`, `Log Viewer.app`) and the `WinBoloDS` dedicated-server CLI binary all need to be code-signed with a Developer ID Application certificate, notarized by Apple, and stapled so Gatekeeper accepts them offline. The `sign_macos` target handles all signing; the `package_macos` target builds a single notarized DMG containing everything.
+
+### One-time setup
+
+1. **Apple Developer Program membership** ($99/yr).
+
+2. **Install a "Developer ID Application" certificate** in your login keychain (Apple Developer portal → Certificates → Developer ID Application). Verify with:
+
+   ```bash
+   security find-identity -p codesigning -v
+   ```
+
+   You should see at least one `Developer ID Application: <Your Name> (TEAMID)` entry.
+
+3. **Generate an app-specific password** at [appleid.apple.com](https://appleid.apple.com/) → *Sign-In and Security* → *App-Specific Passwords*. Then stash it in the keychain as a `notarytool` profile:
+
+   ```bash
+   xcrun notarytool store-credentials winbolo-notary \
+       --apple-id "your@apple.id" \
+       --team-id  "YOURTEAMID" \
+       --password "xxxx-xxxx-xxxx-xxxx"
+   ```
+
+   The profile name `winbolo-notary` matches the script's default; override with `APPLE_NOTARY_PROFILE` if you want a different name.
+
+### Signing a build
+
+After a normal build, run:
+
+```bash
+cmake --build build --target sign_macos
+```
+
+Or invoke the script directly with an alternate build directory:
+
+```bash
+scripts/sign_macos.sh build
+```
+
+For each `.app` in the build directory, the script:
+
+1. Runs `codesign` with `--options runtime` (hardened runtime), `--timestamp`, `--deep`, and the entitlements at `src/gui/sdl3/platform/winbolo.entitlements`.
+2. Verifies the signature with `codesign --verify --deep --strict`.
+3. Zips the bundle and submits it to Apple via `xcrun notarytool submit --wait` (typically 1–5 minutes per bundle).
+4. Staples the notarization ticket with `xcrun stapler staple` and runs `spctl --assess` to confirm Gatekeeper accepts it.
+
+The `WinBoloDS` CLI binary is also signed (hardened runtime + entitlements + timestamp). A bare Mach-O cannot have a notarization ticket stapled to it, so its notarization is deferred to the DMG-level submission in `package_macos` — that single submission covers every signed binary inside the DMG.
+
+The script auto-detects the first `Developer ID Application` identity from the keychain. To force a specific identity, set:
+
+```bash
+export APPLE_DEVELOPER_ID_APPLICATION="Developer ID Application: Your Name (TEAMID)"
+```
+
+### Entitlements
+
+The bundles request only two entitlements (defined in `src/gui/sdl3/platform/winbolo.entitlements`):
+
+- `com.apple.security.network.client` — outbound connections to trackers and peers.
+- `com.apple.security.network.server` — listening UDP socket for inbound peer traffic.
+
+No audio-input, file-access, or JIT entitlements are requested.
+
+### Troubleshooting
+
+- **"No Developer ID Application certificate found"** — the certificate isn't installed, or it's in a non-default keychain. Re-check `security find-identity -p codesigning -v`.
+- **Notarization rejected** — fetch the detailed log from Apple's notary service:
+
+  ```bash
+  xcrun notarytool log <submission-id> --keychain-profile winbolo-notary
+  ```
+
+  The submission ID is printed at the top of the `notarytool submit` output. Common causes are unsigned dylibs inside the bundle (the `codesign --verify` step normally catches these first) or a missing hardened-runtime flag on a nested binary.
+- **`spctl --assess` fails after stapling** — the staple succeeded but Gatekeeper still rejects. Almost always means the bundle was modified after stapling; rebuild and re-run `sign_macos`.
+
+## Packaging a distribution DMG (macOS)
+
+The `package_macos` target builds a single Gatekeeper-clean `WinBolo.dmg` installer containing all three apps, the `WinBoloDS` dedicated-server binary, and an `/Applications` drop-link. End users drag `WinBolo.app`, `MapEditor.app`, and `Log Viewer.app` into `Applications`; server operators copy `WinBoloDS` wherever they prefer (e.g. `/usr/local/bin`) and run it from a terminal or under launchd.
+
+### Prerequisite
+
+Install `create-dmg` once:
+
+```bash
+brew install create-dmg
+```
+
+Signing prerequisites are the same as `sign_macos` above — the same Developer ID certificate and `winbolo-notary` keychain profile are reused.
+
+### Building the DMG
+
+After a normal Release build:
+
+```bash
+cmake --build build --target package_macos
+```
+
+`package_macos` depends on `sign_macos`, so all four targets are signed first if they aren't already. The script then:
+
+1. Stages the signed apps and `WinBoloDS` into a temporary directory.
+2. Runs `create-dmg` to build `WinBolo.dmg` with an icon-arranged window and `/Applications` drop-link.
+3. Signs the DMG with `codesign --timestamp`.
+4. Submits the DMG to Apple via `xcrun notarytool submit --wait`. A single notarization covers every signed binary inside, including `WinBoloDS`.
+5. Staples the ticket onto the DMG and runs `spctl --assess --type install` to confirm Gatekeeper accepts it.
+
+The finished `WinBolo.dmg` is placed in the build directory.
+
+### Shipping the dedicated server
+
+`WinBoloDS` is shipped as a bare CLI binary inside the DMG rather than wrapped in a `.app`. Server operators normally:
+
+```bash
+hdiutil attach WinBolo.dmg
+cp /Volumes/WinBolo/WinBoloDS /usr/local/bin/
+hdiutil detach /Volumes/WinBolo
+```
+
+Because the binary was signed with the hardened runtime and the DMG was notarized by Apple, the copied binary launches without Gatekeeper prompts on first run — the quarantine attribute resolves against the stapled DMG ticket.
 
 ## Uploading debug symbols to Sentry
 
