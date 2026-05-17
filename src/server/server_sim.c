@@ -1736,6 +1736,17 @@ void serverSimPrependEvents(ServerSim *sim,
     sim->eventCount += count;
 }
 
+void serverSimPrependMapEvents(ServerSim *sim,
+                               const GameEvent *events,
+                               uint16_t count) {
+    if (count == 0) return;
+    if ((uint32_t)count + sim->mapEventCount > MAX_MAP_EVENTS) return;
+    memmove(sim->mapEvents + count, sim->mapEvents,
+            sim->mapEventCount * sizeof(GameEvent));
+    memcpy(sim->mapEvents, events, count * sizeof(GameEvent));
+    sim->mapEventCount += count;
+}
+
 void serverSimSetAutoCloseOnEmpty(ServerSim *sim, bool enabled) {
     sim->autoCloseOnEmpty = enabled;
 }

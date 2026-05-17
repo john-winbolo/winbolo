@@ -264,16 +264,29 @@ void serverInstanceTick(ServerSim *sim) {
       }
     }
     if (sim->state == serverStateRunning) {
-      /* Save tick 1's events so bots can see them next frame.
-       * transportUdpServerDrainEvents already captured them for
-       * UDP clients, but bots read directly from the event buffer
-       * via serverSimBuildSnapshot — tick 2 would clear these. */
+      /* Save tick 1's events (regular + map) so snapshot readers see
+       * them after tick 2.  serverSimTick clears both buffers at its
+       * start, so without this save/restore the events from tick 1
+       * are wiped before any reader (bots in next serverInstanceTick,
+       * main-thread snapshot poll between serverInstanceTicks, UDP
+       * drain) can observe them. transportUdpServerDrainEvents already
+       * captured the regular events for UDP clients earlier; this
+       * preserves them for the in-process snapshot path. Map events
+       * have no parallel drain — losing them desyncs client terrain
+       * (shell hits on the game-tick get wiped by the keys-tick
+       * clear within the same serverInstanceTick). */
       GameEvent savedEvents[MAX_SNAPSHOT_EVENTS];
       uint8_t savedCount = sim->eventCount;
+      GameEvent savedMapEvents[MAX_MAP_EVENTS];
+      uint16_t savedMapCount = sim->mapEventCount;
       ServerState preTickState;
       if (savedCount > 0) {
         memcpy(savedEvents, sim->events,
                savedCount * sizeof(GameEvent));
+      }
+      if (savedMapCount > 0) {
+        memcpy(savedMapEvents, sim->mapEvents,
+               savedMapCount * sizeof(GameEvent));
       }
       preTickState = sim->state;
       sim2Start = SDL_GetPerformanceCounter();
@@ -312,6 +325,8 @@ void serverInstanceTick(ServerSim *sim) {
                  savedCount * sizeof(GameEvent));
           sim->eventCount += savedCount;
         }
+        /* Same prepend for map events — see comment at savedMapEvents above. */
+        serverSimPrependMapEvents(sim, savedMapEvents, savedMapCount);
       }
     }
     double simFreq = (double)SDL_GetPerformanceFrequency();
