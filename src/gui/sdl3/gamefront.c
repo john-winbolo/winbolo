@@ -2373,6 +2373,38 @@ bool gameFrontStartSinglePlayerGame(ClientSim *cs) {
   if (cs == NULL || spServerSim == NULL) return FALSE;
   if (serverSimGetState(spServerSim) != serverStateLobby) return FALSE;
 
+  /* Reload the client's map state from the server's current
+   * compressed map. The user may have picked a different map in
+   * the lobby (Server Maps / Upload / Random / WBN), which rewrites
+   * the server's mp/pb/bs/ss in place but leaves the client's
+   * humanSim->sim.* untouched. Without this reload, server physics
+   * would run on the new map while the client renders the original
+   * map — tanks driving through invisible walls etc. */
+  {
+    BYTE compressedMap[65536];
+    int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
+    if (compLen > 0) {
+      char savedName[MAP_STR_SIZE];
+      strncpy(savedName, serverSimGetMapName(spServerSim),
+              MAP_STR_SIZE - 1);
+      savedName[MAP_STR_SIZE - 1] = '\0';
+      /* Read game settings off the client's lobby mirror — same
+       * values were broadcast from the server (CTRL_LOBBY_SETTINGS)
+       * so they match. Saves us a struct dependency on GameSim. */
+      gameType gt    = clientSimGetLobbyGameType(cs);
+      bool     mines = clientSimIsLobbyHiddenMines(cs);
+      clientSimResetForMapLoad(cs);
+      clientLoadCompressedMap(cs, compressedMap, compLen, savedName,
+                              gt, mines,
+                              serverSimGetStartDelay(spServerSim),
+                              serverSimGetGameLength(spServerSim),
+                              gameFrontName, 0, FALSE);
+      /* Local transport stays — clientSimResetForMapLoad preserved
+       * the transport binding by design. */
+      clientSimSetLocalTransport(cs, true);
+    }
+  }
+
   /* Apply team alliances on both sims AND publish them through the
    * control-event dispatcher so every subscribed in-process bot also
    * learns about the alliance — without the publish the bot's
