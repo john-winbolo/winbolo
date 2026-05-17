@@ -42,6 +42,8 @@ typedef struct BgGame {
     BYTE         numTeams;      /* Number of teams (0 = FFA) */
     bool         paused;        /* User-toggled pause state (persists across dialogs) */
     Uint64       createdTicks;  /* SDL_GetTicks() at creation, for map name fade */
+    Uint64       mapNameFadeStartMs;   /* 0 = use initial 10s timer; nonzero = pause-driven fade from this tick */
+    Uint8        mapNameFadeFromAlpha; /* Starting alpha for the active pause-driven fade */
     /* Bounding box of map content (map coordinates) */
     int          mapMinX, mapMinY, mapMaxX, mapMaxY;
 } BgGame;
@@ -56,6 +58,10 @@ void bgGameTickFixed(BgGame *bg, Uint64 *lastTickTime);
 
 /* Convenience: render background game + semi-transparent dark overlay */
 void bgGameRenderWithOverlay(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH);
+
+/* Toggle pause; also kicks off a fade-in (paused) or fade-out (unpaused)
+ * of the map-name label, starting from its current visible alpha. */
+void bgGameTogglePause(BgGame *bg);
 
 /* Shared background game instance used across all pre-game dialogs */
 void bgGameSetShared(BgGame *bg);

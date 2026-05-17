@@ -5,13 +5,17 @@
 <dict>
     <key>CFBundleName</key>             <string>Log Viewer</string>
     <key>CFBundleIdentifier</key>       <string>com.winbolo.logviewer</string>
-    <key>CFBundleVersion</key>          <string>1.01</string>
-    <key>CFBundleShortVersionString</key><string>1.01</string>
+    <key>CFBundleVersion</key>          <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
+    <key>CFBundleShortVersionString</key><string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
     <key>CFBundleExecutable</key>       <string>Log Viewer</string>
     <key>CFBundleIconFile</key>         <string>${MACOSX_BUNDLE_ICON_FILE}</string>
     <key>CFBundlePackageType</key>      <string>APPL</string>
+    <key>LSApplicationCategoryType</key> <string>public.app-category.utilities</string>
+    <key>LSMinimumSystemVersion</key>    <string>11.0</string>
     <key>NSHighResolutionCapable</key>  <true/>
-    <key>NSHumanReadableCopyright</key> <string>Copyright 1998-2008 John Morrison</string>
+    <key>NSHumanReadableCopyright</key> <string>${MACOSX_BUNDLE_COPYRIGHT}</string>
+    <key>NSRequiresAquaSystemAppearance</key><false/>
+    <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
     <!-- Allow opening .wbv files by drag-and-drop -->
     <key>CFBundleDocumentTypes</key>
     <array>

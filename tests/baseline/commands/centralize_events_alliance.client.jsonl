@@ -1,0 +1,12 @@
+# centralize_events_alliance scenario (--fast only):
+# adds 2 bots, starts the game, then exercises the alliance triple
+# (REQUEST → ACCEPT → LEAVE). The UDP equivalent is deferred — the
+# client wire send-wrappers send from-self only, so a single
+# headless can't drive a bot's accept response over the wire.
+{"tick": 4, "op": "add_bot"}
+{"tick": 6, "op": "add_bot"}
+{"tick": 20, "op": "start_game"}
+{"tick": 50, "op": "alliance_request", "from": 0, "to": 1}
+{"tick": 52, "op": "alliance_accept", "from": 1, "to": 0}
+{"tick": 70, "op": "alliance_leave", "slot": 0}
+{"tick": 100, "op": "exit"}

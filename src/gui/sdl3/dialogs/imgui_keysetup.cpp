@@ -116,10 +116,12 @@ static void keyRow(const char *label, KeySetupField field) {
         if (ImGui::SmallButton(langGetText(STR_CANCEL))) {
             s_waiting = ksNone;
         }
+        imguiHandOnHover();
     } else {
         if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
             s_waiting = field;
         }
+        imguiHandOnHover();
     }
     ImGui::PopID();
 }
@@ -154,6 +156,7 @@ extern "C" int imguiKeySetupShow(void) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -344,17 +347,24 @@ extern "C" int imguiKeySetupShow(void) {
             result = 1;
             running = false;
         }
+        imguiHandOnHover();
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(120, 0))) {
             s_waiting = ksNone;
             result = 0;
             running = false;
         }
+        imguiHandOnHover();
 
         if (busy) ImGui::EndDisabled();
 
-        /* Also allow Escape to cancel (when not capturing a key) */
-        if (!busy && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        /* Also allow Escape (or Cmd+W / Cmd+.) to cancel (when not capturing a key) */
+        if (!busy && (ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                      (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
+#ifdef __APPLE__
+                      || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
+#endif
+                     )) {
             result = 0;
             running = false;
         }

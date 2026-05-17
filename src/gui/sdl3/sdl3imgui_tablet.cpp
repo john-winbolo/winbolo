@@ -847,6 +847,7 @@ static void renderBuildSelectBar(ClientSim *cs) {
                               ImVec2(iconSize, iconSize), uv0, uv1)) {
         clientSimSetCurrentBuildSelect(cs, values[i]);
       }
+      imguiHandOnHover();
 
       /* Touch tap fallback — ImGui buttons may not register finger events on iOS */
       ImVec2 rMin = ImGui::GetItemRectMin();

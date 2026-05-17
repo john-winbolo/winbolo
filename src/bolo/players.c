@@ -179,8 +179,11 @@ bool playersSetPlayerName(ClientSim *csParam, GameSim *sim, players *plrs, BYTE 
     if (playersNameTaken(plrs, playerName) == FALSE) {
       /* OK to change do so and then make the message */
       returnValue = TRUE;
-      /* Make Message */
-      {
+      /* The "changed name" newswire is part of the in-game UI. Suppress
+       * it during lobby renames (host edits a bot's name, players
+       * tweaking their own name pre-game) — otherwise the messages
+       * queue and flush all at once when the game starts. */
+      if (csParam != NULL && !clientSimIsInLobby(csParam)) {
         MessageArgs args;
         memset(&args, 0, sizeof(args));
         /* New name (playerName) and old name (otherName) refer to the

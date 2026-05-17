@@ -17,9 +17,9 @@
 #include "server_sim.h"
 #include "game_sim.h"        /* GameSim layout — used by the sim field below */
 #include "position_history.h" /* PosHistory — used by posHistory / lgmPosHistory */
-#include "../../mapeditor/mapeditor_generate.h" /* MapGenConfig — embedded by value in randomMapConfig */
+#include "mapgen.h" /* MapGenConfig — embedded by value in randomMapConfig */
 
-typedef struct ServerSim {
+struct ServerSim {
     GameSim      sim;    /* MUST be first member */
 
     /* Tick state */
@@ -28,6 +28,8 @@ typedef struct ServerSim {
     int32_t      gameLength;
     int32_t      tickLimit;          /* 0 = unlimited; counts running game-ticks */
     int32_t      ticksRun;           /* Running-state tick counter */
+    int32_t      gameTickLimit;      /* 0 = unlimited; ends the running game when reached (no loop exit). */
+    int32_t      gameTicksRun;       /* Running-state tick counter paired with gameTickLimit; resets each game. */
 
     /* Server state machine */
     ServerState  state;
@@ -51,19 +53,6 @@ typedef struct ServerSim {
     /* Discovered brain codebases under brains/ — sent to clients via
      * PACKET_LOBBY_BRAIN_LIST so the AiConfig combo can list them. */
     BrainList       brainList;
-
-    /* Admin IPs (-admins CLI flag). When a client connects from any of
-     * these IPs, the server tags them with PLAYER_FLAG_ADMIN and grants
-     * them host-level lobby authority. Comma-separated string of IPv4
-     * literals; the first '\0' terminates the list. */
-    char            adminIps[1024];
-
-    /* -adminfirst CLI flag: when set, the first client to join while no
-     * other players are connected receives PLAYER_FLAG_ADMIN. Re-arms
-     * each time the server becomes empty again. Surfaced separately from
-     * adminIps so dynamic hosts (no static IPs to whitelist) can still
-     * delegate moderation. */
-    bool            adminFirstJoinAfterEmpty;
 
     /* Layout A lobby flags — all persist across rounds. */
     bool     openHost;             /* anyone can edit when true */
@@ -248,7 +237,7 @@ typedef struct ServerSim {
     uint16_t          subscriberGen[MAX_TANKS + 1];
     int               numSubscribers;
     bool              publishing;
-} ServerSim;
+};
 
 BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
                    ServerSim_sim_must_be_first_member);

@@ -1,0 +1,8 @@
+# centralize_events_alliance_leave_udp scenario.
+# Headless sends an unconditional alliance_leave for itself.
+# The UDP server's PACKET_ALLIANCE_LEAVE handler always
+# republishes CTRL_ALLIANCE_LEAVE regardless of prior alliance
+# state, which makes this a clean UDP-only check that the
+# leave event survives the wire trip.
+{"tick": 30, "op": "alliance_leave", "slot": 0}
+{"tick": 80, "op": "exit"}

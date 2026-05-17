@@ -196,6 +196,7 @@ extern "C" void imguiSettingsShow(void) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -435,6 +436,7 @@ extern "C" void imguiSettingsShow(void) {
                         }
                     }
                 }
+                imguiHandOnHover();
             }
             if (wbnActive) ImGui::EndDisabled();
             if (wbnActive) {
@@ -540,10 +542,12 @@ extern "C" void imguiSettingsShow(void) {
                                        iconSz)) {
                     openInfo = true;
                 }
+                imguiHandOnHover();
             } else {
                 if (ImGui::SmallButton("?##langInfoBtn")) {
                     openInfo = true;
                 }
+                imguiHandOnHover();
             }
             if (openInfo) {
                 ImGui::OpenPopup("##LangInfoPopup");
@@ -608,6 +612,7 @@ extern "C" void imguiSettingsShow(void) {
             if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(120, 0))) {
                 showKeySetup = true;
             }
+            imguiHandOnHover();
 #endif
         }
 
@@ -664,6 +669,7 @@ extern "C" void imguiSettingsShow(void) {
                 gameFrontRequestPlayTutorial();
                 running = false;  /* Close settings; openSettings handler routes to openTutorial. */
             }
+            imguiHandOnHover();
             ImGui::SameLine();
             {
                 bool showOnMain = gameFrontGetShowTutorialButton();
@@ -773,9 +779,15 @@ extern "C" void imguiSettingsShow(void) {
         float btnX = (panelW - btnW) / 2.0f;
         ImGui::SetCursorPosX(btnX);
         if (ImGui::Button(langGetText(STR_CLOSE), ImVec2(btnW, 0)) ||
-            ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+            (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
+#ifdef __APPLE__
+            || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
+#endif
+           ) {
             running = false;
         }
+        imguiHandOnHover();
 
         ImGui::End(); /* ##SettingsPanel */
         ImGui::End(); /* ##SettingsBg */
@@ -844,6 +856,7 @@ extern "C" void imguiSettingsShow(void) {
 
             IMGUI_CHECKVERSION();
             ImGui::CreateContext();
+            imguiRegisterPlatformOpenUrl();
             ImGuiIO &ioNew = ImGui::GetIO();
             ioNew.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
             ioNew.IniFilename = nullptr;

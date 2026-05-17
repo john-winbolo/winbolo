@@ -1,6 +1,6 @@
 # bolo_static — the bulk of the sim runtime in a single static library.
 #
-# 67 of the 70 src/bolo/*.c files compile here. Three stay per-target
+# 66 of the 69 src/bolo/*.c files compile here. Three stay per-target
 # in each binary's *_SOURCES because they have target-divergent compile
 # defs whose gated code paths can't be archive-dropped (the .o files
 # are always live, so a single shared compile can't satisfy every
@@ -52,6 +52,8 @@ add_library(bolo_static STATIC
     lgm.c
     lobby_bot_pools.c
     log.c
+    mapgen.c
+    mapgen_maze.c
     messages.c
     mines.c
     minesexp.c
@@ -77,6 +79,7 @@ add_library(bolo_static STATIC
     swamp.c
     tank.c
     tankexp.c
+    transport_control_codec.c
     transport_local.c
     transport_udp_common.c
     treegrow.c

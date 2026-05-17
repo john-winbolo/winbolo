@@ -1126,3 +1126,29 @@ STR_DLGSYSINFO_BRAIN=Brain
 STR_DLGSYSINFO_SIMULATION=Symulacja
 STR_DLGSYSINFO_BOTPREP=Przygotowanie botów
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Przekroczenia Brain
+
+# macOS App menu and Window menu items
+STR_MENU_ABOUT_APP=O WinBolo
+STR_MENU_PREFERENCES=Preferencje…
+STR_MENU_SERVICES=Usługi
+STR_MENU_HIDE_APP=Ukryj WinBolo
+STR_MENU_HIDE_OTHERS=Ukryj inne
+STR_MENU_SHOW_ALL=Pokaż wszystko
+STR_MENU_QUIT_APP=Zakończ WinBolo
+STR_MENU_ABOUT_LV=O Przeglądarce logów
+STR_MENU_HIDE_LV=Ukryj Przeglądarkę logów
+STR_MENU_QUIT_LV=Zakończ Przeglądarkę logów
+STR_MENU_HIDE_ME=Ukryj Edytor map
+STR_MENU_QUIT_ME=Zakończ Edytor map
+STR_MENU_WINDOW=Okno
+STR_MENU_MINIMIZE=Minimalizuj
+STR_MENU_ZOOM=Powiększ
+STR_MENU_ENTER_FULL_SCREEN=Przejdź do pełnego ekranu
+STR_MENU_BRING_ALL_TO_FRONT=Przesuń wszystko na wierzch
+
+# macOS Dock menu — welcome-screen actions exposed via the Dock right-click
+STR_MENU_FIND_INTERNET_GAME=Znajdź grę w internecie…
+STR_MENU_FIND_LAN_GAME=Znajdź grę w LAN…
+STR_MENU_JOIN_BY_ADDRESS=Dołącz po adresie…
+STR_MENU_OPEN_MAP_EDITOR=Otwórz edytor map
+STR_MENU_OPEN_LOG_VIEWER=Otwórz przeglądarkę logów

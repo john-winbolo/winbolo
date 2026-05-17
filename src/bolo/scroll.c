@@ -388,11 +388,26 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
   scrollItemListProcess(&ss->itemList, &targetX, &targetY);
 
   /* Phase 5: execute scroll (at most 1 tile per tick).
-   * Tile-align so deltas come out on tile boundaries. */
-  targetX &= ~0xFF;
-  targetY &= ~0xFF;
-  xmove = targetX - viewRefX;
-  ymove = targetY - viewRefY;
+   *
+   * Deadband hysteresis: only scroll when target is at least 1 full
+   * tile from viewRef. A previous floor-align approach
+   * (targetX &= ~0xFF; xmove = target - viewRef) used the *same*
+   * threshold for "scroll forward" and "scroll back" at each tile
+   * boundary, which made the viewport bounce whenever target wobbled
+   * sub-pixel across that boundary — from sub-pixel tank motion,
+   * integer speed-step lead recomputation, or tank-turn lead
+   * reorientation. With a 1-tile deadband, scroll-forward fires at
+   * target=viewRef+1 and scroll-back at target=viewRef-1, leaving a
+   * 2-tile stable band centred on viewRef. */
+  {
+    int deltaX = targetX - viewRefX;
+    int deltaY = targetY - viewRefY;
+    const int DEADBAND = (1 << 8);  /* 1 tile in world units */
+    xmove = (deltaX >=  DEADBAND) ?  DEADBAND
+          : (deltaX <= -DEADBAND) ? -DEADBAND : 0;
+    ymove = (deltaY >=  DEADBAND) ?  DEADBAND
+          : (deltaY <= -DEADBAND) ? -DEADBAND : 0;
+  }
 
   if (xmove != 0 || ymove != 0) {
     if (xmove > 0) {

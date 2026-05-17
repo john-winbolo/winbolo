@@ -63,12 +63,13 @@
 #include "server_sim_internal.h"
 #include "server_lifecycle.h"
 #include "control_event.h"
+#include "client_sim.h"
 #include "client_sim_control.h"
 #include <assert.h>
 #include "interpolation.h"
 #include "position_history.h"
 #include "screenbullet.h"
-#include "../mapeditor/mapeditor_generate.h"
+#include "mapgen.h"
 #include "../common/wb_log.h"
 #include "server_dedicated_log.h"
 
@@ -330,6 +331,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->originalGameLength = gameLen;
     sim->tickLimit = 0;
     sim->ticksRun = 0;
+    sim->gameTickLimit = 0;
+    sim->gameTicksRun = 0;
     sim->tick = 0;
     sim->state = serverStateLobby;
     sim->lobbyEnabled = TRUE;
@@ -506,13 +509,7 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
 
     /* Cache the initial map state for between-round resets */
     {
-        /* Oversized for RLE worst-case (the function is named
-         * lzwencoding for legacy reasons but the format is actually
-         * RLE per the comment at the top of ecodlzw.c — an
-         * incompressible 64KB map can encode slightly larger than
-         * its input). Caller checks the returned length against
-         * MAP_DOWNLOAD_MAX_SIZE before shipping over the wire. */
-        BYTE tempBuf[131072];
+        BYTE tempBuf[65536];
         int len = serverSimGetCompressedMap(sim, tempBuf);
         sim->cachedMapData = malloc(len);
         if (sim->cachedMapData != NULL) {
@@ -525,7 +522,7 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
     return sim;
 }
 
-ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
+ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, const char *mapName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen) {
     ServerSim *sim = (ServerSim *)malloc(sizeof(ServerSim));
     if (sim == NULL) {
         return NULL;
@@ -537,17 +534,16 @@ ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, gameType game, boo
         return NULL;
     }
 
+    if (mapName != NULL && mapName[0] != '\0') {
+        strncpy(sim->mapName, mapName, MAP_STR_SIZE - 1);
+        sim->mapName[MAP_STR_SIZE - 1] = '\0';
+    }
+
     basesClearMines(&sim->sim);
 
     /* Cache the initial map state for between-round resets */
     {
-        /* Oversized for RLE worst-case (the function is named
-         * lzwencoding for legacy reasons but the format is actually
-         * RLE per the comment at the top of ecodlzw.c — an
-         * incompressible 64KB map can encode slightly larger than
-         * its input). Caller checks the returned length against
-         * MAP_DOWNLOAD_MAX_SIZE before shipping over the wire. */
-        BYTE tempBuf[131072];
+        BYTE tempBuf[65536];
         int len = serverSimGetCompressedMap(sim, tempBuf);
         sim->cachedMapData = malloc(len);
         if (sim->cachedMapData != NULL) {
@@ -564,8 +560,7 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
                                     gameType game, bool hiddenMines,
                                     int32_t startDelay, int32_t gameLen) {
     ServerSim *sim;
-    /* Oversized for RLE worst-case (see comment in serverSimReloadMap). */
-    BYTE tempBuf[131072];
+    BYTE tempBuf[65536];
     int len;
     char seedStr[64];
     int x, y;
@@ -595,7 +590,7 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
     sim->sim.ss->numStarts = 0;
 
     /* Generate the map */
-    mapEditorGenerate(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, cfg);
+    mapGenRun(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, cfg);
 
     /* Run generated objects through the same init path as file-loaded maps
      * (pillsSetPill / basesSetBase / startsSetStart) so game-logic fields
@@ -636,22 +631,30 @@ ServerSim *serverSimCreateRandomMap(const MapGenConfig *cfg,
     return sim;
 }
 
-/* Core "apply MapGenConfig to the running sim" worker shared by
- * serverSimRandomMapRegenerate (between-round random refresh) and
- * serverSimReloadRandomMap (preview-cycle pick). Wipes the map,
- * runs mapEditorGenerate, re-initialises pills/bases/starts, refreshes
- * cachedMapData, sets mapName from the seed, and clears human ready
- * flags. Does NOT manage the previousMapData stash or randomMapConfig
- * provenance — those live in the call sites. */
-static bool serverSimApplyRandomMapConfig(ServerSim *sim,
-                                          const MapGenConfig *cfg) {
-    /* Oversized for RLE worst-case (see comment in serverSimReloadMap). */
-    BYTE tempBuf[131072];
+bool serverSimRandomMapRegenerate(ServerSim *sim) {
+    BYTE tempBuf[65536];
     int len;
+    char seedStr[64];
+    char msg[128];
     int x, y;
+    MapGenConfig cfg;
 
-    /* Wipe map to DEEP_SEA + re-mine the auto-mined border ring. */
+    if (!sim->randomMapEnabled) return FALSE;
+    if (sim->state != serverStateLobby) return FALSE;
+
+    cfg = sim->randomMapConfig;
+
+    if (!sim->randomMapFixedSeed) {
+        /* Generate a new random seed */
+        cfg.seed = (uint32_t)time(NULL) ^ ((uint32_t)clock() << 16);
+        if (cfg.seed == 0) cfg.seed = 1;
+    }
+    /* else: keep the same seed for reproducible maps */
+
+    /* Clear map */
     memset((*sim->sim.mp).mapItem, DEEP_SEA, sizeof((*sim->sim.mp).mapItem));
+
+    /* Fill mine border */
     for (x = 0; x < 256; x++) {
         for (y = 0; y < 256; y++) {
             if (x <= MAP_MINE_EDGE_LEFT || x >= MAP_MINE_EDGE_RIGHT ||
@@ -661,16 +664,13 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
         }
     }
 
-    /* Zero object counts + generate. */
-    sim->sim.pb->numPills  = 0;
-    sim->sim.bs->numBases  = 0;
+    /* Clear and regenerate objects */
+    sim->sim.pb->numPills = 0;
+    sim->sim.bs->numBases = 0;
     sim->sim.ss->numStarts = 0;
-    mapEditorGenerate(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss,
-                       cfg);
+    mapGenRun(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, &cfg);
 
-    /* Run generated objects through the same init path as file-loaded
-     * maps so game-logic fields (coolDown, justStopped, etc.) are
-     * initialised. */
+    /* Run generated objects through the same init path as file-loaded maps */
     {
         BYTE i;
         for (i = 0; i < sim->sim.pb->numPills; i++) {
@@ -686,479 +686,38 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
             startsSetStart(&sim->sim.ss, &tmp, (BYTE)(i + 1));
         }
     }
-    basesClearMines(&sim->sim);
-
-    /* Refresh cached compressed map. */
-    len = serverSimGetCompressedMap(sim, tempBuf);
-    if (sim->cachedMapData) free(sim->cachedMapData);
-    sim->cachedMapData = (BYTE *)malloc(len);
-    if (sim->cachedMapData == NULL) {
-        sim->cachedMapDataLen = 0;
-        return FALSE;
-    }
-    memcpy(sim->cachedMapData, tempBuf, len);
-    sim->cachedMapDataLen = len;
-
-    /* Build a human-readable map name from the generator type, the
-     * sub-style (Natural only), and a local-timestamp + short
-     * timezone code. Shared with the chooser UI via
-     * mapGenBuildDisplayName so the lobby title and sim->mapName
-     * stay in lockstep. */
-    mapGenBuildDisplayName(cfg, sim->mapName, MAP_STR_SIZE);
-
-    /* Reset human ready flags — they need to re-acknowledge the new
-     * map. Bots stay ready (no UI to click). */
-    {
-        int i;
-        for (i = 0; i < MAX_TANKS; i++) {
-            if (!sim->lobbyPlayers[i].isBot) {
-                sim->lobbyPlayers[i].ready = FALSE;
-            }
-        }
-    }
-    return TRUE;
-}
-
-bool serverSimRandomMapRegenerate(ServerSim *sim) {
-    char seedStr[64];
-    char msg[128];
-    MapGenConfig cfg;
-
-    if (!sim->randomMapEnabled) return FALSE;
-    if (sim->state != serverStateLobby) return FALSE;
-
-    cfg = sim->randomMapConfig;
-    if (!sim->randomMapFixedSeed) {
-        /* Generate a new random seed; keep deterministic if pinned. */
-        cfg.seed = (uint32_t)time(NULL) ^ ((uint32_t)clock() << 16);
-        if (cfg.seed == 0) cfg.seed = 1;
-    }
-
-    if (!serverSimApplyRandomMapConfig(sim, &cfg)) return FALSE;
-
-    /* This call site owns the random-map provenance: update the
-     * stored config and log a between-round regenerate message. */
-    sim->randomMapConfig = cfg;
-    mapGenConfigToSeed(&cfg, seedStr, sizeof(seedStr));
-    snprintf(msg, sizeof(msg), "Random map regenerated, seed: %s", seedStr);
-    serverSimConsoleMessage(msg);
-    return TRUE;
-}
-
-bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
-    /* Oversized for RLE worst-case (see comment in serverSimReloadMap). */
-    BYTE tempBuf[131072];
-    int len;
-    char msg[256];
-
-    if (sim == NULL || mapFileName == NULL || mapFileName[0] == '\0') {
-        return FALSE;
-    }
-    if (sim->state != serverStateLobby) {
-        WB_LOG_INFO(WB_LOG_CAT_SERVER,
-            "serverSimReloadMap rejected: state=%d (not lobby)",
-            (int)sim->state);
-        return FALSE;
-    }
-
-    /* If the previous preview was an in-flight upload AND we're now
-     * loading a DIFFERENT path, discard the upload — the user has
-     * moved on, the uploaded file should not survive. Reload from
-     * the SAME temp path (commit/cancel round-trip) is left alone. */
-    if (sim->pendingUploadActive &&
-        strcmp(sim->pendingUploadTempPath, mapFileName) != 0) {
-        serverSimDiscardPendingUpload(sim);
-    }
-
-    /* Stash the currently-committed map as the "previous" snapshot
-     * before we touch the sim. The chooser flow is:
-     *   click row     → serverSimReloadMap (stash + apply preview)
-     *   click row B   → serverSimReloadMap (no re-stash; keep
-     *                    ORIGINAL committed map)
-     *   Cancel        → serverSimRevertPreview (restore original)
-     *   Set Map       → serverSimCommitPreview (free stash)
-     * Keeping the original (not the most-recent preview) lets the
-     * user browse maps with live previews and still roll all the
-     * way back with one Cancel. */
-    if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
-        sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
-        if (sim->previousMapData) {
-            memcpy(sim->previousMapData, sim->cachedMapData,
-                   sim->cachedMapDataLen);
-            sim->previousMapDataLen = sim->cachedMapDataLen;
-            memcpy(sim->previousMapName, sim->mapName,
-                   sizeof(sim->previousMapName));
-        }
-    }
-
-    /* Wipe the existing map/pill/base/start contents before mapRead
-     * touches them. mapRead's RLE-decoder (mapReadRuns) only writes
-     * cells encoded in the new file — any tile NOT included in the
-     * new map's runs would otherwise keep the previous map's value,
-     * so a smaller map would appear "splatted on top of" the larger
-     * one it replaced. Same wipe pattern serverSimRandomMapRegenerate
-     * uses. */
-    {
-        int x, y;
-        memset((*sim->sim.mp).mapItem, DEEP_SEA,
-               sizeof((*sim->sim.mp).mapItem));
-        /* Re-mine the auto-mined border so the loaded map sits on the
-         * correct base terrain. mapRead fills the playable area; we
-         * pre-fill the ring outside MAP_MINE_EDGE_*. */
-        for (x = 0; x < 256; x++) {
-            for (y = 0; y < 256; y++) {
-                if (x <= MAP_MINE_EDGE_LEFT || x >= MAP_MINE_EDGE_RIGHT ||
-                    y <= MAP_MINE_EDGE_TOP  || y >= MAP_MINE_EDGE_BOTTOM) {
-                    (*sim->sim.mp).mapItem[x][y] = DEEP_SEA;
-                }
-            }
-        }
-        sim->sim.pb->numPills = 0;
-        sim->sim.bs->numBases = 0;
-        sim->sim.ss->numStarts = 0;
-    }
-
-    /* mapRead writes IN PLACE into the existing mp / pb / bs / ss
-     * structures — it doesn't reallocate them. So we don't need (and
-     * must not!) stash + free old handles: the "old" and "new"
-     * pointers are the same memory, just with refreshed contents. */
-    if (mapRead((char *)mapFileName,
-                &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
-        WB_LOG_ERROR(WB_LOG_CAT_SERVER,
-            "serverSimReloadMap: mapRead failed for '%s'", mapFileName);
-        return FALSE;
-    }
 
     basesClearMines(&sim->sim);
 
-    /* Update map name from basename, strip .map suffix. Same logic as
-     * serverSimCreate. */
-    {
-        const char *base = mapFileName;
-        const char *p;
-        for (p = mapFileName; *p; p++) {
-            if (*p == '/' || *p == '\\') {
-                base = p + 1;
-            }
-        }
-        strncpy(sim->mapName, base, MAP_STR_SIZE - 1);
-        sim->mapName[MAP_STR_SIZE - 1] = '\0';
-        {
-            size_t nameLen = strlen(sim->mapName);
-            if (nameLen >= 4 &&
-                strcmp(sim->mapName + nameLen - 4, ".map") == 0) {
-                sim->mapName[nameLen - 4] = '\0';
-            }
-        }
-    }
-
-    /* Refresh cached compressed map — used by between-round resets
-     * (serverSimResetGameWorld) and by the MP map-download path. */
+    /* Update cached map */
     len = serverSimGetCompressedMap(sim, tempBuf);
     if (sim->cachedMapData) free(sim->cachedMapData);
     sim->cachedMapData = malloc(len);
     if (sim->cachedMapData == NULL) {
-        sim->cachedMapDataLen = 0;
         return FALSE;
     }
     memcpy(sim->cachedMapData, tempBuf, len);
     sim->cachedMapDataLen = len;
 
-    /* Random-map provenance no longer applies. */
-    sim->randomMapEnabled = false;
+    /* Update map name */
+    mapGenConfigToSeed(&cfg, seedStr, sizeof(seedStr));
+    snprintf(sim->mapName, MAP_STR_SIZE, "rand_%.30s", seedStr);
 
-    /* Reset lobby ready state — humans must re-acknowledge the new
-     * map. Bots stay ready (no UI to click). */
+    /* Store updated config */
+    sim->randomMapConfig = cfg;
+
+    snprintf(msg, sizeof(msg), "Random map regenerated, seed: %s", seedStr);
+    serverSimConsoleMessage(msg);
+
+    /* Reset lobby ready state */
     {
         int i;
         for (i = 0; i < MAX_TANKS; i++) {
-            if (!sim->lobbyPlayers[i].isBot) {
-                sim->lobbyPlayers[i].ready = FALSE;
-            }
+            sim->lobbyPlayers[i].ready = FALSE;
         }
     }
-
-    snprintf(msg, sizeof(msg), "Map changed to %s", sim->mapName);
-    serverSimConsoleMessage(msg);
-
-    WB_LOG_INFO(WB_LOG_CAT_SERVER,
-        "serverSimReloadMap: now '%s' (%d compressed bytes)",
-        sim->mapName, sim->cachedMapDataLen);
 
     return TRUE;
-}
-
-bool serverSimHasPreviewMap(const ServerSim *sim) {
-    return sim != NULL && sim->previousMapData != NULL;
-}
-
-const char *serverSimGetPreviousMapName(const ServerSim *sim) {
-    if (!sim || !sim->previousMapData) return "";
-    return sim->previousMapName;
-}
-
-bool serverSimRevertPreview(ServerSim *sim) {
-    /* Oversized for RLE worst-case (see comment in serverSimReloadMap). */
-    BYTE tempBuf[131072];
-    int len;
-    if (!sim || !sim->previousMapData) return FALSE;
-    if (sim->state != serverStateLobby) return FALSE;
-
-    /* Load the stashed bytes back into the running sim's
-     * mp / pb / bs / ss. mapLoadCompressedMap writes in place, so
-     * (same caveat as serverSimReloadMap) we don't touch the old
-     * pointer values — only their contents. */
-    if (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb,
-                              &sim->sim.bs, &sim->sim.ss,
-                              sim->previousMapData,
-                              sim->previousMapDataLen) == FALSE) {
-        WB_LOG_ERROR(WB_LOG_CAT_SERVER,
-            "serverSimRevertPreview: mapLoadCompressedMap failed");
-        return FALSE;
-    }
-    basesClearMines(&sim->sim);
-
-    /* Restore mapName + refresh cachedMapData from the live sim. */
-    memcpy(sim->mapName, sim->previousMapName, sizeof(sim->mapName));
-    len = serverSimGetCompressedMap(sim, tempBuf);
-    if (sim->cachedMapData) free(sim->cachedMapData);
-    sim->cachedMapData = (BYTE *)malloc(len);
-    if (sim->cachedMapData) {
-        memcpy(sim->cachedMapData, tempBuf, len);
-        sim->cachedMapDataLen = len;
-    } else {
-        sim->cachedMapDataLen = 0;
-    }
-
-    /* Drop the stash — the previously-committed map is now the
-     * committed map again. */
-    free(sim->previousMapData);
-    sim->previousMapData = NULL;
-    sim->previousMapDataLen = 0;
-    sim->previousMapName[0] = '\0';
-
-    /* If the preview being reverted was driven by an in-flight upload,
-     * delete the temp file too so the rejected map never lands on disk. */
-    serverSimDiscardPendingUpload(sim);
-
-    WB_LOG_INFO(WB_LOG_CAT_SERVER,
-        "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
-    return TRUE;
-}
-
-bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {
-    if (!sim || !cfg) return FALSE;
-    if (sim->state != serverStateLobby) {
-        WB_LOG_INFO(WB_LOG_CAT_SERVER,
-            "serverSimReloadRandomMap rejected: state=%d",
-            (int)sim->state);
-        return FALSE;
-    }
-
-    /* User has picked a generated map — any in-flight upload preview
-     * is now superseded. Delete the temp file. */
-    if (sim->pendingUploadActive) {
-        serverSimDiscardPendingUpload(sim);
-    }
-
-    /* Stash the previously-committed map before we overwrite anything.
-     * Same idea as serverSimReloadMap — keep the ORIGINAL committed
-     * map across a chain of previews so one Cancel rolls all the
-     * way back. */
-    if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
-        sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
-        if (sim->previousMapData) {
-            memcpy(sim->previousMapData, sim->cachedMapData,
-                   sim->cachedMapDataLen);
-            sim->previousMapDataLen = sim->cachedMapDataLen;
-            memcpy(sim->previousMapName, sim->mapName,
-                   sizeof(sim->previousMapName));
-        }
-    }
-
-    if (!serverSimApplyRandomMapConfig(sim, cfg)) return FALSE;
-
-    {
-        char seedStr[64];
-        char msg[128];
-        mapGenConfigToSeed(cfg, seedStr, sizeof(seedStr));
-        snprintf(msg, sizeof(msg),
-                 "Random preview generated, seed: %s", seedStr);
-        serverSimConsoleMessage(msg);
-        WB_LOG_INFO(WB_LOG_CAT_SERVER,
-            "serverSimReloadRandomMap: now '%s' (%d compressed bytes)",
-            sim->mapName, sim->cachedMapDataLen);
-    }
-    return TRUE;
-}
-
-void serverSimCommitPreview(ServerSim *sim) {
-    if (!sim || !sim->previousMapData) return;
-    /* If the previewed map was an in-flight upload, write it to
-     * disk NOW (move from temp to final Uploads/ path). Do this
-     * BEFORE dropping the preview stash so a write failure can
-     * still surface in the log. */
-    serverSimCommitPendingUpload(sim);
-
-    /* Nothing to do for the sim — it's already on the previewed
-     * map. We just free the stash; the previewed map is now the
-     * committed one. */
-    free(sim->previousMapData);
-    sim->previousMapData = NULL;
-    sim->previousMapDataLen = 0;
-    sim->previousMapName[0] = '\0';
-    WB_LOG_INFO(WB_LOG_CAT_SERVER,
-        "serverSimCommitPreview: committed '%s'", sim->mapName);
-}
-
-/* ────────────────────────────────────────────────────────────────
- * Pending-upload helpers — defer writing the uploaded file into
- * data/maps/Uploads/ until the host confirms the preview. The
- * temp path holds the uploaded bytes during preview; on commit
- * we rename to final, on cancel (or when the user picks a
- * different map) we delete the temp file. Single in-flight upload
- * at a time per sim — the lobby flow only lets the host edit.
- * ──────────────────────────────────────────────────────────────── */
-
-void serverSimSetPendingUpload(ServerSim *sim,
-                                const char *tempPath,
-                                const char *finalPath,
-                                const char *relPath) {
-    if (!sim) return;
-    /* If another upload was already pending AND the incoming temp
-     * path is different, discard the previous one (deletes its temp
-     * file) — only one in-flight upload at a time. When the incoming
-     * temp path matches (we overwrite the same fixed scratch file
-     * for every upload), DO NOT delete: that would delete the file
-     * the caller just wrote and is about to commit. */
-    if (sim->pendingUploadActive &&
-        tempPath && tempPath[0] != '\0' &&
-        strcmp(sim->pendingUploadTempPath, tempPath) != 0) {
-        serverSimDiscardPendingUpload(sim);
-    }
-    SDL_strlcpy(sim->pendingUploadTempPath,  tempPath  ? tempPath  : "",
-                sizeof(sim->pendingUploadTempPath));
-    SDL_strlcpy(sim->pendingUploadFinalPath, finalPath ? finalPath : "",
-                sizeof(sim->pendingUploadFinalPath));
-    SDL_strlcpy(sim->pendingUploadRelPath,   relPath   ? relPath   : "",
-                sizeof(sim->pendingUploadRelPath));
-    sim->pendingUploadActive = (tempPath && tempPath[0] != '\0' &&
-                                finalPath && finalPath[0] != '\0');
-}
-
-bool serverSimHasPendingUpload(const ServerSim *sim) {
-    return sim != NULL && sim->pendingUploadActive;
-}
-
-void serverSimDiscardPendingUpload(ServerSim *sim) {
-    if (!sim || !sim->pendingUploadActive) return;
-    if (sim->pendingUploadTempPath[0] != '\0') {
-        /* Best-effort delete — ignore failure (temp may have been
-         * moved by a prior commit, or never created if the write
-         * failed up-front). */
-        SDL_RemovePath(sim->pendingUploadTempPath);
-    }
-    WB_LOG_INFO(WB_LOG_CAT_SERVER,
-        "serverSimDiscardPendingUpload: dropped temp '%s' (intended '%s')",
-        sim->pendingUploadTempPath, sim->pendingUploadFinalPath);
-    sim->pendingUploadTempPath[0]  = '\0';
-    sim->pendingUploadFinalPath[0] = '\0';
-    sim->pendingUploadRelPath[0]   = '\0';
-    sim->pendingUploadActive       = false;
-}
-
-bool serverSimCommitPendingUpload(ServerSim *sim) {
-    if (!sim || !sim->pendingUploadActive) return false;
-    bool ok = false;
-    if (sim->pendingUploadTempPath[0] != '\0' &&
-        sim->pendingUploadFinalPath[0] != '\0') {
-        /* Resolve final filename with collision-avoidance — another
-         * upload with the same name may have raced ahead of us
-         * between when we captured finalPath and now. Probe the FS
-         * and bump (n) until we find a free slot. The base/ext split
-         * mirrors the same logic in transport_udp_server's
-         * UPLOAD_DONE prior to handing the paths off. */
-        char finalPath[FILENAME_MAX];
-        SDL_strlcpy(finalPath, sim->pendingUploadFinalPath, sizeof(finalPath));
-        {
-            SDL_PathInfo info;
-            if (SDL_GetPathInfo(finalPath, &info)) {
-                /* Collision — rename with " (n)" suffix. */
-                char base[128], ext[16];
-                const char *slash = strrchr(sim->pendingUploadFinalPath, '/');
-#if defined(_WIN32)
-                const char *bslash = strrchr(sim->pendingUploadFinalPath, '\\');
-                if (bslash && (!slash || bslash > slash)) slash = bslash;
-#endif
-                const char *fname = slash ? slash + 1 : sim->pendingUploadFinalPath;
-                size_t dirLen = (size_t)(fname - sim->pendingUploadFinalPath);
-                const char *dot = strrchr(fname, '.');
-                if (dot && dot != fname) {
-                    size_t bl = (size_t)(dot - fname);
-                    if (bl >= sizeof(base)) bl = sizeof(base) - 1;
-                    memcpy(base, fname, bl); base[bl] = '\0';
-                    SDL_strlcpy(ext, dot, sizeof(ext));
-                } else {
-                    SDL_strlcpy(base, fname, sizeof(base));
-                    ext[0] = '\0';
-                }
-                for (int n = 1; n < 1000; n++) {
-                    SDL_snprintf(finalPath, sizeof(finalPath),
-                                 "%.*s%s (%d)%s",
-                                 (int)dirLen, sim->pendingUploadFinalPath,
-                                 base, n, ext);
-                    if (!SDL_GetPathInfo(finalPath, &info)) break;
-                }
-            }
-        }
-        /* Ensure the parent directory exists — WBN downloads land
-         * under "data/maps/Winbolo.net Downloads/" which isn't
-         * shipped, and even Uploads/ may have been removed by a
-         * user. SDL_CreateDirectory is best-effort and idempotent. */
-        {
-            const char *fslash = strrchr(finalPath, '/');
-#if defined(_WIN32)
-            const char *fbslash = strrchr(finalPath, '\\');
-            if (fbslash && (!fslash || fbslash > fslash)) fslash = fbslash;
-#endif
-            if (fslash && fslash != finalPath) {
-                char parentDir[FILENAME_MAX];
-                size_t plen = (size_t)(fslash - finalPath);
-                if (plen >= sizeof(parentDir)) plen = sizeof(parentDir) - 1;
-                memcpy(parentDir, finalPath, plen);
-                parentDir[plen] = '\0';
-                SDL_CreateDirectory(parentDir);
-            }
-        }
-        /* SDL doesn't have a rename helper; do copy + delete. */
-        FILE *src = fopen(sim->pendingUploadTempPath, "rb");
-        FILE *dst = src ? fopen(finalPath, "wb") : NULL;
-        if (src && dst) {
-            BYTE chunk[8192];
-            size_t r;
-            ok = true;
-            while ((r = fread(chunk, 1, sizeof(chunk), src)) > 0) {
-                if (fwrite(chunk, 1, r, dst) != r) { ok = false; break; }
-            }
-        }
-        if (dst) fclose(dst);
-        if (src) fclose(src);
-        if (ok) {
-            SDL_RemovePath(sim->pendingUploadTempPath);
-            WB_LOG_INFO(WB_LOG_CAT_SERVER,
-                "serverSimCommitPendingUpload: '%s' -> '%s'",
-                sim->pendingUploadTempPath, finalPath);
-        } else {
-            WB_LOG_ERROR(WB_LOG_CAT_SERVER,
-                "serverSimCommitPendingUpload: failed to write '%s'",
-                finalPath);
-        }
-    }
-    sim->pendingUploadTempPath[0]  = '\0';
-    sim->pendingUploadFinalPath[0] = '\0';
-    sim->pendingUploadRelPath[0]   = '\0';
-    sim->pendingUploadActive       = false;
-    return ok;
 }
 
 void serverSimDestroy(ServerSim *sim) {
@@ -1364,6 +923,23 @@ void serverSimTick(ServerSim *sim) {
             sim->tickLimit = 0;
             mapSetChangeCallback(NULL);
             serverSimConsoleMessage(ticksMsg);
+            serverSimEnterGameOver(sim);
+            sim->tick++;
+            return;
+        }
+    }
+
+    if (sim->gameTickLimit > 0) {
+        sim->gameTicksRun++;
+        if (sim->gameTicksRun >= sim->gameTickLimit) {
+            char gameTicksMsg[64];
+            snprintf(gameTicksMsg, sizeof(gameTicksMsg),
+                     "Game tick limit reached (%d). Ending game.",
+                     (int)sim->gameTickLimit);
+            sim->gameTickLimit = 0;
+            sim->gameTicksRun = 0;
+            mapSetChangeCallback(NULL);
+            serverSimConsoleMessage(gameTicksMsg);
             serverSimEnterGameOver(sim);
             sim->tick++;
             return;
@@ -1894,7 +1470,14 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     /* Broadcast current skip vote state to the new player — existing votes
      * are preserved since the threshold naturally adjusts with more players. */
     if (sim->lobbyEnabled && sim->state == serverStateLobby && (sim->mapDirCount > 1 || sim->randomMapEnabled)) {
-        transportUdpServerBroadcastMapSkipState(sim);
+        ControlEvent skipEvt;
+        BYTE k;
+        memset(&skipEvt, 0, sizeof(skipEvt));
+        skipEvt.type = CTRL_MAP_SKIP_STATE;
+        for (k = 0; k < MAX_TANKS; k++) {
+            skipEvt.u.mapSkipState.votes[k] = sim->mapSkipVotes[k] ? 1 : 0;
+        }
+        serverSimPublishControl(sim, &skipEvt);
     }
 
     /* Notify in-process subscribers that a player joined. The just-added
@@ -1920,6 +1503,17 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     }
     logAddEvent(log_PlayerLeaving, playerNum, 0, 0, 0, 0, NULL);
     logAddEvent(log_PlayerQuit, playerNum, 0, 0, 0, 0, NULL);
+
+    /* Publish before clearing the slot — the filler reads the player's
+     * name and country out of sim->sim.plyrs->item[playerNum], which is
+     * still valid here and gets zeroed later in this function. */
+    {
+        ControlEvent leaveEvt;
+        memset(&leaveEvt, 0, sizeof(leaveEvt));
+        serverSimFillPlayerLeaveEvent(sim, playerNum, &leaveEvt);
+        serverSimPublishControl(sim, &leaveEvt);
+    }
+
     sim->playerConnected[playerNum] = FALSE;
     if (sim->sim.tanks[playerNum] != NULL) {
         tankDestroy(&sim->sim, &sim->sim.tanks[playerNum]);
@@ -2028,8 +1622,23 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
                 serverSimMapDirPickRandom(sim);
             }
             serverSimMapSkipVotesReset(sim);
-            transportUdpServerNotifyMapChange(sim);
-            transportUdpServerBroadcastMapSkipState(sim);
+            transportUdpServerOnLobbyMapChange(sim);
+            {
+                ControlEvent mapEvt;
+                memset(&mapEvt, 0, sizeof(mapEvt));
+                mapEvt.type = CTRL_LOBBY_MAP_CHANGE;
+                serverSimPublishControl(sim, &mapEvt);
+            }
+            {
+                ControlEvent skipEvt;
+                BYTE m;
+                memset(&skipEvt, 0, sizeof(skipEvt));
+                skipEvt.type = CTRL_MAP_SKIP_STATE;
+                for (m = 0; m < MAX_TANKS; m++) {
+                    skipEvt.u.mapSkipState.votes[m] = sim->mapSkipVotes[m] ? 1 : 0;
+                }
+                serverSimPublishControl(sim, &skipEvt);
+            }
             winbolonetSendMapChange(sim->mapName,
                 basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb),
                 basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb));
@@ -2086,6 +1695,11 @@ void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
     if (teamNumber > 16) {
         teamNumber = 1;
     }
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+                "[DIAG] serverSimSetTeam slot=%u oldTeam=%u newTeam=%u",
+                (unsigned)playerNum,
+                (unsigned)sim->lobbyPlayers[playerNum].teamNumber,
+                (unsigned)teamNumber);
     sim->lobbyPlayers[playerNum].teamNumber = teamNumber;
 }
 
@@ -2134,8 +1748,21 @@ void serverSimSetBotPreThinkHook(void (*hook)(int playerNum)) {
 bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
                         const char *brainPath, const char *brainName,
                         aiType ai, gameType game, bool hiddenMines) {
-    return botManagerAddBot(sim, playerNum, brainPath, brainName,
-                            ai, game, hiddenMines);
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+                "[DIAG] serverSimCreateBot ENTRY sim=%p slot=%u brain='%s' name='%s' ai=%d state=%d",
+                (void *)sim, (unsigned)playerNum,
+                brainPath ? brainPath : "(null)",
+                brainName ? brainName : "(null)",
+                (int)ai, sim ? (int)sim->state : -1);
+    bool ok = botManagerAddBot(sim, playerNum, brainPath, brainName,
+                               ai, game, hiddenMines);
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+                "[DIAG] serverSimCreateBot EXIT slot=%u ok=%d (post-state: connected=%d team=%u isBot=%d)",
+                (unsigned)playerNum, (int)ok,
+                sim ? (int)sim->playerConnected[playerNum] : -1,
+                sim ? (unsigned)sim->lobbyPlayers[playerNum].teamNumber : 0,
+                sim ? (int)sim->lobbyPlayers[playerNum].isBot : -1);
+    return ok;
 }
 
 void serverSimRemoveBot(ServerSim *sim, BYTE playerNum) {
@@ -2244,6 +1871,17 @@ void serverSimPrependEvents(ServerSim *sim,
     sim->eventCount += count;
 }
 
+void serverSimPrependMapEvents(ServerSim *sim,
+                               const GameEvent *events,
+                               uint16_t count) {
+    if (count == 0) return;
+    if ((uint32_t)count + sim->mapEventCount > MAX_MAP_EVENTS) return;
+    memmove(sim->mapEvents + count, sim->mapEvents,
+            sim->mapEventCount * sizeof(GameEvent));
+    memcpy(sim->mapEvents, events, count * sizeof(GameEvent));
+    sim->mapEventCount += count;
+}
+
 void serverSimSetAutoCloseOnEmpty(ServerSim *sim, bool enabled) {
     sim->autoCloseOnEmpty = enabled;
 }
@@ -2295,6 +1933,11 @@ void serverSimSetServerPort(ServerSim *sim, unsigned short port) {
 
 void serverSimSetTickLimit(ServerSim *sim, int32_t ticks) {
     sim->tickLimit = ticks;
+}
+
+void serverSimSetGameTickLimit(ServerSim *sim, int32_t ticks) {
+    sim->gameTickLimit = ticks;
+    sim->gameTicksRun = 0;
 }
 
 void serverSimSetUserLogFileName(ServerSim *sim, const char *name) {
@@ -2855,6 +2498,10 @@ void serverSimAbortCountdown(ServerSim *sim) {
     sim->countdownTicks = 0;
 }
 
+void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks) {
+    sim->countdownTicks = ticks;
+}
+
 void serverSimClearBalanceProposal(ServerSim *sim) {
     memset(&sim->balanceProposal, 0, sizeof(BalanceProposal));
 }
@@ -2882,9 +2529,10 @@ void serverSimEnterGameOver(ServerSim *sim) {
         sim->state = serverStateGameOver;
         sim->countdownTicks = GAMEOVER_HOLD_TICKS;
         serverSimConsoleMessage("Game over! Returning to lobby...");
-        /* PACKET_GAME_OVER broadcast is sent by transport layer
-         * via transportUdpServerBroadcastGameOver() called from
-         * the transport recv/tick path when state changes. */
+        /* CTRL_GAME_PHASE(GAME_OVER) and CTRL_GAME_OVER are published
+         * by the server lifecycle when it observes the state change;
+         * the per-client codec subscriber turns each into the matching
+         * wire packet (PACKET_GAME_OVER). */
     }
 }
 
@@ -2967,22 +2615,21 @@ void serverSimReturnToLobby(ServerSim *sim) {
     sim->state = serverStateLobby;
     serverSimMapSkipVotesReset(sim);
 
-    /* Layout A: restore allowNewPlayers if autoLockOnGameStart had
-     * flipped it off when the game started. This persists across
-     * rounds — operators can lock and have it re-arm next start. */
-    if (sim->autoLockOnGameStart && !sim->allowNewPlayers) {
-        sim->allowNewPlayers = sim->savedAllowNewPlayers;
-        transportUdpServerSetLock(sim, sim->savedAllowNewPlayers);
-    }
-
     /* Regenerate random map between rounds */
     if (sim->randomMapEnabled) {
         serverSimRandomMapRegenerate(sim);
-        transportUdpServerNotifyMapChange(sim);
+        transportUdpServerOnLobbyMapChange(sim);
+        {
+            ControlEvent evt;
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_LOBBY_MAP_CHANGE;
+            serverSimPublishControl(sim, &evt);
+        }
     }
 
     serverSimConsoleMessage("Returned to lobby.");
-    /* PACKET_LOBBY_STATE broadcast is sent by transport layer */
+    /* Lobby state fan-out happens via the control-event bus — the
+     * caller publishes CTRL_LOBBY_SLOT + CTRL_LOBBY_SETTINGS. */
 
     serverDedicatedLogOnReturnToLobby(sim);
 }
@@ -3269,23 +2916,13 @@ void serverSimStartGame(ServerSim *sim) {
     sim->state = serverStateRunning;
     serverSimConsoleMessage("Game started!");
 
-    /* Layout A: autoLockOnGameStart. Save the current allowNewPlayers
-     * value so we can restore it when the game ends, then close the
-     * lobby for the duration of the running game. */
-    sim->savedAllowNewPlayers = sim->allowNewPlayers;
-    if (sim->autoLockOnGameStart && sim->allowNewPlayers) {
-        sim->allowNewPlayers = FALSE;
-        transportUdpServerSetLock(sim, FALSE);  /* re-broadcasts lock state */
-    }
-
     /* A snapshot will be written on the first running tick
      * (tick 0 % FULL_SYNC_INTERVAL == 0). */
     serverDedicatedLogOnLobbyExit(sim);
 }
 
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
-    /* Oversized for RLE worst-case (see comment in serverSimReloadMap). */
-    BYTE tempBuf[131072];
+    BYTE tempBuf[65536];
     int len;
     BYTE i;
 
@@ -3338,12 +2975,9 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
         }
     }
 
-    /* Reset all lobby players' ready state. Bots stay permanently
-     * ready (they have no UI to click — set in botManagerAddBot). */
+    /* Reset all lobby players' ready state */
     for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->lobbyPlayers[i].isBot) {
-            sim->lobbyPlayers[i].ready = FALSE;
-        }
+        sim->lobbyPlayers[i].ready = FALSE;
     }
 
     return TRUE;
@@ -3631,8 +3265,23 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
             logAddEvent(log_MapSkipApplied, 0, 0, 0, 0, 0, pstr);
         }
         serverSimMapSkipVotesReset(sim);
-        transportUdpServerNotifyMapChange(sim);
-        transportUdpServerBroadcastMapSkipState(sim);
+        transportUdpServerOnLobbyMapChange(sim);
+        {
+            ControlEvent mapEvt;
+            memset(&mapEvt, 0, sizeof(mapEvt));
+            mapEvt.type = CTRL_LOBBY_MAP_CHANGE;
+            serverSimPublishControl(sim, &mapEvt);
+        }
+        {
+            ControlEvent skipEvt;
+            BYTE m;
+            memset(&skipEvt, 0, sizeof(skipEvt));
+            skipEvt.type = CTRL_MAP_SKIP_STATE;
+            for (m = 0; m < MAX_TANKS; m++) {
+                skipEvt.u.mapSkipState.votes[m] = sim->mapSkipVotes[m] ? 1 : 0;
+            }
+            serverSimPublishControl(sim, &skipEvt);
+        }
         winbolonetSendMapChange(sim->mapName,
             basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb),
             basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb));
@@ -3654,8 +3303,44 @@ void serverSimMapSkipVotesReset(ServerSim *sim) {
  * in the transport tick path.
  * ---------------------------------------------------------------------- */
 
-/* Forward declared in this TU only — implemented in transport_udp_server.c. */
-extern void transportUdpServerBroadcastGameVoteState(ServerSim *sim, uint8_t kind);
+/* Server-originated English broadcast via CTRL_CHAT (fromPlayer=0xFE).
+ * Inlined here (instead of calling transportUdpServerSendServerMessage)
+ * so BrainTest / MapEditor — which link server_sim_static but not the
+ * UDP transport — can still announce server messages to subscribers. */
+static void publishServerMessage(ServerSim *sim, const char *message) {
+    ControlEvent evt;
+    if (!sim || !message) return;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SERVER_TEXT;
+    SDL_strlcpy(evt.u.serverText.text, message, sizeof(evt.u.serverText.text));
+    /* In-process subscribers display via client_sim_control.c's
+     * CTRL_SERVER_TEXT handler (newswire / lobby chat); UDP clients
+     * receive the codec-encoded PACKET_CHAT_BROADCAST(fromPlayer=0xFE)
+     * via the encoder table. */
+    serverSimPublishControl(sim, &evt);
+}
+
+/* Publish current vote state through the control-event dispatcher.
+ * In-process subscribers see it directly; remote UDP clients receive
+ * the wire-encoded PACKET_GAME_VOTE_STATE via the codec encoder. */
+static void publishGameVoteState(ServerSim *sim, uint8_t kind) {
+    ServerGameVoteSnapshot snap;
+    ControlEvent evt;
+    if (!serverSimGetGameVoteSnapshot(sim, kind, &snap)) return;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_GAME_VOTE_STATE;
+    evt.u.gameVoteState.kind             = snap.kind;
+    evt.u.gameVoteState.active           = snap.active;
+    evt.u.gameVoteState.triggerSrc       = snap.triggerSrc;
+    evt.u.gameVoteState.teamId           = snap.teamId;
+    evt.u.gameVoteState.threshold        = snap.threshold;
+    evt.u.gameVoteState.yesCount         = snap.yesCount;
+    evt.u.gameVoteState.noCount          = snap.noCount;
+    evt.u.gameVoteState.eligibleCount    = snap.eligibleCount;
+    evt.u.gameVoteState.secondsRemaining = snap.secondsRemaining;
+    evt.u.gameVoteState.votes            = snap.votes;
+    serverSimPublishControl(sim, &evt);
+}
 
 /* Forward declarations for the in-TU helpers — gameVoteThreshold is
  * called from the public snapshot accessor which sits above the
@@ -3788,7 +3473,7 @@ static void gameVoteConclude(ServerSim *sim, struct ServerGameVote *gv,
                              uint8_t finalState, uint64_t nowMs) {
     gv->active = finalState;
     gv->concludedAtMs = nowMs;
-    transportUdpServerBroadcastGameVoteState(sim, gv->kind);
+    publishGameVoteState(sim, gv->kind);
 }
 
 /* Fire the actual pass effects (countdown for back-to-lobby,
@@ -3814,14 +3499,14 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
                             ? sim->teams[gv->teamId].name : "?";
         snprintf(buf, sizeof(buf),
                  "*** Team %s has surrendered. ***", tname);
-        transportUdpServerSendServerMessage(buf);
+        publishServerMessage(sim, buf);
 
         /* Auto-start a back-to-lobby vote unless one is already running. */
         struct ServerGameVote *btl = gameVoteSlot(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
         if (btl && btl->active != GAME_VOTE_ACTIVE_RUNNING) {
             gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
                           GAME_VOTE_TRIGGER_POST_SURRENDER, 0, nowMs);
-            transportUdpServerBroadcastGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
+            publishGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
         }
     }
 }
@@ -3877,7 +3562,7 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
      * as if the caller voted yes. */
     if (toggleMode == GAME_VOTE_TOGGLE_OPEN_ONLY) {
         if (gv->active == GAME_VOTE_ACTIVE_RUNNING) {
-            transportUdpServerBroadcastGameVoteState(sim, kind);
+            publishGameVoteState(sim, kind);
             return;
         }
         gameVoteStart(sim, kind, GAME_VOTE_TRIGGER_MANUAL, teamId, nowMs);
@@ -3896,15 +3581,15 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
             if (thr == 1) {
                 gv->pendingPassUntilMs = nowMs +
                     (uint64_t)GAME_VOTE_PASS_GRACE_SECONDS * 1000ULL;
-                transportUdpServerBroadcastGameVoteState(sim, kind);
+                publishGameVoteState(sim, kind);
             } else {
-                transportUdpServerBroadcastGameVoteState(sim, kind);
+                publishGameVoteState(sim, kind);
                 gameVoteFirePass(sim, gv, nowMs);
             }
             return;
         }
 
-        transportUdpServerBroadcastGameVoteState(sim, kind);
+        publishGameVoteState(sim, kind);
         return;
     }
 
@@ -3939,9 +3624,9 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
                 gv->pendingPassUntilMs = nowMs +
                     (uint64_t)GAME_VOTE_PASS_GRACE_SECONDS * 1000ULL;
             }
-            transportUdpServerBroadcastGameVoteState(sim, kind);
+            publishGameVoteState(sim, kind);
         } else {
-            transportUdpServerBroadcastGameVoteState(sim, kind);
+            publishGameVoteState(sim, kind);
             gameVoteFirePass(sim, gv, nowMs);
         }
         return;
@@ -3952,7 +3637,7 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
         gv->pendingPassUntilMs = 0;
     }
 
-    transportUdpServerBroadcastGameVoteState(sim, kind);
+    publishGameVoteState(sim, kind);
 
     /* Everyone answered but yes count didn't reach the pass
      * threshold → fail now instead of waiting for the timeout. */
@@ -4009,14 +3694,14 @@ static void gameVoteCheckBaseMonopoly(ServerSim *sim, uint64_t nowMs) {
     snprintf(buf, sizeof(buf),
              "Team %s controls every base. Returning to lobby on unanimous vote.",
              tname);
-    transportUdpServerSendServerMessage(buf);
+    publishServerMessage(sim, buf);
 
     gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
                   GAME_VOTE_TRIGGER_BASE_MONOPOLY, monoTeam, nowMs);
     /* Pre-cast YES for every eligible voter. */
     gv->votesMask    = gameVoteEligibleMask(sim, GAME_VOTE_KIND_BACK_TO_LOBBY, 0);
     gv->answeredMask = gv->votesMask;
-    transportUdpServerBroadcastGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
+    publishGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
 
     sim->baseMonopolyTriggeredThisRound = true;
 }
@@ -4044,7 +3729,7 @@ void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
             /* Surrender invalidation: team count must remain == 2. */
             if (gv->kind == GAME_VOTE_KIND_SURRENDER &&
                 serverSimCountActiveTeams(sim) != 2) {
-                transportUdpServerSendServerMessage("Surrender vote cancelled — team count changed.");
+                publishServerMessage(sim, "Surrender vote cancelled — team count changed.");
                 gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_CANCELLED, nowMs);
                 continue;
             }
@@ -4053,7 +3738,7 @@ void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
              * entirely (everyone disconnected), the vote is moot. */
             if (popcount16(gameVoteEligibleMask(sim, gv->kind, gv->teamId)) == 0) {
                 if (gv->kind == GAME_VOTE_KIND_SURRENDER) {
-                    transportUdpServerSendServerMessage(
+                    publishServerMessage(sim,
                         "Surrender vote cancelled — surrendering team is empty.");
                 }
                 gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_CANCELLED, nowMs);
@@ -4063,7 +3748,7 @@ void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
             /* 1Hz heartbeat broadcast (drives client countdown display). */
             if (nowMs - gv->lastHeartbeatMs >= 1000ULL) {
                 gv->lastHeartbeatMs = nowMs;
-                transportUdpServerBroadcastGameVoteState(sim, gv->kind);
+                publishGameVoteState(sim, gv->kind);
             }
 
             /* Re-check pass under the live eligible-mask. Eligibility
@@ -4185,6 +3870,63 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyServerLocks         = sim->serverLocks;
 }
 
+void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
+    ClientLobbySlot slot;
+    memset(&slot, 0, sizeof(slot));
+    slot.connected = sim->playerConnected[i] ? true : false;
+    if (slot.connected) {
+        const char *name = sim->sim.plyrs->item[i].playerName;
+        strncpy(slot.playerName, name, PACKET_MAX_PLAYER_NAME - 1);
+        slot.playerName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+        slot.teamNumber = sim->lobbyPlayers[i].teamNumber;
+        slot.ready      = sim->lobbyPlayers[i].ready;
+        slot.isBot      = sim->lobbyPlayers[i].isBot;
+        slot.pingMs     = sim->playerPing[i];
+        slot.countryCode[0] = sim->sim.plyrs->item[i].location[0];
+        slot.countryCode[1] = sim->sim.plyrs->item[i].location[1];
+        slot.countryCode[2] = '\0';
+        slot.clientType  = playersGetClientType(&sim->sim.plyrs, i);
+        slot.clientFlags = playersGetClientFlags(&sim->sim.plyrs, i);
+    }
+    evt->type = CTRL_LOBBY_SLOT;
+    evt->u.lobbySlot.playerNum = i;
+    evt->u.lobbySlot.slot = slot;
+}
+
+void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
+    PlayerBitMap allies = playersGetAlliesBitMap(&sim->sim.plyrs, i);
+    BYTE numAllies = 0;
+    BYTE bit;
+
+    evt->type = CTRL_PLAYER_JOIN;
+    evt->u.playerJoin.playerNum = i;
+    memset(evt->u.playerJoin.name, 0, PACKET_MAX_PLAYER_NAME);
+    strncpy(evt->u.playerJoin.name, sim->sim.plyrs->item[i].playerName,
+            PACKET_MAX_PLAYER_NAME - 1);
+    evt->u.playerJoin.country[0] = sim->sim.plyrs->item[i].location[0];
+    evt->u.playerJoin.country[1] = sim->sim.plyrs->item[i].location[1];
+    evt->u.playerJoin.country[2] = '\0';
+    evt->u.playerJoin.clientType  = playersGetClientType(&sim->sim.plyrs, i);
+    evt->u.playerJoin.clientFlags = playersGetClientFlags(&sim->sim.plyrs, i);
+    for (bit = 0; bit < MAX_TANKS && numAllies < MAX_TANKS; bit++) {
+        if (allies & ((PlayerBitMap)1u << bit)) {
+            evt->u.playerJoin.allies[numAllies++] = bit;
+        }
+    }
+    evt->u.playerJoin.numAllies = numAllies;
+}
+
+void serverSimFillPlayerLeaveEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
+    evt->type = CTRL_PLAYER_LEAVE;
+    evt->u.playerLeave.playerNum = i;
+    memset(evt->u.playerLeave.name, 0, PACKET_MAX_PLAYER_NAME);
+    strncpy(evt->u.playerLeave.name, sim->sim.plyrs->item[i].playerName,
+            PACKET_MAX_PLAYER_NAME - 1);
+    evt->u.playerLeave.country[0] = sim->sim.plyrs->item[i].location[0];
+    evt->u.playerLeave.country[1] = sim->sim.plyrs->item[i].location[1];
+    evt->u.playerLeave.country[2] = '\0';
+}
+
 void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, ControlEvent *evt) {
     evt->type = CTRL_LOBBY_TEAM_META;
     evt->u.lobbyTeamMeta.teamId = teamId;
@@ -4233,52 +3975,6 @@ void serverSimFillLobbyBotBrainEvent(const ServerSim *sim, BYTE slot, ControlEve
 void serverSimFillLobbyBrainListEvent(const ServerSim *sim, ControlEvent *evt) {
     evt->type = CTRL_LOBBY_BRAIN_LIST;
     evt->u.lobbyBrainList.list = sim->brainList;
-}
-
-void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
-    ClientLobbySlot slot;
-    memset(&slot, 0, sizeof(slot));
-    slot.connected = sim->playerConnected[i] ? true : false;
-    if (slot.connected) {
-        const char *name = sim->sim.plyrs->item[i].playerName;
-        strncpy(slot.playerName, name, PACKET_MAX_PLAYER_NAME - 1);
-        slot.playerName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
-        slot.teamNumber = sim->lobbyPlayers[i].teamNumber;
-        slot.ready      = sim->lobbyPlayers[i].ready;
-        slot.isBot      = sim->lobbyPlayers[i].isBot;
-        slot.pingMs     = sim->playerPing[i];
-        slot.countryCode[0] = sim->sim.plyrs->item[i].location[0];
-        slot.countryCode[1] = sim->sim.plyrs->item[i].location[1];
-        slot.countryCode[2] = '\0';
-        slot.clientType  = playersGetClientType(&sim->sim.plyrs, i);
-        slot.clientFlags = playersGetClientFlags(&sim->sim.plyrs, i);
-    }
-    evt->type = CTRL_LOBBY_SLOT;
-    evt->u.lobbySlot.playerNum = i;
-    evt->u.lobbySlot.slot = slot;
-}
-
-void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
-    PlayerBitMap allies = playersGetAlliesBitMap(&sim->sim.plyrs, i);
-    BYTE numAllies = 0;
-    BYTE bit;
-
-    evt->type = CTRL_PLAYER_JOIN;
-    evt->u.playerJoin.playerNum = i;
-    memset(evt->u.playerJoin.name, 0, PACKET_MAX_PLAYER_NAME);
-    strncpy(evt->u.playerJoin.name, sim->sim.plyrs->item[i].playerName,
-            PACKET_MAX_PLAYER_NAME - 1);
-    evt->u.playerJoin.country[0] = sim->sim.plyrs->item[i].location[0];
-    evt->u.playerJoin.country[1] = sim->sim.plyrs->item[i].location[1];
-    evt->u.playerJoin.country[2] = '\0';
-    evt->u.playerJoin.clientType  = playersGetClientType(&sim->sim.plyrs, i);
-    evt->u.playerJoin.clientFlags = playersGetClientFlags(&sim->sim.plyrs, i);
-    for (bit = 0; bit < MAX_TANKS && numAllies < MAX_TANKS; bit++) {
-        if (allies & ((PlayerBitMap)1u << bit)) {
-            evt->u.playerJoin.allies[numAllies++] = bit;
-        }
-    }
-    evt->u.playerJoin.numAllies = numAllies;
 }
 
 /* Wrapper used to enforce the documented sync ordering:
@@ -4338,6 +4034,10 @@ static void serverSimSyncSubscriber(
     serverSimFillLobbySettingsEvent(sim, &evt);
     deliver(ctx, &evt);
 
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyBrainListEvent(sim, &evt);
+    deliver(ctx, &evt);
+
     for (i = 0; i < MAX_TANKS; i++) {
         if (sim->playerConnected[i]) {
             memset(&evt, 0, sizeof(evt));
@@ -4346,30 +4046,6 @@ static void serverSimSyncSubscriber(
         }
     }
 
-    /* Layout A initial state — team metadata, bot configs, bot brain
-     * paths, and the brain-list catalogue.  These must precede
-     * PLAYER_JOIN since the sync-ordering check (see
-     * serverSimSyncOrderingDeliver) asserts that PLAYER_JOIN events
-     * are the last non-PHASE events in the stream. */
-    for (i = 1; i < MAX_TANKS; i++) {
-        memset(&evt, 0, sizeof(evt));
-        serverSimFillLobbyTeamMetaEvent(sim, i, &evt);
-        deliver(ctx, &evt);
-    }
-    for (i = 0; i < MAX_TANKS; i++) {
-        memset(&evt, 0, sizeof(evt));
-        serverSimFillLobbyBotConfigEvent(sim, i, &evt);
-        deliver(ctx, &evt);
-
-        memset(&evt, 0, sizeof(evt));
-        serverSimFillLobbyBotBrainEvent(sim, i, &evt);
-        deliver(ctx, &evt);
-    }
-    memset(&evt, 0, sizeof(evt));
-    serverSimFillLobbyBrainListEvent(sim, &evt);
-    deliver(ctx, &evt);
-
-    /* PLAYER_JOIN events go last — see ordering check above. */
     for (i = 0; i < MAX_TANKS; i++) {
         if (playersIsInUse(&sim->sim.plyrs, i) == TRUE) {
             memset(&evt, 0, sizeof(evt));
@@ -4449,6 +4125,53 @@ void serverSimUnregisterSubscriber(ServerSim *sim, SubscriberHandle h) {
     if (sim->numSubscribers > 0) {
         sim->numSubscribers--;
     }
+}
+
+void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember) {
+    GameSim *gs;
+    ControlEvent evt;
+    if (sim == NULL) {
+        return;
+    }
+    gs = serverSimGetGameSim(sim);
+    playersAcceptAlliance(gs, &gs->plyrs, NEUTRAL, accepter, newMember, TRUE);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_ALLIANCE_ACCEPT;
+    evt.u.allianceAccept.acceptedBy = accepter;
+    evt.u.allianceAccept.newMember  = newMember;
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
+    GameSim *gs;
+    ControlEvent evt;
+    if (sim == NULL) {
+        return;
+    }
+    gs = serverSimGetGameSim(sim);
+    playersLeaveAlliance(gs, &gs->plyrs, NEUTRAL, playerNum, TRUE);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_ALLIANCE_LEAVE;
+    evt.u.allianceLeave.playerNum = playerNum;
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimSetPlayerName(ServerSim *sim, BYTE playerNum, const char *name) {
+    GameSim *gs;
+    ControlEvent evt;
+    char nameBuf[PACKET_MAX_PLAYER_NAME];
+    if (sim == NULL || name == NULL) {
+        return;
+    }
+    gs = serverSimGetGameSim(sim);
+    strncpy(nameBuf, name, sizeof(nameBuf) - 1);
+    nameBuf[sizeof(nameBuf) - 1] = '\0';
+    playersSetPlayerName(NULL, gs, &gs->plyrs, NEUTRAL, playerNum, nameBuf, TRUE);
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_PLAYER_NAME;
+    evt.u.playerName.playerNum = playerNum;
+    snprintf(evt.u.playerName.name, PACKET_MAX_PLAYER_NAME, "%s", nameBuf);
+    serverSimPublishControl(sim, &evt);
 }
 
 void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
@@ -4579,6 +4302,11 @@ const LobbyPlayer *serverSimGetLobbyPlayer(const ServerSim *sim, BYTE n) {
     return &sim->lobbyPlayers[n];
 }
 
+LobbyPlayer *serverSimGetLobbyPlayerMut(ServerSim *sim, BYTE n) {
+    if (n >= MAX_TANKS) return NULL;
+    return &sim->lobbyPlayers[n];
+}
+
 bool serverSimIsPlayerConnected(const ServerSim *sim, BYTE n) {
     if (n >= MAX_TANKS) return false;
     return sim->playerConnected[n];
@@ -4592,11 +4320,6 @@ uint32_t serverSimGetLastProcessedInput(const ServerSim *sim, BYTE n) {
 bool serverSimIsMapSkipVote(const ServerSim *sim, BYTE n) {
     if (n >= MAX_TANKS) return false;
     return sim->mapSkipVotes[n];
-}
-
-uint16_t serverSimGetPlayerPing(const ServerSim *sim, BYTE n) {
-    if (n >= MAX_TANKS) return 0;
-    return sim->playerPing[n];
 }
 
 char *const *serverSimGetMapDirFiles(const ServerSim *sim) {
@@ -4619,470 +4342,6 @@ GameSim *serverSimGetGameSim(ServerSim *sim) {
     return &sim->sim;
 }
 
-/* ────────────────────────────────────────────────────────────────
- * Lobby Layout A accessors (declared in server_sim.h)
- * ──────────────────────────────────────────────────────────────── */
-
-const char *serverSimGetBotBrainPathFor(const ServerSim *sim, BYTE slot) {
-    if (!sim || slot >= MAX_TANKS) return NULL;
-    return sim->botBrainPaths[slot];
-}
-
-void serverSimSetBotBrainPathFor(ServerSim *sim, BYTE slot, const char *path) {
-    if (!sim || slot >= MAX_TANKS) return;
-    if (path == NULL) {
-        sim->botBrainPaths[slot][0] = '\0';
-        return;
-    }
-    SDL_strlcpy(sim->botBrainPaths[slot], path, sizeof(sim->botBrainPaths[slot]));
-}
-
-const BrainList *serverSimGetBrainList(const ServerSim *sim) {
-    return sim ? &sim->brainList : NULL;
-}
-
-const char *serverSimGetAdminIps(const ServerSim *sim) {
-    return sim ? sim->adminIps : NULL;
-}
-
-void serverSimSetAdminIps(ServerSim *sim, const char *csvIps) {
-    if (!sim) return;
-    if (csvIps == NULL) { sim->adminIps[0] = '\0'; return; }
-    SDL_strlcpy(sim->adminIps, csvIps, sizeof(sim->adminIps));
-}
-
-bool serverSimGetAdminFirstJoinAfterEmpty(const ServerSim *sim) {
-    return sim ? sim->adminFirstJoinAfterEmpty : false;
-}
-
-void serverSimSetAdminFirstJoinAfterEmpty(ServerSim *sim, bool v) {
-    if (sim) sim->adminFirstJoinAfterEmpty = v;
-}
-
-/* ── Map directory enumeration ──────────────────────────────────────
- * Implementation notes:
- *   - Path validation rejects ".." anywhere in the relative path so a
- *     client can't escape the data/maps sandbox.
- *   - Uses SDL_GlobDirectory + SDL_GetPathInfo so it works on every
- *     supported platform (SDL3 handles the platform-specific FS API).
- *   - Folders sort before files; both groups sort case-insensitive
- *     alphabetical. Matches the chooser's display order. */
-static bool relPathIsSafe(const char *p) {
-    if (!p) return true; /* NULL = root */
-    /* Reject absolute paths and any ".." segment. */
-    if (p[0] == '/' || p[0] == '\\') return false;
-    if (p[0] != '\0' && (p[1] == ':' || (p[2] == ':' && p[3] != '\0')))
-        return false; /* "C:..." Windows drive */
-    for (const char *s = p; *s;) {
-        if (s[0] == '.' && s[1] == '.' &&
-            (s[2] == '\0' || s[2] == '/' || s[2] == '\\')) {
-            return false;
-        }
-        /* Advance past this segment to the next separator. */
-        while (*s && *s != '/' && *s != '\\') s++;
-        while (*s == '/' || *s == '\\') s++;
-    }
-    return true;
-}
-
-int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
-                              ServerMapEntry *entries, int maxEntries) {
-    (void)sim;
-    if (!entries || maxEntries <= 0) return -1;
-    if (!relPathIsSafe(relPath)) return -1;
-
-    /* Build the on-disk path. Server data/maps root is fixed; the
-     * relative tail comes from the caller. Empty / NULL = root. */
-    char fullPath[FILENAME_MAX];
-    if (!relPath || relPath[0] == '\0') {
-        SDL_strlcpy(fullPath, "data/maps", sizeof(fullPath));
-    } else {
-        SDL_snprintf(fullPath, sizeof(fullPath), "data/maps/%s", relPath);
-    }
-
-    int count = 0;
-    int globCount = 0;
-    char **list = SDL_GlobDirectory(fullPath, NULL, 0, &globCount);
-    if (!list) return 0;
-
-    for (int i = 0; i < globCount && count < maxEntries; i++) {
-        const char *name = list[i];
-        if (!name || name[0] == '.') continue; /* skip dotfiles + . / .. */
-
-        char child[FILENAME_MAX];
-        SDL_snprintf(child, sizeof(child), "%s/%s", fullPath, name);
-
-        SDL_PathInfo info;
-        if (!SDL_GetPathInfo(child, &info)) continue;
-        bool isDir = (info.type == SDL_PATHTYPE_DIRECTORY);
-
-        if (!isDir) {
-            /* Files: only *.map */
-            size_t nlen = SDL_strlen(name);
-            if (nlen <= 4 ||
-                SDL_strcasecmp(name + nlen - 4, ".map") != 0) {
-                continue;
-            }
-        }
-
-        ServerMapEntry *e = &entries[count++];
-        SDL_strlcpy(e->name, name, sizeof(e->name));
-        e->isFolder = isDir;
-        e->modTime  = (int64_t)info.modify_time;
-    }
-    SDL_free(list);
-
-    /* Sort: folders first, alphabetical within each group. Simple
-     * insertion sort is fine — typical dir < 200 entries. */
-    for (int i = 1; i < count; i++) {
-        ServerMapEntry cur = entries[i];
-        int j = i - 1;
-        while (j >= 0) {
-            const ServerMapEntry *a = &entries[j];
-            bool aFirst;
-            if (a->isFolder != cur.isFolder) aFirst = a->isFolder;
-            else aFirst = SDL_strcasecmp(a->name, cur.name) <= 0;
-            if (aFirst) break;
-            entries[j + 1] = entries[j];
-            j--;
-        }
-        entries[j + 1] = cur;
-    }
-
-    return count;
-}
-
-/* Recursive worker for serverSimSearchMapDir. Walks `fullRoot` and
- * every nested directory (up to kMaxDepth), appending matching .map
- * files to `entries` with their path relative to fullRoot. Stops
- * scanning as soon as the entries array fills up. */
-static void searchDirRecursive(const char *fullRoot,
-                                const char *subRel,
-                                const char *queryLower,
-                                size_t queryLen,
-                                ServerMapEntry *entries,
-                                int maxEntries,
-                                int *count,
-                                int depth) {
-    const int kMaxDepth = 8;
-    if (*count >= maxEntries) return;
-    if (depth > kMaxDepth) return;
-
-    char dirPath[FILENAME_MAX];
-    if (subRel[0] == '\0') {
-        SDL_strlcpy(dirPath, fullRoot, sizeof(dirPath));
-    } else {
-        SDL_snprintf(dirPath, sizeof(dirPath), "%s/%s",
-                     fullRoot, subRel);
-    }
-
-    int globCount = 0;
-    char **list = SDL_GlobDirectory(dirPath, NULL, 0, &globCount);
-    if (!list) return;
-
-    for (int i = 0; i < globCount && *count < maxEntries; i++) {
-        const char *name = list[i];
-        if (!name || name[0] == '.') continue;
-
-        char childPath[FILENAME_MAX];
-        SDL_snprintf(childPath, sizeof(childPath), "%s/%s",
-                     dirPath, name);
-
-        SDL_PathInfo info;
-        if (!SDL_GetPathInfo(childPath, &info)) continue;
-        bool isDir = (info.type == SDL_PATHTYPE_DIRECTORY);
-
-        char rel[256];
-        if (subRel[0] == '\0') {
-            SDL_strlcpy(rel, name, sizeof(rel));
-        } else {
-            SDL_snprintf(rel, sizeof(rel), "%s/%s", subRel, name);
-        }
-
-        if (isDir) {
-            searchDirRecursive(fullRoot, rel, queryLower, queryLen,
-                               entries, maxEntries, count, depth + 1);
-            continue;
-        }
-
-        /* Files: .map only. */
-        size_t nlen = SDL_strlen(name);
-        if (nlen <= 4 ||
-            SDL_strcasecmp(name + nlen - 4, ".map") != 0) continue;
-
-        /* Case-insensitive substring match of query against
-         * basename. queryLen==0 caller is meaningless (search with
-         * empty query is the same as full listing — handled by the
-         * top-level fn before recursing here). */
-        bool match = false;
-        for (size_t k = 0; k + queryLen <= nlen; k++) {
-            size_t m;
-            for (m = 0; m < queryLen; m++) {
-                char hc = name[k + m];
-                if (hc >= 'A' && hc <= 'Z') hc = (char)(hc + 32);
-                if (hc != queryLower[m]) break;
-            }
-            if (m == queryLen) { match = true; break; }
-        }
-        if (!match) continue;
-
-        ServerMapEntry *e = &entries[(*count)++];
-        SDL_strlcpy(e->name, rel, sizeof(e->name));
-        e->isFolder = false;
-        e->modTime  = (int64_t)info.modify_time;
-    }
-    SDL_free(list);
-}
-
-int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
-                           const char *query,
-                           ServerMapEntry *entries, int maxEntries) {
-    (void)sim;
-    if (!entries || maxEntries <= 0) return -1;
-    if (!query || query[0] == '\0') return 0;
-    if (!relPathIsSafe(relPath)) return -1;
-
-    char fullRoot[FILENAME_MAX];
-    if (!relPath || relPath[0] == '\0') {
-        SDL_strlcpy(fullRoot, "data/maps", sizeof(fullRoot));
-    } else {
-        SDL_snprintf(fullRoot, sizeof(fullRoot), "data/maps/%s", relPath);
-    }
-
-    /* Lowercase the query once up front; recursive worker is hot
-     * and we don't want to re-tolower on every byte comparison. */
-    char queryLower[128];
-    size_t qlen = SDL_strlen(query);
-    if (qlen >= sizeof(queryLower)) qlen = sizeof(queryLower) - 1;
-    for (size_t i = 0; i < qlen; i++) {
-        char c = query[i];
-        if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
-        queryLower[i] = c;
-    }
-    queryLower[qlen] = '\0';
-
-    int count = 0;
-    searchDirRecursive(fullRoot, "", queryLower, qlen,
-                       entries, maxEntries, &count, 0);
-
-    /* Sort alphabetically by relative path (case-insensitive). */
-    for (int i = 1; i < count; i++) {
-        ServerMapEntry cur = entries[i];
-        int j = i - 1;
-        while (j >= 0 &&
-               SDL_strcasecmp(entries[j].name, cur.name) > 0) {
-            entries[j + 1] = entries[j];
-            j--;
-        }
-        entries[j + 1] = cur;
-    }
-    return count;
-}
-
-bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
-                           uint8_t **outBytes, size_t *outLen) {
-    (void)sim;
-    if (!outBytes || !outLen) return false;
-    *outBytes = NULL;
-    *outLen   = 0;
-    if (!relPath || !*relPath) return false;
-    if (!relPathIsSafe(relPath)) return false;
-
-    char fullPath[FILENAME_MAX];
-    SDL_snprintf(fullPath, sizeof(fullPath), "data/maps/%s", relPath);
-    /* Must resolve to a regular file — folders, missing entries
-     * etc. return false so the caller can respond with NOT_FOUND. */
-    SDL_PathInfo info;
-    if (!SDL_GetPathInfo(fullPath, &info)) return false;
-    if (info.type != SDL_PATHTYPE_FILE) return false;
-
-    FILE *fp = fopen(fullPath, "rb");
-    if (!fp) return false;
-    if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return false; }
-    long sz = ftell(fp);
-    if (sz <= 0 || sz > 1024 * 1024) {
-        /* 1 MiB ceiling — Bolo .maps are always small (a few KB).
-         * Anything bigger is corrupt or hostile. */
-        fclose(fp);
-        return false;
-    }
-    if (fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return false; }
-    uint8_t *buf = (uint8_t *)malloc((size_t)sz);
-    if (!buf) { fclose(fp); return false; }
-    size_t got = fread(buf, 1, (size_t)sz, fp);
-    fclose(fp);
-    if (got != (size_t)sz) {
-        free(buf);
-        return false;
-    }
-    *outBytes = buf;
-    *outLen   = (size_t)sz;
-    return true;
-}
-
-bool serverSimGetOpenHost(const ServerSim *sim) {
-    return sim ? sim->openHost : false;
-}
-
-void serverSimSetOpenHost(ServerSim *sim, bool v) {
-    if (sim) sim->openHost = v;
-}
-
-uint16_t serverSimGetServerLocks(const ServerSim *sim) {
-    return sim ? sim->serverLocks : 0;
-}
-
-void serverSimSetServerLocks(ServerSim *sim, uint16_t locks) {
-    if (sim) sim->serverLocks = locks;
-}
-
-bool serverSimGetAutoLockOnGameStart(const ServerSim *sim) {
-    return sim ? sim->autoLockOnGameStart : false;
-}
-
-void serverSimSetAutoLockOnGameStart(ServerSim *sim, bool v) {
-    if (sim) sim->autoLockOnGameStart = v;
-}
-
-bool serverSimGetRanked(const ServerSim *sim) {
-    return sim ? sim->ranked : false;
-}
-
-void serverSimSetRanked(ServerSim *sim, bool v) {
-    if (sim) sim->ranked = v;
-}
-
-uint8_t serverSimGetAiPolicy(const ServerSim *sim) {
-    return sim ? sim->aiPolicy : 0;
-}
-
-void serverSimSetAiPolicy(ServerSim *sim, uint8_t v) {
-    if (sim) sim->aiPolicy = v;
-}
-
-bool serverSimGetTimeLimit(const ServerSim *sim) {
-    return sim ? sim->timeLimit : false;
-}
-
-void serverSimSetTimeLimit(ServerSim *sim, bool v) {
-    if (sim) sim->timeLimit = v;
-}
-
-uint16_t serverSimGetTimeMinutes(const ServerSim *sim) {
-    return sim ? sim->timeMinutes : 0;
-}
-
-void serverSimSetTimeMinutes(ServerSim *sim, uint16_t v) {
-    if (sim) sim->timeMinutes = v;
-}
-
-const TeamMetadata *serverSimGetTeamMeta(const ServerSim *sim, BYTE teamId) {
-    if (!sim || teamId == 0 || teamId >= MAX_TANKS) return NULL;
-    return &sim->teams[teamId];
-}
-
-TeamMetadata *serverSimGetTeamMetaMut(ServerSim *sim, BYTE teamId) {
-    if (!sim || teamId == 0 || teamId >= MAX_TANKS) return NULL;
-    return &sim->teams[teamId];
-}
-
-const LobbyBotConfig *serverSimGetBotConfig(const ServerSim *sim, BYTE slot) {
-    if (!sim || slot >= MAX_TANKS) return NULL;
-    return &sim->botConfigs[slot];
-}
-
-LobbyBotConfig *serverSimGetBotConfigMut(ServerSim *sim, BYTE slot) {
-    if (!sim || slot >= MAX_TANKS) return NULL;
-    return &sim->botConfigs[slot];
-}
-
-LobbyPlayer *serverSimGetLobbyPlayerMut(ServerSim *sim, BYTE n) {
-    if (!sim || n >= MAX_TANKS) return NULL;
-    return &sim->lobbyPlayers[n];
-}
-
-void serverSimSetGameLength(ServerSim *sim, int32_t ticks) {
-    if (sim) sim->gameLength = ticks;
-}
-
-void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks) {
-    if (sim) sim->countdownTicks = ticks;
-}
-
-void serverSimSetState(ServerSim *sim, ServerState s) {
-    if (sim) sim->state = s;
-}
-
-void serverSimSetGameType(ServerSim *sim, gameType gt) {
-    if (sim) sim->sim.game = gt;
-}
-
-void serverSimSetHiddenMines(ServerSim *sim, bool hiddenMines) {
-    if (sim) sim->sim.hiddenMines = hiddenMines;
-}
-
-void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, const char *brainPath) {
-    if (!sim || slot >= MAX_TANKS) return;
-    serverSimSetBotBrainPathFor(sim, slot, brainPath);
-    botManagerSetBrainPath(slot, serverSimGetBotBrainPathFor(sim, slot));
-}
-
-void serverSimRenameBotSlot(ServerSim *sim, BYTE slot, const char *name) {
-    if (!sim || slot >= MAX_TANKS || !name) return;
-    {
-        char nameBuf[32];
-        char loc[3] = "??";
-        SDL_strlcpy(nameBuf, name, sizeof(nameBuf));
-        playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, slot,
-                         nameBuf, loc,
-                         0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
-    }
-}
-
-void serverSimPublishLobbySlot(ServerSim *sim, BYTE slot) {
-    ControlEvent evt;
-    if (!sim) return;
-    memset(&evt, 0, sizeof(evt));
-    serverSimFillLobbySlotEvent(sim, slot, &evt);
-    serverSimPublishControl(sim, &evt);
-}
-
-void serverSimPublishLobbyBotBrain(ServerSim *sim, BYTE slot) {
-    ControlEvent evt;
-    if (!sim) return;
-    memset(&evt, 0, sizeof(evt));
-    serverSimFillLobbyBotBrainEvent(sim, slot, &evt);
-    serverSimPublishControl(sim, &evt);
-}
-
-void serverSimPublishLobbyBotConfig(ServerSim *sim, BYTE slot) {
-    ControlEvent evt;
-    if (!sim) return;
-    memset(&evt, 0, sizeof(evt));
-    serverSimFillLobbyBotConfigEvent(sim, slot, &evt);
-    serverSimPublishControl(sim, &evt);
-}
-
-void serverSimPublishLobbyTeamMeta(ServerSim *sim, BYTE teamId) {
-    ControlEvent evt;
-    if (!sim) return;
-    memset(&evt, 0, sizeof(evt));
-    serverSimFillLobbyTeamMetaEvent(sim, teamId, &evt);
-    serverSimPublishControl(sim, &evt);
-}
-
-void serverSimPublishLobbySettings(ServerSim *sim) {
-    ControlEvent evt;
-    if (!sim) return;
-    memset(&evt, 0, sizeof(evt));
-    serverSimFillLobbySettingsEvent(sim, &evt);
-    serverSimPublishControl(sim, &evt);
-}
-
-bool serverSimIsAcceptingJoins(const ServerSim *sim) {
-    return sim && sim->allowNewPlayers;
-}
-
 BYTE serverSimGetViewPlayer(const ServerSim *sim) {
     return sim->sim.viewPlayer;
 }
@@ -5097,6 +4356,10 @@ bool serverSimIsTutorial(const ServerSim *sim) {
 
 void serverSimSetTutorial(ServerSim *sim, bool v) {
     sim->sim.isTutorial = v;
+}
+
+void serverSimSetPaused(ServerSim *sim, bool paused) {
+    sim->sim.paused = paused;
 }
 
 /* --- Live-sim map / pill / base / start readers --- */
@@ -5256,4 +4519,864 @@ int serverSimGetTankExplosionSnapshot(ServerSim *sim,
 
 bool serverSimMineExistsAt(ServerSim *sim, BYTE x, BYTE y) {
     return minesExistPos(&sim->sim.mns, &sim->sim.mp, x, y);
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * Map preview / map upload — Lobby Layout A
+ * ──────────────────────────────────────────────────────────────── */
+
+static bool serverSimApplyRandomMapConfig(ServerSim *sim,
+                                          const MapGenConfig *cfg) {
+    BYTE tempBuf[131072];
+    int len;
+    int x, y;
+
+    memset((*sim->sim.mp).mapItem, DEEP_SEA, sizeof((*sim->sim.mp).mapItem));
+    for (x = 0; x < 256; x++) {
+        for (y = 0; y < 256; y++) {
+            if (x <= MAP_MINE_EDGE_LEFT || x >= MAP_MINE_EDGE_RIGHT ||
+                y <= MAP_MINE_EDGE_TOP  || y >= MAP_MINE_EDGE_BOTTOM) {
+                (*sim->sim.mp).mapItem[x][y] = DEEP_SEA;
+            }
+        }
+    }
+
+    sim->sim.pb->numPills  = 0;
+    sim->sim.bs->numBases  = 0;
+    sim->sim.ss->numStarts = 0;
+    mapGenRun(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, cfg);
+
+    {
+        BYTE i;
+        for (i = 0; i < sim->sim.pb->numPills; i++) {
+            pillbox tmp = sim->sim.pb->item[i];
+            pillsSetPill(&sim->sim.pb, &tmp, (BYTE)(i + 1));
+        }
+        for (i = 0; i < sim->sim.bs->numBases; i++) {
+            base tmp = sim->sim.bs->item[i];
+            basesSetBase(&sim->sim.bs, &tmp, (BYTE)(i + 1));
+        }
+        for (i = 0; i < sim->sim.ss->numStarts; i++) {
+            start tmp = sim->sim.ss->item[i];
+            startsSetStart(&sim->sim.ss, &tmp, (BYTE)(i + 1));
+        }
+    }
+    basesClearMines(&sim->sim);
+
+    len = serverSimGetCompressedMap(sim, tempBuf);
+    if (sim->cachedMapData) free(sim->cachedMapData);
+    sim->cachedMapData = (BYTE *)malloc(len);
+    if (sim->cachedMapData == NULL) {
+        sim->cachedMapDataLen = 0;
+        return FALSE;
+    }
+    memcpy(sim->cachedMapData, tempBuf, len);
+    sim->cachedMapDataLen = len;
+
+    mapGenBuildDisplayName(cfg, sim->mapName, MAP_STR_SIZE);
+
+    {
+        int i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (!sim->lobbyPlayers[i].isBot) {
+                sim->lobbyPlayers[i].ready = FALSE;
+            }
+        }
+    }
+    return TRUE;
+}
+
+bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
+    BYTE tempBuf[131072];
+    int len;
+    char msg[256];
+
+    if (sim == NULL || mapFileName == NULL || mapFileName[0] == '\0') {
+        return FALSE;
+    }
+    if (sim->state != serverStateLobby) {
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "serverSimReloadMap rejected: state=%d (not lobby)",
+            (int)sim->state);
+        return FALSE;
+    }
+
+    /* If the previous preview was an in-flight upload AND we're now
+     * loading a DIFFERENT path, discard the upload — the user has
+     * moved on, the uploaded file should not survive. Reload from
+     * the SAME temp path (commit/cancel round-trip) is left alone. */
+    if (sim->pendingUploadActive &&
+        strcmp(sim->pendingUploadTempPath, mapFileName) != 0) {
+        serverSimDiscardPendingUpload(sim);
+    }
+
+    /* Stash the currently-committed map as the "previous" snapshot
+     * before we touch the sim. Keep the ORIGINAL committed map
+     * across a chain of previews so one Cancel rolls all the way
+     * back to where the user started. */
+    if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
+        sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
+        if (sim->previousMapData) {
+            memcpy(sim->previousMapData, sim->cachedMapData,
+                   sim->cachedMapDataLen);
+            sim->previousMapDataLen = sim->cachedMapDataLen;
+            memcpy(sim->previousMapName, sim->mapName,
+                   sizeof(sim->previousMapName));
+        }
+    }
+
+    /* Wipe the existing map/pill/base/start contents before mapRead
+     * touches them. mapRead's RLE-decoder only writes cells encoded
+     * in the new file — any tile NOT included in the new map's runs
+     * would otherwise keep the previous map's value. */
+    {
+        int x, y;
+        memset((*sim->sim.mp).mapItem, DEEP_SEA,
+               sizeof((*sim->sim.mp).mapItem));
+        for (x = 0; x < 256; x++) {
+            for (y = 0; y < 256; y++) {
+                if (x <= MAP_MINE_EDGE_LEFT || x >= MAP_MINE_EDGE_RIGHT ||
+                    y <= MAP_MINE_EDGE_TOP  || y >= MAP_MINE_EDGE_BOTTOM) {
+                    (*sim->sim.mp).mapItem[x][y] = DEEP_SEA;
+                }
+            }
+        }
+        sim->sim.pb->numPills = 0;
+        sim->sim.bs->numBases = 0;
+        sim->sim.ss->numStarts = 0;
+    }
+
+    if (mapRead((char *)mapFileName,
+                &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
+        WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+            "serverSimReloadMap: mapRead failed for '%s'", mapFileName);
+        return FALSE;
+    }
+
+    basesClearMines(&sim->sim);
+
+    /* Update map name from basename, strip .map suffix. */
+    {
+        const char *base = mapFileName;
+        const char *p;
+        for (p = mapFileName; *p; p++) {
+            if (*p == '/' || *p == '\\') {
+                base = p + 1;
+            }
+        }
+        strncpy(sim->mapName, base, MAP_STR_SIZE - 1);
+        sim->mapName[MAP_STR_SIZE - 1] = '\0';
+        {
+            size_t nameLen = strlen(sim->mapName);
+            if (nameLen >= 4 &&
+                strcmp(sim->mapName + nameLen - 4, ".map") == 0) {
+                sim->mapName[nameLen - 4] = '\0';
+            }
+        }
+    }
+
+    /* Refresh cached compressed map. */
+    len = serverSimGetCompressedMap(sim, tempBuf);
+    if (sim->cachedMapData) free(sim->cachedMapData);
+    sim->cachedMapData = malloc(len);
+    if (sim->cachedMapData == NULL) {
+        sim->cachedMapDataLen = 0;
+        return FALSE;
+    }
+    memcpy(sim->cachedMapData, tempBuf, len);
+    sim->cachedMapDataLen = len;
+
+    /* Random-map provenance no longer applies. */
+    sim->randomMapEnabled = false;
+
+    /* Reset lobby ready state — humans must re-acknowledge the new
+     * map. Bots stay ready (no UI to click). */
+    {
+        int i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (!sim->lobbyPlayers[i].isBot) {
+                sim->lobbyPlayers[i].ready = FALSE;
+            }
+        }
+    }
+
+    snprintf(msg, sizeof(msg), "Map changed to %s", sim->mapName);
+    serverSimConsoleMessage(msg);
+
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "serverSimReloadMap: now '%s' (%d compressed bytes)",
+        sim->mapName, sim->cachedMapDataLen);
+
+    return TRUE;
+}
+
+bool serverSimReloadClientMap(ServerSim *sim, ClientSim *cs) {
+    BYTE *buf;
+    int len;
+    bool ok;
+    if (sim == NULL || cs == NULL) return FALSE;
+    buf = (BYTE *)malloc(65536);
+    if (buf == NULL) return FALSE;
+    len = serverSimGetCompressedMap(sim, buf);
+    if (len <= 0) {
+        free(buf);
+        return FALSE;
+    }
+    {
+        GameSim *gs = clientSimGetGameSim(cs);
+        ok = mapLoadCompressedMap(&gs->mp, &gs->pb, &gs->bs, &gs->ss, buf, len);
+    }
+    free(buf);
+    return ok;
+}
+
+bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {
+    if (!sim || !cfg) return FALSE;
+    if (sim->state != serverStateLobby) {
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "serverSimReloadRandomMap rejected: state=%d",
+            (int)sim->state);
+        return FALSE;
+    }
+
+    if (sim->pendingUploadActive) {
+        serverSimDiscardPendingUpload(sim);
+    }
+
+    if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
+        sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
+        if (sim->previousMapData) {
+            memcpy(sim->previousMapData, sim->cachedMapData,
+                   sim->cachedMapDataLen);
+            sim->previousMapDataLen = sim->cachedMapDataLen;
+            memcpy(sim->previousMapName, sim->mapName,
+                   sizeof(sim->previousMapName));
+        }
+    }
+
+    if (!serverSimApplyRandomMapConfig(sim, cfg)) return FALSE;
+
+    {
+        char seedStr[64];
+        char msg[128];
+        mapGenConfigToSeed(cfg, seedStr, sizeof(seedStr));
+        snprintf(msg, sizeof(msg),
+                 "Random preview generated, seed: %s", seedStr);
+        serverSimConsoleMessage(msg);
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "serverSimReloadRandomMap: now '%s' (%d compressed bytes)",
+            sim->mapName, sim->cachedMapDataLen);
+    }
+    return TRUE;
+}
+
+bool serverSimHasPreviewMap(const ServerSim *sim) {
+    return sim != NULL && sim->previousMapData != NULL;
+}
+
+const char *serverSimGetPreviousMapName(const ServerSim *sim) {
+    if (!sim || !sim->previousMapData) return "";
+    return sim->previousMapName;
+}
+
+bool serverSimRevertPreview(ServerSim *sim) {
+    BYTE tempBuf[131072];
+    int len;
+    if (!sim || !sim->previousMapData) return FALSE;
+    if (sim->state != serverStateLobby) return FALSE;
+
+    if (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb,
+                              &sim->sim.bs, &sim->sim.ss,
+                              sim->previousMapData,
+                              sim->previousMapDataLen) == FALSE) {
+        WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+            "serverSimRevertPreview: mapLoadCompressedMap failed");
+        return FALSE;
+    }
+    basesClearMines(&sim->sim);
+
+    memcpy(sim->mapName, sim->previousMapName, sizeof(sim->mapName));
+    len = serverSimGetCompressedMap(sim, tempBuf);
+    if (sim->cachedMapData) free(sim->cachedMapData);
+    sim->cachedMapData = (BYTE *)malloc(len);
+    if (sim->cachedMapData) {
+        memcpy(sim->cachedMapData, tempBuf, len);
+        sim->cachedMapDataLen = len;
+    } else {
+        sim->cachedMapDataLen = 0;
+    }
+
+    free(sim->previousMapData);
+    sim->previousMapData = NULL;
+    sim->previousMapDataLen = 0;
+    sim->previousMapName[0] = '\0';
+
+    /* If the preview being reverted was driven by an in-flight upload,
+     * delete the temp file too so the rejected map never lands on disk. */
+    serverSimDiscardPendingUpload(sim);
+
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
+    return TRUE;
+}
+
+void serverSimCommitPreview(ServerSim *sim) {
+    if (!sim || !sim->previousMapData) return;
+    /* If the previewed map was an in-flight upload, write it to
+     * disk NOW (move from temp to final Uploads/ path). */
+    serverSimCommitPendingUpload(sim);
+
+    free(sim->previousMapData);
+    sim->previousMapData = NULL;
+    sim->previousMapDataLen = 0;
+    sim->previousMapName[0] = '\0';
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "serverSimCommitPreview: committed '%s'", sim->mapName);
+}
+
+void serverSimSetPendingUpload(ServerSim *sim,
+                                const char *tempPath,
+                                const char *finalPath,
+                                const char *relPath) {
+    if (!sim) return;
+    /* If another upload was already pending AND the incoming temp
+     * path is different, discard the previous one. When the incoming
+     * temp path matches (we overwrite the same fixed scratch file
+     * for every upload), DO NOT delete: that would delete the file
+     * the caller just wrote and is about to commit. */
+    if (sim->pendingUploadActive &&
+        tempPath && tempPath[0] != '\0' &&
+        strcmp(sim->pendingUploadTempPath, tempPath) != 0) {
+        serverSimDiscardPendingUpload(sim);
+    }
+    SDL_strlcpy(sim->pendingUploadTempPath,  tempPath  ? tempPath  : "",
+                sizeof(sim->pendingUploadTempPath));
+    SDL_strlcpy(sim->pendingUploadFinalPath, finalPath ? finalPath : "",
+                sizeof(sim->pendingUploadFinalPath));
+    SDL_strlcpy(sim->pendingUploadRelPath,   relPath   ? relPath   : "",
+                sizeof(sim->pendingUploadRelPath));
+    sim->pendingUploadActive = (tempPath && tempPath[0] != '\0' &&
+                                finalPath && finalPath[0] != '\0');
+}
+
+bool serverSimHasPendingUpload(const ServerSim *sim) {
+    return sim != NULL && sim->pendingUploadActive;
+}
+
+void serverSimDiscardPendingUpload(ServerSim *sim) {
+    if (!sim || !sim->pendingUploadActive) return;
+    if (sim->pendingUploadTempPath[0] != '\0') {
+        SDL_RemovePath(sim->pendingUploadTempPath);
+    }
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "serverSimDiscardPendingUpload: dropped temp '%s' (intended '%s')",
+        sim->pendingUploadTempPath, sim->pendingUploadFinalPath);
+    sim->pendingUploadTempPath[0]  = '\0';
+    sim->pendingUploadFinalPath[0] = '\0';
+    sim->pendingUploadRelPath[0]   = '\0';
+    sim->pendingUploadActive       = false;
+}
+
+bool serverSimCommitPendingUpload(ServerSim *sim) {
+    if (!sim || !sim->pendingUploadActive) return false;
+    bool ok = false;
+    if (sim->pendingUploadTempPath[0] != '\0' &&
+        sim->pendingUploadFinalPath[0] != '\0') {
+        char finalPath[FILENAME_MAX];
+        SDL_strlcpy(finalPath, sim->pendingUploadFinalPath, sizeof(finalPath));
+        {
+            SDL_PathInfo info;
+            if (SDL_GetPathInfo(finalPath, &info)) {
+                /* Collision — rename with " (n)" suffix. */
+                char base[128], ext[16];
+                const char *slash = strrchr(sim->pendingUploadFinalPath, '/');
+#if defined(_WIN32)
+                const char *bslash = strrchr(sim->pendingUploadFinalPath, '\\');
+                if (bslash && (!slash || bslash > slash)) slash = bslash;
+#endif
+                const char *fname = slash ? slash + 1 : sim->pendingUploadFinalPath;
+                size_t dirLen = (size_t)(fname - sim->pendingUploadFinalPath);
+                const char *dot = strrchr(fname, '.');
+                if (dot && dot != fname) {
+                    size_t bl = (size_t)(dot - fname);
+                    if (bl >= sizeof(base)) bl = sizeof(base) - 1;
+                    memcpy(base, fname, bl); base[bl] = '\0';
+                    SDL_strlcpy(ext, dot, sizeof(ext));
+                } else {
+                    SDL_strlcpy(base, fname, sizeof(base));
+                    ext[0] = '\0';
+                }
+                for (int n = 1; n < 1000; n++) {
+                    SDL_snprintf(finalPath, sizeof(finalPath),
+                                 "%.*s%s (%d)%s",
+                                 (int)dirLen, sim->pendingUploadFinalPath,
+                                 base, n, ext);
+                    if (!SDL_GetPathInfo(finalPath, &info)) break;
+                }
+            }
+        }
+        {
+            const char *fslash = strrchr(finalPath, '/');
+#if defined(_WIN32)
+            const char *fbslash = strrchr(finalPath, '\\');
+            if (fbslash && (!fslash || fbslash > fslash)) fslash = fbslash;
+#endif
+            if (fslash && fslash != finalPath) {
+                char parentDir[FILENAME_MAX];
+                size_t plen = (size_t)(fslash - finalPath);
+                if (plen >= sizeof(parentDir)) plen = sizeof(parentDir) - 1;
+                memcpy(parentDir, finalPath, plen);
+                parentDir[plen] = '\0';
+                SDL_CreateDirectory(parentDir);
+            }
+        }
+        FILE *src = fopen(sim->pendingUploadTempPath, "rb");
+        FILE *dst = src ? fopen(finalPath, "wb") : NULL;
+        if (src && dst) {
+            BYTE chunk[8192];
+            size_t r;
+            ok = true;
+            while ((r = fread(chunk, 1, sizeof(chunk), src)) > 0) {
+                if (fwrite(chunk, 1, r, dst) != r) { ok = false; break; }
+            }
+        }
+        if (dst) fclose(dst);
+        if (src) fclose(src);
+        if (ok) {
+            SDL_RemovePath(sim->pendingUploadTempPath);
+            WB_LOG_INFO(WB_LOG_CAT_SERVER,
+                "serverSimCommitPendingUpload: '%s' -> '%s'",
+                sim->pendingUploadTempPath, finalPath);
+        } else {
+            WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+                "serverSimCommitPendingUpload: failed to write '%s'",
+                finalPath);
+        }
+    }
+    sim->pendingUploadTempPath[0]  = '\0';
+    sim->pendingUploadFinalPath[0] = '\0';
+    sim->pendingUploadRelPath[0]   = '\0';
+    sim->pendingUploadActive       = false;
+    return ok;
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * Map directory enumeration / search
+ * ──────────────────────────────────────────────────────────────── */
+
+static bool relPathIsSafe(const char *p) {
+    if (!p) return true;
+    if (p[0] == '/' || p[0] == '\\') return false;
+    if (p[0] != '\0' && (p[1] == ':' || (p[2] == ':' && p[3] != '\0')))
+        return false; /* "C:..." Windows drive */
+    for (const char *s = p; *s;) {
+        if (s[0] == '.' && s[1] == '.' &&
+            (s[2] == '\0' || s[2] == '/' || s[2] == '\\')) {
+            return false;
+        }
+        while (*s && *s != '/' && *s != '\\') s++;
+        while (*s == '/' || *s == '\\') s++;
+    }
+    return true;
+}
+
+int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
+                              ServerMapEntry *entries, int maxEntries) {
+    (void)sim;
+    if (!entries || maxEntries <= 0) return -1;
+    if (!relPathIsSafe(relPath)) return -1;
+
+    char fullPath[FILENAME_MAX];
+    if (!relPath || relPath[0] == '\0') {
+        SDL_strlcpy(fullPath, "data/maps", sizeof(fullPath));
+    } else {
+        SDL_snprintf(fullPath, sizeof(fullPath), "data/maps/%s", relPath);
+    }
+
+    int count = 0;
+    int globCount = 0;
+    char **list = SDL_GlobDirectory(fullPath, NULL, 0, &globCount);
+    if (!list) return 0;
+
+    for (int i = 0; i < globCount && count < maxEntries; i++) {
+        const char *name = list[i];
+        if (!name || name[0] == '.') continue;
+
+        char child[FILENAME_MAX];
+        SDL_snprintf(child, sizeof(child), "%s/%s", fullPath, name);
+
+        SDL_PathInfo info;
+        if (!SDL_GetPathInfo(child, &info)) continue;
+        bool isDir = (info.type == SDL_PATHTYPE_DIRECTORY);
+
+        if (!isDir) {
+            size_t nlen = SDL_strlen(name);
+            if (nlen <= 4 ||
+                SDL_strcasecmp(name + nlen - 4, ".map") != 0) {
+                continue;
+            }
+        }
+
+        ServerMapEntry *e = &entries[count++];
+        SDL_strlcpy(e->name, name, sizeof(e->name));
+        e->isFolder = isDir;
+        e->modTime  = (int64_t)info.modify_time;
+    }
+    SDL_free(list);
+
+    /* Folders first; alphabetical within each group. */
+    for (int i = 1; i < count; i++) {
+        ServerMapEntry cur = entries[i];
+        int j = i - 1;
+        while (j >= 0) {
+            const ServerMapEntry *a = &entries[j];
+            bool aFirst;
+            if (a->isFolder != cur.isFolder) aFirst = a->isFolder;
+            else aFirst = SDL_strcasecmp(a->name, cur.name) <= 0;
+            if (aFirst) break;
+            entries[j + 1] = entries[j];
+            j--;
+        }
+        entries[j + 1] = cur;
+    }
+
+    return count;
+}
+
+static void searchDirRecursive(const char *fullRoot,
+                                const char *subRel,
+                                const char *queryLower,
+                                size_t queryLen,
+                                ServerMapEntry *entries,
+                                int maxEntries,
+                                int *count,
+                                int depth) {
+    const int kMaxDepth = 8;
+    if (*count >= maxEntries) return;
+    if (depth > kMaxDepth) return;
+
+    char dirPath[FILENAME_MAX];
+    if (subRel[0] == '\0') {
+        SDL_strlcpy(dirPath, fullRoot, sizeof(dirPath));
+    } else {
+        SDL_snprintf(dirPath, sizeof(dirPath), "%s/%s",
+                     fullRoot, subRel);
+    }
+
+    int globCount = 0;
+    char **list = SDL_GlobDirectory(dirPath, NULL, 0, &globCount);
+    if (!list) return;
+
+    for (int i = 0; i < globCount && *count < maxEntries; i++) {
+        const char *name = list[i];
+        if (!name || name[0] == '.') continue;
+
+        char childPath[FILENAME_MAX];
+        SDL_snprintf(childPath, sizeof(childPath), "%s/%s",
+                     dirPath, name);
+
+        SDL_PathInfo info;
+        if (!SDL_GetPathInfo(childPath, &info)) continue;
+        bool isDir = (info.type == SDL_PATHTYPE_DIRECTORY);
+
+        char rel[256];
+        if (subRel[0] == '\0') {
+            SDL_strlcpy(rel, name, sizeof(rel));
+        } else {
+            SDL_snprintf(rel, sizeof(rel), "%s/%s", subRel, name);
+        }
+
+        if (isDir) {
+            searchDirRecursive(fullRoot, rel, queryLower, queryLen,
+                               entries, maxEntries, count, depth + 1);
+            continue;
+        }
+
+        size_t nlen = SDL_strlen(name);
+        if (nlen <= 4 ||
+            SDL_strcasecmp(name + nlen - 4, ".map") != 0) continue;
+
+        bool match = false;
+        for (size_t k = 0; k + queryLen <= nlen; k++) {
+            size_t m;
+            for (m = 0; m < queryLen; m++) {
+                char hc = name[k + m];
+                if (hc >= 'A' && hc <= 'Z') hc = (char)(hc + 32);
+                if (hc != queryLower[m]) break;
+            }
+            if (m == queryLen) { match = true; break; }
+        }
+        if (!match) continue;
+
+        ServerMapEntry *e = &entries[(*count)++];
+        SDL_strlcpy(e->name, rel, sizeof(e->name));
+        e->isFolder = false;
+        e->modTime  = (int64_t)info.modify_time;
+    }
+    SDL_free(list);
+}
+
+int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
+                           const char *query,
+                           ServerMapEntry *entries, int maxEntries) {
+    (void)sim;
+    if (!entries || maxEntries <= 0) return -1;
+    if (!query || query[0] == '\0') return 0;
+    if (!relPathIsSafe(relPath)) return -1;
+
+    char fullRoot[FILENAME_MAX];
+    if (!relPath || relPath[0] == '\0') {
+        SDL_strlcpy(fullRoot, "data/maps", sizeof(fullRoot));
+    } else {
+        SDL_snprintf(fullRoot, sizeof(fullRoot), "data/maps/%s", relPath);
+    }
+
+    char queryLower[128];
+    size_t qlen = SDL_strlen(query);
+    if (qlen >= sizeof(queryLower)) qlen = sizeof(queryLower) - 1;
+    for (size_t i = 0; i < qlen; i++) {
+        char c = query[i];
+        if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+        queryLower[i] = c;
+    }
+    queryLower[qlen] = '\0';
+
+    int count = 0;
+    searchDirRecursive(fullRoot, "", queryLower, qlen,
+                       entries, maxEntries, &count, 0);
+
+    for (int i = 1; i < count; i++) {
+        ServerMapEntry cur = entries[i];
+        int j = i - 1;
+        while (j >= 0 &&
+               SDL_strcasecmp(entries[j].name, cur.name) > 0) {
+            entries[j + 1] = entries[j];
+            j--;
+        }
+        entries[j + 1] = cur;
+    }
+    return count;
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * Lobby Layout A accessors / mutators / publish helpers
+ * ──────────────────────────────────────────────────────────────── */
+
+void serverSimSetBotBrainPathFor(ServerSim *sim, BYTE slot, const char *path) {
+    if (!sim || slot >= MAX_TANKS) return;
+    if (path == NULL) {
+        sim->botBrainPaths[slot][0] = '\0';
+        return;
+    }
+    SDL_strlcpy(sim->botBrainPaths[slot], path, sizeof(sim->botBrainPaths[slot]));
+}
+
+bool serverSimGetAutoLockOnGameStart(const ServerSim *sim) {
+    return sim ? sim->autoLockOnGameStart : false;
+}
+
+void serverSimSetAutoLockOnGameStart(ServerSim *sim, bool v) {
+    if (sim) sim->autoLockOnGameStart = v;
+}
+
+bool serverSimGetOpenHost(const ServerSim *sim) {
+    return sim ? sim->openHost : false;
+}
+
+void serverSimSetOpenHost(ServerSim *sim, bool v) {
+    if (sim) sim->openHost = v;
+}
+
+uint16_t serverSimGetServerLocks(const ServerSim *sim) {
+    return sim ? sim->serverLocks : 0;
+}
+
+void serverSimSetAiPolicy(ServerSim *sim, uint8_t v) {
+    if (sim) sim->aiPolicy = v;
+}
+
+bool serverSimGetTimeLimit(const ServerSim *sim) {
+    return sim ? sim->timeLimit : false;
+}
+
+void serverSimSetTimeLimit(ServerSim *sim, bool v) {
+    if (sim) sim->timeLimit = v;
+}
+
+uint16_t serverSimGetTimeMinutes(const ServerSim *sim) {
+    return sim ? sim->timeMinutes : 0;
+}
+
+void serverSimSetTimeMinutes(ServerSim *sim, uint16_t v) {
+    if (sim) sim->timeMinutes = v;
+}
+
+TeamMetadata *serverSimGetTeamMetaMut(ServerSim *sim, BYTE teamId) {
+    if (!sim || teamId == 0 || teamId >= MAX_TANKS) return NULL;
+    return &sim->teams[teamId];
+}
+
+const LobbyBotConfig *serverSimGetBotConfig(const ServerSim *sim, BYTE slot) {
+    if (!sim || slot >= MAX_TANKS) return NULL;
+    return &sim->botConfigs[slot];
+}
+
+LobbyBotConfig *serverSimGetBotConfigMut(ServerSim *sim, BYTE slot) {
+    if (!sim || slot >= MAX_TANKS) return NULL;
+    return &sim->botConfigs[slot];
+}
+
+void serverSimSetGameLength(ServerSim *sim, int32_t ticks) {
+    if (sim) sim->gameLength = ticks;
+}
+
+void serverSimSetGameType(ServerSim *sim, gameType gt) {
+    if (sim) sim->sim.game = gt;
+}
+
+void serverSimSetHiddenMines(ServerSim *sim, bool hiddenMines) {
+    if (sim) sim->sim.hiddenMines = hiddenMines;
+}
+
+void serverSimSetState(ServerSim *sim, ServerState s) {
+    if (sim) sim->state = s;
+}
+
+void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, const char *brainPath) {
+    if (!sim || slot >= MAX_TANKS) return;
+    serverSimSetBotBrainPathFor(sim, slot, brainPath);
+    botManagerSetBrainPath(slot, sim->botBrainPaths[slot]);
+}
+
+void serverSimRenameBotSlot(ServerSim *sim, BYTE slot, const char *name) {
+    if (!sim || slot >= MAX_TANKS || !name) return;
+    {
+        char nameBuf[32];
+        char loc[3] = "??";
+        SDL_strlcpy(nameBuf, name, sizeof(nameBuf));
+        playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, slot,
+                         nameBuf, loc,
+                         0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
+    }
+    /* Subscriber ClientSims track names in sim.plyrs (what the in-game
+     * players panel reads), not in lobbySlots. Publish so the rename
+     * propagates past the lobby UI into the game view. */
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_PLAYER_NAME;
+        evt.u.playerName.playerNum = slot;
+        snprintf(evt.u.playerName.name, PACKET_MAX_PLAYER_NAME, "%s", name);
+        serverSimPublishControl(sim, &evt);
+    }
+}
+
+void serverSimPublishLobbySlot(ServerSim *sim, BYTE slot) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySlotEvent(sim, slot, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimPublishLobbyBotBrain(ServerSim *sim, BYTE slot) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyBotBrainEvent(sim, slot, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimPublishLobbyBotConfig(ServerSim *sim, BYTE slot) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyBotConfigEvent(sim, slot, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimPublishLobbyTeamMeta(ServerSim *sim, BYTE teamId) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyTeamMetaEvent(sim, teamId, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimPublishLobbySettings(ServerSim *sim) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySettingsEvent(sim, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * Accessors carried forward from the waiting-for-merge branch
+ * (added during the merge from lobby-redesign-opaque-sims).
+ * ──────────────────────────────────────────────────────────────── */
+
+const char *serverSimGetBotBrainPathFor(const ServerSim *sim, BYTE slot) {
+    if (!sim || slot >= MAX_TANKS) return NULL;
+    return sim->botBrainPaths[slot];
+}
+
+const BrainList *serverSimGetBrainList(const ServerSim *sim) {
+    return sim ? &sim->brainList : NULL;
+}
+
+bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
+                           uint8_t **outBytes, size_t *outLen) {
+    (void)sim;
+    if (!outBytes || !outLen) return false;
+    *outBytes = NULL;
+    *outLen   = 0;
+    if (!relPath || !*relPath) return false;
+    if (!relPathIsSafe(relPath)) return false;
+
+    char fullPath[FILENAME_MAX];
+    SDL_snprintf(fullPath, sizeof(fullPath), "data/maps/%s", relPath);
+    SDL_PathInfo info;
+    if (!SDL_GetPathInfo(fullPath, &info)) return false;
+    if (info.type != SDL_PATHTYPE_FILE) return false;
+
+    FILE *fp = fopen(fullPath, "rb");
+    if (!fp) return false;
+    if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return false; }
+    long sz = ftell(fp);
+    if (sz <= 0 || sz > 1024 * 1024) { fclose(fp); return false; }
+    if (fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return false; }
+    uint8_t *buf = (uint8_t *)malloc((size_t)sz);
+    if (!buf) { fclose(fp); return false; }
+    size_t got = fread(buf, 1, (size_t)sz, fp);
+    fclose(fp);
+    if (got != (size_t)sz) { free(buf); return false; }
+    *outBytes = buf;
+    *outLen   = (size_t)sz;
+    return true;
+}
+
+void serverSimSetServerLocks(ServerSim *sim, uint16_t locks) {
+    if (sim) sim->serverLocks = locks;
+}
+
+bool serverSimGetRanked(const ServerSim *sim) {
+    return sim ? sim->ranked : false;
+}
+
+void serverSimSetRanked(ServerSim *sim, bool v) {
+    if (sim) sim->ranked = v;
+}
+
+uint8_t serverSimGetAiPolicy(const ServerSim *sim) {
+    return sim ? sim->aiPolicy : 0;
+}
+
+const TeamMetadata *serverSimGetTeamMeta(const ServerSim *sim, BYTE teamId) {
+    if (!sim || teamId == 0 || teamId >= MAX_TANKS) return NULL;
+    return &sim->teams[teamId];
+}
+
+bool serverSimIsAcceptingJoins(const ServerSim *sim) {
+    return sim && sim->allowNewPlayers;
 }

@@ -77,6 +77,7 @@
 #include "gui_message.h"
 #include "server_sim.h"
 #include "game_sim.h"
+#include "../server/threads.h"
 #include "../gui/sdl3/mapview.h"
 #include "../gui/sdl3/tileloader.h"
 #include "../gui/sdl3/luabrainshandler.h"
@@ -4206,6 +4207,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    threadsCreate(FALSE);
     clientMutexCreate();
     langSetup();
 
@@ -4300,12 +4302,11 @@ int main(int argc, char *argv[]) {
     }
     if (!mapLoaded) {
         BYTE emap[6000] = E_MAP;
-        app.sim = serverSimCreateCompressed(emap, 5097, optGame, false, 0, -1);
+        app.sim = serverSimCreateCompressed(emap, 5097, "Everard Island", optGame, false, 0, -1);
         if (app.sim == NULL) {
             fprintf(stderr, "serverSimCreateCompressed failed\n");
             return 1;
         }
-        serverSimSetMapName(app.sim, "Everard Island");
     }
     serverSimSetLobbyEnabled(app.sim, false);
     app.simValid = true;
@@ -5234,6 +5235,7 @@ int main(int argc, char *argv[]) {
     SDL_DestroyWindow(app.window);
     langCleanup();
     clientMutexDestroy();
+    threadsDestroy();
     SDL_Quit();
 
     return 0;

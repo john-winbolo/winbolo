@@ -59,7 +59,11 @@ struct ClientSim;
 #define ZOOM_FACTOR_CUSTOM 0  /* Resizable window, renders at ceiling integer zoom */
 
 /* Height of the ImGui menu bar rendered inside the client area */
+#ifdef __APPLE__
+#define MENU_BAR_HEIGHT 0
+#else
 #define MENU_BAR_HEIGHT 22
+#endif
 
 /* The size of the main window EXCLUDING Menus and Toolbar */
 #define SCREEN_SIZE_X 515

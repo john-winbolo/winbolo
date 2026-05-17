@@ -76,17 +76,29 @@ void clientMutexDestroy(void) {
 *ARGUMENTS:
 *
 *********************************************************/
+/* Lock order: threads mutex BEFORE client mutex.
+ *
+ * The host server timer thread holds the threads mutex throughout
+ * serverInstanceTick, and inside that tick it dispatches CTRL_PLAYER_JOIN
+ * etc. to every in-process subscriber (the bots' ClientSims). Each
+ * subscriber's apply runs playersSetPlayer -> frontEndRedrawAll ->
+ * windowRedrawAll -> clientMutexWaitFor. If that path took client before
+ * threads, the timer thread would invert the order vs the main thread
+ * (main thread enters via UDP recv and would take client first), and the
+ * two would deadlock as soon as both happened to dispatch a player-join
+ * simultaneously. Acquiring threads first folds the timer-thread case into
+ * a depth-bump and forces both paths to serialise on the same outer lock. */
 void clientMutexWaitFor(void) {
-  SDL_LockMutex(hClientMutexHandle);
   threadsWaitForMutex();
+  SDL_LockMutex(hClientMutexHandle);
 }
 
 bool clientMutexTryWaitFor(void) {
-  if (!SDL_TryLockMutex(hClientMutexHandle)) {
+  if (!threadsTryWaitForMutex()) {
     return FALSE;
   }
-  if (!threadsTryWaitForMutex()) {
-    SDL_UnlockMutex(hClientMutexHandle);
+  if (!SDL_TryLockMutex(hClientMutexHandle)) {
+    threadsReleaseMutex();
     return FALSE;
   }
   return TRUE;
@@ -105,6 +117,6 @@ bool clientMutexTryWaitFor(void) {
 *
 *********************************************************/
 void clientMutexRelease(void) {
-  threadsReleaseMutex();
   SDL_UnlockMutex(hClientMutexHandle);
+  threadsReleaseMutex();
 }

@@ -22,6 +22,7 @@
  *********************************************************/
 
 #include "transport_udp_internal.h"
+#include "../common/wb_log.h"
 
 /* ================================================================
  * Serialization helpers — pack/unpack structs to/from wire format
@@ -97,8 +98,8 @@ const char *packetTypeName(uint8_t type) {
     case PACKET_LOBBY_READY:        return "LOBBY_READY";
     case PACKET_LOBBY_ADD_BOT:      return "LOBBY_ADD_BOT";
     case PACKET_LOBBY_REMOVE_BOT:   return "LOBBY_REMOVE_BOT";
-    case PACKET_LOBBY_STATE:        return "LOBBY_STATE";
     case PACKET_LOBBY_UPDATE:       return "LOBBY_UPDATE";
+    case PACKET_LOBBY_SETTINGS:     return "LOBBY_SETTINGS";
     case PACKET_COUNTDOWN:          return "COUNTDOWN";
     case PACKET_GAME_START:         return "GAME_START";
     case PACKET_GAME_OVER:          return "GAME_OVER";
@@ -322,8 +323,17 @@ void unpackPillSnapshot(const uint8_t *buf, PillSnapshot *ps) {
  * Socket helpers
  * ================================================================ */
 
-/* Create a non-blocking UDP socket */
-SOCKET createUdpSocket(void) {
+/* Create a non-blocking UDP socket.
+ *
+ * exclusive=true: caller wants a hard failure on bind() if the port is
+ *   already in use (server case — a second listen-server host on the
+ *   same machine must NOT silently share the port with the first). On
+ *   Windows that means SO_EXCLUSIVEADDRUSE and skipping SO_REUSEADDR;
+ *   SO_REUSEADDR there is permissive enough that two binds to the same
+ *   port both succeed and the OS dispatches packets to one of them.
+ * exclusive=false: ephemeral / client socket — set SO_REUSEADDR so a
+ *   rebind after an unclean exit doesn't fail with EADDRINUSE. */
+SOCKET createUdpSocket(bool exclusive) {
     SOCKET sock;
     unsigned long nonBlock = 1;
     int reuse = 1;
@@ -332,15 +342,19 @@ SOCKET createUdpSocket(void) {
     if (sock == INVALID_SOCKET) {
         return INVALID_SOCKET;
     }
-    /* Allow rebinding immediately after a previous process exits without
-     * a clean close — the OS may not have reaped the port descriptor yet
-     * (most visible on Windows after a force-quit). */
-    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
-               (const char *)&reuse, sizeof(reuse));
-#ifdef SO_REUSEPORT
-    setsockopt(sock, SOL_SOCKET, SO_REUSEPORT,
-               (const char *)&reuse, sizeof(reuse));
+    if (exclusive) {
+#ifdef _WIN32
+        setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                   (const char *)&reuse, sizeof(reuse));
 #endif
+    } else {
+        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
+                   (const char *)&reuse, sizeof(reuse));
+#ifdef SO_REUSEPORT
+        setsockopt(sock, SOL_SOCKET, SO_REUSEPORT,
+                   (const char *)&reuse, sizeof(reuse));
+#endif
+    }
     ioctlsocket(sock, FIONBIO, &nonBlock);
     return sock;
 }
@@ -350,9 +364,9 @@ void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
                const struct sockaddr_in *addr) {
     uint8_t pktType = getPacketType(buf, len);
     if (pktType != PACKET_STATE_SNAPSHOT && pktType != PACKET_PONG && pktType != PACKET_INPUT) {
-        fprintf(stderr, "[UDP SEND] %s (%u) len=%d to %s:%u\n",
-                packetTypeName(pktType), pktType, len,
-                inet_ntoa(addr->sin_addr), ntohs(addr->sin_port));
+        WB_LOG_DEBUG(WB_LOG_CAT_NET, "[UDP SEND] %s (%u) len=%d to %s:%u",
+                     packetTypeName(pktType), pktType, len,
+                     inet_ntoa(addr->sin_addr), ntohs(addr->sin_port));
     }
     sendto(sock, (const char *)buf, len, 0,
            (const struct sockaddr *)addr, sizeof(*addr));

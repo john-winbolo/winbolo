@@ -72,7 +72,11 @@
 #define ZOOM_FACTOR_CUSTOM 0
 #endif
 #ifndef MENU_BAR_HEIGHT
-#define MENU_BAR_HEIGHT 22
+  #ifdef __APPLE__
+    #define MENU_BAR_HEIGHT 0
+  #else
+    #define MENU_BAR_HEIGHT 22
+  #endif
 #endif
 
 static SDL_Window   *gWindow        = NULL;
@@ -1566,9 +1570,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     int winW, winH;
     SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
 
-    /* Menu bar height — ImGui default is ~20 pixels, but we'll query it later.
-       For now, use a reasonable estimate. */
-    float menuBarHeight = 22.0f;
+    float menuBarHeight = (float)MENU_BAR_HEIGHT;
 
     /* Available area below menu */
     float availW = (float)winW;
@@ -1699,7 +1701,7 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
     int winW, winH;
     SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
 
-    float menuBarHeight = 22.0f;
+    float menuBarHeight = (float)MENU_BAR_HEIGHT;
     float availW = (float)winW;
     float availH = (float)winH - menuBarHeight;
 

@@ -4,15 +4,15 @@
  */
 
 /*********************************************************
- * Name:          mapeditor_maze.h
+ * Name:          mapgen_maze.h
  * Purpose:
- *   Shared maze generation algorithm used by both the
- *   Generate dialog (full map) and the Maze drawing tool
- *   (interactive preview).
+ *   Shared maze generation primitive used by the random-
+ *   map generator (full map) and the Maze drawing tool
+ *   in the map editor (interactive preview).
  *********************************************************/
 
-#ifndef MAPEDITOR_MAZE_H
-#define MAPEDITOR_MAZE_H
+#ifndef MAPGEN_MAZE_H
+#define MAPGEN_MAZE_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -64,4 +64,4 @@ int mazeGeneratePreview(int x1, int y1, int x2, int y2,
 }
 #endif
 
-#endif /* MAPEDITOR_MAZE_H */
+#endif /* MAPGEN_MAZE_H */

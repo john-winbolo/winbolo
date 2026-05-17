@@ -108,12 +108,11 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         /* Fall back to embedded Everard Island */
         BYTE emap[6000] = E_MAP;
         WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Falling back to embedded Everard Island");
-        bg->sim = serverSimCreateCompressed(emap, 5097, gameTournament, false, 0, -1);
+        bg->sim = serverSimCreateCompressed(emap, 5097, "Everard Island", gameTournament, false, 0, -1);
         if (bg->sim == NULL) {
             WB_LOG_ERROR(WB_LOG_CAT_GUI, "[BgGame] serverSimCreateCompressed also failed");
             return false;
         }
-        serverSimSetMapName(bg->sim, "Everard Island");
     }
     /* bg_game is a local headless sim — no lobby, run immediately */
     serverSimSetLobbyEnabled(bg->sim, false);
@@ -308,18 +307,47 @@ void bgGameTick(BgGame *bg) {
 #define MAP_NAME_SCALE           1  /* 1x scale for debug text (8px tall) */
 #define MAP_NAME_MAX_ALPHA     180  /* Slightly transparent */
 
+/* Current visible alpha for the map-name label. 0 = hidden. */
+static Uint8 bgGameMapNameAlpha(const BgGame *bg, Uint64 nowMs) {
+    if (bg->mapNameFadeStartMs != 0) {
+        /* Pause-driven transition: lerp from the captured start alpha to
+         * the target (full when paused, 0 when not) over MAP_NAME_FADE_MS. */
+        Uint8 target = bg->paused ? MAP_NAME_MAX_ALPHA : 0;
+        Uint64 fadeElapsed = nowMs - bg->mapNameFadeStartMs;
+        if (fadeElapsed >= MAP_NAME_FADE_MS) return target;
+        int from = (int)bg->mapNameFadeFromAlpha;
+        int delta = ((int)target - from) * (int)fadeElapsed / (int)MAP_NAME_FADE_MS;
+        int a = from + delta;
+        if (a < 0) a = 0;
+        if (a > 255) a = 255;
+        return (Uint8)a;
+    }
+    /* Initial display: full alpha for 10s, then fade over the last 2s. */
+    Uint64 elapsed = nowMs - bg->createdTicks;
+    if (elapsed >= MAP_NAME_DISPLAY_MS) return 0;
+    if (elapsed > MAP_NAME_DISPLAY_MS - MAP_NAME_FADE_MS) {
+        Uint64 fadeElapsed = elapsed - (MAP_NAME_DISPLAY_MS - MAP_NAME_FADE_MS);
+        return (Uint8)(MAP_NAME_MAX_ALPHA - (MAP_NAME_MAX_ALPHA * fadeElapsed / MAP_NAME_FADE_MS));
+    }
+    return MAP_NAME_MAX_ALPHA;
+}
+
+void bgGameTogglePause(BgGame *bg) {
+    if (!bg) return;
+    Uint64 now = SDL_GetTicks();
+    /* Capture the alpha we are currently rendering so the fade starts
+     * from there (avoids a snap when toggling mid-transition or while
+     * the initial display is still on screen). */
+    bg->mapNameFadeFromAlpha = bgGameMapNameAlpha(bg, now);
+    bg->paused = !bg->paused;
+    bg->mapNameFadeStartMs = now;
+}
+
 static void bgGameRenderMapName(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) {
     if (!serverSimGetMapName(bg->sim)[0]) return;
 
-    Uint64 elapsed = SDL_GetTicks() - bg->createdTicks;
-    if (elapsed >= MAP_NAME_DISPLAY_MS) return;
-
-    /* Compute alpha: semi-transparent then fade over last 2 seconds */
-    Uint8 alpha = MAP_NAME_MAX_ALPHA;
-    if (elapsed > MAP_NAME_DISPLAY_MS - MAP_NAME_FADE_MS) {
-        Uint64 fadeElapsed = elapsed - (MAP_NAME_DISPLAY_MS - MAP_NAME_FADE_MS);
-        alpha = (Uint8)(MAP_NAME_MAX_ALPHA - (MAP_NAME_MAX_ALPHA * fadeElapsed / MAP_NAME_FADE_MS));
-    }
+    Uint8 alpha = bgGameMapNameAlpha(bg, SDL_GetTicks());
+    if (alpha == 0) return;
 
     /* Build map name without .map extension */
     char mapName[MAP_STR_SIZE];

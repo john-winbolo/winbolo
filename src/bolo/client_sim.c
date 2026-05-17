@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <SDL3/SDL.h>
 #include "client_sim.h"
 #include "client_sim_internal.h"
 #include "client_snapshot.h"
@@ -172,16 +173,36 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
    *
    * lobbyBrainList is also preserved: the server delivers it once at
    * subscribe time and never re-broadcasts after a round, so wiping
-   * here would leave the Add Bot controls hidden on every round 2+. */
+   * here would leave the Add Bot controls hidden on every round 2+.
+   *
+   * The test-only control-event observer is preserved on the same
+   * principle — it represents an external party watching events,
+   * with a lifetime independent of map reloads.
+   *
+   * serverAddress / serverPort / isLanOnly are connection-lifetime
+   * state too — set once at join time, never re-published. Without
+   * preserving them, returning to the lobby (which runs this reset
+   * via clientSimResetForMapLoad) clears them, so the lobby UI
+   * shows 0.0.0.0 and loses the LAN-only badges / LAN-IP substitution. */
   Transport savedTransport = cs->transport;
   bool savedHasTransport   = cs->hasTransport;
   bool savedIsUdpTransport = cs->isUdpTransport;
   BrainList savedBrainList = cs->lobbyBrainList;
+  ControlObserverCb savedObserverCb  = cs->controlObserverCb;
+  void             *savedObserverCtx = cs->controlObserverCtx;
+  struct in_addr savedServerAddress  = cs->serverAddress;
+  unsigned short savedServerPort     = cs->serverPort;
+  bool           savedIsLanOnly      = cs->isLanOnly;
   memset(cs, 0, sizeof(*cs));
-  cs->transport       = savedTransport;
-  cs->hasTransport    = savedHasTransport;
-  cs->isUdpTransport  = savedIsUdpTransport;
-  cs->lobbyBrainList  = savedBrainList;
+  cs->transport          = savedTransport;
+  cs->hasTransport       = savedHasTransport;
+  cs->isUdpTransport     = savedIsUdpTransport;
+  cs->lobbyBrainList     = savedBrainList;
+  cs->controlObserverCb  = savedObserverCb;
+  cs->controlObserverCtx = savedObserverCtx;
+  cs->serverAddress      = savedServerAddress;
+  cs->serverPort         = savedServerPort;
+  cs->isLanOnly          = savedIsLanOnly;
   cs->myPlayerNum = 0;
   cs->sim.viewPlayer = 0;
 
@@ -671,6 +692,12 @@ void clientSimSetAllianceAcceptFunc(ClientSim *cs, NetAllianceAcceptFunc func) {
 void clientSimSetAllianceLeaveFunc(ClientSim *cs, NetAllianceLeaveFunc func) { cs->allianceLeaveFunc = func; }
 void clientSimSetLockToggleSendFunc(ClientSim *cs, NetLockToggleSendFunc func) { cs->lockToggleSendFunc = func; }
 
+void clientSimSetControlObserver(ClientSim *cs, ControlObserverCb cb, void *ctx) {
+  if (cs == NULL) return;
+  cs->controlObserverCb  = cb;
+  cs->controlObserverCtx = ctx;
+}
+
 void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message) {
   size_t histLen = strlen(cs->lobbyChatHistory);
   size_t needed = strlen(name) + 2 + strlen(message) + 2; /* "name: message\n" */
@@ -1046,6 +1073,15 @@ const char *clientSimGetMyLastPlayerName(const ClientSim *cs) { return cs->myLas
 const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n) {
   if (n >= 16) return NULL;
   return &cs->lobbySlots[n];
+}
+
+BYTE clientSimGetLobbyNumConnected(const ClientSim *cs) {
+  if (cs == NULL) return 0;
+  BYTE count = 0;
+  for (BYTE i = 0; i < 16; i++) {
+    if (cs->lobbySlots[i].connected) count++;
+  }
+  return count;
 }
 
 bool clientSimIsMapSkipVote(const ClientSim *cs, BYTE n) {

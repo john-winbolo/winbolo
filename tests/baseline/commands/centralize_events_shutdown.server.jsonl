@@ -1,0 +1,7 @@
+# centralize_events_shutdown_udp — server-side commands.
+# WinBoloDS runs for ~1s of wall-clock (~100 server ticks) then
+# exits. The exit triggers serverInstanceShutdown which fires
+# transportUdpServerStop's CTRL_SERVER_SHUTDOWN publish + the
+# matching PACKET_SERVER_SHUTDOWN broadcast that the connected
+# headless's --log-events stream should capture.
+{"tick": 100, "op": "shutdown"}

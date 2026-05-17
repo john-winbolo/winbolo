@@ -25,6 +25,7 @@
 #include "interpolation.h"
 #include "messages.h"
 #include "scroll.h"
+#include "brain_list.h"
 
 /* Internal helpers relocated from client_sim.h during the public-header
  * transitive-leak cleanup. These need GameSim's full layout, so they
@@ -349,6 +350,12 @@ struct ClientSim {
     Transport transport;
     bool      hasTransport;
     bool      isUdpTransport;
+
+    /* Read-only ControlEvent observer (test-only — see
+     * clientSimSetControlObserver in client_sim.h). Preserved across
+     * clientSimCreate's memset alongside the transport fields. */
+    ControlObserverCb controlObserverCb;
+    void             *controlObserverCtx;
 };
 
 BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
