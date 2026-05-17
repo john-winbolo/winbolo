@@ -39,6 +39,9 @@ static const UnitTestEntry s_tests[] = {
     { "game_vote_state_codec_surrender_passed",  run_game_vote_state_codec_surrender_passed  },
     { "game_vote_state_decoder_rejects_short",   run_game_vote_state_decoder_rejects_short   },
     { "server_text_codec_via_chat_wire",         run_server_text_codec_via_chat_wire         },
+    { "md5_rfc1321_vectors",                     run_md5_rfc1321_vectors                     },
+    { "md5_streaming_matches_oneshot",           run_md5_streaming_matches_oneshot           },
+    { "md5_block_boundaries",                    run_md5_block_boundaries                    },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

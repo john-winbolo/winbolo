@@ -48,6 +48,7 @@ extern "C" {
 #include "global.h"
 #include "client_sim.h"
 #include "client_net.h"
+#include "md5.h"
 #include "server_sim.h"          /* serverSim* T1 wrappers for SP-host paths */
 #include "lobby_bot_pools.h"     /* lobbyBotPool* — public utility */
 #include "../../../server/server_lifecycle.h"
@@ -384,19 +385,30 @@ static uint8_t         *s_uploadBuf      = NULL;
 static uint32_t         s_uploadTotal    = 0;
 static uint32_t         s_uploadOffset   = 0;
 static bool             s_uploadActive   = false;
+/* Announce name (e.g. "Foo.map") cached for the USE_LOCAL → UPLOAD
+ * fallback path so the pump knows what to re-announce without
+ * having to re-derive it from a path it no longer holds. */
+static char             s_uploadName[128];
 
 static void lobbyUploadFree(void) {
     if (s_uploadBuf) { SDL_free(s_uploadBuf); s_uploadBuf = NULL; }
     s_uploadTotal  = 0;
     s_uploadOffset = 0;
     s_uploadActive = false;
+    s_uploadName[0] = '\0';
 }
 
 /* Read `srcPath` into s_uploadBuf and announce the upload to the
  * server. The server-side path will be data/maps/Uploads/<basename
  * of srcPath>. Returns silently on any read / size error — the UI
  * surface for that is the status line that flips to "rejected" once
- * the server's ACK / DONE lands. */
+ * the server's ACK / DONE lands.
+ *
+ * Optimisation: if `srcPath` lives under the local data/maps/ tree
+ * we additionally MD5 the bytes and try PACKET_LOBBY_MAP_USE_LOCAL
+ * first — the server may already have an identical file at the
+ * same relative path and will install it without an upload. On NACK
+ * the pump falls back to the regular UPLOAD_BEGIN flow. */
 static void lobbyUploadKick(ClientSim *cs, const char *srcPath) {
     if (!cs || !srcPath || srcPath[0] == '\0') return;
     if (s_uploadActive) return;
@@ -424,9 +436,39 @@ static void lobbyUploadKick(ClientSim *cs, const char *srcPath) {
     s_uploadTotal  = (uint32_t)fileLen;
     s_uploadOffset = 0;
     s_uploadActive = true;
+    SDL_strlcpy(s_uploadName, nameBuf, sizeof(s_uploadName));
 
     clientSimResetLobbyMapUpload(cs);
-    clientSimNetSendLobbyMapUploadBegin(cs, s_uploadTotal, nameBuf);
+
+    /* Derive a data/maps-relative path from srcPath. Local FS provider
+     * hands us paths like "data/maps/Foo/Bar.map"; on Windows the
+     * separators may be backslashes. Strip the prefix to get a path
+     * like "Foo/Bar.map" — same scheme PACKET_LOBBY_MAP_PREVIEW_REQ
+     * uses. If srcPath doesn't sit under data/maps/, skip the USE_LOCAL
+     * optimisation and announce the upload directly. */
+    char relPath[256];
+    relPath[0] = '\0';
+    {
+        char normalized[FILENAME_MAX];
+        SDL_strlcpy(normalized, srcPath, sizeof(normalized));
+        for (char *p = normalized; *p; p++) {
+            if (*p == '\\') *p = '/';
+        }
+        const char *kPrefix = "data/maps/";
+        const size_t kPrefixLen = 10;
+        if (strncmp(normalized, kPrefix, kPrefixLen) == 0) {
+            SDL_strlcpy(relPath, normalized + kPrefixLen, sizeof(relPath));
+        }
+    }
+
+    if (relPath[0] != '\0') {
+        uint8_t md5[16];
+        md5Compute(s_uploadBuf, s_uploadTotal, md5);
+        clientSimNetSendLobbyMapUseLocal(cs, s_uploadTotal, nameBuf,
+                                          relPath, md5);
+    } else {
+        clientSimNetSendLobbyMapUploadBegin(cs, s_uploadTotal, nameBuf);
+    }
 }
 
 /* Pump chunks once the server has ACKed. Called every frame from
@@ -441,6 +483,14 @@ static void lobbyUploadPump(ClientSim *cs) {
          * starts fresh. */
         lobbyUploadFree();
         return;
+    }
+    /* USE_LOCAL was NACK'd: server doesn't have the file at the
+     * relative path with that MD5. Fall back to the regular byte
+     * upload using the bytes already in s_uploadBuf. */
+    if (clientSimConsumeUseLocalFallback(cs)) {
+        clientSimNetSendLobbyMapUploadBegin(cs, s_uploadTotal,
+                                            s_uploadName);
+        return;  /* wait one more frame for ACK */
     }
     if (st != 2) return; /* still waiting on ACK */
 
@@ -2501,8 +2551,16 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
      * stops the prior visit's stale selection from showing through. */
     static int s_lastActiveTab = -1;
     int activeTabBefore = s_chooseMapActiveTab;
+    /* When the server is in our own process (SP, or LAN/internet host
+     * binding to a local ServerSim), "Server Maps" and "Upload" both
+     * read from data/maps/ — they're the same directory by definition.
+     * Hide the Server Maps tab and rename the Upload tab to "Local
+     * Maps" to make that visible to the user.  Remote MP clients
+     * still see both: their server lives on a different machine, so
+     * its data/maps/ tree is distinct from the client's. */
+    bool inProcessServer = (gameFrontGetServerSim() != NULL);
     if (ImGui::BeginTabBar("##MapChooserTabs", ImGuiTabBarFlags_None)) {
-        if (ImGui::BeginTabItem("Server Maps")) {
+        if (!inProcessServer && ImGui::BeginTabItem("Server Maps")) {
             s_chooseMapActiveTab = 0;
             if (s_lastActiveTab != 0 && activeTabBefore != 0) {
                 lobbyMapTabClearSelection(&s_chooseMapState);
@@ -2510,7 +2568,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             lobbyRenderMapTab(&s_chooseMapState, renderer, s);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Upload")) {
+        if (ImGui::BeginTabItem(inProcessServer ? "Local Maps" : "Upload")) {
             s_chooseMapActiveTab = 1;
             if (s_lastActiveTab != 1 && activeTabBefore != 1) {
                 lobbyMapTabClearSelection(&s_chooseMapUploadState);

@@ -291,6 +291,16 @@ void clientSimNetSendLobbyMapUploadChunk(ClientSim *cs,
                                             data, dataLen);
 }
 
+void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,
+                                      uint32_t totalLen,
+                                      const char *name,
+                                      const char *relPath,
+                                      const uint8_t md5[16]) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyMapUseLocal(&cs->transport, totalLen, name,
+                                          relPath, md5);
+}
+
 void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
                                    uint8_t color, uint8_t namingPool,
                                    const char *name) {
