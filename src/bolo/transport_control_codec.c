@@ -233,8 +233,16 @@ static EncodeResult encodeLobbySlot(const ControlEvent *evt,
 /* PACKET_LOBBY_SETTINGS wire format:
  *   [header 8] [mapName MAP_STR_SIZE] [gameType 1] [hiddenMines 1]
  *   [aiType 1] [gameLength 4 BE] [pillCount 1] [baseCount 1]
- *   [startCount 1] [mapSkipAvailable 1] [netStat 1] [inLobby 1] */
-#define LOBBY_SETTINGS_WIRE_PAYLOAD (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1)
+ *   [startCount 1] [mapSkipAvailable 1] [netStat 1] [inLobby 1]
+ *   [openHost 1] [autoLockOnGameStart 1] [serverLocks 2 BE]
+ *
+ * The trailing four bytes (openHost, autoLockOnGameStart, serverLocks)
+ * fold the older standalone PACKET_LOBBY_OPEN_HOST_CHG and the
+ * single-setting echoes that carried these flags into the same
+ * authoritative settings event. serverLocks is packed big-endian to
+ * match every other multi-byte field in the codec (packU16/packU32). */
+#define LOBBY_SETTINGS_WIRE_PAYLOAD \
+    (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 2)
 
 static EncodeResult encodeLobbySettings(const ControlEvent *evt,
                                         const struct UdpServerClient *recipient,
@@ -262,9 +270,161 @@ static EncodeResult encodeLobbySettings(const ControlEvent *evt,
     buf[pos++] = evt->u.lobbySettings.mapSkipAvailable ? 1 : 0;
     buf[pos++] = (uint8_t)evt->u.lobbySettings.netStat;
     buf[pos++] = evt->u.lobbySettings.inLobby ? 1 : 0;
+    buf[pos++] = evt->u.lobbySettings.lobbyOpenHost ? 1 : 0;
+    buf[pos++] = evt->u.lobbySettings.lobbyAutoLockOnGameStart ? 1 : 0;
+    packU16(buf + pos, evt->u.lobbySettings.lobbyServerLocks);
+    pos += 2;
     *outLen = pos;
     return ENCODE_OK;
 }
+
+/* PACKET_LOBBY_TEAM_META_CHG wire format (ported verbatim from the
+ * branch's deleted transportUdpServerBroadcastLobbyTeamMetaChg):
+ *   [header 8] [teamId 1] [color 1] [namingPool 1] [nameLen 1]
+ *   [name nameLen]
+ * The `in_use` flag is not on the wire — the decoder reconstructs it
+ * from (nameLen > 0 || color != 0 || pool != 0), matching the existing
+ * PACKET_LOBBY_TEAM_META_CHG decoder in transport_udp_client.c. */
+static EncodeResult encodeLobbyTeamMeta(const ControlEvent *evt,
+                                        const struct UdpServerClient *recipient,
+                                        uint8_t *buf, size_t bufCap,
+                                        size_t *outLen) {
+    (void)recipient;
+    if (evt->u.lobbyTeamMeta.teamId == 0 ||
+        evt->u.lobbyTeamMeta.teamId >= MAX_TANKS) {
+        return ENCODE_SKIP;
+    }
+    size_t nameLen = strnlen(evt->u.lobbyTeamMeta.name, LOBBY_TEAM_NAME_LEN - 1);
+    const size_t needed = PACKET_HEADER_SIZE + 4 + nameLen;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    size_t pos = PACKET_HEADER_SIZE;
+    packHeader(buf, PACKET_LOBBY_TEAM_META_CHG, 0);
+    buf[pos++] = evt->u.lobbyTeamMeta.teamId;
+    buf[pos++] = evt->u.lobbyTeamMeta.color;
+    buf[pos++] = evt->u.lobbyTeamMeta.namingPool;
+    buf[pos++] = (uint8_t)nameLen;
+    if (nameLen > 0) {
+        memcpy(buf + pos, evt->u.lobbyTeamMeta.name, nameLen);
+        pos += nameLen;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+/* PACKET_LOBBY_BOT_CONFIG_CHG wire format (ported verbatim from
+ * branch's transportUdpServerBroadcastLobbyBotConfigChg):
+ *   [header 8] [slot 1] [difficulty 1] [personality 1] [nameLen 1]
+ *   [name nameLen] */
+static EncodeResult encodeLobbyBotConfig(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    (void)recipient;
+    if (evt->u.lobbyBotConfig.slot >= MAX_TANKS) return ENCODE_SKIP;
+    size_t nameLen = strnlen(evt->u.lobbyBotConfig.name,
+                             PACKET_MAX_PLAYER_NAME - 1);
+    const size_t needed = PACKET_HEADER_SIZE + 4 + nameLen;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    size_t pos = PACKET_HEADER_SIZE;
+    packHeader(buf, PACKET_LOBBY_BOT_CONFIG_CHG, 0);
+    buf[pos++] = evt->u.lobbyBotConfig.slot;
+    buf[pos++] = evt->u.lobbyBotConfig.difficulty;
+    buf[pos++] = evt->u.lobbyBotConfig.personality;
+    buf[pos++] = (uint8_t)nameLen;
+    if (nameLen > 0) {
+        memcpy(buf + pos, evt->u.lobbyBotConfig.name, nameLen);
+        pos += nameLen;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+/* PACKET_LOBBY_BOT_BRAIN_CHG wire format (ported from branch's
+ * transportUdpServerBroadcastLobbyBotBrainChg):
+ *   [header 8] [slot 1] [pathLen 1] [path pathLen]
+ * pathLen == 0 signals "use the server's global bot brain". */
+static EncodeResult encodeLobbyBotBrain(const ControlEvent *evt,
+                                        const struct UdpServerClient *recipient,
+                                        uint8_t *buf, size_t bufCap,
+                                        size_t *outLen) {
+    (void)recipient;
+    if (evt->u.lobbyBotBrain.slot >= MAX_TANKS) return ENCODE_SKIP;
+    size_t pathLen = strnlen(evt->u.lobbyBotBrain.path,
+                             BRAIN_LIST_PATH_LEN - 1);
+    const size_t needed = PACKET_HEADER_SIZE + 2 + pathLen;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    size_t pos = PACKET_HEADER_SIZE;
+    packHeader(buf, PACKET_LOBBY_BOT_BRAIN_CHG, 0);
+    buf[pos++] = evt->u.lobbyBotBrain.slot;
+    buf[pos++] = (uint8_t)pathLen;
+    if (pathLen > 0) {
+        memcpy(buf + pos, evt->u.lobbyBotBrain.path, pathLen);
+        pos += pathLen;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+/* PACKET_LOBBY_BRAIN_LIST wire format (ported verbatim from branch's
+ * transportUdpServerSendLobbyBrainList — branch packs the strings in
+ * name / version / path order, NOT path-first):
+ *   [header 8] [count 1]
+ *   repeat count times:
+ *     [nameLen 1] [name nameLen]
+ *     [verLen 1]  [version verLen]
+ *     [pathLen 1] [path pathLen]
+ * Worst-case payload is 1 + BRAIN_LIST_MAX * (3 + (NAME_LEN-1) +
+ * (VER_LEN-1) + (PATH_LEN-1)) = 4993 bytes, which only fits because
+ * MAX_CONTROL_PACKET was bumped to 8192 alongside this encoder. */
+static EncodeResult encodeLobbyBrainList(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    (void)recipient;
+    const BrainList *list = &evt->u.lobbyBrainList.list;
+    int count = list->count;
+    if (count < 0) count = 0;
+    if (count > BRAIN_LIST_MAX) count = BRAIN_LIST_MAX;
+    /* Pre-compute total size; bail with ENCODE_OVERFLOW before any
+     * write if the recipient buffer can't hold the worst case. */
+    size_t needed = PACKET_HEADER_SIZE + 1;
+    for (int i = 0; i < count; i++) {
+        const BrainListEntry *e = &list->entries[i];
+        needed += 3
+                + strnlen(e->name,    BRAIN_LIST_NAME_LEN - 1)
+                + strnlen(e->version, BRAIN_LIST_VER_LEN  - 1)
+                + strnlen(e->path,    BRAIN_LIST_PATH_LEN - 1);
+    }
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    size_t pos = PACKET_HEADER_SIZE;
+    packHeader(buf, PACKET_LOBBY_BRAIN_LIST, 0);
+    buf[pos++] = (uint8_t)count;
+    for (int i = 0; i < count; i++) {
+        const BrainListEntry *e = &list->entries[i];
+        uint8_t n = (uint8_t)strnlen(e->name,    BRAIN_LIST_NAME_LEN - 1);
+        uint8_t v = (uint8_t)strnlen(e->version, BRAIN_LIST_VER_LEN  - 1);
+        uint8_t p = (uint8_t)strnlen(e->path,    BRAIN_LIST_PATH_LEN - 1);
+        buf[pos++] = n;
+        if (n > 0) { memcpy(buf + pos, e->name, n);    pos += n; }
+        buf[pos++] = v;
+        if (v > 0) { memcpy(buf + pos, e->version, v); pos += v; }
+        buf[pos++] = p;
+        if (p > 0) { memcpy(buf + pos, e->path, p);    pos += p; }
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+/* Compile-time guarantee that the brain-list worst case fits inside
+ * MAX_CONTROL_PACKET — keeps the runtime ENCODE_OVERFLOW path above
+ * unreachable as long as the codec header keeps its budget. */
+BOLO_STATIC_ASSERT(
+    PACKET_HEADER_SIZE + 1 +
+        (size_t)BRAIN_LIST_MAX *
+            (3 + (BRAIN_LIST_NAME_LEN - 1) + (BRAIN_LIST_VER_LEN - 1) +
+             (BRAIN_LIST_PATH_LEN - 1))
+        <= MAX_CONTROL_PACKET,
+    brain_list_worst_case_fits_MAX_CONTROL_PACKET);
 
 /* PACKET_LOBBY_MAP_CHANGE wire format: header only (no payload).
  * The lobbyMapChange union member carries no fields — receipt of
@@ -534,6 +694,117 @@ static bool decodeLobbySettings(const uint8_t *buf, size_t len,
     outEvt->u.lobbySettings.mapSkipAvailable = buf[pos++] ? true : false;
     outEvt->u.lobbySettings.netStat          = (netStatus)buf[pos++];
     outEvt->u.lobbySettings.inLobby          = buf[pos++] ? true : false;
+    outEvt->u.lobbySettings.lobbyOpenHost            = buf[pos++] ? true : false;
+    outEvt->u.lobbySettings.lobbyAutoLockOnGameStart = buf[pos++] ? true : false;
+    outEvt->u.lobbySettings.lobbyServerLocks         = unpackU16(buf + pos);
+    pos += 2;
+    return true;
+}
+
+static bool decodeLobbyTeamMeta(const uint8_t *buf, size_t len,
+                                ControlEvent *outEvt) {
+    /* Layout matches encodeLobbyTeamMeta. */
+    if (len < 4) return false;
+    uint8_t teamId  = buf[0];
+    uint8_t color   = buf[1];
+    uint8_t pool    = buf[2];
+    uint8_t nameLen = buf[3];
+    if (teamId == 0 || teamId >= MAX_TANKS) return false;
+    if (nameLen > LOBBY_TEAM_NAME_LEN - 1) return false;
+    if (len < (size_t)(4 + nameLen)) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_TEAM_META;
+    outEvt->u.lobbyTeamMeta.teamId     = teamId;
+    outEvt->u.lobbyTeamMeta.color      = color;
+    outEvt->u.lobbyTeamMeta.namingPool = pool;
+    if (nameLen > 0) {
+        memcpy(outEvt->u.lobbyTeamMeta.name, buf + 4, nameLen);
+    }
+    outEvt->u.lobbyTeamMeta.name[nameLen] = '\0';
+    /* in_use is not on the wire — reconstruct it the same way the
+     * existing PACKET_LOBBY_TEAM_META_CHG decoder in
+     * transport_udp_client.c does. */
+    outEvt->u.lobbyTeamMeta.in_use =
+        (nameLen > 0 || color != 0 || pool != 0) ? 1 : 0;
+    return true;
+}
+
+static bool decodeLobbyBotConfig(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
+    /* Layout matches encodeLobbyBotConfig. */
+    if (len < 4) return false;
+    uint8_t slot    = buf[0];
+    uint8_t diff    = buf[1];
+    uint8_t pers    = buf[2];
+    uint8_t nameLen = buf[3];
+    if (slot >= MAX_TANKS) return false;
+    if (nameLen > PACKET_MAX_PLAYER_NAME - 1) return false;
+    if (len < (size_t)(4 + nameLen)) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_BOT_CONFIG;
+    outEvt->u.lobbyBotConfig.slot        = slot;
+    outEvt->u.lobbyBotConfig.difficulty  = diff;
+    outEvt->u.lobbyBotConfig.personality = pers;
+    if (nameLen > 0) {
+        memcpy(outEvt->u.lobbyBotConfig.name, buf + 4, nameLen);
+    }
+    outEvt->u.lobbyBotConfig.name[nameLen] = '\0';
+    return true;
+}
+
+static bool decodeLobbyBotBrain(const uint8_t *buf, size_t len,
+                                ControlEvent *outEvt) {
+    /* Layout matches encodeLobbyBotBrain. */
+    if (len < 2) return false;
+    uint8_t slot    = buf[0];
+    uint8_t pathLen = buf[1];
+    if (slot >= MAX_TANKS) return false;
+    if (pathLen > BRAIN_LIST_PATH_LEN - 1) return false;
+    if (len < (size_t)(2 + pathLen)) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_BOT_BRAIN;
+    outEvt->u.lobbyBotBrain.slot = slot;
+    if (pathLen > 0) {
+        memcpy(outEvt->u.lobbyBotBrain.path, buf + 2, pathLen);
+    }
+    outEvt->u.lobbyBotBrain.path[pathLen] = '\0';
+    return true;
+}
+
+static bool decodeLobbyBrainList(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
+    /* Layout matches encodeLobbyBrainList: [count 1] then per entry
+     * [nameLen 1][name][verLen 1][version][pathLen 1][path]. */
+    if (len < 1) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_BRAIN_LIST;
+    BrainList *list = &outEvt->u.lobbyBrainList.list;
+    size_t pos = 0;
+    uint8_t cnt = buf[pos++];
+    if (cnt > BRAIN_LIST_MAX) cnt = BRAIN_LIST_MAX;
+    int written = 0;
+    for (uint8_t i = 0; i < cnt; i++) {
+        if (pos + 1 > len) return false;
+        uint8_t n = buf[pos++];
+        if (n >= BRAIN_LIST_NAME_LEN || pos + n > len) return false;
+        if (n > 0) memcpy(list->entries[written].name, buf + pos, n);
+        list->entries[written].name[n] = '\0';
+        pos += n;
+        if (pos + 1 > len) return false;
+        uint8_t v = buf[pos++];
+        if (v >= BRAIN_LIST_VER_LEN || pos + v > len) return false;
+        if (v > 0) memcpy(list->entries[written].version, buf + pos, v);
+        list->entries[written].version[v] = '\0';
+        pos += v;
+        if (pos + 1 > len) return false;
+        uint8_t p = buf[pos++];
+        if (p >= BRAIN_LIST_PATH_LEN || pos + p > len) return false;
+        if (p > 0) memcpy(list->entries[written].path, buf + pos, p);
+        list->entries[written].path[p] = '\0';
+        pos += p;
+        written++;
+    }
+    list->count = written;
     return true;
 }
 
@@ -639,6 +910,10 @@ static const ControlEncodeFn s_encoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SERVER_SHUTDOWN]    = encodeServerShutdown,
     [CTRL_CHAT]               = encodeChat,
     [CTRL_PLAYER_LEAVE]       = encodePlayerLeave,
+    [CTRL_LOBBY_TEAM_META]    = encodeLobbyTeamMeta,
+    [CTRL_LOBBY_BOT_CONFIG]   = encodeLobbyBotConfig,
+    [CTRL_LOBBY_BOT_BRAIN]    = encodeLobbyBotBrain,
+    [CTRL_LOBBY_BRAIN_LIST]   = encodeLobbyBrainList,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -662,6 +937,10 @@ ControlDecodeFn transportControlCodecDecoder(uint16_t packetType) {
         case PACKET_SERVER_SHUTDOWN:  return decodeServerShutdown;
         case PACKET_CHAT_BROADCAST:   return decodeChat;
         case PACKET_PLAYER_LEFT:      return decodePlayerLeave;
+        case PACKET_LOBBY_TEAM_META_CHG:  return decodeLobbyTeamMeta;
+        case PACKET_LOBBY_BOT_CONFIG_CHG: return decodeLobbyBotConfig;
+        case PACKET_LOBBY_BOT_BRAIN_CHG:  return decodeLobbyBotBrain;
+        case PACKET_LOBBY_BRAIN_LIST:     return decodeLobbyBrainList;
         default:                      return NULL;
     }
 }
