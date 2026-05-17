@@ -1577,7 +1577,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
 
     bolo_net_init();
 
-    c->sock = createUdpSocket();
+    c->sock = createUdpSocket(false);
     if (c->sock == INVALID_SOCKET) {
         WB_LOG_ERROR(WB_LOG_CAT_NET, "client connect: createUdpSocket failed");
         c->joinState = UDP_CLIENT_ERROR;

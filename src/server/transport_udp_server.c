@@ -1659,7 +1659,7 @@ bool transportUdpServerCreate(unsigned short port,
     memset(&udpServer, 0, sizeof(udpServer));
     memset(punchQueue, 0, sizeof(punchQueue));
 
-    udpServer.sock = createUdpSocket();
+    udpServer.sock = createUdpSocket(true);
     if (udpServer.sock == INVALID_SOCKET) {
         return false;
     }
@@ -2451,12 +2451,41 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_LOBBY_ADD_BOT: {
-            /* Wire: [header 8] — no payload needed, server uses its own brain config */
+            /* Wire: [header 8] [teamNumber 1] [pathLen 1] [path N]
+             *       [nameLen 1] [name M]. Server uses its own stored
+             *       brain config; client-picked teamNumber and botName
+             *       come from the team-aware Add Bot button. */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && serverSimIsLobbyEnabled(sim) &&
                 serverSimGetState(sim) == serverStateLobby &&
                 serverSimGetBotAiType(sim) != aiNone &&
                 serverSimGetBotBrainPath(sim)[0] != '\0') {
+                /* Parse wire payload — bounds-check each length so we
+                 * never read past the received bytes. teamNumber, name,
+                 * and path are all optional; missing or zero-length name
+                 * falls back to "Bot N". */
+                uint8_t teamNumber = 0;
+                char clientBotName[PACKET_MAX_PLAYER_NAME] = "";
+                int pos = PACKET_HEADER_SIZE;
+                if (len >= pos + 1) {
+                    teamNumber = buf[pos++];
+                    if (len >= pos + 1) {
+                        uint8_t pathLen = buf[pos++];
+                        if (pathLen < BRAIN_LIST_PATH_LEN &&
+                            len >= pos + pathLen) {
+                            pos += pathLen;  /* skip path; server uses its own */
+                            if (len >= pos + 1) {
+                                uint8_t nameLen = buf[pos++];
+                                if (nameLen < sizeof(clientBotName) &&
+                                    len >= pos + nameLen) {
+                                    memcpy(clientBotName, buf + pos, nameLen);
+                                    clientBotName[nameLen] = '\0';
+                                }
+                            }
+                        }
+                    }
+                }
+
                 /* Find first free player slot */
                 BYTE slot;
                 bool found = false;
@@ -2468,12 +2497,19 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 }
                 if (found) {
                     char botName[64];
-                    snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
+                    if (clientBotName[0] != '\0') {
+                        SDL_strlcpy(botName, clientBotName, sizeof(botName));
+                    } else {
+                        snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
+                    }
                     if (botManagerAddBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
                                          serverSimGetBotAiType(sim),
                                          gameTypeGet(&serverSimGetGameSim(sim)->game),
                                          serverSimGetGameSim(sim)->hiddenMines)) {
                         transportUdpServerSetBotName(slot, botName);
+                        if (teamNumber > 0 && teamNumber < MAX_TANKS) {
+                            serverSimSetTeam(sim, slot, teamNumber);
+                        }
                         publishLobbySlot(sim, slot);
                     }
                 }

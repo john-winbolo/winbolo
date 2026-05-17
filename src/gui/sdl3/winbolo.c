@@ -1583,6 +1583,12 @@ void frontEndEnableLeaveAllyMenu(bool enabled) {
  * ------------------------------------------------------- */
 void frontEndRedrawAll(ClientSim *cs) {
   if (!clientSimIsRunning(cs)) return;
+  /* In lobby state the in-game renderer hasn't taken over yet — the
+   * lobby ImGui is the active view. Skip the game-frame blit so a
+   * subscriber-side playersSetPlayer triggered by a CTRL_PLAYER_JOIN
+   * mid-lobby (e.g. another remote adding a bot) doesn't stomp the
+   * lobby render. */
+  if (clientSimIsInLobby(cs)) return;
   windowRedrawAll(cs);
 }
 

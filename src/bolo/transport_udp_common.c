@@ -321,8 +321,17 @@ void unpackPillSnapshot(const uint8_t *buf, PillSnapshot *ps) {
  * Socket helpers
  * ================================================================ */
 
-/* Create a non-blocking UDP socket */
-SOCKET createUdpSocket(void) {
+/* Create a non-blocking UDP socket.
+ *
+ * exclusive=true: caller wants a hard failure on bind() if the port is
+ *   already in use (server case — a second listen-server host on the
+ *   same machine must NOT silently share the port with the first). On
+ *   Windows that means SO_EXCLUSIVEADDRUSE and skipping SO_REUSEADDR;
+ *   SO_REUSEADDR there is permissive enough that two binds to the same
+ *   port both succeed and the OS dispatches packets to one of them.
+ * exclusive=false: ephemeral / client socket — set SO_REUSEADDR so a
+ *   rebind after an unclean exit doesn't fail with EADDRINUSE. */
+SOCKET createUdpSocket(bool exclusive) {
     SOCKET sock;
     unsigned long nonBlock = 1;
     int reuse = 1;
@@ -331,15 +340,19 @@ SOCKET createUdpSocket(void) {
     if (sock == INVALID_SOCKET) {
         return INVALID_SOCKET;
     }
-    /* Allow rebinding immediately after a previous process exits without
-     * a clean close — the OS may not have reaped the port descriptor yet
-     * (most visible on Windows after a force-quit). */
-    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
-               (const char *)&reuse, sizeof(reuse));
-#ifdef SO_REUSEPORT
-    setsockopt(sock, SOL_SOCKET, SO_REUSEPORT,
-               (const char *)&reuse, sizeof(reuse));
+    if (exclusive) {
+#ifdef _WIN32
+        setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                   (const char *)&reuse, sizeof(reuse));
 #endif
+    } else {
+        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
+                   (const char *)&reuse, sizeof(reuse));
+#ifdef SO_REUSEPORT
+        setsockopt(sock, SOL_SOCKET, SO_REUSEPORT,
+                   (const char *)&reuse, sizeof(reuse));
+#endif
+    }
     ioctlsocket(sock, FIONBIO, &nonBlock);
     return sock;
 }
