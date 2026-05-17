@@ -207,6 +207,11 @@ void transportUdpClientSendBalanceDismiss(Transport *t);
 /* Toggle map skip vote (server identifies player by source address). */
 void transportUdpClientSendMapSkipVote(Transport *t);
 
+/* Send a PACKET_GAME_VOTE_TOGGLE. kind is GAME_VOTE_KIND_*,
+ * toggleMode is GAME_VOTE_TOGGLE_* (NO / YES / OPEN_ONLY). */
+void transportUdpClientSendGameVoteToggle(Transport *t,
+                                          uint8_t kind, uint8_t toggleMode);
+
 /* ── Layout A lobby commands ───────────────────────────────────────
  * Each function ships one PACKET_LOBBY_* request to the server.
  * Server validates (host check OR openHost; lock check), applies,

@@ -206,11 +206,16 @@ void serverInstanceTick(ServerSim *sim) {
       /* If game ended during this tick, broadcast game-over */
       if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
         if (sim->lobbyEnabled) {
-          /* Capture win message now while game state is intact;
-           * it will be sent after players return to the lobby. */
-          serverSimBuildWinMessage(sim,
-                                   sim->pendingWinMessage,
-                                   sizeof(sim->pendingWinMessage));
+          if (serverSimConsumeSuppressNextWinMessage(sim)) {
+            /* Vote-driven game end already announced itself. */
+            sim->pendingWinMessage[0] = '\0';
+          } else {
+            /* Capture win message now while game state is intact;
+             * it will be sent after players return to the lobby. */
+            serverSimBuildWinMessage(sim,
+                                     sim->pendingWinMessage,
+                                     sizeof(sim->pendingWinMessage));
+          }
           serverSimSendWbnWinEvents(sim);
           transportUdpServerBroadcastGameOver(sim);
         }

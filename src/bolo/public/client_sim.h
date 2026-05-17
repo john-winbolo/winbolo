@@ -368,6 +368,45 @@ const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n);
 bool                   clientSimIsMapSkipVote(const ClientSim *cs, BYTE n);
 uint8_t                clientSimGetBalanceProposal(const ClientSim *cs, BYTE n);
 
+/* In-game vote system — public mirror of wire constants from
+ * netpacks.h. Keep these in lockstep with PACKET_GAME_VOTE_* in
+ * netpacks.h; numeric values are wire-stable. */
+#ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
+#define GAME_VOTE_KIND_BACK_TO_LOBBY  1
+#define GAME_VOTE_KIND_SURRENDER      2
+#define GAME_VOTE_TOGGLE_NO           0
+#define GAME_VOTE_TOGGLE_YES          1
+#define GAME_VOTE_TOGGLE_OPEN_ONLY    2
+#define GAME_VOTE_ACTIVE_NONE         0
+#define GAME_VOTE_ACTIVE_RUNNING      1
+#define GAME_VOTE_ACTIVE_PASSED       2
+#define GAME_VOTE_ACTIVE_FAILED       3
+#define GAME_VOTE_ACTIVE_CANCELLED    4
+#define GAME_VOTE_TRIGGER_MANUAL          0
+#define GAME_VOTE_TRIGGER_BASE_MONOPOLY   1
+#define GAME_VOTE_TRIGGER_POST_SURRENDER  2
+#endif
+
+/* In-game vote mirror accessors. kind = GAME_VOTE_KIND_*. The
+ * snapshot mirrors the wire payload; widgetVisible is local-only. */
+typedef struct {
+    uint8_t  kind;
+    uint8_t  active;
+    uint8_t  triggerSrc;
+    uint8_t  teamId;
+    uint8_t  threshold;
+    uint8_t  yesCount;
+    uint8_t  secondsRemaining;
+    uint16_t votes;
+    bool     widgetVisible;
+} ClientGameVoteSnapshot;
+
+bool clientSimGetGameVote(const ClientSim *cs, uint8_t kind,
+                          ClientGameVoteSnapshot *out);
+void clientSimSetGameVoteWidgetVisible(ClientSim *cs, uint8_t kind, bool visible);
+/* Returns true if local player has voted yes on this kind. */
+bool clientSimGameVoteMyVote(const ClientSim *cs, uint8_t kind);
+
 /* Array-pointer accessors (return pointer to backing storage).
  * brainMap is returned non-const because external callers
  * memset it and pass it to writers; the other arrays are

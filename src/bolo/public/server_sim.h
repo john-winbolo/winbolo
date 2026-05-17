@@ -1014,6 +1014,48 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum);
 void serverSimMapSkipVotesReset(ServerSim *sim);
 
 /*********************************************************
+ * In-game vote system (back-to-lobby + surrender).
+ *  - serverSimGameVoteTick is called every server frame from the
+ *    transport layer. It handles per-second heartbeats, the 60s
+ *    timeout, the post-pass 3/2/1 chat countdown, and the
+ *    base-monopoly auto-trigger.
+ *  - serverSimGameVoteToggle handles incoming PACKET_GAME_VOTE_TOGGLE.
+ *  - serverSimGameVoteResetAll clears all in-flight votes (called on
+ *    game start / lobby return).
+ *  - serverSimCountActiveTeams returns true iff there is exactly one
+ *    active team count value, populated into outActiveTeamCount.
+ *********************************************************/
+void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs);
+void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
+                             uint8_t kind, uint8_t toggleMode);
+void serverSimGameVoteResetAll(ServerSim *sim);
+bool serverSimGameVoteIsRunning(const ServerSim *sim, uint8_t kind);
+uint8_t serverSimCountActiveTeams(const ServerSim *sim);
+
+/* Snapshot of a single game vote slot, suitable for wire serialisation
+ * by the transport layer. Returns false if `kind` is unknown. */
+typedef struct {
+    uint8_t  kind;
+    uint8_t  active;           /* GAME_VOTE_ACTIVE_* */
+    uint8_t  triggerSrc;       /* GAME_VOTE_TRIGGER_* */
+    uint8_t  teamId;
+    uint8_t  threshold;
+    uint8_t  yesCount;
+    uint8_t  secondsRemaining; /* 0..60 */
+    uint16_t votes;            /* bitmask */
+} ServerGameVoteSnapshot;
+
+bool serverSimGetGameVoteSnapshot(const ServerSim *sim, uint8_t kind,
+                                  ServerGameVoteSnapshot *out);
+
+/* When set, the next running→gameOver transition should skip the
+ * automatic "Game over!" / win-message broadcast (because the
+ * transition was driven by a vote-pass which already announced its
+ * own context). The flag self-clears once lifecycle reads it. */
+bool serverSimConsumeSuppressNextWinMessage(ServerSim *sim);
+void serverSimSetSuppressNextWinMessage(ServerSim *sim, bool v);
+
+/*********************************************************
  *NAME:          serverSimSendWbnWinEvents
  *PURPOSE:
  *  Sends WINBOLO_NET_EVENT_WIN for each player in the

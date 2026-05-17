@@ -1225,18 +1225,71 @@ static void renderPlayersPanel(ClientSim *cs) {
     /* Alliance actions */
     ImGui::Separator();
     {
+        bool rankedGame   = clientSimGetLobbyRanked(cs);
         bool inCooldown = (s_allianceReqCooldownEnd != 0 &&
                            SDL_GetTicks() < s_allianceReqCooldownEnd);
         if (hasAllies) {
             if (ImGui::Button(langGetText(STR_LEAVE_ALLIANCE), ImVec2(-1, 0)))
                 clientSimLeaveAllianceSelf(cs);
         } else {
-            if (!canRequest || inCooldown) ImGui::BeginDisabled();
+            bool disabled = !canRequest || inCooldown || rankedGame;
+            if (disabled) ImGui::BeginDisabled();
             if (ImGui::Button(langGetText(STR_REQUEST_ALLIANCE), ImVec2(-1, 0))) {
                 clientSimRequestAllianceSelected(cs);
                 s_allianceReqCooldownEnd = SDL_GetTicks() + ALLIANCE_REQ_WAIT_MS;
             }
-            if (!canRequest || inCooldown) ImGui::EndDisabled();
+            if (disabled) ImGui::EndDisabled();
+            if (rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Alliances are disabled in ranked games.");
+            }
+        }
+    }
+
+    /* In-game vote actions — siblings of Request Alliance, only during
+     * the running game phase. */
+    if (clientSimGetNetStatus(cs) == netRunning) {
+        /* Count active teams (distinct teamNumber across connected
+         * humans) for the surrender precondition. */
+        bool teamSeen[17] = {0};
+        int activeTeams = 0;
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
+            if (!ls || !ls->connected || ls->isBot) continue;
+            uint8_t t = ls->teamNumber;
+            if (t == 0 || t > 16) continue;
+            if (!teamSeen[t]) { teamSeen[t] = true; activeTeams++; }
+        }
+
+        if (ImGui::Button("Vote: Return to lobby", ImVec2(-1, 0))) {
+            clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_BACK_TO_LOBBY,
+                                           GAME_VOTE_TOGGLE_OPEN_ONLY);
+            clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_BACK_TO_LOBBY, true);
+            /* SP / host dispatch — server is in-process. */
+            ServerSim *spSim = gameFrontGetServerSim();
+            if (spSim && !clientSimIsUdpTransport(cs)) {
+                serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
+                                        GAME_VOTE_KIND_BACK_TO_LOBBY,
+                                        GAME_VOTE_TOGGLE_OPEN_ONLY);
+            }
+        }
+
+        bool surrDisabled = (activeTeams != 2);
+        if (surrDisabled) ImGui::BeginDisabled();
+        if (ImGui::Button("Vote: Surrender", ImVec2(-1, 0))) {
+            clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_SURRENDER,
+                                           GAME_VOTE_TOGGLE_OPEN_ONLY);
+            clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_SURRENDER, true);
+            ServerSim *spSim = gameFrontGetServerSim();
+            if (spSim && !clientSimIsUdpTransport(cs)) {
+                serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
+                                        GAME_VOTE_KIND_SURRENDER,
+                                        GAME_VOTE_TOGGLE_OPEN_ONLY);
+            }
+        }
+        if (surrDisabled) ImGui::EndDisabled();
+        if (surrDisabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("Surrender is only available when exactly two teams remain,\n"
+                        "each with at least one connected human player.");
         }
     }
 
@@ -1354,6 +1407,141 @@ static void renderChangeNameModal(ClientSim *cs) {
         }
         if (doCancel) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
+    }
+}
+
+/* -------------------------------------------------------
+ * In-game vote widget — one floating window per active vote.
+ *
+ * Each widget is its own top-level ImGui window (no parent
+ * constraint) so the OS window decoration / multi-viewport
+ * platform can drag it outside the main game window. We give
+ * it a half-transparent background so it doesn't fully obscure
+ * the battlefield underneath.
+ *
+ * Pressing the title-bar X just hides locally; the vote keeps
+ * running. Re-press the menu item to bring it back.
+ * ------------------------------------------------------- */
+static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
+                                    const ClientGameVoteSnapshot *snap) {
+    /* Only render while a vote is in-flight or recently concluded
+     * and the user hasn't dismissed. concludedAt fade-out is server-driven
+     * (active changes from RUNNING → PASSED/FAILED/CANCELLED). */
+    if (snap->active == GAME_VOTE_ACTIVE_NONE) return;
+    if (!snap->widgetVisible) return;
+
+    /* Default anchor: top-right of the main window, just under the
+     * menu bar. Player can drag elsewhere — only set on first use. */
+    ImGuiIO &io = ImGui::GetIO();
+    float menuH = ImGui::GetFrameHeight();
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 260.0f, menuH + 8.0f),
+                            ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowBgAlpha(0.55f);
+
+    /* Build the title — includes (Draw) tag for ranked manual
+     * back-to-lobby votes. */
+    char title[128];
+    const char *kindName = (kind == GAME_VOTE_KIND_BACK_TO_LOBBY)
+                           ? "Return to lobby" : "Surrender";
+    bool drawTag = (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) &&
+                   (snap->triggerSrc == GAME_VOTE_TRIGGER_MANUAL) &&
+                   clientSimGetLobbyRanked(cs);
+    snprintf(title, sizeof(title), "Vote: %s%s###gamevote_%u",
+             kindName, drawTag ? " (Draw)" : "", (unsigned)kind);
+
+    bool open = true;
+    if (!ImGui::Begin(title, &open,
+                      ImGuiWindowFlags_AlwaysAutoResize |
+                      ImGuiWindowFlags_NoCollapse |
+                      ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::End();
+        if (!open) clientSimSetGameVoteWidgetVisible(cs, kind, false);
+        return;
+    }
+
+    /* Tally + circular progress. ImGui::PathArcTo on the window
+     * draw list, two arcs (background + filled). */
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImVec2 base = ImGui::GetCursorScreenPos();
+    float radius = 22.0f;
+    ImVec2 centre(base.x + radius + 2.0f, base.y + radius + 2.0f);
+    float progress = (snap->threshold > 0)
+                     ? ((float)snap->yesCount / (float)snap->threshold) : 0.0f;
+    if (progress < 0.0f) progress = 0.0f;
+    if (progress > 1.0f) progress = 1.0f;
+
+    /* Background ring */
+    dl->AddCircle(centre, radius, IM_COL32(120, 120, 120, 200), 36, 3.0f);
+    /* Filled arc — from -90deg, sweeping clockwise. */
+    if (progress > 0.0f) {
+        float a0 = -IM_PI * 0.5f;
+        float a1 = a0 + progress * IM_PI * 2.0f;
+        dl->PathArcTo(centre, radius, a0, a1, 36);
+        dl->PathStroke(IM_COL32(80, 200, 80, 255), 0, 3.5f);
+    }
+
+    /* Reserve the space for the ring + put the tally text next to it. */
+    ImGui::Dummy(ImVec2(radius * 2 + 8, radius * 2 + 4));
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    ImGui::Text("%u / %u",
+                (unsigned)snap->yesCount, (unsigned)snap->threshold);
+    if (snap->active == GAME_VOTE_ACTIVE_RUNNING) {
+        ImGui::TextDisabled("%us left", (unsigned)snap->secondsRemaining);
+    } else if (snap->active == GAME_VOTE_ACTIVE_PASSED) {
+        ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.0f, 1.0f), "Passed");
+    } else if (snap->active == GAME_VOTE_ACTIVE_FAILED) {
+        ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.2f, 1.0f), "Failed");
+    } else if (snap->active == GAME_VOTE_ACTIVE_CANCELLED) {
+        ImGui::TextDisabled("Cancelled");
+    }
+    ImGui::EndGroup();
+
+    /* Yes / No buttons — only meaningful while the vote is running.
+     * Highlight the user's current choice so they can see their stance. */
+    if (snap->active == GAME_VOTE_ACTIVE_RUNNING) {
+        ImGui::Spacing();
+        BYTE me = clientSimGetMyPlayerNum(cs);
+        bool myYes = (me < 16) && ((snap->votes >> me) & 1u);
+        bool myAns = clientSimGameVoteMyVote(cs, kind) || myYes;
+        (void)myAns;
+
+        if (myYes) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.6f, 0.0f, 1.0f));
+        if (ImGui::Button("Yes", ImVec2(80, 0))) {
+            clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_YES);
+            ServerSim *spSim = gameFrontGetServerSim();
+            if (spSim && !clientSimIsUdpTransport(cs)) {
+                serverSimGameVoteToggle(spSim, me, kind, GAME_VOTE_TOGGLE_YES);
+            }
+        }
+        if (myYes) ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+        if (ImGui::Button("No", ImVec2(80, 0))) {
+            clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_NO);
+            ServerSim *spSim = gameFrontGetServerSim();
+            if (spSim && !clientSimIsUdpTransport(cs)) {
+                serverSimGameVoteToggle(spSim, me, kind, GAME_VOTE_TOGGLE_NO);
+            }
+        }
+    }
+
+    ImGui::End();
+    if (!open) {
+        clientSimSetGameVoteWidgetVisible(cs, kind, false);
+    }
+}
+
+static void renderGameVoteWidgets(ClientSim *cs) {
+    if (!cs) return;
+    if (clientSimGetNetStatus(cs) != netRunning) return;
+    static const uint8_t kinds[] = {
+        GAME_VOTE_KIND_BACK_TO_LOBBY, GAME_VOTE_KIND_SURRENDER
+    };
+    for (size_t i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++) {
+        ClientGameVoteSnapshot snap = {};
+        if (!clientSimGetGameVote(cs, kinds[i], &snap)) continue;
+        renderOneGameVoteWidget(cs, kinds[i], &snap);
     }
 }
 
@@ -2081,8 +2269,71 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::MenuItem(langGetText(STR_MENU_NETSTATUS_MSGS),  nullptr, (bool)showNetworkStatusMessages)) windowMenuNetwork_toggle(cs);
         if (ImGui::MenuItem(langGetText(STR_MENU_NETDEBUG_MSGS),   nullptr, (bool)showNetworkDebugMessages))  windowMenuNetworkDebug_toggle(cs);
         ImGui::Separator();
-        if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     "Ctrl+R"))                                 clientSimRequestAllianceSelected(cs);
-        if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))                                                 clientSimLeaveAllianceSelf(cs);
+        {
+            bool rankedGame = clientSimGetLobbyRanked(cs);
+            if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     "Ctrl+R", false, !rankedGame))
+                clientSimRequestAllianceSelected(cs);
+            if (rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Alliances are disabled in ranked games.");
+            }
+            if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))                                             clientSimLeaveAllianceSelf(cs);
+        }
+
+        /* In-game votes — only enabled while the game is running. */
+        ImGui::Separator();
+        {
+            bool running = clientSimGetNetStatus(cs) == netRunning;
+            /* Count active teams for the surrender precondition. */
+            int activeTeams = 0;
+            bool teamSeen[17] = {0};
+            if (running) {
+                for (int i = 0; i < MAX_PLAYERS; i++) {
+                    const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
+                    if (!ls || !ls->connected || ls->isBot) continue;
+                    uint8_t t = ls->teamNumber;
+                    if (t == 0 || t > 16) continue;
+                    if (!teamSeen[t]) { teamSeen[t] = true; activeTeams++; }
+                }
+            }
+
+            if (ImGui::MenuItem("Vote: Return to lobby", nullptr, false, running)) {
+                clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_BACK_TO_LOBBY,
+                                               GAME_VOTE_TOGGLE_OPEN_ONLY);
+                clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_BACK_TO_LOBBY, true);
+                ServerSim *spSim = gameFrontGetServerSim();
+                if (spSim && !clientSimIsUdpTransport(cs)) {
+                    serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
+                                            GAME_VOTE_KIND_BACK_TO_LOBBY,
+                                            GAME_VOTE_TOGGLE_OPEN_ONLY);
+                }
+            }
+            if (!running && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Available once the game is running.");
+            }
+
+            bool surrEnabled = running && (activeTeams == 2);
+            if (ImGui::MenuItem("Vote: Surrender", nullptr, false, surrEnabled)) {
+                clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_SURRENDER,
+                                               GAME_VOTE_TOGGLE_OPEN_ONLY);
+                clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_SURRENDER, true);
+                ServerSim *spSim = gameFrontGetServerSim();
+                if (spSim && !clientSimIsUdpTransport(cs)) {
+                    serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
+                                            GAME_VOTE_KIND_SURRENDER,
+                                            GAME_VOTE_TOGGLE_OPEN_ONLY);
+                }
+            }
+            if (!surrEnabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                if (!running) {
+                    ImGui::SetTooltip("Available once the game is running.");
+                } else {
+                    ImGui::SetTooltip(
+                        "Surrender is only available when exactly two teams remain,\n"
+                        "each with at least one connected human player.");
+                }
+            }
+        }
+
         ImGui::Separator();
         if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS)))                                                  sdl3ImguiShowSettings();
         ImGui::EndMenu();
@@ -2993,6 +3244,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     renderAboutModal();
     renderChangeNameModal(cs);
     renderAllianceRequest(cs);
+    renderGameVoteWidgets(cs);
     renderPasswordModal();
     renderKeySetupModal(cs);
     renderJoinConfirmModal();

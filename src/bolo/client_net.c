@@ -315,6 +315,15 @@ void clientSimNetSendMapSkipVote(ClientSim *cs) {
   transportUdpClientSendMapSkipVote(&cs->transport);
 }
 
+void clientSimNetSendGameVoteToggle(ClientSim *cs,
+                                    uint8_t kind, uint8_t toggleMode) {
+  /* Network path only. SP / host-in-process dispatch lives in the GUI
+   * shim (sdl3imgui.cpp) so the bolo library doesn't pick up a build
+   * dep on server_sim. */
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendGameVoteToggle(&cs->transport, kind, toggleMode);
+}
+
 void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
   transportUdpClientSendBalanceRequest(&cs->transport, teamSize);

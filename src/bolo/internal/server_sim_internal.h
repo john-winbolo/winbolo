@@ -189,6 +189,31 @@ typedef struct ServerSim {
 
     bool mapSkipVotes[MAX_TANKS]; /* per-slot map skip vote */
 
+    /* In-game vote state (back-to-lobby + surrender). Indexed by
+     * (kind - 1). See netpacks.h GAME_VOTE_KIND_* / docs/voting_plan.md. */
+    struct ServerGameVote {
+        uint8_t  kind;             /* GAME_VOTE_KIND_* (BACK_TO_LOBBY/SURRENDER) */
+        uint8_t  active;           /* GAME_VOTE_ACTIVE_* */
+        uint8_t  triggerSrc;       /* GAME_VOTE_TRIGGER_* */
+        uint8_t  teamId;           /* surrender only; 0 = all-teams */
+        uint16_t votesMask;        /* bit i = slot i voted yes */
+        uint16_t answeredMask;     /* bit i = slot i has answered (yes or no) */
+        uint64_t startMs;          /* SDL_GetTicks-style epoch (server frame time) */
+        uint64_t deadlineMs;       /* startMs + 60_000 */
+        uint64_t lastHeartbeatMs;  /* drives 1Hz broadcast */
+        uint64_t concludedAtMs;    /* >0 once active != RUNNING; for auto-dismiss */
+        bool     countdownStarted; /* "3","2","1" countdown for back-to-lobby pass */
+        uint64_t countdownNextMs;  /* time of next countdown tick */
+        uint8_t  countdownStep;    /* 3..0, 0 = done */
+    } gameVotes[2];
+    uint64_t gameVoteWallMs;       /* monotonic ms since serverSim start */
+    bool     baseMonopolyTriggeredThisRound;
+    /* When a vote-pass triggers the game-over transition, lifecycle should
+     * skip buildWinMessage so the players don't get the generic
+     * "Game over!" line on top of the 3/2/1 countdown. Cleared once
+     * consumed. */
+    bool     suppressNextWinMessage;
+
     /* Map directory rotation — validated map file paths for random selection */
     char       **mapDirFiles;             /* Array of validated map file paths (malloc'd) */
     int          mapDirCount;             /* Number of valid maps in the array */

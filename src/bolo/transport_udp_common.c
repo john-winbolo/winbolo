@@ -110,6 +110,8 @@ const char *packetTypeName(uint8_t type) {
     case PACKET_BALANCE_DISMISS:   return "BALANCE_DISMISS";
     case PACKET_MAP_SKIP_VOTE:     return "MAP_SKIP_VOTE";
     case PACKET_MAP_SKIP_STATE:    return "MAP_SKIP_STATE";
+    case PACKET_GAME_VOTE_TOGGLE:  return "GAME_VOTE_TOGGLE";
+    case PACKET_GAME_VOTE_STATE:   return "GAME_VOTE_STATE";
     default:                        return "UNKNOWN";
     }
 }
