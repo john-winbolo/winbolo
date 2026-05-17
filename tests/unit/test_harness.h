@@ -42,6 +42,11 @@ int run_transport_local_passive_threads(void);
 int run_sp_subscriber_delivery(void);
 int run_active_local_input_to_shot(void);
 int run_sp_shoot_through_timer(void);
+int run_lobby_settings_codec_and_apply(void);
+int run_lobby_team_meta_codec_and_apply(void);
+int run_lobby_bot_config_codec_and_apply(void);
+int run_lobby_bot_brain_codec_and_apply(void);
+int run_lobby_brain_list_codec_and_apply(void);
 
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map
  * with one player added at slot 0. Caller is responsible for

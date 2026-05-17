@@ -27,6 +27,11 @@ static const UnitTestEntry s_tests[] = {
     { "sp_subscriber_delivery",          run_sp_subscriber_delivery          },
     { "active_local_input_to_shot",      run_active_local_input_to_shot      },
     { "sp_shoot_through_timer",          run_sp_shoot_through_timer          },
+    { "lobby_settings_codec_and_apply",  run_lobby_settings_codec_and_apply  },
+    { "lobby_team_meta_codec_and_apply", run_lobby_team_meta_codec_and_apply },
+    { "lobby_bot_config_codec_and_apply",run_lobby_bot_config_codec_and_apply},
+    { "lobby_bot_brain_codec_and_apply", run_lobby_bot_brain_codec_and_apply },
+    { "lobby_brain_list_codec_and_apply",run_lobby_brain_list_codec_and_apply},
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 
