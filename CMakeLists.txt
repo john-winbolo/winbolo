@@ -965,6 +965,48 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# winbolonet_core / winbolonet_server / winbolonet_client — three static
+# libs replacing the inline winbolonet/* source lists. Binaries pick the
+# subset they need via target_link_libraries.
+# ---------------------------------------------------------------------------
+add_library(winbolonet_core STATIC
+    src/winbolonet/http.c
+    src/winbolonet/winbolonetthread.c
+    src/winbolonet/winbolonetevents.c
+    src/winbolonet/winbolonet_core.c
+)
+target_include_directories(winbolonet_core PRIVATE
+    ${cjson_SOURCE_DIR}
+    src/third_party/tweetnacl
+)
+target_link_libraries(winbolonet_core PRIVATE SDL3::SDL3 CURL::libcurl)
+bolo_apply_include_rules(winbolonet_core runtime_only)
+
+add_library(winbolonet_server STATIC
+    src/winbolonet/winbolonet_server.c
+)
+target_include_directories(winbolonet_server PRIVATE
+    ${cjson_SOURCE_DIR}
+)
+target_link_libraries(winbolonet_server PRIVATE SDL3::SDL3)
+target_compile_definitions(winbolonet_server PRIVATE
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
+bolo_apply_include_rules(winbolonet_server runtime_only)
+
+add_library(winbolonet_client STATIC
+    src/winbolonet/winbolonet_client.c
+    src/winbolonet/wbn_comments.cpp
+)
+target_include_directories(winbolonet_client PRIVATE
+    ${cjson_SOURCE_DIR}
+)
+target_link_libraries(winbolonet_client PRIVATE SDL3::SDL3)
+bolo_apply_include_rules(winbolonet_client runtime_only)
+
+# ---------------------------------------------------------------------------
 # WinBolo Client (cross-platform: Windows, Linux, macOS)
 # ---------------------------------------------------------------------------
 
@@ -986,8 +1028,7 @@ set(CLIENT_SOURCES
     src/third_party/stb/stb_image_write_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_dedicated_log_stubs.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
+    src/third_party/tweetnacl/tweetnacl.c
 )
 
 
@@ -1164,7 +1205,10 @@ endif()
 target_link_libraries(WinBolo PRIVATE
     bolo_static
     ${SERVER_LINK_GROUP}
-    bot_brains_static)
+    bot_brains_static
+    winbolonet_core
+    winbolonet_server
+    winbolonet_client)
 
 # Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
 target_sources(WinBolo PRIVATE src/common/sentry_integration.c)
@@ -1304,8 +1348,7 @@ set(SERVER_SOURCES
     src/server/server_frontend_stubs.c
     src/gui/sdl3/luabrainshandler.c
     src/headless/cmd_stdin.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
+    src/third_party/tweetnacl/tweetnacl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
 )
 
@@ -1363,7 +1406,9 @@ endif()
 target_link_libraries(WinBoloDS PRIVATE
     bolo_static
     ${SERVER_LINK_GROUP}
-    bot_brains_static)
+    bot_brains_static
+    winbolonet_core
+    winbolonet_server)
 target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson utf8proc)
 
 # libplum NAT port mapping (optional). nat_portmap.c stays per-target
@@ -1483,8 +1528,6 @@ set(LOGVIEWER_PLATFORM_SOURCES
 # WinBolo.net HTTP client + Ed25519 signing — shared with the SDL3 client and
 # servers. LogViewer uses it to fetch/post comments on logs that have a WBN key.
 set(LOGVIEWER_WBN_SOURCES
-    src/winbolonet/http.c
-    src/winbolonet/wbn_comments.cpp
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -1556,6 +1599,8 @@ target_include_directories(LogViewer PRIVATE
 bolo_apply_include_rules(LogViewer runtime_only)
 
 target_link_libraries(LogViewer PRIVATE
+    winbolonet_core
+    winbolonet_client
     minizip SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends
     nanosvg stb_image CURL::libcurl cjson
 )
@@ -1614,8 +1659,7 @@ set(HEADLESS_SOURCES
     src/headless/cmd_stdin.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_dedicated_log_stubs.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
+    src/third_party/tweetnacl/tweetnacl.c
 )
 
 
@@ -1675,7 +1719,9 @@ endif()
 target_link_libraries(WinBoloHeadless PRIVATE
     bolo_static
     ${SERVER_LINK_GROUP}
-    bot_brains_static)
+    bot_brains_static
+    winbolonet_core
+    winbolonet_server)
 target_link_libraries(WinBoloHeadless PRIVATE
     SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
 
@@ -1729,8 +1775,7 @@ set(GYM_SOURCES
     src/headless/headless_frontend.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_dedicated_log_stubs.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
+    src/third_party/tweetnacl/tweetnacl.c
     src/gym/winbolo_gym.c
 )
 
@@ -1789,7 +1834,9 @@ endif()
 target_link_libraries(winbolo_gym PRIVATE
     bolo_static
     ${SERVER_LINK_GROUP}
-    bot_brains_static)
+    bot_brains_static
+    winbolonet_core
+    winbolonet_server)
 target_link_libraries(winbolo_gym PRIVATE
     SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
 

@@ -53,7 +53,7 @@
 #include "tank.h"
 #include "types.h"
 #include "util.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
 
 
 

@@ -16,17 +16,19 @@
 
 
 /*********************************************************
-*Name:          WinBolo.net
-*Filename:      winbolonet.h
+*Name:          WinBolo.net Server
+*Filename:      winbolonet_server.h
 *Author:        John Morrison
 *Creation Date: 23/09/01
 *Last Modified: 30/03/26
 *Purpose:
-*  Responsible for interacting with WinBolo.net JSON API
+*  Server-side WinBolo.net tracker surface: register,
+*  per-tick update, lobby/map/teams/balance, client verify
+*  and leave. Linked into binaries that run a server.
 *********************************************************/
 
-#ifndef __WINBOLO_NET_H
-#define __WINBOLO_NET_H
+#ifndef __WINBOLO_NET_SERVER_H
+#define __WINBOLO_NET_SERVER_H
 
 #include <stdio.h>
 #include <string.h>
@@ -37,31 +39,6 @@
 #define BALANCEPROPOSAL_TYPEDEF
 typedef struct BalanceProposal BalanceProposal;
 #endif
-
-/* Size of key buffers (32-char hex string + null terminator) */
-#define WINBOLONET_KEY_LEN 33
-
-/* Event Types — values match the JSON API event type field */
-#define WINBOLO_NET_EVENT_ALLY_JOIN 0     /* Player B has joined Alliance A */
-#define WINBOLO_NET_EVENT_ALLY_LEAVE 1    /* Player B has left Alliance A */
-#define WINBOLO_NET_EVENT_BASE_CAPTURE 2  /* Player A has captured a base */
-#define WINBOLO_NET_EVENT_PILL_CAPTURE 3  /* Player A has captured a pill */
-#define WINBOLO_NET_EVENT_TANK_KILL 4     /* Player A has killed a tank */
-#define WINBOLO_NET_EVENT_LGM_KILL 5      /* Player A has killed a lgm */
-#define WINBOLO_NET_EVENT_LGM_LOST 6      /* Player A has lost their lgm */
-#define WINBOLO_NET_EVENT_BASE_STEAL 7    /* Player A has stolen a base */
-#define WINBOLO_NET_EVENT_PILL_STEAL 8    /* Player A has stolen a pill */
-#define WINBOLO_NET_EVENT_PLAYER_JOIN 9   /* Player A has joined the game */
-#define WINBOLO_NET_EVENT_PLAYER_LEAVE 10 /* Player A has left the game */
-#define WINBOLO_NET_EVENT_WIN 11          /* Player A has won the game */
-#define WINBOLO_NET_EVENT_REJOIN 12       /* Player A is rejoining */
-#define WINBOLO_NET_EVENT_QUITTING 13     /* Player A is quitting */
-
-#define WINBOLO_NET_NO_PLAYER 100 /* If no player use this holder */
-
-#define WINBOLO_NET_MAX_NOSEND 60 /* Maximum non transmission time in seconds */
-
-#define WINBOLO_NET_TEAM_MARKER (254)
 
 /*********************************************************
 *NAME:          winbolonetCreateServer
@@ -86,20 +63,6 @@ typedef struct BalanceProposal BalanceProposal;
 bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers);
 
 /*********************************************************
-*NAME:          winbolonetCreateClient
-*PURPOSE:
-* Initialises the WinBolo.net module for a client.
-* Joins a game session using an auth token.
-* Returns success.
-*
-*ARGUMENTS:
-* token     - WinBolo.net auth token (64-char hex string)
-* serverKey - Server session key (32-char hex string)
-* errorMsg  - Buffer to hold error message if required
-*********************************************************/
-bool winbolonetCreateClient(const char *token, const char *serverKey, char *errorMsg);
-
-/*********************************************************
 *NAME:          winbolonetServerVerifyToken
 *PURPOSE:
 * Called by the server to verify a joining player's WBN
@@ -120,27 +83,6 @@ bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorM
                                  bool *hasSteam, bool *isSupporter);
 
 /*********************************************************
-*NAME:          winbolonetDestroy
-*PURPOSE:
-* Destroys the winbolonet module.
-* Cleans up any open libraries.
-*
-*ARGUMENTS:
-* isServer - TRUE if we are the server
-*********************************************************/
-void winbolonetDestroy(bool isServer);
-
-/*********************************************************
-*NAME:          winbolonetGoodbye
-*PURPOSE:
-* Sends final update and server quit message to WinBolo.net.
-*
-*ARGUMENTS:
-*
-*********************************************************/
-void winbolonetGoodbye(void);
-
-/*********************************************************
 *NAME:          winbolonetServerSendTeams
 *PURPOSE:
 * Sends the list of teams at the end of the game.
@@ -151,19 +93,6 @@ void winbolonetGoodbye(void);
 * numTeams - Number of teams in the array
 *********************************************************/
 void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams);
-
-/*********************************************************
-*NAME:          winbolonetAddEvent
-*PURPOSE:
-* Adds a WinBolo.net Event for sending to the server.
-*
-*ARGUMENTS:
-* eventType - Type of event this is
-* isServer  - Are we the server for this and not a client
-* playerA   - Player A player Number
-* playerB   - Player B player Number
-*********************************************************/
-void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB);
 
 /*********************************************************
 *NAME:          winbolonetServerUpdate
@@ -178,53 +107,6 @@ void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE player
 * sendNow      - If TRUE the data should not be queued
 *********************************************************/
 void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePills, bool sendNow);
-
-/*********************************************************
-*NAME:          winbolonetIsRunning
-*PURPOSE:
-* Returns if the winbolonet module is running or not.
-*
-*ARGUMENTS:
-*
-*********************************************************/
-bool winbolonetIsRunning(void);
-
-/*********************************************************
-*NAME:          winboloNetGetServerKey
-*PURPOSE:
-* Copies the server key into keyBuff. Will be empty string
-* if not participating in WinBolo.net.
-*
-*ARGUMENTS:
-* keyBuff - Buffer to hold key (must be WINBOLONET_KEY_LEN)
-*********************************************************/
-void winboloNetGetServerKey(char *keyBuff);
-
-/*********************************************************
-*NAME:          winboloNetGetMyClientKey
-*PURPOSE:
-* Copies this client's key into keyBuff. Will be empty
-* string if not set or not participating in WinBolo.net.
-* Expected to be called by clients.
-*
-*ARGUMENTS:
-* keyBuff - Buffer to hold key (must be WINBOLONET_KEY_LEN)
-*********************************************************/
-void winboloNetGetMyClientKey(char *keyBuff);
-
-/*********************************************************
-*NAME:          winboloNetVerifyClientKey
-*PURPOSE:
-* Verifies a client key by sending it to WinBolo.net for
-* authentication. Returns if it's a valid key for this
-* session.
-*
-*ARGUMENTS:
-* playerKey - Player key string to verify
-* userName  - Username of the player
-* playerNum - Player position Number
-*********************************************************/
-bool winboloNetVerifyClientKey(const char *playerKey, char *userName, BYTE playerNum);
 
 /*********************************************************
 *NAME:          winboloNetClientLeaveGame
@@ -311,54 +193,6 @@ bool winbolonetReturnToLobby(char *mapName, unsigned short port, BYTE gameType, 
 void winbolonetSendLobbyStatus(bool inLobby);
 
 /*********************************************************
-*NAME:          winbolonetAuthLogin
-*PURPOSE:
-* Authenticates with WinBolo.net via POST /api/v1/auth/login.
-* On success, writes the token and expiry into the provided
-* buffers and returns TRUE.
-*
-*ARGUMENTS:
-* username      - WinBolo.net username
-* password      - WinBolo.net password
-* tokenOut      - Buffer for token (must be >= 65 bytes)
-* expiryOut     - Buffer for expiry string (must be >= 64 bytes)
-* playerNameOut - Buffer for player name (must be >= PLAYER_NAME_LEN)
-* errorMsg      - Buffer for error message on failure
-*********************************************************/
-bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg);
-
-/*********************************************************
-*NAME:          winbolonetAuthSteam
-*PURPOSE:
-* Authenticates with WinBolo.net via POST /api/v1/auth/steam
-* using a hex-encoded Steam auth ticket. On success, writes
-* the token and expiry into the provided buffers and returns
-* TRUE.
-*
-*ARGUMENTS:
-* steamTicketHex  - Hex-encoded Steam auth ticket
-* tokenOut        - Buffer for token (must be >= 65 bytes)
-* expiryOut       - Buffer for expiry string (must be >= 64 bytes)
-* playerNameOut   - Buffer for player name (must be >= PLAYER_NAME_LEN)
-* errorMsg        - Buffer for error message on failure
-*********************************************************/
-bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg);
-
-/*********************************************************
-*NAME:          winbolonetAuthValidate
-*PURPOSE:
-* Validates a stored auth token by calling
-* POST /api/v1/auth/validate.
-* Returns TRUE if the token is valid.
-*
-*ARGUMENTS:
-* token         - The auth token to validate
-* playerNameOut - Buffer for player name (must be >= PLAYER_NAME_LEN), may be NULL
-* errorMsg      - Buffer for error message on failure
-*********************************************************/
-bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorMsg);
-
-/*********************************************************
 *NAME:          winbolonetServerRequestBalance
 *PURPOSE:
 * Calls the WBN API to get skill-based team assignments
@@ -372,4 +206,4 @@ bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorM
 *********************************************************/
 bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, BalanceProposal *outProposal);
 
-#endif /* __WINBOLO_NET_H */
+#endif /* __WINBOLO_NET_SERVER_H */

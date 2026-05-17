@@ -73,7 +73,7 @@
 #include "playername_validate.h"
 #include "client_net.h"
 #include "../../server/server_lifecycle.h"
-#include "../../winbolonet/winbolonet.h"
+#include "../../winbolonet/winbolonet_client.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
 #include "mapgen.h"

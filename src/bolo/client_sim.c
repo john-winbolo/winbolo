@@ -60,7 +60,7 @@
 #include "../gui/dnsLookups.h"
 #include "../gui/clientmutex.h"
 #include "../gui/dialogAlliance.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
 #include "frontend.h"
 
 /* Must match the value used inside shellsAddItem (shells.c redefines
