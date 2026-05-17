@@ -459,8 +459,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * + baseCount(1) + pillCount(1)
          * + reliableEventCount(1) + reliableBaseSeq(4)
          * + mapEventCount(1) + mapEventBaseSeq(4)
-         * + mapChecksum(2) = 25 bytes */
-        if (len < pos + 25) { c->netErrors++; break; }
+         * + mapChecksum(2) + returnToLobbyTicks(2) = 27 bytes */
+        if (len < pos + 27) { c->netErrors++; break; }
 
         c->snapshotHdr.serverTick = unpackU32(buf + pos);
         pos += 4;
@@ -479,6 +479,34 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         pos += 4;
         c->snapshotHdr.mapChecksum = unpackU16(buf + pos);
         pos += 2;
+        c->snapshotHdr.returnToLobbyTicks = unpackU16(buf + pos);
+        pos += 2;
+        /* Track the seconds-remaining derived from the new value and
+         * emit a one-shot newswire line each time we cross a 1-second
+         * boundary downward (3 → "Returning to lobby in 3", etc.).
+         * The server runs at 100 sim-ticks/sec, so 1 second = 100
+         * snapshot-header units. */
+        {
+            ClientSim *cs = c->clientSim;
+            if (cs) {
+                uint16_t rtl = c->snapshotHdr.returnToLobbyTicks;
+                uint8_t secsNow = rtl > 0 ? (uint8_t)((rtl + 99) / 100) : 0;
+                if (secsNow == 0) {
+                    cs->lastReturnToLobbySecs = 0;
+                } else if (cs->lastReturnToLobbySecs == 0 ||
+                           secsNow < cs->lastReturnToLobbySecs) {
+                    if (secsNow >= 1 && secsNow <= 3) {
+                        char buf2[64];
+                        snprintf(buf2, sizeof(buf2),
+                                 "Returning to lobby in %u", (unsigned)secsNow);
+                        clientMessageAdd(clientSimGetMessages(cs),
+                                         newsWireMessage,
+                                         (char *)"Server", buf2);
+                    }
+                    cs->lastReturnToLobbySecs = secsNow;
+                }
+            }
+        }
 
         c->snapshotHdr.tankCount = tankCount;
         c->snapshotHdr.shellCount = shellCount;

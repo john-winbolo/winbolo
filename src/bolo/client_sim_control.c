@@ -272,15 +272,6 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                 cs->netStat = netLobby;
                 cs->countdownSeconds = 0;
             }
-            /* If a back-to-lobby vote just passed, this game-over
-             * is the start of the 3/2/1 → lobby transition. Latch
-             * the local clock so renderer code can emit the
-             * countdown announcements off it. */
-            if (cs->gameVotes[0].active == GAME_VOTE_ACTIVE_PASSED &&
-                cs->gameVotes[0].kind == GAME_VOTE_KIND_BACK_TO_LOBBY) {
-                cs->lobbyReturnCountdownStartMs = SDL_GetTicks();
-                cs->lobbyReturnLastPrintedSecond = 4; /* haven't printed any yet */
-            }
             break;
         }
         break;

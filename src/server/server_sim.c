@@ -1726,6 +1726,21 @@ void serverSimTick(ServerSim *sim) {
         return;
     }
 
+    /* Forced return-to-lobby countdown (e.g. from a vote pass). Game
+     * keeps running normally — players can move, shoot, etc. — and
+     * each game tick this decrements. At 0 we transition to
+     * gameOver, which is what triggers the existing lifecycle path
+     * (broadcastGameOver + countdownTicks hold + returnToLobby). */
+    if (sim->returnToLobbyTicks > 0) {
+        sim->returnToLobbyTicks--;
+        if (sim->returnToLobbyTicks == 0) {
+            serverSimSetSuppressNextWinMessage(sim, true);
+            serverSimEnterGameOver(sim);
+            sim->tick++;
+            return;
+        }
+    }
+
     /* The legacy server ticked every 20ms (SERVER_TICK_LENGTH) and wrote
      * one log entry per tick.  Our sim ticks every 10ms alternating
      * keys/game.  Only log on game ticks (every 20ms) to match the
@@ -2397,6 +2412,13 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
     memset(hdr, 0, sizeof(*hdr));
     hdr->serverTick = sim->tick;
     hdr->lastProcessedInput = sim->lastProcessedInput[clientIdx];
+    /* Forced return-to-lobby countdown — clients render their own
+     * "Returning to lobby in N" off this. 0 means no pending. */
+    hdr->returnToLobbyTicks =
+        (sim->returnToLobbyTicks > 0)
+            ? (uint16_t)((sim->returnToLobbyTicks > 0xFFFF)
+                          ? 0xFFFFu : sim->returnToLobbyTicks)
+            : 0;
 
     /* Primary viewport: client's tank position. Skipped under noCull so
      * the fallback full-map viewport below covers everything. */
@@ -3745,6 +3767,7 @@ void serverSimGameVoteResetAll(ServerSim *sim) {
     sim->gameVotes[0].kind = GAME_VOTE_KIND_BACK_TO_LOBBY;
     sim->gameVotes[1].kind = GAME_VOTE_KIND_SURRENDER;
     sim->baseMonopolyTriggeredThisRound = false;
+    sim->returnToLobbyTicks = 0;
 }
 
 static void gameVoteStart(ServerSim *sim, uint8_t kind, uint8_t triggerSrc,
@@ -3777,15 +3800,14 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
     gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_PASSED, nowMs);
 
     if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) {
-        /* Hand off to the regular game-over → lobby transition. The
-         * 3/2/1 announcement is rendered by the client off its own
-         * clock once it sees the PASSED vote and the GAME_OVER phase
-         * event — no per-second server broadcast needed. We just
-         * extend countdownTicks long enough to give the client time
-         * to count 3, 2, 1 plus a beat (~4 seconds at 100Hz). */
-        serverSimSetSuppressNextWinMessage(sim, true);
-        serverSimEnterGameOver(sim);
-        sim->countdownTicks = 400;
+        /* Game keeps running — players can still move, shoot,
+         * etc. — but each tick decrements sim->returnToLobbyTicks
+         * and at 0 the running tick transitions to gameOver. The
+         * snapshot header carries the remaining ticks every frame
+         * so clients can render their own 3/2/1 countdown.
+         *
+         * Budget: 5 seconds at 100Hz (each serverSimTick call). */
+        sim->returnToLobbyTicks = 500;
     } else if (kind == GAME_VOTE_KIND_SURRENDER) {
         char buf[160];
         const char *tname = sim->teams[gv->teamId].name[0]
