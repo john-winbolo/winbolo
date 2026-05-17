@@ -548,7 +548,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     ImGui::PopTextWrapPos();
                     ImGui::Spacing();
                     if (ImGui::Button(langGetText(STR_CLOSE)) ||
-                        ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                        ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                        (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
+#ifdef __APPLE__
+                        || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
+#endif
+                       ) {
                         ImGui::CloseCurrentPopup();
                     }
                     imguiHandOnHover();
@@ -926,8 +931,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
                 ImGui::SameLine(0, 20);
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
-                    (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
-                     !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
+                    ((ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                      (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
+#ifdef __APPLE__
+                      || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
+#endif
+                     ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
                     char leavePopupId[64];
                     SDL_snprintf(leavePopupId, sizeof(leavePopupId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
                     ImGui::OpenPopup(leavePopupId);
@@ -1290,8 +1299,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
             ImGui::SameLine(0, 20);
             if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
-                (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
-                 !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
+                ((ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                  (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
+#ifdef __APPLE__
+                  || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
+#endif
+                 ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
                 char leavePopupId[64];
                 SDL_snprintf(leavePopupId, sizeof(leavePopupId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
                 ImGui::OpenPopup(leavePopupId);
@@ -1321,7 +1334,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             imguiHandOnHover();
             ImGui::SameLine(0.0f, 8.0f);
             if (ImGui::Button(langGetText(STR_NO), ImVec2(80 * s, 0)) ||
-                ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
+#ifdef __APPLE__
+                || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
+#endif
+               ) {
                 ImGui::CloseCurrentPopup();
             }
             imguiHandOnHover();

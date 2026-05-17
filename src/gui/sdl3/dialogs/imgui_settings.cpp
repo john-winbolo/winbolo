@@ -779,7 +779,12 @@ extern "C" void imguiSettingsShow(void) {
         float btnX = (panelW - btnW) / 2.0f;
         ImGui::SetCursorPosX(btnX);
         if (ImGui::Button(langGetText(STR_CLOSE), ImVec2(btnW, 0)) ||
-            ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+            (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
+#ifdef __APPLE__
+            || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
+#endif
+           ) {
             running = false;
         }
         imguiHandOnHover();

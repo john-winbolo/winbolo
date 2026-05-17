@@ -202,6 +202,18 @@ static char gameFrontLanguageCode[32] = "";
  * settings → tutorial transitions in one menu cycle. */
 static bool gameFrontPlayTutorialRequested = FALSE;
 
+/* Pending state-machine transition posted from outside the welcome
+ * loop (host-OS menus). Read by the welcome dialog at the top of each
+ * poll iteration. Single-threaded: setters and consumers all run on
+ * the main thread (AppKit menu actions land on the same thread the
+ * welcome loop pumps SDL events on), so no atomics are needed. */
+static bool          gameFrontPendingTransitionSet = FALSE;
+static openingStates gameFrontPendingTransition    = openWelcome;
+
+/* TRUE while gameFrontDialogs() is sitting inside welcomeShow(). The
+ * macOS Dock menu reads this to dim items outside the welcome screen. */
+static bool gameFrontAtWelcome = FALSE;
+
 /* Winbolo.net settings */
 char gameFrontWbnToken[FILENAME_MAX];
 char gameFrontWbnTokenExpiry[FILENAME_MAX];
@@ -456,6 +468,17 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       }
     }
 
+#if defined(__APPLE__) && !defined(BOLO_MOBILE)
+    /* Install only the Dock-icon menu now so it is live during the
+     * welcome screen. The full menu bar comes later via
+     * mac_menubar_install() from sdl3ImguiSetup when a game starts —
+     * pre-game dialogs intentionally have no menu bar of their own. */
+    if (OKStart) {
+      extern void mac_menubar_install_dock_menu(void);
+      mac_menubar_install_dock_menu();
+    }
+#endif
+
     if (soundSetup() == FALSE) {
       /* Sound failure is non-fatal — disable sound */
       soundEffects = FALSE;
@@ -678,7 +701,9 @@ static bool gameFrontDialogs(void) {
       break;
     case openWelcome: {
       const DialogBackend *db = dialogBackendGet();
+      gameFrontAtWelcome = TRUE;
       int result = db->welcomeShow();
+      gameFrontAtWelcome = FALSE;
       if (result < 0) {
         done = TRUE;
         userQuit = TRUE;
@@ -786,6 +811,9 @@ static bool gameFrontDialogs(void) {
     case openLogViewer: {
       WbnBrowserResult wbnResult = imguiWbnBrowserShow(sdl3DrawGetWindow(),
                                                        sdl3DrawGetRenderer());
+      /* The LogViewer NSMenu install/uninstall lives inside logViewerRun
+       * itself — its save/restore stack swaps WinBolo's menu out on
+       * entry and restores it on exit, so no wrapping is needed here. */
       switch (wbnResult.action) {
       case WBN_BROWSER_PLAY_FILE:
         logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), wbnResult.filePath, true);
@@ -1462,6 +1490,22 @@ bool gameFrontConsumePlayTutorialRequest(void) {
   bool was = gameFrontPlayTutorialRequested;
   gameFrontPlayTutorialRequested = FALSE;
   return was;
+}
+
+void gameFrontRequestTransition(openingStates s) {
+  gameFrontPendingTransition    = s;
+  gameFrontPendingTransitionSet = TRUE;
+}
+
+bool gameFrontConsumeRequestedTransition(openingStates *out) {
+  if (!gameFrontPendingTransitionSet) return FALSE;
+  if (out) *out = gameFrontPendingTransition;
+  gameFrontPendingTransitionSet = FALSE;
+  return TRUE;
+}
+
+bool gameFrontIsAtWelcome(void) {
+  return gameFrontAtWelcome;
 }
 
 void gameFrontGetTrackerOptions(char *address, unsigned short *port, bool *enabled) {
@@ -2186,15 +2230,27 @@ void gameFrontFlushWindowSettings(void) {
   s_windowSettingsDirty = false;
 }
 
+/* Throttle state shared with gameFrontPumpDirty: the pump is the consume
+ * point for s_windowSettingsDirty, so the last drag/resize burst doesn't
+ * get silently dropped when its events fall inside the 500ms window. */
+static Uint64 s_lastWindowWriteTime = 0;
+
 void gameFrontSaveWindowSettings(void) {
-  static Uint64 lastWriteTime = 0;
   Uint64 now = SDL_GetTicks();
-  if (now - lastWriteTime < 500) {
+  if (now - s_lastWindowWriteTime < 500) {
     s_windowSettingsDirty = true;
     return;
   }
   gameFrontFlushWindowSettings();
-  lastWriteTime = now;
+  s_lastWindowWriteTime = now;
+}
+
+void gameFrontPumpDirty(void) {
+  if (!s_windowSettingsDirty) return;
+  Uint64 now = SDL_GetTicks();
+  if (now - s_lastWindowWriteTime < 500) return;
+  gameFrontFlushWindowSettings();
+  s_lastWindowWriteTime = now;
 }
 
 ServerSim *gameFrontGetServerSim(void) {

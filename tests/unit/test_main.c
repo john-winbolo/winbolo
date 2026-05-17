@@ -27,6 +27,9 @@ static const UnitTestEntry s_tests[] = {
     { "sp_subscriber_delivery",          run_sp_subscriber_delivery          },
     { "active_local_input_to_shot",      run_active_local_input_to_shot      },
     { "sp_shoot_through_timer",          run_sp_shoot_through_timer          },
+    { "ini_writer_persistence",          run_ini_writer_persistence          },
+    { "ini_writer_insertion_point",      run_ini_writer_insertion_point      },
+    { "ini_writer_security",             run_ini_writer_security             },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

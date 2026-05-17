@@ -1147,6 +1147,41 @@
 #define STR_DLGSYSINFO_BOTPREP              1237
 #define STR_DLGSYSINFO_BRAIN_OVERRUNS       1238
 
+/* macOS native menu — App / File / Window menu items mirrored by
+ * src/gui/sdl3/platform/mac_menubar.mm. Not used by the in-window menu. */
+#define STR_MENU_ABOUT_APP                  1239
+#define STR_MENU_PREFERENCES                1240
+#define STR_MENU_SERVICES                   1241
+#define STR_MENU_HIDE_APP                   1242
+#define STR_MENU_HIDE_OTHERS                1243
+#define STR_MENU_SHOW_ALL                   1244
+#define STR_MENU_QUIT_APP                   1245
+#define STR_MENU_WINDOW                     1246
+#define STR_MENU_MINIMIZE                   1247
+#define STR_MENU_ZOOM                       1248
+#define STR_MENU_ENTER_FULL_SCREEN          1249
+#define STR_MENU_BRING_ALL_TO_FRONT         1250
+#define STR_MENU_FIND_INTERNET_GAME         1251
+#define STR_MENU_FIND_LAN_GAME              1252
+#define STR_MENU_JOIN_BY_ADDRESS            1253
+#define STR_MENU_OPEN_MAP_EDITOR            1254
+#define STR_MENU_OPEN_LOG_VIEWER            1255
+
+/* macOS Log Viewer app-menu items — mirror the WinBolo About/Hide/Quit
+ * trio but with "Log Viewer" wording so the standalone Log Viewer.app's
+ * app menu reads correctly. Embedded Log Viewer reuses WinBolo's app
+ * menu so these are not surfaced there. */
+#define STR_MENU_ABOUT_LV                   1256
+#define STR_MENU_HIDE_LV                    1257
+#define STR_MENU_QUIT_LV                    1258
+
+/* macOS Map Editor app-menu items — same idea as the Log Viewer trio.
+ * Standalone MapEditor.app shows these; embedded reuses WinBolo's
+ * app menu. About is not wired (no in-app About dialog exists yet)
+ * so STR_MENU_ABOUT_ME has no companion menu item for now. */
+#define STR_MENU_HIDE_ME                    1259
+#define STR_MENU_QUIT_ME                    1260
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821
