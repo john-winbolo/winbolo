@@ -118,7 +118,7 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
           httpSetServerBearerToken(tokenObj->valuestring);
         } else {
           /* Register response missing server_token — leave bearer
-           * unset; subsequent server/* calls will refuse-to-send. */
+           * unset; subsequent server/ calls will refuse-to-send. */
           httpSetServerBearerToken(NULL);
           fprintf(stderr, "WinBolo.net register response missing server_token\n");
         }
@@ -442,6 +442,73 @@ bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorM
         }
       } else {
         strcpy(errorMsg, "WinBolo.net returned no player key");
+      }
+    }
+  } else if (resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+    } else {
+      strcpy(errorMsg, "WinBolo.net verification failed");
+    }
+  } else {
+    strcpy(errorMsg, "No response from WinBolo.net");
+  }
+
+  cJSON_Delete(resp);
+  return ok;
+}
+
+/*********************************************************
+*NAME:          winboloNetVerifyClientKey
+*PURPOSE:
+* Validates a player_key received off the wire via
+* POST /api/v1/client/verify. On success, copies the
+* player_key into the player's slot in winboloNetPlayerKey
+* so subsequent events/leaves can identify the player.
+*********************************************************/
+bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter) {
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
+  bool ok = FALSE;
+
+  if (hasSteam) *hasSteam = FALSE;
+  if (isSupporter) *isSupporter = FALSE;
+
+  if (winboloNetRunning != TRUE || winboloNetServerKey[0] == '\0') {
+    strcpy(errorMsg, "WinBolo.net not running");
+    return FALSE;
+  }
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddStringToObject(body, "player_key", playerKey);
+  cJSON_AddStringToObject(body, "player_name", playerName);
+
+  status = wbn_api_call("client/verify", body, &resp);
+  cJSON_Delete(body);
+
+  if (status == 200 && resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+    } else {
+      strncpy(winboloNetPlayerKey[playerNum], playerKey, WINBOLONET_KEY_LEN - 1);
+      winboloNetPlayerKey[playerNum][WINBOLONET_KEY_LEN - 1] = '\0';
+      ok = TRUE;
+      if (hasSteam) {
+        cJSON *steamObj = cJSON_GetObjectItem(resp, "has_steam");
+        if (steamObj && cJSON_IsBool(steamObj)) {
+          *hasSteam = cJSON_IsTrue(steamObj) ? TRUE : FALSE;
+        }
+      }
+      if (isSupporter) {
+        /* TODO: enable once WBN /client/verify returns "supporter" field
+        cJSON *supObj = cJSON_GetObjectItem(resp, "supporter");
+        if (supObj && cJSON_IsBool(supObj))
+            *isSupporter = cJSON_IsTrue(supObj) ? TRUE : FALSE;
+        */
       }
     }
   } else if (resp) {

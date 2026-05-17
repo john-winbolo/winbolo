@@ -99,6 +99,21 @@ bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorM
   return FALSE;
 }
 
+bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter) {
+  (void)playerKey; (void)playerName; (void)playerNum;
+  if (errorMsg) strcpy(errorMsg, "WinBolo.net not supported in WASM build");
+  if (hasSteam)    *hasSteam    = FALSE;
+  if (isSupporter) *isSupporter = FALSE;
+  return FALSE;
+}
+
+bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, char *playerKeyOut, char *errorMsg) {
+  (void)apiToken; (void)serverKey;
+  if (playerKeyOut) playerKeyOut[0] = '\0';
+  if (errorMsg) strcpy(errorMsg, "WinBolo.net not supported in WASM build");
+  return FALSE;
+}
+
 bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {
   (void)username; (void)password; (void)tokenOut; (void)expiryOut; (void)playerNameOut;
   if (errorMsg) strcpy(errorMsg, "WinBolo.net not supported in WASM build");

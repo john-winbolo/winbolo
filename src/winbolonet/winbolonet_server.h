@@ -83,6 +83,30 @@ bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorM
                                  bool *hasSteam, bool *isSupporter);
 
 /*********************************************************
+*NAME:          winboloNetVerifyClientKey
+*PURPOSE:
+* Validates a player_key received on the wire via POST
+* /api/v1/client/verify. On success, stores the player_key
+* at winboloNetPlayerKey[playerNum] so subsequent
+* events/leaves can identify the player to WBN.
+* Returns TRUE if WBN accepts the key.
+*
+*ARGUMENTS:
+* playerKey   - 33-byte player_key from the JOIN/REAUTH packet
+* playerName  - Player display name (server already has this
+*               from the JOIN packet)
+* playerNum   - Player slot number
+* errorMsg    - Buffer for error message on failure
+* hasSteam    - Output: set TRUE if the WBN response declares
+*               a linked Steam identity
+* isSupporter - Output: set TRUE iff the WBN response declares
+*               Supporter status (currently always FALSE —
+*               DLC field not yet exposed by WBN, mirrors
+*               winbolonetServerVerifyToken semantics).
+*********************************************************/
+bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter);
+
+/*********************************************************
 *NAME:          winbolonetServerSendTeams
 *PURPOSE:
 * Sends the list of teams at the end of the game.

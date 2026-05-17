@@ -88,7 +88,7 @@ void winbolonetThreadAddRequest(const char *endpoint, const char *json_body);
 *PURPOSE:
 *  Adds a JSON API request to the background queue, to be
 *  sent with the Authorization: Bearer header (via
-*  wbn_api_post_server). Use for queued server/* endpoints
+*  wbn_api_post_server). Use for queued server/ endpoints
 *  that need the bearer attached when the thread fires.
 *
 *ARGUMENTS:

@@ -70,6 +70,17 @@ bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorM
     if (isSupporter) *isSupporter = false;
     return false;
 }
+bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter) {
+    (void)playerKey; (void)playerName; (void)playerNum; (void)errorMsg;
+    if (hasSteam)    *hasSteam    = false;
+    if (isSupporter) *isSupporter = false;
+    return false;
+}
+bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, char *playerKeyOut, char *errorMsg) {
+    (void)apiToken; (void)serverKey; (void)errorMsg;
+    if (playerKeyOut) playerKeyOut[0] = '\0';
+    return false;
+}
 bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {
     (void)username; (void)password; (void)tokenOut; (void)expiryOut; (void)playerNameOut; (void)errorMsg;
     return false;
