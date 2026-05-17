@@ -2867,7 +2867,7 @@ void serverSimEnterGameOver(ServerSim *sim) {
 }
 
 void serverSimReturnToLobby(ServerSim *sim) {
-    BYTE i;
+    BYTE i, j;
     bool savedConnected[MAX_TANKS];
     LobbyPlayer savedLobby[MAX_TANKS];
 
@@ -2878,6 +2878,45 @@ void serverSimReturnToLobby(ServerSim *sim) {
     /* Clear in-game vote state — any in-flight or just-concluded votes
      * are scoped to the round we're leaving. */
     serverSimGameVoteResetAll(sim);
+
+    /* Carry the in-game alliance topology forward into next-round
+     * team assignments. For each alliance group we pick the lowest
+     * existing teamNumber as the representative and reassign every
+     * group member to it; isolated players keep their current team.
+     *
+     * Two original teams that merged in-game collapse to the lower
+     * team id (the higher one becomes unused metadata, fine). A
+     * defector ends up on their new alliance's team. Players who
+     * dropped alliances mid-game without re-forming one keep their
+     * own team. */
+    {
+        uint8_t newTeam[MAX_TANKS] = {0};
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (!sim->playerConnected[i]) continue;
+            if (newTeam[i] != 0) continue;
+            uint8_t repTeam = sim->lobbyPlayers[i].teamNumber;
+            bool inGroup[MAX_TANKS] = {0};
+            inGroup[i] = true;
+            for (j = 0; j < MAX_TANKS; j++) {
+                if (j == i || !sim->playerConnected[j]) continue;
+                if (playersIsAllie(&sim->sim.plyrs, i, j)) {
+                    inGroup[j] = true;
+                    uint8_t t = sim->lobbyPlayers[j].teamNumber;
+                    if (t > 0 && (repTeam == 0 || t < repTeam)) {
+                        repTeam = t;
+                    }
+                }
+            }
+            for (j = 0; j < MAX_TANKS; j++) {
+                if (inGroup[j]) newTeam[j] = repTeam;
+            }
+        }
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (sim->playerConnected[i] && newTeam[i] != 0) {
+                sim->lobbyPlayers[i].teamNumber = newTeam[i];
+            }
+        }
+    }
 
     /* Save connection and lobby state before reset */
     for (i = 0; i < MAX_TANKS; i++) {
@@ -3596,6 +3635,11 @@ void serverSimMapSkipVotesReset(ServerSim *sim) {
 /* Forward declared in this TU only — implemented in transport_udp_server.c. */
 extern void transportUdpServerBroadcastGameVoteState(ServerSim *sim, uint8_t kind);
 
+/* Forward declarations for the in-TU helpers — gameVoteThreshold is
+ * called from the public snapshot accessor which sits above the
+ * helper's definition. */
+static uint8_t gameVoteThreshold(const ServerSim *sim, const struct ServerGameVote *gv);
+
 static struct ServerGameVote *gameVoteSlot(ServerSim *sim, uint8_t kind) {
     if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) return &sim->gameVotes[0];
     if (kind == GAME_VOTE_KIND_SURRENDER)     return &sim->gameVotes[1];
@@ -3632,15 +3676,14 @@ static uint8_t popcount16(uint16_t v) {
 }
 
 uint8_t serverSimCountActiveTeams(const ServerSim *sim) {
-    /* Counts distinct teamNumbers across every connected slot (humans
-     * and bots). A team is "in play" if any tank is on it. The
-     * humans-per-team eligibility for actually voting is enforced
-     * separately via gameVoteEligibleMask. */
+    /* Counts distinct teamNumbers across teams with at least one
+     * connected human. Bots don't count — surrender needs a human
+     * on each side. */
     bool seen[MAX_TANKS] = {0};
     uint8_t count = 0;
     BYTE i;
     for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->playerConnected[i]) continue;
+        if (!sim->playerConnected[i] || sim->lobbyPlayers[i].isBot) continue;
         uint8_t t = sim->lobbyPlayers[i].teamNumber;
         if (t == 0 || t >= MAX_TANKS) continue;
         if (!seen[t]) { seen[t] = true; count++; }
@@ -3673,12 +3716,23 @@ bool serverSimGetGameVoteSnapshot(const ServerSim *sim, uint8_t kind,
     out->active     = gv->active;
     out->triggerSrc = gv->triggerSrc;
     out->teamId     = gv->teamId;
-    out->threshold  = popcount16(gameVoteEligibleMask(sim, gv->kind, gv->teamId));
+    uint16_t eligibleMask = gameVoteEligibleMask(sim, gv->kind, gv->teamId);
+    out->eligibleCount = popcount16(eligibleMask);
+    out->threshold  = gameVoteThreshold(sim, gv);
     out->yesCount   = popcount16(gv->votesMask);
+    out->noCount    = popcount16(gv->answeredMask & ~gv->votesMask);
     out->votes      = gv->votesMask;
     if (gv->active == GAME_VOTE_ACTIVE_RUNNING) {
         uint64_t now = sim->gameVoteWallMs;
-        uint64_t rem = (gv->deadlineMs > now) ? (gv->deadlineMs - now) : 0;
+        /* During the pre-pass grace window, surface that grace's
+         * remaining seconds so the client widget shows the short
+         * "Passing in N..." countdown instead of the long 60-s
+         * timeout. The client infers the state from
+         * (yesCount == threshold) + small secondsRemaining. */
+        uint64_t until = (gv->pendingPassUntilMs != 0)
+                         ? gv->pendingPassUntilMs
+                         : gv->deadlineMs;
+        uint64_t rem = (until > now) ? (until - now) : 0;
         uint32_t secs = (uint32_t)((rem + 999) / 1000);
         if (secs > 0xFFu) secs = 0xFFu;
         out->secondsRemaining = (uint8_t)secs;
@@ -3714,9 +3768,51 @@ static void gameVoteConclude(ServerSim *sim, struct ServerGameVote *gv,
     transportUdpServerBroadcastGameVoteState(sim, gv->kind);
 }
 
-/* Resolve threshold (== eligible voters; unanimous). Returns 0 if no one is eligible. */
+/* Fire the actual pass effects (countdown for back-to-lobby,
+ * announcement + chained vote for surrender). Called from the tick
+ * once the pending-pass grace expires. */
+static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
+                             uint64_t nowMs) {
+    uint8_t kind = gv->kind;
+    gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_PASSED, nowMs);
+
+    if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) {
+        gv->countdownStarted = true;
+        gv->countdownStep    = 3;
+        gv->countdownNextMs  = nowMs + 1000ULL;
+    } else if (kind == GAME_VOTE_KIND_SURRENDER) {
+        char buf[160];
+        const char *tname = sim->teams[gv->teamId].name[0]
+                            ? sim->teams[gv->teamId].name : "?";
+        snprintf(buf, sizeof(buf),
+                 "*** Team %s has surrendered. ***", tname);
+        transportUdpServerSendServerMessage(buf);
+
+        /* Auto-start a back-to-lobby vote unless one is already running. */
+        struct ServerGameVote *btl = gameVoteSlot(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
+        if (btl && btl->active != GAME_VOTE_ACTIVE_RUNNING) {
+            gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
+                          GAME_VOTE_TRIGGER_POST_SURRENDER, 0, nowMs);
+            transportUdpServerBroadcastGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
+        }
+    }
+}
+
+/* YES-vote count needed for the vote to pass, given the current
+ * eligible voter pool and the configured pass percentage.
+ *
+ *   threshold = ceil(eligible * NUM / DENOM)
+ *
+ * For NUM/DENOM = 100/100 that's exact unanimity (== eligible). */
 static uint8_t gameVoteThreshold(const ServerSim *sim, const struct ServerGameVote *gv) {
-    return popcount16(gameVoteEligibleMask(sim, gv->kind, gv->teamId));
+    uint32_t eligible = popcount16(gameVoteEligibleMask(sim, gv->kind, gv->teamId));
+    if (eligible == 0) return 0;
+    uint32_t num = (uint32_t)GAME_VOTE_PASS_PCT_NUM;
+    uint32_t den = (uint32_t)GAME_VOTE_PASS_PCT_DENOM;
+    /* ceil(eligible * num / den) */
+    uint32_t thr = (eligible * num + (den - 1)) / den;
+    if (thr > 0xFFu) thr = 0xFFu;
+    return (uint8_t)thr;
 }
 
 /* Drop bits from votes/answered for slots that disappeared. */
@@ -3759,6 +3855,27 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
         gameVoteStart(sim, kind, GAME_VOTE_TRIGGER_MANUAL, teamId, nowMs);
         gv->votesMask    |= (uint16_t)(1u << playerNum);
         gv->answeredMask |= (uint16_t)(1u << playerNum);
+
+        /* Check whether opening + auto-YES already constitutes a pass.
+         * Solo (threshold==1) starts the 5-s grace immediately so the
+         * very first broadcast carries secondsRemaining=5 instead of
+         * the 60-s timeout (otherwise the widget flashes "60s" before
+         * the next heartbeat brings it down). Multi-voter unanimity
+         * fires the pass right away. */
+        uint8_t thr = gameVoteThreshold(sim, gv);
+        uint8_t yes = popcount16(gv->votesMask);
+        if (thr > 0 && yes >= thr) {
+            if (thr == 1) {
+                gv->pendingPassUntilMs = nowMs +
+                    (uint64_t)GAME_VOTE_PASS_GRACE_SECONDS * 1000ULL;
+                transportUdpServerBroadcastGameVoteState(sim, kind);
+            } else {
+                transportUdpServerBroadcastGameVoteState(sim, kind);
+                gameVoteFirePass(sim, gv, nowMs);
+            }
+            return;
+        }
+
         transportUdpServerBroadcastGameVoteState(sim, kind);
         return;
     }
@@ -3784,31 +3901,39 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
     uint8_t thr = gameVoteThreshold(sim, gv);
     uint8_t yes = popcount16(gv->votesMask);
 
+    if (thr > 0 && yes >= thr) {
+        /* Solo voter ("am I sure?") path: one-human votes get a
+         * 5-second grace before the effect applies so a misclick
+         * is reversible. Multi-human votes fire instantly — by the
+         * time everyone has agreed there's nothing to second-guess. */
+        if (thr == 1) {
+            if (gv->pendingPassUntilMs == 0) {
+                gv->pendingPassUntilMs = nowMs +
+                    (uint64_t)GAME_VOTE_PASS_GRACE_SECONDS * 1000ULL;
+            }
+            transportUdpServerBroadcastGameVoteState(sim, kind);
+        } else {
+            transportUdpServerBroadcastGameVoteState(sim, kind);
+            gameVoteFirePass(sim, gv, nowMs);
+        }
+        return;
+    }
+
+    /* Lost unanimity during a solo grace — cancel the pending pass. */
+    if (gv->pendingPassUntilMs != 0) {
+        gv->pendingPassUntilMs = 0;
+    }
+
     transportUdpServerBroadcastGameVoteState(sim, kind);
 
-    /* Unanimous pass — every eligible voter voted yes. */
-    if (thr > 0 && yes >= thr) {
-        gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_PASSED, nowMs);
-
-        if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) {
-            gv->countdownStarted = true;
-            gv->countdownStep    = 3;
-            gv->countdownNextMs  = nowMs + 1000ULL;
-        } else if (kind == GAME_VOTE_KIND_SURRENDER) {
-            char buf[160];
-            const char *tname = sim->teams[gv->teamId].name[0]
-                                ? sim->teams[gv->teamId].name : "?";
-            snprintf(buf, sizeof(buf),
-                     "*** Team %s has surrendered. ***", tname);
-            transportUdpServerSendServerMessage(buf);
-
-            /* Auto-start a back-to-lobby vote unless one is already running. */
-            struct ServerGameVote *btl = gameVoteSlot(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
-            if (btl && btl->active != GAME_VOTE_ACTIVE_RUNNING) {
-                gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
-                              GAME_VOTE_TRIGGER_POST_SURRENDER, 0, nowMs);
-                transportUdpServerBroadcastGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
-            }
+    /* Everyone answered but yes count didn't reach the pass
+     * threshold → fail now instead of waiting for the timeout. */
+    {
+        uint16_t eligibleMask = gameVoteEligibleMask(sim, gv->kind, gv->teamId);
+        uint8_t eligible = popcount16(eligibleMask);
+        uint8_t answered = popcount16(gv->answeredMask & eligibleMask);
+        if (eligible > 0 && answered >= eligible && yes < thr) {
+            gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_FAILED, nowMs);
         }
     }
 }
@@ -3913,16 +4038,45 @@ void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
                 transportUdpServerBroadcastGameVoteState(sim, gv->kind);
             }
 
-            /* Re-check pass under the live eligible-mask. */
+            /* Re-check pass under the live eligible-mask. Eligibility
+             * may have shrunk (disconnect) so unanimity can land here
+             * without a fresh toggle. Solo (threshold==1) votes use
+             * a 5-s grace; everything else fires immediately. */
+            uint16_t eligibleMask = gameVoteEligibleMask(sim, gv->kind, gv->teamId);
+            uint8_t eligible = popcount16(eligibleMask);
+            uint8_t answered = popcount16(gv->answeredMask & eligibleMask);
             uint8_t thr = gameVoteThreshold(sim, gv);
             uint8_t yes = popcount16(gv->votesMask);
+
             if (thr > 0 && yes >= thr) {
-                gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_PASSED, nowMs);
-                if (gv->kind == GAME_VOTE_KIND_BACK_TO_LOBBY) {
-                    gv->countdownStarted = true;
-                    gv->countdownStep    = 3;
-                    gv->countdownNextMs  = nowMs + 1000ULL;
+                if (thr == 1) {
+                    if (gv->pendingPassUntilMs == 0) {
+                        gv->pendingPassUntilMs = nowMs +
+                            (uint64_t)GAME_VOTE_PASS_GRACE_SECONDS * 1000ULL;
+                    }
+                } else {
+                    gameVoteFirePass(sim, gv, nowMs);
+                    continue;
                 }
+            } else if (gv->pendingPassUntilMs != 0) {
+                gv->pendingPassUntilMs = 0;
+            }
+
+            /* Solo pre-pass grace expired → fire for real. */
+            if (gv->pendingPassUntilMs != 0 &&
+                nowMs >= gv->pendingPassUntilMs) {
+                gv->pendingPassUntilMs = 0;
+                gameVoteFirePass(sim, gv, nowMs);
+                continue;
+            }
+
+            /* Everyone eligible has answered but the yes side fell
+             * short of the pass threshold → vote fails immediately,
+             * no point waiting on the 60-s timeout. */
+            if (eligible > 0 && answered >= eligible &&
+                yes < thr && gv->pendingPassUntilMs == 0) {
+                gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_FAILED, nowMs);
+                continue;
             }
         }
 

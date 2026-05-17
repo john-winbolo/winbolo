@@ -1039,10 +1039,12 @@ typedef struct {
     uint8_t  active;           /* GAME_VOTE_ACTIVE_* */
     uint8_t  triggerSrc;       /* GAME_VOTE_TRIGGER_* */
     uint8_t  teamId;
-    uint8_t  threshold;
+    uint8_t  threshold;        /* yes-count needed to pass */
     uint8_t  yesCount;
+    uint8_t  noCount;
+    uint8_t  eligibleCount;    /* total eligible voters */
     uint8_t  secondsRemaining; /* 0..60 */
-    uint16_t votes;            /* bitmask */
+    uint16_t votes;            /* bitmask of slots that voted yes */
 } ServerGameVoteSnapshot;
 
 bool serverSimGetGameVoteSnapshot(const ServerSim *sim, uint8_t kind,

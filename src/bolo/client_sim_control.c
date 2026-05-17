@@ -207,6 +207,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         gv->teamId           = evt->u.gameVoteState.teamId;
         gv->threshold        = evt->u.gameVoteState.threshold;
         gv->yesCount         = evt->u.gameVoteState.yesCount;
+        gv->noCount          = evt->u.gameVoteState.noCount;
+        gv->eligibleCount    = evt->u.gameVoteState.eligibleCount;
         gv->secondsRemaining = evt->u.gameVoteState.secondsRemaining;
         gv->votes            = evt->u.gameVoteState.votes;
         /* Auto-pop the widget when a vote starts — players can X to hide. */
@@ -281,6 +283,23 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             cs->lobbyChatHistory[0] = '\0';
         }
         break;
+
+    case CTRL_SERVER_TEXT: {
+        const char *text = evt->u.serverText.text;
+        if (text[0] == '\0') break;
+        if (cs->inLobby) {
+            clientSimAppendLobbyChat(cs, "Server", text);
+        } else {
+            /* Push to both newswire AND networkStatus so the message
+             * is visible whether the player has the netStatus channel
+             * enabled or not — these are server announcements and
+             * should always reach the player. */
+            clientMessageAdd(clientSimGetMessages(cs), newsWireMessage,
+                             (char *)"Server", (char *)text);
+            clientSimNetStatusMessage(cs, (char *)text);
+        }
+        break;
+    }
 
     case CTRL_SERVER_SHUTDOWN:
         /* No ClientSim field maps to UDP joinState; that field stays

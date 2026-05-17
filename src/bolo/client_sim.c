@@ -167,14 +167,20 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
    * runs the destroy-internals + clientSimCreate sequence in place to keep
    * the live transport (and its still-valid map blob) intact; fresh
    * clientSimAlloc + clientSimCreate callers have zeroed transport fields
-   * anyway, so save/restore is a no-op there. */
+   * anyway, so save/restore is a no-op there.
+   *
+   * lobbyBrainList is also preserved: the server delivers it once at
+   * subscribe time and never re-broadcasts after a round, so wiping
+   * here would leave the Add Bot controls hidden on every round 2+. */
   Transport savedTransport = cs->transport;
   bool savedHasTransport   = cs->hasTransport;
   bool savedIsUdpTransport = cs->isUdpTransport;
+  BrainList savedBrainList = cs->lobbyBrainList;
   memset(cs, 0, sizeof(*cs));
   cs->transport       = savedTransport;
   cs->hasTransport    = savedHasTransport;
   cs->isUdpTransport  = savedIsUdpTransport;
+  cs->lobbyBrainList  = savedBrainList;
   cs->myPlayerNum = 0;
   cs->sim.viewPlayer = 0;
 
@@ -1064,6 +1070,8 @@ bool clientSimGetGameVote(const ClientSim *cs, uint8_t kind,
   out->teamId           = gv->teamId;
   out->threshold        = gv->threshold;
   out->yesCount         = gv->yesCount;
+  out->noCount          = gv->noCount;
+  out->eligibleCount    = gv->eligibleCount;
   out->secondsRemaining = gv->secondsRemaining;
   out->votes            = gv->votes;
   out->widgetVisible    = gv->widgetVisible;

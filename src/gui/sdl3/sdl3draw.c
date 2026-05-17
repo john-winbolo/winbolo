@@ -407,6 +407,26 @@ int sdl3DrawGetZoomFactor(void) {
   return gZoomFactor;
 }
 
+/* Expose the live game-render destination rect + scale so UI code can
+ * position ImGui overlays in actual on-screen pixels.
+ *
+ *   on-screen X = gGameDestRect.x + sourceX * gGameScale
+ *
+ * In CUSTOM/ceiling-integer zoom mode the game is drawn into an
+ * off-screen render target at `gZoomFactor` and then blitted into
+ * gGameDestRect, possibly at a non-integer gGameScale. Multiplying
+ * source unscaled coords by gZoomFactor alone is wrong when the
+ * window has been resized to a fractional effective zoom (e.g.
+ * maximized between 3x and 4x). */
+void sdl3DrawGetGameRect(float *destX, float *destY,
+                          float *destW, float *destH, float *scale) {
+  if (destX) *destX = gGameDestRect.x;
+  if (destY) *destY = gGameDestRect.y;
+  if (destW) *destW = gGameDestRect.w;
+  if (destH) *destH = gGameDestRect.h;
+  if (scale) *scale = gGameScale;
+}
+
 SDL_Window *sdl3DrawGetWindow(void) {
   return gWindow;
 }

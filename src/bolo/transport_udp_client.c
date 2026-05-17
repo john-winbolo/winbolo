@@ -1323,8 +1323,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
     case PACKET_GAME_VOTE_STATE:
         /* [header 8] [kind 1] [active 1] [trigger 1] [teamId 1]
-         * [threshold 1] [yes 1] [secsRemaining 1] [votes 2 BE]. */
-        if (len >= PACKET_HEADER_SIZE + 9) {
+         * [threshold 1] [yes 1] [no 1] [eligible 1] [secsRemaining 1]
+         * [votes 2 BE]. */
+        if (len >= PACKET_HEADER_SIZE + 11) {
             ControlEvent evt;
             memset(&evt, 0, sizeof(evt));
             evt.type = CTRL_GAME_VOTE_STATE;
@@ -1334,8 +1335,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             evt.u.gameVoteState.teamId           = buf[PACKET_HEADER_SIZE + 3];
             evt.u.gameVoteState.threshold        = buf[PACKET_HEADER_SIZE + 4];
             evt.u.gameVoteState.yesCount         = buf[PACKET_HEADER_SIZE + 5];
-            evt.u.gameVoteState.secondsRemaining = buf[PACKET_HEADER_SIZE + 6];
-            evt.u.gameVoteState.votes            = unpackU16(buf + PACKET_HEADER_SIZE + 7);
+            evt.u.gameVoteState.noCount          = buf[PACKET_HEADER_SIZE + 6];
+            evt.u.gameVoteState.eligibleCount    = buf[PACKET_HEADER_SIZE + 7];
+            evt.u.gameVoteState.secondsRemaining = buf[PACKET_HEADER_SIZE + 8];
+            evt.u.gameVoteState.votes            = unpackU16(buf + PACKET_HEADER_SIZE + 9);
             clientSimApplyControl(c->clientSim, &evt);
         }
         break;

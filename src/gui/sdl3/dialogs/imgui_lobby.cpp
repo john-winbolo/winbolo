@@ -5640,25 +5640,26 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     /* "Choose Map" — opens the separate chooser window.
                      * Host / admin / openHost-allowed only; non-privileged
                      * clients never see the button. Server enforces the
-                     * same authority gate on PACKET_LOBBY_SET_MAP. */
-                    {
-                        bool isHostLocal  = (myPlayerNum == 0);
-                        bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
-                            (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
-                             & PLAYER_FLAG_ADMIN));
-                        bool effHostMap = isHostLocal || isAdminLocal ||
-                                          clientSimGetLobbyOpenHost(cs);
-                        if (effHostMap) {
-                            if (ImGui::Button("Choose Map")) {
-                                lobbyChooseMapOpen(cs, renderer);
-                            }
-                            ImGui::Spacing();
-                            /* Adjust remaining tab height for the button
-                             * row we just consumed so the preview below
-                             * keeps its aspect ratio. */
-                            tabH -= ImGui::GetFrameHeightWithSpacing()
-                                  + ImGui::GetStyle().ItemSpacing.y;
+                     * same authority gate on PACKET_LOBBY_SET_MAP.
+                     * effHostMap stays visible to the preview block below
+                     * so privileged users can also click the preview to
+                     * jump straight into the chooser. */
+                    bool isHostLocal  = (myPlayerNum == 0);
+                    bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
+                        (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
+                         & PLAYER_FLAG_ADMIN));
+                    bool effHostMap = isHostLocal || isAdminLocal ||
+                                      clientSimGetLobbyOpenHost(cs);
+                    if (effHostMap) {
+                        if (ImGui::Button("Choose Map")) {
+                            lobbyChooseMapOpen(cs, renderer);
                         }
+                        ImGui::Spacing();
+                        /* Adjust remaining tab height for the button
+                         * row we just consumed so the preview below
+                         * keeps its aspect ratio. */
+                        tabH -= ImGui::GetFrameHeightWithSpacing()
+                              + ImGui::GetStyle().ItemSpacing.y;
                     }
 
                     /* Prefer the existing texture even while we're
@@ -5702,7 +5703,14 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         if (ImGui::IsItemHovered()) {
                             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                         }
-                        if (popupCompressedData) {
+                        /* Click behavior: privileged users jump straight
+                         * to the Choose Map dialog; everyone else gets
+                         * the zoomed preview popup. */
+                        if (effHostMap) {
+                            if (ImGui::IsItemClicked()) {
+                                lobbyChooseMapOpen(cs, renderer);
+                            }
+                        } else if (popupCompressedData) {
                             mapPreviewPopupOnClick(popupCompressedData, popupCompressedLen,
                                                    mapBounds.minX, mapBounds.minY,
                                                    mapBounds.maxX, mapBounds.maxY);
@@ -5833,11 +5841,17 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
                 if (!canReady) ImGui::BeginDisabled();
                 const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
+                if (myReady) {
+                    ImGui::PushStyleColor(ImGuiCol_Button,         ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,  ImVec4(0.20f, 0.65f, 0.20f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,   ImVec4(0.10f, 0.45f, 0.10f, 1.0f));
+                }
                 if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
                     if (hasTransport) {
                         lobbySendReadyToggle(cs, !myReady);
                     }
                 }
+                if (myReady) ImGui::PopStyleColor(3);
                 if (!canReady) ImGui::EndDisabled();
 
                 if (myPlayerNum == 0 && hasTransport && !clientSimIsBalanceProposalActive(cs)) {
@@ -6279,7 +6293,14 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                 }
-                if (popupCompressedData) {
+                /* Click behavior: privileged users jump straight to the
+                 * Choose Map dialog; everyone else gets the zoomed
+                 * preview popup. */
+                if (effHostMap) {
+                    if (ImGui::IsItemClicked()) {
+                        lobbyChooseMapOpen(cs, renderer);
+                    }
+                } else if (popupCompressedData) {
                     mapPreviewPopupOnClick(popupCompressedData, popupCompressedLen,
                                            mapBounds.minX, mapBounds.minY,
                                            mapBounds.maxX, mapBounds.maxY);
@@ -6405,11 +6426,17 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
                 if (!canReady) ImGui::BeginDisabled();
                 const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
+                if (myReady) {
+                    ImGui::PushStyleColor(ImGuiCol_Button,         ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,  ImVec4(0.20f, 0.65f, 0.20f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,   ImVec4(0.10f, 0.45f, 0.10f, 1.0f));
+                }
                 if (ImGui::Button(readyLabel, ImVec2(-1, 0))) {
                     if (hasTransport) {
                         lobbySendReadyToggle(cs, !myReady);
                     }
                 }
+                if (myReady) ImGui::PopStyleColor(3);
                 if (!canReady) ImGui::EndDisabled();
             }
             ImGui::EndGroup(); /* /right column */

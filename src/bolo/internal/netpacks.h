@@ -529,6 +529,18 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 /* Vote timeout in seconds */
 #define GAME_VOTE_DEADLINE_SECONDS  60
 
+/* Grace period after a vote becomes unanimous before the effect
+ * fires. Voters can change their mind during this window. */
+#define GAME_VOTE_PASS_GRACE_SECONDS 5
+
+/* Percentage of eligible YES votes needed for a vote to pass.
+ * Compared as `yesCount * 100 >= eligibleCount * PCT_x100`, so
+ * fractional percentages like 50.1 are expressed by multiplying
+ * by 10 (e.g. 50.1 → 501 with PCT_DENOM=1000). For now we ship
+ * exact unanimity. */
+#define GAME_VOTE_PASS_PCT_NUM    100
+#define GAME_VOTE_PASS_PCT_DENOM  100
+
 /* Setting types used inside SET_SETTING / SETTING_CHG payloads.
  * Forward-compat: receivers must skip unknown types via valueLen. */
 #define LST_GAME_TYPE          1   /* 1 byte enum: open|tournament|strict */

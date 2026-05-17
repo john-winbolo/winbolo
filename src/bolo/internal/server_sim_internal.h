@@ -205,6 +205,13 @@ typedef struct ServerSim {
         bool     countdownStarted; /* "3","2","1" countdown for back-to-lobby pass */
         uint64_t countdownNextMs;  /* time of next countdown tick */
         uint8_t  countdownStep;    /* 3..0, 0 = done */
+        /* Pre-pass grace: once the vote first becomes unanimous we
+         * give voters 5 s to change their mind before concluding
+         * PASSED. 0 = not pending, else the wall-clock at which the
+         * pass will actually fire. If a voter retracts during the
+         * grace (yesCount drops below threshold), this clears back
+         * to 0 and the vote keeps running normally. */
+        uint64_t pendingPassUntilMs;
     } gameVotes[2];
     uint64_t gameVoteWallMs;       /* monotonic ms since serverSim start */
     bool     baseMonopolyTriggeredThisRound;
