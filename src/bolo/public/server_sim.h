@@ -736,6 +736,14 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event);
  *********************************************************/
 int serverSimGetCompressedMap(ServerSim *sim, BYTE *output);
 
+/* Refresh a ClientSim's map/pill/base/start state from this server's
+ * current compressed map cache. Preserves player table, lobby slots,
+ * callbacks, and the existing tank — only the terrain structures get
+ * replaced. Used at SP game-start to sync the host's ClientSim to a
+ * lobby map change. Returns false if the compressed map can't be
+ * read or applied. */
+bool serverSimReloadClientMap(ServerSim *sim, ClientSim *cs);
+
 /*********************************************************
  *NAME:          serverSimGetActive
  *PURPOSE:

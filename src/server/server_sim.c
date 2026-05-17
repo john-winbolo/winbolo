@@ -63,6 +63,7 @@
 #include "server_sim_internal.h"
 #include "server_lifecycle.h"
 #include "control_event.h"
+#include "client_sim.h"
 #include "client_sim_control.h"
 #include <assert.h>
 #include "interpolation.h"
@@ -4117,6 +4118,26 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
         sim->mapName, sim->cachedMapDataLen);
 
     return TRUE;
+}
+
+bool serverSimReloadClientMap(ServerSim *sim, ClientSim *cs) {
+    BYTE *buf;
+    int len;
+    bool ok;
+    if (sim == NULL || cs == NULL) return FALSE;
+    buf = (BYTE *)malloc(65536);
+    if (buf == NULL) return FALSE;
+    len = serverSimGetCompressedMap(sim, buf);
+    if (len <= 0) {
+        free(buf);
+        return FALSE;
+    }
+    {
+        GameSim *gs = clientSimGetGameSim(cs);
+        ok = mapLoadCompressedMap(&gs->mp, &gs->pb, &gs->bs, &gs->ss, buf, len);
+    }
+    free(buf);
+    return ok;
 }
 
 bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {

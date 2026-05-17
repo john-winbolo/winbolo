@@ -1729,18 +1729,6 @@ static bool gameFrontStartServerSim(ServerSim *sim,
 bool gameFrontSetupServer(void) {
   ServerInstanceConfig cfg;
 
-  /* Welcome-screen BgGame leaves the global botManager state populated
-   * with its eye-candy bots; without clearing it here, serverFindFreeSlot
-   * skips those slots and the host's loopback JOIN_REQUEST gets a
-   * non-zero player number. Mirrors the SP path. */
-  {
-    BgGame *sharedBg = bgGameGetShared();
-    if (sharedBg != NULL) {
-      bgGameDestroy(sharedBg);
-      bgGameSetShared(NULL);
-    }
-  }
-
   if (strncmp(fileName, "randommap:", 10) == 0) {
     MapGenConfig mcfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
     const char *seedStr = fileName + 10;
@@ -1764,18 +1752,23 @@ bool gameFrontSetupServer(void) {
   if (!serverSimBotPoolInit(0)) {
     fprintf(stderr, "[gameFront] serverSimBotPoolInit failed; bots disabled for this session\n");
   } else {
-    /* Resolve brain path for lobby "Add Bot" support and initial bots */
+    /* Always resolve a brain path so the lobby's "Add Bot" works
+     * regardless of whether the host set compTanks at startup. The
+     * AI Policy can be flipped on later via the lobby UI, and that
+     * path only updates botAiType — without a pre-resolved brain the
+     * server silently drops PACKET_LOBBY_ADD_BOT. */
     char brainPath[FILENAME_MAX];
     bool haveBrain = false;
     if (gameFrontBrainPath[0] != '\0') {
       SDL_strlcpy(brainPath, gameFrontBrainPath, sizeof(brainPath));
       haveBrain = true;
-    } else if (compTanks != aiNone) {
+    } else {
       haveBrain = findBrainPath(brainPath, sizeof(brainPath));
     }
-    /* Set botBrainPath on the ServerSim so lobby Add Bot requests work */
     if (haveBrain) {
       serverSimSetBotBrainPath(spServerSim, brainPath);
+    }
+    if (compTanks != aiNone) {
       serverSimSetBotAiType(spServerSim, compTanks);
     }
   }
@@ -1798,6 +1791,20 @@ bool gameFrontSetupServer(void) {
     serverSimDestroy(spServerSim);
     spServerSim = NULL;
     return FALSE;
+  }
+  /* The welcome-screen BgGame leaves the global botManager state
+   * populated with its eye-candy bots; without clearing it here,
+   * serverFindFreeSlot skips those slots and the host's loopback
+   * JOIN_REQUEST gets a non-zero player number. Mirrors the SP path.
+   * Deferred until AFTER a successful bind so a port-in-use failure
+   * leaves the welcome screen's bg intact when we fall back to
+   * the openWelcome error dialog. */
+  {
+    BgGame *sharedBg = bgGameGetShared();
+    if (sharedBg != NULL) {
+      bgGameDestroy(sharedBg);
+      bgGameSetShared(NULL);
+    }
   }
   return TRUE;
 }
@@ -2285,6 +2292,20 @@ bool gameFrontStartSinglePlayerGame(ClientSim *cs) {
   BYTE i, j;
   if (cs == NULL || spServerSim == NULL) return FALSE;
   if (serverSimGetState(spServerSim) != serverStateLobby) return FALSE;
+
+  /* If the host swapped maps in the lobby, spServerSim has the new
+   * terrain but the host's ClientSim and the bots' ClientSims still
+   * carry the map clientLoadCompressedMap / serverSimCreateBot loaded
+   * at lobby entry. Sync both before the world starts ticking so the
+   * in-game renderer and the bot brains all see the same terrain. The
+   * MP path runs the equivalent reload via botManagerOnGameStart when
+   * serverInstanceTick observes the countdown→running transition;
+   * serverSimStartGameInPlace bypasses that gate, so do it explicitly
+   * here. Serialise against the host timer thread. */
+  threadsWaitForMutex();
+  serverSimReloadClientMap(spServerSim, cs);
+  serverSimOnBotGameStart(spServerSim);
+  threadsReleaseMutex();
 
   /* Apply team alliances on both sims AND publish them through the
    * control-event dispatcher so every subscribed in-process bot also
