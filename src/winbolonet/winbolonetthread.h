@@ -52,6 +52,7 @@ struct wbnListObj {
   wbnList next;           /* Next item */
   char endpoint[128];     /* API endpoint path */
   char *json_body;        /* Heap-allocated JSON body string */
+  bool needs_bearer;      /* Send via wbn_api_post_server (Authorization: Bearer) */
 };
 
 
@@ -73,13 +74,28 @@ void winbolonetThreadDestroy(void);
 *NAME:          winbolonetThreadAddRequest
 *PURPOSE:
 *  Adds a JSON API request to the background queue.
-*  The json_body string is copied internally.
+*  The json_body string is copied internally. Sent via
+*  wbn_api_post (no Authorization header).
 *
 *ARGUMENTS:
 * endpoint  - API endpoint path (e.g. "server/update")
 * json_body - JSON request body string (copied, caller may free)
 *********************************************************/
 void winbolonetThreadAddRequest(const char *endpoint, const char *json_body);
+
+/*********************************************************
+*NAME:          winbolonetThreadAddServerRequest
+*PURPOSE:
+*  Adds a JSON API request to the background queue, to be
+*  sent with the Authorization: Bearer header (via
+*  wbn_api_post_server). Use for queued server/* endpoints
+*  that need the bearer attached when the thread fires.
+*
+*ARGUMENTS:
+* endpoint  - API endpoint path (e.g. "server/lobby")
+* json_body - JSON request body string (copied, caller may free)
+*********************************************************/
+void winbolonetThreadAddServerRequest(const char *endpoint, const char *json_body);
 
 /*********************************************************
 *NAME:          winbolonetThreadRun

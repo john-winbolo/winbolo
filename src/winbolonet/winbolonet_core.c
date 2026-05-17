@@ -31,6 +31,7 @@
 #include "winbolonet_core.h"
 #include "winbolonet_server.h"
 #include "http.h"
+#include "wbn_bearer.h"
 #include "server_sim.h"
 #include "winbolonetevents.h"
 #include "winbolonetthread.h"
@@ -53,6 +54,10 @@ void winbolonetDestroy(bool isServer) {
     winbolonetThreadDestroy();
     if (isServer == TRUE && winboloNetServerKey[0] != '\0') {
       winbolonetGoodbye();
+    }
+    if (isServer == TRUE) {
+      winboloNetServerKey[0] = '\0';
+      httpClearServerBearerToken();
     }
     httpDestroy();
   }
@@ -77,7 +82,7 @@ void winbolonetGoodbye(void) {
   body = cJSON_CreateObject();
   cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
 
-  wbn_api_call("server/quit", body, &resp);
+  wbn_api_call_server("server/quit", body, &resp);
   cJSON_Delete(body);
   if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");

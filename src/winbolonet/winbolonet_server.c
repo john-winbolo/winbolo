@@ -32,6 +32,7 @@
 #include "winbolonet_core.h"
 #include "winbolonet_server.h"
 #include "http.h"
+#include "wbn_bearer.h"
 #include "server_sim.h"
 #include "winbolonetevents.h"
 #include "winbolonetthread.h"
@@ -111,6 +112,17 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
     if (keyObj && cJSON_IsString(keyObj)) {
       strncpy(winboloNetServerKey, keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
       winboloNetServerKey[WINBOLONET_KEY_LEN - 1] = '\0';
+      {
+        cJSON *tokenObj = cJSON_GetObjectItem(resp, "server_token");
+        if (tokenObj && cJSON_IsString(tokenObj)) {
+          httpSetServerBearerToken(tokenObj->valuestring);
+        } else {
+          /* Register response missing server_token — leave bearer
+           * unset; subsequent server/* calls will refuse-to-send. */
+          httpSetServerBearerToken(NULL);
+          fprintf(stderr, "WinBolo.net register response missing server_token\n");
+        }
+      }
       serverSimConsoleMessage("\tWinBolo.net: Server registered");
       winbolonetThreadCreate();
       winboloNetLastSent = time(NULL);
@@ -185,7 +197,7 @@ void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
 
   cJSON_AddItemToObject(body, "teams", teams);
 
-  wbn_api_call("server/teams", body, &resp);
+  wbn_api_call_server("server/teams", body, &resp);
   cJSON_Delete(body);
   cJSON_Delete(resp);
 }
@@ -224,7 +236,7 @@ bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, Bala
   }
   cJSON_AddItemToObject(body, "player_keys", playerKeys);
 
-  status = wbn_api_call("server/balance", body, &resp);
+  status = wbn_api_call_server("server/balance", body, &resp);
   cJSON_Delete(body);
 
   if (status != 200 || resp == NULL) {
@@ -339,16 +351,16 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
   cJSON_AddItemToObject(body, "events", events);
 
   if (sendNow == FALSE) {
-    /* Queue for background thread */
+    /* Queue for background thread (bearer attached at fire time) */
     char *json_str = cJSON_PrintUnformatted(body);
     if (json_str) {
-      winbolonetThreadAddRequest("server/update", json_str);
+      winbolonetThreadAddServerRequest("server/update", json_str);
       free(json_str);
     }
     cJSON_Delete(body);
   } else {
     /* Send immediately */
-    wbn_api_call("server/update", body, &resp);
+    wbn_api_call_server("server/update", body, &resp);
     cJSON_Delete(body);
     if (resp) {
       cJSON *errObj = cJSON_GetObjectItem(resp, "error");
@@ -474,7 +486,7 @@ void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, 
   cJSON_AddNumberToObject(body, "free_bases", freeBases);
   cJSON_AddNumberToObject(body, "free_pills", freePills);
 
-  wbn_api_call("client/leave", body, &resp);
+  wbn_api_call_server("client/leave", body, &resp);
   cJSON_Delete(body);
   if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
@@ -504,7 +516,7 @@ void winboloNetSendLock(bool isLocked) {
   cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddBoolToObject(body, "locked", isLocked);
 
-  wbn_api_call("server/lock", body, &resp);
+  wbn_api_call_server("server/lock", body, &resp);
   cJSON_Delete(body);
   cJSON_Delete(resp);
 }
@@ -533,10 +545,10 @@ bool winbolonetReturnToLobby(char *mapName, unsigned short port, BYTE gameType, 
   /* 1. Drain background thread queue and stop thread */
   winbolonetThreadDestroy();
 
-  /* 2. Quit old session */
+  /* 2. Quit old session (carries the still-valid bearer for this POST) */
   body = cJSON_CreateObject();
   cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
-  wbn_api_call("server/quit", body, &resp);
+  wbn_api_call_server("server/quit", body, &resp);
   cJSON_Delete(body);
   if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
@@ -546,6 +558,10 @@ bool winbolonetReturnToLobby(char *mapName, unsigned short port, BYTE gameType, 
     cJSON_Delete(resp);
   }
   resp = NULL;
+
+  /* Old session is over — the old bearer is now invalid. Clear before
+   * the new register issues a fresh pair. */
+  httpClearServerBearerToken();
 
   /* 3. Clear all player keys */
   for (count = 0; count < MAX_TANKS; count++) {
@@ -590,6 +606,15 @@ bool winbolonetReturnToLobby(char *mapName, unsigned short port, BYTE gameType, 
     if (keyObj && cJSON_IsString(keyObj)) {
       strncpy(winboloNetServerKey, keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
       winboloNetServerKey[WINBOLONET_KEY_LEN - 1] = '\0';
+      {
+        cJSON *tokenObj = cJSON_GetObjectItem(resp, "server_token");
+        if (tokenObj && cJSON_IsString(tokenObj)) {
+          httpSetServerBearerToken(tokenObj->valuestring);
+        } else {
+          httpSetServerBearerToken(NULL);
+          fprintf(stderr, "WinBolo.net register response missing server_token\n");
+        }
+      }
       serverSimConsoleMessage("\tWinBolo.net: New session registered");
     } else {
       serverSimConsoleMessage("Error: WinBolo.net returned no server key");
@@ -640,7 +665,7 @@ void winbolonetSendLobbyStatus(bool inLobby) {
 
   json_str = cJSON_PrintUnformatted(body);
   if (json_str) {
-    winbolonetThreadAddRequest("server/lobby", json_str);
+    winbolonetThreadAddServerRequest("server/lobby", json_str);
     free(json_str);
   }
   cJSON_Delete(body);
@@ -671,7 +696,7 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
 
   json_str = cJSON_PrintUnformatted(body);
   if (json_str) {
-    winbolonetThreadAddRequest("server/map", json_str);
+    winbolonetThreadAddServerRequest("server/map", json_str);
     free(json_str);
   }
   cJSON_Delete(body);
