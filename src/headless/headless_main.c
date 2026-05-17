@@ -283,6 +283,10 @@ static const char *logEventsTypeName(int type) {
     case CTRL_GAME_OVER:             return "CTRL_GAME_OVER";
     case CTRL_SERVER_SHUTDOWN:       return "CTRL_SERVER_SHUTDOWN";
     case CTRL_CHAT:                  return "CTRL_CHAT";
+    case CTRL_LOBBY_TEAM_META:       return "CTRL_LOBBY_TEAM_META";
+    case CTRL_LOBBY_BOT_CONFIG:      return "CTRL_LOBBY_BOT_CONFIG";
+    case CTRL_LOBBY_BOT_BRAIN:       return "CTRL_LOBBY_BOT_BRAIN";
+    case CTRL_LOBBY_BRAIN_LIST:      return "CTRL_LOBBY_BRAIN_LIST";
     default:                         return NULL;
   }
 }
@@ -455,6 +459,38 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
               (unsigned)evt->u.chat.fromPlayer,
               (unsigned)evt->u.chat.destPlayer,
               (unsigned)evt->u.chat.bodyLen);
+      break;
+
+    case CTRL_LOBBY_TEAM_META:
+      fprintf(f, ",\"teamId\":%u,\"in_use\":%u,\"color\":%u,\"namingPool\":%u"
+                 ",\"name\":",
+              (unsigned)evt->u.lobbyTeamMeta.teamId,
+              (unsigned)evt->u.lobbyTeamMeta.in_use,
+              (unsigned)evt->u.lobbyTeamMeta.color,
+              (unsigned)evt->u.lobbyTeamMeta.namingPool);
+      logEventsJsonStr(f, evt->u.lobbyTeamMeta.name,
+                       sizeof(evt->u.lobbyTeamMeta.name));
+      break;
+
+    case CTRL_LOBBY_BOT_CONFIG:
+      fprintf(f, ",\"slot\":%u,\"difficulty\":%u,\"personality\":%u,\"name\":",
+              (unsigned)evt->u.lobbyBotConfig.slot,
+              (unsigned)evt->u.lobbyBotConfig.difficulty,
+              (unsigned)evt->u.lobbyBotConfig.personality);
+      logEventsJsonStr(f, evt->u.lobbyBotConfig.name, PACKET_MAX_PLAYER_NAME);
+      break;
+
+    case CTRL_LOBBY_BOT_BRAIN:
+      fprintf(f, ",\"slot\":%u,\"path\":",
+              (unsigned)evt->u.lobbyBotBrain.slot);
+      logEventsJsonStr(f, evt->u.lobbyBotBrain.path,
+                       sizeof(evt->u.lobbyBotBrain.path));
+      break;
+
+    case CTRL_LOBBY_BRAIN_LIST:
+      /* count-only — per-entry version is mtime-derived and would
+       * drift baselines across fresh checkouts. */
+      fprintf(f, ",\"count\":%d", evt->u.lobbyBrainList.list.count);
       break;
 
     case CTRL_EVENT_TYPE_COUNT:
