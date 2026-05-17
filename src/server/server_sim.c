@@ -1673,6 +1673,11 @@ void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
     if (teamNumber > 16) {
         teamNumber = 1;
     }
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+                "[DIAG] serverSimSetTeam slot=%u oldTeam=%u newTeam=%u",
+                (unsigned)playerNum,
+                (unsigned)sim->lobbyPlayers[playerNum].teamNumber,
+                (unsigned)teamNumber);
     sim->lobbyPlayers[playerNum].teamNumber = teamNumber;
 }
 
@@ -1721,8 +1726,21 @@ void serverSimSetBotPreThinkHook(void (*hook)(int playerNum)) {
 bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
                         const char *brainPath, const char *brainName,
                         aiType ai, gameType game, bool hiddenMines) {
-    return botManagerAddBot(sim, playerNum, brainPath, brainName,
-                            ai, game, hiddenMines);
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+                "[DIAG] serverSimCreateBot ENTRY sim=%p slot=%u brain='%s' name='%s' ai=%d state=%d",
+                (void *)sim, (unsigned)playerNum,
+                brainPath ? brainPath : "(null)",
+                brainName ? brainName : "(null)",
+                (int)ai, sim ? (int)sim->state : -1);
+    bool ok = botManagerAddBot(sim, playerNum, brainPath, brainName,
+                               ai, game, hiddenMines);
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+                "[DIAG] serverSimCreateBot EXIT slot=%u ok=%d (post-state: connected=%d team=%u isBot=%d)",
+                (unsigned)playerNum, (int)ok,
+                sim ? (int)sim->playerConnected[playerNum] : -1,
+                sim ? (unsigned)sim->lobbyPlayers[playerNum].teamNumber : 0,
+                sim ? (int)sim->lobbyPlayers[playerNum].isBot : -1);
+    return ok;
 }
 
 void serverSimRemoveBot(ServerSim *sim, BYTE playerNum) {

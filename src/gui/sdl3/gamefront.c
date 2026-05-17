@@ -902,6 +902,10 @@ bool gameFrontSetDlgState(openingStates newState) {
   bool returnValue = TRUE;
   openingStates prevState = dlgState;
 
+  WB_LOG_INFO(WB_LOG_CAT_GUI,
+              "[DIAG] gameFrontSetDlgState: %d -> %d (humanSim=%p spServerSim=%p)",
+              (int)dlgState, (int)newState, (void *)humanSim, (void *)spServerSim);
+
   if ((dlgState == openInternet || dlgState == openLan || dlgState == openUdp ||
        dlgState == openLanManual || dlgState == openInternetManual) &&
       newState == openUdpJoin) {
@@ -1085,6 +1089,10 @@ bool gameFrontSetDlgState(openingStates newState) {
       dlgState = openStart;
     }
   } else if (dlgState == openSetup && newState == openFinished) {
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[DIAG] openFinished SP-entry: name='%s' fileName='%s' gametype=%d compTanks=%d brainPath='%s' isTutorial=%d",
+                gameFrontName, fileName, (int)gametype, (int)compTanks,
+                gameFrontBrainPath, (int)isTutorial);
     dlgState = openFinished;
     /* New architecture: ServerSim owns the map and all game state.
      * Create the server sim, then load the map on the client side
@@ -1644,11 +1652,17 @@ static void gameFrontFinishSinglePlayer(void) {
  * configuration.  Called from gameFrontStartServerSim after
  * serverInstanceStartup succeeds. */
 static void gameFrontFinishSinglePlayerLobby(void) {
+  WB_LOG_INFO(WB_LOG_CAT_GUI,
+              "[DIAG] gameFrontFinishSinglePlayerLobby ENTRY sim=%p humanSim=%p",
+              (void *)spServerSim, (void *)humanSim);
   serverSimSetLobbyEnabled(spServerSim, true);
   serverSimSetState(spServerSim, serverStateLobby);
+  WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   about to addPlayer slot=0 name='%s'", gameFrontName);
   serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
   serverSimSetViewPlayer(spServerSim, 0);
+  WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   about to registerClientSubscriber humanSim=%p", (void *)humanSim);
   spHumanSubHandle = serverSimRegisterClientSubscriber(spServerSim, humanSim);
+  WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   subscriber registered handle=%d", (int)spHumanSubHandle);
 
   /* Pre-populate the lobby's bot brain path so Add Bot works
    * without further configuration.  Host can override per-bot. */
@@ -1674,6 +1688,10 @@ static void gameFrontFinishSinglePlayerLobby(void) {
   clientSimSetInLobby(humanSim, true);
   clientSimSetNetStatus(humanSim, netLobby);
   clientSimSetMapDownloadComplete(humanSim, true);
+  WB_LOG_INFO(WB_LOG_CAT_GUI,
+              "[DIAG] gameFrontFinishSinglePlayerLobby DONE: isSP=true inLobby=true netStatus=netLobby slot0.team=%u slot0.name='%s'",
+              (unsigned)clientSimGetLobbySlot(humanSim, 0)->teamNumber,
+              clientSimGetLobbySlot(humanSim, 0)->playerName);
 
   spServerSimActive = TRUE;
 }
