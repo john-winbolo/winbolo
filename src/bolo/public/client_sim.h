@@ -407,6 +407,13 @@ typedef struct {
 bool clientSimGetGameVote(const ClientSim *cs, uint8_t kind,
                           ClientGameVoteSnapshot *out);
 void clientSimSetGameVoteWidgetVisible(ClientSim *cs, uint8_t kind, bool visible);
+
+/* Per-frame tick that emits "Returning to lobby in N" newswire lines
+ * for a vote-driven back-to-lobby transition. Server just enters
+ * gameOver and lets countdownTicks drain; the client times its own
+ * 3/2/1 announcement off the local clock so we don't pay for a
+ * per-second chat broadcast. Call this from the main render loop. */
+void clientSimTickLobbyReturnCountdown(ClientSim *cs);
 /* Returns true if local player has voted yes on this kind. */
 bool clientSimGameVoteMyVote(const ClientSim *cs, uint8_t kind);
 

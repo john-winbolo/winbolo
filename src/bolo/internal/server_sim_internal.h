@@ -202,9 +202,6 @@ typedef struct ServerSim {
         uint64_t deadlineMs;       /* startMs + 60_000 */
         uint64_t lastHeartbeatMs;  /* drives 1Hz broadcast */
         uint64_t concludedAtMs;    /* >0 once active != RUNNING; for auto-dismiss */
-        bool     countdownStarted; /* "3","2","1" countdown for back-to-lobby pass */
-        uint64_t countdownNextMs;  /* time of next countdown tick */
-        uint8_t  countdownStep;    /* 3..0, 0 = done */
         /* Pre-pass grace: once the vote first becomes unanimous we
          * give voters 5 s to change their mind before concluding
          * PASSED. 0 = not pending, else the wall-clock at which the
