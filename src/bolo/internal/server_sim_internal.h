@@ -212,6 +212,13 @@ typedef struct ServerSim {
     } gameVotes[2];
     uint64_t gameVoteWallMs;       /* monotonic ms since serverSim start */
     bool     baseMonopolyTriggeredThisRound;
+
+    /* Forced return-to-lobby countdown (e.g. from a vote-pass). When
+     * > 0, the running-state tick decrements this each call; at 0
+     * we call serverSimEnterGameOver. Carried in every snapshot
+     * header so clients can render their own "Returning to lobby in
+     * N" indicator off the value. */
+    int32_t  returnToLobbyTicks;
     /* When a vote-pass triggers the game-over transition, lifecycle should
      * skip buildWinMessage so the players don't get the generic
      * "Game over!" line on top of the 3/2/1 countdown. Cleared once

@@ -1250,13 +1250,13 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
      * + baseCount(1) + pillCount(1)
      * + reliableEventCount(1) + reliableBaseSeq(4)
      * + mapEventCount(1) + mapEventBaseSeq(4)
-     * + mapChecksum(2) = 25 bytes */
+     * + mapChecksum(2) + returnToLobbyTicks(2) = 27 bytes */
     packU32(buf + pos, hdr.serverTick);
     pos += 4;
     packU32(buf + pos, hdr.lastProcessedInput);
     pos += 4;
     countsPos = pos;
-    pos += 17; /* 7 count bytes + 4 byte reliableBaseSeq + 4 byte mapEventBaseSeq + 2 byte mapChecksum */
+    pos += 19; /* 7 count bytes + 4 byte reliableBaseSeq + 4 byte mapEventBaseSeq + 2 byte mapChecksum + 2 byte returnToLobbyTicks */
 
     /* Pack tank snapshots — variable length: stubs are 1 byte, full
      * entries are TANK_SNAPSHOT_WIRE_SIZE bytes. */
@@ -1347,6 +1347,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     buf[countsPos + 10] = (uint8_t)mapEventCount;
     packU32(buf + countsPos + 11, mapEventBaseSeq);
     packU16(buf + countsPos + 15, hdr.mapChecksum);
+    packU16(buf + countsPos + 17, hdr.returnToLobbyTicks);
 
     udpSendTo(udpServer.sock, buf, pos, &client->addr);
     if (serverSimGetTick(sim) % 50 == 0) {

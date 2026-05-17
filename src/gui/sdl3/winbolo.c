@@ -263,8 +263,11 @@ int main(int argc, char *argv[]) {
    * ────────────────────────────────────────────────────────── */
   {
     char marker[256];
+    /* Bump this tag manually on each iteration — __DATE__/__TIME__
+     * only update when winbolo.c itself is recompiled, so they're
+     * unreliable as a freshness check for changes elsewhere. */
     snprintf(marker, sizeof(marker),
-             "[BUILD-TEMP] vote-widget-debug-2026-05-17 build=%s %s",
+             "[BUILD-TEMP] vote-widget-debug rev=#9 build=%s %s",
              __DATE__, __TIME__);
     printf("%s\n", marker); fflush(stdout);
     fprintf(stderr, "%s\n", marker); fflush(stderr);
