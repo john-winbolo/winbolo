@@ -32,6 +32,7 @@
 #include "client_sim_control.h"
 #include "client_sim_internal.h"
 #include "players.h"
+#include "../common/wb_log.h"
 
 void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     if (cs == NULL || evt == NULL) {
@@ -116,6 +117,15 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     }
 
     case CTRL_LOBBY_SLOT:
+        WB_LOG_INFO(WB_LOG_CAT_CLIENT,
+                    "[DIAG] clientSimApplyControl CTRL_LOBBY_SLOT cs=%p slot=%u team=%u ready=%d isBot=%d name='%s' connected=%d",
+                    (void *)cs,
+                    (unsigned)evt->u.lobbySlot.playerNum,
+                    (unsigned)evt->u.lobbySlot.slot.teamNumber,
+                    (int)evt->u.lobbySlot.slot.ready,
+                    (int)evt->u.lobbySlot.slot.isBot,
+                    evt->u.lobbySlot.slot.playerName,
+                    (int)evt->u.lobbySlot.slot.connected);
         cs->lobbySlots[evt->u.lobbySlot.playerNum] = evt->u.lobbySlot.slot;
         break;
 

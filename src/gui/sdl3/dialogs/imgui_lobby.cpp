@@ -144,17 +144,34 @@ static char s_lastChosenBrainPath[256] = "";
  * teamId-aware add-bot packet). */
 static void lobbySendAddBot(ClientSim *cs,
                             int namingPool, uint8_t teamNumber) {
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[DIAG] lobbySendAddBot ENTRY cs=%p namingPool=%d teamNumber=%u isSP=%d",
+                (void *)cs, namingPool, (unsigned)teamNumber,
+                cs ? (int)clientSimIsSinglePlayer(cs) : -1);
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-        if (!sim) return;
-        if (serverSimGetState(sim) != serverStateLobby) return;
+        if (!sim) { WB_LOG_WARN(WB_LOG_CAT_GUI, "[DIAG] lobbySendAddBot SP: sim=NULL"); return; }
+        if (serverSimGetState(sim) != serverStateLobby) {
+            WB_LOG_WARN(WB_LOG_CAT_GUI, "[DIAG] lobbySendAddBot SP: state=%d not lobby",
+                        (int)serverSimGetState(sim));
+            return;
+        }
         /* Find first free slot */
         BYTE slot;
         for (slot = 1; slot < MAX_TANKS; slot++) {
             if (!serverSimIsPlayerConnected(sim, slot)) break;
         }
-        if (slot >= MAX_TANKS) return;
-        if (serverSimGetBotBrainPath(sim)[0] == '\0') return;
+        if (slot >= MAX_TANKS) {
+            WB_LOG_WARN(WB_LOG_CAT_GUI, "[DIAG] lobbySendAddBot SP: no free slot");
+            return;
+        }
+        if (serverSimGetBotBrainPath(sim)[0] == '\0') {
+            WB_LOG_WARN(WB_LOG_CAT_GUI, "[DIAG] lobbySendAddBot SP: botBrainPath empty");
+            return;
+        }
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
+                    "[DIAG] lobbySendAddBot SP: picked slot=%u brain='%s'",
+                    (unsigned)slot, serverSimGetBotBrainPath(sim));
 
         /* Pick a name. If a pool override is supplied we use it; else
          * fall back to "Bot N". Build the used-names list from current
@@ -173,10 +190,15 @@ static void lobbySendAddBot(ClientSim *cs,
             snprintf(botName, sizeof(botName), "Bot %d", slot);
         }
 
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
+                    "[DIAG]   about to serverSimCreateBot slot=%u name='%s' aiType=%d gameType=%d",
+                    (unsigned)slot, botName, (int)serverSimGetBotAiType(sim),
+                    (int)clientSimGetLobbyGameType(cs));
         serverSimCreateBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
                            (aiType)serverSimGetBotAiType(sim),
                            (gameType)clientSimGetLobbyGameType(cs),
                            clientSimIsLobbyHiddenMines(cs));
+        WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   serverSimCreateBot returned slot=%u", (unsigned)slot);
         /* Mirror the path into the per-bot table so the AiConfig combo
          * reflects "this bot's brain" rather than a global default. */
         serverSimSetBotBrainPathFor(sim, slot, serverSimGetBotBrainPath(sim));
@@ -4826,8 +4848,21 @@ static void renderGameSettingsPanel(ClientSim *cs,
 }
 
 extern "C" int imguiLobbyShow(ClientSim *cs) {
-    WB_LOG_INFO(WB_LOG_CAT_GUI, "[LOBBY] imguiLobbyShow called cs=%p inLobby=%d netStat=%d",
-            (void*)cs, cs ? (int)clientSimIsInLobby(cs) : -1, cs ? (int)clientSimGetNetStatus(cs) : -1);
+    WB_LOG_INFO(WB_LOG_CAT_GUI, "[LOBBY] imguiLobbyShow called cs=%p inLobby=%d netStat=%d isSP=%d",
+            (void*)cs, cs ? (int)clientSimIsInLobby(cs) : -1, cs ? (int)clientSimGetNetStatus(cs) : -1,
+            cs ? (int)clientSimIsSinglePlayer(cs) : -1);
+    if (cs) {
+        /* [DIAG] dump slot state every entry — shows whether the slot data is reaching the lobby UI. */
+        for (BYTE i = 0; i < MAX_TANKS; i++) {
+            const ClientLobbySlot *sl = clientSimGetLobbySlot(cs, i);
+            if (sl && sl->connected) {
+                WB_LOG_INFO(WB_LOG_CAT_GUI,
+                            "[DIAG]   slot %u: team=%u ready=%d isBot=%d name='%s'",
+                            (unsigned)i, (unsigned)sl->teamNumber,
+                            (int)sl->ready, (int)sl->isBot, sl->playerName);
+            }
+        }
+    }
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
     if (!window || !renderer) return 0;
