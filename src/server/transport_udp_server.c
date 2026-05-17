@@ -40,6 +40,7 @@
 #include "server_sim.h"
 #include "server_lifecycle.h"
 #include "control_event.h"
+#include "mapgen.h"
 #include "transport_control_codec.h"
 #include "../winbolonet/winbolonet.h"
 #include "threads.h"
@@ -225,7 +226,19 @@ static struct {
     /* Game lock — prevents new players from joining */
     bool gameLocked;           /* Server admin lock */
     bool clientLocked[MAX_TANKS]; /* Per-player lock votes */
+
+    /* Per-client map upload state. clientUploadActive=true between
+     * PACKET_LOBBY_MAP_UPLOAD_BEGIN and the final write-out at
+     * MAP_UPLOAD_DONE. clientUploadBuf grows up to UPLOAD_MAX_BYTES;
+     * clientUploadHave tracks the highest contiguous byte received. */
+    bool     clientUploadActive[MAX_TANKS];
+    uint32_t clientUploadTotal[MAX_TANKS];
+    uint32_t clientUploadHave[MAX_TANKS];
+    uint8_t *clientUploadBuf[MAX_TANKS];
+    char     clientUploadName[MAX_TANKS][128];
 } udpServer;
+
+#define UPLOAD_MAX_BYTES (1u * 1024u * 1024u)
 
 /* Public-address override populated by transportUdpServerSetPublicAddress
  * once libplum negotiates a UPnP/NAT-PMP/PCP mapping.  When non-empty the
@@ -450,6 +463,74 @@ static void publishLobbyStateAll(ServerSim *sim) {
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbySettingsEvent(sim, &evt);
     serverSimPublishControl(sim, &evt);
+}
+
+/* Per-recipient reject: sent only to the originator of a rejected
+ * lobby command. Reason codes in netpacks.h (LOBBY_REJECT_*). */
+static void lobbyRejectTo(struct sockaddr_in *addr, uint8_t origPacket,
+                          uint8_t reasonCode) {
+    uint8_t buf[PACKET_HEADER_SIZE + 2];
+    packHeader(buf, PACKET_LOBBY_REJECT, 0);
+    buf[PACKET_HEADER_SIZE]     = origPacket;
+    buf[PACKET_HEADER_SIZE + 1] = reasonCode;
+    udpSendTo(udpServer.sock, buf, sizeof(buf), addr);
+}
+
+/* Authority check used by every lobby command handler.
+ * Returns TRUE if the sender at clientIdx is allowed to issue the
+ * command (host, OR open-host is on and they're an active player,
+ * OR they're an admin). */
+static bool lobbyClientMayEdit(ServerSim *sim, int clientIdx) {
+    if (clientIdx < 0 || clientIdx >= MAX_TANKS) return FALSE;
+    if (clientIdx == 0) return TRUE;  /* slot 0 = host */
+    if (serverSimIsPlayerConnected(sim, clientIdx) &&
+        (playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs, (BYTE)clientIdx)
+         & PLAYER_FLAG_ADMIN)) {
+        return TRUE;
+    }
+    return serverSimGetOpenHost(sim) && serverSimIsPlayerConnected(sim, clientIdx);
+}
+
+/* Auto-unready: any meaningful lobby change clears every human's
+ * ready flag and aborts an in-flight countdown. State changes are
+ * written through T1 setters; the per-slot CTRL_LOBBY_SLOT publishes
+ * (plus the CTRL_GAME_PHASE publish if the countdown was aborted)
+ * fan out to both in-process subscribers and remote UDP clients via
+ * the codec — no wire-only blast needed. Bots stay permanently ready
+ * by design (set in botManagerAddBot) so the next all-ready check
+ * still triggers a countdown when the human re-confirms. */
+static void lobbyAutoUnreadyOnChange(ServerSim *sim) {
+    BYTE i;
+    bool countdownWasRunning = (serverSimGetState(sim) == serverStateCountdown);
+    bool toggled[MAX_TANKS];
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, i);
+        toggled[i] = false;
+        if (lp == NULL) continue;
+        if (lp->isBot) continue;
+        if (lp->ready) {
+            serverSimSetReady(sim, i, false);
+            toggled[i] = true;
+        }
+    }
+
+    if (countdownWasRunning) {
+        serverSimAbortCountdown(sim);
+    }
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (toggled[i]) {
+            serverSimPublishLobbySlot(sim, i);
+        }
+    }
+
+    if (countdownWasRunning) {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillGamePhaseEvent(sim, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 /* Wire-only fan-out for the cosmetic ping/country refresh fired
@@ -1797,28 +1878,58 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
 void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
     int i;
     int mapLen;
+    uint8_t notifyBuf[PACKET_HEADER_SIZE];
+    /* Compress into a local oversized scratch buffer first — the map
+     * RLE encoder has no internal output-bound check, and an
+     * incompressible map can encode slightly larger than its 64KB
+     * input. Validate the result fits the wire size before copying. */
+    BYTE scratchMap[131072];
 
-    /* Refresh the server's compressed map from the sim so the per-client
-     * map-chunk send loop and any subsequent JOIN_ACCEPT carry the new
-     * compressed size. */
-    mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
+    mapLen = serverSimGetCompressedMap(sim, scratchMap);
     if (mapLen <= 0) {
         fprintf(stderr, "[UDP SERVER] Map change: failed to compress new map\n");
         return;
     }
+    if (mapLen > (int)MAP_DOWNLOAD_MAX_SIZE) {
+        fprintf(stderr,
+                "[UDP SERVER] Map change: compressed map (%d bytes) exceeds "
+                "MAP_DOWNLOAD_MAX_SIZE (%d); aborting broadcast\n",
+                mapLen, (int)MAP_DOWNLOAD_MAX_SIZE);
+        return;
+    }
+    memcpy(udpServer.compressedMap, scratchMap, (size_t)mapLen);
     udpServer.compressedMapSize = (uint32_t)mapLen;
 
+    packHeader(notifyBuf, PACKET_LOBBY_MAP_CHANGE, 0);
     for (i = 0; i < MAX_TANKS; i++) {
         if (!udpServer.clients[i].connected) continue;
+        /* Send PACKET_LOBBY_MAP_CHANGE so the client flushes its
+         * stale map state before the new chunk stream lands. */
+        udpSendTo(udpServer.sock, notifyBuf, sizeof(notifyBuf),
+                  &udpServer.clients[i].addr);
         /* Re-send JOIN_ACCEPT so the client picks up the new compressed
-         * map size before the LOBBY_MAP_CHANGE notification arrives. */
+         * map size. */
         serverSendJoinAccept(i, sim, &udpServer.clients[i].addr);
         /* Reset chunk tracking; subsequent ticks resume sending chunks. */
         serverInitMapDownload(i);
     }
 
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_LOBBY_MAP_CHANGE;
+        serverSimPublishControl(sim, &evt);
+    }
+
     fprintf(stderr, "[UDP SERVER] Map change prep: %u bytes compressed map\n",
             udpServer.compressedMapSize);
+
+    /* Any meaningful change auto-unreadies every human in lobby state;
+     * mid-game map swaps (random regeneration etc.) skip the unready
+     * since everyone's mid-round. */
+    if (serverSimGetState(sim) == serverStateLobby) {
+        lobbyAutoUnreadyOnChange(sim);
+    }
 }
 
 void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
@@ -2381,6 +2492,807 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     publishLobbySlot(sim, targetSlot);
                 }
             }
+            break;
+        }
+        case PACKET_LOBBY_SET_SETTING: {
+            /* Wire: [header 8] [settingType 1] [valueLen 1] [value N] */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 2) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                              LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            uint8_t settingType = buf[PACKET_HEADER_SIZE];
+            uint8_t valueLen    = buf[PACKET_HEADER_SIZE + 1];
+            if (len < PACKET_HEADER_SIZE + 2 + valueLen ||
+                valueLen > 32) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                              LOBBY_REJECT_INVALID);
+                break;
+            }
+            const uint8_t *value = buf + PACKET_HEADER_SIZE + 2;
+
+            uint16_t lockBit = 0;
+            switch (settingType) {
+                case LST_GAME_TYPE:         lockBit = LOBBY_LOCK_GAME_TYPE; break;
+                case LST_HIDDEN_MINES:      lockBit = LOBBY_LOCK_MINES; break;
+                case LST_AI_POLICY:         lockBit = LOBBY_LOCK_AI_POLICY; break;
+                case LST_TIME_LIMIT:        lockBit = LOBBY_LOCK_TIME_LIMIT; break;
+                case LST_TIME_MINUTES:      lockBit = LOBBY_LOCK_TIME_LIMIT; break;
+                case LST_AUTO_LOCK_ON_GAME: lockBit = LOBBY_LOCK_AUTO_LOCK_ON_GAME; break;
+                default:                    lockBit = 0xFFFF; break;
+            }
+            if (lockBit == 0xFFFF) {
+                /* Unknown setting — silently drop (forward-compat). */
+                break;
+            }
+            if (serverSimGetServerLocks(sim) & lockBit) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                              LOBBY_REJECT_LOCKED);
+                break;
+            }
+
+            switch (settingType) {
+                case LST_GAME_TYPE:
+                    if (valueLen == 1 && value[0] >= 1 && value[0] <= 3) {
+                        serverSimGetGameSim(sim)->game = (gameType)value[0];
+                    } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                                           LOBBY_REJECT_INVALID); break; }
+                    break;
+                case LST_HIDDEN_MINES:
+                    if (valueLen == 1) serverSimGetGameSim(sim)->hiddenMines = value[0] != 0;
+                    break;
+                case LST_AI_POLICY:
+                    if (valueLen == 1 && value[0] <= 3) {
+                        serverSimSetAiPolicy(sim, value[0]);
+                        /* botAiType gates the AddBot handler and rides
+                         * in CTRL_LOBBY_SETTINGS — keep them in sync or
+                         * the next settings publish snaps clients back
+                         * to the CLI startup value. */
+                        serverSimSetBotAiType(sim, (aiType)value[0]);
+                        if ((aiType)value[0] == aiNone) {
+                            for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
+                                if (botManagerIsBot(bi)) {
+                                    botManagerRemoveBot(sim, bi);
+                                    publishLobbySlot(sim, bi);
+                                }
+                            }
+                        }
+                    } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                                           LOBBY_REJECT_INVALID); break; }
+                    break;
+                case LST_TIME_LIMIT:
+                    if (valueLen == 1) {
+                        bool tl = value[0] != 0;
+                        serverSimSetTimeLimit(sim, tl);
+                        if (tl) {
+                            uint16_t mins = serverSimGetTimeMinutes(sim) > 0
+                                ? serverSimGetTimeMinutes(sim) : 30;
+                            serverSimSetGameLength(sim,
+                                (int32_t)mins * 60 * GAME_NUMGAMETICKS_SEC);
+                        } else {
+                            serverSimSetGameLength(sim, UNLIMITED_GAME_TIME);
+                        }
+                    }
+                    break;
+                case LST_TIME_MINUTES:
+                    if (valueLen == 2) {
+                        uint16_t mins =
+                            (uint16_t)((value[0] << 8) | value[1]);
+                        serverSimSetTimeMinutes(sim, mins);
+                        if (serverSimGetTimeLimit(sim)) {
+                            serverSimSetGameLength(sim,
+                                (int32_t)mins * 60 * GAME_NUMGAMETICKS_SEC);
+                        }
+                    } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                                           LOBBY_REJECT_INVALID); break; }
+                    break;
+                case LST_AUTO_LOCK_ON_GAME:
+                    if (valueLen == 1) serverSimSetAutoLockOnGameStart(sim, value[0] != 0);
+                    break;
+            }
+
+            serverSimPublishLobbySettings(sim);
+            lobbyAutoUnreadyOnChange(sim);
+            break;
+        }
+        case PACKET_LOBBY_OPEN_HOST: {
+            /* Wire: [header 8] [bool 1]. Host-only. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx != 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 1) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_OPEN_HOST,
+                              LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            serverSimSetOpenHost(sim, buf[PACKET_HEADER_SIZE] != 0);
+            serverSimPublishLobbySettings(sim);
+            lobbyAutoUnreadyOnChange(sim);
+            break;
+        }
+        case PACKET_LOBBY_TEAM_META: {
+            /* Wire: [header 8] [teamId 1] [color 1] [namingPool 1]
+             *       [nameLen 1] [name N] */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 4) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_META,
+                              LOBBY_REJECT_NOT_HOST); break;
+            }
+            uint8_t teamId     = buf[PACKET_HEADER_SIZE + 0];
+            uint8_t color      = buf[PACKET_HEADER_SIZE + 1];
+            uint8_t namingPool = buf[PACKET_HEADER_SIZE + 2];
+            uint8_t nameLen    = buf[PACKET_HEADER_SIZE + 3];
+            if (teamId == 0 || teamId >= MAX_TANKS ||
+                nameLen > LOBBY_TEAM_NAME_LEN - 1 ||
+                len < PACKET_HEADER_SIZE + 4 + nameLen) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_META,
+                              LOBBY_REJECT_INVALID); break;
+            }
+            TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
+            if (t == NULL) break;
+            t->in_use = 1;
+            t->color = color;
+            /* Per-team uniqueness on namingPool: if another in_use team
+             * already owns this pool, pick the lowest pool index not
+             * used by any other team. Falls back to the requested value
+             * if every pool is taken. */
+            {
+                int poolCount = lobbyBotPoolCount();
+                bool poolTaken = false;
+                for (BYTE other = 1; other < MAX_TANKS; other++) {
+                    if (other == teamId) continue;
+                    const TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
+                    if (ot && ot->in_use && ot->namingPool == namingPool) {
+                        poolTaken = true;
+                        break;
+                    }
+                }
+                if (poolTaken && poolCount > 0) {
+                    for (int p = 0; p < poolCount; p++) {
+                        bool used = false;
+                        for (BYTE other = 1; other < MAX_TANKS; other++) {
+                            if (other == teamId) continue;
+                            const TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
+                            if (ot && ot->in_use && ot->namingPool == p) {
+                                used = true;
+                                break;
+                            }
+                        }
+                        if (!used) { namingPool = (uint8_t)p; break; }
+                    }
+                }
+            }
+            t->namingPool = namingPool;
+            memset(t->name, 0, LOBBY_TEAM_NAME_LEN);
+            if (nameLen > 0) {
+                memcpy(t->name, buf + PACKET_HEADER_SIZE + 4, nameLen);
+            }
+            serverSimPublishLobbyTeamMeta(sim, teamId);
+            lobbyAutoUnreadyOnChange(sim);
+            break;
+        }
+        case PACKET_LOBBY_TEAM_CLEAR: {
+            /* Wire: [header 8] [teamId 1] */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 1) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_CLEAR,
+                              LOBBY_REJECT_NOT_HOST); break;
+            }
+            uint8_t teamId = buf[PACKET_HEADER_SIZE];
+            if (teamId == 0 || teamId >= MAX_TANKS) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_CLEAR,
+                              LOBBY_REJECT_INVALID); break;
+            }
+            {
+                TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
+                if (t != NULL) {
+                    memset(t, 0, sizeof(TeamMetadata));
+                }
+            }
+            serverSimPublishLobbyTeamMeta(sim, teamId);
+            lobbyAutoUnreadyOnChange(sim);
+            break;
+        }
+        case PACKET_LOBBY_BOT_CONFIG: {
+            /* Wire: [header 8] [slot 1] [difficulty 1] [personality 1]
+             *       [nameLen 1] [name N] */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 4) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
+                              LOBBY_REJECT_NOT_HOST); break;
+            }
+            uint8_t slot        = buf[PACKET_HEADER_SIZE + 0];
+            uint8_t difficulty  = buf[PACKET_HEADER_SIZE + 1];
+            uint8_t personality = buf[PACKET_HEADER_SIZE + 2];
+            uint8_t nameLen     = buf[PACKET_HEADER_SIZE + 3];
+            if (slot >= MAX_TANKS || difficulty > 2 || personality > 3 ||
+                nameLen > 31 ||
+                len < PACKET_HEADER_SIZE + 4 + nameLen ||
+                !botManagerIsBot(slot)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
+                              LOBBY_REJECT_INVALID); break;
+            }
+            {
+                LobbyBotConfig *bc = serverSimGetBotConfigMut(sim, slot);
+                if (bc) {
+                    bc->difficulty  = difficulty;
+                    bc->personality = personality;
+                }
+            }
+            if (nameLen > 0) {
+                char name[PACKET_MAX_PLAYER_NAME];
+                memset(name, 0, sizeof(name));
+                memcpy(name, buf + PACKET_HEADER_SIZE + 4, nameLen);
+                transportUdpServerSetBotName(slot, name);
+            }
+            serverSimPublishLobbyBotConfig(sim, slot);
+            lobbyAutoUnreadyOnChange(sim);
+            break;
+        }
+        case PACKET_LOBBY_KICK: {
+            /* Wire: [header 8] [slot 1]. Host-only. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx != 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 1) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_KICK,
+                              LOBBY_REJECT_NOT_HOST); break;
+            }
+            uint8_t slot = buf[PACKET_HEADER_SIZE];
+            if (slot >= MAX_TANKS || slot == 0 /* can't kick host */) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_KICK,
+                              LOBBY_REJECT_INVALID); break;
+            }
+            const char *name = transportUdpServerGetPlayerName(slot);
+            if (name) transportUdpServerKickPlayer(sim, name);
+            /* No explicit broadcast — the kick path itself fires the
+             * existing player-left flow. */
+            lobbyAutoUnreadyOnChange(sim);
+            break;
+        }
+        case PACKET_LOBBY_SET_BOT_BRAIN: {
+            /* Wire: [header 8] [slot 1] [pathLen 1] [path N]. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 2) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_BOT_BRAIN,
+                              LOBBY_REJECT_NOT_HOST); break;
+            }
+            uint8_t slot    = buf[PACKET_HEADER_SIZE + 0];
+            uint8_t pathLen = buf[PACKET_HEADER_SIZE + 1];
+            if (slot >= MAX_TANKS || pathLen >= BRAIN_LIST_PATH_LEN ||
+                len < PACKET_HEADER_SIZE + 2 + pathLen ||
+                !botManagerIsBot(slot)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_BOT_BRAIN,
+                              LOBBY_REJECT_INVALID); break;
+            }
+            {
+                char pathBuf[260];
+                memset(pathBuf, 0, sizeof(pathBuf));
+                if (pathLen > 0 && pathLen < sizeof(pathBuf)) {
+                    memcpy(pathBuf, buf + PACKET_HEADER_SIZE + 2, pathLen);
+                }
+                serverSimSetBotBrainPathFor(sim, slot, pathBuf);
+                botManagerSetBrainPath(slot, pathBuf);
+            }
+            serverSimPublishLobbyBotBrain(sim, slot);
+            lobbyAutoUnreadyOnChange(sim);
+            break;
+        }
+        case PACKET_LOBBY_SET_MAP: {
+            /* Wire: [header 8] [pathLen 1] [path N]. Host / openHost
+             * / admin only, lobby state only. Path is relative to
+             * data/maps/ — reject absolute, Windows drive, and any
+             * ".." segment before opening the file. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 1) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
+                              LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            uint8_t pathLen = buf[PACKET_HEADER_SIZE];
+            if (pathLen == 0 || pathLen > 255 ||
+                len < PACKET_HEADER_SIZE + 1 + pathLen) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
+                              LOBBY_REJECT_INVALID);
+                break;
+            }
+            char relPath[256];
+            memcpy(relPath, buf + PACKET_HEADER_SIZE + 1, pathLen);
+            relPath[pathLen] = '\0';
+
+            bool safe = true;
+            if (relPath[0] == '/' || relPath[0] == '\\') safe = false;
+            else if (relPath[0] != '\0' && relPath[1] == ':') safe = false;
+            else {
+                for (const char *s = relPath; *s;) {
+                    if (s[0] == '.' && s[1] == '.' &&
+                        (s[2] == '\0' || s[2] == '/' || s[2] == '\\')) {
+                        safe = false; break;
+                    }
+                    while (*s && *s != '/' && *s != '\\') s++;
+                    while (*s == '/' || *s == '\\') s++;
+                }
+            }
+            if (!safe) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
+                              LOBBY_REJECT_INVALID);
+                WB_LOG_INFO(WB_LOG_CAT_NET,
+                            "[LOBBY] SET_MAP rejected: unsafe path '%s'",
+                            relPath);
+                break;
+            }
+
+            char fullPath[FILENAME_MAX];
+            SDL_snprintf(fullPath, sizeof(fullPath), "data/maps/%s",
+                         relPath);
+
+            if (!serverSimReloadMap(sim, fullPath)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
+                              LOBBY_REJECT_INVALID);
+                WB_LOG_INFO(WB_LOG_CAT_NET,
+                            "[LOBBY] SET_MAP failed: '%s'", fullPath);
+                break;
+            }
+
+            transportUdpServerOnLobbyMapChange(sim);
+            serverSimPublishLobbySettings(sim);
+            WB_LOG_INFO(WB_LOG_CAT_NET,
+                        "[LOBBY] SET_MAP ok: '%s'", fullPath);
+            break;
+        }
+        case PACKET_LOBBY_MAP_LIST_REQ: {
+            /* [header 8] [pathLen 1] [path N] — any lobby client may
+             * ask. Response is sent back to the requester only
+             * (wire-only handshake per ARCHITECTURE.md §"Load-bearing
+             * wire-only exceptions"). */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 1) break;
+            uint8_t pathLen = buf[PACKET_HEADER_SIZE];
+            if (pathLen > 255 ||
+                len < PACKET_HEADER_SIZE + 1 + pathLen) break;
+            char relPath[256];
+            memset(relPath, 0, sizeof(relPath));
+            if (pathLen > 0) {
+                memcpy(relPath, buf + PACKET_HEADER_SIZE + 1, pathLen);
+            }
+
+            bool safe = true;
+            if (relPath[0] == '/' || relPath[0] == '\\') safe = false;
+            else if (relPath[0] != '\0' && relPath[1] == ':') safe = false;
+            else {
+                for (const char *s = relPath; *s;) {
+                    if (s[0] == '.' && s[1] == '.' &&
+                        (s[2] == '\0' || s[2] == '/' || s[2] == '\\')) {
+                        safe = false; break;
+                    }
+                    while (*s && *s != '/' && *s != '\\') s++;
+                    while (*s == '/' || *s == '\\') s++;
+                }
+            }
+
+            ServerMapEntry entries[64];
+            int got = -1;
+            if (safe) {
+                got = serverSimEnumerateMapDir(sim,
+                    relPath[0] == '\0' ? NULL : relPath,
+                    entries, 64);
+            }
+            if (got < 0) got = 0;
+
+            uint8_t rsp[PACKET_HEADER_SIZE + 1 + 256 + 1
+                        + 64 * (1 + 128 + 1 + 8)];
+            int rpos = PACKET_HEADER_SIZE;
+            packHeader(rsp, PACKET_LOBBY_MAP_LIST_RSP, 0);
+            rsp[rpos++] = pathLen;
+            if (pathLen > 0) {
+                memcpy(rsp + rpos, relPath, pathLen);
+                rpos += pathLen;
+            }
+            int countPos = rpos;
+            rsp[rpos++] = 0;
+            int written = 0;
+            for (int i = 0; i < got; i++) {
+                int nameLen = (int)SDL_strlen(entries[i].name);
+                if (nameLen > 127) nameLen = 127;
+                if (rpos + 1 + nameLen + 1 + 8 > (int)sizeof(rsp)) break;
+                rsp[rpos++] = (uint8_t)nameLen;
+                memcpy(rsp + rpos, entries[i].name, nameLen);
+                rpos += nameLen;
+                rsp[rpos++] = entries[i].isFolder ? 1 : 0;
+                uint64_t mt = (uint64_t)entries[i].modTime;
+                for (int b = 7; b >= 0; b--) {
+                    rsp[rpos++] = (uint8_t)((mt >> (b * 8)) & 0xFF);
+                }
+                written++;
+            }
+            rsp[countPos] = (uint8_t)written;
+            udpSendTo(udpServer.sock, rsp, rpos, fromAddr);
+            break;
+        }
+        case PACKET_LOBBY_MAP_UPLOAD_BEGIN: {
+            /* [header 8] [totalLen 4] [nameLen 1] [name N] — only host
+             * / admin / openHost may push files. Per-client wire-only
+             * ACK (handshake/reliability). */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 5) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                uint8_t ack[PACKET_HEADER_SIZE + 1];
+                packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_NOT_HOST;
+                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                break;
+            }
+            uint32_t totalLen =
+                ((uint32_t)buf[PACKET_HEADER_SIZE + 0] << 24) |
+                ((uint32_t)buf[PACKET_HEADER_SIZE + 1] << 16) |
+                ((uint32_t)buf[PACKET_HEADER_SIZE + 2] <<  8) |
+                ((uint32_t)buf[PACKET_HEADER_SIZE + 3]);
+            uint8_t nameLen = buf[PACKET_HEADER_SIZE + 4];
+            if (nameLen == 0 || nameLen > 127 ||
+                len < PACKET_HEADER_SIZE + 5 + nameLen ||
+                totalLen == 0 || totalLen > UPLOAD_MAX_BYTES) {
+                uint8_t ack[PACKET_HEADER_SIZE + 1];
+                packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
+                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                break;
+            }
+            char nameBuf[128];
+            memset(nameBuf, 0, sizeof(nameBuf));
+            memcpy(nameBuf, buf + PACKET_HEADER_SIZE + 5, nameLen);
+
+            /* Name safety: must end in ".map", no path separators,
+             * no leading dot. */
+            bool nameSafe = true;
+            if (nameBuf[0] == '.') nameSafe = false;
+            for (int i = 0; i < nameLen; i++) {
+                char ch = nameBuf[i];
+                if (ch == '/' || ch == '\\' || ch == ':') {
+                    nameSafe = false; break;
+                }
+            }
+            if (nameSafe) {
+                if (nameLen < 4 ||
+                    SDL_strcasecmp(nameBuf + nameLen - 4, ".map") != 0) {
+                    nameSafe = false;
+                }
+            }
+            if (!nameSafe) {
+                uint8_t ack[PACKET_HEADER_SIZE + 1];
+                packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
+                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                break;
+            }
+
+            if (udpServer.clientUploadBuf[clientIdx]) {
+                free(udpServer.clientUploadBuf[clientIdx]);
+                udpServer.clientUploadBuf[clientIdx] = NULL;
+            }
+            udpServer.clientUploadBuf[clientIdx] = (uint8_t *)malloc(totalLen);
+            if (!udpServer.clientUploadBuf[clientIdx]) {
+                uint8_t ack[PACKET_HEADER_SIZE + 1];
+                packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
+                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                break;
+            }
+            udpServer.clientUploadActive[clientIdx] = true;
+            udpServer.clientUploadTotal[clientIdx]  = totalLen;
+            udpServer.clientUploadHave[clientIdx]   = 0;
+            SDL_strlcpy(udpServer.clientUploadName[clientIdx], nameBuf,
+                        sizeof(udpServer.clientUploadName[clientIdx]));
+
+            uint8_t ack[PACKET_HEADER_SIZE + 1];
+            packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+            ack[PACKET_HEADER_SIZE] = 0;
+            udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+            break;
+        }
+        case PACKET_LOBBY_MAP_UPLOAD_CHUNK: {
+            /* [header 8] [offset 4] [dataLen 2] [data N]. Server
+             * accumulates into the per-client buffer and on completion
+             * writes to data/maps/.pending_upload.map, then replies
+             * with MAP_UPLOAD_DONE. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 ||
+                !udpServer.clientUploadActive[clientIdx]) break;
+            if (len < PACKET_HEADER_SIZE + 6) break;
+            uint32_t offset =
+                ((uint32_t)buf[PACKET_HEADER_SIZE + 0] << 24) |
+                ((uint32_t)buf[PACKET_HEADER_SIZE + 1] << 16) |
+                ((uint32_t)buf[PACKET_HEADER_SIZE + 2] <<  8) |
+                ((uint32_t)buf[PACKET_HEADER_SIZE + 3]);
+            uint16_t dataLen =
+                ((uint16_t)buf[PACKET_HEADER_SIZE + 4] << 8) |
+                ((uint16_t)buf[PACKET_HEADER_SIZE + 5]);
+            uint32_t total = udpServer.clientUploadTotal[clientIdx];
+            if (dataLen == 0 || dataLen > 1024 ||
+                offset + dataLen > total ||
+                len < PACKET_HEADER_SIZE + 6 + dataLen) break;
+            memcpy(udpServer.clientUploadBuf[clientIdx] + offset,
+                   buf + PACKET_HEADER_SIZE + 6, dataLen);
+            if (offset + dataLen > udpServer.clientUploadHave[clientIdx]) {
+                udpServer.clientUploadHave[clientIdx] = offset + dataLen;
+            }
+
+            if (udpServer.clientUploadHave[clientIdx] == total) {
+                SDL_CreateDirectory("data/maps/Uploads");
+
+                const char *origName = udpServer.clientUploadName[clientIdx];
+                char baseName[128];
+                char extName[16];
+                {
+                    const char *dot = strrchr(origName, '.');
+                    if (dot && dot != origName) {
+                        size_t baseLen = (size_t)(dot - origName);
+                        if (baseLen >= sizeof(baseName)) {
+                            baseLen = sizeof(baseName) - 1;
+                        }
+                        memcpy(baseName, origName, baseLen);
+                        baseName[baseLen] = '\0';
+                        SDL_strlcpy(extName, dot, sizeof(extName));
+                    } else {
+                        SDL_strlcpy(baseName, origName, sizeof(baseName));
+                        extName[0] = '\0';
+                    }
+                }
+
+                char finalName[128];
+                char outPath[FILENAME_MAX];
+                SDL_strlcpy(finalName, origName, sizeof(finalName));
+                SDL_snprintf(outPath, sizeof(outPath),
+                             "data/maps/Uploads/%s", finalName);
+                {
+                    SDL_PathInfo info;
+                    for (int n = 1; n < 1000; n++) {
+                        if (!SDL_GetPathInfo(outPath, &info)) break;
+                        SDL_snprintf(finalName, sizeof(finalName),
+                                     "%s (%d)%s", baseName, n, extName);
+                        SDL_snprintf(outPath, sizeof(outPath),
+                                     "data/maps/Uploads/%s", finalName);
+                    }
+                }
+
+                /* Stage the upload at a temp path during preview;
+                 * PREVIEW_COMMIT moves it into Uploads/, CANCEL
+                 * deletes it. */
+                char tempPath[FILENAME_MAX];
+                SDL_snprintf(tempPath, sizeof(tempPath),
+                             "data/maps/.pending_upload.map");
+                FILE *fp = fopen(tempPath, "wb");
+                bool wrote = false;
+                if (fp) {
+                    size_t w = fwrite(udpServer.clientUploadBuf[clientIdx],
+                                      1, total, fp);
+                    fclose(fp);
+                    wrote = (w == total);
+                }
+
+                free(udpServer.clientUploadBuf[clientIdx]);
+                udpServer.clientUploadBuf[clientIdx] = NULL;
+                udpServer.clientUploadActive[clientIdx] = false;
+                udpServer.clientUploadHave[clientIdx]   = 0;
+                udpServer.clientUploadTotal[clientIdx]  = 0;
+
+                bool previewed = false;
+                if (wrote) {
+                    if (serverSimReloadMap(sim, tempPath)) {
+                        /* serverSimReloadMap sets mapName from the
+                         * basename of mapFileName — for an upload
+                         * that yields ".pending_upload"; override
+                         * with the user-picked basename. */
+                        char displayName[MAP_STR_SIZE];
+                        SDL_strlcpy(displayName, finalName,
+                                    sizeof(displayName));
+                        {
+                            size_t dlen = SDL_strlen(displayName);
+                            if (dlen >= 4 &&
+                                SDL_strcasecmp(displayName + dlen - 4,
+                                               ".map") == 0) {
+                                displayName[dlen - 4] = '\0';
+                            }
+                        }
+                        serverSimSetMapName(sim, displayName);
+                        char relReturnEarly[256];
+                        SDL_snprintf(relReturnEarly, sizeof(relReturnEarly),
+                                     "Uploads/%s", finalName);
+                        serverSimSetPendingUpload(sim, tempPath, outPath,
+                                                  relReturnEarly);
+                        transportUdpServerOnLobbyMapChange(sim);
+                        serverSimPublishLobbySettings(sim);
+                        previewed = true;
+                    } else {
+                        SDL_RemovePath(tempPath);
+                    }
+                } else if (tempPath[0] != '\0') {
+                    SDL_RemovePath(tempPath);
+                }
+
+                char relReturn[256];
+                SDL_snprintf(relReturn, sizeof(relReturn), "Uploads/%s",
+                             finalName);
+                int relLen = (int)SDL_strlen(relReturn);
+                if (relLen > 255) relLen = 255;
+                uint8_t done[PACKET_HEADER_SIZE + 2 + 256];
+                int dpos = PACKET_HEADER_SIZE;
+                packHeader(done, PACKET_LOBBY_MAP_UPLOAD_DONE, 0);
+                done[dpos++] = (wrote && previewed) ? 0 : LOBBY_REJECT_INVALID;
+                done[dpos++] = (uint8_t)relLen;
+                memcpy(done + dpos, relReturn, relLen);
+                dpos += relLen;
+                udpSendTo(udpServer.sock, done, dpos, fromAddr);
+            }
+            break;
+        }
+        case PACKET_LOBBY_MAP_SEARCH_REQ: {
+            /* [header 8] [pathLen 1] [path N] [queryLen 1] [query M].
+             * Recursive search of data/maps/<path> for .map files
+             * whose basename contains <query>. Read-only, any
+             * connected client may issue. Per-client wire-only RSP. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 2) break;
+            int rpos = PACKET_HEADER_SIZE;
+            uint8_t pathLen = buf[rpos++];
+            if (pathLen > 255 ||
+                rpos + pathLen + 1 > (int)len) break;
+            char relPath[256];
+            memset(relPath, 0, sizeof(relPath));
+            if (pathLen > 0) {
+                memcpy(relPath, buf + rpos, pathLen);
+            }
+            rpos += pathLen;
+            uint8_t qLen = buf[rpos++];
+            if (qLen > 127 || rpos + qLen > (int)len) break;
+            char query[128];
+            memset(query, 0, sizeof(query));
+            if (qLen > 0) {
+                memcpy(query, buf + rpos, qLen);
+            }
+
+            ServerMapEntry entries[64];
+            int got = serverSimSearchMapDir(sim,
+                relPath[0] == '\0' ? NULL : relPath,
+                query, entries, 64);
+            if (got < 0) got = 0;
+
+            uint8_t rsp[PACKET_HEADER_SIZE + 1 + 256 + 1 + 128 + 1
+                        + 64 * (1 + 256 + 1 + 8)];
+            packHeader(rsp, PACKET_LOBBY_MAP_SEARCH_RSP, 0);
+            int wpos = PACKET_HEADER_SIZE;
+            rsp[wpos++] = pathLen;
+            if (pathLen > 0) {
+                memcpy(rsp + wpos, relPath, pathLen);
+                wpos += pathLen;
+            }
+            rsp[wpos++] = qLen;
+            if (qLen > 0) {
+                memcpy(rsp + wpos, query, qLen);
+                wpos += qLen;
+            }
+            int countPos = wpos;
+            rsp[wpos++] = 0;
+            int written = 0;
+            for (int i = 0; i < got; i++) {
+                int nameLen = (int)SDL_strlen(entries[i].name);
+                if (nameLen > 127) nameLen = 127;
+                if (wpos + 1 + nameLen + 1 + 8 > (int)sizeof(rsp)) break;
+                rsp[wpos++] = (uint8_t)nameLen;
+                memcpy(rsp + wpos, entries[i].name, nameLen);
+                wpos += nameLen;
+                rsp[wpos++] = entries[i].isFolder ? 1 : 0;
+                uint64_t mt = (uint64_t)entries[i].modTime;
+                for (int b = 7; b >= 0; b--) {
+                    rsp[wpos++] = (uint8_t)((mt >> (b * 8)) & 0xFF);
+                }
+                written++;
+            }
+            rsp[countPos] = (uint8_t)written;
+            udpSendTo(udpServer.sock, rsp, wpos, fromAddr);
+            break;
+        }
+        case PACKET_LOBBY_PREVIEW_CANCEL: {
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_CANCEL,
+                              LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            if (serverSimRevertPreview(sim)) {
+                transportUdpServerOnLobbyMapChange(sim);
+                serverSimPublishLobbySettings(sim);
+                WB_LOG_INFO(WB_LOG_CAT_NET,
+                            "[LOBBY] PREVIEW_CANCEL: rolled back");
+            }
+            break;
+        }
+        case PACKET_LOBBY_PREVIEW_COMMIT: {
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_COMMIT,
+                              LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            serverSimCommitPreview(sim);
+            WB_LOG_INFO(WB_LOG_CAT_NET,
+                        "[LOBBY] PREVIEW_COMMIT: kept current map");
+            break;
+        }
+        case PACKET_LOBBY_PREVIEW_RANDOM: {
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 1) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
+                              LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            uint8_t seedLen = buf[PACKET_HEADER_SIZE];
+            if (seedLen == 0 || seedLen > 63 ||
+                len < PACKET_HEADER_SIZE + 1 + seedLen) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
+                              LOBBY_REJECT_INVALID);
+                break;
+            }
+            char seedStr[64];
+            memset(seedStr, 0, sizeof(seedStr));
+            memcpy(seedStr, buf + PACKET_HEADER_SIZE + 1, seedLen);
+
+            MapGenConfig cfg;
+            if (!mapGenSeedToConfig(seedStr, &cfg)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
+                              LOBBY_REJECT_INVALID);
+                WB_LOG_INFO(WB_LOG_CAT_NET,
+                            "[LOBBY] PREVIEW_RANDOM rejected: bad seed '%s'",
+                            seedStr);
+                break;
+            }
+            /* Seeds may have been generated against a different region;
+             * pin to the standard playable area. */
+            cfg.x1 = MAP_MINE_EDGE_LEFT + 1;
+            cfg.y1 = MAP_MINE_EDGE_TOP + 1;
+            cfg.x2 = MAP_MINE_EDGE_RIGHT - 1;
+            cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
+
+            if (!serverSimReloadRandomMap(sim, &cfg)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
+                              LOBBY_REJECT_INVALID);
+                break;
+            }
+            transportUdpServerOnLobbyMapChange(sim);
+            serverSimPublishLobbySettings(sim);
+            WB_LOG_INFO(WB_LOG_CAT_NET,
+                        "[LOBBY] PREVIEW_RANDOM ok: '%s'", seedStr);
             break;
         }
         case PACKET_WBN_REAUTH: {
