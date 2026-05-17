@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+#include <limits.h>  /* INT_MAX for default-team load balance */
 /* dirent.h removed — using SDL3 SDL_GlobDirectory for cross-platform directory listing */
 #include <SDL3/SDL.h>
 
@@ -1376,10 +1377,41 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     sim->playerConnected[playerNum] = TRUE;
     sim->hadPlayersEver = TRUE;
 
-    /* Initialize lobby player state */
-    sim->lobbyPlayers[playerNum].teamNumber = 0;
+    /* Initialize lobby player state. Default-team assignment (Layout A):
+     *   slot 0 (host)             → team 1
+     *   slot 1 (second joiner)    → team 2
+     *   slot 2+ (subsequent)      → smallest existing team (load balance)
+     * Bots take whichever team the bot-add path picks (existing logic).
+     * Players can self-reassign via the team picker after joining. */
     sim->lobbyPlayers[playerNum].ready = FALSE;
     sim->lobbyPlayers[playerNum].isBot = FALSE;
+    {
+        uint8_t defaultTeam = 1;
+        if (playerNum == 0) {
+            defaultTeam = 1;
+        } else if (playerNum == 1) {
+            defaultTeam = 2;
+        } else {
+            /* Smallest in-use team wins. Counts include bots. */
+            int counts[16] = {0};
+            for (int i = 0; i < MAX_TANKS; i++) {
+                if (i == playerNum) continue;
+                if (!sim->playerConnected[i]) continue;
+                uint8_t t = sim->lobbyPlayers[i].teamNumber;
+                if (t > 0 && t < 16) counts[t]++;
+            }
+            int bestTeam = 1, bestCount = INT_MAX;
+            for (int t = 1; t < 16; t++) {
+                if (!sim->teams[t].in_use) continue;
+                if (counts[t] < bestCount) {
+                    bestCount = counts[t];
+                    bestTeam  = t;
+                }
+            }
+            defaultTeam = (uint8_t)bestTeam;
+        }
+        sim->lobbyPlayers[playerNum].teamNumber = defaultTeam;
+    }
 
     /* Set active sim so routing functions access sim state during tankCreate */
     activeSim = sim;

@@ -1666,6 +1666,15 @@ static void gameFrontFinishSinglePlayerLobby(void) {
                           (compTanks == aiNone) ? aiFull : compTanks);
   }
 
+  /* Lobby flags — main loop dispatches to lobbyShow when these are set.
+   * Branch's gameFrontEnterSinglePlayerLobby set these explicitly; without
+   * them the new lobby never renders and the legacy in-game path takes
+   * over (the "old lobby screen" regression). */
+  clientSimSetIsSinglePlayer(humanSim, true);
+  clientSimSetInLobby(humanSim, true);
+  clientSimSetNetStatus(humanSim, netLobby);
+  clientSimSetMapDownloadComplete(humanSim, true);
+
   spServerSimActive = TRUE;
 }
 
