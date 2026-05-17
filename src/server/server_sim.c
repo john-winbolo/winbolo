@@ -3777,9 +3777,15 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
     gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_PASSED, nowMs);
 
     if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) {
-        gv->countdownStarted = true;
-        gv->countdownStep    = 3;
-        gv->countdownNextMs  = nowMs + 1000ULL;
+        /* Hand off to the regular game-over → lobby transition. The
+         * 3/2/1 announcement is rendered by the client off its own
+         * clock once it sees the PASSED vote and the GAME_OVER phase
+         * event — no per-second server broadcast needed. We just
+         * extend countdownTicks long enough to give the client time
+         * to count 3, 2, 1 plus a beat (~4 seconds at 100Hz). */
+        serverSimSetSuppressNextWinMessage(sim, true);
+        serverSimEnterGameOver(sim);
+        sim->countdownTicks = 400;
     } else if (kind == GAME_VOTE_KIND_SURRENDER) {
         char buf[160];
         const char *tname = sim->teams[gv->teamId].name[0]
@@ -4080,27 +4086,6 @@ void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
             }
         }
 
-        /* Post-pass countdown for back-to-lobby. Prints
-         * "Returning to lobby in 3", "...2", "...1" then waits one
-         * more second before firing the actual transition (so the
-         * user gets a beat between "1" and the lobby return). */
-        if (gv->kind == GAME_VOTE_KIND_BACK_TO_LOBBY &&
-            gv->countdownStarted && nowMs >= gv->countdownNextMs) {
-            if (gv->countdownStep > 0) {
-                char buf[64];
-                snprintf(buf, sizeof(buf),
-                         "Returning to lobby in %u",
-                         (unsigned)gv->countdownStep);
-                transportUdpServerSendServerMessage(buf);
-                gv->countdownStep--;
-                gv->countdownNextMs = nowMs + 1000ULL;
-            } else {
-                /* step == 0: extra second elapsed past the "1" — fire. */
-                gv->countdownStarted = false;
-                serverSimSetSuppressNextWinMessage(sim, true);
-                serverSimEnterGameOver(sim);
-            }
-        }
     }
 }
 

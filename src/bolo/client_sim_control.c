@@ -272,6 +272,15 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                 cs->netStat = netLobby;
                 cs->countdownSeconds = 0;
             }
+            /* If a back-to-lobby vote just passed, this game-over
+             * is the start of the 3/2/1 → lobby transition. Latch
+             * the local clock so renderer code can emit the
+             * countdown announcements off it. */
+            if (cs->gameVotes[0].active == GAME_VOTE_ACTIVE_PASSED &&
+                cs->gameVotes[0].kind == GAME_VOTE_KIND_BACK_TO_LOBBY) {
+                cs->lobbyReturnCountdownStartMs = SDL_GetTicks();
+                cs->lobbyReturnLastPrintedSecond = 4; /* haven't printed any yet */
+            }
             break;
         }
         break;
@@ -290,13 +299,12 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         if (cs->inLobby) {
             clientSimAppendLobbyChat(cs, "Server", text);
         } else {
-            /* Push to both newswire AND networkStatus so the message
-             * is visible whether the player has the netStatus channel
-             * enabled or not — these are server announcements and
-             * should always reach the player. */
+            /* In-game: route to newswire only. Server announcements
+             * (vote countdown, surrender, etc.) belong on the same
+             * channel as base captures / kills, and newswire is on by
+             * default. */
             clientMessageAdd(clientSimGetMessages(cs), newsWireMessage,
                              (char *)"Server", (char *)text);
-            clientSimNetStatusMessage(cs, (char *)text);
         }
         break;
     }

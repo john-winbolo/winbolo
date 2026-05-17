@@ -206,6 +206,15 @@ struct ClientSim {
         uint32_t concludedAtMs;     /* SDL_GetTicks() when active left RUNNING; 0 = still running / pre-start */
     } gameVotes[2];
 
+    /* Local 3/2/1 countdown for vote-driven back-to-lobby transitions.
+     * Server just enters gameOver; the client times its own
+     * announcements off this entry stamp instead of receiving
+     * per-second chat messages from the server. 0 = no active
+     * countdown. lobbyReturnLastPrintedSecond tracks 3→2→1 so each
+     * line is emitted exactly once. */
+    uint32_t lobbyReturnCountdownStartMs;
+    uint8_t  lobbyReturnLastPrintedSecond;
+
     /* Team balance proposal from WBN */
     uint8_t  balanceProposal[16];      /* Proposed team per slot (0 = none) */
     bool     balanceProposalActive;    /* TRUE if a proposal is being displayed */

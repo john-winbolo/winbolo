@@ -3467,6 +3467,10 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     renderChangeNameModal(cs);
     renderAllianceRequest(cs);
     renderGameVoteWidgets(cs);
+    /* Per-frame tick that emits the 3/2/1 newswire lines while a
+     * vote-driven back-to-lobby is in-flight. Counts off the local
+     * clock; no per-second server broadcast involved. */
+    clientSimTickLobbyReturnCountdown(cs);
     renderPasswordModal();
     renderKeySetupModal(cs);
     renderJoinConfirmModal();

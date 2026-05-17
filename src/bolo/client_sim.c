@@ -40,6 +40,7 @@
 #include "rubble.h"
 #include "explosions.h"
 #include "messages.h"
+#include <SDL3/SDL.h>
 #include "grass.h"
 #include "swamp.h"
 #include "lgm.h"
@@ -1084,6 +1085,33 @@ void clientSimSetGameVoteWidgetVisible(ClientSim *cs, uint8_t kind, bool visible
   int idx = clientGameVoteIdx(kind);
   if (idx < 0) return;
   cs->gameVotes[idx].widgetVisible = visible;
+}
+
+void clientSimTickLobbyReturnCountdown(ClientSim *cs) {
+  if (!cs || cs->lobbyReturnCountdownStartMs == 0) return;
+  /* Reset once we're back in the lobby — the countdown is over. */
+  if (cs->inLobby) {
+    cs->lobbyReturnCountdownStartMs = 0;
+    cs->lobbyReturnLastPrintedSecond = 0;
+    return;
+  }
+  uint32_t now = SDL_GetTicks();
+  uint32_t elapsedMs = now - cs->lobbyReturnCountdownStartMs;
+  /* Total budget mirrors the server's countdownTicks (~4 s = 400
+   * ticks @ 100Hz). Emit at the 1-, 2-, 3-second marks the lines
+   * "Returning to lobby in 3", "...2", "...1". After "1" the
+   * lobby transition naturally lands ~1 s later. */
+  uint8_t nextSecond;
+  if      (elapsedMs >= 3000u) nextSecond = 1;
+  else if (elapsedMs >= 2000u) nextSecond = 2;
+  else if (elapsedMs >= 1000u) nextSecond = 3;
+  else                          return;
+  if (nextSecond >= cs->lobbyReturnLastPrintedSecond) return;
+  cs->lobbyReturnLastPrintedSecond = nextSecond;
+  char buf[64];
+  snprintf(buf, sizeof(buf), "Returning to lobby in %u", (unsigned)nextSecond);
+  clientMessageAdd(clientSimGetMessages(cs), newsWireMessage,
+                   (char *)"Server", buf);
 }
 
 bool clientSimGameVoteMyVote(const ClientSim *cs, uint8_t kind) {

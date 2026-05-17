@@ -1483,6 +1483,14 @@ static void serverSendServerEnglishBroadcast(const char *message) {
      * server-originated text via the regular subscriber path. */
     {
         ServerSim *sim = serverSimGetActive();
+        /* TEMPORARY — remove before merging to main */
+        fprintf(stderr,
+                "[SERVER-MSG-TEMP] msg='%s' sim=%p\n",
+                message, (void *)sim);
+        fflush(stderr);
+        SDL_Log("[SERVER-MSG-TEMP] msg='%s' sim=%p",
+                message, (void *)sim);
+        /* END TEMPORARY */
         if (sim != NULL) {
             ControlEvent evt;
             memset(&evt, 0, sizeof(evt));
