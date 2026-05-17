@@ -53,6 +53,7 @@ extern "C" {
 #include "mapgen_maze.h"
 #include "imgui_mapchooser.h"
 #include "../../lang.h"
+#include "../map_stars.h"
 }
 #include "../../../mapeditor/mapeditor_imgui.h"
 
@@ -611,6 +612,8 @@ static SDL_Texture *s_iconListView = nullptr;
 static SDL_Texture *s_iconGridView = nullptr;
 static SDL_Texture *s_iconFolder   = nullptr;
 static SDL_Texture *s_iconMaximize = nullptr;
+static SDL_Texture *s_iconStarEmpty = nullptr;
+static SDL_Texture *s_iconStarFull  = nullptr;
 static SDL_Renderer *s_iconsRenderer = nullptr;
 
 static void loadViewModeIconsOnce(SDL_Renderer *renderer, int sizePx) {
@@ -618,10 +621,12 @@ static void loadViewModeIconsOnce(SDL_Renderer *renderer, int sizePx) {
         s_iconListView && s_iconGridView && s_iconFolder)
         return;
     if (s_iconsRenderer != renderer) {
-        if (s_iconListView) { SDL_DestroyTexture(s_iconListView); s_iconListView = nullptr; }
-        if (s_iconGridView) { SDL_DestroyTexture(s_iconGridView); s_iconGridView = nullptr; }
-        if (s_iconFolder)   { SDL_DestroyTexture(s_iconFolder);   s_iconFolder   = nullptr; }
-        if (s_iconMaximize) { SDL_DestroyTexture(s_iconMaximize); s_iconMaximize = nullptr; }
+        if (s_iconListView)  { SDL_DestroyTexture(s_iconListView);  s_iconListView  = nullptr; }
+        if (s_iconGridView)  { SDL_DestroyTexture(s_iconGridView);  s_iconGridView  = nullptr; }
+        if (s_iconFolder)    { SDL_DestroyTexture(s_iconFolder);    s_iconFolder    = nullptr; }
+        if (s_iconMaximize)  { SDL_DestroyTexture(s_iconMaximize);  s_iconMaximize  = nullptr; }
+        if (s_iconStarEmpty) { SDL_DestroyTexture(s_iconStarEmpty); s_iconStarEmpty = nullptr; }
+        if (s_iconStarFull)  { SDL_DestroyTexture(s_iconStarFull);  s_iconStarFull  = nullptr; }
         s_iconsRenderer = renderer;
     }
     if (!s_iconListView) {
@@ -677,6 +682,37 @@ static void loadViewModeIconsOnce(SDL_Renderer *renderer, int sizePx) {
                 SDL_snprintf(buf, sizeof(buf),
                              "%sdata/ui/maximize.svg", base);
                 s_iconMaximize = imguiLoadSvgIconWhite(renderer, buf, sizePx);
+            }
+        }
+    }
+    /* Star icons — keep them at the same sizePx as the view-mode
+     * toggle so they read as part of the same set. star_empty is
+     * the unstarred state, star_full is starred. The chooser tints
+     * the empty variant when hovered and the full variant always
+     * renders in its authored colour. */
+    if (!s_iconStarEmpty) {
+        s_iconStarEmpty = imguiLoadSvgIcon(renderer,
+            "data/ui/star_empty.svg", sizePx);
+        if (!s_iconStarEmpty) {
+            char buf[FILENAME_MAX];
+            const char *base = SDL_GetBasePath();
+            if (base) {
+                SDL_snprintf(buf, sizeof(buf),
+                             "%sdata/ui/star_empty.svg", base);
+                s_iconStarEmpty = imguiLoadSvgIcon(renderer, buf, sizePx);
+            }
+        }
+    }
+    if (!s_iconStarFull) {
+        s_iconStarFull = imguiLoadSvgIcon(renderer,
+            "data/ui/star_full.svg", sizePx);
+        if (!s_iconStarFull) {
+            char buf[FILENAME_MAX];
+            const char *base = SDL_GetBasePath();
+            if (base) {
+                SDL_snprintf(buf, sizeof(buf),
+                             "%sdata/ui/star_full.svg", base);
+                s_iconStarFull = imguiLoadSvgIcon(renderer, buf, sizePx);
             }
         }
     }
@@ -1895,7 +1931,9 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
         } else
         /* ── List view (the original table) ──────────────── */
         if (true) {
-        const int kNumCols = state->showModifiedColumn ? 2 : 1;
+        const int kNumCols = (state->showModifiedColumn ? 2 : 1) + 1;
+        const int kStarColIdx = state->showModifiedColumn ? 2 : 1;
+        const float kStarColW = ImGui::GetFrameHeight() + 4.0f;
         if (ImGui::BeginTable("##MapTable", kNumCols, tableFlags)) {
             ImGui::TableSetupColumn("Name",
                 ImGuiTableColumnFlags_WidthStretch
@@ -1910,6 +1948,13 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                     | ImGuiTableColumnFlags_PreferSortDescending, 130.0f,
                     1 /* user_id 1 = modified column */);
             }
+            /* Star column — fixed-width icon-only, no sort, no header
+             * label. Sits at the right edge of every row. */
+            ImGui::TableSetupColumn("##Star",
+                ImGuiTableColumnFlags_WidthFixed
+                | ImGuiTableColumnFlags_NoSort
+                | ImGuiTableColumnFlags_NoResize, kStarColW,
+                2 /* user_id 2 = star column */);
             ImGui::TableSetupScrollFreeze(0, 1);
             ImGui::TableHeadersRow();
 
@@ -1966,6 +2011,156 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                     discoverMaps(state);
                 }
                 sortSpecs->SpecsDirty = false;
+            }
+
+            /* "Starred" pre-section. Renders every starred entry that
+             * belongs to this provider's scope at the top of the
+             * table, in insertion order. Hidden in recursive-search
+             * mode (results-driven view) and when no stars exist for
+             * the scope. Entries are deliberately also still rendered
+             * in their normal place below — clicking a star elsewhere
+             * shouldn't make a row pop out of the main list. */
+            struct StarRenderCtx {
+                MapChooserState *state;
+                SDL_Renderer *renderer;
+                bool *outChanged;
+                int rowSeq;
+                const float starColW;
+            };
+            auto renderStarredRow = [](const char *path, const char *name,
+                                        bool isFolder, void *vctx) -> bool {
+                StarRenderCtx *ctx = (StarRenderCtx *)vctx;
+                MapChooserState *s = ctx->state;
+                const char *scope = s->provider.cacheScope
+                                     ? s->provider.cacheScope : "";
+
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+
+                bool isSelected = !isFolder &&
+                                  s->selectedIdx == -2 - ctx->rowSeq;
+                char id[32];
+                SDL_snprintf(id, sizeof(id), "##starrow%d", ctx->rowSeq);
+                ImVec2 rowStart = ImGui::GetCursorScreenPos();
+                bool clicked = ImGui::Selectable(id, isSelected,
+                    ImGuiSelectableFlags_SpanAllColumns
+                    | ImGuiSelectableFlags_AllowOverlap);
+                ImGui::SameLine(0.0f, 0.0f);
+
+                /* Folder indent so the icon + name align with the
+                 * main-list rows below. */
+                bool hasFolderIcon = isFolder && s_iconFolder != nullptr;
+                if (hasFolderIcon) {
+                    float iconSz = ImGui::GetTextLineHeight();
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX()
+                                          + iconSz + 8.0f);
+                    ImVec2 iconPos(rowStart.x + 2.0f, rowStart.y);
+                    ImGui::GetWindowDrawList()->AddImage(
+                        (ImTextureID)s_iconFolder,
+                        iconPos,
+                        ImVec2(iconPos.x + iconSz, iconPos.y + iconSz));
+                }
+                ImGui::TextUnformatted(name);
+
+                /* Star column — always full, click un-stars. */
+                int starCol = s->showModifiedColumn ? 2 : 1;
+                ImGui::TableSetColumnIndex(starCol);
+                {
+                    float sz = ImGui::GetTextLineHeight();
+                    char btnId[32];
+                    SDL_snprintf(btnId, sizeof(btnId), "##starbtn%d",
+                                  ctx->rowSeq);
+                    /* Zero FramePadding so the button doesn't stretch
+                     * the row past the Selectable's hit area (see
+                     * matching note on the main-list star column). */
+                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                        ImVec2(0.0f, 0.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0,0,0,0));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                                          ImVec4(1,1,1,0.08f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                                          ImVec4(1,1,1,0.15f));
+                    bool toggled = s_iconStarFull
+                        ? ImGui::ImageButton(btnId,
+                            (ImTextureID)s_iconStarFull, ImVec2(sz, sz))
+                        : ImGui::SmallButton("*");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Click to unstar");
+                    }
+                    ImGui::PopStyleColor(3);
+                    ImGui::PopStyleVar();
+                    if (toggled) {
+                        mapStarsToggle(scope, path, name, isFolder);
+                    }
+                }
+
+                if (clicked) {
+                    if (isFolder) {
+                        SDL_strlcpy(s->currentDir, path,
+                                    sizeof(s->currentDir));
+                        discoverMaps(s);
+                        s->searchFilter[0] = '\0';
+                        int firstFile = -1;
+                        for (int j = 0; j < s->numMaps; j++) {
+                            if (!s->maps[j].isFolder) { firstFile = j; break; }
+                        }
+                        s->selectedIdx = (firstFile >= 0) ? firstFile : 0;
+                        if (firstFile >= 0) {
+                            SDL_strlcpy(s->selectedPath,
+                                s->maps[firstFile].path,
+                                sizeof(s->selectedPath));
+                            SDL_strlcpy(s->selectedName,
+                                s->maps[firstFile].name,
+                                sizeof(s->selectedName));
+                        } else {
+                            s->selectedPath[0] = '\0';
+                            s->selectedName[0] = '\0';
+                        }
+                        updatePreview(s, ctx->renderer);
+                        *(ctx->outChanged) = true;
+                    } else {
+                        /* File: use a negative-index sentinel so the
+                         * main-list rows don't pick up "selected"
+                         * accidentally (their selectedIdx values are
+                         * non-negative). */
+                        s->selectedIdx = -2 - ctx->rowSeq;
+                        SDL_strlcpy(s->selectedPath, path,
+                                    sizeof(s->selectedPath));
+                        SDL_strlcpy(s->selectedName, name,
+                                    sizeof(s->selectedName));
+                        updatePreview(s, ctx->renderer);
+                        *(ctx->outChanged) = true;
+                        if (s->provider.onSelect) {
+                            s->provider.onSelect(s, s->provider.ctx);
+                        }
+                    }
+                }
+
+                ctx->rowSeq++;
+                return true;
+            };
+            int starredRowsRendered = 0;
+            if (!(state->searchRecursive &&
+                  state->searchFilter[0] != '\0')) {
+                const char *scope = state->provider.cacheScope
+                                     ? state->provider.cacheScope : "";
+                StarRenderCtx ctx{ state, renderer, &changed,
+                                    0, kStarColW };
+                starredRowsRendered =
+                    (int)mapStarsVisitScope(scope, renderStarredRow, &ctx);
+            }
+            /* Divider row between the starred section and the main
+             * list. Implemented as a 1px row using TableSetBgColor on
+             * a near-empty row — keeps it in-table so column widths
+             * stay aligned. */
+            if (starredRowsRendered > 0) {
+                ImGui::TableNextRow(ImGuiTableRowFlags_None, 1.0f);
+                for (int c = 0; c < kNumCols; c++) {
+                    ImGui::TableSetColumnIndex(c);
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg,
+                        IM_COL32(255, 255, 255, 40));
+                    ImGui::Dummy(ImVec2(0.0f, 1.0f));
+                }
             }
 
             for (int i = 0; i < state->numMaps; i++) {
@@ -2035,7 +2230,8 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                                 (i == state->selectedIdx);
                 ImVec2 rowStart = ImGui::GetCursorScreenPos();
                 bool clicked = ImGui::Selectable(selId, selected,
-                    ImGuiSelectableFlags_SpanAllColumns);
+                    ImGuiSelectableFlags_SpanAllColumns
+                    | ImGuiSelectableFlags_AllowOverlap);
                 /* Capture the Selectable's hover rect for the row
                  * tooltip below — IsItemHovered after the text would
                  * only fire on the narrow text strip, missing the
@@ -2103,6 +2299,64 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                         }
                     } else {
                         ImGui::TextDisabled("-");
+                    }
+                }
+
+                /* Star column. Skip on the synthetic ".." row — there
+                 * is nothing to favourite about navigating up. The
+                 * filled icon shows currently-starred state; clicking
+                 * either icon toggles, with the click captured here
+                 * (Selectable above has AllowOverlap so the row
+                 * selection doesn't fire underneath). */
+                if (!ent.isParentUp) {
+                    ImGui::TableSetColumnIndex(kStarColIdx);
+                    const char *scope = state->provider.cacheScope
+                                         ? state->provider.cacheScope : "";
+                    bool isStarred = mapStarsIsStarred(scope, ent.path);
+                    SDL_Texture *tex = isStarred ? s_iconStarFull
+                                                  : s_iconStarEmpty;
+                    char btnId[24];
+                    SDL_snprintf(btnId, sizeof(btnId), "##star%d", i);
+                    bool toggled = false;
+                    if (tex) {
+                        /* Icon sized to the text line height so it
+                         * fits in the row without stretching it. */
+                        float sz = ImGui::GetTextLineHeight();
+                        /* Zero out ImageButton's default FramePadding
+                         * — otherwise it adds ~6 px of vertical slack
+                         * that makes the cell taller than the row
+                         * Selectable's hit area, leaving a dead
+                         * un-hoverable strip below the highlight. */
+                        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                            ImVec2(0.0f, 0.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Button,
+                            ImVec4(0, 0, 0, 0));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                            ImVec4(1, 1, 1, 0.08f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                            ImVec4(1, 1, 1, 0.15f));
+                        toggled = ImGui::ImageButton(btnId,
+                            (ImTextureID)tex, ImVec2(sz, sz));
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("%s", isStarred
+                                ? "Click to unstar"
+                                : "Click to star to always appear at the top");
+                        }
+                        ImGui::PopStyleColor(3);
+                        ImGui::PopStyleVar();
+                    } else {
+                        /* Textual fallback if the SVG didn't load. */
+                        toggled = ImGui::SmallButton(
+                            isStarred ? "*" : "+");
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("%s", isStarred
+                                ? "Click to unstar"
+                                : "Click to star to always appear at the top");
+                        }
+                    }
+                    if (toggled) {
+                        mapStarsToggle(scope, ent.path, ent.name,
+                                        ent.isFolder);
                     }
                 }
 
@@ -2189,10 +2443,12 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 ImGui::BeginTooltip();
                 ImGui::PushTextWrapPos(kHoverPopupW - 8.0f);
 
-                /* Show the breadcrumb path ONLY in search-subfolders
-                 * mode, where the row's enclosing folder isn't
-                 * already implied by the current directory. In a
-                 * normal folder browse it'd just be redundant. */
+                /* In search mode the breadcrumb is the only thing
+                 * that disambiguates two same-named files in
+                 * different folders — keep it. Title + modified date
+                 * stripped from the non-search tooltip: both are
+                 * already visible on the row itself, so the popup
+                 * just shows the preview. */
                 if (searchMode) {
                     char fullPath[FILENAME_MAX];
                     const char *root = state->crumbsRootLabel;
@@ -2211,20 +2467,6 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                         SDL_strlcpy(fullPath, ent.name, sizeof(fullPath));
                     }
                     ImGui::TextWrapped("%s", fullPath);
-                } else {
-                    /* Outside of search, just the bare name — the
-                     * preview image makes the row identifiable. */
-                    ImGui::TextWrapped("%s", ent.name);
-                }
-                if (ent.modTime > 0) {
-                    SDL_DateTime dt;
-                    if (SDL_TimeToDateTime((SDL_Time)ent.modTime,
-                                           &dt, true)) {
-                        ImGui::TextDisabled(
-                            "Created: %04d-%02d-%02d %02d:%02d",
-                            dt.year, dt.month, dt.day,
-                            dt.hour, dt.minute);
-                    }
                 }
                 if (hoverTex) {
                     /* Use the cropped bbox the cache computed at
