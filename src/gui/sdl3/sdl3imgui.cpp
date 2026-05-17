@@ -1487,10 +1487,16 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
 
     /* Auto-dismiss 5 seconds after the vote concludes (pass / fail /
      * cancel) so the widget doesn't linger forever. Still-running
-     * votes are exempt. */
+     * votes are exempt. Back-to-lobby with the server's return-to-
+     * lobby countdown still active is also exempt — we want the
+     * widget visible through the full N → 1 countdown, even if that's
+     * longer than 5 s. */
     if (snap->active != GAME_VOTE_ACTIVE_RUNNING && snap->concludedAtMs != 0) {
+        bool lobbyCountdownActive =
+            (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) &&
+            (clientSimGetReturnToLobbySecs(cs) > 0);
         uint32_t age = SDL_GetTicks() - snap->concludedAtMs;
-        if (age >= 5000u) {
+        if (age >= 5000u && !lobbyCountdownActive) {
             clientSimSetGameVoteWidgetVisible(cs, kind, false);
             resetLayout();
             return;
@@ -1710,7 +1716,17 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
             ImGui::TextDisabled("%us left", (unsigned)snap->secondsRemaining);
         }
     } else if (snap->active == GAME_VOTE_ACTIVE_PASSED) {
-        ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.0f, 1.0f), "Passed");
+        /* For back-to-lobby: show "Return to lobby in N" while the
+         * server's snapshot-driven countdown is still running, then
+         * fall back to plain "Passed" once it's expired (or for
+         * surrender, which doesn't drive the countdown itself). */
+        uint8_t rtlSecs = clientSimGetReturnToLobbySecs(cs);
+        if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY && rtlSecs > 0) {
+            ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.0f, 1.0f),
+                               "Return to lobby in %u", (unsigned)rtlSecs);
+        } else {
+            ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.0f, 1.0f), "Passed");
+        }
     } else if (snap->active == GAME_VOTE_ACTIVE_FAILED) {
         ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.2f, 1.0f), "Failed");
     } else if (snap->active == GAME_VOTE_ACTIVE_CANCELLED) {

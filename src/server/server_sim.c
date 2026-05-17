@@ -3806,8 +3806,8 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
          * snapshot header carries the remaining ticks every frame
          * so clients can render their own 3/2/1 countdown.
          *
-         * Budget: 5 seconds at 100Hz (each serverSimTick call). */
-        sim->returnToLobbyTicks = 500;
+         * Budget: 7 seconds at 100Hz (each serverSimTick call). */
+        sim->returnToLobbyTicks = 700;
     } else if (kind == GAME_VOTE_KIND_SURRENDER) {
         char buf[160];
         const char *tname = sim->teams[gv->teamId].name[0]
