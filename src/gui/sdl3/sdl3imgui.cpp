@@ -1549,7 +1549,19 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
                 /* anchorY supplanted by stack below other */
             }
         }
+        /* Final clamp: the widget must never overlap the main game
+         * viewport. anchorXL is the on-screen left edge of the status
+         * panel column = right edge of the game viewport, so the
+         * widget's left edge must be >= anchorXL. At 1x zoom the
+         * status panel is too narrow for the auto-resized widget, so
+         * centring naturally pushes targetX into the game area —
+         * this clamp shoves it back to anchorXL. */
+        if (guessX < anchorXL) guessX = anchorXL;
         ImGui::SetNextWindowPos(ImVec2(guessX, anchorY), ImGuiCond_Always);
+        /* Seed lastX so the width-cap block below knows where we are
+         * even before Begin updates the real position. */
+        lay.lastX = guessX;
+        lay.lastY = anchorY;
     } else if (lay.sizeKnown && !lay.positioned && lay.capturedW > 60.0f) {
         /* Default target: centred horizontally in [321, 437] @ Y=0. */
         float targetX = anchorCenter - lay.capturedW * 0.5f;
@@ -1569,6 +1581,9 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
             }
         }
 
+        /* Same anti-overlap clamp as stage 1 — see comment there. */
+        if (targetX < anchorXL) targetX = anchorXL;
+
         ImGui::SetNextWindowPos(ImVec2(targetX, targetY), ImGuiCond_Always);
         lay.lastX = targetX;
         lay.lastY = targetY;
@@ -1579,13 +1594,28 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
      * the actual window rect so siblings can stack against the
      * dragged position. */
 
+    /* Width cap: the widget must not extend past the right edge of
+     * the WinBolo window. We cap the max width and let AutoResize
+     * grow the height instead, so content wraps downward. lay.lastX
+     * is the left edge: stages 1/2 seeded it above when they called
+     * SetNextWindowPos; stage 3 has it from the previous frame's
+     * GetWindowPos so user drags are honoured. */
+    {
+        float windowRight = ImGui::GetIO().DisplaySize.x;
+        float maxW = windowRight - lay.lastX;
+        if (maxW < 60.0f) maxW = 60.0f;
+        ImGui::SetNextWindowSizeConstraints(
+            ImVec2(40.0f, 40.0f),
+            ImVec2(maxW,  FLT_MAX));
+    }
+
     ImGui::SetNextWindowBgAlpha(0.55f);
 
     /* Build the title — includes (Draw) tag for ranked manual
      * back-to-lobby votes. */
     char title[128];
     const char *kindName = (kind == GAME_VOTE_KIND_BACK_TO_LOBBY)
-                           ? "Return to lobby" : "Surrender";
+                           ? "Lobby" : "Surrender";
     bool drawTag = (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) &&
                    (snap->triggerSrc == GAME_VOTE_TRIGGER_MANUAL) &&
                    clientSimGetLobbyRanked(cs);
@@ -1722,8 +1752,12 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
          * surrender, which doesn't drive the countdown itself). */
         uint8_t rtlSecs = clientSimGetReturnToLobbySecs(cs);
         if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY && rtlSecs > 0) {
-            ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.0f, 1.0f),
-                               "Return to lobby in %u", (unsigned)rtlSecs);
+            /* Wrap so the line fits when the widget is width-capped
+             * against a narrow status column (e.g. at 1x zoom). */
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                                  ImVec4(0.0f, 0.9f, 0.0f, 1.0f));
+            ImGui::TextWrapped("Return to lobby in %u", (unsigned)rtlSecs);
+            ImGui::PopStyleColor();
         } else {
             ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.0f, 1.0f), "Passed");
         }

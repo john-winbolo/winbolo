@@ -267,7 +267,7 @@ int main(int argc, char *argv[]) {
      * only update when winbolo.c itself is recompiled, so they're
      * unreliable as a freshness check for changes elsewhere. */
     snprintf(marker, sizeof(marker),
-             "[BUILD-TEMP] vote-widget-debug rev=#14 build=%s %s",
+             "[BUILD-TEMP] vote-widget-debug rev=#18 build=%s %s",
              __DATE__, __TIME__);
     printf("%s\n", marker); fflush(stdout);
     fprintf(stderr, "%s\n", marker); fflush(stderr);
