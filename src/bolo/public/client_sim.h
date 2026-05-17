@@ -399,6 +399,7 @@ typedef struct {
     uint8_t  secondsRemaining;
     uint16_t votes;
     bool     widgetVisible;
+    uint32_t concludedAtMs;   /* SDL_GetTicks() at conclusion, 0 = still running */
 } ClientGameVoteSnapshot;
 
 bool clientSimGetGameVote(const ClientSim *cs, uint8_t kind,

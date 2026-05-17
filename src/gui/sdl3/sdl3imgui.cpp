@@ -1254,7 +1254,7 @@ static void renderPlayersPanel(ClientSim *cs) {
         int activeTeams = 0;
         for (int i = 0; i < MAX_PLAYERS; i++) {
             const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
-            if (!ls || !ls->connected || ls->isBot) continue;
+            if (!ls || !ls->connected) continue;
             uint8_t t = ls->teamNumber;
             if (t == 0 || t > 16) continue;
             if (!teamSeen[t]) { teamSeen[t] = true; activeTeams++; }
@@ -1288,8 +1288,8 @@ static void renderPlayersPanel(ClientSim *cs) {
         }
         if (surrDisabled) ImGui::EndDisabled();
         if (surrDisabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            ImGui::SetTooltip("Surrender is only available when exactly two teams remain,\n"
-                        "each with at least one connected human player.");
+            ImGui::SetTooltip("Surrender is only available when exactly two teams\n"
+                        "remain in play.");
         }
     }
 
@@ -1429,6 +1429,17 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
      * (active changes from RUNNING → PASSED/FAILED/CANCELLED). */
     if (snap->active == GAME_VOTE_ACTIVE_NONE) return;
     if (!snap->widgetVisible) return;
+
+    /* Auto-dismiss 5 seconds after the vote concludes (pass / fail /
+     * cancel) so the widget doesn't linger forever. Still-running
+     * votes are exempt. */
+    if (snap->active != GAME_VOTE_ACTIVE_RUNNING && snap->concludedAtMs != 0) {
+        uint32_t age = SDL_GetTicks() - snap->concludedAtMs;
+        if (age >= 5000u) {
+            clientSimSetGameVoteWidgetVisible(cs, kind, false);
+            return;
+        }
+    }
 
     /* Default anchor: top-right of the main window, just under the
      * menu bar. Player can drag elsewhere — only set on first use. */
@@ -2289,7 +2300,7 @@ static void renderMenuBar(ClientSim *cs) {
             if (running) {
                 for (int i = 0; i < MAX_PLAYERS; i++) {
                     const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
-                    if (!ls || !ls->connected || ls->isBot) continue;
+                    if (!ls || !ls->connected) continue;
                     uint8_t t = ls->teamNumber;
                     if (t == 0 || t > 16) continue;
                     if (!teamSeen[t]) { teamSeen[t] = true; activeTeams++; }
@@ -2328,8 +2339,8 @@ static void renderMenuBar(ClientSim *cs) {
                     ImGui::SetTooltip("Available once the game is running.");
                 } else {
                     ImGui::SetTooltip(
-                        "Surrender is only available when exactly two teams remain,\n"
-                        "each with at least one connected human player.");
+                        "Surrender is only available when exactly two teams\n"
+                        "remain in play.");
                 }
             }
         }

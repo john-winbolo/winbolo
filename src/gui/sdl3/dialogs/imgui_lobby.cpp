@@ -3296,7 +3296,7 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
             } else if (!sizesEligible) {
                 ImGui::SetTooltip(
                     "Ranked games require exactly two teams with equal\n"
-                    "sizes: 1v1, 2v2, or 3v3 connected players.\n"
+                    "sizes: 1v1, 2v2, or 3v3 human players.\n"
                     "(Currently %d %s, sizes %d vs %d.)",
                     teamsInUse, teamsInUse == 1 ? "team" : "teams",
                     firstSize, secondSize);
@@ -3768,12 +3768,14 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                 float rowTopScreenY = ImGui::GetCursorScreenPos().y;
 
                 /* Drag handle — drives the "drag a player onto a team"
-                 * flow. Authority: anyone may drag themselves; the host
-                 * (or openHost / admin) may drag anyone (incl. bots).
+                 * flow. Authority: only effectiveHost (host / admin /
+                 * openHost-empowered editor) can drag. Plain players
+                 * change their own team via the per-team "Join" button
+                 * to keep the row UI uncluttered.
                  * Server re-validates on PACKET_LOBBY_TEAM_SET.
                  * Rendered as a 4-arrow "move" cross centered in the
                  * row, before the tank icon. */
-                bool canDragThis = (i == myPlayerNum) || effectiveHost;
+                bool canDragThis = effectiveHost;
                 if (canDragThis) {
                     const float handleS = 14.0f * s;
                     cyAbs(handleS);

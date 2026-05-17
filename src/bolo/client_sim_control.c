@@ -23,6 +23,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <SDL3/SDL.h>
 #include "client_sim_control.h"
 #include "client_sim_internal.h"
 #include "client_sim.h"
@@ -210,7 +211,13 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         gv->votes            = evt->u.gameVoteState.votes;
         /* Auto-pop the widget when a vote starts — players can X to hide. */
         if (!wasRunning && gv->active == GAME_VOTE_ACTIVE_RUNNING) {
-            gv->widgetVisible = true;
+            gv->widgetVisible  = true;
+            gv->concludedAtMs  = 0;
+        }
+        /* Record conclusion time so the widget can auto-hide a few
+         * seconds after a pass/fail/cancel. */
+        if (wasRunning && gv->active != GAME_VOTE_ACTIVE_RUNNING) {
+            gv->concludedAtMs = SDL_GetTicks();
         }
         /* Newswire notifications on state transitions so players who
          * have the widget closed still see what happened. */

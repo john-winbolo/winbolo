@@ -201,6 +201,7 @@ struct ClientSim {
         uint8_t  secondsRemaining;
         uint16_t votes;             /* bitmask of slots that voted yes */
         bool     widgetVisible;     /* local UI state — X closes, menu reopens */
+        uint32_t concludedAtMs;     /* SDL_GetTicks() when active left RUNNING; 0 = still running / pre-start */
     } gameVotes[2];
 
     /* Team balance proposal from WBN */
