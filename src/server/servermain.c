@@ -1174,6 +1174,7 @@ int main(int argc, char **argv) {
 
   /* WinBolo.net host override — must run before serverInstanceStartup
    * so winbolonetCreateServer hits the override host. */
+  winbolonetCoreSetPreferencesPath("WinBolo.ini");
   {
     int argNum = findArg(argc, argv, "wbnhost");
     if (argNum != ARG_NOT_FOUND) {

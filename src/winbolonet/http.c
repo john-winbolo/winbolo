@@ -47,31 +47,36 @@ void randombytes(unsigned char *buf, unsigned long long len) {
   (void)buf; (void)len;
 }
 
-#ifdef _WIN32
-  #ifndef PREFERENCE_FILE
-    /* PREFERENCE_FILE may be predefined by the build (e.g. LogViewer) so we
-     * don't need to drag in the main game's gamefront.h. */
-    #include "../gui/gamefront.h"   /* PREFERENCE_FILE */
-  #endif
-#else
-  /* Provided by posix_stubs.c (server, map editor, log viewer, SDL3 client) */
-  void preferencesGetPreferenceFile(char *dest);
-  unsigned int GetPrivateProfileString(const char *section, const char *key,
-                                       const char *def, char *out,
-                                       unsigned int outSize,
-                                       const char *filePath);
-  int WritePrivateProfileString(const char *section, const char *key,
-                                const char *value, const char *filePath);
+/* Provided by posix_stubs.c (server, map editor, log viewer, SDL3 client) */
+#ifndef _WIN32
+void preferencesGetPreferenceFile(char *dest);
+unsigned int GetPrivateProfileString(const char *section, const char *key,
+                                     const char *def, char *out,
+                                     unsigned int outSize,
+                                     const char *filePath);
+int WritePrivateProfileString(const char *section, const char *key,
+                              const char *value, const char *filePath);
 #endif
 
 #include "global.h"
 #include "http.h"
+#include "winbolonet_core.h"
 
 static bool httpStarted = false;
 static char wbnHostString[FILENAME_MAX]; /* hostname only, no scheme */
 static char wbnBaseUrl[FILENAME_MAX];    /* full base URL, e.g. https://wbn.winbolo.net */
 static char altIpAddress[FILENAME_MAX];
 static char wbnHostOverride[FILENAME_MAX]; /* command-line override for WBN host */
+static char wbnPrefsPath[FILENAME_MAX];  /* Windows: preferences-file path set by main() */
+
+void winbolonetCoreSetPreferencesPath(const char *path) {
+  if (path == NULL) {
+    wbnPrefsPath[0] = '\0';
+    return;
+  }
+  strncpy(wbnPrefsPath, path, sizeof(wbnPrefsPath) - 1);
+  wbnPrefsPath[sizeof(wbnPrefsPath) - 1] = '\0';
+}
 
 /*********************************************************
 *NAME:          buildBaseUrl
@@ -210,7 +215,8 @@ bool httpCreate(void) {
   } else {
     /* Read from preferences file */
 #ifdef _WIN32
-    strcpy(prefs, PREFERENCE_FILE);
+    strncpy(prefs, wbnPrefsPath, sizeof(prefs) - 1);
+    prefs[sizeof(prefs) - 1] = '\0';
 #else
     preferencesGetPreferenceFile(prefs);
 #endif
