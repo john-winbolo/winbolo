@@ -1437,7 +1437,11 @@ static void renderChangeNameModal(ClientSim *cs) {
  *   - When the widget hides (X-close, auto-dismiss, vote concludes
  *     >5s ago) we clear active=false so the next appearance
  *     re-runs the positioning. */
-struct VoteWidgetLayout {
+/* Shared auto-positioning + sizing state for floating panels that
+ * pin themselves against the status-panel column. Used by the vote
+ * widgets AND the alliance-request modal — anything that wants to
+ * sit in the right-of-game column with the same anti-overlap rules. */
+struct AutoPanelLayout {
     bool  active;
     bool  sizeKnown;
     bool  positioned;
@@ -1446,11 +1450,13 @@ struct VoteWidgetLayout {
     float lastX;
     float lastY;
 };
-static VoteWidgetLayout s_voteLayout[2];
+static AutoPanelLayout s_voteLayout[2];
+static AutoPanelLayout s_allianceLayout;
 
-/* Vote-widget anchor in unscaled coords. The widget hugs the right
- * edge of the game viewport (x=321) and centres inside the
- * 321..437 status-panel column once its rendered size is known. */
+/* Source-pixel anchor band for the right-edge column. Status panel
+ * starts at x=321 (MAIN_OFFSET_X + MAIN_SCREEN_SIZE_X * TILE_SIZE_X)
+ * and ends at x=437. Used as the centering bounds before zoom +
+ * gameScale scaling. */
 static constexpr float VOTE_ANCHOR_X_LEFT  = 321.0f;
 static constexpr float VOTE_ANCHOR_X_RIGHT = 437.0f;
 static constexpr float VOTE_ANCHOR_Y_TOP   = 0.0f;
@@ -1467,139 +1473,84 @@ static bool rectsIntersect(float ax, float ay, float aw, float ah,
              ay + ah <= by || by + bh <= ay);
 }
 
-static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
-                                    const ClientGameVoteSnapshot *snap) {
-    int li = voteLayoutIndex(kind);
-    if (li < 0) return;
-    VoteWidgetLayout &lay = s_voteLayout[li];
-
-    auto resetLayout = [&]() {
-        lay.active = false;
-        lay.sizeKnown = false;
-        lay.positioned = false;
-    };
-
-    /* Only render while a vote is in-flight or recently concluded
-     * and the user hasn't dismissed. concludedAt fade-out is server-driven
-     * (active changes from RUNNING → PASSED/FAILED/CANCELLED). */
-    if (snap->active == GAME_VOTE_ACTIVE_NONE) { resetLayout(); return; }
-    if (!snap->widgetVisible) { resetLayout(); return; }
-
-    /* Auto-dismiss 5 seconds after the vote concludes (pass / fail /
-     * cancel) so the widget doesn't linger forever. Still-running
-     * votes are exempt. Back-to-lobby with the server's return-to-
-     * lobby countdown still active is also exempt — we want the
-     * widget visible through the full N → 1 countdown, even if that's
-     * longer than 5 s. */
-    if (snap->active != GAME_VOTE_ACTIVE_RUNNING && snap->concludedAtMs != 0) {
-        bool lobbyCountdownActive =
-            (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) &&
-            (clientSimGetReturnToLobbySecs(cs) > 0);
-        uint32_t age = SDL_GetTicks() - snap->concludedAtMs;
-        if (age >= 5000u && !lobbyCountdownActive) {
-            clientSimSetGameVoteWidgetVisible(cs, kind, false);
-            resetLayout();
-            return;
-        }
-    }
-
-    /* Compute the anchor band in actual on-screen pixels. The game
-     * is drawn into an off-screen render target at integer zoom
-     * (sdl3DrawGetZoomFactor) and then blitted into gGameDestRect at
-     * gGameScale, which can be non-integer when the window has been
-     * resized / maximized (effective zoom 3.x between integer steps).
-     *
-     *   on-screen X = destX + sourceX * zoomFactor * gameScale
-     *
-     * sourceX comes from VOTE_ANCHOR_X_* (unscaled game coords). */
+/* Compute the on-screen anchor band in actual pixels, accounting for
+ * integer-zoom render-target plus the non-integer blit scale used
+ * when the window is resized between integer zoom levels.
+ *
+ *   on-screen X = destX + sourceX * zoomFactor * gameScale
+ *
+ * sourceX comes from VOTE_ANCHOR_X_* (game-source coords). */
+static void autoPanelComputeAnchors(float *anchorXL, float *anchorXR,
+                                    float *anchorY) {
     int rawZoom = sdl3DrawGetZoomFactor();
     if (rawZoom < 1) rawZoom = 1;
     float destX = 0.0f, destY = 0.0f, gameScale = 1.0f;
     sdl3DrawGetGameRect(&destX, &destY, NULL, NULL, &gameScale);
     if (gameScale <= 0.0f) gameScale = 1.0f;
     float effZoom = (float)rawZoom * gameScale;
-    float anchorXL = destX + VOTE_ANCHOR_X_LEFT  * effZoom;
-    float anchorXR = destX + VOTE_ANCHOR_X_RIGHT * effZoom;
-    float anchorY  = destY + VOTE_ANCHOR_Y_TOP   * effZoom;
+    if (anchorXL) *anchorXL = destX + VOTE_ANCHOR_X_LEFT  * effZoom;
+    if (anchorXR) *anchorXR = destX + VOTE_ANCHOR_X_RIGHT * effZoom;
+    if (anchorY)  *anchorY  = destY + VOTE_ANCHOR_Y_TOP   * effZoom;
+}
+
+/* Pre-Begin step: set window position, size cap, and background
+ * alpha for an auto-positioned panel. siblings (optional) are other
+ * already-positioned panels we should stack underneath instead of
+ * overlapping. */
+static void autoPanelApply(AutoPanelLayout &lay,
+                            float anchorXL, float anchorXR, float anchorY,
+                            float guessW, float guessH,
+                            AutoPanelLayout *const *siblings,
+                            int numSiblings,
+                            float bgAlpha) {
     float anchorCenter = 0.5f * (anchorXL + anchorXR);
 
-    /* Stage 1: widget just became visible. We don't have the real
-     * window size yet (AlwaysAutoResize uses the previous frame's
-     * content, which is empty), so we pre-guess the size. The guess
-     * lets us centre on the first visible frame instead of parking
-     * at the left edge of the band and snapping over later. The
-     * guess only needs to be in the right ballpark — once we have
-     * the true size after Begin, stage 2 re-centres precisely. */
-    const float WIDGET_GUESS_W = 200.0f;
-    const float WIDGET_GUESS_H = 140.0f;
     if (!lay.active) {
+        /* Stage 1: first frame visible. Pre-guess the size to centre
+         * roughly; stage 2 re-centres precisely once Begin gives us
+         * the real content size. */
         lay.active = true;
         lay.sizeKnown = false;
         lay.positioned = false;
-        float guessX = anchorCenter - WIDGET_GUESS_W * 0.5f;
-        /* If a sibling is already positioned, stack under it. */
-        for (int j = 0; j < 2; j++) {
-            if (j == li) continue;
-            const VoteWidgetLayout &other = s_voteLayout[j];
-            if (!other.active || !other.positioned) continue;
-            if (rectsIntersect(guessX, anchorY, WIDGET_GUESS_W, WIDGET_GUESS_H,
-                               other.lastX, other.lastY,
-                               other.capturedW, other.capturedH)) {
-                guessX = other.lastX;
-                /* anchorY supplanted by stack below other */
+        float guessX = anchorCenter - guessW * 0.5f;
+        for (int j = 0; j < numSiblings; j++) {
+            const AutoPanelLayout *other = siblings[j];
+            if (!other || !other->active || !other->positioned) continue;
+            if (rectsIntersect(guessX, anchorY, guessW, guessH,
+                               other->lastX, other->lastY,
+                               other->capturedW, other->capturedH)) {
+                guessX = other->lastX;
             }
         }
-        /* Final clamp: the widget must never overlap the main game
-         * viewport. anchorXL is the on-screen left edge of the status
-         * panel column = right edge of the game viewport, so the
-         * widget's left edge must be >= anchorXL. At 1x zoom the
-         * status panel is too narrow for the auto-resized widget, so
-         * centring naturally pushes targetX into the game area —
-         * this clamp shoves it back to anchorXL. */
         if (guessX < anchorXL) guessX = anchorXL;
         ImGui::SetNextWindowPos(ImVec2(guessX, anchorY), ImGuiCond_Always);
-        /* Seed lastX so the width-cap block below knows where we are
-         * even before Begin updates the real position. */
         lay.lastX = guessX;
         lay.lastY = anchorY;
     } else if (lay.sizeKnown && !lay.positioned && lay.capturedW > 60.0f) {
-        /* Default target: centred horizontally in [321, 437] @ Y=0. */
+        /* Stage 2: we now have the real auto-sized width; recentre. */
         float targetX = anchorCenter - lay.capturedW * 0.5f;
         float targetY = anchorY;
-
-        /* If a previously-positioned sibling widget would overlap
-         * this target, stack directly under it instead. */
-        for (int j = 0; j < 2; j++) {
-            if (j == li) continue;
-            const VoteWidgetLayout &other = s_voteLayout[j];
-            if (!other.active || !other.positioned) continue;
+        for (int j = 0; j < numSiblings; j++) {
+            const AutoPanelLayout *other = siblings[j];
+            if (!other || !other->active || !other->positioned) continue;
             if (rectsIntersect(targetX, targetY, lay.capturedW, lay.capturedH,
-                               other.lastX, other.lastY,
-                               other.capturedW, other.capturedH)) {
-                targetX = other.lastX;
-                targetY = other.lastY + other.capturedH;
+                               other->lastX, other->lastY,
+                               other->capturedW, other->capturedH)) {
+                targetX = other->lastX;
+                targetY = other->lastY + other->capturedH;
             }
         }
-
-        /* Same anti-overlap clamp as stage 1 — see comment there. */
         if (targetX < anchorXL) targetX = anchorXL;
-
         ImGui::SetNextWindowPos(ImVec2(targetX, targetY), ImGuiCond_Always);
         lay.lastX = targetX;
         lay.lastY = targetY;
         lay.positioned = true;
     }
-    /* Once positioned=true we stop forcing position so the user can
-     * drag the window freely. lastX/lastY are refreshed below from
-     * the actual window rect so siblings can stack against the
-     * dragged position. */
+    /* Stage 3 (positioned): no SetNextWindowPos — user can drag. */
 
-    /* Width cap: the widget must not extend past the right edge of
-     * the WinBolo window. We cap the max width and let AutoResize
-     * grow the height instead, so content wraps downward. lay.lastX
-     * is the left edge: stages 1/2 seeded it above when they called
-     * SetNextWindowPos; stage 3 has it from the previous frame's
-     * GetWindowPos so user drags are honoured. */
+    /* Width cap: never extend past the WinBolo window's right edge.
+     * AutoResize still fits to content; when capped, the height grows
+     * downward instead. */
     {
         float windowRight = ImGui::GetIO().DisplaySize.x;
         float maxW = windowRight - lay.lastX;
@@ -1609,7 +1560,65 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
             ImVec2(maxW,  FLT_MAX));
     }
 
-    ImGui::SetNextWindowBgAlpha(0.55f);
+    ImGui::SetNextWindowBgAlpha(bgAlpha);
+}
+
+/* Post-Begin step: refresh captured size + on-screen position so
+ * stage 2 can centre using the real size and stage 3 can honor user
+ * drags. */
+static void autoPanelCapture(AutoPanelLayout &lay) {
+    ImVec2 wPos  = ImGui::GetWindowPos();
+    ImVec2 wSize = ImGui::GetWindowSize();
+    lay.capturedW = wSize.x;
+    lay.capturedH = wSize.y;
+    lay.sizeKnown = true;
+    if (lay.positioned) {
+        lay.lastX = wPos.x;
+        lay.lastY = wPos.y;
+    }
+}
+
+static void autoPanelReset(AutoPanelLayout &lay) {
+    lay.active = false;
+    lay.sizeKnown = false;
+    lay.positioned = false;
+}
+
+static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
+                                    const ClientGameVoteSnapshot *snap) {
+    int li = voteLayoutIndex(kind);
+    if (li < 0) return;
+    AutoPanelLayout &lay = s_voteLayout[li];
+
+    /* Only render while a vote is in-flight or recently concluded
+     * and the user hasn't dismissed. */
+    if (snap->active == GAME_VOTE_ACTIVE_NONE) { autoPanelReset(lay); return; }
+    if (!snap->widgetVisible)                  { autoPanelReset(lay); return; }
+
+    /* Auto-dismiss 5 seconds after the vote concludes (pass / fail /
+     * cancel). Back-to-lobby with the server's return-to-lobby
+     * countdown still active is exempt — keep the widget through the
+     * full N → 1 countdown. */
+    if (snap->active != GAME_VOTE_ACTIVE_RUNNING && snap->concludedAtMs != 0) {
+        bool lobbyCountdownActive =
+            (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) &&
+            (clientSimGetReturnToLobbySecs(cs) > 0);
+        uint32_t age = SDL_GetTicks() - snap->concludedAtMs;
+        if (age >= 5000u && !lobbyCountdownActive) {
+            clientSimSetGameVoteWidgetVisible(cs, kind, false);
+            autoPanelReset(lay);
+            return;
+        }
+    }
+
+    /* Apply the shared auto-panel layout (anti-overlap clamp + width
+     * cap + transparency). Siblings: the other vote widget (so they
+     * stack instead of overlapping each other). */
+    float anchorXL, anchorXR, anchorY;
+    autoPanelComputeAnchors(&anchorXL, &anchorXR, &anchorY);
+    AutoPanelLayout *siblings[1] = { &s_voteLayout[1 - li] };
+    autoPanelApply(lay, anchorXL, anchorXR, anchorY,
+                    200.0f, 140.0f, siblings, 1, 0.55f);
 
     /* Build the title — includes (Draw) tag for ranked manual
      * back-to-lobby votes. */
@@ -1628,54 +1637,11 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
                       ImGuiWindowFlags_NoCollapse |
                       ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::End();
-        if (!open) { clientSimSetGameVoteWidgetVisible(cs, kind, false); resetLayout(); }
+        if (!open) { clientSimSetGameVoteWidgetVisible(cs, kind, false); autoPanelReset(lay); }
         return;
     }
 
-    /* Refresh captured size + actual on-screen position so the next
-     * frame can centre / a sibling can stack underneath us. */
-    ImVec2 wPos  = ImGui::GetWindowPos();
-    ImVec2 wSize = ImGui::GetWindowSize();
-    lay.capturedW = wSize.x;
-    lay.capturedH = wSize.y;
-    lay.sizeKnown = true;
-    if (lay.positioned) {
-        /* User may have dragged — track current pos so siblings
-         * stack correctly against the dragged location. */
-        lay.lastX = wPos.x;
-        lay.lastY = wPos.y;
-    }
-
-    /* ──────────────────────────────────────────────────────────
-     * TEMPORARY — REMOVE BEFORE MERGING TO main
-     * Position logger: prints the widget's top-left whenever it
-     * shifts by more than a pixel. Avoids per-frame spam but still
-     * catches drags / re-positions.
-     * ────────────────────────────────────────────────────────── */
-    {
-        static ImVec2 s_lastLogged[2] = { {-9999, -9999}, {-9999, -9999} };
-        ImVec2 *prev = &s_lastLogged[li];
-        if (fabsf(wPos.x - prev->x) > 0.5f || fabsf(wPos.y - prev->y) > 0.5f) {
-            const char *kindName = (kind == GAME_VOTE_KIND_BACK_TO_LOBBY)
-                                   ? "back-to-lobby" : "surrender";
-            fprintf(stderr,
-                    "[VOTE-WIDGET-TEMP] %s pos=(%.1f, %.1f) size=(%.1f, %.1f) "
-                    "rawZoom=%d gameScale=%.3f effZoom=%.3f "
-                    "destX=%.1f band=[%.1f..%.1f]\n",
-                    kindName, wPos.x, wPos.y, wSize.x, wSize.y,
-                    rawZoom, gameScale, effZoom,
-                    destX, anchorXL, anchorXR);
-            fflush(stderr);
-            SDL_Log("[VOTE-WIDGET-TEMP] %s pos=(%.1f, %.1f) size=(%.1f, %.1f) "
-                    "rawZoom=%d gameScale=%.3f effZoom=%.3f "
-                    "destX=%.1f band=[%.1f..%.1f]",
-                    kindName, wPos.x, wPos.y, wSize.x, wSize.y,
-                    rawZoom, gameScale, effZoom,
-                    destX, anchorXL, anchorXR);
-            *prev = wPos;
-        }
-    }
-    /* END TEMPORARY */
+    autoPanelCapture(lay);
 
     /* Tally + circular progress.
      *
@@ -1800,7 +1766,7 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
     ImGui::End();
     if (!open) {
         clientSimSetGameVoteWidgetVisible(cs, kind, false);
-        resetLayout();
+        autoPanelReset(lay);
     }
 }
 
@@ -1827,37 +1793,42 @@ static void renderAllianceRequest(ClientSim *cs) {
         s_allianceVisible = true;
         s_showAllianceOpen = false;
     }
-    if (!s_allianceVisible) return;
+    if (!s_allianceVisible) { autoPanelReset(s_allianceLayout); return; }
 
-    /* Pin to the top of the status panel (right of the main game view).
-     * MAIN_OFFSET_X=81, MAIN_SCREEN_SIZE_X=15, TILE_SIZE_X=16  =>  321 px at zoom 1 */
-    float menuH      = ImGui::GetFrameHeight();
-    float statusLeft = (float)(zoomFactor * 321);
-    ImGui::SetNextWindowPos(ImVec2(statusLeft, menuH), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_Always);
+    /* Use the same auto-positioning + width cap + transparency as
+     * the vote widgets. Siblings: both vote widgets so the alliance
+     * request stacks below any active vote. */
+    float anchorXL, anchorXR, anchorY;
+    autoPanelComputeAnchors(&anchorXL, &anchorXR, &anchorY);
+    AutoPanelLayout *siblings[2] = { &s_voteLayout[0], &s_voteLayout[1] };
+    autoPanelApply(s_allianceLayout, anchorXL, anchorXR, anchorY,
+                    220.0f, 100.0f, siblings, 2, 0.55f);
+
     char title[128];
     snprintf(title, sizeof(title), "%s###alliancereq", langGetText(STR_DLGALLIANCE_TITLE));
     if (ImGui::Begin(title, &s_allianceVisible,
                      ImGuiWindowFlags_AlwaysAutoResize |
-                     ImGuiWindowFlags_NoMove |
-                     ImGuiWindowFlags_NoCollapse)) {
+                     ImGuiWindowFlags_NoCollapse |
+                     ImGuiWindowFlags_NoSavedSettings)) {
+        autoPanelCapture(s_allianceLayout);
         {
             MessageArgs args = {};
             strncpy(args.playerName, s_alliancePlayerName, sizeof(args.playerName) - 1);
             args.playerFlags = clientSimGetPlayerAccountFlags(cs, s_alliancePlayerNum);
             clientSimGetPlayerCountryCode(cs, s_alliancePlayerNum, args.playerCountry);
-            ImGui::TextUnformatted(langGetTextFmt(STR_DLGALLIANCE_BLURB, &args));
+            ImGui::TextWrapped("%s", langGetTextFmt(STR_DLGALLIANCE_BLURB, &args));
         }
         ImGui::Spacing();
-        if (ImGui::Button(langGetText(STR_DLGALLIANCE_ACCEPT), ImVec2(120, 0))) {
+        if (ImGui::Button(langGetText(STR_DLGALLIANCE_ACCEPT), ImVec2(80, 0))) {
             clientSimAllianceAccept(cs, s_alliancePlayerNum);
             s_allianceVisible = false;
         }
         ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(120, 0)))
+        if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(80, 0)))
             s_allianceVisible = false;
     }
     ImGui::End();
+    if (!s_allianceVisible) autoPanelReset(s_allianceLayout);
 }
 
 /* -------------------------------------------------------

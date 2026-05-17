@@ -3047,6 +3047,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     serverSimSetTeam(sim, target, teamNum);
                     logAddEvent(log_TeamSet, target, teamNum, 0, 0, 0, NULL);
                     transportUdpServerBroadcastLobbyUpdate(sim, target);
+                    transportUdpServerBroadcastLobbyAutoUnready(sim);
                 }
             }
             break;
@@ -3201,6 +3202,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                         transportUdpServerSetBotName(slot, botName);
                         transportUdpServerBroadcastLobbyUpdate(sim, slot);
                         transportUdpServerBroadcastLobbyBotBrainChg(sim, slot);
+                        transportUdpServerBroadcastLobbyAutoUnready(sim);
                     } else {
                         WB_LOG_INFO(WB_LOG_CAT_NET,
                                     "[LOBBY] ADD_BOT failed: botManagerAddBot(slot=%d) returned false",
