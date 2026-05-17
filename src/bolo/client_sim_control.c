@@ -21,9 +21,13 @@
  *  protocol housekeeping live in their respective callers.
  *********************************************************/
 
+#include <stdio.h>
 #include <string.h>
 #include "client_sim_control.h"
 #include "client_sim_internal.h"
+#include "client_sim.h"
+#include "messages.h"
+#include "netpacks.h"
 #include "players.h"
 
 void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
@@ -185,6 +189,57 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             cs->mapSkipVotes[i] = evt->u.mapSkipState.votes[i] ? true : false;
         }
         cs->mapSkipMyVote = cs->mapSkipVotes[cs->myPlayerNum];
+        break;
+    }
+
+    case CTRL_GAME_VOTE_STATE: {
+        uint8_t k = evt->u.gameVoteState.kind;
+        int idx = (k == GAME_VOTE_KIND_BACK_TO_LOBBY) ? 0
+                : (k == GAME_VOTE_KIND_SURRENDER)     ? 1 : -1;
+        if (idx < 0) break;
+        struct ClientGameVote *gv = &cs->gameVotes[idx];
+        uint8_t prevActive = gv->active;
+        bool wasRunning = (prevActive == GAME_VOTE_ACTIVE_RUNNING);
+        gv->kind             = evt->u.gameVoteState.kind;
+        gv->active           = evt->u.gameVoteState.active;
+        gv->triggerSrc       = evt->u.gameVoteState.triggerSrc;
+        gv->teamId           = evt->u.gameVoteState.teamId;
+        gv->threshold        = evt->u.gameVoteState.threshold;
+        gv->yesCount         = evt->u.gameVoteState.yesCount;
+        gv->secondsRemaining = evt->u.gameVoteState.secondsRemaining;
+        gv->votes            = evt->u.gameVoteState.votes;
+        /* Auto-pop the widget when a vote starts — players can X to hide. */
+        if (!wasRunning && gv->active == GAME_VOTE_ACTIVE_RUNNING) {
+            gv->widgetVisible = true;
+        }
+        /* Newswire notifications on state transitions so players who
+         * have the widget closed still see what happened. */
+        const char *kindLabel = (k == GAME_VOTE_KIND_BACK_TO_LOBBY)
+                                ? "Return-to-lobby vote" : "Surrender vote";
+        if (!wasRunning && gv->active == GAME_VOTE_ACTIVE_RUNNING) {
+            const char *trig =
+                (gv->triggerSrc == GAME_VOTE_TRIGGER_BASE_MONOPOLY)
+                    ? "started (one team controls every base)"
+                : (gv->triggerSrc == GAME_VOTE_TRIGGER_POST_SURRENDER)
+                    ? "started (following a surrender)"
+                : "started";
+            char body[128];
+            snprintf(body, sizeof(body), "%s %s.", kindLabel, trig);
+            clientMessageAdd(clientSimGetMessages(cs), newsWireMessage,
+                             (char *)"Vote", body);
+        } else if (wasRunning && gv->active != GAME_VOTE_ACTIVE_RUNNING) {
+            const char *outcome =
+                (gv->active == GAME_VOTE_ACTIVE_PASSED)    ? "passed"
+              : (gv->active == GAME_VOTE_ACTIVE_FAILED)    ? "failed"
+              : (gv->active == GAME_VOTE_ACTIVE_CANCELLED) ? "cancelled"
+              :                                              "ended";
+            char body[160];
+            snprintf(body, sizeof(body), "%s %s (%u / %u).",
+                     kindLabel, outcome,
+                     (unsigned)gv->yesCount, (unsigned)gv->threshold);
+            clientMessageAdd(clientSimGetMessages(cs), newsWireMessage,
+                             (char *)"Vote", body);
+        }
         break;
     }
 

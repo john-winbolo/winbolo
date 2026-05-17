@@ -3220,21 +3220,29 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
             "Accept new join requests right now while the lobby is open.");
     }
     bool autoLockLocked = (clientSimGetLobbyServerLocks(cs) & 0x10) != 0;
+    bool rankedForcesAutoLock = clientSimGetLobbyRanked(cs);
     bool duringGame = !clientSimGetLobbyAutoLockOnGameStart(cs);
-    if (autoLockLocked) ImGui::BeginDisabled();
+    if (rankedForcesAutoLock) duringGame = false;
+    bool autoLockDisabled = autoLockLocked || rankedForcesAutoLock;
+    if (autoLockDisabled) ImGui::BeginDisabled();
     ImGui::SameLine();
     if (ImGui::Checkbox("During game##allowDuring", &duringGame)) {
         uint8_t v = duringGame ? 0 : 1;  /* invert */
         lobbySendSetting(cs, 6 /*LST_AUTO_LOCK_ON_GAME*/, &v, 1);
     }
-    if (autoLockLocked) ImGui::EndDisabled();
+    if (autoLockDisabled) ImGui::EndDisabled();
     if (autoLockLocked) {
         ImGui::SameLine(0.0f, 4.0f * s);
         renderLockBadge();
     }
-    if (ImGui::IsItemHovered() && !autoLockLocked) {
-        ImGui::SetTooltip(
-            "Keep accepting new players after the game has started.");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        if (rankedForcesAutoLock) {
+            ImGui::SetTooltip(
+                "Ranked games lock new players out once the game starts.");
+        } else if (!autoLockLocked) {
+            ImGui::SetTooltip(
+                "Keep accepting new players after the game has started.");
+        }
     }
     if (!effectiveHost) ImGui::EndDisabled();
 
@@ -3248,20 +3256,57 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
      * via the existing auto-unready broadcast path. */
     {
         ImGui::SameLine(0.0f, 16.0f * s);
-        bool rankedV   = clientSimGetLobbyRanked(cs);
-        bool canToggle = effectiveHost;
+        bool rankedV = clientSimGetLobbyRanked(cs);
+
+        /* Eligibility: exactly two teams in the lobby and equal team
+         * sizes of 1, 2, or 3 connected humans (1v1, 2v2, 3v3). */
+        int teamSizes[17] = {0};
+        int teamsInUse = 0;
+        for (int i = 0; i < MAX_TANKS; i++) {
+            const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
+            if (!ls || !ls->connected || ls->isBot) continue;
+            uint8_t t = ls->teamNumber;
+            if (t == 0 || t > 16) continue;
+            if (teamSizes[t] == 0) teamsInUse++;
+            teamSizes[t]++;
+        }
+        int firstSize = 0, secondSize = 0;
+        for (int t = 1; t <= 16; t++) {
+            if (teamSizes[t] == 0) continue;
+            if (firstSize == 0) firstSize = teamSizes[t];
+            else                secondSize = teamSizes[t];
+        }
+        bool sizesEligible = (teamsInUse == 2) &&
+                             (firstSize == secondSize) &&
+                             (firstSize >= 1 && firstSize <= 3);
+        /* Always allow toggling OFF even if shape drifted while it was on. */
+        bool eligibleToToggle = sizesEligible || rankedV;
+
+        bool canToggle = effectiveHost && eligibleToToggle;
         if (!canToggle) ImGui::BeginDisabled();
         if (ImGui::Checkbox("Ranked game##ranked", &rankedV)) {
             uint8_t v = rankedV ? 1 : 0;
             lobbySendSetting(cs, 7 /*LST_RANKED*/, &v, 1);
         }
         if (!canToggle) ImGui::EndDisabled();
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip(
-                "Ranked games forbid bots and force the tournament\n"
-                "game type — no \"Open\" pre-armed mode. Toggling\n"
-                "this resets every player's ready state so the host\n"
-                "can confirm the new configuration.");
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            if (!effectiveHost) {
+                ImGui::SetTooltip(
+                    "Only the host or an admin can toggle Ranked game.");
+            } else if (!sizesEligible) {
+                ImGui::SetTooltip(
+                    "Ranked games require exactly two teams with equal\n"
+                    "sizes: 1v1, 2v2, or 3v3 connected players.\n"
+                    "(Currently %d %s, sizes %d vs %d.)",
+                    teamsInUse, teamsInUse == 1 ? "team" : "teams",
+                    firstSize, secondSize);
+            } else {
+                ImGui::SetTooltip(
+                    "Ranked games forbid bots and force the tournament\n"
+                    "game type — no \"Open\" pre-armed mode. Toggling\n"
+                    "this resets every player's ready state so the host\n"
+                    "can confirm the new configuration.");
+            }
         }
     }
 }

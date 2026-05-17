@@ -1321,6 +1321,25 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
+    case PACKET_GAME_VOTE_STATE:
+        /* [header 8] [kind 1] [active 1] [trigger 1] [teamId 1]
+         * [threshold 1] [yes 1] [secsRemaining 1] [votes 2 BE]. */
+        if (len >= PACKET_HEADER_SIZE + 9) {
+            ControlEvent evt;
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_GAME_VOTE_STATE;
+            evt.u.gameVoteState.kind             = buf[PACKET_HEADER_SIZE + 0];
+            evt.u.gameVoteState.active           = buf[PACKET_HEADER_SIZE + 1];
+            evt.u.gameVoteState.triggerSrc       = buf[PACKET_HEADER_SIZE + 2];
+            evt.u.gameVoteState.teamId           = buf[PACKET_HEADER_SIZE + 3];
+            evt.u.gameVoteState.threshold        = buf[PACKET_HEADER_SIZE + 4];
+            evt.u.gameVoteState.yesCount         = buf[PACKET_HEADER_SIZE + 5];
+            evt.u.gameVoteState.secondsRemaining = buf[PACKET_HEADER_SIZE + 6];
+            evt.u.gameVoteState.votes            = unpackU16(buf + PACKET_HEADER_SIZE + 7);
+            clientSimApplyControl(c->clientSim, &evt);
+        }
+        break;
+
     /* â”€â”€ Layout A lobby â€” server â†’ client broadcasts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
     case PACKET_LOBBY_SETTING_CHG:
         /* [header 8] [settingType 1] [valueLen 1] [value valueLen] */
@@ -2354,6 +2373,20 @@ void transportUdpClientSendMapSkipVote(Transport *t) {
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
     packHeader(buf, PACKET_MAP_SKIP_VOTE, c->outSequence++);
+    udpClientSendTo(c, buf, sizeof(buf));
+}
+
+void transportUdpClientSendGameVoteToggle(Transport *t,
+                                          uint8_t kind, uint8_t toggleMode) {
+    if (!t || t->kind != TRANSPORT_KIND_UDP_CLIENT) return;
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 2];
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    packHeader(buf, PACKET_GAME_VOTE_TOGGLE, c->outSequence++);
+    buf[PACKET_HEADER_SIZE + 0] = kind;
+    buf[PACKET_HEADER_SIZE + 1] = toggleMode;
     udpClientSendTo(c, buf, sizeof(buf));
 }
 

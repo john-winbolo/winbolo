@@ -2138,6 +2138,46 @@ void transportUdpServerBroadcastMapSkipState(ServerSim *sim) {
     }
 }
 
+/* In-game vote system. Wire: [header 8] [kind 1] [active 1] [trigger 1]
+ *   [teamId 1] [threshold 1] [yes 1] [secsRemaining 1] [votes 2 BE]. */
+void transportUdpServerBroadcastGameVoteState(ServerSim *sim, uint8_t kind) {
+    ServerGameVoteSnapshot snap;
+    if (!serverSimGetGameVoteSnapshot(sim, kind, &snap)) return;
+
+    uint8_t buf[PACKET_HEADER_SIZE + 9];
+    packHeader(buf, PACKET_GAME_VOTE_STATE, 0);
+    buf[PACKET_HEADER_SIZE + 0] = snap.kind;
+    buf[PACKET_HEADER_SIZE + 1] = snap.active;
+    buf[PACKET_HEADER_SIZE + 2] = snap.triggerSrc;
+    buf[PACKET_HEADER_SIZE + 3] = snap.teamId;
+    buf[PACKET_HEADER_SIZE + 4] = snap.threshold;
+    buf[PACKET_HEADER_SIZE + 5] = snap.yesCount;
+    buf[PACKET_HEADER_SIZE + 6] = snap.secondsRemaining;
+    packU16(buf + PACKET_HEADER_SIZE + 7, snap.votes);
+
+    int i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (udpServer.clients[i].connected) {
+            udpSendTo(udpServer.sock, buf, sizeof(buf),
+                      &udpServer.clients[i].addr);
+        }
+    }
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_GAME_VOTE_STATE;
+        evt.u.gameVoteState.kind             = snap.kind;
+        evt.u.gameVoteState.active           = snap.active;
+        evt.u.gameVoteState.triggerSrc       = snap.triggerSrc;
+        evt.u.gameVoteState.teamId           = snap.teamId;
+        evt.u.gameVoteState.threshold        = snap.threshold;
+        evt.u.gameVoteState.yesCount         = snap.yesCount;
+        evt.u.gameVoteState.secondsRemaining = snap.secondsRemaining;
+        evt.u.gameVoteState.votes            = snap.votes;
+        serverSimPublishControl(sim, &evt);
+    }
+}
+
 /* ── Layout A lobby — server broadcast helpers ─────────────────── */
 
 /* Internal broadcast helper used by the helpers below. */
@@ -2816,6 +2856,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         }
         case PACKET_ALLIANCE_REQUEST: {
             /* Wire: [header 8] [fromPlayer 1] [toPlayer 1] */
+            /* Ranked games disallow alliances entirely. */
+            if (serverSimGetRanked(sim)) break;
             int clientIdx = serverFindClient(fromAddr);
             fprintf(stderr, "[UDP SERVER] Alliance request: clientIdx=%d len=%d\n",
                     clientIdx, len);
@@ -3287,7 +3329,15 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                                            LOBBY_REJECT_INVALID); break; }
                     break;
                 case LST_AUTO_LOCK_ON_GAME:
-                    if (valueLen == 1) serverSimSetAutoLockOnGameStart(sim, value[0] != 0);
+                    if (valueLen == 1) {
+                        bool v = value[0] != 0;
+                        /* Ranked games keep autoLock forced ON. */
+                        if (serverSimGetRanked(sim) && !v) {
+                            lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                                          LOBBY_REJECT_INVALID); break;
+                        }
+                        serverSimSetAutoLockOnGameStart(sim, v);
+                    }
                     break;
                 case LST_RANKED:
                     if (valueLen == 1) {
@@ -3308,6 +3358,14 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                              * was set there. Default to Tournament. */
                             if (serverSimGetGameSim(sim)->game == gameOpen) {
                                 serverSimGetGameSim(sim)->game = gameTournament;
+                            }
+                            /* Force autoLockOnGameStart=true so new players
+                             * can't slip into a ranked game mid-round. */
+                            if (!serverSimGetAutoLockOnGameStart(sim)) {
+                                serverSimSetAutoLockOnGameStart(sim, true);
+                                uint8_t one = 1;
+                                transportUdpServerBroadcastLobbySettingChg(
+                                    sim, LST_AUTO_LOCK_ON_GAME, &one, 1);
                             }
                         }
                     }
@@ -4299,6 +4357,16 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 serverSimMapSkipVoteToggle(sim, (uint8_t)clientIdx);
                 transportUdpServerBroadcastMapSkipState(sim);
             }
+            break;
+        }
+        case PACKET_GAME_VOTE_TOGGLE: {
+            /* Wire: [header 8] [kind 1] [on 1]. */
+            if (len < PACKET_HEADER_SIZE + 2) break;
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0) break;
+            uint8_t kind   = buf[PACKET_HEADER_SIZE + 0];
+            uint8_t toggle = buf[PACKET_HEADER_SIZE + 1];
+            serverSimGameVoteToggle(sim, (uint8_t)clientIdx, kind, toggle);
             break;
         }
         case PACKET_PUNCH_NOTIFY: {

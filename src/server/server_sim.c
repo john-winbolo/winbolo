@@ -1295,6 +1295,11 @@ void serverSimTick(ServerSim *sim) {
     InputPacket currentInputs[MAX_TANKS];
     bool hasInput[MAX_TANKS];
 
+    /* In-game vote driver — runs in every state so timeouts, heartbeats,
+     * and the post-pass 3/2/1 countdown keep firing in SP, host, and
+     * dedicated builds alike (independent of transport tick). */
+    serverSimGameVoteTick(sim, (uint64_t)SDL_GetTicks());
+
     /* State machine gate — only run simulation in running state */
     switch (sim->state) {
     case serverStateLobby:
@@ -2870,6 +2875,10 @@ void serverSimReturnToLobby(ServerSim *sim) {
         return;
     }
 
+    /* Clear in-game vote state — any in-flight or just-concluded votes
+     * are scoped to the round we're leaving. */
+    serverSimGameVoteResetAll(sim);
+
     /* Save connection and lobby state before reset */
     for (i = 0; i < MAX_TANKS; i++) {
         savedConnected[i] = sim->playerConnected[i];
@@ -3109,6 +3118,9 @@ void serverSimStartGame(ServerSim *sim) {
     }
 
     activeSim = sim;
+
+    /* Fresh round — drop any vote state from the previous game. */
+    serverSimGameVoteResetAll(sim);
 
     /* Reset the game world (map, world systems, queues, tick) */
     serverSimResetGameWorld(sim);
@@ -3568,6 +3580,370 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
 
 void serverSimMapSkipVotesReset(ServerSim *sim) {
     memset(sim->mapSkipVotes, 0, sizeof(sim->mapSkipVotes));
+}
+
+/* ----------------------------------------------------------------------
+ * In-game vote system (back-to-lobby + surrender). See docs/voting_plan.md.
+ *
+ * The state machine lives entirely on the server; clients are mirror-only.
+ * Wire format: PACKET_GAME_VOTE_TOGGLE in, PACKET_GAME_VOTE_STATE out.
+ *
+ * NOTE: this is the data-model + helper layer. Wire serialisation lives
+ * in transport_udp_server.c (broadcastGameVoteState). Tick wiring lives
+ * in the transport tick path.
+ * ---------------------------------------------------------------------- */
+
+/* Forward declared in this TU only — implemented in transport_udp_server.c. */
+extern void transportUdpServerBroadcastGameVoteState(ServerSim *sim, uint8_t kind);
+
+static struct ServerGameVote *gameVoteSlot(ServerSim *sim, uint8_t kind) {
+    if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) return &sim->gameVotes[0];
+    if (kind == GAME_VOTE_KIND_SURRENDER)     return &sim->gameVotes[1];
+    return NULL;
+}
+
+static const struct ServerGameVote *gameVoteSlotConst(const ServerSim *sim, uint8_t kind) {
+    if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) return &sim->gameVotes[0];
+    if (kind == GAME_VOTE_KIND_SURRENDER)     return &sim->gameVotes[1];
+    return NULL;
+}
+
+/* Returns the bitmask of slots eligible to vote on this kind. For
+ * back-to-lobby that's every connected human; for surrender it's the
+ * connected humans on `teamId`. */
+static uint16_t gameVoteEligibleMask(const ServerSim *sim,
+                                     uint8_t kind, uint8_t teamId) {
+    uint16_t mask = 0;
+    BYTE i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        if (sim->lobbyPlayers[i].isBot) continue;
+        if (kind == GAME_VOTE_KIND_SURRENDER &&
+            sim->lobbyPlayers[i].teamNumber != teamId) continue;
+        mask |= (uint16_t)(1u << i);
+    }
+    return mask;
+}
+
+static uint8_t popcount16(uint16_t v) {
+    uint8_t n = 0;
+    while (v) { n += (uint8_t)(v & 1u); v >>= 1; }
+    return n;
+}
+
+uint8_t serverSimCountActiveTeams(const ServerSim *sim) {
+    bool seen[MAX_TANKS] = {0};
+    uint8_t count = 0;
+    BYTE i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i] || sim->lobbyPlayers[i].isBot) continue;
+        uint8_t t = sim->lobbyPlayers[i].teamNumber;
+        if (t == 0 || t >= MAX_TANKS) continue;
+        if (!seen[t]) { seen[t] = true; count++; }
+    }
+    return count;
+}
+
+bool serverSimGameVoteIsRunning(const ServerSim *sim, uint8_t kind) {
+    const struct ServerGameVote *gv = gameVoteSlotConst(sim, kind);
+    return gv && gv->active == GAME_VOTE_ACTIVE_RUNNING;
+}
+
+bool serverSimConsumeSuppressNextWinMessage(ServerSim *sim) {
+    if (!sim) return false;
+    bool v = sim->suppressNextWinMessage;
+    sim->suppressNextWinMessage = false;
+    return v;
+}
+
+void serverSimSetSuppressNextWinMessage(ServerSim *sim, bool v) {
+    if (sim) sim->suppressNextWinMessage = v;
+}
+
+bool serverSimGetGameVoteSnapshot(const ServerSim *sim, uint8_t kind,
+                                  ServerGameVoteSnapshot *out) {
+    const struct ServerGameVote *gv = gameVoteSlotConst(sim, kind);
+    if (!gv || !out) return false;
+    memset(out, 0, sizeof(*out));
+    out->kind       = gv->kind;
+    out->active     = gv->active;
+    out->triggerSrc = gv->triggerSrc;
+    out->teamId     = gv->teamId;
+    out->threshold  = popcount16(gameVoteEligibleMask(sim, gv->kind, gv->teamId));
+    out->yesCount   = popcount16(gv->votesMask);
+    out->votes      = gv->votesMask;
+    if (gv->active == GAME_VOTE_ACTIVE_RUNNING) {
+        uint64_t now = sim->gameVoteWallMs;
+        uint64_t rem = (gv->deadlineMs > now) ? (gv->deadlineMs - now) : 0;
+        uint32_t secs = (uint32_t)((rem + 999) / 1000);
+        if (secs > 0xFFu) secs = 0xFFu;
+        out->secondsRemaining = (uint8_t)secs;
+    }
+    return true;
+}
+
+void serverSimGameVoteResetAll(ServerSim *sim) {
+    memset(sim->gameVotes, 0, sizeof(sim->gameVotes));
+    sim->gameVotes[0].kind = GAME_VOTE_KIND_BACK_TO_LOBBY;
+    sim->gameVotes[1].kind = GAME_VOTE_KIND_SURRENDER;
+    sim->baseMonopolyTriggeredThisRound = false;
+}
+
+static void gameVoteStart(ServerSim *sim, uint8_t kind, uint8_t triggerSrc,
+                          uint8_t teamId, uint64_t nowMs) {
+    struct ServerGameVote *gv = gameVoteSlot(sim, kind);
+    if (!gv) return;
+    memset(gv, 0, sizeof(*gv));
+    gv->kind        = kind;
+    gv->active      = GAME_VOTE_ACTIVE_RUNNING;
+    gv->triggerSrc  = triggerSrc;
+    gv->teamId      = teamId;
+    gv->startMs     = nowMs;
+    gv->deadlineMs  = nowMs + (uint64_t)GAME_VOTE_DEADLINE_SECONDS * 1000ULL;
+    gv->lastHeartbeatMs = nowMs;
+}
+
+static void gameVoteConclude(ServerSim *sim, struct ServerGameVote *gv,
+                             uint8_t finalState, uint64_t nowMs) {
+    gv->active = finalState;
+    gv->concludedAtMs = nowMs;
+    transportUdpServerBroadcastGameVoteState(sim, gv->kind);
+}
+
+/* Resolve threshold (== eligible voters; unanimous). Returns 0 if no one is eligible. */
+static uint8_t gameVoteThreshold(const ServerSim *sim, const struct ServerGameVote *gv) {
+    return popcount16(gameVoteEligibleMask(sim, gv->kind, gv->teamId));
+}
+
+/* Drop bits from votes/answered for slots that disappeared. */
+static void gameVotePruneVotes(const ServerSim *sim, struct ServerGameVote *gv) {
+    uint16_t elig = gameVoteEligibleMask(sim, gv->kind, gv->teamId);
+    gv->votesMask    &= elig;
+    gv->answeredMask &= elig;
+}
+
+void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
+                             uint8_t kind, uint8_t toggleMode) {
+    if (playerNum >= MAX_TANKS) return;
+    if (!sim->playerConnected[playerNum]) return;
+    if (sim->lobbyPlayers[playerNum].isBot) return;
+    struct ServerGameVote *gv = gameVoteSlot(sim, kind);
+    if (!gv) return;
+
+    /* Only allow during running game. */
+    if (sim->state != serverStateRunning) return;
+
+    /* Surrender precondition: exactly two teams in play. */
+    if (kind == GAME_VOTE_KIND_SURRENDER &&
+        serverSimCountActiveTeams(sim) != 2) {
+        return;
+    }
+
+    uint64_t nowMs = sim->gameVoteWallMs;
+    uint8_t teamId = (kind == GAME_VOTE_KIND_SURRENDER)
+                     ? sim->lobbyPlayers[playerNum].teamNumber
+                     : 0;
+
+    /* Open-only re-press: if a vote is running, just rebroadcast (so the
+     * client can pop the widget back up); if no vote is running, start one
+     * as if the caller voted yes. */
+    if (toggleMode == GAME_VOTE_TOGGLE_OPEN_ONLY) {
+        if (gv->active == GAME_VOTE_ACTIVE_RUNNING) {
+            transportUdpServerBroadcastGameVoteState(sim, kind);
+            return;
+        }
+        gameVoteStart(sim, kind, GAME_VOTE_TRIGGER_MANUAL, teamId, nowMs);
+        gv->votesMask    |= (uint16_t)(1u << playerNum);
+        gv->answeredMask |= (uint16_t)(1u << playerNum);
+        transportUdpServerBroadcastGameVoteState(sim, kind);
+        return;
+    }
+
+    if (gv->active != GAME_VOTE_ACTIVE_RUNNING) {
+        /* First voter starts the vote. */
+        gameVoteStart(sim, kind, GAME_VOTE_TRIGGER_MANUAL, teamId, nowMs);
+    } else if (kind == GAME_VOTE_KIND_SURRENDER &&
+               gv->teamId != sim->lobbyPlayers[playerNum].teamNumber) {
+        /* Different-team player can't vote on a team's surrender. */
+        return;
+    }
+
+    gv->answeredMask |= (uint16_t)(1u << playerNum);
+    if (toggleMode == GAME_VOTE_TOGGLE_YES) {
+        gv->votesMask |= (uint16_t)(1u << playerNum);
+    } else {
+        gv->votesMask &= (uint16_t)~(1u << playerNum);
+    }
+
+    gameVotePruneVotes(sim, gv);
+
+    uint8_t thr = gameVoteThreshold(sim, gv);
+    uint8_t yes = popcount16(gv->votesMask);
+
+    transportUdpServerBroadcastGameVoteState(sim, kind);
+
+    /* Unanimous pass — every eligible voter voted yes. */
+    if (thr > 0 && yes >= thr) {
+        gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_PASSED, nowMs);
+
+        if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) {
+            gv->countdownStarted = true;
+            gv->countdownStep    = 3;
+            gv->countdownNextMs  = nowMs + 1000ULL;
+        } else if (kind == GAME_VOTE_KIND_SURRENDER) {
+            char buf[160];
+            const char *tname = sim->teams[gv->teamId].name[0]
+                                ? sim->teams[gv->teamId].name : "?";
+            snprintf(buf, sizeof(buf),
+                     "*** Team %s has surrendered. ***", tname);
+            transportUdpServerSendServerMessage(buf);
+
+            /* Auto-start a back-to-lobby vote unless one is already running. */
+            struct ServerGameVote *btl = gameVoteSlot(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
+            if (btl && btl->active != GAME_VOTE_ACTIVE_RUNNING) {
+                gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
+                              GAME_VOTE_TRIGGER_POST_SURRENDER, 0, nowMs);
+                transportUdpServerBroadcastGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
+            }
+        }
+    }
+}
+
+/* Detect "one team owns every base" and auto-start a back-to-lobby vote. */
+static void gameVoteCheckBaseMonopoly(ServerSim *sim, uint64_t nowMs) {
+    if (sim->state != serverStateRunning) return;
+    if (sim->baseMonopolyTriggeredThisRound) return;
+
+    /* Count bases per team-via-owner-player. */
+    int nBases = basesGetNumBases(&sim->sim.bs);
+    if (nBases <= 0) return;
+
+    uint8_t teamCount[MAX_TANKS] = {0};
+    uint8_t neutral = 0;
+    int i;
+    for (i = 0; i < nBases; i++) {
+        BYTE owner = basesGetBaseOwner(&sim->sim.bs, (BYTE)(i + 1));
+        if (owner >= MAX_TANKS) { neutral++; continue; }
+        if (!sim->playerConnected[owner]) { neutral++; continue; }
+        uint8_t t = sim->lobbyPlayers[owner].teamNumber;
+        if (t == 0 || t >= MAX_TANKS) { neutral++; continue; }
+        teamCount[t]++;
+    }
+    if (neutral > 0) return;
+
+    int teamsWithBases = 0;
+    uint8_t monoTeam = 0;
+    int t;
+    for (t = 1; t < MAX_TANKS; t++) {
+        if (teamCount[t] > 0) { teamsWithBases++; monoTeam = (uint8_t)t; }
+    }
+    if (teamsWithBases != 1) return;
+
+    /* Require >1 active team in play to make "monopoly" meaningful. */
+    if (serverSimCountActiveTeams(sim) < 2) return;
+
+    struct ServerGameVote *gv = gameVoteSlot(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
+    if (!gv) return;
+    if (gv->active == GAME_VOTE_ACTIVE_RUNNING) return;
+
+    char buf[128];
+    const char *tname = sim->teams[monoTeam].name[0]
+                        ? sim->teams[monoTeam].name : "?";
+    snprintf(buf, sizeof(buf),
+             "Team %s controls every base. Returning to lobby on unanimous vote.",
+             tname);
+    transportUdpServerSendServerMessage(buf);
+
+    gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
+                  GAME_VOTE_TRIGGER_BASE_MONOPOLY, monoTeam, nowMs);
+    /* Pre-cast YES for every eligible voter. */
+    gv->votesMask    = gameVoteEligibleMask(sim, GAME_VOTE_KIND_BACK_TO_LOBBY, 0);
+    gv->answeredMask = gv->votesMask;
+    transportUdpServerBroadcastGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
+
+    sim->baseMonopolyTriggeredThisRound = true;
+}
+
+void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
+    sim->gameVoteWallMs = nowMs;
+
+    /* Auto-trigger checks before per-slot servicing. */
+    gameVoteCheckBaseMonopoly(sim, nowMs);
+
+    int k;
+    for (k = 0; k < 2; k++) {
+        struct ServerGameVote *gv = &sim->gameVotes[k];
+
+        if (gv->active == GAME_VOTE_ACTIVE_RUNNING) {
+            /* Prune in case a voter disconnected. */
+            gameVotePruneVotes(sim, gv);
+
+            /* 60s timeout. */
+            if (nowMs >= gv->deadlineMs) {
+                gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_FAILED, nowMs);
+                continue;
+            }
+
+            /* Surrender invalidation: team count must remain == 2. */
+            if (gv->kind == GAME_VOTE_KIND_SURRENDER &&
+                serverSimCountActiveTeams(sim) != 2) {
+                transportUdpServerSendServerMessage("Surrender vote cancelled — team count changed.");
+                gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_CANCELLED, nowMs);
+                continue;
+            }
+
+            /* If the surrendering team or the voter pool has emptied
+             * entirely (everyone disconnected), the vote is moot. */
+            if (popcount16(gameVoteEligibleMask(sim, gv->kind, gv->teamId)) == 0) {
+                if (gv->kind == GAME_VOTE_KIND_SURRENDER) {
+                    transportUdpServerSendServerMessage(
+                        "Surrender vote cancelled — surrendering team is empty.");
+                }
+                gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_CANCELLED, nowMs);
+                continue;
+            }
+
+            /* 1Hz heartbeat broadcast (drives client countdown display). */
+            if (nowMs - gv->lastHeartbeatMs >= 1000ULL) {
+                gv->lastHeartbeatMs = nowMs;
+                transportUdpServerBroadcastGameVoteState(sim, gv->kind);
+            }
+
+            /* Re-check pass under the live eligible-mask. */
+            uint8_t thr = gameVoteThreshold(sim, gv);
+            uint8_t yes = popcount16(gv->votesMask);
+            if (thr > 0 && yes >= thr) {
+                gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_PASSED, nowMs);
+                if (gv->kind == GAME_VOTE_KIND_BACK_TO_LOBBY) {
+                    gv->countdownStarted = true;
+                    gv->countdownStep    = 3;
+                    gv->countdownNextMs  = nowMs + 1000ULL;
+                }
+            }
+        }
+
+        /* Post-pass countdown for back-to-lobby. Prints
+         * "Returning to lobby in 3", "...2", "...1" then waits one
+         * more second before firing the actual transition (so the
+         * user gets a beat between "1" and the lobby return). */
+        if (gv->kind == GAME_VOTE_KIND_BACK_TO_LOBBY &&
+            gv->countdownStarted && nowMs >= gv->countdownNextMs) {
+            if (gv->countdownStep > 0) {
+                char buf[64];
+                snprintf(buf, sizeof(buf),
+                         "Returning to lobby in %u",
+                         (unsigned)gv->countdownStep);
+                transportUdpServerSendServerMessage(buf);
+                gv->countdownStep--;
+                gv->countdownNextMs = nowMs + 1000ULL;
+            } else {
+                /* step == 0: extra second elapsed past the "1" — fire. */
+                gv->countdownStarted = false;
+                serverSimSetSuppressNextWinMessage(sim, true);
+                serverSimEnterGameOver(sim);
+            }
+        }
+    }
 }
 
 void serverSimMapDirDestroy(ServerSim *sim) {

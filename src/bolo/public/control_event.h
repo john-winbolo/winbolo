@@ -58,7 +58,8 @@ typedef enum {
     CTRL_LOBBY_TEAM_META,
     CTRL_LOBBY_BOT_CONFIG,
     CTRL_LOBBY_BOT_BRAIN,
-    CTRL_LOBBY_BRAIN_LIST
+    CTRL_LOBBY_BRAIN_LIST,
+    CTRL_GAME_VOTE_STATE
 } ControlEventType;
 
 typedef enum {
@@ -201,6 +202,18 @@ typedef struct ControlEvent {
         struct {
             BrainList list;
         } lobbyBrainList;
+
+        /* CTRL_GAME_VOTE_STATE — mirrors PACKET_GAME_VOTE_STATE. */
+        struct {
+            uint8_t  kind;             /* GAME_VOTE_KIND_* */
+            uint8_t  active;           /* GAME_VOTE_ACTIVE_* */
+            uint8_t  triggerSrc;       /* GAME_VOTE_TRIGGER_* */
+            uint8_t  teamId;           /* surrender only; 0 = all-teams */
+            uint8_t  threshold;
+            uint8_t  yesCount;
+            uint8_t  secondsRemaining; /* 0..60 */
+            uint16_t votes;            /* bitmask of slots that voted yes */
+        } gameVoteState;
     } u;
 } ControlEvent;
 

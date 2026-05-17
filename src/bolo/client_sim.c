@@ -1046,6 +1046,46 @@ bool clientSimIsMapSkipVote(const ClientSim *cs, BYTE n) {
   return cs->mapSkipVotes[n];
 }
 
+static int clientGameVoteIdx(uint8_t kind) {
+  if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) return 0;
+  if (kind == GAME_VOTE_KIND_SURRENDER)     return 1;
+  return -1;
+}
+
+bool clientSimGetGameVote(const ClientSim *cs, uint8_t kind,
+                          ClientGameVoteSnapshot *out) {
+  if (!cs || !out) return false;
+  int idx = clientGameVoteIdx(kind);
+  if (idx < 0) return false;
+  const struct ClientGameVote *gv = &cs->gameVotes[idx];
+  out->kind             = gv->kind ? gv->kind : kind;
+  out->active           = gv->active;
+  out->triggerSrc       = gv->triggerSrc;
+  out->teamId           = gv->teamId;
+  out->threshold        = gv->threshold;
+  out->yesCount         = gv->yesCount;
+  out->secondsRemaining = gv->secondsRemaining;
+  out->votes            = gv->votes;
+  out->widgetVisible    = gv->widgetVisible;
+  return true;
+}
+
+void clientSimSetGameVoteWidgetVisible(ClientSim *cs, uint8_t kind, bool visible) {
+  if (!cs) return;
+  int idx = clientGameVoteIdx(kind);
+  if (idx < 0) return;
+  cs->gameVotes[idx].widgetVisible = visible;
+}
+
+bool clientSimGameVoteMyVote(const ClientSim *cs, uint8_t kind) {
+  if (!cs) return false;
+  int idx = clientGameVoteIdx(kind);
+  if (idx < 0) return false;
+  BYTE me = cs->myPlayerNum;
+  if (me >= 16) return false;
+  return (cs->gameVotes[idx].votes & (uint16_t)(1u << me)) != 0;
+}
+
 uint8_t clientSimGetBalanceProposal(const ClientSim *cs, BYTE n) {
   if (n >= 16) return 0;
   return cs->balanceProposal[n];

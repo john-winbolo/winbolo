@@ -478,6 +478,57 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                               never echoed to other
                                               clients. */
 
+/* In-game vote system (back-to-lobby + surrender). See docs/voting_plan.md.
+ * Vote-kind values match GAME_VOTE_KIND_*. */
+#define PACKET_GAME_VOTE_TOGGLE        194  /* client → server
+                                              { kind 1, on 1 }
+                                              on: 0=no, 1=yes,
+                                                  2=open-widget-only
+                                              (open-only is used when
+                                              re-pressing the menu
+                                              while a vote is already
+                                              running — leaves the
+                                              caller's existing vote
+                                              alone). For surrender,
+                                              the server infers the
+                                              voter's team from their
+                                              own slot. */
+#define PACKET_GAME_VOTE_STATE         195  /* server → all clients
+                                              { kind 1, active 1,
+                                                triggerSrc 1, teamId 1,
+                                                threshold 1, yesCount 1,
+                                                secondsRemaining 1,
+                                                votes 2 (uint16 BE
+                                                bitmask of slot
+                                                votes) }
+                                              broadcast on every
+                                              state change AND once
+                                              per second while a vote
+                                              is running (drives the
+                                              countdown). */
+
+#ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
+#define GAME_VOTE_KIND_BACK_TO_LOBBY  1
+#define GAME_VOTE_KIND_SURRENDER      2
+
+#define GAME_VOTE_TOGGLE_NO          0
+#define GAME_VOTE_TOGGLE_YES         1
+#define GAME_VOTE_TOGGLE_OPEN_ONLY   2
+
+#define GAME_VOTE_ACTIVE_NONE        0
+#define GAME_VOTE_ACTIVE_RUNNING     1
+#define GAME_VOTE_ACTIVE_PASSED      2
+#define GAME_VOTE_ACTIVE_FAILED      3
+#define GAME_VOTE_ACTIVE_CANCELLED   4
+
+#define GAME_VOTE_TRIGGER_MANUAL          0
+#define GAME_VOTE_TRIGGER_BASE_MONOPOLY   1
+#define GAME_VOTE_TRIGGER_POST_SURRENDER  2
+#endif
+
+/* Vote timeout in seconds */
+#define GAME_VOTE_DEADLINE_SECONDS  60
+
 /* Setting types used inside SET_SETTING / SETTING_CHG payloads.
  * Forward-compat: receivers must skip unknown types via valueLen. */
 #define LST_GAME_TYPE          1   /* 1 byte enum: open|tournament|strict */

@@ -189,6 +189,20 @@ struct ClientSim {
     bool             mapSkipVotes[16];  /* Mirror of server vote state */
     bool             mapSkipMyVote;     /* Local tracking of own vote */
 
+    /* In-game vote mirror (back-to-lobby + surrender). Indexed by
+     * (kind - 1). See netpacks.h GAME_VOTE_KIND_*. */
+    struct ClientGameVote {
+        uint8_t  kind;
+        uint8_t  active;            /* GAME_VOTE_ACTIVE_* */
+        uint8_t  triggerSrc;        /* GAME_VOTE_TRIGGER_* */
+        uint8_t  teamId;
+        uint8_t  threshold;
+        uint8_t  yesCount;
+        uint8_t  secondsRemaining;
+        uint16_t votes;             /* bitmask of slots that voted yes */
+        bool     widgetVisible;     /* local UI state — X closes, menu reopens */
+    } gameVotes[2];
+
     /* Team balance proposal from WBN */
     uint8_t  balanceProposal[16];      /* Proposed team per slot (0 = none) */
     bool     balanceProposalActive;    /* TRUE if a proposal is being displayed */

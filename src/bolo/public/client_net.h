@@ -150,6 +150,11 @@ void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost);
  * itself is never echoed to other clients. */
 void clientSimNetSendLobbySetPassword(ClientSim *cs, const char *pw);
 void clientSimNetSendMapSkipVote(ClientSim *cs);
+
+/* In-game vote toggle. kind = GAME_VOTE_KIND_BACK_TO_LOBBY or
+ * GAME_VOTE_KIND_SURRENDER; toggleMode = GAME_VOTE_TOGGLE_NO/YES/OPEN_ONLY. */
+void clientSimNetSendGameVoteToggle(ClientSim *cs,
+                                    uint8_t kind, uint8_t toggleMode);
 void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize);
 void clientSimNetSendBalanceApply(ClientSim *cs);
 void clientSimNetSendBalanceDismiss(ClientSim *cs);
