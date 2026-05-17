@@ -780,7 +780,15 @@ static void serverSimLogTick(ServerSim *sim) {
     logWriteTick();
 }
 
-void serverSimTick(ServerSim *sim) {
+/* One half-step of the sim: dequeues one input per player and runs
+ * world systems on game ticks (sim->tick % 2 == 0).  Two consecutive
+ * half-steps form one 20ms frame and match the client's 100Hz keys/
+ * game alternation.  Event buffers (sim->events, sim->mapEvents) are
+ * NOT cleared here — that happens once at the top of serverSimTick so
+ * events from both half-steps accumulate naturally into one frame's
+ * worth of state for downstream consumers (UDP drain, in-process
+ * snapshot poll). */
+static void simRunHalfStep(ServerSim *sim) {
     BYTE count;
     bool isKeysTick;
     BYTE numTanks;
@@ -812,10 +820,6 @@ void serverSimTick(ServerSim *sim) {
     case serverStateRunning:
         break; /* Fall through to existing simulation code */
     }
-
-    /* Clear event buffers for this tick */
-    sim->eventCount = 0;
-    sim->mapEventCount = 0;
 
     playersRejoinUpdate();
 
@@ -1240,6 +1244,26 @@ void serverSimTick(ServerSim *sim) {
         serverSimLogTick(sim);
     }
     sim->tick++;
+}
+
+/* Advance the sim by one 20ms frame.  In the running state this runs
+ * two half-steps (the keys/game alternation that matches the client's
+ * 100Hz input rate), with event buffers cleared once at the top so
+ * events from both half-steps land in the same frame's worth of state
+ * for downstream consumers.  In non-running states (lobby / countdown
+ * / gameover) only one half-step runs, preserving the legacy state-
+ * machine cadence — countdown durations, lobby refresh intervals, and
+ * gameover return-to-lobby timing all stay calibrated against the
+ * one-half-step-per-frame rate they were tuned for. */
+void serverSimTick(ServerSim *sim) {
+    if (sim->state == serverStateRunning) {
+        sim->eventCount = 0;
+        sim->mapEventCount = 0;
+        simRunHalfStep(sim);
+        simRunHalfStep(sim);
+    } else {
+        simRunHalfStep(sim);
+    }
 }
 
 void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
@@ -1724,28 +1748,6 @@ void serverSimInstallMapDirList(ServerSim *sim,
                                 char **files, int count) {
     sim->mapDirFiles = files;
     sim->mapDirCount = count;
-}
-
-void serverSimPrependEvents(ServerSim *sim,
-                            const GameEvent *events,
-                            uint8_t count) {
-    if (count == 0) return;
-    if ((uint16_t)count + sim->eventCount > MAX_SNAPSHOT_EVENTS) return;
-    memmove(sim->events + count, sim->events,
-            sim->eventCount * sizeof(GameEvent));
-    memcpy(sim->events, events, count * sizeof(GameEvent));
-    sim->eventCount += count;
-}
-
-void serverSimPrependMapEvents(ServerSim *sim,
-                               const GameEvent *events,
-                               uint16_t count) {
-    if (count == 0) return;
-    if ((uint32_t)count + sim->mapEventCount > MAX_MAP_EVENTS) return;
-    memmove(sim->mapEvents + count, sim->mapEvents,
-            sim->mapEventCount * sizeof(GameEvent));
-    memcpy(sim->mapEvents, events, count * sizeof(GameEvent));
-    sim->mapEventCount += count;
 }
 
 void serverSimSetAutoCloseOnEmpty(ServerSim *sim, bool enabled) {

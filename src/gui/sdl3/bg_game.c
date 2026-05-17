@@ -270,26 +270,10 @@ void bgGameDestroy(BgGame *bg) {
 void bgGameTick(BgGame *bg) {
     if (!bg || !bg->valid || bg->numBots == 0) return;
 
-    /* Real-game cadence: bot brains run at 50 Hz (game-ticks only), but
-     * the inner sim ticks at 100 Hz (keys-tick + game-tick alternation in
-     * winbolo.c). One serverSimBotTick produces input packets for both,
-     * so call serverSimTick twice to advance the sim at the right rate.
-     * Events from the first tick would be wiped by the second; preserve
-     * them so bots see both ticks' events on their next snapshot. */
+    /* One bot pass per 20ms frame produces input for both halves of the
+     * frame; serverSimTick internally runs the keys + game half-steps. */
     serverSimBotTick(bg->sim, aiFull);
     serverSimTick(bg->sim);
-    {
-        GameEvent savedEvents[MAX_SNAPSHOT_EVENTS];
-        uint8_t   savedCount = serverSimGetEventCount(bg->sim);
-        if (savedCount > 0) {
-            memcpy(savedEvents, serverSimGetEvents(bg->sim),
-                   savedCount * sizeof(GameEvent));
-        }
-        serverSimTick(bg->sim);
-        if (savedCount > 0) {
-            serverSimPrependEvents(bg->sim, savedEvents, savedCount);
-        }
-    }
 
     /* Update camera to follow the tracked player (freeze while dead) */
     if (bg->cameraPlayer < MAX_TANKS) {

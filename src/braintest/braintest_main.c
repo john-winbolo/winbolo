@@ -2994,19 +2994,9 @@ static void appTickBrain(BrainTestApp *app) {
 static void appTickSim(BrainTestApp *app) {
     if (!app->simValid || app->numBots == 0) return;
 
+    /* serverSimTick internally runs the keys + game half-steps that
+     * make up one 20ms frame. */
     serverSimTick(app->sim);
-    {
-        GameEvent savedEvents[MAX_SNAPSHOT_EVENTS];
-        uint8_t savedCount = serverSimGetEventCount(app->sim);
-        if (savedCount > 0) {
-            memcpy(savedEvents, serverSimGetEvents(app->sim),
-                   savedCount * sizeof(GameEvent));
-        }
-        serverSimTick(app->sim);
-        if (savedCount > 0) {
-            serverSimPrependEvents(app->sim, savedEvents, savedCount);
-        }
-    }
 
     if (!app->freeCamera && app->followBot < MAX_TANKS) {
         WORLD wx, wy;
