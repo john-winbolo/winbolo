@@ -417,6 +417,11 @@ void clientSimTickLobbyReturnCountdown(ClientSim *cs);
 /* Returns true if local player has voted yes on this kind. */
 bool clientSimGameVoteMyVote(const ClientSim *cs, uint8_t kind);
 
+/* Seconds remaining until the server forces a return to lobby (e.g.
+ * triggered by a vote pass). 0 = no pending forced transition.
+ * Sourced from the snapshot header's returnToLobbyTicks. */
+uint8_t clientSimGetReturnToLobbySecs(const ClientSim *cs);
+
 /* Array-pointer accessors (return pointer to backing storage).
  * brainMap is returned non-const because external callers
  * memset it and pass it to writers; the other arrays are

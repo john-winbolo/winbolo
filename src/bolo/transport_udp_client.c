@@ -496,9 +496,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 } else if (cs->lastReturnToLobbySecs == 0 ||
                            secsNow < cs->lastReturnToLobbySecs) {
                     if (secsNow >= 1 && secsNow <= 3) {
-                        char buf2[64];
-                        snprintf(buf2, sizeof(buf2),
-                                 "Returning to lobby in %u", (unsigned)secsNow);
+                        char buf2[8];
+                        snprintf(buf2, sizeof(buf2), "%u", (unsigned)secsNow);
                         clientMessageAdd(clientSimGetMessages(cs),
                                          newsWireMessage,
                                          (char *)"Server", buf2);

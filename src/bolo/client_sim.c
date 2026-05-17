@@ -1105,6 +1105,10 @@ bool clientSimGameVoteMyVote(const ClientSim *cs, uint8_t kind) {
   return (cs->gameVotes[idx].votes & (uint16_t)(1u << me)) != 0;
 }
 
+uint8_t clientSimGetReturnToLobbySecs(const ClientSim *cs) {
+  return cs ? cs->lastReturnToLobbySecs : 0;
+}
+
 uint8_t clientSimGetBalanceProposal(const ClientSim *cs, BYTE n) {
   if (n >= 16) return 0;
   return cs->balanceProposal[n];
