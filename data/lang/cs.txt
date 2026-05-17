@@ -1130,3 +1130,29 @@ STR_DLGSYSINFO_BRAIN=Brain
 STR_DLGSYSINFO_SIMULATION=Simulace
 STR_DLGSYSINFO_BOTPREP=Příprava botů
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Překročení Brain
+
+# macOS App menu and Window menu items
+STR_MENU_ABOUT_APP=O aplikaci WinBolo
+STR_MENU_PREFERENCES=Předvolby…
+STR_MENU_SERVICES=Služby
+STR_MENU_HIDE_APP=Skrýt WinBolo
+STR_MENU_HIDE_OTHERS=Skrýt ostatní
+STR_MENU_SHOW_ALL=Zobrazit vše
+STR_MENU_QUIT_APP=Ukončit WinBolo
+STR_MENU_ABOUT_LV=O aplikaci Prohlížeč záznamů
+STR_MENU_HIDE_LV=Skrýt Prohlížeč záznamů
+STR_MENU_QUIT_LV=Ukončit Prohlížeč záznamů
+STR_MENU_HIDE_ME=Skrýt Editor map
+STR_MENU_QUIT_ME=Ukončit Editor map
+STR_MENU_WINDOW=Okno
+STR_MENU_MINIMIZE=Minimalizovat
+STR_MENU_ZOOM=Zvětšení
+STR_MENU_ENTER_FULL_SCREEN=Přejít na celou obrazovku
+STR_MENU_BRING_ALL_TO_FRONT=Přenést vše do popředí
+
+# macOS Dock menu — welcome-screen actions exposed via the Dock right-click
+STR_MENU_FIND_INTERNET_GAME=Najít internetovou hru…
+STR_MENU_FIND_LAN_GAME=Najít hru v LAN…
+STR_MENU_JOIN_BY_ADDRESS=Připojit podle adresy…
+STR_MENU_OPEN_MAP_EDITOR=Otevřít editor map
+STR_MENU_OPEN_LOG_VIEWER=Otevřít prohlížeč záznamů

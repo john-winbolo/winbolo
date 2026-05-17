@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 #include <pwd.h>
 #include <unistd.h>
 #include "global.h"
@@ -113,8 +114,13 @@ DWORD GetPrivateProfileString(const char *section, const char *key,
     if (line[0] == '[') {
       char *end = strchr(line + 1, ']');
       if (end) {
-        *end = '\0';
-        strncpy(curSection, line + 1, sizeof(curSection) - 1);
+        /* Bounded copy + explicit NUL: strncpy(... sizeof-1) leaves
+         * curSection un-terminated when the section name reaches its
+         * cap, which would make the next strcmp read past the buffer. */
+        size_t slen = (size_t)(end - (line + 1));
+        if (slen >= sizeof(curSection)) slen = sizeof(curSection) - 1;
+        memcpy(curSection, line + 1, slen);
+        curSection[slen] = '\0';
       }
       continue;
     }
@@ -137,71 +143,227 @@ DWORD GetPrivateProfileString(const char *section, const char *key,
   return (DWORD)strlen(out);
 }
 
+/* Reject any byte that would let a value spill out of its own
+ * key=value line on read-back. Win32's INI API has the same
+ * constraint in practice. Used in WritePrivateProfileString so a
+ * value sourced from the network (WBN auth token, winbolo:// URL
+ * fields) can't inject synthetic keys or section headers. */
+static int hasIniMetachars(const char *s, int rejectEquals, int rejectBrackets) {
+  if (!s) return 0;
+  for (; *s; s++) {
+    if (*s == '\n' || *s == '\r') return 1;
+    if (rejectEquals && *s == '=') return 1;
+    if (rejectBrackets && (*s == '[' || *s == ']')) return 1;
+  }
+  return 0;
+}
+
+/* Free a dynamic line array. */
+static void freeLineArray(char **lines, int count) {
+  int j;
+  for (j = 0; j < count; j++) free(lines[j]);
+  free(lines);
+}
+
+/* Append a heap-duplicated line to a growing vector. Returns 0 on OOM. */
+static int appendLine(char ***lines, int *count, int *cap, const char *s, size_t len) {
+  if (*count == *cap) {
+    int newCap = *cap ? *cap * 2 : 64;
+    char **nb = (char **)realloc(*lines, (size_t)newCap * sizeof(char *));
+    if (!nb) return 0;
+    *lines = nb;
+    *cap = newCap;
+  }
+  char *copy = (char *)malloc(len + 1);
+  if (!copy) return 0;
+  memcpy(copy, s, len);
+  copy[len] = '\0';
+  (*lines)[(*count)++] = copy;
+  return 1;
+}
+
 /* Write a value to a plain INI file.
- * Returns non-zero on success, like the Win32 API. */
+ *
+ * Slurps the whole file into a growing heap vector (one line per entry,
+ * CR/LF stripped at read time), modifies the matching key, and rewrites
+ * the file. Dynamic allocation: there is no line cap — WinBolo's flush
+ * path writes ~40 keys per save and that cascades fast when corruption
+ * doubles blank lines, so any fixed cap will eventually be hit.
+ *
+ * Returns non-zero on success, 0 on failure (matches Win32 contract). */
 int WritePrivateProfileString(const char *section, const char *key,
                                 const char *value,
                                 const char *filePath) {
-  /* Read existing file into memory */
   FILE *fp;
-  char lines[512][MAX_INI_LINE];
+  char **lines = NULL;
   int lineCount = 0;
+  int lineCap = 0;
   char curSection[128] = "";
   int sectionFound = 0;
   int keyFound = 0;
   int i;
 
+  if (!section || !key || !filePath) return 0;
+  /* Win32 treats value=NULL as "delete this key". We do not implement
+   * deletion (no caller needs it); treat NULL as the empty string so we
+   * never strlen(NULL). */
+  if (!value) value = "";
+
+  /* Reject control bytes that would let untrusted values break out of
+   * their own key=value line. Section/key are normally compile-time
+   * literals; value carries network-sourced data (WBN token, URL fields). */
+  if (hasIniMetachars(section, 0, 1)) return 0;
+  if (hasIniMetachars(key, 1, 0))     return 0;
+  if (hasIniMetachars(value, 0, 0))   return 0;
+
+  /* Read whole file, stripping CR/LF from each line up-front. Stripping
+   * here (not inside the find loop) is load-bearing: the previous
+   * implementation stripped lazily in the find loop and broke out early
+   * on a key hit, leaving later lines un-stripped — write-back then
+   * appended an extra '\n' to each, doubling blank lines per call. */
   fp = fopen(filePath, "r");
   if (fp) {
-    while (lineCount < 512 && fgets(lines[lineCount], MAX_INI_LINE, fp)) {
-      lineCount++;
+    char buf[MAX_INI_LINE];
+    while (fgets(buf, sizeof(buf), fp)) {
+      size_t len = strlen(buf);
+      while (len > 0 && (buf[len-1] == '\n' || buf[len-1] == '\r')) len--;
+      if (!appendLine(&lines, &lineCount, &lineCap, buf, len)) {
+        freeLineArray(lines, lineCount);
+        fclose(fp);
+        return 0;
+      }
     }
     fclose(fp);
   }
 
-  /* Find or append section + key */
+  /* Find existing key; also remember the last line index belonging to
+   * the target section, so a missing key can be inserted under its own
+   * section instead of getting appended after whatever section happens
+   * to be last in the file (which would cause every launch to re-append
+   * a duplicate the next read won't find). */
+  size_t klen = strlen(key);
+  int sectionInsertIdx = -1;
   for (i = 0; i < lineCount; i++) {
     char *ln = lines[i];
-    size_t len = strlen(ln);
-    while (len > 0 && (ln[len-1] == '\n' || ln[len-1] == '\r')) len--;
-    ln[len] = '\0';
-
     if (ln[0] == '[') {
       char *end = strchr(ln + 1, ']');
       if (end) {
-        *end = '\0';
-        strncpy(curSection, ln + 1, sizeof(curSection) - 1);
-        *end = ']';  /* restore */
+        size_t slen = (size_t)(end - (ln + 1));
+        if (slen >= sizeof(curSection)) slen = sizeof(curSection) - 1;
+        memcpy(curSection, ln + 1, slen);
+        curSection[slen] = '\0';
       }
-    } else if (strcmp(curSection, section) == 0) {
-      size_t klen = strlen(key);
-      if (strncmp(ln, key, klen) == 0 && ln[klen] == '=') {
-        snprintf(lines[i], MAX_INI_LINE, "%s=%s", key, value);
-        keyFound = 1;
+      if (strcmp(curSection, section) == 0) {
         sectionFound = 1;
-        break;
+        sectionInsertIdx = i;  /* point at section header; advances below */
       }
+      continue;
     }
-    if (strcmp(curSection, section) == 0) sectionFound = 1;
+    if (strcmp(curSection, section) != 0) continue;
+    sectionInsertIdx = i;  /* track last in-section line */
+    if (strncmp(ln, key, klen) == 0 && ln[klen] == '=') {
+      size_t vlen = strlen(value);
+      char *replacement = (char *)malloc(klen + 1 + vlen + 1);
+      if (!replacement) {
+        freeLineArray(lines, lineCount);
+        return 0;
+      }
+      memcpy(replacement, key, klen);
+      replacement[klen] = '=';
+      memcpy(replacement + klen + 1, value, vlen + 1);
+      free(lines[i]);
+      lines[i] = replacement;
+      keyFound = 1;
+      break;
+    }
   }
 
   if (!keyFound) {
-    /* Append key under section (or add new section+key) */
-    if (!sectionFound && lineCount < 512) {
-      snprintf(lines[lineCount++], MAX_INI_LINE, "[%s]", section);
-    }
-    if (lineCount < 512) {
-      snprintf(lines[lineCount++], MAX_INI_LINE, "%s=%s", key, value);
+    char tmp[MAX_INI_LINE];
+    if (!sectionFound) {
+      snprintf(tmp, sizeof(tmp), "[%s]", section);
+      if (!appendLine(&lines, &lineCount, &lineCap, tmp, strlen(tmp))) {
+        freeLineArray(lines, lineCount);
+        return 0;
+      }
+      snprintf(tmp, sizeof(tmp), "%s=%s", key, value);
+      if (!appendLine(&lines, &lineCount, &lineCap, tmp, strlen(tmp))) {
+        freeLineArray(lines, lineCount);
+        return 0;
+      }
+    } else {
+      /* Insert right after the last in-section line so the key lands
+       * under its own section, not at end-of-file. */
+      int insertAt = sectionInsertIdx + 1;
+      snprintf(tmp, sizeof(tmp), "%s=%s", key, value);
+      size_t tlen = strlen(tmp);
+      if (lineCount == lineCap) {
+        int newCap = lineCap ? lineCap * 2 : 64;
+        char **nb = (char **)realloc(lines, (size_t)newCap * sizeof(char *));
+        if (!nb) { freeLineArray(lines, lineCount); return 0; }
+        lines = nb;
+        lineCap = newCap;
+      }
+      char *copy = (char *)malloc(tlen + 1);
+      if (!copy) { freeLineArray(lines, lineCount); return 0; }
+      memcpy(copy, tmp, tlen + 1);
+      if (insertAt < lineCount) {
+        memmove(&lines[insertAt + 1], &lines[insertAt],
+                (size_t)(lineCount - insertAt) * sizeof(char *));
+      }
+      lines[insertAt] = copy;
+      lineCount++;
     }
   }
 
-  /* Write back */
-  fp = fopen(filePath, "w");
-  if (!fp) return 0;
-  for (i = 0; i < lineCount; i++) {
-    fprintf(fp, "%s\n", lines[i]);
+  /* Write to a sibling temp file then rename(2) over the target.
+   * Two reasons: atomic on POSIX within one filesystem, so a crash
+   * mid-write can't leave a truncated prefs file; and we can set
+   * mode 0600 on the temp before rename, so the auth token in this
+   * file is never world-readable even on a shared host. */
+  char tmpPath[FILENAME_MAX];
+  int n = snprintf(tmpPath, sizeof(tmpPath), "%s.tmp", filePath);
+  if (n < 0 || n >= (int)sizeof(tmpPath)) {
+    freeLineArray(lines, lineCount);
+    return 0;
   }
-  fclose(fp);
+
+  /* Open via open()+fdopen so we set 0600 at creation, not after.
+   * O_TRUNC is fine because we own the temp name. */
+  int fd = open(tmpPath, O_CREAT | O_WRONLY | O_TRUNC, 0600);
+  if (fd < 0) {
+    freeLineArray(lines, lineCount);
+    return 0;
+  }
+  fp = fdopen(fd, "w");
+  if (!fp) {
+    close(fd);
+    unlink(tmpPath);
+    freeLineArray(lines, lineCount);
+    return 0;
+  }
+  for (i = 0; i < lineCount; i++) {
+    if (fprintf(fp, "%s\n", lines[i]) < 0) {
+      fclose(fp);
+      unlink(tmpPath);
+      freeLineArray(lines, lineCount);
+      return 0;
+    }
+  }
+  if (fflush(fp) != 0 || fclose(fp) != 0) {
+    unlink(tmpPath);
+    freeLineArray(lines, lineCount);
+    return 0;
+  }
+  /* Defensive: re-assert 0600 in case an old temp inode survived
+   * with a wider mode (umask races on first creation, etc). */
+  chmod(tmpPath, 0600);
+  if (rename(tmpPath, filePath) != 0) {
+    unlink(tmpPath);
+    freeLineArray(lines, lineCount);
+    return 0;
+  }
+  freeLineArray(lines, lineCount);
   return 1;
 }
 

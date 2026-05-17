@@ -1053,6 +1053,39 @@ static const LangEntry langTable[] = {
     {1237, "Bot prep"},
     {1238, "Brain overruns"},
 
+    /* macOS native menu — App / File / Window menu items mirrored by
+     * src/gui/sdl3/platform/mac_menubar.mm. Not referenced by the
+     * in-window menu. */
+    {1239, "About WinBolo"},
+    {1240, "Preferences…"},
+    {1241, "Services"},
+    {1242, "Hide WinBolo"},
+    {1243, "Hide Others"},
+    {1244, "Show All"},
+    {1245, "Quit WinBolo"},
+    {1246, "Window"},
+    {1247, "Minimize"},
+    {1248, "Zoom"},
+    {1249, "Enter Full Screen"},
+    {1250, "Bring All to Front"},
+    {1251, "Find Internet Game…"},
+    {1252, "Find LAN Game…"},
+    {1253, "Join by Address…"},
+    {1254, "Open Map Editor"},
+    {1255, "Open Log Viewer"},
+
+    /* macOS Log Viewer app-menu items — mirrored by
+     * src/logviewer/platform/mac_menubar.mm in the standalone Log
+     * Viewer.app only. */
+    {1256, "About Log Viewer"},
+    {1257, "Hide Log Viewer"},
+    {1258, "Quit Log Viewer"},
+
+    /* macOS Map Editor app-menu items — surfaced only by the standalone
+     * MapEditor.app via src/mapeditor/platform/mac_menubar.mm. */
+    {1259, "Hide Map Editor"},
+    {1260, "Quit Map Editor"},
+
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
      * time by tutorialResolveText() when uiModeIsTablet() is true. */

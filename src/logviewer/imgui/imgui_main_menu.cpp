@@ -45,6 +45,8 @@ static LogViewerState *s_lv = nullptr;
  * its own ImGui context, takes over the window, and returns the user's
  * choice. We save/restore LogViewer's ImGui context, window size+title,
  * and re-init HTTP (the dialog destroys it on close). */
+static void open_wbn_browser_modal(void);
+void lv_imgui_open_wbn_browser(void) { open_wbn_browser_modal(); }
 static void open_wbn_browser_modal(void) {
     if (!s_lv || !s_lv->window || !s_lv->renderer) return;
 
@@ -149,6 +151,30 @@ static void zoom_at_center(int stepIndex) {
     lv_drawSetZoomStep(stepIndex, w / 2, h / 2);
 }
 
+void lv_imgui_zoom_at_center(int stepIndex) { zoom_at_center(stepIndex); }
+
+void lv_imgui_set_mode_information(int isInformation) {
+    s_mode_information = isInformation ? true : false;
+}
+
+int lv_imgui_get_tank_centred(void) { return s_tank_centred ? 1 : 0; }
+
+void lv_imgui_toggle_tank_centred(void) {
+    s_tank_centred = !s_tank_centred;
+    lv_screenTankCentred(s_tank_centred ? 1 : 0);
+}
+
+int lv_imgui_get_dns_lookups(void) { return s_dns_lookups ? 1 : 0; }
+
+void lv_imgui_toggle_dns_lookups(void) {
+    s_dns_lookups = !s_dns_lookups;
+    if (s_dns_lookups) {
+        s_dns_lookups = lv_dnsSetEnabled(1) ? true : false;
+    } else {
+        lv_dnsSetEnabled(0);
+    }
+}
+
 static void handle_keyboard_shortcuts(int *clicked) {
     /* Skip shortcuts when ImGui wants the keyboard (e.g., text input focused) */
     if (ImGui::GetIO().WantCaptureKeyboard) return;
@@ -228,6 +254,7 @@ int lv_imgui_main_menu_bar(void) {
 
     handle_keyboard_shortcuts(&clicked);
 
+#ifndef __APPLE__
     if (ImGui::BeginMainMenuBar()) {
         /* File Menu */
         if (ImGui::BeginMenu(langGetText(STR_MENU_FILE))) {
@@ -414,11 +441,17 @@ int lv_imgui_main_menu_bar(void) {
 
         ImGui::EndMainMenuBar();
     }
-    
+#endif /* __APPLE__ */
+
     return clicked;
 }
 
 float lv_imgui_get_menu_bar_height(void) {
+#ifdef __APPLE__
+    /* macOS uses a native NSMenu — the in-window strip is suppressed and
+     * the viewport reclaims those pixels. */
+    return 0.0f;
+#else
     /* Return the height of the main menu bar.
      * ImGui stores this after BeginMainMenuBar() is called.
      *
@@ -446,6 +479,7 @@ float lv_imgui_get_menu_bar_height(void) {
     cached_height = calculated_height;
     height_cached = true;
     return calculated_height;
+#endif /* __APPLE__ */
 }
 
 void lv_imgui_cache_menu_bar_height(void) {

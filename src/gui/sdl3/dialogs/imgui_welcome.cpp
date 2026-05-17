@@ -232,6 +232,19 @@ extern "C" int imguiWelcomeShow(void) {
 
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
+
+        /* Host-OS menus (macOS Dock) post transitions through gamefront.
+         * Treat a pending entry as if the equivalent ghost button was
+         * clicked — the openingStates enum already matches the RESULT_*
+         * codes byte-for-byte. */
+        {
+            openingStates pending;
+            if (gameFrontConsumeRequestedTransition(&pending)) {
+                result = (int)pending;
+                running = false;
+            }
+        }
+
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
