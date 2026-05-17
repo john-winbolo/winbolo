@@ -485,6 +485,29 @@ void serverSimPrependEvents(ServerSim *sim,
                             uint8_t count);
 
 /*********************************************************
+ *NAME:          serverSimPrependMapEvents
+ *PURPOSE:
+ *  Insert `count` map events at the front of the map-events
+ *  buffer in front of any map events already there. No-op if
+ *  the resulting count would exceed MAX_MAP_EVENTS or if
+ *  count == 0.
+ *
+ *  Companion to serverSimPrependEvents — used by the
+ *  serverInstanceTick double-tick path to preserve the first
+ *  tick's map events across the second tick's clear, so a
+ *  shell hit on the game tick is not wiped by the keys tick
+ *  before any snapshot reader can see it.
+ *
+ *ARGUMENTS:
+ *  sim    - The ServerSim
+ *  events - Source array of map events to prepend
+ *  count  - Number of events from `events` to prepend
+ *********************************************************/
+void serverSimPrependMapEvents(ServerSim *sim,
+                               const GameEvent *events,
+                               uint16_t count);
+
+/*********************************************************
  *NAME:          serverSimSetAutoCloseOnEmpty
  *PURPOSE:
  *  Configures whether the server should close when all
