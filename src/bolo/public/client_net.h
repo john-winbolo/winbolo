@@ -141,6 +141,18 @@ void clientSimNetSendLobbyMapUploadChunk(ClientSim *cs,
                                          uint32_t offset,
                                          const uint8_t *data,
                                          uint16_t dataLen);
+/* Pre-upload optimisation: if the server already has the same file
+ * (matching MD5) at relPath under its data/maps/, it installs that
+ * file directly and replies MAP_UPLOAD_DONE — no chunk transfer
+ * needed. On a miss it replies MAP_USE_LOCAL_NACK and the caller
+ * falls back to clientSimNetSendLobbyMapUploadBegin. relPath is
+ * the same scheme PACKET_LOBBY_MAP_PREVIEW_REQ uses (relative to
+ * data/maps/, no leading "data/maps/" segment). */
+void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,
+                                      uint32_t totalLen,
+                                      const char *name,
+                                      const char *relPath,
+                                      const uint8_t md5[16]);
 void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
                                    uint8_t color, uint8_t namingPool,
                                    const char *name);

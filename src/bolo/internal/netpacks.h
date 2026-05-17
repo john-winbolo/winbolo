@@ -309,6 +309,20 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_LOBBY_MAP_LIST_REQ   168  /* { pathLen 1, path N } */
 #define PACKET_LOBBY_MAP_UPLOAD_BEGIN  169  /* { totalLen 4, nameLen 1, name N } */
 #define PACKET_LOBBY_MAP_UPLOAD_CHUNK  170  /* { offset 4, dataLen 2, data N } */
+#define PACKET_LOBBY_MAP_USE_LOCAL     196  /* client -> server: "I want to
+                                              * install this map; if you
+                                              * already have a file with
+                                              * the same MD5 at this rel
+                                              * path under data/maps/,
+                                              * use it instead and skip
+                                              * the upload."
+                                              * { totalLen 4, nameLen 1,
+                                              *   name N, relPathLen 1,
+                                              *   relPath M, md5 16 } */
+#define PACKET_LOBBY_MAP_USE_LOCAL_NACK 197  /* server -> client: "I do
+                                              * not have a matching file
+                                              * — please upload."
+                                              * { nameLen 1, name N } */
 #define PACKET_LOBBY_MAP_SEARCH_REQ    171  /* { pathLen 1, path N, queryLen 1, query M } */
 #define PACKET_LOBBY_PREVIEW_CANCEL    172  /* (no payload) */
 #define PACKET_LOBBY_PREVIEW_COMMIT    173  /* (no payload) */

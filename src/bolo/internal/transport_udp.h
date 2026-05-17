@@ -213,6 +213,15 @@ void transportUdpClientSendLobbyMapUploadBegin(Transport *t, uint32_t totalLen,
 void transportUdpClientSendLobbyMapUploadChunk(Transport *t, uint32_t offset,
                                                const uint8_t *data,
                                                uint16_t dataLen);
+/* Pre-upload optimisation: try to skip the byte transfer if the server
+ * already has an identical file at relPath (relative to data/maps/).
+ * Server replies PACKET_LOBBY_MAP_UPLOAD_DONE on match, or
+ * PACKET_LOBBY_MAP_USE_LOCAL_NACK on miss — caller falls back to
+ * UploadBegin/Chunk on NACK. */
+void transportUdpClientSendLobbyMapUseLocal(Transport *t, uint32_t totalLen,
+                                             const char *name,
+                                             const char *relPath,
+                                             const uint8_t md5[16]);
 
 /* Re-authenticate WBN token after lobby reset between rounds. */
 void transportUdpClientSendWbnReauth(Transport *t);

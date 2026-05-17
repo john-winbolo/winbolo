@@ -40,6 +40,7 @@
 #include "server_sim.h"
 #include "server_lifecycle.h"
 #include "control_event.h"
+#include "md5.h"
 #include "mapgen.h"
 #include "transport_control_codec.h"
 #include "../winbolonet/winbolonet.h"
@@ -3026,6 +3027,143 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             }
             rsp[countPos] = (uint8_t)written;
             udpSendTo(udpServer.sock, rsp, rpos, fromAddr);
+            break;
+        }
+        case PACKET_LOBBY_MAP_USE_LOCAL: {
+            /* [header 8] [totalLen 4] [nameLen 1] [name N]
+             *           [relPathLen 1] [relPath M] [md5 16]
+             *
+             * Pre-upload optimisation: if our local data/maps/<relPath>
+             * matches the supplied MD5, install it directly and reply
+             * UPLOAD_DONE — no byte transfer needed. On any miss
+             * (permission, path/name unsafe, file missing, MD5
+             * mismatch) reply MAP_USE_LOCAL_NACK and let the client
+             * fall back to the regular UPLOAD_BEGIN/CHUNK flow. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 4 + 1 + 1 + 16) break;
+            int rpos = PACKET_HEADER_SIZE;
+            uint32_t totalLen =
+                ((uint32_t)buf[rpos + 0] << 24) |
+                ((uint32_t)buf[rpos + 1] << 16) |
+                ((uint32_t)buf[rpos + 2] <<  8) |
+                ((uint32_t)buf[rpos + 3]);
+            rpos += 4;
+            uint8_t nameLen = buf[rpos++];
+            if (nameLen == 0 || nameLen > 127 ||
+                rpos + nameLen + 1 + 16 > (int)len) break;
+            char nameBuf[128];
+            memset(nameBuf, 0, sizeof(nameBuf));
+            memcpy(nameBuf, buf + rpos, nameLen);
+            rpos += nameLen;
+            uint8_t relLen = buf[rpos++];
+            if (relLen == 0 || relLen > 255 ||
+                rpos + relLen + 16 > (int)len) break;
+            char relBuf[256];
+            memset(relBuf, 0, sizeof(relBuf));
+            memcpy(relBuf, buf + rpos, relLen);
+            rpos += relLen;
+            uint8_t wantMd5[16];
+            memcpy(wantMd5, buf + rpos, 16);
+
+            /* NACK helper for every miss path: server echoes the
+             * announce name so the client correlates the reply to
+             * the right in-flight USE_LOCAL. */
+            #define SEND_USE_LOCAL_NACK() do { \
+                uint8_t nack[PACKET_HEADER_SIZE + 1 + 128]; \
+                int npos = PACKET_HEADER_SIZE; \
+                packHeader(nack, PACKET_LOBBY_MAP_USE_LOCAL_NACK, 0); \
+                nack[npos++] = (uint8_t)nameLen; \
+                if (nameLen > 0) { memcpy(nack + npos, nameBuf, nameLen); npos += nameLen; } \
+                udpSendTo(udpServer.sock, nack, npos, fromAddr); \
+            } while (0)
+
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                SEND_USE_LOCAL_NACK();
+                break;
+            }
+
+            /* Name safety: must end in ".map", no separators, no
+             * leading dot. Mirrors the UPLOAD_BEGIN guards so a
+             * malicious relPath can't bypass them. */
+            bool nameSafe = true;
+            if (nameBuf[0] == '.') nameSafe = false;
+            for (int i = 0; i < nameLen; i++) {
+                char ch = nameBuf[i];
+                if (ch == '/' || ch == '\\' || ch == ':') {
+                    nameSafe = false; break;
+                }
+            }
+            if (nameSafe) {
+                if (nameLen < 4 ||
+                    SDL_strcasecmp(nameBuf + nameLen - 4, ".map") != 0) {
+                    nameSafe = false;
+                }
+            }
+            if (totalLen == 0 || totalLen > UPLOAD_MAX_BYTES || !nameSafe) {
+                SEND_USE_LOCAL_NACK();
+                break;
+            }
+
+            /* Try to read data/maps/<relPath>. serverSimReadMapFile
+             * handles the path-safety check (".." rejection, etc.). */
+            uint8_t *bytes = NULL;
+            size_t   byteLen = 0;
+            if (!serverSimReadMapFile(sim, relBuf, &bytes, &byteLen) ||
+                bytes == NULL ||
+                (uint32_t)byteLen != totalLen) {
+                if (bytes) free(bytes);
+                SEND_USE_LOCAL_NACK();
+                break;
+            }
+
+            uint8_t haveMd5[16];
+            md5Compute(bytes, byteLen, haveMd5);
+            if (memcmp(haveMd5, wantMd5, 16) != 0) {
+                free(bytes);
+                SEND_USE_LOCAL_NACK();
+                break;
+            }
+
+            /* MD5 match — install as preview directly from the local
+             * file. Mirrors the success branch of UPLOAD_CHUNK but
+             * skips the temp-staging dance (the file already lives
+             * at its final path; pendingUpload is left inactive so
+             * PREVIEW_COMMIT/CANCEL are no-ops). */
+            free(bytes);  /* serverSimReloadMap re-reads it via its own path */
+
+            char localPath[FILENAME_MAX];
+            SDL_snprintf(localPath, sizeof(localPath), "data/maps/%s", relBuf);
+            bool previewed = false;
+            if (serverSimReloadMap(sim, localPath)) {
+                /* Display name: the announce name without ".map". */
+                char displayName[MAP_STR_SIZE];
+                SDL_strlcpy(displayName, nameBuf, sizeof(displayName));
+                {
+                    size_t dlen = SDL_strlen(displayName);
+                    if (dlen >= 4 &&
+                        SDL_strcasecmp(displayName + dlen - 4, ".map") == 0) {
+                        displayName[dlen - 4] = '\0';
+                    }
+                }
+                serverSimSetMapName(sim, displayName);
+                /* Empty temp/final paths => commit/cancel are no-ops:
+                 * the file is already at its final on-disk location. */
+                serverSimSetPendingUpload(sim, "", "", relBuf);
+                transportUdpServerOnLobbyMapChange(sim);
+                serverSimPublishLobbySettings(sim);
+                previewed = true;
+            }
+
+            uint8_t done[PACKET_HEADER_SIZE + 2 + 256];
+            int dpos = PACKET_HEADER_SIZE;
+            packHeader(done, PACKET_LOBBY_MAP_UPLOAD_DONE, 0);
+            done[dpos++] = previewed ? 0 : LOBBY_REJECT_INVALID;
+            done[dpos++] = (uint8_t)relLen;
+            if (relLen > 0) { memcpy(done + dpos, relBuf, relLen); dpos += relLen; }
+            udpSendTo(udpServer.sock, done, dpos, fromAddr);
+            #undef SEND_USE_LOCAL_NACK
             break;
         }
         case PACKET_LOBBY_MAP_UPLOAD_BEGIN: {

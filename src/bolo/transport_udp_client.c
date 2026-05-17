@@ -1329,6 +1329,17 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
     }
 
+    case PACKET_LOBBY_MAP_USE_LOCAL_NACK: {
+        /* [header 8] [nameLen 1] [name N] — server doesn't have a
+         * matching local file. Caller should fall back to a regular
+         * UPLOAD_BEGIN. UI pump notices the flag next frame. */
+        if (!c->clientSim || len < PACKET_HEADER_SIZE + 1) break;
+        /* nameLen + name bytes are informational here (echoes the
+         * client's announce), we just flip the fallback flag. */
+        c->clientSim->lobbyMapUseLocalNeedsFallback = true;
+        break;
+    }
+
     case PACKET_LOBBY_MAP_UPLOAD_DONE: {
         /* [header 8] [status 1] [pathLen 1] [path N] */
         if (!c->clientSim || len < PACKET_HEADER_SIZE + 2) break;
@@ -2351,6 +2362,47 @@ void transportUdpClientSendLobbyMapUploadBegin(Transport *t,
     udpClientSendTo(c, buf, len);
 
     if (c->clientSim) {
+        c->clientSim->lobbyMapUploadStatus = 1;
+        c->clientSim->lobbyMapUploadRejectCode = 0;
+        c->clientSim->lobbyMapUploadFinalPath[0] = '\0';
+    }
+}
+
+void transportUdpClientSendLobbyMapUseLocal(Transport *t,
+                                             uint32_t totalLen,
+                                             const char *name,
+                                             const char *relPath,
+                                             const uint8_t md5[16]) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    /* Wire: [hdr 8][totalLen 4][nameLen 1][name N][relPathLen 1][relPath M][md5 16] */
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255 + 1 + 255 + 16];
+    int nameLen, relLen, pos;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (name == NULL) name = "";
+    if (relPath == NULL) relPath = "";
+    nameLen = (int)strlen(name);
+    if (nameLen > 255) nameLen = 255;
+    relLen = (int)strlen(relPath);
+    if (relLen > 255) relLen = 255;
+
+    packHeader(buf, PACKET_LOBBY_MAP_USE_LOCAL, c->outSequence++);
+    pos = PACKET_HEADER_SIZE;
+    buf[pos++] = (uint8_t)((totalLen >> 24) & 0xFF);
+    buf[pos++] = (uint8_t)((totalLen >> 16) & 0xFF);
+    buf[pos++] = (uint8_t)((totalLen >>  8) & 0xFF);
+    buf[pos++] = (uint8_t)( totalLen        & 0xFF);
+    buf[pos++] = (uint8_t)nameLen;
+    if (nameLen > 0) { memcpy(buf + pos, name, nameLen); pos += nameLen; }
+    buf[pos++] = (uint8_t)relLen;
+    if (relLen > 0) { memcpy(buf + pos, relPath, relLen); pos += relLen; }
+    memcpy(buf + pos, md5, 16);
+    pos += 16;
+    udpClientSendTo(c, buf, pos);
+
+    if (c->clientSim) {
+        /* Mark "USE_LOCAL in flight" — clears to upload-or-done when
+         * the server replies. */
         c->clientSim->lobbyMapUploadStatus = 1;
         c->clientSim->lobbyMapUploadRejectCode = 0;
         c->clientSim->lobbyMapUploadFinalPath[0] = '\0';

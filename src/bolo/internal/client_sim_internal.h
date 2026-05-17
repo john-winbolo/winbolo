@@ -298,6 +298,11 @@ struct ClientSim {
     uint8_t  lobbyMapUploadStatus;
     uint8_t  lobbyMapUploadRejectCode; /* server's reject byte, if any */
     char     lobbyMapUploadFinalPath[256]; /* server-relative path */
+    /* Set by the PACKET_LOBBY_MAP_USE_LOCAL_NACK handler when the
+     * server can't fulfil the MD5-skip-upload shortcut. The Upload
+     * tab's pump loop notices this on the next frame and falls back
+     * to the regular PACKET_LOBBY_MAP_UPLOAD_BEGIN / CHUNK flow. */
+    bool     lobbyMapUseLocalNeedsFallback;
 
     /* Winbolo.net preview result — driven by
      * PACKET_LOBBY_PREVIEW_WBN_DONE. status: 0=idle,

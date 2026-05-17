@@ -1369,6 +1369,13 @@ void clientSimResetLobbyMapUpload(ClientSim *cs) {
   cs->lobbyMapUploadStatus     = 0;
   cs->lobbyMapUploadRejectCode = 0;
   cs->lobbyMapUploadFinalPath[0] = '\0';
+  cs->lobbyMapUseLocalNeedsFallback = false;
+}
+
+bool clientSimConsumeUseLocalFallback(ClientSim *cs) {
+  if (!cs || !cs->lobbyMapUseLocalNeedsFallback) return false;
+  cs->lobbyMapUseLocalNeedsFallback = false;
+  return true;
 }
 
 uint8_t clientSimGetLobbyWbnPreviewStatus(const ClientSim *cs) {
