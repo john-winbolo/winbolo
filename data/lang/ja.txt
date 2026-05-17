@@ -1130,3 +1130,29 @@ STR_DLGSYSINFO_BRAIN=Brain
 STR_DLGSYSINFO_SIMULATION=シミュレーション
 STR_DLGSYSINFO_BOTPREP=Bot 準備
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Brain オーバーラン
+
+# macOS App menu and Window menu items
+STR_MENU_ABOUT_APP=WinBolo について
+STR_MENU_PREFERENCES=環境設定…
+STR_MENU_SERVICES=サービス
+STR_MENU_HIDE_APP=WinBolo を隠す
+STR_MENU_HIDE_OTHERS=ほかを隠す
+STR_MENU_SHOW_ALL=すべてを表示
+STR_MENU_QUIT_APP=WinBolo を終了
+STR_MENU_ABOUT_LV=ログビューアー について
+STR_MENU_HIDE_LV=ログビューアー を隠す
+STR_MENU_QUIT_LV=ログビューアー を終了
+STR_MENU_HIDE_ME=マップエディター を隠す
+STR_MENU_QUIT_ME=マップエディター を終了
+STR_MENU_WINDOW=ウインドウ
+STR_MENU_MINIMIZE=しまう
+STR_MENU_ZOOM=ズーム
+STR_MENU_ENTER_FULL_SCREEN=フルスクリーンにする
+STR_MENU_BRING_ALL_TO_FRONT=すべてのウインドウを手前に移動
+
+# macOS Dock menu — welcome-screen actions exposed via the Dock right-click
+STR_MENU_FIND_INTERNET_GAME=インターネットゲームを検索…
+STR_MENU_FIND_LAN_GAME=LANゲームを検索…
+STR_MENU_JOIN_BY_ADDRESS=アドレスで参加…
+STR_MENU_OPEN_MAP_EDITOR=マップエディターを開く
+STR_MENU_OPEN_LOG_VIEWER=ログビューアーを開く

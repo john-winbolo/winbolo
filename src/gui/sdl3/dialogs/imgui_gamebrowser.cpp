@@ -1061,8 +1061,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
             /* Cancel - right-aligned */
             ImGui::SameLine(panelW - btnW - 16.0f * s);
-            bool escPressed = ImGui::IsKeyPressed(ImGuiKey_Escape) &&
-                              !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup);
+            bool escPressed = (ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                               (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
+#ifdef __APPLE__
+                               || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
+#endif
+                              ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup);
             if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH)) || escPressed) {
                 gameFrontSetDlgState(openWelcome);
                 running = false;

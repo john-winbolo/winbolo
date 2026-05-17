@@ -40,10 +40,24 @@ endif()
 # and Intel Macs. Override on the command line with -DCMAKE_OSX_ARCHITECTURES=arm64
 # for a single-arch build. iOS sets its own architectures via the toolchain.
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_ARCHITECTURES)
-    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS build architectures")
+    # FORCE because CLion / some IDE configures write an empty cache entry
+    # for CMAKE_OSX_ARCHITECTURES, which would otherwise block this default.
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS build architectures" FORCE)
 endif()
 
 set(WINBOLO_VERSION "1.18" CACHE STRING "WinBolo version number")
+
+# Global macOS bundle metadata. Set once here so every MACOSX_BUNDLE target
+# (WinBolo, Log Viewer, Map Editor) picks up matching version/copyright keys
+# in its Info.plist, and so the deployment target applies to all of them.
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
+    string(TIMESTAMP _WB_CURRENT_YEAR "%Y")
+    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${WINBOLO_VERSION}")
+    set(MACOSX_BUNDLE_BUNDLE_VERSION       "${WINBOLO_VERSION}")
+    set(MACOSX_BUNDLE_LONG_VERSION_STRING  "${WINBOLO_VERSION}")
+    set(MACOSX_BUNDLE_COPYRIGHT            "Copyright 1998-${_WB_CURRENT_YEAR} John Morrison")
+endif()
 
 execute_process(COMMAND git rev-parse --short HEAD
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
@@ -217,8 +231,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # Restore try_compile mode now that all probing dependencies are fetched
     set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_saved_try_compile_type}")
 else()
-    # MinGW (MSYS2): vendor freetype so we don't depend on vcpkg or system packages
-    if(MINGW)
+    # MinGW (MSYS2): vendor freetype so we don't depend on vcpkg or system packages.
+    # macOS: vendor freetype so a universal2 (arm64;x86_64) build doesn't link
+    # against an arm64-only Homebrew libfreetype.dylib.
+    if(MINGW OR APPLE)
         set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
         set(SDLTTF_HARFBUZZ OFF CACHE BOOL "" FORCE)
     endif()
@@ -938,11 +954,12 @@ add_subdirectory(brains)
 
 # server_static and server_sim_static have a circular dependency that
 # GNU ld resolves with --start-group/--end-group ($<LINK_GROUP:RESCAN>).
-# MSVC's link.exe does multi-pass static-lib resolution natively and
-# also rejects $<LINK_GROUP> for the CXX link language, so emit plain
-# library names there. Use this variable in target_link_libraries
-# wherever both libs are linked together.
-if(MSVC)
+# MSVC's link.exe does multi-pass static-lib resolution natively, and
+# Apple's ld doesn't support library groups at all -- both also reject
+# $<LINK_GROUP> for the CXX link language, so emit plain library names
+# there. Use this variable in target_link_libraries wherever both libs
+# are linked together.
+if(MSVC OR APPLE)
     set(SERVER_LINK_GROUP server_static server_sim_static)
 else()
     set(SERVER_LINK_GROUP "$<LINK_GROUP:RESCAN,server_static,server_sim_static>")
@@ -1047,6 +1064,14 @@ target_compile_definitions(WinBolo PRIVATE
 # macOS trackpad pinch-to-zoom support
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(WinBolo PRIVATE src/gui/sdl3/macos_pinch.m)
+    target_sources(WinBolo PRIVATE src/gui/sdl3/platform/mac_menubar.mm)
+    # Embedded Log Viewer reuses WinBolo's window — the LogViewer NSMenu
+    # shim is linked in so gamefront.c can swap menu bars on entry/exit.
+    target_sources(WinBolo PRIVATE src/logviewer/platform/mac_menubar.mm)
+    # Same story for the embedded Map Editor entry from the welcome
+    # screen — the editor swaps WinBolo's menu out and restores it on
+    # exit via its own NSMenu shim.
+    target_sources(WinBolo PRIVATE src/mapeditor/platform/mac_menubar.mm)
     target_link_libraries(WinBolo PRIVATE "-framework AppKit")
 endif()
 
@@ -1507,7 +1532,6 @@ if(WIN32)
 endif()
 
 if(APPLE)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
     set_target_properties(LogViewer PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/src/logviewer/platform/Info.plist"
@@ -1545,9 +1569,11 @@ if(MATH_LIB)
     target_link_libraries(LogViewer PRIVATE ${MATH_LIB})
 endif()
 
-# macOS trackpad pinch-to-zoom support
+# macOS trackpad pinch-to-zoom support, plus native NSMenu shim for the
+# standalone Log Viewer.app menu bar.
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(LogViewer PRIVATE src/gui/sdl3/macos_pinch.m)
+    target_sources(LogViewer PRIVATE src/logviewer/platform/mac_menubar.mm)
     target_link_libraries(LogViewer PRIVATE "-framework AppKit")
 endif()
 
@@ -1980,9 +2006,12 @@ target_link_libraries(MapEditor PRIVATE
     nanosvg stb_image utf8proc
 )
 
-# macOS trackpad pinch-to-zoom support
+# macOS trackpad pinch-to-zoom support, plus native NSMenu shim for the
+# Map Editor's menu bar (used by both the standalone MapEditor.app and
+# the embedded entry from WinBolo's welcome screen).
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(MapEditor PRIVATE src/gui/sdl3/macos_pinch.m)
+    target_sources(MapEditor PRIVATE src/mapeditor/platform/mac_menubar.mm)
     target_link_libraries(MapEditor PRIVATE "-framework AppKit")
 endif()
 
@@ -2008,6 +2037,33 @@ add_custom_command(TARGET MapEditor POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3_ttf::SDL3_ttf>" "$<TARGET_FILE_DIR:MapEditor>"
     COMMENT "Copying SDL3 and SDL3_ttf shared libraries to MapEditor output directory"
 )
+
+# bot_brains_static pulls in onnxruntime, so MapEditor inherits the
+# dylib dependency. Mirror the WinBolo POST_BUILD copy step so the
+# .app bundle ships with the dylib next to the executable — without
+# this, launching the standalone MapEditor.app fails at dyld load
+# time with "Library not loaded: @rpath/libonnxruntime.*.dylib".
+if(HAVE_ONNXRUNTIME)
+    if(WIN32 AND DEFINED ONNXRUNTIME_DLL)
+        add_custom_command(TARGET MapEditor POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_DLL}" "$<TARGET_FILE_DIR:MapEditor>"
+            COMMENT "Copying ONNX Runtime DLL to MapEditor output directory"
+        )
+    elseif(DEFINED ONNXRUNTIME_LIBDIR)
+        file(GLOB _ORT_ALL_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
+        foreach(_f ${_ORT_ALL_SO})
+            # Skip .dSYM bundles — they are directories, not files, so
+            # copy_if_different fails on them. They are debug symbols that
+            # don't need to ship next to the binary.
+            if(_f MATCHES "\\.dSYM$")
+                continue()
+            endif()
+            add_custom_command(TARGET MapEditor POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_f}" "$<TARGET_FILE_DIR:MapEditor>"
+            )
+        endforeach()
+    endif()
+endif()
 if(APPLE)
     add_custom_command(TARGET MapEditor POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -2100,6 +2156,29 @@ add_custom_target(dist
     VERBATIM
 )
 
+# ---------------------------------------------------------------------------
+# macOS code-signing + notarization + stapling
+# (cmake --build <dir> --target sign_macos)
+# ---------------------------------------------------------------------------
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_custom_target(sign_macos
+        COMMAND "${CMAKE_SOURCE_DIR}/scripts/sign_macos.sh" "${CMAKE_BINARY_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        COMMENT "Sign + notarize + staple all .app bundles (requires Developer ID cert)"
+        VERBATIM
+        USES_TERMINAL
+    )
+
+    add_custom_target(package_macos
+        COMMAND "${CMAKE_SOURCE_DIR}/scripts/package_macos.sh" "${CMAKE_BINARY_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        DEPENDS sign_macos
+        COMMENT "Bundle signed apps + WinBoloDS into a notarized DMG (requires create-dmg)"
+        VERBATIM
+        USES_TERMINAL
+    )
+endif()
+
 enable_testing()
 
 # Per-scenario CTest entries. Scenario names must stay in sync with the
@@ -2187,6 +2266,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_sp_subscriber_delivery.c
     tests/unit/test_active_local_input_to_shot.c
     tests/unit/test_sp_shoot_through_timer.c
+    tests/unit/test_ini_reader_writer.c
     tests/unit/test_lobby_control_variants.c
     # transport_udp_client.c stays per-target because of HAVE_STEAM
     # gating (it's excluded from bolo_static for that reason). Linked
@@ -2248,6 +2328,9 @@ set(_unit_test_names
     sp_subscriber_delivery
     active_local_input_to_shot
     sp_shoot_through_timer
+    ini_writer_persistence
+    ini_writer_insertion_point
+    ini_writer_security
     lobby_settings_codec_and_apply
     lobby_team_meta_codec_and_apply
     lobby_bot_config_codec_and_apply
