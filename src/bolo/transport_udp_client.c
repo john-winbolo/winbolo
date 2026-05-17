@@ -1152,122 +1152,16 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     }
 
     /* ── Layout A lobby — server → client broadcasts ─────────────── */
-    case PACKET_LOBBY_SETTING_CHG:
-        /* [header 8] [settingType 1] [valueLen 1] [value valueLen] */
-        if (len >= PACKET_HEADER_SIZE + 2) {
-            uint8_t st = buf[PACKET_HEADER_SIZE];
-            uint8_t vl = buf[PACKET_HEADER_SIZE + 1];
-            const uint8_t *v = buf + PACKET_HEADER_SIZE + 2;
-            if (len >= PACKET_HEADER_SIZE + 2 + vl && vl <= 32) {
-                switch (st) {
-                    case LST_GAME_TYPE:
-                        if (vl == 1) c->clientSim->lobbyGameType = (gameType)v[0];
-                        break;
-                    case LST_HIDDEN_MINES:
-                        if (vl == 1) c->clientSim->lobbyHiddenMines = v[0] != 0;
-                        break;
-                    case LST_AI_POLICY:
-                        if (vl == 1) c->clientSim->lobbyAiType = v[0];
-                        break;
-                    case LST_TIME_LIMIT:
-                        if (vl == 1) {
-                            bool on = v[0] != 0;
-                            if (on) {
-                                if (c->clientSim->lobbyTimeLimit <= 0) {
-                                    c->clientSim->lobbyTimeLimit = 30 * 60 * 50;
-                                }
-                            } else {
-                                c->clientSim->lobbyTimeLimit = UNLIMITED_GAME_TIME;
-                            }
-                        }
-                        break;
-                    case LST_TIME_MINUTES:
-                        if (vl == 2) {
-                            uint16_t mins = (uint16_t)((v[0] << 8) | v[1]);
-                            c->clientSim->lobbyTimeLimit =
-                                (int32_t)mins * 60 * 50;
-                        }
-                        break;
-                    case LST_AUTO_LOCK_ON_GAME:
-                        if (vl == 1) c->clientSim->lobbyAutoLockOnGameStart = v[0] != 0;
-                        break;
-                    default: /* unknown setting type — ignore (forward-compat) */ break;
-                }
-            }
-        }
-        break;
-
-    case PACKET_LOBBY_OPEN_HOST_CHG:
-        if (len >= PACKET_HEADER_SIZE + 1) {
-            c->clientSim->lobbyOpenHost = buf[PACKET_HEADER_SIZE] != 0;
-        }
-        break;
-
     case PACKET_LOBBY_TEAM_META_CHG:
-        /* [header 8] [teamId 1] [color 1] [namingPool 1] [nameLen 1] [name N] */
-        if (len >= PACKET_HEADER_SIZE + 4) {
-            uint8_t teamId  = buf[PACKET_HEADER_SIZE + 0];
-            uint8_t color   = buf[PACKET_HEADER_SIZE + 1];
-            uint8_t pool    = buf[PACKET_HEADER_SIZE + 2];
-            uint8_t nameLen = buf[PACKET_HEADER_SIZE + 3];
-            if (teamId > 0 && teamId < 16 && nameLen <= 31 &&
-                len >= PACKET_HEADER_SIZE + 4 + nameLen) {
-                c->clientSim->lobbyTeamColor[teamId] = color;
-                c->clientSim->lobbyTeamPool[teamId]  = pool;
-                memset(c->clientSim->lobbyTeamName[teamId], 0, 32);
-                if (nameLen > 0) {
-                    memcpy(c->clientSim->lobbyTeamName[teamId],
-                           buf + PACKET_HEADER_SIZE + 4, nameLen);
-                }
-                c->clientSim->lobbyTeamInUse[teamId] =
-                    (nameLen > 0 || color != 0 || pool != 0) ? 1 : 0;
-            }
-        }
-        break;
-
     case PACKET_LOBBY_BOT_CONFIG_CHG:
-        /* [header 8] [slot 1] [difficulty 1] [personality 1]
-         *   [nameLen 1] [name N]. */
-        if (len >= PACKET_HEADER_SIZE + 4) {
-            uint8_t slot = buf[PACKET_HEADER_SIZE + 0];
-            uint8_t diff = buf[PACKET_HEADER_SIZE + 1];
-            uint8_t pers = buf[PACKET_HEADER_SIZE + 2];
-            if (slot < 16) {
-                c->clientSim->lobbyBotDifficulty[slot]  = diff;
-                c->clientSim->lobbyBotPersonality[slot] = pers;
-            }
-        }
-        break;
-
     case PACKET_LOBBY_BRAIN_LIST: {
-        /* [header 8] [count 1]
-         * per entry: [nameLen 1][name][verLen 1][ver][pathLen 1][path] */
-        if (len < PACKET_HEADER_SIZE + 1) break;
-        int pos = PACKET_HEADER_SIZE;
-        uint8_t cnt = buf[pos++];
-        BrainList *bl = &c->clientSim->lobbyBrainList;
-        memset(bl, 0, sizeof(*bl));
-        if (cnt > BRAIN_LIST_MAX) cnt = BRAIN_LIST_MAX;
-        for (int i = 0; i < cnt && pos < len; i++) {
-            if (pos + 1 > len) break;
-            uint8_t nlen = buf[pos++];
-            if (nlen >= BRAIN_LIST_NAME_LEN || pos + nlen > len) break;
-            memcpy(bl->entries[i].name, buf + pos, nlen);
-            bl->entries[i].name[nlen] = '\0';
-            pos += nlen;
-            if (pos + 1 > len) break;
-            uint8_t vlen = buf[pos++];
-            if (vlen >= BRAIN_LIST_VER_LEN || pos + vlen > len) break;
-            memcpy(bl->entries[i].version, buf + pos, vlen);
-            bl->entries[i].version[vlen] = '\0';
-            pos += vlen;
-            if (pos + 1 > len) break;
-            uint8_t plen = buf[pos++];
-            if (plen >= BRAIN_LIST_PATH_LEN || pos + plen > len) break;
-            memcpy(bl->entries[i].path, buf + pos, plen);
-            bl->entries[i].path[plen] = '\0';
-            pos += plen;
-            bl->count++;
+        ControlDecodeFn dec = transportControlCodecDecoder(pktType);
+        if (dec != NULL) {
+            ControlEvent evt;
+            if (dec(buf + PACKET_HEADER_SIZE,
+                    (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
+                clientSimApplyControl(c->clientSim, &evt);
+            }
         }
         break;
     }
@@ -1416,18 +1310,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     }
 
     case PACKET_LOBBY_BOT_BRAIN_CHG: {
-        /* [header 8] [slot 1] [pathLen 1] [path N]. */
-        if (len < PACKET_HEADER_SIZE + 2) break;
-        uint8_t slot = buf[PACKET_HEADER_SIZE + 0];
-        uint8_t plen = buf[PACKET_HEADER_SIZE + 1];
-        if (slot >= MAX_TANKS) break;
-        if (plen >= sizeof(c->clientSim->lobbyBotBrain[0])) break;
-        if (len < PACKET_HEADER_SIZE + 2 + plen) break;
-        memset(c->clientSim->lobbyBotBrain[slot], 0,
-               sizeof(c->clientSim->lobbyBotBrain[slot]));
-        if (plen > 0) {
-            memcpy(c->clientSim->lobbyBotBrain[slot],
-                   buf + PACKET_HEADER_SIZE + 2, plen);
+        ControlDecodeFn dec = transportControlCodecDecoder(pktType);
+        if (dec != NULL) {
+            ControlEvent evt;
+            if (dec(buf + PACKET_HEADER_SIZE,
+                    (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
+                clientSimApplyControl(c->clientSim, &evt);
+            }
         }
         break;
     }

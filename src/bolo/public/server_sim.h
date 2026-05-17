@@ -1213,6 +1213,7 @@ const char *serverSimGetServerMessageLogFile(const ServerSim *sim);
 /* Indexed-array accessors (bounds-checked; out-of-range
  * returns NULL for pointer types, false/0 for scalars). */
 const LobbyPlayer *serverSimGetLobbyPlayer(const ServerSim *sim, BYTE n);
+LobbyPlayer       *serverSimGetLobbyPlayerMut(ServerSim *sim, BYTE n);
 bool               serverSimIsPlayerConnected(const ServerSim *sim, BYTE n);
 uint32_t           serverSimGetLastProcessedInput(const ServerSim *sim, BYTE n);
 bool               serverSimIsMapSkipVote(const ServerSim *sim, BYTE n);
@@ -1281,6 +1282,15 @@ int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
 bool        serverSimGetAutoLockOnGameStart(const ServerSim *sim);
 void        serverSimSetAutoLockOnGameStart(ServerSim *sim, bool v);
 
+/* openHost — when true, any connected player has host-level edit
+ * authority on lobby state (see lobbyClientMayEdit). */
+bool        serverSimGetOpenHost(const ServerSim *sim);
+void        serverSimSetOpenHost(ServerSim *sim, bool v);
+
+/* serverLocks — LOBBY_LOCK_* bitmask set from CLI at server start.
+ * Locked settings refuse PACKET_LOBBY_SET_SETTING with REJECT_LOCKED. */
+uint16_t    serverSimGetServerLocks(const ServerSim *sim);
+
 /* Cached game-settings mirrors. authoritative state lives in GameSim;
  * these expose the most-recently-broadcast value for lock checks and
  * SETTING_CHG diffs. */
@@ -1310,6 +1320,7 @@ void serverSimSetGameLength(ServerSim *sim, int32_t ticks);
 void serverSimSetGameType(ServerSim *sim, gameType gt);
 void serverSimSetHiddenMines(ServerSim *sim, bool hiddenMines);
 void serverSimSetState(ServerSim *sim, ServerState s);
+void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
 
 /* Switch a lobby bot to a new brain script. Updates both the
  * per-slot brain-path mirror (serverSimSetBotBrainPathFor) and the

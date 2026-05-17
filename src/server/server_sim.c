@@ -2408,6 +2408,10 @@ void serverSimAbortCountdown(ServerSim *sim) {
     sim->countdownTicks = 0;
 }
 
+void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks) {
+    sim->countdownTicks = ticks;
+}
+
 void serverSimClearBalanceProposal(ServerSim *sim) {
     memset(&sim->balanceProposal, 0, sizeof(BalanceProposal));
 }
@@ -3389,6 +3393,10 @@ static void serverSimSyncSubscriber(
     serverSimFillLobbySettingsEvent(sim, &evt);
     deliver(ctx, &evt);
 
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyBrainListEvent(sim, &evt);
+    deliver(ctx, &evt);
+
     for (i = 0; i < MAX_TANKS; i++) {
         if (sim->playerConnected[i]) {
             memset(&evt, 0, sizeof(evt));
@@ -3649,6 +3657,11 @@ const char *serverSimGetServerMessageLogFile(const ServerSim *sim) {
 }
 
 const LobbyPlayer *serverSimGetLobbyPlayer(const ServerSim *sim, BYTE n) {
+    if (n >= MAX_TANKS) return NULL;
+    return &sim->lobbyPlayers[n];
+}
+
+LobbyPlayer *serverSimGetLobbyPlayerMut(ServerSim *sim, BYTE n) {
     if (n >= MAX_TANKS) return NULL;
     return &sim->lobbyPlayers[n];
 }
@@ -4503,6 +4516,18 @@ bool serverSimGetAutoLockOnGameStart(const ServerSim *sim) {
 
 void serverSimSetAutoLockOnGameStart(ServerSim *sim, bool v) {
     if (sim) sim->autoLockOnGameStart = v;
+}
+
+bool serverSimGetOpenHost(const ServerSim *sim) {
+    return sim ? sim->openHost : false;
+}
+
+void serverSimSetOpenHost(ServerSim *sim, bool v) {
+    if (sim) sim->openHost = v;
+}
+
+uint16_t serverSimGetServerLocks(const ServerSim *sim) {
+    return sim ? sim->serverLocks : 0;
 }
 
 void serverSimSetAiPolicy(ServerSim *sim, uint8_t v) {
