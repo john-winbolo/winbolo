@@ -1477,6 +1477,23 @@ static void serverSendServerEnglishBroadcast(const char *message) {
                       &udpServer.clients[j].addr);
         }
     }
+
+    /* In-process subscribers (SP / host) aren't in udpServer.clients;
+     * mirror the broadcast as a control event so they get the same
+     * server-originated text via the regular subscriber path. */
+    {
+        ServerSim *sim = serverSimGetActive();
+        if (sim != NULL) {
+            ControlEvent evt;
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_SERVER_TEXT;
+            int cap = (int)(sizeof(evt.u.serverText.text) - 1);
+            int n = msgLen < cap ? msgLen : cap;
+            memcpy(evt.u.serverText.text, message, n);
+            evt.u.serverText.text[n] = '\0';
+            serverSimPublishControl(sim, &evt);
+        }
+    }
 }
 
 void transportUdpServerKickPlayer(ServerSim *sim, const char *playerName) {
@@ -2144,7 +2161,7 @@ void transportUdpServerBroadcastGameVoteState(ServerSim *sim, uint8_t kind) {
     ServerGameVoteSnapshot snap;
     if (!serverSimGetGameVoteSnapshot(sim, kind, &snap)) return;
 
-    uint8_t buf[PACKET_HEADER_SIZE + 9];
+    uint8_t buf[PACKET_HEADER_SIZE + 11];
     packHeader(buf, PACKET_GAME_VOTE_STATE, 0);
     buf[PACKET_HEADER_SIZE + 0] = snap.kind;
     buf[PACKET_HEADER_SIZE + 1] = snap.active;
@@ -2152,8 +2169,10 @@ void transportUdpServerBroadcastGameVoteState(ServerSim *sim, uint8_t kind) {
     buf[PACKET_HEADER_SIZE + 3] = snap.teamId;
     buf[PACKET_HEADER_SIZE + 4] = snap.threshold;
     buf[PACKET_HEADER_SIZE + 5] = snap.yesCount;
-    buf[PACKET_HEADER_SIZE + 6] = snap.secondsRemaining;
-    packU16(buf + PACKET_HEADER_SIZE + 7, snap.votes);
+    buf[PACKET_HEADER_SIZE + 6] = snap.noCount;
+    buf[PACKET_HEADER_SIZE + 7] = snap.eligibleCount;
+    buf[PACKET_HEADER_SIZE + 8] = snap.secondsRemaining;
+    packU16(buf + PACKET_HEADER_SIZE + 9, snap.votes);
 
     int i;
     for (i = 0; i < MAX_TANKS; i++) {
@@ -2172,6 +2191,8 @@ void transportUdpServerBroadcastGameVoteState(ServerSim *sim, uint8_t kind) {
         evt.u.gameVoteState.teamId           = snap.teamId;
         evt.u.gameVoteState.threshold        = snap.threshold;
         evt.u.gameVoteState.yesCount         = snap.yesCount;
+        evt.u.gameVoteState.noCount          = snap.noCount;
+        evt.u.gameVoteState.eligibleCount    = snap.eligibleCount;
         evt.u.gameVoteState.secondsRemaining = snap.secondsRemaining;
         evt.u.gameVoteState.votes            = snap.votes;
         serverSimPublishControl(sim, &evt);

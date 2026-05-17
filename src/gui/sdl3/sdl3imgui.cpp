@@ -1254,7 +1254,7 @@ static void renderPlayersPanel(ClientSim *cs) {
         int activeTeams = 0;
         for (int i = 0; i < MAX_PLAYERS; i++) {
             const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
-            if (!ls || !ls->connected) continue;
+            if (!ls || !ls->connected || ls->isBot) continue;
             uint8_t t = ls->teamNumber;
             if (t == 0 || t > 16) continue;
             if (!teamSeen[t]) { teamSeen[t] = true; activeTeams++; }
@@ -1289,7 +1289,7 @@ static void renderPlayersPanel(ClientSim *cs) {
         if (surrDisabled) ImGui::EndDisabled();
         if (surrDisabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
             ImGui::SetTooltip("Surrender is only available when exactly two teams\n"
-                        "remain in play.");
+                        "with human players remain.");
         }
     }
 
@@ -1422,13 +1422,68 @@ static void renderChangeNameModal(ClientSim *cs) {
  * Pressing the title-bar X just hides locally; the vote keeps
  * running. Re-press the menu item to bring it back.
  * ------------------------------------------------------- */
+/* Per-kind layout state for the vote widget's auto-positioning.
+ *
+ * Lifecycle:
+ *   - active=false initially. When the widget first becomes visible
+ *     we set the window to (321*zoom, 0) — flush against the right
+ *     edge of the game viewport. After ImGui::Begin we capture the
+ *     real size into capturedW/H but mark sizeKnown for next frame.
+ *   - On the second frame, with size in hand, we re-position the
+ *     window centred in the status-panel column [321, 437], or
+ *     below an already-shown sibling vote widget if that centre
+ *     would overlap it. Then positioned=true and we stop forcing
+ *     SetNextWindowPos so the user can drag the window freely.
+ *   - When the widget hides (X-close, auto-dismiss, vote concludes
+ *     >5s ago) we clear active=false so the next appearance
+ *     re-runs the positioning. */
+struct VoteWidgetLayout {
+    bool  active;
+    bool  sizeKnown;
+    bool  positioned;
+    float capturedW;
+    float capturedH;
+    float lastX;
+    float lastY;
+};
+static VoteWidgetLayout s_voteLayout[2];
+
+/* Vote-widget anchor in unscaled coords. The widget hugs the right
+ * edge of the game viewport (x=321) and centres inside the
+ * 321..437 status-panel column once its rendered size is known. */
+static constexpr float VOTE_ANCHOR_X_LEFT  = 321.0f;
+static constexpr float VOTE_ANCHOR_X_RIGHT = 437.0f;
+static constexpr float VOTE_ANCHOR_Y_TOP   = 0.0f;
+
+static int voteLayoutIndex(uint8_t kind) {
+    if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) return 0;
+    if (kind == GAME_VOTE_KIND_SURRENDER)     return 1;
+    return -1;
+}
+
+static bool rectsIntersect(float ax, float ay, float aw, float ah,
+                            float bx, float by, float bw, float bh) {
+    return !(ax + aw <= bx || bx + bw <= ax ||
+             ay + ah <= by || by + bh <= ay);
+}
+
 static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
                                     const ClientGameVoteSnapshot *snap) {
+    int li = voteLayoutIndex(kind);
+    if (li < 0) return;
+    VoteWidgetLayout &lay = s_voteLayout[li];
+
+    auto resetLayout = [&]() {
+        lay.active = false;
+        lay.sizeKnown = false;
+        lay.positioned = false;
+    };
+
     /* Only render while a vote is in-flight or recently concluded
      * and the user hasn't dismissed. concludedAt fade-out is server-driven
      * (active changes from RUNNING → PASSED/FAILED/CANCELLED). */
-    if (snap->active == GAME_VOTE_ACTIVE_NONE) return;
-    if (!snap->widgetVisible) return;
+    if (snap->active == GAME_VOTE_ACTIVE_NONE) { resetLayout(); return; }
+    if (!snap->widgetVisible) { resetLayout(); return; }
 
     /* Auto-dismiss 5 seconds after the vote concludes (pass / fail /
      * cancel) so the widget doesn't linger forever. Still-running
@@ -1437,16 +1492,87 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
         uint32_t age = SDL_GetTicks() - snap->concludedAtMs;
         if (age >= 5000u) {
             clientSimSetGameVoteWidgetVisible(cs, kind, false);
+            resetLayout();
             return;
         }
     }
 
-    /* Default anchor: top-right of the main window, just under the
-     * menu bar. Player can drag elsewhere — only set on first use. */
-    ImGuiIO &io = ImGui::GetIO();
-    float menuH = ImGui::GetFrameHeight();
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 260.0f, menuH + 8.0f),
-                            ImGuiCond_FirstUseEver);
+    /* Compute the anchor band in actual on-screen pixels. The game
+     * is drawn into an off-screen render target at integer zoom
+     * (sdl3DrawGetZoomFactor) and then blitted into gGameDestRect at
+     * gGameScale, which can be non-integer when the window has been
+     * resized / maximized (effective zoom 3.x between integer steps).
+     *
+     *   on-screen X = destX + sourceX * zoomFactor * gameScale
+     *
+     * sourceX comes from VOTE_ANCHOR_X_* (unscaled game coords). */
+    int rawZoom = sdl3DrawGetZoomFactor();
+    if (rawZoom < 1) rawZoom = 1;
+    float destX = 0.0f, destY = 0.0f, gameScale = 1.0f;
+    sdl3DrawGetGameRect(&destX, &destY, NULL, NULL, &gameScale);
+    if (gameScale <= 0.0f) gameScale = 1.0f;
+    float effZoom = (float)rawZoom * gameScale;
+    float anchorXL = destX + VOTE_ANCHOR_X_LEFT  * effZoom;
+    float anchorXR = destX + VOTE_ANCHOR_X_RIGHT * effZoom;
+    float anchorY  = destY + VOTE_ANCHOR_Y_TOP   * effZoom;
+    float anchorCenter = 0.5f * (anchorXL + anchorXR);
+
+    /* Stage 1: widget just became visible. We don't have the real
+     * window size yet (AlwaysAutoResize uses the previous frame's
+     * content, which is empty), so we pre-guess the size. The guess
+     * lets us centre on the first visible frame instead of parking
+     * at the left edge of the band and snapping over later. The
+     * guess only needs to be in the right ballpark — once we have
+     * the true size after Begin, stage 2 re-centres precisely. */
+    const float WIDGET_GUESS_W = 200.0f;
+    const float WIDGET_GUESS_H = 140.0f;
+    if (!lay.active) {
+        lay.active = true;
+        lay.sizeKnown = false;
+        lay.positioned = false;
+        float guessX = anchorCenter - WIDGET_GUESS_W * 0.5f;
+        /* If a sibling is already positioned, stack under it. */
+        for (int j = 0; j < 2; j++) {
+            if (j == li) continue;
+            const VoteWidgetLayout &other = s_voteLayout[j];
+            if (!other.active || !other.positioned) continue;
+            if (rectsIntersect(guessX, anchorY, WIDGET_GUESS_W, WIDGET_GUESS_H,
+                               other.lastX, other.lastY,
+                               other.capturedW, other.capturedH)) {
+                guessX = other.lastX;
+                /* anchorY supplanted by stack below other */
+            }
+        }
+        ImGui::SetNextWindowPos(ImVec2(guessX, anchorY), ImGuiCond_Always);
+    } else if (lay.sizeKnown && !lay.positioned && lay.capturedW > 60.0f) {
+        /* Default target: centred horizontally in [321, 437] @ Y=0. */
+        float targetX = anchorCenter - lay.capturedW * 0.5f;
+        float targetY = anchorY;
+
+        /* If a previously-positioned sibling widget would overlap
+         * this target, stack directly under it instead. */
+        for (int j = 0; j < 2; j++) {
+            if (j == li) continue;
+            const VoteWidgetLayout &other = s_voteLayout[j];
+            if (!other.active || !other.positioned) continue;
+            if (rectsIntersect(targetX, targetY, lay.capturedW, lay.capturedH,
+                               other.lastX, other.lastY,
+                               other.capturedW, other.capturedH)) {
+                targetX = other.lastX;
+                targetY = other.lastY + other.capturedH;
+            }
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(targetX, targetY), ImGuiCond_Always);
+        lay.lastX = targetX;
+        lay.lastY = targetY;
+        lay.positioned = true;
+    }
+    /* Once positioned=true we stop forcing position so the user can
+     * drag the window freely. lastX/lastY are refreshed below from
+     * the actual window rect so siblings can stack against the
+     * dragged position. */
+
     ImGui::SetNextWindowBgAlpha(0.55f);
 
     /* Build the title — includes (Draw) tag for ranked manual
@@ -1466,29 +1592,98 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
                       ImGuiWindowFlags_NoCollapse |
                       ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::End();
-        if (!open) clientSimSetGameVoteWidgetVisible(cs, kind, false);
+        if (!open) { clientSimSetGameVoteWidgetVisible(cs, kind, false); resetLayout(); }
         return;
     }
 
-    /* Tally + circular progress. ImGui::PathArcTo on the window
-     * draw list, two arcs (background + filled). */
+    /* Refresh captured size + actual on-screen position so the next
+     * frame can centre / a sibling can stack underneath us. */
+    ImVec2 wPos  = ImGui::GetWindowPos();
+    ImVec2 wSize = ImGui::GetWindowSize();
+    lay.capturedW = wSize.x;
+    lay.capturedH = wSize.y;
+    lay.sizeKnown = true;
+    if (lay.positioned) {
+        /* User may have dragged — track current pos so siblings
+         * stack correctly against the dragged location. */
+        lay.lastX = wPos.x;
+        lay.lastY = wPos.y;
+    }
+
+    /* ──────────────────────────────────────────────────────────
+     * TEMPORARY — REMOVE BEFORE MERGING TO main
+     * Position logger: prints the widget's top-left whenever it
+     * shifts by more than a pixel. Avoids per-frame spam but still
+     * catches drags / re-positions.
+     * ────────────────────────────────────────────────────────── */
+    {
+        static ImVec2 s_lastLogged[2] = { {-9999, -9999}, {-9999, -9999} };
+        ImVec2 *prev = &s_lastLogged[li];
+        if (fabsf(wPos.x - prev->x) > 0.5f || fabsf(wPos.y - prev->y) > 0.5f) {
+            const char *kindName = (kind == GAME_VOTE_KIND_BACK_TO_LOBBY)
+                                   ? "back-to-lobby" : "surrender";
+            fprintf(stderr,
+                    "[VOTE-WIDGET-TEMP] %s pos=(%.1f, %.1f) size=(%.1f, %.1f) "
+                    "rawZoom=%d gameScale=%.3f effZoom=%.3f "
+                    "destX=%.1f band=[%.1f..%.1f]\n",
+                    kindName, wPos.x, wPos.y, wSize.x, wSize.y,
+                    rawZoom, gameScale, effZoom,
+                    destX, anchorXL, anchorXR);
+            fflush(stderr);
+            SDL_Log("[VOTE-WIDGET-TEMP] %s pos=(%.1f, %.1f) size=(%.1f, %.1f) "
+                    "rawZoom=%d gameScale=%.3f effZoom=%.3f "
+                    "destX=%.1f band=[%.1f..%.1f]",
+                    kindName, wPos.x, wPos.y, wSize.x, wSize.y,
+                    rawZoom, gameScale, effZoom,
+                    destX, anchorXL, anchorXR);
+            *prev = wPos;
+        }
+    }
+    /* END TEMPORARY */
+
+    /* Tally + circular progress.
+     *
+     * Ring is split into one slice per eligible voter:
+     *   - green  : voted yes
+     *   - red    : voted no
+     *   - gray   : not yet voted (background)
+     *
+     * When eligibleCount is unknown (legacy server / not running) we
+     * fall back to a single yes-vs-threshold green arc on a gray
+     * background, matching the pre-noCount behavior. */
     ImDrawList *dl = ImGui::GetWindowDrawList();
     ImVec2 base = ImGui::GetCursorScreenPos();
     float radius = 22.0f;
     ImVec2 centre(base.x + radius + 2.0f, base.y + radius + 2.0f);
-    float progress = (snap->threshold > 0)
-                     ? ((float)snap->yesCount / (float)snap->threshold) : 0.0f;
-    if (progress < 0.0f) progress = 0.0f;
-    if (progress > 1.0f) progress = 1.0f;
 
-    /* Background ring */
+    /* Background ring (drawn always; the colored arcs paint over it). */
     dl->AddCircle(centre, radius, IM_COL32(120, 120, 120, 200), 36, 3.0f);
-    /* Filled arc — from -90deg, sweeping clockwise. */
-    if (progress > 0.0f) {
-        float a0 = -IM_PI * 0.5f;
+
+    const ImU32 kYes  = IM_COL32(80, 200, 80, 255);
+    const ImU32 kNo   = IM_COL32(220, 70, 70, 255);
+    const float kStart = -IM_PI * 0.5f;   /* 12 o'clock */
+
+    if (snap->eligibleCount > 0) {
+        float slice = (2.0f * IM_PI) / (float)snap->eligibleCount;
+        if (snap->yesCount > 0) {
+            float a0 = kStart;
+            float a1 = a0 + slice * (float)snap->yesCount;
+            dl->PathArcTo(centre, radius, a0, a1, 36);
+            dl->PathStroke(kYes, 0, 3.5f);
+        }
+        if (snap->noCount > 0) {
+            float a0 = kStart + slice * (float)snap->yesCount;
+            float a1 = a0 + slice * (float)snap->noCount;
+            dl->PathArcTo(centre, radius, a0, a1, 36);
+            dl->PathStroke(kNo, 0, 3.5f);
+        }
+    } else if (snap->threshold > 0 && snap->yesCount > 0) {
+        float progress = (float)snap->yesCount / (float)snap->threshold;
+        if (progress > 1.0f) progress = 1.0f;
+        float a0 = kStart;
         float a1 = a0 + progress * IM_PI * 2.0f;
         dl->PathArcTo(centre, radius, a0, a1, 36);
-        dl->PathStroke(IM_COL32(80, 200, 80, 255), 0, 3.5f);
+        dl->PathStroke(kYes, 0, 3.5f);
     }
 
     /* Reserve the space for the ring + put the tally text next to it. */
@@ -1498,7 +1693,22 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
     ImGui::Text("%u / %u",
                 (unsigned)snap->yesCount, (unsigned)snap->threshold);
     if (snap->active == GAME_VOTE_ACTIVE_RUNNING) {
-        ImGui::TextDisabled("%us left", (unsigned)snap->secondsRemaining);
+        /* Solo (single eligible voter) "are you sure?" grace: server
+         * gives one-human votes 5 s after the yes before firing, so
+         * a misclick is reversible. Multi-human votes fire instantly
+         * on unanimity, so this branch only ever shows for solo. */
+        bool soloPendingPass = (snap->threshold == 1 &&
+                                snap->yesCount >= snap->threshold);
+        if (soloPendingPass) {
+            ImGui::TextColored(ImVec4(0.0f, 0.85f, 0.0f, 1.0f),
+                               "Passing in %us...",
+                               (unsigned)snap->secondsRemaining);
+        } else if (snap->eligibleCount > 1) {
+            /* Only show the 60-s deadline when there's more than one
+             * voter — for a solo vote it's meaningless since the
+             * single voter decides instantly on yes. */
+            ImGui::TextDisabled("%us left", (unsigned)snap->secondsRemaining);
+        }
     } else if (snap->active == GAME_VOTE_ACTIVE_PASSED) {
         ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.0f, 1.0f), "Passed");
     } else if (snap->active == GAME_VOTE_ACTIVE_FAILED) {
@@ -1540,6 +1750,7 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
     ImGui::End();
     if (!open) {
         clientSimSetGameVoteWidgetVisible(cs, kind, false);
+        resetLayout();
     }
 }
 
@@ -2300,7 +2511,7 @@ static void renderMenuBar(ClientSim *cs) {
             if (running) {
                 for (int i = 0; i < MAX_PLAYERS; i++) {
                     const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
-                    if (!ls || !ls->connected) continue;
+                    if (!ls || !ls->connected || ls->isBot) continue;
                     uint8_t t = ls->teamNumber;
                     if (t == 0 || t > 16) continue;
                     if (!teamSeen[t]) { teamSeen[t] = true; activeTeams++; }
@@ -2340,7 +2551,7 @@ static void renderMenuBar(ClientSim *cs) {
                 } else {
                     ImGui::SetTooltip(
                         "Surrender is only available when exactly two teams\n"
-                        "remain in play.");
+                        "with human players remain.");
                 }
             }
         }

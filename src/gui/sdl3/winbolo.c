@@ -255,6 +255,24 @@ int main(int argc, char *argv[]) {
   wb_log_init("WinBolo", "WinBolo", "winbolo.log");
   atexit(wb_log_shutdown);
 
+  /* ──────────────────────────────────────────────────────────
+   * TEMPORARY — REMOVE BEFORE MERGING TO main
+   * Build-marker line so a stale binary is obvious. Bump the tag
+   * when you want to verify a fresh build is actually running.
+   * Pushed through every channel so at least one is visible.
+   * ────────────────────────────────────────────────────────── */
+  {
+    char marker[256];
+    snprintf(marker, sizeof(marker),
+             "[BUILD-TEMP] vote-widget-debug-2026-05-17 build=%s %s",
+             __DATE__, __TIME__);
+    printf("%s\n", marker); fflush(stdout);
+    fprintf(stderr, "%s\n", marker); fflush(stderr);
+    SDL_Log("%s", marker);
+    WB_LOG_INFO(WB_LOG_CAT_GUI, "%s", marker);
+  }
+  /* END TEMPORARY */
+
   steam_init();
   steam_set_join_callback(steamJoinRequested);
 

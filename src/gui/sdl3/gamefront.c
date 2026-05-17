@@ -238,18 +238,28 @@ static bool spTransportLocalUsed = FALSE;
 static bool spServerHosted = FALSE;
 static SDL_TimerID hostedServerTimerID = 0;
 
+/* Set true by gameFrontShutdownServer the moment shutdown begins so
+ * any in-flight or already-scheduled callback bails out and returns 0
+ * (cancels the timer) instead of returning `interval` which would
+ * re-arm it. Without this, SDL_RemoveTimer + a non-zero return value
+ * can cooperate to fire one extra callback after the mutex it grabs
+ * has been destroyed. */
+static volatile bool spServerTimerShutdown = false;
+
 static Uint32 SDLCALL hostedServerTimerCb(void *userdata, SDL_TimerID id, Uint32 interval) {
   (void)userdata; (void)id;
+  if (spServerTimerShutdown) return 0;
   /* Read spServerSim under the mutex so a concurrent shutdown can NULL
    * it out without us racing with a freed pointer cached on this stack
    * frame.  serverInstanceTick re-takes the mutex internally; the
    * threading mutex is recursive on both Windows and SDL3. */
   threadsWaitForMutex();
-  if (spServerHosted && spServerSim != NULL) {
+  bool active = (!spServerTimerShutdown && spServerHosted && spServerSim != NULL);
+  if (active) {
     serverInstanceTick(spServerSim);
   }
   threadsReleaseMutex();
-  return interval;
+  return active ? interval : 0;
 }
 
 /* UDP multiplayer transport state — the Transport handle itself now
@@ -1664,6 +1674,12 @@ void gameFrontReloadSkins(void) {
 void gameFrontShutdownServer(void) {
   ServerSim *toFree;
   if (!spServerSimActive) return;
+  /* Tell the timer callback to bail and cancel itself BEFORE we call
+   * SDL_RemoveTimer — RemoveTimer doesn't wait for an in-flight
+   * callback, and a callback that's already past the mutex lock can
+   * return non-zero and re-arm the timer despite the remove. With
+   * the flag, any cb invocation past this point returns 0. */
+  spServerTimerShutdown = true;
   if (hostedServerTimerID != 0) {
     SDL_RemoveTimer(hostedServerTimerID);
     hostedServerTimerID = 0;
@@ -1778,6 +1794,9 @@ bool gameFrontSetupServer(void) {
     return FALSE;
   }
 
+  /* Clear the shutdown latch in case we're restarting a hosted server
+   * in the same process (e.g. after returning from a previous game). */
+  spServerTimerShutdown = false;
   hostedServerTimerID = SDL_AddTimer(SERVER_TICK_LENGTH, hostedServerTimerCb, NULL);
   if (hostedServerTimerID == 0) {
     serverInstanceShutdown(spServerSim);

@@ -610,6 +610,7 @@ static void discoverMapsRecursive(MapChooserState *state,
 static SDL_Texture *s_iconListView = nullptr;
 static SDL_Texture *s_iconGridView = nullptr;
 static SDL_Texture *s_iconFolder   = nullptr;
+static SDL_Texture *s_iconMaximize = nullptr;
 static SDL_Renderer *s_iconsRenderer = nullptr;
 
 static void loadViewModeIconsOnce(SDL_Renderer *renderer, int sizePx) {
@@ -620,6 +621,7 @@ static void loadViewModeIconsOnce(SDL_Renderer *renderer, int sizePx) {
         if (s_iconListView) { SDL_DestroyTexture(s_iconListView); s_iconListView = nullptr; }
         if (s_iconGridView) { SDL_DestroyTexture(s_iconGridView); s_iconGridView = nullptr; }
         if (s_iconFolder)   { SDL_DestroyTexture(s_iconFolder);   s_iconFolder   = nullptr; }
+        if (s_iconMaximize) { SDL_DestroyTexture(s_iconMaximize); s_iconMaximize = nullptr; }
         s_iconsRenderer = renderer;
     }
     if (!s_iconListView) {
@@ -665,6 +667,25 @@ static void loadViewModeIconsOnce(SDL_Renderer *renderer, int sizePx) {
             }
         }
     }
+    if (!s_iconMaximize) {
+        s_iconMaximize = imguiLoadSvgIconWhite(renderer,
+            "data/ui/maximize.svg", sizePx);
+        if (!s_iconMaximize) {
+            char buf[FILENAME_MAX];
+            const char *base = SDL_GetBasePath();
+            if (base) {
+                SDL_snprintf(buf, sizeof(buf),
+                             "%sdata/ui/maximize.svg", base);
+                s_iconMaximize = imguiLoadSvgIconWhite(renderer, buf, sizePx);
+            }
+        }
+    }
+}
+
+/* Public-within-TU accessor for the maximize SVG. Returns nullptr if
+ * the icon hasn't been loaded yet (caller falls back to glyph). */
+SDL_Texture *mapChooserGetMaximizeIcon(void) {
+    return s_iconMaximize;
 }
 
 /* Render the list/grid view-mode toggle as two SVG icon buttons.
@@ -2344,7 +2365,12 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             /* Maximize / restore toggle — top-right corner of the
              * preview image. Only rendered if the surrounding window
              * wired up a maximize flag. Translucent black backing so
-             * it stays legible over any map terrain. */
+             * it stays legible over any map terrain.
+             *
+             * Uses data/ui/maximize.svg when the icon is loaded;
+             * falls back to unicode glyphs (⤢ / ⤦) when the SVG
+             * texture isn't available (asset missing or render
+             * context not initialised yet). */
             if (state->maximizePtr) {
                 bool maxed = *state->maximizePtr;
                 float btnSz = 24.0f;
@@ -2358,10 +2384,25 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                     ImVec4(0.2f, 0.2f, 0.2f, 0.80f));
                 ImGui::PushStyleColor(ImGuiCol_Text,
                     ImVec4(1.0f, 1.0f, 1.0f, 0.9f));
-                const char *label = maxed
-                    ? "\xe2\xa4\xa6"   /* ⤦ : restore */
-                    : "\xe2\xa4\xa2";  /* ⤢ : maximize */
-                if (ImGui::Button(label, ImVec2(btnSz, btnSz))) {
+
+                bool clicked = false;
+                if (s_iconMaximize) {
+                    /* Pad the image inside the 24px button so it
+                     * matches the glyph-fallback footprint. */
+                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                                        ImVec2(4.0f, 4.0f));
+                    ImVec2 imgSz(btnSz - 8.0f, btnSz - 8.0f);
+                    clicked = ImGui::ImageButton(
+                        maxed ? "##chooseMapRestore" : "##chooseMapMaximize",
+                        (ImTextureID)s_iconMaximize, imgSz);
+                    ImGui::PopStyleVar();
+                } else {
+                    const char *label = maxed
+                        ? "\xe2\xa4\xa6"   /* ⤦ : restore */
+                        : "\xe2\xa4\xa2";  /* ⤢ : maximize */
+                    clicked = ImGui::Button(label, ImVec2(btnSz, btnSz));
+                }
+                if (clicked) {
                     *state->maximizePtr = !maxed;
                 }
                 if (ImGui::IsItemHovered()) {

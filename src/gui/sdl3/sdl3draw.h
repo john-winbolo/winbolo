@@ -78,6 +78,13 @@ SDL_Window *sdl3DrawGetWindow(void);
 SDL_Renderer *sdl3DrawGetRenderer(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
 
+/* Live game-render destination rect + scale, used by UI overlays to
+ * pin themselves to the actual on-screen game viewport (which can be
+ * letterboxed / pillarboxed / non-integer scaled in custom zoom). Any
+ * pointer may be NULL. */
+void sdl3DrawGetGameRect(float *destX, float *destY,
+                          float *destW, float *destH, float *scale);
+
 /* Atlas sheet scale used when blitting from the texture returned by
  * sdl3DrawGetTilesTexture. Sprite source coords stored in the legacy
  * tables (e.g. mapViewPosX/Y) are at scale 1; multiply by this factor

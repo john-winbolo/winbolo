@@ -59,7 +59,8 @@ typedef enum {
     CTRL_LOBBY_BOT_CONFIG,
     CTRL_LOBBY_BOT_BRAIN,
     CTRL_LOBBY_BRAIN_LIST,
-    CTRL_GAME_VOTE_STATE
+    CTRL_GAME_VOTE_STATE,
+    CTRL_SERVER_TEXT
 } ControlEventType;
 
 typedef enum {
@@ -203,14 +204,24 @@ typedef struct ControlEvent {
             BrainList list;
         } lobbyBrainList;
 
+        /* CTRL_SERVER_TEXT — server-originated chat broadcast.
+         * Mirrors what UDP clients receive as
+         * PACKET_CHAT_BROADCAST(fromPlayer=0xFE). Lets in-process
+         * subscribers (SP / host) see the same lines. */
+        struct {
+            char text[PACKET_MAX_CHAT_MESSAGE + 1];
+        } serverText;
+
         /* CTRL_GAME_VOTE_STATE — mirrors PACKET_GAME_VOTE_STATE. */
         struct {
             uint8_t  kind;             /* GAME_VOTE_KIND_* */
             uint8_t  active;           /* GAME_VOTE_ACTIVE_* */
             uint8_t  triggerSrc;       /* GAME_VOTE_TRIGGER_* */
             uint8_t  teamId;           /* surrender only; 0 = all-teams */
-            uint8_t  threshold;
+            uint8_t  threshold;        /* yes-count needed to pass */
             uint8_t  yesCount;
+            uint8_t  noCount;
+            uint8_t  eligibleCount;
             uint8_t  secondsRemaining; /* 0..60 */
             uint16_t votes;            /* bitmask of slots that voted yes */
         } gameVoteState;

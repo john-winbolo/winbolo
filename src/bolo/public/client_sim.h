@@ -396,6 +396,8 @@ typedef struct {
     uint8_t  teamId;
     uint8_t  threshold;
     uint8_t  yesCount;
+    uint8_t  noCount;
+    uint8_t  eligibleCount;
     uint8_t  secondsRemaining;
     uint16_t votes;
     bool     widgetVisible;
