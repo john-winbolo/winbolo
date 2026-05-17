@@ -32,6 +32,9 @@ document is the stable reference for the rules themselves.
 | `src/android/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
 | `src/ios/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
 | `src/logviewer/` | T1 + T3 + T4 | Replays recorded games; uses T3 for the playback render path. |
+| `src/winbolonet/winbolonet_core/` | T1 + T4 | Shared HTTP, async event queue, WBN key storage. Includes `server_sim.h` (T1) only. Linked by every WBN-aware binary. |
+| `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, gym, SDL3 client (SP host). |
+| `src/winbolonet/winbolonet_client/` | T4 | User auth, comments. Linked by binaries with a UI: SDL3 client, LogViewer. |
 | `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. |
 | `tests/`, `tools/` | T1 + T3 + T4 (by default) | Not currently wired through a profile. Tests that legitimately need T2 belong inside `src/bolo/tests/` and link against bolo's own target. |
 
@@ -560,6 +563,103 @@ publish recipe does not apply to them:
   the new code.
 - **Never change the on-wire layout of an existing packet** without
   versioning. Add a new packet ID instead.
+
+## WinBolo.net subsystem
+
+The WinBolo.net (WBN) integration is split across three sibling
+static libraries under `src/winbolonet/`. They share a directory on
+disk but each library covers a different surface and a different
+link set, so binaries pick the subset they need.
+
+### What each library is for
+
+**`winbolonet_core`** owns the shared HTTP transport (libcurl
+wrapper in `http.c`), the async event-delivery queue, WBN key
+storage, and the preferences-file path stored via
+`winbolonetCoreSetPreferencesPath` (called once at startup by each
+binary's `main()` before any WBN call). It is the hard dependency
+of the other two libraries and is linked into every binary that
+talks to WBN.
+
+**`winbolonet_server`** is the tracker-reporting surface a server
+runtime calls: `server/register` at boot, per-tick `server/update`,
+lobby and map status updates, teams and balance, client verify,
+and leave on shutdown. It depends on `winbolonet_core`. Linked into
+binaries that run a server.
+
+**`winbolonet_client`** is the surface UI frontends call to sign in
+(`winbolonetAuthLogin`, `winbolonetAuthSteam`,
+`winbolonetAuthValidate`) and to fetch user-facing data
+(`wbn_comments`). It depends on `winbolonet_core`. Linked into
+binaries with a UI.
+
+### Per-binary link sets
+
+| Binary | core | server | client | Notes |
+|---|---|---|---|---|
+| `WinBolo` (SDL3) | yes | yes | yes | Hosts SP server in-process |
+| `WinBoloDS` | yes | yes | — | |
+| `WinBoloHeadless` | yes | yes | — | SP via `cmd_stdin` |
+| `Gym` | yes | yes | — | |
+| `LogViewer` | yes | — | yes | Replay UI uses `http.c` + comments |
+| `WinBoloIOS`, `WinBoloAndroid`, `BrainTest`, `MapEditor`, `WinBoloUnitTests`, wasm | — | — | — | Stubbed today, stay stubbed. The existing stub files in `android/winbolonet_stub.c`, `gui/ios/ios_stubs.c`, `wasm/winbolonet_wasm.c` cover the WBN surface these binaries pull through their other dependencies. `bolo/log.c`'s `winboloNetGetServerKey` call continues to be satisfied by these stubs, which return an empty string. |
+
+**Gym caveat.** Gym links `winbolonet_core` + `winbolonet_server`
+not because it wants to talk to the WBN tracker (it's an offline
+ML training harness — there's no business reason to phone home),
+but because it shares `server_static`'s runtime which contains
+calls into `winbolonet_server` from `server_sim.c` and
+`server_lifecycle.c`. Every WBN call is gated by
+`winbolonetIsRunning()`, and gym never initialises WBN, so the
+calls are no-ops at runtime — the same situation as a dedicated
+server started with `-nowinbolonet`. Switching gym to the stub set
+(alongside the mobile/wasm binaries) is a possible cleanup but is
+out of scope.
+
+### Recipe — adding a new WBN endpoint
+
+Two shapes, depending on which side of the tracker the new endpoint
+lives on.
+
+**Client-side fetcher** — a UI frontend wants user-facing data from
+the tracker. Modelled on `wbn_comments`:
+
+1. Pick `winbolonet_client` as home. Add `wbn_<name>.{cpp,h}`
+   alongside `wbn_comments.{cpp,h}`.
+2. Use the established async surface: an `std::atomic<bool> done`,
+   an `std::mutex` guarding the result struct, and four entry
+   points — `wbn_<name>_start` (kicks off a worker thread),
+   `wbn_<name>_done` (poll), `wbn_<name>_result` (collect once
+   done), `wbn_<name>_free` (release). The worker issues the
+   request via `wbn_api_get` from `winbolonet_core`.
+3. Call from a UI frontend (e.g. an ImGui dialog under
+   `src/gui/sdl3/dialogs/` or `src/logviewer/imgui/`). The frontend
+   includes `winbolonet_client.h`.
+
+**Server-tracker endpoint** — the sim runtime wants to report
+something authoritative to the tracker. Modelled on
+`winbolonetServerUpdate`:
+
+1. Add the function to `winbolonet_server.c`, following the
+   existing `winbolonetServer*` naming and shape (build a `cJSON`
+   body, call `wbn_api_call` from `winbolonet_core`, parse the
+   response).
+2. Declare it on `winbolonet_server.h`.
+3. Call it from the appropriate server-side site (`server_sim.c`,
+   `server_lifecycle.c`, `transport_udp_server.c`, `servermain.c`),
+   gated by `winbolonetIsRunning()`.
+
+### What not to do
+
+- **Do not `#include "winbolonet_server.h"` from a UI translation
+  unit** (`src/gui/sdl3/dialogs/*`, `gamefront.c`, etc.).
+  `winbolonet_server` is a sim-runtime surface. If a UI file
+  thinks it needs it, the answer is either a T1 sim accessor or
+  surfacing the data through `winbolonet_client` (which is what
+  `wbn_comments` already does).
+- **Do not `#include "winbolonet_client.h"` from server-side TUs**
+  (`src/server/*`). Server code has no API token and no business
+  signing in as a user.
 
 ## Privileged exceptions
 
