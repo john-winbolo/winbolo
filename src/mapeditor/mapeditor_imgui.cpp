@@ -29,8 +29,8 @@
 #include "imgui_impl_sdlrenderer3.h"
 
 #include "mapeditor_imgui.h"
-#include "mapeditor_generate.h"
-#include "mapeditor_maze.h"
+#include "mapgen.h"
+#include "mapgen_maze.h"
 #include "mapeditor_text.h"
 #include "mapeditor_fonts.h"
 #include "mapeditor_validate.h"
@@ -136,6 +136,22 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
                            bool fromMainMenu,
                            int zoomStepIndex, int zoomStepCount,
                            const float *zoomStepValues) {
+#ifdef __APPLE__
+    /* No-op on macOS — the native NSMenu shim owns the menu bar. The
+     * caller in mapeditor.c does NOT invoke this function on Apple; it
+     * calls me_mac_menubar_consume_actions() instead, which is what
+     * zeroes `action` and fills it from the NSMenu pending-action
+     * buffer. Doing the memset here would race with NSMenu clicks
+     * arriving between frames, so we leave `action` untouched. */
+    (void)action; (void)recentFiles; (void)numRecent;
+    (void)showGrid; (void)showMines; (void)showPillRanges; (void)dirty;
+    (void)canUndo; (void)canRedo; (void)hasSelection;
+    (void)showTerrain; (void)showTools; (void)showInspector;
+    (void)showObjects; (void)showOverview; (void)showStats;
+    (void)showStampLibrary; (void)fromMainMenu;
+    (void)zoomStepIndex; (void)zoomStepCount; (void)zoomStepValues;
+    return;
+#else
     memset(action, 0, sizeof(*action));
     action->openRecentIndex = -1;
 
@@ -305,6 +321,7 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
         }
         ImGui::EndMainMenuBar();
     }
+#endif /* __APPLE__ */
 }
 
 int mapEditorImguiUnsavedModal(void) {
@@ -2627,7 +2644,7 @@ int mapEditorImguiStampLibrary(StampLibrary *lib, void *rendererPtr,
                 else fname = s_stampImportPath;
 
                 char destPath[512];
-                snprintf(destPath, sizeof(destPath), "%s/%s", userDir, fname);
+                snprintf(destPath, sizeof(destPath), "%.255s/%.255s", userDir, fname);
 
                 /* Copy file */
                 FILE *src = fopen(s_stampImportPath, "rb");

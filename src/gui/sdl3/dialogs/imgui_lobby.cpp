@@ -144,17 +144,34 @@ static char s_lastChosenBrainPath[256] = "";
  * teamId-aware add-bot packet). */
 static void lobbySendAddBot(ClientSim *cs,
                             int namingPool, uint8_t teamNumber) {
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[DIAG] lobbySendAddBot ENTRY cs=%p namingPool=%d teamNumber=%u isSP=%d",
+                (void *)cs, namingPool, (unsigned)teamNumber,
+                cs ? (int)clientSimIsSinglePlayer(cs) : -1);
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-        if (!sim) return;
-        if (serverSimGetState(sim) != serverStateLobby) return;
+        if (!sim) { WB_LOG_WARN(WB_LOG_CAT_GUI, "[DIAG] lobbySendAddBot SP: sim=NULL"); return; }
+        if (serverSimGetState(sim) != serverStateLobby) {
+            WB_LOG_WARN(WB_LOG_CAT_GUI, "[DIAG] lobbySendAddBot SP: state=%d not lobby",
+                        (int)serverSimGetState(sim));
+            return;
+        }
         /* Find first free slot */
         BYTE slot;
         for (slot = 1; slot < MAX_TANKS; slot++) {
             if (!serverSimIsPlayerConnected(sim, slot)) break;
         }
-        if (slot >= MAX_TANKS) return;
-        if (serverSimGetBotBrainPath(sim)[0] == '\0') return;
+        if (slot >= MAX_TANKS) {
+            WB_LOG_WARN(WB_LOG_CAT_GUI, "[DIAG] lobbySendAddBot SP: no free slot");
+            return;
+        }
+        if (serverSimGetBotBrainPath(sim)[0] == '\0') {
+            WB_LOG_WARN(WB_LOG_CAT_GUI, "[DIAG] lobbySendAddBot SP: botBrainPath empty");
+            return;
+        }
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
+                    "[DIAG] lobbySendAddBot SP: picked slot=%u brain='%s'",
+                    (unsigned)slot, serverSimGetBotBrainPath(sim));
 
         /* Pick a name. If a pool override is supplied we use it; else
          * fall back to "Bot N". Build the used-names list from current
@@ -173,10 +190,15 @@ static void lobbySendAddBot(ClientSim *cs,
             snprintf(botName, sizeof(botName), "Bot %d", slot);
         }
 
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
+                    "[DIAG]   about to serverSimCreateBot slot=%u name='%s' aiType=%d gameType=%d",
+                    (unsigned)slot, botName, (int)serverSimGetBotAiType(sim),
+                    (int)clientSimGetLobbyGameType(cs));
         serverSimCreateBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
                            (aiType)serverSimGetBotAiType(sim),
                            (gameType)clientSimGetLobbyGameType(cs),
                            clientSimIsLobbyHiddenMines(cs));
+        WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   serverSimCreateBot returned slot=%u", (unsigned)slot);
         /* Mirror the path into the per-bot table so the AiConfig combo
          * reflects "this bot's brain" rather than a global default. */
         serverSimSetBotBrainPathFor(sim, slot, serverSimGetBotBrainPath(sim));
@@ -3057,6 +3079,13 @@ static SDL_Texture *s_iconSettings = nullptr;
 static SDL_Texture *s_iconBotCpuGreen  = nullptr;
 static SDL_Texture *s_iconBotCpuRed    = nullptr;
 static bool         s_iconsAttempted = false;
+/* The renderer instance the icons above were created against. SDL_Texture
+ * is tied to the renderer that created it, so if the renderer instance
+ * pointer changes between calls (e.g. across a game→lobby transition
+ * that recreates the renderer) the cached textures reference dead GPU
+ * resources. Track it and reload on mismatch — same pattern as
+ * imgui_mapchooser's loadViewModeIconsOnce. */
+static SDL_Renderer *s_iconsRenderer = nullptr;
 
 /* Tank sprite used as the team identity badge in the lobby header.
  * Loaded once on first lobby render; tinted with the team color via
@@ -3143,8 +3172,21 @@ static SDL_Texture *getTankGood04Texture(SDL_Renderer *renderer) {
 }
 
 static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
-    if (s_iconsAttempted) return;
+    /* If we've loaded against this exact renderer already, nothing
+     * to do. If the renderer pointer differs (game→lobby may have
+     * recreated it; SDL3 textures don't survive that), destroy the
+     * stale textures and reload. */
+    if (s_iconsAttempted && s_iconsRenderer == renderer) return;
+    if (s_iconsAttempted && s_iconsRenderer != renderer) {
+        if (s_iconSuccess)     { SDL_DestroyTexture(s_iconSuccess);     s_iconSuccess     = nullptr; }
+        if (s_iconError)       { SDL_DestroyTexture(s_iconError);       s_iconError       = nullptr; }
+        if (s_iconInfo)        { SDL_DestroyTexture(s_iconInfo);        s_iconInfo        = nullptr; }
+        if (s_iconSettings)    { SDL_DestroyTexture(s_iconSettings);    s_iconSettings    = nullptr; }
+        if (s_iconBotCpuGreen) { SDL_DestroyTexture(s_iconBotCpuGreen); s_iconBotCpuGreen = nullptr; }
+        if (s_iconBotCpuRed)   { SDL_DestroyTexture(s_iconBotCpuRed);   s_iconBotCpuRed   = nullptr; }
+    }
     s_iconsAttempted = true;
+    s_iconsRenderer  = renderer;
 
     int iconPx = (int)(18.0f * scale);
     if (iconPx < 16) iconPx = 16;
@@ -4610,7 +4652,12 @@ static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
         if (ImGui::Button(langGetText(STR_CLOSE)) ||
-            ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+            (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
+#ifdef __APPLE__
+            || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
+#endif
+           ) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -4969,8 +5016,21 @@ static void renderGameSettingsPanel(ClientSim *cs,
 }
 
 extern "C" int imguiLobbyShow(ClientSim *cs) {
-    WB_LOG_INFO(WB_LOG_CAT_GUI, "[LOBBY] imguiLobbyShow called cs=%p inLobby=%d netStat=%d",
-            (void*)cs, cs ? (int)clientSimIsInLobby(cs) : -1, cs ? (int)clientSimGetNetStatus(cs) : -1);
+    WB_LOG_INFO(WB_LOG_CAT_GUI, "[LOBBY] imguiLobbyShow called cs=%p inLobby=%d netStat=%d isSP=%d",
+            (void*)cs, cs ? (int)clientSimIsInLobby(cs) : -1, cs ? (int)clientSimGetNetStatus(cs) : -1,
+            cs ? (int)clientSimIsSinglePlayer(cs) : -1);
+    if (cs) {
+        /* [DIAG] dump slot state every entry — shows whether the slot data is reaching the lobby UI. */
+        for (BYTE i = 0; i < MAX_TANKS; i++) {
+            const ClientLobbySlot *sl = clientSimGetLobbySlot(cs, i);
+            if (sl && sl->connected) {
+                WB_LOG_INFO(WB_LOG_CAT_GUI,
+                            "[DIAG]   slot %u: team=%u ready=%d isBot=%d name='%s'",
+                            (unsigned)i, (unsigned)sl->teamNumber,
+                            (int)sl->ready, (int)sl->isBot, sl->playerName);
+            }
+        }
+    }
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
     if (!window || !renderer) return 0;
@@ -5395,8 +5455,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 dl->AddTriangleFilled(p1, p2, p3, col);
             }
             if (leaveClicked ||
-                (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
-                 !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
+                ((ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                  (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
+#ifdef __APPLE__
+                  || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
+#endif
+                 ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
                 char leavePopupId[64];
                 SDL_snprintf(leavePopupId, sizeof(leavePopupId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
                 ImGui::OpenPopup(leavePopupId);
@@ -5890,8 +5954,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
                 ImGui::SameLine(0, 20);
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
-                    (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
-                     !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
+                    ((ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                      (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
+#ifdef __APPLE__
+                      || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
+#endif
+                     ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
                     char leavePopupId[64];
                     SDL_snprintf(leavePopupId, sizeof(leavePopupId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
                     ImGui::OpenPopup(leavePopupId);
@@ -6477,7 +6545,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             }
             ImGui::SameLine(0.0f, 8.0f);
             if (ImGui::Button(langGetText(STR_NO), ImVec2(80 * s, 0)) ||
-                ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
+#ifdef __APPLE__
+                || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
+#endif
+               ) {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();

@@ -47,7 +47,10 @@
 #include "tutorial.h"
 #include "../steam/steam_wrapper.h"
 
+#ifndef CLIENTSIM_TYPEDEF
+#define CLIENTSIM_TYPEDEF
 typedef struct ClientSim ClientSim;
+#endif
 #include "tankexp.h"
 #include "tilenum.h"
 #include "shells.h"
@@ -320,7 +323,7 @@ void tankCreate(GameSim *sim, tank *value) {
   (*value)->newTank = TRUE;
   (*value)->autoSlowdown = FALSE;
   (*value)->autoHideGunsight = FALSE;
-  (*value)->justFired = FALSE;
+  (*value)->justFired = 0;
   (*value)->tankHitCount = 0;
   (*value)->firstLeft = 0;
   (*value)->firstRight = 0;
@@ -410,18 +413,15 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
   BYTE bmx;                   /* Map x and y co-ords as bytes */
   BYTE bmy;
 
-  /* Tutorial freeze: while a tutorial dialog is up the client has set
-   * tutorialServerPaused, so skip all server-side physics. The
-   * unmodified tick state is then replayed to the client in snapshots,
-   * keeping everything (tank, shells, timers via tankUpdate) stationary
-   * until the dialog closes. Client-side (prediction) still runs so
-   * the UI stays responsive. */
-  if (isServer && tutorialServerPaused) {
+  /* Pause gate: freezes tank movement plus the shell, mine and timer
+   * work that ticks through tankUpdate so the world holds still while
+   * a tutorial dialog is up. */
+  if (sim->paused) {
     return;
   }
 
   (*value)->obstructed = FALSE;
-  (*value)->justFired = FALSE;
+  if ((*value)->justFired > 0) (*value)->justFired--;
   /* Extract MAP co-ords from WORLD co-ords */
   conv = (*value)->x;
   conv >>= TANK_SHIFT_MAPSIZE;
@@ -451,7 +451,7 @@ void tankUpdate(GameSim *sim, tank *value, tankButton tb, bool tankShoot, bool i
       frontEndPlaySound(clientSimFromSim(sim), shootSelf);
       frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
     }
-    (*value)->justFired = TRUE;
+    (*value)->justFired = JUST_FIRED_TICKS;
   }
 
 
@@ -2813,7 +2813,7 @@ void tankSetAutoHideGunsight(tank *value, bool useAutohide) {
 *  value - Pointer to the tank structure
 *********************************************************/
 bool tankJustFired(tank *value) {
-  return (*value)->justFired;
+  return (*value)->justFired > 0;
 }
 
 /*********************************************************

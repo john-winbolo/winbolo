@@ -249,16 +249,12 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 /* Lobby packets — Client -> Server */
 #define PACKET_LOBBY_TEAM_SET    130  /* { playerNum, teamNumber } */
 #define PACKET_LOBBY_READY       131  /* { playerNum, ready } */
-#define PACKET_LOBBY_ADD_BOT     132  /* { teamId 1, pathLen 1, path N,
-                                        *   nameLen 1, name M } —
-                                        * teamId=0 lets server pick;
-                                        * empty path = server default brain;
-                                        * empty name = server falls back to
-                                        *              "Bot <slot>" */
+#define PACKET_LOBBY_ADD_BOT     132  /* { brainPath } — request server add a bot */
 #define PACKET_LOBBY_REMOVE_BOT  133  /* { playerNum } — request server remove a bot */
 
-/* Lobby packets — Server -> Client */
-#define PACKET_LOBBY_STATE       140  /* Full lobby snapshot: all 16 slots + server state */
+/* Lobby packets — Server -> Client.  Slot 140 (formerly the composite
+ * PACKET_LOBBY_STATE) is retired: slot and settings updates are now
+ * encoded as separate packets via the control-event codec. */
 #define PACKET_LOBBY_UPDATE      141  /* Single-player delta: { playerNum, teamNumber, ready, isBot } */
 #define PACKET_COUNTDOWN         142  /* { secondsRemaining } */
 #define PACKET_GAME_START        143  /* Signal to transition from lobby to game */
@@ -292,147 +288,46 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
  * update in lockstep. */
 #define PACKET_NAME_CHANGE_REJECT   158
 
-#define NAME_REJECT_INVALID         1   /* validator: any *_INVALID_* error */
-#define NAME_REJECT_TAKEN           2   /* duplicate via playerNameCompare */
-#define NAME_REJECT_RESERVED_PREFIX 3   /* leading '*' */
-#define NAME_REJECT_RESERVED_SUFFIX 4   /* -unverified */
-#define NAME_REJECT_MIXED_SCRIPTS   5   /* single-script rule */
-#define NAME_REJECT_EMPTY           6   /* empty after strip */
+/* Server -> Client: lobby-wide settings (map, game type, limits, ...).
+ * Produced by the CTRL_LOBBY_SETTINGS codec encoder; replaces the
+ * settings-tail portion of the legacy composite PACKET_LOBBY_STATE.
+ * Layout matches the per-field shape of serverSimFillLobbySettingsEvent. */
+#define PACKET_LOBBY_SETTINGS       159
 
-/* ── Lobby Layout A — Client → Server (160-169) ───────────────────
- * One packet type per command (matches the convention established
- * by PACKET_LOBBY_TEAM_SET / READY / ADD_BOT / REMOVE_BOT above).
- * Per-team objects are auto-ally affordances — server uses the
- * existing alliance system to ally team members at game start.
- *
- * Authority on every command: senderIsHost || (game.openHost &&
- * senderIsActivePlayer). Plus per-setting lock check.
- * Server applies, broadcasts the matching _CHG, then broadcasts
- * PACKET_LOBBY_AUTO_UNREADY. */
+/* ── Lobby Layout A — Client → Server (160-174) ─────────────────── */
 #define PACKET_LOBBY_SET_SETTING    160  /* { settingType 1, valueLen 1, value N } */
 #define PACKET_LOBBY_OPEN_HOST      161  /* { bool 1 } */
 #define PACKET_LOBBY_TEAM_META      162  /* { teamId 1, color 1, namingPool 1,
-                                            *   nameLen 1, name N }
-                                            * Single packet handles create +
-                                            * rename + recolor + naming pool. */
+                                          *   nameLen 1, name N } */
 #define PACKET_LOBBY_TEAM_CLEAR     163  /* { teamId 1 } */
 #define PACKET_LOBBY_BOT_CONFIG     164  /* { slot 1, difficulty 1,
-                                            *   personality 1, nameLen 1,
-                                            *   name N } */
+                                          *   personality 1, nameLen 1,
+                                          *   name N } */
 #define PACKET_LOBBY_KICK           165  /* { slot 1 } */
 #define PACKET_LOBBY_SET_BOT_BRAIN  166  /* { slot 1, pathLen 1, path N } */
-#define PACKET_LOBBY_SET_MAP        167  /* { pathLen 1, path N } —
-                                            * path is relative to the
-                                            * server's data/maps/ root
-                                            * (e.g. "Foo.map" or
-                                            * "subdir/Foo.map"). Server
-                                            * rejects "..", absolute
-                                            * paths, and Windows drive
-                                            * specs before opening the
-                                            * file. */
-#define PACKET_LOBBY_MAP_LIST_REQ   168  /* { pathLen 1, path N } —
-                                            * client asks server to list
-                                            * data/maps/<path>; server
-                                            * replies with MAP_LIST_RSP.
-                                            * Path "" = root. Any client
-                                            * (lobby readers don't need
-                                            * edit authority). */
-#define PACKET_LOBBY_MAP_UPLOAD_BEGIN    169  /* { totalLen 4, nameLen 1, name N }
-                                                * client -> server: announce
-                                                * incoming file. Server
-                                                * allocates a buffer, sends
-                                                * MAP_UPLOAD_ACK. */
-#define PACKET_LOBBY_MAP_UPLOAD_CHUNK    170  /* { offset 4, dataLen 2, data N }
-                                                * client -> server: chunk
-                                                * of the file. Server
-                                                * appends; on offset+dataLen
-                                                * == totalLen finalises
-                                                * the upload. */
-#define PACKET_LOBBY_MAP_SEARCH_REQ      171  /* { pathLen 1, path N,
-                                                *   queryLen 1, query M } —
-                                                * client asks server to
-                                                * recursively walk
-                                                * data/maps/<path> and
-                                                * return .map files whose
-                                                * basename contains
-                                                * <query> (case-insensitive).
-                                                * Replies with MAP_SEARCH_RSP. */
-#define PACKET_LOBBY_PREVIEW_CANCEL      172  /* (no payload) — abandon
-                                                * the currently-previewed
-                                                * map and roll the lobby
-                                                * back to the last
-                                                * committed map. Server
-                                                * re-broadcasts MAP_CHANGE
-                                                * with the prior data. */
-#define PACKET_LOBBY_PREVIEW_COMMIT      173  /* (no payload) — accept
-                                                * the currently-previewed
-                                                * map as the new permanent
-                                                * map. Just frees the
-                                                * server's "previous"
-                                                * snapshot; no broadcast
-                                                * needed since the sim is
-                                                * already on the previewed
-                                                * map. */
-#define PACKET_LOBBY_PREVIEW_RANDOM      174  /* { seedLen 1, seed N } —
-                                                * client asks server to
-                                                * regenerate the map from
-                                                * a procedural seed
-                                                * (mapGenConfigToSeed
-                                                * format) and apply it as
-                                                * the current preview.
-                                                * Same stash + broadcast
-                                                * semantics as SET_MAP. */
+#define PACKET_LOBBY_SET_MAP        167  /* { pathLen 1, path N } */
+#define PACKET_LOBBY_MAP_LIST_REQ   168  /* { pathLen 1, path N } */
+#define PACKET_LOBBY_MAP_UPLOAD_BEGIN  169  /* { totalLen 4, nameLen 1, name N } */
+#define PACKET_LOBBY_MAP_UPLOAD_CHUNK  170  /* { offset 4, dataLen 2, data N } */
+#define PACKET_LOBBY_MAP_SEARCH_REQ    171  /* { pathLen 1, path N, queryLen 1, query M } */
+#define PACKET_LOBBY_PREVIEW_CANCEL    172  /* (no payload) */
+#define PACKET_LOBBY_PREVIEW_COMMIT    173  /* (no payload) */
+#define PACKET_LOBBY_PREVIEW_RANDOM    174  /* { seedLen 1, seed N } */
 
-/* Existing packets get extended payloads (additive, version-bumped):
- *   PACKET_LOBBY_TEAM_SET (130): host can move others, not just self.
- *   PACKET_LOBBY_ADD_BOT  (132): + { teamId, name, difficulty, personality }.
- *   PACKET_LOCK_TOGGLE    (128): unchanged — exposed via "Allow new players"
- *                                checkbox in the Other section. */
-
-/* ── Lobby Layout A — Server → Client (175-184) ─────────────────── */
+/* ── Lobby Layout A — Server → Client (175-186) ─────────────────── */
 #define PACKET_LOBBY_SETTING_CHG    175  /* echo of CLIENT SET_SETTING */
 #define PACKET_LOBBY_OPEN_HOST_CHG  176  /* { bool 1 } */
 #define PACKET_LOBBY_TEAM_META_CHG  177  /* same payload as TEAM_META */
-#define PACKET_LOBBY_BOT_CONFIG_CHG 178
+#define PACKET_LOBBY_BOT_CONFIG_CHG 178  /* same payload as BOT_CONFIG */
 #define PACKET_LOBBY_REJECT         179  /* { origPacket 1, reasonCode 1 } */
 #define PACKET_LOBBY_AUTO_UNREADY   180  /* (empty payload) */
-#define PACKET_LOBBY_BRAIN_LIST     181  /* { count 1,
-                                          *   for each: nameLen 1, name N,
-                                          *             verLen  1, ver  N,
-                                          *             pathLen 1, path N } */
+#define PACKET_LOBBY_BRAIN_LIST     181  /* { count 1, for each: nameLen 1, name,
+                                          *   verLen 1, ver, pathLen 1, path } */
 #define PACKET_LOBBY_BOT_BRAIN_CHG  182  /* { slot 1, pathLen 1, path N } */
-#define PACKET_LOBBY_MAP_LIST_RSP   183  /* { pathLen 1, path N, count 1,
-                                            *   for each: nameLen 1, name M,
-                                            *             isFolder 1 } —
-                                            * server's reply to MAP_LIST_REQ.
-                                            * Path is echoed so the client
-                                            * can match request → response
-                                            * if multiple are in flight. */
-#define PACKET_LOBBY_MAP_UPLOAD_ACK 184  /* { status 1 } —
-                                            * server → client: 0 = ok, ready
-                                            * for chunks; non-zero = reject
-                                            * (size too big, name invalid,
-                                            * not in lobby state, etc.). */
-#define PACKET_LOBBY_MAP_UPLOAD_DONE 185 /* { status 1, pathLen 1, path N } —
-                                            * server -> client: upload
-                                            * finalised. On success path is
-                                            * the relative file path under
-                                            * data/maps/ so the client can
-                                            * navigate to it. */
-#define PACKET_LOBBY_MAP_SEARCH_RSP 186  /* { pathLen 1, path N,
-                                            *   queryLen 1, query M,
-                                            *   count 1,
-                                            *   for each: nameLen 1,
-                                            *             name M (relative
-                                            *             path from <path>),
-                                            *             isFolder 1 }.
-                                            * The echoed path+query let the
-                                            * client tell stale replies
-                                            * apart from a current one. */
-
-/* IDs 187/188 are reserved (removed PACKET_LOBBY_PREVIEW_WBN /
- * _DONE pair — WBN map fetch now happens client-side and is
- * delivered to the server via the regular MAP_UPLOAD protocol). */
+#define PACKET_LOBBY_MAP_LIST_RSP   183  /* server reply to MAP_LIST_REQ */
+#define PACKET_LOBBY_MAP_UPLOAD_ACK 184  /* { status 1 } */
+#define PACKET_LOBBY_MAP_UPLOAD_DONE 185 /* { status 1, pathLen 1, path N } */
+#define PACKET_LOBBY_MAP_SEARCH_RSP 186  /* server reply to MAP_SEARCH_REQ */
 
 /* Server Maps preview-fetch protocol. The client never reads
  * server map files directly: in MP the file lives on a remote
@@ -564,9 +459,12 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define LOBBY_REJECT_LOCKED     2   /* setting is in serverLocks bitmask */
 #define LOBBY_REJECT_INVALID    3   /* malformed payload / out-of-range value */
 
-/* LOBBY_LOCK_* bitmask values moved to public/wire_limits.h so the
- * GUI lobby and servermain.c can reach them without including this
- * internal wire-protocol header. */
+#define NAME_REJECT_INVALID         1   /* validator: any *_INVALID_* error */
+#define NAME_REJECT_TAKEN           2   /* duplicate via playerNameCompare */
+#define NAME_REJECT_RESERVED_PREFIX 3   /* leading '*' */
+#define NAME_REJECT_RESERVED_SUFFIX 4   /* -unverified */
+#define NAME_REJECT_MIXED_SCRIPTS   5   /* single-script rule */
+#define NAME_REJECT_EMPTY           6   /* empty after strip */
 
 /* Alliance update event types */
 #define ALLIANCE_EVENT_REQUEST  0

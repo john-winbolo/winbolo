@@ -1,0 +1,8 @@
+# centralize_events_alliance_2client_udp — client 2 (slot 1).
+# Joins after a short delay so client 1 lands in slot 0
+# deterministically. With -nolobby on the DS the game is RUNNING
+# from tick 0, so this client just accepts client 1's alliance
+# request. Exit is set well past c1's leave/exit so the accept
+# round-trip has room to land before c2's loop terminates.
+{"tick": 50, "op": "alliance_accept", "from": 1, "to": 0}
+{"tick": 250, "op": "exit"}

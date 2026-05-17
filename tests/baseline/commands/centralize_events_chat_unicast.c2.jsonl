@@ -1,0 +1,4 @@
+# centralize_events_chat_unicast_3client_udp — client 2 (slot 1).
+# Passive witness. Sends nothing; receives nothing — the regression
+# target is c2.jsonl having zero CTRL_CHAT events while c1 and c3
+# exchange unicast chats addressed only to each other.

@@ -34,6 +34,7 @@
 #include "netpacks.h"
 #include "gametype.h"
 #include "client_connect_state.h"
+#include "server_sim.h"      /* SubscriberHandle */
 
 /* Forward declarations */
 struct ClientSim;
@@ -171,26 +172,47 @@ void transportUdpClientSendAllianceLeave(Transport *t);
 void transportUdpClientSendLockToggle(Transport *t, bool allow);
 
 /* Send team selection to server. teamNumber: 0-16. */
-/* Move a player to a team. playerNum=self when moving yourself; host
- * (or openHost / admin) may pass any slot to move other players. */
-void transportUdpClientSendTeamSet(Transport *t, uint8_t playerNum,
-                                   uint8_t teamNumber);
+void transportUdpClientSendTeamSet(Transport *t, uint8_t teamNumber);
 
 /* Send ready/unready to server. */
 void transportUdpClientSendReady(Transport *t, bool ready);
 
-/* Request server add a bot. */
-/* Add a bot.
- *   teamNumber: target team (1..15); 0 lets the server pick a default.
- *   brainPath:  brain catalogue entry to assign; NULL/"" = server default.
- *   botName:    pool-picked display name; NULL/"" = server falls back to
- *               "Bot <slot>". */
+/* Request server add a bot. teamNumber=0/brainPath=NULL/botName=NULL
+ * lets the server pick defaults; non-default values configure the new
+ * bot at create time. */
 void transportUdpClientSendAddBot(Transport *t, uint8_t teamNumber,
                                   const char *brainPath,
                                   const char *botName);
 
 /* Request server remove a bot at the given slot. */
 void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum);
+
+/* ── Layout A lobby commands — Client → Server ───────────────────── */
+void transportUdpClientSendLobbySetting(Transport *t, uint8_t settingType,
+                                        const uint8_t *value, uint8_t valueLen);
+void transportUdpClientSendLobbyOpenHost(Transport *t, bool openHost);
+void transportUdpClientSendLobbyTeamMeta(Transport *t, uint8_t teamId,
+                                         uint8_t color, uint8_t namingPool,
+                                         const char *name);
+void transportUdpClientSendLobbyTeamClear(Transport *t, uint8_t teamId);
+void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
+                                          uint8_t difficulty, uint8_t personality,
+                                          const char *name);
+void transportUdpClientSendLobbySetBotBrain(Transport *t, uint8_t slot,
+                                            const char *brainPath);
+void transportUdpClientSendLobbySetMap(Transport *t, const char *mapRelPath);
+void transportUdpClientSendLobbyPreviewCancel(Transport *t);
+void transportUdpClientSendLobbyPreviewCommit(Transport *t);
+void transportUdpClientSendLobbyPreviewRandom(Transport *t, const char *seedStr);
+void transportUdpClientSendLobbyMapListRequest(Transport *t, const char *relPath);
+void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
+                                                 const char *relPath,
+                                                 const char *query);
+void transportUdpClientSendLobbyMapUploadBegin(Transport *t, uint32_t totalLen,
+                                               const char *name);
+void transportUdpClientSendLobbyMapUploadChunk(Transport *t, uint32_t offset,
+                                               const uint8_t *data,
+                                               uint16_t dataLen);
 
 /* Re-authenticate WBN token after lobby reset between rounds. */
 void transportUdpClientSendWbnReauth(Transport *t);
@@ -211,95 +233,6 @@ void transportUdpClientSendMapSkipVote(Transport *t);
  * toggleMode is GAME_VOTE_TOGGLE_* (NO / YES / OPEN_ONLY). */
 void transportUdpClientSendGameVoteToggle(Transport *t,
                                           uint8_t kind, uint8_t toggleMode);
-
-/* ── Layout A lobby commands ───────────────────────────────────────
- * Each function ships one PACKET_LOBBY_* request to the server.
- * Server validates (host check OR openHost; lock check), applies,
- * broadcasts the corresponding _CHG event, then broadcasts an
- * AUTO_UNREADY. Failed validation comes back as a per-recipient
- * PACKET_LOBBY_REJECT (no UI surface yet — silent reject is fine
- * for v1, errors logged server-side). */
-
-/* Set a single lobby setting (e.g. game type, hidden mines, time
- * limit, AI policy, autoLockOnGameStart). settingType is one of
- * the LST_* constants in netpacks.h; value is settingType-specific
- * (bool=1 byte, enum=1 byte, uint16=2 bytes BE). */
-void transportUdpClientSendLobbySetting(Transport *t, uint8_t settingType,
-                                        const uint8_t *value, uint8_t valueLen);
-
-/* Toggle the openHost flag (host-only). */
-void transportUdpClientSendLobbyOpenHost(Transport *t, bool openHost);
-
-/* Set / clear the server password (host-only). Empty / NULL pw
- * clears. Server stores the new value and rebroadcasts lobby
- * state so all clients' has_password mirror flips. */
-void transportUdpClientSendLobbySetPassword(Transport *t, const char *pw);
-
-/* Set a team's metadata. Single packet handles create + rename +
- * recolor + naming-pool change. teamId in 1..MAX_TANKS-1. */
-void transportUdpClientSendLobbyTeamMeta(Transport *t, uint8_t teamId,
-                                         uint8_t color, uint8_t namingPool,
-                                         const char *name);
-
-/* Clear a team's metadata (back to defaults). Members stay on the
- * teamId; host can manually move them after. */
-void transportUdpClientSendLobbyTeamClear(Transport *t, uint8_t teamId);
-
-/* Set a bot's name + difficulty + personality. */
-void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
-                                          uint8_t difficulty, uint8_t personality,
-                                          const char *name);
-
-/* Change which Lua brain a lobby bot uses. Host (or openHost) only. */
-void transportUdpClientSendLobbySetBotBrain(Transport *t, uint8_t slot,
-                                            const char *brainPath);
-
-/* Swap the current lobby map. Host (or openHost / admin) only.
- * mapRelPath is relative to the server's data/maps/ root — server
- * validates against ".." and absolute paths. */
-void transportUdpClientSendLobbySetMap(Transport *t,
-                                       const char *mapRelPath);
-
-/* Lobby preview cycle: SET_MAP and the MAP_UPLOAD flow auto-stash
- * the previous map on the server. These two complete the cycle. */
-void transportUdpClientSendLobbyPreviewCancel(Transport *t);
-void transportUdpClientSendLobbyPreviewCommit(Transport *t);
-
-/* Procedural-map preview. seedStr is a mapGenConfigToSeed-encoded
- * string the server unpacks back into a MapGenConfig and feeds to
- * mapEditorGenerate. Auto-stashes the previous map server-side. */
-void transportUdpClientSendLobbyPreviewRandom(Transport *t,
-                                              const char *seedStr);
-
-/* Ask the server to enumerate data/maps/<relPath>. Empty / NULL =
- * root. Reply arrives async as PACKET_LOBBY_MAP_LIST_RSP and is
- * stored on ClientSim's lobbyMapList* fields. */
-void transportUdpClientSendLobbyMapListRequest(Transport *t,
-                                                const char *relPath);
-
-/* Ask the server to recursively search data/maps/<relPath> for .map
- * files whose basename contains <query> (case-insensitive).
- * Response arrives async as PACKET_LOBBY_MAP_SEARCH_RSP and is
- * stored on ClientSim's lobbyMapSearch* fields. */
-void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
-                                                  const char *relPath,
-                                                  const char *query);
-
-/* Chunked map upload. BEGIN announces the file; the server replies
- * with MAP_UPLOAD_ACK (status 0 = ok) before the client starts
- * sending CHUNKs. Chunks are 1024-byte max payload with a 32-bit
- * offset; the final chunk that brings offset+dataLen up to totalLen
- * triggers MAP_UPLOAD_DONE from the server. */
-void transportUdpClientSendLobbyMapUploadBegin(Transport *t,
-                                                uint32_t totalLen,
-                                                const char *name);
-void transportUdpClientSendLobbyMapUploadChunk(Transport *t,
-                                                uint32_t offset,
-                                                const uint8_t *data,
-                                                uint16_t dataLen);
-
-/* Kick a player out of the lobby. Host action. */
-void transportUdpClientSendLobbyKick(Transport *t, uint8_t slot);
 
 /* Returns the server's reject reason string after a failed join.
  * Returns NULL if no reject reason is available. */
@@ -327,7 +260,7 @@ void transportUdpClientGetGameSettings(Transport *t, gameType *game,
 #define PING_KICK_COUNT         5     /* consecutive pings at kick threshold before kick */
 
 /* Per-client connection info tracked by the server */
-typedef struct {
+typedef struct UdpServerClient {
     struct sockaddr_in addr;
     bool connected;
     uint8_t playerNum;
@@ -353,6 +286,11 @@ typedef struct {
      * intentional, not a bug. */
     uint8_t clientType;          /* immutable after JOIN_REQUEST */
     uint8_t clientHints;         /* immutable after JOIN_REQUEST; SUPPORTER|STEAM_BUILD only */
+    SubscriberHandle controlSub; /* per-client subscription on the server's
+                                  * control-event bus; the deliver callback
+                                  * encodes via the codec table and unicasts
+                                  * to this client.  SUBSCRIBER_HANDLE_INVALID
+                                  * when no subscription is active. */
 } UdpServerClient;
 
 /* Creates a server-side UDP transport.
@@ -405,12 +343,6 @@ void transportUdpServerKickPlayer(struct ServerSim *sim, const char *playerName)
 void transportUdpServerSetLock(struct ServerSim *sim, bool locked);
 bool transportUdpServerGetLock(void);
 
-/* Whether the in-process server is currently accepting new join
- * requests (i.e. !gameLocked && !all-clients-locked). UI lobby
- * checkbox state is keyed off this so the toggle reflects what the
- * client-lock-toggle packet actually flips. */
-bool transportUdpServerIsAcceptingJoins(void);
-
 /* Broadcast a server message to all connected clients (for "say" command). */
 void transportUdpServerSendServerMessage(const char *message);
 
@@ -425,53 +357,25 @@ BYTE transportUdpServerGetMaxPlayers(void);
  * Disconnects clients that haven't sent packets within CLIENT_TIMEOUT_TICKS. */
 void transportUdpServerCheckTimeouts(struct ServerSim *sim);
 
-/* ---- Lobby broadcast functions ---- */
+/* Reset per-client and per-slot state for a fresh game.  Marks every
+ * connected client as needing a player-list refresh, flags map download
+ * complete, and clears reliable / map event queue sequence numbers for
+ * all slots.  Callers run this on the countdown→running transition
+ * before publishing the CTRL_GAME_PHASE(RUNNING) event so the resets
+ * land before the codec encodes PACKET_GAME_START. */
+void transportUdpServerOnGameStart(struct ServerSim *sim);
 
-/* Broadcast full lobby state snapshot to all connected clients. */
-void transportUdpServerBroadcastLobbyState(struct ServerSim *sim);
+/* Refresh the server's compressed map data and re-prime each connected
+ * client for download (resend JOIN_ACCEPT, reset chunk tracking).
+ * Callers run this before publishing CTRL_LOBBY_MAP_CHANGE so the
+ * per-client prep work lands before the codec encodes the
+ * PACKET_LOBBY_MAP_CHANGE notification through the subscriber path. */
+void transportUdpServerOnLobbyMapChange(struct ServerSim *sim);
 
-/* Broadcast a single-player lobby update to all connected clients. */
-void transportUdpServerBroadcastLobbyUpdate(struct ServerSim *sim, BYTE playerNum);
-
-/* Broadcast countdown seconds remaining to all connected clients. */
-void transportUdpServerBroadcastCountdown(struct ServerSim *sim, uint8_t secondsRemaining);
-
-/* Broadcast game start signal to all connected clients. */
-void transportUdpServerBroadcastGameStart(struct ServerSim *sim);
-
-/* Broadcast game over signal to all connected clients. */
-void transportUdpServerBroadcastGameOver(struct ServerSim *sim);
-
-/* Notify all connected clients that the map has changed, refresh the
- * server's compressed map data, and trigger re-download for each client. */
-void transportUdpServerNotifyMapChange(struct ServerSim *sim);
-
-/* Broadcast a team balance proposal (one team assignment per slot) to all clients. */
-void transportUdpServerBroadcastBalanceProposal(struct ServerSim *sim, uint8_t teamForSlot[MAX_TANKS]);
-
-/* Broadcast the current map skip vote state (one byte per slot) to all clients. */
-void transportUdpServerBroadcastMapSkipState(struct ServerSim *sim);
-
-/* ── Layout A lobby — server broadcast helpers ─────────────────────
- * Each is sent in response to an applied client command, plus
- * (for SETTING and OPEN_HOST) on initial state sync. The TEAM_META
- * helper reads the current team metadata from sim->teams[teamId];
- * BOT_CONFIG_CHG reads sim->botConfigs[slot] + the bot's name from
- * the udpServer client array. AUTO_UNREADY also clears server-side
- * ready flags before sending the signal. */
-void transportUdpServerBroadcastLobbySettingChg(struct ServerSim *sim,
-                                                uint8_t settingType,
-                                                const uint8_t *value,
-                                                uint8_t valueLen);
-void transportUdpServerBroadcastLobbyOpenHostChg(struct ServerSim *sim,
-                                                 bool openHost);
-void transportUdpServerBroadcastLobbyTeamMetaChg(struct ServerSim *sim,
-                                                 uint8_t teamId);
-void transportUdpServerBroadcastLobbyBotConfigChg(struct ServerSim *sim,
-                                                  uint8_t slot);
-void transportUdpServerBroadcastLobbyBotBrainChg(struct ServerSim *sim,
-                                                 uint8_t slot);
-void transportUdpServerBroadcastLobbyAutoUnready(struct ServerSim *sim);
+/* Wire-only fan-out for the periodic lobby refresh — drives the codec
+ * encoders directly so cosmetic ping/country updates don't wake the
+ * in-process control-event bus.  Called from server_lifecycle.c. */
+void transportUdpServerSendPeriodicLobbyRefresh(struct ServerSim *sim);
 
 /* Set a bot's name in the server transport client array so it appears
  * in lobby state/update broadcasts. Call after botManagerAddBot(). */

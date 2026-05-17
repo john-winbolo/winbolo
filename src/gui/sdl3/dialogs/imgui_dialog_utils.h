@@ -39,6 +39,20 @@
 #define BOLO_MOBILE 0
 #endif
 
+#ifdef __APPLE__
+  #define KMOD_PRIMARY        SDL_KMOD_GUI
+  #define KMOD_PRIMARY_LABEL  "Cmd+"
+#else
+  #define KMOD_PRIMARY        SDL_KMOD_CTRL
+  #define KMOD_PRIMARY_LABEL  "Ctrl+"
+#endif
+
+#ifdef __APPLE__
+  #define IMGUI_PRIMARY_KEY_DOWN()  (ImGui::GetIO().KeySuper)
+#else
+  #define IMGUI_PRIMARY_KEY_DOWN()  (ImGui::GetIO().KeyCtrl)
+#endif
+
 /* Prevent iOS from shifting the entire SDL view when the soft keyboard appears.
  * SDL3's iOS view controller monitors the textInputRect set via
  * SDL_SetTextInputArea() and scrolls the view so the text field stays visible.
@@ -159,6 +173,115 @@ static inline SDL_Texture *imguiLoadSvgIconWhite(SDL_Renderer *rend, const char 
     SDL_DestroySurface(surface);
     SDL_free(pixels);
     return tex;
+}
+
+/* Open a URL in the system browser. Returns true on success.
+ * SDL_OpenURL handles per-platform dispatch (ShellExecuteW on Windows,
+ * xdg-open / open on Linux/macOS, etc.) — no need for our own #ifdef. */
+static inline bool imguiOpenUrl(const char *url) {
+    if (!url || !*url) return false;
+    return SDL_OpenURL(url);
+}
+
+/* Switch to the hand cursor when the most-recently-submitted ImGui item is
+ * hovered. Call immediately after a Button/SmallButton/ImageButton/
+ * ArrowButton or a row-style Selectable. Safe to call on any frame — if the
+ * item is not hovered, this is a no-op.
+ *
+ * Use the convention: clickable buttons and row selectables get the hand
+ * cursor. Skip MenuItem/Checkbox/RadioButton (they have their own
+ * affordances) and dropdown-list Selectables (the popup already implies
+ * clickability). ImGui::TextLinkOpenURL() sets the cursor itself, so don't
+ * follow it with this call. */
+static inline void imguiHandOnHover(void) {
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+}
+
+/* Register Platform_OpenInShellFn on the current ImGui context so that
+ * ImGui::TextLinkOpenURL() actually launches the system browser on click.
+ * Call once per ImGui::CreateContext(), with that context current. */
+static inline void imguiRegisterPlatformOpenUrl(void) {
+    ImGui::GetPlatformIO().Platform_OpenInShellFn =
+        [](ImGuiContext *, const char *url) -> bool {
+            return imguiOpenUrl(url);
+        };
+}
+
+/* Render wrapped text with embedded http(s):// URLs auto-linked.
+ * Each URL becomes a hand-cursor link that dispatches through the registered
+ * Platform_OpenInShellFn. Non-URL text wraps via TextWrapped. Explicit '\n'
+ * line breaks in the source string are preserved. URL detection: a run
+ * starting with "http://" or "https://" at the start of a line or after
+ * whitespace/bracket, ending at the next whitespace, then trim trailing
+ * .,;:!?)] '" so "see https://x.com." doesn't pull the period into the link.
+ *
+ * Caveat: lines that contain a URL render without mid-line wrapping (the
+ * link itself is atomic, and prefix/suffix segments emit via TextUnformatted
+ * inside a push/pop wrap pair). Fine for the short tutorial/about lines that
+ * use this today; if a longer URL surfaces, cap dialog width or pre-wrap. */
+static inline void imguiTextWrappedWithLinks(const char *text) {
+    if (!text) text = "";
+
+    const char *lineStart = text;
+    while (*lineStart) {
+        const char *lineEnd = lineStart;
+        while (*lineEnd && *lineEnd != '\n') lineEnd++;
+
+        /* Scan the line for http:// or https:// at a valid boundary */
+        const char *urlStart = nullptr;
+        for (const char *scan = lineStart; scan < lineEnd; scan++) {
+            const size_t remain = (size_t)(lineEnd - scan);
+            bool isHttp  = (remain >= 7 && memcmp(scan, "http://",  7) == 0);
+            bool isHttps = (remain >= 8 && memcmp(scan, "https://", 8) == 0);
+            if (!isHttp && !isHttps) continue;
+            if (scan == lineStart ||
+                (unsigned char)scan[-1] <= ' ' ||
+                scan[-1] == '(' || scan[-1] == '[' || scan[-1] == '<') {
+                urlStart = scan;
+                break;
+            }
+        }
+
+        if (!urlStart) {
+            ImGui::TextWrapped("%.*s", (int)(lineEnd - lineStart), lineStart);
+        } else {
+            const char *urlEnd = urlStart;
+            while (urlEnd < lineEnd && (unsigned char)*urlEnd > ' ') urlEnd++;
+            while (urlEnd > urlStart) {
+                char c = urlEnd[-1];
+                if (c == '.' || c == ',' || c == ';' || c == ':' || c == '!' ||
+                    c == '?' || c == ')' || c == ']' || c == '\'' || c == '"') {
+                    urlEnd--;
+                } else {
+                    break;
+                }
+            }
+
+            ImGui::PushTextWrapPos(0.0f);
+            if (urlStart > lineStart) {
+                ImGui::TextUnformatted(lineStart, urlStart);
+                ImGui::SameLine(0, 0);
+            }
+
+            char urlBuf[512];
+            size_t urlLen = (size_t)(urlEnd - urlStart);
+            if (urlLen >= sizeof(urlBuf)) urlLen = sizeof(urlBuf) - 1;
+            memcpy(urlBuf, urlStart, urlLen);
+            urlBuf[urlLen] = '\0';
+            ImGui::TextLinkOpenURL(urlBuf);
+
+            if (urlEnd < lineEnd) {
+                ImGui::SameLine(0, 0);
+                ImGui::TextUnformatted(urlEnd, lineEnd);
+            }
+            ImGui::PopTextWrapPos();
+        }
+
+        lineStart = lineEnd;
+        if (*lineStart == '\n') lineStart++;
+    }
 }
 
 /* Override DisplayFramebufferScale after ImGui_ImplSDL3_NewFrame().
@@ -315,48 +438,12 @@ extern int g_currentDevicePreset;
 #endif
 
 /* Set dialog window size; only re-center if the size actually changed.
- * If a device preset is active, uses the preset dimensions instead.
- * Clamps against the usable bounds of the display the window is on
- * so callers requesting a 1024×768 default still get something
- * reasonable on smaller screens (laptops, low-DPI panels).
- *
- * `SDL_SetWindowSize` sets the *client* area — the OS-managed title
- * bar/borders sit outside that. To make the total window fit within
- * the display's usable bounds we subtract the borders (queried via
- * SDL_GetWindowBordersSize) before clamping. Falls back to a
- * conservative 40px reserve when the platform doesn't report borders. */
+ * If a device preset is active, uses the preset dimensions instead. */
 static inline void dialogSetWindowSize(SDL_Window *window, int w, int h) {
     if (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets &&
         s_devicePresets[g_currentDevicePreset].mode != UI_MODE_DESKTOP) {
         w = s_devicePresets[g_currentDevicePreset].w;
         h = s_devicePresets[g_currentDevicePreset].h;
-    }
-    /* Discover the window's non-client borders so we can leave room
-     * for the title bar (and side/bottom borders) when clamping. */
-    int borderTop = 0, borderLeft = 0, borderBottom = 0, borderRight = 0;
-    if (!SDL_GetWindowBordersSize(window, &borderTop, &borderLeft,
-                                  &borderBottom, &borderRight)
-        || (borderTop + borderBottom == 0)) {
-        /* Platform didn't fill these in (window not yet shown, or no
-         * border data available) — reserve a typical Windows title-
-         * bar + frame budget. */
-        borderTop = 32;
-        borderBottom = 8;
-    }
-    /* Clamp to the usable area of the containing display. */
-    SDL_DisplayID dispID = SDL_GetDisplayForWindow(window);
-    if (!dispID) dispID = SDL_GetPrimaryDisplay();
-    if (dispID) {
-        SDL_Rect bounds = {0, 0, 0, 0};
-        if (SDL_GetDisplayUsableBounds(dispID, &bounds)
-            && bounds.w > 0 && bounds.h > 0) {
-            int maxW = bounds.w - (borderLeft + borderRight);
-            int maxH = bounds.h - (borderTop  + borderBottom);
-            if (maxW < 320) maxW = 320;
-            if (maxH < 240) maxH = 240;
-            if (w > maxW) w = maxW;
-            if (h > maxH) h = maxH;
-        }
     }
     int curW = 0, curH = 0;
     SDL_GetWindowSize(window, &curW, &curH);
@@ -412,12 +499,17 @@ static inline void dialogCycleDevicePreset(SDL_Window *win) {
 /* Check an SDL event for Ctrl+T and cycle presets if matched.
  * Returns true if the event was consumed. */
 static inline bool dialogHandleDevicePresetEvent(SDL_Window *win, const SDL_Event *ev) {
+#ifndef __APPLE__
     if (ev->type == SDL_EVENT_KEY_DOWN &&
-        (ev->key.mod & SDL_KMOD_CTRL) &&
+        (ev->key.mod & KMOD_PRIMARY) &&
         ev->key.scancode == SDL_SCANCODE_T) {
         dialogCycleDevicePreset(win);
         return true;
     }
+#else
+    (void)win;
+    (void)ev;
+#endif
     return false;
 }
 
@@ -449,62 +541,9 @@ static inline void dialogHandleWindowMoveResize(SDL_Window *win, const SDL_Event
     }
 }
 
-/* Restore dialog window position if we have a saved one.
- *
- * On the very first dialog of the process we cross-check the saved
- * position against the user's current mouse-monitor: if they don't
- * agree (or no position was saved), drop the saved value and centre
- * the window on whichever display the mouse currently lives on.
- * Subsequent dialogs in the same session use the saved position
- * verbatim so the user's manual placement is preserved as they tab
- * between dialogs.
- *
- * Reason: WinBolo's window is created (hidden) on SDL's default
- * display — typically the primary — and a saved position from a
- * previous session sticks the dialog there even when the user has
- * since moved to a different monitor. Following the mouse on launch
- * brings the dialog to where the user is looking. */
+/* Restore dialog window position if we have a saved one */
 static inline void dialogRestorePosition(SDL_Window *win) {
-    if (!win) return;
-    static bool s_firstCallThisProcess = true;
-    bool firstCall = s_firstCallThisProcess;
-    s_firstCallThisProcess = false;
-
-    if (firstCall) {
-        float gx = 0.0f, gy = 0.0f;
-        SDL_GetGlobalMouseState(&gx, &gy);
-        SDL_Point mp = { (int)gx, (int)gy };
-        SDL_DisplayID mouseDisp = SDL_GetDisplayForPoint(&mp);
-
-        bool savedOnMouseDisp = false;
-        if (gameFrontDialogX >= 0 && gameFrontDialogY >= 0 && mouseDisp) {
-            int winW = 0, winH = 0;
-            SDL_GetWindowSize(win, &winW, &winH);
-            SDL_Point savedCenter = {
-                gameFrontDialogX + winW / 2,
-                gameFrontDialogY + winH / 2
-            };
-            SDL_DisplayID savedDisp = SDL_GetDisplayForPoint(&savedCenter);
-            savedOnMouseDisp = (savedDisp != 0 && savedDisp == mouseDisp);
-        }
-
-        if (savedOnMouseDisp) {
-            SDL_SetWindowPosition(win, gameFrontDialogX, gameFrontDialogY);
-        } else if (mouseDisp) {
-            SDL_Rect b = {0, 0, 0, 0};
-            if (SDL_GetDisplayUsableBounds(mouseDisp, &b)
-                && b.w > 0 && b.h > 0) {
-                int winW = 0, winH = 0;
-                SDL_GetWindowSize(win, &winW, &winH);
-                int cx = b.x + (b.w - winW) / 2;
-                int cy = b.y + (b.h - winH) / 2;
-                SDL_SetWindowPosition(win, cx, cy);
-            }
-        }
-        return;
-    }
-
-    if (gameFrontDialogX >= 0 && gameFrontDialogY >= 0) {
+    if (win && gameFrontDialogX >= 0 && gameFrontDialogY >= 0) {
         SDL_SetWindowPosition(win, gameFrontDialogX, gameFrontDialogY);
     }
 }
@@ -526,5 +565,48 @@ static inline bool dialogHandleUrlDropEvent(const SDL_Event *ev) {
     }
     return false;
 }
+
+/* ---------------------------------------------------------------
+ * Standard popup modal fade-in.
+ *
+ * BeginPopupModal otherwise snaps in at full opacity, which feels
+ * abrupt next to the welcome screen's own ~150ms alpha ramp.  Call
+ * this *inside* the popup body and push the returned value as
+ * ImGuiStyleVar_Alpha; pop and EndPopup before exiting the body.
+ * Push and pop must live in the popup window's own scope so the
+ * style-stack stays balanced per-window.
+ *
+ * Phase resets to 0 on the first frame the popup window appears
+ * (detected via IsWindowAppearing, which is window-scoped and works
+ * correctly from inside the body — unlike IsPopupOpen, which is
+ * scoped to the parent ID stack and would always read false here).
+ *
+ * Fade-out isn't supported (BeginPopupModal returns false on the
+ * frame after CloseCurrentPopup, leaving nowhere to draw a ramp-out),
+ * so dismissal stays one-frame snappy.  The body's fade-in covers
+ * the perceived "popping in"; the modal dim-bg remains at full
+ * opacity since it is drawn before the body runs, which is
+ * acceptable.  Usage:
+ *
+ *     static float s_fade = 0.0f;
+ *     if (ImGui::BeginPopupModal(popupId, ...)) {
+ *         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+ *                             imguiPopupFadeAlpha(&s_fade));
+ *         ... body ...
+ *         ImGui::PopStyleVar();
+ *         ImGui::EndPopup();
+ *     }
+ */
+#ifdef __cplusplus
+static inline float imguiPopupFadeAlpha(float *phase,
+                                        float fadeInSec = 0.15f) {
+    if (ImGui::IsWindowAppearing()) {
+        *phase = 0.0f;
+    }
+    const float step = ImGui::GetIO().DeltaTime / fadeInSec;
+    *phase = (*phase + step >= 1.0f) ? 1.0f : *phase + step;
+    return *phase;
+}
+#endif /* __cplusplus */
 
 #endif /* IMGUI_DIALOG_UTILS_H */

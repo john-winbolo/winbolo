@@ -32,6 +32,9 @@
 #include "global.h"
 #include "transport.h"
 #include "server_sim.h"
+/* The passive variant is driven from a different thread than the one that
+ * ticks ServerSim, so it self-serialises on the server's threadsMutex. */
+#include "../server/threads.h"
 
 /* Size of the delayed input queue — must be a power of 2 */
 #define INPUT_QUEUE_SIZE 256
@@ -50,6 +53,10 @@ typedef struct {
 static void localSendInput(void *ctx, const InputPacket *input) {
     TransportLocalCtx *lctx = (TransportLocalCtx *)ctx;
 
+    if (!lctx->ticksServer) {
+        threadsWaitForMutex();
+    }
+
     if (lctx->delay_ticks == 0) {
         /* Zero latency: deliver immediately */
         serverSimApplyInput(lctx->sim, input);
@@ -59,6 +66,10 @@ static void localSendInput(void *ctx, const InputPacket *input) {
         lctx->inputQueue[idx] = *input;
         lctx->queueWriteIdx++;
         lctx->queueCount++;
+    }
+
+    if (!lctx->ticksServer) {
+        threadsReleaseMutex();
     }
 }
 
@@ -85,6 +96,10 @@ static bool localGetSnapshot(void *ctx, BYTE clientIdx,
 static bool localTick(void *ctx) {
     TransportLocalCtx *lctx = (TransportLocalCtx *)ctx;
 
+    if (!lctx->ticksServer) {
+        threadsWaitForMutex();
+    }
+
     /* Deliver delayed inputs when they've aged enough */
     if (lctx->delay_ticks > 0 && lctx->queueCount > lctx->delay_ticks) {
         uint8_t idx = lctx->queueReadIdx & (INPUT_QUEUE_SIZE - 1);
@@ -95,6 +110,10 @@ static bool localTick(void *ctx) {
 
     if (lctx->ticksServer) {
         serverSimTick(lctx->sim);
+    }
+
+    if (!lctx->ticksServer) {
+        threadsReleaseMutex();
     }
     return TRUE;
 }
@@ -112,7 +131,6 @@ Transport transportLocalCreate(ServerSim *sim, BYTE playerNum) {
     t.tick = localTick;
     t.getSnapshot = localGetSnapshot;
     t.ctx = lctx;
-    t.kind = TRANSPORT_KIND_LOCAL;
     return t;
 }
 

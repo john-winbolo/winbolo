@@ -54,6 +54,9 @@
 #include "platform/platform_config.h"
 #include "platform/platform_dialogs.h"
 #include "../gui/sdl3/macos_pinch.h"
+#ifdef __APPLE__
+#include "platform/mac_menubar.h"
+#endif
 
 /* Version string referenced by imgui_dialogs.cpp */
 const char *lv_g_version_string = "1.01";
@@ -600,6 +603,13 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
         return;
     }
     lv_imgui_main_menu_init(g_lv);
+#ifdef __APPLE__
+    /* Install the native NSMenu after ImGui + window are up. The shim's
+     * save-on-install / restore-on-uninstall stack swaps WinBolo's menu
+     * out when embedded, and builds a Log Viewer app menu when standalone
+     * (no previous mainMenu to save). */
+    lv_mac_menubar_install(g_lv->window, g_lv);
+#endif
     lv_imgui_controls_init(g_lv);
     lv_imgui_game_info_init();
     lv_imgui_events_init();
@@ -980,6 +990,32 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
 
         /* Render ImGui UI */
         lv_imgui_context_newframe();
+#ifdef __APPLE__
+        /* Marshal in-window menu state into the native NSMenu once per
+         * frame. Cheap walk over cached NSMenuItem pointers; checkmarks
+         * and enable states mirror the ImGui menu's predicates. */
+        {
+            struct LvMenuState lvms;
+            memset(&lvms, 0, sizeof(lvms));
+            lvms.isLoaded         = g_lv->isLoaded ? true : false;
+            lvms.playIsPlaying    = g_lv->playIsPlaying ? true : false;
+            lvms.modeInformation  = lv_imgui_get_mode_information() ? true : false;
+            lvms.useTeamColours   = g_lv->useTeamColours ? true : false;
+            lvms.gameViewActive   = g_lv->gameView ? true : false;
+            lvms.tankCentred      = lv_imgui_get_tank_centred() ? true : false;
+            lvms.soundEffects     = g_lv->isSoundsPlaying ? true : false;
+            lvms.dnsLookups       = lv_imgui_get_dns_lookups() ? true : false;
+            lvms.showControls     = lv_g_show_controls_window;
+            lvms.showEvents       = lv_g_show_events_window;
+            lvms.showGameInfo     = lv_g_show_game_info_window;
+            lvms.showItemInfo     = lv_g_show_item_info_window;
+            lvms.showComments     = lv_g_show_comments_window;
+            lvms.zoomStepIndex    = lv_drawGetZoomStepIndex();
+            lvms.zoomStepCount    = lv_drawGetZoomStepCount();
+            lvms.fromMainMenu     = g_lv->fromMainMenu ? true : false;
+            lv_mac_menubar_refresh(&lvms);
+        }
+#endif
         if (g_lv->gameView) {
             lv_imgui_render_game_menu_bar(g_lv);
             lv_imgui_render_game_view(g_lv);
@@ -1018,6 +1054,11 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     }
     savePreferences();
     lv_windowStop(FALSE);
+#ifdef __APPLE__
+    /* Restore the previously-installed NSMenu (WinBolo's, when embedded;
+     * empty stub when standalone since the process is exiting). */
+    lv_mac_menubar_uninstall();
+#endif
     lv_imgui_comments_shutdown();
     lv_imgui_context_shutdown();
     lv_drawCleanupSplash();

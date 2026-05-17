@@ -280,6 +280,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* Set up ImGui context for this dialog */
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -628,6 +629,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (ImGui::ImageButton("##refreshBtn", (ImTextureID)s_refreshIcon, iconSz)) {
                     doRefresh = true;
                 }
+                imguiHandOnHover();
                 if (wasSearching) ImGui::EndDisabled();
             } else {
                 /* Text fallback when SVG icon is unavailable */
@@ -638,6 +640,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (ImGui::SmallButton(langGetText(STR_DLGBROWSER_REFRESH))) {
                     doRefresh = true;
                 }
+                imguiHandOnHover();
                 if (wasSearching) ImGui::EndDisabled();
             }
             if (doRefresh) {
@@ -837,6 +840,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                 }
                             }
                         }
+                        imguiHandOnHover();
                     }
 
                     /* Map name (C string from tracker/broadcast) */
@@ -990,6 +994,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     }
                 }
             }
+            imguiHandOnHover();
             if (!hasSelection) ImGui::EndDisabled();
 
             /* Rejoin */
@@ -1017,6 +1022,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     }
                 }
             }
+            imguiHandOnHover();
             if (!hasSelection) ImGui::EndDisabled();
 
             /* New Game */
@@ -1030,6 +1036,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 result = (int)setupState;
                 running = false;
             }
+            imguiHandOnHover();
             if (useTracker && ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", langGetText(STR_DLGBROWSER_NEWGAME_PORTFWD_TIP));
             }
@@ -1040,6 +1047,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 gameFrontGetPlayerName(nameEditBuf);
                 ImGui::OpenPopup(setNamePopupId);
             }
+            imguiHandOnHover();
 
             /* Manual Connect */
             ImGui::SameLine();
@@ -1049,20 +1057,29 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 result = useTracker ? (int)openInternetManual : (int)openLanManual;
                 running = false;
             }
+            imguiHandOnHover();
 
             /* Cancel - right-aligned */
             ImGui::SameLine(panelW - btnW - 16.0f * s);
-            bool escPressed = ImGui::IsKeyPressed(ImGuiKey_Escape) &&
-                              !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup);
+            bool escPressed = (ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                               (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
+#ifdef __APPLE__
+                               || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
+#endif
+                              ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup);
             if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH)) || escPressed) {
                 gameFrontSetDlgState(openWelcome);
                 running = false;
             }
+            imguiHandOnHover();
         }
 
         /* ---- Error popup ---- */
+        static float s_fadeGbErr = 0.0f;
         if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeGbErr));
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
             {
@@ -1071,13 +1088,18 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (ImGui::Button(okBuf, ImVec2(80, 0))) {
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 
         /* ---- Set Player Name popup ---- */
+        static float s_fadeGbSetName = 0.0f;
         if (ImGui::BeginPopupModal(setNamePopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeGbSetName));
             bool wbnActive = gameFrontGetWinbolonetUse();
             ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_PLAYERNAME));
             ImGui::SameLine(120 * s);
@@ -1098,12 +1120,15 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     gameFrontSetPlayerName(nameEditBuf);
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
                 if (wbnActive) ImGui::EndDisabled();
                 ImGui::SameLine(0.0f, 8.0f);
                 if (ImGui::Button(cancelBuf, ImVec2(80 * s, 0))) {
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 

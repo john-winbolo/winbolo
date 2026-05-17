@@ -36,6 +36,12 @@ typedef struct {
   const char    *password;        /* "" or NULL = no password */
   BYTE           maxPlayers;
 
+  bool           acceptRemoteClients; /* false = skip UDP bind, WBN, tracker
+                                         and NAT portmap setup; serverInstanceTick
+                                         short-circuits per-tick UDP send/drain;
+                                         serverInstanceShutdown skips matching
+                                         teardown. */
+
   bool           useWbn;          /* false = skip winbolonetCreateServer */
   BYTE           compTanks;       /* AI type — only used when useWbn */
 

@@ -90,15 +90,8 @@ static inline bool eventQueueHasSpace(const ClientEventQueue *q) {
  * decoders length-check each field and reject malformed packets. */
 #define LOBBY_SLOT_WIRE_SIZE (1 + 1 + PACKET_MAX_PLAYER_NAME + 1 + 1 + 1 + 2 + 2 + 1 + 1)
 
-/* Lobby settings tail: mapName(36) + gameType(1) + hiddenMines(1) + aiType(1) + gameLength(4) + pillCount(1) + baseCount(1) + startCount(1) + mapSkipAvailable(1) */
-#define LOBBY_SETTINGS_SIZE  (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1)
-/* Upper bound for buffer sizing: serverState(1) + 16 max-size slots + settings tail. */
-#define LOBBY_STATE_PAYLOAD  (1 + MAX_TANKS * LOBBY_SLOT_WIRE_SIZE + LOBBY_SETTINGS_SIZE)
-
 #define INPUT_PACKET_WIRE_SIZE 21
 #define TANK_SNAPSHOT_WIRE_SIZE 27
-/* Upper bound: slot index(1) + max-size slot. */
-#define LOBBY_UPDATE_PAYLOAD (1 + LOBBY_SLOT_WIRE_SIZE)
 
 /* ---- Serialization helpers ---- */
 
@@ -127,7 +120,7 @@ void unpackPillSnapshot(const uint8_t *buf, PillSnapshot *ps);
 
 /* ---- Socket helpers ---- */
 
-SOCKET createUdpSocket(void);
+SOCKET createUdpSocket(bool exclusive);
 void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
                const struct sockaddr_in *addr);
 int udpRecvFrom(SOCKET sock, uint8_t *buf, int maxLen,

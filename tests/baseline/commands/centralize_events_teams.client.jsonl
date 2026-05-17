@@ -1,0 +1,15 @@
+# centralize_events_teams scenario (--fast only):
+# adds 2 bots, sets per-slot teams, then starts the game.
+# serverSimStartGame fires CTRL_ALLIANCE_LEAVE for each connected
+# slot (wipe pass) followed by CTRL_ALLIANCE_ACCEPT for same-team
+# pairs via serverSimReapplyTeamAlliances. The UDP equivalent is
+# deferred — the wire protocol's set_team can only touch the
+# caller's own slot, so a single headless can't drive bot teams.
+{"tick": 4, "op": "add_bot"}
+{"tick": 6, "op": "add_bot"}
+{"tick": 10, "op": "set_team", "slot": 0, "team": 1}
+{"tick": 12, "op": "set_team", "slot": 1, "team": 2}
+{"tick": 14, "op": "set_team", "slot": 2, "team": 1}
+{"tick": 20, "op": "set_team", "slot": 1, "team": 1}
+{"tick": 40, "op": "start_game"}
+{"tick": 80, "op": "exit"}

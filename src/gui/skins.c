@@ -164,7 +164,7 @@ void skinsRemoveFiles(void) {
               (entry->d_name[1] == '.' && entry->d_name[2] == '\0'))) {
             continue;
           }
-          snprintf(temp, sizeof(temp), "%s%s", skinsDirectory, entry->d_name);
+          snprintf(temp, sizeof(temp), "%.255s%.255s", skinsDirectory, entry->d_name);
           remove(temp);
         }
         closedir(dir);
@@ -345,7 +345,7 @@ int doExtractCurrentFile(uf,popt_extract_without_path,popt_overwrite)
 		{
       char temp[512];
 
-      sprintf(temp, "%s%s", skinsDirectory, write_filename);
+      snprintf(temp, sizeof(temp), "%.255s%.255s", skinsDirectory, write_filename);
       strcpy((char *) write_filename, temp);
 			fout=fopen(write_filename,"wb");
       if (fout==NULL) {

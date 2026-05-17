@@ -45,9 +45,18 @@ typedef struct GameSim GameSim;
 /* Forward declarations for state types whose full layout lives in
  * src/bolo/internal/. External callers reach them only through the
  * pointer-returning accessors below. */
+#ifndef INTERPCONTEXT_TYPEDEF
+#define INTERPCONTEXT_TYPEDEF
 typedef struct InterpContext InterpContext;
+#endif
+#ifndef MESSAGESTATE_TYPEDEF
+#define MESSAGESTATE_TYPEDEF
 typedef struct MessageState  MessageState;
+#endif
+#ifndef SCROLLSTATE_TYPEDEF
+#define SCROLLSTATE_TYPEDEF
 typedef struct ScrollState   ScrollState;
+#endif
 
 /* Messages status on/off */
 #define MSG_NEWSWIRE 0
@@ -76,6 +85,20 @@ typedef void (*NetAllianceRequestFunc)(uint8_t toPlayer);
 typedef void (*NetAllianceAcceptFunc)(uint8_t toPlayer);
 typedef void (*NetAllianceLeaveFunc)(void);
 typedef void (*NetLockToggleSendFunc)(bool allow);
+
+/* Forward decl — full definition in bolo/control_event.h. Kept opaque
+ * here so client_sim.h doesn't pull control_event.h's include closure
+ * into every TU. */
+struct ControlEvent;
+
+/* Read-only observer for ControlEvents arriving at this ClientSim.
+ * Invoked from clientSimApplyControl before any state mutation, so
+ * the callback sees every event the dispatcher receives (including
+ * self-skip cases). The event is const and the callback returns
+ * void — observers cannot influence dispatch. Single slot per
+ * ClientSim; intended for the WinBoloHeadless --log-events test
+ * harness, not for production code. */
+typedef void (*ControlObserverCb)(void *ctx, const struct ControlEvent *evt);
 
 /* Maximum predicted shells the client can track at once */
 #define MAX_PREDICTED_SHELLS 8
@@ -215,6 +238,13 @@ void clientSimSetAllianceRequestFunc(ClientSim *cs, NetAllianceRequestFunc func)
 void clientSimSetAllianceAcceptFunc(ClientSim *cs, NetAllianceAcceptFunc func);
 void clientSimSetAllianceLeaveFunc(ClientSim *cs, NetAllianceLeaveFunc func);
 void clientSimSetLockToggleSendFunc(ClientSim *cs, NetLockToggleSendFunc func);
+
+/* Install (or clear, with cb=NULL) a read-only control-event observer.
+ * Survives clientSimResetForMapLoad / in-place clientSimCreate rebuilds
+ * for the same reason the transport binding does: the observer is owned
+ * by an external party (the test harness) whose lifetime is independent
+ * of the ClientSim's map-reload cycle. */
+void clientSimSetControlObserver(ClientSim *cs, ControlObserverCb cb, void *ctx);
 
 /* Lobby chat helper — appends "name: message\n" to lobbyChatHistory */
 void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message);
@@ -365,6 +395,10 @@ const char *clientSimGetMyLastPlayerName(const ClientSim *cs);
 /* Indexed-array accessors (bounds-checked; out-of-range
  * returns NULL for pointer types, false/0 for scalars). */
 const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n);
+
+/* Count of currently-connected lobby slots (humans + bots).
+ * Matches what the lobby UI's player table renders. */
+BYTE clientSimGetLobbyNumConnected(const ClientSim *cs);
 bool                   clientSimIsMapSkipVote(const ClientSim *cs, BYTE n);
 uint8_t                clientSimGetBalanceProposal(const ClientSim *cs, BYTE n);
 
