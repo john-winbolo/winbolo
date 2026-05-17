@@ -1185,9 +1185,27 @@ bool gameFrontSetDlgState(openingStates newState) {
                      password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,
                      gameFrontTrackerEnabled, wantRejoin, gameFrontWbnUse,
                      gameFrontWbnToken);
+            /* Non-tutorial SP enters the new lobby first; the host clicks
+             * Start to fire gameFrontStartSinglePlayerGame, which then does
+             * the snapshot sync + tank-go work below. netSetup just
+             * overwrote netStat to netRunning, so we re-set the four lobby
+             * flags here (after netSetup, the right moment). The branch's
+             * pre-merge gameFrontEnterSinglePlayerLobby did exactly this. */
+            if (!isTutorial) {
+              clientSimSetIsSinglePlayer(humanSim, true);
+              clientSimSetInLobby(humanSim, true);
+              clientSimSetNetStatus(humanSim, netLobby);
+              clientSimSetMapDownloadComplete(humanSim, true);
+              WB_LOG_INFO(WB_LOG_CAT_GUI,
+                          "[DIAG] openFinished SP non-tutorial lobby flags set: slot0.team=%u",
+                          (unsigned)clientSimGetLobbySlot(humanSim, 0)->teamNumber);
+            }
+            if (isTutorial) {
             /* Sync tank state from initial snapshot. Lock so the snapshot is
              * built and applied atomically against the host timer thread,
-             * which is already ticking spServerSim. */
+             * which is already ticking spServerSim. Tutorial path only —
+             * normal SP defers this to gameFrontStartSinglePlayerGame at
+             * the lobby's Start button. */
             threadsWaitForMutex();
             {
               SnapshotHeader snapHdr;
@@ -1214,6 +1232,7 @@ bool gameFrontSetDlgState(openingStates newState) {
             }
             threadsReleaseMutex();
             clientSimNetSetupTankGo(humanSim);
+            }  /* end if (isTutorial) — snapshot sync + tank-go are tutorial-only */
             /* Destroy background game before adding real bots — bgGameDestroy
              * calls serverSimDestroyBots which would wipe bots we add below. */
             {
@@ -1680,18 +1699,10 @@ static void gameFrontFinishSinglePlayerLobby(void) {
                           (compTanks == aiNone) ? aiFull : compTanks);
   }
 
-  /* Lobby flags — main loop dispatches to lobbyShow when these are set.
-   * Branch's gameFrontEnterSinglePlayerLobby set these explicitly; without
-   * them the new lobby never renders and the legacy in-game path takes
-   * over (the "old lobby screen" regression). */
-  clientSimSetIsSinglePlayer(humanSim, true);
-  clientSimSetInLobby(humanSim, true);
-  clientSimSetNetStatus(humanSim, netLobby);
-  clientSimSetMapDownloadComplete(humanSim, true);
-  WB_LOG_INFO(WB_LOG_CAT_GUI,
-              "[DIAG] gameFrontFinishSinglePlayerLobby DONE: isSP=true inLobby=true netStatus=netLobby slot0.team=%u slot0.name='%s'",
-              (unsigned)clientSimGetLobbySlot(humanSim, 0)->teamNumber,
-              clientSimGetLobbySlot(humanSim, 0)->playerName);
+  /* Lobby flag-setting moved to the openFinished SP branch after
+   * netSetup — netSetup clobbers cs->netStat = netRunning, so setting
+   * the flags here is futile. The openFinished branch sets them at
+   * the right moment, after netSetup and before any game-start work. */
 
   spServerSimActive = TRUE;
 }
