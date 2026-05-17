@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include "cJSON.h"
 #include "winbolonet_client.h"
+#include "winbolonet_core.h"
 #include "http.h"
 
 /*********************************************************
@@ -202,6 +203,64 @@ bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorM
       strcpy(errorMsg, errObj->valuestring);
     } else {
       strcpy(errorMsg, "Validation failed");
+    }
+  } else {
+    strcpy(errorMsg, "No response from WinBolo.net");
+  }
+
+  cJSON_Delete(resp);
+  httpDestroy();
+  return ok;
+}
+
+/*********************************************************
+*NAME:          winbolonetClientJoinSession
+*PURPOSE:
+* Exchanges (apiToken, serverKey) for a server-scoped
+* player_key via POST /api/v1/client/join. The API token
+* never leaves the client; only the issued player_key gets
+* shipped in the JOIN packet's wire field.
+*********************************************************/
+bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, char *playerKeyOut, char *errorMsg) {
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
+  bool ok = FALSE;
+
+  playerKeyOut[0] = '\0';
+
+  if (httpCreate() != TRUE) {
+    strcpy(errorMsg, "Could not initialise HTTP");
+    return FALSE;
+  }
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "token", apiToken);
+  cJSON_AddStringToObject(body, "server_key", serverKey);
+
+  status = wbn_api_call("client/join", body, &resp);
+  cJSON_Delete(body);
+
+  if (status == 200 && resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+    } else {
+      cJSON *keyObj = cJSON_GetObjectItem(resp, "player_key");
+      if (keyObj && cJSON_IsString(keyObj)) {
+        strncpy(playerKeyOut, keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
+        playerKeyOut[WINBOLONET_KEY_LEN - 1] = '\0';
+        ok = TRUE;
+      } else {
+        strcpy(errorMsg, "WinBolo.net returned no player key");
+      }
+    }
+  } else if (resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+    } else {
+      strcpy(errorMsg, "WinBolo.net join failed");
     }
   } else {
     strcpy(errorMsg, "No response from WinBolo.net");

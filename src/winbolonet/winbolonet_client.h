@@ -81,4 +81,24 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
 *********************************************************/
 bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorMsg);
 
+/*********************************************************
+*NAME:          winbolonetClientJoinSession
+*PURPOSE:
+* Exchange (apiToken, serverKey) for a server-scoped
+* player_key via POST /api/v1/client/join. The apiToken is
+* the long-lived WBN credential stored in prefs; the
+* player_key is short-lived and scoped to one server's
+* session and is what the client ships on the JOIN wire.
+* Returns TRUE on success (playerKeyOut populated), FALSE
+* on failure (errorMsg populated).
+*
+*ARGUMENTS:
+* apiToken     - WBN API token (from prefs)
+* serverKey    - server_key of the server we're about to join
+* playerKeyOut - Buffer for issued player_key
+*                (must be >= WINBOLONET_KEY_LEN bytes)
+* errorMsg     - Buffer for error message on failure
+*********************************************************/
+bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, char *playerKeyOut, char *errorMsg);
+
 #endif /* __WINBOLO_NET_CLIENT_H */
