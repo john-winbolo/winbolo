@@ -9,7 +9,9 @@
 
 #include <string.h>
 #include "global.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
+#include "../winbolonet/winbolonet_server.h"
+#include "../winbolonet/winbolonet_client.h"
 #include "../winbolonet/winbolonetevents.h"
 #include "../winbolonet/winbolonetthread.h"
 #include "../winbolonet/http.h"
@@ -56,18 +58,10 @@ bool winbolonetCreateServer(char *mapName, unsigned short port,
   return FALSE;
 }
 
-bool winbolonetCreateClient(const char *token, const char *serverKey, char *errorMsg) {
-  (void)token; (void)serverKey;
-  if (errorMsg) strcpy(errorMsg, "WinBolo.net not supported in WASM build");
-  return FALSE;
-}
-
 void winbolonetDestroy(bool isServer)                               { (void)isServer; }
 void winbolonetGoodbye(void)                                       { }
 
 void winboloNetGetServerKey(char *keyBuff)                         { if (keyBuff) keyBuff[0] = '\0'; }
-void winboloNetGetMyClientKey(char *keyBuff)                       { if (keyBuff) keyBuff[0] = '\0'; }
-bool winboloNetVerifyClientKey(const char *k, char *u, BYTE n)     { (void)k; (void)u; (void)n; return FALSE; }
 bool winboloNetIsPlayerParticipant(BYTE playerNum)                 { (void)playerNum; return FALSE; }
 bool winbolonetIsRunning(void)                                     { return FALSE; }
 

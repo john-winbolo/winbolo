@@ -65,7 +65,6 @@ void randombytes(unsigned char *buf, unsigned long long len) {
 #endif
 
 #include "global.h"
-#include "winbolonet.h"
 #include "http.h"
 
 static bool httpStarted = false;

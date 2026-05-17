@@ -39,7 +39,7 @@
 #include "netpacks.h"
 #include "zip.h"
 #include "server_sim.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
 
 zipFile logFile;               /* File to log to */
 unsigned short logLastEvent; /* Last event logged. Increments each time there are no events */

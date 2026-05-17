@@ -44,19 +44,9 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
     return false;
 }
 
-bool winbolonetCreateClient(const char *token, const char *serverKey, char *errorMsg) {
-    (void)token; (void)serverKey; (void)errorMsg;
-    return false;
-}
-
 void winbolonetDestroy(bool isServer) { (void)isServer; }
 
 void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
-void winboloNetGetMyClientKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
-bool winboloNetVerifyClientKey(const char *playerKey, char *userName, BYTE playerNum) {
-    (void)playerKey; (void)userName; (void)playerNum;
-    return false;
-}
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
     (void)playerNum; (void)numPlayers; (void)freeBases; (void)freePills;
 }
