@@ -463,7 +463,7 @@ extern "C" int imguiWelcomeShow(void) {
             }
 
             if (ImGui::Button("##playPause", ImVec2(ppSize, ppSize))) {
-                bg->paused = !bg->paused;
+                bgGameTogglePause(bg);
             }
             imguiHandOnHover();
 
