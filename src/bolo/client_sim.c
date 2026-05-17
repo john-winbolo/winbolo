@@ -1067,6 +1067,7 @@ bool clientSimGetGameVote(const ClientSim *cs, uint8_t kind,
   out->secondsRemaining = gv->secondsRemaining;
   out->votes            = gv->votes;
   out->widgetVisible    = gv->widgetVisible;
+  out->concludedAtMs    = gv->concludedAtMs;
   return true;
 }
 

@@ -3632,11 +3632,15 @@ static uint8_t popcount16(uint16_t v) {
 }
 
 uint8_t serverSimCountActiveTeams(const ServerSim *sim) {
+    /* Counts distinct teamNumbers across every connected slot (humans
+     * and bots). A team is "in play" if any tank is on it. The
+     * humans-per-team eligibility for actually voting is enforced
+     * separately via gameVoteEligibleMask. */
     bool seen[MAX_TANKS] = {0};
     uint8_t count = 0;
     BYTE i;
     for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->playerConnected[i] || sim->lobbyPlayers[i].isBot) continue;
+        if (!sim->playerConnected[i]) continue;
         uint8_t t = sim->lobbyPlayers[i].teamNumber;
         if (t == 0 || t >= MAX_TANKS) continue;
         if (!seen[t]) { seen[t] = true; count++; }
