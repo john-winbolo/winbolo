@@ -974,6 +974,7 @@ add_library(winbolonet_core STATIC
     src/winbolonet/winbolonetthread.c
     src/winbolonet/winbolonetevents.c
     src/winbolonet/winbolonet_core.c
+    src/winbolonet/wbn_bearer.c
 )
 target_include_directories(winbolonet_core PRIVATE
     ${cjson_SOURCE_DIR}
@@ -2312,6 +2313,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_active_local_input_to_shot.c
     tests/unit/test_sp_shoot_through_timer.c
     tests/unit/test_ini_reader_writer.c
+    tests/unit/test_wbn_bearer_state.c
+    # Compiled standalone (libcurl-free) so the bearer-state test can
+    # link without dragging the rest of winbolonet_core into the test
+    # binary. The test_stubs.c stubs cover the other winbolonet_*
+    # functions; this TU only adds the three bearer accessors.
+    src/winbolonet/wbn_bearer.c
     # transport_udp_client.c stays per-target because of HAVE_STEAM
     # gating (it's excluded from bolo_static for that reason). Linked
     # here without HAVE_STEAM so client_net.c's transportUdpClient*
@@ -2347,6 +2354,7 @@ target_include_directories(WinBoloUnitTests PRIVATE
     src/gui/sdl3
     src/server
     src
+    src/winbolonet
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${cjson_SOURCE_DIR}
 )
@@ -2375,6 +2383,7 @@ set(_unit_test_names
     ini_writer_persistence
     ini_writer_insertion_point
     ini_writer_security
+    wbn_bearer_state
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
