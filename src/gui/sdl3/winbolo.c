@@ -306,17 +306,23 @@ int main(int argc, char *argv[]) {
         }
         continue;
       }
-      /* lobbyResult == 1: game started — load the map that was
-       * downloaded in the background during the lobby. */
-      if (!gameFrontLoadDeferredMap(&cs)) {
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, "Failed to load map from server",
-                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-        winboloQuit = FALSE;
-        gameFrontEnd(&keys, TRUE, FALSE);
-        if (gameFrontStart(cmdLine, &keys, TRUE, &cs) == FALSE) {
-          winboloQuit = TRUE;
+      /* lobbyResult == 1: game started.
+       *  MP: load the map that was downloaded in the background
+       *      during the lobby.
+       *  SP: gameFrontStartSinglePlayerGame already prepared the
+       *      world from the local spServerSim; no server map to
+       *      download. */
+      if (!clientSimIsSinglePlayer(cs)) {
+        if (!gameFrontLoadDeferredMap(&cs)) {
+          imguiMessageBoxEx(DIALOG_BOX_TITLE, "Failed to load map from server",
+                            IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+          winboloQuit = FALSE;
+          gameFrontEnd(&keys, TRUE, FALSE);
+          if (gameFrontStart(cmdLine, &keys, TRUE, &cs) == FALSE) {
+            winboloQuit = TRUE;
+          }
+          continue;
         }
-        continue;
       }
       clientSimSetNetStatus(cs, netRunning);
       simTickCounter = 0;

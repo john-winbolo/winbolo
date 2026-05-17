@@ -578,7 +578,6 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   gameFrontShutdownServer();
   isServer = FALSE;
   clientMutexRelease();
-  threadsDestroy();
 }
 
 /* -------------------------------------------------------
@@ -1179,6 +1178,17 @@ bool gameFrontSetDlgState(openingStates newState) {
                * map data, but we keep the client alive for the lobby/error
                * UI to drain. */
             }
+            /* clientLoadCompressedMap (above) calls setupClientSim →
+             * clientSimCreate which wipes lobby slot state. Register
+             * the subscriber here so the state-replay dispatch lands
+             * on the post-load humanSim and isn't clobbered. Serialise
+             * against the host timer thread, which is already ticking
+             * spServerSim. */
+            threadsWaitForMutex();
+            WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   about to registerClientSubscriber humanSim=%p", (void *)humanSim);
+            spHumanSubHandle = serverSimRegisterClientSubscriber(spServerSim, humanSim);
+            WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   subscriber registered handle=%d", (int)spHumanSubHandle);
+            threadsReleaseMutex();
             if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
             /* Set up networking state after ClientSim is fully initialized */
             netSetup(humanSim, netSingle, gameFrontMyUdp, gameFrontUdpAddress, gameFrontTargetUdp,
@@ -1665,11 +1675,15 @@ static void gameFrontFinishSinglePlayer(void) {
 }
 
 /* Single-player lobby finisher — sets the sim to lobby state with
- * slot 0 occupied by the human, registers humanSim as a subscriber
- * (mirrors gameFrontFinishSinglePlayer), and pre-populates the bot
- * brain path so the lobby's Add Bot button works without further
- * configuration.  Called from gameFrontStartServerSim after
- * serverInstanceStartup succeeds. */
+ * slot 0 occupied by the human and pre-populates the bot brain path
+ * so the lobby's Add Bot button works without further configuration.
+ * Called from gameFrontStartServerSim after serverInstanceStartup
+ * succeeds.
+ *
+ * humanSim is registered as a subscriber later, in the openFinished
+ * SP branch, after clientLoadCompressedMap — registering here would
+ * trigger a state replay onto humanSim that the subsequent map load
+ * then wipes via setupClientSim → clientSimCreate. */
 static void gameFrontFinishSinglePlayerLobby(void) {
   WB_LOG_INFO(WB_LOG_CAT_GUI,
               "[DIAG] gameFrontFinishSinglePlayerLobby ENTRY sim=%p humanSim=%p",
@@ -1679,9 +1693,6 @@ static void gameFrontFinishSinglePlayerLobby(void) {
   WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   about to addPlayer slot=0 name='%s'", gameFrontName);
   serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
   serverSimSetViewPlayer(spServerSim, 0);
-  WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   about to registerClientSubscriber humanSim=%p", (void *)humanSim);
-  spHumanSubHandle = serverSimRegisterClientSubscriber(spServerSim, humanSim);
-  WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   subscriber registered handle=%d", (int)spHumanSubHandle);
 
   /* Pre-populate the lobby's bot brain path so Add Bot works
    * without further configuration.  Host can override per-bot. */
@@ -1698,11 +1709,6 @@ static void gameFrontFinishSinglePlayerLobby(void) {
     serverSimSetBotAiType(spServerSim,
                           (compTanks == aiNone) ? aiFull : compTanks);
   }
-
-  /* Lobby flag-setting moved to the openFinished SP branch after
-   * netSetup — netSetup clobbers cs->netStat = netRunning, so setting
-   * the flags here is futile. The openFinished branch sets them at
-   * the right moment, after netSetup and before any game-start work. */
 
   spServerSimActive = TRUE;
 }

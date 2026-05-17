@@ -4647,6 +4647,17 @@ void serverSimRenameBotSlot(ServerSim *sim, BYTE slot, const char *name) {
                          nameBuf, loc,
                          0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
     }
+    /* Subscriber ClientSims track names in sim.plyrs (what the in-game
+     * players panel reads), not in lobbySlots. Publish so the rename
+     * propagates past the lobby UI into the game view. */
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_PLAYER_NAME;
+        evt.u.playerName.playerNum = slot;
+        snprintf(evt.u.playerName.name, PACKET_MAX_PLAYER_NAME, "%s", name);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 void serverSimPublishLobbySlot(ServerSim *sim, BYTE slot) {
