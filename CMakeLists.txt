@@ -1148,6 +1148,7 @@ target_include_directories(WinBolo PRIVATE
     src/logviewer/platform
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
+    src/third_party/imgui_markdown
 )
 bolo_apply_include_rules(WinBolo gui)
 bolo_grant_internal_source_access(WinBolo
