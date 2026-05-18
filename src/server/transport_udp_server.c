@@ -543,6 +543,32 @@ static void lobbyRejectTo(struct sockaddr_in *addr, uint8_t origPacket,
     udpSendTo(udpServer.sock, buf, sizeof(buf), addr);
 }
 
+bool lobbyAnyOtherUploadActive(const bool *active, int exceptIdx) {
+    int i;
+    if (active == NULL) return false;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (i == exceptIdx) continue;
+        if (active[i]) return true;
+    }
+    return false;
+}
+
+/* Free a client's per-slot upload state. Called from
+ * serverDisconnectClient so a client that drops mid-upload doesn't
+ * leave clientUploadActive set, which would falsely flag the
+ * upload slot as busy and block every subsequent uploader. */
+static void udpServerClearClientUploadState(int idx) {
+    if (idx < 0 || idx >= MAX_TANKS) return;
+    if (udpServer.clientUploadBuf[idx] != NULL) {
+        free(udpServer.clientUploadBuf[idx]);
+        udpServer.clientUploadBuf[idx] = NULL;
+    }
+    udpServer.clientUploadActive[idx] = false;
+    udpServer.clientUploadTotal[idx]  = 0;
+    udpServer.clientUploadHave[idx]   = 0;
+    udpServer.clientUploadName[idx][0] = '\0';
+}
+
 /* Authority check used by every lobby command handler.
  * Returns TRUE if the sender at clientIdx is allowed to issue the
  * command (host, OR open-host is on and they're an active player,
@@ -1572,6 +1598,12 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     udpServer.clients[idx].nameStickySuffix = false;
     memset(udpServer.clients[idx].playerName, 0, PACKET_MAX_PLAYER_NAME);
     udpServer.clientLocked[idx] = false;
+
+    /* Release any in-flight upload state. Without this, a client
+     * who drops mid-upload would leave clientUploadActive set,
+     * blocking every subsequent UPLOAD_BEGIN from a different
+     * client with LOBBY_REJECT_UPLOAD_BUSY until server restart. */
+    udpServerClearClientUploadState(idx);
 }
 
 /* Send a localized server-originated message to all connected clients
@@ -3176,6 +3208,16 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 break;
             }
 
+            /* Single-thread the upload slot. USE_LOCAL writes to
+             * sim->pendingUpload* the same as UPLOAD_DONE, so a
+             * USE_LOCAL landing while another client's upload is
+             * in flight would clobber their pending preview. */
+            if (lobbyAnyOtherUploadActive(udpServer.clientUploadActive,
+                                           clientIdx)) {
+                SEND_USE_LOCAL_NACK();
+                break;
+            }
+
             /* Name safety: must end in ".map", no separators, no
              * leading dot. Mirrors the UPLOAD_BEGIN guards so a
              * malicious relPath can't bypass them. */
@@ -3270,6 +3312,20 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 uint8_t ack[PACKET_HEADER_SIZE + 1];
                 packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
                 ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_NOT_HOST;
+                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                break;
+            }
+            /* Single-thread the upload slot. The sim has one preview
+             * pending-upload slot; allowing two clients to race
+             * truncates the loser's bytes on the global temp file
+             * and overwrites their pending paths. Same-client
+             * retry is fine — the clientUploadBuf cleanup below
+             * handles that — only OTHER clients trigger this gate. */
+            if (lobbyAnyOtherUploadActive(udpServer.clientUploadActive,
+                                           clientIdx)) {
+                uint8_t ack[PACKET_HEADER_SIZE + 1];
+                packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_UPLOAD_BUSY;
                 udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
                 break;
             }

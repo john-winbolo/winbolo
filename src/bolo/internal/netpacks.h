@@ -475,9 +475,10 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
  * serverLocks is read-only (CLI on bolod) — no SET_SETTING for it. */
 
 /* Reject reason codes for PACKET_LOBBY_REJECT. */
-#define LOBBY_REJECT_NOT_HOST   1   /* sender lacks authority */
-#define LOBBY_REJECT_LOCKED     2   /* setting is in serverLocks bitmask */
-#define LOBBY_REJECT_INVALID    3   /* malformed payload / out-of-range value */
+#define LOBBY_REJECT_NOT_HOST     1   /* sender lacks authority */
+#define LOBBY_REJECT_LOCKED       2   /* setting is in serverLocks bitmask */
+#define LOBBY_REJECT_INVALID      3   /* malformed payload / out-of-range value */
+#define LOBBY_REJECT_UPLOAD_BUSY  4   /* another client's map upload is in flight */
 
 #define NAME_REJECT_INVALID         1   /* validator: any *_INVALID_* error */
 #define NAME_REJECT_TAKEN           2   /* duplicate via playerNameCompare */

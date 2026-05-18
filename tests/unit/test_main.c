@@ -49,6 +49,7 @@ static const UnitTestEntry s_tests[] = {
     { "map_field_clamps_passthrough",            run_map_field_clamps_passthrough            },
     { "map_field_clamps_angry_start",            run_map_field_clamps_angry_start            },
     { "map_reload_rollback",                     run_map_reload_rollback                     },
+    { "upload_busy_predicate",                   run_upload_busy_predicate                   },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 
