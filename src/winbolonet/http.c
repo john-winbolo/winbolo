@@ -339,6 +339,7 @@ int wbn_api_post(const char *endpoint, const char *json_body, char **response_ou
 
   fprintf(stderr, "WinBolo.net DEBUG wbn_api_post: POST %s\n", url);
   fprintf(stderr, "WinBolo.net DEBUG wbn_api_post: body=%s\n", json_body);
+  balanceDebugLog("[WBN HTTP] POST %s body=%s", url, json_body);
 
   CURLcode res = curl_easy_perform(curl);
 
@@ -350,12 +351,17 @@ int wbn_api_post(const char *endpoint, const char *json_body, char **response_ou
 
   if (res != CURLE_OK) {
     fprintf(stderr, "WinBolo.net DEBUG wbn_api_post [%s]: curl error: %s\n", endpoint, curl_easy_strerror(res));
+    balanceDebugLog("[WBN HTTP] CURL ERROR endpoint=%s code=%d msg=%s",
+                    endpoint, (int)res, curl_easy_strerror(res));
     free(respBuf.data);
     return -1;
   }
 
   fprintf(stderr, "WinBolo.net DEBUG wbn_api_post [%s]: HTTP %ld, response=%s\n",
           endpoint, http_code, respBuf.data ? respBuf.data : "(null)");
+  balanceDebugLog("[WBN HTTP] RESPONSE endpoint=%s http=%ld body=%s",
+                  endpoint, http_code,
+                  respBuf.data ? respBuf.data : "(null)");
 
   if (response_out) {
     *response_out = respBuf.data;

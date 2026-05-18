@@ -16,6 +16,38 @@
 #include "input_packet.h"
 #include "global.h"
 
+#include <stdarg.h>
+#include <stdio.h>
+#include <time.h>
+
+void balanceDebugLog(const char *fmt, ...) {
+  static FILE *s_f = NULL;
+  static int   s_failed = 0;
+  if (s_failed) return;
+  if (s_f == NULL) {
+    s_f = fopen("balance.log", "a");
+    if (s_f == NULL) { s_failed = 1; return; }
+    /* unbuffered so a crash doesn't lose the last lines */
+    setvbuf(s_f, NULL, _IONBF, 0);
+    time_t now = time(NULL);
+    struct tm tmv;
+#ifdef _WIN32
+    localtime_s(&tmv, &now);
+#else
+    tmv = *localtime(&now);
+#endif
+    fprintf(s_f, "\n----- balance.log opened %04d-%02d-%02d %02d:%02d:%02d -----\n",
+            tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+            tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+  }
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(s_f, fmt, ap);
+  va_end(ap);
+  fputc('\n', s_f);
+  fflush(s_f);
+}
+
 /* === Lifecycle === */
 
 static void clientSimTeardownTransport(ClientSim *cs) {
@@ -344,9 +376,21 @@ void clientSimNetSendGameVoteToggle(ClientSim *cs,
   transportUdpClientSendGameVoteToggle(&cs->transport, kind, toggleMode);
 }
 
-void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendBalanceRequest(&cs->transport, teamSize);
+void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize,
+                                    bool includeBots) {
+  balanceDebugLog("[BAL CLIENT] SendBalanceRequest teamSize=%u includeBots=%d "
+                  "cs=%p hasTransport=%d isUdpTransport=%d",
+                  (unsigned)teamSize, includeBots ? 1 : 0,
+                  (void *)cs,
+                  cs ? cs->hasTransport : 0,
+                  cs ? cs->isUdpTransport : 0);
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) {
+    balanceDebugLog("[BAL CLIENT] dropping: no UDP transport bound");
+    return;
+  }
+  balanceDebugLog("[BAL CLIENT] calling transportUdpClientSendBalanceRequest");
+  transportUdpClientSendBalanceRequest(&cs->transport, teamSize, includeBots);
+  balanceDebugLog("[BAL CLIENT] transportUdpClientSendBalanceRequest returned");
 }
 
 void clientSimNetSendBalanceApply(ClientSim *cs) {

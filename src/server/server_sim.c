@@ -1894,6 +1894,10 @@ void serverSimSetBalanceRequestInFlight(ServerSim *sim, bool inFlight) {
     sim->balanceProposal.requestInFlight = inFlight;
 }
 
+void serverSimSetBalanceIncludeBots(ServerSim *sim, bool includeBots) {
+    sim->balanceProposal.includeBots = includeBots;
+}
+
 void serverSimSetEmptyResetMinutes(ServerSim *sim, int minutes) {
     sim->emptyResetMinutes = minutes;
 }
@@ -3888,6 +3892,8 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyOpenHost            = sim->openHost;
     evt->u.lobbySettings.lobbyAutoLockOnGameStart = sim->autoLockOnGameStart;
     evt->u.lobbySettings.lobbyRanked              = sim->ranked;
+    evt->u.lobbySettings.lobbyAllowNewPlayers     = sim->allowNewPlayers;
+    evt->u.lobbySettings.lobbyWbnAvailable        = winbolonetIsRunning();
     evt->u.lobbySettings.lobbyServerLocks         = sim->serverLocks;
 }
 
@@ -4119,8 +4125,11 @@ SubscriberHandle serverSimRegisterClientSubscriber(ServerSim *sim, ClientSim *cs
 
 void serverSimRequestBalanceProposal(ServerSim *sim,
                                      uint8_t totalPlayers,
-                                     uint8_t teamSize) {
+                                     uint8_t teamSize,
+                                     const uint8_t *botSlots,
+                                     uint8_t numBotSlots) {
     winbolonetServerRequestBalance(totalPlayers, teamSize,
+                                   botSlots, numBotSlots,
                                    &sim->balanceProposal);
 }
 
@@ -5329,7 +5338,10 @@ void serverSimPublishLobbySettings(ServerSim *sim) {
     if (!sim) return;
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbySettingsEvent(sim, &evt);
+    balanceDebugLog("[RANKED SERVER] publishLobbySettings: sim->ranked=%d evt.lobbyRanked=%d",
+                    (int)sim->ranked, (int)evt.u.lobbySettings.lobbyRanked);
     serverSimPublishControl(sim, &evt);
+    balanceDebugLog("[RANKED SERVER] publishLobbySettings: publishControl returned");
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -5387,6 +5399,34 @@ bool serverSimGetRanked(const ServerSim *sim) {
 
 void serverSimSetRanked(ServerSim *sim, bool v) {
     if (sim) sim->ranked = v;
+}
+
+void serverSimSetAllowNewPlayers(ServerSim *sim, bool v) {
+    if (sim) sim->allowNewPlayers = v;
+}
+
+bool serverSimRankedShapeReady(const ServerSim *sim) {
+    if (sim == NULL) return false;
+    int teamSizes[17] = {0};
+    int teamsInUse = 0;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (!serverSimIsPlayerConnected(sim, i)) continue;
+        const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, i);
+        if (lp == NULL || lp->isBot) continue;
+        uint8_t t = lp->teamNumber;
+        if (t == 0 || t > 16) continue;
+        if (teamSizes[t] == 0) teamsInUse++;
+        teamSizes[t]++;
+    }
+    int firstSize = 0, secondSize = 0;
+    for (int t = 1; t <= 16; t++) {
+        if (teamSizes[t] == 0) continue;
+        if (firstSize == 0) firstSize = teamSizes[t];
+        else                secondSize = teamSizes[t];
+    }
+    return (teamsInUse == 2) &&
+           (firstSize == secondSize) &&
+           (firstSize >= 1 && firstSize <= 3);
 }
 
 uint8_t serverSimGetAiPolicy(const ServerSim *sim) {

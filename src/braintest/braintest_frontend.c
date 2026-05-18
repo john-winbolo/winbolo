@@ -206,8 +206,12 @@ bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorM
   return FALSE;
 }
 
-bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, BalanceProposal *outProposal) {
-  (void)totalPlayers; (void)teamSize; (void)outProposal;
+bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize,
+                                     const uint8_t *botSlots, uint8_t numBotSlots,
+                                     BalanceProposal *outProposal) {
+  (void)totalPlayers; (void)teamSize;
+  (void)botSlots; (void)numBotSlots;
+  (void)outProposal;
   return FALSE;
 }
 

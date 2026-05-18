@@ -37,6 +37,7 @@
 #include "messages.h"
 #include "netpacks.h"
 #include "players.h"
+#include "global.h"      /* balanceDebugLog */
 #include "../common/wb_log.h"
 
 void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
@@ -149,7 +150,28 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->inLobby          = evt->u.lobbySettings.inLobby;
         cs->lobbyOpenHost            = evt->u.lobbySettings.lobbyOpenHost;
         cs->lobbyAutoLockOnGameStart = evt->u.lobbySettings.lobbyAutoLockOnGameStart;
-        cs->lobbyRanked              = evt->u.lobbySettings.lobbyRanked;
+        {
+            bool prevR = cs->lobbyRanked;
+            cs->lobbyRanked          = evt->u.lobbySettings.lobbyRanked;
+            /* Unconditional log so we can see every settings arrival
+             * even when ranked stays the same — tells us whether the
+             * client is receiving publishes at all. */
+            balanceDebugLog("[RANKED CLIENT] CTRL_LOBBY_SETTINGS arrived: "
+                            "lobbyRanked prev=%d new=%d (changed=%d) cs=%p",
+                            (int)prevR, (int)cs->lobbyRanked,
+                            (int)(prevR != cs->lobbyRanked), (void *)cs);
+        }
+        {
+            bool prevA = cs->lobbyAllowNewPlayers;
+            cs->lobbyAllowNewPlayers = evt->u.lobbySettings.lobbyAllowNewPlayers;
+            if (prevA != cs->lobbyAllowNewPlayers) {
+                balanceDebugLog("[ALLOW CLIENT] CTRL_LOBBY_SETTINGS arrived: "
+                                "lobbyAllowNewPlayers %d -> %d cs=%p",
+                                (int)prevA, (int)cs->lobbyAllowNewPlayers,
+                                (void *)cs);
+            }
+        }
+        cs->lobbyWbnAvailable = evt->u.lobbySettings.lobbyWbnAvailable;
         cs->lobbyServerLocks         = evt->u.lobbySettings.lobbyServerLocks;
         break;
 
@@ -210,6 +232,16 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             }
         }
         cs->balanceProposalActive = anyNonZero;
+        /* Latch a one-shot timestamp the lobby UI reads to show a brief
+         * "Teams balanced" success label next to the Balance-from-WBN
+         * button. The server auto-applies and immediately clears the
+         * proposal, so an in-process host's render thread would only
+         * ever see balanceProposalActive=false; this timestamp survives
+         * that race. Set only on a non-empty arrival so the matching
+         * clear publish doesn't overwrite it. */
+        if (anyNonZero) {
+            cs->lastBalanceProposalArrivedMs = SDL_GetTicks();
+        }
         break;
     }
 
