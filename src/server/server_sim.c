@@ -2612,6 +2612,27 @@ void serverSimReturnToLobby(ServerSim *sim) {
     sim->gameLength = sim->originalGameLength;
     sim->emptyResetTicks = -1;
 
+    /* Re-keying on lobby return: the WBN session is about to be torn
+     * down and re-registered with a fresh server_key (see
+     * winbolonetReturnToLobby in the caller). Drop every connected
+     * player's WBN-verified / Steam-linked bits so the subsequent
+     * lobby-state publish carries the cleared flags to the clients.
+     * Each client then notices its own slot has lost
+     * PLAYER_FLAG_WBN_VERIFIED and sends PACKET_WBN_REAUTH so the
+     * server can re-attach them to the new WBN session.
+     *
+     * Other clientFlags bits (CLIENT_TYPE_*, platform, STEAM_BUILD,
+     * SUPPORTER) are intentionally preserved — they're identity bits
+     * tied to the connection, not the WBN session, and clearing them
+     * would lose information the client doesn't re-send on REAUTH. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        uint8_t f = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
+        f &= (uint8_t)~(PLAYER_FLAG_WBN_VERIFIED |
+                        PLAYER_FLAG_WBN_STEAM_LINKED);
+        playersSetClientFlags(&sim->sim.plyrs, (BYTE)i, f);
+    }
+
     sim->state = serverStateLobby;
     serverSimMapSkipVotesReset(sim);
 
