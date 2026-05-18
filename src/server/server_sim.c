@@ -32,6 +32,8 @@
 
 #include "global.h"
 #include "bolo_map.h"
+#include "netpacks.h"   /* LST_* setting ids for serverSimGetSettingLockBit */
+#include "wire_limits.h"
 #include "pillbox.h"
 #include "bases.h"
 #include "starts.h"
@@ -5241,6 +5243,26 @@ void serverSimSetFirstJoinerBecomesHost(ServerSim *sim, bool v) {
 
 uint16_t serverSimGetServerLocks(const ServerSim *sim) {
     return sim ? sim->serverLocks : 0;
+}
+
+uint16_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
+    switch (lstSettingType) {
+        case LST_GAME_TYPE:         return LOBBY_LOCK_GAME_TYPE;
+        case LST_HIDDEN_MINES:      return LOBBY_LOCK_MINES;
+        case LST_AI_POLICY:         return LOBBY_LOCK_AI_POLICY;
+        case LST_TIME_LIMIT:        return LOBBY_LOCK_TIME_LIMIT;
+        case LST_TIME_MINUTES:      return LOBBY_LOCK_TIME_LIMIT;
+        case LST_AUTO_LOCK_ON_GAME: return LOBBY_LOCK_AUTO_LOCK_ON_GAME;
+        case LST_RANKED:            return LOBBY_LOCK_RANKED;
+        default:                    return 0xFFFFu;  /* unknown setting */
+    }
+}
+
+bool serverSimIsSettingLocked(const ServerSim *sim, uint8_t lstSettingType) {
+    if (sim == NULL) return false;
+    uint16_t bit = serverSimGetSettingLockBit(lstSettingType);
+    if (bit == 0u || bit == 0xFFFFu) return false;
+    return (sim->serverLocks & bit) != 0u;
 }
 
 void serverSimSetAiPolicy(ServerSim *sim, uint8_t v) {

@@ -2675,22 +2675,13 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             }
             const uint8_t *value = buf + PACKET_HEADER_SIZE + 2;
 
-            uint16_t lockBit = 0;
-            switch (settingType) {
-                case LST_GAME_TYPE:         lockBit = LOBBY_LOCK_GAME_TYPE; break;
-                case LST_HIDDEN_MINES:      lockBit = LOBBY_LOCK_MINES; break;
-                case LST_AI_POLICY:         lockBit = LOBBY_LOCK_AI_POLICY; break;
-                case LST_TIME_LIMIT:        lockBit = LOBBY_LOCK_TIME_LIMIT; break;
-                case LST_TIME_MINUTES:      lockBit = LOBBY_LOCK_TIME_LIMIT; break;
-                case LST_AUTO_LOCK_ON_GAME: lockBit = LOBBY_LOCK_AUTO_LOCK_ON_GAME; break;
-                case LST_RANKED:            lockBit = LOBBY_LOCK_RANKED; break;
-                default:                    lockBit = 0xFFFF; break;  /* unknown */
-            }
-            if (lockBit == 0xFFFF) {
+            uint16_t lockBit = serverSimGetSettingLockBit(settingType);
+            if (lockBit == 0xFFFFu) {
                 /* Unknown setting — silently drop (forward-compat). */
                 break;
             }
-            if (serverSimGetServerLocks(sim) & lockBit) {
+            if (lockBit != 0u &&
+                (serverSimGetServerLocks(sim) & lockBit) != 0u) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
                               LOBBY_REJECT_LOCKED);
                 break;
