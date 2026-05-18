@@ -62,6 +62,11 @@ struct ServerSim {
     bool     ranked;               /* LST_RANKED — server enforces bots-off and
                                     * rejects gameType=Open while true. Toggle-on
                                     * also removes existing bots from teams. */
+    bool     firstJoinerBecomesHost; /* dedicated-server promotion mode. Set
+                                      * via -firstjoinhost. When true and slot
+                                      * 0 is empty (or unowned), the next
+                                      * incoming player is promoted to host.
+                                      * Consumed by the join handler. */
     uint16_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
 
     /* Game-settings mirrors — needed for live mid-lobby change broadcasts.

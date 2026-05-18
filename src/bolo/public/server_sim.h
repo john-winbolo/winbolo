@@ -1414,6 +1414,12 @@ void        serverSimSetOpenHost(ServerSim *sim, bool v);
  * Locked settings refuse PACKET_LOBBY_SET_SETTING with REJECT_LOCKED. */
 uint16_t    serverSimGetServerLocks(const ServerSim *sim);
 
+/* firstJoinerBecomesHost — dedicated-server option. When true and slot
+ * 0 is unoccupied at join time, the incoming player is promoted to
+ * host (admin rights). Set via -firstjoinhost; no UI counterpart. */
+bool        serverSimGetFirstJoinerBecomesHost(const ServerSim *sim);
+void        serverSimSetFirstJoinerBecomesHost(ServerSim *sim, bool v);
+
 /* Cached game-settings mirrors. authoritative state lives in GameSim;
  * these expose the most-recently-broadcast value for lock checks and
  * SETTING_CHG diffs. */

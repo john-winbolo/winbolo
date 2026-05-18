@@ -6157,7 +6157,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                          & PLAYER_FLAG_ADMIN));
                     bool effHostMap = isHostLocal || isAdminLocal ||
                                       clientSimGetLobbyOpenHost(cs);
-                    if (effHostMap) {
+                    if (effHostMap &&
+                        !(clientSimGetLobbyServerLocks(cs) & 0x100 /* LOBBY_LOCK_MAP */)) {
                         if (ImGui::Button("Choose Map")) {
                             lobbyChooseMapOpen(cs, renderer);
                         }
@@ -6233,7 +6234,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     ImGui::Spacing();
                     ImGui::Text("%s - %dP %dB %dS", clientSimGetMapName(cs), clientSimGetLobbyPillCount(cs), clientSimGetLobbyBaseCount(cs), clientSimGetLobbyStartCount(cs));
 
-                    if (clientSimIsMapSkipAvailable(cs) && clientSimIsInLobby(cs)) {
+                    /* Skip-map vote is gated by LOBBY_LOCK_MAP — locking
+                     * the map blocks both manual change and skip-vote. */
+                    if (clientSimIsMapSkipAvailable(cs) && clientSimIsInLobby(cs) &&
+                        !(clientSimGetLobbyServerLocks(cs) & 0x100 /* LOBBY_LOCK_MAP */)) {
                         ImGui::Spacing();
                         bool countdownActive = clientSimGetCountdownSeconds(cs) > 0;
                         if (countdownActive) ImGui::BeginDisabled();
@@ -6785,8 +6789,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
                 /* Choose Map button — sits directly under the preview so
                  * the "change map" affordance reads as part of the
-                 * preview block rather than as a footer at the bottom. */
-                if (effHostMap) {
+                 * preview block rather than as a footer at the bottom.
+                 * Hidden when LOBBY_LOCK_MAP is set (server pins map). */
+                if (effHostMap &&
+                    !(clientSimGetLobbyServerLocks(cs) & 0x100 /* LOBBY_LOCK_MAP */)) {
                     if (ImGui::Button("Choose Map", ImVec2(-1, 0))) {
                         lobbyChooseMapOpen(cs, renderer);
                     }
@@ -6813,7 +6819,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_BASES), clientSimGetLobbyBaseCount(cs));
             ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), clientSimGetLobbyStartCount(cs));
 
-            if (clientSimIsMapSkipAvailable(cs) && clientSimIsInLobby(cs)) {
+            if (clientSimIsMapSkipAvailable(cs) && clientSimIsInLobby(cs) &&
+                !(clientSimGetLobbyServerLocks(cs) & 0x100 /* LOBBY_LOCK_MAP */)) {
                 ImGui::Spacing();
                 bool countdownActive = clientSimGetCountdownSeconds(cs) > 0;
                 if (countdownActive) ImGui::BeginDisabled();

@@ -2683,7 +2683,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 case LST_TIME_LIMIT:        lockBit = LOBBY_LOCK_TIME_LIMIT; break;
                 case LST_TIME_MINUTES:      lockBit = LOBBY_LOCK_TIME_LIMIT; break;
                 case LST_AUTO_LOCK_ON_GAME: lockBit = LOBBY_LOCK_AUTO_LOCK_ON_GAME; break;
-                case LST_RANKED:            lockBit = 0; break;  /* no server-lock for ranked */
+                case LST_RANKED:            lockBit = LOBBY_LOCK_RANKED; break;
                 default:                    lockBit = 0xFFFF; break;  /* unknown */
             }
             if (lockBit == 0xFFFF) {
@@ -2830,6 +2830,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 len < PACKET_HEADER_SIZE + 1) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_OPEN_HOST,
                               LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            if (serverSimGetServerLocks(sim) & LOBBY_LOCK_OPEN_HOST) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_OPEN_HOST,
+                              LOBBY_REJECT_LOCKED);
                 break;
             }
             serverSimSetOpenHost(sim, buf[PACKET_HEADER_SIZE] != 0);
@@ -3315,6 +3320,13 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
                 break;
             }
+            if (serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP) {
+                uint8_t ack[PACKET_HEADER_SIZE + 1];
+                packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_LOCKED;
+                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                break;
+            }
             /* Single-thread the upload slot. The sim has one preview
              * pending-upload slot; allowing two clients to race
              * truncates the loser's bytes on the global temp file
@@ -3626,6 +3638,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                               LOBBY_REJECT_NOT_HOST);
                 break;
             }
+            if (serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_COMMIT,
+                              LOBBY_REJECT_LOCKED);
+                break;
+            }
             serverSimCommitPreview(sim);
             WB_LOG_INFO(WB_LOG_CAT_NET,
                         "[LOBBY] PREVIEW_COMMIT: kept current map");
@@ -3639,6 +3656,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             if (!lobbyClientMayEdit(sim, clientIdx)) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
                               LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            if (serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
+                              LOBBY_REJECT_LOCKED);
                 break;
             }
             uint8_t seedLen = buf[PACKET_HEADER_SIZE];
@@ -3699,6 +3721,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     &serverSimGetGameSim(sim)->plyrs,
                     (BYTE)clientIdx) & PLAYER_FLAG_ADMIN);
             if (!isHost && !isAdmin) break;
+            if (serverSimGetServerLocks(sim) & LOBBY_LOCK_PASSWORD) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_PASSWORD,
+                              LOBBY_REJECT_LOCKED);
+                break;
+            }
             int rpos = PACKET_HEADER_SIZE;
             uint8_t pwLen = buf[rpos++];
             if (pwLen >= MAP_STR_SIZE ||
@@ -3972,7 +3999,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_MAP_SKIP_VOTE: {
             /* Wire: [header 8] (no payload — server identifies player by source) */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0) {
+            if (clientIdx >= 0 &&
+                !(serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP)) {
                 ControlEvent evt;
                 int i;
                 serverSimMapSkipVoteToggle(sim, (uint8_t)clientIdx);

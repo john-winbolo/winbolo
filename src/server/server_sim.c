@@ -5231,6 +5231,14 @@ void serverSimSetOpenHost(ServerSim *sim, bool v) {
     if (sim) sim->openHost = v;
 }
 
+bool serverSimGetFirstJoinerBecomesHost(const ServerSim *sim) {
+    return sim ? sim->firstJoinerBecomesHost : false;
+}
+
+void serverSimSetFirstJoinerBecomesHost(ServerSim *sim, bool v) {
+    if (sim) sim->firstJoinerBecomesHost = v;
+}
+
 uint16_t serverSimGetServerLocks(const ServerSim *sim) {
     return sim ? sim->serverLocks : 0;
 }
