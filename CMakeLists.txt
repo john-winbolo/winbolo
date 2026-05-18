@@ -2273,6 +2273,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_game_vote_control.c
     tests/unit/test_md5.c
     tests/unit/test_ranked_lobby.c
+    tests/unit/test_upload_cap.c
     # transport_udp_client.c stays per-target because of HAVE_STEAM
     # gating (it's excluded from bolo_static for that reason). Linked
     # here without HAVE_STEAM so client_net.c's transportUdpClient*
@@ -2343,6 +2344,7 @@ set(_unit_test_names
     lobby_brain_list_codec_and_apply
     ranked_flag_persists_with_one_player
     ranked_shape_gate
+    upload_cap_enforced
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
