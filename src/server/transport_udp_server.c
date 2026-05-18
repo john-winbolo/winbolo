@@ -687,7 +687,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     int pos = PACKET_HEADER_SIZE;
     char name[PACKET_MAX_PLAYER_NAME];
     char pass[MAP_STR_SIZE];
-    char wbnToken[WBN_TOKEN_WIRE_LEN];
+    char wbnJoinKey[WBN_JOIN_KEY_WIRE_LEN];
     int slot;
 
     WB_LOG_DEBUG(WB_LOG_CAT_NET,
@@ -699,7 +699,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
      * + WBN token + 1 flags byte + 2 client-identity bytes (clientType,
      * clientHints).  No backward-compat path — older clients are rejected. */
     int joinReqMin = pos + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3
-                     + WBN_TOKEN_WIRE_LEN + 1 + 2;
+                     + WBN_JOIN_KEY_WIRE_LEN + 1 + 2;
     if (len < joinReqMin) {
         WB_LOG_WARN(WB_LOG_CAT_NET,
             "join request malformed: need=%d got=%d from=%s:%u",
@@ -756,11 +756,11 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     pos += 3;
 
     /* Read WBN token if present (backwards compatible — older clients won't send it) */
-    memset(wbnToken, 0, WBN_TOKEN_WIRE_LEN);
-    if (len >= pos + WBN_TOKEN_WIRE_LEN) {
-        memcpy(wbnToken, buf + pos, WBN_TOKEN_WIRE_LEN);
-        wbnToken[WBN_TOKEN_WIRE_LEN - 1] = '\0';
-        pos += WBN_TOKEN_WIRE_LEN;
+    memset(wbnJoinKey, 0, WBN_JOIN_KEY_WIRE_LEN);
+    if (len >= pos + WBN_JOIN_KEY_WIRE_LEN) {
+        memcpy(wbnJoinKey, buf + pos, WBN_JOIN_KEY_WIRE_LEN);
+        wbnJoinKey[WBN_JOIN_KEY_WIRE_LEN - 1] = '\0';
+        pos += WBN_JOIN_KEY_WIRE_LEN;
     }
 
     /* Read flags byte if present (backwards compatible — older clients default to 0) */
@@ -830,10 +830,10 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     bool incomingIsWBN = false;
     bool wbnHasSteam = false;
     bool wbnIsSupporter = false;
-    if (wbnToken[0] != '\0' && winbolonetIsRunning()) {
+    if (wbnJoinKey[0] != '\0' && winbolonetIsRunning()) {
         char errorMsg[512];
         errorMsg[0] = '\0';
-        if (winbolonetServerVerifyToken(wbnToken, (BYTE)slot, errorMsg,
+        if (winbolonetServerVerifyToken(wbnJoinKey, (BYTE)slot, errorMsg,
                                         &wbnHasSteam, &wbnIsSupporter)) {
             fprintf(stderr, "[UDP SERVER] Player '%s' verified with WinBolo.net\n", name);
             incomingIsWBN = true;
@@ -2385,12 +2385,12 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_WBN_REAUTH: {
-            /* Wire: [header 8] [wbnToken 65] */
+            /* Wire: [header 8] [wbnJoinKey 65] */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + WBN_TOKEN_WIRE_LEN) {
-                char token[WBN_TOKEN_WIRE_LEN];
-                memcpy(token, buf + PACKET_HEADER_SIZE, WBN_TOKEN_WIRE_LEN);
-                token[WBN_TOKEN_WIRE_LEN - 1] = '\0';
+            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN) {
+                char token[WBN_JOIN_KEY_WIRE_LEN];
+                memcpy(token, buf + PACKET_HEADER_SIZE, WBN_JOIN_KEY_WIRE_LEN);
+                token[WBN_JOIN_KEY_WIRE_LEN - 1] = '\0';
 
                 if (winbolonetIsRunning() && token[0] != '\0') {
                     char errorMsg[512];

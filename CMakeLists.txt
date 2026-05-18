@@ -1409,7 +1409,8 @@ target_link_libraries(WinBoloDS PRIVATE
     ${SERVER_LINK_GROUP}
     bot_brains_static
     winbolonet_core
-    winbolonet_server)
+    winbolonet_server
+    winbolonet_client)
 target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson utf8proc)
 
 # libplum NAT port mapping (optional). nat_portmap.c stays per-target
@@ -1722,7 +1723,8 @@ target_link_libraries(WinBoloHeadless PRIVATE
     ${SERVER_LINK_GROUP}
     bot_brains_static
     winbolonet_core
-    winbolonet_server)
+    winbolonet_server
+    winbolonet_client)
 target_link_libraries(WinBoloHeadless PRIVATE
     SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
 
