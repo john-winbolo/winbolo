@@ -53,8 +53,8 @@ typedef struct {
     uint32_t sequence;      /* Monotonic sequence number */
 } PacketHeader;
 
-/* WBN auth token: 64-char hex string + null */
-#define WBN_TOKEN_WIRE_LEN 65
+/* WBN join key: 64-char hex string + null */
+#define WBN_JOIN_KEY_WIRE_LEN 65
 
 /* Join request packet (client -> server) */
 typedef struct {
@@ -64,7 +64,7 @@ typedef struct {
     uint8_t versionMajor;
     uint8_t versionMinor;
     uint8_t versionRevision;
-    char wbnToken[WBN_TOKEN_WIRE_LEN];
+    char wbnJoinKey[WBN_JOIN_KEY_WIRE_LEN];
 } JoinRequestPacket;
 
 /* Join accept packet (server -> client) */
@@ -114,7 +114,8 @@ Transport transportUdpClientCreate(struct ClientSim *clientSim,
                                    unsigned short serverPort,
                                    const char *playerName,
                                    const char *password,
-                                   const char *wbnToken,
+                                   const char *wbnApiToken,
+                                   const char *wbnServerKey,
                                    bool wantRejoin,
                                    const char *trackerAddr,
                                    unsigned short trackerPort);
@@ -340,6 +341,13 @@ void transportUdpServerOnLobbyMapChange(struct ServerSim *sim);
  * encoders directly so cosmetic ping/country updates don't wake the
  * in-process control-event bus.  Called from server_lifecycle.c. */
 void transportUdpServerSendPeriodicLobbyRefresh(struct ServerSim *sim);
+
+/* Broadcast PACKET_WBN_REKEY to every connected WBN-participating client
+ * carrying the current server_key.  Called after each
+ * winbolonetReturnToLobby succeeds so still-connected clients can mint a
+ * fresh player_key against the rotated session and re-auth via the
+ * existing lobby-snapshot machinery.  No-op when WBN isn't running. */
+void transportUdpServerBroadcastWbnRekey(struct ServerSim *sim);
 
 /* Set a bot's name in the server transport client array so it appears
  * in lobby state/update broadcasts. Call after botManagerAddBot(). */

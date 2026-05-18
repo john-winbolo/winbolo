@@ -16,31 +16,36 @@
 
 
 /*********************************************************
-*Name:          WinBolo.net
-*Filename:      winbolonet.c
+*Name:          WinBolo.net Server
+*Filename:      winbolonet_server.c
 *Author:        John Morrison
 *Creation Date: 23/09/01
 *Last Modified: 30/03/26
 *Purpose:
-*  Responsible for interacting with WinBolo.net via the
-*  JSON REST API (/api/v1/).
+*  Server-side WinBolo.net tracker calls: register, per-tick
+*  update, lobby/map/teams/balance, and client verify/leave.
 *********************************************************/
 
 #include <time.h>
 #include <stdlib.h>
 #include "cJSON.h"
-#include "winbolonet.h"
+#include "winbolonet_core.h"
+#include "winbolonet_server.h"
 #include "http.h"
+#include "wbn_bearer.h"
 #include "server_sim.h"
 #include "winbolonetevents.h"
 #include "winbolonetthread.h"
 
-bool winboloNetRunning = FALSE;
+#define WINBOLO_NET_MAX_NOSEND 60 /* Maximum non transmission time in seconds */
+#define WINBOLO_NET_TEAM_MARKER (254)
 
-char winboloNetServerKey[WINBOLONET_KEY_LEN];
-/* Keys for each player if in use - Always position 0 if we are a client */
-char winboloNetPlayerKey[MAX_TANKS][WINBOLONET_KEY_LEN];
-time_t winboloNetLastSent;
+/* Storage owned by winbolonet_core */
+extern bool winboloNetRunning;
+extern char winboloNetServerKey[WINBOLONET_KEY_LEN];
+extern char winboloNetPlayerKey[MAX_TANKS][WINBOLONET_KEY_LEN];
+
+static time_t winboloNetLastSent;
 
 /*********************************************************
 *NAME:          winbolonetCreateServer
@@ -107,6 +112,17 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
     if (keyObj && cJSON_IsString(keyObj)) {
       strncpy(winboloNetServerKey, keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
       winboloNetServerKey[WINBOLONET_KEY_LEN - 1] = '\0';
+      {
+        cJSON *tokenObj = cJSON_GetObjectItem(resp, "server_token");
+        if (tokenObj && cJSON_IsString(tokenObj)) {
+          httpSetServerBearerToken(tokenObj->valuestring);
+        } else {
+          /* Register response missing server_token — leave bearer
+           * unset; subsequent server/ calls will refuse-to-send. */
+          httpSetServerBearerToken(NULL);
+          fprintf(stderr, "WinBolo.net register response missing server_token\n");
+        }
+      }
       serverSimConsoleMessage("\tWinBolo.net: Server registered");
       winbolonetThreadCreate();
       winboloNetLastSent = time(NULL);
@@ -131,122 +147,6 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
 
   cJSON_Delete(resp);
   return winboloNetRunning;
-}
-
-/*********************************************************
-*NAME:          winbolonetCreateClient
-*PURPOSE:
-* Initialises the WinBolo.net module for a client.
-* Joins a game session via POST /api/v1/client/join.
-* Returns success.
-*********************************************************/
-bool winbolonetCreateClient(const char *token, const char *serverKey, char *errorMsg) {
-  cJSON *body = NULL;
-  cJSON *resp = NULL;
-  int status;
-
-  if (winboloNetRunning == FALSE) {
-    winboloNetRunning = httpCreate();
-    winboloNetServerKey[0] = '\0';
-  }
-  if (winboloNetRunning != TRUE) {
-    strcpy(errorMsg, "Error: Could not initialise HTTP");
-    return FALSE;
-  }
-
-  /* Join game via WinBolo.net */
-  body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "token", token);
-  cJSON_AddStringToObject(body, "server_key", serverKey);
-
-  status = wbn_api_call("client/join", body, &resp);
-  cJSON_Delete(body);
-
-  if (status == 200 && resp) {
-    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-    if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
-      cJSON_Delete(resp);
-      winbolonetDestroy(FALSE);
-      return winboloNetRunning;
-    }
-    cJSON *keyObj = cJSON_GetObjectItem(resp, "player_key");
-    if (keyObj && cJSON_IsString(keyObj)) {
-      strncpy(winboloNetServerKey, serverKey, WINBOLONET_KEY_LEN - 1);
-      winboloNetServerKey[WINBOLONET_KEY_LEN - 1] = '\0';
-      strncpy(winboloNetPlayerKey[0], keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
-      winboloNetPlayerKey[0][WINBOLONET_KEY_LEN - 1] = '\0';
-    } else {
-      strcpy(errorMsg, "Error: WinBolo.net returned no player key");
-      cJSON_Delete(resp);
-      winbolonetDestroy(FALSE);
-      return winboloNetRunning;
-    }
-  } else {
-    if (resp) {
-      cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-      if (errObj && cJSON_IsString(errObj)) {
-        strcpy(errorMsg, errObj->valuestring);
-      } else {
-        strcpy(errorMsg, "Error: No response from WinBolo.net - WinBolo.net disabled");
-      }
-    } else {
-      strcpy(errorMsg, "Error: No response from WinBolo.net - WinBolo.net disabled");
-    }
-    cJSON_Delete(resp);
-    winbolonetDestroy(FALSE);
-    return winboloNetRunning;
-  }
-
-  cJSON_Delete(resp);
-  return winboloNetRunning;
-}
-
-/*********************************************************
-*NAME:          winbolonetDestroy
-*PURPOSE:
-* Destroys the winbolonet module.
-* Cleans up any open libraries.
-*********************************************************/
-void winbolonetDestroy(bool isServer) {
-  serverSimConsoleMessage("WinBolo.net Shutdown");
-  if (winboloNetRunning == TRUE) {
-    winbolonetThreadDestroy();
-    if (isServer == TRUE && winboloNetServerKey[0] != '\0') {
-      winbolonetGoodbye();
-    }
-    httpDestroy();
-  }
-  winbolonetEventsDestroy();
-  winboloNetRunning = FALSE;
-}
-
-/*********************************************************
-*NAME:          winbolonetGoodbye
-*PURPOSE:
-* Sends final update and server quit to WinBolo.net via
-* POST /api/v1/server/quit.
-*********************************************************/
-void winbolonetGoodbye(void) {
-  cJSON *body = NULL;
-  cJSON *resp = NULL;
-
-  /* Send off final data */
-  winbolonetServerUpdate(0, 0, 0, TRUE);
-
-  /* Shutdown */
-  body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
-
-  wbn_api_call("server/quit", body, &resp);
-  cJSON_Delete(body);
-  if (resp) {
-    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-    if (errObj && cJSON_IsString(errObj)) {
-      fprintf(stderr, "WinBolo.net quit error: %s\n", errObj->valuestring);
-    }
-    cJSON_Delete(resp);
-  }
 }
 
 /*********************************************************
@@ -297,7 +197,7 @@ void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
 
   cJSON_AddItemToObject(body, "teams", teams);
 
-  wbn_api_call("server/teams", body, &resp);
+  wbn_api_call_server("server/teams", body, &resp);
   cJSON_Delete(body);
   cJSON_Delete(resp);
 }
@@ -336,7 +236,7 @@ bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, Bala
   }
   cJSON_AddItemToObject(body, "player_keys", playerKeys);
 
-  status = wbn_api_call("server/balance", body, &resp);
+  status = wbn_api_call_server("server/balance", body, &resp);
   cJSON_Delete(body);
 
   if (status != 200 || resp == NULL) {
@@ -451,16 +351,16 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
   cJSON_AddItemToObject(body, "events", events);
 
   if (sendNow == FALSE) {
-    /* Queue for background thread */
+    /* Queue for background thread (bearer attached at fire time) */
     char *json_str = cJSON_PrintUnformatted(body);
     if (json_str) {
-      winbolonetThreadAddRequest("server/update", json_str);
+      winbolonetThreadAddServerRequest("server/update", json_str);
       free(json_str);
     }
     cJSON_Delete(body);
   } else {
     /* Send immediately */
-    wbn_api_call("server/update", body, &resp);
+    wbn_api_call_server("server/update", body, &resp);
     cJSON_Delete(body);
     if (resp) {
       cJSON *errObj = cJSON_GetObjectItem(resp, "error");
@@ -472,24 +372,6 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
   }
 
   winboloNetLastSent = time(NULL);
-}
-
-/*********************************************************
-*NAME:          winboloNetGetServerKey
-*PURPOSE:
-* Copies the server key into keyBuff.
-*********************************************************/
-void winboloNetGetServerKey(char *keyBuff) {
-  strncpy(keyBuff, winboloNetServerKey, WINBOLONET_KEY_LEN);
-}
-
-/*********************************************************
-*NAME:          winboloNetGetMyClientKey
-*PURPOSE:
-* Copies this client's key into keyBuff.
-*********************************************************/
-void winboloNetGetMyClientKey(char *keyBuff) {
-  strncpy(keyBuff, winboloNetPlayerKey[0], WINBOLONET_KEY_LEN);
 }
 
 /*********************************************************
@@ -508,56 +390,12 @@ bool winboloNetIsPlayerParticipant(BYTE playerNum) {
 /*********************************************************
 *NAME:          winboloNetVerifyClientKey
 *PURPOSE:
-* Verifies a client key via POST /api/v1/client/verify.
-* If valid, stores the player key for the given player slot.
+* Validates a player_key received off the wire via
+* POST /api/v1/client/verify. On success, copies the
+* player_key into the player's slot in winboloNetPlayerKey
+* so subsequent events/leaves can identify the player.
 *********************************************************/
-bool winboloNetVerifyClientKey(const char *playerKey, char *userName, BYTE playerNum) {
-  bool returnValue = FALSE;
-  cJSON *body = NULL;
-  cJSON *resp = NULL;
-  int status;
-
-  if (winboloNetPlayerKey[playerNum][0] != '\0' || winboloNetRunning == FALSE) {
-    return FALSE;
-  }
-
-  body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
-  cJSON_AddStringToObject(body, "player_key", playerKey);
-  cJSON_AddStringToObject(body, "player_name", userName);
-
-  status = wbn_api_call("client/verify", body, &resp);
-  cJSON_Delete(body);
-
-  if (status == 200 && resp) {
-    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-    if (errObj && cJSON_IsString(errObj)) {
-      fprintf(stderr, "WinBolo.net verify error: %s\n", errObj->valuestring);
-    } else {
-      cJSON *validObj = cJSON_GetObjectItem(resp, "valid");
-      if (validObj && cJSON_IsTrue(validObj)) {
-        returnValue = TRUE;
-        strncpy(winboloNetPlayerKey[playerNum], playerKey, WINBOLONET_KEY_LEN - 1);
-        winboloNetPlayerKey[playerNum][WINBOLONET_KEY_LEN - 1] = '\0';
-      }
-    }
-  } else {
-    fprintf(stderr, "Error: No response from WinBolo.net\n");
-  }
-
-  cJSON_Delete(resp);
-  return returnValue;
-}
-
-/*********************************************************
-*NAME:          winbolonetServerVerifyToken
-*PURPOSE:
-* Called by the server when a player joins with a WBN
-* token.  POSTs to client/join and stores the resulting
-* player_key at the given slot.  Returns TRUE on success.
-*********************************************************/
-bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg,
-                                 bool *hasSteam, bool *isSupporter) {
+bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter) {
   cJSON *body = NULL;
   cJSON *resp = NULL;
   int status;
@@ -572,10 +410,11 @@ bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorM
   }
 
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "token", token);
   cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddStringToObject(body, "player_key", playerKey);
+  cJSON_AddStringToObject(body, "player_name", playerName);
 
-  status = wbn_api_call("client/join", body, &resp);
+  status = wbn_api_call("client/verify", body, &resp);
   cJSON_Delete(body);
 
   if (status == 200 && resp) {
@@ -583,27 +422,21 @@ bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorM
     if (errObj && cJSON_IsString(errObj)) {
       strcpy(errorMsg, errObj->valuestring);
     } else {
-      cJSON *keyObj = cJSON_GetObjectItem(resp, "player_key");
-      if (keyObj && cJSON_IsString(keyObj)) {
-        strncpy(winboloNetPlayerKey[playerNum], keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
-        winboloNetPlayerKey[playerNum][WINBOLONET_KEY_LEN - 1] = '\0';
-        ok = TRUE;
-        /* Extract has_steam flag */
-        if (hasSteam) {
-          cJSON *steamObj = cJSON_GetObjectItem(resp, "has_steam");
-          if (steamObj && cJSON_IsBool(steamObj)) {
-            *hasSteam = cJSON_IsTrue(steamObj) ? TRUE : FALSE;
-          }
+      strncpy(winboloNetPlayerKey[playerNum], playerKey, WINBOLONET_KEY_LEN - 1);
+      winboloNetPlayerKey[playerNum][WINBOLONET_KEY_LEN - 1] = '\0';
+      ok = TRUE;
+      if (hasSteam) {
+        cJSON *steamObj = cJSON_GetObjectItem(resp, "has_steam");
+        if (steamObj && cJSON_IsBool(steamObj)) {
+          *hasSteam = cJSON_IsTrue(steamObj) ? TRUE : FALSE;
         }
-        if (isSupporter) {
-          /* TODO: enable once WBN /client/join returns "supporter" field
-          cJSON *supObj = cJSON_GetObjectItem(resp, "supporter");
-          if (supObj && cJSON_IsBool(supObj))
-              *isSupporter = cJSON_IsTrue(supObj) ? TRUE : FALSE;
-          */
-        }
-      } else {
-        strcpy(errorMsg, "WinBolo.net returned no player key");
+      }
+      if (isSupporter) {
+        /* TODO: enable once WBN /client/verify returns "supporter" field
+        cJSON *supObj = cJSON_GetObjectItem(resp, "supporter");
+        if (supObj && cJSON_IsBool(supObj))
+            *isSupporter = cJSON_IsTrue(supObj) ? TRUE : FALSE;
+        */
       }
     }
   } else if (resp) {
@@ -648,7 +481,7 @@ void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, 
   cJSON_AddNumberToObject(body, "free_bases", freeBases);
   cJSON_AddNumberToObject(body, "free_pills", freePills);
 
-  wbn_api_call("client/leave", body, &resp);
+  wbn_api_call_server("client/leave", body, &resp);
   cJSON_Delete(body);
   if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
@@ -659,40 +492,6 @@ void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, 
   }
 
   winboloNetPlayerKey[playerNum][0] = '\0';
-}
-
-/*********************************************************
-*NAME:          winbolonetAddEvent
-*PURPOSE:
-* Adds a WinBolo.net Event for sending to the server.
-*********************************************************/
-void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB) {
-  const char *keyA;
-  const char *keyB;
-  char emptyKey[WINBOLONET_KEY_LEN];
-
-  if (winboloNetRunning == TRUE && isServer == TRUE) {
-    emptyKey[0] = '\0';
-    /* Bounds check: playerA/B are BYTE (0-255) but array is MAX_TANKS (16) */
-    if (playerA >= MAX_TANKS) return;
-    keyA = winboloNetPlayerKey[playerA];
-    if (playerB == WINBOLO_NET_NO_PLAYER) {
-      keyB = emptyKey;
-    } else {
-      if (playerB >= MAX_TANKS) return;
-      keyB = winboloNetPlayerKey[playerB];
-    }
-    winbolonetEventsAddItem(eventType, keyA, keyB);
-  }
-}
-
-/*********************************************************
-*NAME:          winbolonetIsRunning
-*PURPOSE:
-* Returns if the winbolonet module is running or not.
-*********************************************************/
-bool winbolonetIsRunning(void) {
-  return winboloNetRunning;
 }
 
 /*********************************************************
@@ -712,7 +511,7 @@ void winboloNetSendLock(bool isLocked) {
   cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddBoolToObject(body, "locked", isLocked);
 
-  wbn_api_call("server/lock", body, &resp);
+  wbn_api_call_server("server/lock", body, &resp);
   cJSON_Delete(body);
   cJSON_Delete(resp);
 }
@@ -741,10 +540,10 @@ bool winbolonetReturnToLobby(char *mapName, unsigned short port, BYTE gameType, 
   /* 1. Drain background thread queue and stop thread */
   winbolonetThreadDestroy();
 
-  /* 2. Quit old session */
+  /* 2. Quit old session (carries the still-valid bearer for this POST) */
   body = cJSON_CreateObject();
   cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
-  wbn_api_call("server/quit", body, &resp);
+  wbn_api_call_server("server/quit", body, &resp);
   cJSON_Delete(body);
   if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
@@ -754,6 +553,10 @@ bool winbolonetReturnToLobby(char *mapName, unsigned short port, BYTE gameType, 
     cJSON_Delete(resp);
   }
   resp = NULL;
+
+  /* Old session is over — the old bearer is now invalid. Clear before
+   * the new register issues a fresh pair. */
+  httpClearServerBearerToken();
 
   /* 3. Clear all player keys */
   for (count = 0; count < MAX_TANKS; count++) {
@@ -798,6 +601,15 @@ bool winbolonetReturnToLobby(char *mapName, unsigned short port, BYTE gameType, 
     if (keyObj && cJSON_IsString(keyObj)) {
       strncpy(winboloNetServerKey, keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
       winboloNetServerKey[WINBOLONET_KEY_LEN - 1] = '\0';
+      {
+        cJSON *tokenObj = cJSON_GetObjectItem(resp, "server_token");
+        if (tokenObj && cJSON_IsString(tokenObj)) {
+          httpSetServerBearerToken(tokenObj->valuestring);
+        } else {
+          httpSetServerBearerToken(NULL);
+          fprintf(stderr, "WinBolo.net register response missing server_token\n");
+        }
+      }
       serverSimConsoleMessage("\tWinBolo.net: New session registered");
     } else {
       serverSimConsoleMessage("Error: WinBolo.net returned no server key");
@@ -848,7 +660,7 @@ void winbolonetSendLobbyStatus(bool inLobby) {
 
   json_str = cJSON_PrintUnformatted(body);
   if (json_str) {
-    winbolonetThreadAddRequest("server/lobby", json_str);
+    winbolonetThreadAddServerRequest("server/lobby", json_str);
     free(json_str);
   }
   cJSON_Delete(body);
@@ -879,189 +691,8 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
 
   json_str = cJSON_PrintUnformatted(body);
   if (json_str) {
-    winbolonetThreadAddRequest("server/map", json_str);
+    winbolonetThreadAddServerRequest("server/map", json_str);
     free(json_str);
   }
   cJSON_Delete(body);
-}
-
-/*********************************************************
-*NAME:          winbolonetAuthLogin
-*PURPOSE:
-* Authenticates via POST /api/v1/auth/login and returns
-* the token and expiry on success.
-*********************************************************/
-bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {
-  cJSON *body = NULL;
-  cJSON *resp = NULL;
-  int status;
-  bool ok = FALSE;
-
-  if (httpCreate() != TRUE) {
-    strcpy(errorMsg, "Could not initialise HTTP");
-    return FALSE;
-  }
-
-  body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "username", username);
-  cJSON_AddStringToObject(body, "password", password);
-
-  status = wbn_api_call("auth/login", body, &resp);
-  cJSON_Delete(body);
-
-  if (status == 200 && resp) {
-    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-    if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
-    } else {
-      cJSON *tokenObj = cJSON_GetObjectItem(resp, "token");
-      cJSON *expiryObj = cJSON_GetObjectItem(resp, "expires_at");
-      if (tokenObj && cJSON_IsString(tokenObj) && expiryObj && cJSON_IsString(expiryObj)) {
-        strcpy(tokenOut, tokenObj->valuestring);
-        strcpy(expiryOut, expiryObj->valuestring);
-        playerNameOut[0] = '\0';
-        cJSON *nameObj = cJSON_GetObjectItem(resp, "display_name");
-        if (nameObj && cJSON_IsString(nameObj)) {
-          strncpy(playerNameOut, nameObj->valuestring, PLAYER_NAME_LEN - 1);
-          playerNameOut[PLAYER_NAME_LEN - 1] = '\0';
-        }
-        ok = TRUE;
-      } else {
-        strcpy(errorMsg, "Invalid response from WinBolo.net");
-      }
-    }
-  } else if (resp) {
-    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-    if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
-    } else {
-      strcpy(errorMsg, "Login failed");
-    }
-  } else {
-    strcpy(errorMsg, "No response from WinBolo.net");
-  }
-
-  cJSON_Delete(resp);
-  httpDestroy();
-  return ok;
-}
-
-/*********************************************************
-*NAME:          winbolonetAuthSteam
-*PURPOSE:
-* Authenticates via POST /api/v1/auth/steam using a
-* hex-encoded Steam auth ticket. Returns token and expiry
-* on success, just like winbolonetAuthLogin.
-*********************************************************/
-bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {
-  cJSON *body = NULL;
-  cJSON *resp = NULL;
-  int status;
-  bool ok = FALSE;
-
-  if (httpCreate() != TRUE) {
-    strcpy(errorMsg, "Could not initialise HTTP");
-    return FALSE;
-  }
-
-  body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "ticket", steamTicketHex);
-
-  status = wbn_api_call("auth/steam", body, &resp);
-  cJSON_Delete(body);
-
-  if (status == 200 && resp) {
-    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-    if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
-    } else {
-      cJSON *tokenObj = cJSON_GetObjectItem(resp, "token");
-      cJSON *expiryObj = cJSON_GetObjectItem(resp, "expires_at");
-      if (tokenObj && cJSON_IsString(tokenObj) && expiryObj && cJSON_IsString(expiryObj)) {
-        strcpy(tokenOut, tokenObj->valuestring);
-        strcpy(expiryOut, expiryObj->valuestring);
-        playerNameOut[0] = '\0';
-        cJSON *nameObj = cJSON_GetObjectItem(resp, "display_name");
-        if (nameObj && cJSON_IsString(nameObj)) {
-          strncpy(playerNameOut, nameObj->valuestring, PLAYER_NAME_LEN - 1);
-          playerNameOut[PLAYER_NAME_LEN - 1] = '\0';
-        }
-        ok = TRUE;
-      } else {
-        strcpy(errorMsg, "Invalid response from WinBolo.net");
-      }
-    }
-  } else if (resp) {
-    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-    if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
-    } else {
-      strcpy(errorMsg, "Steam authentication failed");
-    }
-  } else {
-    strcpy(errorMsg, "No response from WinBolo.net");
-  }
-
-  cJSON_Delete(resp);
-  httpDestroy();
-  return ok;
-}
-
-/*********************************************************
-*NAME:          winbolonetAuthValidate
-*PURPOSE:
-* Validates a token via POST /api/v1/auth/validate.
-* Returns TRUE if the token is still valid.
-*********************************************************/
-bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorMsg) {
-  cJSON *body = NULL;
-  cJSON *resp = NULL;
-  int status;
-  bool ok = FALSE;
-
-  if (httpCreate() != TRUE) {
-    strcpy(errorMsg, "Could not initialise HTTP");
-    return FALSE;
-  }
-
-  body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "token", token);
-
-  status = wbn_api_call("auth/validate", body, &resp);
-  cJSON_Delete(body);
-
-  if (status == 200 && resp) {
-    cJSON *validObj = cJSON_GetObjectItem(resp, "valid");
-    if (validObj && cJSON_IsTrue(validObj)) {
-      if (playerNameOut) {
-        playerNameOut[0] = '\0';
-        cJSON *nameObj = cJSON_GetObjectItem(resp, "display_name");
-        if (nameObj && cJSON_IsString(nameObj)) {
-          strncpy(playerNameOut, nameObj->valuestring, PLAYER_NAME_LEN - 1);
-          playerNameOut[PLAYER_NAME_LEN - 1] = '\0';
-        }
-      }
-      ok = TRUE;
-    } else {
-      cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-      if (errObj && cJSON_IsString(errObj)) {
-        strcpy(errorMsg, errObj->valuestring);
-      } else {
-        strcpy(errorMsg, "Token is no longer valid");
-      }
-    }
-  } else if (resp) {
-    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-    if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
-    } else {
-      strcpy(errorMsg, "Validation failed");
-    }
-  } else {
-    strcpy(errorMsg, "No response from WinBolo.net");
-  }
-
-  cJSON_Delete(resp);
-  httpDestroy();
-  return ok;
 }

@@ -181,31 +181,55 @@ void winbolonetThreadDestroy(void) {
 
 
 /*********************************************************
+*NAME:          enqueueRequest
+*PURPOSE:
+*  Shared queue-add. needs_bearer chooses between the
+*  bare wbn_api_post and the bearer-bearing
+*  wbn_api_post_server at thread-fire time.
+*********************************************************/
+static void enqueueRequest(const char *endpoint, const char *json_body, bool needs_bearer) {
+  wbnList add;
+
+  if (wbnShouldRun != TRUE) {
+    return;
+  }
+  New(add);
+  strncpy(add->endpoint, endpoint, sizeof(add->endpoint) - 1);
+  add->endpoint[sizeof(add->endpoint) - 1] = '\0';
+  add->json_body = strdup(json_body);
+  add->needs_bearer = needs_bearer;
+#ifdef _WIN32
+  WaitForSingleObject(hWbnMutexHandle, INFINITE);
+  add->next = wbnWaiting;
+  wbnWaiting = add;
+  ReleaseMutex(hWbnMutexHandle);
+#else
+  SDL_LockMutex(hWbnMutexHandle);
+  add->next = wbnWaiting;
+  wbnWaiting = add;
+  SDL_UnlockMutex(hWbnMutexHandle);
+#endif
+}
+
+/*********************************************************
 *NAME:          winbolonetThreadAddRequest
 *PURPOSE:
 *  Adds a JSON API request to the background queue.
 *  The json_body string is copied internally.
 *********************************************************/
 void winbolonetThreadAddRequest(const char *endpoint, const char *json_body) {
-  wbnList add;
+  enqueueRequest(endpoint, json_body, FALSE);
+}
 
-  if (wbnShouldRun == TRUE) {
-    New(add);
-    strncpy(add->endpoint, endpoint, sizeof(add->endpoint) - 1);
-    add->endpoint[sizeof(add->endpoint) - 1] = '\0';
-    add->json_body = strdup(json_body);
-#ifdef _WIN32
-    WaitForSingleObject(hWbnMutexHandle, INFINITE);
-    add->next = wbnWaiting;
-    wbnWaiting = add;
-    ReleaseMutex(hWbnMutexHandle);
-#else
-    SDL_LockMutex(hWbnMutexHandle);
-    add->next = wbnWaiting;
-    wbnWaiting = add;
-    SDL_UnlockMutex(hWbnMutexHandle);
-#endif
-  }
+/*********************************************************
+*NAME:          winbolonetThreadAddServerRequest
+*PURPOSE:
+*  Adds a JSON API request to the background queue, flagged
+*  to send through wbn_api_post_server so the thread attaches
+*  the Authorization: Bearer header at fire time.
+*********************************************************/
+void winbolonetThreadAddServerRequest(const char *endpoint, const char *json_body) {
+  enqueueRequest(endpoint, json_body, TRUE);
 }
 
 
@@ -239,7 +263,11 @@ int winbolonetThreadRun(void *data) {
       /* Get last entry (oldest) */
       if (wbnProcessing->next == NULL) {
         /* Only one entry */
-        wbn_api_post(wbnProcessing->endpoint, wbnProcessing->json_body, &resp);
+        if (wbnProcessing->needs_bearer) {
+          wbn_api_post_server(wbnProcessing->endpoint, wbnProcessing->json_body, &resp);
+        } else {
+          wbn_api_post(wbnProcessing->endpoint, wbnProcessing->json_body, &resp);
+        }
         free(resp);
         resp = NULL;
         free(wbnProcessing->json_body);
@@ -254,7 +282,11 @@ int winbolonetThreadRun(void *data) {
         }
         /* Got last entry */
         prev->next = NULL;
-        wbn_api_post(q->endpoint, q->json_body, &resp);
+        if (q->needs_bearer) {
+          wbn_api_post_server(q->endpoint, q->json_body, &resp);
+        } else {
+          wbn_api_post(q->endpoint, q->json_body, &resp);
+        }
         free(resp);
         resp = NULL;
         free(q->json_body);

@@ -1,8 +1,8 @@
 /*
  * winbolonet_stub.c - Stub implementations of WinBolo.net functions
  *
- * On Android we don't include the winbolonet source files (which depend
- * on libcurl). Instead we stub out all functions declared in the
+ * In the gym binary we don't include the winbolonet source files (which
+ * depend on libcurl). Instead we stub out all functions declared in the
  * winbolonet_core / winbolonet_server / winbolonet_client headers.
  */
 
@@ -91,4 +91,14 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
 bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, BalanceProposal *outProposal) {
   (void)totalPlayers; (void)teamSize; (void)outProposal;
   return FALSE;
+}
+
+bool winbolonetReturnToLobby(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
+  (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines; (void)password;
+  (void)numBases; (void)numPills; (void)freeBases; (void)freePills; (void)numPlayers;
+  return FALSE;
+}
+
+void winbolonetSendLobbyStatus(bool inLobby) {
+  (void)inLobby;
 }

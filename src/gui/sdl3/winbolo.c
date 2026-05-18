@@ -47,6 +47,7 @@
 #endif
 
 #include "../../common/wb_log.h"
+#include "../../winbolonet/winbolonet_core.h"
 #include "client_mapload.h"
 #include "client_render.h"
 #include "client_sim.h"
@@ -254,6 +255,8 @@ int main(int argc, char *argv[]) {
 
   wb_log_init("WinBolo", "WinBolo", "winbolo.log");
   atexit(wb_log_shutdown);
+
+  winbolonetCoreSetPreferencesPath("WinBolo.ini");
 
   steam_init();
   steam_set_join_callback(steamJoinRequested);

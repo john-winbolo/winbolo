@@ -82,6 +82,7 @@
 #include "../gui/gamefront.h"
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
+#include "../winbolonet/winbolonet_core.h"
 #include "cmd_stdin.h"
 
 /* ------------------------------------------------------------------ */
@@ -1851,8 +1852,8 @@ static int runNetworkMode(void) {
     fprintf(stderr, "Connecting to %s:%u...\n", optServer, optPort);
   }
 
-  clientSimConnectUdp(humanSim, optServer, optPort, optName, optPassword, "", false,
-                      optTrackerAddr, optTrackerPort);
+  clientSimConnectUdp(humanSim, optServer, optPort, optName, optPassword, "", "",
+                      false, optTrackerAddr, optTrackerPort);
   if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
     const char *reason = clientSimGetConnectErrorReason(humanSim);
     fprintf(stderr, "Error: failed to connect: %s\n", reason ? reason : "unknown");
@@ -2105,6 +2106,7 @@ int main(int argc, char *argv[]) {
   wb_log_init("WinBolo", "WinBoloHeadless", "winbolo-headless.log");
   atexit(wb_log_shutdown);
 
+  winbolonetCoreSetPreferencesPath("WinBolo.ini");
 
   if (!clientMutexCreate()) {
     fprintf(stderr, "Error: failed to create client mutex\n");

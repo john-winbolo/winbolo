@@ -30,6 +30,8 @@ static const UnitTestEntry s_tests[] = {
     { "ini_writer_persistence",          run_ini_writer_persistence          },
     { "ini_writer_insertion_point",      run_ini_writer_insertion_point      },
     { "ini_writer_security",             run_ini_writer_security             },
+    { "wbn_bearer_state",                run_wbn_bearer_state                },
+    { "wbn_rekey_codec",                 run_wbn_rekey_codec                 },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

@@ -32,6 +32,9 @@ document is the stable reference for the rules themselves.
 | `src/android/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
 | `src/ios/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
 | `src/logviewer/` | T1 + T3 + T4 | Replays recorded games; uses T3 for the playback render path. |
+| `src/winbolonet/winbolonet_core/` | T1 + T4 | Shared HTTP, async event queue, WBN key storage. Includes `server_sim.h` (T1) only. Linked by every WBN-aware binary. |
+| `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, SDL3 client (SP host). |
+| `src/winbolonet/winbolonet_client/` | T4 | User auth, comments. Linked by binaries with a UI: SDL3 client, LogViewer. |
 | `tests/unit/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — in-process tests of bolo internals. Not shipped to players. |
 | `tests/`, `tools/` | T1 + T3 + T4 (by default) | Not currently wired through a profile. Tests that legitimately need T2 belong inside `src/bolo/tests/` and link against bolo's own target. |
 
@@ -560,6 +563,234 @@ publish recipe does not apply to them:
   the new code.
 - **Never change the on-wire layout of an existing packet** without
   versioning. Add a new packet ID instead.
+
+## WinBolo.net subsystem
+
+The WinBolo.net (WBN) integration is split across three sibling
+static libraries under `src/winbolonet/`. They share a directory on
+disk but each library covers a different surface and a different
+link set, so binaries pick the subset they need.
+
+### What each library is for
+
+**`winbolonet_core`** owns the shared HTTP transport (libcurl
+wrapper in `http.c`), the async event-delivery queue, WBN key
+storage, the in-memory server bearer-token state (`wbn_bearer.c`
+holds the `server_token` returned by `POST server/register` and
+the `Authorization: Bearer` setter/clearer/accessor that `http.c`
+reads), and the preferences-file path stored via
+`winbolonetCoreSetPreferencesPath` (called once at startup by each
+binary's `main()` before any WBN call). It is the hard dependency
+of the other two libraries and is linked into every binary that
+talks to WBN.
+
+**`winbolonet_server`** is the tracker-reporting surface a server
+runtime calls: `server/register` at boot, per-tick `server/update`,
+lobby and map status updates, teams and balance, client verify,
+and leave on shutdown. It depends on `winbolonet_core`. Linked into
+binaries that run a server.
+
+**`winbolonet_client`** is the surface UI frontends call to sign in
+(`winbolonetAuthLogin`, `winbolonetAuthSteam`,
+`winbolonetAuthValidate`), to exchange the API token for a
+short-lived server-scoped `player_key`
+(`winbolonetClientJoinSession`, called from the transport on
+JOIN / rejoin / re-auth — see "Cross-tier dependency" below),
+and to fetch user-facing data (`wbn_comments`). It depends on
+`winbolonet_core`. Linked into binaries with a UI, plus
+WinBoloDS and WinBoloHeadless — those two pull it solely to
+satisfy `winbolonetClientJoinSession`, which the per-target
+`transport_udp_client.c` references unconditionally (see
+"Cross-tier dependency" below). The stub-set binaries
+(mobile / wasm / braintest / mapeditor / unit-tests / gym)
+resolve the same symbol with a no-op stub.
+
+### Per-binary link sets
+
+| Binary | core | server | client | Notes |
+|---|---|---|---|---|
+| `WinBolo` (SDL3) | yes | yes | yes | Hosts SP server in-process |
+| `WinBoloDS` | yes | yes | yes¹ | |
+| `WinBoloHeadless` | yes | yes | yes¹ | SP via `cmd_stdin` |
+| `LogViewer` | yes | — | yes | Replay UI uses `http.c` + comments |
+
+¹ DS and Headless link `winbolonet_client` only to satisfy
+`winbolonetClientJoinSession`, which `transport_udp_client.c`
+references unconditionally. That TU is per-target (see
+"Per-file T2 grants") so the symbol must resolve in every binary
+that compiles it. Neither binary calls the auth functions —
+there is no UI to invoke them — so `winbolonetAuthLogin`,
+`winbolonetAuthSteam`, and `winbolonetAuthValidate` are dead
+code in these builds. See "Cross-tier dependency" below.
+| `WinBoloIOS`, `WinBoloAndroid`, `BrainTest`, `MapEditor`, `WinBoloUnitTests`, wasm, `Gym` | — | — | — | Stubbed. Each platform-class group has its own stub file: `android/winbolonet_stub.c`, `gui/ios/ios_stubs.c`, `wasm/winbolonet_wasm.c`, and `gym/winbolonet_stub.c`. Gym's lives in its own file because gym links `server_static`, which references the lifecycle-driven WBN surface (`winbolonetReturnToLobby`, `winbolonetSendLobbyStatus`) the other stub sets don't carry. `bolo/log.c`'s `winboloNetGetServerKey` call is satisfied by every stub, returning an empty string. |
+
+**Gym caveat.** Gym is an offline ML training harness with no
+business phoning home. It inherits the `server_static` runtime,
+which contains calls into `winbolonet_server` from `server_sim.c`
+and `server_lifecycle.c`, so the WBN surface has to resolve. Every
+such call is gated by `winbolonetIsRunning()`, which gym never
+sets TRUE, so they were always no-ops at runtime — the same
+situation as a dedicated server started with `-nowinbolonet`. Gym
+historically linked the real `winbolonet_core` + `winbolonet_server`
+libraries to satisfy the symbol surface; it now resolves the
+surface through `src/gym/winbolonet_stub.c` instead, dropping
+the libcurl, cjson, and tweetnacl dependencies it never exercised.
+
+### Recipe — adding a new WBN endpoint
+
+Two shapes, depending on which side of the tracker the new endpoint
+lives on.
+
+**Client-side fetcher** — a UI frontend wants user-facing data from
+the tracker. Modelled on `wbn_comments`:
+
+1. Pick `winbolonet_client` as home. Add `wbn_<name>.{cpp,h}`
+   alongside `wbn_comments.{cpp,h}`.
+2. Use the established async surface: an `std::atomic<bool> done`,
+   an `std::mutex` guarding the result struct, and four entry
+   points — `wbn_<name>_start` (kicks off a worker thread),
+   `wbn_<name>_done` (poll), `wbn_<name>_result` (collect once
+   done), `wbn_<name>_free` (release). The worker issues the
+   request via `wbn_api_get` from `winbolonet_core`.
+3. Call from a UI frontend (e.g. an ImGui dialog under
+   `src/gui/sdl3/dialogs/` or `src/logviewer/imgui/`). The frontend
+   includes `winbolonet_client.h`.
+
+**Server-tracker endpoint** — the sim runtime wants to report
+something authoritative to the tracker. Modelled on
+`winbolonetServerUpdate`:
+
+1. Add the function to `winbolonet_server.c`, following the
+   existing `winbolonetServer*` naming and shape: build a `cJSON`
+   body, call `wbn_api_call_server` from `winbolonet_core`
+   (which attaches the `Authorization: Bearer <server_token>`
+   header), parse the response. Use the `_server` variant
+   whenever a bearer has been minted — everything except
+   bootstrap calls that run before or instead of one.
+   `server/register` (and the in-lobby re-register inside
+   `winbolonetReturnToLobby`) use plain `wbn_api_call` because
+   that call is what mints the bearer in the first place;
+   `client/verify` uses plain `wbn_api_call` because the WBN API
+   defines it as unauthenticated. The endpoint prefix is not the
+   discriminator (e.g. `client/leave` uses the `_server` variant —
+   the server is the caller).
+2. Declare it on `winbolonet_server.h`.
+3. Call it from the appropriate server-side site (`server_sim.c`,
+   `server_lifecycle.c`, `transport_udp_server.c`, `servermain.c`),
+   gated by `winbolonetIsRunning()`.
+
+### Auth invariants
+
+Three rules that, if violated, regress to bugs this subsystem was
+restructured to fix. They belong in this doc for the same reason
+"do not include T2 from outside `src/bolo/`" does — invariants
+that bound the design.
+
+**Two-token rule.** The WBN API token never appears on the wire
+between a client and a game server. The API token is the
+long-lived credential, stored in prefs by `winbolonetAuthLogin` /
+`winbolonetAuthSteam`. Frontends pass it only to
+`winbolonet_client` (the auth functions). The transport calls
+`winbolonetClientJoinSession(apiToken, serverKey, ...)` to mint a
+short-lived `player_key` scoped to one server's session; only the
+`player_key` crosses the wire, in the JOIN packet's `wbnJoinKey`
+field or in `PACKET_WBN_REAUTH`. Servers validate the
+`player_key` via `winboloNetVerifyClientKey` against WBN; servers
+never call any function that takes an API token. A hostile or
+compromised game server therefore cannot replay a credential
+elsewhere or impersonate the user against WBN — the wire only
+ever carries a capability scoped to that server.
+
+**Server bearer-token rule.** The `server_token` returned by
+`POST server/register` lives only in process memory inside
+`winbolonet_core` (`wbn_bearer.c`). Never logged, never persisted
+(not even to the INI prefs), never reaches a UI surface,
+discarded on every session rollover —
+`winbolonetReturnToLobby` clears it immediately after the
+`server/quit` POST, and `winbolonetDestroy(TRUE)` clears it on
+shutdown. The next `register` call mints a fresh pair.
+Authenticated calls go through `wbn_api_call_server` /
+`wbn_api_post_server` (or `httpSendLogFile` for the multipart
+log upload), which are the only sanctioned paths that attach the
+header — the bootstrap calls that run before a bearer exists
+(`server/register` itself, and `client/verify`, which WBN
+defines as unauthenticated) use plain `wbn_api_call`. The narrow
+accessor `winboloNetGetServerToken` is declared in
+`wbn_bearer.h`, not on the general `winbolonet_core.h` surface —
+its only legitimate callers are `http.c`'s server-scoped call
+variants and the log upload.
+
+**Lobby re-keying contract.** WBN issues a fresh `server_key`
+for every pre-game / game cycle. When a server's
+`winbolonetReturnToLobby` completes successfully, the lifecycle
+code broadcasts `PACKET_WBN_REKEY` to every WBN-participating
+remote client, carrying the new `server_key` zero-padded into the
+65-byte `wbnJoinKey`-shaped wire envelope (same encode/decode
+helpers in `bolo/wbn_key_codec.c`, by design — the uniform shape
+is intentional). On receipt, each client stores the new key and
+the existing lobby-snapshot re-auth path mints a fresh
+`player_key` via `winbolonetClientJoinSession` and ships it in
+`PACKET_WBN_REAUTH`. A single-target variant of the same packet
+fires once per new join, immediately after `JOIN_ACCEPT`, so a
+freshly-connected client learns the current `server_key` without
+it ever riding the JOIN wire — JOIN starts anonymous (empty
+`wbnJoinKey`) and the slot becomes WBN-verified on the next
+snapshot tick. Both call sites are gated on
+`winbolonetIsRunning()` so non-WBN servers pay nothing.
+
+`PACKET_WBN_REKEY` sits alongside the existing wire-only
+exceptions (JOIN_ACCEPT, MAP_DOWNLOAD, PONG, PLAYER_LIST resync,
+periodic lobby refresh): per-client reliability with no
+in-process audience. Routing through `ControlEvent` would put a
+WBN-specific concept on the sim's T1 surface where nothing else
+in the sim references it.
+
+### Cross-tier dependency: `transport_udp_client.c` → `winbolonet_client`
+
+Today `src/winbolonet/` depends on `src/bolo/` via T1
+(`server_sim.h`), and nothing in `src/bolo/` reaches back. The
+client-side two-token flow introduces one explicit exception:
+`src/bolo/transport_udp_client.c` includes
+`../winbolonet/winbolonet_client.h` to call
+`winbolonetClientJoinSession` during JOIN, rejoin, and
+lobby-snapshot re-auth. It is the single chokepoint that owns
+the client-side join handshake on behalf of every UI frontend —
+without the edge, every frontend would have to duplicate
+call-WBN-then-pass-key-to-netSetup. So `transport_udp_client.c`
+gets the allowance; nothing else in `src/bolo/` does.
+
+The transitive consequence: every binary linking `bolo_static`
+must resolve `winbolonetClientJoinSession`. WBN-aware binaries
+(WinBolo, WinBoloDS, WinBoloHeadless) get the real
+implementation from `winbolonet_client`; stub-set binaries
+(mobile, wasm, braintest, mapeditor, unit-tests, gym) get a
+no-op stub returning failure. Same pattern as
+`winboloNetGetServerKey` already follows.
+
+### What not to do
+
+- **Do not `#include "winbolonet_server.h"` from a UI translation
+  unit** (`src/gui/sdl3/dialogs/*`, `gamefront.c`, etc.).
+  `winbolonet_server` is a sim-runtime surface. If a UI file
+  thinks it needs it, the answer is either a T1 sim accessor or
+  surfacing the data through `winbolonet_client` (which is what
+  `wbn_comments` already does).
+- **Do not `#include "winbolonet_client.h"` from server-side TUs**
+  (`src/server/*`). Server code has no API token and no business
+  signing in as a user. The one allowed crossover inside
+  `src/bolo/` is `transport_udp_client.c`, which owns the
+  client-side join handshake on behalf of every UI frontend (see
+  "Cross-tier dependency" above). Other sim TUs — everything else
+  in `src/bolo/`, everything in `src/server/` — do not include
+  `_client.h`.
+- **Do not pass the API token to any `winbolonet_server` function.**
+  The API token's only legitimate destinations are the
+  `winbolonet_client` auth/join functions
+  (`winbolonetAuthLogin`, `winbolonetAuthSteam`,
+  `winbolonetAuthValidate`, `winbolonetClientJoinSession`). From
+  anywhere else it should already have been exchanged for a
+  `player_key`. A wire field carrying a credential into a game
+  server is the bug the two-token rule above exists to prevent.
 
 ## Privileged exceptions
 
