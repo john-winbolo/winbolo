@@ -256,7 +256,23 @@ int main(int argc, char *argv[]) {
   wb_log_init("WinBolo", "WinBolo", "winbolo.log");
   atexit(wb_log_shutdown);
 
-  winbolonetCoreSetPreferencesPath("WinBolo.ini");
+  {
+    /* Resolve WinBolo.ini to an absolute path under SDL_GetPrefPath.
+     * Win32 WritePrivateProfileString with a relative filename writes
+     * to C:\Windows\<file>, which an unprivileged process can't touch,
+     * so the news / country-cache / WBN-host writes silently fail.
+     * gamefront.c::getPreferenceFilePath already uses this trick for
+     * SETTINGS keys — mirror it here so every WBN consumer hits the
+     * same file. */
+    static char winboloIniPath[FILENAME_MAX];
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir) {
+      SDL_snprintf(winboloIniPath, sizeof(winboloIniPath), "%sWinBolo.ini", prefDir);
+    } else {
+      SDL_snprintf(winboloIniPath, sizeof(winboloIniPath), "%s", "WinBolo.ini");
+    }
+    winbolonetCoreSetPreferencesPath(winboloIniPath);
+  }
 
   steam_init();
   steam_set_join_callback(steamJoinRequested);
