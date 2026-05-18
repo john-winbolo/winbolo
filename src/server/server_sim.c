@@ -22,6 +22,7 @@
  *  servercore.c and screen.c.
  *********************************************************/
 
+#include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -1374,6 +1375,17 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
         serverSimFillPlayerJoinEvent(sim, playerNum, &joinEvt);
         serverSimPublishControl(sim, &joinEvt);
     }
+}
+
+void serverSimSetPlayerCountry(ServerSim *sim, BYTE playerNum, const char *cc) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    if (cc == NULL) return;
+    if (cc[0] == '\0' || cc[1] == '\0' || cc[2] != '\0') return;
+    if (!isalpha((unsigned char)cc[0]) || !isalpha((unsigned char)cc[1])) return;
+    if (sim->sim.plyrs == NULL) return;
+    sim->sim.plyrs->item[playerNum].location[0] = (char)toupper((unsigned char)cc[0]);
+    sim->sim.plyrs->item[playerNum].location[1] = (char)toupper((unsigned char)cc[1]);
+    sim->sim.plyrs->item[playerNum].location[2] = '\0';
 }
 
 void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
