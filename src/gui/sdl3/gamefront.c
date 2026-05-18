@@ -1195,6 +1195,12 @@ bool gameFrontSetDlgState(openingStates newState) {
                 clientLoadCompressedMap(humanSim, compressedMap, compLen, serverSimGetMapName(spServerSim),
                                        gametype, hiddenMines, startDelay,
                                        timeLen, gameFrontName, 0, FALSE);
+                /* clientLoadCompressedMap → setupClientSim → clientSimCreate
+                 * resets the client's plyrs, wiping the country code that
+                 * the finisher's sync-replay walk just populated. Re-publish
+                 * so the subscriber refreshes plyrs.location and the GUI
+                 * before the player sees the lobby. */
+                serverSimSetPlayerCountry(spServerSim, 0, winbolonetGetCountryCode());
               }
               /* else: clientSimCreate above already initialized the empty
                * client; serverSimGetCompressedMap failure is fatal for the

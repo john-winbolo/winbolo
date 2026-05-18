@@ -27,9 +27,11 @@ extern "C" {
 typedef struct {
     int   id;
     char  title[256];
-    char *body_md;    /* heap-allocated; UTF-8 markdown; freed by wbn_news_fetch_free */
+    char *body_md;        /* heap-allocated; UTF-8 markdown; freed by wbn_news_fetch_free */
     int   comments;
     char  url[512];
+    char  date[20];       /* "YYYY-MM-DD HH:MM:SS" UTC, or empty if the
+                           * response omitted the field. */
 } WbnNewsItem;
 
 typedef struct WbnNewsFetch WbnNewsFetch;

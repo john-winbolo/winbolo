@@ -108,7 +108,11 @@ bool clientLoadMap(ClientSim *csPtr, char *fileName, gameType game, bool hiddenM
         tankGetStats(&MY_TANK(csPtr), &sh, &mi, &ar, &tr);
         frontEndUpdateTankStatusBars(csPtr, sh, mi, ar, tr);
       }
-      frontEndSetPlayer(csPtr, (playerNumbers) clientSimGetMyPlayerNum(csPtr), playerName, "", 0, selfType, selfFlags);
+      {
+        BYTE myNum = clientSimGetMyPlayerNum(csPtr);
+        const char *cc = csPtr->sim.plyrs->item[myNum].location;
+        frontEndSetPlayer(csPtr, (playerNumbers)myNum, playerName, cc, 0, selfType, selfFlags);
+      }
     }
     clientSimUpdateView(csPtr, redraw);
     basesClearMines(clientSimGetGameSim(csPtr));
@@ -157,7 +161,11 @@ bool clientLoadCompressedMap(ClientSim *csPtr, BYTE *buff, int buffLen, const ch
         tankGetStats(&MY_TANK(csPtr), &sh, &mi, &ar, &tr);
         frontEndUpdateTankStatusBars(csPtr, sh, mi, ar, tr);
       }
-      frontEndSetPlayer(csPtr, (playerNumbers) clientSimGetMyPlayerNum(csPtr), playerName, "", 0, selfType, selfFlags);
+      {
+        BYTE myNum = clientSimGetMyPlayerNum(csPtr);
+        const char *cc = csPtr->sim.plyrs->item[myNum].location;
+        frontEndSetPlayer(csPtr, (playerNumbers)myNum, playerName, cc, 0, selfType, selfFlags);
+      }
     }
     clientSimUpdateView(csPtr, redraw);
     basesClearMines(clientSimGetGameSim(csPtr));
