@@ -4678,6 +4678,20 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
 
     if (mapRead((char *)mapFileName,
                 &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
+        /* Roll the wipe back. cachedMapData still holds the previous
+         * map's compressed bytes (the refresh below only runs on the
+         * success path), so restoring from it returns the live
+         * structures to whatever the lobby was showing before this
+         * call — leaving the caller with an unchanged sim is much
+         * less surprising than a half-wiped one, especially for the
+         * upload path where a malformed map shouldn't blank the
+         * host's lobby. */
+        if (sim->cachedMapData != NULL && sim->cachedMapDataLen > 0) {
+            (void)mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb,
+                                        &sim->sim.bs, &sim->sim.ss,
+                                        sim->cachedMapData,
+                                        sim->cachedMapDataLen);
+        }
         WB_LOG_ERROR(WB_LOG_CAT_SERVER,
             "serverSimReloadMap: mapRead failed for '%s'", mapFileName);
         return FALSE;
