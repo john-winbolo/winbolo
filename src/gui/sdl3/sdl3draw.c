@@ -46,6 +46,9 @@
 #include "sdl3draw.h"
 #include "sdl3draw_status.h"
 #include "sdl3imgui.h"
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
+#include "dialogs/imgui_news.h"
+#endif
 #include "cursor.h"
 #include "mapview.h"
 #include "../clientmutex.h"
@@ -1005,6 +1008,16 @@ void sdl3DrawCleanup(void) {
 
   /* ImGui cleanup before destroying renderer/window */
   sdl3ImguiCleanup();
+
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
+  /* News popup teardown sits in this process-exit hook (not in
+   * sdl3ImguiCleanup) because sdl3ImguiCleanup also fires on every
+   * game-end / return-to-lobby transition — releasing the fetch
+   * handle there would prevent the View News button from working
+   * after the first game. The SDL renderer is still alive here, so
+   * newsImageCacheShutdown's SDL_DestroyTexture calls land cleanly. */
+  newsPopupShutdown();
+#endif
 
   /* Phase 5 — destroy text/label caches via the status module (which
      owns them since Phase C of plans/ctrailer.md), then close fonts
