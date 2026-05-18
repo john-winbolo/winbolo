@@ -153,6 +153,16 @@ void basesSetBase(bases *value, base *item, BYTE baseNum) {
     }
     logAddEvent(log_BaseSetOwner, baseNum, item->owner, TRUE, 0, 0, NULL);
     (((*value)->item[baseNum]).owner) = item->owner;
+    /* Clamp stocks to [0, BASE_FULL_*]. The refuel-from-stash path
+     * tops bases back up at BASE_FULL_* and the tank-give path
+     * decrements, so a runtime base never exceeds 90 — but an
+     * attacker-supplied map can load 255 directly. Drain math is
+     * straightforward subtraction (no wrap), so an out-of-range
+     * value simply takes longer to deplete than any legitimate
+     * stock ever could. */
+    if (item->armour > BASE_FULL_ARMOUR) item->armour = BASE_FULL_ARMOUR;
+    if (item->shells > BASE_FULL_SHELLS) item->shells = BASE_FULL_SHELLS;
+    if (item->mines  > BASE_FULL_MINES)  item->mines  = BASE_FULL_MINES;
     (((*value)->item[baseNum]).armour) = item->armour;
     (((*value)->item[baseNum]).shells) = item->shells;
     (((*value)->item[baseNum]).mines) = item->mines;
