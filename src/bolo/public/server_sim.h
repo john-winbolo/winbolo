@@ -1271,6 +1271,7 @@ void serverSimFillLobbyBrainListEvent(const ServerSim *sim, struct ControlEvent 
 /* Scalar (bool/enum) accessors */
 bool          serverSimBalanceShutdownRequested(const ServerSim *sim);
 bool          serverSimIsLobbyEnabled(const ServerSim *sim);
+bool          serverSimIsAcceptingJoins(const ServerSim *sim);
 bool          serverSimHasPassword(const ServerSim *sim);
 bool          serverSimIsRandomMapEnabled(const ServerSim *sim);
 bool          serverSimIsQuiet(const ServerSim *sim);
