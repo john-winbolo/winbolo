@@ -74,6 +74,7 @@
 #include "client_net.h"
 #include "../../server/server_lifecycle.h"
 #include "../../winbolonet/winbolonet_client.h"
+#include "../../winbolonet/winbolonet_core.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
 #include "mapgen.h"
@@ -1677,6 +1678,7 @@ static void gameFrontFinishSinglePlayer(void) {
   serverSimSetLobbyEnabled(spServerSim, false);
   serverSimStartGame(spServerSim);
   serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
+  serverSimSetPlayerCountry(spServerSim, 0, winbolonetGetCountryCode());
   serverSimSetViewPlayer(spServerSim, 0);
   spHumanSubHandle = serverSimRegisterClientSubscriber(spServerSim, humanSim);
   spServerSimActive = TRUE;
