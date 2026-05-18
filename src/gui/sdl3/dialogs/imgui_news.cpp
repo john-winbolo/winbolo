@@ -66,6 +66,7 @@ static bool                  s_consentOpenCalled = false;
 static bool                  s_dontAutoShow = false;
 static int                   s_maxIdAtOpen  = 0;
 static bool                  s_resultCollected = false;
+static bool                  s_autoShowDecided = false;
 static int                   s_maxId        = 0;
 static std::vector<WbnNewsItem> s_sortedItems; /* id-desc */
 
@@ -90,6 +91,7 @@ static const char *newsPrefGetAutoShow(void) {
     static char s_buf[16];
     char prefs[FILENAME_MAX];
     resolvePrefsPath(prefs, sizeof(prefs));
+    s_buf[0] = '\0';
     GetPrivateProfileString("NEWS", "AutoShow", "unset",
                             s_buf, (unsigned int)sizeof(s_buf), prefs);
     /* Normalise unrecognised values to "unset". */
@@ -199,6 +201,16 @@ static void newsLinkCallback(ImGui::MarkdownLinkCallbackData data) {
     newsOpenUrlSchemeFiltered(url);
 }
 
+static void newsMarkdownFormatCallback(
+    const ImGui::MarkdownFormatInfo &info, bool start_) {
+    ImGui::defaultMarkdownFormatCallback(info, start_);
+    if (!start_ &&
+        info.type == ImGui::MarkdownFormatType::LINK &&
+        info.itemHovered) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+}
+
 /* ================================================================
  * One-shot collection of the fetch result.
  * ================================================================ */
@@ -234,9 +246,13 @@ static void renderConsentDialog(void) {
         ImGui::OpenPopup("WinBolo News##consent");
         s_consentOpenCalled = true;
     }
+    /* Centre both horizontally AND vertically. AlwaysAutoResize means
+     * the window size is only known after one frame of layout, so the
+     * first-frame pivot uses size=(0,0). Use ImGuiCond_Always so the
+     * pivot re-applies once the auto-resized size is known. */
     ImVec2 vp = ImGui::GetMainViewport()->Size;
     ImGui::SetNextWindowPos(ImVec2(vp.x * 0.5f, vp.y * 0.5f),
-                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("WinBolo News##consent", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize |
                                ImGuiWindowFlags_NoSavedSettings)) {
@@ -278,8 +294,9 @@ static void renderItem(const WbnNewsItem &item) {
     md.append("\n");
 
     ImGui::MarkdownConfig cfg;
-    cfg.linkCallback  = &newsLinkCallback;
-    cfg.imageCallback = &newsImageCallback;
+    cfg.linkCallback   = &newsLinkCallback;
+    cfg.imageCallback  = &newsImageCallback;
+    cfg.formatCallback = &newsMarkdownFormatCallback;
     ImGui::Markdown(md.c_str(), md.size(), cfg);
 
     /* Comments link — TextLink renders without auto-opening so we can
@@ -409,6 +426,7 @@ extern "C" void newsPopupShutdown(void) {
     s_dontAutoShow      = false;
     s_maxIdAtOpen       = 0;
     s_resultCollected   = false;
+    s_autoShowDecided   = false;
     s_maxId             = 0;
     s_sortedItems.clear();
     s_sortedItems.shrink_to_fit();
@@ -427,6 +445,13 @@ extern "C" void newsPopupTick(void) {
     if (!s_fetch || !wbn_news_fetch_done(s_fetch)) return;
 
     if (s_sortedItems.empty()) return;
+
+    /* The auto-show / consent decision runs at most once per program
+     * run, once the fetch has landed with items. Without this gate,
+     * every idle welcome-screen frame would re-read [NEWS] AutoShow
+     * from the INI file. */
+    if (s_autoShowDecided) return;
+    s_autoShowDecided = true;
 
     const char *pref = newsPrefGetAutoShow();
     int lastSeen = newsPrefGetLastSeenId();
