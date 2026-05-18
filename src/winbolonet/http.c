@@ -62,22 +62,13 @@ int WritePrivateProfileString(const char *section, const char *key,
 #include "http.h"
 #include "winbolonet_core.h"
 #include "wbn_bearer.h"
+#include "wbn_prefs_path.h"
 
 static bool httpStarted = false;
 static char wbnHostString[FILENAME_MAX]; /* hostname only, no scheme */
 static char wbnBaseUrl[FILENAME_MAX];    /* full base URL, e.g. https://wbn.winbolo.net */
 static char altIpAddress[FILENAME_MAX];
 static char wbnHostOverride[FILENAME_MAX]; /* command-line override for WBN host */
-static char wbnPrefsPath[FILENAME_MAX];  /* Windows: preferences-file path set by main() */
-
-void winbolonetCoreSetPreferencesPath(const char *path) {
-  if (path == NULL) {
-    wbnPrefsPath[0] = '\0';
-    return;
-  }
-  strncpy(wbnPrefsPath, path, sizeof(wbnPrefsPath) - 1);
-  wbnPrefsPath[sizeof(wbnPrefsPath) - 1] = '\0';
-}
 
 /*********************************************************
 *NAME:          buildBaseUrl
@@ -216,7 +207,7 @@ bool httpCreate(void) {
   } else {
     /* Read from preferences file */
 #ifdef _WIN32
-    strncpy(prefs, wbnPrefsPath, sizeof(prefs) - 1);
+    strncpy(prefs, winbolonetCorePrefsPath(), sizeof(prefs) - 1);
     prefs[sizeof(prefs) - 1] = '\0';
 #else
     preferencesGetPreferenceFile(prefs);
