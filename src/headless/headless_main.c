@@ -1852,8 +1852,8 @@ static int runNetworkMode(void) {
     fprintf(stderr, "Connecting to %s:%u...\n", optServer, optPort);
   }
 
-  clientSimConnectUdp(humanSim, optServer, optPort, optName, optPassword, "", false,
-                      optTrackerAddr, optTrackerPort);
+  clientSimConnectUdp(humanSim, optServer, optPort, optName, optPassword, "", "",
+                      false, optTrackerAddr, optTrackerPort);
   if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
     const char *reason = clientSimGetConnectErrorReason(humanSim);
     fprintf(stderr, "Error: failed to connect: %s\n", reason ? reason : "unknown");

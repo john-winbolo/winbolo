@@ -206,6 +206,14 @@ bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorM
   return FALSE;
 }
 
+bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey,
+                                 char *playerKeyOut, char *errorMsg) {
+  (void)apiToken; (void)serverKey;
+  if (playerKeyOut) playerKeyOut[0] = '\0';
+  if (errorMsg)     errorMsg[0]     = '\0';
+  return FALSE;
+}
+
 bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, BalanceProposal *outProposal) {
   (void)totalPlayers; (void)teamSize; (void)outProposal;
   return FALSE;
