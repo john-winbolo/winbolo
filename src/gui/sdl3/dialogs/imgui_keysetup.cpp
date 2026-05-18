@@ -34,11 +34,14 @@ extern "C" {
 #include "../input.h"
 #include "../../winbolo.h"
 #include "../../lang.h"
+#include "../../gamefront.h"   /* gameFrontPutPrefs — persist on OK */
+#include "client_sim.h"        /* clientSim{Get,Set}Tank{AutoSlowdown,AutoHideGunsight} */
 #include "imgui_keysetup.h"
 
 extern bool useAutoslow;
 extern bool useAutohide;
 }
+
 
 /* -------------------------------------------------------
  * Key Setup field enum and helpers — ported from
@@ -124,6 +127,148 @@ static void keyRow(const char *label, KeySetupField field) {
         imguiHandOnHover();
     }
     ImGui::PopID();
+}
+
+/* -------------------------------------------------------
+ * Shared form body — drawn by BOTH the standalone blocking
+ * dialog (imguiKeySetupShow) AND the in-game popup wrapper
+ * (imguiKeySetupRenderInGamePopup). The form layout, key-
+ * capture state machine, and OK/Cancel semantics live here
+ * once; each wrapper handles the surrounding context-specific
+ * setup (own ImGui context vs BeginPopupModal).
+ *
+ * Returns:  1 = OK clicked (state has been committed)
+ *          -1 = Cancel clicked / Escape pressed
+ *           0 = still showing this frame
+ *
+ * On OK, this function commits the shared file-static state
+ * to the frontend globals (useAutoslow / useAutohide), pushes
+ * the typed keys via windowSetKeys, optionally pushes the
+ * auto-slowdown / auto-gunsight flags onto the live tank when
+ * cs != NULL (in-game path — pre-game cs is always NULL since
+ * no tank exists yet), and flushes everything to INI via
+ * gameFrontPutPrefs so the choice is durable immediately.
+ * ------------------------------------------------------- */
+static int renderFormBody(struct ClientSim *cs) {
+    if (s_waiting != ksNone) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
+                           langGetText(STR_DLGKEYSETUP_PRESS_OR_CANCEL));
+        ImGui::Separator();
+    }
+
+    /* Scrollable region containing all binding rows */
+    float footerH = ImGui::GetFrameHeightWithSpacing() * 3.0f +
+                    ImGui::GetStyle().ItemSpacing.y * 2.0f;
+    ImGui::BeginChild("##bindings", ImVec2(0.0f, -footerH), false);
+
+    constexpr ImGuiTableFlags tflags =
+        ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit |
+        ImGuiTableFlags_RowBg;
+
+    auto section = [&](const char *sectionTitle) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "%s", sectionTitle);
+        ImGui::BeginTable(sectionTitle, 3, tflags, ImVec2(-1, 0));
+        ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_ACTION),
+                                ImGuiTableColumnFlags_WidthFixed, 140.0f);
+        ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_KEY),
+                                ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("",        ImGuiTableColumnFlags_WidthFixed,  68.0f);
+    };
+    auto endSection = [&]() { ImGui::EndTable(); };
+
+    section(langGetText(STR_DLGKEYSETUP_DRIVETANK));
+    keyRow(langGetText(STR_DLGKEYSETUP_FASTER),    ksForward);
+    keyRow(langGetText(STR_DLGKEYSETUP_SLOWER),    ksBackward);
+    keyRow(langGetText(STR_DLGKEYSETUP_TURNLEFT),  ksTurnLeft);
+    keyRow(langGetText(STR_DLGKEYSETUP_TURNRIGHT), ksTurnRight);
+    endSection();
+
+    section(langGetText(STR_DLGKEYSETUP_WEAPONS));
+    keyRow(langGetText(STR_DLGKEYSETUP_SHOOT),    ksShoot);
+    keyRow(langGetText(STR_DLGKEYSETUP_LAYMINE),  ksLayMine);
+    endSection();
+
+    section(langGetText(STR_DLGKEYSETUP_GUNRANGE));
+    keyRow(langGetText(STR_DLGKEYSETUP_INCREASE), ksGunIncrease);
+    keyRow(langGetText(STR_DLGKEYSETUP_DECREASE), ksGunDecrease);
+    endSection();
+
+    section(langGetText(STR_DLGKEYSETUP_VIEW));
+    keyRow(langGetText(STR_DLGKEYSETUP_TANKVIEW), ksTankView);
+    keyRow(langGetText(STR_DLGKEYSETUP_PILLVIEW), ksPillView);
+    endSection();
+
+    section(langGetText(STR_DLGKEYSETUP_SCROLL));
+    keyRow(langGetText(STR_DLGKEYSETUP_SCROLLUP),    ksScrollUp);
+    keyRow(langGetText(STR_DLGKEYSETUP_SCROLLDOWN),  ksScrollDown);
+    keyRow(langGetText(STR_DLGKEYSETUP_SCROLLLEFT),  ksScrollLeft);
+    keyRow(langGetText(STR_DLGKEYSETUP_SCROLLRIGHT), ksScrollRight);
+    endSection();
+
+    section(langGetText(STR_DLGKEYSETUP_QUICKKEYS));
+    keyRow(langGetText(STR_DLGKEYSETUP_TREE),         ksQuickTree);
+    keyRow(langGetText(STR_DLGKEYSETUP_ROAD),         ksQuickRoad);
+    keyRow(langGetText(STR_DLGKEYSETUP_WALL),         ksQuickWall);
+    keyRow(langGetText(STR_DLGKEYSETUP_QUICKPILLBOX), ksQuickPillbox);
+    keyRow(langGetText(STR_DLGKEYSETUP_QUICKMINE),    ksQuickMine);
+    endSection();
+
+    ImGui::EndChild();
+
+    ImGui::Separator();
+    ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_AUTOSLOWDOWN), &s_autoSlowdown);
+    ImGui::SameLine();
+    ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_AUTOGUNSIGHT), &s_autoGunsight);
+    ImGui::Spacing();
+
+    bool busy = (s_waiting != ksNone);
+    if (busy) ImGui::BeginDisabled();
+
+    int result = 0;
+    if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0))) {
+        autoslowDebugLog("[KEYS-OK] OK clicked (%s): prev useAutoslow=%d "
+                         "new s_autoSlowdown=%d cs=%p",
+                         cs ? "in-game" : "standalone",
+                         (int)useAutoslow, (int)s_autoSlowdown, (void *)cs);
+        windowSetKeys(&s_keys);
+        useAutoslow = s_autoSlowdown;
+        useAutohide = s_autoGunsight;
+        if (cs != NULL) {
+            /* In-game path: push the new flags onto the live tank so
+             * the next sim tick respects them. Pre-game (cs==NULL) skips
+             * this — no tank exists yet, and the next clientSimSetupSelf
+             * path applies useAutoslow via frontEndApplyLocalTankPrefs. */
+            clientSimSetTankAutoSlowdown(cs, s_autoSlowdown);
+            clientSimSetTankAutoHideGunsight(cs, s_autoGunsight);
+        }
+        autoslowDebugLog("[KEYS-OK] after assignment useAutoslow=%d; "
+                         "calling gameFrontPutPrefs", (int)useAutoslow);
+        gameFrontPutPrefs(&s_keys);
+        s_waiting = ksNone;
+        result = 1;
+    }
+    imguiHandOnHover();
+    ImGui::SameLine();
+    if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(120, 0))) {
+        s_waiting = ksNone;
+        result = -1;
+    }
+    imguiHandOnHover();
+
+    if (busy) ImGui::EndDisabled();
+
+    /* Escape / Cmd+W / Cmd+. = cancel (when not capturing a key). */
+    if (!busy && (ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                  (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
+#ifdef __APPLE__
+                  || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
+#endif
+                 )) {
+        result = -1;
+    }
+
+    return result;
 }
 
 /* -------------------------------------------------------
@@ -264,110 +409,9 @@ extern "C" int imguiKeySetupShow(void) {
         ImGui::Separator();
         ImGui::Spacing();
 
-        if (s_waiting != ksNone) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
-                               langGetText(STR_DLGKEYSETUP_PRESS_OR_CANCEL));
-            ImGui::Separator();
-        }
-
-        /* Scrollable region containing all binding rows */
-        float footerH = ImGui::GetFrameHeightWithSpacing() * 3.0f + ImGui::GetStyle().ItemSpacing.y * 2.0f;
-        ImGui::BeginChild("##bindings", ImVec2(0.0f, -footerH), false);
-
-        constexpr ImGuiTableFlags tflags =
-            ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit |
-            ImGuiTableFlags_RowBg;
-
-        auto section = [&](const char *sectionTitle) {
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "%s", sectionTitle);
-            ImGui::BeginTable(sectionTitle, 3, tflags, ImVec2(-1, 0));
-            ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_ACTION),
-                                    ImGuiTableColumnFlags_WidthFixed, 140.0f);
-            ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_KEY),
-                                    ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("",        ImGuiTableColumnFlags_WidthFixed,  68.0f);
-        };
-        auto endSection = [&]() { ImGui::EndTable(); };
-
-        section(langGetText(STR_DLGKEYSETUP_DRIVETANK));
-        keyRow(langGetText(STR_DLGKEYSETUP_FASTER),    ksForward);
-        keyRow(langGetText(STR_DLGKEYSETUP_SLOWER),    ksBackward);
-        keyRow(langGetText(STR_DLGKEYSETUP_TURNLEFT),  ksTurnLeft);
-        keyRow(langGetText(STR_DLGKEYSETUP_TURNRIGHT), ksTurnRight);
-        endSection();
-
-        section(langGetText(STR_DLGKEYSETUP_WEAPONS));
-        keyRow(langGetText(STR_DLGKEYSETUP_SHOOT),    ksShoot);
-        keyRow(langGetText(STR_DLGKEYSETUP_LAYMINE),  ksLayMine);
-        endSection();
-
-        section(langGetText(STR_DLGKEYSETUP_GUNRANGE));
-        keyRow(langGetText(STR_DLGKEYSETUP_INCREASE), ksGunIncrease);
-        keyRow(langGetText(STR_DLGKEYSETUP_DECREASE), ksGunDecrease);
-        endSection();
-
-        section(langGetText(STR_DLGKEYSETUP_VIEW));
-        keyRow(langGetText(STR_DLGKEYSETUP_TANKVIEW), ksTankView);
-        keyRow(langGetText(STR_DLGKEYSETUP_PILLVIEW), ksPillView);
-        endSection();
-
-        section(langGetText(STR_DLGKEYSETUP_SCROLL));
-        keyRow(langGetText(STR_DLGKEYSETUP_SCROLLUP),    ksScrollUp);
-        keyRow(langGetText(STR_DLGKEYSETUP_SCROLLDOWN),  ksScrollDown);
-        keyRow(langGetText(STR_DLGKEYSETUP_SCROLLLEFT),  ksScrollLeft);
-        keyRow(langGetText(STR_DLGKEYSETUP_SCROLLRIGHT), ksScrollRight);
-        endSection();
-
-        section(langGetText(STR_DLGKEYSETUP_QUICKKEYS));
-        keyRow(langGetText(STR_DLGKEYSETUP_TREE),         ksQuickTree);
-        keyRow(langGetText(STR_DLGKEYSETUP_ROAD),         ksQuickRoad);
-        keyRow(langGetText(STR_DLGKEYSETUP_WALL),         ksQuickWall);
-        keyRow(langGetText(STR_DLGKEYSETUP_QUICKPILLBOX), ksQuickPillbox);
-        keyRow(langGetText(STR_DLGKEYSETUP_QUICKMINE),    ksQuickMine);
-        endSection();
-
-        ImGui::EndChild();
-
-        ImGui::Separator();
-        ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_AUTOSLOWDOWN), &s_autoSlowdown);
-        ImGui::SameLine();
-        ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_AUTOGUNSIGHT), &s_autoGunsight);
-        ImGui::Spacing();
-
-        /* OK / Cancel — disabled while a key-capture is pending */
-        bool busy = (s_waiting != ksNone);
-        if (busy) ImGui::BeginDisabled();
-
-        if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0))) {
-            windowSetKeys(&s_keys);
-            useAutoslow = s_autoSlowdown;
-            useAutohide = s_autoGunsight;
-            s_waiting = ksNone;
-            result = 1;
-            running = false;
-        }
-        imguiHandOnHover();
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(120, 0))) {
-            s_waiting = ksNone;
-            result = 0;
-            running = false;
-        }
-        imguiHandOnHover();
-
-        if (busy) ImGui::EndDisabled();
-
-        /* Also allow Escape (or Cmd+W / Cmd+.) to cancel (when not capturing a key) */
-        if (!busy && (ImGui::IsKeyPressed(ImGuiKey_Escape) ||
-                      (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
-#ifdef __APPLE__
-                      || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
-#endif
-                     )) {
-            result = 0;
-            running = false;
-        }
+        int formRc = renderFormBody(/*cs=*/nullptr);
+        if (formRc == 1)  { result = 1;  running = false; }
+        if (formRc == -1) { result = 0;  running = false; }
 
         ImGui::End(); /* ##KeySetupPanel */
         ImGui::End(); /* ##KeySetupBg */
@@ -404,4 +448,85 @@ extern "C" int imguiKeySetupShow(void) {
     SDL_FlushEvent(SDL_EVENT_QUIT);
 
     return result;
+}
+
+/* -------------------------------------------------------
+ * In-game popup wrapper — same form, BeginPopupModal style
+ * so it can sit inside the running game's ImGui context.
+ *
+ * sdl3ImguiShowKeySetup() (or the equivalent menu hook)
+ * calls imguiKeySetupOpenInGame to flip the pending flag,
+ * then each main-game render frame calls
+ * imguiKeySetupRenderInGamePopup(cs) to draw / dismiss the
+ * popup. State seeding happens once on the first render
+ * frame after the trigger so we can read the live tank's
+ * current values (not yet known at trigger time).
+ *
+ * Key capture is split across the event pump and renderForm.
+ * sdl3ImguiProcessEvents intercepts SDL_EVENT_KEY_DOWN while
+ * a row is in capture mode and routes it via
+ * imguiKeySetupHandleInGameScancode — same pattern the
+ * standalone dialog uses in its own event loop, just plumbed
+ * through helper functions because we don't own the loop.
+ * ------------------------------------------------------- */
+static bool  s_inGameShowRequested = false;
+static float s_inGameFadeAlpha     = 0.0f;
+
+extern "C" void imguiKeySetupOpenInGame(void) {
+    s_inGameShowRequested = true;
+}
+
+extern "C" void imguiKeySetupRenderInGamePopup(struct ClientSim *cs) {
+    char title[128];
+    snprintf(title, sizeof(title), "%s###keysetup",
+             langGetText(STR_DLGKEYSETUP_TITLE));
+
+    if (s_inGameShowRequested) {
+        ImGui::OpenPopup(title);
+        s_inGameShowRequested = false;
+        windowGetKeys(&s_keys);
+        /* Seed checkboxes from the live tank so the dialog opens
+         * showing what the tank currently has — this matches the
+         * old in-game popup's behavior. */
+        s_autoSlowdown = cs ? clientSimGetTankAutoSlowdown(cs) : useAutoslow;
+        s_autoGunsight = cs ? clientSimGetTankAutoHideGunsight(cs) : useAutohide;
+        s_waiting      = ksNone;
+    }
+
+    ImGuiIO &io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(420, 560), ImGuiCond_Always);
+
+    bool open = true;
+    if (!ImGui::BeginPopupModal(title, &open,
+                                ImGuiWindowFlags_NoResize |
+                                ImGuiWindowFlags_NoMove)) {
+        return;
+    }
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                        imguiPopupFadeAlpha(&s_inGameFadeAlpha));
+
+    int rc = renderFormBody(cs);
+    if (rc != 0) {
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::PopStyleVar();
+    ImGui::EndPopup();
+}
+
+extern "C" bool imguiKeySetupIsCapturingInGameKey(void) {
+    return s_waiting != ksNone;
+}
+
+extern "C" void imguiKeySetupHandleInGameScancode(int scancode) {
+    if (s_waiting == ksNone) return;
+    if (scancode == SDL_SCANCODE_ESCAPE) {
+        s_waiting = ksNone;
+        return;
+    }
+    int *ptr = fieldPtr(s_waiting, &s_keys);
+    if (ptr) *ptr = scancode;
+    s_waiting = ksNone;
 }

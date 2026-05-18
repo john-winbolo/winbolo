@@ -44,6 +44,7 @@
 #include <strings.h>
 #endif
 #include <ctype.h>
+#include <stdarg.h>
 #include <time.h>
 
 #include "../../common/wb_log.h"
@@ -231,6 +232,37 @@ bool isServer = FALSE;
 bool useAutoslow;
 bool useAutohide;
 
+/* Debug log helper — see global.h. Single FILE* opened on first call,
+ * lives in the process's cwd as autoslowdown.log. Unbuffered so a
+ * crash before exit still leaves a trace. */
+void autoslowDebugLog(const char *fmt, ...) {
+  static FILE *s_f = NULL;
+  static bool s_failed = false;
+  if (s_failed) return;
+  if (s_f == NULL) {
+    s_f = fopen("autoslowdown.log", "a");
+    if (s_f == NULL) { s_failed = true; return; }
+    setvbuf(s_f, NULL, _IONBF, 0);
+    time_t now = time(NULL);
+    struct tm tmv;
+#ifdef _WIN32
+    localtime_s(&tmv, &now);
+#else
+    tmv = *localtime(&now);
+#endif
+    fprintf(s_f,
+            "\n----- autoslowdown.log opened %04d-%02d-%02d %02d:%02d:%02d -----\n",
+            tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+            tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+  }
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(s_f, fmt, ap);
+  va_end(ap);
+  fputc('\n', s_f);
+  fflush(s_f);
+}
+
 bool wantRejoin;
 
 /* Human player's ClientSim — owned by the frontend, allocated lazily
@@ -412,6 +444,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
   /* Read preferences */
   gameFrontGetPrefs(keys, &useAutoslow, &useAutohide);
+  autoslowDebugLog("[START] gameFrontStart: gameFrontGetPrefs returned "
+                   "useAutoslow=%d", (int)useAutoslow);
 
   /* Apply persisted language, or auto-detect if this is a fresh
    * install (empty Language slot in the INI). Either way, this runs
@@ -520,8 +554,13 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
   if (isTutorial == FALSE) {
     clientMutexWaitFor();
+    autoslowDebugLog("[START-PUSH] gameFrontStart pushing prefs to humanSim "
+                     "(tank may still be NULL): useAutoslow=%d humanSim=%p",
+                     (int)useAutoslow, (void *)humanSim);
     clientSimSetTankAutoSlowdown(humanSim, useAutoslow);
     clientSimSetTankAutoHideGunsight(humanSim, useAutohide);
+    autoslowDebugLog("[START-PUSH] post-push tank reports autoSlow=%d",
+                     (int)clientSimGetTankAutoSlowdown(humanSim));
     clientMutexRelease();
   }
 
@@ -538,10 +577,13 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
  * gameFrontEnd).
  * ------------------------------------------------------- */
 void gameFrontSaveTankPrefs(ClientSim *cs) {
-  if (cs != NULL) {
-    useAutoslow = clientSimGetTankAutoSlowdown(cs);
-    useAutohide = clientSimGetTankAutoHideGunsight(cs);
-  }
+  /* No-op since the keys dialog persists useAutoslow / useAutohide
+   * directly to INI on OK. */
+  autoslowDebugLog("[SAVE-TANK] gameFrontSaveTankPrefs called (no-op now); "
+                   "useAutoslow stays %d (tank says %d)",
+                   (int)useAutoslow,
+                   cs ? (int)clientSimGetTankAutoSlowdown(cs) : -1);
+  (void)cs;
 }
 
 /* -------------------------------------------------------
@@ -550,10 +592,20 @@ void gameFrontSaveTankPrefs(ClientSim *cs) {
 void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   steam_clear_rich_presence();
   clientMutexWaitFor();
-  if (gamePlayed == TRUE && humanSim != NULL) {
-    useAutoslow = clientSimGetTankAutoSlowdown(humanSim);
-    useAutohide = clientSimGetTankAutoHideGunsight(humanSim);
-  }
+  /* No tank-readback here. The keys dialog persists useAutoslow /
+   * useAutohide directly to INI on OK (immediate-flush) and nothing
+   * during gameplay mutates tank->autoSlowdown after the initial
+   * clientSimSetTankAutoSlowdown — so reading it back would just
+   * round-trip the same value most of the time. The exception was
+   * the buggy case where clientSimSetTankAutoSlowdown ran before
+   * clientSimSetupSelf existed: it no-op'd on the NULL tank pointer,
+   * then tankCreate later defaulted autoSlowdown to FALSE, and this
+   * readback clobbered the user's INI choice with that default. */
+  autoslowDebugLog("[END] gameFrontEnd entered: gamePlayed=%d humanSim=%p "
+                   "useAutoslow(before)=%d",
+                   (int)gamePlayed, (void *)humanSim, (int)useAutoslow);
+  (void)gamePlayed;
+  (void)humanSim;
   brainsHandlerShutdown();
   if (spServerSimActive) {
     /* Unregister the SP humanSim subscriber before gameFrontShutdownServer
@@ -1951,6 +2003,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   GetPrivateProfileString("GAME OPTIONS", "Auto Slowdown", "No", buff, FILENAME_MAX, prefsFile);
 #endif
   *pUseAutoslow = YESNO_TO_TRUEFALSE(buff[0]);
+  autoslowDebugLog("[GET] prefsFile='%s' read Auto Slowdown raw='%s' -> %d",
+                   prefsFile, buff, (int)*pUseAutoslow);
   GetPrivateProfileString("GAME OPTIONS", "Auto Show-Hide Gunsight", "No", buff, FILENAME_MAX, prefsFile);
   *pUseAutohide = YESNO_TO_TRUEFALSE(buff[0]);
 
@@ -2056,6 +2110,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   char playerName[PLAYER_NAME_LEN];
   char buff[FILENAME_MAX];
   const char *prefsFile = getPreferenceFilePath();
+  autoslowDebugLog("[PUT] gameFrontPutPrefs entered: useAutoslow=%d humanSim=%p",
+                   (int)useAutoslow, (void *)humanSim);
 
   /* Player Name */
   if (((humanSim != NULL && clientSimGetNetType(humanSim) == netSingle) || (gameFrontRemeber == TRUE && humanSim != NULL)) && dlgState != openSetup && !clientSimIsInLobby(humanSim)) {
@@ -2147,6 +2203,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   intToStr(timeLen, buff, sizeof(buff));
   WritePrivateProfileString("GAME OPTIONS", "Time Length", buff, prefsFile);
   WritePrivateProfileString("GAME OPTIONS", "Auto Slowdown", TRUEFALSE_TO_STR(useAutoslow), prefsFile);
+  autoslowDebugLog("[PUT] writing Auto Slowdown=%s to '%s' (useAutoslow=%d)",
+                   TRUEFALSE_TO_STR(useAutoslow), prefsFile, (int)useAutoslow);
   WritePrivateProfileString("GAME OPTIONS", "Auto Show-Hide Gunsight", TRUEFALSE_TO_STR(useAutohide), prefsFile);
 
   WritePrivateProfileString("SETTINGS", "Use UPnP", TRUEFALSE_TO_STR(gameFrontUseUpnp), prefsFile);

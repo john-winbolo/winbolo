@@ -263,5 +263,17 @@ void efree(Generic object);
 /* Used to bitmask with a key code to see if it's pressed or not */
 #define PRESSED 0x80
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+/* Debug: append a printf-style line to ./autoslowdown.log in cwd.
+ * Lazily opens, unbuffered, flushes after every write. Implemented
+ * in src/gui/sdl3/gamefront.c. Used to trace the Auto Slowdown
+ * preference round-trip while we hunt the persistence bug. */
+void autoslowDebugLog(const char *fmt, ...);
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* GLOBAL_H */
 
