@@ -338,6 +338,15 @@ static void lobbySendAddBotDebounced(ClientSim *cs,
  * window opened so Cancel can restore it (no undo packet is wired
  * yet — the field is reserved for that future work). */
 static bool             s_chooseMapOpen          = false;
+/* Screen-space rect of the lobby's chat block, captured each frame so
+ * the map-chooser scrim can punch a hole over it. We deliberately
+ * leave the chat reachable while the chooser is open so players can
+ * keep talking while picking / generating a map, but everything else
+ * behind the chooser was getting accidental clicks; the scrim
+ * windows below (renderChooserScrim) darken + absorb input over the
+ * non-chat area. ImVec2(0,0) on both means "no chat rect yet". */
+static ImVec2           s_chatBlockMin           = ImVec2(0.0f, 0.0f);
+static ImVec2           s_chatBlockMax           = ImVec2(0.0f, 0.0f);
 /* Two chooser instances: one for the Server Maps tab (routes its
  * directory listing through serverSimEnumerateMapDir so it reflects
  * the server's actual map library), one for the Upload tab (always
@@ -6621,7 +6630,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
             /* Left bottom: chat block (label + history + input row),
              * still in the left column group so it stacks under
-             * PlayerPanel. */
+             * PlayerPanel. Rect captured below for the map-chooser
+             * scrim's hole-punch. */
+            ImVec2 chatBlockCursor = ImGui::GetCursorScreenPos();
             ImGui::BeginChild("##ChatBlock", ImVec2(playerPanelW, bottomH), ImGuiChildFlags_None);
             ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_CHAT));
             {
@@ -6661,6 +6672,14 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
             }
             ImGui::EndChild();
+            /* Record chat block rect for the map-chooser scrim. Use the
+             * stored cursor position (chatBlockCursor) plus the panel's
+             * known size — GetItemRectMin/Max after EndChild has been
+             * unreliable on some imgui builds when the child is part
+             * of a group. */
+            s_chatBlockMin = chatBlockCursor;
+            s_chatBlockMax = ImVec2(chatBlockCursor.x + playerPanelW,
+                                    chatBlockCursor.y + bottomH);
 
             ImGui::EndGroup(); /* /left column */
 
@@ -6962,6 +6981,70 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
         ImGui::End(); /* ##LobbyBg */
         ImGui::PopStyleVar(); /* WindowPadding */
+
+        /* Scrim behind the map chooser: darkens + absorbs input over
+         * the whole lobby, EXCEPT a hole over the chat block so the
+         * chat stays usable while picking / generating a map.
+         *
+         * Two windows do it without needing a polygon cut-out:
+         *   1. Top:        (0, 0) .. (winW, chatMin.y)
+         *   2. Bottom-right: (chatMax.x, chatMin.y) .. (winW, winH)
+         * Together they cover everything outside the chat hole
+         * (the chat is at the bottom-left of the lobby and reaches
+         * the screen bottom, so we don't need a fourth strip below).
+         *
+         * Each scrim is a borderless borderless window with a custom
+         * dark background colour and a full-area InvisibleButton to
+         * eat the mouse click. NoBringToFrontOnFocus + NoFocusOnAppearing
+         * keep it from stealing focus from the chooser, which is
+         * rendered just below this block (so it draws on top in Z). */
+        if (s_chooseMapOpen &&
+            s_chatBlockMax.x > s_chatBlockMin.x &&
+            s_chatBlockMax.y > s_chatBlockMin.y) {
+            /* No NoBringToFrontOnFocus / NoFocusOnAppearing here — the
+             * scrim has to rise above the lobby's ##LobbyBg full-screen
+             * window for its dark fill to actually show. The chooser
+             * window is Begun right after this block and the user
+             * interacts there, so ImGui's natural focus-follows-input
+             * keeps the chooser on top of the scrim from frame two on. */
+            const ImGuiWindowFlags scrimFlags =
+                ImGuiWindowFlags_NoTitleBar |
+                ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoCollapse |
+                ImGuiWindowFlags_NoScrollbar |
+                ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoDocking;
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 140));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+
+            auto drawScrim = [&](const char *id, float x, float y,
+                                 float w, float h) {
+                if (w <= 0.0f || h <= 0.0f) return;
+                ImGui::SetNextWindowPos(ImVec2(x, y));
+                ImGui::SetNextWindowSize(ImVec2(w, h));
+                ImGui::Begin(id, NULL, scrimFlags);
+                ImGui::InvisibleButton("##scrimHit", ImVec2(w, h));
+                ImGui::End();
+            };
+
+            /* Top strip — above the chat. */
+            drawScrim("##chooserScrimTop", 0.0f, 0.0f,
+                      (float)winW, s_chatBlockMin.y);
+            /* Right strip — right of the chat, full remaining height. */
+            drawScrim("##chooserScrimRight", s_chatBlockMax.x,
+                      s_chatBlockMin.y,
+                      (float)winW - s_chatBlockMax.x,
+                      (float)winH - s_chatBlockMin.y);
+
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor();
+            /* Force the chooser's next Begin to take focus so it
+             * always sits above the scrim windows we just opened. */
+            ImGui::SetNextWindowFocus();
+        }
 
         /* Map chooser sub-window (Phase 1). Rendered after the main
          * lobby End() so it's a top-level ImGui window that the user
