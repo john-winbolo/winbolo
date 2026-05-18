@@ -35,6 +35,7 @@
 #include "control_event.h"
 #include "client_sim_control.h"
 #include "transport_control_codec.h"
+#include "wbn_key_codec.h"
 #include "../gui/lang.h"
 #include "../gui/winbolo.h"
 #include "../gui/dialogAlliance.h"
@@ -1183,20 +1184,12 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         /* Wire: [header 8] [serverKey WBN_JOIN_KEY_WIRE_LEN] — same 65-byte
          * envelope as wbnJoinKey for symmetry; payload is a NUL-terminated
          * string within the first WINBOLONET_KEY_LEN bytes. */
-        const uint8_t *src;
-        size_t i;
         if (len < PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN) {
             return;
         }
-        src = buf + PACKET_HEADER_SIZE;
-        for (i = 0; i < (size_t)(WINBOLONET_KEY_LEN - 1) && src[i] != '\0'; i++) { }
-        if (i == (size_t)(WINBOLONET_KEY_LEN - 1) &&
-            src[WINBOLONET_KEY_LEN - 1] != '\0') {
-            /* No NUL within the first 33 bytes — malformed, drop. */
+        if (!wbnKeyDecode(c->wbnServerKey, buf + PACKET_HEADER_SIZE)) {
             return;
         }
-        memcpy(c->wbnServerKey, src, i);
-        c->wbnServerKey[i] = '\0';
         /* The lobby-snapshot poll fires re-auth when our slot loses the
          * WBN flag; no need to push from here. */
         break;

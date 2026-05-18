@@ -46,6 +46,7 @@ int run_ini_writer_persistence(void);
 int run_ini_writer_insertion_point(void);
 int run_ini_writer_security(void);
 int run_wbn_bearer_state(void);
+int run_wbn_rekey_codec(void);
 
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map
  * with one player added at slot 0. Caller is responsible for

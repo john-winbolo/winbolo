@@ -2316,6 +2316,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_sp_shoot_through_timer.c
     tests/unit/test_ini_reader_writer.c
     tests/unit/test_wbn_bearer_state.c
+    tests/unit/test_wbn_rekey_codec.c
     # Compiled standalone (libcurl-free) so the bearer-state test can
     # link without dragging the rest of winbolonet_core into the test
     # binary. The test_stubs.c stubs cover the other winbolonet_*
@@ -2386,6 +2387,7 @@ set(_unit_test_names
     ini_writer_insertion_point
     ini_writer_security
     wbn_bearer_state
+    wbn_rekey_codec
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
