@@ -263,5 +263,15 @@ void efree(Generic object);
 /* Used to bitmask with a key code to see if it's pressed or not */
 #define PRESSED 0x80
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+/* Debug: append a printf-style line to ./balance.log in cwd. Implemented
+ * in src/bolo/client_net.c. Lazily opens, flushes after every write. */
+void balanceDebugLog(const char *fmt, ...);
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* GLOBAL_H */
 

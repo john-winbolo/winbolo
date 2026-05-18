@@ -217,6 +217,14 @@ struct ClientSim {
     /* Team balance proposal from WBN */
     uint8_t  balanceProposal[16];      /* Proposed team per slot (0 = none) */
     bool     balanceProposalActive;    /* TRUE if a proposal is being displayed */
+    uint64_t lastBalanceProposalArrivedMs; /* SDL_GetTicks at the last non-empty
+                                            * CTRL_BALANCE_PROPOSAL arrival —
+                                            * latched by the dispatcher so the
+                                            * lobby UI can show a short "Teams
+                                            * balanced" success label even when
+                                            * the auto-apply clear publish that
+                                            * follows resets balanceProposalActive
+                                            * before the next render frame. */
 
     /* ── Layout A lobby state (client-side mirror of server) ──────
      * Populated from PACKET_LOBBY_*_CHG broadcasts. The team metadata
@@ -319,6 +327,17 @@ struct ClientSim {
                             * forbidden. Mirrored on every client so
                             * they can render the ranked badge / lock
                             * affordance. Toggle is host/admin only. */
+    bool     lobbyAllowNewPlayers; /* server's allowNewPlayers state —
+                                    * mirrors sim->allowNewPlayers via
+                                    * CTRL_LOBBY_SETTINGS so the host's
+                                    * "Now" checkbox reflects the real
+                                    * server state instead of a stale
+                                    * local intent. */
+    bool     lobbyWbnAvailable;    /* server's winbolonetIsRunning() —
+                                    * mirrored to remote clients so the
+                                    * lobby can hide WBN-mediated UI
+                                    * (Balance from WBN) when the host
+                                    * process isn't signed in to WBN. */
     uint16_t lobbyServerLocks;
 
     /* Most recent server reject — surfaced via toast/log when set.

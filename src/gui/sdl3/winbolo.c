@@ -267,12 +267,13 @@ int main(int argc, char *argv[]) {
      * only update when winbolo.c itself is recompiled, so they're
      * unreliable as a freshness check for changes elsewhere. */
     snprintf(marker, sizeof(marker),
-             "[BUILD-TEMP] vote-widget-debug rev=#20 build=%s %s",
+             "[BUILD-TEMP] balance-from-wbn-debug rev=#58 build=%s %s",
              __DATE__, __TIME__);
     printf("%s\n", marker); fflush(stdout);
     fprintf(stderr, "%s\n", marker); fflush(stderr);
     SDL_Log("%s", marker);
     WB_LOG_INFO(WB_LOG_CAT_GUI, "%s", marker);
+    balanceDebugLog("%s", marker);
   }
   /* END TEMPORARY */
 

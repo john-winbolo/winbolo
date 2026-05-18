@@ -235,14 +235,17 @@ static EncodeResult encodeLobbySlot(const ControlEvent *evt,
  *   [aiType 1] [gameLength 4 BE] [pillCount 1] [baseCount 1]
  *   [startCount 1] [mapSkipAvailable 1] [netStat 1] [inLobby 1]
  *   [openHost 1] [autoLockOnGameStart 1] [serverLocks 2 BE]
+ *   [ranked 1] [allowNewPlayers 1] [wbnAvailable 1]
  *
- * The trailing four bytes (openHost, autoLockOnGameStart, serverLocks)
- * fold the older standalone PACKET_LOBBY_OPEN_HOST_CHG and the
- * single-setting echoes that carried these flags into the same
- * authoritative settings event. serverLocks is packed big-endian to
- * match every other multi-byte field in the codec (packU16/packU32). */
+ * `ranked`, `allowNewPlayers`, and `wbnAvailable` are appended at the
+ * tail so the existing fields keep their offsets. Older codecs that
+ * don't know about them will short-decode and the decoder rejects the
+ * packet via the LOBBY_SETTINGS_WIRE_PAYLOAD length check; new clients
+ * see the flags flow through to the lobby UI / tracker advertisement.
+ * serverLocks is packed big-endian to match every other multi-byte
+ * field in the codec (packU16/packU32). */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD \
-    (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 2)
+    (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 2 + 1 + 1 + 1)
 
 static EncodeResult encodeLobbySettings(const ControlEvent *evt,
                                         const struct UdpServerClient *recipient,
@@ -274,6 +277,9 @@ static EncodeResult encodeLobbySettings(const ControlEvent *evt,
     buf[pos++] = evt->u.lobbySettings.lobbyAutoLockOnGameStart ? 1 : 0;
     packU16(buf + pos, evt->u.lobbySettings.lobbyServerLocks);
     pos += 2;
+    buf[pos++] = evt->u.lobbySettings.lobbyRanked ? 1 : 0;
+    buf[pos++] = evt->u.lobbySettings.lobbyAllowNewPlayers ? 1 : 0;
+    buf[pos++] = evt->u.lobbySettings.lobbyWbnAvailable ? 1 : 0;
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -747,6 +753,9 @@ static bool decodeLobbySettings(const uint8_t *buf, size_t len,
     outEvt->u.lobbySettings.lobbyAutoLockOnGameStart = buf[pos++] ? true : false;
     outEvt->u.lobbySettings.lobbyServerLocks         = unpackU16(buf + pos);
     pos += 2;
+    outEvt->u.lobbySettings.lobbyRanked              = buf[pos++] ? true : false;
+    outEvt->u.lobbySettings.lobbyAllowNewPlayers     = buf[pos++] ? true : false;
+    outEvt->u.lobbySettings.lobbyWbnAvailable        = buf[pos++] ? true : false;
     return true;
 }
 

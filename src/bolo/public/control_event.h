@@ -146,6 +146,10 @@ typedef struct ControlEvent {
             bool     lobbyOpenHost;
             bool     lobbyAutoLockOnGameStart;
             bool     lobbyRanked;
+            bool     lobbyAllowNewPlayers;
+            bool     lobbyWbnAvailable;  /* host's winbolonetIsRunning() —
+                                          * gates WBN-only UI (Balance
+                                          * from WBN) on remote clients */
             uint16_t lobbyServerLocks;
         } lobbySettings;
 

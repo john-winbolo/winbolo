@@ -73,6 +73,7 @@ extern "C" {
 #include "imgui_messagebox.h"
 #include "imgui_mapchooser.h"
 #include "../../../winbolonet/http.h"
+#include "../../../winbolonet/winbolonet.h"  /* winbolonetIsRunning() — gates WBN-only UI */
 #include "cJSON.h"
 }
 #include "../wb_theme.h"
@@ -3289,6 +3290,49 @@ static void renderBotAiConfig(ClientSim *cs,
  * window. Returns nothing — purely UI. */
 static void renderLockBadge(void);
 
+/* Ranked-game eligibility shape: exactly two teams with equal sizes
+ * of 1/2/3 connected humans (1v1, 2v2, 3v3). Used by the Ranked-game
+ * checkbox tooltip AND by the Ready button (Ready is disabled when
+ * the lobby is flagged Ranked but the current shape doesn't qualify,
+ * so the host can keep Ranked on for the games-list filter even
+ * while shuffling players around). Returns the breakdown so callers
+ * can show the same tooltip text. */
+struct RankedEligibility {
+    bool sizesEligible;
+    int  teamsInUse;
+    int  firstSize;
+    int  secondSize;
+};
+static RankedEligibility computeRankedEligibility(ClientSim *cs) {
+    RankedEligibility r = {false, 0, 0, 0};
+    int teamSizes[17] = {0};
+    for (int i = 0; i < MAX_TANKS; i++) {
+        const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
+        if (!ls || !ls->connected || ls->isBot) continue;
+        uint8_t t = ls->teamNumber;
+        if (t == 0 || t > 16) continue;
+        if (teamSizes[t] == 0) r.teamsInUse++;
+        teamSizes[t]++;
+    }
+    for (int t = 1; t <= 16; t++) {
+        if (teamSizes[t] == 0) continue;
+        if (r.firstSize == 0) r.firstSize = teamSizes[t];
+        else                  r.secondSize = teamSizes[t];
+    }
+    r.sizesEligible = (r.teamsInUse == 2) &&
+                      (r.firstSize == r.secondSize) &&
+                      (r.firstSize >= 1 && r.firstSize <= 3);
+    return r;
+}
+static void rankedShapeTooltip(const RankedEligibility &r) {
+    ImGui::SetTooltip(
+        "Ranked games require exactly two teams with equal\n"
+        "sizes: 1v1, 2v2, or 3v3 human players.\n"
+        "(Currently %d %s, sizes %d vs %d.)",
+        r.teamsInUse, r.teamsInUse == 1 ? "team" : "teams",
+        r.firstSize, r.secondSize);
+}
+
 /* Compact "Allow New Players:  [ ] Now   [ ] During game" row. Host
  * only and multiplayer only (single-player has no UDP listener). Used
  * to live inside renderTeamGroupedPlayers; hoisted to the parent so
@@ -3300,6 +3344,31 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                         (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                          & PLAYER_FLAG_ADMIN));
     bool effectiveHost = isHost || clientSimGetLobbyOpenHost(cs) || isLocalAdmin;
+    /* Diagnostic: log entry state on every call, throttled to changes
+     * only. Fires BEFORE the early-return so we can see whether the
+     * function is reached at all and which condition trips the
+     * early-out. */
+    {
+        static int s_firstCallCount = 0;
+        static bool s_lastHasTransport = false, s_lastIsSP = false;
+        static int  s_lastMyPN = -2;
+        bool hasT = clientSimHasTransport(cs);
+        bool isSP = clientSimIsSinglePlayer(cs);
+        bool changed = (hasT != s_lastHasTransport || isSP != s_lastIsSP ||
+                        myPlayerNum != s_lastMyPN);
+        /* Always log the first few calls so we can confirm the function
+         * is reached even when no state ever changes from the sentinel. */
+        if (changed || s_firstCallCount < 3) {
+            s_firstCallCount++;
+            balanceDebugLog("[BAL FUNC] renderAllowNewPlayersRow entry: "
+                            "myPlayerNum=%d hasTransport=%d isSP=%d effectiveHost=%d -> %s",
+                            myPlayerNum, (int)hasT, (int)isSP, (int)effectiveHost,
+                            (!hasT || isSP) ? "EARLY-RETURN" : "render");
+            s_lastHasTransport = hasT;
+            s_lastIsSP = isSP;
+            s_lastMyPN = myPlayerNum;
+        }
+    }
     /* Row stays visible to non-host players too so they can see the
      * Ranked Game indicator — but the "Allow New Players" controls
      * and the Ranked toggle itself stay disabled for them. */
@@ -3308,12 +3377,17 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("Allow New Players:");
     if (!effectiveHost) ImGui::BeginDisabled();
-    /* TODO: server's allowNewPlayers state isn't carried by
-     * CTRL_LOBBY_SETTINGS — show the host's last-clicked intent. */
-    bool allowJoin = true;
+    bool allowJoin = clientSimGetLobbyAllowNewPlayers(cs);
+    bool allowJoinPrev = allowJoin;
     ImGui::SameLine();
     if (ImGui::Checkbox("Now##allowNow", &allowJoin)) {
+        balanceDebugLog("[ALLOW CLIENT] checkbox toggled: prevSim=%d newLocal=%d "
+                        "sending LockToggle(allow=%d) cs=%p",
+                        (int)allowJoinPrev, (int)allowJoin,
+                        (int)allowJoin, (void *)cs);
         clientSimNetSendLockToggle(cs, allowJoin);
+        balanceDebugLog("[ALLOW CLIENT] post-send sim allowNewPlayers=%d",
+                        (int)clientSimGetLobbyAllowNewPlayers(cs));
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
@@ -3353,53 +3427,65 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
      * can toggle. Server enforces the actual bots-off / no-Open-type
      * constraints regardless of who tries to flip the related
      * controls. Toggling the flag also clears everyone's ready bit
-     * via the existing auto-unready broadcast path. */
-    {
+     * via the existing auto-unready broadcast path.
+     *
+     * Ranked is a winbolo.net feature (results are reported to WBN
+     * for ladder ranking and the tracker advertises the flag), so
+     * the toggle is hidden entirely in LAN / direct-IP / single-
+     * player games AND in Internet games where the host process
+     * isn't signed in to WBN. Non-host clients learn the host's
+     * WBN-availability via lobbyWbnAvailable in CTRL_LOBBY_SETTINGS. */
+    if (!clientSimIsSinglePlayer(cs) && !clientSimIsLanOnly(cs) &&
+        clientSimGetLobbyWbnAvailable(cs)) {
         ImGui::SameLine(0.0f, 16.0f * s);
         bool rankedV = clientSimGetLobbyRanked(cs);
 
-        /* Eligibility: exactly two teams in the lobby and equal team
-         * sizes of 1, 2, or 3 connected humans (1v1, 2v2, 3v3). */
-        int teamSizes[17] = {0};
-        int teamsInUse = 0;
+        /* Ranked toggle policy:
+         *   - Host-only.
+         *   - Blocked while bots are present so the host explicitly
+         *     removes them first (no silent kick on flip-on).
+         *   - Always allow turning Ranked OFF, even if the shape
+         *     drifted while it was on.
+         *   - Shape (1v1 / 2v2 / 3v3) is NOT a gate here — the host
+         *     may want the lobby flagged Ranked so it shows up under
+         *     that filter in the games list while players join.
+         *     Eligibility is enforced at start time by disabling the
+         *     Ready button (server silently drops bad Ready requests). */
+        int botCount = 0;
         for (int i = 0; i < MAX_TANKS; i++) {
             const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
-            if (!ls || !ls->connected || ls->isBot) continue;
-            uint8_t t = ls->teamNumber;
-            if (t == 0 || t > 16) continue;
-            if (teamSizes[t] == 0) teamsInUse++;
-            teamSizes[t]++;
+            if (ls && ls->connected && ls->isBot) botCount++;
         }
-        int firstSize = 0, secondSize = 0;
-        for (int t = 1; t <= 16; t++) {
-            if (teamSizes[t] == 0) continue;
-            if (firstSize == 0) firstSize = teamSizes[t];
-            else                secondSize = teamSizes[t];
-        }
-        bool sizesEligible = (teamsInUse == 2) &&
-                             (firstSize == secondSize) &&
-                             (firstSize >= 1 && firstSize <= 3);
-        /* Always allow toggling OFF even if shape drifted while it was on. */
-        bool eligibleToToggle = sizesEligible || rankedV;
+        bool botsBlock = (botCount > 0) && !rankedV;
+        RankedEligibility re = computeRankedEligibility(cs);
 
-        bool canToggle = effectiveHost && eligibleToToggle;
+        bool canToggle = effectiveHost && !botsBlock;
+        bool rankedReadAtRender = rankedV;
         if (!canToggle) ImGui::BeginDisabled();
         if (ImGui::Checkbox("Ranked game##ranked", &rankedV)) {
             uint8_t v = rankedV ? 1 : 0;
+            balanceDebugLog("[RANKED CLIENT] checkbox toggled: prevSim=%d newLocal=%d "
+                            "effectiveHost=%d botCount=%d isSP=%d isLanOnly=%d",
+                            (int)rankedReadAtRender, (int)rankedV,
+                            (int)effectiveHost, botCount,
+                            (int)clientSimIsSinglePlayer(cs),
+                            (int)clientSimIsLanOnly(cs));
             lobbySendSetting(cs, 7 /*LST_RANKED*/, &v, 1);
+            balanceDebugLog("[RANKED CLIENT] lobbySendSetting returned; "
+                            "post-call sim ranked=%d",
+                            (int)clientSimGetLobbyRanked(cs));
         }
         if (!canToggle) ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
             if (!effectiveHost) {
                 ImGui::SetTooltip(
                     "Only the host or an admin can toggle Ranked game.");
-            } else if (!sizesEligible) {
+            } else if (botsBlock) {
                 ImGui::SetTooltip(
-                    "Ranked games require exactly two teams with equal\n"
-                    "sizes: 1v1, 2v2, or 3v3 human players.\n"
-                    "(Currently %d %s, sizes %d vs %d.)",
-                    teamsInUse, teamsInUse == 1 ? "team" : "teams",
-                    firstSize, secondSize);
+                    "Remove every bot from the lobby before flagging\n"
+                    "the game as Ranked. Ranked matches are humans-only.");
+            } else if (rankedV && !re.sizesEligible) {
+                rankedShapeTooltip(re);
             } else {
                 ImGui::SetTooltip(
                     "Ranked games forbid bots and force the tournament\n"
@@ -3408,6 +3494,237 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                     "can confirm the new configuration.");
             }
         }
+    }
+
+    /* "Balance from WBN" — sits to the right of the Ranked checkbox.
+     * Host-only. Opens a confirm popup explaining that teams will be
+     * cleared and replaced with two skill-balanced teams; if bots are
+     * present the popup offers a third button to kick them so the
+     * matchup is pure-human. After confirm, the existing
+     * BALANCE_REQUEST -> BALANCE_PROPOSAL -> Apply/Dismiss flow runs
+     * normally (proposal shows on every client; host applies or
+     * dismisses). */
+    {
+        int connectedCount = 0;
+        int botCount = 0;
+        for (int i = 0; i < MAX_TANKS; i++) {
+            const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
+            if (!ls || !ls->connected) continue;
+            connectedCount++;
+            if (ls->isBot) botCount++;
+        }
+        bool proposalActive = clientSimIsBalanceProposalActive(cs);
+        bool enoughForBalance = (connectedCount >= 2);
+        bool canBalance = effectiveHost && enoughForBalance && !proposalActive;
+        const char *kBalancePopup = "Balance teams from WBN##balwbn";
+
+        /* Status feedback for the most recent Balance request — read
+         * after the popup confirm sets s_balReqSentMs, displayed in
+         * a small label next to the outer Balance button. */
+        static uint64_t   s_balReqSentMs         = 0;
+        static const char *s_balLastResultText   = NULL;
+        static ImVec4     s_balLastResultColor   = ImVec4(1, 1, 1, 1);
+        static uint64_t   s_balLastResultUntilMs = 0;
+
+        /* Balance-from-WBN visibility:
+         *   - Hidden in SP / LAN-only (WBN never runs there).
+         *   - Hidden when the host process isn't signed in to WBN
+         *     (server's wbnRunning guard would drop every click).
+         *   - Hidden for non-host / non-admin clients — only the
+         *     player who can act on the proposal needs to see the
+         *     request affordance. effectiveHost covers host + admin
+         *     + openHost-empowered slots. */
+        if (effectiveHost &&
+            !clientSimIsSinglePlayer(cs) && !clientSimIsLanOnly(cs) &&
+            clientSimGetLobbyWbnAvailable(cs)) {
+        ImGui::SameLine(0.0f, 12.0f * s);
+        /* Log state at button-render time, throttled to changes only,
+         * so the lobby spam stays low but we can see canBalance
+         * flipping. If a click fires no [BAL OUTER] line, this log
+         * shows what state the disable wrapper was in. */
+        {
+            static bool s_lastEff = false, s_lastEnough = false, s_lastProp = false, s_lastCan = false;
+            static int  s_lastConn = -1;
+            static bool s_firstRender = true;
+            if (s_firstRender ||
+                s_lastEff != effectiveHost ||
+                s_lastEnough != enoughForBalance ||
+                s_lastProp != proposalActive ||
+                s_lastCan != canBalance ||
+                s_lastConn != connectedCount) {
+                s_firstRender = false;
+                balanceDebugLog("[BAL RENDER] state: effectiveHost=%d enoughForBalance=%d "
+                                "(connected=%d) proposalActive=%d canBalance=%d "
+                                "hasTransport=%d isSP=%d",
+                                (int)effectiveHost, (int)enoughForBalance, connectedCount,
+                                (int)proposalActive, (int)canBalance,
+                                (int)clientSimHasTransport(cs),
+                                (int)clientSimIsSinglePlayer(cs));
+                s_lastEff = effectiveHost;
+                s_lastEnough = enoughForBalance;
+                s_lastProp = proposalActive;
+                s_lastCan = canBalance;
+                s_lastConn = connectedCount;
+            }
+        }
+        if (!canBalance) ImGui::BeginDisabled();
+        bool outerClicked = ImGui::Button("Balance from WBN##balwbn_btn");
+        bool btnHovered  = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+        bool btnActive   = ImGui::IsItemActive();
+        bool mouseDown   = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        bool mouseClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+        if (!canBalance) ImGui::EndDisabled();
+
+        /* Short status to the right of the button so the host gets
+         * feedback on the last Balance request. s_balReqSentMs is
+         * set when the popup's confirm button fires; the live
+         * "Asking WBN…" message shows for up to 8 s while we wait.
+         * On a successful proposal we flip to "Proposal ready" for
+         * 6 s; on timeout we surface "No response from WBN" for 8 s
+         * so the host knows the request didn't land. */
+        {
+            uint64_t now = SDL_GetTicks();
+            const char *liveText = NULL;
+            ImVec4 liveColor;
+            if (s_balReqSentMs != 0) {
+                uint64_t arrivedMs =
+                    clientSimGetLastBalanceProposalArrivedMs(cs);
+                if (arrivedMs != 0 && arrivedMs >= s_balReqSentMs) {
+                    /* Server auto-applies the split now, so we use the
+                     * one-shot timestamp the dispatcher latches when the
+                     * proposal event arrives — proposalActive itself is
+                     * cleared on the same mutex hold, so reading it
+                     * here would always miss the success transition. */
+                    s_balLastResultText  = "Teams balanced";
+                    s_balLastResultColor = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
+                    s_balLastResultUntilMs = now + 6000;
+                    s_balReqSentMs = 0;
+                } else if (now - s_balReqSentMs < 8000) {
+                    liveText  = "Asking WBN…";
+                    liveColor = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+                } else {
+                    s_balLastResultText  = "No response from WBN";
+                    s_balLastResultColor = ImVec4(0.9f, 0.4f, 0.3f, 1.0f);
+                    s_balLastResultUntilMs = now + 8000;
+                    s_balReqSentMs = 0;
+                }
+            }
+            const char *showText = liveText ? liveText :
+                (s_balLastResultText && now < s_balLastResultUntilMs)
+                    ? s_balLastResultText : NULL;
+            ImVec4 showColor = liveText ? liveColor : s_balLastResultColor;
+            if (showText) {
+                ImGui::SameLine(0.0f, 8.0f * s);
+                ImGui::TextColored(showColor, "%s", showText);
+            }
+        }
+        /* Loud, unconditional diagnostic: any time the mouse is hovering
+         * the button OR a left click happens while hovering, dump full
+         * state. This catches the disabled-button case where ImGui eats
+         * the click silently. */
+        if (btnHovered && mouseClicked) {
+            balanceDebugLog("[BAL HOVER-CLICK] canBalance=%d outerClicked=%d active=%d down=%d "
+                            "effHost=%d enough=%d conn=%d propActive=%d",
+                            (int)canBalance, (int)outerClicked, (int)btnActive, (int)mouseDown,
+                            (int)effectiveHost, (int)enoughForBalance,
+                            connectedCount, (int)proposalActive);
+        }
+        if (outerClicked) {
+            balanceDebugLog("[BAL OUTER] Balance from WBN clicked: "
+                            "effectiveHost=%d enough=%d (conn=%d) propActive=%d canBalance=%d",
+                            (int)effectiveHost, (int)enoughForBalance, connectedCount,
+                            (int)proposalActive, (int)canBalance);
+            ImGui::OpenPopup(kBalancePopup);
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            if (!effectiveHost) {
+                ImGui::SetTooltip(
+                    "Only the host or an admin can request a skill-\n"
+                    "balanced team split from winbolo.net.");
+            } else if (!enoughForBalance) {
+                ImGui::SetTooltip(
+                    "At least two connected players are needed before\n"
+                    "the lobby can be split into balanced teams.");
+            } else {
+                ImGui::SetTooltip(
+                    "Ask winbolo.net to split the lobby into two skill-\n"
+                    "balanced teams. The split is applied immediately\n"
+                    "once WBN responds — existing teams are replaced.");
+            }
+        }
+
+        /* The confirm popup body. ImGui::BeginPopupModal is the modal
+         * variant — it dims everything underneath and traps focus
+         * until the user picks a button. */
+        ImGui::SetNextWindowSize(ImVec2(420.0f * s, 0.0f), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal(kBalancePopup, NULL,
+                                    ImGuiWindowFlags_AlwaysAutoResize
+                                    | ImGuiWindowFlags_NoSavedSettings)) {
+            /* Per-frame log while the popup body is being drawn so we
+             * can confirm BeginPopupModal returned TRUE. Spammy by
+             * design — should only appear while the modal is on
+             * screen. */
+            static int s_lastBodyFrame = -1;
+            if (ImGui::GetFrameCount() != s_lastBodyFrame) {
+                balanceDebugLog("[BAL POPUP] body rendering frame=%d botCount=%d",
+                                ImGui::GetFrameCount(), botCount);
+                s_lastBodyFrame = ImGui::GetFrameCount();
+            }
+            ImGui::TextWrapped(
+                "This will clear every team in the lobby and replace "
+                "them with two skill-balanced teams from winbolo.net. "
+                "The new split takes effect immediately.");
+            if (botCount > 0) {
+                ImGui::Spacing();
+                ImGui::TextWrapped(
+                    "There %s currently %d bot%s in the lobby. Choose "
+                    "whether the bots should take part in the balanced "
+                    "split or be removed for a humans-only matchup.",
+                    botCount == 1 ? "is" : "are",
+                    botCount,
+                    botCount == 1 ? "" : "s");
+            }
+            ImGui::Spacing();
+
+            float btnW = 140.0f * s;
+            float btnH = 0.0f;
+            if (ImGui::Button("Cancel##balcancel", ImVec2(btnW, btnH))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            uint8_t teamSize = (uint8_t)(connectedCount / 2);
+            if (teamSize == 0) teamSize = 1;
+            if (botCount > 0) {
+                if (ImGui::Button("Bots included##balbots", ImVec2(btnW, btnH))) {
+                    balanceDebugLog("[BAL POPUP] Bots included clicked: teamSize=%u",
+                                    (unsigned)teamSize);
+                    s_balReqSentMs = SDL_GetTicks();
+                    s_balLastResultText = NULL;
+                    clientSimNetSendBalanceRequest(cs, teamSize, /*includeBots=*/true);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Humans only##balhuman", ImVec2(btnW, btnH))) {
+                    balanceDebugLog("[BAL POPUP] Humans only clicked: teamSize=%u",
+                                    (unsigned)teamSize);
+                    s_balReqSentMs = SDL_GetTicks();
+                    s_balLastResultText = NULL;
+                    clientSimNetSendBalanceRequest(cs, teamSize, /*includeBots=*/false);
+                    ImGui::CloseCurrentPopup();
+                }
+            } else {
+                if (ImGui::Button("Balance##balgo", ImVec2(btnW, btnH))) {
+                    balanceDebugLog("[BAL POPUP] Balance clicked: teamSize=%u",
+                                    (unsigned)teamSize);
+                    s_balReqSentMs = SDL_GetTicks();
+                    s_balLastResultText = NULL;
+                    clientSimNetSendBalanceRequest(cs, teamSize, /*includeBots=*/false);
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            ImGui::EndPopup();
+        }
+        } /* end if (winbolonetIsRunning()) — Balance-from-WBN gating */
     }
 }
 
@@ -4632,9 +4949,22 @@ static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
 
     if (!shortText) return;
 
+    /* Right-align the badge to the available width so all states
+     * ("Checking server reachability...", "Server accessible",
+     * "Server unreachable") share the same right edge regardless of
+     * text length. The caller still SameLine()s us onto the status
+     * row; we just absorb the slack on our left. */
+    float iconSize    = icon ? 18.0f * s : 0.0f;
+    float spacingX    = icon ? ImGui::GetStyle().ItemSpacing.x : 0.0f;
+    float textW       = ImGui::CalcTextSize(shortText).x;
+    float badgeWidth  = iconSize + spacingX + textW;
+    float availW      = ImGui::GetContentRegionAvail().x;
+    if (availW > badgeWidth) {
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - badgeWidth));
+    }
+
     ImGui::BeginGroup();
     if (icon) {
-        float iconSize = 18.0f * s;
         ImGui::Image((ImTextureID)icon, ImVec2(iconSize, iconSize));
         ImGui::SameLine();
         float textOffset = (iconSize - ImGui::GetTextLineHeight()) * 0.5f;
@@ -4654,36 +4984,6 @@ static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
 
     if (ImGui::IsItemClicked()) {
         ImGui::OpenPopup(popupTitle);
-    }
-
-    ImGui::SameLine();
-    bool canTest = (pm.status != SERVER_PORTMAP_DISABLED &&
-                    pm.status != SERVER_PORTMAP_PENDING);
-    if (!canTest) ImGui::BeginDisabled();
-    if (ImGui::SmallButton(langGetText(STR_DLGLOBBY_TEST_CONNECTIVITY))) {
-        serverInstanceTriggerManualProbe();
-    }
-    if (!canTest) ImGui::EndDisabled();
-
-    ManualProbeState mps = serverInstanceGetManualProbeState();
-    if (mps != MANUAL_PROBE_IDLE) {
-        ImGui::SameLine();
-        switch (mps) {
-            case MANUAL_PROBE_IN_PROGRESS:
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-                                   "%s", langGetText(STR_DLGLOBBY_TEST_TESTING));
-                break;
-            case MANUAL_PROBE_SUCCESS:
-                ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f),
-                                   "%s", langGetText(STR_DLGLOBBY_TEST_REACHABLE));
-                break;
-            case MANUAL_PROBE_TIMEOUT:
-                ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.3f, 1.0f),
-                                   "%s", langGetText(STR_DLGLOBBY_TEST_NO_REPLY));
-                break;
-            case MANUAL_PROBE_IDLE:
-                break;
-        }
     }
 
     if (ImGui::BeginPopupModal(popupTitle, nullptr,
@@ -4709,6 +5009,46 @@ static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
         }
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
+
+        /* Live re-probe button + result lives inside the dialog now —
+         * keeps the lobby header tidy and groups the test with the
+         * status detail that describes what's being tested. */
+        ManualProbeState mps = serverInstanceGetManualProbeState();
+        /* Disable while the manual probe is in flight too — prevents the
+         * user re-triggering a probe that hasn't reported back yet. */
+        bool canTest = (pm2.status != SERVER_PORTMAP_DISABLED &&
+                        pm2.status != SERVER_PORTMAP_PENDING &&
+                        mps != MANUAL_PROBE_IN_PROGRESS);
+        if (!canTest) ImGui::BeginDisabled();
+        if (ImGui::Button(langGetText(STR_DLGLOBBY_TEST_CONNECTIVITY))) {
+            serverInstanceTriggerManualProbe();
+        }
+        if (!canTest) ImGui::EndDisabled();
+        if (!canTest &&
+            ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("Test in progress");
+        }
+        if (mps != MANUAL_PROBE_IDLE) {
+            ImGui::SameLine();
+            switch (mps) {
+                case MANUAL_PROBE_IN_PROGRESS:
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                                       "%s", langGetText(STR_DLGLOBBY_TEST_TESTING));
+                    break;
+                case MANUAL_PROBE_SUCCESS:
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f),
+                                       "%s", langGetText(STR_DLGLOBBY_TEST_REACHABLE));
+                    break;
+                case MANUAL_PROBE_TIMEOUT:
+                    ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.3f, 1.0f),
+                                       "%s", langGetText(STR_DLGLOBBY_TEST_NO_REPLY));
+                    break;
+                case MANUAL_PROBE_IDLE:
+                    break;
+            }
+        }
+        ImGui::Spacing();
+
         if (ImGui::Button(langGetText(STR_CLOSE)) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape) ||
             (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
@@ -5480,12 +5820,49 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             SDL_snprintf(serverStr, sizeof(serverStr), "%s:%u",
                          addrStr, clientSimGetServerPort(cs));
 
+            /* When we are the host on an Internet game, the client-side
+             * server address is loopback / private — replace it with the
+             * router-side external address learned from libplum's UPnP/PCP
+             * mapping or the tracker's reflexive-probe reply, so the host
+             * sees the address remote players actually connect to and can
+             * read it off to friends. Skipped for LAN-only and SP games
+             * (no external mapping or probe runs there). */
+            if (!clientSimIsSinglePlayer(cs) && !clientSimIsLanOnly(cs) &&
+                serverInstanceIsNatPunchActive()) {
+                ServerPortmapInfo pm;
+                serverInstanceGetPortmapInfo(&pm);
+                if (pm.externalIp[0] != '\0' && pm.externalPort != 0) {
+                    SDL_snprintf(serverStr, sizeof(serverStr), "%s:%u",
+                                 pm.externalIp, (unsigned)pm.externalPort);
+                }
+            }
+
+            /* Hide the host's server IP from joined clients on Internet
+             * games so lobby screenshots don't leak the address. Host
+             * still sees the real address so they can read it to
+             * friends. LAN-only joiners keep the IP (it's already on a
+             * local network). SP always shows "Single player".
+             *
+             * Module-static flag rather than a compile-time #define so
+             * it can be flipped at runtime later (settings toggle, INI
+             * pref, console command) without rebuilding callers. */
+            static bool s_hideServerIpFromJoiners = false;
+            bool serverIsPrivate =
+                s_hideServerIpFromJoiners &&
+                (myPlayerNum != 0) &&
+                !clientSimIsSinglePlayer(cs) && !clientSimIsLanOnly(cs);
+            const char *serverDisplay =
+                clientSimIsSinglePlayer(cs) ? "Single player" :
+                serverIsPrivate             ? "Internet"      :
+                                              serverStr;
+
             char timeStr[32];
             formatTimeLimit(clientSimGetLobbyTimeLimit(cs), timeStr, sizeof(timeStr));
 
 #if BOLO_MOBILE
             /* Stack labels vertically on mobile so the line wraps cleanly. */
-            ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_SERVER), serverStr);
+            ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_SERVER),
+                        serverDisplay);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_GAME_LBL), gameTypeStr(clientSimGetLobbyGameType(cs)));
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MINES_LBL),
                         clientSimIsLobbyHiddenMines(cs) ? langGetText(STR_DLGLOBBY_HIDDEN) : langGetText(STR_DLGLOBBY_VISIBLE));
@@ -5525,8 +5902,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             }
             ImGui::SameLine(0, 16);
             ImGui::AlignTextToFramePadding();
-            ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_SERVER), serverStr);
+            ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_SERVER),
+                        serverDisplay);
             ImGui::SameLine(0, 16);
+            ImGui::AlignTextToFramePadding();
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_GAME_LBL), gameTypeStr(clientSimGetLobbyGameType(cs)));
             ImGui::SameLine(0, 16);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MINES_LBL),
@@ -5543,14 +5922,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
              * passed -no-natpunch / LAN-only). Skipping it covers SP,
              * LAN-only hosts, and non-hosting clients in one check. */
             if (serverInstanceIsNatPunchActive()) {
-                float availW   = ImGui::GetContentRegionAvail().x;
-                float badgeW   = 320.0f * s;
-                float startX   = ImGui::GetCursorPosX() + availW - badgeW;
-                if (startX > ImGui::GetCursorPosX()) {
-                    ImGui::SameLine();
-                    ImGui::SetCursorPosX(startX);
-                    renderConnectivityBadge(renderer, s);
-                }
+                /* renderConnectivityBadge right-aligns itself within the
+                 * remaining horizontal space, so we just SameLine onto
+                 * the status row and let it absorb the slack. */
+                ImGui::SameLine();
+                renderConnectivityBadge(renderer, s);
             }
         }
 
@@ -5959,7 +6335,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             {
                 const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
                 bool myReady = (mySlot && mySlot->connected) ? mySlot->ready : false;
-                bool canReady = clientSimIsMapDownloadComplete(cs);
+                /* Block Ready when the lobby is flagged Ranked but the
+                 * shape doesn't qualify. Ranked-ineligibility doesn't
+                 * matter in SP / LAN where Ranked isn't shown at all. */
+                bool rankedActive = !clientSimIsSinglePlayer(cs) && !clientSimIsLanOnly(cs)
+                                     && clientSimGetLobbyRanked(cs);
+                RankedEligibility readyRe = rankedActive
+                                              ? computeRankedEligibility(cs)
+                                              : RankedEligibility{true, 0, 0, 0};
+                bool rankedBlocksReady = rankedActive && !readyRe.sizesEligible;
+                bool canReady = clientSimIsMapDownloadComplete(cs) && !rankedBlocksReady;
 
                 if (!canReady) ImGui::BeginDisabled();
                 const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
@@ -5975,40 +6360,15 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
                 if (myReady) ImGui::PopStyleColor(3);
                 if (!canReady) ImGui::EndDisabled();
-
-                if (myPlayerNum == 0 && hasTransport && !clientSimIsBalanceProposalActive(cs)) {
-                    bool hasWbnPlayers = false;
-                    uint8_t connectedCount = 0;
-                    for (int j = 0; j < 16; j++) {
-                        const ClientLobbySlot *jSlot = clientSimGetLobbySlot(cs, (BYTE)j);
-                        if (jSlot && jSlot->connected) {
-                            connectedCount++;
-                            if (jSlot->clientFlags & PLAYER_FLAG_WBN_VERIFIED) {
-                                hasWbnPlayers = true;
-                            }
-                        }
-                    }
-                    if (hasWbnPlayers) {
-                        ImGui::SameLine(0, 20);
-                        if (connectedCount < 2) ImGui::BeginDisabled();
-                        if (ImGui::Button(langGetText(STR_DLGLOBBY_BALANCE_TEAMS), ImVec2(120 * s, 0))) {
-                            uint8_t teamSize = (connectedCount > 1) ? (connectedCount / 2) : 1;
-                            clientSimNetSendBalanceRequest(cs, teamSize);
-                        }
-                        if (connectedCount < 2) ImGui::EndDisabled();
-                    }
-                } else if (myPlayerNum == 0 && hasTransport && clientSimIsBalanceProposalActive(cs)) {
-                    ImGui::SameLine(0, 20);
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
-                    if (ImGui::Button(langGetText(STR_DLGLOBBY_APPLY_BALANCE), ImVec2(120 * s, 0))) {
-                        clientSimNetSendBalanceApply(cs);
-                    }
-                    ImGui::PopStyleColor();
-                    ImGui::SameLine(0, 8);
-                    if (ImGui::Button(langGetText(STR_DLGLOBBY_DISMISS), ImVec2(80 * s, 0))) {
-                        clientSimNetSendBalanceDismiss(cs);
-                    }
+                if (rankedBlocksReady &&
+                    ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    rankedShapeTooltip(readyRe);
                 }
+
+                /* Legacy Balance Teams + Apply / Dismiss removed — the
+                 * Balance-from-WBN affordance up top is the only entry
+                 * point, and the server auto-applies WBN's split on
+                 * response (no approval step). */
 
                 ImGui::SameLine(0, 20);
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
@@ -6047,44 +6407,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             float allowRowH = ImGui::GetCursorPosY() - beforeAllowY;
 
             float spacingH = ImGui::GetStyle().ItemSpacing.y;
-            /* Reserve room for the bottom buttons below the map.
-             *   - Always one row for Ready.
-             *   - One extra row for Balance / Apply / Dismiss only when
-             *     it'll actually render: host + transport + at least
-             *     one other WBN-verified player, OR an active balance
-             *     proposal. In SP / LAN that whole branch is skipped,
-             *     so reserving for it pushes Ready below the chat's
-             *     Send button and shrinks the map for no reason. */
-            bool balanceRowReserve = false;
-            if (myPlayerNum == 0 && hasTransport) {
-                if (clientSimIsBalanceProposalActive(cs)) {
-                    balanceRowReserve = true;
-                } else {
-                    int wbnCount = 0;
-                    for (int j = 0; j < 16; j++) {
-                        const ClientLobbySlot *jSlot =
-                            clientSimGetLobbySlot(cs, (BYTE)j);
-                        if (jSlot && jSlot->connected &&
-                            (jSlot->clientFlags & PLAYER_FLAG_WBN_VERIFIED)) {
-                            wbnCount++;
-                        }
-                    }
-                    if (wbnCount >= 1) balanceRowReserve = true;
-                }
-            }
-            /* Reserve EXACTLY the rendered height of the ready footer:
-             *   - one row: FrameHeight
-             *   - two rows: 2*FrameHeight + one ItemSpacing between
-             * (Don't add an extra spacingH on top — the natural
-             * ItemSpacing between MapPanel and the first button row
-             * is already accounted for by ImGui's layout, and the
-             * left column's PlayerPanel→ChatBlock gap matches it.
-             * Over-reserving made MapPanel + Ready end ~2*spacingH
-             * above the chat block's bottom.) */
+            (void)spacingH;
+            /* Footer below the map is now exactly one row for the
+             * Ready button — the legacy Balance Teams / Apply /
+             * Dismiss row was removed (Balance-from-WBN lives next
+             * to the Ranked checkbox up top and the server auto-
+             * applies WBN's split, so there's nothing extra to fit
+             * here any more). The map preview gets the reclaimed
+             * vertical space back. */
             float frameH = ImGui::GetFrameHeight();
-            float readyAreaH = balanceRowReserve
-                             ? (2.0f * frameH + spacingH)
-                             : frameH;
+            float readyAreaH = frameH;
 
             /* Split the remaining vertical space between PlayerPanel
              * (top) and ChatBlock (bottom). The chat's bottom edge
@@ -6517,38 +6849,22 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             {
                 const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
                 bool myReady = (mySlot && mySlot->connected) ? mySlot->ready : false;
-                bool canReady = clientSimIsMapDownloadComplete(cs);
+                /* Block Ready when the lobby is flagged Ranked but the
+                 * shape doesn't qualify. Ranked-ineligibility doesn't
+                 * matter in SP / LAN where Ranked isn't shown at all. */
+                bool rankedActive = !clientSimIsSinglePlayer(cs) && !clientSimIsLanOnly(cs)
+                                     && clientSimGetLobbyRanked(cs);
+                RankedEligibility readyRe = rankedActive
+                                              ? computeRankedEligibility(cs)
+                                              : RankedEligibility{true, 0, 0, 0};
+                bool rankedBlocksReady = rankedActive && !readyRe.sizesEligible;
+                bool canReady = clientSimIsMapDownloadComplete(cs) && !rankedBlocksReady;
 
-                if (myPlayerNum == 0 && hasTransport && !clientSimIsBalanceProposalActive(cs)) {
-                    bool hasWbnPlayers = false;
-                    uint8_t connectedCount = 0;
-                    for (int j = 0; j < 16; j++) {
-                        const ClientLobbySlot *jSlot = clientSimGetLobbySlot(cs, (BYTE)j);
-                        if (jSlot && jSlot->connected) {
-                            connectedCount++;
-                            if (jSlot->clientFlags & PLAYER_FLAG_WBN_VERIFIED) {
-                                hasWbnPlayers = true;
-                            }
-                        }
-                    }
-                    if (hasWbnPlayers) {
-                        if (connectedCount < 2) ImGui::BeginDisabled();
-                        if (ImGui::Button(langGetText(STR_DLGLOBBY_BALANCE_TEAMS), ImVec2(-1, 0))) {
-                            uint8_t teamSize = (connectedCount > 1) ? (connectedCount / 2) : 1;
-                            clientSimNetSendBalanceRequest(cs, teamSize);
-                        }
-                        if (connectedCount < 2) ImGui::EndDisabled();
-                    }
-                } else if (myPlayerNum == 0 && hasTransport && clientSimIsBalanceProposalActive(cs)) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
-                    if (ImGui::Button(langGetText(STR_DLGLOBBY_APPLY_BALANCE), ImVec2(-1, 0))) {
-                        clientSimNetSendBalanceApply(cs);
-                    }
-                    ImGui::PopStyleColor();
-                    if (ImGui::Button(langGetText(STR_DLGLOBBY_DISMISS), ImVec2(-1, 0))) {
-                        clientSimNetSendBalanceDismiss(cs);
-                    }
-                }
+                /* No legacy Balance Teams button in the right column —
+                 * the Balance-from-WBN affordance lives next to the
+                 * Ranked checkbox up top, and the server auto-applies
+                 * WBN's split immediately on response (no Apply /
+                 * Dismiss approval step). */
 
                 if (!canReady) ImGui::BeginDisabled();
                 const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
@@ -6564,6 +6880,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
                 if (myReady) ImGui::PopStyleColor(3);
                 if (!canReady) ImGui::EndDisabled();
+                if (rankedBlocksReady &&
+                    ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    rankedShapeTooltip(readyRe);
+                }
             }
             ImGui::EndGroup(); /* /right column */
         } /* /desktop layout scope (playerPanelW/mapPanelW) */

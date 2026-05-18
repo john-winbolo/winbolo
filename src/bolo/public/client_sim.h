@@ -354,6 +354,12 @@ bool         clientSimIsMapSkipAvailable(const ClientSim *cs);
 bool         clientSimIsMapSkipMyVote(const ClientSim *cs);
 bool         clientSimIsLobbyHiddenMines(const ClientSim *cs);
 bool         clientSimIsBalanceProposalActive(const ClientSim *cs);
+/* SDL_GetTicks() at the most recent non-empty CTRL_BALANCE_PROPOSAL
+ * arrival — used by the lobby's "Teams balanced" status label so the
+ * success state outlives the auto-apply clear publish that follows
+ * the proposal arrival on the same mutex hold. Returns 0 if no
+ * proposal has arrived this session. */
+uint64_t     clientSimGetLastBalanceProposalArrivedMs(const ClientSim *cs);
 bool         clientSimIsLabelOwnTank(const ClientSim *cs);
 buildSelect  clientSimGetCurrentBuildSelect(const ClientSim *cs);
 gameType     clientSimGetLobbyGameType(const ClientSim *cs);
@@ -593,6 +599,18 @@ bool        clientSimGetLobbyAutoLockOnGameStart(const ClientSim *cs);
  * visible to every player (so they can see the ranked badge) but
  * only host/admin may toggle. */
 bool        clientSimGetLobbyRanked(const ClientSim *cs);
+/* Server's authoritative allowNewPlayers flag, mirrored on every client
+ * via CTRL_LOBBY_SETTINGS. The lobby's "Allow New Players: [ ] Now"
+ * checkbox reads this so it reflects real server state rather than the
+ * host's last-clicked intent. */
+bool        clientSimGetLobbyAllowNewPlayers(const ClientSim *cs);
+
+/* True iff the host process has winbolo.net signed in / running. Used
+ * by the lobby UI to hide WBN-only affordances (Balance from WBN) on
+ * remote clients when the host isn't authenticated to WBN — without
+ * this the button would be visible but every click would be dropped
+ * by the server's wbnRunning guard. Mirrored via CTRL_LOBBY_SETTINGS. */
+bool        clientSimGetLobbyWbnAvailable(const ClientSim *cs);
 uint16_t    clientSimGetLobbyServerLocks(const ClientSim *cs);
 
 uint8_t     clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId);

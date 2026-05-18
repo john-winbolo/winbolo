@@ -227,7 +227,8 @@ void transportUdpClientSendLobbyMapUseLocal(Transport *t, uint32_t totalLen,
 void transportUdpClientSendWbnReauth(Transport *t);
 
 /* Request team balance from WBN (host only, enforcement is server-side). */
-void transportUdpClientSendBalanceRequest(Transport *t, uint8_t teamSize);
+void transportUdpClientSendBalanceRequest(Transport *t, uint8_t teamSize,
+                                           bool includeBots);
 
 /* Confirm and apply the current balance proposal. */
 void transportUdpClientSendBalanceApply(Transport *t);

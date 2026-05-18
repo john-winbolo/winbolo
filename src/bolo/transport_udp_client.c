@@ -2036,15 +2036,29 @@ void transportUdpClientSendWbnReauth(Transport *t) {
 
 /* ---- Client balance send functions ---- */
 
-void transportUdpClientSendBalanceRequest(Transport *t, uint8_t teamSize) {
+void transportUdpClientSendBalanceRequest(Transport *t, uint8_t teamSize,
+                                           bool includeBots) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
+    uint8_t buf[PACKET_HEADER_SIZE + 2];
 
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    balanceDebugLog("[BAL XPORT-CLIENT] SendBalanceRequest entry: "
+                    "joinState=%d teamSize=%u includeBots=%d outSeq=%u",
+                    (int)c->joinState, (unsigned)teamSize,
+                    includeBots ? 1 : 0, (unsigned)c->outSequence);
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) {
+        balanceDebugLog("[BAL XPORT-CLIENT] dropping: joinState != CONNECTED (=%d)",
+                        (int)c->joinState);
+        return;
+    }
 
     packHeader(buf, PACKET_BALANCE_REQUEST, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = teamSize;
+    buf[PACKET_HEADER_SIZE]     = teamSize;
+    buf[PACKET_HEADER_SIZE + 1] = includeBots ? 1 : 0;
+    balanceDebugLog("[BAL XPORT-CLIENT] calling udpClientSendTo: %u bytes",
+                    (unsigned)sizeof(buf));
     udpClientSendTo(c, buf, sizeof(buf));
+    balanceDebugLog("[BAL XPORT-CLIENT] udpClientSendTo returned");
 }
 
 void transportUdpClientSendBalanceApply(Transport *t) {

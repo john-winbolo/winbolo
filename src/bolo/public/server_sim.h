@@ -142,6 +142,8 @@ struct BalanceProposal {
   bool requestInFlight;           /* True while the HTTP call is running (prevents duplicate requests) */
   bool broadcastNeeded;           /* True when thread finishes; cleared after first broadcast */
   uint8_t teamSize;               /* Requested team size, passed through to WBN API */
+  bool includeBots;               /* TRUE if bots were sent to WBN and end up in the proposal.
+                                   * FALSE means bots are kicked when the proposal is applied. */
   SDL_AtomicInt shutdownFlag;     /* Set to 1 on shutdown; balance thread checks before accessing sim */
 };
 
@@ -622,6 +624,11 @@ void serverSimSetBalanceBroadcastNeeded(ServerSim *sim, bool needed);
  *  cleared once the worker returns or aborts.
  *********************************************************/
 void serverSimSetBalanceRequestInFlight(ServerSim *sim, bool inFlight);
+
+/* Set after the WBN balance call returns so the APPLY handler knows
+ * whether bots are part of the proposal (TRUE) or should be kicked
+ * before the team assignments are written (FALSE). */
+void serverSimSetBalanceIncludeBots(ServerSim *sim, bool includeBots);
 
 /*********************************************************
  *NAME:          serverSimSetEmptyResetMinutes
@@ -1189,7 +1196,9 @@ SubscriberHandle serverSimRegisterClientSubscriber(ServerSim *sim,
  *********************************************************/
 void serverSimRequestBalanceProposal(ServerSim *sim,
                                      uint8_t totalPlayers,
-                                     uint8_t teamSize);
+                                     uint8_t teamSize,
+                                     const uint8_t *botSlots,
+                                     uint8_t numBotSlots);
 
 /*********************************************************
  *NAME:          serverSimUnregisterSubscriber
@@ -1378,6 +1387,21 @@ void        serverSimSetAutoLockOnGameStart(ServerSim *sim, bool v);
  * flips on, and it also resets every player's ready bit so the host
  * can confirm the new configuration. */
 bool        serverSimGetRanked(const ServerSim *sim);
+
+/* True iff the current lobby shape qualifies as a ranked match —
+ * exactly two teams in use, equal sizes of 1/2/3 connected humans
+ * (1v1, 2v2, 3v3), no bots counted. Independent of whether the
+ * lobby is currently flagged Ranked; callers check both. Used by
+ * the server's PACKET_LOBBY_READY handler to silently drop Ready
+ * requests on ranked lobbies that don't qualify yet, and by the
+ * unit tests to lock the shape rules. */
+bool        serverSimRankedShapeReady(const ServerSim *sim);
+
+/* Setter for the Layout A "Allow New Players: Now" toggle. The
+ * PACKET_LOCK_TOGGLE handler reconciles per-client lock consensus
+ * back into this flag and re-publishes CTRL_LOBBY_SETTINGS so every
+ * client's checkbox reflects the actual server state. */
+void        serverSimSetAllowNewPlayers(ServerSim *sim, bool v);
 void        serverSimSetRanked(ServerSim *sim, bool v);
 
 /* openHost — when true, any connected player has host-level edit

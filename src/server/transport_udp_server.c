@@ -282,16 +282,37 @@ typedef struct {
     ServerSim *sim;
     uint8_t    totalPlayers;
     uint8_t    teamSize;
+    uint8_t    botSlots[MAX_TANKS];   /* bot slots to include; empty if !includeBots */
+    uint8_t    numBotSlots;
+    bool       includeBots;
 } BalanceThreadData;
+
+/* Forward declarations for slot/state publish helpers — defined below
+ * but balanceThreadFunc needs them to auto-apply WBN's split in place
+ * of the old propose-then-approve flow. */
+static void publishLobbySlot(ServerSim *sim, BYTE slot);
+static void publishLobbyStateAll(ServerSim *sim);
 
 /* Background thread: calls WBN balance API (blocks on HTTP) then writes
  * results back under the game mutex so the timer can broadcast them. */
 static int balanceThreadFunc(void *data) {
     BalanceThreadData *btd = (BalanceThreadData *)data;
     ServerSim *sim = btd->sim;
+    bool includeBots = btd->includeBots;
+
+    balanceDebugLog("[BAL THREAD] enter: totalPlayers=%u teamSize=%u "
+                    "numBotSlots=%u includeBots=%d -- about to call WBN",
+                    (unsigned)btd->totalPlayers, (unsigned)btd->teamSize,
+                    (unsigned)btd->numBotSlots, (int)includeBots);
 
     /* This blocks on HTTP — runs outside the game mutex */
-    serverSimRequestBalanceProposal(sim, btd->totalPlayers, btd->teamSize);
+    serverSimRequestBalanceProposal(sim, btd->totalPlayers, btd->teamSize,
+                                     btd->numBotSlots > 0 ? btd->botSlots : NULL,
+                                     btd->numBotSlots);
+
+    balanceDebugLog("[BAL THREAD] WBN call returned; "
+                    "proposal.pending=%d",
+                    (int)serverSimGetBalanceProposal(sim)->pending);
 
     free(btd);
 
@@ -302,11 +323,56 @@ static int balanceThreadFunc(void *data) {
         return 0;
     }
 
-    /* Write results back under the game mutex */
+    /* Write results back under the game mutex. No approval step — the
+     * host already committed to the rebalance by confirming the popup,
+     * so apply WBN's assignments directly and broadcast the new slots. */
     threadsWaitForMutex();
     serverSimSetBalanceRequestInFlight(sim, false);
     if (serverSimGetBalanceProposal(sim)->pending) {
-        serverSimSetBalanceBroadcastNeeded(sim, true);
+        serverSimSetBalanceIncludeBots(sim, includeBots);
+        int i;
+        /* Publish the proposal data first so every client's dispatcher
+         * latches lastBalanceProposalArrivedMs — gives the host's
+         * "Teams balanced" status label a chance to fire even though
+         * we'll clear right after applying. */
+        {
+            ControlEvent propEvt;
+            memset(&propEvt, 0, sizeof(propEvt));
+            propEvt.type = CTRL_BALANCE_PROPOSAL;
+            memcpy(propEvt.u.balanceProposal.teamForSlot,
+                   serverSimGetBalanceProposal(sim)->teamForSlot,
+                   MAX_TANKS);
+            serverSimPublishControl(sim, &propEvt);
+        }
+        /* "Humans only" kicks every bot before applying the human-only
+         * team assignments. */
+        if (!includeBots) {
+            for (i = 0; i < MAX_TANKS; i++) {
+                if (botManagerIsBot((BYTE)i)) {
+                    botManagerRemoveBot(sim, (BYTE)i);
+                    publishLobbySlot(sim, (BYTE)i);
+                }
+            }
+        }
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (serverSimGetBalanceProposal(sim)->teamForSlot[i] != 0) {
+                serverSimSetTeam(sim, (BYTE)i,
+                                 serverSimGetBalanceProposal(sim)->teamForSlot[i]);
+            }
+        }
+        serverSimClearBalanceProposal(sim);
+        /* Publish the cleared proposal so balanceProposalActive flips
+         * back to false on every client — keeps canBalance gating
+         * from staying disabled on the Balance-from-WBN button. */
+        {
+            ControlEvent clrEvt;
+            memset(&clrEvt, 0, sizeof(clrEvt));
+            clrEvt.type = CTRL_BALANCE_PROPOSAL;
+            serverSimPublishControl(sim, &clrEvt);
+        }
+        logAddEvent(log_BalanceApplied, 0, 0, 0, 0, 0, NULL);
+        publishLobbyStateAll(sim);
+        serverSimConsoleMessage("Team balance applied (WBN)");
     }
     threadsReleaseMutex();
     return 0;
@@ -871,8 +937,9 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         }
     }
 
-    /* Check game lock (server admin OR all clients voted to lock) */
-    if (udpServer.gameLocked || serverClientsAllLocked()) {
+    /* Check game lock: server admin command OR host toggled
+     * "Allow New Players: Now" off (mirrored as !sim->allowNewPlayers). */
+    if (udpServer.gameLocked || !serverSimIsAcceptingJoins(sim)) {
         char consoleMsg[128];
         snprintf(consoleMsg, sizeof(consoleMsg),
                  "Join rejected for '%s': Game is locked", name);
@@ -905,9 +972,13 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         incomingCountry[2] = '\0';
     }
 
-    /* Verify WBN token if provided.  Result drives the collision policy
-     * below.  On verification failure we reject without touching the
-     * slot (it's still unconnected at this point). */
+    /* Verify WBN token if provided. Verification failure is no longer
+     * fatal — the client simply joins as a non-WBN player and forfeits
+     * WBN-mediated features (Balance from WBN, ranked credit, ladder
+     * placement). This keeps a game playable when winbolo.net is
+     * unreachable or returns transient errors, instead of locking
+     * everyone out of the lobby. The collision policy below already
+     * treats !incomingIsWBN as the lower-priority class. */
     bool incomingIsWBN = false;
     bool wbnHasSteam = false;
     bool wbnIsSupporter = false;
@@ -917,26 +988,23 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         if (winbolonetServerVerifyToken(wbnToken, (BYTE)slot, errorMsg,
                                         &wbnHasSteam, &wbnIsSupporter)) {
             fprintf(stderr, "[UDP SERVER] Player '%s' verified with WinBolo.net\n", name);
+            balanceDebugLog("[WBN VERIFY] OK player='%s' slot=%d", name, slot);
             incomingIsWBN = true;
         } else {
-            /* Truncate the WBN reason to the per-arg wire cap so
-             * packLocalizedPayload doesn't reject the packet. */
-            char wbnReason[PLAYER_NAME_LEN];
-            /* Pad with two empty args so the reason lands in args.string1
-             * (positional mapping: arg0->playerName, arg1->otherName,
-             * arg2->string1).  STR_REJECT_WBN_VERIFY_FAILED uses {string1}. */
-            const char *wbnArgs[3];
-            fprintf(stderr,
-                    "[UDP SERVER] WinBolo.net verification failed: %s\n",
-                    errorMsg);
-            strncpy(wbnReason, errorMsg, sizeof(wbnReason) - 1);
-            wbnReason[sizeof(wbnReason) - 1] = '\0';
-            wbnArgs[0] = "";
-            wbnArgs[1] = "";
-            wbnArgs[2] = wbnReason;
-            serverSendJoinReject(fromAddr, STR_REJECT_WBN_VERIFY_FAILED, 3,
-                                 wbnArgs);
-            return;
+            /* Degrade to non-WBN join instead of rejecting outright.
+             * The original "WinBolo.net verification failed: <reason>"
+             * message is extended with "Proceeding without WBN.net
+             * features" so the host's console explains both halves
+             * (what broke, and that the lobby keeps running anyway). */
+            char failMsg[256];
+            snprintf(failMsg, sizeof(failMsg),
+                     "WinBolo.net verification failed: %s. Proceeding "
+                     "without WBN.net features.", errorMsg);
+            fprintf(stderr, "[UDP SERVER] %s (player='%s')\n", failMsg, name);
+            balanceDebugLog("[WBN VERIFY] FAILED player='%s' slot=%d reason='%s' "
+                            "— admitting as non-WBN", name, slot, errorMsg);
+            serverSimConsoleMessage(failMsg);
+            incomingIsWBN = false;
         }
     }
 
@@ -2285,41 +2353,44 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_LOCK_TOGGLE: {
-            /* Wire: [header 8] [allow 1] */
+            /* Wire: [header 8] [allow 1].
+             *
+             * Authority model: this is the "Allow New Players: Now"
+             * toggle — host / admin / openHost-empowered clients
+             * unilaterally set the flag for the whole lobby. The
+             * old per-client lock-and-consensus model has been
+             * retired; non-host requests are silently dropped. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 1) {
-                bool allow = buf[PACKET_HEADER_SIZE] != 0;
-                bool wasLocked = serverClientsAllLocked();
-                char msg[128];
-
-                udpServer.clientLocked[clientIdx] = !allow;
-
-                snprintf(msg, sizeof(msg), "%s is now %s players to join.",
-                         udpServer.clients[clientIdx].playerName,
-                         allow ? "allowing" : "not allowing");
-                serverSimConsoleMessage(msg);
-                serverSendServerEnglishBroadcast(sim, msg);
-
-                /* Check if consensus lock state changed */
-                {
-                    bool nowLocked = serverClientsAllLocked();
-                    if (nowLocked && !wasLocked) {
-                        serverSendServerEnglishBroadcast(sim,
-                            "This game is now locked to new players (client lock)");
-                        serverSimConsoleMessage(
-                            "Game locked by client consensus.");
-                        winboloNetSendLock(TRUE);
-                    } else if (!nowLocked && wasLocked) {
-                        serverSendServerEnglishBroadcast(sim,
-                            "This game is now unlocked to new players (client unlock)");
-                        serverSimConsoleMessage(
-                            "Game unlocked by client consensus.");
-                        if (!udpServer.gameLocked) {
-                            winboloNetSendLock(FALSE);
-                        }
-                    }
-                }
+            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 1) break;
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOCK_TOGGLE,
+                              LOBBY_REJECT_NOT_HOST);
+                break;
             }
+            bool allow = buf[PACKET_HEADER_SIZE] != 0;
+            bool prev  = serverSimIsAcceptingJoins(sim);
+            if (prev == allow) break;  /* no-op */
+
+            serverSimSetAllowNewPlayers(sim, allow);
+            /* Keep the per-client lock flag in sync with the actor's
+             * intent for any legacy reader still inspecting it. */
+            udpServer.clientLocked[clientIdx] = !allow;
+
+            char msg[128];
+            snprintf(msg, sizeof(msg),
+                     "%s is now %s players to join.",
+                     udpServer.clients[clientIdx].playerName,
+                     allow ? "allowing" : "not allowing");
+            serverSimConsoleMessage(msg);
+            serverSendServerEnglishBroadcast(sim, msg);
+
+            /* Mirror to winbolo.net's games-list lock state so the
+             * tracker hides/shows the lobby accordingly. */
+            if (!udpServer.gameLocked) {
+                winboloNetSendLock(allow ? FALSE : TRUE);
+            }
+
+            serverSimPublishLobbySettings(sim);
             break;
         }
         case PACKET_ALLIANCE_REQUEST: {
@@ -2422,6 +2493,20 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             if (clientIdx >= 0 && serverSimIsLobbyEnabled(sim) &&
                 len >= PACKET_HEADER_SIZE + 2) {
                 bool ready = buf[PACKET_HEADER_SIZE + 1] != 0;
+
+                /* If the lobby is flagged Ranked, the lobby shape must
+                 * be 1v1 / 2v2 / 3v3 with equal-size human teams before
+                 * anyone is allowed to Ready up. The client mirrors this
+                 * check by disabling the Ready button + tooltip, so we
+                 * just silently drop ready=true requests that don't
+                 * qualify (no LOBBY_REJECT protocol for READY). Ready
+                 * OFF (unready) is always honored. */
+                if (ready && serverSimGetRanked(sim) &&
+                    serverSimGetState(sim) == serverStateLobby &&
+                    !serverSimRankedShapeReady(sim)) {
+                    /* Silently drop — client tooltip explains why. */
+                    break;
+                }
 
                 if (serverSimGetState(sim) == serverStateLobby) {
                     serverSimSetReady(sim, (BYTE)clientIdx, ready);
@@ -2664,7 +2749,14 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 case LST_RANKED:
                     if (valueLen == 1) {
                         bool r = value[0] != 0;
+                        balanceDebugLog("[RANKED SERVER] LST_RANKED received: newValue=%d "
+                                        "clientIdx=%d prevRanked=%d locks=0x%x",
+                                        (int)r, (int)clientIdx,
+                                        (int)serverSimGetRanked(sim),
+                                        (unsigned)serverSimGetServerLocks(sim));
                         serverSimSetRanked(sim, r);
+                        balanceDebugLog("[RANKED SERVER] after setRanked: sim->ranked=%d",
+                                        (int)serverSimGetRanked(sim));
                         if (r) {
                             /* Force AI policy to "none" and clear any
                              * bots that were already in the lobby. */
@@ -3702,11 +3794,22 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_BALANCE_REQUEST: {
-            /* Wire: [header 8] [teamSize 1] */
+            /* Wire: [header 8] [teamSize 1] [includeBots 1] */
             int clientIdx = serverFindClient(fromAddr);
+            const BalanceProposal *bp = serverSimGetBalanceProposal(sim);
+            balanceDebugLog("[BAL SERVER] received PACKET_BALANCE_REQUEST: "
+                            "clientIdx=%d lobbyEnabled=%d state=%d len=%d "
+                            "requestInFlight=%d pending=%d winbolonetIsRunning=%d",
+                            clientIdx,
+                            (int)serverSimIsLobbyEnabled(sim),
+                            (int)serverSimGetState(sim),
+                            (int)len,
+                            (int)bp->requestInFlight,
+                            (int)bp->pending,
+                            (int)winbolonetIsRunning());
             if (clientIdx == 0 && serverSimIsLobbyEnabled(sim) &&
                 serverSimGetState(sim) == serverStateLobby &&
-                len >= PACKET_HEADER_SIZE + 1 &&
+                len >= PACKET_HEADER_SIZE + 2 &&
                 !serverSimGetBalanceProposal(sim)->requestInFlight &&
                 !serverSimGetBalanceProposal(sim)->pending &&
                 winbolonetIsRunning()) {
@@ -3714,22 +3817,54 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 if (btd) {
                     SDL_Thread *t;
                     int i;
+                    memset(btd, 0, sizeof(*btd));
                     btd->sim = sim;
                     btd->teamSize = buf[PACKET_HEADER_SIZE];
+                    btd->includeBots = (buf[PACKET_HEADER_SIZE + 1] != 0);
                     btd->totalPlayers = 0;
+                    btd->numBotSlots = 0;
                     for (i = 0; i < MAX_TANKS; i++) {
-                        if (serverSimIsPlayerConnected(sim, i)) btd->totalPlayers++;
+                        if (!serverSimIsPlayerConnected(sim, i)) continue;
+                        btd->totalPlayers++;
+                        /* Include bot slots in the WBN request only when
+                         * the caller asked for "Bots included". When
+                         * !includeBots the bots are kicked at APPLY time
+                         * and don't need to be skill-placed. */
+                        if (btd->includeBots && botManagerIsBot((BYTE)i)) {
+                            btd->botSlots[btd->numBotSlots++] = (uint8_t)i;
+                        }
                     }
+                    balanceDebugLog("[BAL SERVER] dispatching balance thread: "
+                                    "totalPlayers=%u teamSize=%u includeBots=%d numBotSlots=%u",
+                                    (unsigned)btd->totalPlayers,
+                                    (unsigned)btd->teamSize,
+                                    (int)btd->includeBots,
+                                    (unsigned)btd->numBotSlots);
                     serverSimSetBalanceRequestInFlight(sim, true);
                     t = SDL_CreateThread(balanceThreadFunc, "WbnBalance", btd);
                     if (t) {
                         SDL_DetachThread(t);
+                        balanceDebugLog("[BAL SERVER] balance thread created and detached");
                     } else {
                         serverSimSetBalanceRequestInFlight(sim, false);
                         free(btd);
+                        balanceDebugLog("[BAL SERVER] FAILED to create balance thread");
                         serverSimConsoleMessage("Failed to start balance thread");
                     }
+                } else {
+                    balanceDebugLog("[BAL SERVER] dropped balance request: malloc(BalanceThreadData) failed");
                 }
+            } else {
+                balanceDebugLog("[BAL SERVER] dropped balance request: guards failed "
+                                "(clientIdx==0?%d lobbyEnabled?%d state==lobby?%d len>=10?%d "
+                                "!requestInFlight?%d !pending?%d wbnRunning?%d)",
+                                (int)(clientIdx == 0),
+                                (int)serverSimIsLobbyEnabled(sim),
+                                (int)(serverSimGetState(sim) == serverStateLobby),
+                                (int)(len >= PACKET_HEADER_SIZE + 2),
+                                (int)!serverSimGetBalanceProposal(sim)->requestInFlight,
+                                (int)!serverSimGetBalanceProposal(sim)->pending,
+                                (int)winbolonetIsRunning());
             }
             break;
         }
@@ -3740,6 +3875,18 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 serverSimGetState(sim) == serverStateLobby &&
                 serverSimGetBalanceProposal(sim)->pending) {
                 int i;
+                /* If the request was "humans only" (includeBots=false),
+                 * kick every bot before writing team assignments — the
+                 * caller has signed up for a clean human-only matchup
+                 * and the proposal contains no team for those slots. */
+                if (!serverSimGetBalanceProposal(sim)->includeBots) {
+                    for (i = 0; i < MAX_TANKS; i++) {
+                        if (botManagerIsBot((BYTE)i)) {
+                            botManagerRemoveBot(sim, (BYTE)i);
+                            publishLobbySlot(sim, (BYTE)i);
+                        }
+                    }
+                }
                 for (i = 0; i < MAX_TANKS; i++) {
                     if (serverSimGetBalanceProposal(sim)->teamForSlot[i] != 0) {
                         serverSimSetTeam(sim, (BYTE)i, serverSimGetBalanceProposal(sim)->teamForSlot[i]);

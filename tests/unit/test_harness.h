@@ -57,6 +57,8 @@ int run_server_text_codec_via_chat_wire(void);
 int run_md5_rfc1321_vectors(void);
 int run_md5_streaming_matches_oneshot(void);
 int run_md5_block_boundaries(void);
+int run_ranked_flag_persists_with_one_player(void);
+int run_ranked_shape_gate(void);
 
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map
  * with one player added at slot 0. Caller is responsible for

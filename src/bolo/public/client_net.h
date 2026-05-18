@@ -172,7 +172,17 @@ void clientSimNetSendMapSkipVote(ClientSim *cs);
  * GAME_VOTE_KIND_SURRENDER; toggleMode = GAME_VOTE_TOGGLE_NO/YES/OPEN_ONLY. */
 void clientSimNetSendGameVoteToggle(ClientSim *cs,
                                     uint8_t kind, uint8_t toggleMode);
-void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize);
+/* `includeBots`: when true the server hands every bot slot to WBN
+ * with a non-WBN-player sentinel so bots end up assigned to one of
+ * the two balanced teams. When false bots are removed from the
+ * lobby as the proposal is applied (humans-only matchup). */
+void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize,
+                                    bool includeBots);
+/* Debug: append a printf-style line to ./balance.log in cwd. Lazily
+ * opens the file on first call, flushes after every write. Safe to
+ * call from any thread (single FILE* + best-effort, no mutex). */
+void balanceDebugLog(const char *fmt, ...);
+
 void clientSimNetSendBalanceApply(ClientSim *cs);
 void clientSimNetSendBalanceDismiss(ClientSim *cs);
 void clientSimNetSendWbnReauth(ClientSim *cs);

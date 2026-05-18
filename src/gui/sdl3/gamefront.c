@@ -227,6 +227,14 @@ int gameFrontDialogY = -1;
 /* Dialog states */
 openingStates dlgState = openStart;
 
+/* Remembered "entry path" used to reach the lobby — set whenever the
+ * state machine transitions to openFinished from one of the Internet
+ * / LAN browser or manual-setup screens. After the user leaves the
+ * lobby, gameFrontDialogs() consumes this once so the welcome screen
+ * is skipped and we drop back to the same browser the user came from.
+ * Defaults to openWelcome so first-launch behaviour is unchanged. */
+static openingStates s_lobbyReturnState = openWelcome;
+
 bool isServer = FALSE;
 
 bool useAutoslow;
@@ -247,6 +255,17 @@ ClientSim *humanSim = NULL;
  * tracker / NAT keepalive / UPnP at host bind time so an SP / LAN
  * host doesn't dial out. */
 static bool s_isLanOnly = FALSE;
+
+/* Set TRUE by the openUdpJoin error path when a join attempt fails
+ * (server NACK'd the JOIN_REQUEST, name taken, password wrong, server
+ * full, etc.). The outer dialog loop's openLan / openInternet /
+ * openUdp / openLanManual / openInternetManual cases consult this
+ * flag before applying the "fall back to Welcome if the dialog
+ * exited without picking a state" guard — when set, the user
+ * deliberately wants to stay on the list/manual-entry dialog so
+ * they can pick a different game / tweak their name. Cleared the
+ * moment the outer loop notices it. */
+static bool s_joinAttemptFailed = FALSE;
 
 /* Server-authoritative single-player state */
 static ServerSim *spServerSim = NULL;
@@ -713,6 +732,18 @@ static bool gameFrontDialogs(void) {
   WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[BgGame] hasBg=%d", hasBg);
   if (hasBg) bgGameSetShared(&bg);
 
+  /* Re-entry path after the user leaves a lobby: if the previous
+   * gameFrontSetDlgState recorded an entry browser/manual screen,
+   * jump straight back to it instead of falling through to welcome.
+   * Consumed once. */
+  if (s_lobbyReturnState != openWelcome) {
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[gameFront] resuming from lobby exit, dlgState %d -> %d",
+                (int)dlgState, (int)s_lobbyReturnState);
+    dlgState = s_lobbyReturnState;
+    s_lobbyReturnState = openWelcome;
+  }
+
   while (done == FALSE) {
     switch (dlgState) {
     case openStart:
@@ -748,8 +779,16 @@ static bool gameFrontDialogs(void) {
       db->udpSetupShow();
       /* dlgState already updated by gameFrontSetDlgState inside the dialog
        * (OnJoin/OnNew/OnCancel all call gameFrontSetDlgState before EndModal).
-       * If the dialog stub didn't change state, fall back to welcome. */
-      if (dlgState == prev) dlgState = openWelcome;
+       * If the dialog stub didn't change state, fall back to welcome
+       * — UNLESS a join attempt failed and the error path explicitly
+       * routed us back here. In that case the user has intentionally
+       * stayed on the setup screen to tweak their name / address and
+       * the welcome-fallback would just throw away their context. */
+      if (s_joinAttemptFailed) {
+        s_joinAttemptFailed = FALSE;
+      } else if (dlgState == prev) {
+        dlgState = openWelcome;
+      }
       break;
     }
     case openSetup:
@@ -771,7 +810,14 @@ static bool gameFrontDialogs(void) {
       openingStates prev = dlgState;
       s_isLanOnly = FALSE;
       db->gameBrowserShow(langGetText(STR_GAMEFRONT_TRACKERFINDER_TITLE), TRUE);
-      if (dlgState == prev) dlgState = openWelcome;
+      /* See note in openLanManual case — preserve the browser when a
+       * join attempt was rejected so the user can pick a different
+       * game / change their name. */
+      if (s_joinAttemptFailed) {
+        s_joinAttemptFailed = FALSE;
+      } else if (dlgState == prev) {
+        dlgState = openWelcome;
+      }
       break;
     }
     case openLan: {
@@ -779,7 +825,11 @@ static bool gameFrontDialogs(void) {
       openingStates prev = dlgState;
       s_isLanOnly = TRUE;
       db->gameBrowserShow(langGetText(STR_GAMEFRONT_LANFINDER_TITLE), FALSE);
-      if (dlgState == prev) dlgState = openWelcome;
+      if (s_joinAttemptFailed) {
+        s_joinAttemptFailed = FALSE;
+      } else if (dlgState == prev) {
+        dlgState = openWelcome;
+      }
       break;
     }
     case openTutorial:
@@ -956,6 +1006,24 @@ bool gameFrontSetDlgState(openingStates newState) {
               "[DIAG] gameFrontSetDlgState: %d -> %d (humanSim=%p spServerSim=%p)",
               (int)dlgState, (int)newState, (void *)humanSim, (void *)spServerSim);
 
+  /* Capture the entry path when committing to a game/lobby so the
+   * post-lobby re-entry can skip the welcome screen. Only the browser
+   * / manual-connect screens count — single-player / tutorial / map
+   * editor / settings flows should return to welcome as before. */
+  if (newState == openUdpJoin || newState == openFinished) {
+    switch (dlgState) {
+      case openInternet:
+      case openInternetManual:
+      case openLan:
+      case openLanManual:
+        s_lobbyReturnState = dlgState;
+        break;
+      default:
+        s_lobbyReturnState = openWelcome;
+        break;
+    }
+  }
+
   if ((dlgState == openInternet || dlgState == openLan || dlgState == openUdp ||
        dlgState == openLanManual || dlgState == openInternetManual) &&
       newState == openUdpJoin) {
@@ -985,6 +1053,7 @@ bool gameFrontSetDlgState(openingStates newState) {
       humanSim = NULL;
       gameFrontShutdownServer();
       dlgState = prevState;
+      s_joinAttemptFailed = TRUE;
       returnValue = FALSE;
     } else {
       /* Wait for join handshake. Break early if we enter the lobby
@@ -1111,6 +1180,7 @@ bool gameFrontSetDlgState(openingStates newState) {
         humanSim = NULL;
         gameFrontShutdownServer();
         dlgState = prevState;
+        s_joinAttemptFailed = TRUE;
         returnValue = FALSE;
       }
     }

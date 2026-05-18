@@ -205,6 +205,10 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   cs->isLanOnly          = savedIsLanOnly;
   cs->myPlayerNum = 0;
   cs->sim.viewPlayer = 0;
+  /* Default to "joins accepted" so the UI renders a checked "Now"
+   * box on the very first frame, before the server's first
+   * CTRL_LOBBY_SETTINGS broadcast lands and overwrites this. */
+  cs->lobbyAllowNewPlayers = true;
 
   /* Sentinel value for "no batch start assigned" — clients never run the
    * batch placement, but startsGetStart still checks the slot when bots /
@@ -1033,6 +1037,9 @@ bool clientSimIsMapSkipAvailable(const ClientSim *cs)     { return cs->mapSkipAv
 bool clientSimIsMapSkipMyVote(const ClientSim *cs)        { return cs->mapSkipMyVote; }
 bool clientSimIsLobbyHiddenMines(const ClientSim *cs)     { return cs->lobbyHiddenMines; }
 bool clientSimIsBalanceProposalActive(const ClientSim *cs){ return cs->balanceProposalActive; }
+uint64_t clientSimGetLastBalanceProposalArrivedMs(const ClientSim *cs) {
+    return cs ? cs->lastBalanceProposalArrivedMs : 0;
+}
 bool clientSimIsLabelOwnTank(const ClientSim *cs)         { return cs->labelOwnTank; }
 
 buildSelect clientSimGetCurrentBuildSelect(const ClientSim *cs) { return cs->currentBuildSelect; }
@@ -1261,6 +1268,8 @@ void clientSimSetIsLanOnly(ClientSim *cs, bool v)               { cs->isLanOnly 
 bool     clientSimGetLobbyOpenHost(const ClientSim *cs)              { return cs->lobbyOpenHost; }
 bool     clientSimGetLobbyAutoLockOnGameStart(const ClientSim *cs)   { return cs->lobbyAutoLockOnGameStart; }
 bool     clientSimGetLobbyRanked(const ClientSim *cs)                { return cs ? cs->lobbyRanked : false; }
+bool     clientSimGetLobbyAllowNewPlayers(const ClientSim *cs)       { return cs ? cs->lobbyAllowNewPlayers : true; }
+bool     clientSimGetLobbyWbnAvailable(const ClientSim *cs)          { return cs ? cs->lobbyWbnAvailable : false; }
 uint16_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
 
 uint8_t clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId) {

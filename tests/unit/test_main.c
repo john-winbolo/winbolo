@@ -42,6 +42,8 @@ static const UnitTestEntry s_tests[] = {
     { "md5_rfc1321_vectors",                     run_md5_rfc1321_vectors                     },
     { "md5_streaming_matches_oneshot",           run_md5_streaming_matches_oneshot           },
     { "md5_block_boundaries",                    run_md5_block_boundaries                    },
+    { "ranked_flag_persists_with_one_player",    run_ranked_flag_persists_with_one_player    },
+    { "ranked_shape_gate",                       run_ranked_shape_gate                       },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 
