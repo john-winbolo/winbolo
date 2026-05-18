@@ -5377,7 +5377,7 @@ bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
     if (!fp) return false;
     if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return false; }
     long sz = ftell(fp);
-    if (sz <= 0 || sz > 1024 * 1024) { fclose(fp); return false; }
+    if (sz <= 0 || (size_t)sz > LOBBY_MAP_UPLOAD_MAX_BYTES) { fclose(fp); return false; }
     if (fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return false; }
     uint8_t *buf = (uint8_t *)malloc((size_t)sz);
     if (!buf) { fclose(fp); return false; }

@@ -416,7 +416,7 @@ static void lobbyUploadKick(ClientSim *cs, const char *srcPath) {
 
     size_t fileLen = 0;
     void *fileData = SDL_LoadFile(srcPath, &fileLen);
-    if (!fileData || fileLen == 0 || fileLen > 1u * 1024u * 1024u) {
+    if (!fileData || fileLen == 0 || fileLen > LOBBY_MAP_UPLOAD_MAX_BYTES) {
         if (fileData) SDL_free(fileData);
         return;
     }
@@ -1515,10 +1515,10 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
                 "[WBN-MP] another upload is in flight; ignoring pick");
             return;
         }
-        if (res.bytes.size() > 1u * 1024u * 1024u) {
+        if (res.bytes.size() > LOBBY_MAP_UPLOAD_MAX_BYTES) {
             clientSimSetLobbyWbnPreviewStatus(cs, 3);
             clientSimSetLobbyWbnPreviewErrMsg(cs,
-                "Map exceeds 1MB upload cap");
+                "Map exceeds 64KB upload cap");
             return;
         }
         lobbyUploadFree();

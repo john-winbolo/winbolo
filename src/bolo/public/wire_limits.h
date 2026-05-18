@@ -29,6 +29,20 @@
  * WINBOLO_VERSION is supplied as a compile definition by CMake. */
 #define STRVER WINBOLO_VERSION
 
+/* Maximum bytes accepted by the lobby map-upload path
+ * (PACKET_LOBBY_MAP_UPLOAD_BEGIN and PACKET_LOBBY_MAP_USE_LOCAL). The
+ * .map RLE format encodes a fully-pathological map (every playable
+ * cell different from its neighbour, all 215 playable rows populated)
+ * in roughly 27 KiB; a fully-pathological 256×256 grid maxes out
+ * around 37 KiB. 64 KiB therefore accepts every legitimate map with
+ * comfortable headroom for editor quirks while shrinking the
+ * attacker's working set ~16× compared with the historical 1 MiB
+ * cap. Enforced on the wire by transport_udp_server.c (UPLOAD_BEGIN
+ * and USE_LOCAL handlers), by serverSimReadMapFile, and pre-flighted
+ * client-side in imgui_lobby.cpp. Verified by the unit test
+ * upload_cap_enforced. */
+#define LOBBY_MAP_UPLOAD_MAX_BYTES (64u * 1024u)
+
 /* ServerLocks bitmask — sent in extended PACKET_LOBBY_STATE. Set by
  * bolod CLI flags (--lock-game-type etc); never changes after server
  * startup. Hosts cannot modify locks; clients render matching settings

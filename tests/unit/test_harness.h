@@ -59,6 +59,7 @@ int run_md5_streaming_matches_oneshot(void);
 int run_md5_block_boundaries(void);
 int run_ranked_flag_persists_with_one_player(void);
 int run_ranked_shape_gate(void);
+int run_upload_cap_enforced(void);
 
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map
  * with one player added at slot 0. Caller is responsible for

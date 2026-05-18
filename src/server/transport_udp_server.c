@@ -231,16 +231,15 @@ static struct {
 
     /* Per-client map upload state. clientUploadActive=true between
      * PACKET_LOBBY_MAP_UPLOAD_BEGIN and the final write-out at
-     * MAP_UPLOAD_DONE. clientUploadBuf grows up to UPLOAD_MAX_BYTES;
-     * clientUploadHave tracks the highest contiguous byte received. */
+     * MAP_UPLOAD_DONE. clientUploadBuf grows up to
+     * LOBBY_MAP_UPLOAD_MAX_BYTES; clientUploadHave tracks the highest
+     * contiguous byte received. */
     bool     clientUploadActive[MAX_TANKS];
     uint32_t clientUploadTotal[MAX_TANKS];
     uint32_t clientUploadHave[MAX_TANKS];
     uint8_t *clientUploadBuf[MAX_TANKS];
     char     clientUploadName[MAX_TANKS][128];
 } udpServer;
-
-#define UPLOAD_MAX_BYTES (1u * 1024u * 1024u)
 
 /* Public-address override populated by transportUdpServerSetPublicAddress
  * once libplum negotiates a UPnP/NAT-PMP/PCP mapping.  When non-empty the
@@ -3194,7 +3193,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     nameSafe = false;
                 }
             }
-            if (totalLen == 0 || totalLen > UPLOAD_MAX_BYTES || !nameSafe) {
+            if (totalLen == 0 || totalLen > LOBBY_MAP_UPLOAD_MAX_BYTES || !nameSafe) {
                 SEND_USE_LOCAL_NACK();
                 break;
             }
@@ -3282,7 +3281,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             uint8_t nameLen = buf[PACKET_HEADER_SIZE + 4];
             if (nameLen == 0 || nameLen > 127 ||
                 len < PACKET_HEADER_SIZE + 5 + nameLen ||
-                totalLen == 0 || totalLen > UPLOAD_MAX_BYTES) {
+                totalLen == 0 || totalLen > LOBBY_MAP_UPLOAD_MAX_BYTES) {
                 uint8_t ack[PACKET_HEADER_SIZE + 1];
                 packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
                 ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
