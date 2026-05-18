@@ -612,6 +612,12 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   lua_pushboolean(L, debug_mode);
   lua_setglobal(L, "BRAIN_DEBUG_MODE");
 
+  /* print2 mirrors BRAIN_DEBUG_MODE: writes the per-tick log only in
+   * debug mode. The Lua side gates every print2 call on this so opt
+   * builds and non-debug runs pay zero I/O cost. */
+  lua_pushboolean(L, debug_mode);
+  lua_setglobal(L, "_PRINT2_ENABLED");
+
   lua_pushboolean(L, s_profile);
   lua_setglobal(L, "BRAIN_PROFILE");
 
@@ -944,6 +950,10 @@ void luaBrainInstanceSetDebugMode(LuaBrainInstance *inst, bool enabled) {
   if (!inst || !inst->L) return;
   lua_pushboolean(inst->L, enabled);
   lua_setglobal(inst->L, "BRAIN_DEBUG_MODE");
+  /* Keep print2 gate in sync with debug mode (set initially in instance
+   * create; updated here so the BrainTest toggle flips it live). */
+  lua_pushboolean(inst->L, enabled);
+  lua_setglobal(inst->L, "_PRINT2_ENABLED");
 }
 
 LuaBrainSetting *luaBrainInstanceGetSettings(LuaBrainInstance *inst,
