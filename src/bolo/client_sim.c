@@ -604,7 +604,12 @@ void clientSimAdvancePredictedShells(ClientSim *cs) {
         if (p == cs->interpCtx.localPlayer) continue;
         if (!interpIsAlive(&cs->interpCtx, p)) continue;
         if (interpGetPosition(&cs->interpCtx, p, 1.0f, &tkX, &tkY, &tkAngle, &tkOnBoat)) {
-          if (abs((int)newX - (int)tkX) < 128 && abs((int)newY - (int)tkY) < 128) {
+          /* Hit-circle test — one-tile-diameter circle centered on
+           * the other tank's interpolated position. See
+           * TANK_HIT_RADIUS in internal/tank.h. */
+          int dx = (int)newX - (int)tkX;
+          int dy = (int)newY - (int)tkY;
+          if ((dx * dx + dy * dy) < TANK_HIT_RADIUS_SQUARED) {
             tankHit = true;
           }
         }
