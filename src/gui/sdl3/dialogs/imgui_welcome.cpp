@@ -27,11 +27,8 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
-#ifndef NDEBUG
-#include "imgui_markdown.h"
-#endif
-#if !defined(NDEBUG) && !BOLO_MOBILE
-#include "../news_image_cache.h"
+#if !BOLO_MOBILE
+#include "imgui_news.h"
 #endif
 
 extern "C" {
@@ -147,36 +144,6 @@ static void composeShimmerFrame(SDL_Renderer *r, SDL_Texture *target,
     SDL_SetTextureBlendMode(logo, prevTexBlend);
     SDL_SetRenderTarget(r, prevTarget);
 }
-
-#if !defined(NDEBUG) && !BOLO_MOBILE
-/* Markdown image callback: route URL through the WBN-allowlisted
- * image cache. While the fetch is pending or the URL was rejected,
- * return isValid=false so the upstream renderer falls back to its
- * "( Image <url> not loaded )" alt-text path. */
-static ImGui::MarkdownImageData newsDebugImageCallback(
-    ImGui::MarkdownLinkCallbackData data) {
-    if (data.isImage == false || data.linkLength <= 0) {
-        return ImGui::MarkdownImageData{};
-    }
-    /* data.link is not NUL-terminated; copy out the linkLength bytes. */
-    char url[2048];
-    int n = data.linkLength;
-    if (n >= (int)sizeof(url)) n = (int)sizeof(url) - 1;
-    SDL_memcpy(url, data.link, (size_t)n);
-    url[n] = '\0';
-    SDL_Texture *tex = newsImageGet(url);
-    if (!tex) return ImGui::MarkdownImageData{};
-
-    float w = 0.0f, h = 0.0f;
-    SDL_GetTextureSize(tex, &w, &h);
-    ImGui::MarkdownImageData out;
-    out.isValid         = true;
-    out.useLinkCallback = false;
-    out.user_texture_id = (ImTextureID)tex;
-    out.size            = ImVec2(w, h);
-    return out;
-}
-#endif
 
 extern "C" int imguiWelcomeShow(void) {
     SDL_Window *window = sdl3DrawGetWindow();
@@ -371,8 +338,14 @@ extern "C" int imguiWelcomeShow(void) {
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-#ifndef NDEBUG
-        static bool sShowMarkdownDebug = false;
+#if !BOLO_MOBILE
+        /* Single kick per program run — newsPopupKickFetch is idempotent
+         * but the static guard avoids the call entirely once we've kicked. */
+        static bool sNewsKicked = false;
+        if (!sNewsKicked) {
+            newsPopupKickFetch();
+            sNewsKicked = true;
+        }
 #endif
 
         /* Top-right logo + ghost menu column. Logo is purely decorative. */
@@ -428,10 +401,10 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, ghostTextAlpha));
 
             const bool showTutorial = gameFrontGetShowTutorialButton();
-            /* rawLabel, when non-null, is used as the button text and signals
-             * a non-exit action (the click handler sets a flag instead of
-             * setting result/running). Existing entries leave it value-
-             * initialized to nullptr. */
+            /* rawLabel, when non-null, is used as the button text instead of
+             * langGetText(labelId) and signals a non-exit action: the click
+             * handler dispatches by rawLabel string rather than setting
+             * result/running. */
             struct { langid labelId; int code; bool show; const char* rawLabel; } miniModes[] = {
                 { STR_DLGSETTINGS_TUTORIAL, RESULT_TUTORIAL,     showTutorial },
                 { STR_DLGWELCOME_SINGLE,    RESULT_SINGLEPLAYER, true },
@@ -443,10 +416,8 @@ extern "C" int imguiWelcomeShow(void) {
 #endif
                 { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true },
 #if !BOLO_MOBILE
+                { (langid)0,                0,                   true, "News" },
                 { STR_DLGOPENING_BUTTON2,   RESULT_QUIT,         true },
-#endif
-#ifndef NDEBUG
-                { (langid)0,                0,                   true, "Markdown debug" },
 #endif
             };
             int miniCount = sizeof(miniModes) / sizeof(miniModes[0]);
@@ -467,10 +438,9 @@ extern "C" int imguiWelcomeShow(void) {
                     : langGetText(miniModes[i].labelId);
                 SDL_snprintf(miniLabel, sizeof(miniLabel), "%s##mini", labelText);
                 if (ImGui::Button(miniLabel, ImVec2(miniBtnW, miniBtnH))) {
-#ifndef NDEBUG
-                    if (miniModes[i].rawLabel) {
-                        sShowMarkdownDebug = true;
-                        ImGui::OpenPopup("Markdown debug");
+#if !BOLO_MOBILE
+                    if (miniModes[i].rawLabel && SDL_strcmp(miniModes[i].rawLabel, "News") == 0) {
+                        newsPopupOpenManual();
                     } else
 #endif
                     {
@@ -479,6 +449,20 @@ extern "C" int imguiWelcomeShow(void) {
                     }
                 }
                 imguiHandOnHover();
+#if !BOLO_MOBILE
+                /* Unread dot on the News button when fresh items exist. */
+                if (miniModes[i].rawLabel &&
+                    SDL_strcmp(miniModes[i].rawLabel, "News") == 0 &&
+                    newsPopupHasUnread()) {
+                    ImVec2 itemMin = ImGui::GetItemRectMin();
+                    ImVec2 itemMax = ImGui::GetItemRectMax();
+                    float dotR = 4.0f * s;
+                    ImVec2 dotCenter(itemMax.x - dotR - 6.0f * s,
+                                     (itemMin.y + itemMax.y) * 0.5f);
+                    ImGui::GetWindowDrawList()->AddCircleFilled(
+                        dotCenter, dotR, IM_COL32(220, 60, 60, 230));
+                }
+#endif
                 if (hovered) {
                     ImGui::PopStyleColor();
                 }
@@ -493,41 +477,11 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PopStyleVar(1);
         }
 
-#ifndef NDEBUG
-        /* Scaffolding for the news/markdown renderer. The button above opens
-         * this modal which feeds a hardcoded blob through ImGui::Markdown to
-         * confirm the wiring. Removed when the real news popup lands. */
-        if (sShowMarkdownDebug) {
-            ImGui::SetNextWindowSize(ImVec2((float)winW * 0.6f, (float)winH * 0.6f),
-                                     ImGuiCond_Appearing);
-            if (ImGui::BeginPopupModal("Markdown debug", &sShowMarkdownDebug,
-                                       ImGuiWindowFlags_NoSavedSettings)) {
-                static const char kDebugMd[] =
-                    "# Markdown debug\n"
-                    "\n"
-                    "A plain paragraph that wraps across the modal width so the "
-                    "renderer's line breaker has something to chew on.\n"
-                    "\n"
-                    "Inline **bold** and *italic* should both render.\n"
-                    "\n"
-                    "Link: [winbolo.net](https://www.winbolo.net)\n"
-                    "\n"
-                    "![Test image](https://www.winbolo.net/images/titleorig.png)\n"
-                    "\n"
-                    "![Should not load](https://attacker.example/track.png)\n";
-                ImGui::MarkdownConfig cfg;
 #if !BOLO_MOBILE
-                cfg.imageCallback = &newsDebugImageCallback;
-#endif
-                ImGui::Markdown(kDebugMd, sizeof(kDebugMd) - 1, cfg);
-                ImGui::Separator();
-                if (ImGui::Button("Close")) {
-                    sShowMarkdownDebug = false;
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::EndPopup();
-            }
-        }
+        /* Drive the news popup state machine. Renders the consent dialog
+         * or the news modal when either is open, otherwise polls the
+         * fetch handle and decides whether to auto-open. */
+        newsPopupTick();
 #endif
 
         /* Play/Pause button — bottom-left */
