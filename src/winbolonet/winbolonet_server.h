@@ -63,26 +63,6 @@ typedef struct BalanceProposal BalanceProposal;
 bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers);
 
 /*********************************************************
-*NAME:          winbolonetServerVerifyToken
-*PURPOSE:
-* Called by the server to verify a joining player's WBN
-* auth token via POST /api/v1/client/join. Stores the
-* resulting player_key at the given player slot.
-* Returns TRUE on success.
-*
-*ARGUMENTS:
-* token       - WBN auth token from the join request
-* playerNum   - Player slot number
-* errorMsg    - Buffer for error message on failure
-* hasSteam    - Output: set to TRUE if player has linked Steam
-* isSupporter - Output: set to TRUE iff the WBN response declares this
-*               account as a Supporter (currently always FALSE — DLC field
-*               not yet exposed by WBN).
-*********************************************************/
-bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg,
-                                 bool *hasSteam, bool *isSupporter);
-
-/*********************************************************
 *NAME:          winboloNetVerifyClientKey
 *PURPOSE:
 * Validates a player_key received on the wire via POST
@@ -101,8 +81,7 @@ bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorM
 *               a linked Steam identity
 * isSupporter - Output: set TRUE iff the WBN response declares
 *               Supporter status (currently always FALSE —
-*               DLC field not yet exposed by WBN, mirrors
-*               winbolonetServerVerifyToken semantics).
+*               DLC field not yet exposed by WBN).
 *********************************************************/
 bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter);
 
