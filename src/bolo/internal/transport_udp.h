@@ -368,6 +368,15 @@ BYTE transportUdpServerGetMaxPlayers(void);
  * Disconnects clients that haven't sent packets within CLIENT_TIMEOUT_TICKS. */
 void transportUdpServerCheckTimeouts(struct ServerSim *sim);
 
+/* Returns true if any flag in `active` (MAX_TANKS-sized boolean
+ * array) is set for an index other than `exceptIdx`. Pure
+ * function — no globals, no side effects. Used by the
+ * UPLOAD_BEGIN and USE_LOCAL handlers to single-thread map
+ * uploads through the sim's lone preview slot: letting two
+ * clients race purely produces data-loss UX. Public so unit
+ * tests can verify the predicate without seeding udpServer. */
+bool lobbyAnyOtherUploadActive(const bool *active, int exceptIdx);
+
 /* Reset per-client and per-slot state for a fresh game.  Marks every
  * connected client as needing a player-list refresh, flags map download
  * complete, and clears reliable / map event queue sequence numbers for
