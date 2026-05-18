@@ -103,6 +103,9 @@ bool clientLoadMap(ClientSim *csPtr, char *fileName, gameType game, bool hiddenM
       if (bolo_steam_has_supporter_dlc()) selfFlags |= PLAYER_FLAG_SUPPORTER;
 
       clientSimSetupSelf(csPtr, 0, playerName, selfType, selfFlags);
+      /* Tank exists now — push per-tank user preferences before any
+       * gameplay starts. See frontend.h. */
+      frontEndApplyLocalTankPrefs(csPtr);
 
       { BYTE sh, mi, ar, tr;
         tankGetStats(&MY_TANK(csPtr), &sh, &mi, &ar, &tr);
@@ -152,6 +155,8 @@ bool clientLoadCompressedMap(ClientSim *csPtr, BYTE *buff, int buffLen, const ch
       if (bolo_steam_has_supporter_dlc()) selfFlags |= PLAYER_FLAG_SUPPORTER;
 
       clientSimSetupSelf(csPtr, playerNum, playerName, selfType, selfFlags);
+      /* Tank exists now — push per-tank user preferences. See frontend.h. */
+      frontEndApplyLocalTankPrefs(csPtr);
 
       { BYTE sh, mi, ar, tr;
         tankGetStats(&MY_TANK(csPtr), &sh, &mi, &ar, &tr);
