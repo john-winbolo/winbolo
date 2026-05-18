@@ -31,6 +31,7 @@
 #include "logviewer.h"
 #include "../common/wb_log.h"
 #include "../winbolonet/http.h"
+#include "../winbolonet/winbolonet_core.h"
 #include "platform/platform_config.h"
 
 int main(int argc, char *argv[]);
@@ -55,6 +56,7 @@ int main(int argc, char *argv[]) {
     /* Smoke test: prove the WBN HTTP client links and initialises in the
      * standalone LogViewer build. Read access (comments) and authenticated
      * post will be added in a later step. */
+    winbolonetCoreSetPreferencesPath("WinBolo.ini");
     httpCreate();
 
     /* NULL window/renderer signals standalone mode —

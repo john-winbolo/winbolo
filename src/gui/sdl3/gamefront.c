@@ -73,7 +73,7 @@
 #include "playername_validate.h"
 #include "client_net.h"
 #include "../../server/server_lifecycle.h"
-#include "../../winbolonet/winbolonet.h"
+#include "../../winbolonet/winbolonet_client.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
 #include "mapgen.h"
@@ -949,6 +949,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                         gameFrontTargetUdp,
                         gameFrontName, password,
                         gameFrontWbnUse ? gameFrontWbnToken : "",
+                        "",
                         wantRejoin,
                         gameFrontTrackerEnabled ? gameFrontTrackerAddr : "",
                         gameFrontTrackerPort);
@@ -1204,7 +1205,7 @@ bool gameFrontSetDlgState(openingStates newState) {
             netSetup(humanSim, netSingle, gameFrontMyUdp, gameFrontUdpAddress, gameFrontTargetUdp,
                      password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,
                      gameFrontTrackerEnabled, wantRejoin, gameFrontWbnUse,
-                     gameFrontWbnToken);
+                     gameFrontWbnToken, "");
             /* Sync tank state from initial snapshot. Lock so the snapshot is
              * built and applied atomically against the host timer thread,
              * which is already ticking spServerSim. */

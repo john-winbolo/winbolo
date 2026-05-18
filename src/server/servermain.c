@@ -42,7 +42,8 @@
 #include "global.h"
 #include "gametype.h"
 #include "threads.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
+#include "../winbolonet/winbolonet_server.h"
 #include "server_sim.h"
 #include "mapgen.h"
 #include "log.h"
@@ -1173,6 +1174,7 @@ int main(int argc, char **argv) {
 
   /* WinBolo.net host override — must run before serverInstanceStartup
    * so winbolonetCreateServer hits the override host. */
+  winbolonetCoreSetPreferencesPath("WinBolo.ini");
   {
     int argNum = findArg(argc, argv, "wbnhost");
     if (argNum != ARG_NOT_FOUND) {

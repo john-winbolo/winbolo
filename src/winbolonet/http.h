@@ -85,6 +85,22 @@ void httpDestroy(void);
 int wbn_api_post(const char *endpoint, const char *json_body, char **response_out);
 
 /*********************************************************
+*NAME:          wbn_api_post_server
+*PURPOSE:
+* Server-scoped low-level POST. Same as wbn_api_post plus
+* an Authorization: Bearer <token> header sourced from the
+* in-memory bearer (set after POST server/register).
+* Refuses to send (returns -1) and logs to stderr when the
+* bearer is empty; no curl is invoked in that case.
+*
+*ARGUMENTS:
+* endpoint     - API path after /api/v1/
+* json_body    - JSON request body string
+* response_out - Receives heap-allocated response string (caller frees)
+*********************************************************/
+int wbn_api_post_server(const char *endpoint, const char *json_body, char **response_out);
+
+/*********************************************************
 *NAME:          wbn_api_call
 *PURPOSE:
 * High-level JSON API call. Serializes the cJSON body,
@@ -99,6 +115,21 @@ int wbn_api_post(const char *endpoint, const char *json_body, char **response_ou
 * response - Receives parsed cJSON response (caller frees)
 *********************************************************/
 int wbn_api_call(const char *endpoint, struct cJSON *body, struct cJSON **response);
+
+/*********************************************************
+*NAME:          wbn_api_call_server
+*PURPOSE:
+* Server-scoped high-level JSON API call. Same shape as
+* wbn_api_call but attaches Authorization: Bearer using the
+* stored server bearer. Returns -1 without invoking curl
+* when the bearer is empty (no *response allocated).
+*
+*ARGUMENTS:
+* endpoint - API path after /api/v1/
+* body     - cJSON object for the request body
+* response - Receives parsed cJSON response (caller frees)
+*********************************************************/
+int wbn_api_call_server(const char *endpoint, struct cJSON *body, struct cJSON **response);
 
 /*********************************************************
 *NAME:          httpSendLogFile

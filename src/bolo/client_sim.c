@@ -60,7 +60,7 @@
 #include "../gui/dnsLookups.h"
 #include "../gui/clientmutex.h"
 #include "../gui/dialogAlliance.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
 #include "frontend.h"
 
 /* Must match the value used inside shellsAddItem (shells.c redefines
@@ -958,7 +958,7 @@ void netSendTrackerUpdate(void) {
 /* Alliance dialog window — created/destroyed with network lifecycle */
 static void *dlgAllianceWnd = NULL;
 
-bool netSetup(ClientSim *cs, netType value, unsigned short myPort, char *targetIp, unsigned short targetPort, char *password, bool usCreate, char *trackerAddr, unsigned short trackerPort, bool useTracker, bool wantRejoin, bool useWinboloNet, char *wbnToken) {
+bool netSetup(ClientSim *cs, netType value, unsigned short myPort, char *targetIp, unsigned short targetPort, char *password, bool usCreate, char *trackerAddr, unsigned short trackerPort, bool useTracker, bool wantRejoin, bool useWinboloNet, const char *wbnApiToken, const char *wbnServerKey) {
   cs->networkGameType = value;
   cs->netStat = netRunning;
   dlgAllianceWnd = dialogAllianceCreate();
