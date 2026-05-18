@@ -1778,7 +1778,7 @@ set(GYM_SOURCES
     src/headless/headless_frontend.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_dedicated_log_stubs.c
-    src/third_party/tweetnacl/tweetnacl.c
+    src/gym/winbolonet_stub.c
     src/gym/winbolo_gym.c
 )
 
@@ -1837,11 +1837,9 @@ endif()
 target_link_libraries(winbolo_gym PRIVATE
     bolo_static
     ${SERVER_LINK_GROUP}
-    bot_brains_static
-    winbolonet_core
-    winbolonet_server)
+    bot_brains_static)
 target_link_libraries(winbolo_gym PRIVATE
-    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
+    SDL3::SDL3 minizip lua_static utf8proc)
 
 if(OpenMP_C_FOUND)
     target_link_libraries(winbolo_gym PRIVATE OpenMP::OpenMP_C)
