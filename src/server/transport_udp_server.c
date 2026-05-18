@@ -40,6 +40,7 @@
 #include "server_sim.h"
 #include "server_lifecycle.h"
 #include "control_event.h"
+#include "lobby_bot_pools.h"
 #include "md5.h"
 #include "mapgen.h"
 #include "transport_control_codec.h"
