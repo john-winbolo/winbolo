@@ -524,6 +524,51 @@ static void serverSendJoinAccept(int slot, ServerSim *sim,
     udpSendTo(udpServer.sock, acceptBuf, pos, addr);
 }
 
+/* Send PACKET_WBN_REKEY to a single connected client carrying the current
+ * server_key.  Called right after JOIN_ACCEPT so the joiner learns the
+ * WBN session key without a credential ever riding the JOIN wire field,
+ * and from the broadcast wrapper after each return-to-lobby rotation.
+ * Silently no-ops when WBN isn't running or the server has no session
+ * key yet, so non-WBN servers (and the JOIN_ACCEPT path on them) pay
+ * nothing. */
+static void transportUdpServerSendWbnRekey(UdpServerClient *c) {
+    uint8_t buf[PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN];
+    char serverKey[WINBOLONET_KEY_LEN];
+    size_t keyLen;
+
+    if (!winbolonetIsRunning()) return;
+
+    winboloNetGetServerKey(serverKey);
+    if (serverKey[0] == '\0') return;
+
+    keyLen = strnlen(serverKey, WINBOLONET_KEY_LEN - 1);
+
+    packHeader(buf, PACKET_WBN_REKEY, c->outSequence++);
+    /* Zero the full 65-byte wire envelope, then drop the NUL-terminated
+     * server_key into the first 33 bytes — matches the wbnJoinKey shape
+     * the client decoder expects (NUL-scan within the first 33 bytes). */
+    memset(buf + PACKET_HEADER_SIZE, 0, WBN_JOIN_KEY_WIRE_LEN);
+    memcpy(buf + PACKET_HEADER_SIZE, serverKey, keyLen);
+
+    /* wire-only: per-client capability refresh (no in-process audience) */
+    udpSendTo(udpServer.sock, buf, sizeof(buf), &c->addr);
+}
+
+/* Broadcast PACKET_WBN_REKEY to every connected WBN-participating client
+ * after the server rotates its server_key (post-returnToLobby). Each
+ * client mints a fresh player_key against the new key and re-auths via
+ * the existing lobby-snapshot machinery. */
+void transportUdpServerBroadcastWbnRekey(ServerSim *sim) {
+    int i;
+    (void)sim;
+    if (!winbolonetIsRunning()) return;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!udpServer.clients[i].connected) continue;
+        if (!winboloNetIsPlayerParticipant((BYTE)i)) continue;
+        transportUdpServerSendWbnRekey(&udpServer.clients[i]);
+    }
+}
+
 /* Send map chunks to a client that is downloading */
 static void serverSendMapChunks(int slot) {
     ClientMapDownload *dl = &udpServer.mapDownload[slot];
@@ -718,6 +763,11 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         WB_LOG_DEBUG(WB_LOG_CAT_NET,
             "join from already-connected slot=%d, resending accept", slot);
         serverSendJoinAccept(slot, sim, fromAddr);
+        /* Resend the rekey alongside the accept — recovers the rare case
+         * where the original JOIN_ACCEPT was delivered but the trailing
+         * REKEY wasn't, which would otherwise leave the client without
+         * a wbnServerKey until the next return-to-lobby rotation. */
+        transportUdpServerSendWbnRekey(&udpServer.clients[slot]);
         /* Resend map chunks if download not complete */
         if (!udpServer.mapDownload[slot].downloadComplete) {
             serverSendMapChunks(slot);
@@ -833,8 +883,8 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     if (wbnJoinKey[0] != '\0' && winbolonetIsRunning()) {
         char errorMsg[512];
         errorMsg[0] = '\0';
-        if (winbolonetServerVerifyToken(wbnJoinKey, (BYTE)slot, errorMsg,
-                                        &wbnHasSteam, &wbnIsSupporter)) {
+        if (winboloNetVerifyClientKey(wbnJoinKey, name, (BYTE)slot, errorMsg,
+                                      &wbnHasSteam, &wbnIsSupporter)) {
             fprintf(stderr, "[UDP SERVER] Player '%s' verified with WinBolo.net\n", name);
             incomingIsWBN = true;
         } else {
@@ -1066,6 +1116,10 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     fprintf(stderr, "[UDP SERVER] Player '%s' assigned slot %d, mapSize=%u\n",
             name, slot, udpServer.compressedMapSize);
     serverSendJoinAccept(slot, sim, fromAddr);
+    /* Hand the joiner the current WBN server_key so it can mint a
+     * player_key and re-auth via the lobby-snapshot path.  Gated inside
+     * the send function — no-op on non-WBN servers. */
+    transportUdpServerSendWbnRekey(&udpServer.clients[slot]);
 
     /* Subscribe this client to the server's control-event bus so
      * future events can be encoded and unicast to it via the codec
@@ -2397,8 +2451,10 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     bool hasSteam = FALSE;
                     bool wbnIsSupporter = FALSE;
                     errorMsg[0] = '\0';
-                    if (winbolonetServerVerifyToken(token, (BYTE)clientIdx, errorMsg,
-                                                    &hasSteam, &wbnIsSupporter)) {
+                    if (winboloNetVerifyClientKey(token,
+                                                  udpServer.clients[clientIdx].playerName,
+                                                  (BYTE)clientIdx, errorMsg,
+                                                  &hasSteam, &wbnIsSupporter)) {
                         /* Re-merge using the clientHints captured at JOIN_REQUEST
                          * (the client doesn't re-send them on REAUTH; we re-verify
                          * against WBN, not the network). */

@@ -431,6 +431,10 @@ void serverInstanceTick(ServerSim *sim) {
           serverSimGetNumNeutralBases(sim),
           serverSimGetNumNeutralPills(sim),
           serverSimGetNumPlayers(sim));
+        /* Push the freshly rotated server_key to every WBN-participating
+         * client so they can mint a new player_key and re-auth.  Gated
+         * inside; no-op when WBN isn't running. */
+        transportUdpServerBroadcastWbnRekey(sim);
       }
       /* Returned to lobby — broadcast full lobby state */
       publishLobbyStateAll(sim);
@@ -502,6 +506,8 @@ void serverInstanceTick(ServerSim *sim) {
         serverSimGetNumNeutralBases(sim),
         serverSimGetNumNeutralPills(sim),
         serverSimGetNumPlayers(sim));
+      /* Same rotation push as the game-over → lobby site. */
+      transportUdpServerBroadcastWbnRekey(sim);
     }
     publishLobbyStateAll(sim);
   }

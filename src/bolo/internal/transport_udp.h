@@ -342,6 +342,13 @@ void transportUdpServerOnLobbyMapChange(struct ServerSim *sim);
  * in-process control-event bus.  Called from server_lifecycle.c. */
 void transportUdpServerSendPeriodicLobbyRefresh(struct ServerSim *sim);
 
+/* Broadcast PACKET_WBN_REKEY to every connected WBN-participating client
+ * carrying the current server_key.  Called after each
+ * winbolonetReturnToLobby succeeds so still-connected clients can mint a
+ * fresh player_key against the rotated session and re-auth via the
+ * existing lobby-snapshot machinery.  No-op when WBN isn't running. */
+void transportUdpServerBroadcastWbnRekey(struct ServerSim *sim);
+
 /* Set a bot's name in the server transport client array so it appears
  * in lobby state/update broadcasts. Call after botManagerAddBot(). */
 void transportUdpServerSetBotName(BYTE playerNum, const char *name);

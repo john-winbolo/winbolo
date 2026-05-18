@@ -198,14 +198,6 @@ void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, 
 }
 void winboloNetSendLock(bool isLocked) { (void)isLocked; }
 bool winboloNetIsPlayerParticipant(BYTE playerNum) { (void)playerNum; return FALSE; }
-bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg,
-                                 bool *hasSteam, bool *isSupporter) {
-  (void)token; (void)playerNum; (void)errorMsg;
-  if (hasSteam)    *hasSteam    = FALSE;
-  if (isSupporter) *isSupporter = FALSE;
-  return FALSE;
-}
-
 bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey,
                                  char *playerKeyOut, char *errorMsg) {
   (void)apiToken; (void)serverKey;
