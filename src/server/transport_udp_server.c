@@ -41,6 +41,7 @@
 #include "server_lifecycle.h"
 #include "control_event.h"
 #include "transport_control_codec.h"
+#include "wbn_key_codec.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../winbolonet/winbolonet_server.h"
 #include "threads.h"
@@ -534,21 +535,14 @@ static void serverSendJoinAccept(int slot, ServerSim *sim,
 static void transportUdpServerSendWbnRekey(UdpServerClient *c) {
     uint8_t buf[PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN];
     char serverKey[WINBOLONET_KEY_LEN];
-    size_t keyLen;
 
     if (!winbolonetIsRunning()) return;
 
     winboloNetGetServerKey(serverKey);
     if (serverKey[0] == '\0') return;
 
-    keyLen = strnlen(serverKey, WINBOLONET_KEY_LEN - 1);
-
     packHeader(buf, PACKET_WBN_REKEY, c->outSequence++);
-    /* Zero the full 65-byte wire envelope, then drop the NUL-terminated
-     * server_key into the first 33 bytes — matches the wbnJoinKey shape
-     * the client decoder expects (NUL-scan within the first 33 bytes). */
-    memset(buf + PACKET_HEADER_SIZE, 0, WBN_JOIN_KEY_WIRE_LEN);
-    memcpy(buf + PACKET_HEADER_SIZE, serverKey, keyLen);
+    wbnKeyEncode(buf + PACKET_HEADER_SIZE, serverKey);
 
     /* wire-only: per-client capability refresh (no in-process audience) */
     udpSendTo(udpServer.sock, buf, sizeof(buf), &c->addr);

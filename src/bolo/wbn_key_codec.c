@@ -1,0 +1,45 @@
+/*
+ * Copyright (c) 1998-2008 John Morrison.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/*********************************************************
+ *Name:          WBN key wire codec
+ *Filename:      wbn_key_codec.c
+ *Author:        John Morrison
+ *Purpose:       See wbn_key_codec.h.
+ *********************************************************/
+
+#include <string.h>
+#include <stddef.h>
+
+#include "wbn_key_codec.h"
+#include "transport_udp.h"                /* WBN_JOIN_KEY_WIRE_LEN */
+#include "../winbolonet/winbolonet_core.h" /* WINBOLONET_KEY_LEN */
+
+void wbnKeyEncode(uint8_t *dest, const char *src) {
+    size_t keyLen = strnlen(src, WINBOLONET_KEY_LEN - 1);
+    memset(dest, 0, WBN_JOIN_KEY_WIRE_LEN);
+    memcpy(dest, src, keyLen);
+}
+
+bool wbnKeyDecode(char *dest, const uint8_t *src) {
+    size_t i;
+    for (i = 0; i < (size_t)(WINBOLONET_KEY_LEN - 1) && src[i] != '\0'; i++) { }
+    if (i == (size_t)(WINBOLONET_KEY_LEN - 1) &&
+        src[WINBOLONET_KEY_LEN - 1] != '\0') {
+        return FALSE;
+    }
+    memcpy(dest, src, i);
+    dest[i] = '\0';
+    return TRUE;
+}
