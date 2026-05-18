@@ -60,6 +60,9 @@ int run_md5_block_boundaries(void);
 int run_ranked_flag_persists_with_one_player(void);
 int run_ranked_shape_gate(void);
 int run_upload_cap_enforced(void);
+int run_map_field_clamps_evil(void);
+int run_map_field_clamps_passthrough(void);
+int run_map_field_clamps_angry_start(void);
 
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map
  * with one player added at slot 0. Caller is responsible for

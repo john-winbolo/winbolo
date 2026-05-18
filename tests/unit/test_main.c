@@ -45,6 +45,9 @@ static const UnitTestEntry s_tests[] = {
     { "ranked_flag_persists_with_one_player",    run_ranked_flag_persists_with_one_player    },
     { "ranked_shape_gate",                       run_ranked_shape_gate                       },
     { "upload_cap_enforced",                     run_upload_cap_enforced                     },
+    { "map_field_clamps_evil",                   run_map_field_clamps_evil                   },
+    { "map_field_clamps_passthrough",            run_map_field_clamps_passthrough            },
+    { "map_field_clamps_angry_start",            run_map_field_clamps_angry_start            },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 
