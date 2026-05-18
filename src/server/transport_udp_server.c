@@ -1086,6 +1086,8 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     /* Initialize player in the simulation */
     serverSimAddPlayer(sim, (BYTE)slot, udpServer.clients[slot].playerName,
                        udpServer.clients[slot].wantRejoin);
+    serverSimSetPlayerCountry(sim, (BYTE)slot,
+                              udpServer.clients[slot].countryCode);
 
     /* Compress current map state for the joining player.
      * Done after serverSimAddPlayer so rejoin ownership is included. */

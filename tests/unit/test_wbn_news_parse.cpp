@@ -34,7 +34,8 @@ void freeItems(std::vector<WbnNewsItem> &items) {
 static int parse_valid_one_item_au(void) {
     const char *raw =
         "{\"news\":[{\"id\":1,\"title\":\"T\",\"body\":\"B\","
-        "\"comments\":3,\"url\":\"https://winbolo.net/x\"}],"
+        "\"comments\":3,\"url\":\"https://winbolo.net/x\","
+        "\"date\":\"2026-05-18 14:32:00\"}],"
         "\"countryCode\":\"AU\"}";
     std::vector<WbnNewsItem> items;
     std::string country;
@@ -50,7 +51,43 @@ static int parse_valid_one_item_au(void) {
                   "comments=%d expected 3", items[0].comments);
     UT_ASSERT_MSG(strcmp(items[0].url, "https://winbolo.net/x") == 0,
                   "url mismatch: \"%s\"", items[0].url);
+    UT_ASSERT_MSG(strcmp(items[0].date, "2026-05-18 14:32:00") == 0,
+                  "date mismatch: \"%s\"", items[0].date);
     UT_ASSERT_MSG(country == "AU", "country=\"%s\"", country.c_str());
+    freeItems(items);
+    return 0;
+}
+
+static int parse_date_missing(void) {
+    /* date is optional — older responses (or servers that haven't been
+     * upgraded yet) must still parse, leaving the buffer empty. */
+    const char *raw =
+        "{\"news\":[{\"id\":1,\"title\":\"T\",\"body\":\"B\","
+        "\"url\":\"u\"}],\"countryCode\":\"AU\"}";
+    std::vector<WbnNewsItem> items;
+    std::string country;
+    bool ok = parseNewsResponse(raw, items, country);
+    UT_ASSERT_MSG(ok, "expected true");
+    UT_ASSERT_MSG(items.size() == 1, "size=%zu", items.size());
+    UT_ASSERT_MSG(items[0].date[0] == '\0',
+                  "expected empty date, got \"%s\"", items[0].date);
+    freeItems(items);
+    return 0;
+}
+
+static int parse_date_not_string(void) {
+    /* Wrong type — server sent a number instead of a string. Treat as
+     * missing rather than rejecting the whole item. */
+    const char *raw =
+        "{\"news\":[{\"id\":1,\"title\":\"T\",\"body\":\"B\",\"url\":\"u\","
+        "\"date\":42}],\"countryCode\":\"AU\"}";
+    std::vector<WbnNewsItem> items;
+    std::string country;
+    bool ok = parseNewsResponse(raw, items, country);
+    UT_ASSERT_MSG(ok, "expected true");
+    UT_ASSERT_MSG(items.size() == 1, "size=%zu", items.size());
+    UT_ASSERT_MSG(items[0].date[0] == '\0',
+                  "expected empty date, got \"%s\"", items[0].date);
     freeItems(items);
     return 0;
 }
@@ -230,6 +267,8 @@ static int parse_url_truncation(void) {
 extern "C" int run_wbn_news_parse(void) {
     int rc;
     rc = parse_valid_one_item_au();      if (rc) return rc;
+    rc = parse_date_missing();           if (rc) return rc;
+    rc = parse_date_not_string();        if (rc) return rc;
     rc = parse_empty_news_array();       if (rc) return rc;
     rc = parse_legacy_array_top_level(); if (rc) return rc;
     rc = parse_top_level_null();         if (rc) return rc;

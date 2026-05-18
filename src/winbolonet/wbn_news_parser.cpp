@@ -60,6 +60,7 @@ bool readItem(cJSON *o, WbnNewsItem &out) {
     cJSON *bodyJ    = cJSON_GetObjectItem(o, "body");
     cJSON *urlJ     = cJSON_GetObjectItem(o, "url");
     cJSON *commJ    = cJSON_GetObjectItem(o, "comments");
+    cJSON *dateJ    = cJSON_GetObjectItem(o, "date");
 
     if (!idJ    || !cJSON_IsNumber(idJ))                          return false;
     if (!titleJ || !cJSON_IsString(titleJ) || !titleJ->valuestring) return false;
@@ -71,6 +72,12 @@ bool readItem(cJSON *o, WbnNewsItem &out) {
     SDL_strlcpy(out.title, titleJ->valuestring, sizeof(out.title));
     SDL_strlcpy(out.url,   urlJ->valuestring,   sizeof(out.url));
     out.comments = (commJ && cJSON_IsNumber(commJ)) ? commJ->valueint : 0;
+    /* date is optional. Missing / non-string / empty string leaves the
+     * buffer NUL (already zeroed by the WbnNewsItem{} initialiser); the
+     * renderer skips the date line in that case. */
+    if (dateJ && cJSON_IsString(dateJ) && dateJ->valuestring) {
+        SDL_strlcpy(out.date, dateJ->valuestring, sizeof(out.date));
+    }
 
     /* body_md is malloc'd so the fetch struct and the unit tests can
      * release it with plain free(). */

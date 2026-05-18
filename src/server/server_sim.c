@@ -1334,7 +1334,7 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     /* Register player in sim's players struct so message formatting
      * (e.g. "Player captured a base") uses the correct name. */
     if (playerName != NULL) {
-        playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, playerNum, (char *)playerName, "??",
+        playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, playerNum, (char *)playerName, "XX",
                          0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
         {
             char pstr[256];
@@ -1386,6 +1386,13 @@ void serverSimSetPlayerCountry(ServerSim *sim, BYTE playerNum, const char *cc) {
     sim->sim.plyrs->item[playerNum].location[0] = (char)toupper((unsigned char)cc[0]);
     sim->sim.plyrs->item[playerNum].location[1] = (char)toupper((unsigned char)cc[1]);
     sim->sim.plyrs->item[playerNum].location[2] = '\0';
+
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillPlayerJoinEvent(sim, playerNum, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
@@ -2632,7 +2639,7 @@ void serverSimStartGame(ServerSim *sim) {
         if (!sim->playerConnected[i]) continue;
         const char *name = transportUdpServerGetPlayerName(i);
         if (name != NULL) {
-            playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, i, (char *)name, "??",
+            playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, i, (char *)name, "XX",
                              0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
         }
     }

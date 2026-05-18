@@ -261,6 +261,9 @@ static void renderConsentDialog(void) {
             "launch the game. We will check WBN once at startup and only "
             "open this window when there is something new.");
         ImGui::Spacing();
+        ImGui::TextWrapped(
+            "You can change this anytime in Settings.");
+        ImGui::Spacing();
         if (ImGui::Button("Show news")) {
             newsPrefSetAutoShow("show");
             s_consentOpen       = false;
@@ -282,15 +285,60 @@ static void renderConsentDialog(void) {
 }
 
 static void renderItem(const WbnNewsItem &item) {
-    /* Compose "# title\n\nbody\n" so imgui_markdown renders the
-     * title as an H1 with the body underneath in one Markdown
-     * call per item. */
+    /* Header band: filled background rect, scaled-up title, optional
+     * dimmed date line beneath. Drawn manually rather than via
+     * imgui_markdown's H1 so the band spans the full content width
+     * and the date sits in the same visual block as the title. */
+    ImGuiStyle &style = ImGui::GetStyle();
+    const float padX = style.FramePadding.x * 2.0f;
+    const float padY = style.FramePadding.y * 2.0f;
+    const float availW = ImGui::GetContentRegionAvail().x;
+
+    ImGui::SetWindowFontScale(1.5f);
+    const float titleH = ImGui::GetTextLineHeight();
+    ImGui::SetWindowFontScale(1.0f);
+
+    const bool hasDate = (item.date[0] != '\0');
+    const float dateGap = hasDate ? style.ItemSpacing.y * 0.5f : 0.0f;
+    const float dateH   = hasDate ? ImGui::GetTextLineHeight() : 0.0f;
+    const float headerH = padY * 2.0f + titleH + dateGap + dateH;
+
+    const ImVec2 cursor = ImGui::GetCursorScreenPos();
+    ImGui::GetWindowDrawList()->AddRectFilled(
+        cursor,
+        ImVec2(cursor.x + availW, cursor.y + headerH),
+        ImGui::GetColorU32(ImGuiCol_TableHeaderBg),
+        4.0f);
+
+    /* Reserve the band so the scroll child's content size is correct. */
+    ImGui::Dummy(ImVec2(availW, headerH));
+
+    /* Draw title (1.5x) and date (default scale, dimmed) inside the band. */
+    ImGui::SetCursorScreenPos(ImVec2(cursor.x + padX, cursor.y + padY));
+    ImGui::SetWindowFontScale(1.5f);
+    ImGui::TextUnformatted(item.title);
+    ImGui::SetWindowFontScale(1.0f);
+    if (hasDate) {
+        /* date wire format is "YYYY-MM-DD HH:MM:SS"; display the first 16
+         * chars ("YYYY-MM-DD HH:MM") — seconds are noise for a news
+         * byline. SDL_strlcpy gives us a NUL-terminated truncation even
+         * if the server sends a shorter string. */
+        char dateBuf[17];
+        SDL_strlcpy(dateBuf, item.date, sizeof(dateBuf));
+        ImGui::SetCursorScreenPos(ImVec2(cursor.x + padX,
+                                         cursor.y + padY + titleH + dateGap));
+        ImGui::TextDisabled("%s", dateBuf);
+    }
+
+    /* Park the cursor back at the bottom of the band, then add a deliberate
+     * gap before the body markdown so the title block visually separates
+     * from the post content. */
+    ImGui::SetCursorScreenPos(ImVec2(cursor.x, cursor.y + headerH));
+    ImGui::Dummy(ImVec2(0.0f, style.ItemSpacing.y * 1.5f));
+
+    /* Body markdown — title is no longer embedded as an H1. */
     std::string md;
-    md.reserve(strlen(item.title) + (item.body_md ? strlen(item.body_md) : 0) + 8);
-    md.append("# ");
-    md.append(item.title);
-    md.append("\n\n");
-    if (item.body_md) md.append(item.body_md);
+    if (item.body_md) md.assign(item.body_md);
     md.append("\n");
 
     ImGui::MarkdownConfig cfg;
@@ -351,7 +399,14 @@ static void renderNewsModal(void) {
             ImGui::TextUnformatted("Loading…");
         } else {
             for (const auto &item : s_sortedItems) {
+                /* Scope IDs per item so the "Comments: N" TextLink (and any
+                 * widget imgui_markdown emits internally) doesn't collide
+                 * with the same widget on a sibling item that happens to
+                 * share its visible label — e.g. two posts both with zero
+                 * comments. */
+                ImGui::PushID(item.id);
                 renderItem(item);
+                ImGui::PopID();
             }
         }
     }
