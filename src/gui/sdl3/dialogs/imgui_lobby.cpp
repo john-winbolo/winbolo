@@ -3468,8 +3468,10 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
         bool botsBlock = (botCount > 0) && !rankedV;
         RankedEligibility re = computeRankedEligibility(cs);
 
-        bool canToggle = effectiveHost && !botsBlock;
+        bool rankedLocked = (clientSimGetLobbyServerLocks(cs) & 0x40) != 0;  /* LOBBY_LOCK_RANKED */
+        bool canToggle = effectiveHost && !botsBlock && !rankedLocked;
         bool rankedReadAtRender = rankedV;
+        if (rankedLocked) renderLockBadge();
         if (!canToggle) ImGui::BeginDisabled();
         if (ImGui::Checkbox("Ranked game##ranked", &rankedV)) {
             uint8_t v = rankedV ? 1 : 0;
@@ -3486,7 +3488,10 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
         }
         if (!canToggle) ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            if (!effectiveHost) {
+            if (rankedLocked) {
+                ImGui::SetTooltip(
+                    "Ranked is locked by the server admin.");
+            } else if (!effectiveHost) {
                 ImGui::SetTooltip(
                     "Only the host or an admin can toggle Ranked game.");
             } else if (botsBlock) {
@@ -5281,15 +5286,24 @@ static void renderGameSettingsPanel(ClientSim *cs,
                                   & PLAYER_FLAG_ADMIN));
             if (isHostLocal || isAdminLocal) {
                 bool oh = clientSimGetLobbyOpenHost(cs);
+                bool openHostLocked = (clientSimGetLobbyServerLocks(cs) & 0x80) != 0;  /* LOBBY_LOCK_OPEN_HOST */
+                if (openHostLocked) renderLockBadge();
+                if (openHostLocked) ImGui::BeginDisabled();
                 if (ImGui::Checkbox("Allow all players to change settings",
                                     &oh)) {
                     clientSimNetSendLobbyOpenHost(cs, oh);
                 }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip(
-                        "When on, every connected player can edit lobby\n"
-                        "settings — including changing the map, adding\n"
-                        "or removing bots, and switching teams.");
+                if (openHostLocked) ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    if (openHostLocked) {
+                        ImGui::SetTooltip(
+                            "Open Host is locked by the server admin.");
+                    } else {
+                        ImGui::SetTooltip(
+                            "When on, every connected player can edit lobby\n"
+                            "settings — including changing the map, adding\n"
+                            "or removing bots, and switching teams.");
+                    }
                 }
             }
         }
@@ -5344,6 +5358,9 @@ static void renderGameSettingsPanel(ClientSim *cs,
                 static char s_pwBuf[200] = {0};
                 static bool s_pwOn       = false;
 
+                bool pwLocked = (clientSimGetLobbyServerLocks(cs) & 0x20) != 0;  /* LOBBY_LOCK_PASSWORD */
+                if (pwLocked) renderLockBadge();
+                if (pwLocked) ImGui::BeginDisabled();
                 if (ImGui::Checkbox("Password", &s_pwOn)) {
                     if (!s_pwOn) {
                         s_pwBuf[0] = '\0';
@@ -5352,13 +5369,19 @@ static void renderGameSettingsPanel(ClientSim *cs,
                     /* Checking with an empty buffer doesn't send
                      * anything yet — wait for the user to type. */
                 }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip(
-                        "When on, new clients must supply the\n"
-                        "password to join. Already-connected players\n"
-                        "are unaffected.");
+                if (pwLocked) ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    if (pwLocked) {
+                        ImGui::SetTooltip(
+                            "Password is locked by the server admin.");
+                    } else {
+                        ImGui::SetTooltip(
+                            "When on, new clients must supply the\n"
+                            "password to join. Already-connected players\n"
+                            "are unaffected.");
+                    }
                 }
-                if (s_pwOn) {
+                if (s_pwOn && !pwLocked) {
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(180.0f * s);
                     if (ImGui::InputText("##serverpw", s_pwBuf,
@@ -6813,8 +6836,15 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui::Separator();
             ImGui::Spacing();
 
-            /* Map info */
+            /* Map info — show the lock badge inline with the map name
+             * when LOBBY_LOCK_MAP is set so admins / non-hosts can see
+             * the map is pinned even though the Choose Map / Skip-Map
+             * affordances aren't drawn. */
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MAP_LBL), clientSimGetMapName(cs));
+            if ((clientSimGetLobbyServerLocks(cs) & 0x100) != 0) {  /* LOBBY_LOCK_MAP */
+                ImGui::SameLine(0.0f, 4.0f * s);
+                renderLockBadge();
+            }
             ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_PILLBOXES), clientSimGetLobbyPillCount(cs));
             ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_BASES), clientSimGetLobbyBaseCount(cs));
             ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), clientSimGetLobbyStartCount(cs));

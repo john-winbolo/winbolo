@@ -2273,6 +2273,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_game_vote_control.c
     tests/unit/test_md5.c
     tests/unit/test_ranked_lobby.c
+    tests/unit/test_lobby_locks.c
     tests/unit/test_upload_cap.c
     tests/unit/test_map_field_clamps.c
     tests/unit/test_map_reload_rollback.c
@@ -2347,6 +2348,9 @@ set(_unit_test_names
     lobby_brain_list_codec_and_apply
     ranked_flag_persists_with_one_player
     ranked_shape_gate
+    lobby_lock_bit_lookup
+    lobby_lock_rejects_settings
+    lobby_lock_mask_roundtrip
     upload_cap_enforced
     map_field_clamps_evil
     map_field_clamps_passthrough

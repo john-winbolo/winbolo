@@ -1413,6 +1413,17 @@ void        serverSimSetOpenHost(ServerSim *sim, bool v);
 /* serverLocks — LOBBY_LOCK_* bitmask set from CLI at server start.
  * Locked settings refuse PACKET_LOBBY_SET_SETTING with REJECT_LOCKED. */
 uint16_t    serverSimGetServerLocks(const ServerSim *sim);
+void        serverSimSetServerLocks(ServerSim *sim, uint16_t locks);
+
+/* Map an LST_* setting id to the LOBBY_LOCK_* bit that gates it.
+ * Returns 0 for settings with no lock, 0xFFFF for unknown ids. The
+ * PACKET_LOBBY_SET_SETTING handler uses this to decide whether to
+ * REJECT_LOCKED; tests use it to verify the lock table is correct. */
+uint16_t    serverSimGetSettingLockBit(uint8_t lstSettingType);
+/* True iff sim has the lock bit for `lstSettingType` set AND that
+ * setting actually has a lock bit (i.e., bit != 0 and bit != 0xFFFF). */
+bool        serverSimIsSettingLocked(const ServerSim *sim,
+                                     uint8_t lstSettingType);
 
 /* firstJoinerBecomesHost — dedicated-server option. When true and slot
  * 0 is unoccupied at join time, the incoming player is promoted to
