@@ -54,5 +54,9 @@
 #define LOBBY_LOCK_MINES             (1u << 2)
 #define LOBBY_LOCK_TIME_LIMIT        (1u << 3)
 #define LOBBY_LOCK_AUTO_LOCK_ON_GAME (1u << 4)
+#define LOBBY_LOCK_PASSWORD          (1u << 5)
+#define LOBBY_LOCK_RANKED            (1u << 6)
+#define LOBBY_LOCK_OPEN_HOST         (1u << 7)
+#define LOBBY_LOCK_MAP               (1u << 8)
 
 #endif /* WIRE_LIMITS_H */
