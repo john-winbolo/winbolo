@@ -19,6 +19,7 @@
 #include "position_history.h" /* PosHistory — used by posHistory / lgmPosHistory */
 #include "mapgen.h" /* MapGenConfig — embedded by value in randomMapConfig */
 #include "brain_list_internal.h" /* BRAIN_LIST_PATH_LEN — brainPaths mirror */
+#include "upload_policy.h"  /* UploadPolicy — broadcast in lobby-settings event */
 
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
@@ -69,6 +70,7 @@ struct ServerSim {
     bool     autoLockOnGameStart;  /* if true, set allowNewPlayers=false on game start */
     bool     savedAllowNewPlayers; /* what allowNewPlayers was before autoLockOnGameStart fired */
     uint16_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
+    UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
 
     /* Game-settings mirrors — needed for live mid-lobby change broadcasts.
      * The authoritative values live in GameSim/serverSim CLI args; these

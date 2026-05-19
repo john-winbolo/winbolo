@@ -235,14 +235,22 @@ static EncodeResult encodeLobbySlot(const ControlEvent *evt,
  *   [aiType 1] [gameLength 4 BE] [pillCount 1] [baseCount 1]
  *   [startCount 1] [mapSkipAvailable 1] [netStat 1] [inLobby 1]
  *   [openHost 1] [autoLockOnGameStart 1] [serverLocks 2 BE]
+ *   [uploadPolicy 1]
  *
  * The trailing four bytes (openHost, autoLockOnGameStart, serverLocks)
  * fold the older standalone PACKET_LOBBY_OPEN_HOST_CHG and the
  * single-setting echoes that carried these flags into the same
  * authoritative settings event. serverLocks is packed big-endian to
- * match every other multi-byte field in the codec (packU16/packU32). */
-#define LOBBY_SETTINGS_WIRE_PAYLOAD \
+ * match every other multi-byte field in the codec (packU16/packU32).
+ *
+ * uploadPolicy is appended at the end. The decoder treats it as
+ * optional (parsed only when present), so a new client receiving a
+ * pre-uploadPolicy server's payload leaves the field at UPLOAD_POLICY_ALLOW
+ * via zero-init. Old clients use the same `len < base` tolerance to
+ * ignore the trailing byte from a new server. */
+#define LOBBY_SETTINGS_WIRE_PAYLOAD_BASE \
     (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 2)
+#define LOBBY_SETTINGS_WIRE_PAYLOAD (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 1)
 
 static EncodeResult encodeLobbySettings(const ControlEvent *evt,
                                         const struct UdpServerClient *recipient,
@@ -274,6 +282,7 @@ static EncodeResult encodeLobbySettings(const ControlEvent *evt,
     buf[pos++] = evt->u.lobbySettings.lobbyAutoLockOnGameStart ? 1 : 0;
     packU16(buf + pos, evt->u.lobbySettings.lobbyServerLocks);
     pos += 2;
+    buf[pos++] = (uint8_t)evt->u.lobbySettings.uploadPolicy;
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -662,7 +671,7 @@ static bool decodeLobbySlot(const uint8_t *buf, size_t len,
 
 static bool decodeLobbySettings(const uint8_t *buf, size_t len,
                                 ControlEvent *outEvt) {
-    if (len < LOBBY_SETTINGS_WIRE_PAYLOAD) return false;
+    if (len < LOBBY_SETTINGS_WIRE_PAYLOAD_BASE) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_LOBBY_SETTINGS;
     size_t pos = 0;
@@ -685,6 +694,9 @@ static bool decodeLobbySettings(const uint8_t *buf, size_t len,
     outEvt->u.lobbySettings.lobbyAutoLockOnGameStart = buf[pos++] ? true : false;
     outEvt->u.lobbySettings.lobbyServerLocks         = unpackU16(buf + pos);
     pos += 2;
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.uploadPolicy = (UploadPolicy)buf[pos++];
+    }
     return true;
 }
 

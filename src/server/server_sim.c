@@ -3284,6 +3284,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyOpenHost            = sim->openHost;
     evt->u.lobbySettings.lobbyAutoLockOnGameStart = sim->autoLockOnGameStart;
     evt->u.lobbySettings.lobbyServerLocks         = sim->serverLocks;
+    evt->u.lobbySettings.uploadPolicy             = sim->uploadPolicy;
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
@@ -4394,6 +4395,7 @@ int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
         SDL_strlcpy(e->name, name, sizeof(e->name));
         e->isFolder = isDir;
         e->modTime  = (int64_t)info.modify_time;
+        e->size     = isDir ? 0 : (int64_t)info.size;
     }
     SDL_free(list);
 
@@ -4485,6 +4487,7 @@ static void searchDirRecursive(const char *fullRoot,
         SDL_strlcpy(e->name, rel, sizeof(e->name));
         e->isFolder = false;
         e->modTime  = (int64_t)info.modify_time;
+        e->size     = (int64_t)info.size;
     }
     SDL_free(list);
 }
@@ -4689,4 +4692,9 @@ void serverSimPublishLobbySettings(ServerSim *sim) {
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbySettingsEvent(sim, &evt);
     serverSimPublishControl(sim, &evt);
+}
+
+void serverSimSetUploadPolicy(ServerSim *sim, UploadPolicy policy) {
+    if (!sim) return;
+    sim->uploadPolicy = policy;
 }

@@ -137,6 +137,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
     transportUdpServerSetUploadConfig(cfg->uploadPolicy,
                                       cfg->uploadMaxFiles,
                                       cfg->uploadMaxStorageBytes);
+    serverSimSetUploadPolicy(sim, cfg->uploadPolicy);
   }
 
   instanceUseWbn = cfg->acceptRemoteClients && cfg->useWbn;

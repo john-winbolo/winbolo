@@ -26,6 +26,7 @@
 #include "messages.h"
 #include "scroll.h"
 #include "brain_list.h"
+#include "upload_policy.h"
 
 /* Internal helpers relocated from client_sim.h during the public-header
  * transitive-leak cleanup. These need GameSim's full layout, so they
@@ -186,6 +187,7 @@ struct ClientSim {
     uint8_t          lobbyPillCount;
     uint8_t          lobbyBaseCount;
     uint8_t          lobbyStartCount;
+    UploadPolicy     uploadPolicy;      /* server map-upload policy; ALLOW until first event */
     bool             mapSkipAvailable;  /* Server has map rotation with >1 map */
     bool             mapSkipVotes[16];  /* Mirror of server vote state */
     bool             mapSkipMyVote;     /* Local tracking of own vote */

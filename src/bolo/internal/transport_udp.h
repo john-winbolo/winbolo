@@ -215,6 +215,23 @@ void transportUdpClientSendLobbyMapUploadChunk(Transport *t, uint32_t offset,
                                                const uint8_t *data,
                                                uint16_t dataLen);
 
+/* Server-side: validates a length-prefixed upload filename against the
+ * reserved-name / control-char / suffix-cap rules. Exposed for unit
+ * coverage of the validation matrix; production callers live inside
+ * transport_udp_server.c. */
+bool uploadFilenameIsSafe(const char *name, size_t nameLen);
+
+/* Client-side: parsers for the chunked MAP_LIST_RSP / MAP_SEARCH_RSP
+ * responses. The dispatcher in transport_udp_client.c calls these per
+ * packet; exposing them lets unit tests feed crafted byte streams
+ * through the accumulator path without standing up a full transport
+ * context. `buf` includes the 8-byte packet header. */
+struct ClientSim;
+void udpClientHandleLobbyMapListRsp(struct ClientSim *cs,
+                                    const uint8_t *buf, int len);
+void udpClientHandleLobbyMapSearchRsp(struct ClientSim *cs,
+                                      const uint8_t *buf, int len);
+
 /* Re-authenticate WBN token after lobby reset between rounds. */
 void transportUdpClientSendWbnReauth(Transport *t);
 
