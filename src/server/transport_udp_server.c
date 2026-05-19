@@ -2102,6 +2102,47 @@ void transportUdpServerDrainPunchQueue(void) {
     }
 }
 
+/* Validate an upload filename payload. The wire delivers a length-prefixed
+ * name that may not be NUL-terminated, so iterate by index over nameLen. */
+static bool uploadFilenameIsSafe(const char *name, size_t nameLen) {
+    static const char *kReservedBasenames[] = {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5",
+        "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5",
+        "LPT6", "LPT7", "LPT8", "LPT9",
+    };
+
+    if (!name || nameLen == 0) return false;
+    /* At least one basename byte plus the 4-byte ".map" suffix. */
+    if (nameLen < 5) return false;
+    /* Basename must fit the display-name slot (MAP_STR_SIZE - 1). */
+    if (nameLen > (size_t)(MAP_STR_SIZE - 1) + 4) return false;
+    if (name[0] == '.') return false;
+    for (size_t i = 0; i < nameLen; i++) {
+        unsigned char ch = (unsigned char)name[i];
+        if (ch == '/' || ch == '\\' || ch == ':') return false;
+        if (ch == '\0') return false;
+        if (ch < 0x20) return false;
+    }
+    if (SDL_strncasecmp(name + nameLen - 4, ".map", 4) != 0) return false;
+    /* Trailing dot or space on the basename — Windows strips these on
+     * file creation, which would bypass collision avoidance. */
+    char preDot = name[nameLen - 5];
+    if (preDot == '.' || preDot == ' ') return false;
+    size_t baseLen = nameLen - 4;
+    for (size_t i = 0;
+         i < sizeof(kReservedBasenames) / sizeof(kReservedBasenames[0]);
+         i++) {
+        const char *r = kReservedBasenames[i];
+        size_t rlen = SDL_strlen(r);
+        if (baseLen == rlen && SDL_strncasecmp(name, r, rlen) == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /* Process a single received packet — extracted from the recv loop so both
  * the polled fallback and the recv-thread drain path can share it. */
 static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
@@ -2995,23 +3036,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             memset(nameBuf, 0, sizeof(nameBuf));
             memcpy(nameBuf, buf + PACKET_HEADER_SIZE + 5, nameLen);
 
-            /* Name safety: must end in ".map", no path separators,
-             * no leading dot. */
-            bool nameSafe = true;
-            if (nameBuf[0] == '.') nameSafe = false;
-            for (int i = 0; i < nameLen; i++) {
-                char ch = nameBuf[i];
-                if (ch == '/' || ch == '\\' || ch == ':') {
-                    nameSafe = false; break;
-                }
-            }
-            if (nameSafe) {
-                if (nameLen < 4 ||
-                    SDL_strcasecmp(nameBuf + nameLen - 4, ".map") != 0) {
-                    nameSafe = false;
-                }
-            }
-            if (!nameSafe) {
+            if (!uploadFilenameIsSafe(nameBuf, nameLen)) {
                 uint8_t ack[PACKET_HEADER_SIZE + 1];
                 packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
                 ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
