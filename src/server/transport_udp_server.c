@@ -242,6 +242,14 @@ static struct {
     char     clientUploadName[MAX_TANKS][128];
     uint8_t  clientReqCooldownTicks[MAX_TANKS];
 
+    /* Persist-mode staging: bytes of the upload backing the current
+     * preview, held until PREVIEW_COMMIT writes them to disk or
+     * PREVIEW_CANCEL / a replacing preview drops them. */
+    uint8_t      pendingPersistBytes[UPLOAD_MAX_BYTES];
+    uint32_t     pendingPersistLen;
+    char         pendingPersistName[MAP_STR_SIZE];  /* basename, no .map suffix */
+    bool         pendingPersistActive;
+
     /* Operator-controlled upload handling — zero-init = ALLOW + defaults below. */
     UploadPolicy uploadPolicy;
     uint8_t      uploadMaxFiles;
@@ -2953,6 +2961,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 break;
             }
 
+            udpServer.pendingPersistActive = false;
             transportUdpServerOnLobbyMapChange(sim);
             serverSimPublishLobbySettings(sim);
             WB_LOG_INFO(WB_LOG_CAT_NET,
@@ -3152,6 +3161,15 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     (int)total,
                     displayName);
 
+                if (previewed && udpServer.uploadPolicy == UPLOAD_POLICY_PERSIST) {
+                    memcpy(udpServer.pendingPersistBytes,
+                           udpServer.clientUploadBuf[clientIdx], total);
+                    udpServer.pendingPersistLen = total;
+                    SDL_strlcpy(udpServer.pendingPersistName, displayName,
+                                sizeof(udpServer.pendingPersistName));
+                    udpServer.pendingPersistActive = true;
+                }
+
                 udpServer.clientUploadActive[clientIdx] = false;
                 udpServer.clientUploadHave[clientIdx]   = 0;
                 udpServer.clientUploadTotal[clientIdx]  = 0;
@@ -3266,6 +3284,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 break;
             }
             if (serverSimRevertPreview(sim)) {
+                udpServer.pendingPersistActive = false;
                 transportUdpServerOnLobbyMapChange(sim);
                 serverSimPublishLobbySettings(sim);
                 WB_LOG_INFO(WB_LOG_CAT_NET,
@@ -3281,6 +3300,50 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_COMMIT,
                               LOBBY_REJECT_NOT_HOST);
                 break;
+            }
+            if (udpServer.pendingPersistActive) {
+                SDL_CreateDirectory("data/maps/Uploads");
+                char target[FILENAME_MAX];
+                SDL_snprintf(target, sizeof(target),
+                             "data/maps/Uploads/%s.map",
+                             udpServer.pendingPersistName);
+                SDL_PathInfo info;
+                int suffix = 0;
+                while (SDL_GetPathInfo(target, &info)) {
+                    suffix++;
+                    if (suffix > 999) {
+                        target[0] = '\0';
+                        break;
+                    }
+                    SDL_snprintf(target, sizeof(target),
+                                 "data/maps/Uploads/%s (%d).map",
+                                 udpServer.pendingPersistName, suffix);
+                }
+                if (target[0] != '\0') {
+                    FILE *fp = fopen(target, "wb");
+                    if (fp) {
+                        size_t w = fwrite(udpServer.pendingPersistBytes, 1,
+                                          udpServer.pendingPersistLen, fp);
+                        fclose(fp);
+                        if (w != udpServer.pendingPersistLen) {
+                            WB_LOG_WARN(WB_LOG_CAT_NET,
+                                "persist write short: %zu of %u to '%s'",
+                                w, udpServer.pendingPersistLen, target);
+                        } else {
+                            WB_LOG_INFO(WB_LOG_CAT_NET,
+                                "persist wrote '%s' (%u bytes)",
+                                target, udpServer.pendingPersistLen);
+                        }
+                    } else {
+                        WB_LOG_WARN(WB_LOG_CAT_NET,
+                            "persist open failed: '%s'", target);
+                    }
+                } else {
+                    WB_LOG_WARN(WB_LOG_CAT_NET,
+                        "persist suffix cap hit for '%s.map'",
+                        udpServer.pendingPersistName);
+                }
+                udpServer.pendingPersistActive = false;
             }
             serverSimCommitPreview(sim);
             WB_LOG_INFO(WB_LOG_CAT_NET,
@@ -3331,6 +3394,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                               LOBBY_REJECT_INVALID);
                 break;
             }
+            udpServer.pendingPersistActive = false;
             transportUdpServerOnLobbyMapChange(sim);
             serverSimPublishLobbySettings(sim);
             WB_LOG_INFO(WB_LOG_CAT_NET,
