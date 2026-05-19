@@ -459,7 +459,15 @@ static void renderSection(PanelState &st, Section *s) {
  * half; parses the display half into name{value} terms; cross-
  * references each term with kTermDocs (meaning) and the computation
  * half (how-computed); renders everything in a 3- or 4-column table. */
-static void renderDetailPopup(PanelState &st, int winW, int winH) {
+/* Forward decl of the C-side spot logger so we can drop a panel-side
+ * line that captures EXACTLY what the user sees in the Term Breakdown.
+ * Without this we have to take it on faith that the parsed terms
+ * match cache._spot — and the user has observed cases where they
+ * don't, so we instrument the renderer itself. */
+extern "C" void brainPathfinderSpotLogWriteFor(int bot, int tick, const char *msg);
+
+static void renderDetailPopup(PanelState &st, int winW, int winH,
+                              int tickIn, int followBot) {
     DetailRow &sDetail = st.detail;
     if (!sDetail.open) return;
 
@@ -578,6 +586,45 @@ static void renderDetailPopup(PanelState &st, int winW, int winH) {
         if (nlen > 0 && nlen < 32 && vlen < 32) {
             SDL_strlcpy(terms[nTerms].name,  ns,     nlen + 1);
             SDL_strlcpy(terms[nTerms].value, ob + 1, vlen + 1);
+            /* Correlation log: when the user expands a pool-6
+             * attack_pill row and the Term Breakdown shows "spot{X}",
+             * write X to that bot's spot_bot<N>.log with the row's
+             * pill ID and the current tick. Cross-checking this log
+             * against ENTRY_SPOT_WRITE tells us whether the panel
+             * value matches state.cost_cache._spot or is reading
+             * from somewhere else (recording snapshot, etc). */
+            if (strcmp(terms[nTerms].name, "spot") == 0
+                && (sDetail.sectionIdx == 6
+                    || sDetail.srcPool   == 6)) {
+                int displayId = (sDetail.sectionIdx == 10)
+                                ? (sDetail.rowId & 0xFFFF) : sDetail.rowId;
+                /* Dedup: only emit when (bot, pill, tick, value) tuple
+                 * differs from the last emit. ImGui renders 60 Hz; sim
+                 * runs slower — without dedup we'd get tens of duplicate
+                 * lines per sim tick. Static state is safe because the
+                 * panel renderer is single-threaded. */
+                static int  last_bot   = -1;
+                static int  last_pill  = -1;
+                static int  last_tick  = -2;
+                static char last_value[32] = "";
+                if (followBot != last_bot
+                    || displayId != last_pill
+                    || tickIn != last_tick
+                    || strcmp(terms[nTerms].value, last_value) != 0) {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg),
+                             "PANEL_TERM section=%d srcPool=%d pill_id=%d "
+                             "term=spot value=%s row_mx=%d row_my=%d",
+                             sDetail.sectionIdx, sDetail.srcPool,
+                             displayId, terms[nTerms].value,
+                             sDetail.mx, sDetail.my);
+                    brainPathfinderSpotLogWriteFor(followBot, tickIn, msg);
+                    last_bot  = followBot;
+                    last_pill = displayId;
+                    last_tick = tickIn;
+                    SDL_strlcpy(last_value, terms[nTerms].value, sizeof(last_value));
+                }
+            }
             nTerms++;
         }
         p = cb + 1;
@@ -843,7 +890,7 @@ void renderPoolGrid(int registry_idx, const char *body) {
 
     int winW = (int)ImGui::GetWindowWidth();
     int winH = (int)ImGui::GetWindowHeight();
-    renderDetailPopup(st, winW, winH);
+    renderDetailPopup(st, winW, winH, tickIn, followBot);
 
     /* Winners formula legend window. */
     if (st.showLegend) {

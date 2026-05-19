@@ -597,7 +597,18 @@ function M.decide(state, world, info, now)
                           danger.lgm_path_safe_enhanced(info, wx, wy,
                               C.LGM_DANGER_HIGH, now, world,
                               excl_mx, excl_my)
-      if not angry_pill_close and has_trees and can_reach and path_safe then
+      -- Wall-shield builds for an in-progress pill take are FORCED:
+      -- the take strategy is already committed to walking into pill
+      -- fire, the wall is what makes that survivable, and risking
+      -- the LGM to get it up is part of the deal. Gates 1 (angry
+      -- pill in range) and 4 (LGM path danger) are bypassed — only
+      -- the hard-physical gates 2 (trees on hand) and 3 (LGM can
+      -- physically reach the tile) still apply. base_shield (the
+      -- refuel-defense variant) keeps full safety.
+      local force_mode = (b.mode == "wall_shield")
+      local safety_ok  = force_mode
+        or (not angry_pill_close and path_safe)
+      if has_trees and can_reach and safety_ok then
         -- Forest in the way? The engine can't drop a wall on T_FOREST;
         -- BUILDMODE_BUILD there just clears the trees, no wall goes up.
         -- Dispatch FARM first to harvest, then the next builder tick
@@ -627,12 +638,14 @@ function M.decide(state, world, info, now)
         trees_need     = cost,
         can_reach      = can_reach,
         path_safe      = path_safe,
+        force_mode     = force_mode,
       }
       log.reason("build_skip", {
         mode = b.mode, wall_mx = wx, wall_my = wy,
         angry = angry_pill_close,
         trees = string.format("%d/%d", info.trees, cost),
         reach = can_reach, safe  = path_safe,
+        force = force_mode,
       })
     end
     -- Wall already exists or can't build safely — fall through to default

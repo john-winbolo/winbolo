@@ -253,13 +253,20 @@ typedef struct {
     VizDetailEntry *vizDetails;
     int             vizDetailCount;
 
-    /* pill_contrib registry snapshot (per-pill, per-tile danger
-     * contribution maps). Same scrub-back rationale as vizDetails:
-     * brain isn't running in playback so the shift-2 overlay needs
-     * the recorded data to remain functional. malloc'd per frame;
-     * freed in recordingFreeFrame. */
-    PillContribEntry *pillContrib;
-    int               pillContribCount;
+    /* pill_contrib registry snapshot (per-bot, per-pill, per-tile
+     * danger contribution maps). Same scrub-back rationale as
+     * vizDetails: brain isn't running in playback so the shift-2
+     * overlay needs the recorded data to remain functional. Each
+     * bot's entries are stored separately so switching the
+     * followed bot mid-playback picks up the correct per-bot view.
+     * pillContribEntries[bot] is malloc'd to pillContribCounts[bot]
+     * PillContribEntry; NULL when that bot had no entries.
+     * pillContribPtrs is a parallel const-pointer array exposed
+     * to the playback view API (saves the API caller from doing
+     * the const cast). All three freed in recordingFreeFrame. */
+    PillContribEntry              *pillContribEntries[PILLCONTRIB_MAX_BOTS];
+    const PillContribEntry        *pillContribPtrs[PILLCONTRIB_MAX_BOTS];
+    int                            pillContribCounts[PILLCONTRIB_MAX_BOTS];
 
     /* Strategic placement heatmap text snapshotted when the [8]
      * overlay is on; NULL otherwise (saves the Lua poll cost). */
@@ -543,7 +550,7 @@ static void recordingFreeFrame(RecordingFrame *f) {
     free(f->pathX);
     free(f->pathY);
     free(f->vizDetails);
-    free(f->pillContrib);
+    for (int b = 0; b < PILLCONTRIB_MAX_BOTS; b++) free(f->pillContribEntries[b]);
     SDL_free(f->stratPlaceText);
     memset(f, 0, sizeof(*f));
 }
@@ -1406,11 +1413,8 @@ static void vizDetailClearCallback(void) {
     vizDetailRegistryClear();
 }
 
-static void pillContribClearCallback(void) {
-    pillContribClear();
-}
-static int pillContribBeginPillCallback(int pill_id, int mx, int my) {
-    return pillContribBeginPill(pill_id, mx, my);
+static int pillContribBeginPillCallback(int bot, int pill_id, int mx, int my) {
+    return pillContribBeginPill(bot, pill_id, mx, my);
 }
 static void pillContribAddTileCallback(int slot, int tx, int ty, float value) {
     pillContribAddTile(slot, tx, ty, value);
@@ -1465,8 +1469,7 @@ static char *panelPollCallback(int panel_idx) {
     if (!e || !e->lua_expr[0]) return NULL;
     /* Playback path: serve the recorded JSON for this frame. We
      * hand back a heap-allocated copy because the panel window
-     * frees what we return. NULL → renderer keeps showing whatever
-     * it already had (better than blanking on a gap). */
+     * frees what we return. */
     if (g_panelPollRecording
         && g_panelPollFrame >= 0
         && g_panelPollFrame < g_panelPollRecording->count
@@ -1480,9 +1483,21 @@ static char *panelPollCallback(int panel_idx) {
             if (copy) memcpy(copy, rec, n + 1);
             return copy;
         }
-        /* No recorded data for this frame/panel (e.g. followBot was different
-         * during recording, or bot just registered it). Fall through to
-         * poll the live brain so the panel doesn't blank out. */
+        /* No recorded data for this frame. We USED to fall through and
+         * poll the live brain, which silently showed today's state as
+         * if it were historical — actively misleading. Return a clear
+         * sentinel JSON so the panel renders "-" everywhere instead. */
+        static const char *kNoData =
+            "{\"phase\":\"-\",\"tick\":-1,\"replan_left\":-1,\"bot\":-1,"
+            "\"sections\":[{\"id\":\"nodata\",\"name\":\"NO RECORDING DATA\","
+            "\"weight\":1.0,\"winner_id\":-1,"
+            "\"rows\":[{\"id\":-1,\"mx\":0,\"my\":0,\"cost\":-1,"
+            "\"weighted\":-1,\"is_winner\":false,\"active_goal\":false,"
+            "\"stale\":-1,\"formula\":\"spot{-} + pickup{-}*wound_x2{-} + (stale{-} + diff{-} + anger{-} + xfire{-} + intcpt{-}) * hp{-} + ammo{-}||NO recorded data for this frame: the panel was either not registered yet, the bot owning it was not active, or the brain returned nil. Playback NO LONGER falls back to live brain — the previous fallback silently showed current-state values mislabeled as historical.\",\"reject\":null,\"reject_remaining\":0,\"imminent\":false}]}]}";
+        size_t n = strlen(kNoData);
+        char *copy = (char *)malloc(n + 1);
+        if (copy) memcpy(copy, kNoData, n + 1);
+        return copy;
     }
     char *body = botManagerEvalLuaString(g_panelPollFollowBot, e->lua_expr);
     /* Persist to disk so the same per-tick snapshot can be inspected
@@ -2475,24 +2490,29 @@ static void recordingCapture(BrainTestApp *app) {
     }
 
     /* pill_contrib snapshot — same scrub-back rationale as
-     * vizDetails. Each PillContribEntry is fixed-size (inline
-     * tile array), so a single malloc + memcpy captures the lot. */
-    {
-        int pcc = pillContribCount();
+     * vizDetails. Captured per-bot so playback + bot-switch works.
+     * Each PillContribEntry is fixed-size (inline tile array), so
+     * one malloc + memcpy per bot captures their pills. */
+    for (int b = 0; b < PILLCONTRIB_MAX_BOTS; b++) {
+        int pcc = pillContribCount(b);
         if (pcc > 0) {
-            f->pillContrib = (PillContribEntry *)malloc(pcc * sizeof(PillContribEntry));
-            if (f->pillContrib) {
+            f->pillContribEntries[b] =
+                (PillContribEntry *)malloc(pcc * sizeof(PillContribEntry));
+            if (f->pillContribEntries[b]) {
                 for (int i = 0; i < pcc; i++) {
-                    const PillContribEntry *src = pillContribGet(i);
-                    if (src) f->pillContrib[i] = *src;
+                    const PillContribEntry *src = pillContribGet(b, i);
+                    if (src) f->pillContribEntries[b][i] = *src;
                 }
-                f->pillContribCount = pcc;
+                f->pillContribCounts[b] = pcc;
+                f->pillContribPtrs[b]   = f->pillContribEntries[b];
             } else {
-                f->pillContribCount = 0;
+                f->pillContribCounts[b] = 0;
+                f->pillContribPtrs[b]   = NULL;
             }
         } else {
-            f->pillContrib = NULL;
-            f->pillContribCount = 0;
+            f->pillContribEntries[b] = NULL;
+            f->pillContribPtrs[b]    = NULL;
+            f->pillContribCounts[b]  = 0;
         }
     }
 
@@ -2973,9 +2993,9 @@ static void appTickBrain(BrainTestApp *app) {
      * Brain.think a fresh registry that all bots accumulate into; the
      * recording capture below catches the union after botManagerTick. */
     vizDetailRegistryClear();
-    /* Same multi-bot rationale: clear pillcontrib once host-side
-     * so per-bot Lua emit just appends to the union. */
-    pillContribClear();
+    /* Clear pillcontrib for every bot once per tick. Each bot's
+     * Brain.think then appends to its own slot range — no race. */
+    pillContribClearAll();
 
     botManagerTick(app->sim, optAI);
     {
@@ -3707,7 +3727,12 @@ static void appRender(BrainTestApp *app) {
              * so the next live brain tick repopulates the live
              * registry without interference. */
             vizDetailSetPlaybackView(pf_->vizDetails, pf_->vizDetailCount);
-            pillContribSetPlaybackView(pf_->pillContrib, pf_->pillContribCount);
+            {
+                PillContribSnapshot snap;
+                snap.entries = pf_->pillContribPtrs;
+                snap.counts  = pf_->pillContribCounts;
+                pillContribSetPlaybackView(&snap);
+            }
 
             /* ── A* / Dijkstra path overlay ── temporarily replace
              * app->cachedPath_* with the recorded path. The
@@ -3856,10 +3881,10 @@ static void appRender(BrainTestApp *app) {
      * with alpha proportional to the contribution value. Honors the
      * playback override transparently via pillContribGet. */
     if (app->pillContribSel > 0) {
-        int n = pillContribCount();
+        int n = pillContribCount(app->followBot);
         int sel0 = app->pillContribSel - 1; /* shift to 0-based */
         if (sel0 < n) {
-            const PillContribEntry *pe = pillContribGet(sel0);
+            const PillContribEntry *pe = pillContribGet(app->followBot, sel0);
             if (pe) {
                 /* Find max value for normalization. */
                 float vmax = 1.0f;
@@ -4201,6 +4226,15 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "  Game:    %s\n", gameNames[optGame]);
     fprintf(stderr, "  Opt:     %s\n", optProduction ? "yes (opt/, debug=false)" : "no (source, debug=true)");
 
+    /* Restore SDL2-style keycode behavior: event.key.key carries the
+     * unmodified keycode (Shift+2 → SDLK_2, not SDLK_AT). Without this,
+     * every `case SDLK_<digit>:` branch that checks SDL_KMOD_SHIFT
+     * inside (e.g. shift+2 pillcontrib cycle, shift+5 low-danger
+     * weight, shift+7 dijkstra slate cycle) is silently unreachable on
+     * US layouts because SDL3 translates the keycode through the
+     * current shift state by default. Must be set BEFORE SDL_Init. */
+    SDL_SetHint(SDL_HINT_KEYCODE_OPTIONS, "no_modifiers");
+
     /* Initialize SDL */
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -4247,7 +4281,9 @@ int main(int argc, char *argv[]) {
     brainCoreSetVizDetailClearCallback(vizDetailClearCallback);
     brainCoreSetYieldCallback(SDL_PumpEvents);
     botManagerSetPreThinkHook(preThinkHook);
-    naPillContribSetClearCallback(pillContribClearCallback);
+    /* Clear is host-driven now (called once per tick before bot loop
+     * via pillContribClearAll), so there's no Lua-side clear binding
+     * to wire up. */
     naPillContribSetBeginPillCallback(pillContribBeginPillCallback);
     naPillContribSetAddTileCallback(pillContribAddTileCallback);
     /* Built-in panel renderer: type "text" → plain unformatted
@@ -4522,6 +4558,27 @@ int main(int argc, char *argv[]) {
             }
 
             case SDL_EVENT_KEY_DOWN:
+                /* DIAGNOSTIC: log every keydown to a fixed file (the
+                 * shell-redirect path is unreliable on Windows
+                 * console launches). */
+                {
+                    static FILE *_keylog = NULL;
+                    if (!_keylog) _keylog = fopen("keylog.txt", "w");
+                    if (_keylog) {
+                        fprintf(_keylog,
+                            "[keydown] key=0x%X (%s) scancode=%d mod=0x%X "
+                            "shift=%d ctrl=%d alt=%d repeat=%d\n",
+                            (unsigned)ev.key.key,
+                            SDL_GetKeyName(ev.key.key),
+                            (int)ev.key.scancode,
+                            (unsigned)ev.key.mod,
+                            (ev.key.mod & SDL_KMOD_SHIFT) ? 1 : 0,
+                            (ev.key.mod & SDL_KMOD_CTRL)  ? 1 : 0,
+                            (ev.key.mod & SDL_KMOD_ALT)   ? 1 : 0,
+                            ev.key.repeat ? 1 : 0);
+                        fflush(_keylog);
+                    }
+                }
                 /* Manual control: same as above, for key presses.
                  * We do this BEFORE the repeat check + switch below
                  * so a held key keeps re-asserting the keystate at
@@ -4531,6 +4588,11 @@ int main(int argc, char *argv[]) {
                 if (app.manualControl) {
                     const char *role = keyToRole(&app, ev.key.scancode);
                     if (role) {
+                        {
+                            static FILE *_keylog2 = NULL;
+                            if (!_keylog2) _keylog2 = fopen("keylog.txt", "a");
+                            if (_keylog2) { fprintf(_keylog2, "  → consumed by manualControl role=%s\n", role); fflush(_keylog2); }
+                        }
                         char buf[128];
                         SDL_snprintf(buf, sizeof(buf),
                             "if brain and brain.manual_key then "
@@ -4542,28 +4604,39 @@ int main(int argc, char *argv[]) {
                         break;
                     }
                 }
-                if (ev.key.repeat) break;
+                if (ev.key.repeat) {
+                    {
+                        static FILE *_keylog3 = NULL;
+                        if (!_keylog3) _keylog3 = fopen("keylog.txt", "a");
+                        if (_keylog3) { fprintf(_keylog3, "  → break: repeat\n"); fflush(_keylog3); }
+                    }
+                    break;
+                }
                 /* Skip BrainTest hotkeys while a text field is being
                  * edited inside the V dialog (its own ImGui context
-                 * — has the V-dialog filter input). The main-window
-                 * ImGui context has no text inputs today (shot-sim
-                 * panel + shortcuts window are all buttons/radios/
-                 * tables), so we don't gate on its WantTextInput —
-                 * doing so was eating SPACE / TAB / etc. when the
-                 * shot-sim panel just had focus without any text
-                 * field active. Re-add a main-context gate when a
-                 * real text input lands there. */
-                if (vizWindowWantsTextInput()) break;
+                 * — has the V-dialog filter input). */
+                if (vizWindowWantsTextInput()) {
+                    {
+                        static FILE *_keylog4 = NULL;
+                        if (!_keylog4) _keylog4 = fopen("keylog.txt", "a");
+                        if (_keylog4) { fprintf(_keylog4, "  → break: vizWindowWantsTextInput\n"); fflush(_keylog4); }
+                    }
+                    break;
+                }
                 switch (ev.key.key) {
                 case SDLK_SPACE:
                     app.paused = !app.paused;
                     break;
                 case SDLK_TAB:
-                    /* Cycle to next active bot */
+                    /* Cycle to next active bot. Reset pill-contrib
+                     * selection — the per-bot pill list is different
+                     * for the new bot, so the old cycle index would
+                     * be meaningless (or out of range). */
                     for (int tries = 0; tries < MAX_TANKS; tries++) {
                         app.followBot = (app.followBot + 1) % MAX_TANKS;
                         if (botManagerIsBot(app.followBot)) break;
                     }
+                    app.pillContribSel = 0;
                     break;
                 case SDLK_F:
                     app.freeCamera = !app.freeCamera;
@@ -4591,17 +4664,32 @@ int main(int argc, char *argv[]) {
                     app.overlayDirty = true;
                     break;
                 case SDLK_2:
+                    {
+                        static FILE *_keylog5 = NULL;
+                        if (!_keylog5) _keylog5 = fopen("keylog.txt", "a");
+                        if (_keylog5) { fprintf(_keylog5, "  → SDLK_2 case entered shift=%d ctrl=%d pillContribSel=%d pillContribCount(followBot=%d)=%d\n",
+                            (ev.key.mod & SDL_KMOD_SHIFT) ? 1 : 0,
+                            (ev.key.mod & SDL_KMOD_CTRL)  ? 1 : 0,
+                            app.pillContribSel, app.followBot,
+                            pillContribCount(app.followBot)); fflush(_keylog5); }
+                    }
                     if ((ev.key.mod & SDL_KMOD_SHIFT) && (ev.key.mod & SDL_KMOD_CTRL)) {
                         /* ctrl-shift-2: dedicated off switch (no
                          * cycling through every pill to reach 0). */
                         app.pillContribSel = 0;
                     } else if (ev.key.mod & SDL_KMOD_SHIFT) {
                         /* shift-2: cycle through pill_contrib overlays
-                         * one pill at a time. Wraps via 0 (off) so the
-                         * user can return to a clean view between cycles. */
-                        int n = pillContribCount();
+                         * for the currently-followed bot, one pill at a
+                         * time. Wraps via 0 (off) so the user can return
+                         * to a clean view between cycles. */
+                        int n = pillContribCount(app.followBot);
                         app.pillContribSel++;
                         if (app.pillContribSel > n) app.pillContribSel = 0;
+                        {
+                            static FILE *_keylog6 = NULL;
+                            if (!_keylog6) _keylog6 = fopen("keylog.txt", "a");
+                            if (_keylog6) { fprintf(_keylog6, "  → cycled pillContribSel now=%d of %d\n", app.pillContribSel, n); fflush(_keylog6); }
+                        }
                     } else {
                         vizFlagFlip(app.regIdxDanger);
                         app.overlayDirty = true;

@@ -577,7 +577,8 @@ static void setup_brain_package_path(lua_State *L, const char *path) {
 
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, ClientSim *cs,
-                            aiType aiMode, bool debug_mode) {
+                            aiType aiMode, bool debug_mode,
+                            int player_num) {
   lua_State *L;
 
   memset(inst, 0, sizeof(*inst));
@@ -612,14 +613,28 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   lua_pushboolean(L, debug_mode);
   lua_setglobal(L, "BRAIN_DEBUG_MODE");
 
+  /* print2 mirrors BRAIN_DEBUG_MODE: writes the per-tick log only in
+   * debug mode. The Lua side gates every print2 call on this so opt
+   * builds and non-debug runs pay zero I/O cost. */
+  lua_pushboolean(L, debug_mode);
+  lua_setglobal(L, "_PRINT2_ENABLED");
+
   lua_pushboolean(L, s_profile);
   lua_setglobal(L, "BRAIN_PROFILE");
 
   lua_pushboolean(L, s_profile_log);
   lua_setglobal(L, "BRAIN_PROFILE_LOG");
 
-  lua_pushboolean(L, s_log_json);
+  /* BRAIN_LOG_JSON drives the brain's JSONL behavior log. Force it on
+   * whenever debug mode is on — there's no scenario where you'd want
+   * debug logging without the structured trace too. _JSONL_LOGGER_ENABLED
+   * is the parallel player-0 gate inside init.lua's log-open; set it
+   * here too so player 0's brain_p0.jsonl actually opens. */
+  bool log_json_eff = s_log_json || debug_mode;
+  lua_pushboolean(L, log_json_eff);
   lua_setglobal(L, "BRAIN_LOG_JSON");
+  lua_pushboolean(L, log_json_eff);
+  lua_setglobal(L, "_JSONL_LOGGER_ENABLED");
 
   /* Pool visualizer strings (desc, loc_reason, etc.) — on in debug mode,
    * off in --opt production mode to eliminate GC pressure. */
@@ -639,6 +654,11 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   /* Create C pathfinder and register cpf_* globals */
   inst->pathfinder = brainPathfinderCreate();
   if (inst->pathfinder) {
+    /* Tag this bot's pathfinder with its player number so spot-log
+     * writes from inside dijkstra_lookup_subtract_by_kind route to
+     * THIS bot's spot_bot<N>.log via pf->bot_idx — without consulting
+     * a process-global that other bots' calls can clobber. */
+    brainPathfinderSetBotIdx(inst->pathfinder, player_num);
     /* Preheat slate arrays: malloc + page-commit so the first
      * dijkstra_start (typically tick 1) doesn't pay ~1-2 ms of
      * lazy page-fault cost on a fresh process. */
@@ -652,20 +672,28 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     brainCoreRegisterWorldSim(L, &inst->worldsim);
   }
 
-  /* Overlay bindings intentionally NOT registered under the SDL3 game
-   * client. The buffer would fill with thousands of viz.* commands per
-   * tick (every brain HUD/marker/standoff draw), but no rendering path
-   * in src/gui/sdl3 reads it — only BrainTest's renderer does. Leaving
-   * `overlay_text` et al. as nil makes viz.lua's wrappers short-circuit
-   * via their `if not overlay_text then return end` guard, killing the
-   * per-tick Lua-boundary-crossing cost.
+  /* Overlay bindings ARE registered on both hosts. BrainTest uses
+   * this code path (it links luaBrainInstanceCreate, not a parallel
+   * variant), so omitting the bindings left every brain's viz.* call
+   * short-circuited at the Lua wrapper (`if not overlay_text then
+   * return end`) — V-dialog rows toggled but no map overlays drew.
    *
-   * The buffer struct is still initialized (and destroyed in the close
-   * path) so botManagerGetOverlayCmds() returns a valid empty buffer
-   * to any caller that polls it. */
+   * The per-tick cost the previous "omit the binding" path was
+   * avoiding is now killed at the Lua layer instead: in the release
+   * client (debug_mode == false) we set _BT_VIZ_SUPPRESS_ALL=true,
+   * which makes viz.is_on() return false for every id except
+   * hud_resources. The brain's viz wrappers gate every draw call on
+   * viz.is_on, so suppressed draws never reach the C closure — same
+   * effective cost as before, without BrainTest collateral damage. */
   overlayCmdBufferInit(&inst->overlay);
   inst->overlayPtr = &inst->overlay;
-  /* brainCoreRegisterOverlay(L, &inst->overlayPtr) intentionally omitted */
+  brainCoreRegisterOverlay(L, &inst->overlayPtr);
+
+  /* Release-client suppression: makes viz.is_on() report off for
+   * everything except hud_resources, so viz.* draw calls early-return
+   * at the Lua layer before crossing into the C overlay closures. */
+  lua_pushboolean(L, !debug_mode);
+  lua_setglobal(L, "_BT_VIZ_SUPPRESS_ALL");
 
   /* braintest_viz_register binding so brains can populate the V
    * dialog rows. Routes to a callback BrainTest sets at startup;
@@ -687,7 +715,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * for the per-pill danger overlay (shift-2 in BrainTest). NULL-callback
    * no-op outside BrainTest. NewAutopilot-specific — lives in the bot's
    * own C directory so the engine's brain runtime stays generic. */
-  naPillContribRegister(L);
+  naPillContribRegister(L, player_num);
   /* na_threat — NewAutopilot threat-grid C kernel. Provides terrain
    * factor cache + pill stamping. Tunables are set from Lua via
    * na_threat.configure so cloners can tweak constants without
@@ -936,6 +964,10 @@ void luaBrainInstanceSetDebugMode(LuaBrainInstance *inst, bool enabled) {
   if (!inst || !inst->L) return;
   lua_pushboolean(inst->L, enabled);
   lua_setglobal(inst->L, "BRAIN_DEBUG_MODE");
+  /* Keep print2 gate in sync — flipping debug mode mid-run should
+   * also start/stop the per-tick log file. */
+  lua_pushboolean(inst->L, enabled);
+  lua_setglobal(inst->L, "_PRINT2_ENABLED");
 }
 
 LuaBrainSetting *luaBrainInstanceGetSettings(LuaBrainInstance *inst,
@@ -1279,9 +1311,14 @@ bool luaBrainStart(const char *path, const char *name, ClientSim *cs) {
   }
 
   clientMutexWaitFor();
+  /* Singleton path (legacy "human player loads a script directly")
+   * has no notion of a bot player_num — pillcontrib bindings will
+   * write into slot 0 and the BrainTest viewer (which only ever
+   * follows real bot indices) won't read it. Pass 0 explicitly. */
   if (!luaBrainInstanceCreate(&singletonInst, path, name,
                               cs,
-                              *clientSimGetAllowComputerTanks(cs), false)) {
+                              *clientSimGetAllowComputerTanks(cs), false,
+                              0)) {
     clientMutexRelease();
     return false;
   }
