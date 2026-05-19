@@ -301,6 +301,17 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  /* The server threads mutex outlives every per-session start/end cycle:
+   * SDL's timer thread may still be running hostedServerTimerCb (which waits
+   * on this mutex) while a session shuts down, and SDL_Quit only joins the
+   * timer thread at the very end of main. Destroying the mutex before then
+   * would strand that waiter on freed memory. */
+  if (threadsCreate(FALSE) == FALSE) {
+    clientMutexDestroy();
+    SDL_Quit();
+    return 1;
+  }
+
   winboloQuit = FALSE;
   while (winboloQuit == FALSE) {
     /* Show lobby dialog if the server uses lobby mode */
@@ -359,8 +370,6 @@ int main(int argc, char *argv[]) {
     {
       bool done = FALSE;
       SDL_Window *sdlWin = sdl3DrawGetWindow();
-
-      threadsCreate(FALSE);
 
       /* Flush any stale SDL_QUIT events that may have been queued during
          dialog teardown. Without this, the main loop would exit immediately
@@ -558,6 +567,7 @@ int main(int argc, char *argv[]) {
   sdl3DrawCleanup();
   steam_shutdown();
   SDL_Quit();
+  threadsDestroy();
   sentryClose();
   return 0;
 }

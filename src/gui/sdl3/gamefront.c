@@ -601,7 +601,6 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   gameFrontShutdownServer();
   isServer = FALSE;
   clientMutexRelease();
-  threadsDestroy();
 }
 
 /* -------------------------------------------------------
