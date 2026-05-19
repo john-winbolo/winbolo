@@ -55,6 +55,11 @@ void newsPopupOpenManual(void);
  * teardown.                                                         */
 void newsPopupShutdown(void);
 
+/* [NEWS] AutoShow accessors. `value` must be the literal "show" or
+ * "dontShow"; passing "unset" is undefined for external callers. */
+const char *newsPrefGetAutoShow(void);
+void        newsPrefSetAutoShow(const char *value);
+
 #ifdef __cplusplus
 }
 #endif

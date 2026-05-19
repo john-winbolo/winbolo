@@ -1182,6 +1182,9 @@
 #define STR_MENU_HIDE_ME                    1259
 #define STR_MENU_QUIT_ME                    1260
 
+/* Settings → Network: WinBolo.net news auto-show toggle. */
+#define STR_DLGSETTINGS_NEWS_AUTOSHOW       1261
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821
