@@ -4939,6 +4939,32 @@ local function goal_selection(state, world, info, quiet)
     end -- BRAIN_DEBUG_MODE
 
     if #pool > 0 then
+      -- Dump the FINAL post-everything scores for every candidate so a
+      -- replan tick can be reconstructed after the fact. Stripped from
+      -- opt/ via print2.
+      print2(string.format("FINAL_SCORES t=%d pool_size=%d cur=%s@%d,%d",
+        state.tick or 0, #pool,
+        state.goal and state.goal.kind or "none",
+        state.goal and state.goal.mx or 0,
+        state.goal and state.goal.my or 0))
+      for i, c in ipairs(pool) do
+        local base = c._base_cost or c.cost
+        local penalty = (c.cost or 0) - base
+        print2(string.format(
+          "  [%d] %s@%d,%d total=%.1f base=%.1f pen=%.1f hyst=%s sw=%.1f cmt=%.1f histT=%s histK=%s wsim=%.1f loc=%.2f dens=%.2f pickup=%.1f desc=%s",
+          i,
+          c.goal and c.goal.kind or "?",
+          c.goal and c.goal.mx or 0, c.goal and c.goal.my or 0,
+          c.cost or 0, base, penalty,
+          tostring(c.hysteresis or "-"),
+          c.switch_flat or 0, c.commit_val or 0,
+          tostring(c.hist_target or 0), tostring(c.hist_kind or 0),
+          c.wsim_add or 0,
+          c.loc_mult or 1.0, c.density_mult or 1.0,
+          c.pickup_value or 0,
+          tostring(c.desc or "")))
+      end
+
       local winner = pool[1]
 
       -- Pool log + winner_cands + log.reason are debug/log-only — wrapped

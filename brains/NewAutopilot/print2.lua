@@ -116,14 +116,13 @@ end
 function M.flush()
   if not _G._PRINT2_ENABLED then return end
   if #buffer == 0 then return end
-
   -- One-time open per Lua state (per bot). Once open, we keep the
   -- handle for the life of the process — never close, never reopen.
+  -- Fall back to cwd when no session dir is set (e.g. BrainTest run
+  -- without --profile-log / --log-json).
   if not file then
     local dir = _G.DEBUG_SESSION_DIR
-    if not dir then
-      fail_hard("no DEBUG_SESSION_DIR", nil)
-    end
+    if not dir or dir == "" then dir = "." end
     try_open(dir)
   end
 

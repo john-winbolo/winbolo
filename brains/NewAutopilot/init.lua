@@ -330,6 +330,9 @@ end
 function Brain.open(info)
   opt.set_tick(0)
   opt("BEGIN Brain.open player=", info.player_number)
+  print2("=== BRAIN STARTUP === player=", info.player_number,
+         " name=", tostring(info.player_name),
+         " debug_session_dir=", tostring(_G.DEBUG_SESSION_DIR))
   local t_open0 = clock_us()
   -- Diagnostic: emit a SELF_DR line per pool-6 candidate per replan
   -- showing raw / subtracted / c_reduction / manual_reduction so we can
@@ -2692,10 +2695,35 @@ function Brain.think(info)
              and new_goal.target_id ~= state.goal.target_id) then
         local old_kind = state.goal.kind
         local old_id   = state.goal.target_id
-        -- Record abandoned goal on cooldown (prevent oscillation)
-        if old_kind ~= "none" then
+        -- Record abandoned goal on cooldown (prevent oscillation).
+        -- Skip when a pill goal completed successfully — the pill at that
+        -- tile is no longer a hostile target, so the cooldown is either
+        -- moot (no candidate exists) or actively harmful if the pill
+        -- becomes hostile again shortly.
+        local completed = false
+        if old_kind == "attack_pill" or old_kind == "capture_pill" then
+          local p = W.pill_at(world, state.goal.mx or 0, state.goal.my or 0)
+          if not p or p.owner == "friendly" then completed = true end
+        end
+        if old_kind ~= "none" and not completed then
           local cd_key = old_kind .. ":" .. (state.goal.mx or 0) .. "," .. (state.goal.my or 0)
           state.goal_cooldowns[cd_key] = now + C.GOAL_ABANDON_COOLDOWN
+        end
+        -- Successful pill take: remove the just-finished goal's entry from
+        -- goal_history so the exponential kind/target recurrence penalty
+        -- (goals.lua:4555-4560) doesn't punish picking the next low-HP
+        -- pill. Finishing a take is not oscillation.
+        if completed then
+          local hist = state.goal_history
+          local gmx  = state.goal.mx or 0
+          local gmy  = state.goal.my or 0
+          for i = #hist, 1, -1 do
+            local h = hist[i]
+            if h.kind == old_kind and h.mx == gmx and h.my == gmy then
+              table.remove(hist, i)
+              break
+            end
+          end
         end
         -- Append the NEW goal to the rolling history (oscillation detection).
         -- The history records every distinct goal change; goal_selection

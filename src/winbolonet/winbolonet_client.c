@@ -32,6 +32,13 @@
 #include "winbolonet_core.h"
 #include "http.h"
 
+/* Defined in winbolonet_core.c; consulted before httpDestroy() so the
+ * one-shot auth calls below don't tear down a shared HTTP handle that
+ * a running server/client session owns. Without the guard, the next
+ * wbn_api_post short-circuits to -1 on !httpStarted, which masquerades
+ * as "no response from WinBolo.net" for things like server/balance. */
+extern bool winboloNetRunning;
+
 /*********************************************************
 *NAME:          winbolonetAuthLogin
 *PURPOSE:
@@ -89,7 +96,9 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
   }
 
   cJSON_Delete(resp);
-  httpDestroy();
+  if (winboloNetRunning != TRUE) {
+    httpDestroy();
+  }
   return ok;
 }
 
@@ -150,7 +159,9 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
   }
 
   cJSON_Delete(resp);
-  httpDestroy();
+  if (winboloNetRunning != TRUE) {
+    httpDestroy();
+  }
   return ok;
 }
 
@@ -209,7 +220,9 @@ bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorM
   }
 
   cJSON_Delete(resp);
-  httpDestroy();
+  if (winboloNetRunning != TRUE) {
+    httpDestroy();
+  }
   return ok;
 }
 
@@ -267,6 +280,8 @@ bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, ch
   }
 
   cJSON_Delete(resp);
-  httpDestroy();
+  if (winboloNetRunning != TRUE) {
+    httpDestroy();
+  }
   return ok;
 }

@@ -27,6 +27,9 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#if !BOLO_MOBILE
+#include "imgui_news.h"
+#endif
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -335,6 +338,16 @@ extern "C" int imguiWelcomeShow(void) {
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
+#if !BOLO_MOBILE
+        /* Single kick per program run — newsPopupKickFetch is idempotent
+         * but the static guard avoids the call entirely once we've kicked. */
+        static bool sNewsKicked = false;
+        if (!sNewsKicked) {
+            newsPopupKickFetch();
+            sNewsKicked = true;
+        }
+#endif
+
         /* Top-right logo + ghost menu column. Logo is purely decorative. */
         {
             const float restoreMargin = 12.0f * s;
@@ -388,7 +401,12 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, ghostTextAlpha));
 
             const bool showTutorial = gameFrontGetShowTutorialButton();
-            struct { langid labelId; int code; bool show; } miniModes[] = {
+            /* rawLabel, when non-null, signals a non-exit action: the click
+             * handler dispatches by rawLabel string rather than setting
+             * result/running. Display text still goes through
+             * langGetText(labelId) whenever labelId is non-zero; rawLabel
+             * is only used as the visible text when labelId == 0. */
+            struct { langid labelId; int code; bool show; const char* rawLabel; } miniModes[] = {
                 { STR_DLGSETTINGS_TUTORIAL, RESULT_TUTORIAL,     showTutorial },
                 { STR_DLGWELCOME_SINGLE,    RESULT_SINGLEPLAYER, true },
                 { STR_DLGWELCOME_INTERNET,  RESULT_INTERNET,     true },
@@ -399,6 +417,7 @@ extern "C" int imguiWelcomeShow(void) {
 #endif
                 { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true },
 #if !BOLO_MOBILE
+                { STR_DLGWELCOME_NEWS,      0,                   true, "News" },
                 { STR_DLGOPENING_BUTTON2,   RESULT_QUIT,         true },
 #endif
             };
@@ -415,12 +434,36 @@ extern "C" int imguiWelcomeShow(void) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
                 }
                 char miniLabel[96];
-                SDL_snprintf(miniLabel, sizeof(miniLabel), "%s##mini", langGetText(miniModes[i].labelId));
+                const char* labelText = (miniModes[i].labelId != 0)
+                    ? langGetText(miniModes[i].labelId)
+                    : miniModes[i].rawLabel;
+                SDL_snprintf(miniLabel, sizeof(miniLabel), "%s##mini", labelText);
                 if (ImGui::Button(miniLabel, ImVec2(miniBtnW, miniBtnH))) {
-                    result = miniModes[i].code;
-                    running = false;
+#if !BOLO_MOBILE
+                    if (miniModes[i].rawLabel && SDL_strcmp(miniModes[i].rawLabel, "News") == 0) {
+                        newsPopupOpenManual();
+                    } else
+#endif
+                    {
+                        result = miniModes[i].code;
+                        running = false;
+                    }
                 }
                 imguiHandOnHover();
+#if !BOLO_MOBILE
+                /* Unread dot on the News button when fresh items exist. */
+                if (miniModes[i].rawLabel &&
+                    SDL_strcmp(miniModes[i].rawLabel, "News") == 0 &&
+                    newsPopupHasUnread()) {
+                    ImVec2 itemMin = ImGui::GetItemRectMin();
+                    ImVec2 itemMax = ImGui::GetItemRectMax();
+                    float dotR = 4.0f * s;
+                    ImVec2 dotCenter(itemMax.x - dotR - 6.0f * s,
+                                     (itemMin.y + itemMax.y) * 0.5f);
+                    ImGui::GetWindowDrawList()->AddCircleFilled(
+                        dotCenter, dotR, IM_COL32(220, 60, 60, 230));
+                }
+#endif
                 if (hovered) {
                     ImGui::PopStyleColor();
                 }
@@ -434,6 +477,13 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PopStyleColor(4);
             ImGui::PopStyleVar(1);
         }
+
+#if !BOLO_MOBILE
+        /* Drive the news popup state machine. Renders the consent dialog
+         * or the news modal when either is open, otherwise polls the
+         * fetch handle and decides whether to auto-open. */
+        newsPopupTick();
+#endif
 
         /* Play/Pause button — bottom-left */
         if (hasBg) {
@@ -553,6 +603,12 @@ extern "C" int imguiWelcomeShow(void) {
                 dl->AddText(fullScreen,
                             IM_COL32(235, 235, 235, (int)(230 * fullA)), fullVer);
             }
+            /* Confirm the SetCursorPos above by submitting a zero-area
+             * Dummy — the version text uses GetWindowDrawList directly so
+             * ImGui's content tracker doesn't otherwise see anything after
+             * the cursor was moved, and End() asserts in debug builds
+             * (ErrorCheckUsingSetCursorPosToExtendParentBoundaries). */
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
         }
 
         ImGui::End(); /* ##WelcomeBg host */

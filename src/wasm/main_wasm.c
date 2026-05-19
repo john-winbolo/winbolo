@@ -329,15 +329,8 @@ int main(int argc, char *argv[]) {
     SDL_Quit();
     return 1;
   }
-  {
-    GameSim *gs = humanSim ? clientSimGetGameSim(humanSim) : NULL;
-    fprintf(stderr, "[WASM] gameFrontStart OK; humanSim=%p plyrs=%p mp=%p tank0=%p\n",
-           (void*)humanSim,
-           gs ? (void*)gs->plyrs : NULL,
-           gs ? (void*)gs->mp : NULL,
-           gs ? (void*)gs->tanks[0] : NULL);
-    fflush(stderr);
-  }
+  fprintf(stderr, "[WASM] gameFrontStart OK; humanSim=%p\n", (void*)humanSim);
+  fflush(stderr);
 
   /* Apply player name from URL after gameFrontStart sets defaults.
    * Gated like the Phase 7.1 Steam-persona seed: only honour ?name=
@@ -405,15 +398,8 @@ int main(int argc, char *argv[]) {
   oldTick = SDL_GetTicks();
   lastFrameTime = emscripten_get_now();
 
-  {
-    GameSim *gs = humanSim ? clientSimGetGameSim(humanSim) : NULL;
-    fprintf(stderr, "[WASM] Starting main loop; humanSim=%p plyrs=%p mp=%p tank0=%p\n",
-           (void*)humanSim,
-           gs ? (void*)gs->plyrs : NULL,
-           gs ? (void*)gs->mp : NULL,
-           gs ? (void*)gs->tanks[0] : NULL);
-    fflush(stderr);
-  }
+  fprintf(stderr, "[WASM] Starting main loop; humanSim=%p\n", (void*)humanSim);
+  fflush(stderr);
   emscripten_set_main_loop(main_loop_iteration, 0, 1);
 
   /* Cleanup (not reached with simulate_infinite_loop=1) */
@@ -715,6 +701,7 @@ void frontEndGameOver(ClientSim *cs) {
 void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) { (void)cs; (void)value; }
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) { (void)cs; (void)value; (void)str; (void)countryCode; (void)ping; (void)clientType; (void)clientFlags; }
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) { (void)cs; (void)value; (void)isChecked; }
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
 void frontEndSetActiveClientSim(struct ClientSim *cs) { (void)cs; }
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled)   { (void)enabled; }

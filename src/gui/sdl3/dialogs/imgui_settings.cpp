@@ -43,6 +43,7 @@ extern "C" {
 #include "imgui_settings.h"
 #include "imgui_keysetup.h"
 #include "imgui_winbolonet.h"
+#include "imgui_news.h"
 }
 
 /* Frame-rate / zoom constants (mirrors winbolo.h values) */
@@ -753,6 +754,16 @@ extern "C" void imguiSettingsShow(void) {
                 bool b = gameFrontUseNatTraversal;
                 if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_USE_NATTRAV), &b)) {
                     gameFrontUseNatTraversal = b;
+                }
+            }
+            {
+                const char *cur = newsPrefGetAutoShow();
+                /* "unset" and "show" both default the checkbox to
+                 * checked; only an explicit "dontShow" unchecks it.
+                 * Toggling never writes "unset". */
+                bool b = (strcmp(cur, "dontShow") != 0);
+                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_NEWS_AUTOSHOW), &b)) {
+                    newsPrefSetAutoShow(b ? "show" : "dontShow");
                 }
             }
         }

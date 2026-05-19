@@ -123,4 +123,29 @@ void winboloNetGetServerKey(char *keyBuff);
 *********************************************************/
 void winbolonetCoreSetPreferencesPath(const char *path);
 
+/*********************************************************
+*NAME:          winbolonetGetCountryCode
+*PURPOSE:
+* Returns the cached country code: uppercase 2-char ISO
+* 3166-1 alpha-2. Always a valid 2-char string; returns
+* "XX" if no fetch has ever written one. Reads from
+* [WINBOLO.NET] CountryCode= on first call and from the
+* in-memory copy thereafter.
+*********************************************************/
+const char *winbolonetGetCountryCode(void);
+
+/*********************************************************
+*NAME:          winbolonetSetCountryCode
+*PURPOSE:
+* Called by the news fetcher on a successful response.
+* Validates the input is a 2-char string; unsuitable
+* values (NULL, wrong length, non-alpha) are ignored —
+* the previous value stays. Writes through to
+* [WINBOLO.NET] CountryCode=.
+*
+*ARGUMENTS:
+* cc - 2-char ISO 3166-1 alpha-2 country code (any case)
+*********************************************************/
+void winbolonetSetCountryCode(const char *cc);
+
 #endif /* __WINBOLO_NET_CORE_H */

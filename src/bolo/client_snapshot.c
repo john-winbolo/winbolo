@@ -488,7 +488,7 @@ void clientApplySnapshot(ClientSim *csPtr,
         sprintf(name, "Player %d", pn);
         fprintf(stderr, "[SCREEN] Auto-registering player %d from snapshot (pos=%u,%u)\n",
                 pn, tanks[i].worldX, tanks[i].worldY);
-        playersSetPlayer(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, pn, name, "??",
+        playersSetPlayer(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, pn, name, "XX",
                          0, 0, 0, 0, 0, FALSE, 0, NULL, csPtr->isBot);
       }
 
