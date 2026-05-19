@@ -204,6 +204,15 @@ ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, const char *mapNam
  *********************************************************/
 bool serverSimReloadMap(ServerSim *sim, const char *mapFileName);
 
+/* In-memory analogue of serverSimReloadMap: loads the supplied
+ * compressed map blob directly instead of reading from a file. The
+ * caller-supplied mapName is used as the display name (no basename
+ * or suffix stripping). Same return contract, same side effects as
+ * serverSimReloadMap. */
+bool serverSimReloadCompressedInMemory(ServerSim *sim,
+                                       const uint8_t *bytes, int len,
+                                       const char *mapName);
+
 /* Procedural-map preview variant. Regenerates the map from the
  * given MapGenConfig, stashes the prior committed map for Cancel
  * roll-back (same mechanism as serverSimReloadMap), refreshes

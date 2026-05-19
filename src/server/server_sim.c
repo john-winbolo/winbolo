@@ -4134,6 +4134,111 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
     return TRUE;
 }
 
+bool serverSimReloadCompressedInMemory(ServerSim *sim,
+                                       const uint8_t *bytes, int len,
+                                       const char *mapName) {
+    BYTE tempBuf[131072];
+    int compressedLen;
+    char msg[256];
+
+    if (sim == NULL || bytes == NULL || len <= 0 ||
+        mapName == NULL || mapName[0] == '\0') {
+        return FALSE;
+    }
+    if (sim->state != serverStateLobby) {
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "serverSimReloadCompressedInMemory rejected: state=%d (not lobby)",
+            (int)sim->state);
+        return FALSE;
+    }
+
+    /* Stash the currently-committed map as the "previous" snapshot
+     * before we touch the sim. Keep the ORIGINAL committed map
+     * across a chain of previews so one Cancel rolls all the way
+     * back to where the user started. */
+    if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
+        sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
+        if (sim->previousMapData) {
+            memcpy(sim->previousMapData, sim->cachedMapData,
+                   sim->cachedMapDataLen);
+            sim->previousMapDataLen = sim->cachedMapDataLen;
+            memcpy(sim->previousMapName, sim->mapName,
+                   sizeof(sim->previousMapName));
+        }
+    }
+
+    /* Wipe the existing map/pill/base/start contents before the
+     * decoder touches them. mapLoadCompressedMap's RLE-decoder only
+     * writes cells encoded in the new blob — any tile NOT included
+     * in the new map's runs would otherwise keep the previous map's
+     * value. */
+    {
+        int x, y;
+        memset((*sim->sim.mp).mapItem, DEEP_SEA,
+               sizeof((*sim->sim.mp).mapItem));
+        for (x = 0; x < 256; x++) {
+            for (y = 0; y < 256; y++) {
+                if (x <= MAP_MINE_EDGE_LEFT || x >= MAP_MINE_EDGE_RIGHT ||
+                    y <= MAP_MINE_EDGE_TOP  || y >= MAP_MINE_EDGE_BOTTOM) {
+                    (*sim->sim.mp).mapItem[x][y] = DEEP_SEA;
+                }
+            }
+        }
+        sim->sim.pb->numPills = 0;
+        sim->sim.bs->numBases = 0;
+        sim->sim.ss->numStarts = 0;
+    }
+
+    if (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs,
+                             &sim->sim.ss, (BYTE *)bytes, len) == FALSE) {
+        WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+            "serverSimReloadCompressedInMemory: mapLoadCompressedMap failed (%d bytes)",
+            len);
+        return FALSE;
+    }
+
+    basesClearMines(&sim->sim);
+
+    /* Use caller-supplied display name verbatim — no path or suffix
+     * to strip in the in-memory case. */
+    strncpy(sim->mapName, mapName, MAP_STR_SIZE - 1);
+    sim->mapName[MAP_STR_SIZE - 1] = '\0';
+
+    /* Refresh cached compressed map. */
+    compressedLen = serverSimGetCompressedMap(sim, tempBuf);
+    if (sim->cachedMapData) free(sim->cachedMapData);
+    sim->cachedMapData = malloc(compressedLen);
+    if (sim->cachedMapData == NULL) {
+        sim->cachedMapDataLen = 0;
+        return FALSE;
+    }
+    memcpy(sim->cachedMapData, tempBuf, compressedLen);
+    sim->cachedMapDataLen = compressedLen;
+
+    /* Random-map provenance no longer applies. */
+    sim->randomMapEnabled = false;
+
+    /* Reset lobby ready state — humans must re-acknowledge the new
+     * map. Bots stay ready (no UI to click). */
+    {
+        int i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (!sim->lobbyPlayers[i].isBot) {
+                sim->lobbyPlayers[i].ready = FALSE;
+            }
+        }
+    }
+
+    snprintf(msg, sizeof(msg), "Map changed to %s", sim->mapName);
+    serverSimConsoleMessage(msg);
+
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "serverSimReloadCompressedInMemory: now '%s' (%d compressed bytes)",
+        sim->mapName, sim->cachedMapDataLen);
+
+    return TRUE;
+}
+
 bool serverSimReloadClientMap(ServerSim *sim, ClientSim *cs) {
     BYTE *buf;
     int len;
