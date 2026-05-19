@@ -2884,6 +2884,44 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
                               LOBBY_REJECT_INVALID); break;
             }
+            /* Validate the client-supplied bot name before any state
+             * mutation.  Empty nameLen is a legitimate "keep current
+             * name" signal — difficulty / personality still apply.  A
+             * non-empty name has to clear the same validator humans go
+             * through (controls, reserved leading '*', mixed scripts,
+             * length) so chat and scoreboard rendering can trust the
+             * form they receive.  Uniqueness then runs against the
+             * connected-player table excluding the slot being updated,
+             * so a no-op rename or a normalization-preserving rename
+             * doesn't self-collide on the bot already sitting there. */
+            char validatedName[PACKET_MAX_PLAYER_NAME];
+            if (nameLen > 0) {
+                char rawName[PACKET_MAX_PLAYER_NAME];
+                memset(rawName, 0, sizeof(rawName));
+                memcpy(rawName, buf + PACKET_HEADER_SIZE + 4, nameLen);
+
+                PlayerNameValidationError nameErr = PLAYER_NAME_OK;
+                if (!playerNameValidate(rawName, validatedName,
+                                        sizeof(validatedName), &nameErr)) {
+                    lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
+                                  LOBBY_REJECT_INVALID);
+                    break;
+                }
+                bool nameTaken = false;
+                for (BYTE j = 0; j < MAX_TANKS; j++) {
+                    if (j != slot && udpServer.clients[j].connected &&
+                        playerNameCompare(udpServer.clients[j].playerName,
+                                          validatedName) == 0) {
+                        nameTaken = true;
+                        break;
+                    }
+                }
+                if (nameTaken) {
+                    lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
+                                  LOBBY_REJECT_INVALID);
+                    break;
+                }
+            }
             {
                 LobbyBotConfig *bc = serverSimGetBotConfigMut(sim, slot);
                 if (bc) {
@@ -2892,10 +2930,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 }
             }
             if (nameLen > 0) {
-                char name[PACKET_MAX_PLAYER_NAME];
-                memset(name, 0, sizeof(name));
-                memcpy(name, buf + PACKET_HEADER_SIZE + 4, nameLen);
-                transportUdpServerSetBotName(slot, name);
+                transportUdpServerSetBotName(slot, validatedName);
             }
             serverSimPublishLobbyBotConfig(sim, slot);
             lobbyAutoUnreadyOnChange(sim);
