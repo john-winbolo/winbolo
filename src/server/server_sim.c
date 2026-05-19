@@ -356,10 +356,6 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->previousMapData = NULL;
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
-    sim->pendingUploadTempPath[0]  = '\0';
-    sim->pendingUploadFinalPath[0] = '\0';
-    sim->pendingUploadRelPath[0]   = '\0';
-    sim->pendingUploadActive       = false;
     sim->sim.hiddenMines = hiddenMines;
     sim->sim.isServer = TRUE;
     sim->sim.isLocalTransport = TRUE;
@@ -728,11 +724,6 @@ void serverSimDestroy(ServerSim *sim) {
 
     if (sim == NULL) {
         return;
-    }
-    /* If a preview upload was pending when the server shut down,
-     * clean up the temp file. The user never committed it. */
-    if (sim->pendingUploadActive) {
-        serverSimDiscardPendingUpload(sim);
     }
 
     WB_LOG_INFO(WB_LOG_CAT_SERVER, "serverSim destroy: state=%d", (int)sim->state);
@@ -4025,15 +4016,6 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
         return FALSE;
     }
 
-    /* If the previous preview was an in-flight upload AND we're now
-     * loading a DIFFERENT path, discard the upload — the user has
-     * moved on, the uploaded file should not survive. Reload from
-     * the SAME temp path (commit/cancel round-trip) is left alone. */
-    if (sim->pendingUploadActive &&
-        strcmp(sim->pendingUploadTempPath, mapFileName) != 0) {
-        serverSimDiscardPendingUpload(sim);
-    }
-
     /* Stash the currently-committed map as the "previous" snapshot
      * before we touch the sim. Keep the ORIGINAL committed map
      * across a chain of previews so one Cancel rolls all the way
@@ -4268,10 +4250,6 @@ bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {
         return FALSE;
     }
 
-    if (sim->pendingUploadActive) {
-        serverSimDiscardPendingUpload(sim);
-    }
-
     if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
         sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
         if (sim->previousMapData) {
@@ -4340,10 +4318,6 @@ bool serverSimRevertPreview(ServerSim *sim) {
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
 
-    /* If the preview being reverted was driven by an in-flight upload,
-     * delete the temp file too so the rejected map never lands on disk. */
-    serverSimDiscardPendingUpload(sim);
-
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
     return TRUE;
@@ -4351,142 +4325,12 @@ bool serverSimRevertPreview(ServerSim *sim) {
 
 void serverSimCommitPreview(ServerSim *sim) {
     if (!sim || !sim->previousMapData) return;
-    /* If the previewed map was an in-flight upload, write it to
-     * disk NOW (move from temp to final Uploads/ path). */
-    serverSimCommitPendingUpload(sim);
-
     free(sim->previousMapData);
     sim->previousMapData = NULL;
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimCommitPreview: committed '%s'", sim->mapName);
-}
-
-void serverSimSetPendingUpload(ServerSim *sim,
-                                const char *tempPath,
-                                const char *finalPath,
-                                const char *relPath) {
-    if (!sim) return;
-    /* If another upload was already pending AND the incoming temp
-     * path is different, discard the previous one. When the incoming
-     * temp path matches (we overwrite the same fixed scratch file
-     * for every upload), DO NOT delete: that would delete the file
-     * the caller just wrote and is about to commit. */
-    if (sim->pendingUploadActive &&
-        tempPath && tempPath[0] != '\0' &&
-        strcmp(sim->pendingUploadTempPath, tempPath) != 0) {
-        serverSimDiscardPendingUpload(sim);
-    }
-    SDL_strlcpy(sim->pendingUploadTempPath,  tempPath  ? tempPath  : "",
-                sizeof(sim->pendingUploadTempPath));
-    SDL_strlcpy(sim->pendingUploadFinalPath, finalPath ? finalPath : "",
-                sizeof(sim->pendingUploadFinalPath));
-    SDL_strlcpy(sim->pendingUploadRelPath,   relPath   ? relPath   : "",
-                sizeof(sim->pendingUploadRelPath));
-    sim->pendingUploadActive = (tempPath && tempPath[0] != '\0' &&
-                                finalPath && finalPath[0] != '\0');
-}
-
-bool serverSimHasPendingUpload(const ServerSim *sim) {
-    return sim != NULL && sim->pendingUploadActive;
-}
-
-void serverSimDiscardPendingUpload(ServerSim *sim) {
-    if (!sim || !sim->pendingUploadActive) return;
-    if (sim->pendingUploadTempPath[0] != '\0') {
-        SDL_RemovePath(sim->pendingUploadTempPath);
-    }
-    WB_LOG_INFO(WB_LOG_CAT_SERVER,
-        "serverSimDiscardPendingUpload: dropped temp '%s' (intended '%s')",
-        sim->pendingUploadTempPath, sim->pendingUploadFinalPath);
-    sim->pendingUploadTempPath[0]  = '\0';
-    sim->pendingUploadFinalPath[0] = '\0';
-    sim->pendingUploadRelPath[0]   = '\0';
-    sim->pendingUploadActive       = false;
-}
-
-bool serverSimCommitPendingUpload(ServerSim *sim) {
-    if (!sim || !sim->pendingUploadActive) return false;
-    bool ok = false;
-    if (sim->pendingUploadTempPath[0] != '\0' &&
-        sim->pendingUploadFinalPath[0] != '\0') {
-        char finalPath[FILENAME_MAX];
-        SDL_strlcpy(finalPath, sim->pendingUploadFinalPath, sizeof(finalPath));
-        {
-            SDL_PathInfo info;
-            if (SDL_GetPathInfo(finalPath, &info)) {
-                /* Collision — rename with " (n)" suffix. */
-                char base[128], ext[16];
-                const char *slash = strrchr(sim->pendingUploadFinalPath, '/');
-#if defined(_WIN32)
-                const char *bslash = strrchr(sim->pendingUploadFinalPath, '\\');
-                if (bslash && (!slash || bslash > slash)) slash = bslash;
-#endif
-                const char *fname = slash ? slash + 1 : sim->pendingUploadFinalPath;
-                size_t dirLen = (size_t)(fname - sim->pendingUploadFinalPath);
-                const char *dot = strrchr(fname, '.');
-                if (dot && dot != fname) {
-                    size_t bl = (size_t)(dot - fname);
-                    if (bl >= sizeof(base)) bl = sizeof(base) - 1;
-                    memcpy(base, fname, bl); base[bl] = '\0';
-                    SDL_strlcpy(ext, dot, sizeof(ext));
-                } else {
-                    SDL_strlcpy(base, fname, sizeof(base));
-                    ext[0] = '\0';
-                }
-                for (int n = 1; n < 1000; n++) {
-                    SDL_snprintf(finalPath, sizeof(finalPath),
-                                 "%.*s%s (%d)%s",
-                                 (int)dirLen, sim->pendingUploadFinalPath,
-                                 base, n, ext);
-                    if (!SDL_GetPathInfo(finalPath, &info)) break;
-                }
-            }
-        }
-        {
-            const char *fslash = strrchr(finalPath, '/');
-#if defined(_WIN32)
-            const char *fbslash = strrchr(finalPath, '\\');
-            if (fbslash && (!fslash || fbslash > fslash)) fslash = fbslash;
-#endif
-            if (fslash && fslash != finalPath) {
-                char parentDir[FILENAME_MAX];
-                size_t plen = (size_t)(fslash - finalPath);
-                if (plen >= sizeof(parentDir)) plen = sizeof(parentDir) - 1;
-                memcpy(parentDir, finalPath, plen);
-                parentDir[plen] = '\0';
-                SDL_CreateDirectory(parentDir);
-            }
-        }
-        FILE *src = fopen(sim->pendingUploadTempPath, "rb");
-        FILE *dst = src ? fopen(finalPath, "wb") : NULL;
-        if (src && dst) {
-            BYTE chunk[8192];
-            size_t r;
-            ok = true;
-            while ((r = fread(chunk, 1, sizeof(chunk), src)) > 0) {
-                if (fwrite(chunk, 1, r, dst) != r) { ok = false; break; }
-            }
-        }
-        if (dst) fclose(dst);
-        if (src) fclose(src);
-        if (ok) {
-            SDL_RemovePath(sim->pendingUploadTempPath);
-            WB_LOG_INFO(WB_LOG_CAT_SERVER,
-                "serverSimCommitPendingUpload: '%s' -> '%s'",
-                sim->pendingUploadTempPath, finalPath);
-        } else {
-            WB_LOG_ERROR(WB_LOG_CAT_SERVER,
-                "serverSimCommitPendingUpload: failed to write '%s'",
-                finalPath);
-        }
-    }
-    sim->pendingUploadTempPath[0]  = '\0';
-    sim->pendingUploadFinalPath[0] = '\0';
-    sim->pendingUploadRelPath[0]   = '\0';
-    sim->pendingUploadActive       = false;
-    return ok;
 }
 
 /* ────────────────────────────────────────────────────────────────

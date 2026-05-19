@@ -244,19 +244,6 @@ void serverSimCommitPreview(ServerSim *sim);
  * until the next ServerSim mutation. */
 const char *serverSimGetPreviousMapName(const ServerSim *sim);
 
-/* Pending-upload state. Set when a remote MAP_UPLOAD_DONE arrives:
- * the bytes are written to a temp path and the sim is reloaded
- * from it for preview, but the file is NOT placed in the
- * data/maps/Uploads/ library yet. Commit moves the temp to its
- * final path; cancel (or picking a different map) deletes it. */
-void  serverSimSetPendingUpload(ServerSim *sim,
-                                 const char *tempPath,
-                                 const char *finalPath,
-                                 const char *relPath);
-bool  serverSimHasPendingUpload(const ServerSim *sim);
-void  serverSimDiscardPendingUpload(ServerSim *sim);
-bool  serverSimCommitPendingUpload(ServerSim *sim);
-
 /*********************************************************
  *NAME:          serverSimDestroy
  *PURPOSE:
