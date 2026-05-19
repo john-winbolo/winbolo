@@ -29,4 +29,40 @@
  * WINBOLO_VERSION is supplied as a compile definition by CMake. */
 #define STRVER WINBOLO_VERSION
 
+/* Maximum bytes accepted by the lobby map-upload path
+ * (PACKET_LOBBY_MAP_UPLOAD_BEGIN and PACKET_LOBBY_MAP_USE_LOCAL). The
+ * .map RLE format encodes a fully-pathological map (every playable
+ * cell different from its neighbour, all 215 playable rows populated)
+ * in roughly 27 KiB; a fully-pathological 256×256 grid maxes out
+ * around 37 KiB. 64 KiB therefore accepts every legitimate map with
+ * comfortable headroom for editor quirks while shrinking the
+ * attacker's working set ~16× compared with the historical 1 MiB
+ * cap. Enforced on the wire by transport_udp_server.c (UPLOAD_BEGIN
+ * and USE_LOCAL handlers), by serverSimReadMapFile, and pre-flighted
+ * client-side in imgui_lobby.cpp. Verified by the unit test
+ * upload_cap_enforced. */
+#define LOBBY_MAP_UPLOAD_MAX_BYTES (64u * 1024u)
+
+/* ServerLocks bitmask — sent in extended PACKET_LOBBY_STATE. Set by
+ * bolod CLI flags (--lock-game-type etc); never changes after server
+ * startup. Hosts cannot modify locks; clients render matching settings
+ * disabled with a lock badge. Surfaced publicly so servermain.c (which
+ * parses the CLI flags) and the GUI lobby (which renders the disabled
+ * state) can both reach these without including internal/netpacks.h. */
+#define LOBBY_LOCK_GAME_TYPE         (1u << 0)
+#define LOBBY_LOCK_AI_POLICY         (1u << 1)
+#define LOBBY_LOCK_MINES             (1u << 2)
+#define LOBBY_LOCK_TIME_LIMIT        (1u << 3)
+#define LOBBY_LOCK_AUTO_LOCK_ON_GAME (1u << 4)
+#define LOBBY_LOCK_PASSWORD          (1u << 5)
+#define LOBBY_LOCK_RANKED            (1u << 6)
+#define LOBBY_LOCK_OPEN_HOST         (1u << 7)
+#define LOBBY_LOCK_MAP               (1u << 8)
+
+/* LST_TIME_MINUTES accepted range. Surfaced publicly so the lobby
+ * UI can validate the user's value before sending. Authoritative
+ * range check is wire-side (transport_udp_server.c). */
+#define LOBBY_TIME_MINUTES_MIN 1
+#define LOBBY_TIME_MINUTES_MAX 240
+
 #endif /* WIRE_LIMITS_H */

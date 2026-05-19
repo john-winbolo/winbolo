@@ -18,6 +18,8 @@
 #include "game_sim.h"        /* GameSim layout — used by the sim field below */
 #include "position_history.h" /* PosHistory — used by posHistory / lgmPosHistory */
 #include "mapgen.h" /* MapGenConfig — embedded by value in randomMapConfig */
+#include "brain_list_internal.h" /* BRAIN_LIST_PATH_LEN — brainPaths mirror */
+#include "upload_policy.h"  /* UploadPolicy — broadcast in lobby-settings event */
 
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
@@ -35,6 +37,57 @@ struct ServerSim {
     ServerState  state;
     bool         lobbyEnabled;       /* false = no-lobby mode (skip lobby, play immediately) */
     LobbyPlayer  lobbyPlayers[MAX_TANKS];
+
+    /* ── Lobby Layout A — auto-ally team metadata + bot configs ────
+     * teams[] is presentation: name, color, naming pool — keyed by
+     * teamNumber 1..MAX_TANKS-1. teams[0] is reserved for "Unassigned"
+     * and never has metadata. Persists across rounds with the rest of
+     * the lobby state. */
+    TeamMetadata    teams[MAX_TANKS];
+    LobbyBotConfig  botConfigs[MAX_TANKS];
+
+    /* Per-bot brain selection as an index into brainList. 0xFF means
+     * "use the global botBrainPath" (the CLI-configured default). The
+     * lobby AiConfig dropdown writes here via
+     * PACKET_LOBBY_SET_BOT_BRAIN so different bots in the same lobby
+     * can run different brains. */
+    uint8_t         botBrainIdx[MAX_TANKS];
+
+    /* Discovered brain codebases under brains/ — sent to clients via
+     * PACKET_LOBBY_BRAIN_LIST so the AiConfig combo can list them. */
+    BrainList       brainList;
+
+    /* Server-private mirror of the on-disk paths for each entry in
+     * brainList. Populated in lockstep with brainList by brainListScan
+     * and indexed identically (brainPaths[i] is the disk path for
+     * brainList.entries[i]). Kept off the public catalogue so the path
+     * never appears on the public API or the wire. */
+    char            brainPaths[BRAIN_LIST_MAX][BRAIN_LIST_PATH_LEN];
+
+    /* Layout A lobby flags — all persist across rounds. */
+    bool     openHost;             /* anyone can edit when true */
+    bool     allowNewPlayers;      /* live state — drives PACKET_LOCK_TOGGLE */
+    bool     autoLockOnGameStart;  /* if true, set allowNewPlayers=false on game start */
+    bool     savedAllowNewPlayers; /* what allowNewPlayers was before autoLockOnGameStart fired */
+    bool     ranked;               /* LST_RANKED — server enforces bots-off and
+                                    * rejects gameType=Open while true. Toggle-on
+                                    * also removes existing bots from teams. */
+    bool     firstJoinerBecomesHost; /* dedicated-server promotion mode. Set
+                                      * via -firstjoinhost. When true and slot
+                                      * 0 is empty (or unowned), the next
+                                      * incoming player is promoted to host.
+                                      * Consumed by the join handler. */
+    uint16_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
+    UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
+
+    /* Game-settings mirrors — needed for live mid-lobby change broadcasts.
+     * The authoritative values live in GameSim/serverSim CLI args; these
+     * track the most recently broadcast value so we can detect/refuse
+     * locked changes and emit SETTING_CHG diffs cleanly. */
+    uint8_t  aiPolicy;             /* mirrors aiType passed at create */
+    bool     timeLimit;            /* derived from gameLength != UNLIMITED */
+    uint16_t timeMinutes;          /* user-facing minutes (display + edit) */
+
     int32_t      countdownTicks;     /* Countdown timer (in ticks) */
     int32_t      originalGameLength; /* Cached for reset between rounds */
     bool         hadPlayersEver;     /* For auto-close detection */
@@ -48,6 +101,18 @@ struct ServerSim {
     /* Map reload — cached compressed map for between-round resets */
     BYTE        *cachedMapData;      /* Compressed map buffer (malloc'd) */
     int          cachedMapDataLen;   /* Length of compressed data */
+
+    /* Lobby preview-map state. When a player picks a map from the
+     * chooser (Server Maps click OR a completed upload), the server
+     * stashes the prior committed map here before applying the
+     * preview — so Cancel can revert without re-reading from disk.
+     * NULL when no preview is pending; freed on Commit. Stays
+     * preserved across successive previews (we keep the ORIGINAL
+     * committed map, not the most-recent preview, so one Cancel
+     * rolls back to where the user started). */
+    BYTE        *previousMapData;
+    int          previousMapDataLen;
+    char         previousMapName[MAP_STR_SIZE];
 
     /* Info packet fields — stored at creation for server browser responses */
     char         mapName[MAP_STR_SIZE];
@@ -113,6 +178,42 @@ struct ServerSim {
     BalanceProposal balanceProposal;
 
     bool mapSkipVotes[MAX_TANKS]; /* per-slot map skip vote */
+
+    /* In-game vote state (back-to-lobby + surrender). Indexed by
+     * (kind - 1). See netpacks.h GAME_VOTE_KIND_* / docs/voting_plan.md. */
+    struct ServerGameVote {
+        uint8_t  kind;             /* GAME_VOTE_KIND_* (BACK_TO_LOBBY/SURRENDER) */
+        uint8_t  active;           /* GAME_VOTE_ACTIVE_* */
+        uint8_t  triggerSrc;       /* GAME_VOTE_TRIGGER_* */
+        uint8_t  teamId;           /* surrender only; 0 = all-teams */
+        uint16_t votesMask;        /* bit i = slot i voted yes */
+        uint16_t answeredMask;     /* bit i = slot i has answered (yes or no) */
+        uint64_t startMs;          /* SDL_GetTicks-style epoch (server frame time) */
+        uint64_t deadlineMs;       /* startMs + 60_000 */
+        uint64_t lastHeartbeatMs;  /* drives 1Hz broadcast */
+        uint64_t concludedAtMs;    /* >0 once active != RUNNING; for auto-dismiss */
+        /* Pre-pass grace: once the vote first becomes unanimous we
+         * give voters 5 s to change their mind before concluding
+         * PASSED. 0 = not pending, else the wall-clock at which the
+         * pass will actually fire. If a voter retracts during the
+         * grace (yesCount drops below threshold), this clears back
+         * to 0 and the vote keeps running normally. */
+        uint64_t pendingPassUntilMs;
+    } gameVotes[2];
+    uint64_t gameVoteWallMs;       /* monotonic ms since serverSim start */
+    bool     baseMonopolyTriggeredThisRound;
+
+    /* Forced return-to-lobby countdown (e.g. from a vote-pass). When
+     * > 0, the running-state tick decrements this each call; at 0
+     * we call serverSimEnterGameOver. Carried in every snapshot
+     * header so clients can render their own "Returning to lobby in
+     * N" indicator off the value. */
+    int32_t  returnToLobbyTicks;
+    /* When a vote-pass triggers the game-over transition, lifecycle should
+     * skip buildWinMessage so the players don't get the generic
+     * "Game over!" line on top of the 3/2/1 countdown. Cleared once
+     * consumed. */
+    bool     suppressNextWinMessage;
 
     /* Map directory rotation — validated map file paths for random selection */
     char       **mapDirFiles;             /* Array of validated map file paths (malloc'd) */

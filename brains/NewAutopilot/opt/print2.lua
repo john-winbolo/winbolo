@@ -114,10 +114,11 @@ end
 function M.flush()
   if not _G._PRINT2_ENABLED then return end
   if #buffer == 0 then return end
+  -- Fall back to cwd when no session dir is set (e.g. BrainTest run
+   -- without --profile-log / --log-json). print2 should still work as
+   -- long as debug mode is on.
   local dir = _G.DEBUG_SESSION_DIR
-  if not dir then
-    fail_hard("no DEBUG_SESSION_DIR", nil)
-  end
+  if not dir or dir == "" then dir = "." end
 
   -- Lazy open / reopen on session dir change
   if not file or dir ~= file_dir then

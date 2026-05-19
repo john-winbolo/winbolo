@@ -120,7 +120,7 @@ void unpackPillSnapshot(const uint8_t *buf, PillSnapshot *ps);
 
 /* ---- Socket helpers ---- */
 
-SOCKET createUdpSocket(void);
+SOCKET createUdpSocket(bool exclusive);
 void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
                const struct sockaddr_in *addr);
 int udpRecvFrom(SOCKET sock, uint8_t *buf, int maxLen,

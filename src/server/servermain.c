@@ -53,6 +53,7 @@
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
 #include "../headless/cmd_stdin.h"
+#include "wire_limits.h"
 
 /* Constants previously from backend.h */
 #define GAME_TICK_LENGTH 10
@@ -585,6 +586,14 @@ void printArgs() {
   fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
   fprintf(stderr, "                them, or a different one to fight against them.\n");
   fprintf(stderr, "-nolobby      - Skip lobby, start game immediately (backward-compatible mode)\n");
+  fprintf(stderr, "-autolock     - Start with auto-lock-on-game-start enabled\n");
+  fprintf(stderr, "-ranked       - Start with the lobby flagged Ranked (also forces auto-lock-on-game-start)\n");
+  fprintf(stderr, "-openhost     - Start with Open Host on so any connected player can edit lobby settings\n");
+  fprintf(stderr, "-firstjoinhost- On an empty dedicated server, promote the next joiner to host;\n");
+  fprintf(stderr, "                slot re-opens when the host leaves\n");
+  fprintf(stderr, "-lock <list>  - Comma-separated list of lobby settings to lock as read-only.\n");
+  fprintf(stderr, "                Valid: gametype, ai, mines, timelimit, autolock, password,\n");
+  fprintf(stderr, "                ranked, openhost, map. e.g. -lock gametype,ranked,map\n");
   fprintf(stderr, "-quitonwin    - Quit server when a player/alliance wins\n");
   fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
   fprintf(stderr, "                (enabled by default, resets after 5 minutes)\n");
@@ -1144,6 +1153,77 @@ int main(int argc, char **argv) {
     }
   }
 
+  /* Lobby presets — set initial values for lobby toggles the host can
+   * normally flip in the UI. Only meaningful in lobby mode; if
+   * -nolobby is also set, the lobby state machine is skipped and the
+   * initial values just bake into the running game's settings. */
+  if (argExist(argc, argv, "autolock") == TRUE) {
+    serverSimSetAutoLockOnGameStart(serverSim, true);
+  }
+  if (argExist(argc, argv, "ranked") == TRUE) {
+    serverSimSetRanked(serverSim, true);
+    /* Ranked games force auto-lock-on-game-start on (matches the
+     * server-side LST_RANKED handler at PACKET_LOBBY_SET_SETTING). */
+    serverSimSetAutoLockOnGameStart(serverSim, true);
+  }
+  if (argExist(argc, argv, "openhost") == TRUE) {
+    serverSimSetOpenHost(serverSim, true);
+  }
+  if (argExist(argc, argv, "firstjoinhost") == TRUE) {
+    serverSimSetFirstJoinerBecomesHost(serverSim, true);
+  }
+
+  /* -lock <comma-list> — bit-OR a set of LOBBY_LOCK_* flags into the
+   * server's lock mask. Locked settings are read-only from any client
+   * (including host / admin / openHost); the lobby UI renders them
+   * disabled with a lock badge. Plumbed end-to-end before this flag
+   * existed but inert because nothing set the mask; this fixes that.
+   * Valid names: gametype, ai, mines, timelimit, autolock, password,
+   * ranked, openhost, map. Unknown names emit a warning and are
+   * skipped (forward-compat for future locks). */
+  {
+    int argNum = findArg(argc, argv, "lock");
+    if (argNum != ARG_NOT_FOUND) {
+      const char *list = (const char *)argv[argNum];
+      uint16_t mask = 0;
+      char tmp[256];
+      strncpy(tmp, list, sizeof(tmp) - 1);
+      tmp[sizeof(tmp) - 1] = '\0';
+      char *saveptr = NULL;
+      (void)saveptr;
+      for (char *tok = strtok(tmp, ","); tok != NULL; tok = strtok(NULL, ",")) {
+        /* trim + lowercase */
+        while (*tok == ' ') tok++;
+        char lo[64];
+        int li = 0;
+        for (int i = 0; tok[i] && li < 63; i++) {
+          char c = tok[i];
+          if (c == ' ') continue;
+          if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+          lo[li++] = c;
+        }
+        lo[li] = '\0';
+        if      (strcmp(lo, "gametype") == 0)  mask |= LOBBY_LOCK_GAME_TYPE;
+        else if (strcmp(lo, "ai") == 0)        mask |= LOBBY_LOCK_AI_POLICY;
+        else if (strcmp(lo, "mines") == 0)     mask |= LOBBY_LOCK_MINES;
+        else if (strcmp(lo, "timelimit") == 0 ||
+                 strcmp(lo, "limit") == 0)     mask |= LOBBY_LOCK_TIME_LIMIT;
+        else if (strcmp(lo, "autolock") == 0)  mask |= LOBBY_LOCK_AUTO_LOCK_ON_GAME;
+        else if (strcmp(lo, "password") == 0)  mask |= LOBBY_LOCK_PASSWORD;
+        else if (strcmp(lo, "ranked") == 0)    mask |= LOBBY_LOCK_RANKED;
+        else if (strcmp(lo, "openhost") == 0)  mask |= LOBBY_LOCK_OPEN_HOST;
+        else if (strcmp(lo, "map") == 0)       mask |= LOBBY_LOCK_MAP;
+        else {
+          fprintf(stderr,
+                  "Warning: unknown -lock name '%s' (valid: gametype, "
+                  "ai, mines, timelimit, autolock, password, ranked, "
+                  "openhost, map)\n", lo);
+        }
+      }
+      serverSimSetServerLocks(serverSim, mask);
+    }
+  }
+
   /* -nolobby: skip lobby, start running immediately (backward-compatible mode) */
   if (argExist(argc, argv, "nolobby") == TRUE) {
     serverSimSetLobbyEnabled(serverSim, false);
@@ -1185,6 +1265,58 @@ int main(int argc, char **argv) {
   serverSimSetHasPassword(serverSim, pass[0] != '\0');
   {
     ServerInstanceConfig instCfg;
+    UploadPolicy uploadPolicy = UPLOAD_POLICY_ALLOW;
+    uint8_t      uploadMaxFiles = 0;        /* 0 = leave transport default */
+    uint32_t     uploadMaxStorageBytes = 0; /* 0 = leave transport default */
+
+    {
+      int policyArg = findArg(argc, argv, "uploadpolicy");
+      if (policyArg != ARG_NOT_FOUND) {
+        char policyStr[32];
+        strncpy(policyStr, (char *)argv[policyArg], sizeof(policyStr) - 1);
+        policyStr[sizeof(policyStr) - 1] = '\0';
+        strlower(policyStr);
+        if (strcmp(policyStr, "off") == 0) {
+          uploadPolicy = UPLOAD_POLICY_OFF;
+        } else if (strcmp(policyStr, "allow") == 0) {
+          uploadPolicy = UPLOAD_POLICY_ALLOW;
+        } else if (strcmp(policyStr, "persist") == 0) {
+          uploadPolicy = UPLOAD_POLICY_PERSIST;
+        } else {
+          fprintf(stderr, "Unknown -uploadpolicy '%s'; using allow\n", policyStr);
+          uploadPolicy = UPLOAD_POLICY_ALLOW;
+        }
+      }
+    }
+    {
+      int filesArg = findArg(argc, argv, "uploadmaxfiles");
+      if (filesArg != ARG_NOT_FOUND) {
+        int v = atoi((char *)argv[filesArg]);
+        if (v < 1) {
+          fprintf(stderr, "-uploadmaxfiles %d out of range; clamping to 1\n", v);
+          v = 1;
+        } else if (v > 255) {
+          fprintf(stderr, "-uploadmaxfiles %d out of range; clamping to 255\n", v);
+          v = 255;
+        }
+        uploadMaxFiles = (uint8_t)v;
+      }
+    }
+    {
+      int storageArg = findArg(argc, argv, "uploadmaxstorage");
+      if (storageArg != ARG_NOT_FOUND) {
+        int v = atoi((char *)argv[storageArg]);
+        if (v < 1) {
+          fprintf(stderr, "-uploadmaxstorage %d out of range; clamping to 1\n", v);
+          v = 1;
+        } else if (v > 4096) {
+          fprintf(stderr, "-uploadmaxstorage %d out of range; clamping to 4096\n", v);
+          v = 4096;
+        }
+        uploadMaxStorageBytes = (uint32_t)v * 1024u * 1024u;
+      }
+    }
+
     instCfg.udpPort             = port;
     instCfg.bindAddr            = useAddr;
     instCfg.password            = pass;
@@ -1195,6 +1327,9 @@ int main(int argc, char **argv) {
     instCfg.useTracker          = sTrackerUse;
     instCfg.trackerAddr         = sTrackerAddr;
     instCfg.trackerPort         = sTrackerPort;
+    instCfg.uploadPolicy          = uploadPolicy;
+    instCfg.uploadMaxFiles        = uploadMaxFiles;
+    instCfg.uploadMaxStorageBytes = uploadMaxStorageBytes;
     {
       bool natPunchOptOut = (argExist(argc, argv, "no-natpunch") == TRUE);
       instCfg.useNatPortmap   = (argExist(argc, argv, "upnp") == TRUE);

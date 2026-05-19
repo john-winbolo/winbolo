@@ -26,6 +26,7 @@ set(SRC_ROOT "${REPO_ROOT}/src")
 set(DATA_DIR "${REPO_ROOT}/data")
 
 include(${REPO_ROOT}/cmake/bolo_lib.cmake)
+include(${REPO_ROOT}/cmake/bolo_version.cmake)
 
 ###
 # Fetch dependencies (same versions as main build)
@@ -55,14 +56,25 @@ FetchContent_Declare(zlib
     GIT_REPOSITORY https://github.com/madler/zlib.git
     GIT_TAG        v1.3.1
 )
+FetchContent_Declare(cjson
+    GIT_REPOSITORY https://github.com/DaveGamble/cJSON.git
+    GIT_TAG        v1.7.18
+    GIT_SHALLOW    TRUE
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
 
 # Disable all test/example targets from dependencies
 set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
 set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+set(CJSON_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_TEST OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_INSTALL OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_UNINSTALL OFF CACHE BOOL "" FORCE)
 
-FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui lua zlib)
+FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui lua zlib cjson)
 
 ###
 # nanosvg — header-only SVG parser/rasterizer (vendored)
@@ -112,19 +124,17 @@ target_link_libraries(imgui_backends PUBLIC SDL3::SDL3)
 
 ###
 # bolo_static — the bulk of the bolo source set as a single static lib.
-# Only transport_udp_client.c stays per-target (HAVE_STEAM-divergent);
-# client_mapload.c and nat_portmap.c aren't referenced by the wasm build.
+# transport_udp_client.c and client_mapload.c stay per-target
+# (HAVE_STEAM-divergent); nat_portmap.c isn't referenced by the wasm
+# build.
 #
-set(WINBOLO_VERSION "1.18")
-set(BOLO_VERSION_MAJOR 1)
-set(BOLO_VERSION_MINOR 1)
-set(BOLO_VERSION_REVISION 8)
 add_subdirectory(${REPO_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
 add_subdirectory(${REPO_ROOT}/src/server ${CMAKE_BINARY_DIR}/server_static)
 add_subdirectory(${REPO_ROOT}/brains ${CMAKE_BINARY_DIR}/bot_brains_static)
 
 set(BOLO_SOURCES
     ${SRC_ROOT}/bolo/transport_udp_client.c
+    ${SRC_ROOT}/bolo/client_mapload.c
 )
 
 # Server modules (used by client too).
@@ -162,7 +172,6 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/flags.c
     ${SRC_ROOT}/gui/sdl3/dialog_backend.c
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_welcome.cpp
-    ${SRC_ROOT}/gui/sdl3/dialogs/imgui_gamesetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_mapchooser.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_udpsetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_gamebrowser.cpp
@@ -175,6 +184,8 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keysetup.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_popup.cpp
+    ${SRC_ROOT}/gui/sdl3/map_preview_view.cpp
+    ${SRC_ROOT}/gui/sdl3/wb_theme.cpp
     ${SRC_ROOT}/gui/sdl3/bg_game.c
     ${SRC_ROOT}/gui/sdl3/mapview.c
     ${SRC_ROOT}/gui/sdl3/sprite_positions.c
@@ -220,19 +231,23 @@ target_include_directories(winbolo PRIVATE
     ${SRC_ROOT}/gui
     ${SRC_ROOT}/server
     ${SRC_ROOT}/mapeditor
+    ${cjson_SOURCE_DIR}
 )
 bolo_apply_include_rules(winbolo gui)
 bolo_grant_internal_source_access(winbolo
-    ${SRC_ROOT}/bolo/transport_udp_client.c)
+    ${SRC_ROOT}/bolo/transport_udp_client.c
+    ${SRC_ROOT}/bolo/client_mapload.c)
 
 target_compile_definitions(winbolo PRIVATE
     _GNU_SOURCE
     USE_64WITH32
     HAVE_SCREEN_C=1
-    WINBOLO_VERSION="1.18"
-    BOLO_VERSION_MAJOR=1
-    BOLO_VERSION_MINOR=1
-    BOLO_VERSION_REVISION=8
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
 )
 target_compile_options(winbolo PRIVATE -fno-common -include sys/types.h)
 target_link_options(winbolo PRIVATE "LINKER:--allow-multiple-definition")
@@ -247,6 +262,7 @@ target_link_libraries(winbolo PRIVATE
     nanosvg
     stb_image
     utf8proc
+    cjson
 )
 
 ###

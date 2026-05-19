@@ -28,6 +28,9 @@
 #ifndef PLATFORM_NET_H
 #define PLATFORM_NET_H
 
+#include <string.h>  /* memset, strncpy used by helpers below */
+#include <stddef.h>  /* size_t */
+
 #ifdef _WIN32
   #include <WinSock2.h>
   #include <ws2tcpip.h>
@@ -116,5 +119,9 @@ static inline void bolo_net_cleanup(void) {
   WSACleanup();
 #endif
 }
+
+/* (LAN-IP discovery helper lives in imgui_lobby.cpp directly — it's
+ * the only consumer and putting it in this header tickled MSVC's C89
+ * strict-mode warnings.) */
 
 #endif /* PLATFORM_NET_H */

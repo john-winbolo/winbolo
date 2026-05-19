@@ -205,8 +205,14 @@ void winbolonetSendLobbyStatus(bool inLobby);
 *ARGUMENTS:
 * totalPlayers - Total number of player slots in the game
 * teamSize     - Desired team size
+* botSlots     - Optional slot indices to include as non-WBN bot
+*                participants (sent to WBN as "bot:N" sentinels).
+*                NULL or numBotSlots=0 = humans-only request.
+* numBotSlots  - Number of bot slots in botSlots[]
 * outProposal  - Output: filled BalanceProposal
 *********************************************************/
-bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, BalanceProposal *outProposal);
+bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize,
+                                     const uint8_t *botSlots, uint8_t numBotSlots,
+                                     BalanceProposal *outProposal);
 
 #endif /* __WINBOLO_NET_SERVER_H */
