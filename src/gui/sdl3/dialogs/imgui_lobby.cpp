@@ -572,6 +572,17 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
                              "data/maps/%s", hitPath);
             }
         }
+        /* Server chunk arrival order isn't guaranteed alphabetical
+         * once the response spans multiple packets; sort the file rows
+         * before EmitFolderRows snapshots them so the final layout is
+         * folders-first-alpha then files-alpha. */
+        if (state->numMaps > 1) {
+            std::sort(&state->maps[0],
+                      &state->maps[state->numMaps],
+                [](const MapChooserEntry &a, const MapChooserEntry &b) {
+                    return SDL_strcasecmp(a.name, b.name) < 0;
+                });
+        }
         /* Aggregate the unique folders the file rows reference and
          * prepend them as folder rows. The Server Maps tab's
          * currentDir is data/maps-relative (no prefix), so we pass
@@ -927,8 +938,15 @@ static void lobbyUploadStatusFooter(MapChooserState *state, void *ctx) {
     if (!cs) return;
     if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
         clientSimGetLobbyMapUploadStatus(cs) == 4) {
-        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f),
-                           "Upload rejected by server.");
+        const char *msg = "Upload rejected by server.";
+        switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
+            case 4: /* LOBBY_REJECT_UPLOAD_DISABLED */
+                msg = "Uploads disabled on this server."; break;
+            case 5: /* LOBBY_REJECT_UPLOAD_LIMIT_HIT */
+                msg = "Server map library is full."; break;
+            default: break;
+        }
+        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f), "%s", msg);
     }
 }
 
@@ -2020,8 +2038,15 @@ static void lobbyWbnMapsStatusFooter(MapChooserState *state, void *ctx) {
                            "%s", m && *m ? m : "Download failed");
     } else if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
                clientSimGetLobbyMapUploadStatus(cs) == 4) {
-        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f),
-                           "Upload rejected by server.");
+        const char *msg = "Upload rejected by server.";
+        switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
+            case 4: /* LOBBY_REJECT_UPLOAD_DISABLED */
+                msg = "Uploads disabled on this server."; break;
+            case 5: /* LOBBY_REJECT_UPLOAD_LIMIT_HIT */
+                msg = "Server map library is full."; break;
+            default: break;
+        }
+        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f), "%s", msg);
     }
 }
 
@@ -2481,7 +2506,8 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             lobbyRenderMapTab(&s_chooseMapState, renderer, s);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Upload")) {
+        if (clientSimGetUploadPolicy(cs) != UPLOAD_POLICY_OFF &&
+            ImGui::BeginTabItem("Upload")) {
             s_chooseMapActiveTab = 1;
             if (s_lastActiveTab != 1 && activeTabBefore != 1) {
                 lobbyMapTabClearSelection(&s_chooseMapUploadState);
