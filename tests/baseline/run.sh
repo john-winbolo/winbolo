@@ -44,26 +44,41 @@ mkdir -p "$ACTUAL"
 
 COMMANDS="$DIR/commands"
 
-# Diff two JSONL files after normalizing UDP wall-clock jitter:
-# every line has its tick field stripped and pingMs field zeroed
-# before the lexical sort, so a CTRL_MAP_SKIP_STATE that lands two
-# ticks earlier or later — or a CTRL_LOBBY_SLOT whose ping varies
-# by a millisecond — still matches the golden. The unique set of
-# events is the regression target; sort -u collapses duplicate
-# (untickled) lines because lobby-mode scenarios broadcast the
-# lobby state on a wall-clock cadence, so the multiplicity of
-# identical lobby-state lines varies run-to-run as the pump-tick
-# fallback crosses different positions in the broadcast cycle.
-# Non-lobby UDP scenarios produce one line per event so sort -u
-# is equivalent to sort there. Used only by UDP scenarios; --fast
-# scenarios diff unsorted/unstripped because the in-process pipe
-# is fully deterministic.
+# Fields that aren't part of the regression target and need to be
+# neutralized before any baseline diff:
+#   tick        — UDP wall-clock jitter shifts events by a few ticks.
+#   pingMs      — RTT varies by a millisecond between runs.
+#   countryCode — single-player and DS sessions now stamp the local
+#                 player's country (default "XX", or the resolved WBN
+#                 country code on machines that have made a fetch),
+#                 so the value depends on where the test is running.
+NORMALIZE_EVENTS_SED='s/"tick":[0-9]+,//; s/"pingMs":[0-9]+/"pingMs":0/; s/"countryCode":"[^"]*"/"countryCode":"??"/g'
+
+# Diff two JSONL files after the field normalization above, with a
+# lexical sort. sort -u collapses duplicate (untickled) lines because
+# lobby-mode scenarios broadcast the lobby state on a wall-clock
+# cadence, so the multiplicity of identical lobby-state lines varies
+# run-to-run as the pump-tick fallback crosses different positions in
+# the broadcast cycle. Non-lobby UDP scenarios produce one line per
+# event so sort -u is equivalent to sort there. Used by UDP scenarios.
 diff_sorted() {
   local expected="$1"
   local actual="$2"
   diff -u \
-    <(sed -E 's/"tick":[0-9]+,//; s/"pingMs":[0-9]+/"pingMs":0/' "$expected" | sort -u) \
-    <(sed -E 's/"tick":[0-9]+,//; s/"pingMs":[0-9]+/"pingMs":0/' "$actual"   | sort -u)
+    <(sed -E "$NORMALIZE_EVENTS_SED" "$expected" | sort -u) \
+    <(sed -E "$NORMALIZE_EVENTS_SED" "$actual"   | sort -u)
+}
+
+# Diff two JSONL files after field normalization but with no sort —
+# the line ordering itself is a regression target. Used by --fast
+# scenarios (in-process pipe is fully deterministic) and single-bot
+# UDP scenarios where the wire order is also stable.
+diff_norm() {
+  local expected="$1"
+  local actual="$2"
+  diff -u \
+    <(sed -E "$NORMALIZE_EVENTS_SED" "$expected") \
+    <(sed -E "$NORMALIZE_EVENTS_SED" "$actual")
 }
 
 run() {
@@ -119,11 +134,11 @@ run_events_fast() {
       --ticks 500 --seed 42 \
       --log-events "$ACTUAL/$name.jsonl" --quiet \
       > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || { echo "CRASH"; return 1; }
-  if diff -q "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" >/dev/null 2>&1; then
+  if diff_norm "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" >/dev/null 2>&1; then
     echo "OK"
   else
     echo "DIFF"
-    diff -u "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" 2>&1 | head -40
+    diff_norm "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" 2>&1 | head -40
     return 1
   fi
 }
@@ -171,11 +186,11 @@ run_events_udp() {
     echo "CRASH"
     return 1
   fi
-  if diff -q "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" >/dev/null 2>&1; then
+  if diff_norm "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" >/dev/null 2>&1; then
     echo "OK"
   else
     echo "DIFF"
-    diff -u "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" 2>&1 | head -40
+    diff_norm "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" 2>&1 | head -40
     return 1
   fi
 }
@@ -203,11 +218,11 @@ run_events_cmd_fast() {
       --ticks 500 --seed 42 \
       --log-events "$ACTUAL/$name.jsonl" --quiet \
       > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || { echo "CRASH"; return 1; }
-  if diff -q "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" >/dev/null 2>&1; then
+  if diff_norm "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" >/dev/null 2>&1; then
     echo "OK"
   else
     echo "DIFF"
-    diff -u "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" 2>&1 | head -40
+    diff_norm "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" 2>&1 | head -40
     return 1
   fi
 }
