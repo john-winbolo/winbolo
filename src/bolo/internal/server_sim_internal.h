@@ -104,21 +104,6 @@ struct ServerSim {
     int          previousMapDataLen;
     char         previousMapName[MAP_STR_SIZE];
 
-    /* Pending upload state. When a remote client finishes uploading a
-     * map (PACKET_LOBBY_MAP_UPLOAD_DONE), the bytes are written to a
-     * temp path and the sim is reloaded from it for preview. We hold
-     * onto the (temp -> final) pair until the host commits or cancels
-     * the preview — only on commit do we move the temp file into the
-     * data/maps/Uploads/ directory. On cancel (or when the user picks
-     * a different map mid-preview) the temp file is deleted, so a
-     * rejected upload never pollutes the maps library.
-     * pendingUploadActive == false when no upload preview is in
-     * flight; the path fields are then empty strings. */
-    char         pendingUploadTempPath[FILENAME_MAX];
-    char         pendingUploadFinalPath[FILENAME_MAX];
-    char         pendingUploadRelPath[256];   /* "Uploads/<name>" — for the client reply */
-    bool         pendingUploadActive;
-
     /* Info packet fields — stored at creation for server browser responses */
     char         mapName[MAP_STR_SIZE];
     uint32_t     timeCreated;

@@ -3081,8 +3081,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_MAP_UPLOAD_CHUNK: {
             /* [header 8] [offset 4] [dataLen 2] [data N]. Server
              * accumulates into the per-client buffer and on completion
-             * writes to data/maps/.pending_upload.map, then replies
-             * with MAP_UPLOAD_DONE. */
+             * hands the bytes to the sim, then replies with
+             * MAP_UPLOAD_DONE. */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0 ||
                 !udpServer.clientUploadActive[clientIdx]) break;
@@ -3106,57 +3106,24 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             }
 
             if (udpServer.clientUploadHave[clientIdx] == total) {
-                SDL_CreateDirectory("data/maps/Uploads");
-
                 const char *origName = udpServer.clientUploadName[clientIdx];
-                char baseName[128];
-                char extName[16];
+
+                char displayName[MAP_STR_SIZE];
+                SDL_strlcpy(displayName, origName, sizeof(displayName));
                 {
-                    const char *dot = strrchr(origName, '.');
-                    if (dot && dot != origName) {
-                        size_t baseLen = (size_t)(dot - origName);
-                        if (baseLen >= sizeof(baseName)) {
-                            baseLen = sizeof(baseName) - 1;
-                        }
-                        memcpy(baseName, origName, baseLen);
-                        baseName[baseLen] = '\0';
-                        SDL_strlcpy(extName, dot, sizeof(extName));
-                    } else {
-                        SDL_strlcpy(baseName, origName, sizeof(baseName));
-                        extName[0] = '\0';
+                    size_t dlen = SDL_strlen(displayName);
+                    if (dlen >= 4 &&
+                        SDL_strcasecmp(displayName + dlen - 4,
+                                       ".map") == 0) {
+                        displayName[dlen - 4] = '\0';
                     }
                 }
 
-                char finalName[128];
-                char outPath[FILENAME_MAX];
-                SDL_strlcpy(finalName, origName, sizeof(finalName));
-                SDL_snprintf(outPath, sizeof(outPath),
-                             "data/maps/Uploads/%s", finalName);
-                {
-                    SDL_PathInfo info;
-                    for (int n = 1; n < 1000; n++) {
-                        if (!SDL_GetPathInfo(outPath, &info)) break;
-                        SDL_snprintf(finalName, sizeof(finalName),
-                                     "%s (%d)%s", baseName, n, extName);
-                        SDL_snprintf(outPath, sizeof(outPath),
-                                     "data/maps/Uploads/%s", finalName);
-                    }
-                }
-
-                /* Stage the upload at a temp path during preview;
-                 * PREVIEW_COMMIT moves it into Uploads/, CANCEL
-                 * deletes it. */
-                char tempPath[FILENAME_MAX];
-                SDL_snprintf(tempPath, sizeof(tempPath),
-                             "data/maps/.pending_upload.map");
-                FILE *fp = fopen(tempPath, "wb");
-                bool wrote = false;
-                if (fp) {
-                    size_t w = fwrite(udpServer.clientUploadBuf[clientIdx],
-                                      1, total, fp);
-                    fclose(fp);
-                    wrote = (w == total);
-                }
+                bool previewed = serverSimReloadCompressedInMemory(
+                    sim,
+                    udpServer.clientUploadBuf[clientIdx],
+                    (int)total,
+                    displayName);
 
                 free(udpServer.clientUploadBuf[clientIdx]);
                 udpServer.clientUploadBuf[clientIdx] = NULL;
@@ -3164,49 +3131,20 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 udpServer.clientUploadHave[clientIdx]   = 0;
                 udpServer.clientUploadTotal[clientIdx]  = 0;
 
-                bool previewed = false;
-                if (wrote) {
-                    if (serverSimReloadMap(sim, tempPath)) {
-                        /* serverSimReloadMap sets mapName from the
-                         * basename of mapFileName — for an upload
-                         * that yields ".pending_upload"; override
-                         * with the user-picked basename. */
-                        char displayName[MAP_STR_SIZE];
-                        SDL_strlcpy(displayName, finalName,
-                                    sizeof(displayName));
-                        {
-                            size_t dlen = SDL_strlen(displayName);
-                            if (dlen >= 4 &&
-                                SDL_strcasecmp(displayName + dlen - 4,
-                                               ".map") == 0) {
-                                displayName[dlen - 4] = '\0';
-                            }
-                        }
-                        serverSimSetMapName(sim, displayName);
-                        char relReturnEarly[256];
-                        SDL_snprintf(relReturnEarly, sizeof(relReturnEarly),
-                                     "Uploads/%s", finalName);
-                        serverSimSetPendingUpload(sim, tempPath, outPath,
-                                                  relReturnEarly);
-                        transportUdpServerOnLobbyMapChange(sim);
-                        serverSimPublishLobbySettings(sim);
-                        previewed = true;
-                    } else {
-                        SDL_RemovePath(tempPath);
-                    }
-                } else if (tempPath[0] != '\0') {
-                    SDL_RemovePath(tempPath);
+                if (previewed) {
+                    transportUdpServerOnLobbyMapChange(sim);
+                    serverSimPublishLobbySettings(sim);
                 }
 
                 char relReturn[256];
                 SDL_snprintf(relReturn, sizeof(relReturn), "Uploads/%s",
-                             finalName);
+                             origName);
                 int relLen = (int)SDL_strlen(relReturn);
                 if (relLen > 255) relLen = 255;
                 uint8_t done[PACKET_HEADER_SIZE + 2 + 256];
                 int dpos = PACKET_HEADER_SIZE;
                 packHeader(done, PACKET_LOBBY_MAP_UPLOAD_DONE, 0);
-                done[dpos++] = (wrote && previewed) ? 0 : LOBBY_REJECT_INVALID;
+                done[dpos++] = previewed ? 0 : LOBBY_REJECT_INVALID;
                 done[dpos++] = (uint8_t)relLen;
                 memcpy(done + dpos, relReturn, relLen);
                 dpos += relLen;

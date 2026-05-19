@@ -1275,12 +1275,8 @@ static void wbnMapsParseSearchJson(const char *json, const char *query) {
  * to, so this client process does the fetch itself on a worker
  * thread (mirrors the server's PREVIEW_WBN handler) and then
  * applies the bytes to the local SP ServerSim on the main thread
- * via spWbnPoll. Same pendingUpload semantics: scratch file
- * lives at .pending_upload.map until the user commits via Set
- * Map, at which point serverSimCommitPendingUpload moves it into
- * data/maps/Winbolo.net Downloads/. Cancel-on-supersede uses
- * the http.c cancellable API so rapid map clicks abort the
- * in-flight curl call. */
+ * via spWbnPoll. Cancel-on-supersede uses the http.c cancellable
+ * API so rapid map clicks abort the in-flight curl call. */
 struct SpWbnResult {
     uint32_t mapId;
     int      httpStatus; /* 200 ok; -2 cancelled */
@@ -1388,9 +1384,8 @@ static void spWbnSubmit(uint32_t mapId) {
 }
 
 /* Main-thread completion handler for SP picks. Drains the result
- * and applies it to the local sim via the same scratch-file +
- * pendingUpload flow the dedicated server uses. Called once per
- * frame while the WBN tab is visible. */
+ * and applies it to the local sim. Called once per frame while
+ * the WBN tab is visible. */
 static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
     if (!cs) return;
     SpWbnResult res;
@@ -1501,32 +1496,6 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
         return;
     }
 
-    /* Write to the shared scratch path the upload flow uses — same
-     * temp file is fine since SP only has one in-flight at a time. */
-    const char *tempPath = "data/maps/.pending_upload.map";
-    FILE *fp = fopen(tempPath, "wb");
-    bool wrote = false;
-    if (fp) {
-        size_t w = fwrite(res.bytes.data(), 1, res.bytes.size(), fp);
-        fclose(fp);
-        wrote = (w == res.bytes.size());
-    }
-    if (!wrote) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                    "[WBN-SP] failed to write scratch %s", tempPath);
-        clientSimSetLobbyWbnPreviewStatus(cs, 3);
-        return;
-    }
-
-    if (!serverSimReloadMap(sim, tempPath)) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                    "[WBN-SP] serverSimReloadMap rejected bytes");
-        SDL_RemovePath(tempPath);
-        clientSimSetLobbyWbnPreviewStatus(cs, 3);
-        return;
-    }
-
-    /* Override the auto-detected ".pending_upload" name. */
     char displayName[MAP_STR_SIZE];
     SDL_strlcpy(displayName, safeName.c_str(), sizeof(displayName));
     {
@@ -1536,26 +1505,24 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
             displayName[dlen - 4] = '\0';
         }
     }
-    serverSimSetMapName(sim, displayName);
 
-    /* Commit target lives alongside any other user upload — same
-     * Uploads/ directory the Upload tab uses, so the on-disk
-     * library only has one place for "maps the user put here".
-     * WBN-origin maps are indistinguishable from manual uploads
-     * once committed. */
-    char finalPath[FILENAME_MAX];
-    SDL_snprintf(finalPath, sizeof(finalPath),
-                 "data/maps/Uploads/%s", safeName.c_str());
-    char relPath[256];
-    SDL_snprintf(relPath, sizeof(relPath),
-                 "Uploads/%s", safeName.c_str());
-    serverSimSetPendingUpload(sim, tempPath, finalPath, relPath);
+    bool ok = serverSimReloadCompressedInMemory(
+        sim,
+        reinterpret_cast<const uint8_t *>(res.bytes.data()),
+        static_cast<int>(res.bytes.size()),
+        displayName);
+    if (!ok) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "[WBN-SP] serverSimReloadCompressedInMemory rejected bytes");
+        clientSimSetLobbyWbnPreviewStatus(cs, 3);
+        return;
+    }
     serverSimPublishLobbySettings(sim);
 
     clientSimSetLobbyWbnPreviewStatus(cs, 2);
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                "[WBN-SP] applied '%s' (%zu bytes); will commit to %s",
-                displayName, res.bytes.size(), finalPath);
+                "[WBN-SP] applied '%s' (%zu bytes)",
+                displayName, res.bytes.size());
     s_chooseMapPreviewPending = true;
 }
 
