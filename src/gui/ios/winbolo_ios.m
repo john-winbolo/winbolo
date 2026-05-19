@@ -869,7 +869,6 @@ void frontEndSetPlayerCheckState(playerNumbers value, bool isChecked) {
 }
 
 void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
-void autoslowDebugLog(const char *fmt, ...) { (void)fmt; }
 
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled) { (void)enabled; }

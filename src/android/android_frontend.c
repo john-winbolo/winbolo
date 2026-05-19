@@ -358,7 +358,6 @@ void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool
   sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
 void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
-void autoslowDebugLog(const char *fmt, ...) { (void)fmt; }
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled)   { (void)enabled; }
 

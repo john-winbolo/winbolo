@@ -716,7 +716,6 @@ void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) { (void)cs; 
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) { (void)cs; (void)value; (void)str; (void)countryCode; (void)ping; (void)clientType; (void)clientFlags; }
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) { (void)cs; (void)value; (void)isChecked; }
 void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
-void autoslowDebugLog(const char *fmt, ...) { (void)fmt; }
 void frontEndSetActiveClientSim(struct ClientSim *cs) { (void)cs; }
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled)   { (void)enabled; }

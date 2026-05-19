@@ -2761,9 +2761,6 @@ bool tankGetAutoSlowdown(tank *value) {
 *  useSlowdown - TRUE if auto slowdown is used
 *********************************************************/
 void tankSetAutoSlowdown(tank *value, bool useSlowdown) {
-  autoslowDebugLog("[TANK-SET] tankSetAutoSlowdown(useSlowdown=%d) tankPtr=%p %s",
-                   (int)useSlowdown, (void *)(value ? *value : NULL),
-                   (value && *value) ? "applying" : "NO-OP (tank is NULL)");
   if ((*value) != NULL) {
     (*value)->autoSlowdown = useSlowdown;
   }
