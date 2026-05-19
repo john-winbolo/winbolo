@@ -47,6 +47,7 @@
 #endif
 
 #include "../../common/wb_log.h"
+#include "../../winbolonet/winbolonet_core.h"
 #include "client_mapload.h"
 #include "client_render.h"
 #include "client_sim.h"
@@ -255,6 +256,24 @@ int main(int argc, char *argv[]) {
   wb_log_init("WinBolo", "WinBolo", "winbolo.log");
   atexit(wb_log_shutdown);
 
+  {
+    /* Resolve WinBolo.ini to an absolute path under SDL_GetPrefPath.
+     * Win32 WritePrivateProfileString with a relative filename writes
+     * to C:\Windows\<file>, which an unprivileged process can't touch,
+     * so the news / country-cache / WBN-host writes silently fail.
+     * gamefront.c::getPreferenceFilePath already uses this trick for
+     * SETTINGS keys — mirror it here so every WBN consumer hits the
+     * same file. */
+    static char winboloIniPath[FILENAME_MAX];
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir) {
+      SDL_snprintf(winboloIniPath, sizeof(winboloIniPath), "%sWinBolo.ini", prefDir);
+    } else {
+      SDL_snprintf(winboloIniPath, sizeof(winboloIniPath), "%s", "WinBolo.ini");
+    }
+    winbolonetCoreSetPreferencesPath(winboloIniPath);
+  }
+
   steam_init();
   steam_set_join_callback(steamJoinRequested);
 
@@ -284,6 +303,17 @@ int main(int argc, char *argv[]) {
   threadsCreate(FALSE);
 
   if (gameFrontStart(cmdLine, &keys, FALSE, &cs) == FALSE) {
+    clientMutexDestroy();
+    SDL_Quit();
+    return 1;
+  }
+
+  /* The server threads mutex outlives every per-session start/end cycle:
+   * SDL's timer thread may still be running hostedServerTimerCb (which waits
+   * on this mutex) while a session shuts down, and SDL_Quit only joins the
+   * timer thread at the very end of main. Destroying the mutex before then
+   * would strand that waiter on freed memory. */
+  if (threadsCreate(FALSE) == FALSE) {
     clientMutexDestroy();
     SDL_Quit();
     return 1;
@@ -553,6 +583,7 @@ int main(int argc, char *argv[]) {
   sdl3DrawCleanup();
   steam_shutdown();
   SDL_Quit();
+  threadsDestroy();
   sentryClose();
   return 0;
 }
@@ -1532,6 +1563,14 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
+}
+
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs) {
+  extern bool useAutoslow;
+  extern bool useAutohide;
+  if (cs == NULL) return;
+  clientSimSetTankAutoSlowdown(cs, useAutoslow);
+  clientSimSetTankAutoHideGunsight(cs, useAutohide);
 }
 
 /* -------------------------------------------------------

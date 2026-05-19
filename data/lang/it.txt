@@ -1156,3 +1156,18 @@ STR_MENU_FIND_LAN_GAME=Trova partita LAN…
 STR_MENU_JOIN_BY_ADDRESS=Unisciti tramite indirizzo…
 STR_MENU_OPEN_MAP_EDITOR=Apri editor mappe
 STR_MENU_OPEN_LOG_VIEWER=Apri visualizzatore log
+
+# Settings → Network: WinBolo.net news auto-show toggle.
+STR_DLGSETTINGS_NEWS_AUTOSHOW=Mostra notizie da winbolo.net all'avvio
+
+# News popup + welcome News button strings.
+STR_DLGWELCOME_NEWS=Notizie
+STR_DLGNEWS_TITLE=Notizie
+STR_DLGNEWS_CONSENT_TITLE=WinBolo News
+STR_DLGNEWS_CONSENT_BODY1=WinBolo può mostrarti i nuovi post di winbolo.net all'avvio del gioco. WBN verrà controllato una sola volta all'avvio e questa finestra si aprirà solo quando c'è qualcosa di nuovo.
+STR_DLGNEWS_CONSENT_BODY2=Puoi modificare questa impostazione in qualsiasi momento nelle Impostazioni.
+STR_DLGNEWS_SHOW=Mostra notizie
+STR_DLGNEWS_DONT_SHOW=Non mostrare
+STR_DLGNEWS_LOADING=Caricamento…
+STR_DLGNEWS_DONT_AUTOSHOW=Non mostrare le notizie automaticamente in futuro
+STR_DLGNEWS_COMMENTS_FMT=Commenti: {number}

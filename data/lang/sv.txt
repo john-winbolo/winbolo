@@ -1156,3 +1156,18 @@ STR_MENU_FIND_LAN_GAME=Hitta LAN-spel…
 STR_MENU_JOIN_BY_ADDRESS=Anslut via adress…
 STR_MENU_OPEN_MAP_EDITOR=Öppna kartredigerare
 STR_MENU_OPEN_LOG_VIEWER=Öppna loggvisare
+
+# Settings → Network: WinBolo.net news auto-show toggle.
+STR_DLGSETTINGS_NEWS_AUTOSHOW=Visa nyheter från winbolo.net vid start
+
+# News popup + welcome News button strings.
+STR_DLGWELCOME_NEWS=Nyheter
+STR_DLGNEWS_TITLE=Nyheter
+STR_DLGNEWS_CONSENT_TITLE=WinBolo Nyheter
+STR_DLGNEWS_CONSENT_BODY1=WinBolo kan visa nya inlägg från winbolo.net när du startar spelet. WBN kontrolleras en gång vid start och det här fönstret öppnas bara när det finns något nytt.
+STR_DLGNEWS_CONSENT_BODY2=Du kan ändra detta när som helst i Inställningar.
+STR_DLGNEWS_SHOW=Visa nyheter
+STR_DLGNEWS_DONT_SHOW=Visa inte
+STR_DLGNEWS_LOADING=Läser in…
+STR_DLGNEWS_DONT_AUTOSHOW=Öppna inte nyheter automatiskt i framtiden
+STR_DLGNEWS_COMMENTS_FMT=Kommentarer: {number}

@@ -294,6 +294,28 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input);
 void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin);
 
 /*********************************************************
+ *NAME:          serverSimSetPlayerCountry
+ *PURPOSE:
+ *  Sets the ISO 3166-1 alpha-2 country code on a connected
+ *  player slot. Intended for the in-process SP / tutorial
+ *  path, where no GeoIP lookup runs and the local client
+ *  supplies its own resolved country (e.g. from
+ *  winbolonetGetCountryCode). Network-joined slots receive
+ *  their country from the server's GeoIP lookup and should
+ *  not be re-set through this accessor.
+ *
+ *  Input is validated: NULL, length != 2, or any non-alpha
+ *  byte is ignored (the previous value stays). A valid
+ *  two-character code is stored uppercased.
+ *
+ *ARGUMENTS:
+ *  sim       - Pointer to the ServerSim
+ *  playerNum - Player slot (0..MAX_TANKS-1)
+ *  cc        - 2-char ISO 3166-1 alpha-2 country code (any case)
+ *********************************************************/
+void serverSimSetPlayerCountry(ServerSim *sim, BYTE playerNum, const char *cc);
+
+/*********************************************************
  *NAME:          serverSimRemovePlayer
  *PURPOSE:
  *  Disconnects a player slot and cleans up all per-player

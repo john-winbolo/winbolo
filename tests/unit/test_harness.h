@@ -38,6 +38,10 @@
         }                                                                   \
     } while (0)
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int run_transport_local_passive_threads(void);
 int run_sp_subscriber_delivery(void);
 int run_active_local_input_to_shot(void);
@@ -54,10 +58,18 @@ int run_upload_filename_safe(void);
 int run_lobby_time_minutes_valid(void);
 int run_lobby_map_list_chunked(void);
 int run_lobby_map_search_chunked(void);
+int run_wbn_bearer_state(void);
+int run_wbn_rekey_codec(void);
+int run_wbn_news_parse(void);
+int run_wbn_country_cache(void);
 
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map
  * with one player added at slot 0. Caller is responsible for
  * serverSimDestroy. Returns NULL on failure. */
 struct ServerSim *ut_make_running_sim(const char *player_name);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* WINBOLO_UNITTEST_HARNESS_H */

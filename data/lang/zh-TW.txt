@@ -1156,3 +1156,18 @@ STR_MENU_FIND_LAN_GAME=尋找區域網路遊戲…
 STR_MENU_JOIN_BY_ADDRESS=依位址加入…
 STR_MENU_OPEN_MAP_EDITOR=開啟地圖編輯器
 STR_MENU_OPEN_LOG_VIEWER=開啟日誌檢視器
+
+# Settings → Network: WinBolo.net news auto-show toggle.
+STR_DLGSETTINGS_NEWS_AUTOSHOW=啟動時顯示 winbolo.net 的新聞
+
+# News popup + welcome News button strings.
+STR_DLGWELCOME_NEWS=新聞
+STR_DLGNEWS_TITLE=新聞
+STR_DLGNEWS_CONSENT_TITLE=WinBolo 新聞
+STR_DLGNEWS_CONSENT_BODY1=WinBolo 可在啟動遊戲時顯示 winbolo.net 的最新文章。WBN 將在啟動時檢查一次，只有在有新內容時才會開啟此視窗。
+STR_DLGNEWS_CONSENT_BODY2=您可以隨時在設定中變更此選項。
+STR_DLGNEWS_SHOW=顯示新聞
+STR_DLGNEWS_DONT_SHOW=不顯示
+STR_DLGNEWS_LOADING=載入中…
+STR_DLGNEWS_DONT_AUTOSHOW=以後不自動開啟新聞
+STR_DLGNEWS_COMMENTS_FMT=評論：{number}

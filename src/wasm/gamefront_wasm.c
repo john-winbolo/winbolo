@@ -364,6 +364,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
                         gameFrontTargetUdp,
                         gameFrontName, password,
                         gameFrontWbnUse ? gameFrontWbnToken : "",
+                        "",
                         wantRejoin,
                         "", 0);
     if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {

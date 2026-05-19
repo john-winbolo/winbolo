@@ -35,11 +35,14 @@
 #include "control_event.h"
 #include "client_sim_control.h"
 #include "transport_control_codec.h"
+#include "wbn_key_codec.h"
 #include "../gui/lang.h"
 #include "../gui/winbolo.h"
 #include "../gui/dialogAlliance.h"
 #include "../steam/steam_wrapper.h"
 #include "../common/wb_log.h"
+#include "../winbolonet/winbolonet_client.h"
+#include "../winbolonet/winbolonet_core.h"
 
 /* ================================================================
  * CLIENT SIDE
@@ -52,7 +55,13 @@ typedef struct {
     UdpClientJoinState joinState;
     char playerName[PACKET_MAX_PLAYER_NAME];
     char password[MAP_STR_SIZE];
-    char wbnToken[WBN_TOKEN_WIRE_LEN];
+    /* Long-lived WBN credential from prefs; empty when the user is not
+     * logged in.  Stays out of the wire — only fed to
+     * winbolonetClientJoinSession to mint per-send player_keys. */
+    char wbnApiToken[WBN_JOIN_KEY_WIRE_LEN];
+    /* WBN session key for the connected server.  Empty for direct-IP
+     * joins; refreshed by PACKET_WBN_REKEY when the server rotates. */
+    char wbnServerKey[WINBOLONET_KEY_LEN];
     bool wbnReauthSent;  /* TRUE after sending re-auth, reset when WBN flag restored */
     uint32_t outSequence;
 
@@ -1091,19 +1100,33 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         c->clientSim->balanceProposalActive = false;
         memset(c->clientSim->balanceProposal, 0, sizeof(c->clientSim->balanceProposal));
         /* WBN re-auth: if our slot lost its WBN flag (server re-registered
-         * with WBN between rounds) and we have a token, re-authenticate */
-        if (c->wbnToken[0] != '\0' && c->playerNum < MAX_TANKS &&
+         * with WBN between rounds) and we have a token, mint a fresh
+         * player_key against the latest server_key and re-authenticate. */
+        if (c->wbnApiToken[0] != '\0' && c->playerNum < MAX_TANKS &&
             !(c->clientSim->lobbySlots[c->playerNum].clientFlags &
               PLAYER_FLAG_WBN_VERIFIED)) {
             if (!c->wbnReauthSent) {
-                c->wbnReauthSent = TRUE;
-                {
-                    uint8_t ra[PACKET_HEADER_SIZE + WBN_TOKEN_WIRE_LEN];
+                char playerKey[WBN_JOIN_KEY_WIRE_LEN];
+                char errMsg[256];
+                memset(playerKey, 0, sizeof(playerKey));
+                errMsg[0] = '\0';
+                if (c->wbnServerKey[0] != '\0' &&
+                    winbolonetClientJoinSession(c->wbnApiToken,
+                                                c->wbnServerKey,
+                                                playerKey, errMsg)) {
+                    uint8_t ra[PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN];
                     packHeader(ra, PACKET_WBN_REAUTH, c->outSequence++);
-                    memcpy(ra + PACKET_HEADER_SIZE, c->wbnToken, WBN_TOKEN_WIRE_LEN);
+                    memcpy(ra + PACKET_HEADER_SIZE, playerKey, WBN_JOIN_KEY_WIRE_LEN);
                     udpClientSendTo(c, ra, sizeof(ra));
+                    c->wbnReauthSent = TRUE;
+                    WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Sent re-auth for slot %d", c->playerNum);
+                } else {
+                    fprintf(stderr,
+                            "WinBolo.net re-auth exchange failed: %s\n",
+                            errMsg[0] ? errMsg : "(no server_key)");
+                    /* Leave wbnReauthSent FALSE so the next snapshot
+                     * tick retries.  No backoff — out of scope here. */
                 }
-                WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Sent re-auth for slot %d", c->playerNum);
             }
         } else {
             c->wbnReauthSent = FALSE;
@@ -1382,6 +1405,21 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * into the unknown-packet warning path. */
         break;
 
+    case PACKET_WBN_REKEY: {
+        /* Wire: [header 8] [serverKey WBN_JOIN_KEY_WIRE_LEN] — same 65-byte
+         * envelope as wbnJoinKey for symmetry; payload is a NUL-terminated
+         * string within the first WINBOLONET_KEY_LEN bytes. */
+        if (len < PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN) {
+            return;
+        }
+        if (!wbnKeyDecode(c->wbnServerKey, buf + PACKET_HEADER_SIZE)) {
+            return;
+        }
+        /* The lobby-snapshot poll fires re-auth when our slot loses the
+         * WBN flag; no need to push from here. */
+        break;
+    }
+
     default:
         break;
     }
@@ -1450,8 +1488,25 @@ static bool udpClientTick(void *ctx) {
                     (int)c->joinAttempts, (int)JOIN_MAX_RETRIES);
                 c->joinState = UDP_CLIENT_ERROR;
             } else {
-                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_TOKEN_WIRE_LEN + 1 + 2];
+                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_JOIN_KEY_WIRE_LEN + 1 + 2];
                 int joffset = PACKET_HEADER_SIZE;
+                char playerKey[WBN_JOIN_KEY_WIRE_LEN];
+                memset(playerKey, 0, sizeof(playerKey));
+                if (c->wbnApiToken[0] != '\0' && c->wbnServerKey[0] != '\0') {
+                    char errMsg[256];
+                    errMsg[0] = '\0';
+                    if (!winbolonetClientJoinSession(c->wbnApiToken,
+                                                     c->wbnServerKey,
+                                                     playerKey, errMsg)) {
+                        fprintf(stderr,
+                                "WinBolo.net join exchange failed: %s\n",
+                                errMsg[0] ? errMsg : "(no detail)");
+                        /* Degraded: ship empty wbnJoinKey, server treats
+                         * the JOIN as anonymous (no WBN attribution). */
+                        playerKey[0] = '\0';
+                    }
+                }
+                /* else: direct-IP or not logged in — leave empty. */
                 packHeader(jbuf, PACKET_JOIN_REQUEST, c->outSequence++);
                 memcpy(jbuf + joffset, c->playerName, PACKET_MAX_PLAYER_NAME);
                 joffset += PACKET_MAX_PLAYER_NAME;
@@ -1460,8 +1515,8 @@ static bool udpClientTick(void *ctx) {
                 jbuf[joffset++] = BOLO_VERSION_MAJOR;
                 jbuf[joffset++] = BOLO_VERSION_MINOR;
                 jbuf[joffset++] = BOLO_VERSION_REVISION;
-                memcpy(jbuf + joffset, c->wbnToken, WBN_TOKEN_WIRE_LEN);
-                joffset += WBN_TOKEN_WIRE_LEN;
+                memcpy(jbuf + joffset, playerKey, WBN_JOIN_KEY_WIRE_LEN);
+                joffset += WBN_JOIN_KEY_WIRE_LEN;
                 /* Flags byte: bit 0 = wantRejoin */
                 jbuf[joffset++] = c->wantRejoin ? 0x01 : 0x00;
                 jbuf[joffset++] = bolo_detect_client_type();
@@ -1589,7 +1644,8 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
                                    unsigned short serverPort,
                                    const char *playerName,
                                    const char *password,
-                                   const char *wbnToken,
+                                   const char *wbnApiToken,
+                                   const char *wbnServerKey,
                                    bool wantRejoin,
                                    const char *trackerAddr,
                                    unsigned short trackerPort) {
@@ -1599,11 +1655,12 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
 
     WB_LOG_INFO(WB_LOG_CAT_NET,
         "client connect: server=%s:%u name='%s' wantRejoin=%d "
-        "wbnToken=%s tracker=%s:%u",
+        "wbnApiToken=%s wbnServerKey=%s tracker=%s:%u",
         serverAddr ? serverAddr : "(null)", (unsigned)serverPort,
         playerName ? playerName : "(null)",
         (int)wantRejoin,
-        (wbnToken && *wbnToken) ? "yes" : "no",
+        (wbnApiToken && *wbnApiToken) ? "yes" : "no",
+        (wbnServerKey && *wbnServerKey) ? "yes" : "no",
         (trackerAddr && *trackerAddr) ? trackerAddr : "(none)",
         (unsigned)trackerPort);
 
@@ -1653,18 +1710,22 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         }
     }
 
-    /* Copy player name, password, and WBN token */
+    /* Copy player name, password, and WBN credentials */
     memset(c->playerName, 0, PACKET_MAX_PLAYER_NAME);
     strncpy(c->playerName, playerName, PACKET_MAX_PLAYER_NAME - 1);
     memset(c->password, 0, MAP_STR_SIZE);
     if (password != NULL) {
         strncpy(c->password, password, MAP_STR_SIZE - 1);
     }
-    memset(c->wbnToken, 0, WBN_TOKEN_WIRE_LEN);
-    c->wbnReauthSent = FALSE;
-    if (wbnToken != NULL) {
-        strncpy(c->wbnToken, wbnToken, WBN_TOKEN_WIRE_LEN - 1);
+    memset(c->wbnApiToken, 0, sizeof(c->wbnApiToken));
+    if (wbnApiToken != NULL) {
+        strncpy(c->wbnApiToken, wbnApiToken, sizeof(c->wbnApiToken) - 1);
     }
+    memset(c->wbnServerKey, 0, sizeof(c->wbnServerKey));
+    if (wbnServerKey != NULL) {
+        strncpy(c->wbnServerKey, wbnServerKey, sizeof(c->wbnServerKey) - 1);
+    }
+    c->wbnReauthSent = FALSE;
 
     c->wantRejoin = wantRejoin;
 
@@ -2007,13 +2068,24 @@ void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum) {
 
 void transportUdpClientSendWbnReauth(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + WBN_TOKEN_WIRE_LEN];
+    uint8_t buf[PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN];
+    char playerKey[WBN_JOIN_KEY_WIRE_LEN];
+    char errMsg[256];
 
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    if (c->wbnToken[0] == '\0') return;
+    if (c->wbnApiToken[0] == '\0' || c->wbnServerKey[0] == '\0') return;
+
+    memset(playerKey, 0, sizeof(playerKey));
+    errMsg[0] = '\0';
+    if (!winbolonetClientJoinSession(c->wbnApiToken, c->wbnServerKey,
+                                     playerKey, errMsg)) {
+        fprintf(stderr, "WinBolo.net re-auth exchange failed: %s\n",
+                errMsg[0] ? errMsg : "(no detail)");
+        return;
+    }
 
     packHeader(buf, PACKET_WBN_REAUTH, c->outSequence++);
-    memcpy(buf + PACKET_HEADER_SIZE, c->wbnToken, WBN_TOKEN_WIRE_LEN);
+    memcpy(buf + PACKET_HEADER_SIZE, playerKey, WBN_JOIN_KEY_WIRE_LEN);
     udpClientSendTo(c, buf, sizeof(buf));
 }
 

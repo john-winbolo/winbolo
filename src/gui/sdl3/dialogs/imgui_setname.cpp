@@ -35,7 +35,6 @@ extern "C" {
 #include "client_sim.h"
 #include "util.h"
 #include "playername_validate.h"
-#include "../../../winbolonet/winbolonet.h"
 #include "../../lang.h"
 #include "imgui_setname.h"
 }

@@ -30,13 +30,16 @@ static void clientSimTeardownTransport(ClientSim *cs) {
 
 bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
                          unsigned short serverPort, const char *playerName,
-                         const char *password, const char *wbnToken,
+                         const char *password,
+                         const char *wbnApiToken,
+                         const char *wbnServerKey,
                          bool wantRejoin, const char *trackerAddr,
                          unsigned short trackerPort) {
   if (cs == NULL) return false;
   clientSimTeardownTransport(cs);
   cs->transport = transportUdpClientCreate(cs, serverAddr, serverPort,
-                                           playerName, password, wbnToken,
+                                           playerName, password,
+                                           wbnApiToken, wbnServerKey,
                                            wantRejoin, trackerAddr, trackerPort);
   cs->hasTransport = true;
   cs->isUdpTransport = true;
