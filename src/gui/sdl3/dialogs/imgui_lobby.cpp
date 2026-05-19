@@ -2399,6 +2399,15 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
 
 static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                                        float s, int screenW, int screenH) {
+    /* Stop the preview worker on the close edge — any of the six
+     * paths that flip s_chooseMapOpen to false land here on the next
+     * frame, and the worker auto-restarts on the next preview request
+     * if the user reopens the chooser. */
+    static bool s_prevOpen = false;
+    if (s_prevOpen && !s_chooseMapOpen) {
+        mapChooserStopPreviewWorker();
+    }
+    s_prevOpen = s_chooseMapOpen;
     if (!s_chooseMapOpen) return;
     lobbyChooseMapEnsureInit(renderer);
 
