@@ -202,6 +202,9 @@ typedef struct {
     uint32_t lastSendTick;     /* Last tick we sent chunks (for resend timing) */
 } ClientMapDownload;
 
+#define UPLOAD_MAX_BYTES (64u * 1024u)
+#define LOBBY_REQ_COOLDOWN_TICKS 25  /* ~0.5s at 50 Hz */
+
 /* Server-side global state */
 static struct {
     SOCKET sock;
@@ -230,16 +233,15 @@ static struct {
 
     /* Per-client map upload state. clientUploadActive=true between
      * PACKET_LOBBY_MAP_UPLOAD_BEGIN and the final write-out at
-     * MAP_UPLOAD_DONE. clientUploadBuf grows up to UPLOAD_MAX_BYTES;
-     * clientUploadHave tracks the highest contiguous byte received. */
+     * MAP_UPLOAD_DONE. clientUploadHave tracks the highest contiguous
+     * byte received. clientUploadBuf is a fixed slot of UPLOAD_MAX_BYTES. */
     bool     clientUploadActive[MAX_TANKS];
     uint32_t clientUploadTotal[MAX_TANKS];
     uint32_t clientUploadHave[MAX_TANKS];
-    uint8_t *clientUploadBuf[MAX_TANKS];
+    uint8_t  clientUploadBuf[MAX_TANKS][UPLOAD_MAX_BYTES];
     char     clientUploadName[MAX_TANKS][128];
+    uint8_t  clientReqCooldownTicks[MAX_TANKS];
 } udpServer;
-
-#define UPLOAD_MAX_BYTES (1u * 1024u * 1024u)
 
 /* Public-address override populated by transportUdpServerSetPublicAddress
  * once libplum negotiates a UPnP/NAT-PMP/PCP mapping.  When non-empty the
@@ -1503,6 +1505,11 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     udpServer.clients[idx].nameStickySuffix = false;
     memset(udpServer.clients[idx].playerName, 0, PACKET_MAX_PLAYER_NAME);
     udpServer.clientLocked[idx] = false;
+    udpServer.clientUploadActive[idx] = false;
+    udpServer.clientUploadTotal[idx]  = 0;
+    udpServer.clientUploadHave[idx]   = 0;
+    udpServer.clientUploadName[idx][0] = '\0';
+    udpServer.clientReqCooldownTicks[idx] = 0;
 }
 
 /* Send a localized server-originated message to all connected clients
@@ -2875,6 +2882,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
                 serverSimGetState(sim) != serverStateLobby ||
                 len < PACKET_HEADER_SIZE + 1) break;
+            if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
+            udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
             if (!lobbyClientMayEdit(sim, clientIdx)) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
                               LOBBY_REJECT_NOT_HOST);
@@ -2940,6 +2949,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
                 serverSimGetState(sim) != serverStateLobby ||
                 len < PACKET_HEADER_SIZE + 1) break;
+            if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
+            udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
             uint8_t pathLen = buf[PACKET_HEADER_SIZE];
             if (pathLen > 255 ||
                 len < PACKET_HEADER_SIZE + 1 + pathLen) break;
@@ -3020,6 +3031,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
                 serverSimGetState(sim) != serverStateLobby ||
                 len < PACKET_HEADER_SIZE + 5) break;
+            if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
+            udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
             if (!lobbyClientMayEdit(sim, clientIdx)) {
                 uint8_t ack[PACKET_HEADER_SIZE + 1];
                 packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
@@ -3054,18 +3067,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 break;
             }
 
-            if (udpServer.clientUploadBuf[clientIdx]) {
-                free(udpServer.clientUploadBuf[clientIdx]);
-                udpServer.clientUploadBuf[clientIdx] = NULL;
-            }
-            udpServer.clientUploadBuf[clientIdx] = (uint8_t *)malloc(totalLen);
-            if (!udpServer.clientUploadBuf[clientIdx]) {
-                uint8_t ack[PACKET_HEADER_SIZE + 1];
-                packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
-                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
-                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
-                break;
-            }
             udpServer.clientUploadActive[clientIdx] = true;
             udpServer.clientUploadTotal[clientIdx]  = totalLen;
             udpServer.clientUploadHave[clientIdx]   = 0;
@@ -3125,8 +3126,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     (int)total,
                     displayName);
 
-                free(udpServer.clientUploadBuf[clientIdx]);
-                udpServer.clientUploadBuf[clientIdx] = NULL;
                 udpServer.clientUploadActive[clientIdx] = false;
                 udpServer.clientUploadHave[clientIdx]   = 0;
                 udpServer.clientUploadTotal[clientIdx]  = 0;
@@ -3161,6 +3160,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
                 serverSimGetState(sim) != serverStateLobby ||
                 len < PACKET_HEADER_SIZE + 2) break;
+            if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
+            udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
             int rpos = PACKET_HEADER_SIZE;
             uint8_t pathLen = buf[rpos++];
             if (pathLen > 255 ||
@@ -3265,6 +3266,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
                 serverSimGetState(sim) != serverStateLobby ||
                 len < PACKET_HEADER_SIZE + 1) break;
+            if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
+            udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
             if (!lobbyClientMayEdit(sim, clientIdx)) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
                               LOBBY_REJECT_NOT_HOST);
@@ -3798,6 +3801,11 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
 
 /* Combined receive + tick + send (for callers that don't need split) */
 void transportUdpServerTick(ServerSim *sim) {
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (udpServer.clientReqCooldownTicks[i] > 0) {
+            udpServer.clientReqCooldownTicks[i]--;
+        }
+    }
     if (recvThread) {
         transportUdpServerDrainRecvQueue(sim);
     } else {
