@@ -538,10 +538,9 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
  * gameFrontEnd).
  * ------------------------------------------------------- */
 void gameFrontSaveTankPrefs(ClientSim *cs) {
-  if (cs != NULL) {
-    useAutoslow = clientSimGetTankAutoSlowdown(cs);
-    useAutohide = clientSimGetTankAutoHideGunsight(cs);
-  }
+  /* No-op since the keys dialog persists useAutoslow / useAutohide
+   * directly to INI on OK. */
+  (void)cs;
 }
 
 /* -------------------------------------------------------
@@ -550,10 +549,16 @@ void gameFrontSaveTankPrefs(ClientSim *cs) {
 void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   steam_clear_rich_presence();
   clientMutexWaitFor();
-  if (gamePlayed == TRUE && humanSim != NULL) {
-    useAutoslow = clientSimGetTankAutoSlowdown(humanSim);
-    useAutohide = clientSimGetTankAutoHideGunsight(humanSim);
-  }
+  /* No tank-readback here. The keys dialog persists useAutoslow /
+   * useAutohide directly to INI on OK (immediate-flush) and nothing
+   * during gameplay mutates tank->autoSlowdown after the initial
+   * clientSimSetTankAutoSlowdown — so reading it back would just
+   * round-trip the same value most of the time. The exception was
+   * the buggy case where clientSimSetTankAutoSlowdown ran before
+   * clientSimSetupSelf existed: it no-op'd on the NULL tank pointer,
+   * then tankCreate later defaulted autoSlowdown to FALSE, and this
+   * readback clobbered the user's INI choice with that default. */
+  (void)gamePlayed;
   brainsHandlerShutdown();
   if (spServerSimActive) {
     /* Unregister the SP humanSim subscriber before gameFrontShutdownServer

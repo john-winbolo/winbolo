@@ -1523,6 +1523,14 @@ void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool
   sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
 
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs) {
+  extern bool useAutoslow;
+  extern bool useAutohide;
+  if (cs == NULL) return;
+  clientSimSetTankAutoSlowdown(cs, useAutoslow);
+  clientSimSetTankAutoHideGunsight(cs, useAutohide);
+}
+
 /* -------------------------------------------------------
  * frontEndShowAllianceRequest — called from network thread
  * ------------------------------------------------------- */
