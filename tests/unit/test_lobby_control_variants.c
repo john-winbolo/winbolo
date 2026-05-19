@@ -233,44 +233,50 @@ int run_lobby_bot_config_codec_and_apply(void) {
 }
 
 /* ================================================================
- * CTRL_LOBBY_BOT_BRAIN — non-empty path round-trip and empty-path
- * sentinel (server fallback).
+ * CTRL_LOBBY_BOT_BRAIN — index round-trip and 0xFF "server default"
+ * sentinel. The apply path resolves the index through the client's
+ * brain-list mirror, so the test seeds that catalogue first.
  * ================================================================ */
 int run_lobby_bot_brain_codec_and_apply(void) {
     ControlEvent in, out;
     memset(&in, 0, sizeof(in));
     in.type = CTRL_LOBBY_BOT_BRAIN;
-    in.u.lobbyBotBrain.slot = 2;
-    strncpy(in.u.lobbyBotBrain.path, "Brains/NewAutopilot/init.lua",
-            sizeof(in.u.lobbyBotBrain.path) - 1);
+    in.u.lobbyBotBrain.slot     = 2;
+    in.u.lobbyBotBrain.brainIdx = 3;
 
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_BOT_BRAIN, &in, &out) == 0,
-                  "codec_roundtrip failed (non-empty path)");
+                  "codec_roundtrip failed (in-range index)");
     UT_ASSERT(out.type == CTRL_LOBBY_BOT_BRAIN);
     UT_ASSERT(out.u.lobbyBotBrain.slot == 2);
-    UT_ASSERT(strcmp(out.u.lobbyBotBrain.path,
-                     "Brains/NewAutopilot/init.lua") == 0);
+    UT_ASSERT(out.u.lobbyBotBrain.brainIdx == 3);
 
-    /* Empty-path sentinel — pathLen=0 on the wire, decoder leaves the
-     * path as an empty string. */
-    ControlEvent empty_in, empty_out;
-    memset(&empty_in, 0, sizeof(empty_in));
-    empty_in.type = CTRL_LOBBY_BOT_BRAIN;
-    empty_in.u.lobbyBotBrain.slot = 6;
+    /* 0xFF "use server default" sentinel round-trip. */
+    ControlEvent default_in, default_out;
+    memset(&default_in, 0, sizeof(default_in));
+    default_in.type = CTRL_LOBBY_BOT_BRAIN;
+    default_in.u.lobbyBotBrain.slot     = 6;
+    default_in.u.lobbyBotBrain.brainIdx = 0xFF;
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_BOT_BRAIN,
-                                  &empty_in, &empty_out) == 0,
-                  "codec_roundtrip failed (empty path)");
-    UT_ASSERT(empty_out.u.lobbyBotBrain.slot == 6);
-    UT_ASSERT(empty_out.u.lobbyBotBrain.path[0] == '\0');
+                                  &default_in, &default_out) == 0,
+                  "codec_roundtrip failed (0xFF sentinel)");
+    UT_ASSERT(default_out.u.lobbyBotBrain.slot == 6);
+    UT_ASSERT(default_out.u.lobbyBotBrain.brainIdx == 0xFF);
 
+    /* Apply resolves the index to a display path via the client's
+     * local brain-list mirror. Seed a small catalogue, then apply an
+     * in-range event and the 0xFF sentinel and check both outcomes. */
     ClientSim *cs = fresh_client_sim();
     UT_ASSERT(cs != NULL);
+    cs->lobbyBrainList.count = 4;
+    strncpy(cs->lobbyBrainList.entries[3].path,
+            "Brains/NewAutopilot/init.lua",
+            sizeof(cs->lobbyBrainList.entries[3].path) - 1);
     clientSimApplyControl(cs, &in);
     UT_ASSERT(strcmp(cs->lobbyBotBrain[2],
                      "Brains/NewAutopilot/init.lua") == 0);
-    /* Empty-path apply leaves the field empty (already zero, but
-     * worth asserting we don't crash and don't poison the slot). */
-    clientSimApplyControl(cs, &empty_in);
+    /* 0xFF apply leaves the slot empty (preserves the legacy
+     * "use server default" sentinel). */
+    clientSimApplyControl(cs, &default_in);
     UT_ASSERT(cs->lobbyBotBrain[6][0] == '\0');
     clientSimDestroy(cs);
     return 0;

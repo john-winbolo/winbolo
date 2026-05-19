@@ -339,28 +339,22 @@ static EncodeResult encodeLobbyBotConfig(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
-/* PACKET_LOBBY_BOT_BRAIN_CHG wire format (ported from branch's
- * transportUdpServerBroadcastLobbyBotBrainChg):
- *   [header 8] [slot 1] [pathLen 1] [path pathLen]
- * pathLen == 0 signals "use the server's global bot brain". */
+/* PACKET_LOBBY_BOT_BRAIN_CHG wire format:
+ *   [header 8] [slot 1] [brainIdx 1]
+ * brainIdx == 0xFF signals "use the server's global bot brain";
+ * any other value indexes into the server's brain catalogue. */
 static EncodeResult encodeLobbyBotBrain(const ControlEvent *evt,
                                         const struct UdpServerClient *recipient,
                                         uint8_t *buf, size_t bufCap,
                                         size_t *outLen) {
     (void)recipient;
     if (evt->u.lobbyBotBrain.slot >= MAX_TANKS) return ENCODE_SKIP;
-    size_t pathLen = strnlen(evt->u.lobbyBotBrain.path,
-                             BRAIN_LIST_PATH_LEN - 1);
-    const size_t needed = PACKET_HEADER_SIZE + 2 + pathLen;
+    const size_t needed = PACKET_HEADER_SIZE + 2;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     size_t pos = PACKET_HEADER_SIZE;
     packHeader(buf, PACKET_LOBBY_BOT_BRAIN_CHG, 0);
     buf[pos++] = evt->u.lobbyBotBrain.slot;
-    buf[pos++] = (uint8_t)pathLen;
-    if (pathLen > 0) {
-        memcpy(buf + pos, evt->u.lobbyBotBrain.path, pathLen);
-        pos += pathLen;
-    }
+    buf[pos++] = evt->u.lobbyBotBrain.brainIdx;
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -754,20 +748,15 @@ static bool decodeLobbyBotConfig(const uint8_t *buf, size_t len,
 
 static bool decodeLobbyBotBrain(const uint8_t *buf, size_t len,
                                 ControlEvent *outEvt) {
-    /* Layout matches encodeLobbyBotBrain. */
+    /* Layout matches encodeLobbyBotBrain: [slot 1][brainIdx 1]. */
     if (len < 2) return false;
-    uint8_t slot    = buf[0];
-    uint8_t pathLen = buf[1];
+    uint8_t slot     = buf[0];
+    uint8_t brainIdx = buf[1];
     if (slot >= MAX_TANKS) return false;
-    if (pathLen > BRAIN_LIST_PATH_LEN - 1) return false;
-    if (len < (size_t)(2 + pathLen)) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_LOBBY_BOT_BRAIN;
-    outEvt->u.lobbyBotBrain.slot = slot;
-    if (pathLen > 0) {
-        memcpy(outEvt->u.lobbyBotBrain.path, buf + 2, pathLen);
-    }
-    outEvt->u.lobbyBotBrain.path[pathLen] = '\0';
+    outEvt->u.lobbyBotBrain.slot     = slot;
+    outEvt->u.lobbyBotBrain.brainIdx = brainIdx;
     return true;
 }
 

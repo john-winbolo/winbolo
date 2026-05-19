@@ -481,10 +481,9 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       break;
 
     case CTRL_LOBBY_BOT_BRAIN:
-      fprintf(f, ",\"slot\":%u,\"path\":",
-              (unsigned)evt->u.lobbyBotBrain.slot);
-      logEventsJsonStr(f, evt->u.lobbyBotBrain.path,
-                       sizeof(evt->u.lobbyBotBrain.path));
+      fprintf(f, ",\"slot\":%u,\"brainIdx\":%u",
+              (unsigned)evt->u.lobbyBotBrain.slot,
+              (unsigned)evt->u.lobbyBotBrain.brainIdx);
       break;
 
     case CTRL_LOBBY_BRAIN_LIST:

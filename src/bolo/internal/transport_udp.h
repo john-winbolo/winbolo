@@ -199,7 +199,7 @@ void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
                                           uint8_t difficulty, uint8_t personality,
                                           const char *name);
 void transportUdpClientSendLobbySetBotBrain(Transport *t, uint8_t slot,
-                                            const char *brainPath);
+                                            uint8_t brainIdx);
 void transportUdpClientSendLobbySetMap(Transport *t, const char *mapRelPath);
 void transportUdpClientSendLobbyPreviewCancel(Transport *t);
 void transportUdpClientSendLobbyPreviewCommit(Transport *t);

@@ -199,9 +199,10 @@ static void lobbySendAddBot(ClientSim *cs,
                            (gameType)clientSimGetLobbyGameType(cs),
                            clientSimIsLobbyHiddenMines(cs));
         WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   serverSimCreateBot returned slot=%u", (unsigned)slot);
-        /* Mirror the path into the per-bot table so the AiConfig combo
-         * reflects "this bot's brain" rather than a global default. */
-        serverSimSetBotBrainPathFor(sim, slot, serverSimGetBotBrainPath(sim));
+        /* Mirror the per-bot brain selection so the AiConfig combo
+         * reflects "this bot's brain" rather than a global default.
+         * 0xFF picks up the server's CLI-configured default brain. */
+        serverSimSetBotBrainIdxFor(sim, slot, 0xFF);
         if (teamNumber > 0 && teamNumber < MAX_TANKS) {
             serverSimSetTeam(sim, slot, teamNumber);
         }
@@ -2792,7 +2793,17 @@ static void lobbySendSetBotBrain(ClientSim *cs,
         if (!sim || slot >= MAX_TANKS) return;
         if (serverSimGetState(sim) != serverStateLobby) return;
         if (!serverSimGetLobbyPlayer(sim, slot)->isBot) return;
-        serverSimSwitchBotBrain(sim, slot, brainPath);
+        /* Translate the caller-supplied path to a catalogue index via
+         * the client-side mirror (identical to the server's brainList
+         * in SP). Empty / unknown paths fall through to 0xFF, which
+         * resolves to the CLI-configured default brain server-side. */
+        uint8_t brainIdx = 0xFF;
+        if (brainPath[0] != '\0') {
+            const BrainList *bl = clientSimGetLobbyBrainList(cs);
+            const BrainListEntry *e = bl ? brainListFindByPath(bl, brainPath) : NULL;
+            if (e != NULL) brainIdx = (uint8_t)(e - bl->entries);
+        }
+        serverSimSwitchBotBrain(sim, slot, brainIdx);
         serverSimPublishLobbyBotBrain(sim, slot);
         return;
     }
