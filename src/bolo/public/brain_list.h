@@ -53,8 +53,13 @@ typedef struct {
  * sub-directory containing an init.lua. Fills `out` with up to
  * BRAIN_LIST_MAX entries sorted alphabetically by name. The version
  * field is set from the recursive max-mtime of .lua files inside the
- * brain directory; empty when no .lua files are found. */
-void brainListScan(BrainList *out);
+ * brain directory; empty when no .lua files are found.
+ *
+ * Also populates `paths` in lockstep with `out`: paths[i] carries the
+ * disk path for out->entries[i] after the function returns. Caller
+ * provides storage for BRAIN_LIST_MAX rows. Pass NULL to skip the
+ * paths-mirror fill. */
+void brainListScan(BrainList *out, char (*paths)[BRAIN_LIST_PATH_LEN]);
 
 /* Find an entry by wire path (matches `entry.path`). Returns NULL when
  * not present. */

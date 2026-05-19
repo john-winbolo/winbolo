@@ -171,7 +171,7 @@ static void brainListScanParent(BrainList *out, const char *parent) {
 #endif
 }
 
-void brainListScan(BrainList *out) {
+void brainListScan(BrainList *out, char (*paths)[BRAIN_LIST_PATH_LEN]) {
     if (!out) return;
     memset(out, 0, sizeof(*out));
 
@@ -193,6 +193,15 @@ void brainListScan(BrainList *out) {
     if (out->count > 1) {
         qsort(out->entries, (size_t)out->count, sizeof(out->entries[0]),
               brainListCmp);
+    }
+
+    /* Mirror the (now sorted) disk paths into the caller's out-array
+     * so paths[i] aligns with out->entries[i]. */
+    if (paths) {
+        memset(paths, 0, sizeof(paths[0]) * BRAIN_LIST_MAX);
+        for (int i = 0; i < out->count; i++) {
+            SDL_strlcpy(paths[i], out->entries[i].path, BRAIN_LIST_PATH_LEN);
+        }
     }
 }
 

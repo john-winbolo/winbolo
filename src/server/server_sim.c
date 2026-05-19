@@ -324,7 +324,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     /* Populate the available-brains list so the lobby can advertise
      * them via PACKET_LOBBY_BRAIN_LIST. Cheap one-shot scan of the
      * brains/ tree. */
-    brainListScan(&sim->brainList);
+    brainListScan(&sim->brainList, sim->brainPaths);
 
     sim->startDelay = startDelay;
     sim->gameLength = gameLen;

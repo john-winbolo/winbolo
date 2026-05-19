@@ -54,6 +54,13 @@ struct ServerSim {
      * PACKET_LOBBY_BRAIN_LIST so the AiConfig combo can list them. */
     BrainList       brainList;
 
+    /* Server-private mirror of the on-disk paths for each entry in
+     * brainList. Populated in lockstep with brainList by brainListScan
+     * and indexed identically (brainPaths[i] is the disk path for
+     * brainList.entries[i]). Kept off the public catalogue so the path
+     * never appears on the public API or the wire. */
+    char            brainPaths[BRAIN_LIST_MAX][BRAIN_LIST_PATH_LEN];
+
     /* Layout A lobby flags — all persist across rounds. */
     bool     openHost;             /* anyone can edit when true */
     bool     allowNewPlayers;      /* live state — drives PACKET_LOCK_TOGGLE */
