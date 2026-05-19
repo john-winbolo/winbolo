@@ -215,29 +215,6 @@ static void lobbySendAddBot(ClientSim *cs,
     }
     /* MP path */
     {
-        /* Tell the server which brain to assign. Prefer the sticky
-         * last-picked brain (set whenever the host commits a brain
-         * change from the per-bot AiConfig dropdown) so new bots
-         * inherit the host's current choice. Fall back to the first
-         * catalogue entry when no pick has been made yet. */
-        const char *brainPath = "";
-        if (cs && clientSimGetLobbyBrainList(cs)->count > 0) {
-            const BrainList *bl = clientSimGetLobbyBrainList(cs);
-            brainPath = bl->entries[0].path;
-            if (s_lastChosenBrainPath[0] != '\0') {
-                /* Validate the sticky against the current catalogue —
-                 * if a brain dir was removed since the host's last
-                 * pick, fall back to entries[0] instead of a stale
-                 * path the server would reject. */
-                for (int bi = 0; bi < bl->count; bi++) {
-                    if (SDL_strcasecmp(bl->entries[bi].path,
-                                       s_lastChosenBrainPath) == 0) {
-                        brainPath = s_lastChosenBrainPath;
-                        break;
-                    }
-                }
-            }
-        }
         /* Pick the bot's name from the chosen pool right here on the
          * client — server doesn't know pool contents (see
          * lobby_bot_pools.h). Empty string falls back to "Bot N". */
@@ -255,7 +232,10 @@ static void lobbySendAddBot(ClientSim *cs,
             lobbyBotPoolPick(namingPool, usedNames, usedCount,
                              botName, sizeof(botName));
         }
-        clientSimNetSendAddBotConfigured(cs, teamNumber, brainPath, botName);
+        /* Server-default brain at add time; if the host has a sticky
+         * pick they will have set it via the AiConfig combo, which
+         * issues a SET_BOT_BRAIN once the slot lands. */
+        clientSimNetSendAddBotConfigured(cs, teamNumber, 0xFF, botName);
     }
 }
 
@@ -2788,26 +2768,26 @@ static void lobbySendBotConfig(ClientSim *cs,
 static void lobbySendSetBotBrain(ClientSim *cs,
                                  uint8_t slot, const char *brainPath) {
     if (!brainPath) brainPath = "";
+    /* Translate the caller-supplied path to a catalogue index via
+     * the client-side mirror (identical to the server's brainList
+     * in SP). Empty / unknown paths fall through to 0xFF, which
+     * resolves to the CLI-configured default brain server-side. */
+    uint8_t brainIdx = 0xFF;
+    if (cs && brainPath[0] != '\0') {
+        const BrainList *bl = clientSimGetLobbyBrainList(cs);
+        const BrainListEntry *e = bl ? brainListFindByPath(bl, brainPath) : NULL;
+        if (e != NULL) brainIdx = (uint8_t)(e - bl->entries);
+    }
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim || slot >= MAX_TANKS) return;
         if (serverSimGetState(sim) != serverStateLobby) return;
         if (!serverSimGetLobbyPlayer(sim, slot)->isBot) return;
-        /* Translate the caller-supplied path to a catalogue index via
-         * the client-side mirror (identical to the server's brainList
-         * in SP). Empty / unknown paths fall through to 0xFF, which
-         * resolves to the CLI-configured default brain server-side. */
-        uint8_t brainIdx = 0xFF;
-        if (brainPath[0] != '\0') {
-            const BrainList *bl = clientSimGetLobbyBrainList(cs);
-            const BrainListEntry *e = bl ? brainListFindByPath(bl, brainPath) : NULL;
-            if (e != NULL) brainIdx = (uint8_t)(e - bl->entries);
-        }
         serverSimSwitchBotBrain(sim, slot, brainIdx);
         serverSimPublishLobbyBotBrain(sim, slot);
         return;
     }
-    clientSimNetSendLobbySetBotBrain(cs, slot, brainPath);
+    clientSimNetSendLobbySetBotBrain(cs, slot, brainIdx);
 }
 
 /* Clear a team's metadata (color/name/pool back to defaults).
@@ -4290,8 +4270,9 @@ static void renderBotAiConfig(ClientSim *cs,
         botCodeStartY = formAnchor.y;
         ImGui::BeginGroup();
         ImGui::TextDisabled("Bot Code");
-        const char *curPath = clientSimGetLobbyBotBrain(cs, (BYTE)(slot));
-        const BrainListEntry *curEntry = brainListFindByPath(bl, curPath);
+        uint8_t curIdx = clientSimGetLobbyBotBrain(cs, (BYTE)(slot));
+        const BrainListEntry *curEntry =
+            (curIdx != 0xFF && curIdx < bl->count) ? &bl->entries[curIdx] : NULL;
         char preview[BRAIN_LIST_NAME_LEN + BRAIN_LIST_VER_LEN + 8];
         if (curEntry) {
             if (curEntry->version[0])
@@ -4299,8 +4280,6 @@ static void renderBotAiConfig(ClientSim *cs,
                              curEntry->name, curEntry->version);
             else
                 SDL_snprintf(preview, sizeof(preview), "%s", curEntry->name);
-        } else if (curPath[0]) {
-            SDL_snprintf(preview, sizeof(preview), "(custom)");
         } else {
             SDL_snprintf(preview, sizeof(preview), "(none)");
         }

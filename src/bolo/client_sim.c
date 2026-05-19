@@ -267,6 +267,11 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   cs->mapDownloadComplete = false;
   cs->inLobby = false;
 
+  /* 0 is a valid brain-catalogue index, so the bulk memset above can't
+   * be the "no brain assigned" marker — use 0xFF, matching the sentinel
+   * the server uses for botBrainIdx[]. */
+  memset(cs->lobbyBotBrainIdx, 0xFF, sizeof(cs->lobbyBotBrainIdx));
+
   return true;
 }
 
@@ -1210,9 +1215,9 @@ uint8_t clientSimGetLobbyBotPersonality(const ClientSim *cs, BYTE slot) {
   if (slot >= 16) return 0;
   return cs->lobbyBotPersonality[slot];
 }
-const char *clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot) {
-  if (slot >= 16) return "";
-  return cs->lobbyBotBrain[slot];
+uint8_t clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot) {
+  if (slot >= 16) return 0xFF;
+  return cs->lobbyBotBrainIdx[slot];
 }
 
 const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs) {

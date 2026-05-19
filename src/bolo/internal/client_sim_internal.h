@@ -207,11 +207,12 @@ struct ClientSim {
     uint8_t  lobbyBotDifficulty[16];
     uint8_t  lobbyBotPersonality[16];
 
-    /* Per-bot brain path (full wire path like "Brains/NewAutopilot/init.lua").
-     * Empty when the slot is using whatever the server's global botBrainPath
-     * was at bot-create time. Drives the "Bot Code" combo in the lobby's
-     * AiConfig form. */
-    char     lobbyBotBrain[16][256];
+    /* Per-bot brain catalogue index. 0xFF means the slot is using the
+     * server's CLI-configured default brain. Otherwise indexes into
+     * lobbyBrainList.entries[] to recover the wire path / display name.
+     * Initialised to 0xFF in clientSimCreate (memset(0) would alias
+     * a valid catalogue index). */
+    uint8_t  lobbyBotBrainIdx[16];
 
     /* Brain codebases the server has on disk — populated from
      * PACKET_LOBBY_BRAIN_LIST on join. Used as the option list for the

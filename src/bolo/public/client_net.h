@@ -85,18 +85,27 @@ void clientSimNetSendTeamSet(ClientSim *cs, BYTE teamNumber);
 void clientSimNetSendReady(ClientSim *cs, bool ready);
 void clientSimNetSendAddBot(ClientSim *cs);
 /* Add-bot with explicit team, brain, and pool-picked name. The
- * zero-arg clientSimNetSendAddBot above sends teamNumber=0 / brainPath="" /
- * botName="" and lets the server pick defaults. */
+ * zero-arg clientSimNetSendAddBot above sends teamNumber=0 / brainIdx=0xFF /
+ * botName="" and lets the server pick defaults.
+ *
+ * The server currently ignores brainIdx on PACKET_LOBBY_ADD_BOT — bots
+ * always start on the server's CLI-configured default. To apply a
+ * non-default brain, callers should follow this with
+ * clientSimNetSendLobbySetBotBrain once the new slot lands. The
+ * parameter is kept on the API for symmetry with the rest of the
+ * lobby-bot send wrappers. */
 void clientSimNetSendAddBotConfigured(ClientSim *cs, BYTE teamNumber,
-                                      const char *brainPath,
+                                      uint8_t brainIdx,
                                       const char *botName);
 void clientSimNetSendRemoveBot(ClientSim *cs, BYTE playerNum);
 void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
                                     uint8_t difficulty,
                                     uint8_t personality,
                                     const char *name);
+/* Assign brain catalogue entry brainIdx to lobby bot slot. 0xFF =
+ * use the server's CLI-configured default brain. */
 void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
-                                      const char *brainPath);
+                                      uint8_t brainIdx);
 /* Host (or openHost / admin) only — swap the running lobby map.
  * mapRelPath is relative to data/maps/ (e.g. "Foo.map" or
  * "subdir/Foo.map"). Server rejects "..", absolute paths, and
