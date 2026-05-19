@@ -45,7 +45,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_ARCHITECTURE
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS build architectures" FORCE)
 endif()
 
-set(WINBOLO_VERSION "1.18" CACHE STRING "WinBolo version number")
+include(cmake/bolo_version.cmake)
 
 # Global macOS bundle metadata. Set once here so every MACOSX_BUNDLE target
 # (WinBolo, Log Viewer, Map Editor) picks up matching version/copyright keys
@@ -58,27 +58,6 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(MACOSX_BUNDLE_LONG_VERSION_STRING  "${WINBOLO_VERSION}")
     set(MACOSX_BUNDLE_COPYRIGHT            "Copyright 1998-${_WB_CURRENT_YEAR} John Morrison")
 endif()
-
-execute_process(COMMAND git rev-parse --short HEAD
-                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-                OUTPUT_VARIABLE WINBOLO_GIT_HASH
-                OUTPUT_STRIP_TRAILING_WHITESPACE
-                ERROR_QUIET)
-if(NOT WINBOLO_GIT_HASH)
-    set(WINBOLO_GIT_HASH "unknown")
-endif()
-string(TIMESTAMP WINBOLO_BUILD_DATE "%Y-%m-%d")
-
-# Derive network protocol version bytes from WINBOLO_VERSION.
-# Each digit of the version string (skipping dots) becomes one byte.
-# E.g. "1.18" -> MAJOR=0x01, MINOR=0x01, REVISION=0x08.
-string(REPLACE "." "" _VER_DIGITS "${WINBOLO_VERSION}")
-string(SUBSTRING "${_VER_DIGITS}" 0 1 _VER_D0)
-string(SUBSTRING "${_VER_DIGITS}" 1 1 _VER_D1)
-string(SUBSTRING "${_VER_DIGITS}" 2 1 _VER_D2)
-math(EXPR BOLO_VERSION_MAJOR "${_VER_D0}")
-math(EXPR BOLO_VERSION_MINOR "${_VER_D1}")
-math(EXPR BOLO_VERSION_REVISION "${_VER_D2}")
 
 set(CMAKE_C_STANDARD 99)
 
