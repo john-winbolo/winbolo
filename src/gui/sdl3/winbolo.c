@@ -256,7 +256,23 @@ int main(int argc, char *argv[]) {
   wb_log_init("WinBolo", "WinBolo", "winbolo.log");
   atexit(wb_log_shutdown);
 
-  winbolonetCoreSetPreferencesPath("WinBolo.ini");
+  {
+    /* Resolve WinBolo.ini to an absolute path under SDL_GetPrefPath.
+     * Win32 WritePrivateProfileString with a relative filename writes
+     * to C:\Windows\<file>, which an unprivileged process can't touch,
+     * so the news / country-cache / WBN-host writes silently fail.
+     * gamefront.c::getPreferenceFilePath already uses this trick for
+     * SETTINGS keys — mirror it here so every WBN consumer hits the
+     * same file. */
+    static char winboloIniPath[FILENAME_MAX];
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir) {
+      SDL_snprintf(winboloIniPath, sizeof(winboloIniPath), "%sWinBolo.ini", prefDir);
+    } else {
+      SDL_snprintf(winboloIniPath, sizeof(winboloIniPath), "%s", "WinBolo.ini");
+    }
+    winbolonetCoreSetPreferencesPath(winboloIniPath);
+  }
 
   steam_init();
   steam_set_join_callback(steamJoinRequested);
@@ -280,6 +296,17 @@ int main(int argc, char *argv[]) {
   }
 
   if (gameFrontStart(cmdLine, &keys, FALSE, &cs) == FALSE) {
+    clientMutexDestroy();
+    SDL_Quit();
+    return 1;
+  }
+
+  /* The server threads mutex outlives every per-session start/end cycle:
+   * SDL's timer thread may still be running hostedServerTimerCb (which waits
+   * on this mutex) while a session shuts down, and SDL_Quit only joins the
+   * timer thread at the very end of main. Destroying the mutex before then
+   * would strand that waiter on freed memory. */
+  if (threadsCreate(FALSE) == FALSE) {
     clientMutexDestroy();
     SDL_Quit();
     return 1;
@@ -343,8 +370,6 @@ int main(int argc, char *argv[]) {
     {
       bool done = FALSE;
       SDL_Window *sdlWin = sdl3DrawGetWindow();
-
-      threadsCreate(FALSE);
 
       /* Flush any stale SDL_QUIT events that may have been queued during
          dialog teardown. Without this, the main loop would exit immediately
@@ -542,6 +567,7 @@ int main(int argc, char *argv[]) {
   sdl3DrawCleanup();
   steam_shutdown();
   SDL_Quit();
+  threadsDestroy();
   sentryClose();
   return 0;
 }
