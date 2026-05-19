@@ -753,6 +753,9 @@ void gameFrontRequestPlayTutorial(void) {
 void gameFrontSaveWindowSettings(void) {
 }
 
+void gameFrontPumpDirty(void) {
+}
+
 void gameFrontSaveTankPrefs(ClientSim *cs) {
   if (cs != NULL) {
     useAutoslow = clientSimGetTankAutoSlowdown(cs);
