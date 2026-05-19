@@ -2137,8 +2137,10 @@ void transportUdpServerDrainPunchQueue(void) {
 }
 
 /* Validate an upload filename payload. The wire delivers a length-prefixed
- * name that may not be NUL-terminated, so iterate by index over nameLen. */
-static bool uploadFilenameIsSafe(const char *name, size_t nameLen) {
+ * name that may not be NUL-terminated, so iterate by index over nameLen.
+ * Declared in transport_udp.h so the unit tests can exercise the matrix
+ * directly; production callers stay inside this translation unit. */
+bool uploadFilenameIsSafe(const char *name, size_t nameLen) {
     static const char *kReservedBasenames[] = {
         "CON", "PRN", "AUX", "NUL",
         "COM1", "COM2", "COM3", "COM4", "COM5",
@@ -3100,6 +3102,31 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
                 udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
                 break;
+            }
+
+            if (udpServer.uploadPolicy == UPLOAD_POLICY_PERSIST) {
+                ServerMapEntry entries[256];
+                int got = serverSimEnumerateMapDir(sim, "Uploads",
+                                                    entries,
+                                                    (int)(sizeof(entries) /
+                                                          sizeof(entries[0])));
+                if (got < 0) got = 0;
+                int fileCount = 0;
+                uint64_t totalBytes = 0;
+                for (int i = 0; i < got; i++) {
+                    if (!entries[i].isFolder) {
+                        fileCount++;
+                        totalBytes += (uint64_t)entries[i].size;
+                    }
+                }
+                if (fileCount >= udpServer.uploadMaxFiles ||
+                    totalBytes + totalLen > udpServer.uploadMaxStorageBytes) {
+                    uint8_t ack[PACKET_HEADER_SIZE + 1];
+                    packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+                    ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_UPLOAD_LIMIT_HIT;
+                    udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                    break;
+                }
             }
 
             udpServer.clientUploadActive[clientIdx] = true;

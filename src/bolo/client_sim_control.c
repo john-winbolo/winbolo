@@ -145,6 +145,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyOpenHost            = evt->u.lobbySettings.lobbyOpenHost;
         cs->lobbyAutoLockOnGameStart = evt->u.lobbySettings.lobbyAutoLockOnGameStart;
         cs->lobbyServerLocks         = evt->u.lobbySettings.lobbyServerLocks;
+        cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;
         break;
 
     case CTRL_LOBBY_TEAM_META: {

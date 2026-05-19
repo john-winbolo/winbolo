@@ -1189,6 +1189,7 @@ void clientSimSetIsLanOnly(ClientSim *cs, bool v)               { cs->isLanOnly 
 bool     clientSimGetLobbyOpenHost(const ClientSim *cs)              { return cs->lobbyOpenHost; }
 bool     clientSimGetLobbyAutoLockOnGameStart(const ClientSim *cs)   { return cs->lobbyAutoLockOnGameStart; }
 uint16_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
+UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs)           { return cs ? cs->uploadPolicy : UPLOAD_POLICY_ALLOW; }
 
 uint8_t clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId) {
   if (teamId >= 16) return 0;

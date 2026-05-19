@@ -35,6 +35,9 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_bot_config_codec_and_apply",run_lobby_bot_config_codec_and_apply},
     { "lobby_bot_brain_codec_and_apply", run_lobby_bot_brain_codec_and_apply },
     { "lobby_brain_list_codec_and_apply",run_lobby_brain_list_codec_and_apply},
+    { "upload_filename_safe",            run_upload_filename_safe            },
+    { "lobby_map_list_chunked",          run_lobby_map_list_chunked          },
+    { "lobby_map_search_chunked",        run_lobby_map_search_chunked        },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

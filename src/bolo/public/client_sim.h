@@ -36,6 +36,7 @@
 #include "screentank.h"     /* For tankAlliance */
 #include "brain.h"  /* For BuildInfo, ObjectInfo */
 #include "brain_list.h"   /* BrainList — value type used by clientSimGetLobbyBrainList */
+#include "upload_policy.h" /* UploadPolicy — clientSimGetUploadPolicy return */
 
 #ifndef GAMESIM_TYPEDEF
 #define GAMESIM_TYPEDEF
@@ -535,6 +536,10 @@ void clientSimSetIsLanOnly(ClientSim *cs, bool v);
 bool        clientSimGetLobbyOpenHost(const ClientSim *cs);
 bool        clientSimGetLobbyAutoLockOnGameStart(const ClientSim *cs);
 uint16_t    clientSimGetLobbyServerLocks(const ClientSim *cs);
+
+/* Server map-upload policy as last broadcast in the lobby-settings event.
+ * Defaults to UPLOAD_POLICY_ALLOW until the first event arrives. */
+UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs);
 
 uint8_t     clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamColor(const ClientSim *cs, BYTE teamId);

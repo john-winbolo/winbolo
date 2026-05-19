@@ -50,6 +50,9 @@ int run_lobby_team_meta_codec_and_apply(void);
 int run_lobby_bot_config_codec_and_apply(void);
 int run_lobby_bot_brain_codec_and_apply(void);
 int run_lobby_brain_list_codec_and_apply(void);
+int run_upload_filename_safe(void);
+int run_lobby_map_list_chunked(void);
+int run_lobby_map_search_chunked(void);
 
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map
  * with one player added at slot 0. Caller is responsible for

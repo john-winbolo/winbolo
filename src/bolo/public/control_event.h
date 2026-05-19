@@ -32,6 +32,7 @@
 #include "client_enums.h" /* netStatus, gameType */
 #include "client_sim.h"   /* ClientLobbySlot */
 #include "brain_list.h"   /* BrainList for CTRL_LOBBY_BRAIN_LIST */
+#include "upload_policy.h" /* UploadPolicy in lobbySettings */
 
 #ifndef LOBBY_TEAM_NAME_LEN
 #define LOBBY_TEAM_NAME_LEN 32
@@ -144,6 +145,7 @@ typedef struct ControlEvent {
             bool     lobbyOpenHost;
             bool     lobbyAutoLockOnGameStart;
             uint16_t lobbyServerLocks;
+            UploadPolicy uploadPolicy;
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */

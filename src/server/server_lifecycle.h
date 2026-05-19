@@ -27,16 +27,9 @@
 
 #include "global.h"  /* GAME_TICK_LENGTH */
 #include "server_sim.h"
+#include "upload_policy.h"
 
 #define SERVER_TICK_LENGTH (GAME_TICK_LENGTH * 2)
-
-/* Operator-chosen handling for client-pushed map uploads.
- * Values are ordered so a zero-initialized server defaults to ALLOW. */
-typedef enum {
-    UPLOAD_POLICY_ALLOW   = 0,  /* default; play the upload, drop on map change */
-    UPLOAD_POLICY_OFF     = 1,  /* refuse MAP_UPLOAD_BEGIN */
-    UPLOAD_POLICY_PERSIST = 2   /* accept and (later) write to data/maps/Uploads/ */
-} UploadPolicy;
 
 /* Override the operator-controlled upload policy and per-map storage caps.
  * Called once at startup after transportUdpServerCreate. A maxFiles or

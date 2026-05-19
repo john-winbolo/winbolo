@@ -31,6 +31,7 @@
 #include "alliance_enums.h"    /* baseAlliance, pillAlliance */
 #include "screentank.h"        /* tankAlliance */
 #include "brain_list.h"        /* BrainList — returned by serverSimGetBrainList */
+#include "upload_policy.h"     /* UploadPolicy — serverSimSetUploadPolicy arg */
 
 /* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
@@ -1297,6 +1298,7 @@ typedef struct {
                           0 if unknown. Folders carry the directory
                           mtime so the table sort still reads sensibly
                           for them. */
+    int64_t size;      /* file size in bytes; 0 for folders. */
 } ServerMapEntry;
 
 int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
@@ -1383,6 +1385,11 @@ void serverSimPublishLobbyBotBrain(ServerSim *sim, BYTE slot);
 void serverSimPublishLobbyBotConfig(ServerSim *sim, BYTE slot);
 void serverSimPublishLobbyTeamMeta(ServerSim *sim, BYTE teamId);
 void serverSimPublishLobbySettings(ServerSim *sim);
+
+/* Mirror the operator-chosen upload policy onto the sim so it can be
+ * broadcast in the lobby-settings event. Called at server startup
+ * after transportUdpServerSetUploadConfig. */
+void serverSimSetUploadPolicy(ServerSim *sim, UploadPolicy policy);
 
 /* viewPlayer — which player perspective the sim renders from. */
 BYTE serverSimGetViewPlayer(const ServerSim *sim);
