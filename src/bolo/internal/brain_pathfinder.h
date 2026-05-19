@@ -84,11 +84,6 @@ typedef struct {
 
 /* Per-instance pathfinder state */
 struct BrainPathfinder {
-  /* Bot index this pathfinder belongs to (0..MAX_TANKS-1). Set once
-   * at create time; never changes. Used to route spot-log writes
-   * directly to spot_bot<N>.log without a shared global. */
-  int bot_idx;
-
   /* Terrain map pointer (set each tick, not owned) */
   const BYTE *map;
 
@@ -206,10 +201,6 @@ struct BrainPathfinder {
  *********************************************************/
 
 BrainPathfinder *brainPathfinderCreate(void);
-
-/* Set the bot index this pathfinder belongs to. Call once after
- * brainPathfinderCreate, before any spot-log writes. */
-void brainPathfinderSetBotIdx(BrainPathfinder *pf, int bot_idx);
 void brainPathfinderDestroy(BrainPathfinder *pf);
 void brainPathfinderSetMap(BrainPathfinder *pf, const BYTE *map);
 
@@ -315,31 +306,6 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
                                                    int x, int y, int boat,
                                                    BrainPFTileLookupFn pcontrib_lookup,
                                                    void *user);
-
-/* Spot-log debug controls. When enabled, every call to
- * brainPathfinderDijkstraLookupSubtractByKind dumps every internal step
- * to spot_bot<N>.log (where N = pf->bot_idx). All routing is per-bot —
- * no shared globals to race on across concurrent bot ticks. */
-void brainPathfinderSetSpotLogEnabled(int enabled);
-
-/* Set the tick used to prefix subsequent log lines for one bot. Call at
- * the top of each bot's Brain.think (per-bot, no cross-bot contention). */
-void brainPathfinderSetSpotLogTickFor(int bot, int tick);
-
-/* Append an arbitrary message line into the given bot's spot log,
- * using that bot's stored tick. Used by the Lua cpf.spot_log_write
- * binding (bot is resolved from the bound pathfinder). */
-void brainPathfinderSpotLogWriteForBot(int bot, const char *msg);
-
-/* Set the output directory for spot_bot<N>.log files. Pass NULL or
- * empty to revert to cwd. Closes any already-opened files when the
- * directory actually changes. */
-void brainPathfinderSetSpotLogDir(const char *dir);
-
-/* External loggers (panel renderer etc.) drop a correlation line into a
- * specific bot's spot log using an explicit tick (the panel uses the
- * recording tick during scrub, not the live sim tick). */
-void brainPathfinderSpotLogWriteFor(int bot, int tick, const char *msg);
 
 /* Trace the Dijkstra parent chain from (dx,dy) back to the source.
  * Returns the first step on the optimal path.

@@ -335,15 +335,6 @@ function Brain.open(info)
   -- showing raw / subtracted / c_reduction / manual_reduction so we can
   -- verify the target-pill danger subtraction in pool_6's spot_cost.
   -- BRAIN_DEBUG_MODE-gated so it's stripped from opt/.
-  if BRAIN_DEBUG_MODE then _G.DEBUG_SELF_DR = true end
-  -- Spot-log: dump every step of the C-side
-  -- dijkstra_lookup_subtract_by_kind walk to spot.log. Tick gets
-  -- stamped on every line inside Brain.think.
-  if BRAIN_DEBUG_MODE and cpf and cpf.set_spot_log_enabled then
-    cpf.set_spot_log_enabled(true)
-    -- Session-dir routing happens at tick 1 inside Brain.think — by
-    -- then C has populated _G.DEBUG_SESSION_DIR.
-  end
   -- Switch to Lua 5.4 generational GC. Brain ticks allocate lots of
   -- short-lived tables (closures, per-tick scratch); generational keeps
   -- minor collections cheap and frequent. minor=10 fires minor passes
@@ -735,28 +726,17 @@ function Brain.think(info)
   state.tick = state.tick + 1
   state._last_info = info
   local now  = state.tick
-  -- Stamp tick + bot into the C-side spot-log so every line it writes
-  -- during this think gets [t=N] prefix AND routes to that bot's
-  -- spot_bot<N>.log (no concurrent-bot interleaving). BRAIN_DEBUG_MODE
-  -- gate so opt builds skip both calls.
-  if BRAIN_DEBUG_MODE and cpf and cpf.set_spot_log_tick then
-    cpf.set_spot_log_tick(now)
-    -- At tick 1 the engine has populated info.tankx/y with the bot's
-    -- real spawn position. Brain.open is too early — info isn't
-    -- populated yet there. Emit a BOT_START marker so log readers
-    -- can correlate bot index ↔ map quadrant. Also route spot logs
-    -- into the session dir now that DEBUG_SESSION_DIR is populated.
-    if now == 1 and cpf.spot_log_write then
-      if cpf.set_spot_log_dir and _G.DEBUG_SESSION_DIR then
-        cpf.set_spot_log_dir(_G.DEBUG_SESSION_DIR)
-      end
-      cpf.spot_log_write(string.format(
-        "BOT_START player_number=%s name=%s tank=(%.1f,%.1f) tile=(%d,%d)",
-        tostring(info.player_number),
-        tostring(info.player_name),
-        (info.tankx or 0) / 256.0, (info.tanky or 0) / 256.0,
-        (info.tankx or 0) >> 8, (info.tanky or 0) >> 8))
-    end
+  -- At tick 1 the engine has populated info.tankx/y with the bot's
+  -- real spawn position. Brain.open is too early — info isn't
+  -- populated yet there. Emit a BOT_START marker so log readers can
+  -- correlate bot index ↔ map quadrant.
+  if BRAIN_DEBUG_MODE and now == 1 then
+    print2(string.format(
+      "BOT_START player_number=%s name=%s tank=(%.1f,%.1f) tile=(%d,%d)",
+      tostring(info.player_number),
+      tostring(info.player_name),
+      (info.tankx or 0) / 256.0, (info.tanky or 0) / 256.0,
+      (info.tankx or 0) >> 8, (info.tanky or 0) >> 8))
   end
 
   -- Open the optimize.log section timer at the EARLIEST possible point
@@ -902,6 +882,7 @@ function Brain.think(info)
   -- _dbg.txt) can all use the same brain-tick number.
   _G._BRAIN_TICK = now
   if BRAIN_DEBUG_MODE then
+    print2.set_bot(info.player_number or 0)
     print2.set_tick(now)
     print2("BEGIN bot tick=", now, " state.goal.kind = ", state.goal.kind, ", state.goal.substate = ", tostring(state.goal.substate))
   end
@@ -1436,29 +1417,13 @@ function Brain.think(info)
       goal_str = string.format("Goal: %s (%d,%d)",
         gkind, g.mx or 0, g.my or 0)
     end
-    -- Per-tick goal log — behavior trace. Gate `BRAIN_LOG_JSON or
-    -- BRAIN_DEBUG_MODE` (LOG_JSON first so strip leaves the block alone).
-    -- --opt without --log-json: both false, no file write. --opt --log-json
-    -- or dev mode: writes goal_player<N>.log to DEBUG_SESSION_DIR.
-    if BRAIN_LOG_JSON or BRAIN_DEBUG_MODE then
-      local sdir = _G.DEBUG_SESSION_DIR
-      if sdir then
-        local pn = info.player_number or 0
-        local path = string.format("%s/goal_player%d.log", sdir, pn)
-        if not _G._GOAL_LOG_FILE or _G._GOAL_LOG_PATH ~= path then
-          if _G._GOAL_LOG_FILE then pcall(function() _G._GOAL_LOG_FILE:close() end) end
-          local f = io.open(path, "a")
-          if f then
-            _G._GOAL_LOG_FILE = f
-            _G._GOAL_LOG_PATH = path
-          end
-        end
-        if _G._GOAL_LOG_FILE then
-          local sub = (g.substate and g.substate ~= "" and g.substate ~= "-") and (" sub=" .. g.substate) or ""
-          _G._GOAL_LOG_FILE:write(string.format("%d\t%s%s\n", state.tick or 0, goal_str, sub))
-          _G._GOAL_LOG_FILE:flush()
-        end
-      end
+    -- Goal-change trace — one print2 line per change. Lands in
+    -- print2_bot<N>.log under the rest of the bot's debug trace. The
+    -- outer "if BRAIN_DEBUG_MODE and ..." matches strip.bat's
+    -- --strip-block prefix so opt builds drop this entirely.
+    if BRAIN_DEBUG_MODE and BRAIN_LOG_GOALS then
+      local sub = (g.substate and g.substate ~= "" and g.substate ~= "-") and (" sub=" .. g.substate) or ""
+      print2(string.format("GOAL_CHANGE %s%s", goal_str, sub))
     end
     -- HUD draws (gated)
     if BRAIN_DEBUG_MODE then

@@ -641,6 +641,16 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   lua_pushboolean(L, debug_mode);
   lua_setglobal(L, "BRAIN_POOL_VIZ");
 
+  /* Per-category debug log gates. All require BRAIN_DEBUG_MODE to be on
+   * (debug builds strip the whole block via lua_strip's --strip-block
+   * "if BRAIN_DEBUG_MODE" prefix). Signal-rich categories default ON
+   * when debug is on; chatty ones default OFF so print2_bot<N>.log
+   * stays grep-able. */
+  lua_pushboolean(L, debug_mode);  lua_setglobal(L, "BRAIN_LOG_GOALS");   /* goal transitions */
+  lua_pushboolean(L, debug_mode);  lua_setglobal(L, "BRAIN_LOG_BUILDER"); /* wall/build decisions */
+  lua_pushboolean(L, false);       lua_setglobal(L, "BRAIN_LOG_SCORES");  /* FINAL_SCORES dump every replan */
+  lua_pushboolean(L, false);       lua_setglobal(L, "BRAIN_LOG_SWERVE");  /* per-tick swerve trace */
+
   /* RUN_SCRIPT_PATH: non-empty string = script to run after Brain.open; nil otherwise. */
   if (s_run_script_path[0]) {
     lua_pushstring(L, s_run_script_path);
@@ -654,11 +664,6 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   /* Create C pathfinder and register cpf_* globals */
   inst->pathfinder = brainPathfinderCreate();
   if (inst->pathfinder) {
-    /* Tag this bot's pathfinder with its player number so spot-log
-     * writes from inside dijkstra_lookup_subtract_by_kind route to
-     * THIS bot's spot_bot<N>.log via pf->bot_idx — without consulting
-     * a process-global that other bots' calls can clobber. */
-    brainPathfinderSetBotIdx(inst->pathfinder, player_num);
     /* Preheat slate arrays: malloc + page-commit so the first
      * dijkstra_start (typically tick 1) doesn't pay ~1-2 ms of
      * lazy page-fault cost on a fresh process. */
@@ -968,6 +973,11 @@ void luaBrainInstanceSetDebugMode(LuaBrainInstance *inst, bool enabled) {
    * also start/stop the per-tick log file. */
   lua_pushboolean(inst->L, enabled);
   lua_setglobal(inst->L, "_PRINT2_ENABLED");
+  /* Per-category gates follow the master debug flag for the signal-rich
+   * categories; chatty ones (SCORES/SWERVE) stay off unless user toggles
+   * them in their Lua state separately. */
+  lua_pushboolean(inst->L, enabled); lua_setglobal(inst->L, "BRAIN_LOG_GOALS");
+  lua_pushboolean(inst->L, enabled); lua_setglobal(inst->L, "BRAIN_LOG_BUILDER");
 }
 
 LuaBrainSetting *luaBrainInstanceGetSettings(LuaBrainInstance *inst,

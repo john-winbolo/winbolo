@@ -43,105 +43,6 @@
 #include <SDL3/SDL.h>
 #include <zlib.h>
 
-/* Spot-log debug: when g_spot_log_enabled is true,
- * brainPathfinderDijkstraLookupSubtractByKind dumps every step of its
- * slate lookup + parent-chain walk to a per-bot log file. Routing is
- * NOT done via shared globals — every write takes an explicit bot_idx
- * (derived from pf->bot_idx for C-side walks, or from the bound
- * pathfinder in Lua bindings). Concurrent bot ticks cannot trample
- * each other's lines.
- *
- * Per-bot file handles + per-bot tick + per-bot call counter, up to 16
- * bots (matches MAX_TANKS); opened lazily on first write. */
-#define SPOT_LOG_MAX_BOTS 16
-
-typedef struct {
-  FILE *fp;
-  int   tick;
-  long  call;
-} SpotLogBot;
-static SpotLogBot g_spot_logs[SPOT_LOG_MAX_BOTS] = {{0}};
-static int   g_spot_log_enabled = 0;
-
-/* Output directory prefix for spot_bot<N>.log files. Set via
- * brainPathfinderSetSpotLogDir() at brain startup so logs land in
- * debug_sessions/<ts>/ alongside the other per-session traces. Empty
- * (default) means cwd. */
-static char g_spot_log_dir[1024] = "";
-
-static FILE *spot_log_get_file(int bot) {
-  if (bot < 0 || bot >= SPOT_LOG_MAX_BOTS) return NULL;
-  if (g_spot_logs[bot].fp) return g_spot_logs[bot].fp;
-  char path[1280];
-  if (g_spot_log_dir[0]) {
-    snprintf(path, sizeof(path), "%s/spot_bot%d.log", g_spot_log_dir, bot);
-  } else {
-    snprintf(path, sizeof(path), "spot_bot%d.log", bot);
-  }
-  g_spot_logs[bot].fp = fopen(path, "w");
-  return g_spot_logs[bot].fp;
-}
-
-/* SPOT_LOG_B(bot_idx, fmt, ...) writes ONE pre-formatted string in a
- * single fprintf so the line stays atomic. Routing is explicit per
- * call — no shared global to race on. */
-#define SPOT_LOG_B(bot_idx, ...) do { \
-  int _b = (bot_idx); \
-  if (g_spot_log_enabled && _b >= 0 && _b < SPOT_LOG_MAX_BOTS) { \
-    FILE *_f = spot_log_get_file(_b); \
-    if (_f) { \
-      char _msg[1024]; \
-      int _n = snprintf(_msg, sizeof(_msg), __VA_ARGS__); \
-      (void)_n; \
-      fprintf(_f, "[t=%d bot=%d call=%ld] %s\n", \
-              g_spot_logs[_b].tick, _b, g_spot_logs[_b].call, _msg); \
-      fflush(_f); \
-    } \
-  } \
-} while (0)
-
-void brainPathfinderSetSpotLogEnabled(int on) { g_spot_log_enabled = on ? 1 : 0; }
-
-void brainPathfinderSetSpotLogTickFor(int bot, int tick) {
-  if (bot >= 0 && bot < SPOT_LOG_MAX_BOTS) g_spot_logs[bot].tick = tick;
-}
-
-void brainPathfinderSetSpotLogDir(const char *dir) {
-  const char *in = dir ? dir : "";
-  if (strcmp(g_spot_log_dir, in) == 0) return;
-  size_t n = strnlen(in, sizeof(g_spot_log_dir) - 1);
-  memcpy(g_spot_log_dir, in, n);
-  g_spot_log_dir[n] = '\0';
-  /* Dir actually changed — close current files so next write reopens
-   * in the new directory. */
-  for (int i = 0; i < SPOT_LOG_MAX_BOTS; i++) {
-    if (g_spot_logs[i].fp) { fclose(g_spot_logs[i].fp); g_spot_logs[i].fp = NULL; }
-  }
-}
-
-/* Panel/external callers pass tick explicitly (panel uses recording
- * tick, which can differ from sim tick during scrubbing). */
-void brainPathfinderSpotLogWriteFor(int bot, int tick, const char *msg) {
-  if (!g_spot_log_enabled) return;
-  if (bot < 0 || bot >= SPOT_LOG_MAX_BOTS) return;
-  FILE *f = spot_log_get_file(bot);
-  if (!f) return;
-  fprintf(f, "[t=%d bot=%d source=panel] %s\n", tick, bot, msg ? msg : "");
-  fflush(f);
-}
-
-/* Lua-binding helper: write an arbitrary line into the given bot's
- * spot log using that bot's stored tick (set via SetSpotLogTickFor at
- * top of Brain.think). */
-void brainPathfinderSpotLogWriteForBot(int bot, const char *msg) {
-  if (!g_spot_log_enabled) return;
-  if (bot < 0 || bot >= SPOT_LOG_MAX_BOTS) return;
-  FILE *f = spot_log_get_file(bot);
-  if (!f) return;
-  fprintf(f, "[t=%d] %s\n", g_spot_logs[bot].tick, msg ? msg : "");
-  fflush(f);
-}
-
 #include "brain_pathfinder.h"
 #include "util.h"
 #include "lgm.h"
@@ -473,14 +374,9 @@ static inline float heuristic(int x0, int y0, int x1, int y1) {
 /* Create / Destroy                                                    */
 /* ------------------------------------------------------------------ */
 
-void brainPathfinderSetBotIdx(BrainPathfinder *pf, int bot_idx) {
-  if (pf) pf->bot_idx = bot_idx;
-}
-
 BrainPathfinder *brainPathfinderCreate(void) {
   BrainPathfinder *pf = (BrainPathfinder *)calloc(1, sizeof(BrainPathfinder));
   if (!pf) return NULL;
-  pf->bot_idx = -1; /* unset until brainPathfinderSetBotIdx is called */
 
   pf->heap = (BrainPFHeapEntry *)malloc(sizeof(BrainPFHeapEntry) * HEAP_INITIAL_CAPACITY);
   if (!pf->heap) {
@@ -2186,73 +2082,29 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
                                                    BrainPFTileLookupFn pcontrib_lookup,
                                                    void *user) {
   if (!pf) return COST_INF;
-  /* Per-bot call counter — no shared global to race on. */
-  int b = pf->bot_idx;
-  if (b >= 0 && b < SPOT_LOG_MAX_BOTS) g_spot_logs[b].call++;
-  SPOT_LOG_B(b, "=== ENTRY kind=%d dest=(%d,%d) boat=%d pcontrib_lookup=%p pf=%p ds=%.4f",
-           kind, x, y, boat, (void *)pcontrib_lookup,
-           (void *)pf, pf->danger_scale);
-  if (x < 0 || x > 255 || y < 0 || y > 255) {
-    SPOT_LOG_B(b, "FAIL: dest out of map bounds → return COST_INF");
-    return COST_INF;
-  }
+  if (x < 0 || x > 255 || y < 0 || y > 255) return COST_INF;
   (void)boat;
 
   int order[DIJKSTRA_NUM_SLATES];
   int n = slate_indices_by_recency(pf, kind, order);
-  SPOT_LOG_B(b, "slates_by_recency(kind=%d): %d slate(s) eligible", kind, n);
 
   DijkstraSlate *chosen = NULL;
-  int chosen_idx = -1;
   int chosen_layer = 0;
   float base_cost = COST_INF;
   for (int i = 0; i < n; i++) {
     DijkstraSlate *s = &pf->dij_slates[order[i]];
-    /* Slate state: src/started_tick give identity; max_cost shows if
-     * expansion was bounded; running_max_g tells us how far the slate
-     * actually expanded (so we can spot "all dests at frontier" cases
-     * where many tiles hit the same cap). g_cost@src should be 0.0 if
-     * the slate was built correctly — sanity check. */
-    float src_g = (s->g_cost && s->src_x >= 0 && s->src_x <= 255
-                   && s->src_y >= 0 && s->src_y <= 255)
-                  ? s->g_cost[node_idx(s->src_x, s->src_y, 0)]
-                  : -1.0f;
-    SPOT_LOG_B(b, "  slate[%d]=idx%d src=(%d,%d) started_tick=%d max_cost=%.2f dscale=%.4f g_cost=%p dir_at=%p g_cost@src=%.4f",
-             i, order[i], s->src_x, s->src_y, s->started_tick,
-             s->max_cost, s->danger_scale,
-             (void *)s->g_cost, (void *)s->dir_at, src_g);
-    if (!s->g_cost || !s->dir_at) {
-      SPOT_LOG_B(b, "    skip: slate not allocated");
-      continue;
-    }
-    if (x == s->src_x && y == s->src_y) {
-      SPOT_LOG_B(b, "    skip: dest == source (cost would be 0 — not useful for spot)");
-      continue;
-    }
+    if (!s->g_cost || !s->dir_at) continue;
+    if (x == s->src_x && y == s->src_y) continue;
     float land = s->g_cost[node_idx(x, y, 0)];
     float boatv = s->g_cost[node_idx(x, y, 1)];
-    SPOT_LOG_B(b, "    g_cost@dest land=%.2f boat=%.2f", land, boatv);
-    if (land >= COST_INF && boatv >= COST_INF) {
-      SPOT_LOG_B(b, "    skip: both layers unreachable");
-      continue;
-    }
+    if (land >= COST_INF && boatv >= COST_INF) continue;
     chosen = s;
-    chosen_idx = order[i];
     if (boatv < land) { chosen_layer = 1; base_cost = boatv; }
     else              { chosen_layer = 0; base_cost = land;  }
-    SPOT_LOG_B(b, "    CHOSEN slate idx=%d layer=%s base_cost=%.2f danger_scale=%.4f",
-             chosen_idx, chosen_layer ? "boat" : "land",
-             base_cost, chosen->danger_scale);
     break;
   }
-  if (!chosen) {
-    SPOT_LOG_B(b, "FAIL: no usable slate → return COST_INF");
-    return COST_INF;
-  }
-  if (!pcontrib_lookup) {
-    SPOT_LOG_B(b, "no pcontrib_lookup → return base_cost=%.2f (no subtraction)", base_cost);
-    return base_cost;
-  }
+  if (!chosen) return COST_INF;
+  if (!pcontrib_lookup) return base_cost;
 
   /* Inv-speed tables matching the slate's expansion formula
    * (line ~1832: inv_spd = next_boat ? boat[t] : foot[t]). */
@@ -2264,108 +2116,39 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
     float spd_b = is_water_tile(t) ? 16.0f : spd;
     inv_speed_boat[t] = 16.0f / fmaxf(spd_b, 0.1f);
   }
-  SPOT_LOG_B(b, "inv_speed_foot tables built (terrain_speed[0..15])");
 
   /* Walk parent chain from dest back to source via dir_at. Source tile
    * has dir_at = 0xFF and contributes 0 to g_cost (no danger added at
-   * start), so we exclude it from the subtraction. */
+   * start), so we exclude it from the subtraction. Each step's
+   * subtract is scaled by DMUL8[d] to match the slate's expansion. */
   float subtract = 0.0f;
   float dscale = chosen->danger_scale;
   int cur = node_idx(x, y, chosen_layer);
   int cur_boat = chosen_layer;
   int safety = 2048;
-  int step = 0;
-  int n_hits = 0;
-  SPOT_LOG_B(b, "PARENT_WALK START dest=(%d,%d) layer=%s dscale=%.4f",
-           x, y, chosen_layer ? "boat" : "land", dscale);
   while (safety-- > 0) {
     uint8_t dval = chosen->dir_at[cur];
+    if (dval == 0xFF) break;
     int cx = node_x(cur);
     int cy = node_y(cur);
-
-    if (dval == 0xFF) {
-      SPOT_LOG_B(b, "  step=%d at (%d,%d) boat=%d dir_at=0xFF (SOURCE — stop, excluded)",
-               step, cx, cy, cur_boat);
-      break;
-    }
-
     int tile_key = cy * MAP_SIZE + cx;
     float p = pcontrib_lookup(user, tile_key);
-    int tt = pf->map[tile_key] & 0x0F;
-    float inv_spd = cur_boat ? inv_speed_boat[tt] : inv_speed_foot[tt];
-    /* Every component the dijkstra expansion adds at this tile
-     * (matches brain_pathfinder.c:1886-1894). Reconstructing per-edge:
-     *   tc = ec + danger * dscale * inv_spd + overlay (+ mine_penalty)
-     * where:
-     *   ec     = terrain_cost_table[tt]  (or _boat_table if in boat)
-     *   danger = danger_grid[tile] + danger_offset_grid[tile]
-     *   overlay = overlay_grid[tile]
-     *   mine_penalty = pf->mine_penalty if map[tile] has the mine flag
-     * Subtract removes ONLY (pcontrib * dscale * inv_spd) — pill's
-     * piece of the danger term. Everything else (terrain ec, overlay,
-     * mine, and non-pill danger) survives. */
-    uint16_t field_raw   = pf->danger_grid[tile_key];
-    uint16_t field_off   = pf->danger_offset_grid[tile_key];
-    float field_total    = (float)field_raw + (float)field_off;
-    float field_others   = field_total - p; /* non-target-pill portion */
-    float terrain_ec     = cur_boat ? pf->terrain_cost_boat_table[tt]
-                                    : pf->terrain_cost_table[tt];
-    float overlay_v      = (float)pf->overlay_grid[tile_key];
-    int   mine_flag      = (pf->map[tile_key] & 0x80) ? 1 : 0;
-    float mine_pen       = mine_flag ? pf->mine_penalty : 0.0f;
-    /* The slate's expansion charged this tile's per-tile cost
-     * multiplied by DMUL8[d] (1.0 cardinal, 1.41 diagonal — line 1288):
-     *   edge_cost = (ec + danger*dscale*inv_spd + overlay + mine_pen) * DMUL8[d]
-     * To stay symmetric, every subtract must also scale by DMUL8[d];
-     * otherwise diagonal steps leak 0.41× of the target pill's danger
-     * into the residual cost. */
     int d = dval & 0x07;
     int parent_boat = (dval & 0x08) ? 1 : 0;
-    float dmul = DMUL8[d];
-    float slate_danger_contrib_total  = field_total  * dscale * inv_spd * dmul;
-    float slate_danger_contrib_others = field_others * dscale * inv_spd * dmul;
-    float edge_reconstructed = (terrain_ec + field_total * dscale * inv_spd
-                                + overlay_v + mine_pen) * dmul;
     if (p > 0.0f) {
-      float add = p * dscale * inv_spd * dmul;
-      subtract += add;
-      n_hits++;
-      SPOT_LOG_B(b, "  step=%d at (%d,%d) boat=%d tt=%d inv_spd=%.4f dmul=%.2f | ec=%.2f overlay=%.0f mine=%d mine_pen=%.2f | field_raw=%u field_off=%u field_total=%.4f field_others=%.4f slate_danger_total=%.4f slate_danger_others=%.4f | edge≈(ec+danger+overlay+mine)*dmul=%.4f | pcontrib=%.4f add=p*dscale*inv_spd*dmul=%.4f*%.4f*%.4f*%.2f=%.4f running_subtract=%.4f",
-               step, cx, cy, cur_boat, tt, inv_spd, dmul,
-               terrain_ec, overlay_v, mine_flag, mine_pen,
-               (unsigned)field_raw, (unsigned)field_off,
-               field_total, field_others,
-               slate_danger_contrib_total, slate_danger_contrib_others,
-               edge_reconstructed,
-               p, p, dscale, inv_spd, dmul, add, subtract);
-    } else {
-      SPOT_LOG_B(b, "  step=%d at (%d,%d) boat=%d tt=%d inv_spd=%.4f dmul=%.2f | ec=%.2f overlay=%.0f mine=%d mine_pen=%.2f | field_raw=%u field_off=%u field_total=%.4f slate_danger_total=%.4f | edge≈%.4f | pcontrib=0 (no subtract)",
-               step, cx, cy, cur_boat, tt, inv_spd, dmul,
-               terrain_ec, overlay_v, mine_flag, mine_pen,
-               (unsigned)field_raw, (unsigned)field_off,
-               field_total, slate_danger_contrib_total,
-               edge_reconstructed);
+      int tt = pf->map[tile_key] & 0x0F;
+      float inv_spd = cur_boat ? inv_speed_boat[tt] : inv_speed_foot[tt];
+      subtract += p * dscale * inv_spd * DMUL8[d];
     }
-
     int px = cx - DX8[d];
     int py = cy - DY8[d];
-    SPOT_LOG_B(b, "    dir_at=0x%02X → d=%d (DX8,DY8)=(%d,%d) parent=(%d,%d) parent_boat=%d",
-             dval, d, DX8[d], DY8[d], px, py, parent_boat);
-    if (px < 0 || px > 255 || py < 0 || py > 255) {
-      SPOT_LOG_B(b, "    parent off-map → stop");
-      break;
-    }
+    if (px < 0 || px > 255 || py < 0 || py > 255) break;
     cur = node_idx(px, py, parent_boat);
     cur_boat = parent_boat;
-    step++;
   }
-  SPOT_LOG_B(b, "PARENT_WALK END steps=%d hits=%d total_subtract=%.4f", step, n_hits, subtract);
 
   float corrected = base_cost - subtract;
   if (corrected < 0.0f) corrected = 0.0f;
-  SPOT_LOG_B(b, "=== RESULT base=%.2f - subtract=%.4f = corrected=%.4f%s | non-subtractable residual breaks down as: terrain ec + overlay + mine_pen + (danger from non-target pills) across the path tiles above",
-           base_cost, subtract, corrected,
-           (base_cost - subtract < 0.0f) ? " (clamped to 0)" : "");
   return corrected;
 }
 

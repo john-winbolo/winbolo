@@ -2527,8 +2527,10 @@ function M.update_attack_substate(goal, state, world, info)
       goal._build_decision_msg   = nil
       goal._build_decision_until = nil
       goal._build_timeout_total  = nil
-      print(string.format(TAG .. " BUILD_WALLS: queued %d walls (closest-to-pill first)",
-                          #sorted))
+      if BRAIN_DEBUG_MODE and BRAIN_LOG_BUILDER then
+        print(string.format(TAG .. " BUILD_WALLS: queued %d walls (closest-to-pill first)",
+                            #sorted))
+      end
     end
 
     local list = goal._wall_build_list
@@ -2570,9 +2572,11 @@ function M.update_attack_substate(goal, state, world, info)
         goal._wall_idx_started = now
         goal._wall_idx_prev_tt = cur_tt
       elseif (now - goal._wall_idx_started) > WALL_STALL_TICKS then
-        print(string.format(TAG ..
-          " BUILD_WALLS: wall %d/%d at (%d,%d) stalled (%d ticks, tt=%d), skipping",
-          idx, #list, target.mx, target.my, WALL_STALL_TICKS, cur_tt))
+        if BRAIN_DEBUG_MODE and BRAIN_LOG_BUILDER then
+          print(string.format(TAG ..
+            " BUILD_WALLS: wall %d/%d at (%d,%d) stalled (%d ticks, tt=%d), skipping",
+            idx, #list, target.mx, target.my, WALL_STALL_TICKS, cur_tt))
+        end
         idx = idx + 1
         goal._wall_build_idx = idx
         goal._wall_idx_started = nil
@@ -2623,12 +2627,14 @@ function M.update_attack_substate(goal, state, world, info)
     goal._build_timeout_total = BUILD_GIVE_UP_TICKS
 
     if idx > #list or stalled then
-      if stalled then
-        print(string.format(TAG .. " BUILD_WALLS: stalled (no wall built in %d ticks), proceeding to aim",
-                            BUILD_GIVE_UP_TICKS))
-      else
-        print(string.format(TAG .. " BUILD_WALLS: complete after %d ticks, %d walls built, proceeding to aim",
-                            now - goal._wall_build_start, #list))
+      if BRAIN_DEBUG_MODE and BRAIN_LOG_BUILDER then
+        if stalled then
+          print(string.format(TAG .. " BUILD_WALLS: stalled (no wall built in %d ticks), proceeding to aim",
+                              BUILD_GIVE_UP_TICKS))
+        else
+          print(string.format(TAG .. " BUILD_WALLS: complete after %d ticks, %d walls built, proceeding to aim",
+                              now - goal._wall_build_start, #list))
+        end
       end
       goal.wall_shield = false
       goal.wall_mx = nil
@@ -3232,7 +3238,9 @@ function M.update_attack_substate(goal, state, world, info)
       state._force_replan_reason = "loiter_timeout"
       goal.substate    = "plan_position"
       goal.scan_spots  = nil
-      print(TAG .. " ATTACK: loiter timeout — requesting replan")
+      if BRAIN_DEBUG_MODE then
+        print(TAG .. " ATTACK: loiter timeout — requesting replan")
+      end
     end
     -- Fall through to draw
   end
@@ -3369,8 +3377,10 @@ function M.update_attack_substate(goal, state, world, info)
       state._force_replan_reason = "post_engage_refuel"
       goal.substate    = "plan_position"
       goal.scan_spots  = nil  -- force fresh plan_position scan if we stay
-      print(string.format(TAG .. " ATTACK: refuel may beat loiter (wait=%d vs refuel=%d) — requesting replan",
-            math.floor(ticks_to_calm), refuel_cost < math.huge and math.floor(refuel_cost) or 99999))
+      if BRAIN_DEBUG_MODE then
+        print(string.format(TAG .. " ATTACK: refuel may beat loiter (wait=%d vs refuel=%d) — requesting replan",
+              math.floor(ticks_to_calm), refuel_cost < math.huge and math.floor(refuel_cost) or 99999))
+      end
     end
     -- Fall through to draw
   end

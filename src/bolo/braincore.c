@@ -958,40 +958,6 @@ static float pcontrib_lua_lookup(void *user, int tile_key) {
  * pill-were-dead" cost. pcontrib_table is the per-pill contribution map
  * the brain already produces in M.pill_contrib. Pass nil to skip the
  * subtraction (equivalent to lookup_by_kind). Result is clamped >= 0. */
-/* cpf_set_spot_log_tick(t) — stamp every subsequent spot.log line for
- * THIS bound bot with t. Per-bot routing via pf->bot_idx — no global. */
-static int l_cpf_set_spot_log_tick(lua_State *L) {
-  CPF_GET(L);
-  int t = (int)luaL_checkinteger(L, 1);
-  brainPathfinderSetSpotLogTickFor(pf->bot_idx, t);
-  return 0;
-}
-
-/* cpf_set_spot_log_enabled(bool) — gate the spot.log writes. */
-static int l_cpf_set_spot_log_enabled(lua_State *L) {
-  int on = lua_toboolean(L, 1);
-  brainPathfinderSetSpotLogEnabled(on);
-  return 0;
-}
-
-/* cpf_spot_log_write(text) — append an arbitrary line to THIS bound
- * bot's spot_bot<N>.log. Bot is derived from pf->bot_idx; no shared
- * global to race against. */
-static int l_cpf_spot_log_write(lua_State *L) {
-  CPF_GET(L);
-  const char *s = luaL_checkstring(L, 1);
-  brainPathfinderSpotLogWriteForBot(pf->bot_idx, s);
-  return 0;
-}
-
-/* cpf_set_spot_log_dir(path) — route spot_bot<N>.log files into the
- * given directory (typically debug_sessions/<ts>/). */
-static int l_cpf_set_spot_log_dir(lua_State *L) {
-  const char *p = lua_tostring(L, 1);
-  brainPathfinderSetSpotLogDir(p);
-  return 0;
-}
-
 static int l_cpf_dijkstra_lookup_subtract_by_kind(lua_State *L) {
   CPF_GET(L);
   int kind = (int)luaL_checkinteger(L, 1);
@@ -1443,10 +1409,6 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_dijkstra_cost_at",       l_cpf_dijkstra_cost_at },
     { "cpf_dijkstra_lookup_by_kind", l_cpf_dijkstra_lookup_by_kind },
     { "cpf_dijkstra_lookup_subtract_by_kind", l_cpf_dijkstra_lookup_subtract_by_kind },
-    { "cpf_set_spot_log_tick",      l_cpf_set_spot_log_tick },
-    { "cpf_set_spot_log_enabled",   l_cpf_set_spot_log_enabled },
-    { "cpf_spot_log_write",         l_cpf_spot_log_write },
-    { "cpf_set_spot_log_dir",       l_cpf_set_spot_log_dir },
     { "cpf_dijkstra_next_step",     l_cpf_dijkstra_next_step },
     { "cpf_dijkstra_trace_path",    l_cpf_dijkstra_trace_path },
     { "cpf_dijkstra_trace_path_by_kind", l_cpf_dijkstra_trace_path_by_kind },
