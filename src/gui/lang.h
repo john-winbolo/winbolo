@@ -1185,6 +1185,18 @@
 /* Settings → Network: WinBolo.net news auto-show toggle. */
 #define STR_DLGSETTINGS_NEWS_AUTOSHOW       1261
 
+/* News popup + welcome News button strings. */
+#define STR_DLGWELCOME_NEWS                 1262
+#define STR_DLGNEWS_TITLE                   1263
+#define STR_DLGNEWS_CONSENT_TITLE           1264
+#define STR_DLGNEWS_CONSENT_BODY1           1265
+#define STR_DLGNEWS_CONSENT_BODY2           1266
+#define STR_DLGNEWS_SHOW                    1267
+#define STR_DLGNEWS_DONT_SHOW               1268
+#define STR_DLGNEWS_LOADING                 1269
+#define STR_DLGNEWS_DONT_AUTOSHOW           1270
+#define STR_DLGNEWS_COMMENTS_FMT            1271
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821
