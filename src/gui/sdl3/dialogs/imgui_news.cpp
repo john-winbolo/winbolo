@@ -87,7 +87,7 @@ static void resolvePrefsPath(char *out, size_t outSize) {
 #endif
 }
 
-static const char *newsPrefGetAutoShow(void) {
+const char *newsPrefGetAutoShow(void) {
     static char s_buf[16];
     char prefs[FILENAME_MAX];
     resolvePrefsPath(prefs, sizeof(prefs));
@@ -102,7 +102,7 @@ static const char *newsPrefGetAutoShow(void) {
     return s_buf;
 }
 
-static void newsPrefSetAutoShow(const char *value) {
+void newsPrefSetAutoShow(const char *value) {
     if (!value) return;
     char prefs[FILENAME_MAX];
     resolvePrefsPath(prefs, sizeof(prefs));

@@ -1086,6 +1086,9 @@ static const LangEntry langTable[] = {
     {1259, "Hide Map Editor"},
     {1260, "Quit Map Editor"},
 
+    /* Settings → Network: WinBolo.net news auto-show toggle. */
+    {1261, "Show news from winbolo.net on startup"},
+
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
      * time by tutorialResolveText() when uiModeIsTablet() is true. */
