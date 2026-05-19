@@ -41,6 +41,7 @@
 #include "server_lifecycle.h"
 #include "control_event.h"
 #include "mapgen.h"
+#include "brain_list_internal.h"   /* BRAIN_LIST_PATH_LEN — ADD_BOT pathLen bound */
 #include "transport_control_codec.h"
 #include "../winbolonet/winbolonet.h"
 #include "threads.h"

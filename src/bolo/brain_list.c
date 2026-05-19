@@ -13,6 +13,7 @@
  */
 
 #include "brain_list.h"
+#include "brain_list_internal.h"
 
 #include <SDL3/SDL.h>
 
@@ -103,18 +104,26 @@ static bool brainListHasInit(const char *dir) {
     return (stat(p, &st) == 0);
 }
 
-/* qsort comparator for alphabetical entry order. */
-static int brainListCmp(const void *a, const void *b) {
-    const BrainListEntry *ea = (const BrainListEntry *)a;
-    const BrainListEntry *eb = (const BrainListEntry *)b;
-    return SDL_strcasecmp(ea->name, eb->name);
+/* Indexed sort: we sort an int[] permutation of entry indices by
+ * name order, then reorder entries and paths in lockstep so
+ * paths[i] keeps tracking entries[i]. The qsort comparator reads
+ * the base pointer out of a module-static — not thread-safe, but
+ * brainListScan is a one-shot startup call (per-ServerSim init,
+ * never concurrent), so that's fine. */
+static const BrainListEntry *g_brainListSortBase = NULL;
+static int brainListIndexCmp(const void *a, const void *b) {
+    int ia = *(const int *)a;
+    int ib = *(const int *)b;
+    return SDL_strcasecmp(g_brainListSortBase[ia].name,
+                          g_brainListSortBase[ib].name);
 }
 
 /* Add one entry for the directory at `brainDir` with display name `name`.
  * Skips when the brain has no init.lua, when the list is full, or when
  * an entry with the same name already exists. */
-static void brainListMaybeAdd(BrainList *out, const char *brainDir,
-                              const char *name) {
+static void brainListMaybeAdd(BrainList *out,
+                              char (*paths)[BRAIN_LIST_PATH_LEN],
+                              const char *brainDir, const char *name) {
     if (out->count >= BRAIN_LIST_MAX) return;
     if (!brainListHasInit(brainDir)) return;
     for (int i = 0; i < out->count; i++) {
@@ -122,7 +131,6 @@ static void brainListMaybeAdd(BrainList *out, const char *brainDir,
     }
     BrainListEntry *e = &out->entries[out->count];
     SDL_strlcpy(e->name, name, sizeof(e->name));
-    SDL_snprintf(e->path, sizeof(e->path), "Brains/%s/init.lua", name);
     time_t mt = brainListMaxMtime(brainDir);
     if (mt > 0) {
         struct tm tmv;
@@ -135,11 +143,17 @@ static void brainListMaybeAdd(BrainList *out, const char *brainDir,
     } else {
         e->version[0] = '\0';
     }
+    if (paths) {
+        SDL_snprintf(paths[out->count], BRAIN_LIST_PATH_LEN,
+                     "Brains/%s/init.lua", name);
+    }
     out->count++;
 }
 
 /* Scan one parent directory (looking for child dirs that hold a brain). */
-static void brainListScanParent(BrainList *out, const char *parent) {
+static void brainListScanParent(BrainList *out,
+                                char (*paths)[BRAIN_LIST_PATH_LEN],
+                                const char *parent) {
 #if defined(_WIN32)
     char pattern[1024];
     SDL_snprintf(pattern, sizeof(pattern), "%s\\*", parent);
@@ -151,7 +165,7 @@ static void brainListScanParent(BrainList *out, const char *parent) {
         if (fd.cFileName[0] == '.') continue;
         char full[1024];
         SDL_snprintf(full, sizeof(full), "%s\\%s", parent, fd.cFileName);
-        brainListMaybeAdd(out, full, fd.cFileName);
+        brainListMaybeAdd(out, paths, full, fd.cFileName);
     } while (FindNextFileA(h, &fd));
     FindClose(h);
 #else
@@ -165,7 +179,7 @@ static void brainListScanParent(BrainList *out, const char *parent) {
         struct stat st;
         if (stat(full, &st) != 0) continue;
         if (!S_ISDIR(st.st_mode)) continue;
-        brainListMaybeAdd(out, full, e->d_name);
+        brainListMaybeAdd(out, paths, full, e->d_name);
     }
     closedir(d);
 #endif
@@ -174,10 +188,11 @@ static void brainListScanParent(BrainList *out, const char *parent) {
 void brainListScan(BrainList *out, char (*paths)[BRAIN_LIST_PATH_LEN]) {
     if (!out) return;
     memset(out, 0, sizeof(*out));
+    if (paths) memset(paths, 0, sizeof(paths[0]) * BRAIN_LIST_MAX);
 
     /* Working directory's brains/ — covers running from the repo. */
-    brainListScanParent(out, "brains");
-    brainListScanParent(out, "Brains");
+    brainListScanParent(out, paths, "brains");
+    brainListScanParent(out, paths, "Brains");
 
     /* SDL_GetBasePath()/brains — covers installed builds where the
      * exe lives somewhere other than the brains tree. */
@@ -185,33 +200,34 @@ void brainListScan(BrainList *out, char (*paths)[BRAIN_LIST_PATH_LEN]) {
     if (base) {
         char p[1024];
         SDL_snprintf(p, sizeof(p), "%sbrains", base);
-        brainListScanParent(out, p);
+        brainListScanParent(out, paths, p);
         SDL_snprintf(p, sizeof(p), "%sBrains", base);
-        brainListScanParent(out, p);
+        brainListScanParent(out, paths, p);
     }
 
     if (out->count > 1) {
-        qsort(out->entries, (size_t)out->count, sizeof(out->entries[0]),
-              brainListCmp);
-    }
+        /* Permutation sort: index[i] starts at i, comparator orders by
+         * entries[index[i]].name. After qsort, apply the permutation
+         * to entries (and paths in lockstep) using a temp buffer. */
+        int idx[BRAIN_LIST_MAX];
+        for (int i = 0; i < out->count; i++) idx[i] = i;
+        g_brainListSortBase = out->entries;
+        qsort(idx, (size_t)out->count, sizeof(idx[0]), brainListIndexCmp);
+        g_brainListSortBase = NULL;
 
-    /* Mirror the (now sorted) disk paths into the caller's out-array
-     * so paths[i] aligns with out->entries[i]. */
-    if (paths) {
-        memset(paths, 0, sizeof(paths[0]) * BRAIN_LIST_MAX);
+        BrainListEntry tmpEntries[BRAIN_LIST_MAX];
+        char           tmpPaths[BRAIN_LIST_MAX][BRAIN_LIST_PATH_LEN];
         for (int i = 0; i < out->count; i++) {
-            SDL_strlcpy(paths[i], out->entries[i].path, BRAIN_LIST_PATH_LEN);
+            tmpEntries[i] = out->entries[idx[i]];
+            if (paths) {
+                SDL_strlcpy(tmpPaths[i], paths[idx[i]], BRAIN_LIST_PATH_LEN);
+            }
+        }
+        for (int i = 0; i < out->count; i++) {
+            out->entries[i] = tmpEntries[i];
+            if (paths) {
+                SDL_strlcpy(paths[i], tmpPaths[i], BRAIN_LIST_PATH_LEN);
+            }
         }
     }
-}
-
-const BrainListEntry *brainListFindByPath(const BrainList *list,
-                                          const char *path) {
-    if (!list || !path) return NULL;
-    for (int i = 0; i < list->count; i++) {
-        if (SDL_strcasecmp(list->entries[i].path, path) == 0) {
-            return &list->entries[i];
-        }
-    }
-    return NULL;
 }
