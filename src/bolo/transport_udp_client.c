@@ -1167,13 +1167,15 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     }
 
     case PACKET_LOBBY_MAP_LIST_RSP: {
-        /* [header 8] [pathLen 1] [path N] [count 1]
-         * per entry: [nameLen 1][name M][isFolder 1][modTime 8 BE] */
+        /* [header 8] [pathLen 1] [path N] [final 1] [count 1]
+         * per entry: [nameLen 1][name M][isFolder 1][modTime 8 BE].
+         * Server may emit multiple chunks per request — append entries
+         * and only flip Ready/InFlight on the final chunk. */
         if (!c->clientSim) break;
         if (len < PACKET_HEADER_SIZE + 1) break;
         int pos = PACKET_HEADER_SIZE;
         uint8_t plen = buf[pos++];
-        if (pos + plen + 1 > len) break;
+        if (pos + plen + 2 > len) break;
         char rspPath[256];
         memset(rspPath, 0, sizeof(rspPath));
         if (plen > 0) {
@@ -1181,19 +1183,29 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             memcpy(rspPath, buf + pos, plen);
         }
         pos += plen;
+        uint8_t finalFlag = buf[pos++];
         uint8_t cnt = buf[pos++];
-        if (cnt > LOBBY_MAP_LIST_MAX) cnt = LOBBY_MAP_LIST_MAX;
+
+        /* Drop chunks whose path doesn't match the pending request
+         * (stale response from a prior navigation). */
+        if (strncmp(rspPath, c->clientSim->lobbyMapListReqPath,
+                    sizeof(c->clientSim->lobbyMapListReqPath)) != 0) {
+            break;
+        }
 
         memset(c->clientSim->lobbyMapListPath, 0,
                sizeof(c->clientSim->lobbyMapListPath));
         SDL_strlcpy(c->clientSim->lobbyMapListPath, rspPath,
                     sizeof(c->clientSim->lobbyMapListPath));
-        c->clientSim->lobbyMapListCount = 0;
         for (int i = 0; i < cnt && pos < len; i++) {
             if (pos + 1 > len) break;
             uint8_t nameLen = buf[pos++];
             if (nameLen >= LOBBY_MAP_LIST_NAME_LEN ||
                 pos + nameLen + 1 + 8 > len) break;
+            if (c->clientSim->lobbyMapListCount >= LOBBY_MAP_LIST_MAX) {
+                pos += nameLen + 1 + 8;
+                continue;
+            }
             int idx = c->clientSim->lobbyMapListCount++;
             memset(c->clientSim->lobbyMapListNames[idx], 0,
                    LOBBY_MAP_LIST_NAME_LEN);
@@ -1209,14 +1221,19 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             }
             c->clientSim->lobbyMapListModTime[idx] = (int64_t)mt;
         }
-        c->clientSim->lobbyMapListReady = true;
-        c->clientSim->lobbyMapListInFlight = false;
+        if (finalFlag) {
+            c->clientSim->lobbyMapListReady = true;
+            c->clientSim->lobbyMapListInFlight = false;
+        }
         break;
     }
 
     case PACKET_LOBBY_MAP_SEARCH_RSP: {
         /* [header 8] [pathLen 1] [path N] [queryLen 1] [query M]
-         * [count 1] per entry: [nameLen 1][name M][isFolder 1][modTime 8 BE] */
+         * [final 1] [count 1]
+         * per entry: [nameLen 1][name M][isFolder 1][modTime 8 BE].
+         * Chunks repeat the full path+query prefix; the client filters
+         * stale chunks by matching (reqPath, reqQuery). */
         if (!c->clientSim) break;
         if (len < PACKET_HEADER_SIZE + 1) break;
         int pos = PACKET_HEADER_SIZE;
@@ -1230,7 +1247,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         pos += plen;
         uint8_t qlen = buf[pos++];
-        if (pos + qlen + 1 > len) break;
+        if (pos + qlen + 2 > len) break;
         char rspQuery[128];
         memset(rspQuery, 0, sizeof(rspQuery));
         if (qlen > 0) {
@@ -1238,8 +1255,15 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             memcpy(rspQuery, buf + pos, qlen);
         }
         pos += qlen;
+        uint8_t finalFlag = buf[pos++];
         uint8_t cnt = buf[pos++];
-        if (cnt > LOBBY_MAP_LIST_MAX) cnt = LOBBY_MAP_LIST_MAX;
+
+        if (strncmp(rspPath, c->clientSim->lobbyMapSearchReqPath,
+                    sizeof(c->clientSim->lobbyMapSearchReqPath)) != 0 ||
+            strncmp(rspQuery, c->clientSim->lobbyMapSearchReqQuery,
+                    sizeof(c->clientSim->lobbyMapSearchReqQuery)) != 0) {
+            break;
+        }
 
         memset(c->clientSim->lobbyMapSearchPath, 0,
                sizeof(c->clientSim->lobbyMapSearchPath));
@@ -1249,12 +1273,15 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                sizeof(c->clientSim->lobbyMapSearchQuery));
         SDL_strlcpy(c->clientSim->lobbyMapSearchQuery, rspQuery,
                     sizeof(c->clientSim->lobbyMapSearchQuery));
-        c->clientSim->lobbyMapSearchCount = 0;
         for (int i = 0; i < cnt && pos < len; i++) {
             if (pos + 1 > len) break;
             uint8_t nameLen = buf[pos++];
             if (nameLen >= LOBBY_MAP_LIST_NAME_LEN ||
                 pos + nameLen + 1 + 8 > len) break;
+            if (c->clientSim->lobbyMapSearchCount >= LOBBY_MAP_LIST_MAX) {
+                pos += nameLen + 1 + 8;
+                continue;
+            }
             int idx = c->clientSim->lobbyMapSearchCount++;
             memset(c->clientSim->lobbyMapSearchNames[idx], 0,
                    LOBBY_MAP_LIST_NAME_LEN);
@@ -1270,8 +1297,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             }
             c->clientSim->lobbyMapSearchModTime[idx] = (int64_t)mt;
         }
-        c->clientSim->lobbyMapSearchReady = true;
-        c->clientSim->lobbyMapSearchInFlight = false;
+        if (finalFlag) {
+            c->clientSim->lobbyMapSearchReady = true;
+            c->clientSim->lobbyMapSearchInFlight = false;
+        }
         break;
     }
 
@@ -2199,6 +2228,8 @@ void transportUdpClientSendLobbyMapListRequest(Transport *t,
             memcpy(c->clientSim->lobbyMapListReqPath, relPath,
                    (size_t)pathLen);
         }
+        c->clientSim->lobbyMapListCount = 0;
+        c->clientSim->lobbyMapListReady = false;
         c->clientSim->lobbyMapListInFlight = true;
     }
 }
@@ -2240,6 +2271,8 @@ void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
             memcpy(c->clientSim->lobbyMapSearchReqQuery, query,
                    (size_t)qLen);
         }
+        c->clientSim->lobbyMapSearchCount = 0;
+        c->clientSim->lobbyMapSearchReady = false;
         c->clientSim->lobbyMapSearchInFlight = true;
     }
 }
