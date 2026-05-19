@@ -177,11 +177,12 @@ void transportUdpClientSendTeamSet(Transport *t, uint8_t teamNumber);
 /* Send ready/unready to server. */
 void transportUdpClientSendReady(Transport *t, bool ready);
 
-/* Request server add a bot. teamNumber=0/brainPath=NULL/botName=NULL
- * lets the server pick defaults; non-default values configure the new
- * bot at create time. */
+/* Request server add a bot. teamNumber=0 and botName=NULL let the
+ * server pick defaults. The on-wire payload keeps the [pathLen 1]
+ * byte for byte-compat with the original ADD_BOT format, but always
+ * emits pathLen=0 — the server has always ignored the brain payload
+ * here, so brain selection rides on a follow-up SET_BOT_BRAIN. */
 void transportUdpClientSendAddBot(Transport *t, uint8_t teamNumber,
-                                  const char *brainPath,
                                   const char *botName);
 
 /* Request server remove a bot at the given slot. */

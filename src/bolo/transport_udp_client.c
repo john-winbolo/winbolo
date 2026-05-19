@@ -1933,27 +1933,25 @@ void transportUdpClientSendReady(Transport *t, bool ready) {
 }
 
 void transportUdpClientSendAddBot(Transport *t, uint8_t teamNumber,
-                                  const char *brainPath,
                                   const char *botName) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 3 + BRAIN_LIST_PATH_LEN +
-                PACKET_MAX_PLAYER_NAME];
+    uint8_t buf[PACKET_HEADER_SIZE + 3 + PACKET_MAX_PLAYER_NAME];
 
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
-    if (brainPath == NULL) brainPath = "";
-    if (botName   == NULL) botName   = "";
-    int pathLen = (int)strlen(brainPath);
+    if (botName == NULL) botName = "";
     int nameLen = (int)strlen(botName);
-    if (pathLen >= BRAIN_LIST_PATH_LEN)    pathLen = BRAIN_LIST_PATH_LEN - 1;
     if (nameLen >= PACKET_MAX_PLAYER_NAME) nameLen = PACKET_MAX_PLAYER_NAME - 1;
     if (nameLen > 31)                      nameLen = 31;
 
+    /* The wire format still carries a [pathLen 1][path] pair after the
+     * team byte for byte-compatibility with older servers; the server
+     * already ignores the brain payload here, so we always emit
+     * pathLen=0 (and zero path bytes). */
     int pos = PACKET_HEADER_SIZE;
     packHeader(buf, PACKET_LOBBY_ADD_BOT, c->outSequence++);
     buf[pos++] = teamNumber;
-    buf[pos++] = (uint8_t)pathLen;
-    if (pathLen > 0) { memcpy(buf + pos, brainPath, pathLen); pos += pathLen; }
+    buf[pos++] = 0; /* pathLen */
     buf[pos++] = (uint8_t)nameLen;
     if (nameLen > 0) { memcpy(buf + pos, botName, nameLen); pos += nameLen; }
     udpClientSendTo(c, buf, pos);

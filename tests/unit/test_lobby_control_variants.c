@@ -262,22 +262,18 @@ int run_lobby_bot_brain_codec_and_apply(void) {
     UT_ASSERT(default_out.u.lobbyBotBrain.slot == 6);
     UT_ASSERT(default_out.u.lobbyBotBrain.brainIdx == 0xFF);
 
-    /* Apply resolves the index to a display path via the client's
-     * local brain-list mirror. Seed a small catalogue, then apply an
-     * in-range event and the 0xFF sentinel and check both outcomes. */
+    /* Apply writes the index straight onto cs->lobbyBotBrainIdx, but
+     * clamps any in-range-looking value that lies past the brain
+     * catalogue to the 0xFF sentinel — so we still have to seed the
+     * count (entries[].path stay zero; this dispatcher no longer
+     * reads them). 0xFF passes the clamp untouched. */
     ClientSim *cs = fresh_client_sim();
     UT_ASSERT(cs != NULL);
     cs->lobbyBrainList.count = 4;
-    strncpy(cs->lobbyBrainList.entries[3].path,
-            "Brains/NewAutopilot/init.lua",
-            sizeof(cs->lobbyBrainList.entries[3].path) - 1);
     clientSimApplyControl(cs, &in);
-    UT_ASSERT(strcmp(cs->lobbyBotBrain[2],
-                     "Brains/NewAutopilot/init.lua") == 0);
-    /* 0xFF apply leaves the slot empty (preserves the legacy
-     * "use server default" sentinel). */
+    UT_ASSERT(cs->lobbyBotBrainIdx[2] == 3);
     clientSimApplyControl(cs, &default_in);
-    UT_ASSERT(cs->lobbyBotBrain[6][0] == '\0');
+    UT_ASSERT(cs->lobbyBotBrainIdx[6] == 0xFF);
     clientSimDestroy(cs);
     return 0;
 }

@@ -543,7 +543,12 @@ const char *clientSimGetLobbyTeamName(const ClientSim *cs, BYTE teamId);
 
 uint8_t     clientSimGetLobbyBotDifficulty(const ClientSim *cs, BYTE slot);
 uint8_t     clientSimGetLobbyBotPersonality(const ClientSim *cs, BYTE slot);
-const char *clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot);
+/* Returns the catalogue index of the brain assigned to a lobby bot slot.
+ * 0xFF means the bot uses the server's default brain; for any other
+ * value the caller can look up clientSimGetLobbyBrainList(cs)->entries[idx]
+ * to recover the display name and wire path. Out-of-range slot returns
+ * 0xFF. */
+uint8_t     clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot);
 
 const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs);
 
