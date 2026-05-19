@@ -1107,6 +1107,31 @@ STR_MENU_MINIMIZE=Minimize
 STR_MENU_ZOOM=Zoom
 STR_MENU_ENTER_FULL_SCREEN=Enter Full Screen
 STR_MENU_BRING_ALL_TO_FRONT=Bring All to Front
+STR_MENU_FIND_INTERNET_GAME=Find Internet Game…
+STR_MENU_FIND_LAN_GAME=Find LAN Game…
+STR_MENU_JOIN_BY_ADDRESS=Join by Address…
+STR_MENU_OPEN_MAP_EDITOR=Open Map Editor
+STR_MENU_OPEN_LOG_VIEWER=Open Log Viewer
+STR_MENU_ABOUT_LV=About Log Viewer
+STR_MENU_HIDE_LV=Hide Log Viewer
+STR_MENU_QUIT_LV=Quit Log Viewer
+STR_MENU_HIDE_ME=Hide Map Editor
+STR_MENU_QUIT_ME=Quit Map Editor
+
+# Settings → Network: WinBolo.net news auto-show toggle.
+STR_DLGSETTINGS_NEWS_AUTOSHOW=Show news from winbolo.net on startup
+
+# News popup + welcome News button strings.
+STR_DLGWELCOME_NEWS=News
+STR_DLGNEWS_TITLE=News
+STR_DLGNEWS_CONSENT_TITLE=WinBolo News
+STR_DLGNEWS_CONSENT_BODY1=WinBolo can show you new posts from winbolo.net when you launch the game. We will check WBN once at startup and only open this window when there is something new.
+STR_DLGNEWS_CONSENT_BODY2=You can change this anytime in Settings.
+STR_DLGNEWS_SHOW=Show news
+STR_DLGNEWS_DONT_SHOW=Don't show
+STR_DLGNEWS_LOADING=Loading…
+STR_DLGNEWS_DONT_AUTOSHOW=Don't auto-show news in future
+STR_DLGNEWS_COMMENTS_FMT=Comments: {number}
 
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})

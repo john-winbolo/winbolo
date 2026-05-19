@@ -25,9 +25,39 @@
 extern "C" {
 #endif
 
-/* Show the key setup dialog as a blocking modal loop.
- * Returns 1 if keys were saved, 0 if cancelled. */
-int imguiKeySetupShow(void);
+/* Forward decl — full type lives in src/bolo/public/client_sim.h.
+ * Kept opaque here so the in-game popup wrapper doesn't pull the
+ * full client_sim closure into every menu / event-pump caller. */
+struct ClientSim;
+
+/* Show the key setup dialog as a blocking modal loop (own ImGui
+ * context, own SDL event loop). Used by the pre-game Settings →
+ * Set Keys path where no main-game ImGui context is up. Returns 1
+ * if keys were saved, 0 if cancelled. */
+int  imguiKeySetupShow(void);
+
+/* In-game popup variant — sits inside the running game's ImGui
+ * context as a BeginPopupModal. Trigger with imguiKeySetupOpenInGame
+ * (sets a pending flag, seeded from the current tank on the next
+ * render call). Each render frame calls imguiKeySetupRenderInGamePopup
+ * with the live ClientSim so the OK handler can push the new auto-
+ * slowdown / auto-gunsight values onto the active tank directly.
+ *
+ * The two wrappers share the form body — sections, key rows,
+ * checkboxes — by both calling into the static renderForm helper.
+ * Form state (keys, checkbox values, in-progress key capture) is
+ * shared file-static between the wrappers; only one keys dialog is
+ * ever open at a time. */
+void imguiKeySetupOpenInGame(void);
+void imguiKeySetupRenderInGamePopup(struct ClientSim *cs);
+
+/* Event-pump hooks — called from sdl3ImguiProcessEvents so the
+ * raw SDL_EVENT_KEY_DOWN scancode gets routed into the dialog's
+ * key-capture state instead of the game's input layer. Mirror of
+ * the same intercept the standalone dialog does inside its own
+ * event loop. */
+bool imguiKeySetupIsCapturingInGameKey(void);
+void imguiKeySetupHandleInGameScancode(int scancode);
 
 #ifdef __cplusplus
 }

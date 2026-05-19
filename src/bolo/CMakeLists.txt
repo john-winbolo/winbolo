@@ -87,6 +87,7 @@ add_library(bolo_static STATIC
     udppackets.c
     util.c
     viewport.c
+    wbn_key_codec.c
 )
 
 bolo_apply_include_rules(bolo_static sim_owner)

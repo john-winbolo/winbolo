@@ -2,13 +2,16 @@
  * winbolonet_stub.c - Stub implementations of WinBolo.net functions
  *
  * On Android we don't include the winbolonet source files (which depend
- * on libcurl). Instead we stub out all functions declared in winbolonet.h.
+ * on libcurl). Instead we stub out all functions declared in the
+ * winbolonet_core / winbolonet_server / winbolonet_client headers.
  */
 
 #include <stdint.h>
 
 #include "global.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
+#include "../winbolonet/winbolonet_server.h"
+#include "../winbolonet/winbolonet_client.h"
 
 bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
   (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines; (void)password;
@@ -16,24 +19,10 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
   return FALSE;
 }
 
-bool winbolonetCreateClient(const char *token, const char *serverKey, char *errorMsg) {
-  (void)token; (void)serverKey; (void)errorMsg;
-  return FALSE;
-}
-
 void winbolonetDestroy(bool isServer) { (void)isServer; }
 
 void winboloNetGetServerKey(char *keyBuff) {
   if (keyBuff) keyBuff[0] = '\0';
-}
-
-void winboloNetGetMyClientKey(char *keyBuff) {
-  if (keyBuff) keyBuff[0] = '\0';
-}
-
-bool winboloNetVerifyClientKey(const char *playerKey, char *userName, BYTE playerNum) {
-  (void)playerKey; (void)userName; (void)playerNum;
-  return FALSE;
 }
 
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
@@ -67,11 +56,16 @@ void winboloNetSendLock(bool isLocked) {
   (void)isLocked;
 }
 
-bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg,
-                                 bool *hasSteam, bool *isSupporter) {
-  (void)token; (void)playerNum; (void)errorMsg;
+bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter) {
+  (void)playerKey; (void)playerName; (void)playerNum; (void)errorMsg;
   if (hasSteam)    *hasSteam    = FALSE;
   if (isSupporter) *isSupporter = FALSE;
+  return FALSE;
+}
+
+bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, char *playerKeyOut, char *errorMsg) {
+  (void)apiToken; (void)serverKey; (void)errorMsg;
+  if (playerKeyOut) playerKeyOut[0] = '\0';
   return FALSE;
 }
 

@@ -43,7 +43,7 @@
 #include "game_sim.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
 
 /*********************************************************
 *NAME:          pillsCreate

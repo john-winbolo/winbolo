@@ -24,7 +24,9 @@ struct ServerSim;
 /* === Lifecycle === */
 bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
                          unsigned short serverPort, const char *playerName,
-                         const char *password, const char *wbnToken,
+                         const char *password,
+                         const char *wbnApiToken,
+                         const char *wbnServerKey,
                          bool wantRejoin, const char *trackerAddr,
                          unsigned short trackerPort);
 bool clientSimConnectLocal(ClientSim *cs, struct ServerSim *sim, BYTE playerNum);

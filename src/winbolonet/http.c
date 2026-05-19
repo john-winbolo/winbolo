@@ -47,26 +47,22 @@ void randombytes(unsigned char *buf, unsigned long long len) {
   (void)buf; (void)len;
 }
 
-#ifdef _WIN32
-  #ifndef PREFERENCE_FILE
-    /* PREFERENCE_FILE may be predefined by the build (e.g. LogViewer) so we
-     * don't need to drag in the main game's gamefront.h. */
-    #include "../gui/gamefront.h"   /* PREFERENCE_FILE */
-  #endif
-#else
-  /* Provided by posix_stubs.c (server, map editor, log viewer, SDL3 client) */
-  void preferencesGetPreferenceFile(char *dest);
-  unsigned int GetPrivateProfileString(const char *section, const char *key,
-                                       const char *def, char *out,
-                                       unsigned int outSize,
-                                       const char *filePath);
-  int WritePrivateProfileString(const char *section, const char *key,
-                                const char *value, const char *filePath);
+/* Provided by posix_stubs.c (server, map editor, log viewer, SDL3 client) */
+#ifndef _WIN32
+void preferencesGetPreferenceFile(char *dest);
+unsigned int GetPrivateProfileString(const char *section, const char *key,
+                                     const char *def, char *out,
+                                     unsigned int outSize,
+                                     const char *filePath);
+int WritePrivateProfileString(const char *section, const char *key,
+                              const char *value, const char *filePath);
 #endif
 
 #include "global.h"
-#include "winbolonet.h"
 #include "http.h"
+#include "winbolonet_core.h"
+#include "wbn_bearer.h"
+#include "wbn_prefs_path.h"
 
 static bool httpStarted = false;
 static char wbnHostString[FILENAME_MAX]; /* hostname only, no scheme */
@@ -211,7 +207,8 @@ bool httpCreate(void) {
   } else {
     /* Read from preferences file */
 #ifdef _WIN32
-    strcpy(prefs, PREFERENCE_FILE);
+    strncpy(prefs, winbolonetCorePrefsPath(), sizeof(prefs) - 1);
+    prefs[sizeof(prefs) - 1] = '\0';
 #else
     preferencesGetPreferenceFile(prefs);
 #endif
@@ -283,13 +280,15 @@ static void wbn_sign_request(const char *timestamp_str, const char *json_body, c
 }
 
 /*********************************************************
-*NAME:          wbn_api_post
+*NAME:          wbn_api_post_impl
 *PURPOSE:
-* Low-level POST of a JSON string to a WinBolo.net API
-* endpoint. Builds the full URL as <baseUrl>/api/v1/<endpoint>.
-* Returns the HTTP status code, or -1 on transport error.
+* Shared low-level POST body. extra_header is appended to
+* the curl slist when non-NULL (used to attach the bearer
+* Authorization line on server-scoped calls). All other
+* behavior matches wbn_api_post.
 *********************************************************/
-int wbn_api_post(const char *endpoint, const char *json_body, char **response_out) {
+static int wbn_api_post_impl(const char *endpoint, const char *json_body,
+                             const char *extra_header, char **response_out) {
   if (response_out) *response_out = NULL;
   if (!httpStarted) return -1;
 
@@ -316,6 +315,9 @@ int wbn_api_post(const char *endpoint, const char *json_body, char **response_ou
   headers = curl_slist_append(headers, "Content-Type: application/json");
   headers = curl_slist_append(headers, sig_header);
   headers = curl_slist_append(headers, ts_header);
+  if (extra_header != NULL) {
+    headers = curl_slist_append(headers, extra_header);
+  }
 
   DynBuf respBuf;
   dynBufInit(&respBuf);
@@ -366,6 +368,39 @@ int wbn_api_post(const char *endpoint, const char *json_body, char **response_ou
 }
 
 /*********************************************************
+*NAME:          wbn_api_post
+*PURPOSE:
+* Low-level POST of a JSON string to a WinBolo.net API
+* endpoint. Builds the full URL as <baseUrl>/api/v1/<endpoint>.
+* Returns the HTTP status code, or -1 on transport error.
+*********************************************************/
+int wbn_api_post(const char *endpoint, const char *json_body, char **response_out) {
+  return wbn_api_post_impl(endpoint, json_body, NULL, response_out);
+}
+
+/*********************************************************
+*NAME:          wbn_api_post_server
+*PURPOSE:
+* Server-scoped POST. Attaches Authorization: Bearer <token>
+* using the stored server bearer; refuses to send (returns -1)
+* when no bearer is set.
+*********************************************************/
+int wbn_api_post_server(const char *endpoint, const char *json_body, char **response_out) {
+  if (response_out) *response_out = NULL;
+
+  char token[WBN_SERVER_TOKEN_LEN];
+  winboloNetGetServerToken(token, sizeof(token));
+  if (token[0] == '\0') {
+    fprintf(stderr, "WBN bearer token missing for endpoint %s\n", endpoint);
+    return -1;
+  }
+
+  char auth_header[32 + WBN_SERVER_TOKEN_LEN];
+  snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", token);
+  return wbn_api_post_impl(endpoint, json_body, auth_header, response_out);
+}
+
+/*********************************************************
 *NAME:          wbn_api_call
 *PURPOSE:
 * High-level JSON API call. Serializes the cJSON body,
@@ -380,6 +415,36 @@ int wbn_api_call(const char *endpoint, cJSON *body, cJSON **response) {
 
   char *resp_str = NULL;
   int status = wbn_api_post(endpoint, json_str, &resp_str);
+  free(json_str);
+
+  if (resp_str && response) {
+    *response = cJSON_Parse(resp_str);
+    if (!*response) {
+      fprintf(stderr, "WinBolo.net: failed to parse JSON response from %s\n", endpoint);
+    }
+  }
+  free(resp_str);
+
+  return status;
+}
+
+/*********************************************************
+*NAME:          wbn_api_call_server
+*PURPOSE:
+* Server-scoped JSON API call. Same shape as wbn_api_call
+* but attaches Authorization: Bearer using the stored
+* server bearer. Refuses to send (returns -1) when no
+* bearer is set; no curl is invoked and no *response is
+* allocated in that case.
+*********************************************************/
+int wbn_api_call_server(const char *endpoint, cJSON *body, cJSON **response) {
+  if (response) *response = NULL;
+
+  char *json_str = cJSON_PrintUnformatted(body);
+  if (!json_str) return -1;
+
+  char *resp_str = NULL;
+  int status = wbn_api_post_server(endpoint, json_str, &resp_str);
   free(json_str);
 
   if (resp_str && response) {
@@ -444,12 +509,27 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
   char respBuf[1024];
   WriteCtx ctx = { (BYTE *)respBuf, 0, (int)sizeof(respBuf) };
 
+  /* Attach Authorization: Bearer when a server bearer is set.
+   * Log upload is permissive: if no bearer is set we send
+   * unauthenticated (don't refuse the way wbn_api_post_server does). */
+  struct curl_slist *authHeaders = NULL;
+  char token[WBN_SERVER_TOKEN_LEN];
+  winboloNetGetServerToken(token, sizeof(token));
+  if (token[0] != '\0') {
+    char auth_header[32 + WBN_SERVER_TOKEN_LEN];
+    snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", token);
+    authHeaders = curl_slist_append(authHeaders, auth_header);
+  }
+
   curl_easy_setopt(curl, CURLOPT_URL,            url);
   curl_easy_setopt(curl, CURLOPT_MIMEPOST,       mime);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  writeCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &ctx);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT,        60L);
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  if (authHeaders != NULL) {
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, authHeaders);
+  }
   if (altIpAddress[0] != '\0') {
     curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
   }
@@ -458,6 +538,9 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
   long httpCode = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
   curl_mime_free(mime);
+  if (authHeaders != NULL) {
+    curl_slist_free_all(authHeaders);
+  }
   curl_easy_cleanup(curl);
 
   /* Null-terminate the response buffer */

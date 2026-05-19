@@ -25,7 +25,8 @@
 #include "players.h"
 #include "transport_udp.h"
 #include "server_sim_internal.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
+#include "../winbolonet/winbolonet_server.h"
 #include "../winbolonet/http.h"
 
 #include "server_dedicated_log.h"
