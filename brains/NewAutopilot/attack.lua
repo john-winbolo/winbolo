@@ -2610,8 +2610,10 @@ function M.update_attack_substate(goal, state, world, info)
       goal._build_decision_msg   = nil
       goal._build_decision_until = nil
       goal._build_timeout_total  = nil
-      print(string.format(TAG .. " BUILD_WALLS: queued %d walls (closest-to-pill first)",
-                          #sorted))
+      if BRAIN_DEBUG_MODE and BRAIN_LOG_BUILDER then
+        print(string.format(TAG .. " BUILD_WALLS: queued %d walls (closest-to-pill first)",
+                            #sorted))
+      end
     end
 
     local list = goal._wall_build_list
@@ -2653,9 +2655,11 @@ function M.update_attack_substate(goal, state, world, info)
         goal._wall_idx_started = now
         goal._wall_idx_prev_tt = cur_tt
       elseif (now - goal._wall_idx_started) > WALL_STALL_TICKS then
-        print(string.format(TAG ..
-          " BUILD_WALLS: wall %d/%d at (%d,%d) stalled (%d ticks, tt=%d), skipping",
-          idx, #list, target.mx, target.my, WALL_STALL_TICKS, cur_tt))
+        if BRAIN_DEBUG_MODE and BRAIN_LOG_BUILDER then
+          print(string.format(TAG ..
+            " BUILD_WALLS: wall %d/%d at (%d,%d) stalled (%d ticks, tt=%d), skipping",
+            idx, #list, target.mx, target.my, WALL_STALL_TICKS, cur_tt))
+        end
         idx = idx + 1
         goal._wall_build_idx = idx
         goal._wall_idx_started = nil
@@ -2706,12 +2710,14 @@ function M.update_attack_substate(goal, state, world, info)
     goal._build_timeout_total = BUILD_GIVE_UP_TICKS
 
     if idx > #list or stalled then
-      if stalled then
-        print(string.format(TAG .. " BUILD_WALLS: stalled (no wall built in %d ticks), proceeding to aim",
-                            BUILD_GIVE_UP_TICKS))
-      else
-        print(string.format(TAG .. " BUILD_WALLS: complete after %d ticks, %d walls built, proceeding to aim",
-                            now - goal._wall_build_start, #list))
+      if BRAIN_DEBUG_MODE and BRAIN_LOG_BUILDER then
+        if stalled then
+          print(string.format(TAG .. " BUILD_WALLS: stalled (no wall built in %d ticks), proceeding to aim",
+                              BUILD_GIVE_UP_TICKS))
+        else
+          print(string.format(TAG .. " BUILD_WALLS: complete after %d ticks, %d walls built, proceeding to aim",
+                              now - goal._wall_build_start, #list))
+        end
       end
       goal.wall_shield = false
       goal.wall_mx = nil
@@ -2755,7 +2761,7 @@ function M.update_attack_substate(goal, state, world, info)
     local bullets_fired = (goal._charge_shells or info.shells) - info.shells
     local pill_hp = pill and pill.health or 0
     if pill_hp <= 0 or (goal._bullets_needed and bullets_fired >= goal._bullets_needed) then
-      if BRAIN_DEBUG_MODE then
+      if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
         print2(string.format(
           "SWERVE_ENTER t=%d site=charge tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
           "fired=%d needed=%s start_hp=%s",
@@ -3184,7 +3190,7 @@ function M.update_attack_substate(goal, state, world, info)
     end
 
     if should_swerve then
-      if BRAIN_DEBUG_MODE then
+      if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
         print2(string.format(
           "SWERVE_ENTER t=%d site=shoot_pill_ppt tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
           "pill_dead_arg=%s hits=%s",
@@ -3232,7 +3238,7 @@ function M.update_attack_substate(goal, state, world, info)
 
     -- Immediate swerve: pill dead OR fired enough shots
     if pill_hp <= 0 or (goal._bullets_needed and bullets_fired >= goal._bullets_needed) then
-      if BRAIN_DEBUG_MODE then
+      if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
         print2(string.format(
           "SWERVE_ENTER t=%d site=engage tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
           "fired=%d needed=%s start_hp=%s kill_attempt=%s",
@@ -3286,7 +3292,7 @@ function M.update_attack_substate(goal, state, world, info)
         local pill_anger = pill and pill.anger or 0
         if pill_anger > C.ANGER_ATTACK_THRESHOLD then
           -- Pill is angry — swerve to dodge
-          if BRAIN_DEBUG_MODE then
+          if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
             print2(string.format(
               "SWERVE_ENTER t=%d site=engage_dodge tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
               "hits=%s anger=%.2f xhair_off=%s",
@@ -3380,7 +3386,9 @@ function M.update_attack_substate(goal, state, world, info)
       state._force_replan_reason = "loiter_timeout"
       goal.substate    = "plan_position"
       goal.scan_spots  = nil
-      print(TAG .. " ATTACK: loiter timeout — requesting replan")
+      if BRAIN_DEBUG_MODE then
+        print(TAG .. " ATTACK: loiter timeout — requesting replan")
+      end
     end
     -- Fall through to draw
   end
@@ -3391,10 +3399,9 @@ function M.update_attack_substate(goal, state, world, info)
   if goal.substate == "swerve" then
     -- Per-tick swerve trace: capture pill state every tick we're in
     -- swerve so we can pinpoint the exact tick a pill flipped to
-    -- dead/friendly/nil. BRAIN_DEBUG_MODE gate so lua_strip removes
-    -- the whole block from opt/ AND non-debug source runs skip the
-    -- string.format every swerve tick.
-    if BRAIN_DEBUG_MODE then
+    -- dead/friendly/nil. BRAIN_LOG_SWERVE-gated so it's opt-in even
+    -- with debug on (chatty — fires every swerve tick).
+    if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
       local pat_key = pmy * 256 + pmx
       local entries = world.pill_at and world.pill_at[pat_key] or nil
       local n_entries = entries and #entries or 0
@@ -3455,9 +3462,8 @@ function M.update_attack_substate(goal, state, world, info)
     if goal._swerve_ticks_left <= 0 then
       -- Swerve done — check if pill died.
       -- Detailed diagnostic logged BEFORE the dead-check so we can see
-      -- exactly which state drove the decision. BRAIN_DEBUG_MODE gate
-      -- so lua_strip removes the whole block from opt/.
-      if BRAIN_DEBUG_MODE then
+      -- exactly which state drove the decision. BRAIN_LOG_SWERVE gate.
+      if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
       local pat_key = pmy * 256 + pmx
       local entries = world.pill_at and world.pill_at[pat_key] or nil
       local n_entries = entries and #entries or 0
@@ -3602,8 +3608,10 @@ function M.update_attack_substate(goal, state, world, info)
       state._force_replan_reason = "post_engage_refuel"
       goal.substate    = "plan_position"
       goal.scan_spots  = nil  -- force fresh plan_position scan if we stay
-      print(string.format(TAG .. " ATTACK: refuel may beat loiter (wait=%d vs refuel=%d) — requesting replan",
-            math.floor(ticks_to_calm), refuel_cost < math.huge and math.floor(refuel_cost) or 99999))
+      if BRAIN_DEBUG_MODE then
+        print(string.format(TAG .. " ATTACK: refuel may beat loiter (wait=%d vs refuel=%d) — requesting replan",
+              math.floor(ticks_to_calm), refuel_cost < math.huge and math.floor(refuel_cost) or 99999))
+      end
     end
     -- Fall through to draw
   end

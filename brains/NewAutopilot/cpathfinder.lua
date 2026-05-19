@@ -420,13 +420,6 @@ function M.dijkstra_lookup_subtract_by_kind(kind, dx, dy, in_boat, pcontrib_tabl
   return cpf_dijkstra_lookup_subtract_by_kind(kind, dx, dy, in_boat or 0, pcontrib_table) or math.huge
 end
 
---- Spot-log debug controls (C-side dumps every step of the
---- dijkstra_lookup_subtract_by_kind parent-chain walk to spot.log,
---- prefixed with the tick set here).
-function M.set_spot_log_tick(t)     cpf_set_spot_log_tick(t or 0) end
-function M.set_spot_log_enabled(on) cpf_set_spot_log_enabled(on and true or false) end
-function M.spot_log_write(s)        cpf_spot_log_write(tostring(s or "")) end
-function M.set_spot_log_dir(d)      cpf_set_spot_log_dir(d or "") end
 
 -- Convenience constants for the kind parameter.
 -- KIND_NORMAL: standard danger-weighted path cost.

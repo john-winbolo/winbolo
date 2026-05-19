@@ -26,11 +26,15 @@ local buffer = {}   -- array of {source, line, msg}
 local tick = 0
 local tick_start = 0  -- os.clock() at set_tick
 
--- Persistent file handle for the rolling log + the session dir it
--- corresponds to.  Reopened lazily on first flush after the session
--- dir changes (e.g., between BrainTest sessions in the same process).
+-- Per-bot identity for per-file routing. Each Lua state runs one bot,
+-- so this module-level local is naturally per-bot. Set via M.set_bot()
+-- at brain startup; filename becomes print2_bot<bot_idx>.log so
+-- concurrent bots don't share one file.
+local bot_idx = nil
+
+-- Persistent file handle for the rolling log. Opened once on first
+-- flush, kept open for the process lifetime — never closed/reopened.
 local file = nil
-local file_dir = nil
 
 -- Stats / heartbeat used to detect silent failures.
 local last_successful_flush_tick = -1
@@ -45,6 +49,13 @@ function M.set_tick(t)
   tick_start = clock()
   -- Clear buffer for new tick
   for i = #buffer, 1, -1 do buffer[i] = nil end
+end
+
+-- Stamp this Lua state with its owning bot index. Call once at brain
+-- startup (Brain.think tick 1) — the file path uses this to route
+-- each bot's lines to its own print2_bot<N>.log.
+function M.set_bot(n)
+  bot_idx = n
 end
 
 -- The callable: print2(...)
@@ -88,47 +99,33 @@ local function fail_hard(reason, detail)
   error(msg, 0)
 end
 
--- Try to (re)open the rolling print2.log file. Hard-fails if io.open
+-- Try to open the per-bot rolling log file. Hard-fails if io.open
 -- returns nil — the user wants visible crashes when print2 is broken.
+-- Filename is print2_bot<N>.log so each bot writes to its own file.
 local function try_open(dir)
-  local path = dir .. "/print2.log"
+  local tag = bot_idx and tostring(bot_idx) or "unknown"
+  local path = string.format("%s/print2_bot%s.log", dir, tag)
   local f, err = io.open(path, "a")
   if not f then
     fail_hard("io.open", path .. " : " .. tostring(err))
   end
   file = f
-  file_dir = dir
   print(string.format("[print2] opened %s", path))
-end
-
--- Force-close the current file handle (used after a write failure so the
--- next flush opens a fresh one).
-local function force_reopen()
-  if file then
-    pcall(function() file:close() end)
-    file = nil
-    file_dir = nil
-  end
 end
 
 function M.flush()
   if not _G._PRINT2_ENABLED then return end
   if #buffer == 0 then return end
+  -- One-time open per Lua state (per bot). Once open, we keep the
+  -- handle for the life of the process — never close, never reopen.
   -- Fall back to cwd when no session dir is set (e.g. BrainTest run
-   -- without --profile-log / --log-json). print2 should still work as
-   -- long as debug mode is on.
-  local dir = _G.DEBUG_SESSION_DIR
-  if not dir or dir == "" then dir = "." end
-
-  -- Lazy open / reopen on session dir change
-  if not file or dir ~= file_dir then
-    if file then pcall(function() file:close() end); file = nil end
-    try_open(dir)  -- hard-fails on its own; only returns on success
+  -- without --profile-log / --log-json).
+  if not file then
+    local dir = _G.DEBUG_SESSION_DIR
+    if not dir or dir == "" then dir = "." end
+    try_open(dir)
   end
 
-  -- Each write/flush wrapped in pcall so we can report the actual error
-  -- before crashing. On any failure: force the file closed (so a future
-  -- session at least tries again) and propagate.
   local ok, err = pcall(function()
     file:write("===TICK ", tick, "===\n")
     for _, entry in ipairs(buffer) do
@@ -138,7 +135,6 @@ function M.flush()
   end)
 
   if not ok then
-    force_reopen()
     fail_hard("write/flush", err)
   end
 
@@ -151,7 +147,6 @@ function M.close()
   if file then
     file:close()
     file = nil
-    file_dir = nil
   end
 end
 
