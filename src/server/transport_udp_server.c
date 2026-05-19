@@ -2972,34 +2972,44 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             }
             if (got < 0) got = 0;
 
-            uint8_t rsp[PACKET_HEADER_SIZE + 1 + 256 + 1
-                        + 64 * (1 + 128 + 1 + 8)];
-            int rpos = PACKET_HEADER_SIZE;
-            packHeader(rsp, PACKET_LOBBY_MAP_LIST_RSP, 0);
-            rsp[rpos++] = pathLen;
-            if (pathLen > 0) {
-                memcpy(rsp + rpos, relPath, pathLen);
-                rpos += pathLen;
-            }
-            int countPos = rpos;
-            rsp[rpos++] = 0;
-            int written = 0;
-            for (int i = 0; i < got; i++) {
-                int nameLen = (int)SDL_strlen(entries[i].name);
-                if (nameLen > 127) nameLen = 127;
-                if (rpos + 1 + nameLen + 1 + 8 > (int)sizeof(rsp)) break;
-                rsp[rpos++] = (uint8_t)nameLen;
-                memcpy(rsp + rpos, entries[i].name, nameLen);
-                rpos += nameLen;
-                rsp[rpos++] = entries[i].isFolder ? 1 : 0;
-                uint64_t mt = (uint64_t)entries[i].modTime;
-                for (int b = 7; b >= 0; b--) {
-                    rsp[rpos++] = (uint8_t)((mt >> (b * 8)) & 0xFF);
+            /* Chunked send: each frame fits in UDP_MAX_PAYLOAD and
+             * carries [header][pathLen][path][final][count][entries].
+             * Last chunk sets final=1; empty result is a single chunk
+             * with count=0, final=1. Lost final-chunk failure mode is
+             * accepted — chooser shows a partial list until next req. */
+            uint8_t rsp[UDP_MAX_PAYLOAD];
+            int i = 0;
+            do {
+                int rpos = PACKET_HEADER_SIZE;
+                packHeader(rsp, PACKET_LOBBY_MAP_LIST_RSP, 0);
+                rsp[rpos++] = pathLen;
+                if (pathLen > 0) {
+                    memcpy(rsp + rpos, relPath, pathLen);
+                    rpos += pathLen;
                 }
-                written++;
-            }
-            rsp[countPos] = (uint8_t)written;
-            udpSendTo(udpServer.sock, rsp, rpos, fromAddr);
+                int finalPos = rpos;
+                rsp[rpos++] = 0;
+                int countPos = rpos;
+                rsp[rpos++] = 0;
+                int written = 0;
+                for (; i < got; i++) {
+                    int nameLen = (int)SDL_strlen(entries[i].name);
+                    if (nameLen > 127) nameLen = 127;
+                    if (rpos + 1 + nameLen + 1 + 8 > (int)sizeof(rsp)) break;
+                    rsp[rpos++] = (uint8_t)nameLen;
+                    memcpy(rsp + rpos, entries[i].name, nameLen);
+                    rpos += nameLen;
+                    rsp[rpos++] = entries[i].isFolder ? 1 : 0;
+                    uint64_t mt = (uint64_t)entries[i].modTime;
+                    for (int b = 7; b >= 0; b--) {
+                        rsp[rpos++] = (uint8_t)((mt >> (b * 8)) & 0xFF);
+                    }
+                    written++;
+                }
+                rsp[countPos] = (uint8_t)written;
+                rsp[finalPos] = (i >= got) ? 1 : 0;
+                udpSendTo(udpServer.sock, rsp, rpos, fromAddr);
+            } while (i < got);
             break;
         }
         case PACKET_LOBBY_MAP_UPLOAD_BEGIN: {
@@ -3237,39 +3247,48 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 query, entries, 64);
             if (got < 0) got = 0;
 
-            uint8_t rsp[PACKET_HEADER_SIZE + 1 + 256 + 1 + 128 + 1
-                        + 64 * (1 + 256 + 1 + 8)];
-            packHeader(rsp, PACKET_LOBBY_MAP_SEARCH_RSP, 0);
-            int wpos = PACKET_HEADER_SIZE;
-            rsp[wpos++] = pathLen;
-            if (pathLen > 0) {
-                memcpy(rsp + wpos, relPath, pathLen);
-                wpos += pathLen;
-            }
-            rsp[wpos++] = qLen;
-            if (qLen > 0) {
-                memcpy(rsp + wpos, query, qLen);
-                wpos += qLen;
-            }
-            int countPos = wpos;
-            rsp[wpos++] = 0;
-            int written = 0;
-            for (int i = 0; i < got; i++) {
-                int nameLen = (int)SDL_strlen(entries[i].name);
-                if (nameLen > 127) nameLen = 127;
-                if (wpos + 1 + nameLen + 1 + 8 > (int)sizeof(rsp)) break;
-                rsp[wpos++] = (uint8_t)nameLen;
-                memcpy(rsp + wpos, entries[i].name, nameLen);
-                wpos += nameLen;
-                rsp[wpos++] = entries[i].isFolder ? 1 : 0;
-                uint64_t mt = (uint64_t)entries[i].modTime;
-                for (int b = 7; b >= 0; b--) {
-                    rsp[wpos++] = (uint8_t)((mt >> (b * 8)) & 0xFF);
+            /* Chunked send — every chunk repeats the full path+query
+             * prefix so the client can filter stale responses from a
+             * prior navigation. Final chunk sets final=1; empty
+             * result is a single chunk with count=0, final=1. */
+            uint8_t rsp[UDP_MAX_PAYLOAD];
+            int i = 0;
+            do {
+                int wpos = PACKET_HEADER_SIZE;
+                packHeader(rsp, PACKET_LOBBY_MAP_SEARCH_RSP, 0);
+                rsp[wpos++] = pathLen;
+                if (pathLen > 0) {
+                    memcpy(rsp + wpos, relPath, pathLen);
+                    wpos += pathLen;
                 }
-                written++;
-            }
-            rsp[countPos] = (uint8_t)written;
-            udpSendTo(udpServer.sock, rsp, wpos, fromAddr);
+                rsp[wpos++] = qLen;
+                if (qLen > 0) {
+                    memcpy(rsp + wpos, query, qLen);
+                    wpos += qLen;
+                }
+                int finalPos = wpos;
+                rsp[wpos++] = 0;
+                int countPos = wpos;
+                rsp[wpos++] = 0;
+                int written = 0;
+                for (; i < got; i++) {
+                    int nameLen = (int)SDL_strlen(entries[i].name);
+                    if (nameLen > 127) nameLen = 127;
+                    if (wpos + 1 + nameLen + 1 + 8 > (int)sizeof(rsp)) break;
+                    rsp[wpos++] = (uint8_t)nameLen;
+                    memcpy(rsp + wpos, entries[i].name, nameLen);
+                    wpos += nameLen;
+                    rsp[wpos++] = entries[i].isFolder ? 1 : 0;
+                    uint64_t mt = (uint64_t)entries[i].modTime;
+                    for (int b = 7; b >= 0; b--) {
+                        rsp[wpos++] = (uint8_t)((mt >> (b * 8)) & 0xFF);
+                    }
+                    written++;
+                }
+                rsp[countPos] = (uint8_t)written;
+                rsp[finalPos] = (i >= got) ? 1 : 0;
+                udpSendTo(udpServer.sock, rsp, wpos, fromAddr);
+            } while (i < got);
             break;
         }
         case PACKET_LOBBY_PREVIEW_CANCEL: {
