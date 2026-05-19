@@ -1183,6 +1183,58 @@ int main(int argc, char **argv) {
   serverSimSetHasPassword(serverSim, pass[0] != '\0');
   {
     ServerInstanceConfig instCfg;
+    UploadPolicy uploadPolicy = UPLOAD_POLICY_ALLOW;
+    uint8_t      uploadMaxFiles = 0;        /* 0 = leave transport default */
+    uint32_t     uploadMaxStorageBytes = 0; /* 0 = leave transport default */
+
+    {
+      int policyArg = findArg(argc, argv, "uploadpolicy");
+      if (policyArg != ARG_NOT_FOUND) {
+        char policyStr[32];
+        strncpy(policyStr, (char *)argv[policyArg], sizeof(policyStr) - 1);
+        policyStr[sizeof(policyStr) - 1] = '\0';
+        strlower(policyStr);
+        if (strcmp(policyStr, "off") == 0) {
+          uploadPolicy = UPLOAD_POLICY_OFF;
+        } else if (strcmp(policyStr, "allow") == 0) {
+          uploadPolicy = UPLOAD_POLICY_ALLOW;
+        } else if (strcmp(policyStr, "persist") == 0) {
+          uploadPolicy = UPLOAD_POLICY_PERSIST;
+        } else {
+          fprintf(stderr, "Unknown -uploadpolicy '%s'; using allow\n", policyStr);
+          uploadPolicy = UPLOAD_POLICY_ALLOW;
+        }
+      }
+    }
+    {
+      int filesArg = findArg(argc, argv, "uploadmaxfiles");
+      if (filesArg != ARG_NOT_FOUND) {
+        int v = atoi((char *)argv[filesArg]);
+        if (v < 1) {
+          fprintf(stderr, "-uploadmaxfiles %d out of range; clamping to 1\n", v);
+          v = 1;
+        } else if (v > 255) {
+          fprintf(stderr, "-uploadmaxfiles %d out of range; clamping to 255\n", v);
+          v = 255;
+        }
+        uploadMaxFiles = (uint8_t)v;
+      }
+    }
+    {
+      int storageArg = findArg(argc, argv, "uploadmaxstorage");
+      if (storageArg != ARG_NOT_FOUND) {
+        int v = atoi((char *)argv[storageArg]);
+        if (v < 1) {
+          fprintf(stderr, "-uploadmaxstorage %d out of range; clamping to 1\n", v);
+          v = 1;
+        } else if (v > 4096) {
+          fprintf(stderr, "-uploadmaxstorage %d out of range; clamping to 4096\n", v);
+          v = 4096;
+        }
+        uploadMaxStorageBytes = (uint32_t)v * 1024u * 1024u;
+      }
+    }
+
     instCfg.udpPort             = port;
     instCfg.bindAddr            = useAddr;
     instCfg.password            = pass;
@@ -1193,6 +1245,9 @@ int main(int argc, char **argv) {
     instCfg.useTracker          = sTrackerUse;
     instCfg.trackerAddr         = sTrackerAddr;
     instCfg.trackerPort         = sTrackerPort;
+    instCfg.uploadPolicy          = uploadPolicy;
+    instCfg.uploadMaxFiles        = uploadMaxFiles;
+    instCfg.uploadMaxStorageBytes = uploadMaxStorageBytes;
     {
       bool natPunchOptOut = (argExist(argc, argv, "no-natpunch") == TRUE);
       instCfg.useNatPortmap   = (argExist(argc, argv, "upnp") == TRUE);

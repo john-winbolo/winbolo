@@ -241,6 +241,11 @@ static struct {
     uint8_t  clientUploadBuf[MAX_TANKS][UPLOAD_MAX_BYTES];
     char     clientUploadName[MAX_TANKS][128];
     uint8_t  clientReqCooldownTicks[MAX_TANKS];
+
+    /* Operator-controlled upload handling — zero-init = ALLOW + defaults below. */
+    UploadPolicy uploadPolicy;
+    uint8_t      uploadMaxFiles;
+    uint32_t     uploadMaxStorageBytes;
 } udpServer;
 
 /* Public-address override populated by transportUdpServerSetPublicAddress
@@ -1697,6 +1702,8 @@ bool transportUdpServerCreate(unsigned short port,
     udpServer.maxPlayers = maxPlayers;
     udpServer.running = true;
     udpServer.tickCount = 0;
+    udpServer.uploadMaxFiles        = 64;
+    udpServer.uploadMaxStorageBytes = 8u * 1024u * 1024u;
     serverSimSetServerPort(sim, port);
     WB_LOG_INFO(WB_LOG_CAT_NET,
         "server created: port=%u bindAddr=%s maxPlayers=%u password=%s",
@@ -1737,6 +1744,18 @@ bool transportUdpServerCreate(unsigned short port,
 #endif
 
     return true;
+}
+
+void transportUdpServerSetUploadConfig(UploadPolicy policy,
+                                       uint8_t maxFiles,
+                                       uint32_t maxStorageBytes) {
+    udpServer.uploadPolicy = policy;
+    if (maxFiles != 0) {
+        udpServer.uploadMaxFiles = maxFiles;
+    }
+    if (maxStorageBytes != 0) {
+        udpServer.uploadMaxStorageBytes = maxStorageBytes;
+    }
 }
 
 void transportUdpServerDestroy(void) {
@@ -3037,6 +3056,13 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 uint8_t ack[PACKET_HEADER_SIZE + 1];
                 packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
                 ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_NOT_HOST;
+                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                break;
+            }
+            if (udpServer.uploadPolicy == UPLOAD_POLICY_OFF) {
+                uint8_t ack[PACKET_HEADER_SIZE + 1];
+                packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_UPLOAD_DISABLED;
                 udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
                 break;
             }
