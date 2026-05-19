@@ -342,7 +342,8 @@ typedef struct {
 *********************************************************/
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, struct ClientSim *cs,
-                            aiType aiMode, bool debug_mode);
+                            aiType aiMode, bool debug_mode,
+                            int player_num);
 
 /*********************************************************
 *NAME:          luaBrainsSetRunScript

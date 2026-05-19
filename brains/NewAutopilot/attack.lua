@@ -2755,6 +2755,17 @@ function M.update_attack_substate(goal, state, world, info)
     local bullets_fired = (goal._charge_shells or info.shells) - info.shells
     local pill_hp = pill and pill.health or 0
     if pill_hp <= 0 or (goal._bullets_needed and bullets_fired >= goal._bullets_needed) then
+      if BRAIN_DEBUG_MODE then
+        print2(string.format(
+          "SWERVE_ENTER t=%d site=charge tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
+          "fired=%d needed=%s start_hp=%s",
+          now, tostring(goal.target_id), pmx, pmy,
+          tostring(pill == nil),
+          tostring(pill and pill.health), tostring(pill and pill.owner),
+          tostring(pill and pill.in_tank),
+          bullets_fired, tostring(goal._bullets_needed),
+          tostring(goal._charge_start_hp)))
+      end
       goal.substate = "swerve"
       goal._swerve_start = now
       -- Low-HP pills get a much shorter swerve — the kill happens fast,
@@ -3173,6 +3184,16 @@ function M.update_attack_substate(goal, state, world, info)
     end
 
     if should_swerve then
+      if BRAIN_DEBUG_MODE then
+        print2(string.format(
+          "SWERVE_ENTER t=%d site=shoot_pill_ppt tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
+          "pill_dead_arg=%s hits=%s",
+          now, tostring(goal.target_id), pmx, pmy,
+          tostring(pill == nil),
+          tostring(pill and pill.health), tostring(pill and pill.owner),
+          tostring(pill and pill.in_tank),
+          tostring(pill_dead), tostring(goal._shoot_hits_total)))
+      end
       goal.substate    = "swerve"
       goal._swerve_start = now
       if pill_dead then
@@ -3211,6 +3232,17 @@ function M.update_attack_substate(goal, state, world, info)
 
     -- Immediate swerve: pill dead OR fired enough shots
     if pill_hp <= 0 or (goal._bullets_needed and bullets_fired >= goal._bullets_needed) then
+      if BRAIN_DEBUG_MODE then
+        print2(string.format(
+          "SWERVE_ENTER t=%d site=engage tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
+          "fired=%d needed=%s start_hp=%s kill_attempt=%s",
+          now, tostring(goal.target_id), pmx, pmy,
+          tostring(pill == nil),
+          tostring(pill and pill.health), tostring(pill and pill.owner),
+          tostring(pill and pill.in_tank),
+          bullets_fired, tostring(goal._bullets_needed),
+          tostring(goal._charge_start_hp), tostring(goal._kill_attempt)))
+      end
       goal.substate = "swerve"
       goal._swerve_start = now
       -- Low-HP shortcut from charge_start_hp (see charge handler).
@@ -3254,6 +3286,16 @@ function M.update_attack_substate(goal, state, world, info)
         local pill_anger = pill and pill.anger or 0
         if pill_anger > C.ANGER_ATTACK_THRESHOLD then
           -- Pill is angry — swerve to dodge
+          if BRAIN_DEBUG_MODE then
+            print2(string.format(
+              "SWERVE_ENTER t=%d site=engage_dodge tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
+              "hits=%s anger=%.2f xhair_off=%s",
+              now, tostring(goal.target_id), pmx, pmy,
+              tostring(pill == nil),
+              tostring(pill and pill.health), tostring(pill and pill.owner),
+              tostring(pill and pill.in_tank),
+              tostring(goal._engage_hits), pill_anger, tostring(crosshairs_off)))
+          end
           goal.substate = "swerve"
           goal._swerve_start = now
           -- Defensive swerve (pill still alive): longer turn
@@ -3329,10 +3371,16 @@ function M.update_attack_substate(goal, state, world, info)
         " ATTACK: pill cooled (anger=%.2f, hp=%d), re-planning from scratch",
         pill.anger, pill.health or 0))
     elseif goal._loiter_start and (now - goal._loiter_start) > C.ANGER_WAIT_MAX then
-      -- Waited too long — give up, go refuel
+      -- Loitered too long. Same fix as post_engage refuel branch
+      -- below: don't clear_attack_goal (causes capture_base to steal
+      -- via cur_group=none penalty stack). Instead request urgent
+      -- replan while keeping goal.kind=attack_pill so the wounded
+      -- pill stays competitive as the incumbent.
       state.wounded_pill = { id = goal.target_id, mx = pmx, my = pmy, hp = pill.health, tick = now, owner = pill.owner }
-      print(TAG .. " ATTACK: loiter timeout, abandoning")
-      clear_attack_goal(state)
+      state._force_replan_reason = "loiter_timeout"
+      goal.substate    = "plan_position"
+      goal.scan_spots  = nil
+      print(TAG .. " ATTACK: loiter timeout — requesting replan")
     end
     -- Fall through to draw
   end
@@ -3341,11 +3389,56 @@ function M.update_attack_substate(goal, state, world, info)
   -- swerve: hard turn to dodge pill's predictive aim after engage
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "swerve" then
+    -- Per-tick swerve trace: capture pill state every tick we're in
+    -- swerve so we can pinpoint the exact tick a pill flipped to
+    -- dead/friendly/nil. BRAIN_DEBUG_MODE gate so lua_strip removes
+    -- the whole block from opt/ AND non-debug source runs skip the
+    -- string.format every swerve tick.
+    if BRAIN_DEBUG_MODE then
+      local pat_key = pmy * 256 + pmx
+      local entries = world.pill_at and world.pill_at[pat_key] or nil
+      local n_entries = entries and #entries or 0
+      local target_id = goal.target_id
+      local pby_id = target_id and world.pills and world.pills[target_id] or nil
+      print2(string.format(
+        "SWERVE_TICK t=%d goal=(%d,%d) tid=%s pill_nil=%s hp=%s own=%s in_tank=%s " ..
+        "pmx=%s pmy=%s last_seen=%s pat_n=%d " ..
+        "byid_hp=%s byid_own=%s byid_in_tank=%s byid_tile=(%s,%s) " ..
+        "left=%s turn_left=%s sw_dead=%s on_target=%s extends=%s carried=%s",
+        now, pmx, pmy, tostring(target_id),
+        tostring(pill == nil),
+        tostring(pill and pill.health), tostring(pill and pill.owner),
+        tostring(pill and pill.in_tank),
+        tostring(pill and pill.mx), tostring(pill and pill.my),
+        tostring(pill and pill.last_seen),
+        n_entries,
+        tostring(pby_id and pby_id.health),
+        tostring(pby_id and pby_id.owner),
+        tostring(pby_id and pby_id.in_tank),
+        tostring(pby_id and pby_id.mx),
+        tostring(pby_id and pby_id.my),
+        tostring(goal._swerve_ticks_left),
+        tostring(goal._swerve_turn_ticks_left),
+        tostring(goal._swerve_pill_dead),
+        tostring(goal._on_target_in_flight),
+        tostring(goal._swerve_extends),
+        tostring(info.carried_pills)))
+    end
+
     -- If pill dies mid-swerve, shorten the turn portion to 25 ticks remaining
     if not goal._swerve_pill_dead then
       local pill_now_dead = (not pill or pill.health <= 0)
       if pill_now_dead then
         goal._swerve_pill_dead = true
+        if BRAIN_DEBUG_MODE then
+          print2(string.format(
+            "SWERVE_PILL_DEAD_LATCH t=%d goal=(%d,%d) tid=%s reason=%s hp=%s own=%s in_tank=%s",
+            now, pmx, pmy, tostring(goal.target_id),
+            (pill == nil) and "pill_nil" or "health<=0",
+            tostring(pill and pill.health),
+            tostring(pill and pill.owner),
+            tostring(pill and pill.in_tank)))
+        end
         if (goal._swerve_turn_ticks_left or 0) > C.SWERVE_TURN_TICKS then
           goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
           if (goal._swerve_ticks_left or 0) > C.SWERVE_TOTAL_TICKS then
@@ -3360,7 +3453,52 @@ function M.update_attack_substate(goal, state, world, info)
       goal._swerve_turn_ticks_left = goal._swerve_turn_ticks_left - 1
     end
     if goal._swerve_ticks_left <= 0 then
-      -- Swerve done — check if pill died
+      -- Swerve done — check if pill died.
+      -- Detailed diagnostic logged BEFORE the dead-check so we can see
+      -- exactly which state drove the decision. BRAIN_DEBUG_MODE gate
+      -- so lua_strip removes the whole block from opt/.
+      if BRAIN_DEBUG_MODE then
+      local pat_key = pmy * 256 + pmx
+      local entries = world.pill_at and world.pill_at[pat_key] or nil
+      local n_entries = entries and #entries or 0
+      local entry_dump = ""
+      if entries then
+        for ei, e in ipairs(entries) do
+          local ep = e.pill
+          entry_dump = entry_dump .. string.format(
+            " [e%d id=%s hp=%s own=%s in_tank=%s mx=%s my=%s last_seen=%s]",
+            ei, tostring(e.idnum or e.id),
+            tostring(ep and ep.health), tostring(ep and ep.owner),
+            tostring(ep and ep.in_tank),
+            tostring(ep and ep.mx), tostring(ep and ep.my),
+            tostring(ep and ep.last_seen))
+        end
+      end
+      local target_id = goal.target_id
+      local pby_id = target_id and world.pills and world.pills[target_id] or nil
+      print2(string.format(
+        "SWERVE_END t=%d goal=(%d,%d) target_id=%s pill_nil=%s " ..
+        "pill.health=%s pill.owner=%s pill.in_tank=%s pill.mx=%s pill.my=%s pill.last_seen=%s " ..
+        "swerve_pill_dead=%s on_target_in_flight=%s swerve_extends=%s " ..
+        "carried_pills=%s pat_n=%d pat=%s " ..
+        "byid_hp=%s byid_own=%s byid_in_tank=%s byid_tile=(%s,%s)",
+        now, pmx, pmy, tostring(target_id),
+        tostring(pill == nil),
+        tostring(pill and pill.health), tostring(pill and pill.owner),
+        tostring(pill and pill.in_tank),
+        tostring(pill and pill.mx), tostring(pill and pill.my),
+        tostring(pill and pill.last_seen),
+        tostring(goal._swerve_pill_dead),
+        tostring(goal._on_target_in_flight),
+        tostring(goal._swerve_extends),
+        tostring(info.carried_pills),
+        n_entries, entry_dump,
+        tostring(pby_id and pby_id.health),
+        tostring(pby_id and pby_id.owner),
+        tostring(pby_id and pby_id.in_tank),
+        tostring(pby_id and pby_id.mx),
+        tostring(pby_id and pby_id.my)))
+      end -- BRAIN_DEBUG_MODE (SWERVE_END diag)
       if not pill or pill.health <= 0 then
         -- Drop the attack_pill goal entirely. The dead pill will
         -- pop into pool 11 (capture_pill) on the next replan, win
@@ -3449,10 +3587,23 @@ function M.update_attack_substate(goal, state, world, info)
       print(string.format(TAG .. " ATTACK: loitering (wait=%d vs refuel=%d)",
             math.floor(ticks_to_calm), refuel_cost < math.huge and math.floor(refuel_cost) or 99999))
     else
+      -- Refuel beats loiter for this take. Don't clear_attack_goal here
+      -- — that drops state.goal to none, and on the next replan EVERY
+      -- candidate (including the wounded pill we want to come back to)
+      -- pays the +sw+commit hysteresis penalty because cur_group=none.
+      -- That penalty stack lets capture_base steal the goal even when
+      -- the wounded pill is 1 HP. Instead: keep goal.kind=attack_pill
+      -- so cur_group stays "attack", flag the brain to replan urgently,
+      -- and reset substate to plan_position so if pick_goal keeps us
+      -- on this pill the take continues from a fresh scan. If refuel
+      -- really is cheaper (low armour → low pool-1 urgency score), it
+      -- wins the competition and we bail normally.
       state.wounded_pill = { id = goal.target_id, mx = pmx, my = pmy, hp = pill and pill.health or 0, tick = now, owner = pill and pill.owner or nil }
-      print(string.format(TAG .. " ATTACK: refueling (wait=%d vs refuel=%d)",
+      state._force_replan_reason = "post_engage_refuel"
+      goal.substate    = "plan_position"
+      goal.scan_spots  = nil  -- force fresh plan_position scan if we stay
+      print(string.format(TAG .. " ATTACK: refuel may beat loiter (wait=%d vs refuel=%d) — requesting replan",
             math.floor(ticks_to_calm), refuel_cost < math.huge and math.floor(refuel_cost) or 99999))
-      clear_attack_goal(state)
     end
     -- Fall through to draw
   end

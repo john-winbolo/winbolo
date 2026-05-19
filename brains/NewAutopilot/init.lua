@@ -334,6 +334,19 @@ function Brain.open(info)
          " name=", tostring(info.player_name),
          " debug_session_dir=", tostring(_G.DEBUG_SESSION_DIR))
   local t_open0 = clock_us()
+  -- Diagnostic: emit a SELF_DR line per pool-6 candidate per replan
+  -- showing raw / subtracted / c_reduction / manual_reduction so we can
+  -- verify the target-pill danger subtraction in pool_6's spot_cost.
+  -- BRAIN_DEBUG_MODE-gated so it's stripped from opt/.
+  if BRAIN_DEBUG_MODE then _G.DEBUG_SELF_DR = true end
+  -- Spot-log: dump every step of the C-side
+  -- dijkstra_lookup_subtract_by_kind walk to spot.log. Tick gets
+  -- stamped on every line inside Brain.think.
+  if BRAIN_DEBUG_MODE and cpf and cpf.set_spot_log_enabled then
+    cpf.set_spot_log_enabled(true)
+    -- Session-dir routing happens at tick 1 inside Brain.think — by
+    -- then C has populated _G.DEBUG_SESSION_DIR.
+  end
   -- Switch to Lua 5.4 generational GC. Brain ticks allocate lots of
   -- short-lived tables (closures, per-tick scratch); generational keeps
   -- minor collections cheap and frequent. minor=10 fires minor passes
@@ -724,6 +737,29 @@ function Brain.think(info)
   state.tick = state.tick + 1
   state._last_info = info
   local now  = state.tick
+  -- Stamp tick + bot into the C-side spot-log so every line it writes
+  -- during this think gets [t=N] prefix AND routes to that bot's
+  -- spot_bot<N>.log (no concurrent-bot interleaving). BRAIN_DEBUG_MODE
+  -- gate so opt builds skip both calls.
+  if BRAIN_DEBUG_MODE and cpf and cpf.set_spot_log_tick then
+    cpf.set_spot_log_tick(now)
+    -- At tick 1 the engine has populated info.tankx/y with the bot's
+    -- real spawn position. Brain.open is too early — info isn't
+    -- populated yet there. Emit a BOT_START marker so log readers
+    -- can correlate bot index ↔ map quadrant. Also route spot logs
+    -- into the session dir now that DEBUG_SESSION_DIR is populated.
+    if now == 1 and cpf.spot_log_write then
+      if cpf.set_spot_log_dir and _G.DEBUG_SESSION_DIR then
+        cpf.set_spot_log_dir(_G.DEBUG_SESSION_DIR)
+      end
+      cpf.spot_log_write(string.format(
+        "BOT_START player_number=%s name=%s tank=(%.1f,%.1f) tile=(%d,%d)",
+        tostring(info.player_number),
+        tostring(info.player_name),
+        (info.tankx or 0) / 256.0, (info.tanky or 0) / 256.0,
+        (info.tankx or 0) >> 8, (info.tanky or 0) >> 8))
+    end
+  end
 
   -- Open the optimize.log section timer at the EARLIEST possible point
   -- so prelude work (capacity tier calc, debug-mode viz refresh, the
@@ -2588,7 +2624,15 @@ function Brain.think(info)
     local timer_fire = (now + state.replan_offset) % C.GOAL_REPLAN_INTERVAL == 0
     -- Minimum commitment: suppress timer-based replans shortly after a switch
     local min_commit_met = (now - (state.goal_set_tick or 0)) >= C.GOAL_MIN_COMMIT_TICKS
-    local replan = urgent_replan or refuel_done
+    -- Force-replan flag, set by code paths that used to call
+    -- clear_attack_goal but need the wounded pill to stay incumbent
+    -- (cur_group=attack) through the next pool competition. Consumed
+    -- this tick: cleared whether or not we actually replan, since the
+    -- substate machine has already moved on.
+    local force_replan = state._force_replan_reason ~= nil
+    local force_replan_reason = state._force_replan_reason
+    state._force_replan_reason = nil
+    local replan = urgent_replan or refuel_done or force_replan
                or (min_commit_met and not refuel_hold and not state.command_goal and timer_fire)
     -- Only log the replan-decision dump on ticks where something
     -- interesting happens (timer fire, urgent replan, or refuel done).
@@ -2596,7 +2640,7 @@ function Brain.think(info)
     -- same fields as the previous tick — pure noise.
     if BRAIN_DEBUG_MODE and (replan or timer_fire) then
       print2("replan=", replan, " urgent=", urgent_replan, " atk_done=", attack_tank_done,
-             " refuel_done=", refuel_done,
+             " refuel_done=", refuel_done, " force=", tostring(force_replan_reason),
              " refuel_hold=", refuel_hold, " timer_fire=", timer_fire,
              " min_commit=", min_commit_met,
              " goal=", state.goal.kind, " sub=", state.goal.substate)

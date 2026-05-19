@@ -3223,10 +3223,16 @@ function M.update_attack_substate(goal, state, world, info)
         " ATTACK: pill cooled (anger=%.2f, hp=%d), re-planning from scratch",
         pill.anger, pill.health or 0))
     elseif goal._loiter_start and (now - goal._loiter_start) > C.ANGER_WAIT_MAX then
-      -- Waited too long — give up, go refuel
+      -- Loitered too long. Same fix as post_engage refuel branch
+      -- below: don't clear_attack_goal (causes capture_base to steal
+      -- via cur_group=none penalty stack). Instead request urgent
+      -- replan while keeping goal.kind=attack_pill so the wounded
+      -- pill stays competitive as the incumbent.
       state.wounded_pill = { id = goal.target_id, mx = pmx, my = pmy, hp = pill.health, tick = now, owner = pill.owner }
-      print(TAG .. " ATTACK: loiter timeout, abandoning")
-      clear_attack_goal(state)
+      state._force_replan_reason = "loiter_timeout"
+      goal.substate    = "plan_position"
+      goal.scan_spots  = nil
+      print(TAG .. " ATTACK: loiter timeout — requesting replan")
     end
     -- Fall through to draw
   end
@@ -3235,6 +3241,12 @@ function M.update_attack_substate(goal, state, world, info)
   -- swerve: hard turn to dodge pill's predictive aim after engage
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "swerve" then
+    -- Per-tick swerve trace: capture pill state every tick we're in
+    -- swerve so we can pinpoint the exact tick a pill flipped to
+    -- dead/friendly/nil. BRAIN_DEBUG_MODE gate so lua_strip removes
+    -- the whole block from opt/ AND non-debug source runs skip the
+    -- string.format every swerve tick.
+
     -- If pill dies mid-swerve, shorten the turn portion to 25 ticks remaining
     if not goal._swerve_pill_dead then
       local pill_now_dead = (not pill or pill.health <= 0)
@@ -3254,7 +3266,10 @@ function M.update_attack_substate(goal, state, world, info)
       goal._swerve_turn_ticks_left = goal._swerve_turn_ticks_left - 1
     end
     if goal._swerve_ticks_left <= 0 then
-      -- Swerve done — check if pill died
+      -- Swerve done — check if pill died.
+      -- Detailed diagnostic logged BEFORE the dead-check so we can see
+      -- exactly which state drove the decision. BRAIN_DEBUG_MODE gate
+      -- so lua_strip removes the whole block from opt/.
       if not pill or pill.health <= 0 then
         -- Drop the attack_pill goal entirely. The dead pill will
         -- pop into pool 11 (capture_pill) on the next replan, win
@@ -3339,10 +3354,23 @@ function M.update_attack_substate(goal, state, world, info)
       print(string.format(TAG .. " ATTACK: loitering (wait=%d vs refuel=%d)",
             math.floor(ticks_to_calm), refuel_cost < math.huge and math.floor(refuel_cost) or 99999))
     else
+      -- Refuel beats loiter for this take. Don't clear_attack_goal here
+      -- — that drops state.goal to none, and on the next replan EVERY
+      -- candidate (including the wounded pill we want to come back to)
+      -- pays the +sw+commit hysteresis penalty because cur_group=none.
+      -- That penalty stack lets capture_base steal the goal even when
+      -- the wounded pill is 1 HP. Instead: keep goal.kind=attack_pill
+      -- so cur_group stays "attack", flag the brain to replan urgently,
+      -- and reset substate to plan_position so if pick_goal keeps us
+      -- on this pill the take continues from a fresh scan. If refuel
+      -- really is cheaper (low armour → low pool-1 urgency score), it
+      -- wins the competition and we bail normally.
       state.wounded_pill = { id = goal.target_id, mx = pmx, my = pmy, hp = pill and pill.health or 0, tick = now, owner = pill and pill.owner or nil }
-      print(string.format(TAG .. " ATTACK: refueling (wait=%d vs refuel=%d)",
+      state._force_replan_reason = "post_engage_refuel"
+      goal.substate    = "plan_position"
+      goal.scan_spots  = nil  -- force fresh plan_position scan if we stay
+      print(string.format(TAG .. " ATTACK: refuel may beat loiter (wait=%d vs refuel=%d) — requesting replan",
             math.floor(ticks_to_calm), refuel_cost < math.huge and math.floor(refuel_cost) or 99999))
-      clear_attack_goal(state)
     end
     -- Fall through to draw
   end

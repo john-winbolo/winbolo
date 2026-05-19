@@ -583,7 +583,8 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
      * default (host-controlled): BrainTest sets it to true; the release
      * game leaves it false so brains load from stripped opt/ source. */
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
-                                bot->cs, ai, s_default_debug_mode)) {
+                                bot->cs, ai, s_default_debug_mode,
+                                playerNum)) {
         fprintf(stderr, "botManager: failed to create brain for bot %d\n", playerNum);
         serverSimUnregisterSubscriber(sim, bot->controlSub);
         bot->controlSub = SUBSCRIBER_HANDLE_INVALID;

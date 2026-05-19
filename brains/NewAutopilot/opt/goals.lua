@@ -2064,28 +2064,46 @@ local FINALIZE_POOLS = { 2, 8, 9 }  -- defend_pill, place_pill, attack_tank
 
 -- Filter functions for each incremental pool.
 -- Return true if the object is a valid candidate.
+-- filter_refuel: returns nil if the base qualifies for scoring, or a
+-- reject descriptor table { reason = "<short>", remaining = <ticks> }
+-- when it should be SHOWN in the pool grid but greyed out (so the
+-- user can see "this base exists, here's why we're not picking it").
+-- The only HARD reject (drop from queue entirely) is "hostile" — we
+-- never refuel at an enemy base.
 local function filter_refuel(obj, state, info)
-  if not (obj.owner == "friendly" or obj.owner == "neutral") then return false end
-  -- Skip blocked
+  if not (obj.owner == "friendly" or obj.owner == "neutral") then
+    return { reason = "hostile" }
+  end
+  -- Blocked tile
   if state and state.blocked then
     local bk = U.mkey(obj.mx, obj.my)
-    if state.blocked[bk] and (state.tick or 0) < state.blocked[bk] then return false end
+    local until_tick = state.blocked[bk]
+    if until_tick and (state.tick or 0) < until_tick then
+      return { reason = "blocked", remaining = until_tick - (state.tick or 0) }
+    end
   end
-  -- Skip neutral bases unseen too long
+  -- Neutral and unseen too long
   local now = state and state.tick or 0
   if obj.owner == "neutral" and obj.last_seen and now > 0
-     and (now - obj.last_seen) > C.STALE_SKIP_TICKS then return false end
-  -- Skip bases with recently observed low stock
+     and (now - obj.last_seen) > C.STALE_SKIP_TICKS then
+    return { reason = "stale", remaining = (now - obj.last_seen) - C.STALE_SKIP_TICKS }
+  end
+  -- Recently observed depleted of what we actually need
   if obj.obs_tick and now > 0 and (now - obj.obs_tick) < C.REFUEL_OBS_STALE then
     local obs_low = true
     if info.armour < C.TANK_FULL_ARMOUR and (obj.obs_armour or 0) >= C.REFUEL_MIN_STOCK then obs_low = false end
     if info.shells < C.TANK_FULL_SHELLS and (obj.obs_shells or 0) >= C.REFUEL_MIN_STOCK then obs_low = false end
-    if obs_low then return false end
+    if obs_low then
+      return { reason = "depleted",
+               remaining = C.REFUEL_OBS_STALE - (now - obj.obs_tick) }
+    end
   end
-  -- Reject bases too dangerous (pill fire)
+  -- Too dangerous (pill fire)
   local danger = threat.at(obj.mx, obj.my)
-  if danger > C.REFUEL_DANGER_REJECT then return false end
-  return true
+  if danger > C.REFUEL_DANGER_REJECT then
+    return { reason = "danger" }
+  end
+  return nil
 end
 
 local function filter_capture_base(obj, state)
@@ -2281,11 +2299,32 @@ function M.build_eval_queue(state, world, info)
       pool_idx, pool_name, state.tick or 0))
   end
 
+  -- Pool 1: refuel. Friendly/neutral bases that pass filter_refuel get
+  -- scored normally. Bases that fail soft (blocked / stale / depleted /
+  -- danger) ride along with cost = INF and a _reject tag so the pool
+  -- grid can show them dimmed with the reason — same pattern as
+  -- pool 4 (capture_pill). Hostile bases are HARD-rejected (not queued).
   if needs_refuel then
     for id, obj in pairs(world.bases) do
-      if filter_refuel(obj, state, info) then
-        queue[#queue + 1] = { pool = 1, id = id, obj = obj }
+      local reject = filter_refuel(obj, state, info)
+      if not reject or reject.reason ~= "hostile" then
+        queue[#queue + 1] = { pool = 1, id = id, obj = obj, reject = reject }
         _diag_log_first_pool_add(1, "refuel", id, obj)
+        if reject then
+          local ck = "1:" .. id
+          if not state.cost_cache then state.cost_cache = {} end
+          if not state.cost_cache[ck] or state.cost_cache[ck]._reject ~= reject.reason then
+            state.cost_cache[ck] = {
+              cost = 1e30, raw = 1e30, tick = now, _p = 1,
+              _mx = obj.mx, _my = obj.my,
+              _dv = 0, _dang = 0, _age = 0,
+              _stale = 0, _contest = 0, _hyst = 0,
+              _ratio = 0, _dep = 0,
+              _reject = reject.reason,
+              _reject_remaining = reject.remaining or 0,
+            }
+          end
+        end
       end
     end
   end
@@ -2464,6 +2503,26 @@ local function get_formula_inner(e)
   local raw = e.raw
   local f
   if p == 1 then
+    -- Rejected refuel base: short-circuit with REJECT formula so the
+    -- breakdown panel makes clear why the row exists with INF cost.
+    -- Cost compute was skipped at queue-build time.
+    if e._reject then
+      local rem = e._reject_remaining or 0
+      local rem_tok = (e._reject == "blocked" or e._reject == "stale"
+                       or e._reject == "depleted")
+                      and string.format(" %dt", rem) or ""
+      local desc = ({
+        blocked  = "tile blocked (cooldown)",
+        stale    = "neutral, unseen too long",
+        depleted = "recently observed low on stock we need",
+        danger   = "pill fire on base — too dangerous to refuel",
+      })[e._reject] or e._reject
+      e.formula = string.format(
+        "REJECT %s%s @(%d,%d)||reject:%s%s — %s",
+        e._reject, rem_tok, e._mx or 0, e._my or 0,
+        e._reject, rem_tok, desc)
+      return e.formula
+    end
     local _d_danger  = string.format("%.1f[danger_val] x %.1f[REFUEL_DANGER_WEIGHT] = %.0f",
       e._dv, C.REFUEL_DANGER_WEIGHT, e._dang)
     local _d_stale   = fmt_stale_detail(e._age, e._stale)
@@ -2628,6 +2687,17 @@ local function get_formula_inner(e)
       e._stale, e._diff, e._anger, e._xfire, e._intcpt,
       e._hp, _wound_detail, _ammo_str,
       _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot)
+    -- Format-time log: capture e._spot AT THE MOMENT the formula is
+    -- built. If get_formula caches the result (e.formula = f below),
+    -- this fires only on first build per entry. If panel later parses
+    -- a different value, that proves the formula was rebuilt from a
+    -- different _spot (or read from a different entry).
+    if BRAIN_DEBUG_MODE and cpf and cpf.spot_log_write then
+      cpf.spot_log_write(string.format(
+        "GETFORMULA_BUILD pool=6 pill=(%d,%d) cache_key_p=%s _spot=%.4f _diff=%.4f formatted_spot_text=%.0f",
+        e._mx or -1, e._my or -1, tostring(e._p),
+        e._spot or -1, e._diff or -1, e._spot or -1))
+    end
   elseif p == 7 then
     local _d_threat = string.format(
       "%.2f[threat_val] x %.1f[ATTACK_BASE_THREAT_WEIGHT] = %.0f",
@@ -2761,6 +2831,9 @@ function M.step_eval_queue(state, world, info)
           if entry._reject_remaining < 0 then entry._reject_remaining = 0 end
         elseif item.reject.reason == "stale" and obj.last_seen then
           entry._reject_remaining = (now - obj.last_seen) - C.STALE_SKIP_TICKS
+          if entry._reject_remaining < 0 then entry._reject_remaining = 0 end
+        elseif item.reject.reason == "depleted" and obj.obs_tick then
+          entry._reject_remaining = C.REFUEL_OBS_STALE - (now - obj.obs_tick)
           if entry._reject_remaining < 0 then entry._reject_remaining = 0 end
         end
         entry.tick = now
@@ -3094,6 +3167,45 @@ function M.step_eval_queue(state, world, info)
           spot_cost = cpf.dijkstra_lookup_subtract_by_kind(
                         cpf.KIND_NORMAL, best_spot.mx, best_spot.my, boat_flag, _pc)
           if spot_cost >= 1e9 then spot_cost = 500 end
+          -- Subtract-trace: when _G.DEBUG_SELF_DR is set, also call the
+          -- no-subtract variant + walk the path in Lua so we can compare
+          -- C-side reduction against a manual recomputation. Per-tile
+          -- breakdown logged so we can see exactly which tiles were
+          -- counted. Gated on a global flag (not BRAIN_DEBUG_MODE) so
+          -- it's opt-in even with debug on — this fires PER pool-6
+          -- candidate, which would otherwise drown print2.log.
+          if BRAIN_DEBUG_MODE and _G.DEBUG_SELF_DR then
+            local raw_no_sub = cpf.dijkstra_lookup_by_kind(
+                                 cpf.KIND_NORMAL, best_spot.mx, best_spot.my, boat_flag)
+            local reduction_c = (raw_no_sub or 0) - (spot_cost or 0)
+            local n_contrib_tiles = 0
+            if _pc then for _ in pairs(_pc) do n_contrib_tiles = n_contrib_tiles + 1 end end
+            -- Manual recomputation using the traced path.
+            local path = cpf.dijkstra_trace_path_by_kind(
+                           cpf.KIND_NORMAL, best_spot.mx, best_spot.my)
+            local manual_reduction = 0
+            local manual_tiles_hit = 0
+            local per_tile = ""
+            if path and _pc then
+              local TS = C.TERRAIN_SPEED
+              for i = 1, #path, 2 do
+                local tx, ty = path[i], path[i+1]
+                local p = _pc[ty * 256 + tx]
+                if p then
+                  local tt  = U.ttype(tx, ty) & 0x0F
+                  local spd = (TS and TS[tt]) or 16
+                  if spd <= 0 then spd = 16 end
+                  local add = p * (16 / spd)
+                  manual_reduction = manual_reduction + add
+                  manual_tiles_hit = manual_tiles_hit + 1
+                  if manual_tiles_hit <= 8 then
+                    per_tile = per_tile .. string.format(" (%d,%d):p=%.0f*16/%d=%.1f",
+                                                          tx, ty, p, spd, add)
+                  end
+                end
+              end
+            end
+          end
           -- Travel = spot → dead pill (pill will be dead by the time we
           -- reach the spot, so this is a short capture walk).
           -- Estimate is accurate here: spot has LOS to the pill and the
@@ -3350,6 +3462,17 @@ function M.step_eval_queue(state, world, info)
       if pool_idx == 6 then
         entry._travel=travel; entry._travel_wound=travel_wound; entry._stale=stale_cost; entry._age=_gen_age
         entry._diff=diff_cost; entry._spot=spot_cost
+        -- Correlation marker in spot_bot<N>.log: every pool-6 entry
+        -- write logs the moment _spot is set, so we can see EVERY
+        -- update of the displayed term (not just the C-side walks).
+        if BRAIN_DEBUG_MODE and cpf and cpf.spot_log_write then
+          cpf.spot_log_write(string.format(
+            "ENTRY_SPOT_WRITE pool=6 pill_id=%s pill@(%d,%d) spot@(%d,%d) _spot=%.2f _diff=%.2f cost=%.2f cache_key=%s",
+            tostring(id), obj.mx, obj.my,
+            spot_found_mx or -1, spot_found_my or -1,
+            spot_cost or -1, diff_cost or -1, c or -1,
+            tostring(cache_key)))
+        end
         entry._spot_mx=spot_found_mx; entry._spot_my=spot_found_my
         entry._anger=anger_cost
         entry._xfire=xfire_cost; entry._intcpt=intcpt_cost; entry._hp=hp_mult
