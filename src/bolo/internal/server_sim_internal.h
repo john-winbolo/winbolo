@@ -18,6 +18,7 @@
 #include "game_sim.h"        /* GameSim layout — used by the sim field below */
 #include "position_history.h" /* PosHistory — used by posHistory / lgmPosHistory */
 #include "mapgen.h" /* MapGenConfig — embedded by value in randomMapConfig */
+#include "brain_list_internal.h" /* BRAIN_LIST_PATH_LEN — brainPaths mirror */
 
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */

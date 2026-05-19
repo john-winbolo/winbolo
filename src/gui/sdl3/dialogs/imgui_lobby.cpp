@@ -125,13 +125,13 @@ static void lobbySendReadyToggle(ClientSim *cs, bool ready) {
     clientSimNetSendReady(cs, ready);
 }
 
-/* Sticky "last picked brain" path. ADD BOT uses this when present
- * so new bots inherit whatever brain the host last selected (via
- * the per-bot AiConfig "Bot Code" dropdown), instead of always
- * falling back to brainList->entries[0]. Empty until the user
- * picks at least one brain explicitly; falls back to entries[0]
- * for the first add. Process-scoped. */
-static char s_lastChosenBrainPath[256] = "";
+/* Sticky "last picked brain" catalogue index. ADD BOT uses this
+ * when in range so new bots inherit whatever brain the host last
+ * selected (via the per-bot AiConfig "Bot Code" dropdown), instead
+ * of always falling back to the server's default brain. 0xFF means
+ * "no sticky yet — use the server default"; valid values index into
+ * the lobby brain catalogue. Process-scoped. */
+static uint8_t s_lastChosenBrainIdx = 0xFF;
 
 /* Add Bot. namingPool < 0 means "use the slot's team pool" (multiplayer
  * server already picks based on team membership). namingPool >= 0
@@ -148,6 +148,14 @@ static void lobbySendAddBot(ClientSim *cs,
                 "[DIAG] lobbySendAddBot ENTRY cs=%p namingPool=%d teamNumber=%u isSP=%d",
                 (void *)cs, namingPool, (unsigned)teamNumber,
                 cs ? (int)clientSimIsSinglePlayer(cs) : -1);
+    /* Validate the sticky brain pick against the current catalogue:
+     * an out-of-range sticky (e.g. catalogue shrunk between picks)
+     * falls back to the server-default sentinel. */
+    uint8_t stickyBrainIdx = s_lastChosenBrainIdx;
+    if (stickyBrainIdx != 0xFF && cs) {
+        const BrainList *bl = clientSimGetLobbyBrainList(cs);
+        if (!bl || stickyBrainIdx >= bl->count) stickyBrainIdx = 0xFF;
+    }
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim) { WB_LOG_WARN(WB_LOG_CAT_GUI, "[DIAG] lobbySendAddBot SP: sim=NULL"); return; }
@@ -170,8 +178,9 @@ static void lobbySendAddBot(ClientSim *cs,
             return;
         }
         WB_LOG_INFO(WB_LOG_CAT_GUI,
-                    "[DIAG] lobbySendAddBot SP: picked slot=%u brain='%s'",
-                    (unsigned)slot, serverSimGetBotBrainPath(sim));
+                    "[DIAG] lobbySendAddBot SP: picked slot=%u brain='%s' stickyIdx=%u",
+                    (unsigned)slot, serverSimGetBotBrainPath(sim),
+                    (unsigned)stickyBrainIdx);
 
         /* Pick a name. If a pool override is supplied we use it; else
          * fall back to "Bot N". Build the used-names list from current
@@ -201,8 +210,14 @@ static void lobbySendAddBot(ClientSim *cs,
         WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   serverSimCreateBot returned slot=%u", (unsigned)slot);
         /* Mirror the per-bot brain selection so the AiConfig combo
          * reflects "this bot's brain" rather than a global default.
-         * 0xFF picks up the server's CLI-configured default brain. */
-        serverSimSetBotBrainIdxFor(sim, slot, 0xFF);
+         * stickyBrainIdx == 0xFF picks up the server's CLI-configured
+         * default brain; any other value swaps in the catalogue entry
+         * the host last picked. */
+        if (stickyBrainIdx != 0xFF) {
+            serverSimSwitchBotBrain(sim, slot, stickyBrainIdx);
+        } else {
+            serverSimSetBotBrainIdxFor(sim, slot, 0xFF);
+        }
         if (teamNumber > 0 && teamNumber < MAX_TANKS) {
             serverSimSetTeam(sim, slot, teamNumber);
         }
@@ -232,10 +247,13 @@ static void lobbySendAddBot(ClientSim *cs,
             lobbyBotPoolPick(namingPool, usedNames, usedCount,
                              botName, sizeof(botName));
         }
-        /* Server-default brain at add time; if the host has a sticky
-         * pick they will have set it via the AiConfig combo, which
-         * issues a SET_BOT_BRAIN once the slot lands. */
-        clientSimNetSendAddBotConfigured(cs, teamNumber, 0xFF, botName);
+        /* Pass the sticky brain index for API symmetry with the SP path,
+         * but be aware: PACKET_LOBBY_ADD_BOT does not propagate it to the
+         * server today (the wire payload's brain bytes are vestigial and
+         * the parser ignores them). The AiConfig combo issues a follow-up
+         * SET_BOT_BRAIN once the new slot lands when a non-default brain
+         * is desired. */
+        clientSimNetSendAddBotConfigured(cs, teamNumber, stickyBrainIdx, botName);
     }
 }
 
@@ -2764,20 +2782,11 @@ static void lobbySendBotConfig(ClientSim *cs,
 }
 
 /* Change which Lua brain script a lobby bot uses. SP path mutates the
- * server sim directly; MP path goes through PACKET_LOBBY_SET_BOT_BRAIN. */
+ * server sim directly; MP path goes through PACKET_LOBBY_SET_BOT_BRAIN.
+ * brainIdx == 0xFF means "use the server's CLI-configured default
+ * brain"; any other value indexes into the lobby brain catalogue. */
 static void lobbySendSetBotBrain(ClientSim *cs,
-                                 uint8_t slot, const char *brainPath) {
-    if (!brainPath) brainPath = "";
-    /* Translate the caller-supplied path to a catalogue index via
-     * the client-side mirror (identical to the server's brainList
-     * in SP). Empty / unknown paths fall through to 0xFF, which
-     * resolves to the CLI-configured default brain server-side. */
-    uint8_t brainIdx = 0xFF;
-    if (cs && brainPath[0] != '\0') {
-        const BrainList *bl = clientSimGetLobbyBrainList(cs);
-        const BrainListEntry *e = bl ? brainListFindByPath(bl, brainPath) : NULL;
-        if (e != NULL) brainIdx = (uint8_t)(e - bl->entries);
-    }
+                                 uint8_t slot, uint8_t brainIdx) {
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim || slot >= MAX_TANKS) return;
@@ -4324,12 +4333,11 @@ static void renderBotAiConfig(ClientSim *cs,
     }
     if (pendingBrainPick >= 0 && pendingBrainPick < bl->count) {
         /* Stash as the sticky default so subsequent Add Bot clicks
-         * inherit this choice instead of falling back to entries[0]. */
-        SDL_strlcpy(s_lastChosenBrainPath,
-                    bl->entries[pendingBrainPick].path,
-                    sizeof(s_lastChosenBrainPath));
+         * inherit this choice instead of falling back to the server's
+         * default brain. */
+        s_lastChosenBrainIdx = (uint8_t)pendingBrainPick;
         lobbySendSetBotBrain(cs, (uint8_t)slot,
-                             bl->entries[pendingBrainPick].path);
+                             (uint8_t)pendingBrainPick);
     }
 
     /* Difficulty / Personality dropdowns are hidden for now — the

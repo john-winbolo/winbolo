@@ -19,13 +19,14 @@
  *   Discover the set of bot codebases available on the
  *   server by scanning the brains/ directory for any
  *   sub-directory that contains an init.lua. Each entry
- *   carries a display name, the wire path used as the bot
- *   brain (e.g. "Brains/NewAutopilot/init.lua"), and a
- *   coarse version string sourced from the most-recent
- *   modification time of the brain's .lua files.
+ *   carries a display name and a coarse version string
+ *   sourced from the most-recent modification time of the
+ *   brain's .lua files. Disk paths are server-private and
+ *   live alongside the catalogue under internal/.
  *
- *   Server-side only — the resulting list is shipped to
- *   clients via PACKET_LOBBY_BRAIN_LIST.
+ *   Server-side discovery — the resulting list is shipped
+ *   to clients via PACKET_LOBBY_BRAIN_LIST so the lobby
+ *   AiConfig combo can list the available brains by name.
  *********************************************************/
 
 #ifndef BRAIN_LIST_H
@@ -36,34 +37,15 @@
 #define BRAIN_LIST_MAX        16
 #define BRAIN_LIST_NAME_LEN   32
 #define BRAIN_LIST_VER_LEN    24
-#define BRAIN_LIST_PATH_LEN   256
 
 typedef struct {
     char name[BRAIN_LIST_NAME_LEN];     /* "NewAutopilot" — dir name */
     char version[BRAIN_LIST_VER_LEN];   /* "2026-05-11 12:30" or "" */
-    char path[BRAIN_LIST_PATH_LEN];     /* "Brains/NewAutopilot/init.lua" */
 } BrainListEntry;
 
 typedef struct {
     BrainListEntry entries[BRAIN_LIST_MAX];
     int            count;
 } BrainList;
-
-/* Scan brains/ (and brains/ at SDL_GetBasePath when present) for any
- * sub-directory containing an init.lua. Fills `out` with up to
- * BRAIN_LIST_MAX entries sorted alphabetically by name. The version
- * field is set from the recursive max-mtime of .lua files inside the
- * brain directory; empty when no .lua files are found.
- *
- * Also populates `paths` in lockstep with `out`: paths[i] carries the
- * disk path for out->entries[i] after the function returns. Caller
- * provides storage for BRAIN_LIST_MAX rows. Pass NULL to skip the
- * paths-mirror fill. */
-void brainListScan(BrainList *out, char (*paths)[BRAIN_LIST_PATH_LEN]);
-
-/* Find an entry by wire path (matches `entry.path`). Returns NULL when
- * not present. */
-const BrainListEntry *brainListFindByPath(const BrainList *list,
-                                          const char *path);
 
 #endif /* BRAIN_LIST_H */

@@ -265,8 +265,7 @@ int run_lobby_bot_brain_codec_and_apply(void) {
     /* Apply writes the index straight onto cs->lobbyBotBrainIdx, but
      * clamps any in-range-looking value that lies past the brain
      * catalogue to the 0xFF sentinel — so we still have to seed the
-     * count (entries[].path stay zero; this dispatcher no longer
-     * reads them). 0xFF passes the clamp untouched. */
+     * count. 0xFF passes the clamp untouched. */
     ClientSim *cs = fresh_client_sim();
     UT_ASSERT(cs != NULL);
     cs->lobbyBrainList.count = 4;
@@ -279,10 +278,11 @@ int run_lobby_bot_brain_codec_and_apply(void) {
 }
 
 /* ================================================================
- * CTRL_LOBBY_BRAIN_LIST — biggest payload. Tests a single-entry
- * list and a BRAIN_LIST_MAX-entry list to exercise the worst-case
- * encode path (which only fits because MAX_CONTROL_PACKET was bumped
- * to 8192 alongside this encoder).
+ * CTRL_LOBBY_BRAIN_LIST — name/version round-trip. Tests a
+ * single-entry list and a BRAIN_LIST_MAX-entry list to exercise
+ * the worst-case encode path (~897 bytes payload, comfortably
+ * inside MAX_CONTROL_PACKET's single-datagram budget). Disk paths
+ * are server-private and never appear on the wire.
  * ================================================================ */
 int run_lobby_brain_list_codec_and_apply(void) {
     /* Single entry. */
@@ -295,9 +295,6 @@ int run_lobby_brain_list_codec_and_apply(void) {
                 BRAIN_LIST_NAME_LEN - 1);
         strncpy(in.u.lobbyBrainList.list.entries[0].version, "2026-05-11 12:30",
                 BRAIN_LIST_VER_LEN - 1);
-        strncpy(in.u.lobbyBrainList.list.entries[0].path,
-                "Brains/NewAutopilot/init.lua",
-                BRAIN_LIST_PATH_LEN - 1);
 
         UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_BRAIN_LIST, &in, &out) == 0,
                       "codec_roundtrip failed (single entry)");
@@ -307,13 +304,10 @@ int run_lobby_brain_list_codec_and_apply(void) {
                          "NewAutopilot") == 0);
         UT_ASSERT(strcmp(out.u.lobbyBrainList.list.entries[0].version,
                          "2026-05-11 12:30") == 0);
-        UT_ASSERT(strcmp(out.u.lobbyBrainList.list.entries[0].path,
-                         "Brains/NewAutopilot/init.lua") == 0);
     }
 
-    /* Full BRAIN_LIST_MAX entries — worst-case wire size, near the
-     * 8192-byte cap. Each entry gets a unique name/version/path so
-     * we can spot misordering. */
+    /* Full BRAIN_LIST_MAX entries — worst-case wire size. Each entry
+     * gets a unique name/version so we can spot misordering. */
     ControlEvent full_in, full_out;
     memset(&full_in, 0, sizeof(full_in));
     full_in.type = CTRL_LOBBY_BRAIN_LIST;
@@ -324,8 +318,6 @@ int run_lobby_brain_list_codec_and_apply(void) {
                  BRAIN_LIST_NAME_LEN, "Brain%02d", i);
         snprintf(full_in.u.lobbyBrainList.list.entries[i].version,
                  BRAIN_LIST_VER_LEN, "v%d", i);
-        snprintf(full_in.u.lobbyBrainList.list.entries[i].path,
-                 BRAIN_LIST_PATH_LEN, "Brains/Brain%02d/init.lua", i);
     }
 
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_BRAIN_LIST,
@@ -335,18 +327,14 @@ int run_lobby_brain_list_codec_and_apply(void) {
     for (i = 0; i < BRAIN_LIST_MAX; i++) {
         char wantName[BRAIN_LIST_NAME_LEN];
         char wantVer [BRAIN_LIST_VER_LEN];
-        char wantPath[BRAIN_LIST_PATH_LEN];
         snprintf(wantName, sizeof(wantName), "Brain%02d", i);
         snprintf(wantVer,  sizeof(wantVer),  "v%d", i);
-        snprintf(wantPath, sizeof(wantPath), "Brains/Brain%02d/init.lua", i);
         UT_ASSERT_MSG(strcmp(full_out.u.lobbyBrainList.list.entries[i].name,
                              wantName) == 0,
                       "entry %d name mismatch: got '%s' want '%s'",
                       i, full_out.u.lobbyBrainList.list.entries[i].name, wantName);
         UT_ASSERT(strcmp(full_out.u.lobbyBrainList.list.entries[i].version,
                          wantVer) == 0);
-        UT_ASSERT(strcmp(full_out.u.lobbyBrainList.list.entries[i].path,
-                         wantPath) == 0);
     }
 
     /* Apply: cs->lobbyBrainList is a straight struct copy. */
