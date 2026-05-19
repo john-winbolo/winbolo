@@ -65,6 +65,7 @@
 #include "sdl3imgui.h"
 #include "luabrainshandler.h"
 #include "dialog_backend.h"
+#include "dialogs/imgui_mapchooser.h"
 #include "dialogs/imgui_messagebox.h"
 #include "bg_game.h"
 
@@ -562,6 +563,13 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
    * readback clobbered the user's INI choice with that default. */
   (void)gamePlayed;
   brainsHandlerShutdown();
+  /* Stop the map-preview worker. Idempotent: a no-op if the chooser
+   * was never opened (worker is spawned lazily on first preview
+   * request) or if the dialog already closed (its close edge stops
+   * the worker). Belt-and-suspenders for the quit-with-chooser-open
+   * case: without this, the still-joinable std::thread destructor
+   * runs at atexit and trips std::terminate. */
+  mapChooserStopPreviewWorker();
   if (spServerSimActive) {
     /* Unregister the SP humanSim subscriber before gameFrontShutdownServer
      * destroys the ServerSim's subscriber registry.  The hostedServer-only
