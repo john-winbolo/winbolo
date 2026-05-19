@@ -126,9 +126,13 @@ bool botManagerAddBot(struct ServerSim *sim, BYTE playerNum,
                       const char *brainPath, const char *brainName,
                       aiType ai, gameType game, bool hiddenMines);
 
-/* Swap the brain script path on an already-added bot. Returns false
- * when the slot is empty / out-of-range. */
-bool botManagerSetBrainPath(BYTE playerNum, const char *brainPath);
+/* Swap the brain script on an already-added bot, identified by its
+ * catalogue index. brainIdx == 0xFF resolves to the CLI-configured
+ * default brain via serverSimGetBrainPathForIdx. Returns false when
+ * the slot is empty / out-of-range or the index does not resolve to
+ * a path. */
+bool botManagerSetBrainIdx(struct ServerSim *sim, BYTE playerNum,
+                           uint8_t brainIdx);
 
 /*********************************************************
  *NAME:          botManagerTick

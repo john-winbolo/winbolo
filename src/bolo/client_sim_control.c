@@ -54,17 +54,15 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->controlObserverCb(cs->controlObserverCtx, evt);
     }
 
-    /* Self-skip on CTRL_PLAYER_JOIN only: the recipient's own player
-     * record is established via the join handshake / snapshot stream
-     * and must not be overwritten by sync or live publish with stale
-     * or partial data. CTRL_LOBBY_SLOT and CTRL_PLAYER_NAME do update
-     * self — the server is the source of truth for the recipient's
-     * lobby slot and name, matching the pre-migration UDP handlers
-     * which had no self-guard. */
+    /* Self-skip on CTRL_PLAYER_LEAVE only: a recipient must not process
+     * their own departure. CTRL_PLAYER_JOIN is allowed for self because
+     * playersSetPlayer's self-branch (inUse already TRUE, iMyPlayerNum
+     * == iPlayerNum) updates only the location field and leaves
+     * position, name, and alliances untouched — making it the correct
+     * sink for country-code refreshes. CTRL_LOBBY_SLOT and
+     * CTRL_PLAYER_NAME similarly update self because the server is the
+     * source of truth for those fields. */
     switch (evt->type) {
-    case CTRL_PLAYER_JOIN:
-        if (evt->u.playerJoin.playerNum == cs->myPlayerNum) return;
-        break;
     case CTRL_PLAYER_LEAVE:
         if (evt->u.playerLeave.playerNum == cs->myPlayerNum) return;
         break;
@@ -173,6 +171,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         cs->lobbyWbnAvailable = evt->u.lobbySettings.lobbyWbnAvailable;
         cs->lobbyServerLocks         = evt->u.lobbySettings.lobbyServerLocks;
+        cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;
         break;
 
     case CTRL_LOBBY_TEAM_META: {
@@ -199,11 +198,15 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     }
 
     case CTRL_LOBBY_BOT_BRAIN: {
-        uint8_t s = evt->u.lobbyBotBrain.slot;
+        uint8_t s   = evt->u.lobbyBotBrain.slot;
+        uint8_t idx = evt->u.lobbyBotBrain.brainIdx;
         if (s >= MAX_TANKS) break;
-        strncpy(cs->lobbyBotBrain[s], evt->u.lobbyBotBrain.path,
-                sizeof(cs->lobbyBotBrain[s]) - 1);
-        cs->lobbyBotBrain[s][sizeof(cs->lobbyBotBrain[s]) - 1] = '\0';
+        /* Clamp out-of-range catalogue indices to the 0xFF sentinel so
+         * downstream consumers never see a byte that points past the
+         * brain catalogue. Matches the server-side write-time clamp in
+         * serverSimSetBotBrainIdxFor. */
+        if (idx != 0xFF && idx >= cs->lobbyBrainList.count) idx = 0xFF;
+        cs->lobbyBotBrainIdx[s] = idx;
         break;
     }
 

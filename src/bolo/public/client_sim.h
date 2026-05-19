@@ -36,6 +36,7 @@
 #include "screentank.h"     /* For tankAlliance */
 #include "brain.h"  /* For BuildInfo, ObjectInfo */
 #include "brain_list.h"   /* BrainList — value type used by clientSimGetLobbyBrainList */
+#include "upload_policy.h" /* UploadPolicy — clientSimGetUploadPolicy return */
 
 #ifndef GAMESIM_TYPEDEF
 #define GAMESIM_TYPEDEF
@@ -326,7 +327,7 @@ void netGetOurAddressStr(ClientSim *cs, char *dest);
 BYTE netGetDownloadPos(void);
 void netSecond(void);
 int netGetNetTime(void);
-bool netSetup(ClientSim *cs, netType value, unsigned short myPort, char *targetIp, unsigned short targetPort, char *password, bool usCreate, char *trackerAddr, unsigned short trackerPort, bool useTracker, bool wantRejoin, bool useWinboloNet, char *wbnToken);
+bool netSetup(ClientSim *cs, netType value, unsigned short myPort, char *targetIp, unsigned short targetPort, char *password, bool usCreate, char *trackerAddr, unsigned short trackerPort, bool useTracker, bool wantRejoin, bool useWinboloNet, const char *wbnApiToken, const char *wbnServerKey);
 void netDestroy(ClientSim *cs);
 void netSendTrackerUpdate(void);
 void netProcessedDnsLookup(ClientSim *cs, char *ip, char *host);
@@ -613,6 +614,10 @@ bool        clientSimGetLobbyAllowNewPlayers(const ClientSim *cs);
 bool        clientSimGetLobbyWbnAvailable(const ClientSim *cs);
 uint16_t    clientSimGetLobbyServerLocks(const ClientSim *cs);
 
+/* Server map-upload policy as last broadcast in the lobby-settings event.
+ * Defaults to UPLOAD_POLICY_ALLOW until the first event arrives. */
+UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs);
+
 uint8_t     clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamColor(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamPool(const ClientSim *cs, BYTE teamId);
@@ -620,7 +625,12 @@ const char *clientSimGetLobbyTeamName(const ClientSim *cs, BYTE teamId);
 
 uint8_t     clientSimGetLobbyBotDifficulty(const ClientSim *cs, BYTE slot);
 uint8_t     clientSimGetLobbyBotPersonality(const ClientSim *cs, BYTE slot);
-const char *clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot);
+/* Returns the catalogue index of the brain assigned to a lobby bot slot.
+ * 0xFF means the bot uses the server's default brain; for any other
+ * value the caller can look up clientSimGetLobbyBrainList(cs)->entries[idx]
+ * to recover the display name and wire path. Out-of-range slot returns
+ * 0xFF. */
+uint8_t     clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot);
 
 const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs);
 

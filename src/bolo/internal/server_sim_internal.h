@@ -18,6 +18,8 @@
 #include "game_sim.h"        /* GameSim layout — used by the sim field below */
 #include "position_history.h" /* PosHistory — used by posHistory / lgmPosHistory */
 #include "mapgen.h" /* MapGenConfig — embedded by value in randomMapConfig */
+#include "brain_list_internal.h" /* BRAIN_LIST_PATH_LEN — brainPaths mirror */
+#include "upload_policy.h"  /* UploadPolicy — broadcast in lobby-settings event */
 
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
@@ -44,15 +46,23 @@ struct ServerSim {
     TeamMetadata    teams[MAX_TANKS];
     LobbyBotConfig  botConfigs[MAX_TANKS];
 
-    /* Per-bot brain path. Empty = "use the global botBrainPath". The
+    /* Per-bot brain selection as an index into brainList. 0xFF means
+     * "use the global botBrainPath" (the CLI-configured default). The
      * lobby AiConfig dropdown writes here via
      * PACKET_LOBBY_SET_BOT_BRAIN so different bots in the same lobby
      * can run different brains. */
-    char            botBrainPaths[MAX_TANKS][260];
+    uint8_t         botBrainIdx[MAX_TANKS];
 
     /* Discovered brain codebases under brains/ — sent to clients via
      * PACKET_LOBBY_BRAIN_LIST so the AiConfig combo can list them. */
     BrainList       brainList;
+
+    /* Server-private mirror of the on-disk paths for each entry in
+     * brainList. Populated in lockstep with brainList by brainListScan
+     * and indexed identically (brainPaths[i] is the disk path for
+     * brainList.entries[i]). Kept off the public catalogue so the path
+     * never appears on the public API or the wire. */
+    char            brainPaths[BRAIN_LIST_MAX][BRAIN_LIST_PATH_LEN];
 
     /* Layout A lobby flags — all persist across rounds. */
     bool     openHost;             /* anyone can edit when true */
@@ -68,6 +78,7 @@ struct ServerSim {
                                       * incoming player is promoted to host.
                                       * Consumed by the join handler. */
     uint16_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
+    UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
 
     /* Game-settings mirrors — needed for live mid-lobby change broadcasts.
      * The authoritative values live in GameSim/serverSim CLI args; these
@@ -102,21 +113,6 @@ struct ServerSim {
     BYTE        *previousMapData;
     int          previousMapDataLen;
     char         previousMapName[MAP_STR_SIZE];
-
-    /* Pending upload state. When a remote client finishes uploading a
-     * map (PACKET_LOBBY_MAP_UPLOAD_DONE), the bytes are written to a
-     * temp path and the sim is reloaded from it for preview. We hold
-     * onto the (temp -> final) pair until the host commits or cancels
-     * the preview — only on commit do we move the temp file into the
-     * data/maps/Uploads/ directory. On cancel (or when the user picks
-     * a different map mid-preview) the temp file is deleted, so a
-     * rejected upload never pollutes the maps library.
-     * pendingUploadActive == false when no upload preview is in
-     * flight; the path fields are then empty strings. */
-    char         pendingUploadTempPath[FILENAME_MAX];
-    char         pendingUploadFinalPath[FILENAME_MAX];
-    char         pendingUploadRelPath[256];   /* "Uploads/<name>" — for the client reply */
-    bool         pendingUploadActive;
 
     /* Info packet fields — stored at creation for server browser responses */
     char         mapName[MAP_STR_SIZE];

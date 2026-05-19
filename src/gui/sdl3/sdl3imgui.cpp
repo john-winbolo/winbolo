@@ -79,6 +79,7 @@ extern "C" {
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "dialogs/imgui_dialog_utils.h"
+#include "dialogs/imgui_keysetup.h"
 #include "platform/mac_menubar.h"
 
 extern "C" void windowSetQuitting(void);
@@ -102,6 +103,8 @@ extern "C" void utilStripName(char *name);
 /* Key setup helpers */
 extern "C" void windowGetKeys(keyItems *value);
 extern "C" void windowSetKeys(keyItems *value);
+extern "C" bool useAutoslow;
+extern "C" bool useAutohide;
 extern "C" void windowKeyPressed(struct ClientSim *cs, int keyCode);
 extern "C" void inputTouchSetAbsoluteSteering(bool enabled);
 extern "C" bool inputTouchGetAbsoluteSteering(void);
@@ -308,22 +311,14 @@ static char s_joinConfirmUrl[512]   = "";
 static char s_joinConfirmAddr[256]  = "";
 static int  s_joinConfirmPort       = 0;
 
-/* Key Setup modal state */
-/* Which binding is currently being captured; -1 = none */
-enum KeySetupField {
-    ksNone = -1,
-    ksForward, ksBackward, ksTurnLeft, ksTurnRight,
-    ksShoot, ksLayMine, ksGunIncrease, ksGunDecrease,
-    ksTankView, ksPillView,
-    ksScrollUp, ksScrollDown, ksScrollLeft, ksScrollRight,
-    ksQuickTree, ksQuickRoad, ksQuickWall, ksQuickPillbox, ksQuickMine,
-};
-
-static bool         s_showKeySetup        = false;
-static keyItems     s_keySetupKeys;          /* working copy */
-static bool         s_keySetupAutoSlowdown  = false;
-static bool         s_keySetupAutoGunsight  = false;
-static KeySetupField s_keySetupWaiting      = ksNone;
+/* Key Setup modal state is owned by imgui_keysetup.cpp now —
+ * trigger via imguiKeySetupOpenInGame, render each frame via
+ * imguiKeySetupRenderInGamePopup, route key-capture scancodes
+ * through imguiKeySetupHandleInGameScancode. This file used to
+ * carry a parallel copy of the form + state; the two diverged
+ * (Auto Slowdown not persisting from the in-game popup was the
+ * symptom) so it was consolidated into the standalone dialog's
+ * module. */
 
 /* Send Message panel state */
 enum SendMsgRecipient { kSendAll = 0, kSendAllies, kSendNearby, kSendSelected };
@@ -1903,212 +1898,10 @@ static void renderPasswordModal(void) {
     }
 }
 
-/* -------------------------------------------------------
- * Key Setup modal
- * Mirrors dialogKeySetup.c — allows the user to rebind
- * all game keys.  Key capture is driven by the SDL event
- * loop in sdl3ImguiProcessEvents().
- * ------------------------------------------------------- */
-
-/* Return a human-readable name for a scancode. */
-static const char *keySetupScancodeLabel(int scancode) {
-    const char *name = SDL_GetScancodeName((SDL_Scancode)scancode);
-    if (name && name[0] != '\0') return name;
-    return langGetText(STR_DLGKEYSETUP_NONE_VAL);
-}
-
-/* Map a KeySetupField to the corresponding keyItems member and label. */
-static int *keySetupFieldPtr(KeySetupField f, keyItems *ki) {
-    switch (f) {
-        case ksForward:    return &ki->kiForward;
-        case ksBackward:   return &ki->kiBackward;
-        case ksTurnLeft:   return &ki->kiLeft;
-        case ksTurnRight:  return &ki->kiRight;
-        case ksShoot:      return &ki->kiShoot;
-        case ksLayMine:    return &ki->kiLayMine;
-        case ksGunIncrease:return &ki->kiGunIncrease;
-        case ksGunDecrease:return &ki->kiGunDecrease;
-        case ksTankView:   return &ki->kiTankView;
-        case ksPillView:   return &ki->kiPillView;
-        case ksScrollUp:   return &ki->kiScrollUp;
-        case ksScrollDown: return &ki->kiScrollDown;
-        case ksScrollLeft: return &ki->kiScrollLeft;
-        case ksScrollRight:return &ki->kiScrollRight;
-        case ksQuickTree:  return &ki->kiQuickTree;
-        case ksQuickRoad:  return &ki->kiQuickRoad;
-        case ksQuickWall:  return &ki->kiQuickWall;
-        case ksQuickPillbox:return &ki->kiQuickPillbox;
-        case ksQuickMine:  return &ki->kiQuickMine;
-        default:           return nullptr;
-    }
-}
-
-/* Render a single key-binding row: "Label   [Key Name]  [Change]" */
-static void keySetupRow(const char *label, KeySetupField field) {
-    int *ptr = keySetupFieldPtr(field, &s_keySetupKeys);
-    if (!ptr) return;
-
-    bool waiting = (s_keySetupWaiting == field);
-
-    ImGui::TableNextRow();
-    ImGui::TableSetColumnIndex(0);
-    ImGui::TextUnformatted(label);
-
-    ImGui::TableSetColumnIndex(1);
-    if (waiting) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
-                           langGetText(STR_DLGKEYSETUP_PRESSAKEY));
-    } else {
-        ImGui::TextUnformatted(keySetupScancodeLabel(*ptr));
-    }
-
-    ImGui::TableSetColumnIndex(2);
-    ImGui::PushID((int)field);
-    if (waiting) {
-        if (ImGui::SmallButton(langGetText(STR_CANCEL))) {
-            s_keySetupWaiting = ksNone;
-        }
-        imguiHandOnHover();
-    } else {
-        if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
-            s_keySetupWaiting = field;
-        }
-        imguiHandOnHover();
-    }
-    ImGui::PopID();
-}
-
-static void renderKeySetupModal(ClientSim *cs) {
-    char title[128];
-    snprintf(title, sizeof(title), "%s###keysetup", langGetText(STR_DLGKEYSETUP_TITLE));
-    if (s_showKeySetup) {
-        ImGui::OpenPopup(title);
-        s_showKeySetup = false;
-        windowGetKeys(&s_keySetupKeys);
-        s_keySetupAutoSlowdown = clientSimGetTankAutoSlowdown(cs);
-        s_keySetupAutoGunsight = clientSimGetTankAutoHideGunsight(cs);
-        s_keySetupWaiting      = ksNone;
-    }
-
-    /* Keep the popup centered on first use */
-    ImGuiIO &io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
-                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(420, 560), ImGuiCond_Always);
-
-    /* ImGuiWindowFlags_NoMove so the user cannot accidentally drag it off-screen */
-    bool open = true;
-    static float s_fadeKeySetup = 0.0f;
-    if (!ImGui::BeginPopupModal(title, &open,
-                                ImGuiWindowFlags_NoResize |
-                                ImGuiWindowFlags_NoMove)) {
-        return;
-    }
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
-                        imguiPopupFadeAlpha(&s_fadeKeySetup));
-    if (s_closeAllPopups) { ImGui::PopStyleVar(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-
-    /* While this modal is open ALL keyboard/mouse events are consumed by ImGui
-     * (BeginPopupModal sets WantCaptureKeyboard + WantCaptureMouse).
-     * sdl3ImguiProcessEvents additionally intercepts SDL_EVENT_KEY_DOWN when
-     * s_keySetupWaiting != ksNone to route the raw scancode here. */
-
-    if (s_keySetupWaiting != ksNone) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
-                           langGetText(STR_DLGKEYSETUP_PRESS_OR_CANCEL));
-        ImGui::Separator();
-    }
-
-    /* Scrollable region containing all binding rows */
-    float footerH = ImGui::GetFrameHeightWithSpacing() * 3.0f + ImGui::GetStyle().ItemSpacing.y * 2.0f;
-    ImGui::BeginChild("##bindings", ImVec2(0.0f, -footerH), false);
-
-    constexpr ImGuiTableFlags tflags =
-        ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit |
-        ImGuiTableFlags_RowBg;
-
-    auto section = [&](const char *sectionTitle) {
-        ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "%s", sectionTitle);
-        ImGui::BeginTable(sectionTitle, 3, tflags, ImVec2(-1, 0));
-        ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_ACTION),
-                                ImGuiTableColumnFlags_WidthFixed, 140.0f);
-        ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_KEY),
-                                ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("",        ImGuiTableColumnFlags_WidthFixed,  68.0f);
-    };
-    auto endSection = [&]() { ImGui::EndTable(); };
-
-    section(langGetText(STR_DLGKEYSETUP_DRIVETANK));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_FASTER),    ksForward);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SLOWER),    ksBackward);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_TURNLEFT),  ksTurnLeft);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_TURNRIGHT), ksTurnRight);
-    endSection();
-
-    section(langGetText(STR_DLGKEYSETUP_WEAPONS));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SHOOT),    ksShoot);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_LAYMINE),  ksLayMine);
-    endSection();
-
-    section(langGetText(STR_DLGKEYSETUP_GUNRANGE));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_INCREASE), ksGunIncrease);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_DECREASE), ksGunDecrease);
-    endSection();
-
-    section(langGetText(STR_DLGKEYSETUP_VIEW));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_TANKVIEW), ksTankView);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_PILLVIEW), ksPillView);
-    endSection();
-
-    section(langGetText(STR_DLGKEYSETUP_SCROLL));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SCROLLUP),    ksScrollUp);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SCROLLDOWN),  ksScrollDown);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SCROLLLEFT),  ksScrollLeft);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SCROLLRIGHT), ksScrollRight);
-    endSection();
-
-    section(langGetText(STR_DLGKEYSETUP_QUICKKEYS));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_TREE),         ksQuickTree);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_ROAD),         ksQuickRoad);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_WALL),         ksQuickWall);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_QUICKPILLBOX), ksQuickPillbox);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_QUICKMINE),    ksQuickMine);
-    endSection();
-
-    ImGui::EndChild();
-
-    ImGui::Separator();
-    ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_AUTOSLOWDOWN), &s_keySetupAutoSlowdown);
-    ImGui::SameLine();
-    ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_AUTOGUNSIGHT), &s_keySetupAutoGunsight);
-    ImGui::Spacing();
-
-    /* OK / Cancel — disabled while a key-capture is pending so the user
-     * must press a key or click Cancel on the row first. */
-    bool busy = (s_keySetupWaiting != ksNone);
-    if (busy) ImGui::BeginDisabled();
-
-    if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0))) {
-        windowSetKeys(&s_keySetupKeys);
-        clientSimSetTankAutoSlowdown(cs, s_keySetupAutoSlowdown);
-        clientSimSetTankAutoHideGunsight(cs, s_keySetupAutoGunsight);
-        s_keySetupWaiting = ksNone;
-        ImGui::CloseCurrentPopup();
-    }
-    imguiHandOnHover();
-    ImGui::SameLine();
-    if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(120, 0))) {
-        s_keySetupWaiting = ksNone;
-        ImGui::CloseCurrentPopup();
-    }
-    imguiHandOnHover();
-
-    if (busy) ImGui::EndDisabled();
-
-    ImGui::PopStyleVar();
-    ImGui::EndPopup();
-}
+/* The in-game Key Setup popup lives in imgui_keysetup.cpp now —
+ * see imguiKeySetupRenderInGamePopup. This file used to carry a
+ * parallel copy. Removing it pinned the persistence bug (only
+ * one OK handler now to keep in sync with INI write). */
 
 /* -------------------------------------------------------
  * Settings panel — collects Edit + WinBolo menu options
@@ -3292,18 +3085,13 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         }
 #endif
 
-        /* Key capture for the Key Setup modal — intercept before the game sees it. */
-        if (s_keySetupWaiting != ksNone && ev.type == SDL_EVENT_KEY_DOWN &&
+        /* Key capture for the Key Setup modal — intercept before the
+         * game sees it. State + the actual binding write live in
+         * imgui_keysetup.cpp now; we just feed it the scancode. */
+        if (imguiKeySetupIsCapturingInGameKey() &&
+            ev.type == SDL_EVENT_KEY_DOWN &&
             ev.key.windowID == SDL_GetWindowID(s_window)) {
-            SDL_Scancode sc = ev.key.scancode;
-            if (sc == SDL_SCANCODE_ESCAPE) {
-                /* Escape cancels the current capture but leaves the modal open. */
-                s_keySetupWaiting = ksNone;
-            } else {
-                int *ptr = keySetupFieldPtr(s_keySetupWaiting, &s_keySetupKeys);
-                if (ptr) *ptr = (int)sc;
-                s_keySetupWaiting = ksNone;
-            }
+            imguiKeySetupHandleInGameScancode((int)ev.key.scancode);
             /* Do NOT forward to the game — key was consumed by the dialog. */
             continue;
         }
@@ -3692,7 +3480,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
      * clock; no per-second server broadcast involved. */
     clientSimTickLobbyReturnCountdown(cs);
     renderPasswordModal();
-    renderKeySetupModal(cs);
+    imguiKeySetupRenderInGamePopup(cs);
     renderJoinConfirmModal();
 
     /* Extra render callback (e.g. Android players panel) */
@@ -4149,7 +3937,8 @@ void sdl3ImguiSetPlayerCheckState(unsigned char playerNum, bool isChecked) {
 }
 
 void sdl3ImguiShowKeySetup(void) {
-    s_showKeySetup = true;
+    /* Hands off to imgui_keysetup.cpp's in-game popup wrapper. */
+    imguiKeySetupOpenInGame();
 }
 
 void sdl3ImguiCleanup(void) {

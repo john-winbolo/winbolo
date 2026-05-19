@@ -326,6 +326,12 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
 /* Clean up textures and state. */
 void mapChooserDestroy(MapChooserState *state);
 
+/* Stop the shared preview-generation worker thread (no-op if not
+ * running). The worker is restarted lazily on the next preview
+ * request, so callers can use this freely whenever previews aren't
+ * needed — when the chooser dialog closes, and on app shutdown. */
+void mapChooserStopPreviewWorker(void);
+
 /* Force-set the chooser's selectedPath/Name and rebuild the preview
  * texture. Used by the WBN tab after an async download completes —
  * map rows there are emitted with synthetic "wbn:<id>" paths so

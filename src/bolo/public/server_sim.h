@@ -31,6 +31,7 @@
 #include "alliance_enums.h"    /* baseAlliance, pillAlliance */
 #include "screentank.h"        /* tankAlliance */
 #include "brain_list.h"        /* BrainList — returned by serverSimGetBrainList */
+#include "upload_policy.h"     /* UploadPolicy — serverSimSetUploadPolicy arg */
 
 /* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
@@ -206,6 +207,15 @@ ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, const char *mapNam
  *********************************************************/
 bool serverSimReloadMap(ServerSim *sim, const char *mapFileName);
 
+/* In-memory analogue of serverSimReloadMap: loads the supplied
+ * compressed map blob directly instead of reading from a file. The
+ * caller-supplied mapName is used as the display name (no basename
+ * or suffix stripping). Same return contract, same side effects as
+ * serverSimReloadMap. */
+bool serverSimReloadCompressedInMemory(ServerSim *sim,
+                                       const uint8_t *bytes, int len,
+                                       const char *mapName);
+
 /* Procedural-map preview variant. Regenerates the map from the
  * given MapGenConfig, stashes the prior committed map for Cancel
  * roll-back (same mechanism as serverSimReloadMap), refreshes
@@ -236,19 +246,6 @@ void serverSimCommitPreview(ServerSim *sim);
  * an empty string when no preview is in flight. Lifetime: valid
  * until the next ServerSim mutation. */
 const char *serverSimGetPreviousMapName(const ServerSim *sim);
-
-/* Pending-upload state. Set when a remote MAP_UPLOAD_DONE arrives:
- * the bytes are written to a temp path and the sim is reloaded
- * from it for preview, but the file is NOT placed in the
- * data/maps/Uploads/ library yet. Commit moves the temp to its
- * final path; cancel (or picking a different map) deletes it. */
-void  serverSimSetPendingUpload(ServerSim *sim,
-                                 const char *tempPath,
-                                 const char *finalPath,
-                                 const char *relPath);
-bool  serverSimHasPendingUpload(const ServerSim *sim);
-void  serverSimDiscardPendingUpload(ServerSim *sim);
-bool  serverSimCommitPendingUpload(ServerSim *sim);
 
 /*********************************************************
  *NAME:          serverSimDestroy
@@ -297,6 +294,28 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input);
  *  wantRejoin - If true, restore ownership of pills/bases from previous session
  *********************************************************/
 void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin);
+
+/*********************************************************
+ *NAME:          serverSimSetPlayerCountry
+ *PURPOSE:
+ *  Sets the ISO 3166-1 alpha-2 country code on a connected
+ *  player slot. Intended for the in-process SP / tutorial
+ *  path, where no GeoIP lookup runs and the local client
+ *  supplies its own resolved country (e.g. from
+ *  winbolonetGetCountryCode). Network-joined slots receive
+ *  their country from the server's GeoIP lookup and should
+ *  not be re-set through this accessor.
+ *
+ *  Input is validated: NULL, length != 2, or any non-alpha
+ *  byte is ignored (the previous value stays). A valid
+ *  two-character code is stored uppercased.
+ *
+ *ARGUMENTS:
+ *  sim       - Pointer to the ServerSim
+ *  playerNum - Player slot (0..MAX_TANKS-1)
+ *  cc        - 2-char ISO 3166-1 alpha-2 country code (any case)
+ *********************************************************/
+void serverSimSetPlayerCountry(ServerSim *sim, BYTE playerNum, const char *cc);
 
 /*********************************************************
  *NAME:          serverSimRemovePlayer
@@ -1319,9 +1338,18 @@ GameSim *serverSimGetGameSim(ServerSim *sim);
  * Lobby Layout A accessors / mutators
  * ──────────────────────────────────────────────────────────────── */
 
-/* Per-bot brain path. Set via PACKET_LOBBY_SET_BOT_BRAIN. */
-void        serverSimSetBotBrainPathFor(ServerSim *sim, BYTE slot,
-                                        const char *path);
+/* Per-bot brain selection as an index into the server's brain
+ * catalogue. brainIdx == 0xFF means "use the CLI-configured default
+ * brain". Set via PACKET_LOBBY_SET_BOT_BRAIN. */
+void        serverSimSetBotBrainIdxFor(ServerSim *sim, BYTE slot,
+                                       uint8_t brainIdx);
+
+/* Resolve a catalogue index back to its disk path. Returns the
+ * CLI-configured default path for brainIdx == 0xFF, NULL when the
+ * index is out of range. The returned pointer is owned by the sim
+ * and is valid until the sim is destroyed. */
+const char *serverSimGetBrainPathForIdx(const ServerSim *sim,
+                                        uint8_t brainIdx);
 
 /* ── Server-side map directory enumeration ──────────────────────────
  *
@@ -1346,6 +1374,7 @@ typedef struct {
                           0 if unknown. Folders carry the directory
                           mtime so the table sort still reads sensibly
                           for them. */
+    int64_t size;      /* file size in bytes; 0 for folders. */
 } ServerMapEntry;
 
 int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
@@ -1463,10 +1492,11 @@ void serverSimSetState(ServerSim *sim, ServerState s);
 void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
 
 /* Switch a lobby bot to a new brain script. Updates both the
- * per-slot brain-path mirror (serverSimSetBotBrainPathFor) and the
+ * per-slot brain-index mirror (serverSimSetBotBrainIdxFor) and the
  * bot manager's live state in a single call — these are always
- * paired at call sites. */
-void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, const char *brainPath);
+ * paired at call sites. brainIdx == 0xFF resolves to the
+ * CLI-configured default brain. */
+void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, uint8_t brainIdx);
 
 /* Rename a bot's display name in the players table without
  * touching alliance/team/transport state. SP-only path used by the
@@ -1486,6 +1516,11 @@ void serverSimPublishLobbyBotBrain(ServerSim *sim, BYTE slot);
 void serverSimPublishLobbyBotConfig(ServerSim *sim, BYTE slot);
 void serverSimPublishLobbyTeamMeta(ServerSim *sim, BYTE teamId);
 void serverSimPublishLobbySettings(ServerSim *sim);
+
+/* Mirror the operator-chosen upload policy onto the sim so it can be
+ * broadcast in the lobby-settings event. Called at server startup
+ * after transportUdpServerSetUploadConfig. */
+void serverSimSetUploadPolicy(ServerSim *sim, UploadPolicy policy);
 
 /* viewPlayer — which player perspective the sim renders from. */
 BYTE serverSimGetViewPlayer(const ServerSim *sim);

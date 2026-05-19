@@ -35,11 +35,14 @@
 #include "control_event.h"
 #include "client_sim_control.h"
 #include "transport_control_codec.h"
+#include "wbn_key_codec.h"
 #include "../gui/lang.h"
 #include "../gui/winbolo.h"
 #include "../gui/dialogAlliance.h"
 #include "../steam/steam_wrapper.h"
 #include "../common/wb_log.h"
+#include "../winbolonet/winbolonet_client.h"
+#include "../winbolonet/winbolonet_core.h"
 
 /* ================================================================
  * CLIENT SIDE
@@ -52,7 +55,13 @@ typedef struct {
     UdpClientJoinState joinState;
     char playerName[PACKET_MAX_PLAYER_NAME];
     char password[MAP_STR_SIZE];
-    char wbnToken[WBN_TOKEN_WIRE_LEN];
+    /* Long-lived WBN credential from prefs; empty when the user is not
+     * logged in.  Stays out of the wire — only fed to
+     * winbolonetClientJoinSession to mint per-send player_keys. */
+    char wbnApiToken[WBN_JOIN_KEY_WIRE_LEN];
+    /* WBN session key for the connected server.  Empty for direct-IP
+     * joins; refreshed by PACKET_WBN_REKEY when the server rotates. */
+    char wbnServerKey[WINBOLONET_KEY_LEN];
     bool wbnReauthSent;  /* TRUE after sending re-auth, reset when WBN flag restored */
     uint32_t outSequence;
 
@@ -266,6 +275,144 @@ static bool decodeLocalizedPayload(const uint8_t *buf, int len, int startPos,
     }
     *outId = (langid)id16;
     return true;
+}
+
+/* Apply one PACKET_LOBBY_MAP_LIST_RSP chunk to the client's accumulator.
+ * Wire format:
+ *   [header 8] [pathLen 1] [path N] [final 1] [count 1]
+ *   per entry: [nameLen 1][name M][isFolder 1][modTime 8 BE].
+ * Server may emit multiple chunks per request — append entries and only
+ * flip Ready/InFlight on the final chunk. Stale chunks (path mismatched
+ * against the in-flight request) are silently dropped.
+ *
+ * Declared in transport_udp.h so unit tests can drive the accumulator
+ * directly without standing up a full TransportUdpClientCtx. */
+void udpClientHandleLobbyMapListRsp(ClientSim *cs,
+                                    const uint8_t *buf, int len) {
+    if (!cs) return;
+    if (len < PACKET_HEADER_SIZE + 1) return;
+    int pos = PACKET_HEADER_SIZE;
+    uint8_t plen = buf[pos++];
+    if (pos + plen + 2 > len) return;
+    char rspPath[256];
+    memset(rspPath, 0, sizeof(rspPath));
+    if (plen > 0) {
+        if (plen >= sizeof(rspPath)) plen = (uint8_t)(sizeof(rspPath) - 1);
+        memcpy(rspPath, buf + pos, plen);
+    }
+    pos += plen;
+    uint8_t finalFlag = buf[pos++];
+    uint8_t cnt = buf[pos++];
+
+    if (strncmp(rspPath, cs->lobbyMapListReqPath,
+                sizeof(cs->lobbyMapListReqPath)) != 0) {
+        return;
+    }
+
+    memset(cs->lobbyMapListPath, 0, sizeof(cs->lobbyMapListPath));
+    SDL_strlcpy(cs->lobbyMapListPath, rspPath,
+                sizeof(cs->lobbyMapListPath));
+    for (int i = 0; i < cnt && pos < len; i++) {
+        if (pos + 1 > len) break;
+        uint8_t nameLen = buf[pos++];
+        if (nameLen >= LOBBY_MAP_LIST_NAME_LEN ||
+            pos + nameLen + 1 + 8 > len) break;
+        if (cs->lobbyMapListCount >= LOBBY_MAP_LIST_MAX) {
+            pos += nameLen + 1 + 8;
+            continue;
+        }
+        int idx = cs->lobbyMapListCount++;
+        memset(cs->lobbyMapListNames[idx], 0, LOBBY_MAP_LIST_NAME_LEN);
+        if (nameLen > 0) {
+            memcpy(cs->lobbyMapListNames[idx], buf + pos, nameLen);
+        }
+        pos += nameLen;
+        cs->lobbyMapListIsFolder[idx] = buf[pos++];
+        uint64_t mt = 0;
+        for (int b = 0; b < 8; b++) {
+            mt = (mt << 8) | buf[pos++];
+        }
+        cs->lobbyMapListModTime[idx] = (int64_t)mt;
+    }
+    if (finalFlag) {
+        cs->lobbyMapListReady = true;
+        cs->lobbyMapListInFlight = false;
+    }
+}
+
+/* Apply one PACKET_LOBBY_MAP_SEARCH_RSP chunk to the client's search
+ * accumulator.
+ * Wire format:
+ *   [header 8] [pathLen 1] [path N] [queryLen 1] [query M]
+ *   [final 1] [count 1]
+ *   per entry: [nameLen 1][name M][isFolder 1][modTime 8 BE].
+ * Chunks repeat the full path+query prefix; stale chunks are dropped
+ * by matching against (reqPath, reqQuery). */
+void udpClientHandleLobbyMapSearchRsp(ClientSim *cs,
+                                      const uint8_t *buf, int len) {
+    if (!cs) return;
+    if (len < PACKET_HEADER_SIZE + 1) return;
+    int pos = PACKET_HEADER_SIZE;
+    uint8_t plen = buf[pos++];
+    if (pos + plen + 2 > len) return;
+    char rspPath[256];
+    memset(rspPath, 0, sizeof(rspPath));
+    if (plen > 0) {
+        if (plen >= sizeof(rspPath)) plen = (uint8_t)(sizeof(rspPath) - 1);
+        memcpy(rspPath, buf + pos, plen);
+    }
+    pos += plen;
+    uint8_t qlen = buf[pos++];
+    if (pos + qlen + 2 > len) return;
+    char rspQuery[128];
+    memset(rspQuery, 0, sizeof(rspQuery));
+    if (qlen > 0) {
+        if (qlen >= sizeof(rspQuery)) qlen = (uint8_t)(sizeof(rspQuery) - 1);
+        memcpy(rspQuery, buf + pos, qlen);
+    }
+    pos += qlen;
+    uint8_t finalFlag = buf[pos++];
+    uint8_t cnt = buf[pos++];
+
+    if (strncmp(rspPath, cs->lobbyMapSearchReqPath,
+                sizeof(cs->lobbyMapSearchReqPath)) != 0 ||
+        strncmp(rspQuery, cs->lobbyMapSearchReqQuery,
+                sizeof(cs->lobbyMapSearchReqQuery)) != 0) {
+        return;
+    }
+
+    memset(cs->lobbyMapSearchPath, 0, sizeof(cs->lobbyMapSearchPath));
+    SDL_strlcpy(cs->lobbyMapSearchPath, rspPath,
+                sizeof(cs->lobbyMapSearchPath));
+    memset(cs->lobbyMapSearchQuery, 0, sizeof(cs->lobbyMapSearchQuery));
+    SDL_strlcpy(cs->lobbyMapSearchQuery, rspQuery,
+                sizeof(cs->lobbyMapSearchQuery));
+    for (int i = 0; i < cnt && pos < len; i++) {
+        if (pos + 1 > len) break;
+        uint8_t nameLen = buf[pos++];
+        if (nameLen >= LOBBY_MAP_LIST_NAME_LEN ||
+            pos + nameLen + 1 + 8 > len) break;
+        if (cs->lobbyMapSearchCount >= LOBBY_MAP_LIST_MAX) {
+            pos += nameLen + 1 + 8;
+            continue;
+        }
+        int idx = cs->lobbyMapSearchCount++;
+        memset(cs->lobbyMapSearchNames[idx], 0, LOBBY_MAP_LIST_NAME_LEN);
+        if (nameLen > 0) {
+            memcpy(cs->lobbyMapSearchNames[idx], buf + pos, nameLen);
+        }
+        pos += nameLen;
+        cs->lobbyMapSearchIsFolder[idx] = buf[pos++];
+        uint64_t mt = 0;
+        for (int b = 0; b < 8; b++) {
+            mt = (mt << 8) | buf[pos++];
+        }
+        cs->lobbyMapSearchModTime[idx] = (int64_t)mt;
+    }
+    if (finalFlag) {
+        cs->lobbyMapSearchReady = true;
+        cs->lobbyMapSearchInFlight = false;
+    }
 }
 
 /* Process a single incoming packet (used by both direct and delayed paths) */
@@ -980,19 +1127,33 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         c->clientSim->balanceProposalActive = false;
         memset(c->clientSim->balanceProposal, 0, sizeof(c->clientSim->balanceProposal));
         /* WBN re-auth: if our slot lost its WBN flag (server re-registered
-         * with WBN between rounds) and we have a token, re-authenticate */
-        if (c->wbnToken[0] != '\0' && c->playerNum < MAX_TANKS &&
+         * with WBN between rounds) and we have a token, mint a fresh
+         * player_key against the latest server_key and re-authenticate. */
+        if (c->wbnApiToken[0] != '\0' && c->playerNum < MAX_TANKS &&
             !(c->clientSim->lobbySlots[c->playerNum].clientFlags &
               PLAYER_FLAG_WBN_VERIFIED)) {
             if (!c->wbnReauthSent) {
-                c->wbnReauthSent = TRUE;
-                {
-                    uint8_t ra[PACKET_HEADER_SIZE + WBN_TOKEN_WIRE_LEN];
+                char playerKey[WBN_JOIN_KEY_WIRE_LEN];
+                char errMsg[256];
+                memset(playerKey, 0, sizeof(playerKey));
+                errMsg[0] = '\0';
+                if (c->wbnServerKey[0] != '\0' &&
+                    winbolonetClientJoinSession(c->wbnApiToken,
+                                                c->wbnServerKey,
+                                                playerKey, errMsg)) {
+                    uint8_t ra[PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN];
                     packHeader(ra, PACKET_WBN_REAUTH, c->outSequence++);
-                    memcpy(ra + PACKET_HEADER_SIZE, c->wbnToken, WBN_TOKEN_WIRE_LEN);
+                    memcpy(ra + PACKET_HEADER_SIZE, playerKey, WBN_JOIN_KEY_WIRE_LEN);
                     udpClientSendTo(c, ra, sizeof(ra));
+                    c->wbnReauthSent = TRUE;
+                    WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Sent re-auth for slot %d", c->playerNum);
+                } else {
+                    fprintf(stderr,
+                            "WinBolo.net re-auth exchange failed: %s\n",
+                            errMsg[0] ? errMsg : "(no server_key)");
+                    /* Leave wbnReauthSent FALSE so the next snapshot
+                     * tick retries.  No backoff — out of scope here. */
                 }
-                WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Sent re-auth for slot %d", c->playerNum);
             }
         } else {
             c->wbnReauthSent = FALSE;
@@ -1207,114 +1368,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
     }
 
-    case PACKET_LOBBY_MAP_LIST_RSP: {
-        /* [header 8] [pathLen 1] [path N] [count 1]
-         * per entry: [nameLen 1][name M][isFolder 1][modTime 8 BE] */
-        if (!c->clientSim) break;
-        if (len < PACKET_HEADER_SIZE + 1) break;
-        int pos = PACKET_HEADER_SIZE;
-        uint8_t plen = buf[pos++];
-        if (pos + plen + 1 > len) break;
-        char rspPath[256];
-        memset(rspPath, 0, sizeof(rspPath));
-        if (plen > 0) {
-            if (plen >= sizeof(rspPath)) plen = (uint8_t)(sizeof(rspPath) - 1);
-            memcpy(rspPath, buf + pos, plen);
-        }
-        pos += plen;
-        uint8_t cnt = buf[pos++];
-        if (cnt > LOBBY_MAP_LIST_MAX) cnt = LOBBY_MAP_LIST_MAX;
-
-        memset(c->clientSim->lobbyMapListPath, 0,
-               sizeof(c->clientSim->lobbyMapListPath));
-        SDL_strlcpy(c->clientSim->lobbyMapListPath, rspPath,
-                    sizeof(c->clientSim->lobbyMapListPath));
-        c->clientSim->lobbyMapListCount = 0;
-        for (int i = 0; i < cnt && pos < len; i++) {
-            if (pos + 1 > len) break;
-            uint8_t nameLen = buf[pos++];
-            if (nameLen >= LOBBY_MAP_LIST_NAME_LEN ||
-                pos + nameLen + 1 + 8 > len) break;
-            int idx = c->clientSim->lobbyMapListCount++;
-            memset(c->clientSim->lobbyMapListNames[idx], 0,
-                   LOBBY_MAP_LIST_NAME_LEN);
-            if (nameLen > 0) {
-                memcpy(c->clientSim->lobbyMapListNames[idx],
-                       buf + pos, nameLen);
-            }
-            pos += nameLen;
-            c->clientSim->lobbyMapListIsFolder[idx] = buf[pos++];
-            uint64_t mt = 0;
-            for (int b = 0; b < 8; b++) {
-                mt = (mt << 8) | buf[pos++];
-            }
-            c->clientSim->lobbyMapListModTime[idx] = (int64_t)mt;
-        }
-        c->clientSim->lobbyMapListReady = true;
-        c->clientSim->lobbyMapListInFlight = false;
+    case PACKET_LOBBY_MAP_LIST_RSP:
+        udpClientHandleLobbyMapListRsp(c->clientSim, buf, len);
         break;
-    }
 
-    case PACKET_LOBBY_MAP_SEARCH_RSP: {
-        /* [header 8] [pathLen 1] [path N] [queryLen 1] [query M]
-         * [count 1] per entry: [nameLen 1][name M][isFolder 1][modTime 8 BE] */
-        if (!c->clientSim) break;
-        if (len < PACKET_HEADER_SIZE + 1) break;
-        int pos = PACKET_HEADER_SIZE;
-        uint8_t plen = buf[pos++];
-        if (pos + plen + 2 > len) break;
-        char rspPath[256];
-        memset(rspPath, 0, sizeof(rspPath));
-        if (plen > 0) {
-            if (plen >= sizeof(rspPath)) plen = (uint8_t)(sizeof(rspPath) - 1);
-            memcpy(rspPath, buf + pos, plen);
-        }
-        pos += plen;
-        uint8_t qlen = buf[pos++];
-        if (pos + qlen + 1 > len) break;
-        char rspQuery[128];
-        memset(rspQuery, 0, sizeof(rspQuery));
-        if (qlen > 0) {
-            if (qlen >= sizeof(rspQuery)) qlen = (uint8_t)(sizeof(rspQuery) - 1);
-            memcpy(rspQuery, buf + pos, qlen);
-        }
-        pos += qlen;
-        uint8_t cnt = buf[pos++];
-        if (cnt > LOBBY_MAP_LIST_MAX) cnt = LOBBY_MAP_LIST_MAX;
-
-        memset(c->clientSim->lobbyMapSearchPath, 0,
-               sizeof(c->clientSim->lobbyMapSearchPath));
-        SDL_strlcpy(c->clientSim->lobbyMapSearchPath, rspPath,
-                    sizeof(c->clientSim->lobbyMapSearchPath));
-        memset(c->clientSim->lobbyMapSearchQuery, 0,
-               sizeof(c->clientSim->lobbyMapSearchQuery));
-        SDL_strlcpy(c->clientSim->lobbyMapSearchQuery, rspQuery,
-                    sizeof(c->clientSim->lobbyMapSearchQuery));
-        c->clientSim->lobbyMapSearchCount = 0;
-        for (int i = 0; i < cnt && pos < len; i++) {
-            if (pos + 1 > len) break;
-            uint8_t nameLen = buf[pos++];
-            if (nameLen >= LOBBY_MAP_LIST_NAME_LEN ||
-                pos + nameLen + 1 + 8 > len) break;
-            int idx = c->clientSim->lobbyMapSearchCount++;
-            memset(c->clientSim->lobbyMapSearchNames[idx], 0,
-                   LOBBY_MAP_LIST_NAME_LEN);
-            if (nameLen > 0) {
-                memcpy(c->clientSim->lobbyMapSearchNames[idx],
-                       buf + pos, nameLen);
-            }
-            pos += nameLen;
-            c->clientSim->lobbyMapSearchIsFolder[idx] = buf[pos++];
-            uint64_t mt = 0;
-            for (int b = 0; b < 8; b++) {
-                mt = (mt << 8) | buf[pos++];
-            }
-            c->clientSim->lobbyMapSearchModTime[idx] = (int64_t)mt;
-        }
-        c->clientSim->lobbyMapSearchReady = true;
-        c->clientSim->lobbyMapSearchInFlight = false;
+    case PACKET_LOBBY_MAP_SEARCH_RSP:
+        udpClientHandleLobbyMapSearchRsp(c->clientSim, buf, len);
         break;
-    }
 
     case PACKET_LOBBY_MAP_UPLOAD_ACK: {
         /* [header 8] [status 1]. 0 = ok, non-zero = reject. */
@@ -1397,6 +1457,21 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * into the unknown-packet warning path. */
         break;
 
+    case PACKET_WBN_REKEY: {
+        /* Wire: [header 8] [serverKey WBN_JOIN_KEY_WIRE_LEN] — same 65-byte
+         * envelope as wbnJoinKey for symmetry; payload is a NUL-terminated
+         * string within the first WINBOLONET_KEY_LEN bytes. */
+        if (len < PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN) {
+            return;
+        }
+        if (!wbnKeyDecode(c->wbnServerKey, buf + PACKET_HEADER_SIZE)) {
+            return;
+        }
+        /* The lobby-snapshot poll fires re-auth when our slot loses the
+         * WBN flag; no need to push from here. */
+        break;
+    }
+
     default:
         break;
     }
@@ -1465,8 +1540,25 @@ static bool udpClientTick(void *ctx) {
                     (int)c->joinAttempts, (int)JOIN_MAX_RETRIES);
                 c->joinState = UDP_CLIENT_ERROR;
             } else {
-                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_TOKEN_WIRE_LEN + 1 + 2];
+                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_JOIN_KEY_WIRE_LEN + 1 + 2];
                 int joffset = PACKET_HEADER_SIZE;
+                char playerKey[WBN_JOIN_KEY_WIRE_LEN];
+                memset(playerKey, 0, sizeof(playerKey));
+                if (c->wbnApiToken[0] != '\0' && c->wbnServerKey[0] != '\0') {
+                    char errMsg[256];
+                    errMsg[0] = '\0';
+                    if (!winbolonetClientJoinSession(c->wbnApiToken,
+                                                     c->wbnServerKey,
+                                                     playerKey, errMsg)) {
+                        fprintf(stderr,
+                                "WinBolo.net join exchange failed: %s\n",
+                                errMsg[0] ? errMsg : "(no detail)");
+                        /* Degraded: ship empty wbnJoinKey, server treats
+                         * the JOIN as anonymous (no WBN attribution). */
+                        playerKey[0] = '\0';
+                    }
+                }
+                /* else: direct-IP or not logged in — leave empty. */
                 packHeader(jbuf, PACKET_JOIN_REQUEST, c->outSequence++);
                 memcpy(jbuf + joffset, c->playerName, PACKET_MAX_PLAYER_NAME);
                 joffset += PACKET_MAX_PLAYER_NAME;
@@ -1475,8 +1567,8 @@ static bool udpClientTick(void *ctx) {
                 jbuf[joffset++] = BOLO_VERSION_MAJOR;
                 jbuf[joffset++] = BOLO_VERSION_MINOR;
                 jbuf[joffset++] = BOLO_VERSION_REVISION;
-                memcpy(jbuf + joffset, c->wbnToken, WBN_TOKEN_WIRE_LEN);
-                joffset += WBN_TOKEN_WIRE_LEN;
+                memcpy(jbuf + joffset, playerKey, WBN_JOIN_KEY_WIRE_LEN);
+                joffset += WBN_JOIN_KEY_WIRE_LEN;
                 /* Flags byte: bit 0 = wantRejoin */
                 jbuf[joffset++] = c->wantRejoin ? 0x01 : 0x00;
                 jbuf[joffset++] = bolo_detect_client_type();
@@ -1604,7 +1696,8 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
                                    unsigned short serverPort,
                                    const char *playerName,
                                    const char *password,
-                                   const char *wbnToken,
+                                   const char *wbnApiToken,
+                                   const char *wbnServerKey,
                                    bool wantRejoin,
                                    const char *trackerAddr,
                                    unsigned short trackerPort) {
@@ -1614,11 +1707,12 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
 
     WB_LOG_INFO(WB_LOG_CAT_NET,
         "client connect: server=%s:%u name='%s' wantRejoin=%d "
-        "wbnToken=%s tracker=%s:%u",
+        "wbnApiToken=%s wbnServerKey=%s tracker=%s:%u",
         serverAddr ? serverAddr : "(null)", (unsigned)serverPort,
         playerName ? playerName : "(null)",
         (int)wantRejoin,
-        (wbnToken && *wbnToken) ? "yes" : "no",
+        (wbnApiToken && *wbnApiToken) ? "yes" : "no",
+        (wbnServerKey && *wbnServerKey) ? "yes" : "no",
         (trackerAddr && *trackerAddr) ? trackerAddr : "(none)",
         (unsigned)trackerPort);
 
@@ -1668,18 +1762,22 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         }
     }
 
-    /* Copy player name, password, and WBN token */
+    /* Copy player name, password, and WBN credentials */
     memset(c->playerName, 0, PACKET_MAX_PLAYER_NAME);
     strncpy(c->playerName, playerName, PACKET_MAX_PLAYER_NAME - 1);
     memset(c->password, 0, MAP_STR_SIZE);
     if (password != NULL) {
         strncpy(c->password, password, MAP_STR_SIZE - 1);
     }
-    memset(c->wbnToken, 0, WBN_TOKEN_WIRE_LEN);
-    c->wbnReauthSent = FALSE;
-    if (wbnToken != NULL) {
-        strncpy(c->wbnToken, wbnToken, WBN_TOKEN_WIRE_LEN - 1);
+    memset(c->wbnApiToken, 0, sizeof(c->wbnApiToken));
+    if (wbnApiToken != NULL) {
+        strncpy(c->wbnApiToken, wbnApiToken, sizeof(c->wbnApiToken) - 1);
     }
+    memset(c->wbnServerKey, 0, sizeof(c->wbnServerKey));
+    if (wbnServerKey != NULL) {
+        strncpy(c->wbnServerKey, wbnServerKey, sizeof(c->wbnServerKey) - 1);
+    }
+    c->wbnReauthSent = FALSE;
 
     c->wantRejoin = wantRejoin;
 
@@ -1985,27 +2083,25 @@ void transportUdpClientSendReady(Transport *t, bool ready) {
 }
 
 void transportUdpClientSendAddBot(Transport *t, uint8_t teamNumber,
-                                  const char *brainPath,
                                   const char *botName) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 3 + BRAIN_LIST_PATH_LEN +
-                PACKET_MAX_PLAYER_NAME];
+    uint8_t buf[PACKET_HEADER_SIZE + 3 + PACKET_MAX_PLAYER_NAME];
 
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
-    if (brainPath == NULL) brainPath = "";
-    if (botName   == NULL) botName   = "";
-    int pathLen = (int)strlen(brainPath);
+    if (botName == NULL) botName = "";
     int nameLen = (int)strlen(botName);
-    if (pathLen >= BRAIN_LIST_PATH_LEN)    pathLen = BRAIN_LIST_PATH_LEN - 1;
     if (nameLen >= PACKET_MAX_PLAYER_NAME) nameLen = PACKET_MAX_PLAYER_NAME - 1;
     if (nameLen > 31)                      nameLen = 31;
 
+    /* The wire format still carries a [pathLen 1][path] pair after the
+     * team byte for byte-compatibility with older servers; the server
+     * already ignores the brain payload here, so we always emit
+     * pathLen=0 (and zero path bytes). */
     int pos = PACKET_HEADER_SIZE;
     packHeader(buf, PACKET_LOBBY_ADD_BOT, c->outSequence++);
     buf[pos++] = teamNumber;
-    buf[pos++] = (uint8_t)pathLen;
-    if (pathLen > 0) { memcpy(buf + pos, brainPath, pathLen); pos += pathLen; }
+    buf[pos++] = 0; /* pathLen */
     buf[pos++] = (uint8_t)nameLen;
     if (nameLen > 0) { memcpy(buf + pos, botName, nameLen); pos += nameLen; }
     udpClientSendTo(c, buf, pos);
@@ -2024,13 +2120,24 @@ void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum) {
 
 void transportUdpClientSendWbnReauth(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + WBN_TOKEN_WIRE_LEN];
+    uint8_t buf[PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN];
+    char playerKey[WBN_JOIN_KEY_WIRE_LEN];
+    char errMsg[256];
 
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    if (c->wbnToken[0] == '\0') return;
+    if (c->wbnApiToken[0] == '\0' || c->wbnServerKey[0] == '\0') return;
+
+    memset(playerKey, 0, sizeof(playerKey));
+    errMsg[0] = '\0';
+    if (!winbolonetClientJoinSession(c->wbnApiToken, c->wbnServerKey,
+                                     playerKey, errMsg)) {
+        fprintf(stderr, "WinBolo.net re-auth exchange failed: %s\n",
+                errMsg[0] ? errMsg : "(no detail)");
+        return;
+    }
 
     packHeader(buf, PACKET_WBN_REAUTH, c->outSequence++);
-    memcpy(buf + PACKET_HEADER_SIZE, c->wbnToken, WBN_TOKEN_WIRE_LEN);
+    memcpy(buf + PACKET_HEADER_SIZE, playerKey, WBN_JOIN_KEY_WIRE_LEN);
     udpClientSendTo(c, buf, sizeof(buf));
 }
 
@@ -2215,23 +2322,16 @@ void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
 }
 
 void transportUdpClientSendLobbySetBotBrain(Transport *t, uint8_t slot,
-                                            const char *brainPath) {
+                                            uint8_t brainIdx) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2 + BRAIN_LIST_PATH_LEN];
-    int pathLen, len;
+    uint8_t buf[PACKET_HEADER_SIZE + 2];
 
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    if (brainPath == NULL) brainPath = "";
-
-    pathLen = (int)strlen(brainPath);
-    if (pathLen >= BRAIN_LIST_PATH_LEN) pathLen = BRAIN_LIST_PATH_LEN - 1;
 
     packHeader(buf, PACKET_LOBBY_SET_BOT_BRAIN, c->outSequence++);
     buf[PACKET_HEADER_SIZE + 0] = slot;
-    buf[PACKET_HEADER_SIZE + 1] = (uint8_t)pathLen;
-    if (pathLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 2, brainPath, pathLen);
-    len = PACKET_HEADER_SIZE + 2 + pathLen;
-    udpClientSendTo(c, buf, len);
+    buf[PACKET_HEADER_SIZE + 1] = brainIdx;
+    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 void transportUdpClientSendLobbySetMap(Transport *t,
@@ -2308,6 +2408,8 @@ void transportUdpClientSendLobbyMapListRequest(Transport *t,
             memcpy(c->clientSim->lobbyMapListReqPath, relPath,
                    (size_t)pathLen);
         }
+        c->clientSim->lobbyMapListCount = 0;
+        c->clientSim->lobbyMapListReady = false;
         c->clientSim->lobbyMapListInFlight = true;
     }
 }
@@ -2349,6 +2451,8 @@ void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
             memcpy(c->clientSim->lobbyMapSearchReqQuery, query,
                    (size_t)qLen);
         }
+        c->clientSim->lobbyMapSearchCount = 0;
+        c->clientSim->lobbyMapSearchReady = false;
         c->clientSim->lobbyMapSearchInFlight = true;
     }
 }

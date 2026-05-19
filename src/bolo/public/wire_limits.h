@@ -59,4 +59,10 @@
 #define LOBBY_LOCK_OPEN_HOST         (1u << 7)
 #define LOBBY_LOCK_MAP               (1u << 8)
 
+/* LST_TIME_MINUTES accepted range. Surfaced publicly so the lobby
+ * UI can validate the user's value before sending. Authoritative
+ * range check is wire-side (transport_udp_server.c). */
+#define LOBBY_TIME_MINUTES_MIN 1
+#define LOBBY_TIME_MINUTES_MAX 240
+
 #endif /* WIRE_LIMITS_H */

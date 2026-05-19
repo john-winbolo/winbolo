@@ -293,6 +293,10 @@ static WorkerGuard gWorkerGuard;
 
 }  /* anonymous namespace */
 
+extern "C" void mapChooserStopPreviewWorker(void) {
+    cacheStopWorker();
+}
+
 /* Public: look up (and lazily request) a thumbnail texture for
  * `key`. Returns nullptr while the cache is still building it; the
  * caller (row renderer) just skips drawing the image that frame

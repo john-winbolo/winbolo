@@ -62,13 +62,16 @@ static void clientSimTeardownTransport(ClientSim *cs) {
 
 bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
                          unsigned short serverPort, const char *playerName,
-                         const char *password, const char *wbnToken,
+                         const char *password,
+                         const char *wbnApiToken,
+                         const char *wbnServerKey,
                          bool wantRejoin, const char *trackerAddr,
                          unsigned short trackerPort) {
   if (cs == NULL) return false;
   clientSimTeardownTransport(cs);
   cs->transport = transportUdpClientCreate(cs, serverAddr, serverPort,
-                                           playerName, password, wbnToken,
+                                           playerName, password,
+                                           wbnApiToken, wbnServerKey,
                                            wantRejoin, trackerAddr, trackerPort);
   cs->hasTransport = true;
   cs->isUdpTransport = true;
@@ -243,14 +246,17 @@ void clientSimNetSendReady(ClientSim *cs, bool ready) {
 
 void clientSimNetSendAddBot(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendAddBot(&cs->transport, 0, NULL, NULL);
+  transportUdpClientSendAddBot(&cs->transport, 0, NULL);
 }
 
 void clientSimNetSendAddBotConfigured(ClientSim *cs, BYTE teamNumber,
-                                      const char *brainPath,
+                                      uint8_t brainIdx,
                                       const char *botName) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendAddBot(&cs->transport, teamNumber, brainPath, botName);
+  /* brainIdx accepted for API symmetry; the server applies the default
+   * brain on add. Use clientSimNetSendLobbySetBotBrain to change it. */
+  (void)brainIdx;
+  transportUdpClientSendAddBot(&cs->transport, teamNumber, botName);
 }
 
 void clientSimNetSendRemoveBot(ClientSim *cs, BYTE playerNum) {
@@ -268,9 +274,9 @@ void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
 }
 
 void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
-                                      const char *brainPath) {
+                                      uint8_t brainIdx) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbySetBotBrain(&cs->transport, slot, brainPath);
+  transportUdpClientSendLobbySetBotBrain(&cs->transport, slot, brainIdx);
 }
 
 void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath) {

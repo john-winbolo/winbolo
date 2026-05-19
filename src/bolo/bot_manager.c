@@ -482,13 +482,17 @@ static bool botManagerReloadBrain(BotContext *bot, const char *brainPath) {
 }
 
 /* Swap the brain script for an already-added bot. Destroys the
- * existing Lua VM and re-loads from the new path so the bot
- * starts ticking the chosen brain immediately. No-op when the
- * path is unchanged (avoids a redundant reload on roster
- * resyncs or duplicate UI events). */
-bool botManagerSetBrainPath(BYTE playerNum, const char *brainPath) {
-    if (playerNum >= MAX_TANKS || brainPath == NULL) return false;
+ * existing Lua VM and re-loads from the disk path resolved through
+ * the server's catalogue mirror so the bot starts ticking the chosen
+ * brain immediately. No-op when the path is unchanged (avoids a
+ * redundant reload on roster resyncs or duplicate UI events). */
+bool botManagerSetBrainIdx(ServerSim *sim, BYTE playerNum,
+                           uint8_t brainIdx) {
+    const char *brainPath;
+    if (sim == NULL || playerNum >= MAX_TANKS) return false;
     if (!bots[playerNum].active) return false;
+    brainPath = serverSimGetBrainPathForIdx(sim, brainIdx);
+    if (brainPath == NULL) return false;
     if (SDL_strcasecmp(bots[playerNum].brainPath, brainPath) == 0) {
         return true;
     }

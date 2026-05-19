@@ -1086,6 +1086,21 @@ static const LangEntry langTable[] = {
     {1259, "Hide Map Editor"},
     {1260, "Quit Map Editor"},
 
+    /* Settings → Network: WinBolo.net news auto-show toggle. */
+    {1261, "Show news from winbolo.net on startup"},
+
+    /* News popup + welcome News button strings. */
+    {1262, "News"},
+    {1263, "News"},
+    {1264, "WinBolo News"},
+    {1265, "WinBolo can show you new posts from winbolo.net when you launch the game. We will check WBN once at startup and only open this window when there is something new."},
+    {1266, "You can change this anytime in Settings."},
+    {1267, "Show news"},
+    {1268, "Don't show"},
+    {1269, "Loading…"},
+    {1270, "Don't auto-show news in future"},
+    {1271, "Comments: {number}"},
+
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
      * time by tutorialResolveText() when uiModeIsTablet() is true. */

@@ -27,8 +27,18 @@
 
 #include "global.h"  /* GAME_TICK_LENGTH */
 #include "server_sim.h"
+#include "upload_policy.h"
 
 #define SERVER_TICK_LENGTH (GAME_TICK_LENGTH * 2)
+
+/* Override the operator-controlled upload policy and per-map storage caps.
+ * Called once at startup after transportUdpServerCreate. A maxFiles or
+ * maxStorageBytes value of 0 leaves that cap at the create-time default
+ * (64 files / 8 MiB) — lets the GUI host-and-play path use ServerInstanceConfig
+ * zero-init without explicit values. policy is always applied (0 = ALLOW). */
+void transportUdpServerSetUploadConfig(UploadPolicy policy,
+                                       uint8_t maxFiles,
+                                       uint32_t maxStorageBytes);
 
 typedef struct {
   unsigned short udpPort;
@@ -59,6 +69,13 @@ typedef struct {
                                      shutdown.  Hosted MP sets true;
                                      dedicated defaults false (admins
                                      control routers). */
+
+  /* Operator-controlled handling for client-pushed map uploads.
+   * Zero-init = ALLOW + transport defaults (64 files / 8 MiB), so the GUI
+   * host-and-play path needs no explicit plumbing. */
+  UploadPolicy   uploadPolicy;
+  uint8_t        uploadMaxFiles;        /* 0 = leave transport default (64) */
+  uint32_t       uploadMaxStorageBytes; /* 0 = leave transport default (8 MiB) */
 } ServerInstanceConfig;
 
 /* Bind UDP transport, optionally register with WBN, store tracker config

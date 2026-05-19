@@ -66,7 +66,9 @@ set_target_properties(threads_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # transitive link line correct.
 target_link_libraries(threads_static PUBLIC SDL3::SDL3)
 
-if(NOT MSVC)
+if(EMSCRIPTEN)
+    target_compile_options(threads_static PRIVATE -fno-common -include sys/types.h)
+elseif(NOT MSVC)
     target_compile_options(threads_static PRIVATE -fcommon)
 endif()
 
@@ -85,7 +87,9 @@ set_target_properties(server_sim_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # bolo_static separately when they link server_sim_static.
 target_link_libraries(server_sim_static PUBLIC bolo_static)
 
-if(NOT MSVC)
+if(EMSCRIPTEN)
+    target_compile_options(server_sim_static PRIVATE -fno-common -include sys/types.h)
+elseif(NOT MSVC)
     target_compile_options(server_sim_static PRIVATE -fcommon)
 endif()
 
@@ -133,6 +137,8 @@ target_link_libraries(server_static PRIVATE server_sim_static)
 # threads_static themselves.
 target_link_libraries(server_static PUBLIC threads_static)
 
-if(NOT MSVC)
+if(EMSCRIPTEN)
+    target_compile_options(server_static PRIVATE -fno-common -include sys/types.h)
+elseif(NOT MSVC)
     target_compile_options(server_static PRIVATE -fcommon)
 endif()

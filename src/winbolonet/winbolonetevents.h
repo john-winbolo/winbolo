@@ -31,7 +31,7 @@
 
 
 #include "global.h"
-#include "winbolonet.h"
+#include "winbolonet_core.h"
 
 
 /* Defines */

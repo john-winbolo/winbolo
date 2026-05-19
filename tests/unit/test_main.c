@@ -53,6 +53,14 @@ static const UnitTestEntry s_tests[] = {
     { "map_field_clamps_angry_start",            run_map_field_clamps_angry_start            },
     { "map_reload_rollback",                     run_map_reload_rollback                     },
     { "upload_busy_predicate",                   run_upload_busy_predicate                   },
+    { "upload_filename_safe",                    run_upload_filename_safe                    },
+    { "lobby_time_minutes_valid",                run_lobby_time_minutes_valid                },
+    { "lobby_map_list_chunked",                  run_lobby_map_list_chunked                  },
+    { "lobby_map_search_chunked",                run_lobby_map_search_chunked                },
+    { "wbn_bearer_state",                        run_wbn_bearer_state                        },
+    { "wbn_rekey_codec",                         run_wbn_rekey_codec                         },
+    { "wbn_news_parse",                          run_wbn_news_parse                          },
+    { "wbn_country_cache",                       run_wbn_country_cache                       },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

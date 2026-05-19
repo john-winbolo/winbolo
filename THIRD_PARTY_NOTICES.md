@@ -80,6 +80,14 @@ WinBolo uses the following third-party libraries and code.
 - Authors: Steven G. Johnson, Jiahao Chen, Peter Colberg, Tony Kelman, Scott P. Jones, and other contributors; Public Software Group e. V.
 - Used for UTF-8 NFC normalization and codepoint property lookup in player-name validation
 
+### imgui_markdown
+- Location: src/third_party/imgui_markdown/
+- Commit: 7f88a689f783b5f628a2c446ccc2e7198e732dfe (2026-05-18)
+- License: Zlib
+- https://github.com/juliettef/imgui_markdown
+- Authors: Juliette Foucaut, Doug Binks
+- Used to render the in-game news popup (headings, emphasis, links, images)
+
 ## Fonts
 
 ### Inter

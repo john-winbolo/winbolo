@@ -65,6 +65,7 @@
 #include "sdl3imgui.h"
 #include "luabrainshandler.h"
 #include "dialog_backend.h"
+#include "dialogs/imgui_mapchooser.h"
 #include "dialogs/imgui_messagebox.h"
 #include "bg_game.h"
 
@@ -73,7 +74,8 @@
 #include "playername_validate.h"
 #include "client_net.h"
 #include "../../server/server_lifecycle.h"
-#include "../../winbolonet/winbolonet.h"
+#include "../../winbolonet/winbolonet_client.h"
+#include "../../winbolonet/winbolonet_core.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
 #include "mapgen.h"
@@ -577,10 +579,9 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
  * gameFrontEnd).
  * ------------------------------------------------------- */
 void gameFrontSaveTankPrefs(ClientSim *cs) {
-  if (cs != NULL) {
-    useAutoslow = clientSimGetTankAutoSlowdown(cs);
-    useAutohide = clientSimGetTankAutoHideGunsight(cs);
-  }
+  /* No-op since the keys dialog persists useAutoslow / useAutohide
+   * directly to INI on OK. */
+  (void)cs;
 }
 
 /* -------------------------------------------------------
@@ -589,11 +590,24 @@ void gameFrontSaveTankPrefs(ClientSim *cs) {
 void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   steam_clear_rich_presence();
   clientMutexWaitFor();
-  if (gamePlayed == TRUE && humanSim != NULL) {
-    useAutoslow = clientSimGetTankAutoSlowdown(humanSim);
-    useAutohide = clientSimGetTankAutoHideGunsight(humanSim);
-  }
+  /* No tank-readback here. The keys dialog persists useAutoslow /
+   * useAutohide directly to INI on OK (immediate-flush) and nothing
+   * during gameplay mutates tank->autoSlowdown after the initial
+   * clientSimSetTankAutoSlowdown — so reading it back would just
+   * round-trip the same value most of the time. The exception was
+   * the buggy case where clientSimSetTankAutoSlowdown ran before
+   * clientSimSetupSelf existed: it no-op'd on the NULL tank pointer,
+   * then tankCreate later defaulted autoSlowdown to FALSE, and this
+   * readback clobbered the user's INI choice with that default. */
+  (void)gamePlayed;
   brainsHandlerShutdown();
+  /* Stop the map-preview worker. Idempotent: a no-op if the chooser
+   * was never opened (worker is spawned lazily on first preview
+   * request) or if the dialog already closed (its close edge stops
+   * the worker). Belt-and-suspenders for the quit-with-chooser-open
+   * case: without this, the still-joinable std::thread destructor
+   * runs at atexit and trips std::terminate. */
+  mapChooserStopPreviewWorker();
   if (spServerSimActive) {
     /* Unregister the SP humanSim subscriber before gameFrontShutdownServer
      * destroys the ServerSim's subscriber registry.  The hostedServer-only
@@ -1041,6 +1055,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                         gameFrontTargetUdp,
                         gameFrontName, password,
                         gameFrontWbnUse ? gameFrontWbnToken : "",
+                        "",
                         wantRejoin,
                         gameFrontTrackerEnabled ? gameFrontTrackerAddr : "",
                         gameFrontTrackerPort);
@@ -1295,6 +1310,12 @@ bool gameFrontSetDlgState(openingStates newState) {
                 clientLoadCompressedMap(humanSim, compressedMap, compLen, serverSimGetMapName(spServerSim),
                                        gametype, hiddenMines, startDelay,
                                        timeLen, gameFrontName, 0, FALSE);
+                /* clientLoadCompressedMap → setupClientSim → clientSimCreate
+                 * resets the client's plyrs, wiping the country code that
+                 * the finisher's sync-replay walk just populated. Re-publish
+                 * so the subscriber refreshes plyrs.location and the GUI
+                 * before the player sees the lobby. */
+                serverSimSetPlayerCountry(spServerSim, 0, winbolonetGetCountryCode());
               }
               /* else: clientSimCreate above already initialized the empty
                * client; serverSimGetCompressedMap failure is fatal for the
@@ -1317,7 +1338,7 @@ bool gameFrontSetDlgState(openingStates newState) {
             netSetup(humanSim, netSingle, gameFrontMyUdp, gameFrontUdpAddress, gameFrontTargetUdp,
                      password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,
                      gameFrontTrackerEnabled, wantRejoin, gameFrontWbnUse,
-                     gameFrontWbnToken);
+                     gameFrontWbnToken, "");
             /* Non-tutorial SP enters the new lobby first; the host clicks
              * Start to fire gameFrontStartSinglePlayerGame, which then does
              * the snapshot sync + tank-go work below. netSetup just
@@ -1814,6 +1835,7 @@ static void gameFrontFinishSinglePlayer(void) {
   serverSimSetLobbyEnabled(spServerSim, false);
   serverSimStartGame(spServerSim);
   serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
+  serverSimSetPlayerCountry(spServerSim, 0, winbolonetGetCountryCode());
   serverSimSetViewPlayer(spServerSim, 0);
   spHumanSubHandle = serverSimRegisterClientSubscriber(spServerSim, humanSim);
   spServerSimActive = TRUE;

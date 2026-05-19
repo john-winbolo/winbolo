@@ -53,8 +53,8 @@ typedef struct {
     uint32_t sequence;      /* Monotonic sequence number */
 } PacketHeader;
 
-/* WBN auth token: 64-char hex string + null */
-#define WBN_TOKEN_WIRE_LEN 65
+/* WBN join key: 64-char hex string + null */
+#define WBN_JOIN_KEY_WIRE_LEN 65
 
 /* Join request packet (client -> server) */
 typedef struct {
@@ -64,7 +64,7 @@ typedef struct {
     uint8_t versionMajor;
     uint8_t versionMinor;
     uint8_t versionRevision;
-    char wbnToken[WBN_TOKEN_WIRE_LEN];
+    char wbnJoinKey[WBN_JOIN_KEY_WIRE_LEN];
 } JoinRequestPacket;
 
 /* Join accept packet (server -> client) */
@@ -114,7 +114,8 @@ Transport transportUdpClientCreate(struct ClientSim *clientSim,
                                    unsigned short serverPort,
                                    const char *playerName,
                                    const char *password,
-                                   const char *wbnToken,
+                                   const char *wbnApiToken,
+                                   const char *wbnServerKey,
                                    bool wantRejoin,
                                    const char *trackerAddr,
                                    unsigned short trackerPort);
@@ -177,11 +178,12 @@ void transportUdpClientSendTeamSet(Transport *t, uint8_t teamNumber);
 /* Send ready/unready to server. */
 void transportUdpClientSendReady(Transport *t, bool ready);
 
-/* Request server add a bot. teamNumber=0/brainPath=NULL/botName=NULL
- * lets the server pick defaults; non-default values configure the new
- * bot at create time. */
+/* Request server add a bot. teamNumber=0 and botName=NULL let the
+ * server pick defaults. The on-wire payload keeps the [pathLen 1]
+ * byte for byte-compat with the original ADD_BOT format, but always
+ * emits pathLen=0 — the server has always ignored the brain payload
+ * here, so brain selection rides on a follow-up SET_BOT_BRAIN. */
 void transportUdpClientSendAddBot(Transport *t, uint8_t teamNumber,
-                                  const char *brainPath,
                                   const char *botName);
 
 /* Request server remove a bot at the given slot. */
@@ -200,7 +202,7 @@ void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
                                           uint8_t difficulty, uint8_t personality,
                                           const char *name);
 void transportUdpClientSendLobbySetBotBrain(Transport *t, uint8_t slot,
-                                            const char *brainPath);
+                                            uint8_t brainIdx);
 void transportUdpClientSendLobbySetMap(Transport *t, const char *mapRelPath);
 void transportUdpClientSendLobbyPreviewCancel(Transport *t);
 void transportUdpClientSendLobbyPreviewCommit(Transport *t);
@@ -223,6 +225,23 @@ void transportUdpClientSendLobbyMapUseLocal(Transport *t, uint32_t totalLen,
                                              const char *name,
                                              const char *relPath,
                                              const uint8_t md5[16]);
+
+/* Server-side: validates a length-prefixed upload filename against the
+ * reserved-name / control-char / suffix-cap rules. Exposed for unit
+ * coverage of the validation matrix; production callers live inside
+ * transport_udp_server.c. */
+bool uploadFilenameIsSafe(const char *name, size_t nameLen);
+
+/* Client-side: parsers for the chunked MAP_LIST_RSP / MAP_SEARCH_RSP
+ * responses. The dispatcher in transport_udp_client.c calls these per
+ * packet; exposing them lets unit tests feed crafted byte streams
+ * through the accumulator path without standing up a full transport
+ * context. `buf` includes the 8-byte packet header. */
+struct ClientSim;
+void udpClientHandleLobbyMapListRsp(struct ClientSim *cs,
+                                    const uint8_t *buf, int len);
+void udpClientHandleLobbyMapSearchRsp(struct ClientSim *cs,
+                                      const uint8_t *buf, int len);
 
 /* Re-authenticate WBN token after lobby reset between rounds. */
 void transportUdpClientSendWbnReauth(Transport *t);
@@ -396,6 +415,13 @@ void transportUdpServerOnLobbyMapChange(struct ServerSim *sim);
  * encoders directly so cosmetic ping/country updates don't wake the
  * in-process control-event bus.  Called from server_lifecycle.c. */
 void transportUdpServerSendPeriodicLobbyRefresh(struct ServerSim *sim);
+
+/* Broadcast PACKET_WBN_REKEY to every connected WBN-participating client
+ * carrying the current server_key.  Called after each
+ * winbolonetReturnToLobby succeeds so still-connected clients can mint a
+ * fresh player_key against the rotated session and re-auth via the
+ * existing lobby-snapshot machinery.  No-op when WBN isn't running. */
+void transportUdpServerBroadcastWbnRekey(struct ServerSim *sim);
 
 /* Set a bot's name in the server transport client array so it appears
  * in lobby state/update broadcasts. Call after botManagerAddBot(). */

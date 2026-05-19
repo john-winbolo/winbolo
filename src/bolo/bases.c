@@ -36,7 +36,7 @@
 #include "players.h"
 #include "brain_data.h"
 #include "log.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
 #include "bases.h"
 #include "game_sim.h"
 #include "client_sim.h"
