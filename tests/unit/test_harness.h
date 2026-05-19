@@ -51,6 +51,7 @@ int run_lobby_bot_config_codec_and_apply(void);
 int run_lobby_bot_brain_codec_and_apply(void);
 int run_lobby_brain_list_codec_and_apply(void);
 int run_upload_filename_safe(void);
+int run_lobby_time_minutes_valid(void);
 int run_lobby_map_list_chunked(void);
 int run_lobby_map_search_chunked(void);
 

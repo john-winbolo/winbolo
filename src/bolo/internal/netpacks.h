@@ -338,6 +338,18 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define LST_TIME_MINUTES       5   /* 2 bytes uint16 BE */
 #define LST_AUTO_LOCK_ON_GAME  6   /* 1 byte bool */
 
+/* LST_TIME_MINUTES accepted range: 1..240 minutes (4 hours).
+ * Defended at the wire so downstream ticks arithmetic
+ * (minutes * 60 * GAME_NUMGAMETICKS_SEC) can't be coaxed
+ * toward int32_t overflow by a malicious client. */
+#define LOBBY_TIME_MINUTES_MIN 1
+#define LOBBY_TIME_MINUTES_MAX 240
+
+static inline bool lobbyTimeMinutesIsValid(uint16_t minutes) {
+    return minutes >= LOBBY_TIME_MINUTES_MIN &&
+           minutes <= LOBBY_TIME_MINUTES_MAX;
+}
+
 /* Reject reason codes for PACKET_LOBBY_REJECT. */
 #define LOBBY_REJECT_NOT_HOST   1   /* sender lacks authority */
 #define LOBBY_REJECT_LOCKED     2   /* setting is in serverLocks bitmask */
