@@ -2564,6 +2564,46 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     }
                 }
 
+                /* Validate the client-supplied bot name before any state
+                 * mutation.  Empty name is a legitimate "let the server
+                 * pick a default" signal and stays in the fallback path
+                 * below.  A non-empty name has to clear the same
+                 * validator humans go through (controls, reserved
+                 * leading '*', mixed scripts, length) so chat and
+                 * scoreboard rendering can trust the form they receive.
+                 * Then run uniqueness against the connected-player
+                 * table — bots and humans share udpServer.clients[],
+                 * and a duplicate name breaks chat attribution and
+                 * scoreboard disambiguation either way. */
+                if (clientBotName[0] != '\0') {
+                    char validated[PACKET_MAX_PLAYER_NAME];
+                    PlayerNameValidationError nameErr = PLAYER_NAME_OK;
+                    if (!playerNameValidate(clientBotName, validated,
+                                            sizeof(validated), &nameErr)) {
+                        lobbyRejectTo(fromAddr, PACKET_LOBBY_ADD_BOT,
+                                      LOBBY_REJECT_INVALID);
+                        break;
+                    }
+                    bool nameTaken = false;
+                    for (BYTE j = 0; j < MAX_TANKS; j++) {
+                        if (udpServer.clients[j].connected &&
+                            playerNameCompare(udpServer.clients[j].playerName,
+                                              validated) == 0) {
+                            nameTaken = true;
+                            break;
+                        }
+                    }
+                    if (nameTaken) {
+                        lobbyRejectTo(fromAddr, PACKET_LOBBY_ADD_BOT,
+                                      LOBBY_REJECT_INVALID);
+                        break;
+                    }
+                    /* Use the normalized form going forward so the bot
+                     * is registered under the exact name the validator
+                     * returned. */
+                    SDL_strlcpy(clientBotName, validated, sizeof(clientBotName));
+                }
+
                 /* Find first free player slot */
                 BYTE slot;
                 bool found = false;
