@@ -29,6 +29,7 @@ extern "C" {
 #include "../../../winbolonet/wbn_news.h"
 #include "../../../winbolonet/winbolonet_core.h"
 #include "../../../winbolonet/wbn_prefs_path.h"
+#include "../../lang.h"
 }
 
 #include <algorithm>
@@ -242,8 +243,15 @@ static void collectFetchResultOnce(void) {
  * ================================================================ */
 
 static void renderConsentDialog(void) {
+    /* ImGui matches popups by their full string (visible prefix + "##id"
+     * tail are both hashed), so OpenPopup and BeginPopupModal MUST be
+     * fed the same bytes. Build the title once per frame from the
+     * translated prefix and the static "##consent" id suffix. */
+    char title[96];
+    SDL_snprintf(title, sizeof(title), "%s##consent",
+                 langGetText(STR_DLGNEWS_CONSENT_TITLE));
     if (!s_consentOpenCalled) {
-        ImGui::OpenPopup("WinBolo News##consent");
+        ImGui::OpenPopup(title);
         s_consentOpenCalled = true;
     }
     /* Centre both horizontally AND vertically. AlwaysAutoResize means
@@ -253,18 +261,14 @@ static void renderConsentDialog(void) {
     ImVec2 vp = ImGui::GetMainViewport()->Size;
     ImGui::SetNextWindowPos(ImVec2(vp.x * 0.5f, vp.y * 0.5f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal("WinBolo News##consent", nullptr,
+    if (ImGui::BeginPopupModal(title, nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize |
                                ImGuiWindowFlags_NoSavedSettings)) {
-        ImGui::TextWrapped(
-            "WinBolo can show you new posts from winbolo.net when you "
-            "launch the game. We will check WBN once at startup and only "
-            "open this window when there is something new.");
+        ImGui::TextWrapped("%s", langGetText(STR_DLGNEWS_CONSENT_BODY1));
         ImGui::Spacing();
-        ImGui::TextWrapped(
-            "You can change this anytime in Settings.");
+        ImGui::TextWrapped("%s", langGetText(STR_DLGNEWS_CONSENT_BODY2));
         ImGui::Spacing();
-        if (ImGui::Button("Show news")) {
+        if (ImGui::Button(langGetText(STR_DLGNEWS_SHOW))) {
             newsPrefSetAutoShow("show");
             s_consentOpen       = false;
             s_consentOpenCalled = false;
@@ -274,7 +278,7 @@ static void renderConsentDialog(void) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Don't show")) {
+        if (ImGui::Button(langGetText(STR_DLGNEWS_DONT_SHOW))) {
             newsPrefSetAutoShow("dontShow");
             s_consentOpen       = false;
             s_consentOpenCalled = false;
@@ -351,9 +355,9 @@ static void renderItem(const WbnNewsItem &item) {
      * route the click through our scheme-filtered helper rather than
      * the unconditional Platform_OpenInShellFn that TextLinkOpenURL
      * would use. */
-    char label[64];
-    SDL_snprintf(label, sizeof(label), "Comments: %d", item.comments);
-    if (ImGui::TextLink(label)) {
+    MessageArgs args = {};
+    args.number = item.comments;
+    if (ImGui::TextLink(langGetTextFmt(STR_DLGNEWS_COMMENTS_FMT, &args))) {
         newsOpenUrlSchemeFiltered(item.url);
     }
 
@@ -369,8 +373,14 @@ static void finaliseClose(void) {
 }
 
 static void renderNewsModal(void) {
+    /* Same matching constraint as the consent popup — build the title
+     * once per frame so OpenPopup and BeginPopupModal hash to the same
+     * string. */
+    char title[96];
+    SDL_snprintf(title, sizeof(title), "%s##popup",
+                 langGetText(STR_DLGNEWS_TITLE));
     if (!s_modalOpenCalled) {
-        ImGui::OpenPopup("News##popup");
+        ImGui::OpenPopup(title);
         s_modalOpenCalled = true;
     }
     ImVec2 vp = ImGui::GetMainViewport()->Size;
@@ -380,7 +390,7 @@ static void renderNewsModal(void) {
                             ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 
     bool open = true;
-    if (!ImGui::BeginPopupModal("News##popup", &open,
+    if (!ImGui::BeginPopupModal(title, &open,
                                 ImGuiWindowFlags_NoCollapse |
                                 ImGuiWindowFlags_NoSavedSettings)) {
         /* ImGui has already torn the popup down (e.g. the title-bar X
@@ -396,7 +406,7 @@ static void renderNewsModal(void) {
     if (ImGui::BeginChild("scroll", ImVec2(0.0f, -footerH), true,
                           ImGuiWindowFlags_None)) {
         if (s_sortedItems.empty()) {
-            ImGui::TextUnformatted("Loading…");
+            ImGui::TextUnformatted(langGetText(STR_DLGNEWS_LOADING));
         } else {
             for (const auto &item : s_sortedItems) {
                 /* Scope IDs per item so the "Comments: N" TextLink (and any
@@ -414,7 +424,7 @@ static void renderNewsModal(void) {
 
     /* Footer row: checkbox left-aligned, Close right-aligned. */
     bool prev = s_dontAutoShow;
-    ImGui::Checkbox("Don't auto-show news in future", &s_dontAutoShow);
+    ImGui::Checkbox(langGetText(STR_DLGNEWS_DONT_AUTOSHOW), &s_dontAutoShow);
     if (s_dontAutoShow != prev) {
         newsPrefSetAutoShow(s_dontAutoShow ? "dontShow" : "show");
     }
@@ -422,7 +432,7 @@ static void renderNewsModal(void) {
     const float closeBtnW = 80.0f;
     ImGui::SameLine();
     ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - closeBtnW);
-    bool closeClicked = ImGui::Button("Close", ImVec2(closeBtnW, 0));
+    bool closeClicked = ImGui::Button(langGetText(STR_CLOSE), ImVec2(closeBtnW, 0));
     bool escClosed    = ImGui::IsKeyPressed(ImGuiKey_Escape);
 
     bool shouldClose = !open || closeClicked || escClosed;

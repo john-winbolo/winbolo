@@ -401,10 +401,11 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, ghostTextAlpha));
 
             const bool showTutorial = gameFrontGetShowTutorialButton();
-            /* rawLabel, when non-null, is used as the button text instead of
-             * langGetText(labelId) and signals a non-exit action: the click
+            /* rawLabel, when non-null, signals a non-exit action: the click
              * handler dispatches by rawLabel string rather than setting
-             * result/running. */
+             * result/running. Display text still goes through
+             * langGetText(labelId) whenever labelId is non-zero; rawLabel
+             * is only used as the visible text when labelId == 0. */
             struct { langid labelId; int code; bool show; const char* rawLabel; } miniModes[] = {
                 { STR_DLGSETTINGS_TUTORIAL, RESULT_TUTORIAL,     showTutorial },
                 { STR_DLGWELCOME_SINGLE,    RESULT_SINGLEPLAYER, true },
@@ -416,7 +417,7 @@ extern "C" int imguiWelcomeShow(void) {
 #endif
                 { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true },
 #if !BOLO_MOBILE
-                { (langid)0,                0,                   true, "News" },
+                { STR_DLGWELCOME_NEWS,      0,                   true, "News" },
                 { STR_DLGOPENING_BUTTON2,   RESULT_QUIT,         true },
 #endif
             };
@@ -433,9 +434,9 @@ extern "C" int imguiWelcomeShow(void) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
                 }
                 char miniLabel[96];
-                const char* labelText = miniModes[i].rawLabel
-                    ? miniModes[i].rawLabel
-                    : langGetText(miniModes[i].labelId);
+                const char* labelText = (miniModes[i].labelId != 0)
+                    ? langGetText(miniModes[i].labelId)
+                    : miniModes[i].rawLabel;
                 SDL_snprintf(miniLabel, sizeof(miniLabel), "%s##mini", labelText);
                 if (ImGui::Button(miniLabel, ImVec2(miniBtnW, miniBtnH))) {
 #if !BOLO_MOBILE
