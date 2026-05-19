@@ -1156,3 +1156,18 @@ STR_MENU_FIND_LAN_GAME=LAN Oyunu Bul…
 STR_MENU_JOIN_BY_ADDRESS=Adres ile Katıl…
 STR_MENU_OPEN_MAP_EDITOR=Harita Düzenleyiciyi Aç
 STR_MENU_OPEN_LOG_VIEWER=Günlük Görüntüleyiciyi Aç
+
+# Settings → Network: WinBolo.net news auto-show toggle.
+STR_DLGSETTINGS_NEWS_AUTOSHOW=Başlangıçta winbolo.net haberlerini göster
+
+# News popup + welcome News button strings.
+STR_DLGWELCOME_NEWS=Haberler
+STR_DLGNEWS_TITLE=Haberler
+STR_DLGNEWS_CONSENT_TITLE=WinBolo Haberleri
+STR_DLGNEWS_CONSENT_BODY1=WinBolo, oyunu başlattığınızda winbolo.net'teki yeni gönderileri gösterebilir. WBN başlangıçta bir kez kontrol edilir ve yalnızca yeni bir şey olduğunda bu pencere açılır.
+STR_DLGNEWS_CONSENT_BODY2=Bunu istediğiniz zaman Ayarlar'dan değiştirebilirsiniz.
+STR_DLGNEWS_SHOW=Haberleri göster
+STR_DLGNEWS_DONT_SHOW=Gösterme
+STR_DLGNEWS_LOADING=Yükleniyor…
+STR_DLGNEWS_DONT_AUTOSHOW=Haberleri gelecekte otomatik açma
+STR_DLGNEWS_COMMENTS_FMT=Yorumlar: {number}
