@@ -2778,6 +2778,34 @@ static void lobbySendBotConfig(ClientSim *cs,
                                uint8_t slot,
                                uint8_t difficulty, uint8_t personality,
                                const char *name) {
+    /* Pre-send validation for the bot name.  Empty name is the
+     * legitimate "leave name unchanged; difficulty/personality still
+     * apply" signal — pass through.  Non-empty must clear the same
+     * validator the server applies (controls, reserved leading '*',
+     * mixed scripts, length), then uniqueness against the client's
+     * lobby-slot mirror — bots and humans both register as connected
+     * here, so this catches bot-vs-bot collisions in addition to
+     * bot-vs-human.  Server is authoritative
+     * (transport_udp_server.c); this is the client mirror. */
+    char validated[PACKET_MAX_PLAYER_NAME];
+    const char *effectiveName = name;
+    if (cs && name && name[0] != '\0') {
+        PlayerNameValidationError nameErr = PLAYER_NAME_OK;
+        if (!playerNameValidate(name, validated,
+                                sizeof(validated), &nameErr)) {
+            return;
+        }
+        for (BYTE j = 0; j < MAX_TANKS; j++) {
+            if (j == slot) continue;
+            const ClientLobbySlot *other = clientSimGetLobbySlot(cs, j);
+            if (!other || !other->connected) continue;
+            if (playerNameCompare(other->playerName, validated) == 0) {
+                return;
+            }
+        }
+        effectiveName = validated;
+    }
+
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim || slot >= MAX_TANKS) return;
@@ -2791,8 +2819,8 @@ static void lobbySendBotConfig(ClientSim *cs,
                 bc->personality = personality;
             }
         }
-        if (name && name[0] != '\0') {
-            serverSimRenameBotSlot(sim, slot, name);
+        if (effectiveName && effectiveName[0] != '\0') {
+            serverSimRenameBotSlot(sim, slot, effectiveName);
         }
         /* Publish bot config change AND the slot's new state (playerName
          * may have changed). */
@@ -2800,7 +2828,7 @@ static void lobbySendBotConfig(ClientSim *cs,
         serverSimPublishLobbySlot(sim, slot);
         return;
     }
-    clientSimNetSendLobbyBotConfig(cs, slot, difficulty, personality, name);
+    clientSimNetSendLobbyBotConfig(cs, slot, difficulty, personality, effectiveName);
 }
 
 /* Change which Lua brain script a lobby bot uses. SP path mutates the
