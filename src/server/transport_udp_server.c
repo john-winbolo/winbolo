@@ -2586,9 +2586,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     }
                     bool nameTaken = false;
                     for (BYTE j = 0; j < MAX_TANKS; j++) {
-                        if (udpServer.clients[j].connected &&
-                            playerNameCompare(udpServer.clients[j].playerName,
-                                              validated) == 0) {
+                        const char *otherName = transportUdpServerGetPlayerName(j);
+                        if (otherName != NULL &&
+                            playerNameCompare(otherName, validated) == 0) {
                             nameTaken = true;
                             break;
                         }
@@ -2909,9 +2909,10 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 }
                 bool nameTaken = false;
                 for (BYTE j = 0; j < MAX_TANKS; j++) {
-                    if (j != slot && udpServer.clients[j].connected &&
-                        playerNameCompare(udpServer.clients[j].playerName,
-                                          validatedName) == 0) {
+                    if (j == slot) continue;
+                    const char *otherName = transportUdpServerGetPlayerName(j);
+                    if (otherName != NULL &&
+                        playerNameCompare(otherName, validatedName) == 0) {
                         nameTaken = true;
                         break;
                     }
