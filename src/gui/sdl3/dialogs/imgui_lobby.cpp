@@ -50,6 +50,7 @@ extern "C" {
 #include "client_net.h"
 #include "server_sim.h"          /* serverSim* T1 wrappers for SP-host paths */
 #include "lobby_bot_pools.h"     /* lobbyBotPool* — public utility */
+#include "playername_validate.h" /* playerNameValidate — client-side bot name gate */
 #include "../../../server/server_lifecycle.h"
 #include "platform_net.h"
 #include "../flags.h"
@@ -199,6 +200,22 @@ static void lobbySendAddBot(ClientSim *cs,
             snprintf(botName, sizeof(botName), "Bot %d", slot);
         }
 
+        /* Mirror the server's bot-name validator before applying.  The
+         * picked name is normally a pool / "Bot N" pick — server-trusted
+         * by construction — but the gate is consistent with the wire rule
+         * (transport_udp_server.c rejects invalid names) and stops a pool
+         * definition that smuggled in a control byte, reserved leading
+         * '*', etc. from landing in the local sim. */
+        if (botName[0] != '\0') {
+            char validated[PACKET_MAX_PLAYER_NAME];
+            PlayerNameValidationError nameErr = PLAYER_NAME_OK;
+            if (!playerNameValidate(botName, validated,
+                                    sizeof(validated), &nameErr)) {
+                return;
+            }
+            SDL_strlcpy(botName, validated, sizeof(botName));
+        }
+
         WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[DIAG]   about to serverSimCreateBot slot=%u name='%s' aiType=%d gameType=%d",
                     (unsigned)slot, botName, (int)serverSimGetBotAiType(sim),
@@ -246,6 +263,18 @@ static void lobbySendAddBot(ClientSim *cs,
             }
             lobbyBotPoolPick(namingPool, usedNames, usedCount,
                              botName, sizeof(botName));
+        }
+        /* Same defensive gate as the SP branch.  Empty botName is the
+         * legitimate "let the server pick a default" signal and must
+         * pass through unchanged. */
+        if (botName[0] != '\0') {
+            char validated[PACKET_MAX_PLAYER_NAME];
+            PlayerNameValidationError nameErr = PLAYER_NAME_OK;
+            if (!playerNameValidate(botName, validated,
+                                    sizeof(validated), &nameErr)) {
+                return;
+            }
+            SDL_strlcpy(botName, validated, sizeof(botName));
         }
         /* Pass the sticky brain index for API symmetry with the SP path,
          * but be aware: PACKET_LOBBY_ADD_BOT does not propagate it to the
