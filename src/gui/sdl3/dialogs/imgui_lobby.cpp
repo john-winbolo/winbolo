@@ -3146,6 +3146,7 @@ static SDL_Texture *s_iconInfo    = nullptr;
 static SDL_Texture *s_iconSettings = nullptr;
 static SDL_Texture *s_iconBotCpuGreen  = nullptr;
 static SDL_Texture *s_iconBotCpuRed    = nullptr;
+static SDL_Texture *s_iconLocked       = nullptr;
 static bool         s_iconsAttempted = false;
 /* The renderer instance the icons above were created against. SDL_Texture
  * is tied to the renderer that created it, so if the renderer instance
@@ -3252,6 +3253,7 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         if (s_iconSettings)    { SDL_DestroyTexture(s_iconSettings);    s_iconSettings    = nullptr; }
         if (s_iconBotCpuGreen) { SDL_DestroyTexture(s_iconBotCpuGreen); s_iconBotCpuGreen = nullptr; }
         if (s_iconBotCpuRed)   { SDL_DestroyTexture(s_iconBotCpuRed);   s_iconBotCpuRed   = nullptr; }
+        if (s_iconLocked)      { SDL_DestroyTexture(s_iconLocked);      s_iconLocked      = nullptr; }
     }
     s_iconsAttempted = true;
     s_iconsRenderer  = renderer;
@@ -3281,6 +3283,20 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
                              "%s%s", base, icons[i].relPath);
                 *icons[i].target = imguiLoadSvgIcon(renderer, basePathBuf, iconPx);
             }
+        }
+    }
+
+    /* Lock badge — rasterised as a white alpha mask so the lockBadge
+     * theme color tints it at draw time (matches the previous orange
+     * "[locked]" pill). */
+    s_iconLocked = imguiLoadSvgIconWhite(renderer, "data/ui/mapeditor/locked.svg", iconPx);
+    if (s_iconLocked == nullptr) {
+        char basePathBuf[FILENAME_MAX];
+        const char *base = SDL_GetBasePath();
+        if (base) {
+            SDL_snprintf(basePathBuf, sizeof(basePathBuf),
+                         "%sdata/ui/mapeditor/locked.svg", base);
+            s_iconLocked = imguiLoadSvgIconWhite(renderer, basePathBuf, iconPx);
         }
     }
 }
@@ -3471,7 +3487,6 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
         bool rankedLocked = (clientSimGetLobbyServerLocks(cs) & 0x40) != 0;  /* LOBBY_LOCK_RANKED */
         bool canToggle = effectiveHost && !botsBlock && !rankedLocked;
         bool rankedReadAtRender = rankedV;
-        if (rankedLocked) renderLockBadge();
         if (!canToggle) ImGui::BeginDisabled();
         if (ImGui::Checkbox("Ranked game##ranked", &rankedV)) {
             uint8_t v = rankedV ? 1 : 0;
@@ -3487,10 +3502,11 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                             (int)clientSimGetLobbyRanked(cs));
         }
         if (!canToggle) ImGui::EndDisabled();
+        if (rankedLocked) renderLockBadge();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
             if (rankedLocked) {
                 ImGui::SetTooltip(
-                    "Ranked is locked by the server admin.");
+                    "Locked by the server admin.");
             } else if (!effectiveHost) {
                 ImGui::SetTooltip(
                     "Only the host or an admin can toggle Ranked game.");
@@ -5104,12 +5120,19 @@ static void renderLobbyRejectToast(ClientSim *cs, float s) {
  * when the server has flagged it in serverLocks. Cosmetic + tooltip. */
 static void renderLockBadge(void) {
     ImGui::SameLine();
-    ImGui::PushStyleColor(ImGuiCol_Text, wbThemeColor(g_theme->lockBadge));
-    ImGui::Text("[locked]");
-    ImGui::PopStyleColor();
+    if (s_iconLocked) {
+        float sz = ImGui::GetTextLineHeight();
+        ImGui::ImageWithBg((ImTextureID)s_iconLocked, ImVec2(sz, sz),
+                          ImVec2(0, 0), ImVec2(1, 1),
+                          ImVec4(0, 0, 0, 0),
+                          wbThemeColor(g_theme->lockBadge));
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Text, wbThemeColor(g_theme->lockBadge));
+        ImGui::Text("[locked]");
+        ImGui::PopStyleColor();
+    }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Locked by server (admin --lock-* CLI flag).\n"
-                          "Cannot be changed from the lobby.");
+        ImGui::SetTooltip("Locked by the server admin.");
     }
 }
 
@@ -5287,17 +5310,17 @@ static void renderGameSettingsPanel(ClientSim *cs,
             if (isHostLocal || isAdminLocal) {
                 bool oh = clientSimGetLobbyOpenHost(cs);
                 bool openHostLocked = (clientSimGetLobbyServerLocks(cs) & 0x80) != 0;  /* LOBBY_LOCK_OPEN_HOST */
-                if (openHostLocked) renderLockBadge();
                 if (openHostLocked) ImGui::BeginDisabled();
                 if (ImGui::Checkbox("Allow all players to change settings",
                                     &oh)) {
                     clientSimNetSendLobbyOpenHost(cs, oh);
                 }
                 if (openHostLocked) ImGui::EndDisabled();
+                if (openHostLocked) renderLockBadge();
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     if (openHostLocked) {
                         ImGui::SetTooltip(
-                            "Open Host is locked by the server admin.");
+                            "Locked by the server admin.");
                     } else {
                         ImGui::SetTooltip(
                             "When on, every connected player can edit lobby\n"
@@ -5359,7 +5382,6 @@ static void renderGameSettingsPanel(ClientSim *cs,
                 static bool s_pwOn       = false;
 
                 bool pwLocked = (clientSimGetLobbyServerLocks(cs) & 0x20) != 0;  /* LOBBY_LOCK_PASSWORD */
-                if (pwLocked) renderLockBadge();
                 if (pwLocked) ImGui::BeginDisabled();
                 if (ImGui::Checkbox("Password", &s_pwOn)) {
                     if (!s_pwOn) {
@@ -5370,10 +5392,11 @@ static void renderGameSettingsPanel(ClientSim *cs,
                      * anything yet — wait for the user to type. */
                 }
                 if (pwLocked) ImGui::EndDisabled();
+                if (pwLocked) renderLockBadge();
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     if (pwLocked) {
                         ImGui::SetTooltip(
-                            "Password is locked by the server admin.");
+                            "Locked by the server admin.");
                     } else {
                         ImGui::SetTooltip(
                             "When on, new clients must supply the\n"
