@@ -52,7 +52,9 @@ COMMANDS="$DIR/commands"
 #                 player's country (default "XX", or the resolved WBN
 #                 country code on machines that have made a fetch),
 #                 so the value depends on where the test is running.
-NORMALIZE_EVENTS_SED='s/"tick":[0-9]+,//; s/"pingMs":[0-9]+/"pingMs":0/; s/"countryCode":"[^"]*"/"countryCode":"??"/g'
+#                 The bare "country" field carried by CTRL_PLAYER_JOIN
+#                 and CTRL_PLAYER_LEAVE has the same problem.
+NORMALIZE_EVENTS_SED='s/"tick":[0-9]+,//; s/"pingMs":[0-9]+/"pingMs":0/; s/"countryCode":"[^"]*"/"countryCode":"??"/g; s/"country":"[^"]*"/"country":"??"/g'
 
 # Diff two JSONL files after the field normalization above, with a
 # lexical sort. sort -u collapses duplicate (untickled) lines because
