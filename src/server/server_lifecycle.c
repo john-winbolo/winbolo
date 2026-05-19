@@ -134,6 +134,9 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
                                  password, cfg->maxPlayers) == FALSE) {
       return FALSE;
     }
+    transportUdpServerSetUploadConfig(cfg->uploadPolicy,
+                                      cfg->uploadMaxFiles,
+                                      cfg->uploadMaxStorageBytes);
   }
 
   instanceUseWbn = cfg->acceptRemoteClients && cfg->useWbn;
