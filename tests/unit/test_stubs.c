@@ -19,11 +19,6 @@
 
 bool isInMenu = FALSE;
 
-/* autoslowDebugLog lives in src/gui/sdl3/gamefront.c (writes to
- * build/autoslowdown.log while the persistence bug is being tracked).
- * Unit tests don't link gamefront, so they get this no-op stub. */
-void autoslowDebugLog(const char *fmt, ...) { (void)fmt; }
-
 /* Localized-string accessors live in src/gui/sdl3/lang.c, which we
  * don't link (it pulls SDL3-IO + INI parsing). bolo TUs sprinkle
  * langGetText / langGetTextFmt into message-formatting paths

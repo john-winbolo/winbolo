@@ -1526,18 +1526,9 @@ void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool
 void frontEndApplyLocalTankPrefs(struct ClientSim *cs) {
   extern bool useAutoslow;
   extern bool useAutohide;
-  if (cs == NULL) {
-    autoslowDebugLog("[APPLY] frontEndApplyLocalTankPrefs called with cs=NULL");
-    return;
-  }
-  autoslowDebugLog("[APPLY] frontEndApplyLocalTankPrefs cs=%p useAutoslow=%d "
-                   "pre-apply tank autoSlow=%d",
-                   (void *)cs, (int)useAutoslow,
-                   (int)clientSimGetTankAutoSlowdown(cs));
+  if (cs == NULL) return;
   clientSimSetTankAutoSlowdown(cs, useAutoslow);
   clientSimSetTankAutoHideGunsight(cs, useAutohide);
-  autoslowDebugLog("[APPLY] post-apply tank autoSlow=%d",
-                   (int)clientSimGetTankAutoSlowdown(cs));
 }
 
 /* -------------------------------------------------------

@@ -227,10 +227,6 @@ static int renderFormBody(struct ClientSim *cs) {
 
     int result = 0;
     if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0))) {
-        autoslowDebugLog("[KEYS-OK] OK clicked (%s): prev useAutoslow=%d "
-                         "new s_autoSlowdown=%d cs=%p",
-                         cs ? "in-game" : "standalone",
-                         (int)useAutoslow, (int)s_autoSlowdown, (void *)cs);
         windowSetKeys(&s_keys);
         useAutoslow = s_autoSlowdown;
         useAutohide = s_autoGunsight;
@@ -242,8 +238,6 @@ static int renderFormBody(struct ClientSim *cs) {
             clientSimSetTankAutoSlowdown(cs, s_autoSlowdown);
             clientSimSetTankAutoHideGunsight(cs, s_autoGunsight);
         }
-        autoslowDebugLog("[KEYS-OK] after assignment useAutoslow=%d; "
-                         "calling gameFrontPutPrefs", (int)useAutoslow);
         gameFrontPutPrefs(&s_keys);
         s_waiting = ksNone;
         result = 1;

@@ -99,7 +99,6 @@ void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool
 }
 
 void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
-void autoslowDebugLog(const char *fmt, ...) { (void)fmt; }
 
 void frontEndSetActiveClientSim(struct ClientSim *cs) {
   (void)cs;
