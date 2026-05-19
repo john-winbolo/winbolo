@@ -2923,6 +2923,19 @@ static void lobbySendTeamPool(ClientSim *cs,
 static void lobbySendSetting(ClientSim *cs,
                              uint8_t settingType,
                              const uint8_t *value, uint8_t valueLen) {
+    /* Pre-send validation for setting types that have a wire-side range
+     * cap on the server. Drop out-of-range values rather than letting
+     * the server reject them — the server has the authoritative check
+     * (transport_udp_server.c) and emits LOBBY_REJECT_INVALID; this
+     * mirrors the cap so the SP-host local apply path doesn't bypass
+     * it either. */
+    if (settingType == 5 /* LST_TIME_MINUTES */ && valueLen == 2) {
+        uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
+        if (mins < LOBBY_TIME_MINUTES_MIN ||
+            mins > LOBBY_TIME_MINUTES_MAX) {
+            return;
+        }
+    }
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim) return;
