@@ -321,6 +321,10 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
         sim->sim.pendingStartIdx[count] = MAX_STARTS;
     }
 
+    /* Sentinel "use the CLI-configured default brain" for every slot.
+     * 0 is a valid brain-catalogue index, so memset doesn't suffice. */
+    memset(sim->botBrainIdx, 0xFF, sizeof(sim->botBrainIdx));
+
     /* Populate the available-brains list so the lobby can advertise
      * them via PACKET_LOBBY_BRAIN_LIST. Cheap one-shot scan of the
      * brains/ tree. */
@@ -3387,10 +3391,9 @@ void serverSimFillLobbyBotConfigEvent(ServerSim *sim, BYTE slot, ControlEvent *e
 void serverSimFillLobbyBotBrainEvent(const ServerSim *sim, BYTE slot, ControlEvent *evt) {
     evt->type = CTRL_LOBBY_BOT_BRAIN;
     evt->u.lobbyBotBrain.slot = slot;
-    memset(evt->u.lobbyBotBrain.path, 0, BRAIN_LIST_PATH_LEN);
+    evt->u.lobbyBotBrain.brainIdx = 0xFF;
     if (slot >= MAX_TANKS) return;
-    strncpy(evt->u.lobbyBotBrain.path, sim->botBrainPaths[slot],
-            BRAIN_LIST_PATH_LEN - 1);
+    evt->u.lobbyBotBrain.brainIdx = sim->botBrainIdx[slot];
 }
 
 void serverSimFillLobbyBrainListEvent(const ServerSim *sim, ControlEvent *evt) {
@@ -4583,13 +4586,20 @@ int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
  * Lobby Layout A accessors / mutators / publish helpers
  * ──────────────────────────────────────────────────────────────── */
 
-void serverSimSetBotBrainPathFor(ServerSim *sim, BYTE slot, const char *path) {
+void serverSimSetBotBrainIdxFor(ServerSim *sim, BYTE slot, uint8_t brainIdx) {
     if (!sim || slot >= MAX_TANKS) return;
-    if (path == NULL) {
-        sim->botBrainPaths[slot][0] = '\0';
-        return;
-    }
-    SDL_strlcpy(sim->botBrainPaths[slot], path, sizeof(sim->botBrainPaths[slot]));
+    /* 0xFF is the "use server default" sentinel; any other in-range
+     * value indexes into the catalogue. Out-of-range is a no-op,
+     * matching the existing "ignore malformed input" pattern. */
+    if (brainIdx != 0xFF && brainIdx >= sim->brainList.count) return;
+    sim->botBrainIdx[slot] = brainIdx;
+}
+
+const char *serverSimGetBrainPathForIdx(const ServerSim *sim, uint8_t brainIdx) {
+    if (!sim) return NULL;
+    if (brainIdx == 0xFF) return sim->botBrainPath;
+    if (brainIdx >= sim->brainList.count) return NULL;
+    return sim->brainPaths[brainIdx];
 }
 
 bool serverSimGetAutoLockOnGameStart(const ServerSim *sim) {
@@ -4663,10 +4673,10 @@ void serverSimSetState(ServerSim *sim, ServerState s) {
     if (sim) sim->state = s;
 }
 
-void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, const char *brainPath) {
+void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, uint8_t brainIdx) {
     if (!sim || slot >= MAX_TANKS) return;
-    serverSimSetBotBrainPathFor(sim, slot, brainPath);
-    botManagerSetBrainPath(slot, sim->botBrainPaths[slot]);
+    serverSimSetBotBrainIdxFor(sim, slot, brainIdx);
+    botManagerSetBrainIdx(sim, slot, sim->botBrainIdx[slot]);
 }
 
 void serverSimRenameBotSlot(ServerSim *sim, BYTE slot, const char *name) {

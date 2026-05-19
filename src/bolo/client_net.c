@@ -238,7 +238,19 @@ void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
 void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
                                       const char *brainPath) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbySetBotBrain(&cs->transport, slot, brainPath);
+  /* Translate the caller-supplied path to a catalogue index using the
+   * client's local brain-list mirror. Empty / missing / unknown paths
+   * map to 0xFF (server-default sentinel) — the path field stays on
+   * the public signature until Phase 3 retires it. */
+  uint8_t brainIdx = 0xFF;
+  if (brainPath != NULL && brainPath[0] != '\0') {
+    const BrainListEntry *e =
+        brainListFindByPath(&cs->lobbyBrainList, brainPath);
+    if (e != NULL) {
+      brainIdx = (uint8_t)(e - cs->lobbyBrainList.entries);
+    }
+  }
+  transportUdpClientSendLobbySetBotBrain(&cs->transport, slot, brainIdx);
 }
 
 void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath) {

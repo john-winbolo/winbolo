@@ -44,11 +44,12 @@ struct ServerSim {
     TeamMetadata    teams[MAX_TANKS];
     LobbyBotConfig  botConfigs[MAX_TANKS];
 
-    /* Per-bot brain path. Empty = "use the global botBrainPath". The
+    /* Per-bot brain selection as an index into brainList. 0xFF means
+     * "use the global botBrainPath" (the CLI-configured default). The
      * lobby AiConfig dropdown writes here via
      * PACKET_LOBBY_SET_BOT_BRAIN so different bots in the same lobby
      * can run different brains. */
-    char            botBrainPaths[MAX_TANKS][260];
+    uint8_t         botBrainIdx[MAX_TANKS];
 
     /* Discovered brain codebases under brains/ — sent to clients via
      * PACKET_LOBBY_BRAIN_LIST so the AiConfig combo can list them. */

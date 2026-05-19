@@ -171,11 +171,21 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     }
 
     case CTRL_LOBBY_BOT_BRAIN: {
-        uint8_t s = evt->u.lobbyBotBrain.slot;
+        uint8_t s   = evt->u.lobbyBotBrain.slot;
+        uint8_t idx = evt->u.lobbyBotBrain.brainIdx;
         if (s >= MAX_TANKS) break;
-        strncpy(cs->lobbyBotBrain[s], evt->u.lobbyBotBrain.path,
-                sizeof(cs->lobbyBotBrain[s]) - 1);
-        cs->lobbyBotBrain[s][sizeof(cs->lobbyBotBrain[s]) - 1] = '\0';
+        /* Resolve the catalogue index to a display path against the
+         * local brain-list mirror. 0xFF (and any other index not
+         * present in the catalogue) maps to the empty string, which
+         * preserves the "use the server default" sentinel that
+         * downstream UI already understands. */
+        cs->lobbyBotBrain[s][0] = '\0';
+        if (idx != 0xFF && idx < cs->lobbyBrainList.count) {
+            strncpy(cs->lobbyBotBrain[s],
+                    cs->lobbyBrainList.entries[idx].path,
+                    sizeof(cs->lobbyBotBrain[s]) - 1);
+            cs->lobbyBotBrain[s][sizeof(cs->lobbyBotBrain[s]) - 1] = '\0';
+        }
         break;
     }
 

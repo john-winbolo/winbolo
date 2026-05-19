@@ -2800,7 +2800,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_LOBBY_SET_BOT_BRAIN: {
-            /* Wire: [header 8] [slot 1] [pathLen 1] [path N]. */
+            /* Wire: [header 8] [slot 1] [brainIdx 1]. brainIdx == 0xFF
+             * resolves to the CLI-configured default brain; any other
+             * value must index into the server's brain catalogue. */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
                 serverSimGetState(sim) != serverStateLobby ||
@@ -2809,23 +2811,15 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_BOT_BRAIN,
                               LOBBY_REJECT_NOT_HOST); break;
             }
-            uint8_t slot    = buf[PACKET_HEADER_SIZE + 0];
-            uint8_t pathLen = buf[PACKET_HEADER_SIZE + 1];
-            if (slot >= MAX_TANKS || pathLen >= BRAIN_LIST_PATH_LEN ||
-                len < PACKET_HEADER_SIZE + 2 + pathLen ||
-                !botManagerIsBot(slot)) {
+            uint8_t slot     = buf[PACKET_HEADER_SIZE + 0];
+            uint8_t brainIdx = buf[PACKET_HEADER_SIZE + 1];
+            if (slot >= MAX_TANKS || !botManagerIsBot(slot) ||
+                serverSimGetBrainPathForIdx(sim, brainIdx) == NULL) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_BOT_BRAIN,
                               LOBBY_REJECT_INVALID); break;
             }
-            {
-                char pathBuf[260];
-                memset(pathBuf, 0, sizeof(pathBuf));
-                if (pathLen > 0 && pathLen < sizeof(pathBuf)) {
-                    memcpy(pathBuf, buf + PACKET_HEADER_SIZE + 2, pathLen);
-                }
-                serverSimSetBotBrainPathFor(sim, slot, pathBuf);
-                botManagerSetBrainPath(slot, pathBuf);
-            }
+            serverSimSetBotBrainIdxFor(sim, slot, brainIdx);
+            botManagerSetBrainIdx(sim, slot, brainIdx);
             serverSimPublishLobbyBotBrain(sim, slot);
             lobbyAutoUnreadyOnChange(sim);
             break;

@@ -1265,9 +1265,18 @@ GameSim *serverSimGetGameSim(ServerSim *sim);
  * Lobby Layout A accessors / mutators
  * ──────────────────────────────────────────────────────────────── */
 
-/* Per-bot brain path. Set via PACKET_LOBBY_SET_BOT_BRAIN. */
-void        serverSimSetBotBrainPathFor(ServerSim *sim, BYTE slot,
-                                        const char *path);
+/* Per-bot brain selection as an index into the server's brain
+ * catalogue. brainIdx == 0xFF means "use the CLI-configured default
+ * brain". Set via PACKET_LOBBY_SET_BOT_BRAIN. */
+void        serverSimSetBotBrainIdxFor(ServerSim *sim, BYTE slot,
+                                       uint8_t brainIdx);
+
+/* Resolve a catalogue index back to its disk path. Returns the
+ * CLI-configured default path for brainIdx == 0xFF, NULL when the
+ * index is out of range. The returned pointer is owned by the sim
+ * and is valid until the sim is destroyed. */
+const char *serverSimGetBrainPathForIdx(const ServerSim *sim,
+                                        uint8_t brainIdx);
 
 /* ── Server-side map directory enumeration ──────────────────────────
  *
@@ -1354,10 +1363,11 @@ void serverSimSetState(ServerSim *sim, ServerState s);
 void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
 
 /* Switch a lobby bot to a new brain script. Updates both the
- * per-slot brain-path mirror (serverSimSetBotBrainPathFor) and the
+ * per-slot brain-index mirror (serverSimSetBotBrainIdxFor) and the
  * bot manager's live state in a single call — these are always
- * paired at call sites. */
-void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, const char *brainPath);
+ * paired at call sites. brainIdx == 0xFF resolves to the
+ * CLI-configured default brain. */
+void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, uint8_t brainIdx);
 
 /* Rename a bot's display name in the players table without
  * touching alliance/team/transport state. SP-only path used by the

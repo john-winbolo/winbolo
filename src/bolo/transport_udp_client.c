@@ -2115,23 +2115,16 @@ void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
 }
 
 void transportUdpClientSendLobbySetBotBrain(Transport *t, uint8_t slot,
-                                            const char *brainPath) {
+                                            uint8_t brainIdx) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2 + BRAIN_LIST_PATH_LEN];
-    int pathLen, len;
+    uint8_t buf[PACKET_HEADER_SIZE + 2];
 
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    if (brainPath == NULL) brainPath = "";
-
-    pathLen = (int)strlen(brainPath);
-    if (pathLen >= BRAIN_LIST_PATH_LEN) pathLen = BRAIN_LIST_PATH_LEN - 1;
 
     packHeader(buf, PACKET_LOBBY_SET_BOT_BRAIN, c->outSequence++);
     buf[PACKET_HEADER_SIZE + 0] = slot;
-    buf[PACKET_HEADER_SIZE + 1] = (uint8_t)pathLen;
-    if (pathLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 2, brainPath, pathLen);
-    len = PACKET_HEADER_SIZE + 2 + pathLen;
-    udpClientSendTo(c, buf, len);
+    buf[PACKET_HEADER_SIZE + 1] = brainIdx;
+    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 void transportUdpClientSendLobbySetMap(Transport *t,
