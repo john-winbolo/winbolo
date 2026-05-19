@@ -2248,6 +2248,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_ini_reader_writer.c
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_upload_filename_safe.c
+    tests/unit/test_lobby_time_minutes_valid.c
     tests/unit/test_lobby_map_list_chunked.c
     # transport_udp_client.c stays per-target because of HAVE_STEAM
     # gating (it's excluded from bolo_static for that reason). Linked

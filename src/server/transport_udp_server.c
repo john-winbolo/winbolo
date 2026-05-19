@@ -2696,6 +2696,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     if (valueLen == 2) {
                         uint16_t mins =
                             (uint16_t)((value[0] << 8) | value[1]);
+                        if (!lobbyTimeMinutesIsValid(mins)) {
+                            lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                                          LOBBY_REJECT_INVALID);
+                            break;
+                        }
                         serverSimSetTimeMinutes(sim, mins);
                         if (serverSimGetTimeLimit(sim)) {
                             serverSimSetGameLength(sim,
