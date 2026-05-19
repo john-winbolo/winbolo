@@ -35,6 +35,8 @@ target_link_libraries(bot_brains_static PUBLIC
     lua_static
     SDL3::SDL3)
 
-if(NOT MSVC)
+if(EMSCRIPTEN)
+    target_compile_options(bot_brains_static PRIVATE -fno-common -include sys/types.h)
+elseif(NOT MSVC)
     target_compile_options(bot_brains_static PRIVATE -fcommon)
 endif()
