@@ -124,8 +124,9 @@ target_link_libraries(imgui_backends PUBLIC SDL3::SDL3)
 
 ###
 # bolo_static — the bulk of the bolo source set as a single static lib.
-# Only transport_udp_client.c stays per-target (HAVE_STEAM-divergent);
-# client_mapload.c and nat_portmap.c aren't referenced by the wasm build.
+# transport_udp_client.c and client_mapload.c stay per-target
+# (HAVE_STEAM-divergent); nat_portmap.c isn't referenced by the wasm
+# build.
 #
 add_subdirectory(${REPO_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
 add_subdirectory(${REPO_ROOT}/src/server ${CMAKE_BINARY_DIR}/server_static)
@@ -133,6 +134,7 @@ add_subdirectory(${REPO_ROOT}/brains ${CMAKE_BINARY_DIR}/bot_brains_static)
 
 set(BOLO_SOURCES
     ${SRC_ROOT}/bolo/transport_udp_client.c
+    ${SRC_ROOT}/bolo/client_mapload.c
 )
 
 # Server modules (used by client too).
@@ -233,7 +235,8 @@ target_include_directories(winbolo PRIVATE
 )
 bolo_apply_include_rules(winbolo gui)
 bolo_grant_internal_source_access(winbolo
-    ${SRC_ROOT}/bolo/transport_udp_client.c)
+    ${SRC_ROOT}/bolo/transport_udp_client.c
+    ${SRC_ROOT}/bolo/client_mapload.c)
 
 target_compile_definitions(winbolo PRIVATE
     _GNU_SOURCE
