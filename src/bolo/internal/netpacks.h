@@ -261,6 +261,7 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_GAME_OVER         144  /* Signal game ended, return to lobby */
 #define PACKET_LOBBY_MAP_CHANGE  145  /* Server changed map, clients must re-download */
 #define PACKET_WBN_REAUTH       146  /* Client -> Server: re-authenticate WBN token after lobby reset */
+#define PACKET_WBN_REKEY        160  /* Server -> Client: rotate WBN session key (Phase 7/8 encodes/decodes; see plans/fixwbn.md "Lobby key rotation") */
 
 /* Team balance packets */
 #define PACKET_BALANCE_REQUEST   147  /* Client(host) -> Server: request WBN balance
@@ -474,11 +475,24 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 /* allowNewPlayers stays on PACKET_LOCK_TOGGLE — not duplicated here.
  * serverLocks is read-only (CLI on bolod) — no SET_SETTING for it. */
 
+/* LST_TIME_MINUTES accepted range: 1..240 minutes (4 hours).
+ * Defended at the wire so downstream ticks arithmetic
+ * (minutes * 60 * GAME_NUMGAMETICKS_SEC) can't be coaxed
+ * toward int32_t overflow by a malicious client.
+ * LOBBY_TIME_MINUTES_MIN/MAX are in public/wire_limits.h so the
+ * GUI lobby can pre-validate before sending. */
+static inline bool lobbyTimeMinutesIsValid(uint16_t minutes) {
+    return minutes >= LOBBY_TIME_MINUTES_MIN &&
+           minutes <= LOBBY_TIME_MINUTES_MAX;
+}
+
 /* Reject reason codes for PACKET_LOBBY_REJECT. */
-#define LOBBY_REJECT_NOT_HOST     1   /* sender lacks authority */
-#define LOBBY_REJECT_LOCKED       2   /* setting is in serverLocks bitmask */
-#define LOBBY_REJECT_INVALID      3   /* malformed payload / out-of-range value */
-#define LOBBY_REJECT_UPLOAD_BUSY  4   /* another client's map upload is in flight */
+#define LOBBY_REJECT_NOT_HOST          1   /* sender lacks authority */
+#define LOBBY_REJECT_LOCKED            2   /* setting is in serverLocks bitmask */
+#define LOBBY_REJECT_INVALID           3   /* malformed payload / out-of-range value */
+#define LOBBY_REJECT_UPLOAD_BUSY       4   /* another client's map upload is in flight */
+#define LOBBY_REJECT_UPLOAD_DISABLED   5   /* host disabled map uploads */
+#define LOBBY_REJECT_UPLOAD_LIMIT_HIT  6   /* per-map storage cap reached */
 
 #define NAME_REJECT_INVALID         1   /* validator: any *_INVALID_* error */
 #define NAME_REJECT_TAKEN           2   /* duplicate via playerNameCompare */

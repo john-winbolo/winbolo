@@ -245,54 +245,56 @@ int run_lobby_bot_config_codec_and_apply(void) {
 }
 
 /* ================================================================
- * CTRL_LOBBY_BOT_BRAIN — non-empty path round-trip and empty-path
- * sentinel (server fallback).
+ * CTRL_LOBBY_BOT_BRAIN — index round-trip and 0xFF "server default"
+ * sentinel. The apply path resolves the index through the client's
+ * brain-list mirror, so the test seeds that catalogue first.
  * ================================================================ */
 int run_lobby_bot_brain_codec_and_apply(void) {
     ControlEvent in, out;
     memset(&in, 0, sizeof(in));
     in.type = CTRL_LOBBY_BOT_BRAIN;
-    in.u.lobbyBotBrain.slot = 2;
-    strncpy(in.u.lobbyBotBrain.path, "Brains/NewAutopilot/init.lua",
-            sizeof(in.u.lobbyBotBrain.path) - 1);
+    in.u.lobbyBotBrain.slot     = 2;
+    in.u.lobbyBotBrain.brainIdx = 3;
 
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_BOT_BRAIN, &in, &out) == 0,
-                  "codec_roundtrip failed (non-empty path)");
+                  "codec_roundtrip failed (in-range index)");
     UT_ASSERT(out.type == CTRL_LOBBY_BOT_BRAIN);
     UT_ASSERT(out.u.lobbyBotBrain.slot == 2);
-    UT_ASSERT(strcmp(out.u.lobbyBotBrain.path,
-                     "Brains/NewAutopilot/init.lua") == 0);
+    UT_ASSERT(out.u.lobbyBotBrain.brainIdx == 3);
 
-    /* Empty-path sentinel — pathLen=0 on the wire, decoder leaves the
-     * path as an empty string. */
-    ControlEvent empty_in, empty_out;
-    memset(&empty_in, 0, sizeof(empty_in));
-    empty_in.type = CTRL_LOBBY_BOT_BRAIN;
-    empty_in.u.lobbyBotBrain.slot = 6;
+    /* 0xFF "use server default" sentinel round-trip. */
+    ControlEvent default_in, default_out;
+    memset(&default_in, 0, sizeof(default_in));
+    default_in.type = CTRL_LOBBY_BOT_BRAIN;
+    default_in.u.lobbyBotBrain.slot     = 6;
+    default_in.u.lobbyBotBrain.brainIdx = 0xFF;
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_BOT_BRAIN,
-                                  &empty_in, &empty_out) == 0,
-                  "codec_roundtrip failed (empty path)");
-    UT_ASSERT(empty_out.u.lobbyBotBrain.slot == 6);
-    UT_ASSERT(empty_out.u.lobbyBotBrain.path[0] == '\0');
+                                  &default_in, &default_out) == 0,
+                  "codec_roundtrip failed (0xFF sentinel)");
+    UT_ASSERT(default_out.u.lobbyBotBrain.slot == 6);
+    UT_ASSERT(default_out.u.lobbyBotBrain.brainIdx == 0xFF);
 
+    /* Apply writes the index straight onto cs->lobbyBotBrainIdx, but
+     * clamps any in-range-looking value that lies past the brain
+     * catalogue to the 0xFF sentinel — so we still have to seed the
+     * count. 0xFF passes the clamp untouched. */
     ClientSim *cs = fresh_client_sim();
     UT_ASSERT(cs != NULL);
+    cs->lobbyBrainList.count = 4;
     clientSimApplyControl(cs, &in);
-    UT_ASSERT(strcmp(cs->lobbyBotBrain[2],
-                     "Brains/NewAutopilot/init.lua") == 0);
-    /* Empty-path apply leaves the field empty (already zero, but
-     * worth asserting we don't crash and don't poison the slot). */
-    clientSimApplyControl(cs, &empty_in);
-    UT_ASSERT(cs->lobbyBotBrain[6][0] == '\0');
+    UT_ASSERT(cs->lobbyBotBrainIdx[2] == 3);
+    clientSimApplyControl(cs, &default_in);
+    UT_ASSERT(cs->lobbyBotBrainIdx[6] == 0xFF);
     clientSimDestroy(cs);
     return 0;
 }
 
 /* ================================================================
- * CTRL_LOBBY_BRAIN_LIST — biggest payload. Tests a single-entry
- * list and a BRAIN_LIST_MAX-entry list to exercise the worst-case
- * encode path (which only fits because MAX_CONTROL_PACKET was bumped
- * to 8192 alongside this encoder).
+ * CTRL_LOBBY_BRAIN_LIST — name/version round-trip. Tests a
+ * single-entry list and a BRAIN_LIST_MAX-entry list to exercise
+ * the worst-case encode path (~897 bytes payload, comfortably
+ * inside MAX_CONTROL_PACKET's single-datagram budget). Disk paths
+ * are server-private and never appear on the wire.
  * ================================================================ */
 int run_lobby_brain_list_codec_and_apply(void) {
     /* Single entry. */
@@ -305,9 +307,6 @@ int run_lobby_brain_list_codec_and_apply(void) {
                 BRAIN_LIST_NAME_LEN - 1);
         strncpy(in.u.lobbyBrainList.list.entries[0].version, "2026-05-11 12:30",
                 BRAIN_LIST_VER_LEN - 1);
-        strncpy(in.u.lobbyBrainList.list.entries[0].path,
-                "Brains/NewAutopilot/init.lua",
-                BRAIN_LIST_PATH_LEN - 1);
 
         UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_BRAIN_LIST, &in, &out) == 0,
                       "codec_roundtrip failed (single entry)");
@@ -317,13 +316,10 @@ int run_lobby_brain_list_codec_and_apply(void) {
                          "NewAutopilot") == 0);
         UT_ASSERT(strcmp(out.u.lobbyBrainList.list.entries[0].version,
                          "2026-05-11 12:30") == 0);
-        UT_ASSERT(strcmp(out.u.lobbyBrainList.list.entries[0].path,
-                         "Brains/NewAutopilot/init.lua") == 0);
     }
 
-    /* Full BRAIN_LIST_MAX entries — worst-case wire size, near the
-     * 8192-byte cap. Each entry gets a unique name/version/path so
-     * we can spot misordering. */
+    /* Full BRAIN_LIST_MAX entries — worst-case wire size. Each entry
+     * gets a unique name/version so we can spot misordering. */
     ControlEvent full_in, full_out;
     memset(&full_in, 0, sizeof(full_in));
     full_in.type = CTRL_LOBBY_BRAIN_LIST;
@@ -334,8 +330,6 @@ int run_lobby_brain_list_codec_and_apply(void) {
                  BRAIN_LIST_NAME_LEN, "Brain%02d", i);
         snprintf(full_in.u.lobbyBrainList.list.entries[i].version,
                  BRAIN_LIST_VER_LEN, "v%d", i);
-        snprintf(full_in.u.lobbyBrainList.list.entries[i].path,
-                 BRAIN_LIST_PATH_LEN, "Brains/Brain%02d/init.lua", i);
     }
 
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_BRAIN_LIST,
@@ -345,18 +339,14 @@ int run_lobby_brain_list_codec_and_apply(void) {
     for (i = 0; i < BRAIN_LIST_MAX; i++) {
         char wantName[BRAIN_LIST_NAME_LEN];
         char wantVer [BRAIN_LIST_VER_LEN];
-        char wantPath[BRAIN_LIST_PATH_LEN];
         snprintf(wantName, sizeof(wantName), "Brain%02d", i);
         snprintf(wantVer,  sizeof(wantVer),  "v%d", i);
-        snprintf(wantPath, sizeof(wantPath), "Brains/Brain%02d/init.lua", i);
         UT_ASSERT_MSG(strcmp(full_out.u.lobbyBrainList.list.entries[i].name,
                              wantName) == 0,
                       "entry %d name mismatch: got '%s' want '%s'",
                       i, full_out.u.lobbyBrainList.list.entries[i].name, wantName);
         UT_ASSERT(strcmp(full_out.u.lobbyBrainList.list.entries[i].version,
                          wantVer) == 0);
-        UT_ASSERT(strcmp(full_out.u.lobbyBrainList.list.entries[i].path,
-                         wantPath) == 0);
     }
 
     /* Apply: cs->lobbyBrainList is a straight struct copy. */

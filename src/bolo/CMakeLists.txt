@@ -88,6 +88,7 @@ add_library(bolo_static STATIC
     udppackets.c
     util.c
     viewport.c
+    wbn_key_codec.c
 )
 
 bolo_apply_include_rules(bolo_static sim_owner)
@@ -133,6 +134,13 @@ endif()
 # uses today. Keeps tentative definitions like debug_file_output.c's
 # `char fileName[2048]` mergeable with the strong definition of the
 # same name in servermain.c (WinBoloDS).
-if(NOT MSVC)
+#
+# Emscripten/wasm-ld can't merge COMMON symbols, and there's no
+# servermain.c in the wasm link anyway. -include sys/types.h brings
+# in the BSD typedefs (u_char, u_short) that brain.h relies on under
+# non-_WIN32 platforms.
+if(EMSCRIPTEN)
+    target_compile_options(bolo_static PRIVATE -fno-common -include sys/types.h)
+elseif(NOT MSVC)
     target_compile_options(bolo_static PRIVATE -fcommon)
 endif()

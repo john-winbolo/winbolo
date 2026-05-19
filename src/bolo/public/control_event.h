@@ -32,6 +32,7 @@
 #include "client_enums.h" /* netStatus, gameType */
 #include "client_sim.h"   /* ClientLobbySlot */
 #include "brain_list.h"   /* BrainList for CTRL_LOBBY_BRAIN_LIST */
+#include "upload_policy.h" /* UploadPolicy in lobbySettings */
 
 #ifndef LOBBY_TEAM_NAME_LEN
 #define LOBBY_TEAM_NAME_LEN 32
@@ -151,6 +152,7 @@ typedef struct ControlEvent {
                                           * gates WBN-only UI (Balance
                                           * from WBN) on remote clients */
             uint16_t lobbyServerLocks;
+            UploadPolicy uploadPolicy;
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */
@@ -224,11 +226,12 @@ typedef struct ControlEvent {
             char    name[PACKET_MAX_PLAYER_NAME];
         } lobbyBotConfig;
 
-        /* CTRL_LOBBY_BOT_BRAIN — per-bot brain script path. Empty
-         * path means "fall back to the server's global bot brain". */
+        /* CTRL_LOBBY_BOT_BRAIN — per-bot brain selection as an index
+         * into the server's brain catalogue. brainIdx == 0xFF means
+         * "fall back to the server's global bot brain". */
         struct {
             uint8_t slot;
-            char    path[BRAIN_LIST_PATH_LEN];
+            uint8_t brainIdx;
         } lobbyBotBrain;
 
         /* CTRL_LOBBY_BRAIN_LIST — server's discovered brain catalogue,

@@ -45,7 +45,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_ARCHITECTURE
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS build architectures" FORCE)
 endif()
 
-set(WINBOLO_VERSION "1.18" CACHE STRING "WinBolo version number")
+include(cmake/bolo_version.cmake)
 
 # Global macOS bundle metadata. Set once here so every MACOSX_BUNDLE target
 # (WinBolo, Log Viewer, Map Editor) picks up matching version/copyright keys
@@ -58,27 +58,6 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(MACOSX_BUNDLE_LONG_VERSION_STRING  "${WINBOLO_VERSION}")
     set(MACOSX_BUNDLE_COPYRIGHT            "Copyright 1998-${_WB_CURRENT_YEAR} John Morrison")
 endif()
-
-execute_process(COMMAND git rev-parse --short HEAD
-                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-                OUTPUT_VARIABLE WINBOLO_GIT_HASH
-                OUTPUT_STRIP_TRAILING_WHITESPACE
-                ERROR_QUIET)
-if(NOT WINBOLO_GIT_HASH)
-    set(WINBOLO_GIT_HASH "unknown")
-endif()
-string(TIMESTAMP WINBOLO_BUILD_DATE "%Y-%m-%d")
-
-# Derive network protocol version bytes from WINBOLO_VERSION.
-# Each digit of the version string (skipping dots) becomes one byte.
-# E.g. "1.18" -> MAJOR=0x01, MINOR=0x01, REVISION=0x08.
-string(REPLACE "." "" _VER_DIGITS "${WINBOLO_VERSION}")
-string(SUBSTRING "${_VER_DIGITS}" 0 1 _VER_D0)
-string(SUBSTRING "${_VER_DIGITS}" 1 1 _VER_D1)
-string(SUBSTRING "${_VER_DIGITS}" 2 1 _VER_D2)
-math(EXPR BOLO_VERSION_MAJOR "${_VER_D0}")
-math(EXPR BOLO_VERSION_MINOR "${_VER_D1}")
-math(EXPR BOLO_VERSION_REVISION "${_VER_D2}")
 
 set(CMAKE_C_STANDARD 99)
 
@@ -967,6 +946,53 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# winbolonet_core / winbolonet_server / winbolonet_client — three static
+# libs replacing the inline winbolonet/* source lists. Binaries pick the
+# subset they need via target_link_libraries.
+# ---------------------------------------------------------------------------
+add_library(winbolonet_core STATIC
+    src/winbolonet/http.c
+    src/winbolonet/winbolonetthread.c
+    src/winbolonet/winbolonetevents.c
+    src/winbolonet/winbolonet_core.c
+    src/winbolonet/wbn_bearer.c
+    src/winbolonet/wbn_prefs_path.c
+    src/winbolonet/wbn_country_cache.c
+)
+target_include_directories(winbolonet_core PRIVATE
+    ${cjson_SOURCE_DIR}
+    src/third_party/tweetnacl
+)
+target_link_libraries(winbolonet_core PRIVATE SDL3::SDL3 CURL::libcurl)
+bolo_apply_include_rules(winbolonet_core runtime_only)
+
+add_library(winbolonet_server STATIC
+    src/winbolonet/winbolonet_server.c
+)
+target_include_directories(winbolonet_server PRIVATE
+    ${cjson_SOURCE_DIR}
+)
+target_link_libraries(winbolonet_server PRIVATE SDL3::SDL3)
+target_compile_definitions(winbolonet_server PRIVATE
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
+bolo_apply_include_rules(winbolonet_server runtime_only)
+
+add_library(winbolonet_client STATIC
+    src/winbolonet/winbolonet_client.c
+    src/winbolonet/wbn_comments.cpp
+    src/winbolonet/wbn_news.cpp
+    src/winbolonet/wbn_news_parser.cpp
+)
+target_include_directories(winbolonet_client PRIVATE
+    ${cjson_SOURCE_DIR}
+)
+target_link_libraries(winbolonet_client PRIVATE SDL3::SDL3)
+bolo_apply_include_rules(winbolonet_client runtime_only)
+
+# ---------------------------------------------------------------------------
 # WinBolo Client (cross-platform: Windows, Linux, macOS)
 # ---------------------------------------------------------------------------
 
@@ -978,10 +1004,11 @@ set(CLIENT_SOURCES
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_stars.cpp
+    src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c
     src/gui/sdl3/tutorial_text.c
@@ -990,8 +1017,7 @@ set(CLIENT_SOURCES
     src/third_party/stb/stb_image_write_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_dedicated_log_stubs.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
+    src/third_party/tweetnacl/tweetnacl.c
 )
 
 
@@ -1110,6 +1136,7 @@ target_include_directories(WinBolo PRIVATE
     src/logviewer/platform
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
+    src/third_party/imgui_markdown
 )
 bolo_apply_include_rules(WinBolo gui)
 bolo_grant_internal_source_access(WinBolo
@@ -1168,7 +1195,10 @@ endif()
 target_link_libraries(WinBolo PRIVATE
     bolo_static
     ${SERVER_LINK_GROUP}
-    bot_brains_static)
+    bot_brains_static
+    winbolonet_core
+    winbolonet_server
+    winbolonet_client)
 
 # Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
 target_sources(WinBolo PRIVATE src/common/sentry_integration.c)
@@ -1308,8 +1338,7 @@ set(SERVER_SOURCES
     src/server/server_frontend_stubs.c
     src/gui/sdl3/luabrainshandler.c
     src/headless/cmd_stdin.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
+    src/third_party/tweetnacl/tweetnacl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
 )
 
@@ -1367,7 +1396,10 @@ endif()
 target_link_libraries(WinBoloDS PRIVATE
     bolo_static
     ${SERVER_LINK_GROUP}
-    bot_brains_static)
+    bot_brains_static
+    winbolonet_core
+    winbolonet_server
+    winbolonet_client)
 target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson utf8proc)
 
 # libplum NAT port mapping (optional). nat_portmap.c stays per-target
@@ -1487,8 +1519,6 @@ set(LOGVIEWER_PLATFORM_SOURCES
 # WinBolo.net HTTP client + Ed25519 signing — shared with the SDL3 client and
 # servers. LogViewer uses it to fetch/post comments on logs that have a WBN key.
 set(LOGVIEWER_WBN_SOURCES
-    src/winbolonet/http.c
-    src/winbolonet/wbn_comments.cpp
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -1560,6 +1590,8 @@ target_include_directories(LogViewer PRIVATE
 bolo_apply_include_rules(LogViewer runtime_only)
 
 target_link_libraries(LogViewer PRIVATE
+    winbolonet_core
+    winbolonet_client
     minizip SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends
     nanosvg stb_image CURL::libcurl cjson
 )
@@ -1618,8 +1650,7 @@ set(HEADLESS_SOURCES
     src/headless/cmd_stdin.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_dedicated_log_stubs.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
+    src/third_party/tweetnacl/tweetnacl.c
 )
 
 
@@ -1679,7 +1710,10 @@ endif()
 target_link_libraries(WinBoloHeadless PRIVATE
     bolo_static
     ${SERVER_LINK_GROUP}
-    bot_brains_static)
+    bot_brains_static
+    winbolonet_core
+    winbolonet_server
+    winbolonet_client)
 target_link_libraries(WinBoloHeadless PRIVATE
     SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
 
@@ -1733,8 +1767,7 @@ set(GYM_SOURCES
     src/headless/headless_frontend.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_dedicated_log_stubs.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
+    src/gym/winbolonet_stub.c
     src/gym/winbolo_gym.c
 )
 
@@ -1795,7 +1828,7 @@ target_link_libraries(winbolo_gym PRIVATE
     ${SERVER_LINK_GROUP}
     bot_brains_static)
 target_link_libraries(winbolo_gym PRIVATE
-    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
+    SDL3::SDL3 minizip lua_static utf8proc)
 
 if(OpenMP_C_FOUND)
     target_link_libraries(winbolo_gym PRIVATE OpenMP::OpenMP_C)
@@ -2278,6 +2311,22 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_map_field_clamps.c
     tests/unit/test_map_reload_rollback.c
     tests/unit/test_upload_busy.c
+    tests/unit/test_upload_filename_safe.c
+    tests/unit/test_lobby_time_minutes_valid.c
+    tests/unit/test_lobby_map_list_chunked.c
+    tests/unit/test_wbn_bearer_state.c
+    tests/unit/test_wbn_rekey_codec.c
+    tests/unit/test_wbn_news_parse.cpp
+    tests/unit/test_wbn_country_cache.c
+    # Compiled standalone (libcurl-free) so the bearer-state, news-parser
+    # and country-cache tests can link without dragging the rest of
+    # winbolonet_core into the test binary. The test_stubs.c stubs cover
+    # the other winbolonet_* functions; these TUs only add the bearer,
+    # prefs-path, country-cache and parser surfaces.
+    src/winbolonet/wbn_bearer.c
+    src/winbolonet/wbn_prefs_path.c
+    src/winbolonet/wbn_country_cache.c
+    src/winbolonet/wbn_news_parser.cpp
     # transport_udp_client.c stays per-target because of HAVE_STEAM
     # gating (it's excluded from bolo_static for that reason). Linked
     # here without HAVE_STEAM so client_net.c's transportUdpClient*
@@ -2313,6 +2362,7 @@ target_include_directories(WinBoloUnitTests PRIVATE
     src/gui/sdl3
     src/server
     src
+    src/winbolonet
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${cjson_SOURCE_DIR}
 )
@@ -2357,6 +2407,13 @@ set(_unit_test_names
     map_field_clamps_angry_start
     map_reload_rollback
     upload_busy_predicate
+    upload_filename_safe
+    lobby_map_list_chunked
+    lobby_map_search_chunked
+    wbn_bearer_state
+    wbn_rekey_codec
+    wbn_news_parse
+    wbn_country_cache
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}

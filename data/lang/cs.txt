@@ -1156,3 +1156,18 @@ STR_MENU_FIND_LAN_GAME=Najít hru v LAN…
 STR_MENU_JOIN_BY_ADDRESS=Připojit podle adresy…
 STR_MENU_OPEN_MAP_EDITOR=Otevřít editor map
 STR_MENU_OPEN_LOG_VIEWER=Otevřít prohlížeč záznamů
+
+# Settings → Network: WinBolo.net news auto-show toggle.
+STR_DLGSETTINGS_NEWS_AUTOSHOW=Zobrazovat novinky z winbolo.net při spuštění
+
+# News popup + welcome News button strings.
+STR_DLGWELCOME_NEWS=Novinky
+STR_DLGNEWS_TITLE=Novinky
+STR_DLGNEWS_CONSENT_TITLE=WinBolo News
+STR_DLGNEWS_CONSENT_BODY1=WinBolo vám může při spuštění hry zobrazovat nové příspěvky z winbolo.net. WBN zkontrolujeme jednou při spuštění a toto okno otevřeme jen tehdy, když bude něco nového.
+STR_DLGNEWS_CONSENT_BODY2=Toto nastavení můžete kdykoli změnit v části Nastavení.
+STR_DLGNEWS_SHOW=Zobrazit novinky
+STR_DLGNEWS_DONT_SHOW=Nezobrazovat
+STR_DLGNEWS_LOADING=Načítání…
+STR_DLGNEWS_DONT_AUTOSHOW=Příště novinky automaticky nezobrazovat
+STR_DLGNEWS_COMMENTS_FMT=Komentáře: {number}

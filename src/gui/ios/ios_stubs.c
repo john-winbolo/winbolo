@@ -44,19 +44,9 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
     return false;
 }
 
-bool winbolonetCreateClient(const char *token, const char *serverKey, char *errorMsg) {
-    (void)token; (void)serverKey; (void)errorMsg;
-    return false;
-}
-
 void winbolonetDestroy(bool isServer) { (void)isServer; }
 
 void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
-void winboloNetGetMyClientKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
-bool winboloNetVerifyClientKey(const char *playerKey, char *userName, BYTE playerNum) {
-    (void)playerKey; (void)userName; (void)playerNum;
-    return false;
-}
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
     (void)playerNum; (void)numPlayers; (void)freeBases; (void)freePills;
 }
@@ -73,11 +63,15 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
 bool winbolonetIsRunning(void) { return false; }
 bool winboloNetIsPlayerParticipant(BYTE playerNum) { (void)playerNum; return false; }
 void winboloNetSendLock(bool isLocked) { (void)isLocked; }
-bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg,
-                                 bool *hasSteam, bool *isSupporter) {
-    (void)token; (void)playerNum; (void)errorMsg;
+bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter) {
+    (void)playerKey; (void)playerName; (void)playerNum; (void)errorMsg;
     if (hasSteam)    *hasSteam    = false;
     if (isSupporter) *isSupporter = false;
+    return false;
+}
+bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, char *playerKeyOut, char *errorMsg) {
+    (void)apiToken; (void)serverKey; (void)errorMsg;
+    if (playerKeyOut) playerKeyOut[0] = '\0';
     return false;
 }
 bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {

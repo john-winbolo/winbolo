@@ -62,7 +62,7 @@
 #include "../gui/dnsLookups.h"
 #include "../gui/clientmutex.h"
 #include "../gui/dialogAlliance.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
 #include "frontend.h"
 
 /* Must match the value used inside shellsAddItem (shells.c redefines
@@ -291,6 +291,11 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   cs->countdownSeconds = 0;
   cs->mapDownloadComplete = false;
   cs->inLobby = false;
+
+  /* 0 is a valid brain-catalogue index, so the bulk memset above can't
+   * be the "no brain assigned" marker — use 0xFF, matching the sentinel
+   * the server uses for botBrainIdx[]. */
+  memset(cs->lobbyBotBrainIdx, 0xFF, sizeof(cs->lobbyBotBrainIdx));
 
   return true;
 }
@@ -984,7 +989,7 @@ void netSendTrackerUpdate(void) {
 /* Alliance dialog window — created/destroyed with network lifecycle */
 static void *dlgAllianceWnd = NULL;
 
-bool netSetup(ClientSim *cs, netType value, unsigned short myPort, char *targetIp, unsigned short targetPort, char *password, bool usCreate, char *trackerAddr, unsigned short trackerPort, bool useTracker, bool wantRejoin, bool useWinboloNet, char *wbnToken) {
+bool netSetup(ClientSim *cs, netType value, unsigned short myPort, char *targetIp, unsigned short targetPort, char *password, bool usCreate, char *trackerAddr, unsigned short trackerPort, bool useTracker, bool wantRejoin, bool useWinboloNet, const char *wbnApiToken, const char *wbnServerKey) {
   cs->networkGameType = value;
   cs->netStat = netRunning;
   dlgAllianceWnd = dialogAllianceCreate();
@@ -1271,6 +1276,7 @@ bool     clientSimGetLobbyRanked(const ClientSim *cs)                { return cs
 bool     clientSimGetLobbyAllowNewPlayers(const ClientSim *cs)       { return cs ? cs->lobbyAllowNewPlayers : true; }
 bool     clientSimGetLobbyWbnAvailable(const ClientSim *cs)          { return cs ? cs->lobbyWbnAvailable : false; }
 uint16_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
+UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs)           { return cs ? cs->uploadPolicy : UPLOAD_POLICY_ALLOW; }
 
 uint8_t clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId) {
   if (teamId >= 16) return 0;
@@ -1297,9 +1303,9 @@ uint8_t clientSimGetLobbyBotPersonality(const ClientSim *cs, BYTE slot) {
   if (slot >= 16) return 0;
   return cs->lobbyBotPersonality[slot];
 }
-const char *clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot) {
-  if (slot >= 16) return "";
-  return cs->lobbyBotBrain[slot];
+uint8_t clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot) {
+  if (slot >= 16) return 0xFF;
+  return cs->lobbyBotBrainIdx[slot];
 }
 
 const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs) {

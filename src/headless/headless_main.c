@@ -82,6 +82,7 @@
 #include "../gui/gamefront.h"
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
+#include "../winbolonet/winbolonet_core.h"
 #include "cmd_stdin.h"
 
 /* ------------------------------------------------------------------ */
@@ -481,10 +482,9 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       break;
 
     case CTRL_LOBBY_BOT_BRAIN:
-      fprintf(f, ",\"slot\":%u,\"path\":",
-              (unsigned)evt->u.lobbyBotBrain.slot);
-      logEventsJsonStr(f, evt->u.lobbyBotBrain.path,
-                       sizeof(evt->u.lobbyBotBrain.path));
+      fprintf(f, ",\"slot\":%u,\"brainIdx\":%u",
+              (unsigned)evt->u.lobbyBotBrain.slot,
+              (unsigned)evt->u.lobbyBotBrain.brainIdx);
       break;
 
     case CTRL_LOBBY_BRAIN_LIST:
@@ -1887,8 +1887,8 @@ static int runNetworkMode(void) {
     fprintf(stderr, "Connecting to %s:%u...\n", optServer, optPort);
   }
 
-  clientSimConnectUdp(humanSim, optServer, optPort, optName, optPassword, "", false,
-                      optTrackerAddr, optTrackerPort);
+  clientSimConnectUdp(humanSim, optServer, optPort, optName, optPassword, "", "",
+                      false, optTrackerAddr, optTrackerPort);
   if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
     const char *reason = clientSimGetConnectErrorReason(humanSim);
     fprintf(stderr, "Error: failed to connect: %s\n", reason ? reason : "unknown");
@@ -2141,6 +2141,7 @@ int main(int argc, char *argv[]) {
   wb_log_init("WinBolo", "WinBoloHeadless", "winbolo-headless.log");
   atexit(wb_log_shutdown);
 
+  winbolonetCoreSetPreferencesPath("WinBolo.ini");
 
   if (!clientMutexCreate()) {
     fprintf(stderr, "Error: failed to create client mutex\n");

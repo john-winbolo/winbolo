@@ -29,7 +29,7 @@
 extern "C" {
 #include "../../gamefront.h"
 #include "global.h"
-#include "../../../winbolonet/winbolonet.h"
+#include "../../../winbolonet/winbolonet_client.h"
 #include "../../lang.h"
 #include "imgui_winbolonet.h"
 }

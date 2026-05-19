@@ -51,6 +51,7 @@ extern "C" {
 #include "md5.h"
 #include "server_sim.h"          /* serverSim* T1 wrappers for SP-host paths */
 #include "lobby_bot_pools.h"     /* lobbyBotPool* — public utility */
+#include "playername_validate.h" /* playerNameValidate — client-side bot name gate */
 #include "../../../server/server_lifecycle.h"
 #include "platform_net.h"
 #include "../flags.h"
@@ -73,7 +74,7 @@ extern "C" {
 #include "imgui_messagebox.h"
 #include "imgui_mapchooser.h"
 #include "../../../winbolonet/http.h"
-#include "../../../winbolonet/winbolonet.h"  /* winbolonetIsRunning() — gates WBN-only UI */
+#include "../../../winbolonet/winbolonet_core.h"  /* winbolonetIsRunning() — gates WBN-only UI */
 #include "cJSON.h"
 }
 #include "../wb_theme.h"
@@ -127,13 +128,13 @@ static void lobbySendReadyToggle(ClientSim *cs, bool ready) {
     clientSimNetSendReady(cs, ready);
 }
 
-/* Sticky "last picked brain" path. ADD BOT uses this when present
- * so new bots inherit whatever brain the host last selected (via
- * the per-bot AiConfig "Bot Code" dropdown), instead of always
- * falling back to brainList->entries[0]. Empty until the user
- * picks at least one brain explicitly; falls back to entries[0]
- * for the first add. Process-scoped. */
-static char s_lastChosenBrainPath[256] = "";
+/* Sticky "last picked brain" catalogue index. ADD BOT uses this
+ * when in range so new bots inherit whatever brain the host last
+ * selected (via the per-bot AiConfig "Bot Code" dropdown), instead
+ * of always falling back to the server's default brain. 0xFF means
+ * "no sticky yet — use the server default"; valid values index into
+ * the lobby brain catalogue. Process-scoped. */
+static uint8_t s_lastChosenBrainIdx = 0xFF;
 
 /* Add Bot. namingPool < 0 means "use the slot's team pool" (multiplayer
  * server already picks based on team membership). namingPool >= 0
@@ -150,6 +151,14 @@ static void lobbySendAddBot(ClientSim *cs,
                 "[DIAG] lobbySendAddBot ENTRY cs=%p namingPool=%d teamNumber=%u isSP=%d",
                 (void *)cs, namingPool, (unsigned)teamNumber,
                 cs ? (int)clientSimIsSinglePlayer(cs) : -1);
+    /* Validate the sticky brain pick against the current catalogue:
+     * an out-of-range sticky (e.g. catalogue shrunk between picks)
+     * falls back to the server-default sentinel. */
+    uint8_t stickyBrainIdx = s_lastChosenBrainIdx;
+    if (stickyBrainIdx != 0xFF && cs) {
+        const BrainList *bl = clientSimGetLobbyBrainList(cs);
+        if (!bl || stickyBrainIdx >= bl->count) stickyBrainIdx = 0xFF;
+    }
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim) { WB_LOG_WARN(WB_LOG_CAT_GUI, "[DIAG] lobbySendAddBot SP: sim=NULL"); return; }
@@ -172,8 +181,9 @@ static void lobbySendAddBot(ClientSim *cs,
             return;
         }
         WB_LOG_INFO(WB_LOG_CAT_GUI,
-                    "[DIAG] lobbySendAddBot SP: picked slot=%u brain='%s'",
-                    (unsigned)slot, serverSimGetBotBrainPath(sim));
+                    "[DIAG] lobbySendAddBot SP: picked slot=%u brain='%s' stickyIdx=%u",
+                    (unsigned)slot, serverSimGetBotBrainPath(sim),
+                    (unsigned)stickyBrainIdx);
 
         /* Pick a name. If a pool override is supplied we use it; else
          * fall back to "Bot N". Build the used-names list from current
@@ -192,6 +202,22 @@ static void lobbySendAddBot(ClientSim *cs,
             snprintf(botName, sizeof(botName), "Bot %d", slot);
         }
 
+        /* Mirror the server's bot-name validator before applying.  The
+         * picked name is normally a pool / "Bot N" pick — server-trusted
+         * by construction — but the gate is consistent with the wire rule
+         * (transport_udp_server.c rejects invalid names) and stops a pool
+         * definition that smuggled in a control byte, reserved leading
+         * '*', etc. from landing in the local sim. */
+        if (botName[0] != '\0') {
+            char validated[PACKET_MAX_PLAYER_NAME];
+            PlayerNameValidationError nameErr = PLAYER_NAME_OK;
+            if (!playerNameValidate(botName, validated,
+                                    sizeof(validated), &nameErr)) {
+                return;
+            }
+            SDL_strlcpy(botName, validated, sizeof(botName));
+        }
+
         WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[DIAG]   about to serverSimCreateBot slot=%u name='%s' aiType=%d gameType=%d",
                     (unsigned)slot, botName, (int)serverSimGetBotAiType(sim),
@@ -201,9 +227,16 @@ static void lobbySendAddBot(ClientSim *cs,
                            (gameType)clientSimGetLobbyGameType(cs),
                            clientSimIsLobbyHiddenMines(cs));
         WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   serverSimCreateBot returned slot=%u", (unsigned)slot);
-        /* Mirror the path into the per-bot table so the AiConfig combo
-         * reflects "this bot's brain" rather than a global default. */
-        serverSimSetBotBrainPathFor(sim, slot, serverSimGetBotBrainPath(sim));
+        /* Mirror the per-bot brain selection so the AiConfig combo
+         * reflects "this bot's brain" rather than a global default.
+         * stickyBrainIdx == 0xFF picks up the server's CLI-configured
+         * default brain; any other value swaps in the catalogue entry
+         * the host last picked. */
+        if (stickyBrainIdx != 0xFF) {
+            serverSimSwitchBotBrain(sim, slot, stickyBrainIdx);
+        } else {
+            serverSimSetBotBrainIdxFor(sim, slot, 0xFF);
+        }
         if (teamNumber > 0 && teamNumber < MAX_TANKS) {
             serverSimSetTeam(sim, slot, teamNumber);
         }
@@ -216,29 +249,6 @@ static void lobbySendAddBot(ClientSim *cs,
     }
     /* MP path */
     {
-        /* Tell the server which brain to assign. Prefer the sticky
-         * last-picked brain (set whenever the host commits a brain
-         * change from the per-bot AiConfig dropdown) so new bots
-         * inherit the host's current choice. Fall back to the first
-         * catalogue entry when no pick has been made yet. */
-        const char *brainPath = "";
-        if (cs && clientSimGetLobbyBrainList(cs)->count > 0) {
-            const BrainList *bl = clientSimGetLobbyBrainList(cs);
-            brainPath = bl->entries[0].path;
-            if (s_lastChosenBrainPath[0] != '\0') {
-                /* Validate the sticky against the current catalogue —
-                 * if a brain dir was removed since the host's last
-                 * pick, fall back to entries[0] instead of a stale
-                 * path the server would reject. */
-                for (int bi = 0; bi < bl->count; bi++) {
-                    if (SDL_strcasecmp(bl->entries[bi].path,
-                                       s_lastChosenBrainPath) == 0) {
-                        brainPath = s_lastChosenBrainPath;
-                        break;
-                    }
-                }
-            }
-        }
         /* Pick the bot's name from the chosen pool right here on the
          * client — server doesn't know pool contents (see
          * lobby_bot_pools.h). Empty string falls back to "Bot N". */
@@ -256,7 +266,25 @@ static void lobbySendAddBot(ClientSim *cs,
             lobbyBotPoolPick(namingPool, usedNames, usedCount,
                              botName, sizeof(botName));
         }
-        clientSimNetSendAddBotConfigured(cs, teamNumber, brainPath, botName);
+        /* Same defensive gate as the SP branch.  Empty botName is the
+         * legitimate "let the server pick a default" signal and must
+         * pass through unchanged. */
+        if (botName[0] != '\0') {
+            char validated[PACKET_MAX_PLAYER_NAME];
+            PlayerNameValidationError nameErr = PLAYER_NAME_OK;
+            if (!playerNameValidate(botName, validated,
+                                    sizeof(validated), &nameErr)) {
+                return;
+            }
+            SDL_strlcpy(botName, validated, sizeof(botName));
+        }
+        /* Pass the sticky brain index for API symmetry with the SP path,
+         * but be aware: PACKET_LOBBY_ADD_BOT does not propagate it to the
+         * server today (the wire payload's brain bytes are vestigial and
+         * the parser ignores them). The AiConfig combo issues a follow-up
+         * SET_BOT_BRAIN once the new slot lands when a non-default brain
+         * is desired. */
+        clientSimNetSendAddBotConfigured(cs, teamNumber, stickyBrainIdx, botName);
     }
 }
 
@@ -633,6 +661,17 @@ static void lobbyServerMapsListProvider(MapChooserState *state,
                              "data/maps/%s", hitPath);
             }
         }
+        /* Server chunk arrival order isn't guaranteed alphabetical
+         * once the response spans multiple packets; sort the file rows
+         * before EmitFolderRows snapshots them so the final layout is
+         * folders-first-alpha then files-alpha. */
+        if (state->numMaps > 1) {
+            std::sort(&state->maps[0],
+                      &state->maps[state->numMaps],
+                [](const MapChooserEntry &a, const MapChooserEntry &b) {
+                    return SDL_strcasecmp(a.name, b.name) < 0;
+                });
+        }
         /* Aggregate the unique folders the file rows reference and
          * prepend them as folder rows. The Server Maps tab's
          * currentDir is data/maps-relative (no prefix), so we pass
@@ -987,8 +1026,15 @@ static void lobbyUploadStatusFooter(MapChooserState *state, void *ctx) {
     if (!cs) return;
     if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
         clientSimGetLobbyMapUploadStatus(cs) == 4) {
-        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f),
-                           "Upload rejected by server.");
+        const char *msg = "Upload rejected by server.";
+        switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
+            case 5: /* LOBBY_REJECT_UPLOAD_DISABLED */
+                msg = "Uploads disabled on this server."; break;
+            case 6: /* LOBBY_REJECT_UPLOAD_LIMIT_HIT */
+                msg = "Server map library is full."; break;
+            default: break;
+        }
+        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f), "%s", msg);
     }
 }
 
@@ -1335,12 +1381,8 @@ static void wbnMapsParseSearchJson(const char *json, const char *query) {
  * to, so this client process does the fetch itself on a worker
  * thread (mirrors the server's PREVIEW_WBN handler) and then
  * applies the bytes to the local SP ServerSim on the main thread
- * via spWbnPoll. Same pendingUpload semantics: scratch file
- * lives at .pending_upload.map until the user commits via Set
- * Map, at which point serverSimCommitPendingUpload moves it into
- * data/maps/Winbolo.net Downloads/. Cancel-on-supersede uses
- * the http.c cancellable API so rapid map clicks abort the
- * in-flight curl call. */
+ * via spWbnPoll. Cancel-on-supersede uses the http.c cancellable
+ * API so rapid map clicks abort the in-flight curl call. */
 struct SpWbnResult {
     uint32_t mapId;
     int      httpStatus; /* 200 ok; -2 cancelled */
@@ -1448,9 +1490,8 @@ static void spWbnSubmit(uint32_t mapId) {
 }
 
 /* Main-thread completion handler for SP picks. Drains the result
- * and applies it to the local sim via the same scratch-file +
- * pendingUpload flow the dedicated server uses. Called once per
- * frame while the WBN tab is visible. */
+ * and applies it to the local sim. Called once per frame while
+ * the WBN tab is visible. */
 static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
     if (!cs) return;
     SpWbnResult res;
@@ -1561,32 +1602,6 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
         return;
     }
 
-    /* Write to the shared scratch path the upload flow uses — same
-     * temp file is fine since SP only has one in-flight at a time. */
-    const char *tempPath = "data/maps/.pending_upload.map";
-    FILE *fp = fopen(tempPath, "wb");
-    bool wrote = false;
-    if (fp) {
-        size_t w = fwrite(res.bytes.data(), 1, res.bytes.size(), fp);
-        fclose(fp);
-        wrote = (w == res.bytes.size());
-    }
-    if (!wrote) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                    "[WBN-SP] failed to write scratch %s", tempPath);
-        clientSimSetLobbyWbnPreviewStatus(cs, 3);
-        return;
-    }
-
-    if (!serverSimReloadMap(sim, tempPath)) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                    "[WBN-SP] serverSimReloadMap rejected bytes");
-        SDL_RemovePath(tempPath);
-        clientSimSetLobbyWbnPreviewStatus(cs, 3);
-        return;
-    }
-
-    /* Override the auto-detected ".pending_upload" name. */
     char displayName[MAP_STR_SIZE];
     SDL_strlcpy(displayName, safeName.c_str(), sizeof(displayName));
     {
@@ -1596,26 +1611,24 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
             displayName[dlen - 4] = '\0';
         }
     }
-    serverSimSetMapName(sim, displayName);
 
-    /* Commit target lives alongside any other user upload — same
-     * Uploads/ directory the Upload tab uses, so the on-disk
-     * library only has one place for "maps the user put here".
-     * WBN-origin maps are indistinguishable from manual uploads
-     * once committed. */
-    char finalPath[FILENAME_MAX];
-    SDL_snprintf(finalPath, sizeof(finalPath),
-                 "data/maps/Uploads/%s", safeName.c_str());
-    char relPath[256];
-    SDL_snprintf(relPath, sizeof(relPath),
-                 "Uploads/%s", safeName.c_str());
-    serverSimSetPendingUpload(sim, tempPath, finalPath, relPath);
+    bool ok = serverSimReloadCompressedInMemory(
+        sim,
+        reinterpret_cast<const uint8_t *>(res.bytes.data()),
+        static_cast<int>(res.bytes.size()),
+        displayName);
+    if (!ok) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "[WBN-SP] serverSimReloadCompressedInMemory rejected bytes");
+        clientSimSetLobbyWbnPreviewStatus(cs, 3);
+        return;
+    }
     serverSimPublishLobbySettings(sim);
 
     clientSimSetLobbyWbnPreviewStatus(cs, 2);
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                "[WBN-SP] applied '%s' (%zu bytes); will commit to %s",
-                displayName, res.bytes.size(), finalPath);
+                "[WBN-SP] applied '%s' (%zu bytes)",
+                displayName, res.bytes.size());
     s_chooseMapPreviewPending = true;
 }
 
@@ -2109,8 +2122,15 @@ static void lobbyWbnMapsStatusFooter(MapChooserState *state, void *ctx) {
                            "%s", m && *m ? m : "Download failed");
     } else if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
                clientSimGetLobbyMapUploadStatus(cs) == 4) {
-        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f),
-                           "Upload rejected by server.");
+        const char *msg = "Upload rejected by server.";
+        switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
+            case 5: /* LOBBY_REJECT_UPLOAD_DISABLED */
+                msg = "Uploads disabled on this server."; break;
+            case 6: /* LOBBY_REJECT_UPLOAD_LIMIT_HIT */
+                msg = "Server map library is full."; break;
+            default: break;
+        }
+        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f), "%s", msg);
     }
 }
 
@@ -2434,6 +2454,15 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
 
 static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                                        float s, int screenW, int screenH) {
+    /* Stop the preview worker on the close edge — any of the six
+     * paths that flip s_chooseMapOpen to false land here on the next
+     * frame, and the worker auto-restarts on the next preview request
+     * if the user reopens the chooser. */
+    static bool s_prevOpen = false;
+    if (s_prevOpen && !s_chooseMapOpen) {
+        mapChooserStopPreviewWorker();
+    }
+    s_prevOpen = s_chooseMapOpen;
     if (!s_chooseMapOpen) return;
     lobbyChooseMapEnsureInit(renderer);
 
@@ -2578,7 +2607,8 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             lobbyRenderMapTab(&s_chooseMapState, renderer, s);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(inProcessServer ? "Local Maps" : "Upload")) {
+        if ((inProcessServer || clientSimGetUploadPolicy(cs) != UPLOAD_POLICY_OFF) &&
+            ImGui::BeginTabItem(inProcessServer ? "Local Maps" : "Upload")) {
             s_chooseMapActiveTab = 1;
             if (s_lastActiveTab != 1 && activeTabBefore != 1) {
                 lobbyMapTabClearSelection(&s_chooseMapUploadState);
@@ -2803,6 +2833,34 @@ static void lobbySendBotConfig(ClientSim *cs,
                                uint8_t slot,
                                uint8_t difficulty, uint8_t personality,
                                const char *name) {
+    /* Pre-send validation for the bot name.  Empty name is the
+     * legitimate "leave name unchanged; difficulty/personality still
+     * apply" signal — pass through.  Non-empty must clear the same
+     * validator the server applies (controls, reserved leading '*',
+     * mixed scripts, length), then uniqueness against the client's
+     * lobby-slot mirror — bots and humans both register as connected
+     * here, so this catches bot-vs-bot collisions in addition to
+     * bot-vs-human.  Server is authoritative
+     * (transport_udp_server.c); this is the client mirror. */
+    char validated[PACKET_MAX_PLAYER_NAME];
+    const char *effectiveName = name;
+    if (cs && name && name[0] != '\0') {
+        PlayerNameValidationError nameErr = PLAYER_NAME_OK;
+        if (!playerNameValidate(name, validated,
+                                sizeof(validated), &nameErr)) {
+            return;
+        }
+        for (BYTE j = 0; j < MAX_TANKS; j++) {
+            if (j == slot) continue;
+            const ClientLobbySlot *other = clientSimGetLobbySlot(cs, j);
+            if (!other || !other->connected) continue;
+            if (playerNameCompare(other->playerName, validated) == 0) {
+                return;
+            }
+        }
+        effectiveName = validated;
+    }
+
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim || slot >= MAX_TANKS) return;
@@ -2816,8 +2874,8 @@ static void lobbySendBotConfig(ClientSim *cs,
                 bc->personality = personality;
             }
         }
-        if (name && name[0] != '\0') {
-            serverSimRenameBotSlot(sim, slot, name);
+        if (effectiveName && effectiveName[0] != '\0') {
+            serverSimRenameBotSlot(sim, slot, effectiveName);
         }
         /* Publish bot config change AND the slot's new state (playerName
          * may have changed). */
@@ -2825,24 +2883,25 @@ static void lobbySendBotConfig(ClientSim *cs,
         serverSimPublishLobbySlot(sim, slot);
         return;
     }
-    clientSimNetSendLobbyBotConfig(cs, slot, difficulty, personality, name);
+    clientSimNetSendLobbyBotConfig(cs, slot, difficulty, personality, effectiveName);
 }
 
 /* Change which Lua brain script a lobby bot uses. SP path mutates the
- * server sim directly; MP path goes through PACKET_LOBBY_SET_BOT_BRAIN. */
+ * server sim directly; MP path goes through PACKET_LOBBY_SET_BOT_BRAIN.
+ * brainIdx == 0xFF means "use the server's CLI-configured default
+ * brain"; any other value indexes into the lobby brain catalogue. */
 static void lobbySendSetBotBrain(ClientSim *cs,
-                                 uint8_t slot, const char *brainPath) {
-    if (!brainPath) brainPath = "";
+                                 uint8_t slot, uint8_t brainIdx) {
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim || slot >= MAX_TANKS) return;
         if (serverSimGetState(sim) != serverStateLobby) return;
         if (!serverSimGetLobbyPlayer(sim, slot)->isBot) return;
-        serverSimSwitchBotBrain(sim, slot, brainPath);
+        serverSimSwitchBotBrain(sim, slot, brainIdx);
         serverSimPublishLobbyBotBrain(sim, slot);
         return;
     }
-    clientSimNetSendLobbySetBotBrain(cs, slot, brainPath);
+    clientSimNetSendLobbySetBotBrain(cs, slot, brainIdx);
 }
 
 /* Clear a team's metadata (color/name/pool back to defaults).
@@ -2976,6 +3035,19 @@ static void lobbySendTeamPool(ClientSim *cs,
 static void lobbySendSetting(ClientSim *cs,
                              uint8_t settingType,
                              const uint8_t *value, uint8_t valueLen) {
+    /* Pre-send validation for setting types that have a wire-side range
+     * cap on the server. Drop out-of-range values rather than letting
+     * the server reject them — the server has the authoritative check
+     * (transport_udp_server.c) and emits LOBBY_REJECT_INVALID; this
+     * mirrors the cap so the SP-host local apply path doesn't bypass
+     * it either. */
+    if (settingType == 5 /* LST_TIME_MINUTES */ && valueLen == 2) {
+        uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
+        if (mins < LOBBY_TIME_MINUTES_MIN ||
+            mins > LOBBY_TIME_MINUTES_MAX) {
+            return;
+        }
+    }
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim) return;
@@ -4778,8 +4850,9 @@ static void renderBotAiConfig(ClientSim *cs,
         botCodeStartY = formAnchor.y;
         ImGui::BeginGroup();
         ImGui::TextDisabled("Bot Code");
-        const char *curPath = clientSimGetLobbyBotBrain(cs, (BYTE)(slot));
-        const BrainListEntry *curEntry = brainListFindByPath(bl, curPath);
+        uint8_t curIdx = clientSimGetLobbyBotBrain(cs, (BYTE)(slot));
+        const BrainListEntry *curEntry =
+            (curIdx != 0xFF && curIdx < bl->count) ? &bl->entries[curIdx] : NULL;
         char preview[BRAIN_LIST_NAME_LEN + BRAIN_LIST_VER_LEN + 8];
         if (curEntry) {
             if (curEntry->version[0])
@@ -4787,8 +4860,6 @@ static void renderBotAiConfig(ClientSim *cs,
                              curEntry->name, curEntry->version);
             else
                 SDL_snprintf(preview, sizeof(preview), "%s", curEntry->name);
-        } else if (curPath[0]) {
-            SDL_snprintf(preview, sizeof(preview), "(custom)");
         } else {
             SDL_snprintf(preview, sizeof(preview), "(none)");
         }
@@ -4833,12 +4904,11 @@ static void renderBotAiConfig(ClientSim *cs,
     }
     if (pendingBrainPick >= 0 && pendingBrainPick < bl->count) {
         /* Stash as the sticky default so subsequent Add Bot clicks
-         * inherit this choice instead of falling back to entries[0]. */
-        SDL_strlcpy(s_lastChosenBrainPath,
-                    bl->entries[pendingBrainPick].path,
-                    sizeof(s_lastChosenBrainPath));
+         * inherit this choice instead of falling back to the server's
+         * default brain. */
+        s_lastChosenBrainIdx = (uint8_t)pendingBrainPick;
         lobbySendSetBotBrain(cs, (uint8_t)slot,
-                             bl->entries[pendingBrainPick].path);
+                             (uint8_t)pendingBrainPick);
     }
 
     /* Difficulty / Personality dropdowns are hidden for now — the
