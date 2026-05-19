@@ -864,6 +864,16 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         if (!geoLookupCountry(ipStr, incomingCountry)) {
             incomingCountry[0] = '\0';
             incomingCountry[1] = '\0';
+            /* Host self-join over a loopback socket has no public IP
+             * for GeoIP to resolve.  Fall back to the cached WBN
+             * country code so the host shows the same flag locally
+             * that they advertise on the tracker. */
+            if ((ntohl(fromAddr->sin_addr.s_addr) & 0xff000000u)
+                == 0x7f000000u) {
+                const char *cached = winbolonetGetCountryCode();
+                incomingCountry[0] = cached[0];
+                incomingCountry[1] = cached[1];
+            }
         }
         incomingCountry[2] = '\0';
     }
