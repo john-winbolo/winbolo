@@ -566,9 +566,24 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
 * Builds the full URL as <baseUrl>/api/v1/<path>.
 * Returns the HTTP status code, or -1 on transport error.
 *********************************************************/
+const char *httpGetBaseUrl(void) {
+  return wbnBaseUrl;
+}
+
 int wbn_api_get(const char *path, char **response_out) {
   if (response_out) *response_out = NULL;
-  if (!httpStarted) return -1;
+  /* Lazy-init: the WBN map browser uses this API even when the
+   * client isn't logged in / WBN subsystem isn't otherwise active.
+   * httpCreate() is idempotent w.r.t. curl_global_init, so calling
+   * it here on first use is safe. */
+  if (!httpStarted) (void)httpCreate();
+  if (!httpStarted) {
+    fprintf(stderr,
+        "WinBolo.net DEBUG wbn_api_get [%s]: SKIP — httpStarted=false "
+        "after lazy httpCreate(); curl init or INI Host= is broken\n",
+        path ? path : "(null)");
+    return -1;
+  }
 
   CURL *curl = curl_easy_init();
   if (!curl) return -1;
@@ -721,6 +736,91 @@ int wbn_api_download(const char *path, const char *dest_path) {
 * Downloads a file from WBN into a heap-allocated buffer.
 * Returns the HTTP status code, or -1 on transport error.
 *********************************************************/
+/* Thin xferinfo callback used by the _cancellable variant: aborts
+ * curl mid-transfer when the caller's flag becomes non-zero. */
+static int wbnXferInfoCancel(void *userPtr,
+                             curl_off_t dltotal, curl_off_t dlnow,
+                             curl_off_t ultotal, curl_off_t ulnow) {
+  (void)dltotal; (void)dlnow; (void)ultotal; (void)ulnow;
+  volatile int *flag = (volatile int *)userPtr;
+  if (flag && *flag) return 1; /* non-zero -> CURLE_ABORTED_BY_CALLBACK */
+  return 0;
+}
+
+int wbn_api_download_to_memory_cancellable(const char *path,
+                                           uint8_t **data_out,
+                                           size_t *size_out,
+                                           volatile int *cancel_flag) {
+  if (data_out) *data_out = NULL;
+  if (size_out) *size_out = 0;
+  if (!httpStarted) return -1;
+  if (cancel_flag && *cancel_flag) return -2;
+
+  CURL *curl = curl_easy_init();
+  if (!curl) return -1;
+
+  char url[FILENAME_MAX + 256];
+  snprintf(url, sizeof(url), "%s/api/v1/%s", wbnBaseUrl, path);
+
+  char timestamp_str[32];
+  snprintf(timestamp_str, sizeof(timestamp_str), "%ld", (long)time(NULL));
+  char sig_hex[129];
+  wbn_sign_request(timestamp_str, "", sig_hex);
+
+  char sig_header[256];
+  char ts_header[64];
+  snprintf(sig_header, sizeof(sig_header), "X-WBN-Signature: %s", sig_hex);
+  snprintf(ts_header, sizeof(ts_header), "X-WBN-Timestamp: %s", timestamp_str);
+
+  struct curl_slist *headers = NULL;
+  headers = curl_slist_append(headers, sig_header);
+  headers = curl_slist_append(headers, ts_header);
+
+  DynBuf respBuf;
+  dynBufInit(&respBuf);
+  if (!respBuf.data) {
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    return -1;
+  }
+
+  curl_easy_setopt(curl, CURLOPT_URL,             url);
+  curl_easy_setopt(curl, CURLOPT_HTTPGET,          1L);
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER,      headers);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,   dynWriteCallback);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA,       &respBuf);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT,         120L);
+  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION,  1L);
+  curl_easy_setopt(curl, CURLOPT_NOPROGRESS,      0L);
+  curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, wbnXferInfoCancel);
+  curl_easy_setopt(curl, CURLOPT_XFERINFODATA,    (void *)cancel_flag);
+  if (altIpAddress[0] != '\0') {
+    curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
+  }
+
+  CURLcode res = curl_easy_perform(curl);
+  long http_code = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+  curl_slist_free_all(headers);
+  curl_easy_cleanup(curl);
+
+  if (res == CURLE_ABORTED_BY_CALLBACK) {
+    free(respBuf.data);
+    return -2;
+  }
+  if (res != CURLE_OK) {
+    free(respBuf.data);
+    return -1;
+  }
+  if (http_code == 200 && data_out && size_out) {
+    *data_out = (uint8_t *)respBuf.data;
+    *size_out = respBuf.size;
+  } else {
+    free(respBuf.data);
+  }
+  return (int)http_code;
+}
+
 int wbn_api_download_to_memory(const char *path, uint8_t **data_out, size_t *size_out) {
   if (data_out) *data_out = NULL;
   if (size_out) *size_out = 0;

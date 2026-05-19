@@ -16,6 +16,38 @@
 #include "input_packet.h"
 #include "global.h"
 
+#include <stdarg.h>
+#include <stdio.h>
+#include <time.h>
+
+void balanceDebugLog(const char *fmt, ...) {
+  static FILE *s_f = NULL;
+  static int   s_failed = 0;
+  if (s_failed) return;
+  if (s_f == NULL) {
+    s_f = fopen("balance.log", "a");
+    if (s_f == NULL) { s_failed = 1; return; }
+    /* unbuffered so a crash doesn't lose the last lines */
+    setvbuf(s_f, NULL, _IONBF, 0);
+    time_t now = time(NULL);
+    struct tm tmv;
+#ifdef _WIN32
+    localtime_s(&tmv, &now);
+#else
+    tmv = *localtime(&now);
+#endif
+    fprintf(s_f, "\n----- balance.log opened %04d-%02d-%02d %02d:%02d:%02d -----\n",
+            tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+            tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+  }
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(s_f, fmt, ap);
+  va_end(ap);
+  fputc('\n', s_f);
+  fflush(s_f);
+}
+
 /* === Lifecycle === */
 
 static void clientSimTeardownTransport(ClientSim *cs) {
@@ -214,7 +246,17 @@ void clientSimNetSendReady(ClientSim *cs, bool ready) {
 
 void clientSimNetSendAddBot(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendAddBot(&cs->transport);
+  transportUdpClientSendAddBot(&cs->transport, 0, NULL);
+}
+
+void clientSimNetSendAddBotConfigured(ClientSim *cs, BYTE teamNumber,
+                                      uint8_t brainIdx,
+                                      const char *botName) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  /* brainIdx accepted for API symmetry; the server applies the default
+   * brain on add. Use clientSimNetSendLobbySetBotBrain to change it. */
+  (void)brainIdx;
+  transportUdpClientSendAddBot(&cs->transport, teamNumber, botName);
 }
 
 void clientSimNetSendRemoveBot(ClientSim *cs, BYTE playerNum) {
@@ -222,14 +264,139 @@ void clientSimNetSendRemoveBot(ClientSim *cs, BYTE playerNum) {
   transportUdpClientSendRemoveBot(&cs->transport, playerNum);
 }
 
+void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
+                                    uint8_t difficulty,
+                                    uint8_t personality,
+                                    const char *name) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyBotConfig(&cs->transport, slot,
+                                       difficulty, personality, name);
+}
+
+void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
+                                      uint8_t brainIdx) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbySetBotBrain(&cs->transport, slot, brainIdx);
+}
+
+void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbySetMap(&cs->transport, mapRelPath);
+}
+
+void clientSimNetSendLobbyPreviewCancel(ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyPreviewCancel(&cs->transport);
+}
+
+void clientSimNetSendLobbyPreviewCommit(ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyPreviewCommit(&cs->transport);
+}
+
+void clientSimNetSendLobbyPreviewRandom(ClientSim *cs, const char *seedStr) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyPreviewRandom(&cs->transport, seedStr);
+}
+
+void clientSimNetSendLobbyMapListRequest(ClientSim *cs,
+                                         const char *relPath) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyMapListRequest(&cs->transport, relPath);
+}
+
+void clientSimNetSendLobbyMapSearchRequest(ClientSim *cs,
+                                           const char *relPath,
+                                           const char *query) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyMapSearchRequest(&cs->transport,
+                                              relPath, query);
+}
+
+void clientSimNetSendLobbyMapUploadBegin(ClientSim *cs,
+                                         uint32_t totalLen,
+                                         const char *name) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyMapUploadBegin(&cs->transport, totalLen, name);
+}
+
+void clientSimNetSendLobbyMapUploadChunk(ClientSim *cs,
+                                         uint32_t offset,
+                                         const uint8_t *data,
+                                         uint16_t dataLen) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyMapUploadChunk(&cs->transport, offset,
+                                            data, dataLen);
+}
+
+void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,
+                                      uint32_t totalLen,
+                                      const char *name,
+                                      const char *relPath,
+                                      const uint8_t md5[16]) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyMapUseLocal(&cs->transport, totalLen, name,
+                                          relPath, md5);
+}
+
+void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
+                                   uint8_t color, uint8_t namingPool,
+                                   const char *name) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyTeamMeta(&cs->transport, teamId, color,
+                                      namingPool, name);
+}
+
+void clientSimNetSendLobbyTeamClear(ClientSim *cs, BYTE teamId) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyTeamClear(&cs->transport, teamId);
+}
+
+void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
+                                  const uint8_t *value, uint8_t valueLen) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbySetting(&cs->transport, settingType, value, valueLen);
+}
+
+void clientSimNetSendLobbySetPassword(ClientSim *cs, const char *pw) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbySetPassword(&cs->transport, pw);
+}
+
+void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyOpenHost(&cs->transport, openHost);
+}
+
 void clientSimNetSendMapSkipVote(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
   transportUdpClientSendMapSkipVote(&cs->transport);
 }
 
-void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize) {
+void clientSimNetSendGameVoteToggle(ClientSim *cs,
+                                    uint8_t kind, uint8_t toggleMode) {
+  /* Network path only. SP / host-in-process dispatch lives in the GUI
+   * shim (sdl3imgui.cpp) so the bolo library doesn't pick up a build
+   * dep on server_sim. */
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendBalanceRequest(&cs->transport, teamSize);
+  transportUdpClientSendGameVoteToggle(&cs->transport, kind, toggleMode);
+}
+
+void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize,
+                                    bool includeBots) {
+  balanceDebugLog("[BAL CLIENT] SendBalanceRequest teamSize=%u includeBots=%d "
+                  "cs=%p hasTransport=%d isUdpTransport=%d",
+                  (unsigned)teamSize, includeBots ? 1 : 0,
+                  (void *)cs,
+                  cs ? cs->hasTransport : 0,
+                  cs ? cs->isUdpTransport : 0);
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) {
+    balanceDebugLog("[BAL CLIENT] dropping: no UDP transport bound");
+    return;
+  }
+  balanceDebugLog("[BAL CLIENT] calling transportUdpClientSendBalanceRequest");
+  transportUdpClientSendBalanceRequest(&cs->transport, teamSize, includeBots);
+  balanceDebugLog("[BAL CLIENT] transportUdpClientSendBalanceRequest returned");
 }
 
 void clientSimNetSendBalanceApply(ClientSim *cs) {

@@ -45,7 +45,7 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_ARCHITECTURE
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS build architectures" FORCE)
 endif()
 
-set(WINBOLO_VERSION "1.18" CACHE STRING "WinBolo version number")
+include(cmake/bolo_version.cmake)
 
 # Global macOS bundle metadata. Set once here so every MACOSX_BUNDLE target
 # (WinBolo, Log Viewer, Map Editor) picks up matching version/copyright keys
@@ -58,27 +58,6 @@ if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(MACOSX_BUNDLE_LONG_VERSION_STRING  "${WINBOLO_VERSION}")
     set(MACOSX_BUNDLE_COPYRIGHT            "Copyright 1998-${_WB_CURRENT_YEAR} John Morrison")
 endif()
-
-execute_process(COMMAND git rev-parse --short HEAD
-                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-                OUTPUT_VARIABLE WINBOLO_GIT_HASH
-                OUTPUT_STRIP_TRAILING_WHITESPACE
-                ERROR_QUIET)
-if(NOT WINBOLO_GIT_HASH)
-    set(WINBOLO_GIT_HASH "unknown")
-endif()
-string(TIMESTAMP WINBOLO_BUILD_DATE "%Y-%m-%d")
-
-# Derive network protocol version bytes from WINBOLO_VERSION.
-# Each digit of the version string (skipping dots) becomes one byte.
-# E.g. "1.18" -> MAJOR=0x01, MINOR=0x01, REVISION=0x08.
-string(REPLACE "." "" _VER_DIGITS "${WINBOLO_VERSION}")
-string(SUBSTRING "${_VER_DIGITS}" 0 1 _VER_D0)
-string(SUBSTRING "${_VER_DIGITS}" 1 1 _VER_D1)
-string(SUBSTRING "${_VER_DIGITS}" 2 1 _VER_D2)
-math(EXPR BOLO_VERSION_MAJOR "${_VER_D0}")
-math(EXPR BOLO_VERSION_MINOR "${_VER_D1}")
-math(EXPR BOLO_VERSION_REVISION "${_VER_D2}")
 
 set(CMAKE_C_STANDARD 99)
 
@@ -531,7 +510,6 @@ set(IOS_GUI_SOURCES
     src/gui/ui_mode.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/gui/sdl3/dialogs/imgui_welcome.cpp
-    src/gui/sdl3/dialogs/imgui_gamesetup.cpp
     src/gui/sdl3/dialogs/imgui_mapchooser.cpp
     src/gui/sdl3/dialogs/imgui_udpsetup.cpp
     src/gui/sdl3/dialogs/imgui_gamebrowser.cpp
@@ -544,6 +522,9 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_settings.cpp
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
     src/gui/sdl3/map_preview_popup.cpp
+    src/gui/sdl3/map_preview_view.cpp
+    src/gui/sdl3/map_stars.cpp
+    src/gui/sdl3/wb_theme.cpp
 )
 
 # Shared mobile UI (touch input, legacy players panel for non-tablet mode)
@@ -1020,11 +1001,13 @@ set(CLIENT_SOURCES
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/gui/ui_mode.c
-    src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c
+    src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_gamesetup.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp
     src/gui/sdl3/map_preview_popup.cpp
+    src/gui/sdl3/map_preview_view.cpp
+    src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c
@@ -2319,6 +2302,18 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_active_local_input_to_shot.c
     tests/unit/test_sp_shoot_through_timer.c
     tests/unit/test_ini_reader_writer.c
+    tests/unit/test_lobby_control_variants.c
+    tests/unit/test_game_vote_control.c
+    tests/unit/test_md5.c
+    tests/unit/test_ranked_lobby.c
+    tests/unit/test_lobby_locks.c
+    tests/unit/test_upload_cap.c
+    tests/unit/test_map_field_clamps.c
+    tests/unit/test_map_reload_rollback.c
+    tests/unit/test_upload_busy.c
+    tests/unit/test_upload_filename_safe.c
+    tests/unit/test_lobby_time_minutes_valid.c
+    tests/unit/test_lobby_map_list_chunked.c
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
@@ -2396,6 +2391,25 @@ set(_unit_test_names
     ini_writer_persistence
     ini_writer_insertion_point
     ini_writer_security
+    lobby_settings_codec_and_apply
+    lobby_team_meta_codec_and_apply
+    lobby_bot_config_codec_and_apply
+    lobby_bot_brain_codec_and_apply
+    lobby_brain_list_codec_and_apply
+    ranked_flag_persists_with_one_player
+    ranked_shape_gate
+    lobby_lock_bit_lookup
+    lobby_lock_rejects_settings
+    lobby_lock_mask_roundtrip
+    upload_cap_enforced
+    map_field_clamps_evil
+    map_field_clamps_passthrough
+    map_field_clamps_angry_start
+    map_reload_rollback
+    upload_busy_predicate
+    upload_filename_safe
+    lobby_map_list_chunked
+    lobby_map_search_chunked
     wbn_bearer_state
     wbn_rekey_codec
     wbn_news_parse

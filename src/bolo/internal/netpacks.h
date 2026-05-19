@@ -264,7 +264,13 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_WBN_REKEY        160  /* Server -> Client: rotate WBN session key (Phase 7/8 encodes/decodes; see plans/fixwbn.md "Lobby key rotation") */
 
 /* Team balance packets */
-#define PACKET_BALANCE_REQUEST   147  /* Client(host) -> Server: request WBN balance */
+#define PACKET_BALANCE_REQUEST   147  /* Client(host) -> Server: request WBN balance
+                                       * body: [teamSize 1] [includeBots 1]
+                                       * includeBots: 1 = bots take part (WBN
+                                       * marks them non-WBN players and
+                                       * places them into teams); 0 = bots
+                                       * are removed from the lobby before
+                                       * the proposal is applied. */
 #define PACKET_BALANCE_PROPOSAL  148  /* Server -> Clients: proposed team assignments */
 #define PACKET_BALANCE_APPLY     149  /* Client(host) -> Server: confirm and apply proposal */
 #define PACKET_BALANCE_DISMISS   150  /* Client(host) -> Server: dismiss proposal */
@@ -294,6 +300,199 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
  * settings-tail portion of the legacy composite PACKET_LOBBY_STATE.
  * Layout matches the per-field shape of serverSimFillLobbySettingsEvent. */
 #define PACKET_LOBBY_SETTINGS       159
+
+/* ── Lobby Layout A — Client → Server (160-174) ─────────────────── */
+#define PACKET_LOBBY_SET_SETTING    160  /* { settingType 1, valueLen 1, value N } */
+#define PACKET_LOBBY_OPEN_HOST      161  /* { bool 1 } */
+#define PACKET_LOBBY_TEAM_META      162  /* { teamId 1, color 1, namingPool 1,
+                                          *   nameLen 1, name N } */
+#define PACKET_LOBBY_TEAM_CLEAR     163  /* { teamId 1 } */
+#define PACKET_LOBBY_BOT_CONFIG     164  /* { slot 1, difficulty 1,
+                                          *   personality 1, nameLen 1,
+                                          *   name N } */
+#define PACKET_LOBBY_KICK           165  /* { slot 1 } */
+#define PACKET_LOBBY_SET_BOT_BRAIN  166  /* { slot 1, pathLen 1, path N } */
+#define PACKET_LOBBY_SET_MAP        167  /* { pathLen 1, path N } */
+#define PACKET_LOBBY_MAP_LIST_REQ   168  /* { pathLen 1, path N } */
+#define PACKET_LOBBY_MAP_UPLOAD_BEGIN  169  /* { totalLen 4, nameLen 1, name N } */
+#define PACKET_LOBBY_MAP_UPLOAD_CHUNK  170  /* { offset 4, dataLen 2, data N } */
+#define PACKET_LOBBY_MAP_USE_LOCAL     196  /* client -> server: "I want to
+                                              * install this map; if you
+                                              * already have a file with
+                                              * the same MD5 at this rel
+                                              * path under data/maps/,
+                                              * use it instead and skip
+                                              * the upload."
+                                              * { totalLen 4, nameLen 1,
+                                              *   name N, relPathLen 1,
+                                              *   relPath M, md5 16 } */
+#define PACKET_LOBBY_MAP_USE_LOCAL_NACK 197  /* server -> client: "I do
+                                              * not have a matching file
+                                              * — please upload."
+                                              * { nameLen 1, name N } */
+#define PACKET_LOBBY_MAP_SEARCH_REQ    171  /* { pathLen 1, path N, queryLen 1, query M } */
+#define PACKET_LOBBY_PREVIEW_CANCEL    172  /* (no payload) */
+#define PACKET_LOBBY_PREVIEW_COMMIT    173  /* (no payload) */
+#define PACKET_LOBBY_PREVIEW_RANDOM    174  /* { seedLen 1, seed N } */
+
+/* ── Lobby Layout A — Server → Client (175-186) ─────────────────── */
+#define PACKET_LOBBY_SETTING_CHG    175  /* echo of CLIENT SET_SETTING */
+#define PACKET_LOBBY_OPEN_HOST_CHG  176  /* { bool 1 } */
+#define PACKET_LOBBY_TEAM_META_CHG  177  /* same payload as TEAM_META */
+#define PACKET_LOBBY_BOT_CONFIG_CHG 178  /* same payload as BOT_CONFIG */
+#define PACKET_LOBBY_REJECT         179  /* { origPacket 1, reasonCode 1 } */
+#define PACKET_LOBBY_AUTO_UNREADY   180  /* (empty payload) */
+#define PACKET_LOBBY_BRAIN_LIST     181  /* { count 1, for each: nameLen 1, name,
+                                          *   verLen 1, ver, pathLen 1, path } */
+#define PACKET_LOBBY_BOT_BRAIN_CHG  182  /* { slot 1, pathLen 1, path N } */
+#define PACKET_LOBBY_MAP_LIST_RSP   183  /* server reply to MAP_LIST_REQ */
+#define PACKET_LOBBY_MAP_UPLOAD_ACK 184  /* { status 1 } */
+#define PACKET_LOBBY_MAP_UPLOAD_DONE 185 /* { status 1, pathLen 1, path N } */
+#define PACKET_LOBBY_MAP_SEARCH_RSP 186  /* server reply to MAP_SEARCH_REQ */
+
+/* Server Maps preview-fetch protocol. The client never reads
+ * server map files directly: in MP the file lives on a remote
+ * host, so the server sources the bytes and streams them back.
+ * The client then rasterises locally via its existing
+ * minimapRenderPixels path, so neither side pays a hard dep on
+ * an image encoder. */
+#define PACKET_LOBBY_MAP_PREVIEW_REQ   189  /* client → server
+                                              { pathLen 1, path N }
+                                              path is relative to
+                                              data/maps/ (e.g.
+                                              "Uploads/Foo.map"). */
+#define PACKET_LOBBY_MAP_PREVIEW_BEGIN 190  /* server → client first
+                                              { pathLen 1, path N,
+                                                seq 1, totalLen 4 }
+                                              seq id allows the
+                                              receiver to skip
+                                              stale chunks from a
+                                              prior request for the
+                                              same path. */
+#define PACKET_LOBBY_MAP_PREVIEW_CHUNK 191  /* server → client
+                                              { seq 1, offset 4,
+                                                chunkLen 2, bytes M }
+                                              fragments the .map
+                                              bytes referenced by
+                                              the most recent BEGIN. */
+#define PACKET_LOBBY_MAP_PREVIEW_ERR   192  /* server → client
+                                              { pathLen 1, path N,
+                                                err 1 } 1=not-found
+                                              2=too-large 3=internal */
+
+#define PACKET_LOBBY_SET_PASSWORD      193  /* client(host) → server
+                                              { pwLen 1, pw N }
+                                              pwLen 0 clears the
+                                              password. Server stores
+                                              the new value, updates
+                                              its hasPassword flag,
+                                              and rebroadcasts the
+                                              lobby state so all
+                                              clients see the
+                                              password lock indicator
+                                              flip. Password text is
+                                              never echoed to other
+                                              clients. */
+
+/* In-game vote system (back-to-lobby + surrender). See docs/voting_plan.md.
+ * Vote-kind values match GAME_VOTE_KIND_*. */
+#define PACKET_GAME_VOTE_TOGGLE        194  /* client → server
+                                              { kind 1, on 1 }
+                                              on: 0=no, 1=yes,
+                                                  2=open-widget-only
+                                              (open-only is used when
+                                              re-pressing the menu
+                                              while a vote is already
+                                              running — leaves the
+                                              caller's existing vote
+                                              alone). For surrender,
+                                              the server infers the
+                                              voter's team from their
+                                              own slot. */
+#define PACKET_GAME_VOTE_STATE         195  /* server → all clients
+                                              { kind 1, active 1,
+                                                triggerSrc 1, teamId 1,
+                                                threshold 1, yesCount 1,
+                                                secondsRemaining 1,
+                                                votes 2 (uint16 BE
+                                                bitmask of slot
+                                                votes) }
+                                              broadcast on every
+                                              state change AND once
+                                              per second while a vote
+                                              is running (drives the
+                                              countdown). */
+
+#ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
+#define GAME_VOTE_KIND_BACK_TO_LOBBY  1
+#define GAME_VOTE_KIND_SURRENDER      2
+
+#define GAME_VOTE_TOGGLE_NO          0
+#define GAME_VOTE_TOGGLE_YES         1
+#define GAME_VOTE_TOGGLE_OPEN_ONLY   2
+
+#define GAME_VOTE_ACTIVE_NONE        0
+#define GAME_VOTE_ACTIVE_RUNNING     1
+#define GAME_VOTE_ACTIVE_PASSED      2
+#define GAME_VOTE_ACTIVE_FAILED      3
+#define GAME_VOTE_ACTIVE_CANCELLED   4
+
+#define GAME_VOTE_TRIGGER_MANUAL          0
+#define GAME_VOTE_TRIGGER_BASE_MONOPOLY   1
+#define GAME_VOTE_TRIGGER_POST_SURRENDER  2
+#endif
+
+/* Vote timeout in seconds */
+#define GAME_VOTE_DEADLINE_SECONDS  60
+
+/* Grace period after a vote becomes unanimous before the effect
+ * fires. Voters can change their mind during this window. */
+#define GAME_VOTE_PASS_GRACE_SECONDS 5
+
+/* Percentage of eligible YES votes needed for a vote to pass.
+ * Compared as `yesCount * 100 >= eligibleCount * PCT_x100`, so
+ * fractional percentages like 50.1 are expressed by multiplying
+ * by 10 (e.g. 50.1 → 501 with PCT_DENOM=1000). For now we ship
+ * exact unanimity. */
+#define GAME_VOTE_PASS_PCT_NUM    100
+#define GAME_VOTE_PASS_PCT_DENOM  100
+
+/* Setting types used inside SET_SETTING / SETTING_CHG payloads.
+ * Forward-compat: receivers must skip unknown types via valueLen. */
+#define LST_GAME_TYPE          1   /* 1 byte enum: open|tournament|strict */
+#define LST_HIDDEN_MINES       2   /* 1 byte bool */
+#define LST_AI_POLICY          3   /* 1 byte enum: none|allow|advantage|full */
+#define LST_TIME_LIMIT         4   /* 1 byte bool */
+#define LST_TIME_MINUTES       5   /* 2 bytes uint16 BE */
+#define LST_AUTO_LOCK_ON_GAME  6   /* 1 byte bool */
+#define LST_RANKED             7   /* 1 byte bool. When true the server
+                                    * forces ai=none, refuses game_type
+                                    * Open, and removes any existing
+                                    * bots. The client mirrors the
+                                    * value so every viewer sees the
+                                    * ranked badge — toggle is still
+                                    * host/admin only. */
+/* allowNewPlayers stays on PACKET_LOCK_TOGGLE — not duplicated here.
+ * serverLocks is read-only (CLI on bolod) — no SET_SETTING for it. */
+
+/* LST_TIME_MINUTES accepted range: 1..240 minutes (4 hours).
+ * Defended at the wire so downstream ticks arithmetic
+ * (minutes * 60 * GAME_NUMGAMETICKS_SEC) can't be coaxed
+ * toward int32_t overflow by a malicious client.
+ * LOBBY_TIME_MINUTES_MIN/MAX are in public/wire_limits.h so the
+ * GUI lobby can pre-validate before sending. */
+static inline bool lobbyTimeMinutesIsValid(uint16_t minutes) {
+    return minutes >= LOBBY_TIME_MINUTES_MIN &&
+           minutes <= LOBBY_TIME_MINUTES_MAX;
+}
+
+/* Reject reason codes for PACKET_LOBBY_REJECT. */
+#define LOBBY_REJECT_NOT_HOST          1   /* sender lacks authority */
+#define LOBBY_REJECT_LOCKED            2   /* setting is in serverLocks bitmask */
+#define LOBBY_REJECT_INVALID           3   /* malformed payload / out-of-range value */
+#define LOBBY_REJECT_UPLOAD_BUSY       4   /* another client's map upload is in flight */
+#define LOBBY_REJECT_UPLOAD_DISABLED   5   /* host disabled map uploads */
+#define LOBBY_REJECT_UPLOAD_LIMIT_HIT  6   /* per-map storage cap reached */
 
 #define NAME_REJECT_INVALID         1   /* validator: any *_INVALID_* error */
 #define NAME_REJECT_TAKEN           2   /* duplicate via playerNameCompare */

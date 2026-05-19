@@ -603,6 +603,12 @@ extern "C" int imguiWelcomeShow(void) {
                 dl->AddText(fullScreen,
                             IM_COL32(235, 235, 235, (int)(230 * fullA)), fullVer);
             }
+            /* Confirm the SetCursorPos above by submitting a zero-area
+             * Dummy — the version text uses GetWindowDrawList directly so
+             * ImGui's content tracker doesn't otherwise see anything after
+             * the cursor was moved, and End() asserts in debug builds
+             * (ErrorCheckUsingSetCursorPosToExtendParentBoundaries). */
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
         }
 
         ImGui::End(); /* ##WelcomeBg host */

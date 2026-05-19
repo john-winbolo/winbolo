@@ -75,6 +75,11 @@ typedef struct {
     /* mapEventCount + mapEventBaseSeq are on the wire only, not stored here —
      * map events are merged into the same snapshotEvents array on the client. */
     uint16_t mapChecksum;         /* CRC-16 of map terrain (non-zero on full sync ticks) */
+    /* Forced return-to-lobby countdown. > 0 means the server is going
+     * to transition to gameOver in this many serverSimTick calls.
+     * 0 = no pending forced transition. Clients render their own
+     * "Returning to lobby in N" off this value. */
+    uint16_t returnToLobbyTicks;
 } SnapshotHeader;
 
 /* High bit of TankSnapshot.playerNum: when set, this entry is a "hidden stub"

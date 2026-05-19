@@ -31,7 +31,12 @@ extern "C" {
 #include "global.h"
 #include "client_mapload.h"
 #include "client_sim.h"
-#include "../gui/sdl3/dialogs/imgui_gamesetup.h"
+
+/* The desktop imgui_gamesetup screen has been removed in favor of the
+ * lobby flow. The Android port still uses its own setup dialog (this
+ * file) — declare the entry point inline so we don't have to keep
+ * around a one-symbol header for it. */
+int imguiGameSetupShow(struct ClientSim *cs);
 }
 
 #define NUM_SECONDS 60

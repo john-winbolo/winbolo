@@ -175,7 +175,6 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/android/android_frontend.c
     ${PROJ_ROOT}/src/android/touch_input.c
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_welcome.cpp
-    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_gamesetup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_mapchooser.cpp
     ${PROJ_ROOT}/src/android/players_panel.cpp
     ${PROJ_ROOT}/src/android/winbolonet_stub.c
@@ -201,6 +200,8 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keysetup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_winbolonet.cpp
     ${PROJ_ROOT}/src/gui/sdl3/map_preview_popup.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/map_preview_view.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/wb_theme.cpp
     ${PROJ_ROOT}/src/gui/sdl3/minimap_render.c
     ${PROJ_ROOT}/src/gui/sdl3/luabrainshandler.c
     ${PROJ_ROOT}/src/gui/sdl3/cursor.c
