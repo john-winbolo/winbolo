@@ -81,7 +81,7 @@ const PillContribEntry *pillContribGet(int bot, int idx) {
     if (idx < 0 || idx >= n) return NULL;
     if (g_pb_active) {
         if (!g_pb_snap.entries || !g_pb_snap.entries[bot]) return NULL;
-        return &g_pb_snap.entries[bot][idx];
+        return g_pb_snap.entries[bot][idx];
     }
     return &g_entries[bot][idx];
 }

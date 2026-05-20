@@ -456,7 +456,8 @@ static bool botManagerReloadBrain(BotContext *bot, const char *brainPath) {
     SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
 
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
-                                bot->cs, bot->ai, s_default_debug_mode)) {
+                                bot->cs, bot->ai, s_default_debug_mode,
+                                (int)bot->playerNum)) {
         fprintf(stderr,
                 "botManager: failed to reload brain '%s' for bot %d\n",
                 brainPath, (int)bot->playerNum);
