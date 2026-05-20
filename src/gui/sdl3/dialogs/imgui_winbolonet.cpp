@@ -25,6 +25,7 @@
 
 #include "imgui.h"
 #include "imgui_dialog_utils.h"
+#include "dialog_footer.h"
 
 extern "C" {
 #include "../../gamefront.h"
@@ -282,26 +283,20 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
         if (busy) {
             wbnDrawSpinner(langGetText(STR_DLGWBN_SIGNINGIN));
         } else {
-            float btnW = 80.0f;
-            float totalW = btnW * 2 + 8.0f;
-            float avail = ImGui::GetContentRegionAvail().x;
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - totalW) * 0.5f);
-
-            if (ImGui::Button(langGetText(STR_DLGWBN_SIGNIN_OK), ImVec2(btnW, 0)) || enterPressed) {
+            int footer = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                            langGetText(STR_DLGWBN_SIGNIN_OK),
+                                            /*enterConfirms*/ true);
+            if (footer == WBUI::FOOTER_CONFIRM || enterPressed) {
                 if (strlen(wbnUsername) == 0 || strlen(wbnPassword) == 0) {
                     SDL_strlcpy(wbnErrorBuf, langGetText(STR_DLGWBN_NEEDCREDS), sizeof(wbnErrorBuf));
                     wbnState = WBN_ERROR;
                 } else {
                     wbnStartLogin();
                 }
-            }
-            imguiHandOnHover();
-            ImGui::SameLine(0.0f, 8.0f);
-            if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0))) {
+            } else if (footer == WBUI::FOOTER_CANCEL) {
                 ImGui::CloseCurrentPopup();
                 wbnPopupOpen = false;
             }
-            imguiHandOnHover();
         }
 
         ImGui::PopStyleVar();
