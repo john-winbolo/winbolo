@@ -2654,7 +2654,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 serverSimGetState(sim) == serverStateLobby &&
                 len >= PACKET_HEADER_SIZE + 2) {
                 uint8_t teamNum = buf[PACKET_HEADER_SIZE + 1];
-                if (teamNum <= 16) {
+                if (teamNum < MAX_TANKS) {
                     serverSimSetTeam(sim, (BYTE)clientIdx, teamNum);
                     logAddEvent(log_TeamSet, (BYTE)clientIdx, teamNum, 0, 0, 0, NULL);
                     publishLobbySlot(sim, (BYTE)clientIdx);
