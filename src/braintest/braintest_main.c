@@ -255,17 +255,18 @@ typedef struct {
 
     /* pill_contrib registry snapshot (per-bot, per-pill, per-tile
      * danger contribution maps). Same scrub-back rationale as
-     * vizDetails: brain isn't running in playback so the shift-2
-     * overlay needs the recorded data to remain functional. Each
-     * bot's entries are stored separately so switching the
-     * followed bot mid-playback picks up the correct per-bot view.
-     * pillContribEntries[bot] is malloc'd to pillContribCounts[bot]
-     * PillContribEntry; NULL when that bot had no entries.
-     * pillContribPtrs is a parallel const-pointer array exposed
-     * to the playback view API (saves the API caller from doing
-     * the const cast). All three freed in recordingFreeFrame. */
-    PillContribEntry              *pillContribEntries[PILLCONTRIB_MAX_BOTS];
-    const PillContribEntry        *pillContribPtrs[PILLCONTRIB_MAX_BOTS];
+     * vizDetails. Storage uses per-pill refcounted cells (see
+     * PillContribCell below) so consecutive frames that have an
+     * identical pill entry share one allocation. pcontrib is highly
+     * stable tick-to-tick (changes only on pill death or anger
+     * tick), so dedup typically saves >90% of this section's bytes.
+     *
+     * pillContribPtrs[bot] is either NULL or a malloc'd array of
+     * `pillContribCounts[bot]` (const PillContribEntry *) pointers.
+     * Each pointer either references a cell this frame owns (which
+     * it will free when refcount hits 0) or one shared from an
+     * earlier frame. */
+    const PillContribEntry       **pillContribPtrs[PILLCONTRIB_MAX_BOTS];
     int                            pillContribCounts[PILLCONTRIB_MAX_BOTS];
 
     /* Strategic placement heatmap text snapshotted when the [8]
@@ -534,6 +535,42 @@ static void recordingInit(RecordingBuffer *rb) {
     rb->playbackBrainMap = (BYTE *)calloc(mapSz, 1);
 }
 
+/* Refcount-headered pcontrib cell. Frames that captured the same
+ * pill entry (unchanged content) share one cell across all of them;
+ * we free when the last frame referencing it goes away.
+ *
+ * Layout: refcount lives BEFORE the PillContribEntry so callers can
+ * still use a plain `const PillContribEntry *` everywhere. cell_of()
+ * recovers the cell pointer from an entry pointer via offsetof. */
+typedef struct {
+    int              refcount;
+    PillContribEntry entry;
+} PillContribCell;
+
+static inline PillContribCell *pcontrib_cell_of(const PillContribEntry *e) {
+    return (PillContribCell *)((char *)e - offsetof(PillContribCell, entry));
+}
+
+/* Drop one reference to each cell pointed to by pillContribPtrs[b][*]
+ * and free the per-bot pointer array. Called from recordingFreeFrame
+ * and as part of the truncate-tail path. */
+static void recordingReleasePcontrib(RecordingFrame *f) {
+    for (int b = 0; b < PILLCONTRIB_MAX_BOTS; b++) {
+        const PillContribEntry **arr = f->pillContribPtrs[b];
+        if (!arr) continue;
+        int n = f->pillContribCounts[b];
+        for (int i = 0; i < n; i++) {
+            const PillContribEntry *e = arr[i];
+            if (!e) continue;
+            PillContribCell *c = pcontrib_cell_of(e);
+            if (--c->refcount <= 0) free(c);
+        }
+        free(arr);
+        f->pillContribPtrs[b] = NULL;
+        f->pillContribCounts[b] = 0;
+    }
+}
+
 static void recordingFreeFrame(RecordingFrame *f) {
     free(f->fullMap);
     free(f->mapDeltas);
@@ -550,7 +587,7 @@ static void recordingFreeFrame(RecordingFrame *f) {
     free(f->pathX);
     free(f->pathY);
     free(f->vizDetails);
-    for (int b = 0; b < PILLCONTRIB_MAX_BOTS; b++) free(f->pillContribEntries[b]);
+    recordingReleasePcontrib(f);
     SDL_free(f->stratPlaceText);
     memset(f, 0, sizeof(*f));
 }
@@ -2489,30 +2526,68 @@ static void recordingCapture(BrainTestApp *app) {
         }
     }
 
-    /* pill_contrib snapshot — same scrub-back rationale as
-     * vizDetails. Captured per-bot so playback + bot-switch works.
-     * Each PillContribEntry is fixed-size (inline tile array), so
-     * one malloc + memcpy per bot captures their pills. */
-    for (int b = 0; b < PILLCONTRIB_MAX_BOTS; b++) {
-        int pcc = pillContribCount(b);
-        if (pcc > 0) {
-            f->pillContribEntries[b] =
-                (PillContribEntry *)malloc(pcc * sizeof(PillContribEntry));
-            if (f->pillContribEntries[b]) {
-                for (int i = 0; i < pcc; i++) {
-                    const PillContribEntry *src = pillContribGet(b, i);
-                    if (src) f->pillContribEntries[b][i] = *src;
-                }
-                f->pillContribCounts[b] = pcc;
-                f->pillContribPtrs[b]   = f->pillContribEntries[b];
-            } else {
-                f->pillContribCounts[b] = 0;
+    /* pill_contrib snapshot — per-pill refcounted cells. For each
+     * live entry, check whether the previous frame held an entry
+     * with the same pill_id whose bytes are identical; if so, bump
+     * the cell's refcount and share the pointer instead of malloc'ing
+     * a fresh copy. pcontrib only changes when a pill takes damage
+     * (anger bump), dies, or flips owner — most frames steal-share
+     * every entry. */
+    {
+        RecordingFrame *prev = (rb->count > 0) ? &rb->frames[rb->count - 1] : NULL;
+        for (int b = 0; b < PILLCONTRIB_MAX_BOTS; b++) {
+            int pcc = pillContribCount(b);
+            if (pcc <= 0) {
                 f->pillContribPtrs[b]   = NULL;
+                f->pillContribCounts[b] = 0;
+                continue;
             }
-        } else {
-            f->pillContribEntries[b] = NULL;
-            f->pillContribPtrs[b]    = NULL;
-            f->pillContribCounts[b]  = 0;
+            const PillContribEntry **arr =
+                (const PillContribEntry **)malloc(pcc * sizeof(PillContribEntry *));
+            if (!arr) {
+                f->pillContribPtrs[b]   = NULL;
+                f->pillContribCounts[b] = 0;
+                continue;
+            }
+            f->pillContribPtrs[b]   = arr;
+            f->pillContribCounts[b] = pcc;
+
+            const PillContribEntry **prev_arr = prev ? prev->pillContribPtrs[b] : NULL;
+            int prev_n = prev ? prev->pillContribCounts[b] : 0;
+
+            for (int i = 0; i < pcc; i++) {
+                const PillContribEntry *src = pillContribGet(b, i);
+                if (!src) { arr[i] = NULL; continue; }
+
+                /* Try to share: same pill_id + byte-identical content
+                 * as some entry in the previous frame's pcontrib for
+                 * this bot. Inner loop is bounded by PILLCONTRIB_MAX_PILLS
+                 * (16) and the memcmp is ~2 KB on hit, so worst case is
+                 * ~32 KB/bot/tick — negligible vs the malloc savings. */
+                const PillContribEntry *shared = NULL;
+                if (prev_arr) {
+                    for (int j = 0; j < prev_n; j++) {
+                        const PillContribEntry *pe = prev_arr[j];
+                        if (pe && pe->pill_id == src->pill_id
+                            && memcmp(pe, src, sizeof(*pe)) == 0) {
+                            shared = pe;
+                            break;
+                        }
+                    }
+                }
+
+                if (shared) {
+                    pcontrib_cell_of(shared)->refcount++;
+                    arr[i] = shared;
+                } else {
+                    PillContribCell *c =
+                        (PillContribCell *)malloc(sizeof(PillContribCell));
+                    if (!c) { arr[i] = NULL; continue; }
+                    c->refcount = 1;
+                    c->entry    = *src;
+                    arr[i]      = &c->entry;
+                }
+            }
         }
     }
 

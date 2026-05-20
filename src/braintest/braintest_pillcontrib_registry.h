@@ -69,15 +69,18 @@ int  pillContribCount(int bot);
 const PillContribEntry *pillContribGet(int bot, int idx);
 
 /* Recording / playback. Playback snapshot is the full per-bot
- * layout — one PillContribEntry array per bot plus the per-bot
- * count. Set with active=true on patch-in (with the recorded
- * frame's snapshot), clear on patch-out. NULL data with
- * active=true is a valid empty snapshot. */
+ * layout — one entry-pointer array per bot plus the per-bot count.
+ * Set with active=true on patch-in (with the recorded frame's
+ * snapshot), clear on patch-out. NULL data with active=true is a
+ * valid empty snapshot.
+ *
+ * Storage indirection: entries[bot] is NULL or points to an array of
+ * `counts[bot]` (const PillContribEntry *) pointers. The recording
+ * layer uses this to refcount/share individual pill entries across
+ * frames (most frames have identical pcontrib state). */
 typedef struct {
-    /* Flat array: entries[bot] is an array of `counts[bot]`
-     * PillContribEntry. NULL when bot has no entries. */
-    const PillContribEntry *const *entries;
-    const int                    *counts;
+    const PillContribEntry *const *const *entries;
+    const int                          *counts;
 } PillContribSnapshot;
 
 void pillContribSetPlaybackView(const PillContribSnapshot *snap);
