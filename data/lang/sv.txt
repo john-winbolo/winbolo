@@ -422,6 +422,7 @@ STR_DLGLOBBY_BOT_FMT={player} [Bot]
 STR_DLGLOBBY_YOU_FMT={player} (Du)
 STR_DLGLOBBY_STARTING_FMT=Startar om {number}...
 STR_DLGLOBBY_LOSTCONNECTION=Du har förlorat anslutningen till servern.
+STR_DLGLOBBY_KICKED=Du har sparkats från servern.
 STR_DLGLOBBY_ME=Jag
 STR_DLGLOBBY_PLAYER_COL=Spelare
 STR_DLGLOBBY_PING_COL=Ping
@@ -1071,10 +1072,10 @@ STR_DLGLOBBY_PORTMAP_CHECKING=Kontrollerar serveråtkomst…
 STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Server nåbar
 STR_DLGLOBBY_PORTMAP_UNREACHABLE=Server inte nåbar
 STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Försöker öppna en brandväggsport via UPnP / NAT-PMP och bekräftar att trackern kan nå dig via ditt nätverk. Detta brukar slutföras inom 30 sekunder.
-STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port vidarebefordrades automatiskt via UPnP/NAT-PMP på %s:%u. Anslutande spelare ansluter direkt utan ytterligare steg.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port vidarebefordrades automatiskt via UPnP/NAT-PMP på {string1}:{number}. Anslutande spelare ansluter direkt utan ytterligare steg.
 STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Direkt portvidarebefordran kunde inte upprättas, men NAT-traversal är aktiv. Anslutande spelare koordinerar via trackern för att ta sig igenom ditt nätverks brandvägg. Detta fungerar för de flesta hemnätverk; spelare bakom symmetrisk NAT eller carrier-grade NAT kan ändå inte ansluta.
-STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Symmetrisk NAT upptäckt — ditt nätverk skriver om källporten för varje destination, vilket hindrar spelare från att nå dig även via NAT-traversal. För att kunna hosta måste du manuellt vidarebefordra UDP-port %u på din router till den här datorn.
-STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Kunde inte öppna en brandväggsport automatiskt (UPnP/NAT-PMP nekade eller är otillgängligt) och trackern kunde inte bekräfta dubbelriktad åtkomst. För att kunna hosta måste du manuellt vidarebefordra UDP-port %u på din router till den här datorn.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Symmetrisk NAT upptäckt — ditt nätverk skriver om källporten för varje destination, vilket hindrar spelare från att nå dig även via NAT-traversal. För att kunna hosta måste du manuellt vidarebefordra UDP-port {number} på din router till den här datorn.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Kunde inte öppna en brandväggsport automatiskt (UPnP/NAT-PMP nekade eller är otillgängligt) och trackern kunde inte bekräfta dubbelriktad åtkomst. För att kunna hosta måste du manuellt vidarebefordra UDP-port {number} på din router till den här datorn.
 STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Serveråtkomst
 STR_DLGLOBBY_TEST_CONNECTIVITY=Testa anslutning
 STR_DLGLOBBY_TEST_TESTING=Testar…
@@ -1171,3 +1172,140 @@ STR_DLGNEWS_DONT_SHOW=Visa inte
 STR_DLGNEWS_LOADING=Läser in…
 STR_DLGNEWS_DONT_AUTOSHOW=Öppna inte nyheter automatiskt i framtiden
 STR_DLGNEWS_COMMENTS_FMT=Kommentarer: {number}
+
+# Map chooser (window title, tabs, action buttons, close-confirm popup)
+STR_DLGLOBBY_CHOOSEMAP_TITLE=Välj karta
+STR_DLGLOBBY_TAB_SERVERMAPS=Serverkartor
+STR_DLGLOBBY_TAB_LOCALMAPS=Lokala kartor
+STR_DLGLOBBY_TAB_UPLOAD=Ladda upp
+STR_DLGLOBBY_TAB_GENERATE=Generera
+STR_DLGLOBBY_TAB_WBNMAPS=Winbolo.net-kartor
+STR_DLGLOBBY_CLOSEMAP_PROMPT=Du har förhandsgranskat en annan karta.
+STR_DLGLOBBY_CLOSEMAP_QUESTION=Vad vill du göra?
+STR_DLGLOBBY_USETHISMAP=Använd den här kartan
+STR_DLGLOBBY_REVERTCLOSE=Återställ och stäng
+STR_DLGLOBBY_KEEPPICKING=Fortsätt välja
+STR_DLGLOBBY_CANCEL_MAPCHOOSER=Avbryt
+STR_DLGLOBBY_CHOOSE_MAP_BTN=Välj karta
+
+# Upload + WBN errors
+STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT=En annan uppladdning pågår redan.
+STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Uppladdningar inaktiverade på den här servern.
+STR_DLGLOBBY_UPLOAD_ERR_FULL=Serverns kartbibliotek är fullt.
+STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=För många förfrågningar \xe2\x80\x94 vänta ett ögonblick innan du försöker igen.
+STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Uppladdning avvisad av servern.
+STR_DLGLOBBY_WBN_ERR_DOWNLOAD=Nedladdning misslyckades
+STR_DLGLOBBY_WBN_ERR_BADRESPONSE=Ogiltigt svar från WinBolo.net
+STR_DLGLOBBY_WBN_ERR_NETERROR=Nätverksfel vid hämtning av karta
+STR_DLGLOBBY_WBN_ERR_HTTPERROR=WBN returnerade HTTP {number}
+STR_DLGLOBBY_WBN_ERR_MAPFAILED=Kartnedladdning misslyckades
+STR_DLGLOBBY_WBN_ERR_TOOBIG=Kartan överstiger uppladdningsgränsen på 64 KB
+STR_DLGLOBBY_WBN_ERR_OOM=Otillräckligt minne för uppladdningskö
+STR_DLGLOBBY_WBN_ERR_BADSEARCHRESPONSE=Ogiltigt söksvar från WinBolo.net
+
+# Allow-new-players + ranked-game controls
+STR_DLGLOBBY_ALLOW_NOW=Nu
+STR_DLGLOBBY_ALLOW_DURING=Under spelet
+STR_DLGLOBBY_TOOLTIP_ALLOWNOW=Acceptera nya anslutningsförfrågningar nu medan lobbyn är öppen.
+STR_DLGLOBBY_TOOLTIP_ALLOWDURING=Fortsätt acceptera nya spelare efter att spelet har startat.
+STR_DLGLOBBY_TOOLTIP_RANKED_AUTOLOCK=Ranked-spel stänger ute nya spelare när spelet startar.
+STR_DLGLOBBY_RANKED=Ranked-spel
+STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED=Låst av serveradministratören.
+STR_DLGLOBBY_TOOLTIP_RANKED_NOTHOST=Bara värden eller en admin kan växla Ranked-spel.
+STR_DLGLOBBY_TOOLTIP_RANKED_BOTS=Ta bort alla bots från lobbyn innan du markerar\nspelet som Ranked. Ranked-matcher är enbart för människor.
+STR_DLGLOBBY_TOOLTIP_RANKED_INFO=Ranked-spel förbjuder bots och tvingar fram turnerings-\nspeltypen — ingen \"Öppen\" förbeväpnad läge. Att växla\nåterställer varje spelares beredskapsläge så att värden\nkan bekräfta den nya konfigurationen.
+
+# Team-grouped player list + kick modal
+STR_DLGLOBBY_TEAM_HEADER=Lag {number}
+STR_DLGLOBBY_TEAM_MEMBERS_1=· 1 spelare
+STR_DLGLOBBY_TEAM_MEMBERS_N=· {number} spelare
+STR_DLGLOBBY_TEAM_1BOT=1 bot
+STR_DLGLOBBY_TEAM_NBOTS=bots
+STR_DLGLOBBY_JOIN_TEAM=Gå med
+STR_DLGLOBBY_TOOLTIP_JOIN=Flytta dig till Lag {number}.
+STR_DLGLOBBY_BOT_NAMING=Bot-namn:
+STR_DLGLOBBY_ADDBOT_LBL=Lägg till bot
+STR_DLGLOBBY_TOOLTIP_ADDBOT=Lägg till en bot i Lag {number}, med namn från den valda poolen.
+STR_DLGLOBBY_TOOLTIP_RMTEAM=Ta bort Lag {number} (och dess bots).
+STR_DLGLOBBY_TOOLTIP_DRAG=Dra till ett lag för att flytta
+STR_DLGLOBBY_TAG_HOST=VÄRD
+STR_DLGLOBBY_TAG_ADMIN=ADMIN
+STR_DLGLOBBY_TAG_BOT=BOT
+STR_DLGLOBBY_PILL_READY=REDO
+STR_DLGLOBBY_PILL_NOTREADY=INTE REDO
+STR_DLGLOBBY_TOOLTIP_CONFIG=Konfigurera bot
+STR_DLGLOBBY_TOOLTIP_RMBOT=Ta bort bot
+STR_DLGLOBBY_TOOLTIP_KICK=Kicka spelare
+STR_DLGLOBBY_ADD_TEAM=Lägg till lag
+STR_DLGLOBBY_UNASSIGNED_FMT=Otilldelade ({number}):
+STR_DLGLOBBY_KICK_FMT=Kicka „{player}"?
+
+# Bot AiConfig panel
+STR_DLGLOBBY_BOTCFG_NAME=Namn (åsidosätt)
+STR_DLGLOBBY_BOTCFG_REROLL=Slå om
+STR_DLGLOBBY_BOTCFG_REROLL_TIP=Välj ett nytt slumpmässigt namn från lagets pool.
+STR_DLGLOBBY_BOTCFG_CODE=Bot-kod
+STR_DLGLOBBY_BOTCFG_NONE=(ingen)
+STR_DLGLOBBY_BOTCFG_DIFFICULTY=Svårighetsgrad
+STR_DLGLOBBY_BOTCFG_EASY=Lätt
+STR_DLGLOBBY_BOTCFG_NORMAL=Normal
+STR_DLGLOBBY_BOTCFG_HARD=Svår
+STR_DLGLOBBY_BOTCFG_PERSONALITY=Personlighet
+STR_DLGLOBBY_BOTCFG_AGGRESSIVE=Aggressiv
+STR_DLGLOBBY_BOTCFG_DEFENSIVE=Defensiv
+STR_DLGLOBBY_BOTCFG_SNIPER=Sniper
+STR_DLGLOBBY_BOTCFG_DONE=Klar
+
+# Balance-from-WBN dialog
+STR_DLGLOBBY_BAL_BTN=Balansera från WBN
+STR_DLGLOBBY_BAL_POPUP_TITLE=Balansera lag från WBN
+STR_DLGLOBBY_BAL_POPUP_BODY=Detta rensar alla lag i lobbyn och ersätter dem med två färdighetsbalanserade lag från winbolo.net. Den nya uppdelningen träder i kraft omedelbart.
+STR_DLGLOBBY_BAL_POPUP_BOT_SINGULAR=Det finns för närvarande 1 bot i lobbyn. Välj om boten ska ingå i den balanserade uppdelningen eller tas bort för en match med enbart människor.
+STR_DLGLOBBY_BAL_POPUP_BOT_PLURAL=Det finns för närvarande {number} bots i lobbyn. Välj om botarna ska ingå i den balanserade uppdelningen eller tas bort för en match med enbart människor.
+STR_DLGLOBBY_BAL_BOTS_INCLUDED=Bots inkluderade
+STR_DLGLOBBY_BAL_HUMANS_ONLY=Endast människor
+STR_DLGLOBBY_BAL_GO=Balansera
+STR_DLGLOBBY_BAL_TOOLTIP_NOTHOST=Bara värden eller en admin kan begära en färdighets-\nbalanserad laguppdelning från winbolo.net.
+STR_DLGLOBBY_BAL_TOOLTIP_NOTENOUGH=Minst två anslutna spelare krävs innan\nlobbyn kan delas in i balanserade lag.
+STR_DLGLOBBY_BAL_TOOLTIP_INFO=Be winbolo.net dela upp lobbyn i två färdighets-\nbalanserade lag. Uppdelningen tillämpas omedelbart\nnär WBN svarar — befintliga lag ersätts.
+STR_DLGLOBBY_BAL_STATUS_ASKING=Frågar WBN\xe2\x80\xa6
+STR_DLGLOBBY_BAL_STATUS_BALANCED=Lag balanserade
+STR_DLGLOBBY_BAL_STATUS_NOREPLY=Inget svar från WBN
+
+# Reject toast
+STR_DLGLOBBY_REJECT_DEFAULT=avvisad
+STR_DLGLOBBY_REJECT_NOTHOST=endast för värden
+STR_DLGLOBBY_REJECT_LOCKED=inställning låst av server
+STR_DLGLOBBY_REJECT_INVALID=ogiltig förfrågan
+STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Lobbyändring avvisad: {string1}
+
+# Lock badge fallback
+STR_DLGLOBBY_LOCK_BADGE=[låst]
+
+# Ranked-shape tooltip
+STR_DLGLOBBY_RANKED_SHAPE_TIP=Ranked-spel kräver exakt två lag med lika\nstorlek: 1v1, 2v2 eller 3v3 mänskliga spelare.\n(För närvarande {number} {string1}, storlekar {number2} vs {number3}.)
+STR_DLGLOBBY_RANKED_SHAPE_TEAM=lag
+STR_DLGLOBBY_RANKED_SHAPE_TEAMS=lag
+
+# Game settings panel
+STR_DLGLOBBY_SETTINGS_HEADER=Spelinställningar
+STR_DLGLOBBY_OPENHOST_NOTE=Värden har tillåtit alla spelare att ändra spelinställningar.
+STR_DLGLOBBY_GAMETYPE_LBL=Speltyp
+STR_DLGLOBBY_AI_SECTION_LBL=Datorspelare
+STR_DLGLOBBY_AI_NONE=Inga datortankar
+STR_DLGLOBBY_AI_ALLOW=Tillåt datortankar
+STR_DLGLOBBY_AI_ADVANTAGE=Tillåt med fördel
+STR_DLGLOBBY_AI_FULLADV=Tillåt med full fördel
+STR_DLGLOBBY_OTHER_LBL=Övrigt
+STR_DLGLOBBY_OPENHOST_CB=Alla spelare får ändra inställningar
+STR_DLGLOBBY_OPENHOST_TOOLTIP=När aktiverat kan varje ansluten spelare redigera lobby-\ninställningar — inklusive att byta karta, lägga till\neller ta bort bots och byta lag.
+STR_DLGLOBBY_TIMELIMIT_MIN=min
+STR_DLGLOBBY_PASSWORD_CB=Lösenord
+STR_DLGLOBBY_PASSWORD_TOOLTIP=När aktiverat måste nya klienter ange\nlösenordet för att ansluta. Redan anslutna\nspelare påverkas inte.
+
+# Desktop header
+STR_DLGLOBBY_SERVERDISP_SP=Enspelarläge
+STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
+
+# Connectivity badge tooltip
+STR_DLGLOBBY_CONN_TEST_TIP=Test pågår

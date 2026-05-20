@@ -410,7 +410,6 @@ STR_DLGLOBBY_BOT_FMT={player} [Bot]
 STR_DLGLOBBY_YOU_FMT={player} (You)
 STR_DLGLOBBY_STARTING_FMT=Starting in {number}...
 STR_DLGLOBBY_LOSTCONNECTION=You have lost your connection to the server.
-STR_DLGLOBBY_KICKED=You have been kicked from the server.
 STR_DLGLOBBY_ME=Me
 STR_DLGLOBBY_PLAYER_COL=Player
 STR_DLGLOBBY_PING_COL=Ping
@@ -1041,10 +1040,10 @@ STR_DLGLOBBY_PORTMAP_CHECKING=Checking server reachability...
 STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Server accessible
 STR_DLGLOBBY_PORTMAP_UNREACHABLE=Server unreachable
 STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Trying to open a firewall port via UPnP / NAT-PMP and confirming the tracker can reach back through your network. This usually completes within 30 seconds.
-STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port forwarded automatically via UPnP/NAT-PMP at %s:%u. Joiners connect directly with no further steps required.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port forwarded automatically via UPnP/NAT-PMP at {string1}:{number}. Joiners connect directly with no further steps required.
 STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Direct port forwarding could not be established, but NAT traversal is active. Joiners coordinate through the tracker to punch through your network's firewall. This works for most home networks; joiners on symmetric NAT or carrier-grade NAT may still fail to connect.
-STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Symmetric NAT detected — your network rewrites the source port for every destination, which prevents joiners from reaching you even via NAT traversal. To host successfully, manually forward UDP port %u on your router to this machine.
-STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Could not open a firewall port automatically (UPnP/NAT-PMP refused or unavailable) and the tracker could not confirm bidirectional reachability. To host successfully, manually forward UDP port %u on your router to this machine.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Symmetric NAT detected — your network rewrites the source port for every destination, which prevents joiners from reaching you even via NAT traversal. To host successfully, manually forward UDP port {number} on your router to this machine.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Could not open a firewall port automatically (UPnP/NAT-PMP refused or unavailable) and the tracker could not confirm bidirectional reachability. To host successfully, manually forward UDP port {number} on your router to this machine.
 STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Server Reachability
 STR_DLGLOBBY_TEST_CONNECTIVITY=Test connectivity
 STR_DLGLOBBY_TEST_TESTING=Testing...
@@ -1066,7 +1065,7 @@ STR_NAME_INVALID_RESERVED_SUFFIX=Player name cannot end with '-unverified'.
 STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Show country flags in chat
 
 # Verified-priority collision policy (Phase 5).
-STR_NAME_RENAMED_BY_VERIFIED=%s was renamed because %s joined verified
+STR_NAME_RENAMED_BY_VERIFIED={player} was renamed because {other} joined verified
 STR_NAME_TAKEN_BY_VERIFIED=That display name belongs to a verified player. Please pick another.
 STR_NAME_TAKEN_BY_OTHER_VERIFIED=That display name is in use by another verified player. Please pick another.
 STR_REJECT_INCORRECT_PASSWORD=Incorrect password
@@ -1133,6 +1132,146 @@ STR_DLGNEWS_DONT_SHOW=Don't show
 STR_DLGNEWS_LOADING=Loading…
 STR_DLGNEWS_DONT_AUTOSHOW=Don't auto-show news in future
 STR_DLGNEWS_COMMENTS_FMT=Comments: {number}
+STR_DLGLOBBY_KICKED=You have been kicked from the server.
+
+# Lobby — map chooser
+STR_DLGLOBBY_CHOOSEMAP_TITLE=Choose Map
+STR_DLGLOBBY_TAB_SERVERMAPS=Server Maps
+STR_DLGLOBBY_TAB_LOCALMAPS=Local Maps
+STR_DLGLOBBY_TAB_UPLOAD=Upload
+STR_DLGLOBBY_TAB_GENERATE=Generate
+STR_DLGLOBBY_TAB_WBNMAPS=Winbolo.net Maps
+STR_DLGLOBBY_CLOSEMAP_PROMPT=You've previewed a different map.
+STR_DLGLOBBY_CLOSEMAP_QUESTION=What would you like to do?
+STR_DLGLOBBY_USETHISMAP=Use This Map
+STR_DLGLOBBY_REVERTCLOSE=Revert and Close
+STR_DLGLOBBY_KEEPPICKING=Keep picking
+STR_DLGLOBBY_CANCEL_MAPCHOOSER=Cancel
+
+# Lobby — map chooser (continued)
+STR_DLGLOBBY_CHOOSE_MAP_BTN=Choose Map
+
+# Lobby — upload + WBN errors
+STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT=Another upload is in flight.
+STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Uploads disabled on this server.
+STR_DLGLOBBY_UPLOAD_ERR_FULL=Server map library is full.
+STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=Too many requests — please wait a moment before retrying.
+STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Upload rejected by server.
+STR_DLGLOBBY_WBN_ERR_DOWNLOAD=Download failed
+STR_DLGLOBBY_WBN_ERR_BADRESPONSE=Bad response from WinBolo.net
+STR_DLGLOBBY_WBN_ERR_NETERROR=Network error fetching map
+STR_DLGLOBBY_WBN_ERR_HTTPERROR=WBN returned HTTP {number}
+STR_DLGLOBBY_WBN_ERR_MAPFAILED=Map download failed
+STR_DLGLOBBY_WBN_ERR_TOOBIG=Map exceeds 64KB upload cap
+STR_DLGLOBBY_WBN_ERR_OOM=Out of memory queuing upload
+STR_DLGLOBBY_WBN_ERR_BADSEARCHRESPONSE=Bad search response from WinBolo.net
+
+# Allow-new-players + ranked controls
+STR_DLGLOBBY_ALLOW_NOW=Now
+STR_DLGLOBBY_ALLOW_DURING=During game
+STR_DLGLOBBY_TOOLTIP_ALLOWNOW=Accept new join requests right now while the lobby is open.
+STR_DLGLOBBY_TOOLTIP_ALLOWDURING=Keep accepting new players after the game has started.
+STR_DLGLOBBY_TOOLTIP_RANKED_AUTOLOCK=Ranked games lock new players out once the game starts.
+STR_DLGLOBBY_RANKED=Ranked game
+STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED=Locked by the server admin.
+STR_DLGLOBBY_TOOLTIP_RANKED_NOTHOST=Only the host or an admin can toggle Ranked game.
+STR_DLGLOBBY_TOOLTIP_RANKED_BOTS=Remove every bot from the lobby before flagging\nthe game as Ranked. Ranked matches are humans-only.
+STR_DLGLOBBY_TOOLTIP_RANKED_INFO=Ranked games forbid bots and force the tournament\ngame type — no "Open" pre-armed mode. Toggling\nthis resets every player's ready state so the host\ncan confirm the new configuration.
+
+# Team-grouped player list
+STR_DLGLOBBY_TEAM_HEADER=Team {number}
+STR_DLGLOBBY_TEAM_MEMBERS_1=· 1 player
+STR_DLGLOBBY_TEAM_MEMBERS_N=· {number} players
+STR_DLGLOBBY_TEAM_1BOT=1 bot
+STR_DLGLOBBY_TEAM_NBOTS=bots
+STR_DLGLOBBY_JOIN_TEAM=Join
+STR_DLGLOBBY_TOOLTIP_JOIN=Move yourself to Team {number}.
+STR_DLGLOBBY_BOT_NAMING=Bot Naming:
+STR_DLGLOBBY_ADDBOT_LBL=Add Bot
+STR_DLGLOBBY_TOOLTIP_ADDBOT=Add a bot to Team {number}, named from the selected pool.
+STR_DLGLOBBY_TOOLTIP_RMTEAM=Remove Team {number} (and its bots).
+STR_DLGLOBBY_TOOLTIP_DRAG=Drag onto a team to move
+STR_DLGLOBBY_TAG_HOST=HOST
+STR_DLGLOBBY_TAG_ADMIN=ADMIN
+STR_DLGLOBBY_TAG_BOT=BOT
+STR_DLGLOBBY_PILL_READY=READY
+STR_DLGLOBBY_PILL_NOTREADY=NOT READY
+STR_DLGLOBBY_TOOLTIP_CONFIG=Configure bot
+STR_DLGLOBBY_TOOLTIP_RMBOT=Remove bot
+STR_DLGLOBBY_TOOLTIP_KICK=Kick player
+STR_DLGLOBBY_ADD_TEAM=Add Team
+STR_DLGLOBBY_UNASSIGNED_FMT=Unassigned ({number}):
+STR_DLGLOBBY_KICK_FMT=Kick "{player}"?
+
+# Bot AiConfig panel
+STR_DLGLOBBY_BOTCFG_NAME=Name (override)
+STR_DLGLOBBY_BOTCFG_REROLL=Reroll
+STR_DLGLOBBY_BOTCFG_REROLL_TIP=Pick a fresh random name from the team's pool.
+STR_DLGLOBBY_BOTCFG_CODE=Bot Code
+STR_DLGLOBBY_BOTCFG_NONE=(none)
+STR_DLGLOBBY_BOTCFG_DIFFICULTY=Difficulty
+STR_DLGLOBBY_BOTCFG_EASY=Easy
+STR_DLGLOBBY_BOTCFG_NORMAL=Normal
+STR_DLGLOBBY_BOTCFG_HARD=Hard
+STR_DLGLOBBY_BOTCFG_PERSONALITY=Personality
+STR_DLGLOBBY_BOTCFG_AGGRESSIVE=Aggressive
+STR_DLGLOBBY_BOTCFG_DEFENSIVE=Defensive
+STR_DLGLOBBY_BOTCFG_SNIPER=Sniper
+STR_DLGLOBBY_BOTCFG_DONE=Done
+
+# Balance from WBN
+STR_DLGLOBBY_BAL_BTN=Balance from WBN
+STR_DLGLOBBY_BAL_POPUP_TITLE=Balance teams from WBN
+STR_DLGLOBBY_BAL_POPUP_BODY=This will clear every team in the lobby and replace them with two skill-balanced teams from winbolo.net. The new split takes effect immediately.
+STR_DLGLOBBY_BAL_POPUP_BOT_SINGULAR=There is currently 1 bot in the lobby. Choose whether the bot should take part in the balanced split or be removed for a humans-only matchup.
+STR_DLGLOBBY_BAL_POPUP_BOT_PLURAL=There are currently {number} bots in the lobby. Choose whether the bots should take part in the balanced split or be removed for a humans-only matchup.
+STR_DLGLOBBY_BAL_BOTS_INCLUDED=Bots included
+STR_DLGLOBBY_BAL_HUMANS_ONLY=Humans only
+STR_DLGLOBBY_BAL_GO=Balance
+STR_DLGLOBBY_BAL_TOOLTIP_NOTHOST=Only the host or an admin can request a skill-\nbalanced team split from winbolo.net.
+STR_DLGLOBBY_BAL_TOOLTIP_NOTENOUGH=At least two connected players are needed before\nthe lobby can be split into balanced teams.
+STR_DLGLOBBY_BAL_TOOLTIP_INFO=Ask winbolo.net to split the lobby into two skill-\nbalanced teams. The split is applied immediately\nonce WBN responds — existing teams are replaced.
+STR_DLGLOBBY_BAL_STATUS_ASKING=Asking WBN…
+STR_DLGLOBBY_BAL_STATUS_BALANCED=Teams balanced
+STR_DLGLOBBY_BAL_STATUS_NOREPLY=No response from WBN
+
+# Reject toast
+STR_DLGLOBBY_REJECT_DEFAULT=rejected
+STR_DLGLOBBY_REJECT_NOTHOST=host-only action
+STR_DLGLOBBY_REJECT_LOCKED=setting locked by server
+STR_DLGLOBBY_REJECT_INVALID=invalid request
+STR_DLGLOBBY_REJECT_FMT=⚠ Lobby change rejected: {string1}
+
+# Lock badge fallback
+STR_DLGLOBBY_LOCK_BADGE=[locked]
+
+# Ranked shape tooltip
+STR_DLGLOBBY_RANKED_SHAPE_TIP=Ranked games require exactly two teams with equal\nsizes: 1v1, 2v2, or 3v3 human players.\n(Currently {number} {string1}, sizes {number2} vs {number3}.)
+STR_DLGLOBBY_RANKED_SHAPE_TEAM=team
+STR_DLGLOBBY_RANKED_SHAPE_TEAMS=teams
+
+# Game settings panel
+STR_DLGLOBBY_SETTINGS_HEADER=Game settings
+STR_DLGLOBBY_OPENHOST_NOTE=The host has allowed all players to change game settings.
+STR_DLGLOBBY_GAMETYPE_LBL=Game Type
+STR_DLGLOBBY_AI_SECTION_LBL=Computer Players
+STR_DLGLOBBY_AI_NONE=No computer tanks
+STR_DLGLOBBY_AI_ALLOW=Allow computer tanks
+STR_DLGLOBBY_AI_ADVANTAGE=Allow with advantage
+STR_DLGLOBBY_AI_FULLADV=Allow with full advantage
+STR_DLGLOBBY_OTHER_LBL=Other
+STR_DLGLOBBY_OPENHOST_CB=Allow all players to change settings
+STR_DLGLOBBY_OPENHOST_TOOLTIP=When on, every connected player can edit lobby\nsettings — including changing the map, adding\nor removing bots, and switching teams.
+STR_DLGLOBBY_TIMELIMIT_MIN=min
+STR_DLGLOBBY_PASSWORD_CB=Password
+STR_DLGLOBBY_PASSWORD_TOOLTIP=When on, new clients must supply the\npassword to join. Already-connected players\nare unaffected.
+
+# Desktop header
+STR_DLGLOBBY_SERVERDISP_SP=Single player
+STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
+
+# Connectivity badge
+STR_DLGLOBBY_CONN_TEST_TIP=Test in progress
 
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
