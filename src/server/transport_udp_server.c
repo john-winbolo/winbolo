@@ -2849,6 +2849,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                               LOBBY_REJECT_NOT_HOST);
                 break;
             }
+            if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
+            udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
             uint8_t settingType = buf[PACKET_HEADER_SIZE];
             uint8_t valueLen    = buf[PACKET_HEADER_SIZE + 1];
             if (len < PACKET_HEADER_SIZE + 2 + valueLen ||
@@ -4266,6 +4268,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             if (len < PACKET_HEADER_SIZE + 2) break;
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0) break;
+            if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
+            udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
             uint8_t kind   = buf[PACKET_HEADER_SIZE + 0];
             uint8_t toggle = buf[PACKET_HEADER_SIZE + 1];
             serverSimGameVoteToggle(sim, (uint8_t)clientIdx, kind, toggle);
