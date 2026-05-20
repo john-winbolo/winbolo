@@ -1969,14 +1969,28 @@ function Brain.think(info)
   -- attack_pill / PPT state (substate, _shield_scan, _aim_locked,
   -- _wall_build_list, etc.) doesn't leak through into the next
   -- goal selection on the new tank.
-  if info.newtank then
+  --
+  -- Belt-and-suspenders: info.newtank is only true for a SINGLE
+  -- tick after respawn (tank.c:463/491). If anything (GC pause, a
+  -- long previous Brain.think, a Lua error mid-body) ate that one
+  -- tick, in-flight state survives the death — observed as a
+  -- respawned tank still in build_walls. Also check for the dead
+  -- waiting-to-respawn state: the engine holds armour at
+  -- TANK_FULL_ARMOUR+1 (= 41) through the whole deathWait
+  -- countdown (~200 ticks), giving us a wide window we can't miss.
+  -- Idempotent re-clearing during deathWait is harmless — the
+  -- brain has no control anyway while the tank is dead.
+  local _is_dead = (info.armour or 0) > C.TANK_FULL_ARMOUR
+  if info.newtank or _is_dead then
     state.stuck_for = 0
     attack.clear_attack_goal(state)
-    if BRAIN_DEBUG_MODE then
+    if BRAIN_DEBUG_MODE and info.newtank then
       print(string.format(TAG .. " t=%d RESPAWN at (%d,%d)",
             now, info.tankx >> 8, info.tanky >> 8))
     end
-    log.event("respawn", string.format("%d,%d", info.tankx >> 8, info.tanky >> 8))
+    if info.newtank then
+      log.event("respawn", string.format("%d,%d", info.tankx >> 8, info.tanky >> 8))
+    end
   end
 
   -- Stuck detection
