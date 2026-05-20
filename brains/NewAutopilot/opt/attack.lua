@@ -2334,6 +2334,61 @@ function M.update_attack_substate(goal, state, world, info)
         goal._approach_last_progress = now
         goal._approach_last_dist     = adist
       end
+
+      -- Yield mode: short-term collision-recovery (see attack.lua).
+      local YIELD_STALL_TICKS = 100
+      local YIELD_TIMEOUT     = 150
+      local YIELD_MAX         = 3
+      if goal._approach_yield_active then
+        if adist <= 32
+           or (goal._approach_yield_start and (now - goal._approach_yield_start) > YIELD_TIMEOUT) then
+          goal.approach_mx = goal._approach_yield_prev_mx
+          goal.approach_my = goal._approach_yield_prev_my
+          goal.approach_fx = goal._approach_yield_prev_fx
+          goal.approach_fy = goal._approach_yield_prev_fy
+          goal._approach_yield_active   = false
+          goal._approach_yield_start    = nil
+          goal._approach_yield_prev_mx  = nil
+          goal._approach_yield_prev_my  = nil
+          goal._approach_yield_prev_fx  = nil
+          goal._approach_yield_prev_fy  = nil
+          goal._approach_last_progress  = now
+          goal._approach_last_dist      = nil
+          print(TAG .. " ATTACK: yield done, resuming approach")
+        end
+      elseif goal.standoff_mx
+             and (now - goal._approach_last_progress) > YIELD_STALL_TICKS
+             and (goal._approach_yield_count or 0) < YIELD_MAX then
+        local dx = goal.standoff_mx - pmx
+        local dy = goal.standoff_my - pmy
+        local len = math.sqrt(dx * dx + dy * dy)
+        if len > 0.001 then
+          local ux = dx / len
+          local uy = dy / len
+          local yx = goal.standoff_mx + math.floor(ux + 0.5)
+          local yy = goal.standoff_my + math.floor(uy + 0.5)
+          local in_bounds = yx >= 0 and yx <= 255 and yy >= 0 and yy <= 255
+          local walkable  = in_bounds and (U.ttype(yx, yy) & 0x0F) ~= 0
+                                       and (U.ttype(yx, yy) & 0x0F) ~= 8
+          if walkable then
+            goal._approach_yield_prev_mx = goal.approach_mx
+            goal._approach_yield_prev_my = goal.approach_my
+            goal._approach_yield_prev_fx = goal.approach_fx
+            goal._approach_yield_prev_fy = goal.approach_fy
+            goal.approach_mx = yx
+            goal.approach_my = yy
+            goal.approach_fx = yx + 0.5
+            goal.approach_fy = yy + 0.5
+            goal._approach_yield_active = true
+            goal._approach_yield_start  = now
+            goal._approach_yield_count  = (goal._approach_yield_count or 0) + 1
+            goal._approach_last_progress = now
+            goal._approach_last_dist     = nil
+            print(string.format(TAG .. " ATTACK: approach stalled, yielding to (%d,%d) [retry %d/%d]",
+                  yx, yy, goal._approach_yield_count, YIELD_MAX))
+          end
+        end
+      end
       -- Was 64 (1/4 tile). At that tolerance the tank brakes early and
       -- coasts to a stop short of the approach point — visible as a
       -- noticeable gap at the green winner-marker. 16 wu (1/16 tile)
@@ -2429,10 +2484,13 @@ function M.update_attack_substate(goal, state, world, info)
           decision_msg = "skip build_walls: " .. why_no_build
         end
         -- Approach finished — clear its timer so a future re-entry
-        -- starts a fresh countdown.
+        -- starts a fresh countdown. Also clear yield state.
         goal._approach_start = nil
         goal._approach_last_progress = nil
         goal._approach_last_dist = nil
+        goal._approach_yield_active = nil
+        goal._approach_yield_start  = nil
+        goal._approach_yield_count  = nil
         print(TAG .. " ATTACK: at approach " .. decision_msg)
         -- Park the message on screen for ~2 seconds (100 ticks @ 50Hz)
         -- so the human can read it without scrubbing the trace.
@@ -2474,6 +2532,9 @@ function M.update_attack_substate(goal, state, world, info)
           goal._approach_start = nil
           goal._approach_last_progress = nil
           goal._approach_last_dist = nil
+          goal._approach_yield_active = nil
+          goal._approach_yield_start  = nil
+          goal._approach_yield_count  = nil
         end
       end
     end
