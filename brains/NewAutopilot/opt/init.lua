@@ -2877,6 +2877,11 @@ function Brain.think(info)
   local t_build_setmode = clock_us()
   opt(string.format("  builder.set_mode done %.2f ms", (t_build_setmode - t_build0) / 1000))
   local build_cmd = builder.decide(state, world, info, now)
+  -- Repair-pill completion: see init.lua for notes.
+  if state._repair_dispatched then
+    state._repair_dispatched = nil
+    attack.clear_attack_goal(state)
+  end
   local t_build1 = clock_us()
   opt(string.format("  builder.decide done %.2f ms", (t_build1 - t_build_setmode) / 1000))
   metrics.set("us_builder", t_build1 - t_build0)

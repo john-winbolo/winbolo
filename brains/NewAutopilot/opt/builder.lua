@@ -378,11 +378,29 @@ function M.decide(state, world, info, now)
     end
   end
 
+  local tmx = info.tankx >> 8
+  local tmy = info.tanky >> 8
+
+  -- Priority 0.4: repair_pill dispatch (forced — no danger gate).
+  -- See builder.lua for full notes. Within 5 tiles + LGM-reach passes
+  -- → dispatch BUILDMODE_PBOX; engine auto-repairs on arrival.
+  if state.goal and state.goal.kind == "repair_pill"
+     and state.goal.mx and state.goal.my
+     and info.trees > 0
+     and U.mdist(tmx, tmy, state.goal.mx, state.goal.my) <= 5
+  then
+    local ticks = cpf_lgm_travel_ticks_map(
+      tmx, tmy, state.goal.mx, state.goal.my,
+      0, 0, 2000, 150)
+    if ticks > 0 then
+      state._repair_dispatched = true
+      return { x = state.goal.mx, y = state.goal.my, action = BUILDMODE_PBOX }
+    end
+  end
+
   -- Priority 0.5: base shield — build wall to block pill fire while on any base.
   -- Triggers ONLY on the tick we take damage (pill just fired → max window
   -- before next shot). Checks all 8 directions for the best blocking tile.
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
   -- Allow base shield when ON the base or within 1 tile of it.
   -- Wall must be placed on one of the 8 tiles adjacent to the base.
   local has_base = info.base and info.base.x

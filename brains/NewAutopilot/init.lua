@@ -3449,6 +3449,17 @@ function Brain.think(info)
   local t_build_setmode = clock_us()
   opt(string.format("  builder.set_mode done %.2f ms", (t_build_setmode - t_build0) / 1000))
   local build_cmd = builder.decide(state, world, info, now)
+  -- Repair-pill completion: the builder dispatched the LGM onto a
+  -- friendly damaged pill (engine auto-repairs on arrival). Clear the
+  -- goal so this tick's downstream goal-tracking and next tick's
+  -- pick_goal see a clean slate — repair runs autonomously from here.
+  if state._repair_dispatched then
+    state._repair_dispatched = nil
+    attack.clear_attack_goal(state)
+    if BRAIN_DEBUG_MODE then
+      print(string.format(TAG .. " t=%d REPAIR dispatched, clearing goal", now))
+    end
+  end
   local t_build1 = clock_us()
   opt(string.format("  builder.decide done %.2f ms", (t_build1 - t_build_setmode) / 1000))
   metrics.set("us_builder", t_build1 - t_build0)
