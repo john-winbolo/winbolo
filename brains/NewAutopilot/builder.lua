@@ -378,11 +378,65 @@ function M.decide(state, world, info, now)
     end
   end
 
+  local tmx = info.tankx >> 8
+  local tmy = info.tanky >> 8
+
+  -- Priority 0.4: repair_pill dispatch (FORCED mode — no danger gate).
+  -- As soon as we're within 5 tiles of the target friendly damaged pill
+  -- AND the LGM's tile-walk reachability sim says it can actually arrive,
+  -- dispatch BUILDMODE_PBOX onto the pill tile. Engine-side (lgm.c:1060+)
+  -- treats an empty-handed LGM walking onto a pill while carrying trees
+  -- as a repair: pillsRepairPos consumes the trees, restores health.
+  --
+  -- After dispatch the brain is free to pick a new goal — the LGM
+  -- runs the repair autonomously. state._repair_dispatched signals
+  -- init.lua to clear state.goal back to "none".
+  if state.goal and state.goal.kind == "repair_pill"
+     and state.goal.mx and state.goal.my then
+    local px, py = state.goal.mx, state.goal.my
+    local dist  = U.mdist(tmx, tmy, px, py)
+    local in_range = dist <= 5
+    local has_trees = info.trees > 0
+    local ticks = (in_range and has_trees)
+      and cpf_lgm_travel_ticks_map(tmx, tmy, px, py, 0, 0, 2000, 150)
+      or -1
+    local can_dispatch = in_range and has_trees and ticks > 0
+
+    if BRAIN_DEBUG_MODE then
+      -- Status circle on the pill: green = dispatch fires this tick,
+      -- yellow = in goal but blocked on prerequisites, red = LGM can't
+      -- reach. Status line text on the tank.
+      local r, g, b
+      if can_dispatch then          r, g, b =   0, 255,   0
+      elseif ticks == 0 then        r, g, b = 255, 100, 100
+      else                          r, g, b = 255, 220,   0 end
+      viz.circle("repair_pill_viz", px + 0.5, py + 0.5, 0.55, r, g, b, 220)
+      viz.circle("repair_pill_viz", px + 0.5, py + 0.5, 0.30, r, g, b, 180)
+      local tank_fx = info.tankx / 256.0
+      local tank_fy = info.tanky / 256.0
+      viz.line("repair_pill_viz", tank_fx, tank_fy, px + 0.5, py + 0.5,
+               r, g, b, 120)
+      viz.text("repair_pill_viz", tank_fx + 0.6, tank_fy - 1.2,
+               string.format("Repair d=%d tr=%d lgm=%d", dist, info.trees, ticks),
+               "topleft", r, g, b, 240)
+      print2(string.format(
+        "REPAIR_DISPATCH_CHECK pill=(%d,%d) tank=(%d,%d) dist=%d trees=%d lgm_ticks=%d can=%s",
+        px, py, tmx, tmy, dist, info.trees, ticks, tostring(can_dispatch)))
+    end
+
+    if can_dispatch then
+      state._repair_dispatched = true
+      if BRAIN_DEBUG_MODE then
+        print2(string.format(
+          "REPAIR_DISPATCH_FIRED pill=(%d,%d) action=BUILDMODE_PBOX", px, py))
+      end
+      return { x = px, y = py, action = BUILDMODE_PBOX }
+    end
+  end
+
   -- Priority 0.5: base shield — build wall to block pill fire while on any base.
   -- Triggers ONLY on the tick we take damage (pill just fired → max window
   -- before next shot). Checks all 8 directions for the best blocking tile.
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
   -- Allow base shield when ON the base or within 1 tile of it.
   -- Wall must be placed on one of the 8 tiles adjacent to the base.
   local has_base = info.base and info.base.x

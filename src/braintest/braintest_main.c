@@ -133,6 +133,13 @@ time_t serverMainGetTicks(void) { return (time_t)SDL_GetTicks(); }
 #define CONTROL_BAR_HEIGHT 32   /* timeline scrubber strip at bottom */
 #define MAX_RECORDING_FRAMES 90000
 
+/* Sliding-window cap. Default = 3000 frames ≈ 60 sec @ 50 Hz; oldest
+ * frames evicted in keyframe-aligned chunks once the buffer fills.
+ * --record-all on the command line bumps this to MAX_RECORDING_FRAMES
+ * (effectively unlimited — full session retained). Lower default
+ * keeps memory bounded on multi-hour runs. */
+static int g_recordingMaxFrames = 3000;
+
 /* Playback / live-replay speed presets, ms-per-tick. Lower = faster. */
 static const int SPEED_PRESETS[] = {
     1, 2, 5, 10, 20, 40, 80, 150, 300, 500, 1000, 2000, 5000
@@ -1477,6 +1484,15 @@ static BYTE     g_panelPollFollowBot   = 0;
  * yet. Opt in with --record-panels when you want offline replay. */
 static bool     g_panelRecordEnabled   = false;
 static char     g_panelRecordDir[FILENAME_MAX] = "";
+
+/* Per-frame pcontrib snapshot for playback's shift-2 overlay. Off by
+ * default: even with per-pill refcount sharing the long tail of
+ * occasionally-changing entries still grows ~2 KB per changed pill
+ * per frame, which adds up over multi-hour sessions. Turn on with
+ * --record-pcontrib when you actually need scrub-replay of the
+ * danger-contribution overlay. With this off, the live overlay still
+ * works during play — only playback's view of it is empty. */
+static bool     g_recordPcontribEnabled = false;
 static uint32_t g_panelPollTick        = 0;
 /* Playback bridge — when set, the poll callback returns the
  * recorded panel JSON for `g_panelPollFrame` instead of asking
@@ -1603,6 +1619,11 @@ static void printUsage(const char *prog) {
         "  -ai TYPE         AI type: none, yes, advantage, full (default: full)\n"
         "  -game TYPE       Game type: open, tournament, strict (default: open)\n"
         "  --record-panels  Write per-tick panel JSON to debug_sessions/<ts>/panels/\n"
+        "  --record-pcontrib  Record per-tick pill-contribution snapshots so the\n"
+        "                     shift-2 overlay works during playback (off by default;\n"
+        "                     each changed pill entry is ~2 KB so long runs grow fast)\n"
+        "  --record-all      Keep ALL recorded frames (up to ~30 min). Default is a\n"
+        "                     60-second sliding window so long runs stay bounded.\n"
         "  --opt            Load stripped opt/ brain (debug=false). Production-mode feel.\n"
         "  --run-script PATH  Run PATH as a Lua script in the brain's VM after Brain.open,\n"
         "                     then exit. The script has full access to cpf, world, etc.\n"
@@ -1663,6 +1684,18 @@ static bool parseArgs(int argc, char **argv) {
              * no rotation yet so a long session creates many files.
              * Use when you want to inspect / replay later. */
             g_panelRecordEnabled = true;
+        } else if (strcmp(argv[i], "--record-pcontrib") == 0) {
+            /* Enable per-tick pill-danger-contribution snapshots so
+             * the shift-2 overlay works during playback. Off by
+             * default because each changed pill entry is ~2 KB and
+             * long sessions push the recording buffer multi-GB. */
+            g_recordPcontribEnabled = true;
+        } else if (strcmp(argv[i], "--record-all") == 0) {
+            /* Disable the sliding-window cap on the recording buffer:
+             * keep ALL frames up to MAX_RECORDING_FRAMES (~30 min @
+             * 50Hz) instead of the default 60-second rolling window.
+             * Off by default to keep memory bounded on long runs. */
+            g_recordingMaxFrames = MAX_RECORDING_FRAMES;
         } else if (strcmp(argv[i], "--opt") == 0) {
             /* Load brain from the stripped opt/ subdirectory with
              * BRAIN_DEBUG_MODE=false — true production-mode feel. */
@@ -2246,6 +2279,36 @@ static void pushVizStateToBots(bool vizSuppressActive) {
     }
 }
 
+/* Drop the oldest KEYFRAME_INTERVAL frames so the new head is still a
+ * keyframe (preserves delta-chain validity for the remaining frames).
+ * Adjusts every index that points into the frame array: playbackFrame,
+ * playbackMapFrame, panelPoll cursor. Called from recordingCapture when
+ * the configured sliding-window cap is hit. */
+static void recordingEvictHead(BrainTestApp *app) {
+    RecordingBuffer *rb = &app->recording;
+    int drop = KEYFRAME_INTERVAL;
+    if (drop > rb->count) drop = rb->count;
+    if (drop <= 0) return;
+    for (int i = 0; i < drop; i++) recordingFreeFrame(&rb->frames[i]);
+    if (rb->count > drop) {
+        memmove(&rb->frames[0], &rb->frames[drop],
+                (rb->count - drop) * sizeof(RecordingFrame));
+    }
+    rb->count -= drop;
+    /* Shift cursors. Any index that referred to an evicted frame
+     * collapses to 0 (oldest still-live frame). */
+    app->playbackFrame -= drop;
+    if (app->playbackFrame < 0) app->playbackFrame = 0;
+    if (rb->playbackMapFrame >= 0) {
+        rb->playbackMapFrame -= drop;
+        if (rb->playbackMapFrame < 0) rb->playbackMapFrame = -1;
+    }
+    if (g_panelPollFrame >= 0) {
+        g_panelPollFrame -= drop;
+        if (g_panelPollFrame < 0) g_panelPollFrame = 0;
+    }
+}
+
 /* Per-tick recording capture. Called once per game tick from the
  * main loop after botManagerTick + serverSimTick. Captures the
  * followed bot's view of the world (map, grids, brainMap), the
@@ -2255,6 +2318,12 @@ static void pushVizStateToBots(bool vizSuppressActive) {
  * at that tick). */
 static void recordingCapture(BrainTestApp *app) {
     RecordingBuffer *rb = &app->recording;
+    /* Sliding-window: evict oldest keyframe-aligned chunk before
+     * appending. Hard ceiling stays MAX_RECORDING_FRAMES regardless. */
+    if (rb->count >= g_recordingMaxFrames
+        && g_recordingMaxFrames < MAX_RECORDING_FRAMES) {
+        recordingEvictHead(app);
+    }
     if (rb->count >= MAX_RECORDING_FRAMES) return;
     if (rb->count >= rb->capacity) {
         int newCap = rb->capacity == 0 ? 1024 : rb->capacity * 2;
@@ -2526,14 +2595,14 @@ static void recordingCapture(BrainTestApp *app) {
         }
     }
 
-    /* pill_contrib snapshot — per-pill refcounted cells. For each
-     * live entry, check whether the previous frame held an entry
-     * with the same pill_id whose bytes are identical; if so, bump
-     * the cell's refcount and share the pointer instead of malloc'ing
-     * a fresh copy. pcontrib only changes when a pill takes damage
-     * (anger bump), dies, or flips owner — most frames steal-share
-     * every entry. */
-    {
+    /* pill_contrib snapshot — gated on --record-pcontrib. Even with
+     * per-pill refcount sharing, long runs accumulate enough distinct
+     * entries to dominate the recording buffer; default off to keep
+     * memory bounded. When disabled, leave pillContribPtrs[b] = NULL
+     * (memset of the frame at the top of recordingCapture already
+     * zeroed them) — playback's snapshot patch-in will see counts=0
+     * everywhere and the shift-2 overlay just renders nothing. */
+    if (g_recordPcontribEnabled) {
         RecordingFrame *prev = (rb->count > 0) ? &rb->frames[rb->count - 1] : NULL;
         for (int b = 0; b < PILLCONTRIB_MAX_BOTS; b++) {
             int pcc = pillContribCount(b);
