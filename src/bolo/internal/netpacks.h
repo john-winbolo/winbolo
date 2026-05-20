@@ -31,6 +31,7 @@
 #include "global.h"
 #include "platform_net.h"  /* struct in_addr */
 #include "wire_limits.h"   /* PACKET_MAX_CHAT_MESSAGE */
+#include "playername_validate.h"  /* playerNameValidate / playerNameCompare */
 
 #define MAX_UDPPACKET_SIZE 1024
 #define MAX_TCPPACKET_SIZE 1024
@@ -476,6 +477,62 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 static inline bool lobbyTimeMinutesIsValid(uint16_t minutes) {
     return minutes >= LOBBY_TIME_MINUTES_MIN &&
            minutes <= LOBBY_TIME_MINUTES_MAX;
+}
+
+/* Callback shape matching transportUdpServerGetPlayerName so the
+ * ADD_BOT / BOT_CONFIG handlers can pass it through verbatim. May
+ * return NULL for slots without a connected player; lobbyBotNameAcceptable
+ * skips NULL returns rather than treating them as collisions. */
+typedef const char *(*LobbyBotNameLookupFn)(BYTE slot);
+
+/* Validate + uniqueness-check a candidate bot name from the wire.
+ *
+ * Pure: no globals, no I/O. Callers handle the empty-name branch
+ * externally (ADD_BOT falls through to "Bot N" pool naming;
+ * BOT_CONFIG treats empty nameLen as "no name change"), so rawName
+ * is expected to be non-empty.
+ *
+ * Step 1: playerNameValidate(rawName -> validatedOut). On failure,
+ * writes *validateErrOut (if non-NULL) and returns false.
+ *
+ * Step 2: uniqueness — for each j in [0, MAX_TANKS) with j != skipSlot,
+ * fetch getName(j) and compare via playerNameCompare. A NULL return
+ * from getName means "no player in that slot" and is skipped. On a
+ * match, writes *collisionSlotOut (if non-NULL) and returns false.
+ *
+ * skipSlot: pass the bot's own slot from BOT_CONFIG so a no-op or
+ * normalization-preserving rename doesn't self-collide. ADD_BOT
+ * passes -1 (or any out-of-range index) so every slot participates.
+ *
+ * Returns true if the name is acceptable. validateErrOut /
+ * collisionSlotOut are not touched on the success path; on failure
+ * exactly one of them is written (validator failures don't reach
+ * the uniqueness loop). */
+static inline bool lobbyBotNameAcceptable(
+    const char *rawName,
+    char *validatedOut, size_t validatedOutSize,
+    int skipSlot,
+    LobbyBotNameLookupFn getName,
+    PlayerNameValidationError *validateErrOut,
+    int *collisionSlotOut) {
+    PlayerNameValidationError err = PLAYER_NAME_OK;
+    if (!playerNameValidate(rawName, validatedOut, validatedOutSize, &err)) {
+        if (validateErrOut) *validateErrOut = err;
+        return false;
+    }
+    if (getName != NULL) {
+        BYTE j;
+        for (j = 0; j < MAX_TANKS; j++) {
+            if ((int)j == skipSlot) continue;
+            const char *other = getName(j);
+            if (other != NULL &&
+                playerNameCompare(other, validatedOut) == 0) {
+                if (collisionSlotOut) *collisionSlotOut = (int)j;
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 /* Reject reason codes for PACKET_LOBBY_REJECT. */

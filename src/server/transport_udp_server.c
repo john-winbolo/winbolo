@@ -2755,29 +2755,16 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                  * validator humans go through (controls, reserved
                  * leading '*', mixed scripts, length) so chat and
                  * scoreboard rendering can trust the form they receive.
-                 * Then run uniqueness against the connected-player
-                 * table — bots and humans share udpServer.clients[],
-                 * and a duplicate name breaks chat attribution and
-                 * scoreboard disambiguation either way. */
+                 * Uniqueness runs against the connected-player table —
+                 * bots and humans share udpServer.clients[], and a
+                 * duplicate name breaks chat attribution and scoreboard
+                 * disambiguation either way. */
                 if (clientBotName[0] != '\0') {
                     char validated[PACKET_MAX_PLAYER_NAME];
-                    PlayerNameValidationError nameErr = PLAYER_NAME_OK;
-                    if (!playerNameValidate(clientBotName, validated,
-                                            sizeof(validated), &nameErr)) {
-                        lobbyRejectTo(fromAddr, PACKET_LOBBY_ADD_BOT,
-                                      LOBBY_REJECT_INVALID);
-                        break;
-                    }
-                    bool nameTaken = false;
-                    for (BYTE j = 0; j < MAX_TANKS; j++) {
-                        const char *otherName = transportUdpServerGetPlayerName(j);
-                        if (otherName != NULL &&
-                            playerNameCompare(otherName, validated) == 0) {
-                            nameTaken = true;
-                            break;
-                        }
-                    }
-                    if (nameTaken) {
+                    if (!lobbyBotNameAcceptable(clientBotName, validated,
+                                                sizeof(validated), -1,
+                                                transportUdpServerGetPlayerName,
+                                                NULL, NULL)) {
                         lobbyRejectTo(fromAddr, PACKET_LOBBY_ADD_BOT,
                                       LOBBY_REJECT_INVALID);
                         break;
@@ -3151,24 +3138,10 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 memset(rawName, 0, sizeof(rawName));
                 memcpy(rawName, buf + PACKET_HEADER_SIZE + 4, nameLen);
 
-                PlayerNameValidationError nameErr = PLAYER_NAME_OK;
-                if (!playerNameValidate(rawName, validatedName,
-                                        sizeof(validatedName), &nameErr)) {
-                    lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
-                                  LOBBY_REJECT_INVALID);
-                    break;
-                }
-                bool nameTaken = false;
-                for (BYTE j = 0; j < MAX_TANKS; j++) {
-                    if (j == slot) continue;
-                    const char *otherName = transportUdpServerGetPlayerName(j);
-                    if (otherName != NULL &&
-                        playerNameCompare(otherName, validatedName) == 0) {
-                        nameTaken = true;
-                        break;
-                    }
-                }
-                if (nameTaken) {
+                if (!lobbyBotNameAcceptable(rawName, validatedName,
+                                            sizeof(validatedName), (int)slot,
+                                            transportUdpServerGetPlayerName,
+                                            NULL, NULL)) {
                     lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
                                   LOBBY_REJECT_INVALID);
                     break;
