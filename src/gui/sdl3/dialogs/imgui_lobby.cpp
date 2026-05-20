@@ -548,7 +548,18 @@ static void lobbyUploadPump(ClientSim *cs) {
      * flight". Bail and free the slot once we cross either timeout. */
     {
         uint64_t now = SDL_GetTicks();
-        if (s_uploadPrevStatus != st || s_uploadPrevOffset != s_uploadOffset) {
+        bool advanced = (s_uploadPrevStatus != st) ||
+                        (s_uploadPrevOffset != s_uploadOffset);
+        /* Treat the moment the last chunk goes out as one final
+         * forward-progress event. After this, offset stays pinned
+         * at s_uploadTotal while we wait for MAP_UPLOAD_DONE; without
+         * this reset the stall timer would count against a server
+         * that's merely slow to load + reply. */
+        if (st >= 2 && s_uploadOffset == s_uploadTotal &&
+            s_uploadPrevOffset < s_uploadTotal) {
+            advanced = true;
+        }
+        if (advanced) {
             s_uploadPrevStatus      = st;
             s_uploadPrevOffset      = s_uploadOffset;
             s_uploadPrevProgressMs  = now;
