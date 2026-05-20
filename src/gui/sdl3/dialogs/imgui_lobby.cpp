@@ -3376,6 +3376,13 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
 /* Currently-expanded bot slot for the AiConfig sub-row, or -1. */
 static int s_expandedBotSlot = -1;
 
+/* Kick-confirm dialog state. Populated when an authorised player picks
+ * "Kick" from a row's right-click context menu; the modal at the bottom
+ * of renderTeamGroupedPlayers reads it on the next frame. */
+static int  s_kickPendingSlot = -1;
+static char s_kickPendingName[64] = {0};
+static bool s_kickPendingOpen = false;
+
 /* Forward decl — defined below the team renderer. */
 static void renderBotAiConfig(ClientSim *cs,
                               int slot, int teamId, float s);
@@ -4455,6 +4462,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     ImGui::Text("%s", clientSimGetLobbySlot(cs, (BYTE)(i))->playerName);
                 }
 
+
                 /* Inline tag pills after the name. Drawn via
                  * WindowDrawList so we can size them tightly and
                  * tint each one independently (HOST = yellow,
@@ -4622,7 +4630,10 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     ImGui::Dummy(ImVec2(pillW, pillH));
                 }
 
-                /* ── Column 6: remove bot X (CloseButton) ────────── */
+                /* ── Column 6: remove bot X / kick player X (CloseButton) ──
+                 * Bots get an immediate remove; humans (non-self, non-host)
+                 * stage a kick-confirm modal. Both visible only to host /
+                 * admin / openHost — server re-validates either way. */
                 ImGui::TableSetColumnIndex(6);
                 rowTopY = ImGui::GetCursorPosY();
                 if (isBot && effectiveHost) {
@@ -4637,6 +4648,22 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     }
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("Remove bot");
+                    }
+                } else if (!isBot && !isMe && i != 0 && effectiveHost) {
+                    cyAbs(closeSz);
+                    ImVec2 closePos = ImGui::GetCursorScreenPos();
+                    char kbStr[24];
+                    SDL_snprintf(kbStr, sizeof(kbStr), "##kb%d", i);
+                    ImGuiID kbId = ImGui::GetID(kbStr);
+                    if (ImGui::CloseButton(kbId, closePos)) {
+                        s_kickPendingSlot = i;
+                        SDL_strlcpy(s_kickPendingName,
+                                    clientSimGetLobbySlot(cs, (BYTE)i)->playerName,
+                                    sizeof(s_kickPendingName));
+                        s_kickPendingOpen = true;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Kick player");
                     }
                 }
 
@@ -4761,6 +4788,32 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
     /* No bottom team picker — Layout A relies on drag-to-assign + the
      * default-team logic on the server. Players who want to switch
      * teams can be dragged by the host (planned) or via context menu. */
+
+    /* Deferred-open kick-confirm modal. OpenPopup must happen in the
+     * same ID scope as BeginPopupModal, so we set a flag inside the
+     * team child windows and pop it open here at the outer scope. */
+    if (s_kickPendingOpen) {
+        ImGui::OpenPopup("##kickConfirm");
+        s_kickPendingOpen = false;
+    }
+    if (ImGui::BeginPopupModal("##kickConfirm", NULL,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Kick \"%s\"?", s_kickPendingName);
+        ImGui::Spacing();
+        if (ImGui::Button("Yes", ImVec2(80.0f * s, 0))) {
+            if (s_kickPendingSlot > 0 && s_kickPendingSlot < MAX_TANKS) {
+                clientSimNetSendLobbyKick(cs, (uint8_t)s_kickPendingSlot);
+            }
+            s_kickPendingSlot = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(80.0f * s, 0))) {
+            s_kickPendingSlot = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 /* ── Layout A — bot AiConfig sub-row ──────────────────────────────
@@ -5699,10 +5752,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         /* Check for server disconnect/shutdown */
         if (hasTransport) {
             ClientConnectState js = clientSimGetConnectState(cs);
-            if (js == CLIENT_CONNECT_SERVER_SHUTDOWN || js == CLIENT_CONNECT_ERROR) {
+            if (js == CLIENT_CONNECT_SERVER_SHUTDOWN ||
+                js == CLIENT_CONNECT_ERROR ||
+                js == CLIENT_CONNECT_KICKED) {
+                bool kicked = (js == CLIENT_CONNECT_KICKED);
                 imguiMessageBoxEx(DIALOG_BOX_TITLE,
-                    langGetText(STR_DLGLOBBY_LOSTCONNECTION),
-                    IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+                    langGetText(kicked
+                                ? STR_DLGLOBBY_KICKED
+                                : STR_DLGLOBBY_LOSTCONNECTION),
+                    kicked ? IMGUI_MSG_NONE : IMGUI_MSG_ERROR,
+                    IMGUI_MSG_OK);
                 result = 0;
                 running = false;
                 break;

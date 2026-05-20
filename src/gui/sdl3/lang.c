@@ -1118,6 +1118,7 @@ static const LangEntry langTable[] = {
     {479,  "To cross this river you will have to build a boat. Boats\ntake five trees, so tap on the five trees to farm them.\nThen select the wall/boat tool (the third button from\nthe top) and tap on the water to build a boat.\n\nIf you tap on the land you will build a wall instead\nand you will have to farm some more trees to build a\nboat. Drive onto the boat and cross the river to the\nother side."},
     {480,  "Welcome to the WinBolo tutorial. This island introduces\nthe basic principles of WinBolo and leads you through\nthem one at a time. Each new principle will be\ndescribed in a window like this one.\n\nAfter reading each message, you can proceed by\ntapping the \"OK\" button."},
     {481,  "You are in control of a tank, which is currently on a\nboat at sea. Use the thumbstick on the left side of the\nscreen to drive: push it forward to accelerate, pull it\nback to slow down and stop.\n\nThe further you push the thumbstick, the faster the\ntank goes. Push the thumbstick forward now to make\nthe boat drive forwards towards the land.\n(Tap OK first to dismiss this window)"},
+    {1272, "You have been kicked from the server."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
