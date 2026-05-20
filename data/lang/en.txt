@@ -410,6 +410,7 @@ STR_DLGLOBBY_BOT_FMT={player} [Bot]
 STR_DLGLOBBY_YOU_FMT={player} (You)
 STR_DLGLOBBY_STARTING_FMT=Starting in {number}...
 STR_DLGLOBBY_LOSTCONNECTION=You have lost your connection to the server.
+STR_DLGLOBBY_KICKED=You have been kicked from the server.
 STR_DLGLOBBY_ME=Me
 STR_DLGLOBBY_PLAYER_COL=Player
 STR_DLGLOBBY_PING_COL=Ping
