@@ -79,6 +79,7 @@ extern "C" {
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "dialogs/imgui_dialog_utils.h"
+#include "dialogs/dialog_footer.h"
 #include "dialogs/imgui_keysetup.h"
 #include "platform/mac_menubar.h"
 
@@ -1326,7 +1327,8 @@ static void renderAboutModal(void) {
         s_showAbout = false;
     }
     static float s_fadeAbout = 0.0f;
-    if (ImGui::BeginPopupModal(title, nullptr,
+    bool aboutOpen = true;
+    if (ImGui::BeginPopupModal(title, &aboutOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                             imguiPopupFadeAlpha(&s_fadeAbout));
@@ -1335,10 +1337,9 @@ static void renderAboutModal(void) {
         ImGui::TextUnformatted(langGetText(STR_DLGABOUT_COPYRIGHT));
         ImGui::Separator();
         ImGui::TextDisabled("%s", langGetText(STR_DLGABOUT_BOLOCOPYRIGHT));
-        ImGui::Spacing();
-        if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0)))
-            ImGui::CloseCurrentPopup();
-            imguiHandOnHover();
+        int f = WBUI::DialogFooter(/*cancelLabel*/ nullptr,
+                                   langGetText(STR_OK));
+        if (f != WBUI::FOOTER_NONE) ImGui::CloseCurrentPopup();
         ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
@@ -1356,7 +1357,8 @@ static void renderJoinConfirmModal(void) {
         s_showJoinConfirm = false;
     }
     static float s_fadeJoinConfirm = 0.0f;
-    if (ImGui::BeginPopupModal(title, nullptr,
+    bool joinOpen = true;
+    if (ImGui::BeginPopupModal(title, &joinOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                             imguiPopupFadeAlpha(&s_fadeJoinConfirm));
@@ -1368,22 +1370,16 @@ static void renderJoinConfirmModal(void) {
         } else {
             ImGui::TextUnformatted(s_joinConfirmAddr);
         }
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        if (ImGui::Button(langGetText(STR_DLGJOIN_BUTTON), ImVec2(80, 0))) {
+        int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                   langGetText(STR_DLGJOIN_BUTTON));
+        if (f == WBUI::FOOTER_CONFIRM) {
             ImGui::CloseCurrentPopup();
             /* Leave current game and return to menu with the URL queued */
             gameFrontHandleUrlOpen(s_joinConfirmUrl);
             windowNewGame();
-        }
-        imguiHandOnHover();
-        ImGui::SameLine(0.0f, 8.0f);
-        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(80, 0)) ||
-            ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        } else if (f == WBUI::FOOTER_CANCEL) {
             ImGui::CloseCurrentPopup();
         }
-        imguiHandOnHover();
         ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
@@ -1402,7 +1398,8 @@ static void renderChangeNameModal(ClientSim *cs) {
         clientSimGetPlayerName(cs, s_changeNameBuf);
     }
     static float s_fadeChangeName = 0.0f;
-    if (ImGui::BeginPopupModal(title, nullptr,
+    bool changeNameOpen = true;
+    if (ImGui::BeginPopupModal(title, &changeNameOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                             imguiPopupFadeAlpha(&s_fadeChangeName));
@@ -1413,12 +1410,11 @@ static void renderChangeNameModal(ClientSim *cs) {
         bool enter = ImGui::InputText("##name", s_changeNameBuf,
                                       sizeof(s_changeNameBuf),
                                       ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::Spacing();
-        bool doOK     = ImGui::Button(langGetText(STR_OK),     ImVec2(120, 0)) || enter;
-        imguiHandOnHover();
-        ImGui::SameLine();
-        bool doCancel = ImGui::Button(langGetText(STR_CANCEL), ImVec2(120, 0));
-        imguiHandOnHover();
+        int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                   langGetText(STR_OK),
+                                   /*enterConfirms*/ true);
+        bool doOK     = (f == WBUI::FOOTER_CONFIRM) || enter;
+        bool doCancel = (f == WBUI::FOOTER_CANCEL);
 
         if (doOK) {
             s_changeNameBuf[32] = '\0'; /* PLAYER_NAME_LAST - 1 */
@@ -1874,7 +1870,8 @@ static void renderPasswordModal(void) {
         s_passwordBuf[0]   = '\0';
     }
     static float s_fadePassword = 0.0f;
-    if (ImGui::BeginPopupModal(title, nullptr,
+    bool passOpen = true;
+    if (ImGui::BeginPopupModal(title, &passOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                             imguiPopupFadeAlpha(&s_fadePassword));
@@ -1886,13 +1883,17 @@ static void renderPasswordModal(void) {
                                       sizeof(s_passwordBuf),
                                       ImGuiInputTextFlags_Password |
                                       ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::Spacing();
-        if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0)) || enter) {
+        int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                   langGetText(STR_OK),
+                                   /*enterConfirms*/ true);
+        if (f == WBUI::FOOTER_CONFIRM || enter) {
             /* gameOpen=1, aiNone=0, justPass=TRUE */
             gameFrontSetGameOptions(s_passwordBuf, (gameType)1, false, (aiType)0, 0, 0, true);
             ImGui::CloseCurrentPopup();
+        } else if (f == WBUI::FOOTER_CANCEL) {
+            /* Abort the join attempt. */
+            ImGui::CloseCurrentPopup();
         }
-        imguiHandOnHover();
         ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
