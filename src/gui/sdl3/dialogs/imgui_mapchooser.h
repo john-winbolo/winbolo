@@ -136,10 +136,6 @@ struct MapFsProvider_s {
      * makes sense for the tab — Upload writes the cwd path, WBN
      * writes the host URL, Server Maps writes "" (no tooltip). */
     void (*refreshTooltipPrefix)(MapChooserState *state, void *ctx);
-    /* Optional. Renders a small status line under the chooser
-     * (e.g. "Upload rejected" / "Download failed"). Called after
-     * mapChooserRender on every frame, inside the tab item. */
-    void (*renderStatusFooter)(MapChooserState *state, void *ctx);
     /* Optional. Drains async work at the top of every frame — e.g.
      * the WBN provider uses this to poll its background download
      * worker and apply any completed bytes to the chooser preview.

@@ -4817,10 +4817,47 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
         sim->sim.ss->numStarts = 0;
     }
 
-    if (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs,
-                             &sim->sim.ss, (BYTE *)bytes, len) == FALSE) {
+    /* The wire / upload / WBN paths all hand us a full .map file
+     * (starting with the BMAPBOLO magic + version + counts header).
+     * mapLoadCompressedMap expects a different on-the-wire layout
+     * (raw bases/pills/starts struct dump + LZW map), so feeding it
+     * the .map file bytes misaligns every field. Detect the magic
+     * and route through mapRead via a temp file when it matches.
+     * Fall back to the legacy mapLoadCompressedMap path for any
+     * future caller passing compressed-map-format bytes directly. */
+    bool loadedOk = FALSE;
+    if (len >= (int)(sizeof(MAP_HEADER) - 1) &&
+        memcmp(bytes, MAP_HEADER, sizeof(MAP_HEADER) - 1) == 0) {
+        char tmpPath[FILENAME_MAX];
+        SDL_snprintf(tmpPath, sizeof(tmpPath),
+                     "data/maps/.tmp_inmem_reload.map");
+        FILE *tf = fopen(tmpPath, "wb");
+        if (tf == NULL) {
+            WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+                "serverSimReloadCompressedInMemory: temp open failed '%s'",
+                tmpPath);
+            return FALSE;
+        }
+        size_t wrote = fwrite(bytes, 1, (size_t)len, tf);
+        fclose(tf);
+        if (wrote != (size_t)len) {
+            remove(tmpPath);
+            WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+                "serverSimReloadCompressedInMemory: temp write short (%zu/%d)",
+                wrote, len);
+            return FALSE;
+        }
+        loadedOk = (mapRead(tmpPath, &sim->sim.mp, &sim->sim.pb,
+                            &sim->sim.bs, &sim->sim.ss) == TRUE);
+        remove(tmpPath);
+    } else {
+        loadedOk = (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb,
+                                         &sim->sim.bs, &sim->sim.ss,
+                                         (BYTE *)bytes, len) == TRUE);
+    }
+    if (!loadedOk) {
         WB_LOG_ERROR(WB_LOG_CAT_SERVER,
-            "serverSimReloadCompressedInMemory: mapLoadCompressedMap failed (%d bytes)",
+            "serverSimReloadCompressedInMemory: load failed (%d bytes)",
             len);
         return FALSE;
     }
