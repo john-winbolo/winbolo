@@ -3041,7 +3041,7 @@ static void lobbySendSetting(ClientSim *cs,
      * (transport_udp_server.c) and emits LOBBY_REJECT_INVALID; this
      * mirrors the cap so the SP-host local apply path doesn't bypass
      * it either. */
-    if (settingType == 5 /* LST_TIME_MINUTES */ && valueLen == 2) {
+    if (settingType == LST_TIME_MINUTES && valueLen == 2) {
         uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
         if (mins < LOBBY_TIME_MINUTES_MIN ||
             mins > LOBBY_TIME_MINUTES_MAX) {
@@ -3053,17 +3053,17 @@ static void lobbySendSetting(ClientSim *cs,
         if (!sim) return;
         if (serverSimGetState(sim) != serverStateLobby) return;
         switch (settingType) {
-            case 1 /* LST_GAME_TYPE */:
+            case LST_GAME_TYPE:
                 /* gameType enum is 1..3 (Open / Tournament / Strict).
                  * The wire carries the raw enum value. */
                 if (valueLen == 1 && value[0] >= 1 && value[0] <= 3) {
                     serverSimSetGameType(sim, (gameType)value[0]);
                 }
                 break;
-            case 2 /* LST_HIDDEN_MINES */:
+            case LST_HIDDEN_MINES:
                 if (valueLen == 1) serverSimSetHiddenMines(sim, value[0] != 0);
                 break;
-            case 3 /* LST_AI_POLICY */:
+            case LST_AI_POLICY:
                 if (valueLen == 1 && value[0] <= 3) {
                     serverSimSetAiPolicy(sim, value[0]);
                     serverSimSetBotAiType(sim, (aiType)value[0]);
@@ -3082,7 +3082,7 @@ static void lobbySendSetting(ClientSim *cs,
                     }
                 }
                 break;
-            case 4 /* LST_TIME_LIMIT */: {
+            case LST_TIME_LIMIT: {
                 if (valueLen == 1) {
                     bool tl = value[0] != 0;
                     serverSimSetTimeLimit(sim, tl);
@@ -3098,7 +3098,7 @@ static void lobbySendSetting(ClientSim *cs,
                 }
                 break;
             }
-            case 5 /* LST_TIME_MINUTES */: {
+            case LST_TIME_MINUTES: {
                 if (valueLen == 2) {
                     uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
                     serverSimSetTimeMinutes(sim, mins);
@@ -3109,10 +3109,10 @@ static void lobbySendSetting(ClientSim *cs,
                 }
                 break;
             }
-            case 6 /* LST_AUTO_LOCK_ON_GAME */:
+            case LST_AUTO_LOCK_ON_GAME:
                 if (valueLen == 1) serverSimSetAutoLockOnGameStart(sim, value[0] != 0);
                 break;
-            case 7 /* LST_RANKED */:
+            case LST_RANKED:
                 if (valueLen == 1) {
                     bool r = value[0] != 0;
                     serverSimSetRanked(sim, r);
@@ -3499,7 +3499,7 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
     ImGui::SameLine();
     if (ImGui::Checkbox("During game##allowDuring", &duringGame)) {
         uint8_t v = duringGame ? 0 : 1;  /* invert */
-        lobbySendSetting(cs, 6 /*LST_AUTO_LOCK_ON_GAME*/, &v, 1);
+        lobbySendSetting(cs, LST_AUTO_LOCK_ON_GAME, &v, 1);
     }
     if (autoLockDisabled) ImGui::EndDisabled();
     if (autoLockLocked) {
@@ -3568,7 +3568,7 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                             (int)effectiveHost, botCount,
                             (int)clientSimIsSinglePlayer(cs),
                             (int)clientSimIsLanOnly(cs));
-            lobbySendSetting(cs, 7 /*LST_RANKED*/, &v, 1);
+            lobbySendSetting(cs, LST_RANKED, &v, 1);
             balanceDebugLog("[RANKED CLIENT] lobbySendSetting returned; "
                             "post-call sim ranked=%d",
                             (int)clientSimGetLobbyRanked(cs));
@@ -5308,7 +5308,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
             bool checked = (clientSimGetLobbyGameType(cs) == (gameType)enumVal);
             if (ImGui::RadioButton(rid, checked) && !checked) {
                 uint8_t v = (uint8_t)enumVal;
-                lobbySendSetting(cs, 1 /*LST_GAME_TYPE*/, &v, 1);
+                lobbySendSetting(cs, LST_GAME_TYPE, &v, 1);
             }
             if (optDisabled) ImGui::EndDisabled();
         }
@@ -5340,7 +5340,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
             bool checked = (clientSimGetLobbyAiType(cs) == (uint8_t)i);
             if (ImGui::RadioButton(rid, checked) && !checked) {
                 uint8_t v = (uint8_t)i;
-                lobbySendSetting(cs, 3 /*LST_AI_POLICY*/, &v, 1);
+                lobbySendSetting(cs, LST_AI_POLICY, &v, 1);
             }
         }
         if (disable) ImGui::EndDisabled();
@@ -5357,7 +5357,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
         if (minesDisabled) ImGui::BeginDisabled();
         if (ImGui::Checkbox("Allow Hidden Mines", &minesV)) {
             uint8_t v = minesV ? 1 : 0;
-            lobbySendSetting(cs, 2 /*LST_HIDDEN_MINES*/, &v, 1);
+            lobbySendSetting(cs, LST_HIDDEN_MINES, &v, 1);
         }
         if (minesDisabled) ImGui::EndDisabled();
         if (minesLocked) renderLockBadge();
@@ -5407,7 +5407,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
         if (timeDisabled) ImGui::BeginDisabled();
         if (ImGui::Checkbox("Game time limit", &timeV)) {
             uint8_t v = timeV ? 1 : 0;
-            lobbySendSetting(cs, 4 /*LST_TIME_LIMIT*/, &v, 1);
+            lobbySendSetting(cs, LST_TIME_LIMIT, &v, 1);
         }
         if (timeV) {
             int mins = clientSimGetLobbyTimeLimit(cs) > 0
@@ -5421,7 +5421,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
                 if (mins > 999) mins = 999;
                 uint8_t v[2] = { (uint8_t)((mins >> 8) & 0xFF),
                                  (uint8_t)(mins & 0xFF) };
-                lobbySendSetting(cs, 5 /*LST_TIME_MINUTES*/, v, 2);
+                lobbySendSetting(cs, LST_TIME_MINUTES, v, 2);
             }
             ImGui::SameLine();
             ImGui::TextUnformatted("min");
