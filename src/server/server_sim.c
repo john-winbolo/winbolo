@@ -3588,10 +3588,13 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
     /* Only allow during running game. */
     if (sim->state != serverStateRunning) return;
 
-    /* Surrender precondition: exactly two teams in play. */
-    if (kind == GAME_VOTE_KIND_SURRENDER &&
-        serverSimCountActiveTeams(sim) != 2) {
-        return;
+    /* Surrender precondition: exactly two teams in play, and the
+     * caller must be on a real team — an Unassigned (team 0) player
+     * surrendering "team 0" would broadcast a fake side and chain a
+     * back-to-lobby vote against two unrelated playing teams. */
+    if (kind == GAME_VOTE_KIND_SURRENDER) {
+        if (serverSimCountActiveTeams(sim) != 2) return;
+        if (sim->lobbyPlayers[playerNum].teamNumber == 0) return;
     }
 
     uint64_t nowMs = sim->gameVoteWallMs;

@@ -1285,7 +1285,10 @@ static void renderPlayersPanel(ClientSim *cs) {
             }
         }
 
-        bool surrDisabled = (activeTeams != 2);
+        const ClientLobbySlot *meSlot =
+            clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+        bool meUnassigned = (meSlot && meSlot->teamNumber == 0);
+        bool surrDisabled = (activeTeams != 2) || meUnassigned;
         if (surrDisabled) ImGui::BeginDisabled();
         if (ImGui::Button("Vote: Surrender", ImVec2(-1, 0))) {
             clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_SURRENDER,
@@ -1300,8 +1303,12 @@ static void renderPlayersPanel(ClientSim *cs) {
         }
         if (surrDisabled) ImGui::EndDisabled();
         if (surrDisabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            ImGui::SetTooltip("Surrender is only available when exactly two teams\n"
-                        "with human players remain.");
+            if (meUnassigned) {
+                ImGui::SetTooltip("Pick a team before voting to surrender.");
+            } else {
+                ImGui::SetTooltip("Surrender is only available when exactly two teams\n"
+                            "with human players remain.");
+            }
         }
     }
 
@@ -2400,7 +2407,10 @@ static void renderMenuBar(ClientSim *cs) {
                 ImGui::SetTooltip("Available once the game is running.");
             }
 
-            bool surrEnabled = running && (activeTeams == 2);
+            const ClientLobbySlot *meSlot =
+                clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+            bool meUnassigned = (meSlot && meSlot->teamNumber == 0);
+            bool surrEnabled = running && (activeTeams == 2) && !meUnassigned;
             if (ImGui::MenuItem("Vote: Surrender", nullptr, false, surrEnabled)) {
                 clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_SURRENDER,
                                                GAME_VOTE_TOGGLE_OPEN_ONLY);
@@ -2415,6 +2425,8 @@ static void renderMenuBar(ClientSim *cs) {
             if (!surrEnabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 if (!running) {
                     ImGui::SetTooltip("Available once the game is running.");
+                } else if (meUnassigned) {
+                    ImGui::SetTooltip("Pick a team before voting to surrender.");
                 } else {
                     ImGui::SetTooltip(
                         "Surrender is only available when exactly two teams\n"
