@@ -2304,6 +2304,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_ini_reader_writer.c
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_game_vote_control.c
+    tests/unit/test_vote_surrender.c
     tests/unit/test_md5.c
     tests/unit/test_ranked_lobby.c
     tests/unit/test_lobby_locks.c
@@ -2396,6 +2397,9 @@ set(_unit_test_names
     lobby_bot_config_codec_and_apply
     lobby_bot_brain_codec_and_apply
     lobby_brain_list_codec_and_apply
+    vote_surrender_rejects_unassigned_caller
+    vote_surrender_starts_for_real_team_caller
+    vote_surrender_rejects_three_active_teams
     ranked_flag_persists_with_one_player
     ranked_shape_gate
     lobby_lock_bit_lookup
