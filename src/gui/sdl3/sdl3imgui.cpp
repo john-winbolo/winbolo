@@ -1279,9 +1279,11 @@ static void renderPlayersPanel(ClientSim *cs) {
             /* SP / host dispatch — server is in-process. */
             ServerSim *spSim = gameFrontGetServerSim();
             if (spSim && !clientSimIsUdpTransport(cs)) {
+                threadsWaitForMutex();
                 serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
                                         GAME_VOTE_KIND_BACK_TO_LOBBY,
                                         GAME_VOTE_TOGGLE_OPEN_ONLY);
+                threadsReleaseMutex();
             }
         }
 
@@ -1296,9 +1298,11 @@ static void renderPlayersPanel(ClientSim *cs) {
             clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_SURRENDER, true);
             ServerSim *spSim = gameFrontGetServerSim();
             if (spSim && !clientSimIsUdpTransport(cs)) {
+                threadsWaitForMutex();
                 serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
                                         GAME_VOTE_KIND_SURRENDER,
                                         GAME_VOTE_TOGGLE_OPEN_ONLY);
+                threadsReleaseMutex();
             }
         }
         if (surrDisabled) ImGui::EndDisabled();
@@ -1784,7 +1788,9 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
             clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_YES);
             ServerSim *spSim = gameFrontGetServerSim();
             if (spSim && !clientSimIsUdpTransport(cs)) {
+                threadsWaitForMutex();
                 serverSimGameVoteToggle(spSim, me, kind, GAME_VOTE_TOGGLE_YES);
+                threadsReleaseMutex();
             }
         }
         if (myYes) ImGui::PopStyleColor();
@@ -1794,7 +1800,9 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
             clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_NO);
             ServerSim *spSim = gameFrontGetServerSim();
             if (spSim && !clientSimIsUdpTransport(cs)) {
+                threadsWaitForMutex();
                 serverSimGameVoteToggle(spSim, me, kind, GAME_VOTE_TOGGLE_NO);
+                threadsReleaseMutex();
             }
         }
     }
@@ -2398,9 +2406,11 @@ static void renderMenuBar(ClientSim *cs) {
                 clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_BACK_TO_LOBBY, true);
                 ServerSim *spSim = gameFrontGetServerSim();
                 if (spSim && !clientSimIsUdpTransport(cs)) {
+                    threadsWaitForMutex();
                     serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
                                             GAME_VOTE_KIND_BACK_TO_LOBBY,
                                             GAME_VOTE_TOGGLE_OPEN_ONLY);
+                    threadsReleaseMutex();
                 }
             }
             if (!running && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -2417,9 +2427,11 @@ static void renderMenuBar(ClientSim *cs) {
                 clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_SURRENDER, true);
                 ServerSim *spSim = gameFrontGetServerSim();
                 if (spSim && !clientSimIsUdpTransport(cs)) {
+                    threadsWaitForMutex();
                     serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
                                             GAME_VOTE_KIND_SURRENDER,
                                             GAME_VOTE_TOGGLE_OPEN_ONLY);
+                    threadsReleaseMutex();
                 }
             }
             if (!surrEnabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
