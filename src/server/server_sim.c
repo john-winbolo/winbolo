@@ -1709,7 +1709,7 @@ void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
     if (playerNum >= MAX_TANKS) {
         return;
     }
-    if (teamNumber > 16) {
+    if (teamNumber >= MAX_TANKS) {
         teamNumber = 1;
     }
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
