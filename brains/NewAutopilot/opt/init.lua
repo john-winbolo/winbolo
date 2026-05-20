@@ -1597,14 +1597,19 @@ function Brain.think(info)
     state.command_reply = nil
   end
 
-  -- Respawn handling. Use clear_attack_goal so any in-progress
-  -- attack_pill / PPT state (substate, _shield_scan, _aim_locked,
-  -- _wall_build_list, etc.) doesn't leak through into the next
-  -- goal selection on the new tank.
-  if info.newtank then
+  -- Respawn handling. Trigger on either newtank (1-tick flag) or
+  -- the death-pending-respawn state (armour > TANK_FULL_ARMOUR is
+  -- held by the engine through the whole deathWait window). The
+  -- belt-and-suspenders armour check catches the case where a
+  -- missed think tick lets newtank flip back to false before we
+  -- saw it; build_walls state would otherwise survive the death.
+  local _is_dead = (info.armour or 0) > C.TANK_FULL_ARMOUR
+  if info.newtank or _is_dead then
     state.stuck_for = 0
     attack.clear_attack_goal(state)
-    log.event("respawn", string.format("%d,%d", info.tankx >> 8, info.tanky >> 8))
+    if info.newtank then
+      log.event("respawn", string.format("%d,%d", info.tankx >> 8, info.tanky >> 8))
+    end
   end
 
   -- Stuck detection
