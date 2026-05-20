@@ -58,6 +58,7 @@ extern "C" {
 #include "../sdl3imgui.h"
 #include "../minimap_render.h"
 #include "../../../bolo/public/client_mappreview.h"
+#include "../../../bolo/public/wire_limits.h"
 #include <errno.h>
 
 /* stb_image entry points used by lobbyWbnGeneratePreview (defined in
@@ -3577,7 +3578,7 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
         ImGui::SetTooltip(
             "Accept new join requests right now while the lobby is open.");
     }
-    bool autoLockLocked = (clientSimGetLobbyServerLocks(cs) & 0x10) != 0;
+    bool autoLockLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_AUTO_LOCK_ON_GAME) != 0;
     bool rankedForcesAutoLock = clientSimGetLobbyRanked(cs);
     bool duringGame = !clientSimGetLobbyAutoLockOnGameStart(cs);
     if (rankedForcesAutoLock) duringGame = false;
@@ -3643,7 +3644,7 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
         bool botsBlock = (botCount > 0) && !rankedV;
         RankedEligibility re = computeRankedEligibility(cs);
 
-        bool rankedLocked = (clientSimGetLobbyServerLocks(cs) & 0x40) != 0;  /* LOBBY_LOCK_RANKED */
+        bool rankedLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_RANKED) != 0;
         bool canToggle = effectiveHost && !botsBlock && !rankedLocked;
         bool rankedReadAtRender = rankedV;
         if (!canToggle) ImGui::BeginDisabled();
@@ -5414,7 +5415,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
     ImGui::Columns(3, "##settingsCols", false);
 
     /* ── Game Type ──────────────────────────────────────────── */
-    bool gtLocked = (clientSimGetLobbyServerLocks(cs) & 0x01) != 0;  /* LOBBY_LOCK_GAME_TYPE */
+    bool gtLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_GAME_TYPE) != 0;
     {
         ImGui::Text("Game Type");
         if (gtLocked) renderLockBadge();
@@ -5450,7 +5451,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
     ImGui::NextColumn();
 
     /* ── Computer Players ────────────────────────────────────── */
-    bool aiLocked = (clientSimGetLobbyServerLocks(cs) & 0x02) != 0;  /* LOBBY_LOCK_AI_POLICY */
+    bool aiLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_AI_POLICY) != 0;
     {
         ImGui::Text("Computer Players");
         if (aiLocked) renderLockBadge();
@@ -5484,7 +5485,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
     {
         ImGui::Text("Other");
 
-        bool minesLocked = (clientSimGetLobbyServerLocks(cs) & 0x04) != 0;
+        bool minesLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MINES) != 0;
         bool minesV = clientSimIsLobbyHiddenMines(cs);
         bool minesDisabled = !effectiveHost || minesLocked;
         if (minesDisabled) ImGui::BeginDisabled();
@@ -5512,7 +5513,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
                                   & PLAYER_FLAG_ADMIN));
             if (isHostLocal || isAdminLocal) {
                 bool oh = clientSimGetLobbyOpenHost(cs);
-                bool openHostLocked = (clientSimGetLobbyServerLocks(cs) & 0x80) != 0;  /* LOBBY_LOCK_OPEN_HOST */
+                bool openHostLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_OPEN_HOST) != 0;
                 if (openHostLocked) ImGui::BeginDisabled();
                 if (ImGui::Checkbox("Allow all players to change settings",
                                     &oh)) {
@@ -5534,7 +5535,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
             }
         }
 
-        bool timeLocked = (clientSimGetLobbyServerLocks(cs) & 0x08) != 0;
+        bool timeLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_TIME_LIMIT) != 0;
         bool timeV = clientSimGetLobbyTimeLimit(cs) > 0;
         bool timeDisabled = !effectiveHost || timeLocked;
         if (timeDisabled) ImGui::BeginDisabled();
@@ -5584,7 +5585,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
                 static char s_pwBuf[200] = {0};
                 static bool s_pwOn       = false;
 
-                bool pwLocked = (clientSimGetLobbyServerLocks(cs) & 0x20) != 0;  /* LOBBY_LOCK_PASSWORD */
+                bool pwLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_PASSWORD) != 0;
                 if (pwLocked) ImGui::BeginDisabled();
                 if (ImGui::Checkbox("Password", &s_pwOn)) {
                     if (!s_pwOn) {
@@ -6413,7 +6414,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     bool effHostMap = isHostLocal || isAdminLocal ||
                                       clientSimGetLobbyOpenHost(cs);
                     if (effHostMap &&
-                        !(clientSimGetLobbyServerLocks(cs) & 0x100 /* LOBBY_LOCK_MAP */)) {
+                        !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
                         if (ImGui::Button("Choose Map")) {
                             lobbyChooseMapOpen(cs, renderer);
                         }
@@ -6492,7 +6493,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     /* Skip-map vote is gated by LOBBY_LOCK_MAP — locking
                      * the map blocks both manual change and skip-vote. */
                     if (clientSimIsMapSkipAvailable(cs) && clientSimIsInLobby(cs) &&
-                        !(clientSimGetLobbyServerLocks(cs) & 0x100 /* LOBBY_LOCK_MAP */)) {
+                        !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
                         ImGui::Spacing();
                         bool countdownActive = clientSimGetCountdownSeconds(cs) > 0;
                         if (countdownActive) ImGui::BeginDisabled();
@@ -7047,7 +7048,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                  * preview block rather than as a footer at the bottom.
                  * Hidden when LOBBY_LOCK_MAP is set (server pins map). */
                 if (effHostMap &&
-                    !(clientSimGetLobbyServerLocks(cs) & 0x100 /* LOBBY_LOCK_MAP */)) {
+                    !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
                     if (ImGui::Button("Choose Map", ImVec2(-1, 0))) {
                         lobbyChooseMapOpen(cs, renderer);
                     }
@@ -7073,7 +7074,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
              * the map is pinned even though the Choose Map / Skip-Map
              * affordances aren't drawn. */
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MAP_LBL), clientSimGetMapName(cs));
-            if ((clientSimGetLobbyServerLocks(cs) & 0x100) != 0) {  /* LOBBY_LOCK_MAP */
+            if ((clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP) != 0) {
                 ImGui::SameLine(0.0f, 4.0f * s);
                 renderLockBadge();
             }
@@ -7082,7 +7083,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), clientSimGetLobbyStartCount(cs));
 
             if (clientSimIsMapSkipAvailable(cs) && clientSimIsInLobby(cs) &&
-                !(clientSimGetLobbyServerLocks(cs) & 0x100 /* LOBBY_LOCK_MAP */)) {
+                !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
                 ImGui::Spacing();
                 bool countdownActive = clientSimGetCountdownSeconds(cs) > 0;
                 if (countdownActive) ImGui::BeginDisabled();
