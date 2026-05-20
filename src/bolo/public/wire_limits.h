@@ -63,7 +63,7 @@
  * UI can validate the user's value before sending. Authoritative
  * range check is wire-side (transport_udp_server.c). */
 #define LOBBY_TIME_MINUTES_MIN 1
-#define LOBBY_TIME_MINUTES_MAX 240
+#define LOBBY_TIME_MINUTES_MAX 4320
 
 /* Setting types used inside PACKET_LOBBY_SET_SETTING /
  * PACKET_LOBBY_SETTING_CHG payloads. Surfaced publicly so the GUI
