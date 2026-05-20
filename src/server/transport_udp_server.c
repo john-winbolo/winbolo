@@ -3543,12 +3543,12 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 len < PACKET_HEADER_SIZE + 5) break;
             /* Cooldown gate — silent break used to leave the client at
              * upload-status=1 (BEGIN sent, awaiting ACK) indefinitely,
-             * jamming further picks. Reply with BUSY so the client's
+             * jamming further picks. Reply with COOLDOWN so the client's
              * upload pump transitions to status=4 and frees the slot. */
             if (udpServer.clientReqCooldownTicks[clientIdx] > 0) {
                 uint8_t ack[PACKET_HEADER_SIZE + 1];
                 packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
-                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_UPLOAD_BUSY;
+                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_COOLDOWN;
                 udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
                 break;
             }
