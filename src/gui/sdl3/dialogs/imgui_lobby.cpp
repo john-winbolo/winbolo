@@ -366,6 +366,10 @@ static void lobbySendAddBotDebounced(ClientSim *cs,
  * window opened so Cancel can restore it (no undo packet is wired
  * yet — the field is reserved for that future work). */
 static bool             s_chooseMapOpen          = false;
+/* Edge-trigger: SetNextWindowFocus the chooser on the frame it opens so
+ * it draws above the scrim windows, but NOT every frame after — that
+ * yanks focus away from anything the user clicks into the chat-hole. */
+static bool             s_chooseMapFocusedOnce   = false;
 /* Screen-space rect of the lobby's chat block, captured each frame so
  * the map-chooser scrim can punch a hole over it. We deliberately
  * leave the chat reachable while the chooser is open so players can
@@ -427,6 +431,16 @@ static bool             s_uploadActive   = false;
  * fallback path so the pump knows what to re-announce without
  * having to re-derive it from a path it no longer holds. */
 static char             s_uploadName[128];
+/* Watchdog timestamps so a server that goes silent mid-handshake
+ * (e.g. dropped BEGIN ACK) doesn't strand the upload slot at
+ * lobbyMapUploadStatus=1 forever. Reset whenever we observe forward
+ * progress: status advances, or bytes drain. */
+static uint64_t         s_uploadStartedMs = 0;
+static uint8_t          s_uploadPrevStatus = 0;
+static uint64_t         s_uploadPrevProgressMs = 0;
+static uint32_t         s_uploadPrevOffset = 0;
+#define UPLOAD_ACK_TIMEOUT_MS   5000   /* BEGIN → ACK */
+#define UPLOAD_STALL_TIMEOUT_MS 10000  /* no chunk progress */
 
 static void lobbyUploadFree(void) {
     if (s_uploadBuf) { SDL_free(s_uploadBuf); s_uploadBuf = NULL; }
@@ -434,6 +448,10 @@ static void lobbyUploadFree(void) {
     s_uploadOffset = 0;
     s_uploadActive = false;
     s_uploadName[0] = '\0';
+    s_uploadStartedMs       = 0;
+    s_uploadPrevStatus      = 0;
+    s_uploadPrevProgressMs  = 0;
+    s_uploadPrevOffset      = 0;
 }
 
 /* Read `srcPath` into s_uploadBuf and announce the upload to the
@@ -521,6 +539,38 @@ static void lobbyUploadPump(ClientSim *cs) {
          * starts fresh. */
         lobbyUploadFree();
         return;
+    }
+
+    /* Watchdog: if the server goes silent mid-handshake, the pump
+     * can otherwise sit at status=1 forever (BEGIN sent, awaiting
+     * ACK) and reject every future pick with "another upload in
+     * flight". Bail and free the slot once we cross either timeout. */
+    {
+        uint64_t now = SDL_GetTicks();
+        if (s_uploadPrevStatus != st || s_uploadPrevOffset != s_uploadOffset) {
+            s_uploadPrevStatus      = st;
+            s_uploadPrevOffset      = s_uploadOffset;
+            s_uploadPrevProgressMs  = now;
+        }
+        if (s_uploadStartedMs == 0) s_uploadStartedMs = now;
+        uint64_t sinceProgress = now - s_uploadPrevProgressMs;
+        uint64_t sinceStart    = now - s_uploadStartedMs;
+        bool timedOut = false;
+        if (st < 2 && sinceStart > UPLOAD_ACK_TIMEOUT_MS) {
+            WB_LOG_WARN(WB_LOG_CAT_GUI,
+                "[MAPPICK] upload watchdog: no BEGIN ACK in %llums — freeing",
+                (unsigned long long)sinceStart);
+            timedOut = true;
+        } else if (st >= 2 && sinceProgress > UPLOAD_STALL_TIMEOUT_MS) {
+            WB_LOG_WARN(WB_LOG_CAT_GUI,
+                "[MAPPICK] upload watchdog: no chunk progress in %llums — freeing",
+                (unsigned long long)sinceProgress);
+            timedOut = true;
+        }
+        if (timedOut) {
+            lobbyUploadFree();
+            return;
+        }
     }
     /* USE_LOCAL was NACK'd: server doesn't have the file at the
      * relative path with that MD5. Fall back to the regular byte
@@ -810,6 +860,9 @@ static void lobbyServerMapsOnSelect(MapChooserState *state, void *ctx) {
     if (!cs) return;
     const char *sel = state->selectedPath;
     if (!sel || !sel[0]) return;
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[MAPPICK] server-maps onSelect sel='%s' sp=%d",
+                sel, (int)clientSimIsSinglePlayer(cs));
     if (clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (sim && serverSimReloadMap(sim, sel)) {
@@ -824,6 +877,9 @@ static void lobbyServerMapsOnSelect(MapChooserState *state, void *ctx) {
         }
         clientSimNetSendLobbySetMap(cs, relPath);
         s_chooseMapPreviewPending = true;
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
+                    "[MAPPICK] server-maps SET_MAP relPath='%s' previewPending=1",
+                    relPath);
     }
 }
 
@@ -950,18 +1006,31 @@ static void lobbyUploadOnSelect(MapChooserState *state, void *ctx) {
     if (!cs) return;
     const char *picked = state->selectedPath;
     if (!picked || !picked[0]) return;
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[MAPPICK] upload onSelect picked='%s' sp=%d",
+                picked, (int)clientSimIsSinglePlayer(cs));
     if (clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (sim && serverSimReloadMap(sim, picked)) {
             serverSimPublishLobbySettings(sim);
             s_chooseMapPreviewPending = true;
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[MAPPICK] upload SP reload ok previewPending=1");
+        } else {
+            WB_LOG_WARN(WB_LOG_CAT_GUI,
+                        "[MAPPICK] upload SP reload FAILED for '%s'", picked);
         }
     } else if (clientSimHasTransport(cs)) {
         uint8_t upStatus = clientSimGetLobbyMapUploadStatus(cs);
         bool inFlight = (upStatus == 1 || upStatus == 2);
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
+                    "[MAPPICK] upload MP upStatus=%u inFlight=%d",
+                    (unsigned)upStatus, (int)inFlight);
         if (!inFlight) {
             lobbyUploadKick(cs, picked);
             s_chooseMapPreviewPending = true;
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[MAPPICK] upload kicked previewPending=1");
         }
     }
 }
@@ -1014,28 +1083,6 @@ static bool lobbyUploadGeneratePreview(const char *entryPath,
     outBuf->h      = MINIMAP_SIZE;
     outBuf->pixels = pixels;
     return true;
-}
-
-/* MP-only rejection footer. SP loads instantly; in-flight "Uploading…"
- * messages flash for a tick before preview takes over and just feel
- * like noise — only the rejection surfaces because the user needs
- * to know it failed. */
-static void lobbyUploadStatusFooter(MapChooserState *state, void *ctx) {
-    (void)state;
-    ClientSim *cs = (ClientSim *)ctx;
-    if (!cs) return;
-    if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
-        clientSimGetLobbyMapUploadStatus(cs) == 4) {
-        const char *msg = "Upload rejected by server.";
-        switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
-            case 5: /* LOBBY_REJECT_UPLOAD_DISABLED */
-                msg = "Uploads disabled on this server."; break;
-            case 6: /* LOBBY_REJECT_UPLOAD_LIMIT_HIT */
-                msg = "Server map library is full."; break;
-            default: break;
-        }
-        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f), "%s", msg);
-    }
 }
 
 /* onFolderJump for the Upload provider. Upload's currentDir is the
@@ -2017,11 +2064,21 @@ static void lobbyWbnMapsOnSelect(MapChooserState *state, void *ctx) {
     if (!cs) return;
     const char *sel = state->selectedPath;
     static const char kPrefix[] = "wbn:";
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[MAPPICK] wbn onSelect sel='%s' sp=%d",
+                sel ? sel : "(null)",
+                (int)clientSimIsSinglePlayer(cs));
     if (!sel || strncmp(sel, kPrefix, sizeof(kPrefix) - 1) != 0) return;
     uint32_t mapId = (uint32_t)SDL_atoi(sel + sizeof(kPrefix) - 1);
     if (mapId > 0) {
         clientSimSetLobbyWbnPreviewStatus(cs, 1);
         spWbnSubmit(mapId);
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
+                    "[MAPPICK] wbn submitted mapId=%u previewStatus=1",
+                    (unsigned)mapId);
+    } else {
+        WB_LOG_WARN(WB_LOG_CAT_GUI,
+                    "[MAPPICK] wbn parse failed for '%s'", sel);
     }
 }
 
@@ -2109,31 +2166,6 @@ static void lobbyWbnMapsTooltipPrefix(MapChooserState *state, void *ctx) {
                 sizeof(state->pathTooltipPrefix));
 }
 
-/* WBN footer: two failure modes. spWbnPoll surfaces HTTP download
- * errors via the lobby preview-status field; the MP upload path can
- * reject the bytes after the download lands (same shape as Upload). */
-static void lobbyWbnMapsStatusFooter(MapChooserState *state, void *ctx) {
-    (void)state;
-    ClientSim *cs = (ClientSim *)ctx;
-    if (!cs) return;
-    if (clientSimGetLobbyWbnPreviewStatus(cs) == 3) {
-        const char *m = clientSimGetLobbyWbnPreviewErrMsg(cs);
-        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f),
-                           "%s", m && *m ? m : "Download failed");
-    } else if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
-               clientSimGetLobbyMapUploadStatus(cs) == 4) {
-        const char *msg = "Upload rejected by server.";
-        switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
-            case 5: /* LOBBY_REJECT_UPLOAD_DISABLED */
-                msg = "Uploads disabled on this server."; break;
-            case 6: /* LOBBY_REJECT_UPLOAD_LIMIT_HIT */
-                msg = "Server map library is full."; break;
-            default: break;
-        }
-        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f), "%s", msg);
-    }
-}
-
 /* Shared per-tab render helper. Manages the chooser-area size,
  * refreshes the tooltip prefix, runs a per-frame enumerate when the
  * provider asks for it, hands the widget the supplied render slot,
@@ -2166,11 +2198,11 @@ static void lobbyRenderMapTab(MapChooserState *state, SDL_Renderer *renderer,
         state->provider.refreshTooltipPrefix(state, state->provider.ctx);
     }
 
-    /* Chooser fills the entire body region. The provider's status
-     * footer is rendered OUTSIDE this helper, immediately above the
-     * action buttons (see lobbyRenderActiveTabFooter), so the
-     * chooser's bottom border can extend flush against the action
-     * bar without leaving an idle reservation gap. */
+    /* Chooser fills the entire body region. Any per-tab error
+     * message is drawn via the foreground draw list (see
+     * lobbyGetActiveTabError) anchored over the preview area, so the
+     * body can sit flush against the action bar without leaving a
+     * reservation gap for an inline footer. */
     float availW = ImGui::GetContentRegionAvail().x;
     float availH = ImGui::GetContentRegionAvail().y;
     if (availH < 120.0f) availH = 120.0f;
@@ -2202,19 +2234,41 @@ static void lobbyRenderMapTab(MapChooserState *state, SDL_Renderer *renderer,
 
 }
 
-/* Dispatch the active tab's status footer (called outside the body
- * child, just before the action bar). Looks up the active state via
- * s_chooseMapActiveTab and invokes its provider hook if set. */
-static void lobbyRenderActiveTabFooter(void) {
-    MapChooserState *st = nullptr;
+/* Returns a short error message for the active tab (NULL if none).
+ * The chooser body overlays the result top-right of the preview via
+ * the foreground draw list, so a wrapped message can't push the
+ * action bar out of the window. */
+static const char *lobbyGetActiveTabError(ClientSim *cs) {
+    if (!cs) return NULL;
     switch (s_chooseMapActiveTab) {
-        case 0: st = &s_chooseMapState;       break;
-        case 1: st = &s_chooseMapUploadState; break;
-        case 3: st = &s_chooseMapWbnState;    break;
-        default: return;  /* Generate tab — no footer. */
-    }
-    if (st && st->provider.renderStatusFooter) {
-        st->provider.renderStatusFooter(st, st->provider.ctx);
+        case 1: /* Local upload */
+            if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
+                clientSimGetLobbyMapUploadStatus(cs) == 4) {
+                switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
+                    case 4: return "Server busy — try again";
+                    case 5: return "Uploads disabled on this server.";
+                    case 6: return "Server map library is full.";
+                    default: return "Upload rejected by server.";
+                }
+            }
+            return NULL;
+        case 3: /* WBN */
+            if (clientSimGetLobbyWbnPreviewStatus(cs) == 3) {
+                const char *m = clientSimGetLobbyWbnPreviewErrMsg(cs);
+                return (m && *m) ? m : "Download failed";
+            }
+            if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
+                clientSimGetLobbyMapUploadStatus(cs) == 4) {
+                switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
+                    case 4: return "Server busy — try again";
+                    case 5: return "Uploads disabled on this server.";
+                    case 6: return "Server map library is full.";
+                    default: return "Upload rejected by server.";
+                }
+            }
+            return NULL;
+        default:
+            return NULL;
     }
 }
 
@@ -2243,7 +2297,6 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapUploadState.provider.onSelect             = lobbyUploadOnSelect;
         s_chooseMapUploadState.provider.onFolderJump         = lobbyUploadOnFolderJump;
         s_chooseMapUploadState.provider.refreshTooltipPrefix = lobbyUploadTooltipPrefix;
-        s_chooseMapUploadState.provider.renderStatusFooter   = lobbyUploadStatusFooter;
         s_chooseMapUploadState.provider.generatePreview      = lobbyUploadGeneratePreview;
         s_chooseMapUploadState.provider.cacheScope           = "upload";
         SDL_strlcpy(s_chooseMapUploadState.crumbsRootLabel, "Maps",
@@ -2280,7 +2333,6 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapWbnState.provider.onSelect             = lobbyWbnMapsOnSelect;
         s_chooseMapWbnState.provider.onFolderJump         = lobbyWbnMapsOnFolderJump;
         s_chooseMapWbnState.provider.refreshTooltipPrefix = lobbyWbnMapsTooltipPrefix;
-        s_chooseMapWbnState.provider.renderStatusFooter   = lobbyWbnMapsStatusFooter;
         s_chooseMapWbnState.provider.tick                 = lobbyWbnMapsTick;
         s_chooseMapWbnState.provider.generatePreview      = lobbyWbnGeneratePreview;
         s_chooseMapWbnState.provider.cacheScope           = "wbn";
@@ -2667,11 +2719,31 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     }
     s_lastActiveTab = s_chooseMapActiveTab;
     ImGui::EndChild(); /* ##MapChooserBody */
+    /* The child window becomes the "last item" after EndChild — its
+     * screen rect is what we want to anchor the error overlay to. */
+    ImVec2 chooserBodyMin = ImGui::GetItemRectMin();
+    ImVec2 chooserBodyMax = ImGui::GetItemRectMax();
 
-    /* Status footer for the active tab, rendered between the chooser
-     * body and the action bar so the chooser's bottom border sits
-     * flush against the buttons when no footer is visible. */
-    lobbyRenderActiveTabFooter();
+    /* Error overlay — anchored top-right of the chooser body (over the
+     * map preview's empty header area). Old behaviour rendered the
+     * footer text below the body, which pushed the Cancel / Use This
+     * Map buttons past the window bottom when the message wrapped. */
+    const char *errMsg = lobbyGetActiveTabError(cs);
+    if (errMsg && *errMsg) {
+        ImDrawList *fg = ImGui::GetForegroundDrawList();
+        ImVec2 textSz = ImGui::CalcTextSize(errMsg);
+        float pad = 8.0f * s;
+        float maxW = (chooserBodyMax.x - chooserBodyMin.x) * 0.6f;
+        if (textSz.x > maxW) textSz.x = maxW;
+        ImVec2 boxMin(chooserBodyMax.x - textSz.x - pad * 2.0f,
+                      chooserBodyMin.y + pad * 0.5f);
+        ImVec2 boxMax(chooserBodyMax.x - pad * 0.5f,
+                      boxMin.y + textSz.y + pad);
+        fg->AddRectFilled(boxMin, boxMax, IM_COL32(40, 0, 0, 200),
+                          4.0f * s);
+        fg->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad * 0.5f),
+                    IM_COL32(230, 130, 130, 255), errMsg);
+    }
 
     /* Action bar: Cancel rolls back the server's preview; Set Map
      * commits it. Selecting any row already pushed the map to the
@@ -2695,6 +2767,10 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         float startX  = (ImGui::GetContentRegionAvail().x - total) * 0.5f;
         if (startX > 0.0f) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
         if (ImGui::Button(cancelLbl)) {
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[MAPPICK] action-bar Cancel sp=%d previewPending=%d",
+                        cs ? (int)clientSimIsSinglePlayer(cs) : -1,
+                        (int)s_chooseMapPreviewPending);
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
@@ -2710,6 +2786,10 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         }
         ImGui::SameLine();
         if (ImGui::Button(setLbl)) {
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[MAPPICK] action-bar UseThisMap sp=%d previewPending=%d",
+                        cs ? (int)clientSimIsSinglePlayer(cs) : -1,
+                        (int)s_chooseMapPreviewPending);
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
@@ -7230,9 +7310,19 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor();
-            /* Force the chooser's next Begin to take focus so it
-             * always sits above the scrim windows we just opened. */
-            ImGui::SetNextWindowFocus();
+            /* Focus the chooser on the frame it OPENS so it draws above
+             * the scrim windows we just begun. Doing this every frame
+             * snatches focus back from anything the user clicks into the
+             * chat-hole (the chat InputText loses its cursor on the very
+             * next frame). Once the chooser is on top, ImGui's natural
+             * focus follows the click. */
+            if (!s_chooseMapFocusedOnce) {
+                ImGui::SetNextWindowFocus();
+                s_chooseMapFocusedOnce = true;
+            }
+        } else {
+            /* Reset the edge-trigger so re-opening focuses again. */
+            s_chooseMapFocusedOnce = false;
         }
 
         /* Map chooser sub-window (Phase 1). Rendered after the main

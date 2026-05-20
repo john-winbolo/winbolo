@@ -3539,7 +3539,17 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
                 serverSimGetState(sim) != serverStateLobby ||
                 len < PACKET_HEADER_SIZE + 5) break;
-            if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
+            /* Cooldown gate — silent break used to leave the client at
+             * upload-status=1 (BEGIN sent, awaiting ACK) indefinitely,
+             * jamming further picks. Reply with BUSY so the client's
+             * upload pump transitions to status=4 and frees the slot. */
+            if (udpServer.clientReqCooldownTicks[clientIdx] > 0) {
+                uint8_t ack[PACKET_HEADER_SIZE + 1];
+                packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_UPLOAD_BUSY;
+                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                break;
+            }
             udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
             if (!lobbyClientMayEdit(sim, clientIdx)) {
                 uint8_t ack[PACKET_HEADER_SIZE + 1];
