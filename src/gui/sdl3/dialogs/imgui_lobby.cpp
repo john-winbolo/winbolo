@@ -1085,28 +1085,6 @@ static bool lobbyUploadGeneratePreview(const char *entryPath,
     return true;
 }
 
-/* MP-only rejection footer. SP loads instantly; in-flight "Uploading…"
- * messages flash for a tick before preview takes over and just feel
- * like noise — only the rejection surfaces because the user needs
- * to know it failed. */
-static void lobbyUploadStatusFooter(MapChooserState *state, void *ctx) {
-    (void)state;
-    ClientSim *cs = (ClientSim *)ctx;
-    if (!cs) return;
-    if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
-        clientSimGetLobbyMapUploadStatus(cs) == 4) {
-        const char *msg = "Upload rejected by server.";
-        switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
-            case 5: /* LOBBY_REJECT_UPLOAD_DISABLED */
-                msg = "Uploads disabled on this server."; break;
-            case 6: /* LOBBY_REJECT_UPLOAD_LIMIT_HIT */
-                msg = "Server map library is full."; break;
-            default: break;
-        }
-        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f), "%s", msg);
-    }
-}
-
 /* onFolderJump for the Upload provider. Upload's currentDir is the
  * absolute on-disk path (e.g. "data/maps/Sub"), and the breadcrumb
  * strips "data/maps/" before rendering and prepends "Maps". Reverse
@@ -2188,31 +2166,6 @@ static void lobbyWbnMapsTooltipPrefix(MapChooserState *state, void *ctx) {
                 sizeof(state->pathTooltipPrefix));
 }
 
-/* WBN footer: two failure modes. spWbnPoll surfaces HTTP download
- * errors via the lobby preview-status field; the MP upload path can
- * reject the bytes after the download lands (same shape as Upload). */
-static void lobbyWbnMapsStatusFooter(MapChooserState *state, void *ctx) {
-    (void)state;
-    ClientSim *cs = (ClientSim *)ctx;
-    if (!cs) return;
-    if (clientSimGetLobbyWbnPreviewStatus(cs) == 3) {
-        const char *m = clientSimGetLobbyWbnPreviewErrMsg(cs);
-        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f),
-                           "%s", m && *m ? m : "Download failed");
-    } else if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
-               clientSimGetLobbyMapUploadStatus(cs) == 4) {
-        const char *msg = "Upload rejected by server.";
-        switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
-            case 5: /* LOBBY_REJECT_UPLOAD_DISABLED */
-                msg = "Uploads disabled on this server."; break;
-            case 6: /* LOBBY_REJECT_UPLOAD_LIMIT_HIT */
-                msg = "Server map library is full."; break;
-            default: break;
-        }
-        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f), "%s", msg);
-    }
-}
-
 /* Shared per-tab render helper. Manages the chooser-area size,
  * refreshes the tooltip prefix, runs a per-frame enumerate when the
  * provider asks for it, hands the widget the supplied render slot,
@@ -2245,11 +2198,11 @@ static void lobbyRenderMapTab(MapChooserState *state, SDL_Renderer *renderer,
         state->provider.refreshTooltipPrefix(state, state->provider.ctx);
     }
 
-    /* Chooser fills the entire body region. The provider's status
-     * footer is rendered OUTSIDE this helper, immediately above the
-     * action buttons (see lobbyRenderActiveTabFooter), so the
-     * chooser's bottom border can extend flush against the action
-     * bar without leaving an idle reservation gap. */
+    /* Chooser fills the entire body region. Any per-tab error
+     * message is drawn via the foreground draw list (see
+     * lobbyGetActiveTabError) anchored over the preview area, so the
+     * body can sit flush against the action bar without leaving a
+     * reservation gap for an inline footer. */
     float availW = ImGui::GetContentRegionAvail().x;
     float availH = ImGui::GetContentRegionAvail().y;
     if (availH < 120.0f) availH = 120.0f;
@@ -2281,27 +2234,10 @@ static void lobbyRenderMapTab(MapChooserState *state, SDL_Renderer *renderer,
 
 }
 
-/* Dispatch the active tab's status footer (called outside the body
- * child, just before the action bar). Looks up the active state via
- * s_chooseMapActiveTab and invokes its provider hook if set. */
-static void lobbyRenderActiveTabFooter(void) {
-    MapChooserState *st = nullptr;
-    switch (s_chooseMapActiveTab) {
-        case 0: st = &s_chooseMapState;       break;
-        case 1: st = &s_chooseMapUploadState; break;
-        case 3: st = &s_chooseMapWbnState;    break;
-        default: return;  /* Generate tab — no footer. */
-    }
-    if (st && st->provider.renderStatusFooter) {
-        st->provider.renderStatusFooter(st, st->provider.ctx);
-    }
-}
-
 /* Returns a short error message for the active tab (NULL if none).
- * Centralises the per-tab logic that lobbyUploadStatusFooter /
- * lobbyWbnMapsStatusFooter used to render inline; the chooser body
- * now overlays the result top-right of the preview so a wrapped
- * footer can't push the action bar out of the window. */
+ * The chooser body overlays the result top-right of the preview via
+ * the foreground draw list, so a wrapped message can't push the
+ * action bar out of the window. */
 static const char *lobbyGetActiveTabError(ClientSim *cs) {
     if (!cs) return NULL;
     switch (s_chooseMapActiveTab) {
@@ -2361,7 +2297,6 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapUploadState.provider.onSelect             = lobbyUploadOnSelect;
         s_chooseMapUploadState.provider.onFolderJump         = lobbyUploadOnFolderJump;
         s_chooseMapUploadState.provider.refreshTooltipPrefix = lobbyUploadTooltipPrefix;
-        s_chooseMapUploadState.provider.renderStatusFooter   = lobbyUploadStatusFooter;
         s_chooseMapUploadState.provider.generatePreview      = lobbyUploadGeneratePreview;
         s_chooseMapUploadState.provider.cacheScope           = "upload";
         SDL_strlcpy(s_chooseMapUploadState.crumbsRootLabel, "Maps",
@@ -2398,7 +2333,6 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapWbnState.provider.onSelect             = lobbyWbnMapsOnSelect;
         s_chooseMapWbnState.provider.onFolderJump         = lobbyWbnMapsOnFolderJump;
         s_chooseMapWbnState.provider.refreshTooltipPrefix = lobbyWbnMapsTooltipPrefix;
-        s_chooseMapWbnState.provider.renderStatusFooter   = lobbyWbnMapsStatusFooter;
         s_chooseMapWbnState.provider.tick                 = lobbyWbnMapsTick;
         s_chooseMapWbnState.provider.generatePreview      = lobbyWbnGeneratePreview;
         s_chooseMapWbnState.provider.cacheScope           = "wbn";
