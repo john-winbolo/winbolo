@@ -3138,6 +3138,13 @@ static void lobbySendSetting(ClientSim *cs,
                 /* gameType enum is 1..3 (Open / Tournament / Strict).
                  * The wire carries the raw enum value. */
                 if (valueLen == 1 && value[0] >= 1 && value[0] <= 3) {
+                    /* mirror of transport_udp_server.c:2881-2886 —
+                     * ranked games forbid the "Open" type. SP has no
+                     * wire to reject on; drop the change silently. */
+                    if (serverSimGetRanked(sim) &&
+                        (gameType)value[0] == gameOpen) {
+                        break;
+                    }
                     serverSimSetGameType(sim, (gameType)value[0]);
                 }
                 break;
@@ -3146,6 +3153,13 @@ static void lobbySendSetting(ClientSim *cs,
                 break;
             case LST_AI_POLICY:
                 if (valueLen == 1 && value[0] <= 3) {
+                    /* mirror of transport_udp_server.c:2898-2903 —
+                     * ranked games forbid any AI policy other than
+                     * "none". SP drops the change silently. */
+                    if (serverSimGetRanked(sim) &&
+                        (aiType)value[0] != aiNone) {
+                        break;
+                    }
                     serverSimSetAiPolicy(sim, value[0]);
                     serverSimSetBotAiType(sim, (aiType)value[0]);
                     /* Switching to "No computer tanks" should clear every
@@ -3191,7 +3205,15 @@ static void lobbySendSetting(ClientSim *cs,
                 break;
             }
             case LST_AUTO_LOCK_ON_GAME:
-                if (valueLen == 1) serverSimSetAutoLockOnGameStart(sim, value[0] != 0);
+                if (valueLen == 1) {
+                    bool v = value[0] != 0;
+                    /* mirror of transport_udp_server.c:2956-2959 —
+                     * ranked games keep autoLock forced ON. */
+                    if (serverSimGetRanked(sim) && !v) {
+                        break;
+                    }
+                    serverSimSetAutoLockOnGameStart(sim, v);
+                }
                 break;
             case LST_RANKED:
                 if (valueLen == 1) {
@@ -3207,6 +3229,12 @@ static void lobbySendSetting(ClientSim *cs,
                         }
                         if (clientSimGetLobbyGameType(cs) == gameOpen) {
                             serverSimSetGameType(sim, gameTournament);
+                        }
+                        /* mirror of transport_udp_server.c:2990-2997 —
+                         * force autoLockOnGameStart=true so new players
+                         * can't slip into a ranked game mid-round. */
+                        if (!serverSimGetAutoLockOnGameStart(sim)) {
+                            serverSimSetAutoLockOnGameStart(sim, true);
                         }
                     }
                 }

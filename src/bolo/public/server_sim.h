@@ -1487,6 +1487,7 @@ void serverSimSetGameLength(ServerSim *sim, int32_t ticks);
 /* Lobby-time game-setting writers. The lobby UI used to poke
  * serverSimGetGameSim(sim)->game / ->hiddenMines directly; these
  * keep the field on GameSim opaque. Only meaningful in lobby state. */
+gameType serverSimGetGameType(const ServerSim *sim);
 void serverSimSetGameType(ServerSim *sim, gameType gt);
 void serverSimSetHiddenMines(ServerSim *sim, bool hiddenMines);
 void serverSimSetState(ServerSim *sim, ServerState s);

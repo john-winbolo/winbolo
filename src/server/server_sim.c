@@ -5345,6 +5345,10 @@ void serverSimSetGameLength(ServerSim *sim, int32_t ticks) {
     if (sim) sim->gameLength = ticks;
 }
 
+gameType serverSimGetGameType(const ServerSim *sim) {
+    return sim ? sim->sim.game : gameOpen;
+}
+
 void serverSimSetGameType(ServerSim *sim, gameType gt) {
     if (sim) sim->sim.game = gt;
 }

@@ -2984,8 +2984,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                             }
                             /* Force game type away from Open if it
                              * was set there. Default to Tournament. */
-                            if (serverSimGetGameSim(sim)->game == gameOpen) {
-                                serverSimGetGameSim(sim)->game = gameTournament;
+                            if (serverSimGetGameType(sim) == gameOpen) {
+                                serverSimSetGameType(sim, gameTournament);
                             }
                             /* Force autoLockOnGameStart=true so new players
                              * can't slip into a ranked game mid-round. */
