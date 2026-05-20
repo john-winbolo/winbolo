@@ -3026,7 +3026,7 @@ static void lobbySendTeamPool(ClientSim *cs,
     }
 }
 
-/* Game-settings dispatcher. settingType is one of LST_* (netpacks.h);
+/* Game-settings dispatcher. settingType is one of LST_* (wire_limits.h);
  * payload is 1 or 2 bytes per server-side parser. Mirrors what
  * transport_udp_server.c::PACKET_LOBBY_SET_SETTING does to spServerSim
  * for the single-player path, then re-syncs so the lobby UI's read
