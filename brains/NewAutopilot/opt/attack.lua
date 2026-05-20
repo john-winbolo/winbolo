@@ -2603,10 +2603,10 @@ function M.update_attack_substate(goal, state, world, info)
     while idx <= #list do
       local target = list[idx]
       local tt = U.ttype(target.mx, target.my)
-      if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
+      if tt == C.T_BUILDING or tt == C.T_HALFBUILD or tt == C.T_PILLBOX then
         idx = idx + 1
         goal._wall_build_last_progress = now
-        goal._wall_idx_started = nil  -- reset per-wall sub-timer
+        goal._wall_idx_started = nil
       else
         break
       end
@@ -2861,14 +2861,25 @@ function M.update_attack_substate(goal, state, world, info)
     else
       local sfx = goal.standoff_fx or (goal.standoff_mx + 0.5)
       local sfy = goal.standoff_fy or (goal.standoff_my + 0.5)
-      -- Round-to-nearest (not truncate) so this matches steering's
-      -- in_range_position quantization (steering.lua:914-915). Truncating
-      -- here while steering rounds caused a 1-wu discrepancy on sub-wu
-      -- standoffs (attack viz showed dist=17/16 while steering showed
-      -- sdist=16 in the same tick).
       local swx = math.floor(sfx * 256 + 0.5)
       local swy = math.floor(sfy * 256 + 0.5)
       local sdist = U.wdist(info.tankx, info.tanky, swx, swy)
+
+      -- Stall give-up: abandon this attack_pill if no progress in ~10s.
+      local IN_RANGE_GIVE_UP_TICKS = 500
+      if goal._in_range_last_progress == nil then
+        goal._in_range_last_progress = now
+        goal._in_range_last_dist     = sdist
+      elseif sdist < (goal._in_range_last_dist or sdist) - 4 then
+        goal._in_range_last_progress = now
+        goal._in_range_last_dist     = sdist
+      elseif (now - goal._in_range_last_progress) > IN_RANGE_GIVE_UP_TICKS then
+        print(string.format(TAG ..
+          " ATTACK: in_range stalled (no progress in %d ticks, sdist=%d) — abandoning attack_pill",
+          IN_RANGE_GIVE_UP_TICKS, sdist))
+        clear_attack_goal(state, "in_range_position stalled")
+        return
+      end
       -- EXPERIMENT: use 16 wu for ALL takes, including 3-blocker. The
       -- old rule tightened to 8 wu when 3+ blockers were in play, on the
       -- theory that the gun-line geometry is more sensitive there. In
@@ -2930,6 +2941,8 @@ function M.update_attack_substate(goal, state, world, info)
         goal.aim_tick        = now
         goal._aim_locked     = nil
         goal._pre_aim_locked = nil
+        goal._in_range_last_progress = nil
+        goal._in_range_last_dist     = nil
         print(string.format(TAG ..
           " ATTACK: PPT in range (%.2f,%.2f) sdist=%d spd=%d, pre-aiming to (%.3f,%.3f)",
           sfx, sfy, sdist, info.speed, goal.aim_pre_mx, goal.aim_pre_my))

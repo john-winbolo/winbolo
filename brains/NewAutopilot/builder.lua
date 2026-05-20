@@ -395,7 +395,20 @@ function M.decide(state, world, info, now)
      and state.goal.mx and state.goal.my then
     local px, py = state.goal.mx, state.goal.my
     local dist  = U.mdist(tmx, tmy, px, py)
-    local in_range = dist <= 5
+    -- Danger-blended distance cap. Insist on dist<=5 when we're not
+    -- under fire; widen toward DIST_DANGEROUS as the tank's local
+    -- danger climbs from DANGER_LOW to DANGER_HIGH. The tank still
+    -- navigates toward the pill (goal.mx/my unchanged), so it keeps
+    -- closing — we just stop EARLIER when staying close would cost
+    -- armour. "Get as close as we can while it's safe" naturally
+    -- emerges from re-evaluating the cap each tick.
+    local DANGER_LOW, DANGER_HIGH = 50, 150
+    local DIST_BASE, DIST_DANGEROUS = 5, 12
+    local danger_at_tank = (state.perc and state.perc.threat_at_tank) or 0
+    local t = (danger_at_tank - DANGER_LOW) / (DANGER_HIGH - DANGER_LOW)
+    if t < 0 then t = 0 elseif t > 1 then t = 1 end
+    local effective_max = DIST_BASE + (DIST_DANGEROUS - DIST_BASE) * t
+    local in_range = dist <= effective_max
     local has_trees = info.trees > 0
     local ticks = (in_range and has_trees)
       and cpf_lgm_travel_ticks_map(tmx, tmy, px, py, 0, 0, 2000, 150)
@@ -417,11 +430,14 @@ function M.decide(state, world, info, now)
       viz.line("repair_pill_viz", tank_fx, tank_fy, px + 0.5, py + 0.5,
                r, g, b, 120)
       viz.text("repair_pill_viz", tank_fx + 0.6, tank_fy - 1.2,
-               string.format("Repair d=%d tr=%d lgm=%d", dist, info.trees, ticks),
+               string.format("Repair d=%d/%.1f tr=%d dgr=%d lgm=%d",
+                             dist, effective_max, info.trees,
+                             danger_at_tank, ticks),
                "topleft", r, g, b, 240)
       print2(string.format(
-        "REPAIR_DISPATCH_CHECK pill=(%d,%d) tank=(%d,%d) dist=%d trees=%d lgm_ticks=%d can=%s",
-        px, py, tmx, tmy, dist, info.trees, ticks, tostring(can_dispatch)))
+        "REPAIR_DISPATCH_CHECK pill=(%d,%d) tank=(%d,%d) dist=%d eff_max=%.1f trees=%d danger=%d lgm_ticks=%d can=%s",
+        px, py, tmx, tmy, dist, effective_max, info.trees,
+        danger_at_tank, ticks, tostring(can_dispatch)))
     end
 
     if can_dispatch then
@@ -662,6 +678,31 @@ function M.decide(state, world, info, now)
       local force_mode = (b.mode == "wall_shield")
       local safety_ok  = force_mode
         or (not angry_pill_close and path_safe)
+
+      -- Pillbox-as-blocker: if the bot has carried pills on hand,
+      -- spend up to PILLBOX_BLOCKERS_MAX of them on the closest shield
+      -- slots instead of building walls. A pillbox is a much better
+      -- blocker than a wall — it actively shoots back at enemies. Only
+      -- applies to wall_shield (attack_pill); base_shield keeps its
+      -- defensive-wall economy. PBOX placement doesn't need trees, but
+      -- the engine refuses on FOREST tiles so we still farm those first.
+      local PILLBOX_BLOCKERS_MAX = 2
+      local pbox_used = (state.goal and state.goal._pillbox_blockers_used) or 0
+      local can_pbox = b.mode == "wall_shield"
+                       and (info.carried_pills or 0) > 0
+                       and pbox_used < PILLBOX_BLOCKERS_MAX
+                       and wtt ~= C.T_FOREST
+                       and can_reach
+                       and safety_ok
+      if can_pbox then
+        state.goal._pillbox_blockers_used = pbox_used + 1
+        log.reason("build", { mode = b.mode,
+                              why = "drop pillbox as wall blocker",
+                              wall_mx = wx, wall_my = wy,
+                              blockers_used = state.goal._pillbox_blockers_used })
+        return { x = wx, y = wy, action = BUILDMODE_PBOX }
+      end
+
       if has_trees and can_reach and safety_ok then
         -- Forest in the way? The engine can't drop a wall on T_FOREST;
         -- BUILDMODE_BUILD there just clears the trees, no wall goes up.
