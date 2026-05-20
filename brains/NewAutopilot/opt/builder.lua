@@ -387,14 +387,21 @@ function M.decide(state, world, info, now)
   if state.goal and state.goal.kind == "repair_pill"
      and state.goal.mx and state.goal.my
      and info.trees > 0
-     and U.mdist(tmx, tmy, state.goal.mx, state.goal.my) <= 5
   then
-    local ticks = cpf_lgm_travel_ticks_map(
-      tmx, tmy, state.goal.mx, state.goal.my,
-      0, 0, 2000, 150)
-    if ticks > 0 then
-      state._repair_dispatched = true
-      return { x = state.goal.mx, y = state.goal.my, action = BUILDMODE_PBOX }
+    -- Danger-blended distance cap: 5 tiles when safe, up to 12 when
+    -- under fire (danger 50..150 lerps the cap from BASE to DANGEROUS).
+    local danger_at_tank = (state.perc and state.perc.threat_at_tank) or 0
+    local t = (danger_at_tank - 50) / 100
+    if t < 0 then t = 0 elseif t > 1 then t = 1 end
+    local effective_max = 5 + 7 * t
+    if U.mdist(tmx, tmy, state.goal.mx, state.goal.my) <= effective_max then
+      local ticks = cpf_lgm_travel_ticks_map(
+        tmx, tmy, state.goal.mx, state.goal.my,
+        0, 0, 2000, 150)
+      if ticks > 0 then
+        state._repair_dispatched = true
+        return { x = state.goal.mx, y = state.goal.my, action = BUILDMODE_PBOX }
+      end
     end
   end
 
@@ -621,14 +628,26 @@ function M.decide(state, world, info, now)
       local force_mode = (b.mode == "wall_shield")
       local safety_ok  = force_mode
         or (not angry_pill_close and path_safe)
+
+      -- Pillbox-as-blocker: spend up to 2 carried pills on closest
+      -- shield slots instead of building walls (wall_shield only).
+      local PILLBOX_BLOCKERS_MAX = 2
+      local pbox_used = (state.goal and state.goal._pillbox_blockers_used) or 0
+      if b.mode == "wall_shield"
+         and (info.carried_pills or 0) > 0
+         and pbox_used < PILLBOX_BLOCKERS_MAX
+         and wtt ~= C.T_FOREST
+         and can_reach
+         and safety_ok then
+        state.goal._pillbox_blockers_used = pbox_used + 1
+        log.reason("build", { mode = b.mode,
+                              why = "drop pillbox as wall blocker",
+                              wall_mx = wx, wall_my = wy,
+                              blockers_used = state.goal._pillbox_blockers_used })
+        return { x = wx, y = wy, action = BUILDMODE_PBOX }
+      end
+
       if has_trees and can_reach and safety_ok then
-        -- Forest in the way? The engine can't drop a wall on T_FOREST;
-        -- BUILDMODE_BUILD there just clears the trees, no wall goes up.
-        -- Dispatch FARM first to harvest, then the next builder tick
-        -- will see grass/road and dispatch the actual BUILD. Two
-        -- separate LGM round-trips, but the wall_shield idx in attack.lua
-        -- only advances on T_BUILDING/T_HALFBUILD so it'll keep
-        -- targeting the same tile until the wall is genuinely up.
         if wtt == C.T_FOREST then
           log.reason("build", { mode = b.mode, why = "harvest forest before wall",
                                 wall_mx = wx, wall_my = wy })
