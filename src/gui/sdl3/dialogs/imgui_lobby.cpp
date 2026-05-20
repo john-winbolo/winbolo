@@ -5550,8 +5550,8 @@ static void renderGameSettingsPanel(ClientSim *cs,
             ImGui::SetNextItemWidth(80.0f * s);
             if (ImGui::InputInt("##tmin", &mins, 1, 5,
                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
-                if (mins < 1) mins = 1;
-                if (mins > 999) mins = 999;
+                if (mins < LOBBY_TIME_MINUTES_MIN) mins = LOBBY_TIME_MINUTES_MIN;
+                if (mins > LOBBY_TIME_MINUTES_MAX) mins = LOBBY_TIME_MINUTES_MAX;
                 uint8_t v[2] = { (uint8_t)((mins >> 8) & 0xFF),
                                  (uint8_t)(mins & 0xFF) };
                 lobbySendSetting(cs, LST_TIME_MINUTES, v, 2);
