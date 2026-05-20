@@ -2743,18 +2743,24 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     const char *errMsg = lobbyGetActiveTabError(cs);
     if (errMsg && *errMsg) {
         ImDrawList *fg = ImGui::GetForegroundDrawList();
-        ImVec2 textSz = ImGui::CalcTextSize(errMsg);
         float pad = 8.0f * s;
-        float maxW = (chooserBodyMax.x - chooserBodyMin.x) * 0.6f;
-        if (textSz.x > maxW) textSz.x = maxW;
+        const float maxW =
+            (chooserBodyMax.x - chooserBodyMin.x) * 0.6f - pad * 3.0f;
+        ImFont *font = ImGui::GetFont();
+        float   fsz  = ImGui::GetFontSize();
+        ImVec2  textSz = font->CalcTextSizeA(fsz, FLT_MAX, maxW, errMsg);
+
         ImVec2 boxMin(chooserBodyMax.x - textSz.x - pad * 2.0f,
                       chooserBodyMin.y + pad * 0.5f);
         ImVec2 boxMax(chooserBodyMax.x - pad * 0.5f,
                       boxMin.y + textSz.y + pad);
-        fg->AddRectFilled(boxMin, boxMax, IM_COL32(40, 0, 0, 200),
-                          4.0f * s);
-        fg->AddText(ImVec2(boxMin.x + pad, boxMin.y + pad * 0.5f),
-                    IM_COL32(230, 130, 130, 255), errMsg);
+
+        fg->AddRectFilled(boxMin, boxMax,
+                          IM_COL32(40, 0, 0, 200), 4.0f * s);
+        fg->AddText(font, fsz,
+                    ImVec2(boxMin.x + pad, boxMin.y + pad * 0.5f),
+                    IM_COL32(230, 130, 130, 255), errMsg,
+                    nullptr, maxW);
     }
 
     /* Action bar: Cancel rolls back the server's preview; Set Map
