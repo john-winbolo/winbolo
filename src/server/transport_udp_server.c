@@ -1748,6 +1748,17 @@ void transportUdpServerKickPlayer(ServerSim *sim, const char *playerName) {
             /* Send kick message to all clients (including the kicked player) */
             kickArgs[0] = udpServer.clients[i].playerName;
             serverSendServerMessage(sim, STR_KICK_ANNOUNCE, 1, kickArgs);
+            /* Hand the kicked client an immediate disconnect notification so
+             * they don't sit waiting for the keepalive timeout. PACKET_KICKED
+             * transitions the client's joinState to UDP_CLIENT_KICKED, which
+             * surfaces a "you were kicked" dialog in the lobby. */
+            {
+                uint8_t kbuf[PACKET_HEADER_SIZE];
+                packHeader(kbuf, PACKET_KICKED, 0);
+                sendto(udpServer.sock, (const char *)kbuf, sizeof(kbuf), 0,
+                       (const struct sockaddr *)&udpServer.clients[i].addr,
+                       sizeof(udpServer.clients[i].addr));
+            }
             serverCleanupMapDownload(i);
             serverDisconnectClient(sim, i, FALSE);
             serverSimRemovePlayer(sim, (BYTE)i);
@@ -3176,16 +3187,21 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_LOBBY_KICK: {
-            /* Wire: [header 8] [slot 1]. Host-only. */
+            /* Wire: [header 8] [slot 1]. Host / admin / openHost. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx != 0 || !serverSimIsLobbyEnabled(sim) ||
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
                 serverSimGetState(sim) != serverStateLobby ||
                 len < PACKET_HEADER_SIZE + 1) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_KICK,
                               LOBBY_REJECT_NOT_HOST); break;
             }
+            if (!lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_KICK,
+                              LOBBY_REJECT_NOT_HOST); break;
+            }
             uint8_t slot = buf[PACKET_HEADER_SIZE];
-            if (slot >= MAX_TANKS || slot == 0 /* can't kick host */) {
+            if (slot >= MAX_TANKS || slot == 0 /* can't kick host */ ||
+                (int)slot == clientIdx /* can't kick yourself */) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_KICK,
                               LOBBY_REJECT_INVALID); break;
             }

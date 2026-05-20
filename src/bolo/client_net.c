@@ -368,6 +368,11 @@ void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost) {
   transportUdpClientSendLobbyOpenHost(&cs->transport, openHost);
 }
 
+void clientSimNetSendLobbyKick(ClientSim *cs, uint8_t slot) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyKick(&cs->transport, slot);
+}
+
 void clientSimNetSendMapSkipVote(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
   transportUdpClientSendMapSkipVote(&cs->transport);
