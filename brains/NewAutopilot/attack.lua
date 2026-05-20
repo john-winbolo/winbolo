@@ -2809,6 +2809,15 @@ function M.update_attack_substate(goal, state, world, info)
     if goal._aim_locked then
       compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
 
+      -- Anger cool-down gate: don't commit to the take while the pill
+      -- is still hot. We wait in aim until anger drops to <= 0.65.
+      -- aim_tick is bumped each waiting tick so the 3-second aim
+      -- timeout doesn't fire while we're just waiting on the cool-down.
+      local anger = (pill and pill.anger) or 0
+      if anger > 0.65 then
+        goal.aim_tick = now
+      else
+
       -- Check for trees between tank and crosshairs (pill direction).
       -- Skip detree entirely for shielded pill takes — the shield scan
       -- already picked an aim corner with a clear shot through the
@@ -2835,6 +2844,7 @@ function M.update_attack_substate(goal, state, world, info)
         goal._charge_braking = nil
         print(TAG .. " ATTACK: aimed, charging to standoff")
       end
+      end  -- anger gate
     -- Abort if can't aim within 3 seconds
     elseif goal.aim_tick and (now - goal.aim_tick) > 150 then
       print(TAG .. " ATTACK: aim timeout, aborting")
