@@ -1709,7 +1709,7 @@ void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
     if (playerNum >= MAX_TANKS) {
         return;
     }
-    if (teamNumber > 16) {
+    if (teamNumber >= MAX_TANKS) {
         teamNumber = 1;
     }
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
@@ -3588,16 +3588,38 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
     /* Only allow during running game. */
     if (sim->state != serverStateRunning) return;
 
-    /* Surrender precondition: exactly two teams in play. */
-    if (kind == GAME_VOTE_KIND_SURRENDER &&
-        serverSimCountActiveTeams(sim) != 2) {
+    /* Reject malformed toggleMode bytes from the wire before any
+     * state-mutating branch can react to them. The historical else-fall
+     * treated anything that wasn't YES as NO, so 0xFF would be recorded
+     * as a NO vote. */
+    if (toggleMode != GAME_VOTE_TOGGLE_NO &&
+        toggleMode != GAME_VOTE_TOGGLE_YES &&
+        toggleMode != GAME_VOTE_TOGGLE_OPEN_ONLY) {
         return;
+    }
+
+    /* Surrender precondition: exactly two teams in play, and the
+     * caller must be on a real team — an Unassigned (team 0) player
+     * surrendering "team 0" would broadcast a fake side and chain a
+     * back-to-lobby vote against two unrelated playing teams. */
+    if (kind == GAME_VOTE_KIND_SURRENDER) {
+        if (serverSimCountActiveTeams(sim) != 2) return;
+        if (sim->lobbyPlayers[playerNum].teamNumber == 0) return;
     }
 
     uint64_t nowMs = sim->gameVoteWallMs;
     uint8_t teamId = (kind == GAME_VOTE_KIND_SURRENDER)
                      ? sim->lobbyPlayers[playerNum].teamNumber
                      : 0;
+
+    /* A standalone NO has no effect when no vote is running. The
+     * vote-start branch below would otherwise open a fresh vote and
+     * record the caller as NO+answered, which is meaningless. Only
+     * YES or OPEN_ONLY may open a vote. */
+    if (gv->active != GAME_VOTE_ACTIVE_RUNNING &&
+        toggleMode == GAME_VOTE_TOGGLE_NO) {
+        return;
+    }
 
     /* Open-only re-press: if a vote is running, just rebroadcast (so the
      * client can pop the widget back up); if no vote is running, start one
@@ -5321,6 +5343,10 @@ LobbyBotConfig *serverSimGetBotConfigMut(ServerSim *sim, BYTE slot) {
 
 void serverSimSetGameLength(ServerSim *sim, int32_t ticks) {
     if (sim) sim->gameLength = ticks;
+}
+
+gameType serverSimGetGameType(const ServerSim *sim) {
+    return sim ? sim->sim.game : gameOpen;
 }
 
 void serverSimSetGameType(ServerSim *sim, gameType gt) {

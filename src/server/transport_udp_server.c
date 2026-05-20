@@ -2654,7 +2654,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 serverSimGetState(sim) == serverStateLobby &&
                 len >= PACKET_HEADER_SIZE + 2) {
                 uint8_t teamNum = buf[PACKET_HEADER_SIZE + 1];
-                if (teamNum <= 16) {
+                if (teamNum < MAX_TANKS) {
                     serverSimSetTeam(sim, (BYTE)clientIdx, teamNum);
                     logAddEvent(log_TeamSet, (BYTE)clientIdx, teamNum, 0, 0, 0, NULL);
                     publishLobbySlot(sim, (BYTE)clientIdx);
@@ -2755,29 +2755,16 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                  * validator humans go through (controls, reserved
                  * leading '*', mixed scripts, length) so chat and
                  * scoreboard rendering can trust the form they receive.
-                 * Then run uniqueness against the connected-player
-                 * table — bots and humans share udpServer.clients[],
-                 * and a duplicate name breaks chat attribution and
-                 * scoreboard disambiguation either way. */
+                 * Uniqueness runs against the connected-player table —
+                 * bots and humans share udpServer.clients[], and a
+                 * duplicate name breaks chat attribution and scoreboard
+                 * disambiguation either way. */
                 if (clientBotName[0] != '\0') {
                     char validated[PACKET_MAX_PLAYER_NAME];
-                    PlayerNameValidationError nameErr = PLAYER_NAME_OK;
-                    if (!playerNameValidate(clientBotName, validated,
-                                            sizeof(validated), &nameErr)) {
-                        lobbyRejectTo(fromAddr, PACKET_LOBBY_ADD_BOT,
-                                      LOBBY_REJECT_INVALID);
-                        break;
-                    }
-                    bool nameTaken = false;
-                    for (BYTE j = 0; j < MAX_TANKS; j++) {
-                        const char *otherName = transportUdpServerGetPlayerName(j);
-                        if (otherName != NULL &&
-                            playerNameCompare(otherName, validated) == 0) {
-                            nameTaken = true;
-                            break;
-                        }
-                    }
-                    if (nameTaken) {
+                    if (!lobbyBotNameAcceptable(clientBotName, validated,
+                                                sizeof(validated), -1,
+                                                transportUdpServerGetPlayerName,
+                                                NULL, NULL)) {
                         lobbyRejectTo(fromAddr, PACKET_LOBBY_ADD_BOT,
                                       LOBBY_REJECT_INVALID);
                         break;
@@ -2849,6 +2836,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                               LOBBY_REJECT_NOT_HOST);
                 break;
             }
+            if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
+            udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
             uint8_t settingType = buf[PACKET_HEADER_SIZE];
             uint8_t valueLen    = buf[PACKET_HEADER_SIZE + 1];
             if (len < PACKET_HEADER_SIZE + 2 + valueLen ||
@@ -2982,8 +2971,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                             }
                             /* Force game type away from Open if it
                              * was set there. Default to Tournament. */
-                            if (serverSimGetGameSim(sim)->game == gameOpen) {
-                                serverSimGetGameSim(sim)->game = gameTournament;
+                            if (serverSimGetGameType(sim) == gameOpen) {
+                                serverSimSetGameType(sim, gameTournament);
                             }
                             /* Force autoLockOnGameStart=true so new players
                              * can't slip into a ranked game mid-round. */
@@ -3149,24 +3138,10 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 memset(rawName, 0, sizeof(rawName));
                 memcpy(rawName, buf + PACKET_HEADER_SIZE + 4, nameLen);
 
-                PlayerNameValidationError nameErr = PLAYER_NAME_OK;
-                if (!playerNameValidate(rawName, validatedName,
-                                        sizeof(validatedName), &nameErr)) {
-                    lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
-                                  LOBBY_REJECT_INVALID);
-                    break;
-                }
-                bool nameTaken = false;
-                for (BYTE j = 0; j < MAX_TANKS; j++) {
-                    if (j == slot) continue;
-                    const char *otherName = transportUdpServerGetPlayerName(j);
-                    if (otherName != NULL &&
-                        playerNameCompare(otherName, validatedName) == 0) {
-                        nameTaken = true;
-                        break;
-                    }
-                }
-                if (nameTaken) {
+                if (!lobbyBotNameAcceptable(rawName, validatedName,
+                                            sizeof(validatedName), (int)slot,
+                                            transportUdpServerGetPlayerName,
+                                            NULL, NULL)) {
                     lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
                                   LOBBY_REJECT_INVALID);
                     break;
@@ -3541,12 +3516,12 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 len < PACKET_HEADER_SIZE + 5) break;
             /* Cooldown gate — silent break used to leave the client at
              * upload-status=1 (BEGIN sent, awaiting ACK) indefinitely,
-             * jamming further picks. Reply with BUSY so the client's
+             * jamming further picks. Reply with COOLDOWN so the client's
              * upload pump transitions to status=4 and frees the slot. */
             if (udpServer.clientReqCooldownTicks[clientIdx] > 0) {
                 uint8_t ack[PACKET_HEADER_SIZE + 1];
                 packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
-                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_UPLOAD_BUSY;
+                ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_COOLDOWN;
                 udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
                 break;
             }
@@ -4266,6 +4241,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             if (len < PACKET_HEADER_SIZE + 2) break;
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0) break;
+            if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
+            udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
             uint8_t kind   = buf[PACKET_HEADER_SIZE + 0];
             uint8_t toggle = buf[PACKET_HEADER_SIZE + 1];
             serverSimGameVoteToggle(sim, (uint8_t)clientIdx, kind, toggle);

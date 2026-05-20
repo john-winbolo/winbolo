@@ -328,6 +328,7 @@ bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize,
       if (strncmp(entry->valuestring, "bot:", 4) == 0) {
         int botSlot = atoi(entry->valuestring + 4);
         if (botSlot >= 0 && botSlot < MAX_TANKS) {
+          if (teamIdx + 1 >= MAX_TANKS) continue;
           outProposal->teamForSlot[botSlot] = (uint8_t)(teamIdx + 1);
         }
         continue;
@@ -335,6 +336,7 @@ bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize,
       for (count = 0; count < MAX_TANKS; count++) {
         if (winboloNetPlayerKey[count][0] != '\0' &&
             strcmp(winboloNetPlayerKey[count], entry->valuestring) == 0) {
+          if (teamIdx + 1 >= MAX_TANKS) continue;
           outProposal->teamForSlot[count] = (uint8_t)(teamIdx + 1); /* 1-indexed */
           break;
         }

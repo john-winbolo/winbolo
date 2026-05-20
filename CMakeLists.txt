@@ -2304,6 +2304,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_ini_reader_writer.c
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_game_vote_control.c
+    tests/unit/test_vote_surrender.c
+    tests/unit/test_vote_toggle_modes.c
+    tests/unit/test_lobby_set_team_clamps.c
     tests/unit/test_md5.c
     tests/unit/test_ranked_lobby.c
     tests/unit/test_lobby_locks.c
@@ -2313,6 +2316,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_upload_busy.c
     tests/unit/test_upload_filename_safe.c
     tests/unit/test_lobby_time_minutes_valid.c
+    tests/unit/test_lobby_bot_name.c
     tests/unit/test_lobby_map_list_chunked.c
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
@@ -2396,6 +2400,17 @@ set(_unit_test_names
     lobby_bot_config_codec_and_apply
     lobby_bot_brain_codec_and_apply
     lobby_brain_list_codec_and_apply
+    vote_surrender_rejects_unassigned_caller
+    vote_surrender_starts_for_real_team_caller
+    vote_surrender_rejects_three_active_teams
+    vote_toggle_standalone_no_does_nothing
+    vote_toggle_invalid_mode_dropped
+    vote_toggle_yes_opens_vote
+    vote_toggle_no_during_running_records_answered
+    lobby_set_team_clamps_max_tanks
+    lobby_set_team_accepts_max_legal
+    lobby_set_team_accepts_unassigned
+    lobby_set_team_clamps_above_max
     ranked_flag_persists_with_one_player
     ranked_shape_gate
     lobby_lock_bit_lookup
@@ -2408,6 +2423,13 @@ set(_unit_test_names
     map_reload_rollback
     upload_busy_predicate
     upload_filename_safe
+    lobby_bot_name_rejects_reserved_prefix
+    lobby_bot_name_rejects_disallowed_char
+    lobby_bot_name_rejects_collision
+    lobby_bot_name_skip_does_not_bypass_validator_prefix
+    lobby_bot_name_skip_does_not_bypass_validator_control
+    lobby_bot_name_skip_excludes_self_from_uniqueness
+    lobby_bot_name_accepts_clean_unique
     lobby_map_list_chunked
     lobby_map_search_chunked
     wbn_bearer_state

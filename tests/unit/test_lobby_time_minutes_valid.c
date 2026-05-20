@@ -16,7 +16,8 @@ int run_lobby_time_minutes_valid(void) {
     UT_ASSERT(lobbyTimeMinutesIsValid(1) == true);
     UT_ASSERT(lobbyTimeMinutesIsValid(30) == true);
     UT_ASSERT(lobbyTimeMinutesIsValid(240) == true);
-    UT_ASSERT(lobbyTimeMinutesIsValid(241) == false);
+    UT_ASSERT(lobbyTimeMinutesIsValid(4320) == true);
+    UT_ASSERT(lobbyTimeMinutesIsValid(4321) == false);
     UT_ASSERT(lobbyTimeMinutesIsValid(65535) == false);
     return 0;
 }

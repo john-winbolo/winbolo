@@ -88,6 +88,12 @@ WinBolo uses the following third-party libraries and code.
 - Authors: Juliette Foucaut, Doug Binks
 - Used to render the in-game news popup (headings, emphasis, links, images)
 
+### MD5 (RFC 1321 reference)
+- Location: src/bolo/md5.c, src/bolo/public/md5.h
+- License: Public domain
+- https://www.rfc-editor.org/rfc/rfc1321
+- Used for the lobby map-upload MD5 handshake (integrity check only — not cryptographically safe)
+
 ## Fonts
 
 ### Inter
