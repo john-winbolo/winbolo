@@ -33,8 +33,8 @@
 
 #include "global.h"
 #include "bolo_map.h"
-#include "netpacks.h"   /* LST_* setting ids for serverSimGetSettingLockBit */
-#include "wire_limits.h"
+#include "netpacks.h"
+#include "wire_limits.h"   /* LobbySettingType for serverSimGetSettingLockBit */
 #include "pillbox.h"
 #include "bases.h"
 #include "starts.h"

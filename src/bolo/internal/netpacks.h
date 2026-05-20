@@ -457,22 +457,11 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define GAME_VOTE_PASS_PCT_NUM    100
 #define GAME_VOTE_PASS_PCT_DENOM  100
 
-/* Setting types used inside SET_SETTING / SETTING_CHG payloads.
- * Forward-compat: receivers must skip unknown types via valueLen. */
-#define LST_GAME_TYPE          1   /* 1 byte enum: open|tournament|strict */
-#define LST_HIDDEN_MINES       2   /* 1 byte bool */
-#define LST_AI_POLICY          3   /* 1 byte enum: none|allow|advantage|full */
-#define LST_TIME_LIMIT         4   /* 1 byte bool */
-#define LST_TIME_MINUTES       5   /* 2 bytes uint16 BE */
-#define LST_AUTO_LOCK_ON_GAME  6   /* 1 byte bool */
-#define LST_RANKED             7   /* 1 byte bool. When true the server
-                                    * forces ai=none, refuses game_type
-                                    * Open, and removes any existing
-                                    * bots. The client mirrors the
-                                    * value so every viewer sees the
-                                    * ranked badge — toggle is still
-                                    * host/admin only. */
-/* allowNewPlayers stays on PACKET_LOCK_TOGGLE — not duplicated here.
+/* LobbySettingType (LST_*) lives in public/wire_limits.h so the GUI
+ * lobby can reach the enum without including internal/netpacks.h —
+ * same pattern as LOBBY_LOCK_* and LOBBY_TIME_MINUTES_*.
+ *
+ * allowNewPlayers stays on PACKET_LOCK_TOGGLE — not duplicated here.
  * serverLocks is read-only (CLI on bolod) — no SET_SETTING for it. */
 
 /* LST_TIME_MINUTES accepted range: 1..240 minutes (4 hours).
