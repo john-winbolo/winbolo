@@ -2316,6 +2316,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_upload_busy.c
     tests/unit/test_upload_filename_safe.c
     tests/unit/test_lobby_time_minutes_valid.c
+    tests/unit/test_lobby_bot_name.c
     tests/unit/test_lobby_map_list_chunked.c
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
@@ -2422,6 +2423,13 @@ set(_unit_test_names
     map_reload_rollback
     upload_busy_predicate
     upload_filename_safe
+    lobby_bot_name_rejects_reserved_prefix
+    lobby_bot_name_rejects_disallowed_char
+    lobby_bot_name_rejects_collision
+    lobby_bot_name_skip_does_not_bypass_validator_prefix
+    lobby_bot_name_skip_does_not_bypass_validator_control
+    lobby_bot_name_skip_excludes_self_from_uniqueness
+    lobby_bot_name_accepts_clean_unique
     lobby_map_list_chunked
     lobby_map_search_chunked
     wbn_bearer_state
