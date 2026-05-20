@@ -467,7 +467,7 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
  * allowNewPlayers stays on PACKET_LOCK_TOGGLE — not duplicated here.
  * serverLocks is read-only (CLI on bolod) — no SET_SETTING for it. */
 
-/* LST_TIME_MINUTES accepted range: 1..240 minutes (4 hours).
+/* LST_TIME_MINUTES accepted range: 1..4320 minutes (72 hours).
  * Defended at the wire so downstream ticks arithmetic
  * (minutes * 60 * GAME_NUMGAMETICKS_SEC) can't be coaxed
  * toward int32_t overflow by a malicious client.
