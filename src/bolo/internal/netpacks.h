@@ -311,6 +311,9 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                           *   personality 1, nameLen 1,
                                           *   name N } */
 #define PACKET_LOBBY_KICK           165  /* { slot 1 } */
+#define PACKET_KICKED               198  /* server -> kicked client: immediate
+                                          *   disconnect notification with
+                                          *   "you were kicked" semantics */
 #define PACKET_LOBBY_SET_BOT_BRAIN  166  /* { slot 1, pathLen 1, path N } */
 #define PACKET_LOBBY_SET_MAP        167  /* { pathLen 1, path N } */
 #define PACKET_LOBBY_MAP_LIST_REQ   168  /* { pathLen 1, path N } */

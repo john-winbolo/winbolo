@@ -1196,6 +1196,7 @@
 #define STR_DLGNEWS_LOADING                 1269
 #define STR_DLGNEWS_DONT_AUTOSHOW           1270
 #define STR_DLGNEWS_COMMENTS_FMT            1271
+#define STR_DLGLOBBY_KICKED                 1272
 
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820

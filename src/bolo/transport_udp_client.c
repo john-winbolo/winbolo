@@ -1072,6 +1072,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
     }
 
+    case PACKET_KICKED: {
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "PACKET_KICKED received -> KICKED");
+        c->joinState = UDP_CLIENT_KICKED;
+        break;
+    }
+
     case PACKET_LOBBY_UPDATE: {
         ControlDecodeFn dec = transportControlCodecDecoder(pktType);
         if (dec != NULL) {
@@ -2241,6 +2248,17 @@ void transportUdpClientSendLobbyOpenHost(Transport *t, bool openHost) {
 
     packHeader(buf, PACKET_LOBBY_OPEN_HOST, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = openHost ? 1 : 0;
+    udpClientSendTo(c, buf, sizeof(buf));
+}
+
+void transportUdpClientSendLobbyKick(Transport *t, uint8_t slot) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 1];
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    packHeader(buf, PACKET_LOBBY_KICK, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = slot;
     udpClientSendTo(c, buf, sizeof(buf));
 }
 
