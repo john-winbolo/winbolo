@@ -3588,6 +3588,16 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
     /* Only allow during running game. */
     if (sim->state != serverStateRunning) return;
 
+    /* Reject malformed toggleMode bytes from the wire before any
+     * state-mutating branch can react to them. The historical else-fall
+     * treated anything that wasn't YES as NO, so 0xFF would be recorded
+     * as a NO vote. */
+    if (toggleMode != GAME_VOTE_TOGGLE_NO &&
+        toggleMode != GAME_VOTE_TOGGLE_YES &&
+        toggleMode != GAME_VOTE_TOGGLE_OPEN_ONLY) {
+        return;
+    }
+
     /* Surrender precondition: exactly two teams in play, and the
      * caller must be on a real team — an Unassigned (team 0) player
      * surrendering "team 0" would broadcast a fake side and chain a
@@ -3601,6 +3611,15 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
     uint8_t teamId = (kind == GAME_VOTE_KIND_SURRENDER)
                      ? sim->lobbyPlayers[playerNum].teamNumber
                      : 0;
+
+    /* A standalone NO has no effect when no vote is running. The
+     * vote-start branch below would otherwise open a fresh vote and
+     * record the caller as NO+answered, which is meaningless. Only
+     * YES or OPEN_ONLY may open a vote. */
+    if (gv->active != GAME_VOTE_ACTIVE_RUNNING &&
+        toggleMode == GAME_VOTE_TOGGLE_NO) {
+        return;
+    }
 
     /* Open-only re-press: if a vote is running, just rebroadcast (so the
      * client can pop the widget back up); if no vote is running, start one
