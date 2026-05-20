@@ -2257,9 +2257,10 @@ static const char *lobbyGetActiveTabError(ClientSim *cs) {
             if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
                 clientSimGetLobbyMapUploadStatus(cs) == 4) {
                 switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
-                    case 4: return "Server busy — try again";
+                    case 4: return "Another upload is in flight.";
                     case 5: return "Uploads disabled on this server.";
                     case 6: return "Server map library is full.";
+                    case 7: return "Too many requests — please wait a moment before retrying.";
                     default: return "Upload rejected by server.";
                 }
             }
@@ -2272,9 +2273,10 @@ static const char *lobbyGetActiveTabError(ClientSim *cs) {
             if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
                 clientSimGetLobbyMapUploadStatus(cs) == 4) {
                 switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
-                    case 4: return "Server busy — try again";
+                    case 4: return "Another upload is in flight.";
                     case 5: return "Uploads disabled on this server.";
                     case 6: return "Server map library is full.";
+                    case 7: return "Too many requests — please wait a moment before retrying.";
                     default: return "Upload rejected by server.";
                 }
             }

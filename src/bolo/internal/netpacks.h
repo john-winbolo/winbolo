@@ -485,6 +485,7 @@ static inline bool lobbyTimeMinutesIsValid(uint16_t minutes) {
 #define LOBBY_REJECT_UPLOAD_BUSY       4   /* another client's map upload is in flight */
 #define LOBBY_REJECT_UPLOAD_DISABLED   5   /* host disabled map uploads */
 #define LOBBY_REJECT_UPLOAD_LIMIT_HIT  6   /* per-map storage cap reached */
+#define LOBBY_REJECT_COOLDOWN          7   /* per-client request cooldown active */
 
 #define NAME_REJECT_INVALID         1   /* validator: any *_INVALID_* error */
 #define NAME_REJECT_TAKEN           2   /* duplicate via playerNameCompare */
