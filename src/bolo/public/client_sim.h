@@ -235,10 +235,9 @@ void clientSimSetAllianceLeaveFunc(ClientSim *cs, NetAllianceLeaveFunc func);
 void clientSimSetLockToggleSendFunc(ClientSim *cs, NetLockToggleSendFunc func);
 
 /* Install (or clear, with cb=NULL) a read-only control-event observer.
- * Survives in-place clientSimCreate rebuilds for the same reason the
- * transport binding does: the observer is owned by an external party
- * (the test harness) whose lifetime is independent of the ClientSim's
- * map-reload cycle. */
+ * Preserved across clientSimCreate's memset for the same reason the
+ * transport binding is: the observer is owned by an external party
+ * (the test harness) whose lifetime is independent of the ClientSim. */
 void clientSimSetControlObserver(ClientSim *cs, ControlObserverCb cb, void *ctx);
 
 /* Lobby chat helper — appends "name: message\n" to lobbyChatHistory */

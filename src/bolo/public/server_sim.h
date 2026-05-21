@@ -448,7 +448,6 @@ bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
 
 void serverSimRemoveBot(ServerSim *sim, BYTE playerNum);
 void serverSimDestroyBots(ServerSim *sim);
-void serverSimOnBotGameStart(ServerSim *sim);
 void serverSimSetBotTeams(ServerSim *sim,
                           const BYTE *teamOf, BYTE numPlayers);
 

@@ -173,8 +173,7 @@ ClientSim *clientSimAlloc(void) {
  *********************************************************/
 bool clientSimCreate(ClientSim *cs) {
   /* Preserve transport / subscriber / brain-list / observer /
-   * server-endpoint / LAN-only state across the wipe so an
-   * in-place rebuild keeps the connection alive. Fresh
+   * server-endpoint / LAN-only state across the memset. Fresh
    * clientSimAlloc + clientSimCreate callers have zeroed
    * fields anyway, so save/restore is a no-op there.
    *

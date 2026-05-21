@@ -373,8 +373,7 @@ struct ClientSim {
      * transport constructors return Transport by value.
      *
      * clientSimCreate preserves these three fields across its memset
-     * (save/restore in the function body) so an in-place rebuild keeps
-     * the connection alive. */
+     * (save/restore in the function body). */
     Transport transport;
     bool      hasTransport;
     bool      isUdpTransport;

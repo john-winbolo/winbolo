@@ -1868,10 +1868,6 @@ void serverSimDestroyBots(ServerSim *sim) {
     botManagerDestroy(sim);
 }
 
-void serverSimOnBotGameStart(ServerSim *sim) {
-    botManagerOnGameStart(sim);
-}
-
 void serverSimSetBotTeams(ServerSim *sim,
                           const BYTE *teamOf, BYTE numPlayers) {
     botManagerSetTeams(sim, teamOf, numPlayers);
@@ -2908,9 +2904,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
 
     /* Wire any bots in the roster into the running game (idempotent on
-     * a fresh sim with zero bots). Inlined from serverSimOnBotGameStart
-     * so the all-ready→StartGameInPlace path doesn't depend on the
-     * frontend remembering to call it separately. */
+     * a fresh sim with zero bots). */
     botManagerOnGameStart(sim);
 
     /* Apply team alliances: players with same non-zero teamNumber become allies */
