@@ -23,6 +23,7 @@
 #include "bg_game.h"
 #include "mapview.h"
 #include "tileloader.h"
+#include "sdl3draw.h"             /* sdl3DrawGetRenderer */
 #include "../../common/wb_log.h"
 #include "global.h"
 #include "everard_map.h"
@@ -147,6 +148,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         serverSimDestroy(bg->sim);
         return false;
     }
+    bg->texRenderer = renderer;
 
     bg->valid = true;
     bg->createdTicks = SDL_GetTicks();
@@ -414,8 +416,52 @@ static void bgGameRenderMapName(BgGame *bg, SDL_Renderer *renderer, int screenW,
     SDL_SetRenderScale(renderer, 1.0f, 1.0f);
 }
 
+/* If the SDL renderer has been destroyed and recreated (zoom change,
+ * skin reload) since bg->tilesTex was built, rebuild the texture
+ * against the current renderer. Cheap fast-path: a single pointer
+ * compare when the renderer is unchanged. */
+static void bgGameEnsureTexture(BgGame *bg) {
+    SDL_Renderer *cur = sdl3DrawGetRenderer();
+    if (bg->texRenderer == cur) return;
+
+    /* The previous renderer is gone — its textures are already
+     * invalidated by SDL3 when SDL_DestroyRenderer ran. Calling
+     * SDL_DestroyTexture on the stale handle is undefined behaviour,
+     * so we elide the destroy and just NULL the field. */
+    bg->tilesTex = NULL;
+    bg->texRenderer = cur;
+    if (cur == NULL) return;   /* No renderer to rebuild against yet. */
+
+    static Uint64 sLastTexErrLogMs = 0;
+    SDL_Surface *sheet = tileLoaderBuildSheet(16);
+    if (!sheet) {
+        Uint64 now = SDL_GetTicks();
+        if (now - sLastTexErrLogMs > 5000) {
+            WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                         "[BgGame] tileLoaderBuildSheet failed during "
+                         "renderer-recreate rebuild");
+            sLastTexErrLogMs = now;
+        }
+        return;
+    }
+    bg->tilesTex = SDL_CreateTextureFromSurface(cur, sheet);
+    SDL_DestroySurface(sheet);
+    if (bg->tilesTex) {
+        SDL_SetTextureScaleMode(bg->tilesTex, SDL_SCALEMODE_NEAREST);
+    } else {
+        Uint64 now = SDL_GetTicks();
+        if (now - sLastTexErrLogMs > 5000) {
+            WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                         "[BgGame] SDL_CreateTextureFromSurface failed "
+                         "during renderer-recreate rebuild");
+            sLastTexErrLogMs = now;
+        }
+    }
+}
+
 void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) {
     if (!bg || !bg->valid) return;
+    bgGameEnsureTexture(bg);
 
     /* Pick zoom factor so the map content area fits the screen.
      * mapTilesW/H = number of tiles in the bounding box.
@@ -428,10 +474,12 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     int zf = zfW < zfH ? zfW : zfH;
     if (zf < 1) zf = 1;
 
-    MapViewCtx ctx = { renderer, bg->tilesTex, zf, 1 };
-    mapViewRenderCentered(&ctx, bg->sim,
-                          bg->viewCenterX, bg->viewCenterY,
-                          0, 0, screenW, screenH, bg->cameraPlayer);
+    if (bg->tilesTex != NULL) {
+        MapViewCtx ctx = { renderer, bg->tilesTex, zf, 1 };
+        mapViewRenderCentered(&ctx, bg->sim,
+                              bg->viewCenterX, bg->viewCenterY,
+                              0, 0, screenW, screenH, bg->cameraPlayer);
+    }
 
     /* Draw "Map: <name>" next to play/pause button, fading out after 10 seconds */
     bgGameRenderMapName(bg, renderer, screenW, screenH);

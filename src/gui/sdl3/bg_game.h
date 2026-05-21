@@ -35,6 +35,12 @@ typedef struct BgGame {
     ServerSim   *sim;
     bool         valid;         /* true if sim was loaded successfully */
     SDL_Texture *tilesTex;      /* Own tile atlas for bg rendering */
+    /* Renderer the texture was created against. SDL3 invalidates child
+     * textures when its renderer is destroyed, so the next bgGameRender
+     * checks this against sdl3DrawGetRenderer() and rebuilds tilesTex
+     * when they differ. NULL = uninitialised (no texture has been
+     * built yet). */
+    SDL_Renderer *texRenderer;
     BYTE         cameraPlayer;  /* Player slot to follow with camera */
     WORLD        viewCenterX;   /* Camera world position */
     WORLD        viewCenterY;
