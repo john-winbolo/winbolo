@@ -224,8 +224,8 @@ void serverInstanceTick(ServerSim *sim) {
 
   if (sim->state == serverStateRunning) {
     /* Run brain AI bots — queues two InputPackets per bot (keys + game) */
-    if (botManagerGetNumBots() > 0) {
-      botManagerTick(sim, sim->botAiType);
+    if (serverSimGetNumBots(sim) > 0) {
+      serverSimBotTick(sim, sim->botAiType);
     }
     /* Run two sim ticks per 20ms callback to match the client's
      * 100Hz rate (alternating keys tick + game tick).
@@ -385,7 +385,7 @@ void serverInstanceTick(ServerSim *sim) {
           evt.u.gamePhase.countdownSeconds = 0;
           serverSimPublishControl(sim, &evt);
         }
-        if (botManagerGetNumBots() > 0) {
+        if (serverSimGetNumBots(sim) > 0) {
           botManagerOnGameStart(sim);
         }
         /* Notify WBN that we are now in-game */

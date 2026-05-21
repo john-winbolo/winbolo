@@ -442,6 +442,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.lagCompTicks = 0;
     memset(sim->sim.perPlayerCompTicks, 0, sizeof(sim->sim.perPlayerCompTicks));
 
+    botManagerInitInSim(&sim->botMgr, sim, 0);
+
     gameTypeSet(&sim->sim.game, game);
     logCreate();
 
@@ -1528,7 +1530,7 @@ int serverSimFindFreeSlot(const ServerSim *sim) {
     if (sim == NULL) return -1;
     limit = (sim->maxPlayers > 0) ? sim->maxPlayers : (BYTE)MAX_TANKS;
     for (i = 0; i < limit; i++) {
-        if (!sim->playerConnected[i] && !botManagerIsBot((BYTE)i)) {
+        if (!sim->playerConnected[i] && !botManagerIsBot(sim, (BYTE)i)) {
             return i;
         }
     }
@@ -1821,24 +1823,25 @@ bool serverSimBotPoolInit(int threads) {
     return botManagerInit(threads);
 }
 
-void serverSimRequestBotThreads(int total_runners) {
-    botManagerRequestThreads(total_runners);
+void serverSimRequestBotThreads(ServerSim *sim, int total_runners) {
+    botManagerRequestThreads(sim, total_runners);
 }
 
-int serverSimGetBotThreads(void) {
-    return botManagerGetThreads();
+int serverSimGetBotThreads(ServerSim *sim) {
+    return botManagerGetThreads(sim);
 }
 
-int serverSimGetPendingBotThreads(void) {
-    return botManagerGetPendingThreads();
+int serverSimGetPendingBotThreads(ServerSim *sim) {
+    return botManagerGetPendingThreads(sim);
 }
 
-void serverSimSetBotDefaultDebugMode(bool enabled) {
-    botManagerSetDefaultDebugMode(enabled);
+void serverSimSetBotDefaultDebugMode(ServerSim *sim, bool enabled) {
+    botManagerSetDefaultDebugMode(sim, enabled);
 }
 
-void serverSimSetBotPreThinkHook(void (*hook)(int playerNum)) {
-    botManagerSetPreThinkHook(hook);
+void serverSimSetBotPreThinkHook(ServerSim *sim,
+                                 void (*hook)(int playerNum)) {
+    botManagerSetPreThinkHook(sim, hook);
 }
 
 bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
@@ -1879,38 +1882,57 @@ void serverSimBotTick(ServerSim *sim, aiType ai) {
 }
 
 BYTE serverSimGetNumBots(ServerSim *sim) {
-    (void)sim;
-    return botManagerGetNumBots();
+    return botManagerGetNumBots(sim);
 }
 
 bool serverSimHasAnyBot(ServerSim *sim) {
-    (void)sim;
-    return botManagerHasAnyBot();
+    return botManagerHasAnyBot(sim);
 }
 
 bool serverSimIsBot(ServerSim *sim, BYTE playerNum) {
-    (void)sim;
-    return botManagerIsBot(playerNum);
+    return botManagerIsBot(sim, playerNum);
 }
 
 double serverSimGetBotLastThinkMs(ServerSim *sim, BYTE playerNum) {
-    (void)sim;
-    return botManagerGetLastThinkMs(playerNum);
+    return botManagerGetLastThinkMs(sim, playerNum);
 }
 
 bool serverSimGetBotInfo(ServerSim *sim, BYTE playerNum, BotInfo *out) {
-    (void)sim;
-    return botManagerGetBotInfo(playerNum, out);
+    return botManagerGetBotInfo(sim, playerNum, out);
 }
 
 void serverSimGetBotPoolStats(ServerSim *sim, BotPoolStats *out) {
-    (void)sim;
-    botManagerGetPoolStats(out);
+    botManagerGetPoolStats(sim, out);
 }
 
 bool serverSimToggleAllBrainDebugMode(ServerSim *sim) {
-    (void)sim;
-    return botManagerToggleAllBrainDebugMode();
+    return botManagerToggleAllBrainDebugMode(sim);
+}
+
+int serverSimGetActiveBotCount(ServerSim *sim) {
+    return botManagerGetActiveBotCount(sim);
+}
+
+BrainPathfinder *serverSimGetBotBrainPathfinder(ServerSim *sim, BYTE playerNum) {
+    return botManagerGetBrainPathfinder(sim, playerNum);
+}
+
+OverlayCmdBuffer *serverSimGetBotOverlayCmds(ServerSim *sim, BYTE playerNum) {
+    return botManagerGetOverlayCmds(sim, playerNum);
+}
+
+bool serverSimGetBotGoalInfo(ServerSim *sim, BYTE playerNum,
+                             BrainGoalInfo *out) {
+    return botManagerGetGoalInfo(sim, playerNum, out);
+}
+
+bool serverSimBotExecLua(ServerSim *sim, BYTE playerNum, const char *src) {
+    return botManagerExecLua(sim, playerNum, src);
+}
+
+char *serverSimBotEvalLuaString(ServerSim *sim, BYTE playerNum,
+                                const char *src) {
+    return botManagerEvalLuaString(sim, playerNum, src);
 }
 
 void serverSimSetBotBrainPath(ServerSim *sim, const char *path) {
@@ -2470,7 +2492,7 @@ void serverSimInformation(ServerSim *sim, bool locked) {
              * the brain's most recent timing. Mute fields suppressed
              * when zero — see commit message. */
             BotInfo bi;
-            if (botManagerGetBotInfo(count, &bi)) {
+            if (botManagerGetBotInfo(sim, count, &bi)) {
                 if (bi.hasBrain) {
                     if (bi.overrunCount == 0) {
                         fprintf(stdout,
@@ -2493,9 +2515,9 @@ void serverSimInformation(ServerSim *sim, bool locked) {
      * active. Shows the per-bot budget against the 20ms server tick
      * plus per-stage last + EWMA wall-clock so operators can spot
      * spikes against averages at a glance. */
-    if (botManagerHasAnyBot()) {
+    if (botManagerHasAnyBot(sim)) {
         BotPoolStats ps;
-        botManagerGetPoolStats(&ps);
+        botManagerGetPoolStats(sim, &ps);
         if (ps.workerCount == 0) {
             fprintf(stdout,
                     "Bot pool: single-thread (%d active bots), target=%.1fms/bot\n",
@@ -5696,7 +5718,7 @@ bool serverSimApplyLobbySetting(ServerSim *sim,
             serverSimSetBotAiType(sim, (aiType)value[0]);
             if ((aiType)value[0] == aiNone) {
                 for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
-                    if (botManagerIsBot(bi)) {
+                    if (botManagerIsBot(sim, bi)) {
                         botManagerRemoveBot(sim, bi);
                         serverSimPublishLobbySlot(sim, bi);
                     }
@@ -5743,7 +5765,7 @@ bool serverSimApplyLobbySetting(ServerSim *sim,
                 serverSimSetAiPolicy(sim, (uint8_t)aiNone);
                 serverSimSetBotAiType(sim, aiNone);
                 for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
-                    if (botManagerIsBot(bi)) {
+                    if (botManagerIsBot(sim, bi)) {
                         botManagerRemoveBot(sim, bi);
                         serverSimPublishLobbySlot(sim, bi);
                     }

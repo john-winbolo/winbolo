@@ -20,6 +20,7 @@
 #include "mapgen.h" /* MapGenConfig — embedded by value in randomMapConfig */
 #include "brain_list_internal.h" /* BRAIN_LIST_PATH_LEN — brainPaths mirror */
 #include "upload_policy.h"  /* UploadPolicy — broadcast in lobby-settings event */
+#include "bot_manager.h"    /* BotManager — embedded by value below */
 
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
@@ -45,6 +46,8 @@ struct ServerSim {
      * the lobby state. */
     TeamMetadata    teams[MAX_TANKS];
     LobbyBotConfig  botConfigs[MAX_TANKS];
+
+    BotManager      botMgr;  /* per-sim bot manager — initialised by botManagerInitInSim */
 
     /* Per-bot brain selection as an index into brainList. 0xFF means
      * "use the global botBrainPath" (the CLI-configured default). The

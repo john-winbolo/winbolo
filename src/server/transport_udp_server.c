@@ -369,8 +369,8 @@ static int balanceThreadFunc(void *data) {
          * team assignments. */
         if (!includeBots) {
             for (i = 0; i < MAX_TANKS; i++) {
-                if (botManagerIsBot((BYTE)i)) {
-                    botManagerRemoveBot(sim, (BYTE)i);
+                if (serverSimIsBot(sim, (BYTE)i)) {
+                    serverSimRemoveBot(sim, (BYTE)i);
                     publishLobbySlot(sim, (BYTE)i);
                 }
             }
@@ -2096,7 +2096,12 @@ const char *transportUdpServerGetPlayerName(BYTE playerNum) {
     }
     /* Bots have no UDP connection but their name was set via
      * transportUdpServerSetBotName; treat them as valid name owners. */
-    if (!udpServer.clients[playerNum].connected && !botManagerIsBot(playerNum)) {
+    /* sim not in scope here (this is a callback fed to the snapshot
+     * builder); reach the active sim through serverSimGetActive so the
+     * bot check still works after BotManager moved onto ServerSim. */
+    ServerSim *active = serverSimGetActive();
+    if (!udpServer.clients[playerNum].connected &&
+        (active == NULL || !serverSimIsBot(active, playerNum))) {
         return NULL;
     }
     return udpServer.clients[playerNum].playerName;
@@ -2770,8 +2775,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 serverSimGetState(sim) == serverStateLobby &&
                 len >= PACKET_HEADER_SIZE + 1) {
                 uint8_t targetSlot = buf[PACKET_HEADER_SIZE];
-                if (targetSlot < MAX_TANKS && botManagerIsBot(targetSlot)) {
-                    botManagerRemoveBot(sim, targetSlot);
+                if (targetSlot < MAX_TANKS && serverSimIsBot(sim, targetSlot)) {
+                    serverSimRemoveBot(sim, targetSlot);
                     publishLobbySlot(sim, targetSlot);
                 }
             }
@@ -2848,8 +2853,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                         serverSimSetBotAiType(sim, (aiType)value[0]);
                         if ((aiType)value[0] == aiNone) {
                             for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
-                                if (botManagerIsBot(bi)) {
-                                    botManagerRemoveBot(sim, bi);
+                                if (serverSimIsBot(sim, bi)) {
+                                    serverSimRemoveBot(sim, bi);
                                     publishLobbySlot(sim, bi);
                                 }
                             }
@@ -2916,8 +2921,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                             serverSimSetAiPolicy(sim, (uint8_t)aiNone);
                             serverSimSetBotAiType(sim, aiNone);
                             for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
-                                if (botManagerIsBot(bi)) {
-                                    botManagerRemoveBot(sim, bi);
+                                if (serverSimIsBot(sim, bi)) {
+                                    serverSimRemoveBot(sim, bi);
                                     publishLobbySlot(sim, bi);
                                 }
                             }
@@ -3070,7 +3075,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             if (slot >= MAX_TANKS || difficulty > 2 || personality > 3 ||
                 nameLen > 31 ||
                 len < PACKET_HEADER_SIZE + 4 + nameLen ||
-                !botManagerIsBot(slot)) {
+                !serverSimIsBot(sim, slot)) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
                               LOBBY_REJECT_INVALID); break;
             }
@@ -3153,7 +3158,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             }
             uint8_t slot     = buf[PACKET_HEADER_SIZE + 0];
             uint8_t brainIdx = buf[PACKET_HEADER_SIZE + 1];
-            if (slot >= MAX_TANKS || !botManagerIsBot(slot) ||
+            if (slot >= MAX_TANKS || !serverSimIsBot(sim, slot) ||
                 serverSimGetBrainPathForIdx(sim, brainIdx) == NULL) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_BOT_BRAIN,
                               LOBBY_REJECT_INVALID); break;
@@ -4088,7 +4093,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                          * the caller asked for "Bots included". When
                          * !includeBots the bots are kicked at APPLY time
                          * and don't need to be skill-placed. */
-                        if (btd->includeBots && botManagerIsBot((BYTE)i)) {
+                        if (btd->includeBots && serverSimIsBot(sim, (BYTE)i)) {
                             btd->botSlots[btd->numBotSlots++] = (uint8_t)i;
                         }
                     }
@@ -4139,8 +4144,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                  * and the proposal contains no team for those slots. */
                 if (!serverSimGetBalanceProposal(sim)->includeBots) {
                     for (i = 0; i < MAX_TANKS; i++) {
-                        if (botManagerIsBot((BYTE)i)) {
-                            botManagerRemoveBot(sim, (BYTE)i);
+                        if (serverSimIsBot(sim, (BYTE)i)) {
+                            serverSimRemoveBot(sim, (BYTE)i);
                             publishLobbySlot(sim, (BYTE)i);
                         }
                     }

@@ -21,7 +21,6 @@
 #include "netpacks.h"                      /* MAP_DOWNLOAD_MAX_SIZE, lobbyBotNameAcceptable */
 #include "input_packet.h"
 #include "global.h"
-#include "bot_manager.h"                   /* botManagerIsBot (local lobby applies) */
 #include "lobby_bot_pools.h"                /* lobbyBotPoolCount (pool uniqueness rewrite) */
 #include "../server/threads.h"
 #include "../gui/lang.h"
@@ -183,6 +182,16 @@ static bool clientSimConnectLocalBody(ClientSim *cs, struct ServerSim *sim,
 
   /* 7. Set up the self-record (tank + name + client type/flags). */
   clientSimSetupSelf(cs, slot, playerName, clientType, clientFlags);
+
+  /* 7b. Push the server's authoritative game-timing settings into the
+   *     ClientSim. The UDP path applies these from JOIN_ACCEPT
+   *     (transport_udp_client.c). On local transport there is no
+   *     JOIN_ACCEPT, so the equivalent setters run here. Without
+   *     gmeLength in particular, client_ui_events.c sees gmeLength==0
+   *     on tick 1 and immediately fires frontEndGameOver. */
+  clientSimSetGameType(cs, serverSimGetGameType(sim));
+  clientSimSetGmeStartDelay(cs, (int)serverSimGetStartDelay(sim));
+  clientSimSetGmeLength(cs, serverSimGetGameLength(sim));
 
   /* 8. Push per-tank user preferences now that the tank exists. */
   frontEndApplyLocalTankPrefs(cs);
@@ -494,7 +503,7 @@ void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
     if (!serverSimIsLobbyEnabled(sim) ||
         serverSimGetState(sim) != serverStateLobby) break;
     if (slot >= MAX_TANKS || difficulty > 2 || personality > 3) break;
-    if (!botManagerIsBot(slot)) break;
+    if (!serverSimIsBot(sim, slot)) break;
 
     char validatedName[PACKET_MAX_PLAYER_NAME];
     const bool haveName = (name != NULL && name[0] != '\0');

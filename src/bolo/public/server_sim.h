@@ -54,6 +54,19 @@ typedef struct GameSim GameSim;
  * server_sim.h doesn't drag client_sim.h's include closure into every TU. */
 struct ControlEvent;
 
+/* Forward declarations for internal types returned by braintest
+ * accessors as opaque pointers. The structs themselves live in
+ * the internal tier (BrainPathfinder) or the public brain_overlay.h
+ * (OverlayCmdBuffer). */
+#ifndef BRAINPATHFINDER_TYPEDEF
+#define BRAINPATHFINDER_TYPEDEF
+typedef struct BrainPathfinder  BrainPathfinder;
+#endif
+#ifndef OVERLAYCMDBUFFER_TYPEDEF
+#define OVERLAYCMDBUFFER_TYPEDEF
+typedef struct OverlayCmdBuffer OverlayCmdBuffer;
+#endif
+
 typedef int SubscriberHandle;
 #define SUBSCRIBER_HANDLE_INVALID (-1)
 
@@ -390,10 +403,26 @@ typedef struct {
     uint32_t totalOverruns;     /* sum of overrunCount across bots */
 } BotPoolStats;
 
-/* Max candidate count for BrainGoalInfo (defined in bot_manager.h,
- * which is internal-only). Lives here so it can be referenced from
- * the public surface without exposing bot_manager.h. */
+/* Max candidate count for BrainGoalInfo. */
 #define BRAIN_GOAL_MAX_CANDIDATES 32
+
+/* Goal info for debug viewer (BrainTest). Read by
+ * serverSimGetBotGoalInfo from the brain's Lua state each frame. */
+typedef struct {
+    char kind[32];          /* goal kind string (e.g. "attack_pill") */
+    int  mx, my;            /* goal target map coords */
+    int  target_id;         /* item index (base/pill number, -1 if none) */
+    char substate[32];      /* attack substate (or empty) */
+
+    /* Last evaluated candidate pool from cost competition */
+    struct {
+        char  desc[120];
+        float cost;
+        bool  winner;
+        float phase_weight;
+    } candidates[BRAIN_GOAL_MAX_CANDIDATES];
+    int num_candidates;
+} BrainGoalInfo;
 
 /*********************************************************
  * Bot pool wrappers.
@@ -417,24 +446,24 @@ bool serverSimBotPoolInit(int threads);
 
 /* Request a live resize of the worker pool. Stashes the
  * value as pending; the next serverSimBotTick applies it. */
-void serverSimRequestBotThreads(int total_runners);
+void serverSimRequestBotThreads(ServerSim *sim, int total_runners);
 
 /* Current total runner count (workers + producer). */
-int  serverSimGetBotThreads(void);
+int  serverSimGetBotThreads(ServerSim *sim);
 
 /* Pending thread-count request, or -1 if no resize pending. */
-int  serverSimGetPendingBotThreads(void);
+int  serverSimGetPendingBotThreads(ServerSim *sim);
 
 /* === Default debug mode for new bots === */
 /* Set the BRAIN_DEBUG_MODE value bots inherit at creation.
  * Affects bots created AFTER this call. */
-void serverSimSetBotDefaultDebugMode(bool enabled);
+void serverSimSetBotDefaultDebugMode(ServerSim *sim, bool enabled);
 
 /* === Pre-think hook === */
 /* Register a callback invoked just before each bot's brain
  * runs (with the bot's playerNum) and again with -1 after.
  * Pass NULL to clear. */
-void serverSimSetBotPreThinkHook(void (*hook)(int playerNum));
+void serverSimSetBotPreThinkHook(ServerSim *sim, void (*hook)(int playerNum));
 
 /* === Per-sim bot lifecycle === */
 
@@ -465,6 +494,17 @@ double serverSimGetBotLastThinkMs(ServerSim *sim, BYTE playerNum);
 bool   serverSimGetBotInfo(ServerSim *sim, BYTE playerNum, BotInfo *out);
 void   serverSimGetBotPoolStats(ServerSim *sim, BotPoolStats *out);
 bool   serverSimToggleAllBrainDebugMode(ServerSim *sim);
+int    serverSimGetActiveBotCount(ServerSim *sim);
+
+/* === Bot brain introspection (BrainTest debug viewer) === */
+BrainPathfinder  *serverSimGetBotBrainPathfinder(ServerSim *sim, BYTE playerNum);
+OverlayCmdBuffer *serverSimGetBotOverlayCmds(ServerSim *sim, BYTE playerNum);
+bool              serverSimGetBotGoalInfo(ServerSim *sim, BYTE playerNum,
+                                          BrainGoalInfo *out);
+bool              serverSimBotExecLua(ServerSim *sim, BYTE playerNum,
+                                      const char *src);
+char             *serverSimBotEvalLuaString(ServerSim *sim, BYTE playerNum,
+                                            const char *src);
 
 /* serverSimSetTeam: moved to internal/server_sim_lifecycle.h —
  * applied by UDP PACKET_LOBBY_TEAM_SET / PACKET_LOBBY_ADD_BOT

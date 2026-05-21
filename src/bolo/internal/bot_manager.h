@@ -29,18 +29,156 @@
 #include "client_enums.h"  /* aiType, gameType */
 #include "brain_pathfinder.h"
 #include "brain_overlay.h"
-#include "server_sim.h"    /* BotInfo, BotPoolStats, BRAIN_GOAL_MAX_CANDIDATES */
+#include "server_sim.h"    /* BotInfo, BotPoolStats, BRAIN_GOAL_MAX_CANDIDATES, SubscriberHandle */
+#include "transport.h"     /* Transport */
+#include "client_snapshot.h"
+#include "input_packet.h"  /* SnapshotHeader, TankSnapshot, ... MAX_SNAPSHOT_* */
+#include "control_event.h"
+#include "../gui/sdl3/luabrainshandler.h"  /* LuaBrainInstance */
 
 /* Forward declarations */
 struct ServerSim;
 struct lua_State;
 
+/* Per-bot context. Owns the bot's ClientSim, passive transport, brain
+ * instance, and the abort-flag plumbing the count hook and C bindings
+ * (cpf_/wsim_/NA) read to cut think short on budget overrun. */
+typedef struct {
+    /* Back-pointer to the owning ServerSim. Set by botManagerAddBot so
+     * Lua bindings that only get a lua_State (via lua_getextraspace)
+     * can route back to the per-sim BotManager without a global. */
+    struct ServerSim *sim;
+    ClientSim      *cs;
+    Transport       transport;
+    LuaBrainInstance brain;
+    /* Filesystem path to the brain script for this bot. Captured at
+     * botManagerAddBot time so botManagerGetBotInfo can surface the
+     * brain identity without confusing it with the player display
+     * name (multiple bots commonly share one brain script). */
+    char            brainPath[256];
+    BYTE            playerNum;
+    bool            active;
+    aiType          ai;
+    /* Wall-clock duration of this bot's most recent brain.think call,
+     * in milliseconds. Updated every botManagerTick. Surfaced via
+     * botManagerGetLastThinkMs so HUDs / perf graphs can read it. */
+    double          lastThinkMs;
+    /* Number of ticks this bot's think exceeded targetMs * 1.5. Counts
+     * every overrun; see lastOverrunWarnTick for the rate-limited log. */
+    Uint32          overrunCount;
+    /* Last tick at which a budget-overrun warning was logged for this
+     * bot. Limits the warning to at most one per ~50 ticks. */
+    Uint32          lastOverrunWarnTick;
+    /* Set by the count hook when SDL_GetPerformanceCounter() passes
+     * thinkDeadlineCounter; polled by C bindings (cpf/wsim/NA) at
+     * their outer-loop checkpoints so they can return a partial result
+     * cheaply instead of running to completion past the budget. The
+     * hook also raises luaL_error("tick_budget_exceeded") in the same
+     * step, so once C returns to Lua the longjmp unwinds to the
+     * brainCoreCallThink pcall within ~1000 instructions. Reset to 0
+     * each tick before dispatch.  */
+    SDL_AtomicInt   abort_flag;
+    /* Absolute SDL_GetPerformanceCounter() value at which this bot's
+     * think budget elapses. Set per-tick by runBotThinkJob from
+     * t0 + sim->botMgr.lastTargetMs * SDL_GetPerformanceFrequency() / 1000
+     * so the count hook does one cheap compare against `now`. */
+    Uint64          thinkDeadlineCounter;
+    /* One-tick edge signal set by the producer when the previous tick
+     * was aborted by the budget hook. Surfaced to the brain via
+     * brain.wasKilled; reset to false immediately after being passed,
+     * so a brain only sees it for the single tick that follows an
+     * abort. */
+    bool            wasKilled;
+    /* The bot's lua_State stores BotContext * via lua_getextraspace(L).
+     * Set up exactly once during botManagerAddBot after the brain
+     * instance is created; the count hook and every cpf_/wsim_/NA
+     * binding cast lua_getextraspace(L) back to BotContext * to read
+     * abort_flag and thinkDeadlineCounter without per-binding plumbing. */
+    SubscriberHandle controlSub;
+} BotContext;
+
+/* Per-bot scratch carried across the three within-tick stages
+ * (snapshot/sync, brain tick, input dispatch). One instance per bot
+ * slot lives in sim->botMgr.jobs[] so the worker thread sees only its
+ * own indexed entry — packets and the needRemove flag stay thread-local
+ * to that bot. */
+typedef struct {
+    BotContext *bot;
+    ServerSim  *sim;
+    SnapshotHeader      hdr;
+    TankSnapshot        tanks[MAX_TANKS];
+    ShellSnapshot       shells[MAX_SNAPSHOT_SHELLS];
+    TkExplosionSnapshot tkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
+    BaseSnapshot        bases[MAX_SNAPSHOT_BASES];
+    PillSnapshot        pills[MAX_SNAPSHOT_PILLS];
+    GameEvent           events[MAX_SNAPSHOT_EVENTS];
+    InputPacket         pkt1, pkt2;
+    bool                needRemove;  /* worker → producer: brain tick failed */
+    bool                hasInput;    /* worker → producer: pkt1/pkt2 valid */
+    /* worker → producer: brain.think was aborted by the count hook this
+     * tick (tick_budget_exceeded). The bot stays alive; the producer
+     * surfaces the kill to the next tick via bot->wasKilled. */
+    bool                wasKilled;
+} BotJobCtx;
+
+typedef struct BotManager {
+    struct ServerSim *sim;  /* back-pointer; callbacks read it */
+
+    BotContext   bots[MAX_TANKS];
+    int          numBots;
+
+    /* Total concurrent brain-tick runners including the producer thread.
+     * Saved by botManagerInit after validation; read by the budget formula
+     * to scale per-bot time when more bots than runners are active. */
+    int          threadsConfig;
+
+    /* Pending thread-count request from the BrainTest panel. -1 = no
+     * pending change. Applied at the top of botManagerTick (between ticks),
+     * never mid-dispatch. Single-producer (main thread) so a plain int
+     * is fine — no atomics needed. */
+    int          pendingThreads;
+
+    /* Default debug mode for newly-created bots. Hosts override via
+     * botManagerSetDefaultDebugMode (BrainTest sets true at startup;
+     * release game leaves false). */
+    bool         defaultDebugMode;
+
+    /* Runtime debug mode tracker. Flipped by botManagerToggleAllBrainDebugMode
+     * so the toggle alternates correctly across calls. */
+    bool         brainDebugMode;
+
+    /* EWMA of the serial-stage cost (ms) of recent ticks. Seeded by the
+     * first call to botManagerRecordSerialMs to avoid biasing toward zero. */
+    double       serialMsEwma;
+    /* Last serial-stage cost (ms). Companion to serialMsEwma so the
+     * server `info` summary can show last + EWMA together. */
+    double       lastSerialMs;
+
+    /* Wall-clock cost of the most recent dispatched brain-think stage, in
+     * milliseconds. Set per-tick at the end of botManagerTick; reserved
+     * for future refinements (e.g. computing the EWMA from the full
+     * serverInstanceTick instead of approximating it via kReservedSimMs). */
+    double       lastBrainPhaseMs;
+    /* EWMA of the brain-think stage cost (ms). Display-only — the budget
+     * formula reads serialMsEwma, not this. */
+    double       brainPhaseMsEwma;
+
+    /* Per-bot brain-tick budget computed for the current tick. Set per-tick
+     * before dispatch so the input-send overrun check and any future server
+     * info command can read the same number the brains were given. */
+    double       lastTargetMs;
+
+    BotJobCtx    jobs[MAX_TANKS];
+    int          jobIndices[MAX_TANKS];
+
+    void       (*preThinkHook)(int playerNum);
+} BotManager;
+
 /*********************************************************
  *NAME:          botManagerInit
  *PURPOSE:
- *  Zeros the bot array, eager-inits the worldsim trig
- *  tables, and creates the bot worker pool. Call once at
- *  startup.
+ *  Eager-inits the worldsim trig tables and creates the bot
+ *  worker pool. Call once at process startup.
  *
  *  `threads` is the total number of concurrent brain-tick
  *  runners including the producer (main) thread; the pool
@@ -56,6 +194,18 @@ struct lua_State;
 bool botManagerInit(int threads);
 
 /*********************************************************
+ *NAME:          botManagerInitInSim
+ *PURPOSE:
+ *  Initialise a per-sim BotManager embedded in a ServerSim.
+ *  Zeros the BotManager, plants the sim back-pointer, and
+ *  seeds threadsConfig. threads <= 0 means "use the worker
+ *  pool's current size + 1" (falling back to 1 if the pool
+ *  isn't created yet); otherwise clamps to logical cores
+ *  and MAX_TANKS.
+ *********************************************************/
+void botManagerInitInSim(BotManager *bm, struct ServerSim *sim, int threads);
+
+/*********************************************************
  *NAME:          botManagerSetDefaultDebugMode
  *PURPOSE:
  *  Set the BRAIN_DEBUG_MODE value bots inherit at creation.
@@ -68,7 +218,7 @@ bool botManagerInit(int threads);
  *  unchanged; use botManagerToggleAllBrainDebugMode to flip
  *  the runtime global on existing brains.
  *********************************************************/
-void botManagerSetDefaultDebugMode(bool enabled);
+void botManagerSetDefaultDebugMode(struct ServerSim *sim, bool enabled);
 
 /*********************************************************
  *NAME:          botManagerRequestThreads
@@ -84,7 +234,7 @@ void botManagerSetDefaultDebugMode(bool enabled);
  *  and never mid-dispatch. Safe to call from the main thread
  *  any time (e.g. from a panel slider during render).
  *********************************************************/
-void botManagerRequestThreads(int total_runners);
+void botManagerRequestThreads(struct ServerSim *sim, int total_runners);
 
 /*********************************************************
  *NAME:          botManagerGetThreads
@@ -93,7 +243,7 @@ void botManagerRequestThreads(int total_runners);
  *  1 means serial dispatch. Reflects the live state, not any
  *  pending request.
  *********************************************************/
-int  botManagerGetThreads(void);
+int  botManagerGetThreads(const struct ServerSim *sim);
 
 /*********************************************************
  *NAME:          botManagerGetPendingThreads
@@ -104,7 +254,7 @@ int  botManagerGetThreads(void);
  *  applying it. Cleared to -1 by the apply step (whether the
  *  pool create succeeded or fell back to serial).
  *********************************************************/
-int  botManagerGetPendingThreads(void);
+int  botManagerGetPendingThreads(const struct ServerSim *sim);
 
 /*********************************************************
  *NAME:          botManagerAddBot
@@ -156,7 +306,8 @@ void botManagerTick(struct ServerSim *sim, aiType ai);
  *  Pass NULL to clear. Used by BrainTest to track which
  *  bot is currently thinking (for overlay registration).
  *********************************************************/
-void botManagerSetPreThinkHook(void (*hook)(int playerNum));
+void botManagerSetPreThinkHook(struct ServerSim *sim,
+                               void (*hook)(int playerNum));
 
 /*********************************************************
  *NAME:          botManagerOnGameStart
@@ -218,7 +369,7 @@ void botManagerDestroy(struct ServerSim *sim);
  *PURPOSE:
  *  Returns the number of currently active bots.
  *********************************************************/
-BYTE botManagerGetNumBots(void);
+BYTE botManagerGetNumBots(const struct ServerSim *sim);
 
 /*********************************************************
  *NAME:          botManagerIsBot
@@ -228,7 +379,7 @@ BYTE botManagerGetNumBots(void);
  *ARGUMENTS:
  *  playerNum - Player slot to check
  *********************************************************/
-bool botManagerIsBot(BYTE playerNum);
+bool botManagerIsBot(const struct ServerSim *sim, BYTE playerNum);
 
 /*********************************************************
  *NAME:          botManagerGetBrainPathfinder
@@ -240,7 +391,8 @@ bool botManagerIsBot(BYTE playerNum);
  *ARGUMENTS:
  *  playerNum - Player slot to query
  *********************************************************/
-BrainPathfinder *botManagerGetBrainPathfinder(BYTE playerNum);
+BrainPathfinder *botManagerGetBrainPathfinder(const struct ServerSim *sim,
+                                              BYTE playerNum);
 
 /*********************************************************
  *NAME:          botManagerGetOverlayCmds
@@ -253,7 +405,8 @@ BrainPathfinder *botManagerGetBrainPathfinder(BYTE playerNum);
  *ARGUMENTS:
  *  playerNum - Player slot to query
  *********************************************************/
-OverlayCmdBuffer *botManagerGetOverlayCmds(BYTE playerNum);
+OverlayCmdBuffer *botManagerGetOverlayCmds(const struct ServerSim *sim,
+                                           BYTE playerNum);
 
 /*********************************************************
  *NAME:          botManagerGetLastThinkMs
@@ -266,7 +419,7 @@ OverlayCmdBuffer *botManagerGetOverlayCmds(BYTE playerNum);
  *ARGUMENTS:
  *  playerNum - Player slot to query
  *********************************************************/
-double botManagerGetLastThinkMs(BYTE playerNum);
+double botManagerGetLastThinkMs(const struct ServerSim *sim, BYTE playerNum);
 
 /*********************************************************
  *NAME:          botManagerComputePerBotTargetMs
@@ -277,15 +430,15 @@ double botManagerGetLastThinkMs(BYTE playerNum);
  *  the budget tightens when the rest of the tick gets
  *  busier and loosens when it doesn't.
  *
- *  Producer-thread only — reads the EWMA file-static
- *  without synchronisation. Returns the full tick target
- *  if the EWMA hasn't been seeded yet or no bots are
- *  active.
+ *  Producer-thread only — reads the EWMA without
+ *  synchronisation. Returns the full tick target if the
+ *  EWMA hasn't been seeded yet or no bots are active.
  *
  *ARGUMENTS:
  *  activeBots - Number of bots that will dispatch this tick
  *********************************************************/
-double botManagerComputePerBotTargetMs(int activeBots);
+double botManagerComputePerBotTargetMs(const struct ServerSim *sim,
+                                       int activeBots);
 
 /*********************************************************
  *NAME:          botManagerRecordSerialMs
@@ -296,19 +449,15 @@ double botManagerComputePerBotTargetMs(int activeBots);
  *  call to botManagerComputePerBotTargetMs uses the
  *  updated EWMA.
  *
- *  Producer-thread only — writes the EWMA file-static
- *  without synchronisation. The first call seeds the
- *  EWMA directly to avoid an init bias toward zero.
+ *  Producer-thread only — writes the EWMA without
+ *  synchronisation. The first call seeds the EWMA
+ *  directly to avoid an init bias toward zero.
  *
  *ARGUMENTS:
  *  ms - Wall-clock milliseconds spent in the tick's
  *       serial stages (snapshot/sync + input send).
  *********************************************************/
-void botManagerRecordSerialMs(double ms);
-
-/* BotInfo and BotPoolStats are defined in server_sim.h so the
- * public serverSim wrappers can return them without exposing
- * this header. */
+void botManagerRecordSerialMs(struct ServerSim *sim, double ms);
 
 /*********************************************************
  *NAME:          botManagerHasAnyBot
@@ -319,7 +468,7 @@ void botManagerRecordSerialMs(double ms);
  *  must hold the server mutex; reads bots[] without
  *  synchronisation.
  *********************************************************/
-bool botManagerHasAnyBot(void);
+bool botManagerHasAnyBot(const struct ServerSim *sim);
 
 /*********************************************************
  *NAME:          botManagerGetBotInfo
@@ -337,7 +486,8 @@ bool botManagerHasAnyBot(void);
  *  playerNum - Player slot to query
  *  out       - Output struct to fill
  *********************************************************/
-bool botManagerGetBotInfo(BYTE playerNum, BotInfo *out);
+bool botManagerGetBotInfo(const struct ServerSim *sim, BYTE playerNum,
+                          BotInfo *out);
 
 /*********************************************************
  *NAME:          botManagerGetPoolStats
@@ -354,7 +504,7 @@ bool botManagerGetBotInfo(BYTE playerNum, BotInfo *out);
  *ARGUMENTS:
  *  out - Output struct to fill (must not be NULL)
  *********************************************************/
-void botManagerGetPoolStats(BotPoolStats *out);
+void botManagerGetPoolStats(const struct ServerSim *sim, BotPoolStats *out);
 
 /*********************************************************
  *NAME:          botManagerGetActiveBotCount
@@ -371,7 +521,21 @@ void botManagerGetPoolStats(BotPoolStats *out);
  *  The heavier botManagerGetPoolStats remains producer-only;
  *  use this when only the active-bot count is needed.
  *********************************************************/
-int botManagerGetActiveBotCount(void);
+int botManagerGetActiveBotCount(const struct ServerSim *sim);
+
+/*********************************************************
+ *NAME:          botManagerActiveBotCountForLua
+ *PURPOSE:
+ *  Active-bot count for the sim that owns the bot whose
+ *  lua_State this is. Used by brain C bindings that have
+ *  only an L (e.g. NewAutopilot's pillcontrib overlay) and
+ *  need to gate on multi-bot vs single-bot mode.
+ *
+ *  Returns 0 when L has no associated bot (e.g. the
+ *  singleton GUI brain) so callers using a `> 1` multi-bot
+ *  check still let the binding run.
+ *********************************************************/
+int botManagerActiveBotCountForLua(struct lua_State *L);
 
 /*********************************************************
  *NAME:          botManagerEvalLuaString
@@ -388,7 +552,8 @@ int botManagerGetActiveBotCount(void);
  *  playerNum - Player slot
  *  src       - Lua chunk; should `return <something>`
  *********************************************************/
-char *botManagerEvalLuaString(BYTE playerNum, const char *src);
+char *botManagerEvalLuaString(struct ServerSim *sim, BYTE playerNum,
+                              const char *src);
 
 /*********************************************************
  *NAME:          botManagerExecLua
@@ -402,7 +567,8 @@ char *botManagerEvalLuaString(BYTE playerNum, const char *src);
  *  playerNum - Bot slot
  *  src       - Lua source string (NUL-terminated)
  *********************************************************/
-bool botManagerExecLua(BYTE playerNum, const char *src);
+bool botManagerExecLua(struct ServerSim *sim, BYTE playerNum,
+                       const char *src);
 
 /*********************************************************
  *NAME:          botManagerToggleAllBrainDebugMode
@@ -417,29 +583,7 @@ bool botManagerExecLua(BYTE playerNum, const char *src);
  *  removed `if BRAIN_DEBUG_MODE then ... end` blocks at
  *  build time, so toggling has no runtime effect there.
  *********************************************************/
-bool botManagerToggleAllBrainDebugMode(void);
-
-/* ------------------------------------------------------------------ */
-/* Goal info for debug viewer (BrainTest)                              */
-/* ------------------------------------------------------------------ */
-
-/* BRAIN_GOAL_MAX_CANDIDATES is defined in server_sim.h. */
-
-typedef struct {
-    char kind[32];          /* goal kind string (e.g. "attack_pill") */
-    int  mx, my;            /* goal target map coords */
-    int  target_id;         /* item index (base/pill number, -1 if none) */
-    char substate[32];      /* attack substate (or empty) */
-
-    /* Last evaluated candidate pool from cost competition */
-    struct {
-        char  desc[120];
-        float cost;
-        bool  winner;
-        float phase_weight;
-    } candidates[BRAIN_GOAL_MAX_CANDIDATES];
-    int num_candidates;
-} BrainGoalInfo;
+bool botManagerToggleAllBrainDebugMode(struct ServerSim *sim);
 
 /*********************************************************
  *NAME:          botManagerShouldAbort
@@ -469,6 +613,7 @@ bool botManagerShouldAbort(struct lua_State *L);
  *  playerNum - Player slot to query
  *  out       - Output struct to fill
  *********************************************************/
-bool botManagerGetGoalInfo(BYTE playerNum, BrainGoalInfo *out);
+bool botManagerGetGoalInfo(const struct ServerSim *sim, BYTE playerNum,
+                           BrainGoalInfo *out);
 
 #endif /* BOT_MANAGER_H */
