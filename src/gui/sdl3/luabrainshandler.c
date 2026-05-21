@@ -969,8 +969,8 @@ void luaBrainInstanceSetDebugMode(LuaBrainInstance *inst, bool enabled) {
   if (!inst || !inst->L) return;
   lua_pushboolean(inst->L, enabled);
   lua_setglobal(inst->L, "BRAIN_DEBUG_MODE");
-  /* Keep print2 gate in sync with debug mode (set initially in instance
-   * create; updated here so the BrainTest toggle flips it live). */
+  /* Keep print2 gate in sync — flipping debug mode mid-run should
+   * also start/stop the per-tick log file. */
   lua_pushboolean(inst->L, enabled);
   lua_setglobal(inst->L, "_PRINT2_ENABLED");
   /* Per-category gates follow the master debug flag for the signal-rich
