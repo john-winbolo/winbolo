@@ -144,6 +144,9 @@ M.IDS = {
   base_shield_viz   = { short = "Base shield viz",
                         long  = "ws_*/base_shield wall + line markers (legacy single-wall path)" },
 
+  repair_pill_viz   = { short = "Repair pill viz",
+                        long  = "Yellow target ring + status line for repair_pill dispatch (green=ready, red=blocked)" },
+
   -- Inspect overlay (right-click on pill etc).
   inspect_pill      = { short = "Inspect pill",
                         long  = "Full pill-attack inspector (range circles, scan spots, score legend)" },

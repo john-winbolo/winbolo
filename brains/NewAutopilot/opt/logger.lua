@@ -310,12 +310,15 @@ function M.log_tick(state, info, goal, keys, taps, build_cmd)
       state.front_center_mx, state.front_center_my, state.front_line_count or 0)
   end
 
-  -- Path chain: flat array [x1,y1,x2,y2,...] from A* trace
+  -- Path chain: flat array [x1,y1,x2,y2,...] from A*/Dijkstra trace
+  -- (see cpf_trace_path / cpf_dijkstra_trace_path in braincore.c —
+  -- both push pairs of integers, NOT {x,y} tables).
   local path_str = "[]"
   if pf.path_chain and #pf.path_chain > 0 then
     local parts = {}
-    for i = 1, #pf.path_chain do
-      parts[#parts + 1] = string.format("%d,%d", pf.path_chain[i].x, pf.path_chain[i].y)
+    for i = 1, #pf.path_chain, 2 do
+      parts[#parts + 1] = string.format("%d,%d",
+        pf.path_chain[i], pf.path_chain[i + 1])
     end
     path_str = "[[" .. table.concat(parts, "],[") .. "]]"
   end

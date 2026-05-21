@@ -21,7 +21,7 @@ if not exist "%LUA_STRIP%" (
     --strip print2 ^
     --strip "viz." ^
     --strip overlay_ ^
-    --strip-block "if BRAIN_DEBUG_MODE then" ^
+    --strip-block "if BRAIN_DEBUG_MODE" ^
     --exclude los_stamp_cache.lua ^
     --exclude shield_stamp_cache.lua ^
     "%SCRIPT_DIR%opt" ^
