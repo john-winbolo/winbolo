@@ -96,8 +96,8 @@ typedef struct {
     SDL_AtomicInt   abort_flag;
     /* Absolute SDL_GetPerformanceCounter() value at which this bot's
      * think budget elapses. Set per-tick by runBotThinkJob from
-     * t0 + s_lastTargetMs * SDL_GetPerformanceFrequency() / 1000 so
-     * the count hook does one cheap compare against `now`. */
+     * t0 + g_botMgr.lastTargetMs * SDL_GetPerformanceFrequency() / 1000
+     * so the count hook does one cheap compare against `now`. */
     Uint64          thinkDeadlineCounter;
     /* One-tick edge signal set by the producer when the previous tick
      * was aborted by the budget hook. Surfaced to the brain via
@@ -117,47 +117,101 @@ static void botDeliverControl(void *ctx, const ControlEvent *evt) {
     clientSimApplyControl((ClientSim *)ctx, evt);
 }
 
-static BotContext bots[MAX_TANKS];
+/* Per-bot scratch carried across the three within-tick stages
+ * (snapshot/sync, brain tick, input dispatch). One instance per bot
+ * slot lives in g_botMgr.jobs[] so the worker thread sees only its own
+ * indexed entry — packets and the needRemove flag stay thread-local
+ * to that bot. */
+typedef struct {
+    BotContext *bot;
+    ServerSim  *sim;
+    SnapshotHeader      hdr;
+    TankSnapshot        tanks[MAX_TANKS];
+    ShellSnapshot       shells[MAX_SNAPSHOT_SHELLS];
+    TkExplosionSnapshot tkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
+    BaseSnapshot        bases[MAX_SNAPSHOT_BASES];
+    PillSnapshot        pills[MAX_SNAPSHOT_PILLS];
+    GameEvent           events[MAX_SNAPSHOT_EVENTS];
+    InputPacket         pkt1, pkt2;
+    bool                needRemove;  /* worker → producer: brain tick failed */
+    bool                hasInput;    /* worker → producer: pkt1/pkt2 valid */
+    /* worker → producer: brain.think was aborted by the count hook this
+     * tick (tick_budget_exceeded). The bot stays alive; the producer
+     * surfaces the kill to the next tick via bot->wasKilled. */
+    bool                wasKilled;
+} BotJobCtx;
 
-/* Default debug mode for newly-created bots. Hosts override via
- * botManagerSetDefaultDebugMode (BrainTest sets true at startup;
- * release game leaves false). */
-static bool s_default_debug_mode = false;
+typedef struct BotManager {
+    BotContext   bots[MAX_TANKS];
+    int          numBots;
 
-/* Runtime debug mode tracker. Flipped by botManagerToggleAllBrainDebugMode
- * so the toggle alternates correctly across calls. */
-static bool s_brain_debug_mode   = false;
-static int numBots = 0;
+    /* Total concurrent brain-tick runners including the producer thread.
+     * Saved by botManagerInit after validation; read by the budget formula
+     * to scale per-bot time when more bots than runners are active. */
+    int          threadsConfig;
 
-/* Total concurrent brain-tick runners including the producer thread.
- * Saved by botManagerInit after validation; read by the budget formula
- * to scale per-bot time when more bots than runners are active. */
-static int g_threadsConfig = 1;
+    /* Pending thread-count request from the BrainTest panel. -1 = no
+     * pending change. Applied at the top of botManagerTick (between ticks),
+     * never mid-dispatch. Single-producer (main thread) so a plain int
+     * is fine — no atomics needed. */
+    int          pendingThreads;
 
-/* Pending thread-count request from the BrainTest panel. -1 = no
- * pending change. Applied at the top of botManagerTick (between ticks),
- * never mid-dispatch. Single-producer (main thread) so a plain int
- * is fine — no atomics needed. */
-static int s_pending_threads = -1;
+    /* Default debug mode for newly-created bots. Hosts override via
+     * botManagerSetDefaultDebugMode (BrainTest sets true at startup;
+     * release game leaves false). */
+    bool         defaultDebugMode;
+
+    /* Runtime debug mode tracker. Flipped by botManagerToggleAllBrainDebugMode
+     * so the toggle alternates correctly across calls. */
+    bool         brainDebugMode;
+
+    /* EWMA of the serial-stage cost (ms) of recent ticks. Seeded by the
+     * first call to botManagerRecordSerialMs to avoid biasing toward zero. */
+    double       serialMsEwma;
+    /* Last serial-stage cost (ms). Companion to serialMsEwma so the
+     * server `info` summary can show last + EWMA together. */
+    double       lastSerialMs;
+
+    /* Wall-clock cost of the most recent dispatched brain-think stage, in
+     * milliseconds. Set per-tick at the end of botManagerTick; reserved
+     * for future refinements (e.g. computing the EWMA from the full
+     * serverInstanceTick instead of approximating it via kReservedSimMs). */
+    double       lastBrainPhaseMs;
+    /* EWMA of the brain-think stage cost (ms). Display-only — the budget
+     * formula reads serialMsEwma, not this. */
+    double       brainPhaseMsEwma;
+
+    /* Per-bot brain-tick budget computed for the current tick. Set per-tick
+     * before dispatch so the input-send overrun check and any future server
+     * info command can read the same number the brains were given. */
+    double       lastTargetMs;
+
+    BotJobCtx    jobs[MAX_TANKS];
+    int          jobIndices[MAX_TANKS];
+
+    void       (*preThinkHook)(int playerNum);
+} BotManager;
+
+static BotManager g_botMgr = { .threadsConfig = 1, .pendingThreads = -1 };
 
 void botManagerRequestThreads(int total_runners) {
     if (total_runners < 1) total_runners = 1;
     int cores = SDL_GetNumLogicalCPUCores();
     if (total_runners > cores)    total_runners = cores;
     if (total_runners > MAX_TANKS) total_runners = MAX_TANKS;
-    s_pending_threads = total_runners;
+    g_botMgr.pendingThreads = total_runners;
 }
 
-int botManagerGetThreads(void) { return g_threadsConfig; }
-int botManagerGetPendingThreads(void) { return s_pending_threads; }
+int botManagerGetThreads(void) { return g_botMgr.threadsConfig; }
+int botManagerGetPendingThreads(void) { return g_botMgr.pendingThreads; }
 
 /* Apply any pending pool-resize request. Called from botManagerTick
  * before any dispatch happens, so the resize lands in the gap between
  * ticks. */
 static void applyPendingThreadResize(void) {
-    int want = s_pending_threads;
-    if (want < 0 || want == g_threadsConfig) {
-        s_pending_threads = -1;
+    int want = g_botMgr.pendingThreads;
+    if (want < 0 || want == g_botMgr.threadsConfig) {
+        g_botMgr.pendingThreads = -1;
         return;
     }
     botWorkerPoolDestroy();
@@ -166,11 +220,11 @@ static void applyPendingThreadResize(void) {
         WB_LOG_WARN(WB_LOG_CAT_PLATFORM,
                     "botManager: pool create(%d) failed; staying serial",
                     workers);
-        g_threadsConfig = 1;
+        g_botMgr.threadsConfig = 1;
     } else {
-        g_threadsConfig = want;
+        g_botMgr.threadsConfig = want;
     }
-    s_pending_threads = -1;
+    g_botMgr.pendingThreads = -1;
 }
 
 /* Diagnostic toggle for the per-tick brain budget kill path. When 1
@@ -185,27 +239,6 @@ static void applyPendingThreadResize(void) {
 #define BRAIN_BUDGET_ENFORCE 1
 #endif
 
-/* EWMA of the serial-stage cost (ms) of recent ticks. Seeded by the
- * first call to botManagerRecordSerialMs to avoid biasing toward zero. */
-static double s_serialMsEwma = 0.0;
-/* Last serial-stage cost (ms). Companion to s_serialMsEwma so the
- * server `info` summary can show last + EWMA together. */
-static double s_lastSerialMs = 0.0;
-
-/* Wall-clock cost of the most recent dispatched brain-think stage, in
- * milliseconds. Set per-tick at the end of botManagerTick; reserved
- * for future refinements (e.g. computing the EWMA from the full
- * serverInstanceTick instead of approximating it via kReservedSimMs). */
-static double s_lastBrainPhaseMs = 0.0;
-/* EWMA of the brain-think stage cost (ms). Display-only — the budget
- * formula reads s_serialMsEwma, not this. */
-static double s_brainPhaseMsEwma = 0.0;
-
-/* Per-bot brain-tick budget computed for the current tick. Set per-tick
- * before dispatch so the input-send overrun check and any future server
- * info command can read the same number the brains were given. */
-static double s_lastTargetMs = 0.0;
-
 /* EWMA smoothing factor — ~10-tick (200 ms) window. */
 static const double kAlpha = 0.1;
 /* Server tick target: 50 Hz → 20 ms. */
@@ -218,10 +251,8 @@ static const double kReservedSimMs = 6.0;
 /* Headroom subtracted from the per-tick budget. */
 static const double kSafetyMs = 2.0;
 
-static void (*g_preThinkHook)(int playerNum) = NULL;
-
 void botManagerSetPreThinkHook(void (*hook)(int playerNum)) {
-    g_preThinkHook = hook;
+    g_botMgr.preThinkHook = hook;
 }
 
 /* Recover the BotContext from a brain's lua_State. NULL when the
@@ -342,11 +373,11 @@ double botManagerComputePerBotTargetMs(int activeBots) {
     if (activeBots <= 0) {
         return kTickMs;
     }
-    double brainBudget = kTickMs - s_serialMsEwma - kReservedSimMs - kSafetyMs;
+    double brainBudget = kTickMs - g_botMgr.serialMsEwma - kReservedSimMs - kSafetyMs;
     if (brainBudget < 1.0) {
         brainBudget = 1.0;
     }
-    double perBot = brainBudget * (double)g_threadsConfig
+    double perBot = brainBudget * (double)g_botMgr.threadsConfig
                     / (double)activeBots;
     if (perBot > brainBudget) {
         perBot = brainBudget;
@@ -355,16 +386,17 @@ double botManagerComputePerBotTargetMs(int activeBots) {
 }
 
 void botManagerRecordSerialMs(double ms) {
-    if (s_serialMsEwma <= 0.0) {
-        s_serialMsEwma = ms;
+    if (g_botMgr.serialMsEwma <= 0.0) {
+        g_botMgr.serialMsEwma = ms;
     } else {
-        s_serialMsEwma = kAlpha * ms + (1.0 - kAlpha) * s_serialMsEwma;
+        g_botMgr.serialMsEwma = kAlpha * ms + (1.0 - kAlpha) * g_botMgr.serialMsEwma;
     }
 }
 
 bool botManagerInit(int threads) {
-    memset(bots, 0, sizeof(bots));
-    numBots = 0;
+    memset(&g_botMgr, 0, sizeof(g_botMgr));
+    g_botMgr.threadsConfig  = 1;
+    g_botMgr.pendingThreads = -1;
     /* Eager-init the shared sin/cos tables before any worker thread
      * could touch them. Single-threaded context here. */
     wsim_init_tables();
@@ -397,7 +429,7 @@ bool botManagerInit(int threads) {
     if (workers > 0 && !botWorkerPoolCreate(workers)) {
         return false;
     }
-    g_threadsConfig = threads;
+    g_botMgr.threadsConfig = threads;
     return true;
 }
 
@@ -456,7 +488,7 @@ static bool botManagerReloadBrain(BotContext *bot, const char *brainPath) {
     SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
 
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
-                                bot->cs, bot->ai, s_default_debug_mode)) {
+                                bot->cs, bot->ai, g_botMgr.defaultDebugMode)) {
         fprintf(stderr,
                 "botManager: failed to reload brain '%s' for bot %d\n",
                 brainPath, (int)bot->playerNum);
@@ -490,13 +522,13 @@ bool botManagerSetBrainIdx(ServerSim *sim, BYTE playerNum,
                            uint8_t brainIdx) {
     const char *brainPath;
     if (sim == NULL || playerNum >= MAX_TANKS) return false;
-    if (!bots[playerNum].active) return false;
+    if (!g_botMgr.bots[playerNum].active) return false;
     brainPath = serverSimGetBrainPathForIdx(sim, brainIdx);
     if (brainPath == NULL) return false;
-    if (SDL_strcasecmp(bots[playerNum].brainPath, brainPath) == 0) {
+    if (SDL_strcasecmp(g_botMgr.bots[playerNum].brainPath, brainPath) == 0) {
         return true;
     }
-    return botManagerReloadBrain(&bots[playerNum], brainPath);
+    return botManagerReloadBrain(&g_botMgr.bots[playerNum], brainPath);
 }
 
 bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
@@ -507,11 +539,11 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     if (playerNum >= MAX_TANKS) {
         return false;
     }
-    if (bots[playerNum].active) {
+    if (g_botMgr.bots[playerNum].active) {
         botManagerRemoveBot(sim, playerNum);
     }
 
-    bot = &bots[playerNum];
+    bot = &g_botMgr.bots[playerNum];
     memset(bot, 0, sizeof(BotContext));
     bot->playerNum = playerNum;
     bot->ai = ai;
@@ -586,7 +618,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
      * default (host-controlled): BrainTest sets it to true; the release
      * game leaves it false so brains load from stripped opt/ source. */
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
-                                bot->cs, ai, s_default_debug_mode)) {
+                                bot->cs, ai, g_botMgr.defaultDebugMode)) {
         fprintf(stderr, "botManager: failed to create brain for bot %d\n", playerNum);
         serverSimUnregisterSubscriber(sim, bot->controlSub);
         bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
@@ -620,39 +652,12 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     }
 
     bot->active = true;
-    numBots++;
+    g_botMgr.numBots++;
 
     fprintf(stderr, "botManager: bot %d started with brain '%s'\n",
             playerNum, brainName);
     return true;
 }
-
-/* Per-bot scratch carried across the three within-tick stages
- * (snapshot/sync, brain tick, input dispatch). One instance per bot
- * slot lives in s_jobs[] so the worker thread sees only its own
- * indexed entry — packets and the needRemove flag stay thread-local
- * to that bot. */
-typedef struct {
-    BotContext *bot;
-    ServerSim  *sim;
-    SnapshotHeader      hdr;
-    TankSnapshot        tanks[MAX_TANKS];
-    ShellSnapshot       shells[MAX_SNAPSHOT_SHELLS];
-    TkExplosionSnapshot tkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
-    BaseSnapshot        bases[MAX_SNAPSHOT_BASES];
-    PillSnapshot        pills[MAX_SNAPSHOT_PILLS];
-    GameEvent           events[MAX_SNAPSHOT_EVENTS];
-    InputPacket         pkt1, pkt2;
-    bool                needRemove;  /* worker → producer: brain tick failed */
-    bool                hasInput;    /* worker → producer: pkt1/pkt2 valid */
-    /* worker → producer: brain.think was aborted by the count hook this
-     * tick (tick_budget_exceeded). The bot stays alive; the producer
-     * surfaces the kill to the next tick via bot->wasKilled. */
-    bool                wasKilled;
-} BotJobCtx;
-
-static BotJobCtx s_jobs[MAX_TANKS];
-static int       s_jobIndices[MAX_TANKS];
 
 /* Run brain.think for the bot, with the count hook already armed and
  * a deadline already populated by the wrapper. Single return point in
@@ -704,13 +709,13 @@ static void runBotThinkJobImpl(BotJobCtx *j, BotContext *bot, Uint64 t0) {
 
 static void runBotThinkJob(int botIndex, void *userData) {
     (void)userData;
-    BotJobCtx *j = &s_jobs[botIndex];
+    BotJobCtx *j = &g_botMgr.jobs[botIndex];
     BotContext *bot = j->bot;
 
     /* Optional pre-think hook (BrainTest viz). NULL in WinBoloDS.
      * Set once at host init and never modified after, so reading the
      * function pointer here from a worker thread is safe. */
-    if (g_preThinkHook) g_preThinkHook(botIndex);
+    if (g_botMgr.preThinkHook) g_botMgr.preThinkHook(botIndex);
 
     /* Compute this bot's absolute deadline and arm the count hook
      * before the tick. Capturing t0 here (after the pre-think hook)
@@ -718,7 +723,7 @@ static void runBotThinkJob(int botIndex, void *userData) {
     Uint64 t0   = SDL_GetPerformanceCounter();
     Uint64 freq = SDL_GetPerformanceFrequency();
     bot->thinkDeadlineCounter =
-        t0 + (Uint64)(s_lastTargetMs * (double)freq / 1000.0);
+        t0 + (Uint64)(g_botMgr.lastTargetMs * (double)freq / 1000.0);
 
     /* Install for brain.think() only — brain.open() (one-time init,
      * called from luaBrainInstanceCreate) is allowed to be unbounded. */
@@ -739,7 +744,7 @@ static void runBotThinkJob(int botIndex, void *userData) {
     }
 #endif
 
-    if (g_preThinkHook) g_preThinkHook(-1);
+    if (g_botMgr.preThinkHook) g_botMgr.preThinkHook(-1);
 }
 
 void botManagerTick(ServerSim *sim, aiType ai) {
@@ -760,11 +765,11 @@ void botManagerTick(ServerSim *sim, aiType ai) {
 
     /* ---- Stage 1: snapshot/sync (serial, on producer thread) ---- */
     for (BYTE i = 0; i < MAX_TANKS; i++) {
-        BotContext *bot = &bots[i];
+        BotContext *bot = &g_botMgr.bots[i];
         if (!bot->active) continue;
         if (gs->tanks[i] == NULL) continue;
 
-        BotJobCtx *j = &s_jobs[i];
+        BotJobCtx *j = &g_botMgr.jobs[i];
         j->bot = bot;
         j->sim = sim;
         j->needRemove = false;
@@ -813,29 +818,29 @@ void botManagerTick(ServerSim *sim, aiType ai) {
             }
         }
 
-        s_jobIndices[activeCount++] = i;
+        g_botMgr.jobIndices[activeCount++] = i;
     }
 
     /* Compute this tick's per-bot brain budget once, before dispatch.
-     * Saved into s_lastTargetMs so the input-send overrun check below
-     * (and any future server info command) reads the same value the
-     * brains were given. */
-    s_lastTargetMs = botManagerComputePerBotTargetMs(activeCount);
+     * Saved into g_botMgr.lastTargetMs so the input-send overrun check
+     * below (and any future server info command) reads the same value
+     * the brains were given. */
+    g_botMgr.lastTargetMs = botManagerComputePerBotTargetMs(activeCount);
     for (int k = 0; k < activeCount; k++) {
-        int i = s_jobIndices[k];
+        int i = g_botMgr.jobIndices[k];
         /* wasKilled is a one-tick edge signal: pass the persisted flag
          * from the previous tick, then reset so it does not stick. The
-         * worker may set bots[i].wasKilled = true again below if the
-         * count hook fires this tick. */
-        luaBrainSetTickInputs(&bots[i].brain,
-                              bots[i].lastThinkMs,
-                              s_lastTargetMs,
-                              bots[i].wasKilled);
-        bots[i].wasKilled = false;
+         * worker may set g_botMgr.bots[i].wasKilled = true again below
+         * if the count hook fires this tick. */
+        luaBrainSetTickInputs(&g_botMgr.bots[i].brain,
+                              g_botMgr.bots[i].lastThinkMs,
+                              g_botMgr.lastTargetMs,
+                              g_botMgr.bots[i].wasKilled);
+        g_botMgr.bots[i].wasKilled = false;
         /* Clean abort flag so the worker starts each tick unflagged.
          * Atomic store pairs with the worker's atomic load on the
          * other side of the pool's release/acquire on dispatch. */
-        SDL_SetAtomicInt(&bots[i].abort_flag, 0);
+        SDL_SetAtomicInt(&g_botMgr.bots[i].abort_flag, 0);
     }
 
     /* ---- Stage 2: brain tick (parallel via pool, serial on first tick) ----
@@ -847,7 +852,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
      * registration window. */
     bool anyFirstTick = false;
     for (int k = 0; k < activeCount; k++) {
-        if (bots[s_jobIndices[k]].brain.isFirst) {
+        if (g_botMgr.bots[g_botMgr.jobIndices[k]].brain.isFirst) {
             anyFirstTick = true;
             break;
         }
@@ -855,13 +860,13 @@ void botManagerTick(ServerSim *sim, aiType ai) {
     Uint64 brainStart = SDL_GetPerformanceCounter();
     if (anyFirstTick) {
         for (int k = 0; k < activeCount; k++) {
-            runBotThinkJob(s_jobIndices[k], NULL);
+            runBotThinkJob(g_botMgr.jobIndices[k], NULL);
         }
     } else {
         /* botWorkerPoolRun has its own serial fallback when the pool
          * has 0 workers, so the panel resize-to-1 case Just Works
          * without an extra check here. */
-        botWorkerPoolRun(s_jobIndices, activeCount, runBotThinkJob, NULL);
+        botWorkerPoolRun(g_botMgr.jobIndices, activeCount, runBotThinkJob, NULL);
     }
     Uint64 brainEnd = SDL_GetPerformanceCounter();
 
@@ -871,8 +876,8 @@ void botManagerTick(ServerSim *sim, aiType ai) {
      * (j->pkt1, j->pkt2, j->needRemove, j->hasInput, bot->lastThinkMs)
      * is visible here without explicit barriers. */
     for (int k = 0; k < activeCount; k++) {
-        int i = s_jobIndices[k];
-        BotJobCtx *j = &s_jobs[i];
+        int i = g_botMgr.jobIndices[k];
+        BotJobCtx *j = &g_botMgr.jobs[i];
 
         if (j->needRemove) {
             WB_LOG_WARN(WB_LOG_CAT_LUA,
@@ -886,13 +891,13 @@ void botManagerTick(ServerSim *sim, aiType ai) {
              * packet, so j->hasInput stays false above. Surface the
              * kill to next tick's brain.wasKilled and bump the overrun
              * counter — these always go together. */
-            bots[i].wasKilled = true;
-            bots[i].overrunCount++;
-            if ((serverSimGetTick(sim) - bots[i].lastOverrunWarnTick) > 50) {
+            g_botMgr.bots[i].wasKilled = true;
+            g_botMgr.bots[i].overrunCount++;
+            if ((serverSimGetTick(sim) - g_botMgr.bots[i].lastOverrunWarnTick) > 50) {
                 WB_LOG_WARN(WB_LOG_CAT_LUA,
                             "bot %d think aborted (budget %.1fms exceeded; overruns=%u)",
-                            i, s_lastTargetMs, bots[i].overrunCount);
-                bots[i].lastOverrunWarnTick = serverSimGetTick(sim);
+                            i, g_botMgr.lastTargetMs, g_botMgr.bots[i].overrunCount);
+                g_botMgr.bots[i].lastOverrunWarnTick = serverSimGetTick(sim);
             }
             continue;
         }
@@ -900,22 +905,22 @@ void botManagerTick(ServerSim *sim, aiType ai) {
             continue;
         }
 
-        bots[i].transport.sendInput(bots[i].transport.ctx, &j->pkt1);
-        bots[i].transport.sendInput(bots[i].transport.ctx, &j->pkt2);
+        g_botMgr.bots[i].transport.sendInput(g_botMgr.bots[i].transport.ctx, &j->pkt1);
+        g_botMgr.bots[i].transport.sendInput(g_botMgr.bots[i].transport.ctx, &j->pkt2);
 
         /* Budget-overrun telemetry: every overrun bumps the per-bot
          * counter; logging is rate-limited to once per ~50 ticks per
          * bot so a chronically slow bot doesn't flood. Reads
          * bot->lastThinkMs which the worker wrote — visible here via
          * the pool's release/acquire on the done semaphore. */
-        double ms = bots[i].lastThinkMs;
-        if (ms > s_lastTargetMs * 1.5) {
-            bots[i].overrunCount++;
-            if ((serverSimGetTick(sim) - bots[i].lastOverrunWarnTick) > 50) {
+        double ms = g_botMgr.bots[i].lastThinkMs;
+        if (ms > g_botMgr.lastTargetMs * 1.5) {
+            g_botMgr.bots[i].overrunCount++;
+            if ((serverSimGetTick(sim) - g_botMgr.bots[i].lastOverrunWarnTick) > 50) {
                 WB_LOG_WARN(WB_LOG_CAT_LUA,
                             "bot %d think %.1fms over target %.1fms (overruns=%u)",
-                            i, ms, s_lastTargetMs, bots[i].overrunCount);
-                bots[i].lastOverrunWarnTick = serverSimGetTick(sim);
+                            i, ms, g_botMgr.lastTargetMs, g_botMgr.bots[i].overrunCount);
+                g_botMgr.bots[i].lastOverrunWarnTick = serverSimGetTick(sim);
             }
         }
     }
@@ -925,16 +930,16 @@ void botManagerTick(ServerSim *sim, aiType ai) {
      * stage), and stash that stage's wall-clock for future use. */
     Uint64 sendEnd = SDL_GetPerformanceCounter();
     double freq = (double)SDL_GetPerformanceFrequency();
-    s_lastBrainPhaseMs = (double)(brainEnd - brainStart) * 1000.0 / freq;
-    if (s_brainPhaseMsEwma <= 0.0) {
-        s_brainPhaseMsEwma = s_lastBrainPhaseMs;
+    g_botMgr.lastBrainPhaseMs = (double)(brainEnd - brainStart) * 1000.0 / freq;
+    if (g_botMgr.brainPhaseMsEwma <= 0.0) {
+        g_botMgr.brainPhaseMsEwma = g_botMgr.lastBrainPhaseMs;
     } else {
-        s_brainPhaseMsEwma = kAlpha * s_lastBrainPhaseMs
-                             + (1.0 - kAlpha) * s_brainPhaseMsEwma;
+        g_botMgr.brainPhaseMsEwma = kAlpha * g_botMgr.lastBrainPhaseMs
+                             + (1.0 - kAlpha) * g_botMgr.brainPhaseMsEwma;
     }
     double serialMs = ((double)(brainStart - setupStart)
                        + (double)(sendEnd - brainEnd)) * 1000.0 / freq;
-    s_lastSerialMs = serialMs;
+    g_botMgr.lastSerialMs = serialMs;
     botManagerRecordSerialMs(serialMs);
 
     (void)ai;
@@ -943,7 +948,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
 void botManagerOnGameStart(ServerSim *sim) {
     BYTE i;
     for (i = 0; i < MAX_TANKS; i++) {
-        BotContext *bot = &bots[i];
+        BotContext *bot = &g_botMgr.bots[i];
         if (!bot->active) continue;
 
         /* Reload the bot's ClientSim map from the server (map was reset) */
@@ -975,8 +980,8 @@ void botManagerSetTeams(ServerSim *sim, const BYTE *teamOf, BYTE numPlayers) {
             allienceAdd(&serverSimGetGameSim(sim)->plyrs->item[i].allie, j);
 
             for (BYTE k = 0; k < MAX_TANKS; k++) {
-                if (!bots[k].active) continue;
-                allienceAdd(&clientSimGetGameSim(bots[k].cs)->plyrs->item[i].allie, j);
+                if (!g_botMgr.bots[k].active) continue;
+                allienceAdd(&clientSimGetGameSim(g_botMgr.bots[k].cs)->plyrs->item[i].allie, j);
             }
         }
     }
@@ -985,7 +990,7 @@ void botManagerSetTeams(ServerSim *sim, const BYTE *teamOf, BYTE numPlayers) {
 void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
     BotContext *bot;
     if (playerNum >= MAX_TANKS) return;
-    bot = &bots[playerNum];
+    bot = &g_botMgr.bots[playerNum];
     if (!bot->active) return;
 
     luaBrainInstanceDestroy(&bot->brain);
@@ -997,7 +1002,7 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
     serverSimRemovePlayer(sim, playerNum);
 
     bot->active = false;
-    numBots--;
+    g_botMgr.numBots--;
 
     fprintf(stderr, "botManager: bot %d removed\n", playerNum);
 }
@@ -1005,7 +1010,7 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
 void botManagerDestroy(ServerSim *sim) {
     BYTE i;
     for (i = 0; i < MAX_TANKS; i++) {
-        if (bots[i].active) {
+        if (g_botMgr.bots[i].active) {
             botManagerRemoveBot(sim, i);
         }
     }
@@ -1014,58 +1019,58 @@ void botManagerDestroy(ServerSim *sim) {
 }
 
 BYTE botManagerGetNumBots(void) {
-    return (BYTE)numBots;
+    return (BYTE)g_botMgr.numBots;
 }
 
 bool botManagerIsBot(BYTE playerNum) {
     if (playerNum >= MAX_TANKS) return false;
-    return bots[playerNum].active;
+    return g_botMgr.bots[playerNum].active;
 }
 
 BrainPathfinder *botManagerGetBrainPathfinder(BYTE playerNum) {
     if (playerNum >= MAX_TANKS) return NULL;
-    if (!bots[playerNum].active) return NULL;
-    return bots[playerNum].brain.pathfinder;
+    if (!g_botMgr.bots[playerNum].active) return NULL;
+    return g_botMgr.bots[playerNum].brain.pathfinder;
 }
 
 OverlayCmdBuffer *botManagerGetOverlayCmds(BYTE playerNum) {
     if (playerNum >= MAX_TANKS) return NULL;
-    if (!bots[playerNum].active) return NULL;
+    if (!g_botMgr.bots[playerNum].active) return NULL;
     /* The brain instance owns the buffer; return a pointer into it
      * so callers can read this tick's commands. The buffer is
      * populated by overlay_* Lua calls during brain.think(). */
-    if (!bots[playerNum].brain.running) return NULL;
-    return &bots[playerNum].brain.overlay;
+    if (!g_botMgr.bots[playerNum].brain.running) return NULL;
+    return &g_botMgr.bots[playerNum].brain.overlay;
 }
 
 double botManagerGetLastThinkMs(BYTE playerNum) {
     if (playerNum >= MAX_TANKS) return 0.0;
-    if (!bots[playerNum].active) return 0.0;
-    return bots[playerNum].lastThinkMs;
+    if (!g_botMgr.bots[playerNum].active) return 0.0;
+    return g_botMgr.bots[playerNum].lastThinkMs;
 }
 
 bool botManagerHasAnyBot(void) {
     for (int i = 0; i < MAX_TANKS; i++) {
-        if (bots[i].active) return true;
+        if (g_botMgr.bots[i].active) return true;
     }
     return false;
 }
 
 bool botManagerGetBotInfo(BYTE playerNum, BotInfo *out) {
     if (out == NULL) return false;
-    if (playerNum >= MAX_TANKS || !bots[playerNum].active) {
+    if (playerNum >= MAX_TANKS || !g_botMgr.bots[playerNum].active) {
         memset(out, 0, sizeof(*out));
         return false;
     }
 
-    BotContext *bot = &bots[playerNum];
+    BotContext *bot = &g_botMgr.bots[playerNum];
 
     /* Active count drives the per-bot target the next tick will use.
      * The console command is rare; recompute on each call rather than
      * caching. */
     int active = 0;
     for (int i = 0; i < MAX_TANKS; i++) {
-        if (bots[i].active) active++;
+        if (g_botMgr.bots[i].active) active++;
     }
 
     out->isBot        = true;
@@ -1122,50 +1127,50 @@ void botManagerGetPoolStats(BotPoolStats *out) {
     int      active        = 0;
     uint32_t totalOverruns = 0;
     for (int i = 0; i < MAX_TANKS; i++) {
-        if (bots[i].active) {
+        if (g_botMgr.bots[i].active) {
             active++;
-            totalOverruns += bots[i].overrunCount;
+            totalOverruns += g_botMgr.bots[i].overrunCount;
         }
     }
 
     out->workerCount      = botWorkerPoolGetSize();
     out->activeBots       = active;
-    out->ewmaSerialMs     = s_serialMsEwma;
+    out->ewmaSerialMs     = g_botMgr.serialMsEwma;
     out->currentTargetMs  = botManagerComputePerBotTargetMs(active);
-    out->lastBrainPhaseMs = s_lastBrainPhaseMs;
-    out->ewmaBrainPhaseMs = s_brainPhaseMsEwma;
-    out->lastSerialMs     = s_lastSerialMs;
+    out->lastBrainPhaseMs = g_botMgr.lastBrainPhaseMs;
+    out->ewmaBrainPhaseMs = g_botMgr.brainPhaseMsEwma;
+    out->lastSerialMs     = g_botMgr.lastSerialMs;
     out->totalOverruns    = totalOverruns;
 }
 
 int botManagerGetActiveBotCount(void) {
     int active = 0;
     for (int i = 0; i < MAX_TANKS; i++) {
-        if (bots[i].active) active++;
+        if (g_botMgr.bots[i].active) active++;
     }
     return active;
 }
 
 void botManagerSetDefaultDebugMode(bool enabled) {
-    s_default_debug_mode = enabled;
-    s_brain_debug_mode   = enabled;
+    g_botMgr.defaultDebugMode = enabled;
+    g_botMgr.brainDebugMode   = enabled;
 }
 
 bool botManagerToggleAllBrainDebugMode(void) {
-    s_brain_debug_mode = !s_brain_debug_mode;
+    g_botMgr.brainDebugMode = !g_botMgr.brainDebugMode;
     for (int i = 0; i < MAX_TANKS; i++) {
-        if (bots[i].active && bots[i].brain.running) {
-            luaBrainInstanceSetDebugMode(&bots[i].brain, s_brain_debug_mode);
+        if (g_botMgr.bots[i].active && g_botMgr.bots[i].brain.running) {
+            luaBrainInstanceSetDebugMode(&g_botMgr.bots[i].brain, g_botMgr.brainDebugMode);
         }
     }
-    return s_brain_debug_mode;
+    return g_botMgr.brainDebugMode;
 }
 
 bool botManagerExecLua(BYTE playerNum, const char *src) {
     if (playerNum >= MAX_TANKS) return false;
-    if (!bots[playerNum].active) return false;
-    if (!bots[playerNum].brain.running) return false;
-    lua_State *L = bots[playerNum].brain.L;
+    if (!g_botMgr.bots[playerNum].active) return false;
+    if (!g_botMgr.bots[playerNum].brain.running) return false;
+    lua_State *L = g_botMgr.bots[playerNum].brain.L;
     if (!L || !src) return false;
     /* Compile + run a chunk of Lua in this bot's state. Used by
      * BrainTest to push viz toggle state into the brain's globals
@@ -1183,9 +1188,9 @@ bool botManagerExecLua(BYTE playerNum, const char *src) {
 
 char *botManagerEvalLuaString(BYTE playerNum, const char *src) {
     if (playerNum >= MAX_TANKS) return NULL;
-    if (!bots[playerNum].active) return NULL;
-    if (!bots[playerNum].brain.running) return NULL;
-    lua_State *L = bots[playerNum].brain.L;
+    if (!g_botMgr.bots[playerNum].active) return NULL;
+    if (!g_botMgr.bots[playerNum].brain.running) return NULL;
+    lua_State *L = g_botMgr.bots[playerNum].brain.L;
     if (!L || !src) return NULL;
     /* Caller-owned heap copy of whatever string the chunk returns.
      * On any error path (compile fail, runtime fail, non-string
@@ -1259,8 +1264,8 @@ static int luaReadIntField(lua_State *L, int tblIdx, const char *key) {
 
 bool botManagerGetGoalInfo(BYTE playerNum, BrainGoalInfo *out) {
     lua_State *L;
-    if (playerNum >= MAX_TANKS || !bots[playerNum].active) return false;
-    L = bots[playerNum].brain.L;
+    if (playerNum >= MAX_TANKS || !g_botMgr.bots[playerNum].active) return false;
+    L = g_botMgr.bots[playerNum].brain.L;
     if (!L) return false;
 
     memset(out, 0, sizeof(BrainGoalInfo));
