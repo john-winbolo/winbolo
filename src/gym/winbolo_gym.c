@@ -1652,8 +1652,9 @@ WBGYM_API void winbolo_step_batch(
     WinBoloObs *obs_out,
     int count
 ) {
+    int i;
     #pragma omp parallel for schedule(static)
-    for (int i = 0; i < count; i++) {
+    for (i = 0; i < count; i++) {
         winbolo_step(games[i], &actions[i], &obs_out[i]);
     }
 }
@@ -1667,8 +1668,9 @@ WBGYM_API void winbolo_fill_actions_batch(
     static const int turn_map[3] = {-1, 0, 1};
     static const int gun_range_map[3] = {-1, 0, 1};
 
+    int i;
     #pragma omp parallel for schedule(static)
-    for (int i = 0; i < count; i++) {
+    for (i = 0; i < count; i++) {
         const int32_t *a = &actions_flat[i * 8];
         WinBoloAction *out = &actions_out[i];
         out->accel            = accel_map[a[0]];
@@ -1692,8 +1694,9 @@ WBGYM_API void winbolo_obs_to_numpy_batch(
     float *sound_mask_out,
     int count
 ) {
+    int i;
     #pragma omp parallel for schedule(static)
-    for (int i = 0; i < count; i++) {
+    for (i = 0; i < count; i++) {
         const WinBoloObs *obs = &obs_array[i];
 
         /* Terrain: [29, 29, 2] — channel-last interleaved */
@@ -1765,8 +1768,9 @@ WBGYM_API void winbolo_obs_to_reward_batch(
     WinBoloRewardBatchOut *out,
     int count
 ) {
+    int i;
     #pragma omp parallel for schedule(static)
-    for (int i = 0; i < count; i++) {
+    for (i = 0; i < count; i++) {
         const WinBoloObs *obs = &obs_array[i];
 
         /* Scalars: direct copy */
