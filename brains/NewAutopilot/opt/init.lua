@@ -679,15 +679,14 @@ local function draw_shell_hitbox_viz(info)
       end
     end
   end
-  -- Own-tank hitbox outline. Per tank.c::tankIsTankHit, a shell now
-  -- hits when dx*dx + dy*dy < TANK_HIT_RADIUS_SQUARED with radius 128
-  -- WU — a one-tile-diameter circle centered on the tank. (Was an
-  -- AABB `abs(dx) < 128 && abs(dy) < 128` until the hitbox-as-circle
-  -- change — diagonal grazes that the square accepted now miss.)
+  -- Own-tank hitbox outline. Per tank.c:1089 a shell hits when
+  -- abs(tank.x-shell.x) < 128 && abs(tank.y-shell.y) < 128 — so
+  -- the hitbox is a 256x256 wu (1 tile) centered on the tank.
   if v_tank and info.tankx and info.tanky then
-    local cx = info.tankx / 256.0
-    local cy = info.tanky / 256.0
-    -- TANK_HIT_RADIUS = 128 WU = 0.5 tile.
+    local htx1 = (info.tankx - 128) / 256.0
+    local hty1 = (info.tanky - 128) / 256.0
+    local htx2 = (info.tankx + 128) / 256.0
+    local hty2 = (info.tanky + 128) / 256.0
   end
 end
 

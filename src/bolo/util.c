@@ -208,14 +208,14 @@ BYTE utilGet16Dir(TURNTYPE value) {
 *  angle     - The direction the shell came from
 *********************************************************/
 bool utilIsTankHit(WORLD xTank, WORLD yTank, TURNTYPE tankAngle, WORLD x, WORLD y, TURNTYPE angle) {
-  /* Hit-circle test — one-tile-diameter circle centered on tank.
-   * See TANK_HIT_RADIUS in internal/tank.h. (void) the angle args —
-   * the legacy signature exposes them for a future per-facing
-   * collision check that hasn't been wired up. */
-  int dx = (int)xTank - (int)x;
-  int dy = (int)yTank - (int)y;
-  (void)tankAngle; (void)angle;
-  return (dx * dx + dy * dy) < TANK_HIT_RADIUS_SQUARED;
+  bool returnValue; /* Value to return */
+
+  returnValue = FALSE;
+  if (abs(xTank - x) < 128 && abs(yTank - y) < 128) {
+    returnValue = TRUE;
+  }
+
+  return returnValue;
 }
 
 /*********************************************************

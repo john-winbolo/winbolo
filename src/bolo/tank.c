@@ -1091,13 +1091,14 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 
 	returnValue = TH_MISSED;
 
-	/* Hit-circle test — see TANK_HIT_RADIUS in internal/tank.h.
-	 * One-tile-diameter circle centered on the tank's WORLD position. */
-	{
-	int dx = (int)(*value)->x - (int)x;
-	int dy = (int)(*value)->y - (int)y;
-	int distSq = dx*dx + dy*dy;
-	if (distSq < TANK_HIT_RADIUS_SQUARED && (*value)->armour <= TANK_FULL_ARMOUR) {
+	/*
+	* TODO: here is where we would call a collision-detection function.  For now, we check to see
+	* if the shell is within 128 WORLD coordinates of a tank's WORLD coordinates.  Since a tank's
+	* WORLD coordinates are from the center, we assume that the tank is basically a circle.
+	*
+	*
+	*/
+	if (abs((*value)->x - x) < 128 && abs((*value)->y - y) < 128  && (*value)->armour <= TANK_FULL_ARMOUR) {
 		returnValue = TH_HIT;
 		(*value)->armour -= DAMAGE;
 		if ((*value)->onBoat == TRUE) {
@@ -1141,9 +1142,8 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 				frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
 			}
 		}
-	} else if (distSq < TANK_HIT_RADIUS_SQUARED && (*value)->armour > TANK_FULL_ARMOUR) {
+	} else if (abs((*value)->x - x) < 128 && abs((*value)->y - y) < 128  && (*value)->armour > TANK_FULL_ARMOUR) {
 		/* Do crazy shit here */
-	}
 	}
 	return returnValue;
 }
@@ -3175,11 +3175,7 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 
 	returnValue = TH_MISSED;
 
-	{
-	int dx = (int)tankX - (int)shellX;
-	int dy = (int)tankY - (int)shellY;
-	int distSq = dx*dx + dy*dy;
-	if (distSq < TANK_HIT_RADIUS_SQUARED && (*value)->armour <= TANK_FULL_ARMOUR) {
+	if (abs(tankX - shellX) < 128 && abs(tankY - shellY) < 128  && (*value)->armour <= TANK_FULL_ARMOUR) {
 		returnValue = TH_HIT;
 		(*value)->armour -= DAMAGE;
 		if ((*value)->onBoat == TRUE) {
@@ -3217,9 +3213,8 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 				frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
 			}
 		}
-	} else if (distSq < TANK_HIT_RADIUS_SQUARED && (*value)->armour > TANK_FULL_ARMOUR) {
+	} else if (abs(tankX - shellX) < 128 && abs(tankY - shellY) < 128  && (*value)->armour > TANK_FULL_ARMOUR) {
 		/* Do crazy shit here */
-	}
 	}
 	return returnValue;
 }
