@@ -157,11 +157,11 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
         char errPopupId[64];
         SDL_snprintf(errPopupId, sizeof(errPopupId), "%s##setname", langGetText(STR_ERR_TITLE));
 
-        if (wbnLocked) ImGui::BeginDisabled();
         int footer = WBUI::DialogFooter(langGetText(STR_CANCEL),
                                         langGetText(STR_OK),
-                                        /*enterConfirms*/ true);
-        if (wbnLocked) ImGui::EndDisabled();
+                                        /*enterConfirms*/ true,
+                                        /*showSeparator*/ true,
+                                        /*confirmDisabled*/ wbnLocked);
         if (footer == WBUI::FOOTER_CONFIRM || enterPressed) {
             char newName[PLAYER_NAME_LEN];
             PlayerNameValidationError nameErr = PLAYER_NAME_OK;

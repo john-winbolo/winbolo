@@ -47,20 +47,28 @@ enum FooterResult {
 
 /* Two-button footer: [Cancel] [Confirm].
  *
- * cancelLabel  : button label, e.g. STR_CANCEL. If NULL, only Confirm
- *                is shown (centered). Esc/Ctrl+W/Cmd+. still return
- *                FOOTER_CANCEL so callers can treat as dismiss.
- * confirmLabel : primary action label, e.g. STR_OK, STR_SAVE.
- * enterConfirms: set true ONLY for dialogs whose body has a text input.
- *                Enter key returns FOOTER_CONFIRM when true.
- * showSeparator: draw Separator+Spacing above the row. Default true.
- *                Set false on tiny confirmation modals (one-line body).
+ * cancelLabel    : button label, e.g. STR_CANCEL. If NULL, only Confirm
+ *                  is shown (centered). Esc/Ctrl+W/Cmd+. still return
+ *                  FOOTER_CANCEL so callers can treat as dismiss.
+ * confirmLabel   : primary action label, e.g. STR_OK, STR_SAVE.
+ * enterConfirms  : set true ONLY for dialogs whose body has a text input.
+ *                  Enter key returns FOOTER_CONFIRM when true.
+ * showSeparator  : draw Separator+Spacing above the row. Default true.
+ *                  Set false on tiny confirmation modals (one-line body).
+ * confirmDisabled: grey out *only* the Confirm button (Cancel stays
+ *                  clickable). Use when the primary action isn't valid
+ *                  yet — e.g. required text field empty, dependent
+ *                  field locked — but the user must still be able to
+ *                  back out via the visible Cancel button.
  *
- * Returns FOOTER_NONE / FOOTER_CANCEL / FOOTER_CONFIRM. */
+ * Returns FOOTER_NONE / FOOTER_CANCEL / FOOTER_CONFIRM. When
+ * confirmDisabled is true, FOOTER_CONFIRM is never returned (click and
+ * Enter both suppressed). */
 int DialogFooter(const char *cancelLabel,
                  const char *confirmLabel,
                  bool enterConfirms = false,
-                 bool showSeparator = true);
+                 bool showSeparator = true,
+                 bool confirmDisabled = false);
 
 /* Three-button footer: [Cancel] [Destructive] [Primary].
  *

@@ -1112,11 +1112,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (wbnActive) {
                 ImGui::TextUnformatted(langGetText(STR_DLGSETNAME_WBN_LOCKED));
             }
-            if (wbnActive) ImGui::BeginDisabled();
             int nameFooter = WBUI::DialogFooter(langGetText(STR_CANCEL),
                                                 langGetText(STR_OK),
-                                                /*enterConfirms*/ true);
-            if (wbnActive) ImGui::EndDisabled();
+                                                /*enterConfirms*/ true,
+                                                /*showSeparator*/ true,
+                                                /*confirmDisabled*/ wbnActive);
             if (nameFooter == WBUI::FOOTER_CONFIRM || (nameEnter && !wbnActive)) {
                 gameFrontSetPlayerName(nameEditBuf);
                 ImGui::CloseCurrentPopup();

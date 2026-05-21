@@ -2676,12 +2676,12 @@ int mapEditorImguiSaveStampModal(char *name, int nameLen) {
 
         bool canSave = name[0] != '\0';
 
-        if (!canSave) ImGui::BeginDisabled();
         int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
                                    langGetText(STR_MAPEDIT_SAVE_BTN),
-                                   /*enterConfirms*/ true);
-        if (!canSave) ImGui::EndDisabled();
-        if ((f == WBUI::FOOTER_CONFIRM && canSave) || (enter && canSave)) {
+                                   /*enterConfirms*/ true,
+                                   /*showSeparator*/ true,
+                                   /*confirmDisabled*/ !canSave);
+        if (f == WBUI::FOOTER_CONFIRM || (enter && canSave)) {
             result = 1;
             ImGui::CloseCurrentPopup();
         } else if (f == WBUI::FOOTER_CANCEL) {
