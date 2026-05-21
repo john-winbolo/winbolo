@@ -22,8 +22,9 @@
  *  the Esc/Enter/Ctrl+W/Cmd+. key bindings.
  *
  *  Conventions:
- *    - 2-button: [Cancel] [Confirm]   (Cancel-left, Confirm-right)
- *    - 3-button: [Destructive] [Cancel] [Primary]
+ *    - 2-button: [Cancel] [Confirm]              (Cancel-left, Confirm-right)
+ *    - 3-button: [Cancel] [Destructive] [Primary] (Discard sits between
+ *      back-out and affirmative; primary stays rightmost)
  *    - Esc / Ctrl+W / Cmd+. always cancel
  *    - Enter only confirms when enterConfirms=true
  *      (use only for dialogs containing a text input)
@@ -71,6 +72,9 @@ int DialogFooter(const char *cancelLabel,
                  bool confirmDisabled = false);
 
 /* Three-button footer: [Cancel] [Destructive] [Primary].
+ *
+ * All three labels are REQUIRED (non-null). If you want a 2-button
+ * row, call DialogFooter instead — there's no NULL-skip behavior here.
  *
  * cancelLabel      : far-left, e.g. "Cancel" — consistent with 2-button order
  * destructiveLabel : middle, e.g. "Discard", "Don't Save"
