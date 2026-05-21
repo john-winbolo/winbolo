@@ -136,7 +136,8 @@ static void drawSeparatorAbove() {
 int DialogFooter(const char *cancelLabel,
                  const char *confirmLabel,
                  bool enterConfirms,
-                 bool showSeparator) {
+                 bool showSeparator,
+                 bool confirmDisabled) {
     if (showSeparator) drawSeparatorAbove();
 
     int result = FOOTER_NONE;
@@ -163,19 +164,24 @@ int DialogFooter(const char *cancelLabel,
     }
 
     if (confirmLabel) {
+        if (confirmDisabled) ImGui::BeginDisabled();
         if (ImGui::Button(confirmLabel, ImVec2(btnW, 0))) {
             result = FOOTER_CONFIRM;
         }
         imguiHandOnHover();
+        if (confirmDisabled) ImGui::EndDisabled();
     }
 
     /* Key bindings. Esc/Ctrl+W/Cmd+. always cancel (even on OK-only
      * dialogs — caller treats that as dismiss). Enter confirms only
-     * when the caller has indicated the dialog has a text input. */
+     * when the caller has indicated the dialog has a text input, and
+     * suppresses when the Confirm button itself is disabled — Enter
+     * is the keyboard equivalent of clicking Confirm. */
     if (result == FOOTER_NONE && CancelKeyPressed()) {
         result = FOOTER_CANCEL;
     }
-    if (result == FOOTER_NONE && enterConfirms && confirmKeyPressed()) {
+    if (result == FOOTER_NONE && enterConfirms && !confirmDisabled &&
+        confirmKeyPressed()) {
         result = FOOTER_CONFIRM;
     }
 
