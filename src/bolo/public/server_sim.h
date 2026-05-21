@@ -31,7 +31,7 @@
 #include "alliance_enums.h"    /* baseAlliance, pillAlliance */
 #include "screentank.h"        /* tankAlliance */
 #include "brain_list.h"        /* BrainList — returned by serverSimGetBrainList */
-#include "upload_policy.h"     /* UploadPolicy — serverSimSetUploadPolicy arg */
+#include "upload_policy.h"     /* UploadPolicy — sim->uploadPolicy field */
 
 /* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
@@ -488,19 +488,6 @@ bool   serverSimToggleAllBrainDebugMode(ServerSim *sim);
 void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber);
 
 /*********************************************************
- *NAME:          serverSimSetReady
- *PURPOSE:
- *  Sets a player's lobby-ready flag. No-op if
- *  playerNum >= MAX_TANKS or lobby is not enabled.
- *
- *ARGUMENTS:
- *  sim       - Pointer to the ServerSim
- *  playerNum - Player slot (0..MAX_TANKS-1)
- *  ready     - true = ready, false = not ready
- *********************************************************/
-void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready);
-
-/*********************************************************
  *NAME:          serverSimSetBotAiType
  *PURPOSE:
  *  Sets the AI advantage level cached for lobby bot
@@ -509,28 +496,12 @@ void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready);
 void serverSimSetBotAiType(ServerSim *sim, aiType ai);
 
 /*********************************************************
- *NAME:          serverSimSetBotBrainPath
- *PURPOSE:
- *  Sets the brain path cached for lobby bot creation.
- *  Truncates to fit the internal buffer; always null-
- *  terminates. NULL or empty path clears it.
- *********************************************************/
-void serverSimSetBotBrainPath(ServerSim *sim, const char *path);
-
-/*********************************************************
  *NAME:          serverSimSetEmptyResetEnabled
  *PURPOSE:
  *  Enables or disables the empty-server auto-reset
  *  feature.
  *********************************************************/
 void serverSimSetEmptyResetEnabled(ServerSim *sim, bool enabled);
-
-/*********************************************************
- *NAME:          serverSimSetHasPassword
- *PURPOSE:
- *  Marks whether the server has a password set.
- *********************************************************/
-void serverSimSetHasPassword(ServerSim *sim, bool hasPassword);
 
 /*********************************************************
  *NAME:          serverSimSetLobbyEnabled
@@ -553,16 +524,6 @@ void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled);
 void serverSimEnableRandomMap(ServerSim *sim,
                               const struct MapGenConfig *cfg,
                               bool fixedSeed);
-
-/*********************************************************
- *NAME:          serverSimEnterLobby
- *PURPOSE:
- *  Sets the server state to serverStateLobby. Used by
- *  the multiplayer-host startup path to begin in lobby.
- *  No other side effects — for the round-start sequence
- *  use serverSimStartGame.
- *********************************************************/
-void serverSimEnterLobby(ServerSim *sim);
 
 /*********************************************************
  *NAME:          serverSimInstallMapDirList
@@ -626,29 +587,6 @@ void serverSimPrependMapEvents(ServerSim *sim,
  *  players leave.
  *********************************************************/
 void serverSimSetAutoCloseOnEmpty(ServerSim *sim, bool enabled);
-
-/*********************************************************
- *NAME:          serverSimSetBalanceBroadcastNeeded
- *PURPOSE:
- *  Sets the balance proposal's broadcastNeeded flag. Set
- *  true by the balance worker thread when it finishes;
- *  cleared after the main thread broadcasts.
- *********************************************************/
-void serverSimSetBalanceBroadcastNeeded(ServerSim *sim, bool needed);
-
-/*********************************************************
- *NAME:          serverSimSetBalanceRequestInFlight
- *PURPOSE:
- *  Sets the balance proposal's requestInFlight flag. True
- *  while the HTTP call is in flight (prevents duplicates);
- *  cleared once the worker returns or aborts.
- *********************************************************/
-void serverSimSetBalanceRequestInFlight(ServerSim *sim, bool inFlight);
-
-/* Set after the WBN balance call returns so the APPLY handler knows
- * whether bots are part of the proposal (TRUE) or should be kicked
- * before the team assignments are written (FALSE). */
-void serverSimSetBalanceIncludeBots(ServerSim *sim, bool includeBots);
 
 /*********************************************************
  *NAME:          serverSimSetEmptyResetMinutes
@@ -935,31 +873,6 @@ void serverSimAbortCountdown(ServerSim *sim);
 void serverSimClearBalanceProposal(ServerSim *sim);
 
 /*********************************************************
- *NAME:          serverSimEnterGameOver
- *PURPOSE:
- *  Transitions the server to game-over state. If lobby is
- *  enabled, starts the game-over hold timer. If not, the
- *  server will shut down.
- *********************************************************/
-void serverSimEnterGameOver(ServerSim *sim);
-
-/*********************************************************
- *NAME:          serverSimReturnToLobby
- *PURPOSE:
- *  Transitions from game-over back to lobby state.
- *  Only called when lobbyEnabled is true.
- *********************************************************/
-void serverSimReturnToLobby(ServerSim *sim);
-
-/*********************************************************
- *NAME:          serverSimLobbyCheckAllReady
- *PURPOSE:
- *  Checks if all connected players are ready. If so,
- *  transitions to countdown state.
- *********************************************************/
-void serverSimLobbyCheckAllReady(ServerSim *sim);
-
-/*********************************************************
  *NAME:          serverSimStartGame
  *PURPOSE:
  *  Called when countdown reaches zero. Resets the game
@@ -967,19 +880,6 @@ void serverSimLobbyCheckAllReady(ServerSim *sim);
  *  connected players, and transitions to running state.
  *********************************************************/
 void serverSimStartGame(ServerSim *sim);
-
-/*********************************************************
- *NAME:          serverSimStartGameInPlace
- *PURPOSE:
- *  Lobby → running transition that keeps the world intact:
- *  reapplies team alliances, batch-assigns start slots,
- *  creates tanks for all connected players, flips state to
- *  serverStateRunning, and (when autoLockOnGameStart is set)
- *  toggles allowNewPlayers off for the duration of the game.
- *  Used by the SP-host path where the world is already loaded
- *  and no resetGameWorld is needed.
- *********************************************************/
-void serverSimStartGameInPlace(ServerSim *sim);
 
 /*********************************************************
  *NAME:          serverSimReapplyTeamAlliances
@@ -1131,7 +1031,6 @@ bool serverSimGetGameVoteSnapshot(const ServerSim *sim, uint8_t kind,
  * transition was driven by a vote-pass which already announced its
  * own context). The flag self-clears once lifecycle reads it. */
 bool serverSimConsumeSuppressNextWinMessage(ServerSim *sim);
-void serverSimSetSuppressNextWinMessage(ServerSim *sim, bool v);
 
 /*********************************************************
  *NAME:          serverSimSendWbnWinEvents
@@ -1320,7 +1219,6 @@ const char *serverSimGetServerMessageLogFile(const ServerSim *sim);
 /* Indexed-array accessors (bounds-checked; out-of-range
  * returns NULL for pointer types, false/0 for scalars). */
 const LobbyPlayer *serverSimGetLobbyPlayer(const ServerSim *sim, BYTE n);
-LobbyPlayer       *serverSimGetLobbyPlayerMut(ServerSim *sim, BYTE n);
 bool               serverSimIsPlayerConnected(const ServerSim *sim, BYTE n);
 uint32_t           serverSimGetLastProcessedInput(const ServerSim *sim, BYTE n);
 bool               serverSimIsMapSkipVote(const ServerSim *sim, BYTE n);
@@ -1430,22 +1328,15 @@ bool        serverSimGetRanked(const ServerSim *sim);
  * unit tests to lock the shape rules. */
 bool        serverSimRankedShapeReady(const ServerSim *sim);
 
-/* Setter for the Layout A "Allow New Players: Now" toggle. The
- * PACKET_LOCK_TOGGLE handler reconciles per-client lock consensus
- * back into this flag and re-publishes CTRL_LOBBY_SETTINGS so every
- * client's checkbox reflects the actual server state. */
-void        serverSimSetAllowNewPlayers(ServerSim *sim, bool v);
 void        serverSimSetRanked(ServerSim *sim, bool v);
 
 /* openHost — when true, any connected player has host-level edit
  * authority on lobby state (see lobbyClientMayEdit). */
 bool        serverSimGetOpenHost(const ServerSim *sim);
-void        serverSimSetOpenHost(ServerSim *sim, bool v);
 
 /* serverLocks — LOBBY_LOCK_* bitmask set from CLI at server start.
  * Locked settings refuse PACKET_LOBBY_SET_SETTING with REJECT_LOCKED. */
 uint16_t    serverSimGetServerLocks(const ServerSim *sim);
-void        serverSimSetServerLocks(ServerSim *sim, uint16_t locks);
 
 /* Map an LST_* setting id to the LOBBY_LOCK_* bit that gates it.
  * Returns 0 for settings with no lock, 0xFFFF for unknown ids. The
@@ -1472,15 +1363,8 @@ void        serverSimSetTimeLimit(ServerSim *sim, bool v);
 uint16_t    serverSimGetTimeMinutes(const ServerSim *sim);
 void        serverSimSetTimeMinutes(ServerSim *sim, uint16_t v);
 
-/* Per-team metadata (color, name, naming pool, in_use flag). Returns
- * NULL for out-of-range teamId (0 or >= MAX_TANKS). Mutable so the
- * UDP TEAM_META handler can write through it. */
-TeamMetadata *serverSimGetTeamMetaMut(ServerSim *sim, BYTE teamId);
-
-/* Per-bot config (difficulty + personality). Mutable for the UDP
- * BOT_CONFIG handler. */
+/* Per-bot config (difficulty + personality). */
 const LobbyBotConfig *serverSimGetBotConfig(const ServerSim *sim, BYTE slot);
-LobbyBotConfig       *serverSimGetBotConfigMut(ServerSim *sim, BYTE slot);
 
 /* Mutable game-length (transition-out-of-lobby and time-limit edits
  * write through this). */
@@ -1520,20 +1404,6 @@ void serverSimPublishLobbyBotBrain(ServerSim *sim, BYTE slot);
 void serverSimPublishLobbyBotConfig(ServerSim *sim, BYTE slot);
 void serverSimPublishLobbyTeamMeta(ServerSim *sim, BYTE teamId);
 void serverSimPublishLobbySettings(ServerSim *sim);
-
-/* Auto-unready every human and abort any in-flight countdown after a
- * meaningful lobby change. The PACKET_LOBBY_* handlers in
- * transport_udp_server.c call this after each apply; the local-transport
- * branches in client_net.c do the same so SP-host produces identical
- * sim state to UDP-host. Body lives in server_sim.c — pure sim state,
- * no transport coupling — so callers that don't link server_static can
- * still reach it. */
-void lobbyAutoUnreadyOnChange(ServerSim *sim);
-
-/* Mirror the operator-chosen upload policy onto the sim so it can be
- * broadcast in the lobby-settings event. Called at server startup
- * after transportUdpServerSetUploadConfig. */
-void serverSimSetUploadPolicy(ServerSim *sim, UploadPolicy policy);
 
 /* viewPlayer — which player perspective the sim renders from. */
 BYTE serverSimGetViewPlayer(const ServerSim *sim);

@@ -77,6 +77,7 @@
 #include "client_net.h"
 #include "gui_message.h"
 #include "server_sim.h"
+#include "../bolo/internal/server_sim_lifecycle.h"
 #include "../server/server_lifecycle.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"

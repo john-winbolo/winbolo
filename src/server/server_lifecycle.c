@@ -27,6 +27,7 @@
 #include "../winbolonet/winbolonet_server.h"
 #include "threads.h"
 #include "server_sim_internal.h"
+#include "server_sim_lifecycle.h"
 #include "server_lifecycle.h"
 
 /* Publish CTRL_LOBBY_SLOT for every connected slot plus
@@ -139,7 +140,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
     transportUdpServerSetUploadConfig(cfg->uploadPolicy,
                                       cfg->uploadMaxFiles,
                                       cfg->uploadMaxStorageBytes);
-    serverSimSetUploadPolicy(sim, cfg->uploadPolicy);
+    sim->uploadPolicy = cfg->uploadPolicy;
   }
 
   serverSimSetEmptyResetEnabled(sim, cfg->emptyResetEnabled);

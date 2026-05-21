@@ -5770,7 +5770,3 @@ BYTE serverSimGetMaxPlayers(const ServerSim *sim) {
     return (sim->maxPlayers > 0) ? sim->maxPlayers : (BYTE)MAX_TANKS;
 }
 
-void serverSimSetUploadPolicy(ServerSim *sim, UploadPolicy policy) {
-    if (!sim) return;
-    sim->uploadPolicy = policy;
-}

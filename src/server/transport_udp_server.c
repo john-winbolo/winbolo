@@ -54,6 +54,7 @@
 #include "log.h"
 #include "playername_validate.h"
 #include "server_sim_join.h"
+#include "server_sim_lifecycle.h"
 #include "../common/wb_log.h"
 
 #ifdef _WIN32
