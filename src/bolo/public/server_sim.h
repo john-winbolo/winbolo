@@ -1521,6 +1521,15 @@ void serverSimPublishLobbyBotConfig(ServerSim *sim, BYTE slot);
 void serverSimPublishLobbyTeamMeta(ServerSim *sim, BYTE teamId);
 void serverSimPublishLobbySettings(ServerSim *sim);
 
+/* Auto-unready every human and abort any in-flight countdown after a
+ * meaningful lobby change. The PACKET_LOBBY_* handlers in
+ * transport_udp_server.c call this after each apply; the local-transport
+ * branches in client_net.c do the same so SP-host produces identical
+ * sim state to UDP-host. Body lives in server_sim.c — pure sim state,
+ * no transport coupling — so callers that don't link server_static can
+ * still reach it. */
+void lobbyAutoUnreadyOnChange(ServerSim *sim);
+
 /* Mirror the operator-chosen upload policy onto the sim so it can be
  * broadcast in the lobby-settings event. Called at server startup
  * after transportUdpServerSetUploadConfig. */

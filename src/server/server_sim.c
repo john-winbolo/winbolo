@@ -5635,6 +5635,48 @@ void serverSimPublishLobbySettings(ServerSim *sim) {
     balanceDebugLog("[RANKED SERVER] publishLobbySettings: publishControl returned");
 }
 
+/* Auto-unready: any meaningful lobby change clears every human's
+ * ready flag and aborts an in-flight countdown. The per-slot
+ * CTRL_LOBBY_SLOT publishes (plus the CTRL_GAME_PHASE publish if the
+ * countdown was aborted) fan out to both in-process subscribers and
+ * remote UDP clients via the codec — no wire-only blast needed. Bots
+ * stay permanently ready by design (set in botManagerAddBot) so the
+ * next all-ready check still triggers a countdown when the human
+ * re-confirms. */
+void lobbyAutoUnreadyOnChange(ServerSim *sim) {
+    BYTE i;
+    bool countdownWasRunning = (serverSimGetState(sim) == serverStateCountdown);
+    bool toggled[MAX_TANKS];
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, i);
+        toggled[i] = false;
+        if (lp == NULL) continue;
+        if (lp->isBot) continue;
+        if (lp->ready) {
+            serverSimSetReady(sim, i, false);
+            toggled[i] = true;
+        }
+    }
+
+    if (countdownWasRunning) {
+        serverSimAbortCountdown(sim);
+    }
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (toggled[i]) {
+            serverSimPublishLobbySlot(sim, i);
+        }
+    }
+
+    if (countdownWasRunning) {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillGamePhaseEvent(sim, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
+}
+
 const BrainList *serverSimGetBrainList(const ServerSim *sim) {
     return sim ? &sim->brainList : NULL;
 }

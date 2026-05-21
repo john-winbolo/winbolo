@@ -589,48 +589,6 @@ static bool lobbyClientMayEdit(ServerSim *sim, int clientIdx) {
     return serverSimGetOpenHost(sim) && serverSimIsPlayerConnected(sim, clientIdx);
 }
 
-/* Auto-unready: any meaningful lobby change clears every human's
- * ready flag and aborts an in-flight countdown. State changes are
- * written through T1 setters; the per-slot CTRL_LOBBY_SLOT publishes
- * (plus the CTRL_GAME_PHASE publish if the countdown was aborted)
- * fan out to both in-process subscribers and remote UDP clients via
- * the codec — no wire-only blast needed. Bots stay permanently ready
- * by design (set in botManagerAddBot) so the next all-ready check
- * still triggers a countdown when the human re-confirms. */
-static void lobbyAutoUnreadyOnChange(ServerSim *sim) {
-    BYTE i;
-    bool countdownWasRunning = (serverSimGetState(sim) == serverStateCountdown);
-    bool toggled[MAX_TANKS];
-
-    for (i = 0; i < MAX_TANKS; i++) {
-        const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, i);
-        toggled[i] = false;
-        if (lp == NULL) continue;
-        if (lp->isBot) continue;
-        if (lp->ready) {
-            serverSimSetReady(sim, i, false);
-            toggled[i] = true;
-        }
-    }
-
-    if (countdownWasRunning) {
-        serverSimAbortCountdown(sim);
-    }
-
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (toggled[i]) {
-            serverSimPublishLobbySlot(sim, i);
-        }
-    }
-
-    if (countdownWasRunning) {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        serverSimFillGamePhaseEvent(sim, &evt);
-        serverSimPublishControl(sim, &evt);
-    }
-}
-
 /* Wire-only fan-out for the cosmetic ping/country refresh fired
  * every 25 ticks while in lobby/countdown.  Drives the same codec
  * encoders the bus path uses, but bypasses serverSimPublishControl

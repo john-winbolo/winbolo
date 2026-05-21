@@ -2740,10 +2740,10 @@ static void lobbySendTeamSet(ClientSim *cs,
 }
 
 /* Update a bot's per-slot config (difficulty / personality / name
- * override). Mirrors the server-side PACKET_LOBBY_BOT_CONFIG handler.
- * In single-player we write directly into spServerSim->botConfigs and
- * (if name supplied) update the players struct so the lobby slot's
- * playerName changes as well. */
+ * override). Pre-validates the name on the client (UX courtesy — the
+ * UI can drop bad input before sending) and hands off to the wire
+ * wrapper, whose local-transport branch re-runs the canonical
+ * validate-and-apply path for SP-host. */
 static void lobbySendBotConfig(ClientSim *cs,
                                uint8_t slot,
                                uint8_t difficulty, uint8_t personality,
@@ -2776,28 +2776,6 @@ static void lobbySendBotConfig(ClientSim *cs,
         effectiveName = validated;
     }
 
-    if (cs && clientSimIsSinglePlayer(cs)) {
-        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-        if (!sim || slot >= MAX_TANKS) return;
-        if (serverSimGetState(sim) != serverStateLobby) return;
-        if (difficulty > 2 || personality > 3) return;
-        if (!serverSimGetLobbyPlayer(sim, slot)->isBot) return;
-        {
-            LobbyBotConfig *bc = serverSimGetBotConfigMut(sim, slot);
-            if (bc) {
-                bc->difficulty  = difficulty;
-                bc->personality = personality;
-            }
-        }
-        if (effectiveName && effectiveName[0] != '\0') {
-            serverSimRenameBotSlot(sim, slot, effectiveName);
-        }
-        /* Publish bot config change AND the slot's new state (playerName
-         * may have changed). */
-        serverSimPublishLobbyBotConfig(sim, slot);
-        serverSimPublishLobbySlot(sim, slot);
-        return;
-    }
     clientSimNetSendLobbyBotConfig(cs, slot, difficulty, personality, effectiveName);
 }
 
@@ -2821,41 +2799,36 @@ static void lobbySendSetBotBrain(ClientSim *cs,
 
 /* Clear a team's metadata (color/name/pool back to defaults).
  * Mirrors PACKET_LOBBY_TEAM_CLEAR. Only called when the team is
- * empty — caller already gates on memberCount == 0. */
+ * empty — caller already gates on memberCount == 0. The wrapper's
+ * local-transport branch handles SP-host. */
 static void lobbySendTeamClear(ClientSim *cs, uint8_t teamId) {
-    if (cs && clientSimIsSinglePlayer(cs)) {
-        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-        if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
-        {
-            TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
-            if (t) memset(t, 0, sizeof(*t));
-        }
-        serverSimPublishLobbyTeamMeta(sim, teamId);
-        return;
-    }
     clientSimNetSendLobbyTeamClear(cs, teamId);
 }
 
-/* Update a team's naming pool. Mirrors the per-team naming dropdown
- * which previously sent transportUdpClientSendLobbyTeamMeta directly.
- * Single-player path mutates spServerSim->teams[teamId] in-place AND
- * re-rolls every bot on the team whose name wasn't manually
- * overridden so the new pool's vibe applies immediately. */
+/* Update a team's naming pool. The team-meta write goes through the
+ * wire wrapper (its local-transport branch handles SP-host). After
+ * the new pool is published we re-roll every bot on the team whose
+ * name wasn't manually overridden so the new pool's vibe applies
+ * immediately — the SP and MP branches diverge only in which set of
+ * accessors they iterate (server-sim vs client-sim mirror); both
+ * land on the same wire wrapper for the per-bot rename sends. */
 static void lobbySendTeamPool(ClientSim *cs,
                               uint8_t teamId, uint8_t namingPool,
                               const char *teamName) {
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
-        TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
-        if (!t) return;
-        t->in_use = 1;
-        t->namingPool = namingPool;
-        if (teamName && teamName[0]) {
-            strncpy(t->name, teamName, LOBBY_TEAM_NAME_LEN - 1);
-            t->name[LOBBY_TEAM_NAME_LEN - 1] = '\0';
+        /* Route the team-meta write through the wire wrapper. The
+         * local-transport branch in client_net.c applies the same
+         * fields (and pool-uniqueness rewrite) under the threads
+         * mutex. Read the current color so the wrapper's required
+         * color arg doesn't clobber it — fresh teams fall back to a
+         * per-teamId default, same as the MP branch below. */
+        uint8_t color = clientSimGetLobbyTeamColor(cs, (BYTE)(teamId));
+        if (!clientSimGetLobbyTeamInUse(cs, (BYTE)(teamId))) {
+            color = (uint8_t)((teamId - 1) & 7);
         }
-        serverSimPublishLobbyTeamMeta(sim, teamId);
+        clientSimNetSendLobbyTeamMeta(cs, teamId, color, namingPool, teamName);
 
         /* Rename bots on this team whose names weren't overridden by
          * the host. We pick names sequentially from the new pool,
@@ -4722,21 +4695,8 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                         SDL_snprintf(defaultName, sizeof(defaultName), "%s", langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args));
                     }
                     uint8_t color = (uint8_t)((t - 1) & 7);
-                    if (clientSimIsSinglePlayer(cs)) {
-                        ServerSim *spSim = gameFrontGetSinglePlayerServerSim();
-                        TeamMetadata *tm = serverSimGetTeamMetaMut(spSim, t);
-                        if (spSim && tm) {
-                            tm->in_use = 1;
-                            tm->color = color;
-                            tm->namingPool = 0;
-                            strncpy(tm->name, defaultName, LOBBY_TEAM_NAME_LEN - 1);
-                            tm->name[LOBBY_TEAM_NAME_LEN - 1] = '\0';
-                            serverSimPublishLobbyTeamMeta(spSim, (uint8_t)t);
-                        }
-                    } else {
-                        clientSimNetSendLobbyTeamMeta(cs, (uint8_t)t,
-                            color, 0 /*pool=classic*/, defaultName);
-                    }
+                    clientSimNetSendLobbyTeamMeta(cs, (uint8_t)t,
+                        color, 0 /*pool=classic*/, defaultName);
                     break;
                 }
             }
