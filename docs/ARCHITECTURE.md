@@ -11,7 +11,7 @@ document is the stable reference for the rules themselves.
 
 | Tier | Purpose | Representative headers |
 |---|---|---|
-| **T1 — Sim runtime (public API)** | The official front door to the simulation. Opaque handles; no direct struct access. | `server_sim.h`, `client_sim.h`, `client_mapload.h`, `client_enums.h` |
+| **T1 — Sim runtime (public API)** | The official front door to the simulation. Opaque handles; no direct struct access. | `server_sim.h`, `client_sim.h`, `client_net.h`, `client_enums.h`, `bolo_map_validate.h` |
 | **T2 — Sim internals** | Implementation details of the sim: state structs, wire protocol, sub-systems. | `tank.h`, `players.h`, `game_sim.h`, `allience.h`, `client_sim_internal.h`, `server_sim_internal.h`, `client_sim_control.h`, `bot_manager.h`, `shells.h`, `mines.h`, `lgm.h`, `viewport.h`, `bolo_packets.h`, `netpacks.h`, `transport_udp.h`, `bolo_map.h`, `starts.h`, `pillbox.h`, `bases.h` |
 | **T3 — Presentation data** | Read-only per-frame views the sim publishes for the renderer. | `viewport_types.h`, `client_render.h`, `client_ui_events.h`, `screentank.h`, `screenbullet.h`, `screenlgm.h`, `screencalc.h`, `frontend.h` |
 | **T4 — Shared leaves** | Plain types and constants with no dependencies. | `types.h`, `global.h`, `tilenum.h`, `gametype.h`, `platform_types.h` |
@@ -152,53 +152,77 @@ implements `frontEndDrawMainScreen` against the per-frame view
 buffers (`screen *`, `screenTanks *`, `screenBullets *`, `screenLgm *`)
 the sim passes in.
 
-**Setting up a client.**
+**Setting up a client and connecting.** The complete frontend setup
+for any game — SP, LAN host, LAN join, internet host, internet join —
+is alloc-create-set-active-connect:
 
 ```c
 ClientSim *cs = clientSimAlloc();
-clientSimCreate(cs, gameType, hiddenMines, startDelay, gameLen);
-clientSimSetPlayerNum(cs, myPlayerNum);
-clientSimSetupSelf(cs, myPlayerNum, "PlayerName", clientType, clientFlags);
+clientSimCreate(cs);
+frontEndSetActiveClientSim(cs);
 ```
 
 `clientSimAlloc` heap-allocates and zero-initialises. `clientSimCreate`
-applies game settings. `clientSimSetupSelf` populates the local
-self-record (tank/LGM) once `setPlayerNum` has been called.
+prepares the ClientSim for a connect call; game settings (gameType,
+hiddenMines, startDelay, gameLength) install later via setters driven
+by the connect handshake — the frontend never threads them through
+construction. `frontEndSetActiveClientSim` must run **before** the
+connect call: sync-replay fires `frontEndSetPlayer` /
+`frontEndUpdateTankStatusBars` from inside the connect body and those
+hooks look at the active-sim pointer to dispatch.
 
-**Loading a map.** From disk:
-
-```c
-clientLoadMap(cs, "maps/everard.map", gameType, hiddenMines,
-              startDelay, gameLen, "PlayerName", /*wantFree=*/false);
-```
-
-From an in-memory compressed blob (the UDP-join flow — server sends
-the map during the join handshake):
+Then connect, either to an in-process ServerSim (single-player or
+host-with-self):
 
 ```c
-clientSimResetForMapLoad(cs);   /* drops map state, keeps transport */
-clientLoadCompressedMap(cs, buff, buffLen, "mapname", gameType,
-                        hiddenMines, startDelay, gameLen,
-                        "PlayerName", playerNum, /*wantFree=*/false);
+clientSimConnectLocalPassive(cs, serverSim,
+                             playerName,
+                             winbolonetGetCountryCode(),
+                             clientType, clientFlags);
+/* clientSimConnectLocal (active) for headless / gym — same shape,
+ * but the local transport's tick also drives serverSimTick. Passive
+ * leaves that to the host's timer thread. */
 ```
 
-**Connecting.** Network (LAN, or internet via tracker — see `client_net.h`):
+…or to a remote server via UDP (LAN, or internet via tracker — see
+`client_net.h`):
 
 ```c
-clientSimConnectUdp(cs, serverAddr, serverPort, playerName,
-                    password, wbnToken, wantRejoin,
-                    trackerAddr, trackerPort);
+clientSimConnectUdp(cs, serverAddr, serverPort,
+                   playerName,
+                   winbolonetGetCountryCode(),
+                   password, wbnApiToken, wbnServerKey,
+                   wantRejoin,
+                   trackerAddr, trackerPort);
 ```
 
-In-process (single-player, or host-with-self):
+The connect call does everything the frontend used to drive by hand:
+picks the slot, installs the map blob the server sends, registers the
+auto-subscriber so control events fan into the ClientSim, creates the
+local tank, and applies the first snapshot. The frontend never sees
+the map bytes, never picks a slot, never stamps a country code — it
+supplies a `fallbackCountry` (cached from WBN) so the server has
+something to fall back to when GeoIP can't resolve the joiner's IP,
+and that's the only piece of identity the frontend hands over.
 
-```c
-clientSimConnectLocal(cs, serverSim, playerNum);
-```
+Post-conditions of `clientSimConnectLocal{,Passive}` are **synchronous**:
+on successful return the map is installed, the local tank exists in
+the assigned slot, the initial snapshot has been applied,
+`clientSimGetConnectState(cs) == CLIENT_CONNECT_CONNECTED`. Post-
+conditions of `clientSimConnectUdp` are **asynchronous**: transport is
+bound and `JOIN_REQUEST` is queued; `clientSimGetConnectState(cs) ==
+CLIENT_CONNECT_JOINING`. The remaining state arrives over subsequent
+`clientSimNetTick` calls — frontends observe progress via
+`clientSimGetConnectState` / `clientSimGetMapDownloadPercent` /
+`clientSimIsInLobby` / `clientSimIsMapDownloadComplete`. No additional
+install call is required; the transport drives the map install
+internally on `CTRL_GAME_PHASE` transition or on no-lobby
+`MAP_DOWNLOAD` completion.
 
-The transport stays bound to the ClientSim across
-`clientSimResetForMapLoad`, which is what makes UDP-join work:
-connect → handshake → reset for map load → load compressed map.
+On failure, the connect call writes a localised rejection reason into
+the ClientSim that the frontend reads via
+`clientSimGetConnectErrorReason(cs)`. One error-handling path covers
+SP, LAN host, LAN join, internet host, and internet join.
 
 **Ticking.** Alternating cadence — keys on odd ticks, full game on
 even ticks. From `src/headless/headless_main.c`:
@@ -254,31 +278,66 @@ ServerSim *sim = serverSimCreate("maps/everard.map", gameType,
  */
 ```
 
-**Player management.**
+**Startup config.** `serverInstanceStartup` is the single entry point
+that takes a `ServerInstanceConfig` and applies every cfg field
+(lobbyEnabled / skipLobby / emptyResetEnabled / hasPassword /
+botBrainPath / botAiType / autoLockOnGameStart / ranked / openHost /
+serverLocks / viewPlayer / uploadPolicy / maxPlayers / …) onto the
+sim, plus drives the UDP transport / WBN / tracker / NAT-portmap
+bring-up when `cfg.acceptRemoteClients` is true.
 
 ```c
-serverSimAddPlayer(sim, playerNum, "Name", /*wantRejoin=*/false);
+ServerInstanceConfig cfg;
+memset(&cfg, 0, sizeof(cfg));
+cfg.acceptRemoteClients = true;            /* false for SP, gym, braintest, bg_game */
+cfg.lobbyEnabled        = true;            /* mutually exclusive with skipLobby */
+cfg.emptyResetEnabled   = true;
+cfg.hasPassword         = (password[0] != '\0');
+cfg.botBrainPath        = "brains/NewAutopilot/init.lua";
+cfg.botAiType           = aiFull;
+cfg.udpPort             = port;
+/* …other transport / WBN / tracker fields… */
+
+serverInstanceStartup(sim, &cfg);
+```
+
+For headless callers that don't run the UDP / WBN stack (gym,
+braintest, bg_game, headless `--fast`), pass `cfg.acceptRemoteClients
+= false` and `cfg.skipLobby = true` to enter running state directly.
+
+**Player management.** Players join through the connect path on the
+**client** side — `clientSimConnectLocal{,Passive}` calls
+`serverSimLocalJoin` internally for in-process joins;
+`clientSimConnectUdp` queues `PACKET_JOIN_REQUEST`, which the UDP
+server handler turns into a join. Frontends never call into the
+server's join machinery directly. Bots flow through a separate
+publish path:
+
+```c
 serverSimRemovePlayer(sim, playerNum);
-serverSimAddBot(sim, playerNum, &botCfg);
+serverSimCreateBot(sim, playerNum, brainPath, "Name", aiFull,
+                   gameType, hiddenMines);
 ```
 
 The bot pool is process-global — call `serverSimBotPoolInit` once at
 startup; multiple ServerSims share it.
 
-**Lobby and start.**
+**Lobby → running transition.** Driven by the all-ready detector
+inside `serverSimLobbyCheckAllReady`, which the UDP packet handlers
+and the SP-host local-transport branch of `clientSimNetSendReady` both
+fire after a ready-toggle. The detector branches on
+`sim->worldPreLoaded`:
 
-```c
-serverSimEnterLobby(sim);
-serverSimSetTeam(sim, playerNum, teamNumber);
-serverSimSetReady(sim, playerNum, true);
-serverSimLobbyCheckAllReady(sim);   /* transitions to countdown */
-serverSimStartGame(sim);            /* countdown done; world begins */
-```
+- Fresh sim from `serverSimCreate*` → `serverSimStartGameInPlace`
+  (synchronous; no countdown). Used by SP host on first round.
+- Subsequent rounds (after a `serverSimResetGameWorld`) → countdown
+  state, then `serverSimStartGame` on countdown expiry. Used by MP
+  and by SP's second-and-later rounds.
 
-If players are added after `serverSimStartGame`, the server frontend
-must call `serverSimReapplyTeamAlliances` to re-fix alliances. This is
-tech debt — new frontends should add players and set teams before
-calling `serverSimStartGame`.
+The detector entry points are private to `src/server/` — frontends
+never call `serverSimStartGame` directly; they fire
+`clientSimNetSendReady(cs, true)` and the server side decides what to
+do with that signal.
 
 **Ticking.**
 
@@ -1095,10 +1154,11 @@ own defines. Files in this category:
 
 - `src/bolo/transport_udp_client.c` — `HAVE_STEAM` flips the
   `PLAYER_FLAG_STEAM_BUILD` bit in the JOIN_REQUEST path.
-- `src/bolo/client_mapload.c` — same flag.
 
-**Per-target globals or `main()`.** A TU owns target-specific globals
-or the binary's entry point, so it can't live in a shared archive:
+**Per-target globals, `main()`, or target-specific stubs.** A TU
+owns target-specific globals or the binary's entry point, or stubs a
+sim-internal function whose production body lives in a static archive
+the target deliberately doesn't link:
 
 - `src/server/servermain.c` — the dedicated-server `main()` and the
   module globals it owns.
@@ -1108,10 +1168,30 @@ or the binary's entry point, so it can't live in a shared archive:
 - `src/server/server_dedicated_log.c` — real bodies for the replay-
   log hooks; the no-op pair (`server_dedicated_log_stubs.c`) ships
   in every other binary, so the two can't both link.
+- `src/braintest/braintest_lifecycle_stub.c` — BrainTest deliberately
+  omits `server_static`'s transport/WBN/maxmind chain, so the real
+  `serverInstanceStartup` body in `server_lifecycle.c` isn't on its
+  link line. The stub is a thin wrapper that forwards to
+  `serverSimApplyInstanceConfig` (which lives in `server_sim_static`,
+  reachable by both call paths) and stubs `serverInstanceTick` /
+  `serverInstanceShutdown` as no-ops.
 - WinBolo's embedded map editor TUs (`src/mapeditor/mapeditor.c`,
   `mapeditor_export.c`, `mapeditor_validate.c`) — sim-co-owner files
   from the editor that need T2 access regardless of which binary
   they're compiled into.
+
+**Frontend sim-driver without per-actor ClientSim.** A frontend that
+drives an in-process ServerSim with bots but doesn't allocate a
+ClientSim per bot, so the wire-wrapper migration that routes SP-host
+lobby mutations through the local transport doesn't apply.
+
+- `src/gui/sdl3/bg_game.c` — the lobby-background animation. Mutates
+  `lobbyPlayers[].teamNumber` via `serverSimSetTeam` directly because
+  there's no ClientSim per bot to call `clientSimNetSendTeamSet` on.
+  The grant is bounded to that single setter; the rendering helpers
+  read `viewPlayer` via a parameter threaded from the render entry
+  point, not via the sim's `viewPlayer` field, so they don't need
+  privileged access.
 
 This is not a third tier of privileged exception. The grants are a
 CMake-level workaround for archive packaging, not an architectural
