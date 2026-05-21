@@ -2728,10 +2728,12 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
      * least one live preview since opening the chooser, route through
      * a 3-way confirmation instead of silently reverting — they've
      * been showing this map on every client and may well want to keep
-     * it. With no pending preview, the close path silently reverts. */
+     * it. With no pending preview, the close path silently reverts.
+     * CancelKeyPressed self-gates on window focus so the keypress
+     * won't fire here when the preview-close confirmation popup below
+     * is open over the chooser. */
     bool wantClose = !open;
-    if (!wantClose && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
-        WBUI::CancelKeyPressed()) {
+    if (!wantClose && WBUI::CancelKeyPressed()) {
         wantClose = true;
     }
     if (wantClose) {
