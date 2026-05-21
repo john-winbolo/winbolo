@@ -746,6 +746,14 @@ void serverSimDestroy(ServerSim *sim) {
         SDL_Delay(10);
     }
 
+    /* Tear down the per-sim BotManager before anything else.
+     * botManagerRemoveBot reaches back into sim->plyrs and the
+     * subscriber list, both of which the destroy steps below
+     * dismantle. Idempotent: callers that still pair an explicit
+     * botManagerDestroy(sim) / serverSimDestroyBots(sim) before
+     * this destroy walk an already-empty bots[] on this call. */
+    botManagerDestroy(sim);
+
     for (count = 0; count < MAX_TANKS; count++) {
         if (sim->sim.tanks[count] != NULL) {
             tankDestroy(&sim->sim, &sim->sim.tanks[count]);
