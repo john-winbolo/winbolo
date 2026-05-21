@@ -1946,6 +1946,38 @@ void serverSimEnterLobby(ServerSim *sim) {
     sim->state = serverStateLobby;
 }
 
+void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cfg) {
+  sim->sim.viewPlayer = cfg->viewPlayer;
+
+  serverSimSetEmptyResetEnabled(sim, cfg->emptyResetEnabled);
+  serverSimSetHasPassword(sim, cfg->hasPassword);
+  if (cfg->botBrainPath != NULL) {
+    serverSimSetBotBrainPath(sim, cfg->botBrainPath);
+  }
+  if ((aiType)cfg->botAiType != aiNone) {
+    serverSimSetBotAiType(sim, (aiType)cfg->botAiType);
+  }
+  /* ranked forces autolock-on-game-start (matches the server-side
+   * LST_RANKED handler at PACKET_LOBBY_SET_SETTING and the existing
+   * servermain.c -ranked CLI behaviour). */
+  serverSimSetAutoLockOnGameStart(sim,
+      cfg->autoLockOnGameStart || cfg->ranked);
+  serverSimSetRanked(sim, cfg->ranked);
+  serverSimSetOpenHost(sim, cfg->openHost);
+  serverSimSetServerLocks(sim, cfg->serverLocks);
+
+  /* lobbyEnabled and skipLobby drive state transitions. If neither is
+   * set, the sim stays in whatever state serverSimCreate* left it
+   * (today's dedicated-server-with-no-cfg-fields behaviour). */
+  if (cfg->skipLobby) {
+    serverSimSetLobbyEnabled(sim, false);
+    serverSimStartGame(sim);
+  } else if (cfg->lobbyEnabled) {
+    serverSimSetLobbyEnabled(sim, true);
+    serverSimEnterLobby(sim);
+  }
+}
+
 void serverSimInstallMapDirList(ServerSim *sim,
                                 char **files, int count) {
     sim->mapDirFiles = files;

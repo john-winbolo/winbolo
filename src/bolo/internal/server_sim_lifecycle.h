@@ -2,6 +2,7 @@
 #define BOLO_INTERNAL_SERVER_SIM_LIFECYCLE_H
 
 #include "server_sim.h"
+#include "../../server/server_lifecycle.h"  /* ServerInstanceConfig */
 
 /* Lobby/round lifecycle transitions. Callers: the UDP server's
  * countdown / all-ready paths, dedicated server admin /start,
@@ -51,6 +52,15 @@ void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled);
 void serverSimSetBotAiType(ServerSim *sim, aiType ai);
 void serverSimSetAutoLockOnGameStart(ServerSim *sim, bool v);
 void serverSimSetRanked(ServerSim *sim, bool v);
+
+/* Apply ServerInstanceConfig's cfg-driven setter cluster onto sim.
+ * Called by serverInstanceStartup (production) and
+ * braintest_lifecycle_stub.c (BrainTest's minimal alternative).
+ * Covers every cfg field that isn't transport / WBN / tracker / NAT
+ * setup — those are gated on cfg->acceptRemoteClients and stay in
+ * serverInstanceStartup. */
+void serverSimApplyInstanceConfig(ServerSim *sim,
+                                  const ServerInstanceConfig *cfg);
 
 /* Runtime lobby-state toggles. Mutated only by their in-process
  * packet handlers and lifecycle code. */

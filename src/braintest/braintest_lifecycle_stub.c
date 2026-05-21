@@ -21,32 +21,12 @@
 
 #include <stdbool.h>
 #include "server_sim.h"
-#include "server_sim_lifecycle.h"
+#include "server_sim_lifecycle.h"  /* serverSimApplyInstanceConfig */
 #include "../server/server_lifecycle.h"
 
 bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   if (sim == NULL || cfg == NULL) return false;
-  serverSimSetViewPlayer(sim, cfg->viewPlayer);
-  serverSimSetEmptyResetEnabled(sim, cfg->emptyResetEnabled);
-  serverSimSetHasPassword(sim, cfg->hasPassword);
-  if (cfg->botBrainPath != NULL) {
-    serverSimSetBotBrainPath(sim, cfg->botBrainPath);
-  }
-  if ((aiType)cfg->botAiType != aiNone) {
-    serverSimSetBotAiType(sim, (aiType)cfg->botAiType);
-  }
-  serverSimSetAutoLockOnGameStart(sim,
-      cfg->autoLockOnGameStart || cfg->ranked);
-  serverSimSetRanked(sim, cfg->ranked);
-  serverSimSetOpenHost(sim, cfg->openHost);
-  serverSimSetServerLocks(sim, cfg->serverLocks);
-  if (cfg->skipLobby) {
-    serverSimSetLobbyEnabled(sim, false);
-    serverSimStartGame(sim);
-  } else if (cfg->lobbyEnabled) {
-    serverSimSetLobbyEnabled(sim, true);
-    serverSimEnterLobby(sim);
-  }
+  serverSimApplyInstanceConfig(sim, cfg);
   return true;
 }
 
