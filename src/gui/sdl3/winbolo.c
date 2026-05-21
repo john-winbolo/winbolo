@@ -579,11 +579,12 @@ int main(int argc, char *argv[]) {
   clientMutexDestroy();
   /* Explicit cleanup before SDL_Quit so leak checks see freed memory */
   sdl3ImguiCleanup();
-  sdl3DrawCleanup();
-  steam_shutdown();
-  /* Tear down the process-lifetime welcome-screen bg before the bot pool:
-   * bg destruction publishes control events through its sim's subscribers,
-   * so the worker pool must still be live when that runs. */
+  /* Tear down the process-lifetime welcome-screen bg before the renderer
+   * and the bot pool: bgGameDestroy calls SDL_DestroyTexture on
+   * bg->tilesTex (renderer must still be alive — SDL3 docs say destroying
+   * a renderer invalidates its child textures, so destroying a texture
+   * afterwards is UB), and bg destruction publishes control events through
+   * its sim's subscribers (worker pool must still be live for that flush). */
   {
     BgGame *bg = bgGameGetShared();
     if (bg != NULL) {
@@ -592,6 +593,8 @@ int main(int argc, char *argv[]) {
       SDL_free(bg);
     }
   }
+  sdl3DrawCleanup();
+  steam_shutdown();
   serverSimBotPoolDestroy();
   SDL_Quit();
   threadsDestroy();
