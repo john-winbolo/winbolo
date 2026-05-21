@@ -286,6 +286,7 @@ void bgGameDestroy(BgGame *bg) {
 
 void bgGameTick(BgGame *bg) {
     if (!bg || !bg->valid || bg->numBots == 0) return;
+    if (bg->hiddenByForeground) return;
 
     /* Real-game cadence: bot brains run at 50 Hz (game-ticks only), but
      * the inner sim ticks at 100 Hz (keys-tick + game-tick alternation in
@@ -347,6 +348,10 @@ static Uint8 bgGameMapNameAlpha(const BgGame *bg, Uint64 nowMs) {
         return (Uint8)(MAP_NAME_MAX_ALPHA - (MAP_NAME_MAX_ALPHA * fadeElapsed / MAP_NAME_FADE_MS));
     }
     return MAP_NAME_MAX_ALPHA;
+}
+
+void bgGameSetHiddenByForeground(BgGame *bg, bool hidden) {
+    if (bg) bg->hiddenByForeground = hidden;
 }
 
 void bgGameTogglePause(BgGame *bg) {

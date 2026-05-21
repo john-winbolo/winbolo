@@ -423,6 +423,10 @@ static void longToStr(long val, char *buf, int bufSize) {
   snprintf(buf, bufSize, "%ld", val);
 }
 
+/* Forward declaration — pickRandomMap is defined below near gameFrontDialogs,
+ * but gameFrontStart calls it during the one-shot init block. */
+static bool pickRandomMap(char *out, size_t outLen);
+
 /* -------------------------------------------------------
  * gameFrontStart — initialise game subsystems
  * ------------------------------------------------------- */
@@ -522,6 +526,22 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
     if (brainsHandlerLoadBrains() == FALSE) {
       /* Brain loading failure is non-fatal */
+    }
+
+    /* Heap-allocate the shared welcome-screen background game so it
+     * survives every SP/host transition. Hidden by gameFrontStart* while
+     * a foreground game runs; freed at app shutdown by main(). */
+    {
+      BgGame *bg = (BgGame *)SDL_calloc(1, sizeof(BgGame));
+      if (bg != NULL) {
+        char mapPath[512];
+        if (pickRandomMap(mapPath, sizeof(mapPath)) &&
+            bgGameCreate(bg, mapPath, sdl3DrawGetRenderer())) {
+          bgGameSetShared(bg);
+        } else {
+          SDL_free(bg);
+        }
+      }
     }
   }
 
@@ -729,17 +749,13 @@ static bool gameFrontDialogs(void) {
    * view which would otherwise cause a coordinate mismatch in ImGui. */
   sdl3DrawDisableLogicalPresentation();
 
-  /* Create shared background game for all pre-game dialogs */
-  BgGame bg;
-  bool hasBg = false;
-  {
-    char mapPath[512];
-    if (pickRandomMap(mapPath, sizeof(mapPath))) {
-      hasBg = bgGameCreate(&bg, mapPath, sdl3DrawGetRenderer());
-    }
-  }
+  /* Retrieve the process-lifetime shared bg (created in gameFrontStart's
+   * one-shot init); mark it visible so bgGameTick runs while we're on
+   * the welcome / settings dialogs. */
+  BgGame *bg = bgGameGetShared();
+  bool hasBg = (bg != NULL);
+  if (hasBg) bgGameSetHiddenByForeground(bg, false);
   WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[BgGame] hasBg=%d", hasBg);
-  if (hasBg) bgGameSetShared(&bg);
 
   /* Re-entry path after the user leaves a lobby: if the previous
    * gameFrontSetDlgState recorded an entry browser/manual screen,
@@ -919,10 +935,6 @@ static bool gameFrontDialogs(void) {
       break;
     }
   }
-
-  /* Clean up shared background game */
-  bgGameSetShared(NULL);
-  if (hasBg) bgGameDestroy(&bg);
 
   /* Restore render logical presentation for the game view (Android). */
   sdl3DrawRestoreLogicalPresentation();
@@ -1167,9 +1179,12 @@ bool gameFrontSetDlgState(openingStates newState) {
     }
   } else if (dlgState == openSetup && newState == openFinished) {
     WB_LOG_INFO(WB_LOG_CAT_GUI,
-                "[DIAG] openFinished SP-entry: name='%s' fileName='%s' gametype=%d compTanks=%d brainPath='%s' isTutorial=%d",
+                "[DIAG] openFinished SP-entry: name='%s' fileName='%s' gametype=%d compTanks=%d brainPath='%s' isTutorial=%d timeLen=%d startDelay=%d hiddenMines=%d botCount=%d playerTeam=%u",
                 gameFrontName, fileName, (int)gametype, (int)compTanks,
-                gameFrontBrainPath, (int)isTutorial);
+                gameFrontBrainPath, (int)isTutorial,
+                (int)timeLen, (int)startDelay, (int)hiddenMines,
+                (int)gameFrontBotSetupData.count,
+                (unsigned)gameFrontBotSetupData.playerTeamNumber);
     dlgState = openFinished;
     /* New architecture: ServerSim owns the map and all game state.
      * Create the server sim, then load the map on the client side
@@ -1192,6 +1207,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen);
         }
         if (spServerSim != NULL) {
+          bgGameSetHiddenByForeground(bgGameGetShared(), true);
           /* Single-player runs through the same serverInstanceStartup +
            * timer-thread ticking path as the host, so SP and listen-server
            * share one shutdown path and the bot tick is owned by the
@@ -1242,6 +1258,9 @@ bool gameFrontSetDlgState(openingStates newState) {
           /* Start the host timer; serverInstanceStartup applies the
            * lobby/skipLobby + hasPassword + brain/AI fields above. */
           if (!gameFrontStartServerSim(spServerSim, &cfg)) {
+            WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                         "[SP-FAIL] gameFrontStartServerSim failed — "
+                         "humanSim being nulled, dlgState stays at openFinished");
             frontEndSetActiveClientSim(NULL);
             clientSimDestroy(humanSim);
             humanSim = NULL;
@@ -1270,8 +1289,10 @@ bool gameFrontSetDlgState(openingStates newState) {
                 selfType, selfFlags);
 
             if (!connectOk) {
-              WB_LOG_WARN(WB_LOG_CAT_GUI, "SP connect failed: %s",
-                          clientSimGetConnectErrorReason(humanSim));
+              WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                           "[SP-FAIL] clientSimConnectLocalPassive failed: %s — "
+                           "humanSim being nulled, dlgState stays at openFinished",
+                           clientSimGetConnectErrorReason(humanSim));
               frontEndSetActiveClientSim(NULL);
               clientSimDestroy(humanSim);
               humanSim = NULL;
@@ -1312,15 +1333,6 @@ bool gameFrontSetDlgState(openingStates newState) {
                * the tutorial's no-lobby path just needs the tank-go
                * fixup before frame 1 renders. */
               clientSimNetSetupTankGo(humanSim);
-            }
-            /* Destroy background game before adding real bots — bgGameDestroy
-             * calls serverSimDestroyBots which would wipe bots we add below. */
-            {
-              BgGame *sharedBg = bgGameGetShared();
-              if (sharedBg != NULL) {
-                bgGameDestroy(sharedBg);
-                bgGameSetShared(NULL);
-              }
             }
             /* Add bot brains for local game if AI is enabled.
              * Serialise bot-pool init, bot creation, team assignment,
@@ -1367,6 +1379,11 @@ bool gameFrontSetDlgState(openingStates newState) {
             }  /* end "clientSimConnectLocalPassive succeeded" */
           } /* end "gameFrontStartServerSim succeeded" */
         } else {
+          WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                       "[SP-FAIL] spServerSim creation returned NULL "
+                       "(fileName='%s') — humanSim never allocated, "
+                       "dlgState stays at openFinished",
+                       fileName);
           if (spServerSim != NULL) {
             free(spServerSim);
             spServerSim = NULL;
@@ -1823,20 +1840,7 @@ bool gameFrontSetupServer(void) {
    * cfg.lobbyEnabled inside serverInstanceStartup. */
   isServer = TRUE;
   spServerSimActive = TRUE;
-  /* The welcome-screen BgGame leaves the global botManager state
-   * populated with its eye-candy bots; without clearing it here,
-   * serverSimFindFreeSlot skips those slots and the host's loopback
-   * JOIN_REQUEST gets a non-zero player number. Mirrors the SP path.
-   * Deferred until AFTER a successful bind so a port-in-use failure
-   * leaves the welcome screen's bg intact when we fall back to
-   * the openWelcome error dialog. */
-  {
-    BgGame *sharedBg = bgGameGetShared();
-    if (sharedBg != NULL) {
-      bgGameDestroy(sharedBg);
-      bgGameSetShared(NULL);
-    }
-  }
+  bgGameSetHiddenByForeground(bgGameGetShared(), true);
   return TRUE;
 }
 

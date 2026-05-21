@@ -68,6 +68,7 @@
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
 #include "luabrainshandler.h"
+#include "bg_game.h"
 
 #include "dialog_backend.h"
 #include "dialogs/imgui_messagebox.h"
@@ -580,6 +581,17 @@ int main(int argc, char *argv[]) {
   sdl3ImguiCleanup();
   sdl3DrawCleanup();
   steam_shutdown();
+  /* Tear down the process-lifetime welcome-screen bg before the bot pool:
+   * bg destruction publishes control events through its sim's subscribers,
+   * so the worker pool must still be live when that runs. */
+  {
+    BgGame *bg = bgGameGetShared();
+    if (bg != NULL) {
+      bgGameSetShared(NULL);
+      bgGameDestroy(bg);
+      SDL_free(bg);
+    }
+  }
   serverSimBotPoolDestroy();
   SDL_Quit();
   threadsDestroy();

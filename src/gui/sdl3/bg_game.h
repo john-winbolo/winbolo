@@ -41,6 +41,11 @@ typedef struct BgGame {
     BYTE         numBots;       /* Number of bots added */
     BYTE         numTeams;      /* Number of teams (0 = FFA) */
     bool         paused;        /* User-toggled pause state (persists across dialogs) */
+    bool         hiddenByForeground;  /* true while a foreground SP/host game is active —
+                                       * bgGameTick early-returns so the bg doesn't dispatch
+                                       * brains to the shared worker pool. Independent of
+                                       * the user-pause flag (paused), which only drives
+                                       * the map-name overlay fade. */
     Uint64       createdTicks;  /* SDL_GetTicks() at creation, for map name fade */
     Uint64       mapNameFadeStartMs;   /* 0 = use initial 10s timer; nonzero = pause-driven fade from this tick */
     Uint8        mapNameFadeFromAlpha; /* Starting alpha for the active pause-driven fade */
@@ -62,6 +67,10 @@ void bgGameRenderWithOverlay(BgGame *bg, SDL_Renderer *renderer, int screenW, in
 /* Toggle pause; also kicks off a fade-in (paused) or fade-out (unpaused)
  * of the map-name label, starting from its current visible alpha. */
 void bgGameTogglePause(BgGame *bg);
+
+/* Mark bg as hidden by a foreground game (SP or host). While hidden,
+ * bgGameTick is a no-op. Independent of bgGameTogglePause. */
+void bgGameSetHiddenByForeground(BgGame *bg, bool hidden);
 
 /* Shared background game instance used across all pre-game dialogs */
 void bgGameSetShared(BgGame *bg);
