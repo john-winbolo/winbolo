@@ -65,6 +65,7 @@
 #include "../winbolonet/winbolonet_server.h"
 #include "../winbolonet/http.h"
 #include "server_sim_internal.h"
+#include "server_sim_lifecycle.h"
 #include "server_lifecycle.h"
 #include "control_event.h"
 #include "client_sim.h"
