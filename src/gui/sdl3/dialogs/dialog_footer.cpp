@@ -94,12 +94,20 @@ bool DrawPanelCloseX() {
     return clicked;
 }
 
-/* Note: we intentionally don't gate these on IsPopupOpen — ImGui already
- * blocks key/click input to parent windows while a modal popup is open,
- * and an IsPopupOpen check would also disable us when *we* are being
- * called from inside a popup body (the popup containing us would count
- * as "open"). */
+/* Gate on IsWindowFocused(RootAndChildWindows) rather than IsPopupOpen.
+ *
+ * IsPopupOpen("") would have matched ANY popup — including the popup
+ * whose body is currently calling us — so the helper would self-disable
+ * inside nested popups (the SetPlayerName Enter/Esc bug in the Game
+ * Browser). IsWindowFocused is the correct frame of reference: a popup
+ * body sees its own window as focused (returns true → keys fire), while
+ * a parent panel whose child popup is on top sees the popup as focused,
+ * not itself (returns false → no spurious cancel underneath the popup).
+ *
+ * RootAndChildWindows so a popup with its own sub-child windows still
+ * registers as focused from the outermost popup body. */
 bool CancelKeyPressed() {
+    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) return false;
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) return true;
     if (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN()) return true;
 #ifdef __APPLE__
@@ -108,7 +116,11 @@ bool CancelKeyPressed() {
     return false;
 }
 
+/* Same focus gate as CancelKeyPressed — Enter is the keyboard equivalent
+ * of clicking the Confirm button, so it must only fire for the focused
+ * window, not its background ancestors. */
 static bool confirmKeyPressed() {
+    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) return false;
     return ImGui::IsKeyPressed(ImGuiKey_Enter) ||
            ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
 }

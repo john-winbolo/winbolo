@@ -101,7 +101,10 @@ void PushCancelStyle();
 void PopCancelStyle();
 
 /* Returns true once per frame if any "cancel-equivalent" key was pressed
- * (Esc / Ctrl+W / Cmd+W / Cmd+. on macOS) AND no child popup is open.
+ * (Esc / Ctrl+W / Cmd+W / Cmd+. on macOS) AND the calling window is the
+ * focused window (or one of its child windows is). The focus gate is
+ * what makes this safe to call from panel screens whose child popups
+ * may be open — only the focused popup/panel sees the keypress.
  *
  * Use at panel-screen call sites that don't use DialogFooter (because
  * their button layout is custom). The DialogFooter functions check this
