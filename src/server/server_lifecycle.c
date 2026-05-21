@@ -223,125 +223,50 @@ void serverInstanceTick(ServerSim *sim) {
     if (botManagerGetNumBots() > 0) {
       botManagerTick(sim, sim->botAiType);
     }
-    /* Run two sim ticks per 20ms callback to match the client's
-     * 100Hz rate (alternating keys tick + game tick).
-     * Drain events after each tick so they're captured before
-     * the next tick clears the event buffer.
-     *
-     * Two timing pairs (sim1Start/End, sim2Start/End) summed into
-     * simMs — the bookkeeping between the ticks (drain + memcpy +
-     * any game-over broadcast) stays where it is but is excluded
-     * from the simulation cost. */
-    Uint64 sim1Start = 0, sim1End = 0;
-    Uint64 sim2Start = 0, sim2End = 0;
-    {
-      ServerState preTickState = sim->state;
-      sim1Start = SDL_GetPerformanceCounter();
-      serverSimTick(sim);
-      sim1End = SDL_GetPerformanceCounter();
-      /* If game ended during this tick, publish game-over events */
-      if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
-        if (sim->lobbyEnabled) {
-          if (serverSimConsumeSuppressNextWinMessage(sim)) {
-            /* Vote-driven game end already announced itself. */
-            sim->pendingWinMessage[0] = '\0';
-          } else {
-            /* Capture win message now while game state is intact;
-             * it will be sent after players return to the lobby. */
-            serverSimBuildWinMessage(sim,
-                                     sim->pendingWinMessage,
-                                     sizeof(sim->pendingWinMessage));
-          }
-          serverSimSendWbnWinEvents(sim);
-        }
-        {
-          ControlEvent phaseEvt;
-          ControlEvent overEvt;
-          memset(&phaseEvt, 0, sizeof(phaseEvt));
-          phaseEvt.type = CTRL_GAME_PHASE;
-          phaseEvt.u.gamePhase.phase = CTRL_PHASE_GAME_OVER;
-          phaseEvt.u.gamePhase.countdownSeconds = 0;
-          serverSimPublishControl(sim, &phaseEvt);
-          memset(&overEvt, 0, sizeof(overEvt));
-          overEvt.type = CTRL_GAME_OVER;
-          serverSimPublishControl(sim, &overEvt);
-        }
-      }
-      if (sim->state == serverStateRunning) {
-        if (instanceAcceptRemoteClients) {
-          transportUdpServerDrainEvents(sim);
-        }
-      }
-    }
-    if (sim->state == serverStateRunning) {
-      /* Save tick 1's events (regular + map) so snapshot readers see
-       * them after tick 2.  serverSimTick clears both buffers at its
-       * start, so without this save/restore the events from tick 1
-       * are wiped before any reader (bots in next serverInstanceTick,
-       * main-thread snapshot poll between serverInstanceTicks, UDP
-       * drain) can observe them. transportUdpServerDrainEvents already
-       * captured the regular events for UDP clients earlier; this
-       * preserves them for the in-process snapshot path. Map events
-       * have no parallel drain — losing them desyncs client terrain
-       * (shell hits on the game-tick get wiped by the keys-tick
-       * clear within the same serverInstanceTick). */
-      GameEvent savedEvents[MAX_SNAPSHOT_EVENTS];
-      uint8_t savedCount = sim->eventCount;
-      GameEvent savedMapEvents[MAX_MAP_EVENTS];
-      uint16_t savedMapCount = sim->mapEventCount;
-      ServerState preTickState;
-      if (savedCount > 0) {
-        memcpy(savedEvents, sim->events,
-               savedCount * sizeof(GameEvent));
-      }
-      if (savedMapCount > 0) {
-        memcpy(savedMapEvents, sim->mapEvents,
-               savedMapCount * sizeof(GameEvent));
-      }
-      preTickState = sim->state;
-      sim2Start = SDL_GetPerformanceCounter();
-      serverSimTick(sim);
-      sim2End = SDL_GetPerformanceCounter();
-      /* If game ended during this tick, publish game-over events */
-      if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
-        if (sim->lobbyEnabled) {
+    /* Advance the sim by one 20ms frame.  serverSimTick internally runs
+     * the keys-tick + game-tick pair and accumulates events from both
+     * half-steps into a single frame's worth of state, so the prior
+     * save/restore dance is no longer needed here.  The half-step split
+     * is private to server_sim.c. */
+    ServerState preTickState = sim->state;
+    Uint64 simStart = SDL_GetPerformanceCounter();
+    serverSimTick(sim);
+    Uint64 simEnd = SDL_GetPerformanceCounter();
+    /* If game ended during this tick, publish game-over events */
+    if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
+      if (sim->lobbyEnabled) {
+        if (serverSimConsumeSuppressNextWinMessage(sim)) {
+          /* Vote-driven game end already announced itself. */
+          sim->pendingWinMessage[0] = '\0';
+        } else {
+          /* Capture win message now while game state is intact;
+           * it will be sent after players return to the lobby. */
           serverSimBuildWinMessage(sim,
                                    sim->pendingWinMessage,
                                    sizeof(sim->pendingWinMessage));
-          serverSimSendWbnWinEvents(sim);
         }
-        {
-          ControlEvent phaseEvt;
-          ControlEvent overEvt;
-          memset(&phaseEvt, 0, sizeof(phaseEvt));
-          phaseEvt.type = CTRL_GAME_PHASE;
-          phaseEvt.u.gamePhase.phase = CTRL_PHASE_GAME_OVER;
-          phaseEvt.u.gamePhase.countdownSeconds = 0;
-          serverSimPublishControl(sim, &phaseEvt);
-          memset(&overEvt, 0, sizeof(overEvt));
-          overEvt.type = CTRL_GAME_OVER;
-          serverSimPublishControl(sim, &overEvt);
-        }
+        serverSimSendWbnWinEvents(sim);
       }
-      if (sim->state == serverStateRunning) {
-        if (instanceAcceptRemoteClients) {
-          transportUdpServerDrainEvents(sim);
-        }
-        /* Prepend tick 1's events before tick 2's events */
-        if (savedCount > 0 && savedCount + sim->eventCount <= MAX_SNAPSHOT_EVENTS) {
-          memmove(sim->events + savedCount, sim->events,
-                  sim->eventCount * sizeof(GameEvent));
-          memcpy(sim->events, savedEvents,
-                 savedCount * sizeof(GameEvent));
-          sim->eventCount += savedCount;
-        }
-        /* Same prepend for map events — see comment at savedMapEvents above. */
-        serverSimPrependMapEvents(sim, savedMapEvents, savedMapCount);
+      {
+        ControlEvent phaseEvt;
+        ControlEvent overEvt;
+        memset(&phaseEvt, 0, sizeof(phaseEvt));
+        phaseEvt.type = CTRL_GAME_PHASE;
+        phaseEvt.u.gamePhase.phase = CTRL_PHASE_GAME_OVER;
+        phaseEvt.u.gamePhase.countdownSeconds = 0;
+        serverSimPublishControl(sim, &phaseEvt);
+        memset(&overEvt, 0, sizeof(overEvt));
+        overEvt.type = CTRL_GAME_OVER;
+        serverSimPublishControl(sim, &overEvt);
+      }
+    }
+    if (sim->state == serverStateRunning) {
+      if (instanceAcceptRemoteClients) {
+        transportUdpServerDrainEvents(sim);
       }
     }
     double simFreq = (double)SDL_GetPerformanceFrequency();
-    double simMs = ((double)(sim1End - sim1Start)
-                    + (double)(sim2End - sim2Start)) * 1000.0 / simFreq;
+    double simMs = (double)(simEnd - simStart) * 1000.0 / simFreq;
     serverLifecycleRecordSimMs(simMs);
     /* Send snapshots only if still running */
     if (sim->state == serverStateRunning) {
