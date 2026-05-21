@@ -50,6 +50,7 @@
 #include "client_sim.h"
 #include "control_event.h"
 #include "global.h"
+#include "util.h"
 #include "gui_message.h"
 #include "frontend.h"
 #include "../brainsHandler.h"

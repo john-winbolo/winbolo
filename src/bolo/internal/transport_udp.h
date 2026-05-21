@@ -422,7 +422,7 @@ bool lobbyAnyOtherUploadActive(const bool *active, int exceptIdx);
  * connected client as needing a player-list refresh, flags map download
  * complete, and clears reliable / map event queue sequence numbers for
  * all slots.  Callers run this on the countdown→running transition
- * before publishing the CTRL_GAME_PHASE(RUNNING) event so the resets
+ * before publishing the CTRL_GAME_PHASE_RUNNING event so the resets
  * land before the codec encodes PACKET_GAME_START. */
 void transportUdpServerOnGameStart(struct ServerSim *sim);
 

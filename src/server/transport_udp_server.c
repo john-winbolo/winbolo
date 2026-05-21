@@ -1302,7 +1302,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         }
     }
     /* No-lobby and mid-game-join PACKET_GAME_START is emitted by the
-     * subscriber's sync replay: CTRL_GAME_PHASE(RUNNING) flows through
+     * subscriber's sync replay: CTRL_GAME_PHASE_RUNNING flows through
      * the codec encoder to this client's socket as part of
      * serverSimRegisterSubscriber above. */
 
@@ -2652,8 +2652,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                         uint8_t secs = (uint8_t)((serverSimGetCountdownTicks(sim) + 49) / 50);
                         ControlEvent evt;
                         memset(&evt, 0, sizeof(evt));
-                        evt.type = CTRL_GAME_PHASE;
-                        evt.u.gamePhase.phase = CTRL_PHASE_COUNTDOWN;
+                        evt.type = CTRL_GAME_PHASE_COUNTDOWN;
                         evt.u.gamePhase.countdownSeconds = secs;
                         serverSimPublishControl(sim, &evt);
                     }

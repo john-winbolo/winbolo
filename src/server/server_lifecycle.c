@@ -262,9 +262,7 @@ void serverInstanceTick(ServerSim *sim) {
           ControlEvent phaseEvt;
           ControlEvent overEvt;
           memset(&phaseEvt, 0, sizeof(phaseEvt));
-          phaseEvt.type = CTRL_GAME_PHASE;
-          phaseEvt.u.gamePhase.phase = CTRL_PHASE_GAME_OVER;
-          phaseEvt.u.gamePhase.countdownSeconds = 0;
+          phaseEvt.type = CTRL_GAME_PHASE_GAME_OVER;
           serverSimPublishControl(sim, &phaseEvt);
           memset(&overEvt, 0, sizeof(overEvt));
           overEvt.type = CTRL_GAME_OVER;
@@ -318,9 +316,7 @@ void serverInstanceTick(ServerSim *sim) {
           ControlEvent phaseEvt;
           ControlEvent overEvt;
           memset(&phaseEvt, 0, sizeof(phaseEvt));
-          phaseEvt.type = CTRL_GAME_PHASE;
-          phaseEvt.u.gamePhase.phase = CTRL_PHASE_GAME_OVER;
-          phaseEvt.u.gamePhase.countdownSeconds = 0;
+          phaseEvt.type = CTRL_GAME_PHASE_GAME_OVER;
           serverSimPublishControl(sim, &phaseEvt);
           memset(&overEvt, 0, sizeof(overEvt));
           overEvt.type = CTRL_GAME_OVER;
@@ -380,9 +376,7 @@ void serverInstanceTick(ServerSim *sim) {
         {
           ControlEvent evt;
           memset(&evt, 0, sizeof(evt));
-          evt.type = CTRL_GAME_PHASE;
-          evt.u.gamePhase.phase = CTRL_PHASE_RUNNING;
-          evt.u.gamePhase.countdownSeconds = 0;
+          evt.type = CTRL_GAME_PHASE_RUNNING;
           serverSimPublishControl(sim, &evt);
         }
         if (serverSimGetNumBots(sim) > 0) {
@@ -408,8 +402,7 @@ void serverInstanceTick(ServerSim *sim) {
         uint8_t secs = (uint8_t)((sim->countdownTicks + 49) / 50);
         ControlEvent evt;
         memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_GAME_PHASE;
-        evt.u.gamePhase.phase = CTRL_PHASE_COUNTDOWN;
+        evt.type = CTRL_GAME_PHASE_COUNTDOWN;
         evt.u.gamePhase.countdownSeconds = secs;
         serverSimPublishControl(sim, &evt);
       }

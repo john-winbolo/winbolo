@@ -281,7 +281,10 @@ static const char *logEventsTypeName(int type) {
     case CTRL_MAP_DOWNLOAD_COMPLETE: return "CTRL_MAP_DOWNLOAD_COMPLETE";
     case CTRL_BALANCE_PROPOSAL:      return "CTRL_BALANCE_PROPOSAL";
     case CTRL_MAP_SKIP_STATE:        return "CTRL_MAP_SKIP_STATE";
-    case CTRL_GAME_PHASE:            return "CTRL_GAME_PHASE";
+    case CTRL_GAME_PHASE_LOBBY:
+    case CTRL_GAME_PHASE_COUNTDOWN:
+    case CTRL_GAME_PHASE_RUNNING:
+    case CTRL_GAME_PHASE_GAME_OVER:  return "CTRL_GAME_PHASE";
     case CTRL_GAME_OVER:             return "CTRL_GAME_OVER";
     case CTRL_SERVER_SHUTDOWN:       return "CTRL_SERVER_SHUTDOWN";
     case CTRL_CHAT:                  return "CTRL_CHAT";
@@ -290,16 +293,6 @@ static const char *logEventsTypeName(int type) {
     case CTRL_LOBBY_BOT_BRAIN:       return "CTRL_LOBBY_BOT_BRAIN";
     case CTRL_LOBBY_BRAIN_LIST:      return "CTRL_LOBBY_BRAIN_LIST";
     default:                         return NULL;
-  }
-}
-
-static const char *logEventsPhaseName(int phase) {
-  switch (phase) {
-    case CTRL_PHASE_LOBBY:     return "LOBBY";
-    case CTRL_PHASE_COUNTDOWN: return "COUNTDOWN";
-    case CTRL_PHASE_RUNNING:   return "RUNNING";
-    case CTRL_PHASE_GAME_OVER: return "GAME_OVER";
-    default:                   return NULL;
   }
 }
 
@@ -443,18 +436,19 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       break;
     }
 
-    case CTRL_GAME_PHASE: {
-      const char *phase = logEventsPhaseName((int)evt->u.gamePhase.phase);
-      if (phase != NULL) {
-        fprintf(f, ",\"phase\":\"%s\"", phase);
-      } else {
-        fprintf(f, ",\"phase\":\"UNKNOWN\",\"phaseRaw\":%d",
-                (int)evt->u.gamePhase.phase);
-      }
-      fprintf(f, ",\"countdownSeconds\":%d",
+    case CTRL_GAME_PHASE_LOBBY:
+      fprintf(f, ",\"phase\":\"LOBBY\",\"countdownSeconds\":0");
+      break;
+    case CTRL_GAME_PHASE_COUNTDOWN:
+      fprintf(f, ",\"phase\":\"COUNTDOWN\",\"countdownSeconds\":%d",
               evt->u.gamePhase.countdownSeconds);
       break;
-    }
+    case CTRL_GAME_PHASE_RUNNING:
+      fprintf(f, ",\"phase\":\"RUNNING\",\"countdownSeconds\":0");
+      break;
+    case CTRL_GAME_PHASE_GAME_OVER:
+      fprintf(f, ",\"phase\":\"GAME_OVER\",\"countdownSeconds\":0");
+      break;
 
     case CTRL_CHAT:
       fprintf(f, ",\"fromPlayer\":%u,\"destPlayer\":%u,\"bodyLen\":%u",

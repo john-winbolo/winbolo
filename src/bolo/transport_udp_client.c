@@ -614,8 +614,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 c->joinState = UDP_CLIENT_CONNECTED;
                 /* No-lobby joiner: server is already running, so install
                  * the buffered map onto the ClientSim immediately. The
-                 * lobby case defers install until CTRL_GAME_PHASE
-                 * LOBBY→RUNNING runs it (see PACKET_GAME_START below).
+                 * lobby case defers install until the LOBBY→RUNNING
+                 * phase transition runs it (see PACKET_GAME_START below).
                  * Order: install → flag → event. */
                 if (!c->clientSim->inLobby) {
                     installCompressedMap(c->clientSim, c->mapDownloadBuf,
@@ -1306,7 +1306,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                  * subscriber that reads map state from the running flip
                  * sees an installed map. Order: install → flag → dispatch.
                  * Read inLobby BEFORE the dispatch — clientSimApplyControl
-                 * clears it on CTRL_PHASE_RUNNING. */
+                 * clears it on CTRL_GAME_PHASE_RUNNING. */
                 if (c->clientSim->inLobby && !c->mapInstalled &&
                     c->mapDownloadBuf != NULL &&
                     c->mapDownloadReceived == c->mapDownloadTotal) {
@@ -1402,14 +1402,12 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
 
         {
-            /* Synthesize the matching CTRL_GAME_PHASE(GAME_OVER)
+            /* Synthesize the matching CTRL_GAME_PHASE_GAME_OVER
              * locally so the client's bus sees the same publish
              * order as the server (PHASE then OVER); the server
              * encoder skips PACKET_GAME_OVER for the PHASE event so
              * only the CTRL_GAME_OVER side crosses the wire. */
-            ControlEvent phaseEvt = { .type = CTRL_GAME_PHASE };
-            phaseEvt.u.gamePhase.phase = CTRL_PHASE_GAME_OVER;
-            phaseEvt.u.gamePhase.countdownSeconds = 0;
+            ControlEvent phaseEvt = { .type = CTRL_GAME_PHASE_GAME_OVER };
             clientSimApplyControl(c->clientSim, &phaseEvt);
 
             ControlDecodeFn dec = transportControlCodecDecoder(pktType);

@@ -50,7 +50,10 @@ typedef enum {
     CTRL_MAP_DOWNLOAD_COMPLETE,
     CTRL_BALANCE_PROPOSAL,
     CTRL_MAP_SKIP_STATE,
-    CTRL_GAME_PHASE,
+    CTRL_GAME_PHASE_LOBBY,
+    CTRL_GAME_PHASE_COUNTDOWN,
+    CTRL_GAME_PHASE_RUNNING,
+    CTRL_GAME_PHASE_GAME_OVER,
     CTRL_GAME_OVER,
     CTRL_SERVER_SHUTDOWN,
     CTRL_CHAT,
@@ -71,13 +74,6 @@ typedef enum {
  * name bytes) = 263 bytes; rounded up for headroom. fromPlayer and
  * destPlayer are separate struct fields, not part of body[]. */
 #define CHAT_BODY_MAX 272
-
-typedef enum {
-    CTRL_PHASE_LOBBY,
-    CTRL_PHASE_COUNTDOWN,
-    CTRL_PHASE_RUNNING,
-    CTRL_PHASE_GAME_OVER
-} ControlGamePhase;
 
 typedef struct ControlEvent {
     ControlEventType type;
@@ -175,10 +171,10 @@ typedef struct ControlEvent {
             BYTE votes[MAX_TANKS];
         } mapSkipState;
 
-        /* CTRL_GAME_PHASE */
+        /* CTRL_GAME_PHASE_COUNTDOWN carries countdownSeconds; the other
+         * CTRL_GAME_PHASE_* siblings have no body. */
         struct {
-            ControlGamePhase phase;
-            int countdownSeconds;       /* meaningful when phase == COUNTDOWN */
+            int countdownSeconds;
         } gamePhase;
 
         /* CTRL_GAME_OVER */

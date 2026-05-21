@@ -470,8 +470,8 @@ static EncodeResult encodeGamePhase(const ControlEvent *evt,
                                     uint8_t *buf, size_t bufCap,
                                     size_t *outLen) {
     (void)recipient;
-    switch (evt->u.gamePhase.phase) {
-        case CTRL_PHASE_COUNTDOWN: {
+    switch (evt->type) {
+        case CTRL_GAME_PHASE_COUNTDOWN: {
             const size_t needed = PACKET_HEADER_SIZE + 1;
             if (bufCap < needed) return ENCODE_OVERFLOW;
             packHeader(buf, PACKET_COUNTDOWN, 0);
@@ -479,13 +479,14 @@ static EncodeResult encodeGamePhase(const ControlEvent *evt,
             *outLen = needed;
             return ENCODE_OK;
         }
-        case CTRL_PHASE_RUNNING: {
+        case CTRL_GAME_PHASE_RUNNING: {
             if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
             packHeader(buf, PACKET_GAME_START, 0);
             *outLen = PACKET_HEADER_SIZE;
             return ENCODE_OK;
         }
-        case CTRL_PHASE_GAME_OVER:
+        case CTRL_GAME_PHASE_LOBBY:
+        case CTRL_GAME_PHASE_GAME_OVER:
         default:
             return ENCODE_SKIP;
     }
@@ -882,8 +883,7 @@ static bool decodeCountdown(const uint8_t *buf, size_t len,
                             ControlEvent *outEvt) {
     if (len < 1) return false;
     memset(outEvt, 0, sizeof(*outEvt));
-    outEvt->type = CTRL_GAME_PHASE;
-    outEvt->u.gamePhase.phase = CTRL_PHASE_COUNTDOWN;
+    outEvt->type = CTRL_GAME_PHASE_COUNTDOWN;
     outEvt->u.gamePhase.countdownSeconds = buf[0];
     return true;
 }
@@ -892,9 +892,7 @@ static bool decodeGameStart(const uint8_t *buf, size_t len,
                             ControlEvent *outEvt) {
     (void)buf; (void)len;
     memset(outEvt, 0, sizeof(*outEvt));
-    outEvt->type = CTRL_GAME_PHASE;
-    outEvt->u.gamePhase.phase = CTRL_PHASE_RUNNING;
-    outEvt->u.gamePhase.countdownSeconds = 0;
+    outEvt->type = CTRL_GAME_PHASE_RUNNING;
     return true;
 }
 
@@ -967,7 +965,10 @@ static const ControlEncodeFn s_encoders[CTRL_EVENT_TYPE_COUNT] = {
     /* CTRL_MAP_DOWNLOAD_COMPLETE intentionally absent (NULL). */
     [CTRL_BALANCE_PROPOSAL]   = encodeBalanceProposal,
     [CTRL_MAP_SKIP_STATE]     = encodeMapSkipState,
-    [CTRL_GAME_PHASE]         = encodeGamePhase,
+    [CTRL_GAME_PHASE_LOBBY]      = encodeGamePhase,
+    [CTRL_GAME_PHASE_COUNTDOWN]  = encodeGamePhase,
+    [CTRL_GAME_PHASE_RUNNING]    = encodeGamePhase,
+    [CTRL_GAME_PHASE_GAME_OVER]  = encodeGamePhase,
     [CTRL_GAME_OVER]          = encodeGameOver,
     [CTRL_SERVER_SHUTDOWN]    = encodeServerShutdown,
     [CTRL_CHAT]               = encodeChat,

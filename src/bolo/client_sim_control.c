@@ -329,33 +329,29 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         break;
     }
 
-    case CTRL_GAME_PHASE:
-        switch (evt->u.gamePhase.phase) {
-        case CTRL_PHASE_LOBBY:
+    case CTRL_GAME_PHASE_LOBBY:
+        cs->netStat = netLobby;
+        cs->countdownSeconds = 0;
+        break;
+    case CTRL_GAME_PHASE_COUNTDOWN:
+        cs->netStat = netLobbyCountdown;
+        cs->countdownSeconds = evt->u.gamePhase.countdownSeconds;
+        break;
+    case CTRL_GAME_PHASE_RUNNING:
+        cs->netStat = netRunning;
+        cs->countdownSeconds = 0;
+        /* Frontends flip out of the lobby view on the running
+         * transition; previously the SP finisher set this by hand
+         * after StartGameInPlace, but now StartGameInPlace publishes
+         * the RUNNING phase event and every subscriber should pick
+         * up the lobby→game flip from this event. */
+        cs->inLobby = false;
+        break;
+    case CTRL_GAME_PHASE_GAME_OVER:
+        /* Lobby-branch reset; non-lobby end-of-game is transport-internal. */
+        if (cs->inLobby) {
             cs->netStat = netLobby;
             cs->countdownSeconds = 0;
-            break;
-        case CTRL_PHASE_COUNTDOWN:
-            cs->netStat = netLobbyCountdown;
-            cs->countdownSeconds = evt->u.gamePhase.countdownSeconds;
-            break;
-        case CTRL_PHASE_RUNNING:
-            cs->netStat = netRunning;
-            cs->countdownSeconds = 0;
-            /* Frontends flip out of the lobby view on the running
-             * transition; previously the SP finisher set this by hand
-             * after StartGameInPlace, but now StartGameInPlace publishes
-             * CTRL_PHASE_RUNNING and every subscriber should pick up
-             * the lobby→game flip from this event. */
-            cs->inLobby = false;
-            break;
-        case CTRL_PHASE_GAME_OVER:
-            /* Lobby-branch reset; non-lobby end-of-game is transport-internal. */
-            if (cs->inLobby) {
-                cs->netStat = netLobby;
-                cs->countdownSeconds = 0;
-            }
-            break;
         }
         break;
 

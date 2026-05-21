@@ -2692,7 +2692,7 @@ void serverSimEnterGameOver(ServerSim *sim) {
         sim->state = serverStateGameOver;
         sim->countdownTicks = GAMEOVER_HOLD_TICKS;
         serverSimConsoleMessage("Game over! Returning to lobby...");
-        /* CTRL_GAME_PHASE(GAME_OVER) and CTRL_GAME_OVER are published
+        /* CTRL_GAME_PHASE_GAME_OVER and CTRL_GAME_OVER are published
          * by the server lifecycle when it observes the state change;
          * the per-client codec subscriber turns each into the matching
          * wire packet (PACKET_GAME_OVER). */
@@ -3023,9 +3023,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     {
         ControlEvent phaseEvt;
         memset(&phaseEvt, 0, sizeof(phaseEvt));
-        phaseEvt.type = CTRL_GAME_PHASE;
-        phaseEvt.u.gamePhase.phase = CTRL_PHASE_RUNNING;
-        phaseEvt.u.gamePhase.countdownSeconds = 0;
+        phaseEvt.type = CTRL_GAME_PHASE_RUNNING;
         serverSimPublishControl(sim, &phaseEvt);
     }
 }
@@ -4053,16 +4051,6 @@ void serverSimMapDirDestroy(ServerSim *sim) {
 #define SUBSCRIBER_HANDLE_SLOT(h)           (((h) >> 16) & 0xFFFF)
 #define SUBSCRIBER_HANDLE_GEN(h)            ((uint16_t)((h) & 0xFFFF))
 
-static ControlGamePhase serverPhaseToCtrlPhase(ServerState s) {
-    switch (s) {
-    case serverStateLobby:     return CTRL_PHASE_LOBBY;
-    case serverStateCountdown: return CTRL_PHASE_COUNTDOWN;
-    case serverStateRunning:   return CTRL_PHASE_RUNNING;
-    case serverStateGameOver:  return CTRL_PHASE_GAME_OVER;
-    }
-    return CTRL_PHASE_LOBBY;
-}
-
 static netStatus serverPhaseToNetStat(ServerState s) {
     switch (s) {
     case serverStateLobby:     return netLobby;
@@ -4074,8 +4062,13 @@ static netStatus serverPhaseToNetStat(ServerState s) {
 }
 
 void serverSimFillGamePhaseEvent(const ServerSim *sim, ControlEvent *evt) {
-    evt->type = CTRL_GAME_PHASE;
-    evt->u.gamePhase.phase = serverPhaseToCtrlPhase(sim->state);
+    switch (sim->state) {
+    case serverStateLobby:     evt->type = CTRL_GAME_PHASE_LOBBY;     break;
+    case serverStateCountdown: evt->type = CTRL_GAME_PHASE_COUNTDOWN; break;
+    case serverStateRunning:   evt->type = CTRL_GAME_PHASE_RUNNING;   break;
+    case serverStateGameOver:  evt->type = CTRL_GAME_PHASE_GAME_OVER; break;
+    default:                   evt->type = CTRL_GAME_PHASE_LOBBY;     break;
+    }
     /* countdownTicks is a 50Hz counter; round up so a partial second still
      * surfaces as 1 rather than 0 to a freshly-synced subscriber. */
     if (sim->countdownTicks > 0) {
@@ -4260,9 +4253,10 @@ static void serverSimFillMapSkipStateEvent(const ServerSim *sim,
 }
 
 /* Wrapper used to enforce the documented sync ordering:
- *   CTRL_GAME_PHASE first; CTRL_PLAYER_JOIN events last (a regression
- *   that reorders sync would silently mis-initialize a subscriber, so
- *   catch it loudly in debug builds). Asserts compile out under NDEBUG.
+ *   a CTRL_GAME_PHASE_* event first; CTRL_PLAYER_JOIN events last
+ *   (a regression that reorders sync would silently mis-initialize a
+ *   subscriber, so catch it loudly in debug builds). Asserts compile
+ *   out under NDEBUG.
  */
 typedef struct {
     void (*inner)(void *, const struct ControlEvent *);
@@ -4274,10 +4268,14 @@ typedef struct {
 static void serverSimSyncOrderingDeliver(void *ctx,
                                          const struct ControlEvent *evt) {
     SyncOrderingCheck *check = (SyncOrderingCheck *)ctx;
+    bool isPhase = (evt->type == CTRL_GAME_PHASE_LOBBY ||
+                    evt->type == CTRL_GAME_PHASE_COUNTDOWN ||
+                    evt->type == CTRL_GAME_PHASE_RUNNING ||
+                    evt->type == CTRL_GAME_PHASE_GAME_OVER);
 
-    if (evt->type == CTRL_GAME_PHASE) {
+    if (isPhase) {
         assert(!check->sawNonPhase &&
-               "CTRL_GAME_PHASE must be the first event in sync");
+               "a CTRL_GAME_PHASE_* event must be the first event in sync");
     } else {
         check->sawNonPhase = true;
     }
@@ -5799,8 +5797,8 @@ bool serverSimApplyLobbySetting(ServerSim *sim,
 
 /* Auto-unready: any meaningful lobby change clears every human's
  * ready flag and aborts an in-flight countdown. The per-slot
- * CTRL_LOBBY_SLOT publishes (plus the CTRL_GAME_PHASE publish if the
- * countdown was aborted) fan out to both in-process subscribers and
+ * CTRL_LOBBY_SLOT publishes (plus the CTRL_GAME_PHASE_LOBBY publish
+ * if the countdown was aborted) fan out to both in-process subscribers and
  * remote UDP clients via the codec — no wire-only blast needed. Bots
  * stay permanently ready by design (set in botManagerAddBot) so the
  * next all-ready check still triggers a countdown when the human
