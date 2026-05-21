@@ -410,6 +410,7 @@ function M.dijkstra_lookup_subtract_by_kind(kind, dx, dy, in_boat, pcontrib_tabl
   return cpf_dijkstra_lookup_subtract_by_kind(kind, dx, dy, in_boat or 0, pcontrib_table) or math.huge
 end
 
+
 -- Convenience constants for the kind parameter.
 -- KIND_NORMAL: standard danger-weighted path cost.
 -- KIND_PILL:   path cost with a specific pill's local danger contribution

@@ -459,7 +459,8 @@ static void renderSection(PanelState &st, Section *s) {
  * half; parses the display half into name{value} terms; cross-
  * references each term with kTermDocs (meaning) and the computation
  * half (how-computed); renders everything in a 3- or 4-column table. */
-static void renderDetailPopup(PanelState &st, int winW, int winH) {
+static void renderDetailPopup(PanelState &st, int winW, int winH,
+                              int tickIn, int followBot) {
     DetailRow &sDetail = st.detail;
     if (!sDetail.open) return;
 
@@ -578,6 +579,7 @@ static void renderDetailPopup(PanelState &st, int winW, int winH) {
         if (nlen > 0 && nlen < 32 && vlen < 32) {
             SDL_strlcpy(terms[nTerms].name,  ns,     nlen + 1);
             SDL_strlcpy(terms[nTerms].value, ob + 1, vlen + 1);
+            (void)tickIn; (void)followBot;
             nTerms++;
         }
         p = cb + 1;
@@ -843,7 +845,7 @@ void renderPoolGrid(int registry_idx, const char *body) {
 
     int winW = (int)ImGui::GetWindowWidth();
     int winH = (int)ImGui::GetWindowHeight();
-    renderDetailPopup(st, winW, winH);
+    renderDetailPopup(st, winW, winH, tickIn, followBot);
 
     /* Winners formula legend window. */
     if (st.showLegend) {

@@ -133,6 +133,13 @@ time_t serverMainGetTicks(void) { return (time_t)SDL_GetTicks(); }
 #define CONTROL_BAR_HEIGHT 32   /* timeline scrubber strip at bottom */
 #define MAX_RECORDING_FRAMES 90000
 
+/* Sliding-window cap. Default = 3000 frames ≈ 60 sec @ 50 Hz; oldest
+ * frames evicted in keyframe-aligned chunks once the buffer fills.
+ * --record-all on the command line bumps this to MAX_RECORDING_FRAMES
+ * (effectively unlimited — full session retained). Lower default
+ * keeps memory bounded on multi-hour runs. */
+static int g_recordingMaxFrames = 3000;
+
 /* Playback / live-replay speed presets, ms-per-tick. Lower = faster. */
 static const int SPEED_PRESETS[] = {
     1, 2, 5, 10, 20, 40, 80, 150, 300, 500, 1000, 2000, 5000
@@ -253,13 +260,21 @@ typedef struct {
     VizDetailEntry *vizDetails;
     int             vizDetailCount;
 
-    /* pill_contrib registry snapshot (per-pill, per-tile danger
-     * contribution maps). Same scrub-back rationale as vizDetails:
-     * brain isn't running in playback so the shift-2 overlay needs
-     * the recorded data to remain functional. malloc'd per frame;
-     * freed in recordingFreeFrame. */
-    PillContribEntry *pillContrib;
-    int               pillContribCount;
+    /* pill_contrib registry snapshot (per-bot, per-pill, per-tile
+     * danger contribution maps). Same scrub-back rationale as
+     * vizDetails. Storage uses per-pill refcounted cells (see
+     * PillContribCell below) so consecutive frames that have an
+     * identical pill entry share one allocation. pcontrib is highly
+     * stable tick-to-tick (changes only on pill death or anger
+     * tick), so dedup typically saves >90% of this section's bytes.
+     *
+     * pillContribPtrs[bot] is either NULL or a malloc'd array of
+     * `pillContribCounts[bot]` (const PillContribEntry *) pointers.
+     * Each pointer either references a cell this frame owns (which
+     * it will free when refcount hits 0) or one shared from an
+     * earlier frame. */
+    const PillContribEntry       **pillContribPtrs[PILLCONTRIB_MAX_BOTS];
+    int                            pillContribCounts[PILLCONTRIB_MAX_BOTS];
 
     /* Strategic placement heatmap text snapshotted when the [8]
      * overlay is on; NULL otherwise (saves the Lua poll cost). */
@@ -527,6 +542,42 @@ static void recordingInit(RecordingBuffer *rb) {
     rb->playbackBrainMap = (BYTE *)calloc(mapSz, 1);
 }
 
+/* Refcount-headered pcontrib cell. Frames that captured the same
+ * pill entry (unchanged content) share one cell across all of them;
+ * we free when the last frame referencing it goes away.
+ *
+ * Layout: refcount lives BEFORE the PillContribEntry so callers can
+ * still use a plain `const PillContribEntry *` everywhere. cell_of()
+ * recovers the cell pointer from an entry pointer via offsetof. */
+typedef struct {
+    int              refcount;
+    PillContribEntry entry;
+} PillContribCell;
+
+static inline PillContribCell *pcontrib_cell_of(const PillContribEntry *e) {
+    return (PillContribCell *)((char *)e - offsetof(PillContribCell, entry));
+}
+
+/* Drop one reference to each cell pointed to by pillContribPtrs[b][*]
+ * and free the per-bot pointer array. Called from recordingFreeFrame
+ * and as part of the truncate-tail path. */
+static void recordingReleasePcontrib(RecordingFrame *f) {
+    for (int b = 0; b < PILLCONTRIB_MAX_BOTS; b++) {
+        const PillContribEntry **arr = f->pillContribPtrs[b];
+        if (!arr) continue;
+        int n = f->pillContribCounts[b];
+        for (int i = 0; i < n; i++) {
+            const PillContribEntry *e = arr[i];
+            if (!e) continue;
+            PillContribCell *c = pcontrib_cell_of(e);
+            if (--c->refcount <= 0) free(c);
+        }
+        free(arr);
+        f->pillContribPtrs[b] = NULL;
+        f->pillContribCounts[b] = 0;
+    }
+}
+
 static void recordingFreeFrame(RecordingFrame *f) {
     free(f->fullMap);
     free(f->mapDeltas);
@@ -543,7 +594,7 @@ static void recordingFreeFrame(RecordingFrame *f) {
     free(f->pathX);
     free(f->pathY);
     free(f->vizDetails);
-    free(f->pillContrib);
+    recordingReleasePcontrib(f);
     SDL_free(f->stratPlaceText);
     memset(f, 0, sizeof(*f));
 }
@@ -1406,11 +1457,8 @@ static void vizDetailClearCallback(void) {
     vizDetailRegistryClear();
 }
 
-static void pillContribClearCallback(void) {
-    pillContribClear();
-}
-static int pillContribBeginPillCallback(int pill_id, int mx, int my) {
-    return pillContribBeginPill(pill_id, mx, my);
+static int pillContribBeginPillCallback(int bot, int pill_id, int mx, int my) {
+    return pillContribBeginPill(bot, pill_id, mx, my);
 }
 static void pillContribAddTileCallback(int slot, int tx, int ty, float value) {
     pillContribAddTile(slot, tx, ty, value);
@@ -1436,6 +1484,15 @@ static BYTE     g_panelPollFollowBot   = 0;
  * yet. Opt in with --record-panels when you want offline replay. */
 static bool     g_panelRecordEnabled   = false;
 static char     g_panelRecordDir[FILENAME_MAX] = "";
+
+/* Per-frame pcontrib snapshot for playback's shift-2 overlay. Off by
+ * default: even with per-pill refcount sharing the long tail of
+ * occasionally-changing entries still grows ~2 KB per changed pill
+ * per frame, which adds up over multi-hour sessions. Turn on with
+ * --record-pcontrib when you actually need scrub-replay of the
+ * danger-contribution overlay. With this off, the live overlay still
+ * works during play — only playback's view of it is empty. */
+static bool     g_recordPcontribEnabled = false;
 static uint32_t g_panelPollTick        = 0;
 /* Playback bridge — when set, the poll callback returns the
  * recorded panel JSON for `g_panelPollFrame` instead of asking
@@ -1465,8 +1522,7 @@ static char *panelPollCallback(int panel_idx) {
     if (!e || !e->lua_expr[0]) return NULL;
     /* Playback path: serve the recorded JSON for this frame. We
      * hand back a heap-allocated copy because the panel window
-     * frees what we return. NULL → renderer keeps showing whatever
-     * it already had (better than blanking on a gap). */
+     * frees what we return. */
     if (g_panelPollRecording
         && g_panelPollFrame >= 0
         && g_panelPollFrame < g_panelPollRecording->count
@@ -1480,9 +1536,21 @@ static char *panelPollCallback(int panel_idx) {
             if (copy) memcpy(copy, rec, n + 1);
             return copy;
         }
-        /* No recorded data for this frame/panel (e.g. followBot was different
-         * during recording, or bot just registered it). Fall through to
-         * poll the live brain so the panel doesn't blank out. */
+        /* No recorded data for this frame. We USED to fall through and
+         * poll the live brain, which silently showed today's state as
+         * if it were historical — actively misleading. Return a clear
+         * sentinel JSON so the panel renders "-" everywhere instead. */
+        static const char *kNoData =
+            "{\"phase\":\"-\",\"tick\":-1,\"replan_left\":-1,\"bot\":-1,"
+            "\"sections\":[{\"id\":\"nodata\",\"name\":\"NO RECORDING DATA\","
+            "\"weight\":1.0,\"winner_id\":-1,"
+            "\"rows\":[{\"id\":-1,\"mx\":0,\"my\":0,\"cost\":-1,"
+            "\"weighted\":-1,\"is_winner\":false,\"active_goal\":false,"
+            "\"stale\":-1,\"formula\":\"spot{-} + pickup{-}*wound_x2{-} + (stale{-} + diff{-} + anger{-} + xfire{-} + intcpt{-}) * hp{-} + ammo{-}||NO recorded data for this frame: the panel was either not registered yet, the bot owning it was not active, or the brain returned nil. Playback NO LONGER falls back to live brain — the previous fallback silently showed current-state values mislabeled as historical.\",\"reject\":null,\"reject_remaining\":0,\"imminent\":false}]}]}";
+        size_t n = strlen(kNoData);
+        char *copy = (char *)malloc(n + 1);
+        if (copy) memcpy(copy, kNoData, n + 1);
+        return copy;
     }
     char *body = botManagerEvalLuaString(g_panelPollFollowBot, e->lua_expr);
     /* Persist to disk so the same per-tick snapshot can be inspected
@@ -1551,6 +1619,11 @@ static void printUsage(const char *prog) {
         "  -ai TYPE         AI type: none, yes, advantage, full (default: full)\n"
         "  -game TYPE       Game type: open, tournament, strict (default: open)\n"
         "  --record-panels  Write per-tick panel JSON to debug_sessions/<ts>/panels/\n"
+        "  --record-pcontrib  Record per-tick pill-contribution snapshots so the\n"
+        "                     shift-2 overlay works during playback (off by default;\n"
+        "                     each changed pill entry is ~2 KB so long runs grow fast)\n"
+        "  --record-all      Keep ALL recorded frames (up to ~30 min). Default is a\n"
+        "                     60-second sliding window so long runs stay bounded.\n"
         "  --opt            Load stripped opt/ brain (debug=false). Production-mode feel.\n"
         "  --run-script PATH  Run PATH as a Lua script in the brain's VM after Brain.open,\n"
         "                     then exit. The script has full access to cpf, world, etc.\n"
@@ -1611,6 +1684,18 @@ static bool parseArgs(int argc, char **argv) {
              * no rotation yet so a long session creates many files.
              * Use when you want to inspect / replay later. */
             g_panelRecordEnabled = true;
+        } else if (strcmp(argv[i], "--record-pcontrib") == 0) {
+            /* Enable per-tick pill-danger-contribution snapshots so
+             * the shift-2 overlay works during playback. Off by
+             * default because each changed pill entry is ~2 KB and
+             * long sessions push the recording buffer multi-GB. */
+            g_recordPcontribEnabled = true;
+        } else if (strcmp(argv[i], "--record-all") == 0) {
+            /* Disable the sliding-window cap on the recording buffer:
+             * keep ALL frames up to MAX_RECORDING_FRAMES (~30 min @
+             * 50Hz) instead of the default 60-second rolling window.
+             * Off by default to keep memory bounded on long runs. */
+            g_recordingMaxFrames = MAX_RECORDING_FRAMES;
         } else if (strcmp(argv[i], "--opt") == 0) {
             /* Load brain from the stripped opt/ subdirectory with
              * BRAIN_DEBUG_MODE=false — true production-mode feel. */
@@ -2194,6 +2279,45 @@ static void pushVizStateToBots(bool vizSuppressActive) {
     }
 }
 
+/* Drop the oldest KEYFRAME_INTERVAL frames so the new head is still a
+ * keyframe (preserves delta-chain validity for the remaining frames).
+ * Adjusts every index that points into the frame array: playbackFrame,
+ * playbackMapFrame, panelPoll cursor. Called from recordingCapture when
+ * the configured sliding-window cap is hit. */
+static void recordingEvictHead(BrainTestApp *app) {
+    RecordingBuffer *rb = &app->recording;
+    int drop = KEYFRAME_INTERVAL;
+    if (drop > rb->count) drop = rb->count;
+    if (drop <= 0) return;
+    for (int i = 0; i < drop; i++) recordingFreeFrame(&rb->frames[i]);
+    if (rb->count > drop) {
+        memmove(&rb->frames[0], &rb->frames[drop],
+                (rb->count - drop) * sizeof(RecordingFrame));
+    }
+    rb->count -= drop;
+    /* Shift cursors. Two distinct clamps because the sentinel values
+     * differ by purpose:
+     *   - playbackFrame and g_panelPollFrame are real frame cursors
+     *     (0..count-1). If their previous target got evicted we snap
+     *     them to 0 — the oldest still-live frame.
+     *   - playbackMapFrame is a CACHE VALIDITY MARKER, not a cursor.
+     *     -1 means "the playback map buffer is stale; rebuild on
+     *     next read". Snapping it to -1 (rather than 0) is the right
+     *     call when the frame it pointed at is gone — there's no
+     *     guarantee the cached map content still applies to frame 0.
+     */
+    app->playbackFrame -= drop;
+    if (app->playbackFrame < 0) app->playbackFrame = 0;
+    if (rb->playbackMapFrame >= 0) {
+        rb->playbackMapFrame -= drop;
+        if (rb->playbackMapFrame < 0) rb->playbackMapFrame = -1;
+    }
+    if (g_panelPollFrame >= 0) {
+        g_panelPollFrame -= drop;
+        if (g_panelPollFrame < 0) g_panelPollFrame = 0;
+    }
+}
+
 /* Per-tick recording capture. Called once per game tick from the
  * main loop after botManagerTick + serverSimTick. Captures the
  * followed bot's view of the world (map, grids, brainMap), the
@@ -2203,6 +2327,12 @@ static void pushVizStateToBots(bool vizSuppressActive) {
  * at that tick). */
 static void recordingCapture(BrainTestApp *app) {
     RecordingBuffer *rb = &app->recording;
+    /* Sliding-window: evict oldest keyframe-aligned chunk before
+     * appending. Hard ceiling stays MAX_RECORDING_FRAMES regardless. */
+    if (rb->count >= g_recordingMaxFrames
+        && g_recordingMaxFrames < MAX_RECORDING_FRAMES) {
+        recordingEvictHead(app);
+    }
     if (rb->count >= MAX_RECORDING_FRAMES) return;
     if (rb->count >= rb->capacity) {
         int newCap = rb->capacity == 0 ? 1024 : rb->capacity * 2;
@@ -2474,25 +2604,68 @@ static void recordingCapture(BrainTestApp *app) {
         }
     }
 
-    /* pill_contrib snapshot — same scrub-back rationale as
-     * vizDetails. Each PillContribEntry is fixed-size (inline
-     * tile array), so a single malloc + memcpy captures the lot. */
-    {
-        int pcc = pillContribCount();
-        if (pcc > 0) {
-            f->pillContrib = (PillContribEntry *)malloc(pcc * sizeof(PillContribEntry));
-            if (f->pillContrib) {
-                for (int i = 0; i < pcc; i++) {
-                    const PillContribEntry *src = pillContribGet(i);
-                    if (src) f->pillContrib[i] = *src;
-                }
-                f->pillContribCount = pcc;
-            } else {
-                f->pillContribCount = 0;
+    /* pill_contrib snapshot — gated on --record-pcontrib. Even with
+     * per-pill refcount sharing, long runs accumulate enough distinct
+     * entries to dominate the recording buffer; default off to keep
+     * memory bounded. When disabled, leave pillContribPtrs[b] = NULL
+     * (memset of the frame at the top of recordingCapture already
+     * zeroed them) — playback's snapshot patch-in will see counts=0
+     * everywhere and the shift-2 overlay just renders nothing. */
+    if (g_recordPcontribEnabled) {
+        RecordingFrame *prev = (rb->count > 0) ? &rb->frames[rb->count - 1] : NULL;
+        for (int b = 0; b < PILLCONTRIB_MAX_BOTS; b++) {
+            int pcc = pillContribCount(b);
+            if (pcc <= 0) {
+                f->pillContribPtrs[b]   = NULL;
+                f->pillContribCounts[b] = 0;
+                continue;
             }
-        } else {
-            f->pillContrib = NULL;
-            f->pillContribCount = 0;
+            const PillContribEntry **arr =
+                (const PillContribEntry **)malloc(pcc * sizeof(PillContribEntry *));
+            if (!arr) {
+                f->pillContribPtrs[b]   = NULL;
+                f->pillContribCounts[b] = 0;
+                continue;
+            }
+            f->pillContribPtrs[b]   = arr;
+            f->pillContribCounts[b] = pcc;
+
+            const PillContribEntry **prev_arr = prev ? prev->pillContribPtrs[b] : NULL;
+            int prev_n = prev ? prev->pillContribCounts[b] : 0;
+
+            for (int i = 0; i < pcc; i++) {
+                const PillContribEntry *src = pillContribGet(b, i);
+                if (!src) { arr[i] = NULL; continue; }
+
+                /* Try to share: same pill_id + byte-identical content
+                 * as some entry in the previous frame's pcontrib for
+                 * this bot. Inner loop is bounded by PILLCONTRIB_MAX_PILLS
+                 * (16) and the memcmp is ~2 KB on hit, so worst case is
+                 * ~32 KB/bot/tick — negligible vs the malloc savings. */
+                const PillContribEntry *shared = NULL;
+                if (prev_arr) {
+                    for (int j = 0; j < prev_n; j++) {
+                        const PillContribEntry *pe = prev_arr[j];
+                        if (pe && pe->pill_id == src->pill_id
+                            && memcmp(pe, src, sizeof(*pe)) == 0) {
+                            shared = pe;
+                            break;
+                        }
+                    }
+                }
+
+                if (shared) {
+                    pcontrib_cell_of(shared)->refcount++;
+                    arr[i] = shared;
+                } else {
+                    PillContribCell *c =
+                        (PillContribCell *)malloc(sizeof(PillContribCell));
+                    if (!c) { arr[i] = NULL; continue; }
+                    c->refcount = 1;
+                    c->entry    = *src;
+                    arr[i]      = &c->entry;
+                }
+            }
         }
     }
 
@@ -2973,9 +3146,9 @@ static void appTickBrain(BrainTestApp *app) {
      * Brain.think a fresh registry that all bots accumulate into; the
      * recording capture below catches the union after botManagerTick. */
     vizDetailRegistryClear();
-    /* Same multi-bot rationale: clear pillcontrib once host-side
-     * so per-bot Lua emit just appends to the union. */
-    pillContribClear();
+    /* Clear pillcontrib for every bot once per tick. Each bot's
+     * Brain.think then appends to its own slot range — no race. */
+    pillContribClearAll();
 
     botManagerTick(app->sim, optAI);
     {
@@ -3697,7 +3870,12 @@ static void appRender(BrainTestApp *app) {
              * so the next live brain tick repopulates the live
              * registry without interference. */
             vizDetailSetPlaybackView(pf_->vizDetails, pf_->vizDetailCount);
-            pillContribSetPlaybackView(pf_->pillContrib, pf_->pillContribCount);
+            {
+                PillContribSnapshot snap;
+                snap.entries = pf_->pillContribPtrs;
+                snap.counts  = pf_->pillContribCounts;
+                pillContribSetPlaybackView(&snap);
+            }
 
             /* ── A* / Dijkstra path overlay ── temporarily replace
              * app->cachedPath_* with the recorded path. The
@@ -3846,10 +4024,10 @@ static void appRender(BrainTestApp *app) {
      * with alpha proportional to the contribution value. Honors the
      * playback override transparently via pillContribGet. */
     if (app->pillContribSel > 0) {
-        int n = pillContribCount();
+        int n = pillContribCount(app->followBot);
         int sel0 = app->pillContribSel - 1; /* shift to 0-based */
         if (sel0 < n) {
-            const PillContribEntry *pe = pillContribGet(sel0);
+            const PillContribEntry *pe = pillContribGet(app->followBot, sel0);
             if (pe) {
                 /* Find max value for normalization. */
                 float vmax = 1.0f;
@@ -4191,6 +4369,15 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "  Game:    %s\n", gameNames[optGame]);
     fprintf(stderr, "  Opt:     %s\n", optProduction ? "yes (opt/, debug=false)" : "no (source, debug=true)");
 
+    /* Restore SDL2-style keycode behavior: event.key.key carries the
+     * unmodified keycode (Shift+2 → SDLK_2, not SDLK_AT). Without this,
+     * every `case SDLK_<digit>:` branch that checks SDL_KMOD_SHIFT
+     * inside (e.g. shift+2 pillcontrib cycle, shift+5 low-danger
+     * weight, shift+7 dijkstra slate cycle) is silently unreachable on
+     * US layouts because SDL3 translates the keycode through the
+     * current shift state by default. Must be set BEFORE SDL_Init. */
+    SDL_SetHint(SDL_HINT_KEYCODE_OPTIONS, "no_modifiers");
+
     /* Initialize SDL */
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -4237,7 +4424,9 @@ int main(int argc, char *argv[]) {
     brainCoreSetVizDetailClearCallback(vizDetailClearCallback);
     brainCoreSetYieldCallback(SDL_PumpEvents);
     botManagerSetPreThinkHook(preThinkHook);
-    naPillContribSetClearCallback(pillContribClearCallback);
+    /* Clear is host-driven now (called once per tick before bot loop
+     * via pillContribClearAll), so there's no Lua-side clear binding
+     * to wire up. */
     naPillContribSetBeginPillCallback(pillContribBeginPillCallback);
     naPillContribSetAddTileCallback(pillContribAddTileCallback);
     /* Built-in panel renderer: type "text" → plain unformatted
@@ -4532,28 +4721,29 @@ int main(int argc, char *argv[]) {
                         break;
                     }
                 }
-                if (ev.key.repeat) break;
+                if (ev.key.repeat) {
+                    break;
+                }
                 /* Skip BrainTest hotkeys while a text field is being
                  * edited inside the V dialog (its own ImGui context
-                 * — has the V-dialog filter input). The main-window
-                 * ImGui context has no text inputs today (shot-sim
-                 * panel + shortcuts window are all buttons/radios/
-                 * tables), so we don't gate on its WantTextInput —
-                 * doing so was eating SPACE / TAB / etc. when the
-                 * shot-sim panel just had focus without any text
-                 * field active. Re-add a main-context gate when a
-                 * real text input lands there. */
-                if (vizWindowWantsTextInput()) break;
+                 * — has the V-dialog filter input). */
+                if (vizWindowWantsTextInput()) {
+                    break;
+                }
                 switch (ev.key.key) {
                 case SDLK_SPACE:
                     app.paused = !app.paused;
                     break;
                 case SDLK_TAB:
-                    /* Cycle to next active bot */
+                    /* Cycle to next active bot. Reset pill-contrib
+                     * selection — the per-bot pill list is different
+                     * for the new bot, so the old cycle index would
+                     * be meaningless (or out of range). */
                     for (int tries = 0; tries < MAX_TANKS; tries++) {
                         app.followBot = (app.followBot + 1) % MAX_TANKS;
                         if (botManagerIsBot(app.followBot)) break;
                     }
+                    app.pillContribSel = 0;
                     break;
                 case SDLK_F:
                     app.freeCamera = !app.freeCamera;
@@ -4587,9 +4777,10 @@ int main(int argc, char *argv[]) {
                         app.pillContribSel = 0;
                     } else if (ev.key.mod & SDL_KMOD_SHIFT) {
                         /* shift-2: cycle through pill_contrib overlays
-                         * one pill at a time. Wraps via 0 (off) so the
-                         * user can return to a clean view between cycles. */
-                        int n = pillContribCount();
+                         * for the currently-followed bot, one pill at a
+                         * time. Wraps via 0 (off) so the user can return
+                         * to a clean view between cycles. */
+                        int n = pillContribCount(app.followBot);
                         app.pillContribSel++;
                         if (app.pillContribSel > n) app.pillContribSel = 0;
                     } else {

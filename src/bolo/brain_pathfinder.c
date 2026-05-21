@@ -37,6 +37,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <math.h>
 #include <float.h>
 #include <SDL3/SDL.h>
@@ -136,7 +137,7 @@ static inline int next_boat_state(int cur_boat, int type) {
 /* Heap operations (array-based 4-ary min-heap)                         */
 /*                                                                      */
 /* 4-ary heap: each node has 4 children. Tree height is half a binary   */
-/* heap, sift_down does ~1.3× the comparisons but ~0.5× the cache       */
+/* heap, sift_down does ~1.3Ã— the comparisons but ~0.5Ã— the cache       */
 /* misses since 4 siblings live in adjacent memory. Net ~25% faster on  */
 /* the heap-heavy phases of A-star and Dijkstra.                       */
 /* ------------------------------------------------------------------ */
@@ -1312,7 +1313,7 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
   float result;
   FILE *alog = astar_log;
 
-  /* ── Performance counters (always tallied; only printed if alog) ── */
+  /* â”€â”€ Performance counters (always tallied; only printed if alog) â”€â”€ */
   int n_pops = 0;          /* heap_pop calls */
   int n_stale_pops = 0;    /* popped a node that was already closed */
   int n_pushes = 0;        /* heap_push calls */
@@ -1519,9 +1520,9 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
   return result;
 }
 
-/* ── Full Dijkstra from a source ──────────────────────────────────────── */
+/* â”€â”€ Full Dijkstra from a source â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
-/* ── Precomputed neighbor edge cost grid ──
+/* â”€â”€ Precomputed neighbor edge cost grid â”€â”€
  *
  * For each (tile, direction) pair, store the static base cost of stepping
  * from that tile in that direction:
@@ -1609,7 +1610,7 @@ void brainPathfinderRebuildEdgeCosts(BrainPathfinder *pf) {
   pf->cache_dirty = 1;
 }
 
-/* ── Incremental Dijkstra ──
+/* â”€â”€ Incremental Dijkstra â”€â”€
  *
  * Splits one full Dijkstra search across multiple ticks. Brain calls
  * Start once when it wants a fresh search, then Step every tick with a
@@ -2118,7 +2119,8 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
 
   /* Walk parent chain from dest back to source via dir_at. Source tile
    * has dir_at = 0xFF and contributes 0 to g_cost (no danger added at
-   * start), so we exclude it from the subtraction. */
+   * start), so we exclude it from the subtraction. Each step's
+   * subtract is scaled by DMUL8[d] to match the slate's expansion. */
   float subtract = 0.0f;
   float dscale = chosen->danger_scale;
   int cur = node_idx(x, y, chosen_layer);
@@ -2126,20 +2128,32 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
   int safety = 2048;
   while (safety-- > 0) {
     uint8_t dval = chosen->dir_at[cur];
-    if (dval == 0xFF) break; /* source — exclude */
-
+    if (dval == 0xFF) break;
     int cx = node_x(cur);
     int cy = node_y(cur);
     int tile_key = cy * MAP_SIZE + cx;
     float p = pcontrib_lookup(user, tile_key);
+    int d = dval & 0x07;
+    int parent_boat = (dval & 0x08) ? 1 : 0;
     if (p > 0.0f) {
       int tt = pf->map[tile_key] & 0x0F;
       float inv_spd = cur_boat ? inv_speed_boat[tt] : inv_speed_foot[tt];
-      subtract += p * dscale * inv_spd;
+      /* Subtract assumes the slate's expansion at this tile was
+       *   tc = ec + p*dscale*inv_spd
+       * which matches the main expansion paths in this file. Two
+       * known incomplete paths leave a residual that we still
+       * remove here (causing minor over-subtraction):
+       *   1. Wall-shoot tiles (TT_BUILDING/TT_HALFBUILD): expansion
+       *      uses danger*16/3 instead of danger*inv_spd[tt]
+       *      (lines ~1839-1855, 1891-1903).
+       *   2. Road-build short-circuit caps tc = road_build_cost,
+       *      which drops the danger term entirely; we still
+       *      subtract here as if it were present.
+       * Both pre-existing — fixing them needs the subtract to mirror
+       * the per-tile dispatch in the expansion. Out of scope for
+       * the DMUL fix; flagged for follow-up. */
+      subtract += p * dscale * inv_spd * DMUL8[d];
     }
-
-    int d = dval & 0x07;
-    int parent_boat = (dval & 0x08) ? 1 : 0;
     int px = cx - DX8[d];
     int py = cy - DY8[d];
     if (px < 0 || px > 255 || py < 0 || py > 255) break;
@@ -2523,7 +2537,7 @@ double brainPathfinderDijkstraFrom(BrainPathfinder *pf,
   return t1 - t0;
 }
 
-/* ── Incremental cost_to ──────────────────────────────────────── */
+/* â”€â”€ Incremental cost_to â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 /* Reset: initialize g_cost/closed/heap from a source position.
  * Call once at the start of a replan cycle. */

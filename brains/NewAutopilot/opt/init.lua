@@ -327,6 +327,10 @@ function Brain.open(info)
   opt.set_tick(0)
   opt("BEGIN Brain.open player=", info.player_number)
   local t_open0 = clock_us()
+  -- Diagnostic: emit a SELF_DR line per pool-6 candidate per replan
+  -- showing raw / subtracted / c_reduction / manual_reduction so we can
+  -- verify the target-pill danger subtraction in pool_6's spot_cost.
+  -- BRAIN_DEBUG_MODE-gated so it's stripped from opt/.
   -- Switch to Lua 5.4 generational GC. Brain ticks allocate lots of
   -- short-lived tables (closures, per-tick scratch); generational keeps
   -- minor collections cheap and frequent. minor=10 fires minor passes
@@ -706,6 +710,16 @@ function Brain.think(info)
   state.tick = state.tick + 1
   state._last_info = info
   local now  = state.tick
+  -- At tick 1 emit a BOT_START marker so log readers can correlate
+  -- bot index ↔ map quadrant. (opt build strips this whole block.)
+  if BRAIN_DEBUG_MODE and now == 1 then
+    print2(string.format(
+      "BOT_START player_number=%s name=%s tank=(%.1f,%.1f) tile=(%d,%d)",
+      tostring(info.player_number),
+      tostring(info.player_name),
+      (info.tankx or 0) / 256.0, (info.tanky or 0) / 256.0,
+      (info.tankx or 0) >> 8, (info.tanky or 0) >> 8))
+  end
 
   -- Open the optimize.log section timer at the EARLIEST possible point
   -- so prelude work (capacity tier calc, debug-mode viz refresh, the
@@ -1085,29 +1099,13 @@ function Brain.think(info)
       goal_str = string.format("Goal: %s (%d,%d)",
         gkind, g.mx or 0, g.my or 0)
     end
-    -- Per-tick goal log — behavior trace. Gate `BRAIN_LOG_JSON or
-    -- BRAIN_DEBUG_MODE` (LOG_JSON first so strip leaves the block alone).
-    -- --opt without --log-json: both false, no file write. --opt --log-json
-    -- or dev mode: writes goal_player<N>.log to DEBUG_SESSION_DIR.
-    if BRAIN_LOG_JSON or BRAIN_DEBUG_MODE then
-      local sdir = _G.DEBUG_SESSION_DIR
-      if sdir then
-        local pn = info.player_number or 0
-        local path = string.format("%s/goal_player%d.log", sdir, pn)
-        if not _G._GOAL_LOG_FILE or _G._GOAL_LOG_PATH ~= path then
-          if _G._GOAL_LOG_FILE then pcall(function() _G._GOAL_LOG_FILE:close() end) end
-          local f = io.open(path, "a")
-          if f then
-            _G._GOAL_LOG_FILE = f
-            _G._GOAL_LOG_PATH = path
-          end
-        end
-        if _G._GOAL_LOG_FILE then
-          local sub = (g.substate and g.substate ~= "" and g.substate ~= "-") and (" sub=" .. g.substate) or ""
-          _G._GOAL_LOG_FILE:write(string.format("%d\t%s%s\n", state.tick or 0, goal_str, sub))
-          _G._GOAL_LOG_FILE:flush()
-        end
-      end
+    -- Goal-change trace consolidated into print2_bot<N>.log. The
+    -- "if BRAIN_DEBUG_MODE and ..." prefix matches strip.bat so opt
+    -- builds drop this whole block; opt/ source is left as-is for
+    -- completeness but lua_strip will have already removed it.
+    if BRAIN_DEBUG_MODE and BRAIN_LOG_GOALS then
+      local sub = (g.substate and g.substate ~= "" and g.substate ~= "-") and (" sub=" .. g.substate) or ""
+      print2(string.format("GOAL_CHANGE %s%s", goal_str, sub))
     end
     -- HUD draws (gated)
   end
@@ -1599,14 +1597,31 @@ function Brain.think(info)
     state.command_reply = nil
   end
 
-  -- Respawn handling. Use clear_attack_goal so any in-progress
-  -- attack_pill / PPT state (substate, _shield_scan, _aim_locked,
-  -- _wall_build_list, etc.) doesn't leak through into the next
-  -- goal selection on the new tank.
-  if info.newtank then
+  -- Respawn handling. Trigger on either newtank (1-tick flag) or
+  -- the death-pending-respawn state (armour > TANK_FULL_ARMOUR is
+  -- held by the engine through the whole deathWait window). The
+  -- belt-and-suspenders armour check catches the case where a
+  -- missed think tick lets newtank flip back to false before we
+  -- saw it; build_walls state would otherwise survive the death.
+  local _is_dead = (info.armour or 0) > C.TANK_FULL_ARMOUR
+  if info.newtank or _is_dead then
     state.stuck_for = 0
     attack.clear_attack_goal(state)
-    log.event("respawn", string.format("%d,%d", info.tankx >> 8, info.tanky >> 8))
+    if info.newtank then
+      log.event("respawn", string.format("%d,%d", info.tankx >> 8, info.tanky >> 8))
+    end
+  end
+
+  -- Early return while dead — see init.lua for notes.
+  if _is_dead then
+    return {
+      holdkeys    = 0,
+      tapkeys     = 0,
+      build       = nil,
+      wantallies  = info.allies,
+      messagedest = 0,
+      sendmessage = "",
+    }
   end
 
   -- Stuck detection
@@ -2163,7 +2178,15 @@ function Brain.think(info)
     local timer_fire = (now + state.replan_offset) % C.GOAL_REPLAN_INTERVAL == 0
     -- Minimum commitment: suppress timer-based replans shortly after a switch
     local min_commit_met = (now - (state.goal_set_tick or 0)) >= C.GOAL_MIN_COMMIT_TICKS
-    local replan = urgent_replan or refuel_done
+    -- Force-replan flag, set by code paths that used to call
+    -- clear_attack_goal but need the wounded pill to stay incumbent
+    -- (cur_group=attack) through the next pool competition. Consumed
+    -- this tick: cleared whether or not we actually replan, since the
+    -- substate machine has already moved on.
+    local force_replan = state._force_replan_reason ~= nil
+    local force_replan_reason = state._force_replan_reason
+    state._force_replan_reason = nil
+    local replan = urgent_replan or refuel_done or force_replan
                or (min_commit_met and not refuel_hold and not state.command_goal and timer_fire)
     -- Only log the replan-decision dump on ticks where something
     -- interesting happens (timer fire, urgent replan, or refuel done).
@@ -2866,6 +2889,11 @@ function Brain.think(info)
   local t_build_setmode = clock_us()
   opt(string.format("  builder.set_mode done %.2f ms", (t_build_setmode - t_build0) / 1000))
   local build_cmd = builder.decide(state, world, info, now)
+  -- Repair-pill completion: see init.lua for notes.
+  if state._repair_dispatched then
+    state._repair_dispatched = nil
+    attack.clear_attack_goal(state)
+  end
   local t_build1 = clock_us()
   opt(string.format("  builder.decide done %.2f ms", (t_build1 - t_build_setmode) / 1000))
   metrics.set("us_builder", t_build1 - t_build0)

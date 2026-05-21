@@ -378,11 +378,36 @@ function M.decide(state, world, info, now)
     end
   end
 
+  local tmx = info.tankx >> 8
+  local tmy = info.tanky >> 8
+
+  -- Priority 0.4: repair_pill dispatch (forced — no danger gate).
+  -- See builder.lua for full notes. Within 5 tiles + LGM-reach passes
+  -- → dispatch BUILDMODE_PBOX; engine auto-repairs on arrival.
+  if state.goal and state.goal.kind == "repair_pill"
+     and state.goal.mx and state.goal.my
+     and info.trees > 0
+  then
+    -- Danger-blended distance cap: 5 tiles when safe, up to 12 when
+    -- under fire (danger 50..150 lerps the cap from BASE to DANGEROUS).
+    local danger_at_tank = (state.perc and state.perc.threat_at_tank) or 0
+    local t = (danger_at_tank - 50) / 100
+    if t < 0 then t = 0 elseif t > 1 then t = 1 end
+    local effective_max = 5 + 7 * t
+    if U.mdist(tmx, tmy, state.goal.mx, state.goal.my) <= effective_max then
+      local ticks = cpf_lgm_travel_ticks_map(
+        tmx, tmy, state.goal.mx, state.goal.my,
+        0, 0, 2000, 150)
+      if ticks > 0 then
+        state._repair_dispatched = true
+        return { x = state.goal.mx, y = state.goal.my, action = BUILDMODE_PBOX }
+      end
+    end
+  end
+
   -- Priority 0.5: base shield — build wall to block pill fire while on any base.
   -- Triggers ONLY on the tick we take damage (pill just fired → max window
   -- before next shot). Checks all 8 directions for the best blocking tile.
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
   -- Allow base shield when ON the base or within 1 tile of it.
   -- Wall must be placed on one of the 8 tiles adjacent to the base.
   local has_base = info.base and info.base.x
@@ -592,14 +617,38 @@ function M.decide(state, world, info, now)
                           danger.lgm_path_safe_enhanced(info, wx, wy,
                               C.LGM_DANGER_HIGH, now, world,
                               excl_mx, excl_my)
-      if not angry_pill_close and has_trees and can_reach and path_safe then
-        -- Forest in the way? The engine can't drop a wall on T_FOREST;
-        -- BUILDMODE_BUILD there just clears the trees, no wall goes up.
-        -- Dispatch FARM first to harvest, then the next builder tick
-        -- will see grass/road and dispatch the actual BUILD. Two
-        -- separate LGM round-trips, but the wall_shield idx in attack.lua
-        -- only advances on T_BUILDING/T_HALFBUILD so it'll keep
-        -- targeting the same tile until the wall is genuinely up.
+      -- Wall-shield builds for an in-progress pill take are FORCED:
+      -- the take strategy is already committed to walking into pill
+      -- fire, the wall is what makes that survivable, and risking
+      -- the LGM to get it up is part of the deal. Gates 1 (angry
+      -- pill in range) and 4 (LGM path danger) are bypassed — only
+      -- the hard-physical gates 2 (trees on hand) and 3 (LGM can
+      -- physically reach the tile) still apply. base_shield (the
+      -- refuel-defense variant) keeps full safety.
+      local force_mode = (b.mode == "wall_shield")
+      local safety_ok  = force_mode
+        or (not angry_pill_close and path_safe)
+
+      -- Pillbox-as-blocker: spend up to 2 carried pills on closest
+      -- shield slots instead of building walls (wall_shield only).
+      local PILLBOX_BLOCKERS_MAX = 2
+      local pbox_used = (state.goal and state.goal._pillbox_blockers_used) or 0
+      if b.mode == "wall_shield"
+         and (info.carried_pills or 0) > 0
+         and pbox_used < PILLBOX_BLOCKERS_MAX
+         and wtt ~= C.T_FOREST
+         and can_reach
+         and safety_ok then
+        -- "attempts dispatched", not "blockers placed" — see builder.lua.
+        state.goal._pillbox_blockers_used = pbox_used + 1
+        log.reason("build", { mode = b.mode,
+                              why = "drop pillbox as wall blocker",
+                              wall_mx = wx, wall_my = wy,
+                              blockers_used = state.goal._pillbox_blockers_used })
+        return { x = wx, y = wy, action = BUILDMODE_PBOX }
+      end
+
+      if has_trees and can_reach and safety_ok then
         if wtt == C.T_FOREST then
           log.reason("build", { mode = b.mode, why = "harvest forest before wall",
                                 wall_mx = wx, wall_my = wy })
@@ -622,12 +671,14 @@ function M.decide(state, world, info, now)
         trees_need     = cost,
         can_reach      = can_reach,
         path_safe      = path_safe,
+        force_mode     = force_mode,
       }
       log.reason("build_skip", {
         mode = b.mode, wall_mx = wx, wall_my = wy,
         angry = angry_pill_close,
         trees = string.format("%d/%d", info.trees, cost),
         reach = can_reach, safe  = path_safe,
+        force = force_mode,
       })
     end
     -- Wall already exists or can't build safely — fall through to default
