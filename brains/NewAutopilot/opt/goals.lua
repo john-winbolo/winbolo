@@ -3719,11 +3719,14 @@ function M.finalize_pools(state, world, info)
       if cur_pill then
         pill  = cur_pill
         pid   = cur_pid
-        -- Soft mid-take lock. 10 is low enough to beat normal alternatives
-        -- (refuel, capture_*, attack_base, attack_pill on a different pill)
-        -- but stays beatable by an attack_tank goal that drops itself
-        -- under 10 — see eval_attack_tank's mid-take engage discount.
-        pcost = 10
+        -- Mid-take cost override: only when actively firing
+        -- (engage/shoot_pill) AND >= 3 shells committed. See
+        -- goals.lua for full notes.
+        local sub = state.goal.substate or ""
+        local fired = state.goal._fired or 0
+        if (sub == "engage" or sub == "shoot_pill") and fired >= 3 then
+          pcost = 10
+        end
       end
     end
     local lm6, lr6 = strategic_location_mult(pill.mx, pill.my, state, world, info, "attack_pill", pill)
@@ -4456,11 +4459,9 @@ local function goal_selection(state, world, info, quiet)
     -- penalised — otherwise an incidental capture or a passing enemy tank
     -- yanks us off an attack we've already invested shells/position in.
     local cur_is_attack_pill = (state.goal.kind == "attack_pill")
-    local HYST_EXEMPT
-    if cur_is_attack_pill then
-      HYST_EXEMPT = {}   -- nothing is exempt mid-attack_pill
-    else
-      HYST_EXEMPT = { capture_pill = true, attack_tank = true }
+    local HYST_EXEMPT = { capture_pill = true }
+    if not cur_is_attack_pill then
+      HYST_EXEMPT.attack_tank = true
     end
     local cur_group = goal_group(state.goal.kind)
     local ticks_on_goal = (state.tick or 0) - (state.goal_set_tick or 0)
@@ -4525,6 +4526,8 @@ local function goal_selection(state, world, info, quiet)
           and c.goal.mx   == state.goal.mx
           and c.goal.my   == state.goal.my
         if is_current then goto continue_hist end
+        -- capture_pill is exempt from history thrash penalty too.
+        if HYST_EXEMPT[c.goal.kind] then goto continue_hist end
         local target_count = 0
         local kind_count = 0
         for _, h in ipairs(hist) do
