@@ -131,8 +131,9 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   instanceAcceptRemoteClients = cfg->acceptRemoteClients;
 
   if (cfg->acceptRemoteClients) {
+    sim->maxPlayers = (cfg->maxPlayers > 0) ? cfg->maxPlayers : (BYTE)MAX_TANKS;
     if (transportUdpServerCreate(cfg->udpPort, bindAddr, sim,
-                                 password, cfg->maxPlayers) == FALSE) {
+                                 password) == FALSE) {
       return FALSE;
     }
     transportUdpServerSetUploadConfig(cfg->uploadPolicy,

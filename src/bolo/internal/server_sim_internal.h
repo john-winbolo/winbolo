@@ -79,6 +79,7 @@ struct ServerSim {
                                       * Consumed by the join handler. */
     uint16_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
+    BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
 
     /* Game-settings mirrors — needed for live mid-lobby change broadcasts.
      * The authoritative values live in GameSim/serverSim CLI args; these

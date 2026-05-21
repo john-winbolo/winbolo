@@ -53,6 +53,7 @@
 #include "bot_manager.h"
 #include "log.h"
 #include "playername_validate.h"
+#include "server_sim_join.h"
 #include "../common/wb_log.h"
 
 #ifdef _WIN32
@@ -214,7 +215,6 @@ static struct {
     SOCKET sock;
     bool running;
     char password[MAP_STR_SIZE];
-    BYTE maxPlayers;
     UdpServerClient clients[MAX_TANKS];
     uint32_t tickCount;
 
@@ -396,18 +396,6 @@ static int balanceThreadFunc(void *data) {
     }
     threadsReleaseMutex();
     return 0;
-}
-
-/* Find a free player slot. Returns index or -1. */
-static int serverFindFreeSlot(void) {
-    int i;
-    BYTE limit = (udpServer.maxPlayers > 0) ? udpServer.maxPlayers : MAX_TANKS;
-    for (i = 0; i < limit; i++) {
-        if (!udpServer.clients[i].connected && !botManagerIsBot((BYTE)i)) {
-            return i;
-        }
-    }
-    return -1;
 }
 
 /* Pack a langid + arg list into buf at *pos.  Used by the localized
@@ -1038,7 +1026,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
      * ahead of the duplicate check (Phase 5) so the WBN-verification
      * step below has a slot to bind its player_key to, and the collision
      * policy has the slot available before applying any preempt. */
-    slot = serverFindFreeSlot();
+    slot = serverSimFindFreeSlot(sim);
     if (slot < 0) {
         serverSimConsoleMessage("Join rejected: Server full");
         serverSendJoinReject(fromAddr, STR_REJECT_SERVER_FULL, 0, NULL);
@@ -1268,27 +1256,25 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     memset(udpServer.mapEventQueues[slot].buffer, 0, sizeof(udpServer.mapEventQueues[slot].buffer));
 
     /* Merge client-supplied hints with server-determined WBN trust into a
-     * single clientFlags byte before serverSimAddPlayer so the
-     * log_PlayerJoined event captures the right value.  Always written
-     * (cleared when not WBN) so a recycled slot doesn't inherit a previous
-     * occupant's flags. */
+     * single clientFlags byte, then run the four-step join sequence so a
+     * single CTRL_PLAYER_JOIN fans out with name, country, clientType,
+     * and clientFlags all populated. */
     {
         uint8_t flags = clientHints & PLAYER_CLIENT_HINT_MASK;
         if (incomingIsWBN)                  flags |= PLAYER_FLAG_WBN_VERIFIED;
         if (incomingIsWBN && wbnHasSteam)   flags |= PLAYER_FLAG_WBN_STEAM_LINKED;
         if (incomingIsWBN && wbnIsSupporter) flags |= PLAYER_FLAG_SUPPORTER;
-        playersSetClientFlags(&serverSimGetGameSim(sim)->plyrs, (BYTE)slot, flags);
-        playersSetClientType (&serverSimGetGameSim(sim)->plyrs, (BYTE)slot, clientType);
+        addPlayerInternal(sim, (BYTE)slot,
+                          udpServer.clients[slot].playerName,
+                          udpServer.clients[slot].wantRejoin);
+        setPlayerCountryInternal(sim, (BYTE)slot,
+                                 udpServer.clients[slot].countryCode);
+        setClientTypeFlagsInternal(sim, (BYTE)slot, clientType, flags);
+        fillAndPublishPlayerJoin(sim, (BYTE)slot);
     }
     WB_LOG_INFO(WB_LOG_CAT_NET,
                 "join accept: slot=%d clientType=%u clientHints=0x%02x",
                 slot, (unsigned)clientType, (unsigned)clientHints);
-
-    /* Initialize player in the simulation */
-    serverSimAddPlayer(sim, (BYTE)slot, udpServer.clients[slot].playerName,
-                       udpServer.clients[slot].wantRejoin);
-    serverSimSetPlayerCountry(sim, (BYTE)slot,
-                              udpServer.clients[slot].countryCode);
 
     /* Compress current map state for the joining player.
      * Done after serverSimAddPlayer so rejoin ownership is included. */
@@ -1833,8 +1819,7 @@ void transportUdpServerEnforcePing(ServerSim *sim) {
 bool transportUdpServerCreate(unsigned short port,
                               const char *addrToUse,
                               ServerSim *sim,
-                              const char *password,
-                              BYTE maxPlayers) {
+                              const char *password) {
     struct sockaddr_in bindAddr;
     int i;
 
@@ -1871,7 +1856,6 @@ bool transportUdpServerCreate(unsigned short port,
         strncpy(udpServer.password, password, MAP_STR_SIZE - 1);
     }
 
-    udpServer.maxPlayers = maxPlayers;
     udpServer.running = true;
     udpServer.tickCount = 0;
     udpServer.uploadMaxFiles        = 64;
@@ -1881,7 +1865,7 @@ bool transportUdpServerCreate(unsigned short port,
         "server created: port=%u bindAddr=%s maxPlayers=%u password=%s",
         port,
         (addrToUse && *addrToUse) ? addrToUse : "0.0.0.0",
-        (unsigned)maxPlayers,
+        (unsigned)sim->maxPlayers,
         (password && *password) ? "yes" : "no");
     fprintf(stderr, "[UDP SERVER] Created, bound to port %u\n", port);
     udpServer.compressedMapSize = 0;
@@ -4716,6 +4700,3 @@ void transportUdpServerPrintStatus(bool toFile) {
     }
 }
 
-BYTE transportUdpServerGetMaxPlayers(void) {
-    return udpServer.maxPlayers;
-}

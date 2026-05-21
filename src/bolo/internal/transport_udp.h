@@ -327,13 +327,13 @@ typedef struct UdpServerClient {
 /* Creates a server-side UDP transport.
  * Binds to the given port and starts accepting connections.
  * sim: the authoritative ServerSim that inputs will be applied to.
- * password: game password (empty string if none).
- * maxPlayers: maximum allowed players (0 = MAX_TANKS). */
+ *      sim->maxPlayers is the join-slot cap (set by the lifecycle layer
+ *      before calling here).
+ * password: game password (empty string if none). */
 bool transportUdpServerCreate(unsigned short port,
                               const char *addrToUse,
                               struct ServerSim *sim,
-                              const char *password,
-                              BYTE maxPlayers);
+                              const char *password);
 
 /* Destroys the server-side UDP transport. */
 void transportUdpServerDestroy(void);
@@ -380,9 +380,6 @@ void transportUdpServerSendServerMessage(const char *message);
 /* Print player status to stdout (for "status" command).
  * If toFile is TRUE, also write to "status.txt". */
 void transportUdpServerPrintStatus(bool toFile);
-
-/* Returns the max players setting. */
-BYTE transportUdpServerGetMaxPlayers(void);
 
 /* Check for client timeouts — safe to call in any server state.
  * Disconnects clients that haven't sent packets within CLIENT_TIMEOUT_TICKS. */
