@@ -3769,11 +3769,14 @@ function M.finalize_pools(state, world, info)
       if cur_pill then
         pill  = cur_pill
         pid   = cur_pid
-        -- Soft mid-take lock. 10 is low enough to beat normal alternatives
+        -- Soft mid-take lock. 30 is low enough to beat normal alternatives
         -- (refuel, capture_*, attack_base, attack_pill on a different pill)
-        -- but stays beatable by an attack_tank goal that drops itself
-        -- under 10 — see eval_attack_tank's mid-take engage discount.
-        pcost = 10
+        -- but stays beatable by an attack_tank engage-break (under 10)
+        -- and by IMMINENT_CAPTURE_FLOOR (5). Bumped from 10 → 30 so the
+        -- incumbent isn't too sticky relative to merely-low-cost
+        -- alternatives — switching off a half-built take is fine when
+        -- the alternative truly is much cheaper.
+        pcost = 30
       end
     end
     local lm6, lr6 = strategic_location_mult(pill.mx, pill.my, state, world, info, "attack_pill", pill)
@@ -4527,17 +4530,18 @@ local function goal_selection(state, world, info, quiet)
     end
 
     -- ── Apply hysteresis to discourage thrashing ──
-    -- High-value opportunistic goals are normally exempt so they can win on
-    -- raw cost (flee_to_base / rescue_lgm skip this pool entirely as
-    -- overrides). But when we're mid-attack on a pill, even those get
-    -- penalised — otherwise an incidental capture or a passing enemy tank
-    -- yanks us off an attack we've already invested shells/position in.
+    -- High-value opportunistic goals are exempt so they can win on raw
+    -- cost (flee_to_base / rescue_lgm skip this pool entirely as
+    -- overrides). capture_pill is ALWAYS exempt — pills die in finite
+    -- time and the capture window is short, so paying switch+commitment
+    -- to skip it would lose us the resource. attack_tank only exempts
+    -- when we're NOT mid-attack_pill — during a take, the engage-break
+    -- lock (cost < 9) handles real tank threats; everything else
+    -- shouldn't yank us off the attack.
     local cur_is_attack_pill = (state.goal.kind == "attack_pill")
-    local HYST_EXEMPT
-    if cur_is_attack_pill then
-      HYST_EXEMPT = {}   -- nothing is exempt mid-attack_pill
-    else
-      HYST_EXEMPT = { capture_pill = true, attack_tank = true }
+    local HYST_EXEMPT = { capture_pill = true }
+    if not cur_is_attack_pill then
+      HYST_EXEMPT.attack_tank = true
     end
     local cur_group = goal_group(state.goal.kind)
     local ticks_on_goal = (state.tick or 0) - (state.goal_set_tick or 0)
@@ -4602,6 +4606,10 @@ local function goal_selection(state, world, info, quiet)
           and c.goal.mx   == state.goal.mx
           and c.goal.my   == state.goal.my
         if is_current then goto continue_hist end
+        -- capture_pill is exempt from history thrash penalty too —
+        -- same rationale as the HYST_EXEMPT block above: pills die in
+        -- finite time and the capture window is short.
+        if HYST_EXEMPT[c.goal.kind] then goto continue_hist end
         local target_count = 0
         local kind_count = 0
         for _, h in ipairs(hist) do
