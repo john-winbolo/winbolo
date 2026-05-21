@@ -695,6 +695,16 @@ function M.decide(state, world, info, now)
                        and can_reach
                        and safety_ok
       if can_pbox then
+        -- NOTE: this is "attempts dispatched", not "blockers actually
+        -- placed". If the engine refuses the action or the LGM dies
+        -- in transit, this slot won't be retried — attack.lua's
+        -- wall_build iterator advances on T_PILLBOX/T_BUILDING/
+        -- T_HALFBUILD so a failed PBOX dispatch leaves the slot in
+        -- its original terrain and the iterator stays put, calling
+        -- back with a fresh PBOX attempt next tick UNLESS we've
+        -- already burned both attempts here. Acceptable trade
+        -- because losing 2 carried pills to LGM deaths is itself a
+        -- signal the position is too dangerous.
         state.goal._pillbox_blockers_used = pbox_used + 1
         log.reason("build", { mode = b.mode,
                               why = "drop pillbox as wall blocker",

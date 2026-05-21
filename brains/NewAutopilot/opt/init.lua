@@ -1613,6 +1613,18 @@ function Brain.think(info)
     end
   end
 
+  -- Early return while dead — see init.lua for notes.
+  if _is_dead then
+    return {
+      holdkeys    = 0,
+      tapkeys     = 0,
+      build       = nil,
+      wantallies  = info.allies,
+      messagedest = 0,
+      sendmessage = "",
+    }
+  end
+
   -- Stuck detection
   local t_stuck0 = clock_us()
   local cur_mx = info.tankx >> 8

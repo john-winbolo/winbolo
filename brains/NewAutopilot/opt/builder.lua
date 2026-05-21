@@ -639,6 +639,7 @@ function M.decide(state, world, info, now)
          and wtt ~= C.T_FOREST
          and can_reach
          and safety_ok then
+        -- "attempts dispatched", not "blockers placed" — see builder.lua.
         state.goal._pillbox_blockers_used = pbox_used + 1
         log.reason("build", { mode = b.mode,
                               why = "drop pillbox as wall blocker",

@@ -2295,8 +2295,17 @@ static void recordingEvictHead(BrainTestApp *app) {
                 (rb->count - drop) * sizeof(RecordingFrame));
     }
     rb->count -= drop;
-    /* Shift cursors. Any index that referred to an evicted frame
-     * collapses to 0 (oldest still-live frame). */
+    /* Shift cursors. Two distinct clamps because the sentinel values
+     * differ by purpose:
+     *   - playbackFrame and g_panelPollFrame are real frame cursors
+     *     (0..count-1). If their previous target got evicted we snap
+     *     them to 0 — the oldest still-live frame.
+     *   - playbackMapFrame is a CACHE VALIDITY MARKER, not a cursor.
+     *     -1 means "the playback map buffer is stale; rebuild on
+     *     next read". Snapping it to -1 (rather than 0) is the right
+     *     call when the frame it pointed at is gone — there's no
+     *     guarantee the cached map content still applies to frame 0.
+     */
     app->playbackFrame -= drop;
     if (app->playbackFrame < 0) app->playbackFrame = 0;
     if (rb->playbackMapFrame >= 0) {

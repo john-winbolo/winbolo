@@ -2138,6 +2138,20 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
     if (p > 0.0f) {
       int tt = pf->map[tile_key] & 0x0F;
       float inv_spd = cur_boat ? inv_speed_boat[tt] : inv_speed_foot[tt];
+      /* Subtract assumes the slate's expansion at this tile was
+       *   tc = ec + p*dscale*inv_spd
+       * which matches the main expansion paths in this file. Two
+       * known incomplete paths leave a residual that we still
+       * remove here (causing minor over-subtraction):
+       *   1. Wall-shoot tiles (TT_BUILDING/TT_HALFBUILD): expansion
+       *      uses danger*16/3 instead of danger*inv_spd[tt]
+       *      (lines ~1839-1855, 1891-1903).
+       *   2. Road-build short-circuit caps tc = road_build_cost,
+       *      which drops the danger term entirely; we still
+       *      subtract here as if it were present.
+       * Both pre-existing — fixing them needs the subtract to mirror
+       * the per-tile dispatch in the expansion. Out of scope for
+       * the DMUL fix; flagged for follow-up. */
       subtract += p * dscale * inv_spd * DMUL8[d];
     }
     int px = cx - DX8[d];

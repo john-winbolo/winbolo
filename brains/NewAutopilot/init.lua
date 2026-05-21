@@ -1993,6 +1993,23 @@ function Brain.think(info)
     end
   end
 
+  -- Early return while dead. info.tankx/y hold the LAST-living tile
+  -- through the whole deathWait window (~200 ticks) — running threat,
+  -- perception, pcontrib, planning, etc. against those stale coords
+  -- pushes garbage into the danger map and the pillcontrib registry
+  -- for the duration. Just emit a no-op brain output (engine ignores
+  -- input from a dead tank anyway). Goal already cleared above.
+  if _is_dead then
+    return {
+      holdkeys    = 0,
+      tapkeys     = 0,
+      build       = nil,
+      wantallies  = info.allies,
+      messagedest = 0,
+      sendmessage = "",
+    }
+  end
+
   -- Stuck detection
   local t_stuck0 = clock_us()
   local cur_mx = info.tankx >> 8
