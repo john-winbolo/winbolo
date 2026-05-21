@@ -682,10 +682,9 @@ bool        clientSimGetLobbyMapSearchInFlight(const ClientSim *cs);
 uint8_t     clientSimGetLobbyMapUploadStatus(const ClientSim *cs);
 uint8_t     clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs);
 const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs);
-void        clientSimResetLobbyMapUpload(ClientSim *cs);
 /* True (and clears the flag) if the server NACK'd a USE_LOCAL request
- * since the last call — the caller should fall back to the regular
- * UPLOAD_BEGIN/CHUNK flow. */
+ * since the last call — drives the BEGIN/CHUNK fallback inside the
+ * UDP transport's upload pump. No frontend caller. */
 bool        clientSimConsumeUseLocalFallback(ClientSim *cs);
 
 /* Winbolo.net preview reflection. status: 0=idle, 1=in-flight,

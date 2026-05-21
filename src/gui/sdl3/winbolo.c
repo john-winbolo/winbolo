@@ -336,24 +336,11 @@ int main(int argc, char *argv[]) {
         }
         continue;
       }
-      /* lobbyResult == 1: game started.
-       *  MP: load the map that was downloaded in the background
-       *      during the lobby.
-       *  SP: gameFrontStartSinglePlayerGame already prepared the
-       *      world from the local spServerSim; no server map to
-       *      download. */
-      if (!clientSimIsSinglePlayer(cs)) {
-        if (!gameFrontLoadDeferredMap(&cs)) {
-          imguiMessageBoxEx(DIALOG_BOX_TITLE, "Failed to load map from server",
-                            IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-          winboloQuit = FALSE;
-          gameFrontEnd(&keys, TRUE, FALSE);
-          if (gameFrontStart(cmdLine, &keys, TRUE, &cs) == FALSE) {
-            winboloQuit = TRUE;
-          }
-          continue;
-        }
-      }
+      /* lobbyResult == 1: game started. Both MP and SP have already
+       * had their world installed (MP via the UDP transport's
+       * CTRL_GAME_PHASE LOBBY→RUNNING watcher; SP via the local
+       * transport's localTick path), so the main loop just flips the
+       * net status and falls into the per-frame game tick. */
       clientSimSetNetStatus(cs, netRunning);
       simTickCounter = 0;
       justKeysFlag = FALSE;
@@ -676,9 +663,6 @@ static void windowRunGameTick(ClientSim *cs) {
           clientMutexRelease();
           clientSimNetRecordInput(cs, &pkt);
           clientSimNetTick(cs);
-          clientMutexWaitFor();
-          clientSimNetSyncSnapshot(cs);
-          clientMutexRelease();
           simTickCounter++;
           justKeysFlag = FALSE;
         } else {
@@ -713,7 +697,6 @@ static void windowRunGameTick(ClientSim *cs) {
            * to do here. */
           clientSimNetTick(cs);
           clientMutexWaitFor();
-          clientSimNetSyncSnapshot(cs);
           clientSimDisplayTick(cs, brainRunning);
           clientMutexRelease();
           simTickCounter++;

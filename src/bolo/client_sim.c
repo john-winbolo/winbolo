@@ -1466,12 +1466,6 @@ bool clientSimGetLobbyMapSearchInFlight(const ClientSim *cs) {
 uint8_t  clientSimGetLobbyMapUploadStatus(const ClientSim *cs)     { return cs->lobbyMapUploadStatus; }
 uint8_t  clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs) { return cs->lobbyMapUploadRejectCode; }
 const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs){ return cs->lobbyMapUploadFinalPath; }
-void clientSimResetLobbyMapUpload(ClientSim *cs) {
-  cs->lobbyMapUploadStatus     = 0;
-  cs->lobbyMapUploadRejectCode = 0;
-  cs->lobbyMapUploadFinalPath[0] = '\0';
-  cs->lobbyMapUseLocalNeedsFallback = false;
-}
 
 bool clientSimConsumeUseLocalFallback(ClientSim *cs) {
   if (!cs || !cs->lobbyMapUseLocalNeedsFallback) return false;

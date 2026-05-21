@@ -1518,15 +1518,6 @@ time_t serverMainGetTicks(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Helper: sync snapshot from transport. Kept for the UDP-mode loop —  */
-/* the local transport now pulls snapshots from inside localTick, so   */
-/* the fast-local path no longer calls this directly.                  */
-/* ------------------------------------------------------------------ */
-static void headlessSyncSnapshot(void) {
-  clientSimNetSyncSnapshot(humanSim);
-}
-
-/* ------------------------------------------------------------------ */
 /* Fast local mode: setup and game loop                                */
 /* ------------------------------------------------------------------ */
 
@@ -1868,7 +1859,9 @@ static int runNetworkMode(void) {
     fprintf(stderr, "Connecting to %s:%u...\n", optServer, optPort);
   }
 
-  clientSimConnectUdp(humanSim, optServer, optPort, optName, optPassword, "", "",
+  clientSimConnectUdp(humanSim, optServer, optPort, optName,
+                      winbolonetGetCountryCode(),
+                      optPassword, "", "",
                       false, optTrackerAddr, optTrackerPort);
   if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
     const char *reason = clientSimGetConnectErrorReason(humanSim);
@@ -1899,44 +1892,11 @@ static int runNetworkMode(void) {
   playerNum = clientSimGetServerPlayerNum(humanSim);
   transportActive = TRUE;
 
-  /* Load map from server */
-  {
-    const BYTE *mapData;
-    int mapLen = 0;
-    gameType serverGame;
-    bool serverHiddenMines;
-    int32_t serverStartDelay, serverGameLen;
-
-    mapData = clientSimGetServerMapData(humanSim, &mapLen);
-    clientSimGetServerGameSettings(humanSim, &serverGame,
-                                   &serverHiddenMines,
-                                   &serverStartDelay, &serverGameLen);
-
-    if (mapData != NULL && mapLen > 0) {
-      char savedMapName[MAP_STR_SIZE];
-      strncpy(savedMapName, clientSimGetMapName(humanSim), MAP_STR_SIZE - 1);
-      savedMapName[MAP_STR_SIZE - 1] = '\0';
-      /* Reset map-dependent state in place; the transport (and the
-       * mapData pointer that lives inside it) survive the reset. */
-      clientSimResetForMapLoad(humanSim);
-      if (clientLoadCompressedMap(humanSim, (BYTE *)mapData, mapLen, savedMapName,
-                                  serverGame, serverHiddenMines,
-                                  serverStartDelay, serverGameLen,
-                                  optName, playerNum, FALSE) == FALSE) {
-        fprintf(stderr, "Error: failed to load map from server\n");
-        clientSimDestroy(humanSim);
-        return 1;
-      }
-      clientSimSetLocalTransport(humanSim, false);
-      clientSimSetAiType(humanSim, optAi);
-    } else {
-      fprintf(stderr, "Error: no map data from server\n");
-      clientSimDestroy(humanSim);
-      return 1;
-    }
-  }
-
-  /* Set up tank at start position */
+  /* Map install + snapshot apply happen inside the transport — the
+   * MAP_DOWNLOAD completion path drops the buffered bytes onto the
+   * ClientSim, and PACKET_STATE_SNAPSHOT applies inline. Headless
+   * only sets the bot AI type and finalises the local tank. */
+  clientSimSetAiType(humanSim, optAi);
   clientSimNetSetupTankGo(humanSim);
 
   /* Gate lobby vs running: if we received CTRL_LOBBY_SETTINGS during
@@ -1989,9 +1949,6 @@ static int runNetworkMode(void) {
           clientMutexRelease();
           clientSimNetRecordInput(humanSim, &pkt);
           clientSimNetTick(humanSim);
-          clientMutexWaitFor();
-          headlessSyncSnapshot();
-          clientMutexRelease();
           simTickCounter++;
           justKeys = FALSE;
         } else {
@@ -2004,7 +1961,6 @@ static int runNetworkMode(void) {
           clientSimNetSendInput(humanSim, &pkt);
           clientSimNetTick(humanSim);
           clientMutexWaitFor();
-          headlessSyncSnapshot();
           clientSimDisplayTick(humanSim, brainRunning);
           clientMutexRelease();
           simTickCounter++;

@@ -37,6 +37,9 @@
 #include "client_sim_control.h"
 #include "transport_control_codec.h"
 #include "wbn_key_codec.h"
+#include "bolo_map_validate.h"
+#include "wire_limits.h"
+#include "md5.h"
 #include "../gui/lang.h"
 #include "../gui/winbolo.h"
 #include "../gui/dialogAlliance.h"
@@ -146,7 +149,43 @@ typedef struct {
     struct in_addr targetIp;       /* host IP (network order) for PUNCH_REQUEST body */
     unsigned short targetPort;     /* host port (host order) for PUNCH_REQUEST body */
     bool           punchSent;      /* sent at least one PUNCH_REQUEST */
+
+    /* ISO-3166 fallback country (2 chars + NUL). Empty when the caller
+     * passed NULL/"". Written verbatim into the trailing slot of every
+     * JOIN_REQUEST so the server's GeoIP-failed fallback path can use
+     * it uniformly (loopback, LAN, missing MMDB). */
+    char fallbackCountry[3];
+
+    /* Lobby map upload — the chunked PACKET_LOBBY_MAP_UPLOAD_* state
+     * machine that used to live in imgui_lobby's per-frame pump. The
+     * frontend kicks it off via transportUdpClientStartLobbyMapUpload*
+     * and reads progress back via clientSimGetLobbyMapUpload* status +
+     * Percent getters. Pump fires from udpClientTick once per tick. */
+    bool      uploadActive;
+    uint8_t  *uploadBuf;                  /* malloc'd, sized to uploadTotal */
+    uint32_t  uploadTotal;
+    uint32_t  uploadOffset;               /* bytes already sent via CHUNK */
+    char      uploadName[128];            /* wire-side filename announced to server */
+    /* USE_LOCAL pre-check: when the source path resolves under
+     * data/maps/, the kick computes md5 + the data/maps-relative
+     * filename and sends PACKET_LOBBY_MAP_USE_LOCAL first. On
+     * USE_LOCAL_NACK the pump transitions to BEGIN+CHUNK using the
+     * bytes already buffered. */
+    bool      uploadUseLocalPending;      /* USE_LOCAL sent, awaiting ACK/NACK */
+    bool      uploadBeginSent;            /* BEGIN sent (USE_LOCAL never tried, or NACKed) */
+    /* Watchdog timestamps (SDL ticks ms). Reset on forward progress:
+     * status flip, offset advance, or the transition to awaiting-DONE
+     * after the last chunk. */
+    uint64_t  uploadStartedMs;
+    uint8_t   uploadPrevStatus;
+    uint64_t  uploadPrevProgressMs;
+    uint32_t  uploadPrevOffset;
 } TransportUdpClientCtx;
+
+#define UPLOAD_ACK_TIMEOUT_MS   5000   /* BEGIN/USE_LOCAL → ACK */
+#define UPLOAD_STALL_TIMEOUT_MS 10000  /* no chunk progress */
+#define UPLOAD_CHUNK_SIZE       1024
+#define UPLOAD_CHUNKS_PER_TICK  8
 
 /* Client send wrapper — tracks packet and byte counters */
 static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int len) {
@@ -154,6 +193,10 @@ static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int le
     c->packetsSentThisSec++;
     c->bytesSentThisSec += len;
 }
+
+/* Forward decl: defined alongside the upload state machine below;
+ * called from the connected-state branch of udpClientTick. */
+static void udpClientUploadPump(TransportUdpClientCtx *c);
 
 /* Build an input packet into buf, returns length */
 static int buildInputPacket(TransportUdpClientCtx *c, uint8_t *buf) {
@@ -1676,11 +1719,12 @@ static bool udpClientTick(void *ctx) {
                     if (bolo_steam_has_supporter_dlc()) clientHints |= PLAYER_FLAG_SUPPORTER;
                     jbuf[joffset++] = clientHints;
                 }
-                /* fallbackCountry (2 bytes). Always empty at this call
-                 * site; a follow-up threads a real value from
-                 * clientSimConnectUdp. */
-                jbuf[joffset++] = '\0';
-                jbuf[joffset++] = '\0';
+                /* fallbackCountry (2 bytes). Set at create time from
+                 * clientSimConnectUdp's parameter; empty when the
+                 * caller passed NULL/"". Server reads as the GeoIP
+                 * fallback when the joiner's IP doesn't resolve. */
+                jbuf[joffset++] = (uint8_t)c->fallbackCountry[0];
+                jbuf[joffset++] = (uint8_t)c->fallbackCountry[1];
                 /* Join requests bypass delay — they're control plane */
                 udpClientSendTo(c, jbuf, joffset);
                 WB_LOG_DEBUG(WB_LOG_CAT_NET,
@@ -1733,6 +1777,9 @@ static bool udpClientTick(void *ctx) {
                 (int)CLIENT_TIMEOUT_TICKS);
             c->joinState = UDP_CLIENT_SERVER_SHUTDOWN;
         }
+
+        /* Drive in-flight lobby map upload (no-op when none active). */
+        udpClientUploadPump(c);
     }
 
     return true;
@@ -1796,6 +1843,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
                                    const char *serverAddr,
                                    unsigned short serverPort,
                                    const char *playerName,
+                                   const char *fallbackCountry,
                                    const char *password,
                                    const char *wbnApiToken,
                                    const char *wbnServerKey,
@@ -1882,6 +1930,17 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
 
     c->wantRejoin = wantRejoin;
 
+    /* Cache fallback country for the JOIN_REQUEST encoder. Two chars
+     * + NUL; NULL/"" lands as \0\0 on the wire, which the server
+     * treats as "no fallback supplied". */
+    memset(c->fallbackCountry, 0, sizeof(c->fallbackCountry));
+    if (fallbackCountry != NULL) {
+        size_t i;
+        for (i = 0; i < 2 && fallbackCountry[i] != '\0'; i++) {
+            c->fallbackCountry[i] = fallbackCountry[i];
+        }
+    }
+
     c->trackerAddr[0] = '\0';
     if (trackerAddr != NULL) {
         strncpy(c->trackerAddr, trackerAddr, sizeof(c->trackerAddr) - 1);
@@ -1935,6 +1994,9 @@ void transportUdpClientDestroy(Transport *t) {
     }
     if (c->mapChunkReceived != NULL) {
         free(c->mapChunkReceived);
+    }
+    if (c->uploadBuf != NULL) {
+        free(c->uploadBuf);
     }
     free(c);
     t->ctx = NULL;
@@ -2578,10 +2640,15 @@ void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
     }
 }
 
-void transportUdpClientSendLobbyMapUploadBegin(Transport *t,
-                                                uint32_t totalLen,
-                                                const char *name) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+/* === Lobby map upload — packet emitters ============================
+ *
+ * The wire-side packet builders are factored as ctx-flavoured helpers
+ * so both the public Transport*-flavoured entry points and the
+ * transport-internal pump can drive the same packet layout. */
+
+static void udpClientUploadSendBegin(TransportUdpClientCtx *c,
+                                      uint32_t totalLen,
+                                      const char *name) {
     uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255];
     int nameLen, len;
 
@@ -2607,12 +2674,11 @@ void transportUdpClientSendLobbyMapUploadBegin(Transport *t,
     }
 }
 
-void transportUdpClientSendLobbyMapUseLocal(Transport *t,
-                                             uint32_t totalLen,
-                                             const char *name,
-                                             const char *relPath,
-                                             const uint8_t md5[16]) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+static void udpClientUploadSendUseLocal(TransportUdpClientCtx *c,
+                                         uint32_t totalLen,
+                                         const char *name,
+                                         const char *relPath,
+                                         const uint8_t md5[16]) {
     /* Wire: [hdr 8][totalLen 4][nameLen 1][name N][relPathLen 1][relPath M][md5 16] */
     uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255 + 1 + 255 + 16];
     int nameLen, relLen, pos;
@@ -2648,16 +2714,15 @@ void transportUdpClientSendLobbyMapUseLocal(Transport *t,
     }
 }
 
-void transportUdpClientSendLobbyMapUploadChunk(Transport *t,
-                                                uint32_t offset,
-                                                const uint8_t *data,
-                                                uint16_t dataLen) {
-    if (dataLen == 0 || data == NULL) return;
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    if (dataLen > 1024) return;
+static void udpClientUploadSendChunk(TransportUdpClientCtx *c,
+                                      uint32_t offset,
+                                      const uint8_t *data,
+                                      uint16_t dataLen) {
     uint8_t buf[PACKET_HEADER_SIZE + 4 + 2 + 1024];
     int len;
 
+    if (dataLen == 0 || data == NULL) return;
+    if (dataLen > UPLOAD_CHUNK_SIZE) return;
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
     packHeader(buf, PACKET_LOBBY_MAP_UPLOAD_CHUNK, c->outSequence++);
@@ -2670,4 +2735,285 @@ void transportUdpClientSendLobbyMapUploadChunk(Transport *t,
     memcpy(buf + PACKET_HEADER_SIZE + 6, data, dataLen);
     len = PACKET_HEADER_SIZE + 6 + dataLen;
     udpClientSendTo(c, buf, len);
+}
+
+void transportUdpClientSendLobbyMapUploadBegin(Transport *t,
+                                                uint32_t totalLen,
+                                                const char *name) {
+    udpClientUploadSendBegin((TransportUdpClientCtx *)t->ctx, totalLen, name);
+}
+
+void transportUdpClientSendLobbyMapUseLocal(Transport *t,
+                                             uint32_t totalLen,
+                                             const char *name,
+                                             const char *relPath,
+                                             const uint8_t md5[16]) {
+    udpClientUploadSendUseLocal((TransportUdpClientCtx *)t->ctx, totalLen,
+                                 name, relPath, md5);
+}
+
+void transportUdpClientSendLobbyMapUploadChunk(Transport *t,
+                                                uint32_t offset,
+                                                const uint8_t *data,
+                                                uint16_t dataLen) {
+    udpClientUploadSendChunk((TransportUdpClientCtx *)t->ctx, offset,
+                              data, dataLen);
+}
+
+/* === Lobby map upload — state machine =============================
+ *
+ * Moved from imgui_lobby.cpp (lobbyUploadKick / lobbyUploadPump). The
+ * transport owns the bytes, the BEGIN/USE_LOCAL handshake, the chunk
+ * pump (paced from udpClientTick), and the watchdog. */
+
+static void udpClientUploadCleanup(TransportUdpClientCtx *c) {
+    if (c->uploadBuf != NULL) {
+        free(c->uploadBuf);
+        c->uploadBuf = NULL;
+    }
+    c->uploadActive          = false;
+    c->uploadTotal           = 0;
+    c->uploadOffset          = 0;
+    c->uploadName[0]         = '\0';
+    c->uploadUseLocalPending = false;
+    c->uploadBeginSent       = false;
+    c->uploadStartedMs       = 0;
+    c->uploadPrevStatus      = 0;
+    c->uploadPrevProgressMs  = 0;
+    c->uploadPrevOffset      = 0;
+}
+
+/* Shared kick: stash the bytes on the transport, optionally try
+ * USE_LOCAL first when the caller derived a data/maps-relative path,
+ * else announce via BEGIN. `buf` is copied; caller retains ownership. */
+static bool udpClientUploadStart(TransportUdpClientCtx *c,
+                                  const uint8_t *buf, size_t len,
+                                  const char *name,
+                                  const char *relPath, /* nullable */
+                                  const uint8_t *md5   /* required iff relPath */) {
+    if (c == NULL || buf == NULL || name == NULL || name[0] == '\0') {
+        return false;
+    }
+    if (len == 0 || len > LOBBY_MAP_UPLOAD_MAX_BYTES) return false;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return false;
+    if (c->uploadActive) return false;
+
+    udpClientUploadCleanup(c);
+
+    c->uploadBuf = (uint8_t *)malloc(len);
+    if (c->uploadBuf == NULL) return false;
+    memcpy(c->uploadBuf, buf, len);
+    c->uploadTotal  = (uint32_t)len;
+    c->uploadOffset = 0;
+    c->uploadName[0] = '\0';
+    {
+        size_t copy = strlen(name);
+        if (copy >= sizeof(c->uploadName)) copy = sizeof(c->uploadName) - 1;
+        memcpy(c->uploadName, name, copy);
+        c->uploadName[copy] = '\0';
+    }
+    c->uploadActive = true;
+
+    if (c->clientSim != NULL) {
+        c->clientSim->lobbyMapUploadStatus     = 0;
+        c->clientSim->lobbyMapUploadRejectCode = 0;
+        c->clientSim->lobbyMapUploadFinalPath[0] = '\0';
+        c->clientSim->lobbyMapUseLocalNeedsFallback = false;
+    }
+
+    if (relPath != NULL && relPath[0] != '\0' && md5 != NULL) {
+        udpClientUploadSendUseLocal(c, c->uploadTotal, c->uploadName,
+                                     relPath, md5);
+        c->uploadUseLocalPending = true;
+        c->uploadBeginSent       = false;
+    } else {
+        udpClientUploadSendBegin(c, c->uploadTotal, c->uploadName);
+        c->uploadUseLocalPending = false;
+        c->uploadBeginSent       = true;
+    }
+    return true;
+}
+
+/* Per-tick pump. Drives the upload through the USE_LOCAL → BEGIN →
+ * CHUNK → DONE/REJECT lifecycle. */
+static void udpClientUploadPump(TransportUdpClientCtx *c) {
+    uint8_t st;
+    uint64_t now, sinceProgress, sinceStart;
+    bool advanced, timedOut;
+
+    if (!c->uploadActive) return;
+    if (c->clientSim == NULL) {
+        udpClientUploadCleanup(c);
+        return;
+    }
+
+    st = c->clientSim->lobbyMapUploadStatus;
+    if (st == 3 || st == 4) {
+        /* Done or rejected — drop the buffer so the next upload starts
+         * fresh. The frontend still sees status/rejectCode/finalPath
+         * because those live on the ClientSim. */
+        udpClientUploadCleanup(c);
+        return;
+    }
+
+    /* Watchdog. Treat the moment the last chunk goes out as one final
+     * forward-progress event (lobby-misc item 10): after the last
+     * CHUNK send, offset stays pinned at uploadTotal while we wait
+     * for MAP_UPLOAD_DONE; without this reset the stall timer would
+     * count against a server that's merely slow to load + reply. */
+    now = SDL_GetTicks();
+    advanced = (c->uploadPrevStatus != st) ||
+               (c->uploadPrevOffset != c->uploadOffset);
+    if (st >= 2 && c->uploadOffset == c->uploadTotal &&
+        c->uploadPrevOffset < c->uploadTotal) {
+        advanced = true;
+    }
+    if (advanced) {
+        c->uploadPrevStatus     = st;
+        c->uploadPrevOffset     = c->uploadOffset;
+        c->uploadPrevProgressMs = now;
+    }
+    if (c->uploadStartedMs == 0) c->uploadStartedMs = now;
+    sinceProgress = now - c->uploadPrevProgressMs;
+    sinceStart    = now - c->uploadStartedMs;
+    timedOut = false;
+    if (st < 2 && sinceStart > UPLOAD_ACK_TIMEOUT_MS) {
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+            "upload watchdog: no BEGIN ACK in %llums — freeing",
+            (unsigned long long)sinceStart);
+        timedOut = true;
+    } else if (st >= 2 && sinceProgress > UPLOAD_STALL_TIMEOUT_MS) {
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+            "upload watchdog: no chunk progress in %llums — freeing",
+            (unsigned long long)sinceProgress);
+        timedOut = true;
+    }
+    if (timedOut) {
+        udpClientUploadCleanup(c);
+        return;
+    }
+
+    /* USE_LOCAL was NACKed: the server doesn't have a matching file at
+     * the relative path / MD5. Fall back to BEGIN + CHUNK against the
+     * bytes already buffered. */
+    if (c->uploadUseLocalPending &&
+        clientSimConsumeUseLocalFallback(c->clientSim)) {
+        udpClientUploadSendBegin(c, c->uploadTotal, c->uploadName);
+        c->uploadUseLocalPending = false;
+        c->uploadBeginSent       = true;
+        return; /* wait one more tick for ACK */
+    }
+
+    /* Still waiting on ACK to BEGIN (status flips to 2 on ACK). */
+    if (st != 2) return;
+
+    /* Chunk pump — UPLOAD_CHUNKS_PER_TICK chunks per tick paces a 1 MB
+     * upload to roughly 130 ticks (~2.5 s at 50 fps) without flooding
+     * the server's receive window. */
+    {
+        int i;
+        for (i = 0; i < UPLOAD_CHUNKS_PER_TICK &&
+                    c->uploadOffset < c->uploadTotal; i++) {
+            uint32_t remaining = c->uploadTotal - c->uploadOffset;
+            uint16_t cur = (remaining > UPLOAD_CHUNK_SIZE)
+                           ? UPLOAD_CHUNK_SIZE
+                           : (uint16_t)remaining;
+            udpClientUploadSendChunk(c, c->uploadOffset,
+                                      c->uploadBuf + c->uploadOffset, cur);
+            c->uploadOffset += cur;
+        }
+    }
+}
+
+bool transportUdpClientStartLobbyMapUploadFromBytes(Transport *t,
+                                                     const uint8_t *buf,
+                                                     size_t len,
+                                                     const char *mapName) {
+    return udpClientUploadStart((TransportUdpClientCtx *)t->ctx,
+                                 buf, len, mapName,
+                                 /*relPath=*/NULL, /*md5=*/NULL);
+}
+
+bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
+                                                    const char *localFilePath) {
+    TransportUdpClientCtx *c;
+    size_t fileLen = 0;
+    void *fileData = NULL;
+    char nameBuf[128];
+    char relPath[256];
+    bool haveRelPath;
+    uint8_t md5[16];
+    bool ok;
+
+    if (t == NULL || localFilePath == NULL || localFilePath[0] == '\0') {
+        return false;
+    }
+    c = (TransportUdpClientCtx *)t->ctx;
+
+    /* Pre-flight validation. boloMapValidate opens, decodes against
+     * scratch buffers, and discards — caller never sees the decoded
+     * sim. Bail on any rejection (file-not-found, malformed map,
+     * truncated). */
+    if (!boloMapValidate(localFilePath, NULL, 0)) return false;
+
+    fileData = SDL_LoadFile(localFilePath, &fileLen);
+    if (fileData == NULL) return false;
+    if (fileLen == 0 || fileLen > LOBBY_MAP_UPLOAD_MAX_BYTES) {
+        SDL_free(fileData);
+        return false;
+    }
+
+    /* Basename of the local path (drop directory components). */
+    {
+        const char *base = localFilePath;
+        const char *p;
+        for (p = localFilePath; *p; p++) {
+            if (*p == '/' || *p == '\\') base = p + 1;
+        }
+        SDL_strlcpy(nameBuf, base, sizeof(nameBuf));
+    }
+
+    /* Derive a data/maps-relative path for the USE_LOCAL pre-check.
+     * Local FS provider hands us paths like "data/maps/Foo/Bar.map";
+     * on Windows the separators may be backslashes. Strip the prefix
+     * to get a path like "Foo/Bar.map" — same scheme
+     * PACKET_LOBBY_MAP_PREVIEW_REQ uses. If the path doesn't sit
+     * under data/maps/, skip USE_LOCAL and go straight to BEGIN. */
+    relPath[0] = '\0';
+    {
+        char normalized[FILENAME_MAX];
+        char *p;
+        const char *kPrefix = "data/maps/";
+        const size_t kPrefixLen = 10;
+        SDL_strlcpy(normalized, localFilePath, sizeof(normalized));
+        for (p = normalized; *p; p++) {
+            if (*p == '\\') *p = '/';
+        }
+        if (strncmp(normalized, kPrefix, kPrefixLen) == 0) {
+            SDL_strlcpy(relPath, normalized + kPrefixLen, sizeof(relPath));
+        }
+    }
+    haveRelPath = (relPath[0] != '\0');
+    if (haveRelPath) {
+        md5Compute(fileData, fileLen, md5);
+    }
+
+    ok = udpClientUploadStart(c, (const uint8_t *)fileData, fileLen, nameBuf,
+                               haveRelPath ? relPath : NULL,
+                               haveRelPath ? md5     : NULL);
+    SDL_free(fileData);
+    return ok;
+}
+
+uint8_t transportUdpClientGetLobbyMapUploadProgressPercent(Transport *t) {
+    TransportUdpClientCtx *c;
+    if (t == NULL) return 0;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (!c->uploadActive || c->uploadTotal == 0) return 0;
+    {
+        uint64_t pct = (uint64_t)c->uploadOffset * 100 /
+                       (uint64_t)c->uploadTotal;
+        if (pct > 100) pct = 100;
+        return (uint8_t)pct;
+    }
 }

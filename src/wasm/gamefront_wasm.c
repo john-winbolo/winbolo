@@ -33,6 +33,7 @@
 #include "../gui/sound.h"
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
+#include "../winbolonet/winbolonet_core.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/luabrainshandler.h"
 
@@ -362,7 +363,9 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     printf("[WASM] Connecting via UDP transport...\n");
     clientSimConnectUdp(humanSim, gameFrontUdpAddress,
                         gameFrontTargetUdp,
-                        gameFrontName, password,
+                        gameFrontName,
+                        winbolonetGetCountryCode(),
+                        password,
                         gameFrontWbnUse ? gameFrontWbnToken : "",
                         "",
                         wantRejoin,
@@ -409,44 +412,9 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       clientSimSetServerPort(humanSim, gameFrontTargetUdp);
     }
 
-    /* Load map from server */
-    {
-      const BYTE *mapData;
-      int mapLen = 0;
-      gameType serverGame;
-      bool serverHiddenMines;
-      int32_t serverStartDelay, serverGameLen;
-
-      mapData = clientSimGetServerMapData(humanSim, &mapLen);
-      clientSimGetServerGameSettings(humanSim, &serverGame,
-                                     &serverHiddenMines,
-                                     &serverStartDelay, &serverGameLen);
-
-      if (mapData != NULL && mapLen > 0) {
-        char savedMapName[MAP_STR_SIZE];
-        strncpy(savedMapName, clientSimGetMapName(humanSim), MAP_STR_SIZE - 1);
-        savedMapName[MAP_STR_SIZE - 1] = '\0';
-        /* Reset map-dependent state in place; the transport (and the
-         * mapData pointer that lives inside it) survive the reset. */
-        clientSimResetForMapLoad(humanSim);
-        if (clientLoadCompressedMap(humanSim, (BYTE *)mapData, mapLen, savedMapName,
-                                   serverGame, serverHiddenMines,
-                                   serverStartDelay, serverGameLen,
-                                   gameFrontName, wasmPlayerNum, FALSE) == FALSE) {
-          printf("[WASM] Failed to load map from server\n");
-          clientSimDisconnect(humanSim);
-          wasmTransportActive = FALSE;
-          return FALSE;
-        }
-        clientSimSetLocalTransport(humanSim, false);
-      } else {
-        printf("[WASM] No map data from server\n");
-        clientSimDestroy(humanSim);
-        wasmTransportActive = FALSE;
-        return FALSE;
-      }
-    }
-
+    /* Map install + snapshot apply happen inside the UDP transport
+     * (MAP_DOWNLOAD inline install + CTRL_GAME_PHASE LOBBY→RUNNING
+     * watcher). The wasm frontend just finalises the local tank. */
     clientSimNetSetupTankGo(humanSim);
     /* Gate lobby vs running: if we received CTRL_LOBBY_SETTINGS during
      * join, stay in lobby state; otherwise proceed to running */
@@ -644,7 +612,6 @@ bool gameFrontGetWinbolonetUse(void) {
   return gameFrontWbnUse;
 }
 
-bool gameFrontLoadDeferredMap(ClientSim **cs)  { (void)cs; return FALSE; }
 void gameFrontGetBotOptions(int *count, char *brainPath, size_t brainPathSize) {
   *count = 0; brainPath[0] = '\0'; (void)brainPathSize;
 }

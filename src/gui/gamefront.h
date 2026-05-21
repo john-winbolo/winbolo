@@ -760,17 +760,6 @@ ServerSim *gameFrontGetServerSim(void);
 BYTE gameFrontGetPlayerNum(void);
 
 /*********************************************************
-*NAME:          gameFrontLoadDeferredMap
-*PURPOSE:
-*  Loads the map from the transport after lobby exit.
-*  Called when the lobby dialog returns (game started)
-*  and the map was downloaded in the background.
-*RETURNS:
-*  TRUE on success, FALSE on failure.
-*********************************************************/
-bool gameFrontLoadDeferredMap(struct ClientSim **cs);
-
-/*********************************************************
 *NAME:          gameFrontGetSinglePlayerServerSim
 *PURPOSE:
 *  Returns the in-process spServerSim pointer for the

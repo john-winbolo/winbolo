@@ -113,6 +113,7 @@ Transport transportUdpClientCreate(struct ClientSim *clientSim,
                                    const char *serverAddr,
                                    unsigned short serverPort,
                                    const char *playerName,
+                                   const char *fallbackCountry,
                                    const char *password,
                                    const char *wbnApiToken,
                                    const char *wbnServerKey,
@@ -226,6 +227,24 @@ void transportUdpClientSendLobbyMapUseLocal(Transport *t, uint32_t totalLen,
                                              const char *name,
                                              const char *relPath,
                                              const uint8_t md5[16]);
+
+/* Lobby map upload entry points — the chunked PACKET_LOBBY_MAP_UPLOAD_*
+ * state machine that used to live in imgui_lobby's per-frame pump. The
+ * transport owns the read, validation, USE_LOCAL pre-check, chunk
+ * dispatch, ACK/DONE state machine, and the watchdog. Both return
+ * false on file-not-found / validate-failed / no-transport /
+ * upload-already-in-flight; on true the transport pump (driven by
+ * udpClientTick) carries the upload to completion. The frontend reads
+ * progress via the lobbyMapUpload* status fields on ClientSim. */
+bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
+                                                    const char *localFilePath);
+bool transportUdpClientStartLobbyMapUploadFromBytes(Transport *t,
+                                                     const uint8_t *buf,
+                                                     size_t len,
+                                                     const char *mapName);
+
+/* Current upload progress as 0..100 (bytesSent / fileLen * 100). */
+uint8_t transportUdpClientGetLobbyMapUploadProgressPercent(Transport *t);
 
 /* Server-side: validates a length-prefixed upload filename against the
  * reserved-name / control-char / suffix-cap rules. Exposed for unit

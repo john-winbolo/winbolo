@@ -72,6 +72,7 @@ static void clientSimTeardownTransport(ClientSim *cs) {
 
 bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
                          unsigned short serverPort, const char *playerName,
+                         const char *fallbackCountry,
                          const char *password,
                          const char *wbnApiToken,
                          const char *wbnServerKey,
@@ -80,7 +81,8 @@ bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
   if (cs == NULL) return false;
   clientSimTeardownTransport(cs);
   cs->transport = transportUdpClientCreate(cs, serverAddr, serverPort,
-                                           playerName, password,
+                                           playerName, fallbackCountry,
+                                           password,
                                            wbnApiToken, wbnServerKey,
                                            wantRejoin, trackerAddr, trackerPort);
   cs->hasTransport = true;
@@ -496,20 +498,24 @@ void clientSimNetSendLobbyMapSearchRequest(ClientSim *cs,
                                               relPath, query);
 }
 
-void clientSimNetSendLobbyMapUploadBegin(ClientSim *cs,
-                                         uint32_t totalLen,
-                                         const char *name) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyMapUploadBegin(&cs->transport, totalLen, name);
+bool clientSimNetSendLobbyMapUpload(ClientSim *cs, const char *localFilePath) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return false;
+  return transportUdpClientStartLobbyMapUploadFromPath(&cs->transport,
+                                                       localFilePath);
 }
 
-void clientSimNetSendLobbyMapUploadChunk(ClientSim *cs,
-                                         uint32_t offset,
-                                         const uint8_t *data,
-                                         uint16_t dataLen) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyMapUploadChunk(&cs->transport, offset,
-                                            data, dataLen);
+bool clientSimNetSendLobbyMapUploadBytes(ClientSim *cs,
+                                         const uint8_t *buf, size_t len,
+                                         const char *mapName) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return false;
+  return transportUdpClientStartLobbyMapUploadFromBytes(&cs->transport,
+                                                        buf, len, mapName);
+}
+
+uint8_t clientSimGetLobbyMapUploadProgressPercent(const ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return 0;
+  return transportUdpClientGetLobbyMapUploadProgressPercent(
+      (Transport *)&cs->transport);
 }
 
 void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,

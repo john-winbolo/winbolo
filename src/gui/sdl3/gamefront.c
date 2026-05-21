@@ -1048,10 +1048,15 @@ bool gameFrontSetDlgState(openingStates newState) {
             gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
     fflush(stderr);
 
-    /* Create UDP client transport for the new protocol */
+    /* Create UDP client transport. The transport drives the JOIN
+     * handshake, map download + install, and inline snapshot apply
+     * by itself — the frontend only ticks it until the join state
+     * settles or inLobby flips true. */
     clientSimConnectUdp(humanSim, gameFrontUdpAddress,
                         gameFrontTargetUdp,
-                        gameFrontName, password,
+                        gameFrontName,
+                        winbolonetGetCountryCode(),
+                        password,
                         gameFrontWbnUse ? gameFrontWbnToken : "",
                         "",
                         wantRejoin,
@@ -1110,80 +1115,21 @@ bool gameFrontSetDlgState(openingStates newState) {
         clientSimSetLockToggleSendFunc(humanSim, gameFrontLockToggleCallback);
 
         if (clientSimIsInLobby(humanSim)) {
-          /* Lobby path: enter lobby immediately, map downloads in background.
-           * The lobby UI shows a progress bar and gates the ready button
-           * on mapDownloadComplete. Deferred map loading happens when
-           * the lobby exits (game start). */
+          /* Lobby path: enter lobby immediately, map downloads in
+           * background. The lobby UI shows a progress bar and gates
+           * the ready button on mapDownloadComplete. Install happens
+           * inside the transport on the CTRL_GAME_PHASE LOBBY→RUNNING
+           * watcher when the host starts the game. */
           clientSimSetNetStatus(humanSim, netLobby);
-          dlgState = openFinished;
         } else {
-          /* No-lobby path: map already downloaded, load it now */
-          const BYTE *mapData;
-          int mapLen = 0;
-          gameType serverGame;
-          bool serverHiddenMines;
-          int32_t serverStartDelay, serverGameLen;
-          bool mapLoadOk = TRUE;
-
-          mapData = clientSimGetServerMapData(humanSim, &mapLen);
-          clientSimGetServerGameSettings(humanSim, &serverGame,
-                                         &serverHiddenMines,
-                                         &serverStartDelay,
-                                         &serverGameLen);
-
-          if (mapData != NULL && mapLen > 0) {
-            char savedMapName[MAP_STR_SIZE];
-            strncpy(savedMapName, clientSimGetMapName(humanSim), MAP_STR_SIZE - 1);
-            savedMapName[MAP_STR_SIZE - 1] = '\0';
-            gametype = serverGame;
-            hiddenMines = serverHiddenMines;
-            startDelay = serverStartDelay;
-            timeLen = serverGameLen;
-
-            /* Reset map-dependent state in place; clientSimResetForMapLoad
-             * keeps the transport binding so the mapData pointer (which
-             * lives inside the UDP transport's buffer) stays valid. */
-            clientSimResetForMapLoad(humanSim);
-
-            if (clientLoadCompressedMap(humanSim, (BYTE *)mapData, mapLen,
-                                       savedMapName, serverGame,
-                                       serverHiddenMines, serverStartDelay,
-                                       serverGameLen, gameFrontName,
-                                       (BYTE)udpPlayerNum, FALSE) == FALSE) {
-              mapLoadOk = FALSE;
-            } else {
-              clientSimSetLocalTransport(humanSim, false);
-              /* Re-register network callbacks (clientSimResetForMapLoad cleared them). */
-              clientSimSetChatSendFunc(humanSim, gameFrontChatSendCallback);
-              clientSimSetNameChangeSendFunc(humanSim, gameFrontNameChangeSendCallback);
-              clientSimSetAllianceRequestFunc(humanSim, gameFrontAllianceRequestCallback);
-              clientSimSetAllianceAcceptFunc(humanSim, gameFrontAllianceAcceptCallback);
-              clientSimSetAllianceLeaveFunc(humanSim, gameFrontAllianceLeaveCallback);
-              clientSimSetLockToggleSendFunc(humanSim, gameFrontLockToggleCallback);
-            }
-          } else {
-            mapLoadOk = FALSE;
-          }
-
-          if (!mapLoadOk) {
-            imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_GAMEFRONTERR_MAPLOAD),
-                              IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-            clientSimSetChatSendFunc(humanSim, NULL);
-            clientSimSetNameChangeSendFunc(humanSim, NULL);
-            clientSimSetLockToggleSendFunc(humanSim, NULL);
-            clientSimDisconnect(humanSim);
-            udpTransportActive = FALSE;
-            gameFrontShutdownServer();
-            dlgState = prevState;
-            returnValue = FALSE;
-          } else {
-            clientMutexWaitFor();
-            clientSimNetSetupTankGo(humanSim);
-            clientMutexRelease();
-            gameFrontUpdateSteamPresence(humanSim);
-            dlgState = openFinished;
-          }
+          /* No-lobby path: transport already installed the map inline
+           * on MAP_DOWNLOAD completion. Just finalise the local tank. */
+          clientMutexWaitFor();
+          clientSimNetSetupTankGo(humanSim);
+          clientMutexRelease();
+          gameFrontUpdateSteamPresence(humanSim);
         }
+        dlgState = openFinished;
       } else {
         const char *reason = clientSimGetConnectErrorReason(humanSim);
         imguiMessageBoxEx(DIALOG_BOX_TITLE,
@@ -2435,66 +2381,5 @@ ServerSim *gameFrontGetSinglePlayerServerSim(void) {
 BYTE gameFrontGetPlayerNum(void) {
   if (udpTransportActive) return udpPlayerNum;
   return 0;
-}
-
-bool gameFrontLoadDeferredMap(ClientSim **cs) {
-  const BYTE *mapData;
-  int mapLen = 0;
-  gameType serverGame;
-  bool serverHiddenMines;
-  int32_t serverStartDelay, serverGameLen;
-
-  mapData = clientSimGetServerMapData(*cs, &mapLen);
-  clientSimGetServerGameSettings(*cs, &serverGame,
-                                 &serverHiddenMines,
-                                 &serverStartDelay,
-                                 &serverGameLen);
-
-  if (mapData == NULL || mapLen <= 0) {
-    return FALSE;
-  }
-
-  gametype = serverGame;
-  hiddenMines = serverHiddenMines;
-  startDelay = serverStartDelay;
-  timeLen = serverGameLen;
-
-  /* Preserve lobby flag and map name across reset — clientSimCreate
-   * (re-entered via clientLoadCompressedMap below) clears them. */
-  bool wasInLobby = clientSimIsInLobby(*cs);
-  char savedMapName[MAP_STR_SIZE];
-  strncpy(savedMapName, clientSimGetMapName(*cs), MAP_STR_SIZE - 1);
-  savedMapName[MAP_STR_SIZE - 1] = '\0';
-
-  /* Reset map-dependent state in place; clientSimResetForMapLoad keeps
-   * the transport binding so the mapData pointer (which lives inside
-   * the UDP transport's buffer) stays valid for clientLoadCompressedMap. */
-  clientSimResetForMapLoad(*cs);
-  sdl3DrawResetCachedText();
-
-  if (clientLoadCompressedMap(*cs, (BYTE *)mapData, mapLen,
-                             savedMapName, serverGame,
-                             serverHiddenMines, serverStartDelay,
-                             serverGameLen, gameFrontName,
-                             (BYTE)udpPlayerNum, FALSE) == FALSE) {
-    return FALSE;
-  }
-
-  clientSimSetLocalTransport(*cs, false);
-  clientSimSetInLobby(*cs, wasInLobby);
-  clientSimSetMapDownloadComplete(*cs, true);
-
-  clientSimSetChatSendFunc(*cs, gameFrontChatSendCallback);
-  clientSimSetNameChangeSendFunc(*cs, gameFrontNameChangeSendCallback);
-  clientSimSetAllianceRequestFunc(*cs, gameFrontAllianceRequestCallback);
-  clientSimSetAllianceAcceptFunc(*cs, gameFrontAllianceAcceptCallback);
-  clientSimSetAllianceLeaveFunc(*cs, gameFrontAllianceLeaveCallback);
-  clientSimSetLockToggleSendFunc(*cs, gameFrontLockToggleCallback);
-
-  clientMutexWaitFor();
-  clientSimNetSetupTankGo(*cs);
-  clientMutexRelease();
-
-  return TRUE;
 }
 

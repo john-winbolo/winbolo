@@ -295,15 +295,10 @@ ios_game_start:
             SDL_Quit();
             return 0;
         }
-        if (!gameFrontLoadDeferredMap(&cs)) {
-            SDL_Log("[iOS] Failed to load deferred map");
-            gameFrontEnd(&keys, FALSE, TRUE);
-            clientMutexDestroy();
-            sdl3DrawCleanup();
-            soundCleanup();
-            SDL_Quit();
-            return 0;
-        }
+        /* lobbyResult == 1: game started. The UDP transport's
+         * CTRL_GAME_PHASE LOBBY→RUNNING watcher already installed
+         * the map onto the ClientSim, so we fall straight through
+         * to the per-frame game-tick loop below. */
         clientSimSetNetStatus(cs, netRunning);
         SDL_Log("[iOS] Lobby complete, game starting");
         {

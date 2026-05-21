@@ -14,6 +14,8 @@
 #ifndef CLIENT_NET_H
 #define CLIENT_NET_H
 
+#include <stddef.h>
+
 #include "client_sim.h"
 #include "client_connect_state.h"
 #include "input_packet.h"        /* SnapshotHeader, TankSnapshot, etc. */
@@ -22,8 +24,13 @@
 struct ServerSim;
 
 /* === Lifecycle === */
+/* fallbackCountry is the ISO-3166 two-letter code the server falls
+ * back to when GeoIP doesn't resolve the joiner's IP (loopback joins,
+ * private LAN, missing MMDB). Pass NULL or "" to leave the slot empty
+ * — the server treats both the same. */
 bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
                          unsigned short serverPort, const char *playerName,
+                         const char *fallbackCountry,
                          const char *password,
                          const char *wbnApiToken,
                          const char *wbnServerKey,
@@ -152,26 +159,41 @@ void clientSimNetSendLobbyMapSearchRequest(ClientSim *cs,
                                            const char *relPath,
                                            const char *query);
 
-/* Map upload: BEGIN announces a file with its byte length and
- * server-relative name (e.g. "Uploaded/Foo.map"); CHUNK delivers
- * data segments at the given offset (1024-byte cap). Server
- * acknowledges BEGIN with MAP_UPLOAD_ACK and the final chunk with
- * MAP_UPLOAD_DONE — both update lobbyMapUploadStatus on the
- * ClientSim. */
-void clientSimNetSendLobbyMapUploadBegin(ClientSim *cs,
-                                         uint32_t totalLen,
-                                         const char *name);
-void clientSimNetSendLobbyMapUploadChunk(ClientSim *cs,
-                                         uint32_t offset,
-                                         const uint8_t *data,
-                                         uint16_t dataLen);
+/* Map upload — file flavour. Read `localFilePath`, validate it via
+ * boloMapValidate, and drive the chunked PACKET_LOBBY_MAP_UPLOAD_*
+ * state machine over the wire. Returns false on file-not-found /
+ * validate-failed / no-transport / upload-already-in-flight; on true
+ * the transport owns the rest. The frontend polls
+ * clientSimGetLobbyMapUpload* status getters for progress, completion,
+ * and reject. When `localFilePath` lives under data/maps/, the
+ * transport tries PACKET_LOBBY_MAP_USE_LOCAL first (server installs
+ * directly if it already has a matching MD5) and falls back to a
+ * regular byte upload on NACK. */
+bool clientSimNetSendLobbyMapUpload(ClientSim *cs, const char *localFilePath);
+
+/* Map upload — bytes flavour. Same as above but the bytes are already
+ * in memory (e.g. a WinBolo.net blob with no on-disk identity). The
+ * transport copies into its own state immediately; caller retains
+ * ownership of `buf`. `mapName` is the wire-side filename the server
+ * records. USE_LOCAL is skipped (no on-disk identity to claim) — the
+ * upload always goes via BEGIN+CHUNK. */
+bool clientSimNetSendLobbyMapUploadBytes(ClientSim *cs,
+                                         const uint8_t *buf, size_t len,
+                                         const char *mapName);
+
+/* Upload progress as 0..100 driven by bytesSent / fileLen. Returns 0
+ * when no upload is in flight. */
+uint8_t clientSimGetLobbyMapUploadProgressPercent(const ClientSim *cs);
+
 /* Pre-upload optimisation: if the server already has the same file
  * (matching MD5) at relPath under its data/maps/, it installs that
  * file directly and replies MAP_UPLOAD_DONE — no chunk transfer
  * needed. On a miss it replies MAP_USE_LOCAL_NACK and the caller
- * falls back to clientSimNetSendLobbyMapUploadBegin. relPath is
- * the same scheme PACKET_LOBBY_MAP_PREVIEW_REQ uses (relative to
- * data/maps/, no leading "data/maps/" segment). */
+ * falls back to clientSimNetSendLobbyMapUpload. relPath is the same
+ * scheme PACKET_LOBBY_MAP_PREVIEW_REQ uses (relative to data/maps/,
+ * no leading "data/maps/" segment). Vestigial: the new
+ * clientSimNetSendLobbyMapUpload runs USE_LOCAL internally, so no
+ * frontend caller remains; kept for symmetry pending a later sweep. */
 void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,
                                       uint32_t totalLen,
                                       const char *name,

@@ -48,7 +48,6 @@ extern "C" {
 #include "global.h"
 #include "client_sim.h"
 #include "client_net.h"
-#include "md5.h"
 #include "server_sim.h"          /* serverSim* T1 wrappers for SP-host paths */
 #include "lobby_bot_pools.h"     /* lobbyBotPool* — public utility */
 #include "playername_validate.h" /* playerNameValidate — client-side bot name gate */
@@ -416,195 +415,6 @@ static bool             s_chooseMapWantCloseConfirm = false;
  * ctx) can reach into the cs's lobbyMapList* state without each
  * call site rethreading the pointer. */
 static ClientSim       *s_chooseMapCs             = NULL;
-
-/* Upload pump state. The Upload tab reads a local .map into
- * s_uploadBuf and announces it via PACKET_LOBBY_MAP_UPLOAD_BEGIN.
- * Once the server's MAP_UPLOAD_ACK arrives (status flips to 2 on
- * the ClientSim), the lobby's frame loop calls lobbyUploadPump
- * which streams ~8 KB / frame of chunks until totalLen is sent.
- * On DONE the buffer is freed. */
-static uint8_t         *s_uploadBuf      = NULL;
-static uint32_t         s_uploadTotal    = 0;
-static uint32_t         s_uploadOffset   = 0;
-static bool             s_uploadActive   = false;
-/* Announce name (e.g. "Foo.map") cached for the USE_LOCAL → UPLOAD
- * fallback path so the pump knows what to re-announce without
- * having to re-derive it from a path it no longer holds. */
-static char             s_uploadName[128];
-/* Watchdog timestamps so a server that goes silent mid-handshake
- * (e.g. dropped BEGIN ACK) doesn't strand the upload slot at
- * lobbyMapUploadStatus=1 forever. Reset whenever we observe forward
- * progress: status advances, or bytes drain. */
-static uint64_t         s_uploadStartedMs = 0;
-static uint8_t          s_uploadPrevStatus = 0;
-static uint64_t         s_uploadPrevProgressMs = 0;
-static uint32_t         s_uploadPrevOffset = 0;
-#define UPLOAD_ACK_TIMEOUT_MS   5000   /* BEGIN → ACK */
-#define UPLOAD_STALL_TIMEOUT_MS 10000  /* no chunk progress */
-
-static void lobbyUploadFree(void) {
-    if (s_uploadBuf) { SDL_free(s_uploadBuf); s_uploadBuf = NULL; }
-    s_uploadTotal  = 0;
-    s_uploadOffset = 0;
-    s_uploadActive = false;
-    s_uploadName[0] = '\0';
-    s_uploadStartedMs       = 0;
-    s_uploadPrevStatus      = 0;
-    s_uploadPrevProgressMs  = 0;
-    s_uploadPrevOffset      = 0;
-}
-
-/* Read `srcPath` into s_uploadBuf and announce the upload to the
- * server. The server-side path will be data/maps/Uploads/<basename
- * of srcPath>. Returns silently on any read / size error — the UI
- * surface for that is the status line that flips to "rejected" once
- * the server's ACK / DONE lands.
- *
- * Optimisation: if `srcPath` lives under the local data/maps/ tree
- * we additionally MD5 the bytes and try PACKET_LOBBY_MAP_USE_LOCAL
- * first — the server may already have an identical file at the
- * same relative path and will install it without an upload. On NACK
- * the pump falls back to the regular UPLOAD_BEGIN flow. */
-static void lobbyUploadKick(ClientSim *cs, const char *srcPath) {
-    if (!cs || !srcPath || srcPath[0] == '\0') return;
-    if (s_uploadActive) return;
-
-    size_t fileLen = 0;
-    void *fileData = SDL_LoadFile(srcPath, &fileLen);
-    if (!fileData || fileLen == 0 || fileLen > LOBBY_MAP_UPLOAD_MAX_BYTES) {
-        if (fileData) SDL_free(fileData);
-        return;
-    }
-
-    /* Basename of the local path (drop directory components). */
-    const char *base = srcPath;
-    for (const char *p = srcPath; *p; p++) {
-        if (*p == '/' || *p == '\\') base = p + 1;
-    }
-    char nameBuf[128];
-    SDL_strlcpy(nameBuf, base, sizeof(nameBuf));
-
-    lobbyUploadFree();
-    s_uploadBuf    = (uint8_t *)SDL_malloc(fileLen);
-    if (!s_uploadBuf) { SDL_free(fileData); return; }
-    memcpy(s_uploadBuf, fileData, fileLen);
-    SDL_free(fileData);
-    s_uploadTotal  = (uint32_t)fileLen;
-    s_uploadOffset = 0;
-    s_uploadActive = true;
-    SDL_strlcpy(s_uploadName, nameBuf, sizeof(s_uploadName));
-
-    clientSimResetLobbyMapUpload(cs);
-
-    /* Derive a data/maps-relative path from srcPath. Local FS provider
-     * hands us paths like "data/maps/Foo/Bar.map"; on Windows the
-     * separators may be backslashes. Strip the prefix to get a path
-     * like "Foo/Bar.map" — same scheme PACKET_LOBBY_MAP_PREVIEW_REQ
-     * uses. If srcPath doesn't sit under data/maps/, skip the USE_LOCAL
-     * optimisation and announce the upload directly. */
-    char relPath[256];
-    relPath[0] = '\0';
-    {
-        char normalized[FILENAME_MAX];
-        SDL_strlcpy(normalized, srcPath, sizeof(normalized));
-        for (char *p = normalized; *p; p++) {
-            if (*p == '\\') *p = '/';
-        }
-        const char *kPrefix = "data/maps/";
-        const size_t kPrefixLen = 10;
-        if (strncmp(normalized, kPrefix, kPrefixLen) == 0) {
-            SDL_strlcpy(relPath, normalized + kPrefixLen, sizeof(relPath));
-        }
-    }
-
-    if (relPath[0] != '\0') {
-        uint8_t md5[16];
-        md5Compute(s_uploadBuf, s_uploadTotal, md5);
-        clientSimNetSendLobbyMapUseLocal(cs, s_uploadTotal, nameBuf,
-                                          relPath, md5);
-    } else {
-        clientSimNetSendLobbyMapUploadBegin(cs, s_uploadTotal, nameBuf);
-    }
-}
-
-/* Pump chunks once the server has ACKed. Called every frame from
- * the lobby loop; no-op when status != 2 (sending). Caps ~8 KB
- * per frame so a 1 MB upload completes in ~130 frames (~2.5 s at
- * 50 fps) without blowing the UDP send window. */
-static void lobbyUploadPump(ClientSim *cs) {
-    if (!cs || !s_uploadActive) return;
-    uint8_t st = clientSimGetLobbyMapUploadStatus(cs);
-    if (st == 3 || st == 4) {
-        /* Done or rejected — drop the buffer so the next upload
-         * starts fresh. */
-        lobbyUploadFree();
-        return;
-    }
-
-    /* Watchdog: if the server goes silent mid-handshake, the pump
-     * can otherwise sit at status=1 forever (BEGIN sent, awaiting
-     * ACK) and reject every future pick with "another upload in
-     * flight". Bail and free the slot once we cross either timeout. */
-    {
-        uint64_t now = SDL_GetTicks();
-        bool advanced = (s_uploadPrevStatus != st) ||
-                        (s_uploadPrevOffset != s_uploadOffset);
-        /* Treat the moment the last chunk goes out as one final
-         * forward-progress event. After this, offset stays pinned
-         * at s_uploadTotal while we wait for MAP_UPLOAD_DONE; without
-         * this reset the stall timer would count against a server
-         * that's merely slow to load + reply. */
-        if (st >= 2 && s_uploadOffset == s_uploadTotal &&
-            s_uploadPrevOffset < s_uploadTotal) {
-            advanced = true;
-        }
-        if (advanced) {
-            s_uploadPrevStatus      = st;
-            s_uploadPrevOffset      = s_uploadOffset;
-            s_uploadPrevProgressMs  = now;
-        }
-        if (s_uploadStartedMs == 0) s_uploadStartedMs = now;
-        uint64_t sinceProgress = now - s_uploadPrevProgressMs;
-        uint64_t sinceStart    = now - s_uploadStartedMs;
-        bool timedOut = false;
-        if (st < 2 && sinceStart > UPLOAD_ACK_TIMEOUT_MS) {
-            WB_LOG_WARN(WB_LOG_CAT_GUI,
-                "[MAPPICK] upload watchdog: no BEGIN ACK in %llums — freeing",
-                (unsigned long long)sinceStart);
-            timedOut = true;
-        } else if (st >= 2 && sinceProgress > UPLOAD_STALL_TIMEOUT_MS) {
-            WB_LOG_WARN(WB_LOG_CAT_GUI,
-                "[MAPPICK] upload watchdog: no chunk progress in %llums — freeing",
-                (unsigned long long)sinceProgress);
-            timedOut = true;
-        }
-        if (timedOut) {
-            lobbyUploadFree();
-            return;
-        }
-    }
-    /* USE_LOCAL was NACK'd: server doesn't have the file at the
-     * relative path with that MD5. Fall back to the regular byte
-     * upload using the bytes already in s_uploadBuf. */
-    if (clientSimConsumeUseLocalFallback(cs)) {
-        clientSimNetSendLobbyMapUploadBegin(cs, s_uploadTotal,
-                                            s_uploadName);
-        return;  /* wait one more frame for ACK */
-    }
-    if (st != 2) return; /* still waiting on ACK */
-
-    const uint16_t kChunkSize  = 1024;
-    const int      kPerFrame   = 8;
-    for (int i = 0; i < kPerFrame && s_uploadOffset < s_uploadTotal; i++) {
-        uint32_t remaining = s_uploadTotal - s_uploadOffset;
-        uint16_t cur = (remaining > kChunkSize)
-                       ? kChunkSize : (uint16_t)remaining;
-        clientSimNetSendLobbyMapUploadChunk(cs, s_uploadOffset,
-                                            s_uploadBuf + s_uploadOffset,
-                                            cur);
-        s_uploadOffset += cur;
-    }
-}
 
 /* enumerate for the Server Maps provider. Routes through the server's
  * directory enumeration so the chooser browses the SERVER's map
@@ -1038,10 +848,14 @@ static void lobbyUploadOnSelect(MapChooserState *state, void *ctx) {
                     "[MAPPICK] upload MP upStatus=%u inFlight=%d",
                     (unsigned)upStatus, (int)inFlight);
         if (!inFlight) {
-            lobbyUploadKick(cs, picked);
-            s_chooseMapPreviewPending = true;
-            WB_LOG_INFO(WB_LOG_CAT_GUI,
-                        "[MAPPICK] upload kicked previewPending=1");
+            if (clientSimNetSendLobbyMapUpload(cs, picked)) {
+                s_chooseMapPreviewPending = true;
+                WB_LOG_INFO(WB_LOG_CAT_GUI,
+                            "[MAPPICK] upload kicked previewPending=1");
+            } else {
+                WB_LOG_WARN(WB_LOG_CAT_GUI,
+                            "[MAPPICK] upload kick rejected for '%s'", picked);
+            }
         }
     }
 }
@@ -1620,7 +1434,8 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
      * (on commit) writes to data/maps/Uploads/<name>.map with
      * the existing " (N)" dedup — same path as a manual upload. */
     if (!clientSimIsSinglePlayer(cs)) {
-        if (s_uploadActive) {
+        uint8_t upStatus = clientSimGetLobbyMapUploadStatus(cs);
+        if (upStatus == 1 || upStatus == 2) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "[WBN-MP] another upload is in flight; ignoring pick");
             return;
@@ -1631,26 +1446,20 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
                 langGetText(STR_DLGLOBBY_WBN_ERR_TOOBIG));
             return;
         }
-        lobbyUploadFree();
-        s_uploadBuf = (uint8_t *)SDL_malloc(res.bytes.size());
-        if (!s_uploadBuf) {
+        if (!clientSimNetSendLobbyMapUploadBytes(
+                cs,
+                reinterpret_cast<const uint8_t *>(res.bytes.data()),
+                res.bytes.size(), safeName.c_str())) {
             clientSimSetLobbyWbnPreviewStatus(cs, 3);
             clientSimSetLobbyWbnPreviewErrMsg(cs,
                 langGetText(STR_DLGLOBBY_WBN_ERR_OOM));
             return;
         }
-        memcpy(s_uploadBuf, res.bytes.data(), res.bytes.size());
-        s_uploadTotal  = (uint32_t)res.bytes.size();
-        s_uploadOffset = 0;
-        s_uploadActive = true;
-        clientSimResetLobbyMapUpload(cs);
-        clientSimNetSendLobbyMapUploadBegin(cs, s_uploadTotal,
-                                             safeName.c_str());
         clientSimSetLobbyWbnPreviewStatus(cs, 2);
         s_chooseMapPreviewPending = true;
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
             "[WBN-MP] uploading '%s' (%u bytes)",
-            safeName.c_str(), (unsigned)s_uploadTotal);
+            safeName.c_str(), (unsigned)res.bytes.size());
         return;
     }
 
@@ -5913,13 +5722,6 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         bool hasTransport = clientSimHasTransport(cs);
         if (hasTransport) {
             clientSimNetTick(cs);
-        }
-
-        /* Pump any in-flight map upload — sends a small batch of
-         * chunks each frame once the server has ACKed BEGIN. No-op
-         * when no upload is active. */
-        if (hasTransport) {
-            lobbyUploadPump(cs);
         }
 
         /* Clear balance proposal when countdown starts */
