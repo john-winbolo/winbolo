@@ -70,21 +70,6 @@ struct GameSim;
 
 #define TANK_DEATH_WAIT 255
 
-/* Hit-circle radius in WORLD units. 128 = MAP_SQUARE_MIDDLE, so the
- * tank's hit zone is a circle one map square (one tile) in diameter
- * centered on the tank's world position. Was previously coded as the
- * AABB `abs(dx) < 128 && abs(dy) < 128` — that's the BOUNDING SQUARE
- * of this circle (256×256), so a shell grazing one of the square's
- * corners counted as a hit even though the tank doesn't physically
- * occupy those corners. The circle check rejects those corner cases.
- *
- * Six places use this: tank.c's tankIsTankHit / tankIsTankHitAtPosition
- * (×2 each), util.c's utilIsTankHit (used by the pillbox AI's
- * shell-prediction), and client_sim.c's predicted-shell tank-hit
- * sweep. Stay in sync. */
-#define TANK_HIT_RADIUS         128
-#define TANK_HIT_RADIUS_SQUARED (TANK_HIT_RADIUS * TANK_HIT_RADIUS)
-
 /*
 Wharf-Rat explains Acceleration
 
