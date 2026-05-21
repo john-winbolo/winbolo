@@ -1865,7 +1865,7 @@ bool transportUdpServerCreate(unsigned short port,
         "server created: port=%u bindAddr=%s maxPlayers=%u password=%s",
         port,
         (addrToUse && *addrToUse) ? addrToUse : "0.0.0.0",
-        (unsigned)sim->maxPlayers,
+        (unsigned)serverSimGetMaxPlayers(sim),
         (password && *password) ? "yes" : "no");
     fprintf(stderr, "[UDP SERVER] Created, bound to port %u\n", port);
     udpServer.compressedMapSize = 0;

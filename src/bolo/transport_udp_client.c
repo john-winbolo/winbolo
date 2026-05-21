@@ -579,6 +579,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         WB_LOG_WARN(WB_LOG_CAT_NET,
             "PACKET_JOIN_REJECT: langid=%u reason='%s'",
             (unsigned)id, c->joinRejectReason);
+        /* Mirror into the unified accessor's source buffer so the
+         * frontend's clientSimGetConnectErrorReason call returns the
+         * same rendered string for both local and UDP rejects. */
+        clientSimSetConnectErrorReason(c->clientSim, c->joinRejectReason);
         c->joinState = UDP_CLIENT_ERROR;
         break;
     }

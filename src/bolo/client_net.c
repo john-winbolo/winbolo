@@ -11,13 +11,23 @@
 #include "client_net.h"
 #include "client_sim_internal.h"
 #include "client_sim.h"
+#include "client_mapload_internal.h"       /* installCompressedMap */
+#include "server_sim.h"                    /* serverSimLocalJoin + accessors */
+#include "server_sim_join.h"
+#include "control_event.h"                 /* ControlEvent (local-transport ready toggle) */
+#include "frontend.h"                      /* frontEndApplyLocalTankPrefs */
 #include "transport.h"
 #include "transport_udp.h"
+#include "netpacks.h"                      /* MAP_DOWNLOAD_MAX_SIZE */
 #include "input_packet.h"
 #include "global.h"
+#include "../server/threads.h"
+#include "../gui/lang.h"
+#include "../common/wb_log.h"
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 
 void balanceDebugLog(const char *fmt, ...) {
@@ -79,29 +89,179 @@ bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
   return true;
 }
 
-bool clientSimConnectLocal(ClientSim *cs, struct ServerSim *sim, BYTE playerNum) {
-  if (cs == NULL) return false;
+/* Map a serverSimLocalJoin failure code to the langid the UDP path
+ * uses for the equivalent reject, render it, and stash on the
+ * ClientSim. INVALID_INPUT has no dedicated langid — best-fit onto
+ * the name-validation reject. */
+static void clientSimRenderLocalJoinReject(ClientSim *cs, LocalJoinResult res) {
+  langid id;
+  const char *rendered;
+  switch (res) {
+    case LOCAL_JOIN_INVALID_NAME:  id = STR_REJECT_INVALID_PLAYER_NAME; break;
+    case LOCAL_JOIN_SLOT_FULL:     id = STR_REJECT_SERVER_FULL;         break;
+    case LOCAL_JOIN_GAME_LOCKED:   id = STR_REJECT_GAME_LOCKED;         break;
+    case LOCAL_JOIN_INVALID_INPUT: id = STR_REJECT_INVALID_PLAYER_NAME; break;
+    default:                       id = STR_REJECT_GAME_LOCKED;         break;
+  }
+  rendered = langGetText(id);
+  clientSimSetConnectErrorReason(cs, rendered ? rendered : "Connection rejected");
+}
+
+/* Shared body for the active / passive local-connect paths. Runs the
+ * twelve-step join+install dance under the server's threads mutex.
+ * Differs from clientSimConnectLocalPassive only by which transport
+ * constructor the caller passed in. */
+static bool clientSimConnectLocalBody(ClientSim *cs, struct ServerSim *sim,
+                                      const char *playerName,
+                                      const char *fallbackCountry,
+                                      uint8_t clientType, uint8_t clientFlags,
+                                      bool passive) {
+  Transport tr;
+  LocalJoinResult res;
+  BYTE slot = 0;
+  BYTE compressedMap[MAP_DOWNLOAD_MAX_SIZE];
+  int compLen;
+
+  if (cs == NULL || sim == NULL) return false;
+
+  /* 1. Allocate the transport (placeholder slot 0; refined in step 6).
+   *    Transport teardown of any prior binding happens before alloc so
+   *    a failed reconnect leaves cs in a known state. */
   clientSimTeardownTransport(cs);
-  cs->transport = transportLocalCreate(sim, playerNum);
-  cs->hasTransport = true;
-  cs->isUdpTransport = false;
+  cs->connectErrorReason[0] = '\0';
+  tr = passive ? transportLocalCreatePassive(sim, cs, 0)
+               : transportLocalCreate       (sim, cs, 0);
+
+  /* 2. Serialise the join + map install against the host's timer
+   *    thread (which may already be ticking sim). */
+  threadsWaitForMutex();
+
+  /* 3. Hand the join off to ServerSim — name validation, slot search,
+   *    lock-state predicate, country fill, type/flags, PLAYER_JOIN
+   *    publish, WBN tracker event. */
+  res = serverSimLocalJoin(sim, playerName, fallbackCountry,
+                           clientType, clientFlags, &slot);
+  if (res != LOCAL_JOIN_OK) {
+    clientSimRenderLocalJoinReject(cs, res);
+    threadsReleaseMutex();
+    transportLocalDestroy(&tr);
+    return false;
+  }
+
+  /* 4. Pull the compressed map blob. */
+  compLen = serverSimGetCompressedMap(sim, compressedMap);
+  if (compLen <= 0) {
+    const char *rendered = langGetText(NETERR_MAPSERIALIZE);
+    clientSimSetConnectErrorReason(cs, rendered ? rendered : "Map serialise failed");
+    /* Undo the join so the slot is reclaimable. */
+    serverSimRemovePlayer(sim, slot);
+    threadsReleaseMutex();
+    transportLocalDestroy(&tr);
+    return false;
+  }
+
+  /* 5. Install the map onto the ClientSim. */
+  if (!installCompressedMap(cs, compressedMap, compLen,
+                            serverSimGetMapName(sim))) {
+    const char *rendered = langGetText(NETERR_MAPSERIALIZE);
+    clientSimSetConnectErrorReason(cs, rendered ? rendered : "Map serialise failed");
+    serverSimRemovePlayer(sim, slot);
+    threadsReleaseMutex();
+    transportLocalDestroy(&tr);
+    return false;
+  }
+
+  /* 6. Record the assigned slot on the ClientSim and refine the
+   *    transport's snapshot-target slot from the placeholder 0. */
+  clientSimSetPlayerNum(cs, slot);
+  transportLocalSetPlayerNum(&tr, slot);
+
+  /* 7. Set up the self-record (tank + name + client type/flags). */
+  clientSimSetupSelf(cs, slot, playerName, clientType, clientFlags);
+
+  /* 8. Push per-tank user preferences now that the tank exists. */
+  frontEndApplyLocalTankPrefs(cs);
+
+  /* 9. Commit the transport binding. boundServerSim drives the
+   *     local-transport branch of CTRL_LOBBY_MAP_CHANGE; the
+   *     networkGameType / isLocalTransport mirrors make this a
+   *     single-player ClientSim. */
+  cs->transport          = tr;
+  cs->hasTransport       = true;
+  cs->isUdpTransport     = false;
+  clientSimSetBoundServerSim(cs, sim);
   clientSimSetLocalTransport(cs, true);
+  clientSimSetNetType(cs, netSingle);
+
+  /* 10. Register the auto-subscriber so future control events fan in
+   *     through the bus. The sync-replay walks lobby state on top of
+   *     the freshly-installed map. Stash the handle so disconnect /
+   *     destroy can unregister cleanly. */
+  cs->autoSubHandle = serverSimRegisterClientSubscriber(sim, cs);
+
+  /* 11. Apply the first snapshot synchronously so the ClientSim has
+   *     valid tank state before the next tick wakes up. The localTick
+   *     path then takes over for subsequent ticks. */
+  {
+    SnapshotHeader snapHdr;
+    TankSnapshot snapTanks[MAX_TANKS];
+    ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
+    TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
+    BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
+    PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
+    GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
+    if (cs->transport.getSnapshot(cs->transport.ctx, slot, &snapHdr,
+                                  snapTanks, MAX_TANKS,
+                                  snapShells, MAX_SNAPSHOT_SHELLS,
+                                  snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
+                                  snapBases, MAX_SNAPSHOT_BASES,
+                                  snapPills, MAX_SNAPSHOT_PILLS,
+                                  snapEvents, MAX_SNAPSHOT_EVENTS)) {
+      clientSimSyncFromSnapshot(cs, &snapHdr,
+                                snapTanks, snapHdr.tankCount,
+                                snapShells, snapHdr.shellCount,
+                                snapTkExplosions, snapHdr.tkExplosionCount,
+                                snapBases, snapHdr.baseCount,
+                                snapPills, snapHdr.pillCount,
+                                snapEvents, snapHdr.reliableEventCount,
+                                slot);
+    }
+  }
+
+  /* 12. Release. */
+  threadsReleaseMutex();
   return true;
 }
 
-bool clientSimConnectLocalPassive(ClientSim *cs, struct ServerSim *sim, BYTE playerNum) {
-  if (cs == NULL) return false;
-  clientSimTeardownTransport(cs);
-  cs->transport = transportLocalCreatePassive(sim, playerNum);
-  cs->hasTransport = true;
-  cs->isUdpTransport = false;
-  clientSimSetLocalTransport(cs, true);
-  return true;
+bool clientSimConnectLocal(ClientSim *cs, struct ServerSim *sim,
+                           const char *playerName,
+                           const char *fallbackCountry,
+                           uint8_t clientType, uint8_t clientFlags) {
+  return clientSimConnectLocalBody(cs, sim, playerName, fallbackCountry,
+                                   clientType, clientFlags, /*passive=*/false);
+}
+
+bool clientSimConnectLocalPassive(ClientSim *cs, struct ServerSim *sim,
+                                  const char *playerName,
+                                  const char *fallbackCountry,
+                                  uint8_t clientType, uint8_t clientFlags) {
+  return clientSimConnectLocalBody(cs, sim, playerName, fallbackCountry,
+                                   clientType, clientFlags, /*passive=*/true);
 }
 
 void clientSimDisconnect(ClientSim *cs) {
   if (cs == NULL) return;
+  /* Unregister the auto-subscriber BEFORE teardown so boundServerSim
+   * is still valid. clientSimConnectLocal{,Passive} stashed the
+   * handle into cs->autoSubHandle; the UDP path leaves it
+   * SUBSCRIBER_HANDLE_INVALID and the check below short-circuits. */
+  if (cs->boundServerSim != NULL &&
+      cs->autoSubHandle != SUBSCRIBER_HANDLE_INVALID) {
+    serverSimUnregisterSubscriber(cs->boundServerSim, cs->autoSubHandle);
+    cs->autoSubHandle = SUBSCRIBER_HANDLE_INVALID;
+  }
   clientSimTeardownTransport(cs);
+  clientSimSetBoundServerSim(cs, NULL);
 }
 
 bool clientSimHasTransport(const ClientSim *cs) {
@@ -177,8 +337,8 @@ ClientConnectState clientSimGetConnectState(const ClientSim *cs) {
 }
 
 const char *clientSimGetConnectErrorReason(const ClientSim *cs) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return NULL;
-  return transportUdpClientGetJoinRejectReason((Transport *)&cs->transport);
+  if (cs == NULL || cs->connectErrorReason[0] == '\0') return NULL;
+  return cs->connectErrorReason;
 }
 
 BYTE clientSimGetServerPlayerNum(const ClientSim *cs) {
@@ -240,8 +400,31 @@ void clientSimNetSendTeamSet(ClientSim *cs, BYTE teamNumber) {
 }
 
 void clientSimNetSendReady(ClientSim *cs, bool ready) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendReady(&cs->transport, ready);
+  if (cs == NULL || !cs->hasTransport) return;
+  if (cs->isUdpTransport) {
+    transportUdpClientSendReady(&cs->transport, ready);
+    return;
+  }
+  /* Local transport: drive the server-side ready toggle directly.
+   * Mirrors the PACKET_LOBBY_READY handler at transport_udp_server.c:
+   *   setReady → publishLobbySlot → LobbyCheckAllReady. The all-ready
+   * detector picks the worldPreLoaded branch (StartGameInPlace) on a
+   * fresh SP sim, or the countdown branch on subsequent rounds. */
+  if (cs->boundServerSim == NULL) return;
+  threadsWaitForMutex();
+  if (serverSimIsLobbyEnabled(cs->boundServerSim) &&
+      serverSimGetState(cs->boundServerSim) == serverStateLobby) {
+    BYTE slot = clientSimGetMyPlayerNum(cs);
+    serverSimSetReady(cs->boundServerSim, slot, ready);
+    {
+      ControlEvent slotEvt;
+      memset(&slotEvt, 0, sizeof(slotEvt));
+      serverSimFillLobbySlotEvent(cs->boundServerSim, slot, &slotEvt);
+      serverSimPublishControl(cs->boundServerSim, &slotEvt);
+    }
+    serverSimLobbyCheckAllReady(cs->boundServerSim);
+  }
+  threadsReleaseMutex();
 }
 
 void clientSimNetSendAddBot(ClientSim *cs) {

@@ -72,8 +72,7 @@ int run_sp_shoot_through_timer(void) {
     ClientSim *cs = clientSimAlloc();
     UT_ASSERT(cs != NULL);
     clientSimCreate(cs, gameOpen, false, 0, -1);
-    clientSimSetPlayerNum(cs, 0);
-    UT_ASSERT(clientSimConnectLocalPassive(cs, sim, 0));
+    UT_ASSERT(clientSimConnectLocalPassive(cs, sim, "Shooter", "", 0, 0));
 
     WorkerCtx ctx;
     ctx.sim = sim;

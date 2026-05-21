@@ -194,37 +194,6 @@ bool clientLoadCompressedMap(ClientSim *csPtr, BYTE *buff, int buffLen, const ch
  *ARGUMENTS:
  *  fileName - path and filename to save
  *********************************************************/
-bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name) {
-  GameSim *gs;
-  if (cs == NULL || buf == NULL || len <= 0) return false;
-
-  gs = clientSimGetGameSim(cs);
-  if (!mapLoadCompressedMap(&gs->mp, &gs->pb, &gs->bs, &gs->ss,
-                            (BYTE *)buf, len)) {
-    return false;
-  }
-
-  /* Initialise rendering state — clientSimCreate deliberately skips
-   * viewport init (see client_sim.c) and setupClientSim used to do it
-   * before clientLoadCompressedMap. Phase 5 removes the old path, so
-   * the new install path owns this responsibility now. */
-  viewportInit(clientSimViewportMut(cs));
-
-  {
-    char *mapNameMut = clientSimGetMapNameMutable(cs);
-    if (name != NULL) {
-      strncpy(mapNameMut, name, MAP_STR_SIZE - 1);
-      mapNameMut[MAP_STR_SIZE - 1] = '\0';
-    } else {
-      mapNameMut[0] = '\0';
-    }
-  }
-
-  clientSimUpdateView(cs, redraw);
-  basesClearMines(gs);
-  return true;
-}
-
 bool clientSaveMap(ClientSim *csPtr, char *fileName) {
   bool returnValue;                 /* Value to return */
 

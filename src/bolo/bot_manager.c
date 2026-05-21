@@ -563,8 +563,11 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     /* Set AI type on the ClientSim */
     *clientSimGetAllowComputerTanks(bot->cs) = ai;
 
-    /* Create passive transport (does NOT tick the server) */
-    bot->transport = transportLocalCreatePassive(sim, playerNum);
+    /* Create passive transport (does NOT tick the server). Bot
+     * ClientSims drive their own snapshot pull through the existing
+     * bot_manager loop rather than the per-tick auto-apply, so pass
+     * NULL for cs to skip the localTick snapshot-apply hook. */
+    bot->transport = transportLocalCreatePassive(sim, NULL, playerNum);
 
     /* Register this bot's ClientSim as a control-event subscriber so
      * out-of-band roster/lobby/phase state from the server reaches it

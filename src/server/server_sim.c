@@ -5723,6 +5723,11 @@ bool serverSimIsAcceptingJoins(const ServerSim *sim) {
     return sim && sim->allowNewPlayers;
 }
 
+BYTE serverSimGetMaxPlayers(const ServerSim *sim) {
+    if (sim == NULL) return MAX_TANKS;
+    return (sim->maxPlayers > 0) ? sim->maxPlayers : (BYTE)MAX_TANKS;
+}
+
 void serverSimSetUploadPolicy(ServerSim *sim, UploadPolicy policy) {
     if (!sim) return;
     sim->uploadPolicy = policy;

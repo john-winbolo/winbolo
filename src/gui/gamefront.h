@@ -771,22 +771,6 @@ BYTE gameFrontGetPlayerNum(void);
 bool gameFrontLoadDeferredMap(struct ClientSim **cs);
 
 /*********************************************************
-*NAME:          gameFrontStartSinglePlayerGame
-*PURPOSE:
-*  Single-player path: transitions the local spServerSim
-*  from serverStateLobby to serverStateRunning, applies
-*  team alliances, creates tanks for connected players,
-*  syncs an initial snapshot to the client, and flips
-*  cs->inLobby/netStat so lobbyShow exits with result=1.
-*  Called by the lobby UI's Start button when
-*  cs->isSinglePlayer is true.
-*RETURNS:
-*  TRUE on success, FALSE if the local server isn't in a
-*  state that can start (e.g. no players connected).
-*********************************************************/
-bool gameFrontStartSinglePlayerGame(struct ClientSim *cs);
-
-/*********************************************************
 *NAME:          gameFrontGetSinglePlayerServerSim
 *PURPOSE:
 *  Returns the in-process spServerSim pointer for the

@@ -1518,7 +1518,9 @@ time_t serverMainGetTicks(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Helper: sync snapshot from transport                                */
+/* Helper: sync snapshot from transport. Kept for the UDP-mode loop —  */
+/* the local transport now pulls snapshots from inside localTick, so   */
+/* the fast-local path no longer calls this directly.                  */
 /* ------------------------------------------------------------------ */
 static void headlessSyncSnapshot(void) {
   clientSimNetSyncSnapshot(humanSim);
@@ -1546,37 +1548,28 @@ static bool fastModeSetupGame(void) {
     serverSimSetLobbyEnabled(fastServerSim, false);
     serverSimStartGame(fastServerSim);
   }
-  serverSimAddPlayer(fastServerSim, 0, optName, false);
   serverSimSetViewPlayer(fastServerSim, 0);
 
   transportActive = TRUE;
   playerNum = 0;
 
-  /* Reload client sim from cached compressed map */
+  /* Build the ClientSim, install the observer, then run the connect
+   * body — it joins the sim, installs the map, sets up the local
+   * tank, registers the auto-subscriber, and applies the first
+   * snapshot in one call. */
   humanSim = clientSimAlloc();
-  /* Re-install the control-event observer on the fresh ClientSim so a
-   * --stdin reset still captures the post-reset event stream. No-op
-   * when --log-events was not requested (logEventsFile is NULL). */
+  clientSimCreate(humanSim, optGameType, false, 0, UNLIMITED_GAME_TIME);
   if (logEventsFile != NULL) {
     clientSimSetControlObserver(humanSim, logEventsDeliverCb, logEventsFile);
   }
-  clientSimConnectLocal(humanSim, fastServerSim, 0);
-  clientLoadCompressedMap(humanSim, cachedCompressedMap, cachedCompressedMapLen,
-                          "Fast Local", optGameType, false, 0,
-                          UNLIMITED_GAME_TIME, optName, 0, FALSE);
+  clientSimConnectLocal(humanSim, fastServerSim, optName, "", 0, 0);
   clientSimSetAiType(humanSim, optAi);
-
-  /* Sync initial snapshot and place tank */
-  headlessSyncSnapshot();
   clientSimNetSetupTankGo(humanSim);
 
-  /* Register the headless client as a control-event subscriber. Placed
-   * after clientLoadCompressedMap (which calls clientSimCreate) so
-   * humanSim->myPlayerNum is initialized to 0 before sync's self-skip
-   * runs. Unregister any prior handle first so a re-setup that skipped
-   * the teardown path does not leak a slot. */
-  serverSimUnregisterSubscriber(fastServerSim, headlessControlSub);
-  headlessControlSub = serverSimRegisterClientSubscriber(fastServerSim, humanSim);
+  /* Legacy subscriber handle — connect's auto-subscriber registration
+   * supersedes the explicit headlessControlSub bookkeeping. Keep the
+   * field cleared so the teardown path's unregister is a no-op. */
+  headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
 
   return true;
 }
@@ -1656,30 +1649,20 @@ static int runFastMode(void) {
     serverSimSetLobbyEnabled(fastServerSim, false);
     serverSimStartGame(fastServerSim);
   }
-  serverSimAddPlayer(fastServerSim, 0, optName, false);
   serverSimSetViewPlayer(fastServerSim, 0);
   transportActive = TRUE;
   playerNum = 0;
   humanSim = clientSimAlloc();
-  /* Attach the control-event observer to humanSim before it joins the
-   * server's subscriber list so register-time sync events are observed.
-   * Survives clientLoadCompressedMap's in-place clientSimCreate via the
-   * save/restore block in client_sim.c. */
+  clientSimCreate(humanSim, optGameType, false, 0, UNLIMITED_GAME_TIME);
+  /* Observer must be set before connect so register-time sync events
+   * are observed. Preserved across clientSimCreate's memset. */
   if (logEventsFile != NULL) {
     clientSimSetControlObserver(humanSim, logEventsDeliverCb, logEventsFile);
   }
-  clientSimConnectLocal(humanSim, fastServerSim, 0);
-  clientLoadCompressedMap(humanSim, cachedCompressedMap, cachedCompressedMapLen,
-                          "Fast Local", optGameType, false, 0,
-                          UNLIMITED_GAME_TIME, optName, 0, FALSE);
+  clientSimConnectLocal(humanSim, fastServerSim, optName, "", 0, 0);
   clientSimSetAiType(humanSim, optAi);
-  headlessSyncSnapshot();
   clientSimNetSetupTankGo(humanSim);
-
-  /* Register the headless client as a control-event subscriber. Placed
-   * after clientLoadCompressedMap so humanSim->myPlayerNum is 0 before
-   * sync's self-skip runs. */
-  headlessControlSub = serverSimRegisterClientSubscriber(fastServerSim, humanSim);
+  headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
 
   if (!optQuiet) {
     fprintf(stderr, "Game ready. Entering fast loop.\n");
@@ -1724,8 +1707,7 @@ static int runFastMode(void) {
       }
       clientSimKeysTick(humanSim, &pkt);
       clientSimNetSendInput(humanSim, &pkt);
-      clientSimNetTick(humanSim);
-      headlessSyncSnapshot();
+      clientSimNetTick(humanSim);  /* localTick pulls + applies the snapshot */
       simTickCounter++;
       justKeys = FALSE;
     } else {
@@ -1766,8 +1748,7 @@ static int runFastMode(void) {
       }
       clientSimGameTick(humanSim, &pkt, brainRunning);
       clientSimNetSendInput(humanSim, &pkt);
-      clientSimNetTick(humanSim);
-      headlessSyncSnapshot();
+      clientSimNetTick(humanSim);  /* localTick pulls + applies the snapshot */
       clientSimDisplayTick(humanSim, brainRunning);
       simTickCounter++;
       tickCount++;

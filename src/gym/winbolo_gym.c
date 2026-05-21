@@ -86,7 +86,10 @@ static void gymMessageHandler(const char *message, const char *title) {
 }
 
 static void gymDeliverControl(void *ctx, const ControlEvent *evt) {
-    clientSimApplyControl((ClientSim *)ctx, evt);
+    /* Apply-side handled by the auto-subscriber that clientSimConnectLocal
+     * registers; this subscriber observes events for telemetry only. */
+    (void)ctx;
+    (void)evt;
 }
 
 /* Accumulate server events into pre-allocated cache.
@@ -118,29 +121,20 @@ static void gymBufferServerEvents(WinBoloGym *g) {
     }
 }
 
-static void gymSyncSnapshot(WinBoloGym *g) {
-    clientSimNetSyncSnapshot(g->clientSim);
-}
-
 static void gymSetupGame(WinBoloGym *g) {
     serverSimSetLobbyEnabled(g->serverSim, false);
     serverSimStartGame(g->serverSim);
-    serverSimAddPlayer(g->serverSim, 0, "GymAgent", false);
     serverSimGetGameSim(g->serverSim)->viewPlayer = 0;
 
     g->clientSim = clientSimAlloc();
-    clientSimConnectLocal(g->clientSim, g->serverSim, 0);
-    clientLoadCompressedMap(g->clientSim, g->cachedMap, g->cachedMapLen,
-                            "Gym", g->gameMode, false, 0,
-                            UNLIMITED_GAME_TIME, "GymAgent", 0, FALSE);
+    clientSimCreate(g->clientSim, g->gameMode, false, 0, UNLIMITED_GAME_TIME);
+    clientSimConnectLocal(g->clientSim, g->serverSim, "GymAgent", "", 0, 0);
     clientSimSetAiType(g->clientSim, aiYes);
-    gymSyncSnapshot(g);
     clientSimNetSetupTankGo(g->clientSim);
 
-    /* Register the gym client as a control-event subscriber. Placed after
-     * clientLoadCompressedMap (which calls clientSimCreate) so myPlayerNum
-     * is initialized to 0 — matching the gym agent's slot — before sync's
-     * self-skip runs. */
+    /* Register a second (observe-only) subscriber for gym telemetry. The
+     * auto-subscriber that clientSimConnectLocal registered is the one
+     * that applies events; this one just watches. */
     g->controlSub = serverSimRegisterSubscriber(g->serverSim,
                                                 gymDeliverControl,
                                                 g->clientSim);

@@ -116,15 +116,14 @@ static bool s_botNameOverridden[MAX_TANKS] = {0};
  * Transport is null and we're not single-player, the call is a no-op.
  */
 static void lobbySendReadyToggle(ClientSim *cs, bool ready) {
-    if (cs && clientSimIsSinglePlayer(cs)) {
-        /* Single-player: skip the multiplayer ready→countdown
-         * choreography; clicking the Ready button starts the game
-         * straight away.  The Unready direction is meaningless here
-         * (there's nobody to wait on) so we ignore ready=false. */
-        if (ready) {
-            (void)gameFrontStartSinglePlayerGame(cs);
-        }
-        return;
+    /* Both single-player and multiplayer now go through the same
+     * ready toggle. The server's all-ready detector trips the
+     * lobby→running transition (synchronously via StartGameInPlace
+     * when worldPreLoaded, via countdown+StartGame otherwise). For
+     * SP the rich-presence update happens immediately on Ready;
+     * the next presence cycle picks up the running state. */
+    if (cs && clientSimIsSinglePlayer(cs) && ready) {
+        gameFrontUpdateSteamPresence(cs);
     }
     clientSimNetSendReady(cs, ready);
 }

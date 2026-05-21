@@ -1292,6 +1292,8 @@ void serverSimFillLobbyBrainListEvent(const ServerSim *sim, struct ControlEvent 
 bool          serverSimBalanceShutdownRequested(const ServerSim *sim);
 bool          serverSimIsLobbyEnabled(const ServerSim *sim);
 bool          serverSimIsAcceptingJoins(const ServerSim *sim);
+/* Cap on join slots; 0 in the struct field falls back to MAX_TANKS. */
+BYTE          serverSimGetMaxPlayers(const ServerSim *sim);
 bool          serverSimHasPassword(const ServerSim *sim);
 bool          serverSimIsRandomMapEnabled(const ServerSim *sim);
 bool          serverSimIsQuiet(const ServerSim *sim);

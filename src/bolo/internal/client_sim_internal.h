@@ -19,6 +19,7 @@
 #include <stddef.h>
 #include "client_sim.h"
 #include "game_sim.h"
+#include "server_sim.h"   /* SubscriberHandle */
 #include "viewport.h"
 #include "transport.h"
 #include "client_state.h"
@@ -390,6 +391,11 @@ struct ClientSim {
      * directly here; UDP JOIN_REJECT mirrors its reason here too. The
      * clientSimGetConnectErrorReason accessor reads from this field. */
     char      connectErrorReason[256];
+
+    SubscriberHandle autoSubHandle;    /* Returned by serverSimRegisterClientSubscriber
+                                        * inside clientSimConnectLocal{,Passive}; cleared
+                                        * to SUBSCRIBER_HANDLE_INVALID at create-time and
+                                        * after clientSimDisconnect unregisters it. */
 
     /* Read-only ControlEvent observer (test-only — see
      * clientSimSetControlObserver in client_sim.h). Preserved across

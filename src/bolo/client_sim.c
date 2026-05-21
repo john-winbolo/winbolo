@@ -28,6 +28,7 @@
 #include <SDL3/SDL.h>
 #include "client_sim.h"
 #include "client_sim_internal.h"
+#include "client_mapload_internal.h"  /* installCompressedMap */
 #include "client_snapshot.h"
 #include "client_state.h"
 #include "client_ui_events.h"
@@ -144,7 +145,15 @@ static void csCallbackMineVisible(void *ctx, BYTE mx, BYTE my, BYTE sourcePlayer
  *  clientSimDestroy, which frees the returned pointer.
  *********************************************************/
 ClientSim *clientSimAlloc(void) {
-  return (ClientSim *)calloc(1, sizeof(ClientSim));
+  ClientSim *cs = (ClientSim *)calloc(1, sizeof(ClientSim));
+  if (cs != NULL) {
+    /* SubscriberHandle's canonical "none" sentinel is -1, not the
+     * calloc'd 0 (which encodes a real slot/gen). Patch it here so
+     * subsequent disconnect / destroy paths can distinguish
+     * "never registered" from "registered, handle == 0". */
+    cs->autoSubHandle = SUBSCRIBER_HANDLE_INVALID;
+  }
+  return cs;
 }
 
 /*********************************************************
@@ -188,6 +197,7 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   bool savedHasTransport   = cs->hasTransport;
   bool savedIsUdpTransport = cs->isUdpTransport;
   struct ServerSim *savedBoundServerSim = cs->boundServerSim;
+  SubscriberHandle savedAutoSubHandle = cs->autoSubHandle;
   BrainList savedBrainList = cs->lobbyBrainList;
   ControlObserverCb savedObserverCb  = cs->controlObserverCb;
   void             *savedObserverCtx = cs->controlObserverCtx;
@@ -199,6 +209,7 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   cs->hasTransport       = savedHasTransport;
   cs->isUdpTransport     = savedIsUdpTransport;
   cs->boundServerSim     = savedBoundServerSim;
+  cs->autoSubHandle      = savedAutoSubHandle;
   cs->lobbyBrainList     = savedBrainList;
   cs->controlObserverCb  = savedObserverCb;
   cs->controlObserverCtx = savedObserverCtx;
@@ -402,6 +413,14 @@ static void clientSimDestroyContents(ClientSim *cs) {
 
 void clientSimDestroy(ClientSim *cs) {
   if (cs == NULL) return;
+  /* Unregister the auto-subscriber BEFORE the transport teardown so
+   * boundServerSim is still valid. Callers that skip clientSimDisconnect
+   * (gym / headless / wasm) rely on destroy to clean this up too. */
+  if (cs->boundServerSim != NULL &&
+      cs->autoSubHandle != SUBSCRIBER_HANDLE_INVALID) {
+    serverSimUnregisterSubscriber(cs->boundServerSim, cs->autoSubHandle);
+    cs->autoSubHandle = SUBSCRIBER_HANDLE_INVALID;
+  }
   if (cs->hasTransport) {
     if (cs->isUdpTransport) {
       transportUdpClientDestroy(&cs->transport);
@@ -410,6 +429,7 @@ void clientSimDestroy(ClientSim *cs) {
     }
     cs->hasTransport = false;
   }
+  cs->boundServerSim = NULL;
   clientSimDestroyContents(cs);
   free(cs);
 }
@@ -1255,6 +1275,42 @@ void clientSimSetConnectErrorReason(ClientSim *cs, const char *str) {
   }
   strncpy(cs->connectErrorReason, str, sizeof(cs->connectErrorReason) - 1);
   cs->connectErrorReason[sizeof(cs->connectErrorReason) - 1] = '\0';
+}
+
+/* installCompressedMap lives here (in bolo_static) rather than in
+ * client_mapload.c because the dedicated server build (WinBoloDS)
+ * excludes client_mapload.c — it's per-target due to HAVE_STEAM
+ * gating — but pulls client_net.c and client_sim_control.c through
+ * bolo_static, both of which call this. */
+bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name) {
+  GameSim *gs;
+  if (cs == NULL || buf == NULL || len <= 0) return false;
+
+  gs = clientSimGetGameSim(cs);
+  if (!mapLoadCompressedMap(&gs->mp, &gs->pb, &gs->bs, &gs->ss,
+                            (BYTE *)buf, len)) {
+    return false;
+  }
+
+  /* Initialise rendering state — clientSimCreate deliberately skips
+   * viewport init (see comment above on clientSimCreate) and the old
+   * setupClientSim used to do it before clientLoadCompressedMap.
+   * Phase 5 removes the old path; the new install path owns it. */
+  viewportInit(clientSimViewportMut(cs));
+
+  {
+    char *mapNameMut = clientSimGetMapNameMutable(cs);
+    if (name != NULL) {
+      strncpy(mapNameMut, name, MAP_STR_SIZE - 1);
+      mapNameMut[MAP_STR_SIZE - 1] = '\0';
+    } else {
+      mapNameMut[0] = '\0';
+    }
+  }
+
+  clientSimUpdateView(cs, redraw);
+  basesClearMines(gs);
+  return true;
 }
 
 void clientSimSetCurrentBuildSelect(ClientSim *cs, buildSelect v) {

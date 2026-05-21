@@ -480,70 +480,24 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     /* WASM single-player: no lobby, run immediately */
     serverSimSetLobbyEnabled(wasmServerSim, false);
     serverSimStartGame(wasmServerSim);
-    serverSimAddPlayer(wasmServerSim, 0, gameFrontName, false);
     serverSimSetViewPlayer(wasmServerSim, 0);
-    clientSimConnectLocal(humanSim, wasmServerSim, 0);
+
+    /* Run the 12-step join+install in one call. */
+    if (!clientSimConnectLocal(humanSim, wasmServerSim,
+                               gameFrontName, "", 0, 0)) {
+      printf("[WASM] clientSimConnectLocal failed: %s\n",
+             clientSimGetConnectErrorReason(humanSim));
+      free(wasmServerSim);
+      wasmServerSim = NULL;
+      clientSimDestroy(humanSim);
+      return FALSE;
+    }
     wasmTransportActive = TRUE;
     wasmPlayerNum = 0;
-
-    /* Load compressed map on client side */
-    {
-      BYTE compressedMap[65536];
-      int compLen = serverSimGetCompressedMap(wasmServerSim, compressedMap);
-      printf("[WASM] serverSimGetCompressedMap returned %d bytes\n", compLen);
-      if (compLen > 0) {
-        bool mapOk = clientLoadCompressedMap(humanSim, compressedMap, compLen, "Local Game",
-                                 gametype, hiddenMines, startDelay,
-                                 timeLen, gameFrontName, 0, FALSE);
-        printf("[WASM] clientLoadCompressedMap returned %s\n", mapOk ? "TRUE" : "FALSE");
-        if (!mapOk) {
-          printf("[WASM] Map load failed; humanSim has been destroyed by clientLoadCompressedMap\n");
-          wasmTransportActive = FALSE;
-          free(wasmServerSim);
-          wasmServerSim = NULL;
-          return FALSE;
-        }
-      } else {
-        printf("[WASM] serverSimGetCompressedMap returned no data\n");
-        clientSimDisconnect(humanSim);
-        wasmTransportActive = FALSE;
-        free(wasmServerSim);
-        wasmServerSim = NULL;
-        clientSimDestroy(humanSim);
-        return FALSE;
-      }
-    }
-
-    /* Sync initial snapshot */
-    {
-      SnapshotHeader snapHdr;
-      TankSnapshot snapTanks[MAX_TANKS];
-      ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-      TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
-      BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
-      PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
-      GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-      serverSimBuildSnapshot(wasmServerSim, 0, &snapHdr,
-                             snapTanks, MAX_TANKS,
-                             snapShells, MAX_SNAPSHOT_SHELLS,
-                             snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                             snapBases, MAX_SNAPSHOT_BASES,
-                             snapPills, MAX_SNAPSHOT_PILLS,
-                             snapEvents, MAX_SNAPSHOT_EVENTS,
-                             false);
-      clientSimSyncFromSnapshot(humanSim, &snapHdr, snapTanks, snapHdr.tankCount,
-                             snapShells, snapHdr.shellCount,
-                             snapTkExplosions, snapHdr.tkExplosionCount,
-                             snapBases, snapHdr.baseCount,
-                             snapPills, snapHdr.pillCount,
-                             snapEvents, snapHdr.reliableEventCount, 0);
-    }
     clientSimNetSetupTankGo(humanSim);
-    /* Register the WASM client as a control-event subscriber. Placed
-     * after clientLoadCompressedMap (which calls clientSimCreate) so
-     * humanSim->myPlayerNum is initialized to 0 — matching the SP
-     * slot — before sync's self-skip runs. */
-    wasmControlSub = serverSimRegisterClientSubscriber(wasmServerSim, humanSim);
+    /* Phase 2: connect registers the auto-subscriber. Clear the
+     * legacy handle so the teardown path's unregister is a no-op. */
+    wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
     printf("[WASM] Single-player ServerSim ready\n");
   }
 

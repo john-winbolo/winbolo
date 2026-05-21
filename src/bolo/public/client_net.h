@@ -29,12 +29,25 @@ bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
                          const char *wbnServerKey,
                          bool wantRejoin, const char *trackerAddr,
                          unsigned short trackerPort);
-bool clientSimConnectLocal(ClientSim *cs, struct ServerSim *sim, BYTE playerNum);
+/* Run the full local-join handshake against an in-process ServerSim:
+ * pick a slot via serverSimLocalJoin, install the server's compressed
+ * map, set up the local tank, register the auto-subscriber, apply the
+ * initial snapshot. Returns false and writes a rendered rejection
+ * reason into cs (readable via clientSimGetConnectErrorReason) on
+ * failure. clientType / clientFlags are recorded on the slot at join
+ * time; fallbackCountry is used directly (no GeoIP). */
+bool clientSimConnectLocal(ClientSim *cs, struct ServerSim *sim,
+                           const char *playerName,
+                           const char *fallbackCountry,
+                           uint8_t clientType, uint8_t clientFlags);
 /* Like clientSimConnectLocal, but constructs the local transport in
  * passive mode — the transport's tick path will NOT drive
  * serverSimTick. The caller is responsible for stepping the ServerSim
  * itself (e.g. via a host-side timer/finisher). */
-bool clientSimConnectLocalPassive(ClientSim *cs, struct ServerSim *sim, BYTE playerNum);
+bool clientSimConnectLocalPassive(ClientSim *cs, struct ServerSim *sim,
+                                  const char *playerName,
+                                  const char *fallbackCountry,
+                                  uint8_t clientType, uint8_t clientFlags);
 void clientSimDisconnect(ClientSim *cs);
 bool clientSimHasTransport(const ClientSim *cs);
 
