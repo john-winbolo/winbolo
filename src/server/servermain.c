@@ -592,8 +592,9 @@ void printArgs() {
   fprintf(stderr, "-firstjoinhost- On an empty dedicated server, promote the next joiner to host;\n");
   fprintf(stderr, "                slot re-opens when the host leaves\n");
   fprintf(stderr, "-lock <list>  - Comma-separated list of lobby settings to lock as read-only.\n");
-  fprintf(stderr, "                Valid: gametype, ai, mines, timelimit, autolock, password,\n");
-  fprintf(stderr, "                ranked, openhost, map. e.g. -lock gametype,ranked,map\n");
+  fprintf(stderr, "                Valid: gametype, ai, mines, timelimit (alias: limit),\n");
+  fprintf(stderr, "                autolock, password, ranked, openhost, map.\n");
+  fprintf(stderr, "                e.g. -lock gametype,ranked,map\n");
   fprintf(stderr, "-quitonwin    - Quit server when a player/alliance wins\n");
   fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
   fprintf(stderr, "                (enabled by default, resets after 5 minutes)\n");

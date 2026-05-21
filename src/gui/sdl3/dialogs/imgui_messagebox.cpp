@@ -55,6 +55,7 @@ static const char *iconPathForType(ImguiMsgType type) {
     switch (type) {
         case IMGUI_MSG_WARNING: return "data/ui/dialog-warning.svg";
         case IMGUI_MSG_ERROR:   return "data/ui/dialog-error.svg";
+        case IMGUI_MSG_NONE:    return NULL;
         default:                return "data/ui/dialog-info.svg";
     }
 }
@@ -181,7 +182,10 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
     ImGui_ImplSDLRenderer3_Init(renderer);
     dialogApplyScaling(s);
 
-    SDL_Texture *iconTex = imguiLoadSvgIcon(renderer, iconPathForType(type), ICON_SIZE);
+    const char *iconPath = iconPathForType(type);
+    SDL_Texture *iconTex = iconPath
+        ? imguiLoadSvgIcon(renderer, iconPath, ICON_SIZE)
+        : nullptr;
 
     /* Compute dialog width: 50% of window, clamped to [420, 700] */
     float dialogW = (float)screenW * DIALOG_WIDTH_FRACTION;
