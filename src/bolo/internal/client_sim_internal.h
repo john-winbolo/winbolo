@@ -9,7 +9,7 @@
  * Allowed includers: src/bolo/client_sim.c,
  * src/bolo/client_sim_control.c, src/bolo/client_snapshot.c,
  * src/bolo/transport_udp_client.c, src/bolo/viewport.c,
- * src/bolo/client_mapload.c.
+ * src/bolo/client_net.c.
  * All other callers must include client_sim.h and use the
  * public accessor API.
  *********************************************************/
@@ -373,8 +373,8 @@ struct ClientSim {
      * transport constructors return Transport by value.
      *
      * clientSimCreate preserves these three fields across its memset
-     * (save/restore in the function body) so that clientSimResetForMapLoad
-     * can keep the connection alive while wiping map-dependent state. */
+     * (save/restore in the function body) so an in-place rebuild keeps
+     * the connection alive. */
     Transport transport;
     bool      hasTransport;
     bool      isUdpTransport;
@@ -416,5 +416,12 @@ BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
 void                    clientSimSetBoundServerSim(ClientSim *cs, struct ServerSim *sim);
 struct ServerSim       *clientSimGetBoundServerSim(const ClientSim *cs);
 void                    clientSimSetConnectErrorReason(ClientSim *cs, const char *str);
+
+/* Decompress `buf`/`len` into the ClientSim's map/pills/bases/starts,
+ * stash the map name, and prime the viewport + mine-visibility state.
+ * Does NOT call clientSimCreate; the ClientSim must already be alive
+ * and initialised. The caller is responsible for clientSimSetupSelf
+ * and for the snapshot apply that follows. */
+bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name);
 
 #endif /* CLIENT_SIM_INTERNAL_H */

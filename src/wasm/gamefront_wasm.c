@@ -15,7 +15,6 @@
 #include <emscripten.h>
 #include <emscripten/html5.h>
 
-#include "client_mapload.h"
 #include "client_sim.h"
 #include "control_event.h"
 #include "global.h"
@@ -311,7 +310,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   /* Start the game directly — no dialogs */
   printf("[WASM] Setting up screen...\n");
   humanSim = clientSimAlloc();
-  clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+  clientSimCreate(humanSim);
   frontEndSetActiveClientSim(humanSim);
 
   if (urlNetType == netUdp) {

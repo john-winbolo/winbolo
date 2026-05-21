@@ -32,7 +32,6 @@
 #include "messages.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"
-#include "client_mapload_internal.h"  /* installCompressedMap */
 #include "control_event.h"
 #include "client_sim_control.h"
 #include "transport_control_codec.h"

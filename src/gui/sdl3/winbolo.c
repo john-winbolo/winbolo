@@ -48,7 +48,6 @@
 
 #include "../../common/wb_log.h"
 #include "../../winbolonet/winbolonet_core.h"
-#include "client_mapload.h"
 #include "client_render.h"
 #include "client_sim.h"
 #include "frontend.h"

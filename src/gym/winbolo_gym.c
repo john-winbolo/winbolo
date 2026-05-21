@@ -30,7 +30,6 @@
 #include "winbolo_gym.h"
 
 #include "global.h"
-#include "client_mapload.h"
 #include "client_sim.h"
 #include "../server/server_lifecycle.h"
 #include "client_sim_control.h"
@@ -136,7 +135,7 @@ static void gymSetupGame(WinBoloGym *g) {
     serverSimGetGameSim(g->serverSim)->viewPlayer = 0;
 
     g->clientSim = clientSimAlloc();
-    clientSimCreate(g->clientSim, g->gameMode, false, 0, UNLIMITED_GAME_TIME);
+    clientSimCreate(g->clientSim);
     clientSimConnectLocal(g->clientSim, g->serverSim, "GymAgent", "", 0, 0);
     clientSimSetAiType(g->clientSim, aiYes);
     clientSimNetSetupTankGo(g->clientSim);

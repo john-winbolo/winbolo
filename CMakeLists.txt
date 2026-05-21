@@ -461,9 +461,8 @@ file(GLOB IOS_LANG_FILES "${CMAKE_SOURCE_DIR}/data/lang/*.txt")
 # Bolo engine sources that stay per-target (HAVE_STEAM-divergent).
 # Everything else now lives in bolo_static (added via add_subdirectory
 # below). iOS doesn't define HAVE_STEAM, so PLAYER_FLAG_STEAM_BUILD is
-# never OR'd into selfFlags / clientHints by these two TUs.
+# never OR'd into selfFlags / clientHints by this TU.
 set(IOS_BOLO_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
 )
 
@@ -634,7 +633,6 @@ target_include_directories(WinBoloIOS PRIVATE
 )
 bolo_apply_include_rules(WinBoloIOS gui)
 bolo_grant_internal_source_access(WinBoloIOS
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c)
 
 target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
@@ -923,9 +921,9 @@ endif()
 # and the shared server-peer files. Added here so every desktop target
 # below can link them. server_sim_static holds server_sim.c + servermessages.c;
 # server_static (the dedicated-server runtime) PUBLIC-links it.
-# Per-target conditional sources (client_mapload, transport_udp_client,
-# nat_portmap, servermain, server_frontend_stubs, server_stubs, posix_stubs)
-# stay in their respective *_SOURCES lists.
+# Per-target conditional sources (transport_udp_client, nat_portmap,
+# servermain, server_frontend_stubs, server_stubs, posix_stubs) stay
+# in their respective *_SOURCES lists.
 # ---------------------------------------------------------------------------
 
 add_subdirectory(src/bolo)
@@ -997,7 +995,6 @@ bolo_apply_include_rules(winbolonet_client runtime_only)
 # ---------------------------------------------------------------------------
 
 set(CLIENT_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/gui/ui_mode.c
@@ -1150,7 +1147,6 @@ bolo_apply_include_rules(WinBolo gui)
 # perspective override" grant, distinct from the compile-def
 # divergence grants below.
 bolo_grant_internal_source_access(WinBolo
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/gui/sdl3/bg_game.c
     src/mapeditor/mapeditor.c
@@ -1651,7 +1647,6 @@ endif()
 # ---------------------------------------------------------------------------
 
 set(HEADLESS_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
@@ -1699,7 +1694,6 @@ target_include_directories(WinBoloHeadless PRIVATE
 )
 bolo_apply_include_rules(WinBoloHeadless runtime_only)
 bolo_grant_internal_source_access(WinBoloHeadless
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c)
 
 if(WIN32)
@@ -1769,7 +1763,6 @@ endif()
 # ---------------------------------------------------------------------------
 
 set(GYM_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
@@ -1882,7 +1875,6 @@ endif()
 # ---------------------------------------------------------------------------
 
 set(BRAINTEST_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/lang.c
@@ -1990,7 +1982,6 @@ add_custom_command(TARGET BrainTest POST_BUILD
 # ---------------------------------------------------------------------------
 
 set(MAPEDITOR_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/minimap_render.c

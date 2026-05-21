@@ -540,7 +540,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
         serverSimRemovePlayer(sim, playerNum);
         return false;
     }
-    clientSimCreate(bot->cs, game, hiddenMines, 0, -1);
+    clientSimCreate(bot->cs);
     clientSimSetIsBot(bot->cs, true);
     clientSimSetPlayerNum(bot->cs, playerNum);
 

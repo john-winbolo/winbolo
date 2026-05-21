@@ -142,9 +142,9 @@ struct ViewPort;
  *NAME:          clientSimAlloc
  *PURPOSE:
  *  Allocates a ClientSim on the heap, zero-initialised.
- *  Caller must follow with clientSimCreate() or
- *  clientLoadCompressedMap() to populate before use.
- *  Pairs with clientSimDestroy, which frees the pointer.
+ *  Caller must follow with clientSimCreate() to populate
+ *  before use. Pairs with clientSimDestroy, which frees
+ *  the pointer.
  *
  *  After ClientSim opacity, external callers cannot
  *  declare a ClientSim by value (incomplete type) or
@@ -153,21 +153,15 @@ struct ViewPort;
  *********************************************************/
 ClientSim *clientSimAlloc(void);
 
-/* Lifecycle API — initializes/destroys the ClientSim struct */
-bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDelay, int32_t gmeLen);
+/* Lifecycle API — initializes/destroys the ClientSim struct.
+ * Game settings (game type, hidden mines, start delay, length)
+ * are not parameters: the UDP path installs them via JOIN_ACCEPT,
+ * the local path inherits them from the bound ServerSim, and
+ * direct callers use the clientSimSet{GameType,HiddenMines,
+ * GmeStartDelay,GmeLength} setters when needed. */
+bool clientSimCreate(ClientSim *cs);
 void clientSimDestroy(ClientSim *cs);
 void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum);
-
-/* Reset all map-dependent state in cs back to a freshly-created
- * empty configuration, WITHOUT freeing cs or tearing down its
- * transport binding (clientSimConnectUdp/Local state survives).
- *
- * Used by the UDP-join flow: after the join handshake completes,
- * the empty ClientSim is reset in-place before clientLoadCompressedMap
- * reads the server's map blob (which lives inside the transport).
- * Previously this was done by clientSimDestroy + clientSimAlloc,
- * which dropped the transport and broke the back-pointer chain. */
-void clientSimResetForMapLoad(ClientSim *cs);
 
 /*********************************************************
  *NAME:          clientSimSetupSelf
@@ -241,10 +235,10 @@ void clientSimSetAllianceLeaveFunc(ClientSim *cs, NetAllianceLeaveFunc func);
 void clientSimSetLockToggleSendFunc(ClientSim *cs, NetLockToggleSendFunc func);
 
 /* Install (or clear, with cb=NULL) a read-only control-event observer.
- * Survives clientSimResetForMapLoad / in-place clientSimCreate rebuilds
- * for the same reason the transport binding does: the observer is owned
- * by an external party (the test harness) whose lifetime is independent
- * of the ClientSim's map-reload cycle. */
+ * Survives in-place clientSimCreate rebuilds for the same reason the
+ * transport binding does: the observer is owned by an external party
+ * (the test harness) whose lifetime is independent of the ClientSim's
+ * map-reload cycle. */
 void clientSimSetControlObserver(ClientSim *cs, ControlObserverCb cb, void *ctx);
 
 /* Lobby chat helper — appends "name: message\n" to lobbyChatHistory */
@@ -765,6 +759,17 @@ bool         clientSimGetStart(ClientSim *cs, BYTE i,
 /* Local tank stat accessors. */
 void         clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount);
 void         clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths);
+
+/*********************************************************
+ *NAME:          clientSaveMap
+ *PURPOSE:
+ * Saves the map. Returns whether the operation was
+ * successful or not.
+ *
+ *ARGUMENTS:
+ *  fileName - path and filename to save
+ *********************************************************/
+bool clientSaveMap(ClientSim *cs, char *fileName);
 
 /* Notifies the local LGM and player table that the server connection
  * has been lost; called by the frontend when a UDP shutdown is seen. */

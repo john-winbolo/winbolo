@@ -278,8 +278,9 @@ void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool
 /*********************************************************
 *NAME:          frontEndApplyLocalTankPrefs
 *PURPOSE:
-* Called by client_mapload right after the local player's tank
-* has been created via clientSimSetupSelf, so the frontend can
+* Called by the client connect path right after the local
+* player's tank has been created via clientSimSetupSelf, so
+* the frontend can
 * push per-tank preferences (Auto Slowdown, Auto Hide Gunsight)
 * onto the freshly created tank pointer. Previously the
 * preferences were applied earlier in the boot sequence — before

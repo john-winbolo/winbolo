@@ -28,7 +28,6 @@
 #include <SDL3/SDL.h>
 #include "client_sim.h"
 #include "client_sim_internal.h"
-#include "client_mapload_internal.h"  /* installCompressedMap */
 #include "client_snapshot.h"
 #include "client_state.h"
 #include "client_ui_events.h"
@@ -163,36 +162,30 @@ ClientSim *clientSimAlloc(void) {
  *  This is the simulation-only initialization; rendering
  *  setup is handled separately by viewportInit().
  *
+ *  Game settings (game type, hidden mines, start delay,
+ *  length) install via clientSimSet{GameType,HiddenMines,
+ *  GmeStartDelay,GmeLength} — the UDP transport applies
+ *  them at JOIN_ACCEPT, and the local path inherits them
+ *  from the bound ServerSim.
+ *
  *ARGUMENTS:
- *  cs         - Pointer to the ClientSim to initialize
- *  game       - The game type-Open/tournament/strict tournament
- *  hiddenMines - Are hidden mines allowed
- *  srtDelay   - Game start delay (50th second increments)
- *  gmeLen     - Length of the game (in 50ths) (-1 =unlimited)
+ *  cs - Pointer to the ClientSim to initialize
  *********************************************************/
-bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDelay, int32_t gmeLen) {
-  (void)srtDelay;  /* Used by screen.c for display */
-  (void)gmeLen;    /* Used by screen.c for display */
-
-  /* Preserve the transport binding across the wipe. clientSimResetForMapLoad
-   * runs the destroy-internals + clientSimCreate sequence in place to keep
-   * the live transport (and its still-valid map blob) intact; fresh
-   * clientSimAlloc + clientSimCreate callers have zeroed transport fields
-   * anyway, so save/restore is a no-op there.
+bool clientSimCreate(ClientSim *cs) {
+  /* Preserve transport / subscriber / brain-list / observer /
+   * server-endpoint / LAN-only state across the wipe so an
+   * in-place rebuild keeps the connection alive. Fresh
+   * clientSimAlloc + clientSimCreate callers have zeroed
+   * fields anyway, so save/restore is a no-op there.
    *
-   * lobbyBrainList is also preserved: the server delivers it once at
-   * subscribe time and never re-broadcasts after a round, so wiping
-   * here would leave the Add Bot controls hidden on every round 2+.
+   * lobbyBrainList: server delivers it once at subscribe time
+   * and never re-broadcasts after a round.
    *
-   * The test-only control-event observer is preserved on the same
-   * principle — it represents an external party watching events,
-   * with a lifetime independent of map reloads.
+   * controlObserverCb/Ctx: external test-harness lifetime,
+   * independent of map reloads.
    *
-   * serverAddress / serverPort / isLanOnly are connection-lifetime
-   * state too — set once at join time, never re-published. Without
-   * preserving them, returning to the lobby (which runs this reset
-   * via clientSimResetForMapLoad) clears them, so the lobby UI
-   * shows 0.0.0.0 and loses the LAN-only badges / LAN-IP substitution. */
+   * serverAddress / serverPort / isLanOnly: connection-lifetime
+   * state — set once at join, never re-published. */
   Transport savedTransport = cs->transport;
   bool savedHasTransport   = cs->hasTransport;
   bool savedIsUdpTransport = cs->isUdpTransport;
@@ -233,7 +226,6 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   /* Initialize GameSim identity and callbacks */
   cs->sim.isServer = false;
   cs->sim.isLocalTransport = true;
-  cs->sim.hiddenMines = hiddenMines;
   cs->sim.callbacks.messageAdd = csCallbackMessageAdd;
   cs->sim.callbacks.soundDist = csCallbackSoundDist;
   cs->sim.callbacks.soundDistShoot = csCallbackSoundDistShoot;
@@ -251,8 +243,8 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   cs->labelMessage = lblShort;
   cs->labelTankLabel = lblShort;
 
-  minesCreate(&cs->sim.mns, hiddenMines);
-  gameTypeSet(&cs->sim.game, game);
+  minesCreate(&cs->sim.mns, false);
+  gameTypeSet(&cs->sim.game, 0);
   mapCreate(&cs->sim.mp);
   startsCreate(&cs->sim.ss);
   basesCreate(&cs->sim.bs);
@@ -354,10 +346,8 @@ void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
  *  cs - Pointer to the ClientSim to destroy and free
  *********************************************************/
 /* Tears down all owned simulation state on cs but does NOT free cs
- * itself or touch the transport binding. Shared by clientSimDestroy
- * (which then frees the pointer) and clientSimResetForMapLoad (which
- * keeps the pointer and the transport so the caller can hand the
- * mid-handshake map blob into clientLoadCompressedMap). */
+ * itself or touch the transport binding. Called from
+ * clientSimDestroy, which then frees the pointer. */
 static void clientSimDestroyContents(ClientSim *cs) {
   viewportDestroy(&cs->viewport);
   cs->running = FALSE;
@@ -432,32 +422,6 @@ void clientSimDestroy(ClientSim *cs) {
   cs->boundServerSim = NULL;
   clientSimDestroyContents(cs);
   free(cs);
-}
-
-/*********************************************************
- *NAME:          clientSimResetForMapLoad
- *PURPOSE:
- *  Returns cs to a freshly-allocated-and-empty state without
- *  freeing cs or tearing down the transport binding. The
- *  no-lobby UDP-join path uses this between the join handshake
- *  and clientLoadCompressedMap: the compressed map blob lives
- *  inside the transport, so the transport must survive the
- *  wipe.
- *
- *  After the reset, the subsequent setupClientSim ->
- *  clientSimCreate(cs, ...) re-initialises substructs.
- *  clientSimCreate preserves cs->transport / hasTransport /
- *  isUdpTransport across its memset so the connection stays
- *  intact end-to-end.
- *
- *  Callback function pointers (chatSendFunc, etc.) are reset
- *  to NULL — that matches the prior clientSimDestroy +
- *  clientSimAlloc behaviour, and every call site already
- *  re-registers them after the reload.
- *********************************************************/
-void clientSimResetForMapLoad(ClientSim *cs) {
-  if (cs == NULL) return;
-  clientSimDestroyContents(cs);
 }
 
 /*********************************************************
@@ -1285,11 +1249,6 @@ void clientSimSetConnectErrorReason(ClientSim *cs, const char *str) {
   cs->connectErrorReason[sizeof(cs->connectErrorReason) - 1] = '\0';
 }
 
-/* installCompressedMap lives here (in bolo_static) rather than in
- * client_mapload.c because the dedicated server build (WinBoloDS)
- * excludes client_mapload.c — it's per-target due to HAVE_STEAM
- * gating — but pulls client_net.c and client_sim_control.c through
- * bolo_static, both of which call this. */
 bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name) {
   GameSim *gs;
   if (cs == NULL || buf == NULL || len <= 0) return false;
@@ -1301,9 +1260,8 @@ bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *n
   }
 
   /* Initialise rendering state — clientSimCreate deliberately skips
-   * viewport init (see comment above on clientSimCreate) and the old
-   * setupClientSim used to do it before clientLoadCompressedMap.
-   * Phase 5 removes the old path; the new install path owns it. */
+   * viewport init (see comment above on clientSimCreate); the map
+   * install path owns it. */
   viewportInit(clientSimViewportMut(cs));
 
   {
@@ -1639,6 +1597,32 @@ void clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths) {
 void clientSimConnectionLost(ClientSim *cs) {
   lgmConnectionLost(clientSimGetGameSim(cs), &MY_LGM(cs), &MY_TANK(cs), &clientSimGetGameSim(cs)->ss);
   playersConnectionLost(cs, clientSimGetGameSim(cs), &clientSimGetGameSim(cs)->plyrs, clientSimGetMyPlayerNum(cs));
+}
+
+/*********************************************************
+ *NAME:          clientSaveMap
+ *PURPOSE:
+ * Saves the map. Returns whether the operation was
+ * successful or not.
+ *
+ *ARGUMENTS:
+ *  fileName - path and filename to save
+ *********************************************************/
+bool clientSaveMap(ClientSim *csPtr, char *fileName) {
+  bool returnValue;
+
+  returnValue = mapWrite(fileName, &clientSimGetGameSim(csPtr)->mp, &clientSimGetGameSim(csPtr)->pb, &clientSimGetGameSim(csPtr)->bs, &clientSimGetGameSim(csPtr)->ss);
+  if (returnValue == TRUE) {
+    if (clientSimGetNetType(csPtr) == netSingle) {
+      MessageArgs args;
+      memset(&args, 0, sizeof(args));
+      playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), args.playerName);
+      args.playerFlags = playersGetAccountFlags(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr));
+      playersGetCountryCode(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), args.playerCountry);
+      clientSimGetGameSim(csPtr)->callbacks.messageAdd(clientSimGetGameSim(csPtr)->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_SAVED_MAP, &args);
+    }
+  }
+  return returnValue;
 }
 
 /* ================================================================

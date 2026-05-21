@@ -47,7 +47,6 @@
 #include <time.h>
 
 #include "../../common/wb_log.h"
-#include "client_mapload.h"
 #include "client_sim.h"
 #include "control_event.h"
 #include "global.h"
@@ -1038,7 +1037,7 @@ bool gameFrontSetDlgState(openingStates newState) {
        dlgState == openLanManual || dlgState == openInternetManual) &&
       newState == openUdpJoin) {
     gameFrontValidateWbnBeforeJoin();
-    humanSim = clientSimAlloc(); clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+    humanSim = clientSimAlloc(); clientSimCreate(humanSim);
     clientSimSetIsLanOnly(humanSim, s_isLanOnly);
     frontEndSetActiveClientSim(humanSim);
     if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
@@ -1234,11 +1233,9 @@ bool gameFrontSetDlgState(openingStates newState) {
           cfg.botAiType    = (BYTE)((compTanks == aiNone) ? aiFull : compTanks);
 
           /* Build the ClientSim first — clientSimConnectLocalPassive
-           * runs the full join+install body against an alive ClientSim
-           * (no more "clientLoadCompressedMap inside the connect's
-           * own callbacks" inversion). */
+           * runs the full join+install body against an alive ClientSim. */
           humanSim = clientSimAlloc();
-          clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
+          clientSimCreate(humanSim);
           clientSimSetIsLanOnly(humanSim, s_isLanOnly);
           frontEndSetActiveClientSim(humanSim);
 
@@ -1254,8 +1251,7 @@ bool gameFrontSetDlgState(openingStates newState) {
             spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
             returnValue = FALSE;
           } else {
-            /* Resolve the self client type / flags the same way
-             * clientLoadCompressedMap used to. */
+            /* Resolve the self client type / flags. */
             uint8_t selfType  = bolo_detect_client_type();
             uint8_t selfFlags = 0;
 #ifdef HAVE_STEAM

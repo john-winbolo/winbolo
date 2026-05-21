@@ -11,7 +11,6 @@
 #include "client_net.h"
 #include "client_sim_internal.h"
 #include "client_sim.h"
-#include "client_mapload_internal.h"       /* installCompressedMap */
 #include "server_sim.h"                    /* serverSimLocalJoin + accessors */
 #include "server_sim_join.h"
 #include "server_sim_lifecycle.h"          /* privatised setters/accessors used by local-transport branches */

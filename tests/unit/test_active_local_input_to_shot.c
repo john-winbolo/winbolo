@@ -34,7 +34,7 @@ int run_active_local_input_to_shot(void) {
 
     ClientSim *cs = clientSimAlloc();
     UT_ASSERT(cs != NULL);
-    clientSimCreate(cs, gameOpen, false, 0, -1);
+    clientSimCreate(cs);
     /* New signature: connect runs serverSimLocalJoin internally, which
      * picks slot 0 in this empty harness; playerName is the input
      * the join validator accepts. */

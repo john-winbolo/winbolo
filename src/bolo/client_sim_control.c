@@ -34,7 +34,6 @@
 #include "client_sim_control.h"
 #include "client_sim_internal.h"
 #include "client_sim.h"
-#include "client_mapload_internal.h"  /* installCompressedMap — local map reload */
 #include "messages.h"
 #include "netpacks.h"
 #include "players.h"

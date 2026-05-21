@@ -68,7 +68,6 @@
 #include "cJSON.h"
 
 #include "brain_data.h"
-#include "client_mapload.h"
 #include "client_sim.h"
 #include "control_event.h"
 #include "frontend.h"
@@ -1560,7 +1559,7 @@ static bool fastModeSetupGame(void) {
    * tank, registers the auto-subscriber, and applies the first
    * snapshot in one call. */
   humanSim = clientSimAlloc();
-  clientSimCreate(humanSim, optGameType, false, 0, UNLIMITED_GAME_TIME);
+  clientSimCreate(humanSim);
   if (logEventsFile != NULL) {
     clientSimSetControlObserver(humanSim, logEventsDeliverCb, logEventsFile);
   }
@@ -1660,7 +1659,7 @@ static int runFastMode(void) {
   transportActive = TRUE;
   playerNum = 0;
   humanSim = clientSimAlloc();
-  clientSimCreate(humanSim, optGameType, false, 0, UNLIMITED_GAME_TIME);
+  clientSimCreate(humanSim);
   /* Observer must be set before connect so register-time sync events
    * are observed. Preserved across clientSimCreate's memset. */
   if (logEventsFile != NULL) {
@@ -1851,7 +1850,7 @@ static int runNetworkMode(void) {
 
   /* Open events log before connect so PACKET_PLAYER_LIST / lobby /
    * map-download events that arrive during the join handshake are
-   * captured. Observer is preserved across clientSimResetForMapLoad
+   * captured. Observer is preserved across clientSimCreate's memset
    * (see the save/restore block in client_sim.c). */
   logEventsOpen(optLogEvents);
 
@@ -1862,9 +1861,10 @@ static int runNetworkMode(void) {
     if (cmdStream == NULL) return 1;
   }
 
-  /* Initialize the game engine with dummy params (will be re-created after map load) */
+  /* Initialize the game engine (JOIN_ACCEPT will install the
+   * authoritative game settings). */
   humanSim = clientSimAlloc();
-  clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+  clientSimCreate(humanSim);
   if (logEventsFile != NULL) {
     clientSimSetControlObserver(humanSim, logEventsDeliverCb, logEventsFile);
   }

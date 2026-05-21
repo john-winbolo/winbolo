@@ -83,8 +83,8 @@ bool clientSimNetGetSnapshot(ClientSim *cs, SnapshotHeader *hdr,
 bool clientSimNetSyncSnapshot(ClientSim *cs);
 
 /* Finalize the local tank after the server has placed it. Called by
- * GUI frontends once clientLoadCompressedMap + the first snapshot
- * have populated the sim. */
+ * GUI frontends once the map install + the first snapshot have
+ * populated the sim. */
 void clientSimNetSetupTankGo(ClientSim *cs);
 
 /* === State queries === */
