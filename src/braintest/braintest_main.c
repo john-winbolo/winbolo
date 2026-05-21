@@ -4702,27 +4702,6 @@ int main(int argc, char *argv[]) {
             }
 
             case SDL_EVENT_KEY_DOWN:
-                /* DIAGNOSTIC: log every keydown to a fixed file (the
-                 * shell-redirect path is unreliable on Windows
-                 * console launches). */
-                {
-                    static FILE *_keylog = NULL;
-                    if (!_keylog) _keylog = fopen("keylog.txt", "w");
-                    if (_keylog) {
-                        fprintf(_keylog,
-                            "[keydown] key=0x%X (%s) scancode=%d mod=0x%X "
-                            "shift=%d ctrl=%d alt=%d repeat=%d\n",
-                            (unsigned)ev.key.key,
-                            SDL_GetKeyName(ev.key.key),
-                            (int)ev.key.scancode,
-                            (unsigned)ev.key.mod,
-                            (ev.key.mod & SDL_KMOD_SHIFT) ? 1 : 0,
-                            (ev.key.mod & SDL_KMOD_CTRL)  ? 1 : 0,
-                            (ev.key.mod & SDL_KMOD_ALT)   ? 1 : 0,
-                            ev.key.repeat ? 1 : 0);
-                        fflush(_keylog);
-                    }
-                }
                 /* Manual control: same as above, for key presses.
                  * We do this BEFORE the repeat check + switch below
                  * so a held key keeps re-asserting the keystate at
@@ -4732,11 +4711,6 @@ int main(int argc, char *argv[]) {
                 if (app.manualControl) {
                     const char *role = keyToRole(&app, ev.key.scancode);
                     if (role) {
-                        {
-                            static FILE *_keylog2 = NULL;
-                            if (!_keylog2) _keylog2 = fopen("keylog.txt", "a");
-                            if (_keylog2) { fprintf(_keylog2, "  → consumed by manualControl role=%s\n", role); fflush(_keylog2); }
-                        }
                         char buf[128];
                         SDL_snprintf(buf, sizeof(buf),
                             "if brain and brain.manual_key then "
@@ -4749,22 +4723,12 @@ int main(int argc, char *argv[]) {
                     }
                 }
                 if (ev.key.repeat) {
-                    {
-                        static FILE *_keylog3 = NULL;
-                        if (!_keylog3) _keylog3 = fopen("keylog.txt", "a");
-                        if (_keylog3) { fprintf(_keylog3, "  → break: repeat\n"); fflush(_keylog3); }
-                    }
                     break;
                 }
                 /* Skip BrainTest hotkeys while a text field is being
                  * edited inside the V dialog (its own ImGui context
                  * — has the V-dialog filter input). */
                 if (vizWindowWantsTextInput()) {
-                    {
-                        static FILE *_keylog4 = NULL;
-                        if (!_keylog4) _keylog4 = fopen("keylog.txt", "a");
-                        if (_keylog4) { fprintf(_keylog4, "  → break: vizWindowWantsTextInput\n"); fflush(_keylog4); }
-                    }
                     break;
                 }
                 switch (ev.key.key) {
@@ -4808,15 +4772,6 @@ int main(int argc, char *argv[]) {
                     app.overlayDirty = true;
                     break;
                 case SDLK_2:
-                    {
-                        static FILE *_keylog5 = NULL;
-                        if (!_keylog5) _keylog5 = fopen("keylog.txt", "a");
-                        if (_keylog5) { fprintf(_keylog5, "  → SDLK_2 case entered shift=%d ctrl=%d pillContribSel=%d pillContribCount(followBot=%d)=%d\n",
-                            (ev.key.mod & SDL_KMOD_SHIFT) ? 1 : 0,
-                            (ev.key.mod & SDL_KMOD_CTRL)  ? 1 : 0,
-                            app.pillContribSel, app.followBot,
-                            pillContribCount(app.followBot)); fflush(_keylog5); }
-                    }
                     if ((ev.key.mod & SDL_KMOD_SHIFT) && (ev.key.mod & SDL_KMOD_CTRL)) {
                         /* ctrl-shift-2: dedicated off switch (no
                          * cycling through every pill to reach 0). */
@@ -4829,11 +4784,6 @@ int main(int argc, char *argv[]) {
                         int n = pillContribCount(app.followBot);
                         app.pillContribSel++;
                         if (app.pillContribSel > n) app.pillContribSel = 0;
-                        {
-                            static FILE *_keylog6 = NULL;
-                            if (!_keylog6) _keylog6 = fopen("keylog.txt", "a");
-                            if (_keylog6) { fprintf(_keylog6, "  → cycled pillContribSel now=%d of %d\n", app.pillContribSel, n); fflush(_keylog6); }
-                        }
                     } else {
                         vizFlagFlip(app.regIdxDanger);
                         app.overlayDirty = true;
