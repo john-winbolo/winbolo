@@ -2109,7 +2109,7 @@ function M.update_attack_substate(goal, state, world, info)
                                   goal.standoff_mx, goal.standoff_my,
                                   goal._chosen_deg or 0,
                                   goal.standoff_fx, goal.standoff_fy,
-                                  scan_radius, no_builder)
+                                  scan_radius, no_builder, info.armour)
         if no_builder and sscan and (not sscan.best or (sscan.best.score or 0) <= 0) then
           print(TAG .. " ATTACK: LGM dead and no existing cover — demoting to no-shield")
           goal._is_ppt = false
@@ -2528,6 +2528,19 @@ function M.update_attack_substate(goal, state, world, info)
       goal._wall_build_idx   = 1
       goal._wall_build_start = now
       goal._wall_build_last_progress = now
+      if BRAIN_DEBUG_MODE then
+        local initial_tt = {}
+        local preexisting = 0
+        for i, p in ipairs(sorted) do
+          local tt0 = U.ttype(p.mx, p.my)
+          initial_tt[i] = tt0
+          if tt0 == C.T_BUILDING or tt0 == C.T_HALFBUILD or tt0 == C.T_PILLBOX then
+            preexisting = preexisting + 1
+          end
+        end
+        goal._wall_build_initial_tt   = initial_tt
+        goal._wall_build_preexisting  = preexisting
+      end
       -- Reset the LGM-progress trackers too, otherwise they retain
       -- state from a previous build attempt on the same goal table
       -- and the give-up timer compares against stale "last seen
@@ -2638,13 +2651,70 @@ function M.update_attack_substate(goal, state, world, info)
     goal._build_timeout_total = BUILD_GIVE_UP_TICKS
 
     if idx > #list or stalled then
-      if BRAIN_DEBUG_MODE and BRAIN_LOG_BUILDER then
-        if stalled then
-          print(string.format(TAG .. " BUILD_WALLS: stalled (no wall built in %d ticks), proceeding to aim",
-                              BUILD_GIVE_UP_TICKS))
-        else
-          print(string.format(TAG .. " BUILD_WALLS: complete after %d ticks, %d walls built, proceeding to aim",
-                              now - goal._wall_build_start, #list))
+      if BRAIN_DEBUG_MODE then
+        local list_n        = #list
+        local initial_tt    = goal._wall_build_initial_tt or {}
+        local preexisting_n = goal._wall_build_preexisting or 0
+        local built_n, unbuilt_n = 0, 0
+        for i, p in ipairs(list) do
+          local tt0 = initial_tt[i]
+          local tt1 = U.ttype(p.mx, p.my)
+          local final_is_wall = (tt1 == C.T_BUILDING or tt1 == C.T_HALFBUILD or tt1 == C.T_PILLBOX)
+          local initial_was_wall = (tt0 == C.T_BUILDING or tt0 == C.T_HALFBUILD or tt0 == C.T_PILLBOX)
+          if final_is_wall and not initial_was_wall then
+            built_n = built_n + 1
+          elseif not final_is_wall then
+            unbuilt_n = unbuilt_n + 1
+          end
+        end
+        if BRAIN_LOG_BUILDER then
+          if stalled then
+            print(string.format(TAG .. " BUILD_WALLS: stalled (no progress in %d ticks), proceeding to aim — built=%d preexist=%d unbuilt=%d/%d",
+                                BUILD_GIVE_UP_TICKS, built_n, preexisting_n, unbuilt_n, list_n))
+          else
+            print(string.format(TAG .. " BUILD_WALLS: complete after %d ticks — built=%d preexist=%d unbuilt=%d/%d, proceeding to aim",
+                                now - goal._wall_build_start, built_n, preexisting_n, unbuilt_n, list_n))
+          end
+        end
+        if built_n == 0 then
+          local why
+          if list_n == 0 then
+            why = "queue empty (no potential blockers from shield scan)"
+          elseif preexisting_n == list_n then
+            why = string.format("all %d slots already pre-existing — no build was needed", list_n)
+          else
+            local skip = state._wall_shield_skip
+            local parts = {}
+            if skip and (now - (skip.tick or 0)) < BUILD_GIVE_UP_TICKS + 50 then
+              if skip.angry_pill_close   then parts[#parts + 1] = "ANGRY_PILL" end
+              if not skip.has_trees      then parts[#parts + 1] =
+                string.format("TREES(%d/%d)", skip.trees_have or 0, skip.trees_need or 0) end
+              if not skip.can_reach      then parts[#parts + 1] = "NO_REACH" end
+              if not skip.path_safe      then parts[#parts + 1] = "UNSAFE_PATH" end
+            end
+            if stalled then
+              if #parts > 0 then
+                why = string.format("stalled %dt — last skip: %s — %d/%d unbuilt",
+                                    BUILD_GIVE_UP_TICKS, table.concat(parts, "+"),
+                                    unbuilt_n, list_n)
+              else
+                why = string.format("stalled %dt with no skip reason logged — %d/%d unbuilt (LGM dead? unreachable?)",
+                                    BUILD_GIVE_UP_TICKS, unbuilt_n, list_n)
+              end
+            else
+              if #parts > 0 then
+                why = string.format("each wall per-stall — last skip: %s — %d/%d unbuilt",
+                                    table.concat(parts, "+"), unbuilt_n, list_n)
+              else
+                why = string.format("%d/%d slots advanced as pre-built but %d/%d unbuilt — check queue ordering",
+                                    preexisting_n, list_n, unbuilt_n, list_n)
+              end
+            end
+          end
+          goal._build_decision_msg = "BUILD_WALLS 0 BUILT: " .. why
+          goal._build_decision_until = now + 500
+          goal._build_decision_is_failure = true
+          print(TAG .. " " .. goal._build_decision_msg)
         end
       end
       goal.wall_shield = false

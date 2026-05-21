@@ -23,8 +23,19 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
+#include <stdarg.h>
+#include <stdint.h>
 
 #include <SDL3/SDL.h>
+
+#ifdef _WIN32
+#include <process.h>  /* _getpid */
+#define brc_getpid() _getpid()
+#else
+#include <unistd.h>
+#define brc_getpid() getpid()
+#endif
 
 #include <lua.h>
 #include <lualib.h>
@@ -469,6 +480,171 @@ void brainCoreExtractOutput(lua_State *L, BrainInfo *info) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Brain crash logging                                                 */
+/* ------------------------------------------------------------------ */
+/* Lua error in brain.think() causes the producer in bot_manager.c to
+ * remove the bot from the game (j->needRemove). Without crash logging
+ * the disappearance is silent. These helpers:
+ *   1. Install a debug.traceback message handler so pcall returns the
+ *      full Lua stack.
+ *   2. Write a unique file per crash — never overwritten — with a
+ *      searchable banner "===== BRAIN CRASH =====" and [BRAIN_CRASH]
+ *      tagged lines. Filename embeds UTC timestamp, PID, lua_State
+ *      pointer, and (if readable) state.bot_index.
+ *   3. Also tag stderr lines with [BRAIN_CRASH] so debugger consoles
+ *      surface the failure without grepping log files.
+ * No CLI switch — always on.
+ */
+static int brc_traceback_msgh(lua_State *L) {
+  const char *msg = lua_tostring(L, 1);
+  if (msg == NULL) {
+    if (luaL_callmeta(L, 1, "__tostring") && lua_type(L, -1) == LUA_TSTRING) {
+      return 1;
+    }
+    msg = lua_pushfstring(L, "(error object is a %s value)",
+                           luaL_typename(L, 1));
+  }
+  luaL_traceback(L, L, msg, 1);
+  return 1;
+}
+
+/* Best-effort read of state.bot_index (Lua-side identifier matching
+ * print2_botN.log / playerN.jsonl). Returns -1 if unavailable. Never
+ * raises. */
+static int brc_read_bot_index(lua_State *L) {
+  int top = lua_gettop(L);
+  int idx = -1;
+  lua_getglobal(L, "state");
+  if (lua_istable(L, -1)) {
+    lua_getfield(L, -1, "bot_index");
+    if (lua_isnumber(L, -1)) {
+      idx = (int)lua_tointeger(L, -1);
+    }
+  }
+  lua_settop(L, top);
+  return idx;
+}
+
+/* Best-effort read of an integer field from the global "state" table.
+ * Returns -1 if missing / not a number. */
+static int brc_read_state_int(lua_State *L, const char *field) {
+  int top = lua_gettop(L);
+  int v = -1;
+  lua_getglobal(L, "state");
+  if (lua_istable(L, -1)) {
+    lua_getfield(L, -1, field);
+    if (lua_isnumber(L, -1)) v = (int)lua_tointeger(L, -1);
+  }
+  lua_settop(L, top);
+  return v;
+}
+
+/* Best-effort copy of _G.DEBUG_SESSION_DIR into out (NUL-terminated).
+ * Returns true if set & non-empty. */
+static bool brc_read_session_dir(lua_State *L, char *out, size_t outsz) {
+  int top = lua_gettop(L);
+  bool ok = false;
+  out[0] = '\0';
+  lua_getglobal(L, "DEBUG_SESSION_DIR");
+  if (lua_isstring(L, -1)) {
+    const char *s = lua_tostring(L, -1);
+    if (s && s[0]) {
+      strncpy(out, s, outsz - 1);
+      out[outsz - 1] = '\0';
+      ok = true;
+    }
+  }
+  lua_settop(L, top);
+  return ok;
+}
+
+/* Write a brain crash report. err_or_traceback is the pcall payload
+ * (error string + "\nstack traceback:\n..." from the msgh). method is
+ * "think" / "init" / whatever — used in the banner and filename. */
+static void brc_write_crash_log(lua_State *L,
+                                const char *method,
+                                const char *err_or_traceback) {
+  if (err_or_traceback == NULL) err_or_traceback = "(no error message)";
+  if (method == NULL) method = "?";
+
+  /* Timestamps: UTC (for filenames + cross-host comparison) and local
+   * (for at-a-glance reading next to other session logs). */
+  time_t now = time(NULL);
+  struct tm tm_utc, tm_local;
+#ifdef _WIN32
+  gmtime_s(&tm_utc, &now);
+  localtime_s(&tm_local, &now);
+#else
+  gmtime_r(&now, &tm_utc);
+  localtime_r(&now, &tm_local);
+#endif
+  char ts_utc[32], ts_local[32];
+  strftime(ts_utc,   sizeof(ts_utc),   "%Y%m%d_%H%M%SZ",     &tm_utc);
+  strftime(ts_local, sizeof(ts_local), "%Y-%m-%d %H:%M:%S",  &tm_local);
+
+  int bot_idx = brc_read_bot_index(L);
+  int tick    = brc_read_state_int(L, "tick");
+  int pid     = brc_getpid();
+  uintptr_t lptr = (uintptr_t)L;
+
+  char session_dir[512];
+  bool has_session = brc_read_session_dir(L, session_dir, sizeof(session_dir));
+
+  /* Filename: bot index if known, else lua_State pointer. Goes inside
+   * DEBUG_SESSION_DIR if BrainTest set one (so each session's crashes
+   * are colocated with its other logs); else CWD. Unique per crash. */
+  char path[1024];
+  const char *prefix = has_session ? session_dir : ".";
+  if (bot_idx >= 0) {
+    SDL_snprintf(path, sizeof(path),
+                 "%s/brain_crash_%s_pid%d_bot%d.log",
+                 prefix, ts_utc, pid, bot_idx);
+  } else {
+    SDL_snprintf(path, sizeof(path),
+                 "%s/brain_crash_%s_pid%d_L%p.log",
+                 prefix, ts_utc, pid, (void *)lptr);
+  }
+
+  FILE *f = fopen(path, "wb");
+  if (f) {
+    fprintf(f, "===== BRAIN CRASH =====\n");
+    fprintf(f, "[BRAIN_CRASH] method=brain.%s\n", method);
+    fprintf(f, "[BRAIN_CRASH] timestamp_utc=%s\n", ts_utc);
+    fprintf(f, "[BRAIN_CRASH] timestamp_local=%s\n", ts_local);
+    fprintf(f, "[BRAIN_CRASH] debug_session_dir=%s\n",
+            has_session ? session_dir : "(none)");
+    fprintf(f, "[BRAIN_CRASH] pid=%d\n", pid);
+    fprintf(f, "[BRAIN_CRASH] lua_state=%p\n", (void *)lptr);
+    fprintf(f, "[BRAIN_CRASH] bot_index=%d\n", bot_idx);
+    fprintf(f, "[BRAIN_CRASH] state.tick=%d\n", tick);
+    fprintf(f, "[BRAIN_CRASH] ----- error + traceback below -----\n");
+    fprintf(f, "%s\n", err_or_traceback);
+    fprintf(f, "===== END BRAIN CRASH =====\n");
+    fflush(f);
+    fclose(f);
+  }
+
+  /* Stderr surface so the failure is visible without grepping. */
+  fprintf(stderr,
+          "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) — see %s\n",
+          method, ts_local, bot_idx, tick, (void *)lptr, path);
+  fprintf(stderr, "[BRAIN_CRASH] %s\n", err_or_traceback);
+  fflush(stderr);
+
+  /* One-line index entry in brain_error.log (inside the session dir if
+   * applicable) for tail-watchers; back-points at the full crash file. */
+  char idx_path[1024];
+  SDL_snprintf(idx_path, sizeof(idx_path), "%s/brain_error.log", prefix);
+  FILE *idx = fopen(idx_path, "a");
+  if (idx) {
+    fprintf(idx,
+            "[BRAIN_CRASH] %s (%s) bot=%d tick=%d pid=%d L=%p method=%s file=%s\n",
+            ts_utc, ts_local, bot_idx, tick, pid, (void *)lptr, method, path);
+    fclose(idx);
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Brain method invocation                                             */
 /* ------------------------------------------------------------------ */
 
@@ -493,9 +669,17 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed) {
     return false;
   }
 
-  brainCorePushInfo(L, info);
+  /* Push traceback msgh BELOW the function so lua_pcall reports full
+   * stack on error. Stack before pcall:
+   *   [brain, msgh, brain.think, info_arg]
+   * msgh_idx is the absolute index of msgh. */
+  lua_pushcfunction(L, brc_traceback_msgh);  /* [brain, think, msgh] */
+  lua_insert(L, -2);                          /* [brain, msgh, think] */
+  int msgh_idx = lua_gettop(L) - 1;           /* msgh is one below top */
 
-  if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
+  brainCorePushInfo(L, info);                 /* [brain, msgh, think, info] */
+
+  if (lua_pcall(L, 1, 1, msgh_idx) != LUA_OK) {
     const char *errMsg = lua_tostring(L, -1);
     /* Budget-hook sentinel: Lua prepends "<chunkname>:<line>: " to
      * luaL_error messages, so the suffix is the stable match point.
@@ -512,19 +696,16 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed) {
       lua_settop(L, top);
       return false;
     }
-    fprintf(stderr, "brainCore: brain.think() error: %s\n", errMsg ? errMsg : "(unknown)");
-    /* Write to brain_error.log so errors are never lost */
-    {
-      FILE *ef = fopen("brain_error.log", "a");
-      if (ef) {
-        fprintf(ef, "brain.think() error: %s\n", errMsg ? errMsg : "(unknown)");
-        fclose(ef);
-      }
-    }
-    /* Route error through Lua print() so BrainTest Print Output captures it */
+    /* Full crash report: timestamped per-bot file with traceback + a
+     * stderr/[BRAIN_CRASH] surface. errMsg here is the value returned
+     * by brc_traceback_msgh, i.e. "<err>\nstack traceback:\n...". */
+    brc_write_crash_log(L, "think", errMsg);
+    /* Route error through Lua print() so BrainTest Print Output captures it.
+     * Wrap in pcall so a busted print() can't re-enter this same path. */
     lua_getglobal(L, "print");
     if (lua_isfunction(L, -1)) {
-      lua_pushfstring(L, "[FATAL] brain.think() error: %s", errMsg ? errMsg : "(unknown)");
+      lua_pushfstring(L, "[BRAIN_CRASH] brain.think() error: %s",
+                      errMsg ? errMsg : "(unknown)");
       lua_pcall(L, 1, 0, 0);
     } else {
       lua_pop(L, 1);
@@ -553,19 +734,17 @@ bool brainCoreCallMethod(lua_State *L, BrainInfo *info, const char *method) {
     return true; /* optional — not an error */
   }
 
+  /* Install traceback msgh below the function so errors include the
+   * full Lua stack. Stack: [brain, msgh, method_fn, info_arg]. */
+  lua_pushcfunction(L, brc_traceback_msgh);
+  lua_insert(L, -2);
+  int msgh_idx = lua_gettop(L) - 1;
+
   brainCorePushInfo(L, info);
 
-  if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+  if (lua_pcall(L, 1, 0, msgh_idx) != LUA_OK) {
     const char *errMsg = lua_tostring(L, -1);
-    fprintf(stderr, "brainCore: brain.%s() error: %s\n",
-            method, errMsg ? errMsg : "(unknown)");
-    {
-      FILE *ef = fopen("brain_error.log", "a");
-      if (ef) {
-        fprintf(ef, "brain.%s() error: %s\n", method, errMsg ? errMsg : "(unknown)");
-        fclose(ef);
-      }
-    }
+    brc_write_crash_log(L, method, errMsg);
     lua_settop(L, top);
     return false;
   }
