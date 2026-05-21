@@ -1438,6 +1438,13 @@ static BYTE     g_panelPollFollowBot   = 0;
  * per-sim BotManager. Updated alongside g_panelPollFollowBot each
  * frame the panel window is visible. */
 static ServerSim *g_panelPollSim       = NULL;
+/* Exposed via braintest_panel_registry.h so per-brain panel
+ * renderers (under brains/<name>/braintest_panels/) can route
+ * through serverSim* wrappers without holding an app handle. */
+ServerSim *braintestGetCurrentSim(void) {
+    return g_panelPollSim;
+}
+
 /* Off by default: recording produces one file per polled tick per
  * panel, which adds up fast over long sessions and has no rotation
  * yet. Opt in with --record-panels when you want offline replay. */
