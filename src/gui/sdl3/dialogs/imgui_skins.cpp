@@ -30,6 +30,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "dialog_footer.h"
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -280,32 +281,15 @@ extern "C" void imguiSkinsShow(void) {
         ImGui::Spacing();
         ImGui::TextWrapped("%s", langGetText(STR_DLGSKIN_BLURB));
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        float btnW = 80.0f;
-        float btnX = ((float)winW - btnW * 2 - 8.0f) / 2.0f;
-        ImGui::SetCursorPosX(btnX);
-
-        if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0))) {
+        int footer = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                        langGetText(STR_OK));
+        if (footer == WBUI::FOOTER_CONFIRM) {
             gameFrontReloadSkins();
             running = false;
-        }
-        imguiHandOnHover();
-
-        ImGui::SameLine(0.0f, 8.0f);
-        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0)) ||
-            ((ImGui::IsKeyPressed(ImGuiKey_Escape) ||
-              (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
-#ifdef __APPLE__
-              || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
-#endif
-             ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
+        } else if (footer == WBUI::FOOTER_CANCEL) {
             skinsLoadSkin(prevSkin);
             running = false;
         }
-        imguiHandOnHover();
 
         /* Error popup */
         static float s_fadeSkinsErr = 0.0f;

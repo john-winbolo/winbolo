@@ -36,6 +36,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 
@@ -103,53 +104,32 @@ static int renderMessageBoxContent(const char *message, ImguiMsgButtons buttons,
         ImGui::SetCursorPosY(afterIconY);
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    /* Buttons */
-    float btnW = 80.0f;
-    float spacing = ImGui::GetStyle().ItemSpacing.x;
-    float availW = ImGui::GetContentRegionAvail().x;
+    /* Focus the primary action so Enter activates it. The helper draws
+     * the buttons; we set focus on the next item before that call so the
+     * first button in the cluster receives focus. */
+    if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
 
     if (buttons == IMGUI_MSG_OK) {
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - btnW) / 2.0f);
-        if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
-        if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0))) {
+        int f = WBUI::DialogFooter(/*cancelLabel*/ nullptr,
+                                   langGetText(STR_OK));
+        if (f == WBUI::FOOTER_CONFIRM || f == WBUI::FOOTER_CANCEL) {
             result = IMGUI_MSG_RESULT_OK;
         }
-        imguiHandOnHover();
     } else if (buttons == IMGUI_MSG_YES_NO) {
-        float totalW = btnW * 2 + spacing;
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - totalW) / 2.0f);
-        if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
-        if (ImGui::Button(langGetText(STR_YES), ImVec2(btnW, 0))) {
-            result = IMGUI_MSG_RESULT_YES;
-        }
-        imguiHandOnHover();
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_NO), ImVec2(btnW, 0))) {
-            result = IMGUI_MSG_RESULT_NO;
-        }
-        imguiHandOnHover();
+        /* 2-button: [No][Yes] — Yes is the affirmative/primary, No is the
+         * cancel-equivalent. Matches the spec's [Cancel][Confirm] shape. */
+        int f = WBUI::DialogFooter(langGetText(STR_NO),
+                                   langGetText(STR_YES));
+        if (f == WBUI::FOOTER_CONFIRM) result = IMGUI_MSG_RESULT_YES;
+        else if (f == WBUI::FOOTER_CANCEL) result = IMGUI_MSG_RESULT_NO;
     } else { /* IMGUI_MSG_YES_NO_CANCEL */
-        float totalW = btnW * 3 + spacing * 2;
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - totalW) / 2.0f);
-        if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
-        if (ImGui::Button(langGetText(STR_YES), ImVec2(btnW, 0))) {
-            result = IMGUI_MSG_RESULT_YES;
-        }
-        imguiHandOnHover();
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_NO), ImVec2(btnW, 0))) {
-            result = IMGUI_MSG_RESULT_NO;
-        }
-        imguiHandOnHover();
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0))) {
-            result = IMGUI_MSG_RESULT_CANCEL;
-        }
-        imguiHandOnHover();
+        /* 3-button: [Cancel (stay)][No (destructive — discard)][Yes (primary — save)]. */
+        int f = WBUI::DialogFooter3(langGetText(STR_CANCEL),
+                                    langGetText(STR_NO),
+                                    langGetText(STR_YES));
+        if (f == WBUI::FOOTER_CONFIRM)         result = IMGUI_MSG_RESULT_YES;
+        else if (f == WBUI::FOOTER_DESTRUCTIVE) result = IMGUI_MSG_RESULT_NO;
+        else if (f == WBUI::FOOTER_CANCEL)     result = IMGUI_MSG_RESULT_CANCEL;
     }
 
     return result;

@@ -26,6 +26,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "dialog_footer.h"
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -223,43 +224,35 @@ static int renderFormBody(struct ClientSim *cs) {
     ImGui::Spacing();
 
     bool busy = (s_waiting != ksNone);
-    if (busy) ImGui::BeginDisabled();
-
     int result = 0;
-    if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0))) {
-        windowSetKeys(&s_keys);
-        useAutoslow = s_autoSlowdown;
-        useAutohide = s_autoGunsight;
-        if (cs != NULL) {
-            /* In-game path: push the new flags onto the live tank so
-             * the next sim tick respects them. Pre-game (cs==NULL) skips
-             * this — no tank exists yet, and the next clientSimSetupSelf
-             * path applies useAutoslow via frontEndApplyLocalTankPrefs. */
-            clientSimSetTankAutoSlowdown(cs, s_autoSlowdown);
-            clientSimSetTankAutoHideGunsight(cs, s_autoGunsight);
-        }
-        gameFrontPutPrefs(&s_keys);
-        s_waiting = ksNone;
-        result = 1;
-    }
-    imguiHandOnHover();
-    ImGui::SameLine();
-    if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(120, 0))) {
-        s_waiting = ksNone;
-        result = -1;
-    }
-    imguiHandOnHover();
 
+    if (busy) ImGui::BeginDisabled();
+    int footer = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                    langGetText(STR_OK));
     if (busy) ImGui::EndDisabled();
 
-    /* Escape / Cmd+W / Cmd+. = cancel (when not capturing a key). */
-    if (!busy && (ImGui::IsKeyPressed(ImGuiKey_Escape) ||
-                  (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
-#ifdef __APPLE__
-                  || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
-#endif
-                 )) {
-        result = -1;
+    /* Skip key/click action while capturing a key — the footer suppresses
+     * itself visually via BeginDisabled but key bindings still fire. */
+    if (!busy) {
+        if (footer == WBUI::FOOTER_CONFIRM) {
+            windowSetKeys(&s_keys);
+            useAutoslow = s_autoSlowdown;
+            useAutohide = s_autoGunsight;
+            if (cs != NULL) {
+                /* In-game path: push the new flags onto the live tank so
+                 * the next sim tick respects them. Pre-game (cs==NULL) skips
+                 * this — no tank exists yet, and the next clientSimSetupSelf
+                 * path applies useAutoslow via frontEndApplyLocalTankPrefs. */
+                clientSimSetTankAutoSlowdown(cs, s_autoSlowdown);
+                clientSimSetTankAutoHideGunsight(cs, s_autoGunsight);
+            }
+            gameFrontPutPrefs(&s_keys);
+            s_waiting = ksNone;
+            result = 1;
+        } else if (footer == WBUI::FOOTER_CANCEL) {
+            s_waiting = ksNone;
+            result = -1;
+        }
     }
 
     return result;
@@ -389,6 +382,12 @@ extern "C" int imguiKeySetupShow(void) {
                      ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse);
+
+        /* Top-right close X — same effect as Cancel in the form body. */
+        if (WBUI::DrawPanelCloseX()) {
+            result = 0;
+            running = false;
+        }
 
         /* Title */
         {
