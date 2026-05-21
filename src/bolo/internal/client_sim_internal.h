@@ -378,6 +378,19 @@ struct ClientSim {
     bool      hasTransport;
     bool      isUdpTransport;
 
+    /* In-process server bound by clientSimConnectLocal{,Passive}. NULL
+     * for UDP and disconnected clients. Read by the local-transport
+     * branch of CTRL_LOBBY_MAP_CHANGE to fetch the freshly-compressed
+     * map without going through the wire MAP_DOWNLOAD machinery.
+     * Preserved across clientSimCreate's memset alongside the
+     * transport fields (connection-lifetime state). */
+    struct ServerSim *boundServerSim;
+
+    /* Unified rejection-reason buffer. Local connect failures write
+     * directly here; UDP JOIN_REJECT mirrors its reason here too. The
+     * clientSimGetConnectErrorReason accessor reads from this field. */
+    char      connectErrorReason[256];
+
     /* Read-only ControlEvent observer (test-only — see
      * clientSimSetControlObserver in client_sim.h). Preserved across
      * clientSimCreate's memset alongside the transport fields. */
@@ -387,5 +400,15 @@ struct ClientSim {
 
 BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
                    ClientSim_sim_must_be_first_member);
+
+/* Internal accessors for the connect-path fields. The local-transport
+ * branch of CTRL_LOBBY_MAP_CHANGE reads the bound server through
+ * clientSimGetBoundServerSim; clientSimConnectLocal{,Passive} record
+ * the binding via clientSimSetBoundServerSim. clientSimSetConnectErrorReason
+ * is the single writer used by both connect paths and (Phase 2) the UDP
+ * JOIN_REJECT handler. */
+void                    clientSimSetBoundServerSim(ClientSim *cs, struct ServerSim *sim);
+struct ServerSim       *clientSimGetBoundServerSim(const ClientSim *cs);
+void                    clientSimSetConnectErrorReason(ClientSim *cs, const char *str);
 
 #endif /* CLIENT_SIM_INTERNAL_H */

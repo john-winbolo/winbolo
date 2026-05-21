@@ -398,6 +398,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->ranked              = FALSE;
     sim->serverLocks         = 0;
     sim->maxPlayers          = MAX_TANKS;
+    sim->worldPreLoaded      = TRUE;
 
     /* Mirror gameType + hiddenMines + time fields so the lobby change
      * path can detect locked-setting attempts and emit clean diffs.
@@ -2766,10 +2767,17 @@ void serverSimLobbyCheckAllReady(ServerSim *sim) {
     }
     if (numConnected == 0) return;
 
-    /* All ready — start countdown */
-    sim->state = serverStateCountdown;
-    sim->countdownTicks = LOBBY_COUNTDOWN_TICKS;
-    serverSimConsoleMessage("All players ready! Starting countdown...");
+    if (sim->worldPreLoaded) {
+        /* Fresh sim from serverSimCreate* — the world is already
+         * primed. Transition to running synchronously; no countdown
+         * announcement, no full-reset round-start dance. */
+        serverSimStartGameInPlace(sim);
+    } else {
+        /* Subsequent round: full reset via countdown + StartGame. */
+        sim->state = serverStateCountdown;
+        sim->countdownTicks = LOBBY_COUNTDOWN_TICKS;
+        serverSimConsoleMessage("All players ready! Starting countdown...");
+    }
 }
 
 void serverSimResetGameWorld(ServerSim *sim) {
@@ -2868,6 +2876,12 @@ void serverSimResetGameWorld(ServerSim *sim) {
     sim->hadPlayersEver = FALSE;
     playersDestroy(&sim->sim.plyrs);
     playersCreate(&sim->sim.plyrs, TRUE);
+
+    /* The world is no longer the pristine one set up by
+     * serverSimCreate* — subsequent lobby→running transitions
+     * must go through countdown + serverSimStartGame (full reset),
+     * not StartGameInPlace. */
+    sim->worldPreLoaded = FALSE;
 }
 
 void serverSimReapplyTeamAlliances(ServerSim *sim) {
@@ -2892,6 +2906,12 @@ void serverSimReapplyTeamAlliances(ServerSim *sim) {
 
 void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
+
+    /* Wire any bots in the roster into the running game (idempotent on
+     * a fresh sim with zero bots). Inlined from serverSimOnBotGameStart
+     * so the all-ready→StartGameInPlace path doesn't depend on the
+     * frontend remembering to call it separately. */
+    botManagerOnGameStart(sim);
 
     /* Apply team alliances: players with same non-zero teamNumber become allies */
     serverSimReapplyTeamAlliances(sim);
@@ -2932,6 +2952,19 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     if (sim->autoLockOnGameStart && sim->allowNewPlayers) {
         sim->allowNewPlayers = FALSE;
         transportUdpServerSetLock(sim, FALSE);
+    }
+
+    /* Announce the RUNNING phase to subscribers. The countdown→running
+     * transition in server_lifecycle.c publishes the same event for
+     * the full-reset path; this is the analogue for the in-place
+     * (worldPreLoaded) path which bypasses countdown. */
+    {
+        ControlEvent phaseEvt;
+        memset(&phaseEvt, 0, sizeof(phaseEvt));
+        phaseEvt.type = CTRL_GAME_PHASE;
+        phaseEvt.u.gamePhase.phase = CTRL_PHASE_RUNNING;
+        phaseEvt.u.gamePhase.countdownSeconds = 0;
+        serverSimPublishControl(sim, &phaseEvt);
     }
 }
 

@@ -187,6 +187,7 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   Transport savedTransport = cs->transport;
   bool savedHasTransport   = cs->hasTransport;
   bool savedIsUdpTransport = cs->isUdpTransport;
+  struct ServerSim *savedBoundServerSim = cs->boundServerSim;
   BrainList savedBrainList = cs->lobbyBrainList;
   ControlObserverCb savedObserverCb  = cs->controlObserverCb;
   void             *savedObserverCtx = cs->controlObserverCtx;
@@ -197,6 +198,7 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   cs->transport          = savedTransport;
   cs->hasTransport       = savedHasTransport;
   cs->isUdpTransport     = savedIsUdpTransport;
+  cs->boundServerSim     = savedBoundServerSim;
   cs->lobbyBrainList     = savedBrainList;
   cs->controlObserverCb  = savedObserverCb;
   cs->controlObserverCtx = savedObserverCtx;
@@ -1233,6 +1235,26 @@ void clientSimSetTimeStart(ClientSim *cs, time_t v)        { cs->timeStart = v; 
 void clientSimSetRunning(ClientSim *cs, bool v)            { cs->running = v; }
 void clientSimSetLocalTransport(ClientSim *cs, bool isLocal) {
   clientSimGetGameSim(cs)->isLocalTransport = isLocal;
+}
+
+void clientSimSetBoundServerSim(ClientSim *cs, struct ServerSim *sim) {
+  if (cs == NULL) return;
+  cs->boundServerSim = sim;
+}
+
+struct ServerSim *clientSimGetBoundServerSim(const ClientSim *cs) {
+  if (cs == NULL) return NULL;
+  return cs->boundServerSim;
+}
+
+void clientSimSetConnectErrorReason(ClientSim *cs, const char *str) {
+  if (cs == NULL) return;
+  if (str == NULL || str[0] == '\0') {
+    cs->connectErrorReason[0] = '\0';
+    return;
+  }
+  strncpy(cs->connectErrorReason, str, sizeof(cs->connectErrorReason) - 1);
+  cs->connectErrorReason[sizeof(cs->connectErrorReason) - 1] = '\0';
 }
 
 void clientSimSetCurrentBuildSelect(ClientSim *cs, buildSelect v) {

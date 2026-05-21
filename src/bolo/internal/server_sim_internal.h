@@ -80,6 +80,11 @@ struct ServerSim {
     uint16_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
     BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
+    bool     worldPreLoaded;       /* TRUE while the world is fresh from
+                                    * serverSimCreate*; FALSE after the first
+                                    * serverSimResetGameWorld. Drives the
+                                    * all-ready detector to pick
+                                    * StartGameInPlace vs countdown+StartGame. */
 
     /* Game-settings mirrors — needed for live mid-lobby change broadcasts.
      * The authoritative values live in GameSim/serverSim CLI args; these

@@ -34,9 +34,11 @@
 #include "client_sim_control.h"
 #include "client_sim_internal.h"
 #include "client_sim.h"
+#include "client_mapload_internal.h"  /* installCompressedMap — local map reload */
 #include "messages.h"
 #include "netpacks.h"
 #include "players.h"
+#include "server_sim.h"  /* serverSimGetCompressedMap / serverSimGetMapName */
 #include "global.h"      /* balanceDebugLog */
 #include "../common/wb_log.h"
 
@@ -218,6 +220,18 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->mapDownloadComplete = false;
         memset(cs->mapSkipVotes, 0, sizeof(cs->mapSkipVotes));
         cs->mapSkipMyVote = false;
+        if (!cs->isUdpTransport && cs->boundServerSim != NULL) {
+            /* Local transport: the server is in-process. Pull the
+             * freshly-compressed map directly and reinstall — there is
+             * no MAP_DOWNLOAD wire path to wait on. */
+            BYTE buf[MAP_DOWNLOAD_MAX_SIZE];
+            int  len = serverSimGetCompressedMap(cs->boundServerSim, buf);
+            if (len > 0) {
+                installCompressedMap(cs, buf, len,
+                                     serverSimGetMapName(cs->boundServerSim));
+                cs->mapDownloadComplete = true;
+            }
+        }
         break;
 
     case CTRL_MAP_DOWNLOAD_COMPLETE:
@@ -329,6 +343,12 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         case CTRL_PHASE_RUNNING:
             cs->netStat = netRunning;
             cs->countdownSeconds = 0;
+            /* Frontends flip out of the lobby view on the running
+             * transition; previously the SP finisher set this by hand
+             * after StartGameInPlace, but now StartGameInPlace publishes
+             * CTRL_PHASE_RUNNING and every subscriber should pick up
+             * the lobby→game flip from this event. */
+            cs->inLobby = false;
             break;
         case CTRL_PHASE_GAME_OVER:
             /* Lobby-branch reset; non-lobby end-of-game is transport-internal. */
