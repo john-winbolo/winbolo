@@ -32,6 +32,7 @@
 #include "messages.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"
+#include "client_mapload_internal.h"  /* installCompressedMap */
 #include "control_event.h"
 #include "client_sim_control.h"
 #include "transport_control_codec.h"
@@ -102,6 +103,13 @@ typedef struct {
     uint16_t mapChunksExpected;  /* Total chunks expected */
     uint16_t mapChunksReceived;  /* Number of unique chunks received */
     bool    *mapChunkReceived;   /* Bitfield: which chunks we've gotten */
+    /* True once the buffered map has been installed onto the ClientSim
+     * (mp/pb/bs/ss populated). Distinct from mapDownloadComplete on the
+     * ClientSim (bytes-received) — this tracks "applied". Reset to false
+     * when a fresh download begins (JOIN_ACCEPT reallocates the buffer)
+     * so a mid-lobby map swap re-gates snapshots until the new map is
+     * installed. */
+    bool     mapInstalled;
 
     /* Game settings received from server */
     gameType serverGameType;
@@ -463,7 +471,21 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 break;
             }
 
-            /* Allocate map download buffer */
+            /* Apply game settings to the ClientSim directly. The frontend
+             * still pre-constructs the ClientSim with defaults; these
+             * setters correct them once the server's authoritative values
+             * land. minesCreate already consumed hiddenMines at construct
+             * time, so this is a forward-going write — later mines state
+             * changes that read sim.hiddenMines pick up the new value. */
+            clientSimSetGameType(c->clientSim, c->serverGameType);
+            clientSimSetHiddenMines(c->clientSim, c->serverHiddenMines);
+            clientSimSetGmeStartDelay(c->clientSim, c->serverStartDelay);
+            clientSimSetGmeLength(c->clientSim, c->serverGameLen);
+
+            /* Allocate map download buffer. A fresh allocation also resets
+             * mapInstalled — snapshots stay gated until the new buffer is
+             * applied (covers the mid-lobby PACKET_LOBBY_MAP_CHANGE swap,
+             * which routes through JOIN_REQUEST → JOIN_ACCEPT). */
             if (c->mapDownloadBuf != NULL) {
                 free(c->mapDownloadBuf);
             }
@@ -475,6 +497,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             memset(c->mapDownloadBuf, 0, mapSize);
             c->mapDownloadTotal = mapSize;
             c->mapDownloadReceived = 0;
+            c->mapInstalled = false;
 
             /* Calculate expected chunks */
             c->mapChunksExpected = (uint16_t)((mapSize + MAP_DOWNLOAD_CHUNK_SIZE - 1) / MAP_DOWNLOAD_CHUNK_SIZE);
@@ -547,6 +570,16 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     (unsigned)c->mapDownloadTotal,
                     (unsigned)c->playerNum);
                 c->joinState = UDP_CLIENT_CONNECTED;
+                /* No-lobby joiner: server is already running, so install
+                 * the buffered map onto the ClientSim immediately. The
+                 * lobby case defers install until CTRL_GAME_PHASE
+                 * LOBBY→RUNNING runs it (see PACKET_GAME_START below).
+                 * Order: install → flag → event. */
+                if (!c->clientSim->inLobby) {
+                    installCompressedMap(c->clientSim, c->mapDownloadBuf,
+                                         (int)c->mapDownloadTotal, NULL);
+                    c->mapInstalled = true;
+                }
                 {
                     ControlEvent evt = { .type = CTRL_MAP_DOWNLOAD_COMPLETE };
                     clientSimApplyControl(c->clientSim, &evt);
@@ -600,9 +633,24 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         int actuallyUnpacked = 0;
         int actuallyUnpackedMap = 0;
 
-        /* Ignore stale snapshots */
-        if (c->hasSnapshot && seq <= c->lastSnapshotSeq) {
+        /* Ignore stale snapshots. lastSnapshotSeq stays 0 until the
+         * first valid arrival and only advances forward, so it's the
+         * authoritative high-water mark — independent of whether the
+         * staged snapshot has been consumed yet. */
+        if (c->lastSnapshotSeq != 0 && seq <= c->lastSnapshotSeq) {
             c->netErrors++;
+            break;
+        }
+
+        /* Drop snapshots until the buffered map is installed onto the
+         * ClientSim. Covers the asymmetric-arrival case where a snapshot
+         * for the new map lands before the install completes (mid-lobby
+         * map swap, or a lobby joiner whose first PHASE_RUNNING is still
+         * pending). */
+        if (!c->mapInstalled) {
+            WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                "snapshot dropped — map not yet installed (seq=%u)",
+                (unsigned)seq);
             break;
         }
 
@@ -770,6 +818,23 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         c->hasSnapshot = true;
         c->lastSnapshotSeq = seq;
         c->lastSnapshotTick = c->localTick;
+
+        /* Apply the freshly-staged snapshot directly onto the ClientSim.
+         * The frontend's per-frame clientSimNetSyncSnapshot also reads
+         * via the getSnapshot vtable; that path stays for the local
+         * transport's first-snapshot pull and the headless cmd-stdin
+         * loop. */
+        clientSimSyncFromSnapshot(c->clientSim, &c->snapshotHdr,
+                                  c->snapshotTanks, c->snapshotHdr.tankCount,
+                                  c->snapshotShells, c->snapshotHdr.shellCount,
+                                  c->snapshotTkExplosions, c->snapshotHdr.tkExplosionCount,
+                                  c->snapshotBases, c->snapshotHdr.baseCount,
+                                  c->snapshotPills, c->snapshotHdr.pillCount,
+                                  c->snapshotEvents, c->snapshotHdr.reliableEventCount,
+                                  c->playerNum);
+        c->hasSnapshot = false;   /* Consumed inline — per-frame
+                                   * syncSnapshot no-ops until the
+                                   * next arrival. */
         break;
     }
 
@@ -1192,6 +1257,21 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             ControlEvent evt;
             if (dec(buf + PACKET_HEADER_SIZE,
                     (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
+                /* LOBBY→RUNNING transition: if the map blob is fully
+                 * buffered but not yet installed (lobby joiner deferred
+                 * the install at MAP_DOWNLOAD completion), run it now
+                 * BEFORE dispatching the event so any in-process
+                 * subscriber that reads map state from the running flip
+                 * sees an installed map. Order: install → flag → dispatch.
+                 * Read inLobby BEFORE the dispatch — clientSimApplyControl
+                 * clears it on CTRL_PHASE_RUNNING. */
+                if (c->clientSim->inLobby && !c->mapInstalled &&
+                    c->mapDownloadBuf != NULL &&
+                    c->mapDownloadReceived == c->mapDownloadTotal) {
+                    installCompressedMap(c->clientSim, c->mapDownloadBuf,
+                                         (int)c->mapDownloadTotal, NULL);
+                    c->mapInstalled = true;
+                }
                 clientSimApplyControl(c->clientSim, &evt);
             }
         }
@@ -1551,7 +1631,12 @@ static bool udpClientTick(void *ctx) {
                     (int)c->joinAttempts, (int)JOIN_MAX_RETRIES);
                 c->joinState = UDP_CLIENT_ERROR;
             } else {
-                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_JOIN_KEY_WIRE_LEN + 1 + 2];
+                /* Buffer holds: header + name + pass + 3 version bytes
+                 * + WBN token + flags + clientType + clientHints
+                 * + 2-byte trailing fallbackCountry (additive, per the
+                 * connect-driven model). Server treats the trailing
+                 * field as optional for backward compatibility. */
+                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_JOIN_KEY_WIRE_LEN + 1 + 2 + 2];
                 int joffset = PACKET_HEADER_SIZE;
                 char playerKey[WBN_JOIN_KEY_WIRE_LEN];
                 memset(playerKey, 0, sizeof(playerKey));
@@ -1591,6 +1676,11 @@ static bool udpClientTick(void *ctx) {
                     if (bolo_steam_has_supporter_dlc()) clientHints |= PLAYER_FLAG_SUPPORTER;
                     jbuf[joffset++] = clientHints;
                 }
+                /* fallbackCountry (2 bytes). Always empty at this call
+                 * site; a follow-up threads a real value from
+                 * clientSimConnectUdp. */
+                jbuf[joffset++] = '\0';
+                jbuf[joffset++] = '\0';
                 /* Join requests bypass delay — they're control plane */
                 udpClientSendTo(c, jbuf, joffset);
                 WB_LOG_DEBUG(WB_LOG_CAT_NET,
@@ -1959,6 +2049,15 @@ const BYTE *transportUdpClientGetMapData(Transport *t, int *outLen) {
         *outLen = (int)c->mapDownloadTotal;
     }
     return c->mapDownloadBuf;
+}
+
+uint8_t transportUdpClientGetMapDownloadPercent(Transport *t) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) return 100;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->mapDownloadTotal == 0) return 100;
+    uint32_t pct = (c->mapDownloadReceived * 100u) / c->mapDownloadTotal;
+    return pct > 100 ? 100 : (uint8_t)pct;
 }
 
 void transportUdpClientGetGameSettings(Transport *t, gameType *game,

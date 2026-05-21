@@ -999,6 +999,19 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
      * WBN_VERIFIED or WBN_STEAM_LINKED. */
     clientHints &= PLAYER_CLIENT_HINT_MASK;
 
+    /* Optional trailing fallbackCountry (2 bytes). Old clients won't
+     * send it — leave empty in that case. Used below as the GeoIP-failed
+     * fallback so loopback and private-LAN joiners can supply their own
+     * cached country code without the server reading its own WBN cache. */
+    char wireFallbackCountry[3];
+    wireFallbackCountry[0] = '\0';
+    wireFallbackCountry[1] = '\0';
+    wireFallbackCountry[2] = '\0';
+    if (len >= pos + 2) {
+        wireFallbackCountry[0] = (char)buf[pos++];
+        wireFallbackCountry[1] = (char)buf[pos++];
+    }
+
     /* Check password */
     if (udpServer.password[0] != '\0') {
         if (strcmp(pass, udpServer.password) != 0) {
@@ -1033,25 +1046,21 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         return;
     }
 
-    /* GeoIP country lookup for the incoming player.  Done early so the
-     * preempt path can include it in the rename newswire. */
+    /* Country resolution for the incoming player.  Done early so the
+     * preempt path can include it in the rename newswire. Uniform
+     * across loopback / private-LAN / public-WAN joiners: GeoIP first,
+     * then the client-supplied fallbackCountry if GeoIP can't resolve
+     * the address. The host self-join over loopback supplies its own
+     * cached WBN country via clientSimConnectUdp; private-LAN joiners
+     * supply whatever they cached. Empty stays empty for non-WBN
+     * old clients. */
     char incomingCountry[3];
     {
         char ipStr[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &fromAddr->sin_addr, ipStr, sizeof(ipStr));
         if (!geoLookupCountry(ipStr, incomingCountry)) {
-            incomingCountry[0] = '\0';
-            incomingCountry[1] = '\0';
-            /* Host self-join over a loopback socket has no public IP
-             * for GeoIP to resolve.  Fall back to the cached WBN
-             * country code so the host shows the same flag locally
-             * that they advertise on the tracker. */
-            if ((ntohl(fromAddr->sin_addr.s_addr) & 0xff000000u)
-                == 0x7f000000u) {
-                const char *cached = winbolonetGetCountryCode();
-                incomingCountry[0] = cached[0];
-                incomingCountry[1] = cached[1];
-            }
+            incomingCountry[0] = wireFallbackCountry[0];
+            incomingCountry[1] = wireFallbackCountry[1];
         }
         incomingCountry[2] = '\0';
     }

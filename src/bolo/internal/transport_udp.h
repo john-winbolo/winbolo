@@ -274,6 +274,11 @@ const char *transportUdpClientGetJoinRejectReason(Transport *t);
  * outLen receives the length of the compressed data. */
 const BYTE *transportUdpClientGetMapData(Transport *t, int *outLen);
 
+/* Returns map-download progress as 0..100. Returns 100 when nothing is
+ * in flight (no buffer allocated yet, or zero-sized total — neither
+ * happens in practice). */
+uint8_t transportUdpClientGetMapDownloadPercent(Transport *t);
+
 /* Returns the game settings received from the server during join. */
 void transportUdpClientGetGameSettings(Transport *t, gameType *game,
                                        bool *hiddenMines, int32_t *startDelay,

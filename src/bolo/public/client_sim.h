@@ -351,6 +351,10 @@ bool         clientSimIsInPillView(const ClientSim *cs);
 bool         clientSimIsNeedScreenReCalc(const ClientSim *cs);
 bool         clientSimIsInLobby(const ClientSim *cs);
 bool         clientSimIsMapDownloadComplete(const ClientSim *cs);
+/* Map-download progress as 0..100. Returns 100 for the local transport
+ * (no download needed) and 0 when no transport is bound. UDP path reads
+ * mapDownloadReceived/Total from the transport. */
+uint8_t      clientSimGetMapDownloadPercent(const ClientSim *cs);
 bool         clientSimIsMapSkipAvailable(const ClientSim *cs);
 bool         clientSimIsMapSkipMyVote(const ClientSim *cs);
 bool         clientSimIsLobbyHiddenMines(const ClientSim *cs);
@@ -539,6 +543,8 @@ void clientSimSetMineView(ClientSim *cs, screenMines v);
 /* Game / round state */
 void clientSimSetGmeStartDelay(ClientSim *cs, int v);
 void clientSimSetGmeLength(ClientSim *cs, int32_t v);
+void clientSimSetGameType(ClientSim *cs, gameType v);
+void clientSimSetHiddenMines(ClientSim *cs, bool v);
 void clientSimSetTimeStart(ClientSim *cs, time_t v);
 void clientSimSetRunning(ClientSim *cs, bool v);
 void clientSimSetCurrentBuildSelect(ClientSim *cs, buildSelect v);

@@ -1060,6 +1060,12 @@ bool clientSimIsInPillView(const ClientSim *cs)           { return cs->viewport.
 bool clientSimIsNeedScreenReCalc(const ClientSim *cs)     { return cs->viewport.needRecalc; }
 bool clientSimIsInLobby(const ClientSim *cs)              { return cs->inLobby; }
 bool clientSimIsMapDownloadComplete(const ClientSim *cs)  { return cs->mapDownloadComplete; }
+
+uint8_t clientSimGetMapDownloadPercent(const ClientSim *cs) {
+    if (cs == NULL || !cs->hasTransport) return 0;
+    if (!cs->isUdpTransport) return 100;
+    return transportUdpClientGetMapDownloadPercent((Transport *)&cs->transport);
+}
 bool clientSimIsMapSkipAvailable(const ClientSim *cs)     { return cs->mapSkipAvailable; }
 bool clientSimIsMapSkipMyVote(const ClientSim *cs)        { return cs->mapSkipMyVote; }
 bool clientSimIsLobbyHiddenMines(const ClientSim *cs)     { return cs->lobbyHiddenMines; }
@@ -1251,6 +1257,8 @@ void clientSimSetMineView(ClientSim *cs, screenMines v)    { cs->viewport.mineVi
 
 void clientSimSetGmeStartDelay(ClientSim *cs, int v)       { cs->gmeStartDelay = v; }
 void clientSimSetGmeLength(ClientSim *cs, int32_t v)       { cs->gmeLength = v; }
+void clientSimSetGameType(ClientSim *cs, gameType v)       { if (cs) gameTypeSet(&cs->sim.game, v); }
+void clientSimSetHiddenMines(ClientSim *cs, bool v)        { if (cs) cs->sim.hiddenMines = v; }
 void clientSimSetTimeStart(ClientSim *cs, time_t v)        { cs->timeStart = v; }
 void clientSimSetRunning(ClientSim *cs, bool v)            { cs->running = v; }
 void clientSimSetLocalTransport(ClientSim *cs, bool isLocal) {
@@ -1303,9 +1311,9 @@ bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *n
     if (name != NULL) {
       strncpy(mapNameMut, name, MAP_STR_SIZE - 1);
       mapNameMut[MAP_STR_SIZE - 1] = '\0';
-    } else {
-      mapNameMut[0] = '\0';
     }
+    /* name == NULL: caller doesn't know the map name; leave whatever
+     * CTRL_LOBBY_SETTINGS has populated (or empty, until it arrives). */
   }
 
   clientSimUpdateView(cs, redraw);
