@@ -131,10 +131,8 @@ static const char *getPreferenceFilePath(void) {
 
 /* Forward declarations */
 static bool gameFrontDialogs(void);
-typedef void (*ServerFinisherFn)(void);
 static bool gameFrontStartServerSim(ServerSim *sim,
-                                    const ServerInstanceConfig *cfg,
-                                    ServerFinisherFn finisher);
+                                    const ServerInstanceConfig *cfg);
 extern void sdl3MessageHandler(const char *message, const char *title);
 
 /* Find the brain script — try several paths */
@@ -1200,6 +1198,17 @@ bool gameFrontSetDlgState(openingStates newState) {
            * share one shutdown path and the bot tick is owned by the
            * timer thread only.  acceptRemoteClients=false short-circuits
            * the UDP server / WBN / tracker / NAT-portmap bring-up. */
+          /* Resolve the brain path once for both the cfg-driven setter
+           * application inside serverInstanceStartup and the later bot
+           * setup loop. Falls back to findBrainPath when the user has
+           * not pre-set gameFrontBrainPath. */
+          char spBrainPath[FILENAME_MAX] = "";
+          if (gameFrontBrainPath[0] != '\0') {
+            SDL_strlcpy(spBrainPath, gameFrontBrainPath, sizeof(spBrainPath));
+          } else {
+            findBrainPath(spBrainPath, sizeof(spBrainPath));
+          }
+
           ServerInstanceConfig cfg;
           memset(&cfg, 0, sizeof(cfg));
           cfg.udpPort             = gameFrontMyUdp;
@@ -1214,6 +1223,15 @@ bool gameFrontSetDlgState(openingStates newState) {
           cfg.trackerPort         = gameFrontTrackerPort;
           cfg.useNatKeepalive     = false;
           cfg.useNatPortmap       = false;
+          if (isTutorial) {
+            cfg.skipLobby         = true;
+          } else {
+            cfg.lobbyEnabled      = true;
+            cfg.emptyResetEnabled = true;
+            cfg.hasPassword       = (password[0] != '\0');
+          }
+          cfg.botBrainPath = (spBrainPath[0] != '\0') ? spBrainPath : NULL;
+          cfg.botAiType    = (BYTE)((compTanks == aiNone) ? aiFull : compTanks);
 
           /* Build the ClientSim first — clientSimConnectLocalPassive
            * runs the full join+install body against an alive ClientSim
@@ -1224,38 +1242,9 @@ bool gameFrontSetDlgState(openingStates newState) {
           clientSimSetIsLanOnly(humanSim, s_isLanOnly);
           frontEndSetActiveClientSim(humanSim);
 
-          /* Configure spServerSim before connect — these were the
-           * single-player finishers' jobs (gameFrontFinishSinglePlayer
-           * / gameFrontFinishSinglePlayerLobby) before Phase 2 collapsed
-           * them. Phase 4 will fold these setters into
-           * ServerInstanceConfig. */
-          if (isTutorial) {
-            serverSimSetLobbyEnabled(spServerSim, false);
-            serverSimStartGame(spServerSim);
-          } else {
-            serverSimSetLobbyEnabled(spServerSim, true);
-            serverSimSetEmptyResetEnabled(spServerSim, true);
-            serverSimSetHasPassword(spServerSim, (password[0] != '\0'));
-            serverSimEnterLobby(spServerSim);
-            /* Pre-populate the lobby's bot brain path so Add Bot works
-             * without further configuration. Host can override per-bot. */
-            {
-              char brainPath[FILENAME_MAX] = "";
-              if (gameFrontBrainPath[0] != '\0') {
-                SDL_strlcpy(brainPath, gameFrontBrainPath, sizeof(brainPath));
-              } else {
-                findBrainPath(brainPath, sizeof(brainPath));
-              }
-              if (brainPath[0] != '\0') {
-                serverSimSetBotBrainPath(spServerSim, brainPath);
-              }
-              serverSimSetBotAiType(spServerSim,
-                                    (compTanks == aiNone) ? aiFull : compTanks);
-            }
-          }
-
-          /* Start the host timer (no finisher — SP setup done above). */
-          if (!gameFrontStartServerSim(spServerSim, &cfg, NULL)) {
+          /* Start the host timer; serverInstanceStartup applies the
+           * lobby/skipLobby + hasPassword + brain/AI fields above. */
+          if (!gameFrontStartServerSim(spServerSim, &cfg)) {
             frontEndSetActiveClientSim(NULL);
             clientSimDestroy(humanSim);
             humanSim = NULL;
@@ -1346,20 +1335,10 @@ bool gameFrontSetDlgState(openingStates newState) {
             if (!serverSimBotPoolInit(0)) {
               fprintf(stderr, "[gameFront] serverSimBotPoolInit failed; bots disabled for this session\n");
             } else {
-              /* Resolve brain path for lobby "Add Bot" support and initial bots */
-              char brainPath[FILENAME_MAX];
-              bool haveBrain = false;
-              if (gameFrontBrainPath[0] != '\0') {
-                SDL_strlcpy(brainPath, gameFrontBrainPath, sizeof(brainPath));
-                haveBrain = true;
-              } else if (compTanks != aiNone) {
-                haveBrain = findBrainPath(brainPath, sizeof(brainPath));
-              }
-              /* Set botBrainPath on the ServerSim so lobby Add Bot requests work */
-              if (haveBrain) {
-                serverSimSetBotBrainPath(spServerSim, brainPath);
-                serverSimSetBotAiType(spServerSim, compTanks);
-              }
+              /* botBrainPath / botAiType were already pushed into the
+               * sim via cfg above; here we only need brainPath as a
+               * per-bot default for the serverSimCreateBot loop. */
+              bool haveBrain = (spBrainPath[0] != '\0');
               if (compTanks != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
                 for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS; bi++) {
                   BYTE slot = (BYTE)(bi + 1);
@@ -1367,7 +1346,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                   snprintf(botName, sizeof(botName), "Bot %d", slot);
                   /* Use per-bot brain path if set, otherwise fall back to default */
                   const char *botBrain = gameFrontBotSetupData.bots[bi].brainPath;
-                  if (botBrain[0] == '\0') botBrain = brainPath;
+                  if (botBrain[0] == '\0') botBrain = spBrainPath;
                   serverSimCreateBot(spServerSim, slot, botBrain, botName, compTanks, gametype, hiddenMines);
                   /* Apply team number */
                   uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
@@ -1761,20 +1740,9 @@ bool gameFrontPreferencesExist(void) {
 }
 
 
-static void gameFrontFinishLobbyHost(void) {
-  serverSimSetLobbyEnabled(spServerSim, true);
-  serverSimSetEmptyResetEnabled(spServerSim, true);
-  serverSimEnterLobby(spServerSim);
-  serverSimSetHasPassword(spServerSim, (password[0] != '\0'));
-  isServer = TRUE;
-  spServerSimActive = TRUE;
-}
-
 static bool gameFrontStartServerSim(ServerSim *sim,
-                                    const ServerInstanceConfig *cfg,
-                                    ServerFinisherFn finisher) {
+                                    const ServerInstanceConfig *cfg) {
   if (!serverInstanceStartup(sim, cfg)) return false;
-  if (finisher != NULL) finisher();
   /* Clear the shutdown latch — gameFrontShutdownServerSim sets it true
    * on teardown to make in-flight timer callbacks bail; if we restart
    * a hosted server in the same process (e.g. exiting a game back to
@@ -1811,29 +1779,18 @@ bool gameFrontSetupServer(void) {
     return FALSE;
   }
 
-  /* Add bot brains for local game if AI is enabled */
+  /* Resolve a brain path so the lobby's "Add Bot" works regardless of
+   * whether the host set compTanks at startup. The AI Policy can be
+   * flipped on later via the lobby UI; without a pre-resolved brain
+   * the server silently drops PACKET_LOBBY_ADD_BOT. */
+  char brainPath[FILENAME_MAX] = "";
+  if (gameFrontBrainPath[0] != '\0') {
+    SDL_strlcpy(brainPath, gameFrontBrainPath, sizeof(brainPath));
+  } else {
+    findBrainPath(brainPath, sizeof(brainPath));
+  }
   if (!serverSimBotPoolInit(0)) {
     fprintf(stderr, "[gameFront] serverSimBotPoolInit failed; bots disabled for this session\n");
-  } else {
-    /* Always resolve a brain path so the lobby's "Add Bot" works
-     * regardless of whether the host set compTanks at startup. The
-     * AI Policy can be flipped on later via the lobby UI, and that
-     * path only updates botAiType — without a pre-resolved brain the
-     * server silently drops PACKET_LOBBY_ADD_BOT. */
-    char brainPath[FILENAME_MAX];
-    bool haveBrain = false;
-    if (gameFrontBrainPath[0] != '\0') {
-      SDL_strlcpy(brainPath, gameFrontBrainPath, sizeof(brainPath));
-      haveBrain = true;
-    } else {
-      haveBrain = findBrainPath(brainPath, sizeof(brainPath));
-    }
-    if (haveBrain) {
-      serverSimSetBotBrainPath(spServerSim, brainPath);
-    }
-    if (compTanks != aiNone) {
-      serverSimSetBotAiType(spServerSim, compTanks);
-    }
   }
 
   memset(&cfg, 0, sizeof(cfg));
@@ -1849,6 +1806,13 @@ bool gameFrontSetupServer(void) {
   cfg.trackerPort         = gameFrontTrackerPort;
   cfg.useNatKeepalive     = gameFrontUseNatTraversal;
   cfg.useNatPortmap       = gameFrontUseUpnp;
+  cfg.lobbyEnabled        = true;
+  cfg.emptyResetEnabled   = true;
+  cfg.hasPassword         = (password[0] != '\0');
+  cfg.botBrainPath        = (brainPath[0] != '\0') ? brainPath : NULL;
+  if (compTanks != aiNone) {
+    cfg.botAiType         = (BYTE)compTanks;
+  }
 
   /* LAN-only host: no public-facing services. winbolonetCreateServer
    * would advertise to the global tracker, the WBN tracker reports
@@ -1865,11 +1829,16 @@ bool gameFrontSetupServer(void) {
     cfg.useNatPortmap   = FALSE;
   }
 
-  if (!gameFrontStartServerSim(spServerSim, &cfg, gameFrontFinishLobbyHost)) {
+  if (!gameFrontStartServerSim(spServerSim, &cfg)) {
     serverSimDestroy(spServerSim);
     spServerSim = NULL;
     return FALSE;
   }
+  /* The host-side flags previously set by gameFrontFinishLobbyHost
+   * after the startup call. The lobby state itself is now driven by
+   * cfg.lobbyEnabled inside serverInstanceStartup. */
+  isServer = TRUE;
+  spServerSimActive = TRUE;
   /* The welcome-screen BgGame leaves the global botManager state
    * populated with its eye-candy bots; without clearing it here,
    * serverSimFindFreeSlot skips those slots and the host's loopback
@@ -1885,47 +1854,6 @@ bool gameFrontSetupServer(void) {
     }
   }
   return TRUE;
-}
-
-bool gameFrontLoadInBuiltMap(void) {
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable: 4305)
-#endif
-  BYTE emap[6000] = E_MAP;
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-  return clientLoadCompressedMap(humanSim, emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen, gameFrontName, 0, FALSE);
-}
-
-bool gameFrontLoadTutorial(void) {
-  const char *candidates[3];
-  char basePathBuf[FILENAME_MAX];
-  const char *basePath = SDL_GetBasePath();
-  int i;
-  FILE *fp;
-
-  candidates[0] = "data/maps/Inbuilt Tutorial.map";
-
-  if (basePath != NULL) {
-    snprintf(basePathBuf, FILENAME_MAX, "%sdata/maps/Inbuilt Tutorial.map", basePath);
-    candidates[1] = basePathBuf;
-  } else {
-    candidates[1] = NULL;
-  }
-  candidates[2] = "Inbuilt Tutorial.map";
-
-  for (i = 0; i < 3; i++) {
-    if (candidates[i] == NULL) continue;
-    fp = fopen(candidates[i], "rb");
-    if (fp != NULL) {
-      fclose(fp);
-      /* clientLoadMap takes char* (not const) but doesn't mutate. */
-      return clientLoadMap(humanSim, (char *)candidates[i], gameStrictTournament, FALSE, 0, UNLIMITED_GAME_TIME, gameFrontName, FALSE);
-    }
-  }
-  return FALSE;
 }
 
 /* -------------------------------------------------------

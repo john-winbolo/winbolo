@@ -201,51 +201,6 @@ static void gameFrontSetDefaultKeys(keyItems *keys) {
 }
 
 /* -------------------------------------------------------
- * gameFrontLoadInBuiltMap
- * ------------------------------------------------------- */
-bool gameFrontLoadInBuiltMap(void) {
-  /* In WASM, maps are preloaded into the virtual filesystem */
-  const char *paths[] = {
-    "/data/EverardIsland.map",
-    "/data/Everard Island.map",
-    "Everard Island.map",
-    NULL
-  };
-
-  for (int i = 0; paths[i] != NULL; i++) {
-    FILE *fp = fopen(paths[i], "rb");
-    if (fp != NULL) {
-      fclose(fp);
-      printf("[WASM] Loading map: %s\n", paths[i]);
-      return clientLoadMap(humanSim, (char *)paths[i], gametype, hiddenMines,
-                         startDelay, timeLen, gameFrontName, FALSE);
-    }
-  }
-
-  printf("[WASM] ERROR: Could not find Everard Island.map\n");
-  return FALSE;
-}
-
-bool gameFrontLoadTutorial(void) {
-  const char *paths[] = {
-    "/data/InbuiltTutorial.map",
-    "/data/Inbuilt Tutorial.map",
-    "Inbuilt Tutorial.map",
-    NULL
-  };
-
-  for (int i = 0; paths[i] != NULL; i++) {
-    FILE *fp = fopen(paths[i], "rb");
-    if (fp != NULL) {
-      fclose(fp);
-      return clientLoadMap(humanSim, (char *)paths[i], gameStrictTournament, FALSE,
-                         0, UNLIMITED_GAME_TIME, gameFrontName, FALSE);
-    }
-  }
-  return FALSE;
-}
-
-/* -------------------------------------------------------
  * gameFrontStart — skip all dialogs, start practice game
  * ------------------------------------------------------- */
 bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSim **out_cs) {

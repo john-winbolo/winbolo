@@ -142,6 +142,34 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
     serverSimSetUploadPolicy(sim, cfg->uploadPolicy);
   }
 
+  serverSimSetEmptyResetEnabled(sim, cfg->emptyResetEnabled);
+  serverSimSetHasPassword(sim, cfg->hasPassword);
+  if (cfg->botBrainPath != NULL) {
+    serverSimSetBotBrainPath(sim, cfg->botBrainPath);
+  }
+  if ((aiType)cfg->botAiType != aiNone) {
+    serverSimSetBotAiType(sim, (aiType)cfg->botAiType);
+  }
+  /* ranked forces autolock-on-game-start (matches the server-side
+   * LST_RANKED handler at PACKET_LOBBY_SET_SETTING and the existing
+   * servermain.c -ranked CLI behaviour). */
+  serverSimSetAutoLockOnGameStart(sim,
+      cfg->autoLockOnGameStart || cfg->ranked);
+  serverSimSetRanked(sim, cfg->ranked);
+  serverSimSetOpenHost(sim, cfg->openHost);
+  serverSimSetServerLocks(sim, cfg->serverLocks);
+
+  /* lobbyEnabled and skipLobby drive state transitions. If neither is
+   * set, the sim stays in whatever state serverSimCreate* left it
+   * (today's dedicated-server-with-no-cfg-fields behaviour). */
+  if (cfg->skipLobby) {
+    serverSimSetLobbyEnabled(sim, false);
+    serverSimStartGame(sim);
+  } else if (cfg->lobbyEnabled) {
+    serverSimSetLobbyEnabled(sim, true);
+    serverSimEnterLobby(sim);
+  }
+
   instanceUseWbn = cfg->acceptRemoteClients && cfg->useWbn;
   if (instanceUseWbn) {
     winbolonetCreateServer(sim->mapName, cfg->udpPort,

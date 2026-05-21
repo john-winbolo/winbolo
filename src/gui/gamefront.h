@@ -602,34 +602,6 @@ void gameFrontEnableRejoin(void);
 bool gameFrontPreferencesExist(void);
 
 /*********************************************************
-*NAME:          gameFrontLoadInBuiltMap
-*AUTHOR:        John Morrison
-*CREATION DATE: 1/5/00
-*LAST MODIFIED: 1/5/00
-*PURPOSE:
-* Attempts to load the built in map by loading the
-* compress resource. Returns Success
-*
-*ARGUMENTS:
-*
-*********************************************************/
-bool gameFrontLoadInBuiltMap(void);
-
-/*********************************************************
-*NAME:          gameFrontLoadTutorial
-*AUTHOR:        John Morrison
-*CREATION DATE: 1/5/00
-*LAST MODIFIED: 1/5/00
-*PURPOSE:
-* Attempts to load the built in tutorial by loading the
-* compress resource. Returns Success
-*
-*ARGUMENTS:
-*
-*********************************************************/
-bool gameFrontLoadTutorial(void);
-
-/*********************************************************
 *NAME:          gameFrontSetWinbolonetToken
 *PURPOSE:
 * Stores a WinBolo.net auth token and its expiry.

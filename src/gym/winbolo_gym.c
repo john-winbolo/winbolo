@@ -32,6 +32,7 @@
 #include "global.h"
 #include "client_mapload.h"
 #include "client_sim.h"
+#include "../server/server_lifecycle.h"
 #include "client_sim_control.h"
 #include "control_event.h"
 #include "frontend.h"
@@ -122,8 +123,16 @@ static void gymBufferServerEvents(WinBoloGym *g) {
 }
 
 static void gymSetupGame(WinBoloGym *g) {
-    serverSimSetLobbyEnabled(g->serverSim, false);
-    serverSimStartGame(g->serverSim);
+    /* Local headless sim — no lobby, run immediately. cfg.skipLobby
+     * drives SetLobbyEnabled(false) + StartGame inside startup;
+     * acceptRemoteClients=false short-circuits UDP/WBN/tracker/NAT. */
+    {
+        ServerInstanceConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.acceptRemoteClients = false;
+        cfg.skipLobby           = true;
+        serverInstanceStartup(g->serverSim, &cfg);
+    }
     serverSimGetGameSim(g->serverSim)->viewPlayer = 0;
 
     g->clientSim = clientSimAlloc();

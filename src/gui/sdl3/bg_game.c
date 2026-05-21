@@ -27,6 +27,7 @@
 #include "global.h"
 #include "everard_map.h"
 #include "control_event.h"
+#include "../../server/server_lifecycle.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -114,8 +115,18 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
             return false;
         }
     }
-    /* bg_game is a local headless sim — no lobby, run immediately */
-    serverSimSetLobbyEnabled(bg->sim, false);
+    /* bg_game is a local headless sim — no lobby, run immediately.
+     * acceptRemoteClients=false short-circuits UDP/WBN/tracker/NAT
+     * inside serverInstanceStartup; cfg.skipLobby flips lobbyEnabled
+     * off and runs serverSimStartGame so the subsequent
+     * serverSimCreateBot calls hit the running-state branch. */
+    {
+        ServerInstanceConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.acceptRemoteClients = false;
+        cfg.skipLobby           = true;
+        serverInstanceStartup(bg->sim, &cfg);
+    }
 
     SDL_Surface *sheet = tileLoaderBuildSheet(16);
     if (!sheet) {
@@ -239,7 +250,6 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
             bg->numTeams = 0;
             WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Free-for-all (no teams)");
         }
-        serverSimStartGame(bg->sim);
     } else {
         WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] No brain script found");
     }

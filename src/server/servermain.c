@@ -1106,7 +1106,6 @@ int main(int argc, char **argv) {
    * Create (when sim was an embedded zero-struct that Create then
    * clobbered). */
   serverMessageSetQuietMode(serverSim, isQuiet ? TRUE : FALSE);
-  serverSimSetBotAiType(serverSim, ai);
   if (findArg(argc, argv, "logfile") != ARG_NOT_FOUND) {
     serverMessagesSetLogFile(serverSim, (char *) argv[findArg(argc, argv, "logfile")]);
   }
@@ -1141,9 +1140,7 @@ int main(int argc, char **argv) {
   }
 
   /* Empty reset configuration — on by default */
-  if (argExist(argc, argv, "noemptyreset") == TRUE) {
-    serverSimSetEmptyResetEnabled(serverSim, false);
-  }
+  bool emptyResetEnabled = (argExist(argc, argv, "noemptyreset") == FALSE);
   {
     int argNum = findArg(argc, argv, "emptyresetmins");
     if (argNum != ARG_NOT_FOUND) {
@@ -1157,19 +1154,11 @@ int main(int argc, char **argv) {
   /* Lobby presets — set initial values for lobby toggles the host can
    * normally flip in the UI. Only meaningful in lobby mode; if
    * -nolobby is also set, the lobby state machine is skipped and the
-   * initial values just bake into the running game's settings. */
-  if (argExist(argc, argv, "autolock") == TRUE) {
-    serverSimSetAutoLockOnGameStart(serverSim, true);
-  }
-  if (argExist(argc, argv, "ranked") == TRUE) {
-    serverSimSetRanked(serverSim, true);
-    /* Ranked games force auto-lock-on-game-start on (matches the
-     * server-side LST_RANKED handler at PACKET_LOBBY_SET_SETTING). */
-    serverSimSetAutoLockOnGameStart(serverSim, true);
-  }
-  if (argExist(argc, argv, "openhost") == TRUE) {
-    serverSimSetOpenHost(serverSim, true);
-  }
+   * initial values just bake into the running game's settings. ranked
+   * forces autolock-on-game-start inside serverInstanceStartup. */
+  bool autoLockOnGameStart = (argExist(argc, argv, "autolock") == TRUE);
+  bool ranked              = (argExist(argc, argv, "ranked") == TRUE);
+  bool openHost            = (argExist(argc, argv, "openhost") == TRUE);
   if (argExist(argc, argv, "firstjoinhost") == TRUE) {
     serverSimSetFirstJoinerBecomesHost(serverSim, true);
   }
@@ -1182,11 +1171,11 @@ int main(int argc, char **argv) {
    * Valid names: gametype, ai, mines, timelimit, autolock, password,
    * ranked, openhost, map. Unknown names emit a warning and are
    * skipped (forward-compat for future locks). */
+  uint16_t serverLocks = 0;
   {
     int argNum = findArg(argc, argv, "lock");
     if (argNum != ARG_NOT_FOUND) {
       const char *list = (const char *)argv[argNum];
-      uint16_t mask = 0;
       char tmp[256];
       strncpy(tmp, list, sizeof(tmp) - 1);
       tmp[sizeof(tmp) - 1] = '\0';
@@ -1204,16 +1193,16 @@ int main(int argc, char **argv) {
           lo[li++] = c;
         }
         lo[li] = '\0';
-        if      (strcmp(lo, "gametype") == 0)  mask |= LOBBY_LOCK_GAME_TYPE;
-        else if (strcmp(lo, "ai") == 0)        mask |= LOBBY_LOCK_AI_POLICY;
-        else if (strcmp(lo, "mines") == 0)     mask |= LOBBY_LOCK_MINES;
+        if      (strcmp(lo, "gametype") == 0)  serverLocks |= LOBBY_LOCK_GAME_TYPE;
+        else if (strcmp(lo, "ai") == 0)        serverLocks |= LOBBY_LOCK_AI_POLICY;
+        else if (strcmp(lo, "mines") == 0)     serverLocks |= LOBBY_LOCK_MINES;
         else if (strcmp(lo, "timelimit") == 0 ||
-                 strcmp(lo, "limit") == 0)     mask |= LOBBY_LOCK_TIME_LIMIT;
-        else if (strcmp(lo, "autolock") == 0)  mask |= LOBBY_LOCK_AUTO_LOCK_ON_GAME;
-        else if (strcmp(lo, "password") == 0)  mask |= LOBBY_LOCK_PASSWORD;
-        else if (strcmp(lo, "ranked") == 0)    mask |= LOBBY_LOCK_RANKED;
-        else if (strcmp(lo, "openhost") == 0)  mask |= LOBBY_LOCK_OPEN_HOST;
-        else if (strcmp(lo, "map") == 0)       mask |= LOBBY_LOCK_MAP;
+                 strcmp(lo, "limit") == 0)     serverLocks |= LOBBY_LOCK_TIME_LIMIT;
+        else if (strcmp(lo, "autolock") == 0)  serverLocks |= LOBBY_LOCK_AUTO_LOCK_ON_GAME;
+        else if (strcmp(lo, "password") == 0)  serverLocks |= LOBBY_LOCK_PASSWORD;
+        else if (strcmp(lo, "ranked") == 0)    serverLocks |= LOBBY_LOCK_RANKED;
+        else if (strcmp(lo, "openhost") == 0)  serverLocks |= LOBBY_LOCK_OPEN_HOST;
+        else if (strcmp(lo, "map") == 0)       serverLocks |= LOBBY_LOCK_MAP;
         else {
           fprintf(stderr,
                   "Warning: unknown -lock name '%s' (valid: gametype, "
@@ -1221,15 +1210,15 @@ int main(int argc, char **argv) {
                   "openhost, map)\n", lo);
         }
       }
-      serverSimSetServerLocks(serverSim, mask);
     }
   }
 
-  /* -nolobby: skip lobby, start running immediately (backward-compatible mode) */
-  if (argExist(argc, argv, "nolobby") == TRUE) {
-    serverSimSetLobbyEnabled(serverSim, false);
-    serverSimSetEmptyResetEnabled(serverSim, false);
-    serverSimStartGame(serverSim);
+  /* -nolobby: skip lobby, start running immediately (backward-compatible
+   * mode). serverInstanceStartup runs SetLobbyEnabled(false) + StartGame
+   * from cfg.skipLobby; emptyReset is force-disabled in this mode. */
+  bool skipLobby = (argExist(argc, argv, "nolobby") == TRUE);
+  if (skipLobby) {
+    emptyResetEnabled = false;
   }
 
   /* -mapdir: build validated map list for rotation between rounds.
@@ -1237,7 +1226,7 @@ int main(int argc, char **argv) {
   {
     int argNum = findArg(argc, argv, "mapdir");
     if (argNum != ARG_NOT_FOUND && serverSimGetMapDirFiles(serverSim) == NULL) {
-      if (!serverSimIsLobbyEnabled(serverSim)) {
+      if (skipLobby) {
         fprintf(stderr, "Error: -mapdir requires lobby mode (incompatible with -nolobby)\n");
 #ifdef USING_SDL
         SDL_Quit();
@@ -1263,7 +1252,46 @@ int main(int argc, char **argv) {
     }
   }
 
-  serverSimSetHasPassword(serverSim, pass[0] != '\0');
+  /* Bot count + brain path resolution. Hoisted above instCfg so cfg
+   * can carry them into serverInstanceStartup; the actual bot creation
+   * (botManagerAddBot loop) still runs after startup. */
+  int  numBots = 0;
+  char brainPath[MAX_PATH];
+  brainPath[0] = '\0';
+  {
+    int argNum = findArg(argc, argv, "bots");
+    if (argNum != ARG_NOT_FOUND) {
+      numBots = atoi((char *)argv[argNum]);
+      if (numBots < 0) numBots = 0;
+      if (numBots > MAX_TANKS) numBots = MAX_TANKS;
+    }
+    argNum = findArg(argc, argv, "brain");
+    if (argNum != ARG_NOT_FOUND) {
+      strncpy(brainPath, (char *)argv[argNum], MAX_PATH - 1);
+      brainPath[MAX_PATH - 1] = '\0';
+    }
+    /* If no -brain specified but AI is enabled, auto-discover a brain path
+     * so that lobby "Add Bot" requests have a brain to use. */
+    if (brainPath[0] == '\0' && ai != aiNone) {
+      static const char *candidates[] = {
+        "Brains/NewAutopilot/init.lua",
+        "brains/NewAutopilot/init.lua",
+        "data/Brains/NewAutopilot/init.lua",
+      };
+      int c;
+      for (c = 0; c < 3; c++) {
+        FILE *f = fopen(candidates[c], "r");
+        if (f) {
+          fclose(f);
+          strncpy(brainPath, candidates[c], MAX_PATH - 1);
+          brainPath[MAX_PATH - 1] = '\0';
+          fprintf(stderr, "Auto-discovered brain: %s\n", brainPath);
+          break;
+        }
+      }
+    }
+  }
+
   {
     ServerInstanceConfig instCfg;
     UploadPolicy uploadPolicy = UPLOAD_POLICY_ALLOW;
@@ -1318,6 +1346,7 @@ int main(int argc, char **argv) {
       }
     }
 
+    memset(&instCfg, 0, sizeof(instCfg));
     instCfg.udpPort             = port;
     instCfg.bindAddr            = useAddr;
     instCfg.password            = pass;
@@ -1331,6 +1360,15 @@ int main(int argc, char **argv) {
     instCfg.uploadPolicy          = uploadPolicy;
     instCfg.uploadMaxFiles        = uploadMaxFiles;
     instCfg.uploadMaxStorageBytes = uploadMaxStorageBytes;
+    instCfg.skipLobby           = skipLobby;
+    instCfg.emptyResetEnabled   = emptyResetEnabled;
+    instCfg.hasPassword         = (pass[0] != '\0');
+    instCfg.botBrainPath        = (brainPath[0] != '\0') ? brainPath : NULL;
+    instCfg.botAiType           = (BYTE)ai;
+    instCfg.autoLockOnGameStart = autoLockOnGameStart;
+    instCfg.ranked              = ranked;
+    instCfg.openHost            = openHost;
+    instCfg.serverLocks         = serverLocks;
     {
       bool natPunchOptOut = (argExist(argc, argv, "no-natpunch") == TRUE);
       instCfg.useNatPortmap   = (argExist(argc, argv, "upnp") == TRUE);
@@ -1418,44 +1456,10 @@ int main(int argc, char **argv) {
       return 0;
     }
   }
+  /* botBrainPath + botAiType were already pushed into the sim via the
+   * cfg block above; the loop below only needs to spawn the configured
+   * bot count (numBots / brainPath resolved earlier). */
   {
-    int numBots = 0;
-    char brainPath[MAX_PATH];
-    int argNum;
-
-    brainPath[0] = '\0';
-    argNum = findArg(argc, argv, "bots");
-    if (argNum != ARG_NOT_FOUND) {
-      numBots = atoi((char *)argv[argNum]);
-      if (numBots < 0) numBots = 0;
-      if (numBots > MAX_TANKS) numBots = MAX_TANKS;
-    }
-    argNum = findArg(argc, argv, "brain");
-    if (argNum != ARG_NOT_FOUND) {
-      strncpy(brainPath, (char *)argv[argNum], MAX_PATH - 1);
-      brainPath[MAX_PATH - 1] = '\0';
-    }
-    /* If no -brain specified but AI is enabled, auto-discover a brain path
-     * so that lobby "Add Bot" requests have a brain to use. */
-    if (brainPath[0] == '\0' && ai != aiNone) {
-      static const char *candidates[] = {
-        "Brains/NewAutopilot/init.lua",
-        "brains/NewAutopilot/init.lua",
-        "data/Brains/NewAutopilot/init.lua",
-      };
-      int c;
-      for (c = 0; c < 3; c++) {
-        FILE *f = fopen(candidates[c], "r");
-        if (f) {
-          fclose(f);
-          strncpy(brainPath, candidates[c], MAX_PATH - 1);
-          brainPath[MAX_PATH - 1] = '\0';
-          fprintf(stderr, "Auto-discovered brain: %s\n", brainPath);
-          break;
-        }
-      }
-    }
-    serverSimSetBotBrainPath(serverSim, brainPath);
     if (numBots > 0 && brainPath[0] != '\0') {
       int i;
       char botName[64];

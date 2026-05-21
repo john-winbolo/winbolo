@@ -77,6 +77,7 @@
 #include "client_net.h"
 #include "gui_message.h"
 #include "server_sim.h"
+#include "../server/server_lifecycle.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../gui/gamefront.h"
@@ -1531,13 +1532,22 @@ static bool verboseNeedMapInit = TRUE;
 /* Set up the server sim, transport, and client sim from cached map.
  * Called at initial startup and on each reset. */
 static bool fastModeSetupGame(void) {
-  if (cmdStream != NULL) {
-    /* Scripted scenarios drive the lifecycle explicitly — leave the
-     * sim in lobby state until the cmd stream issues start_game. */
-    serverSimSetLobbyEnabled(fastServerSim, true);
-  } else {
-    serverSimSetLobbyEnabled(fastServerSim, false);
-    serverSimStartGame(fastServerSim);
+  {
+    /* Scripted scenarios stay in lobby state until the cmd stream
+     * issues start_game (cfg.lobbyEnabled drives SetLobbyEnabled(true)
+     * + EnterLobby inside serverInstanceStartup). Non-scripted fast
+     * mode goes straight into running state (cfg.skipLobby drives
+     * SetLobbyEnabled(false) + StartGame). acceptRemoteClients=false
+     * short-circuits the UDP/WBN/tracker/NAT bring-up. */
+    ServerInstanceConfig cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.acceptRemoteClients = false;
+    if (cmdStream != NULL) {
+      cfg.lobbyEnabled = true;
+    } else {
+      cfg.skipLobby    = true;
+    }
+    serverInstanceStartup(fastServerSim, &cfg);
   }
   serverSimSetViewPlayer(fastServerSim, 0);
 
@@ -1634,11 +1644,16 @@ static int runFastMode(void) {
   /* Initial game setup. Scripted scenarios (--cmd-stdin) stay in
    * lobby state so add_bot / set_team / start_game ops can drive
    * the lifecycle transitions deterministically. */
-  if (cmdStream != NULL) {
-    serverSimSetLobbyEnabled(fastServerSim, true);
-  } else {
-    serverSimSetLobbyEnabled(fastServerSim, false);
-    serverSimStartGame(fastServerSim);
+  {
+    ServerInstanceConfig cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.acceptRemoteClients = false;
+    if (cmdStream != NULL) {
+      cfg.lobbyEnabled = true;
+    } else {
+      cfg.skipLobby    = true;
+    }
+    serverInstanceStartup(fastServerSim, &cfg);
   }
   serverSimSetViewPlayer(fastServerSim, 0);
   transportActive = TRUE;

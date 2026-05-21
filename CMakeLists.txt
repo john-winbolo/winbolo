@@ -1879,6 +1879,7 @@ set(BRAINTEST_SOURCES
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
     src/server/server_dedicated_log_stubs.c
+    src/braintest/braintest_lifecycle_stub.c
     src/braintest/braintest_main.c src/braintest/braintest_frontend.c
     src/braintest/braintest_viz_registry.c
     src/braintest/braintest_vizwindow.cpp

@@ -77,6 +77,7 @@
 #include "gui_message.h"
 #include "server_sim.h"
 #include "game_sim.h"
+#include "../server/server_lifecycle.h"
 #include "../server/threads.h"
 #include "../gui/sdl3/mapview.h"
 #include "../gui/sdl3/tileloader.h"
@@ -4308,7 +4309,17 @@ int main(int argc, char *argv[]) {
             return 1;
         }
     }
-    serverSimSetLobbyEnabled(app.sim, false);
+    /* braintest is a local headless sim — no lobby, run immediately.
+     * cfg.skipLobby drives SetLobbyEnabled(false) + StartGame inside
+     * serverInstanceStartup; the manual StartGame later in this
+     * function is dropped accordingly. */
+    {
+        ServerInstanceConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.acceptRemoteClients = false;
+        cfg.skipLobby           = true;
+        serverInstanceStartup(app.sim, &cfg);
+    }
     app.simValid = true;
 
     /* Calculate map bounds */
@@ -4431,7 +4442,6 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "  Assigned %d bots to %d teams (round-robin)\n",
                     optNumPlayers, optNumTeams);
         }
-        serverSimStartGame(app.sim);
         /* Publish the per-run session dir to each bot's Lua state so the
          * brain's optimize.log + performance.ticks.log writers land
          * inside debug_sessions/<ts>/ instead of cwd. Forward-slashes so
