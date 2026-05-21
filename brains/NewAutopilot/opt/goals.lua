@@ -3719,10 +3719,14 @@ function M.finalize_pools(state, world, info)
       if cur_pill then
         pill  = cur_pill
         pid   = cur_pid
-        -- Soft mid-take lock. 30 is low enough to beat normal alternatives
-        -- but stays beatable by an attack_tank engage-break (under 10)
-        -- and IMMINENT_CAPTURE_FLOOR (5). Bumped from 10 → 30.
-        pcost = 30
+        -- Mid-take cost override: only when actively firing
+        -- (engage/shoot_pill) AND >= 3 shells committed. See
+        -- goals.lua for full notes.
+        local sub = state.goal.substate or ""
+        local fired = state.goal._fired or 0
+        if (sub == "engage" or sub == "shoot_pill") and fired >= 3 then
+          pcost = 10
+        end
       end
     end
     local lm6, lr6 = strategic_location_mult(pill.mx, pill.my, state, world, info, "attack_pill", pill)

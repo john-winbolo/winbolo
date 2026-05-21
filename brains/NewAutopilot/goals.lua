@@ -3769,14 +3769,24 @@ function M.finalize_pools(state, world, info)
       if cur_pill then
         pill  = cur_pill
         pid   = cur_pid
-        -- Soft mid-take lock. 30 is low enough to beat normal alternatives
-        -- (refuel, capture_*, attack_base, attack_pill on a different pill)
-        -- but stays beatable by an attack_tank engage-break (under 10)
-        -- and by IMMINENT_CAPTURE_FLOOR (5). Bumped from 10 → 30 so the
-        -- incumbent isn't too sticky relative to merely-low-cost
-        -- alternatives — switching off a half-built take is fine when
-        -- the alternative truly is much cheaper.
-        pcost = 30
+        -- Mid-take cost override, scoped tight: only when ACTIVELY
+        -- firing at the pill (engage / shoot_pill) AND we've already
+        -- committed >= 3 shells. At that point pulling off the take
+        -- wastes the shells, so drop pcost to 10 — low enough that
+        -- nothing short of attack_tank engage-break (<9) or
+        -- IMMINENT_CAPTURE_FLOOR (5) can interrupt.
+        --
+        -- All other locked substates (plan_position, approach, aim,
+        -- charge, build_walls, in_range_*, ws_*) keep the natural
+        -- pool-6 cost. The pill SWAP above still happens so we don't
+        -- flip targets mid-substate-transition, but the cost rides
+        -- on real merit — a genuinely-cheaper alternative wins
+        -- before we've sunk shells.
+        local sub = state.goal.substate or ""
+        local fired = state.goal._fired or 0
+        if (sub == "engage" or sub == "shoot_pill") and fired >= 3 then
+          pcost = 10
+        end
       end
     end
     local lm6, lr6 = strategic_location_mult(pill.mx, pill.my, state, world, info, "attack_pill", pill)
