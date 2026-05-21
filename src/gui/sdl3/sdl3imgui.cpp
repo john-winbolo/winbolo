@@ -1280,13 +1280,18 @@ static void renderPlayersPanel(ClientSim *cs) {
             /* SP / host dispatch — server is in-process. */
             ServerSim *spSim = gameFrontGetServerSim();
             if (spSim && !clientSimIsUdpTransport(cs)) {
+                threadsWaitForMutex();
                 serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
                                         GAME_VOTE_KIND_BACK_TO_LOBBY,
                                         GAME_VOTE_TOGGLE_OPEN_ONLY);
+                threadsReleaseMutex();
             }
         }
 
-        bool surrDisabled = (activeTeams != 2);
+        const ClientLobbySlot *meSlot =
+            clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+        bool meUnassigned = (meSlot && meSlot->teamNumber == 0);
+        bool surrDisabled = (activeTeams != 2) || meUnassigned;
         if (surrDisabled) ImGui::BeginDisabled();
         if (ImGui::Button("Vote: Surrender", ImVec2(-1, 0))) {
             clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_SURRENDER,
@@ -1294,15 +1299,21 @@ static void renderPlayersPanel(ClientSim *cs) {
             clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_SURRENDER, true);
             ServerSim *spSim = gameFrontGetServerSim();
             if (spSim && !clientSimIsUdpTransport(cs)) {
+                threadsWaitForMutex();
                 serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
                                         GAME_VOTE_KIND_SURRENDER,
                                         GAME_VOTE_TOGGLE_OPEN_ONLY);
+                threadsReleaseMutex();
             }
         }
         if (surrDisabled) ImGui::EndDisabled();
         if (surrDisabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            ImGui::SetTooltip("Surrender is only available when exactly two teams\n"
-                        "with human players remain.");
+            if (meUnassigned) {
+                ImGui::SetTooltip("Pick a team before voting to surrender.");
+            } else {
+                ImGui::SetTooltip("Surrender is only available when exactly two teams\n"
+                            "with human players remain.");
+            }
         }
     }
 
@@ -1773,7 +1784,9 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
             clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_YES);
             ServerSim *spSim = gameFrontGetServerSim();
             if (spSim && !clientSimIsUdpTransport(cs)) {
+                threadsWaitForMutex();
                 serverSimGameVoteToggle(spSim, me, kind, GAME_VOTE_TOGGLE_YES);
+                threadsReleaseMutex();
             }
         }
         if (myYes) ImGui::PopStyleColor();
@@ -1783,7 +1796,9 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
             clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_NO);
             ServerSim *spSim = gameFrontGetServerSim();
             if (spSim && !clientSimIsUdpTransport(cs)) {
+                threadsWaitForMutex();
                 serverSimGameVoteToggle(spSim, me, kind, GAME_VOTE_TOGGLE_NO);
+                threadsReleaseMutex();
             }
         }
     }
@@ -2392,30 +2407,39 @@ static void renderMenuBar(ClientSim *cs) {
                 clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_BACK_TO_LOBBY, true);
                 ServerSim *spSim = gameFrontGetServerSim();
                 if (spSim && !clientSimIsUdpTransport(cs)) {
+                    threadsWaitForMutex();
                     serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
                                             GAME_VOTE_KIND_BACK_TO_LOBBY,
                                             GAME_VOTE_TOGGLE_OPEN_ONLY);
+                    threadsReleaseMutex();
                 }
             }
             if (!running && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 ImGui::SetTooltip("Available once the game is running.");
             }
 
-            bool surrEnabled = running && (activeTeams == 2);
+            const ClientLobbySlot *meSlot =
+                clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+            bool meUnassigned = (meSlot && meSlot->teamNumber == 0);
+            bool surrEnabled = running && (activeTeams == 2) && !meUnassigned;
             if (ImGui::MenuItem("Vote: Surrender", nullptr, false, surrEnabled)) {
                 clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_SURRENDER,
                                                GAME_VOTE_TOGGLE_OPEN_ONLY);
                 clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_SURRENDER, true);
                 ServerSim *spSim = gameFrontGetServerSim();
                 if (spSim && !clientSimIsUdpTransport(cs)) {
+                    threadsWaitForMutex();
                     serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
                                             GAME_VOTE_KIND_SURRENDER,
                                             GAME_VOTE_TOGGLE_OPEN_ONLY);
+                    threadsReleaseMutex();
                 }
             }
             if (!surrEnabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 if (!running) {
                     ImGui::SetTooltip("Available once the game is running.");
+                } else if (meUnassigned) {
+                    ImGui::SetTooltip("Pick a team before voting to surrender.");
                 } else {
                     ImGui::SetTooltip(
                         "Surrender is only available when exactly two teams\n"
@@ -2430,6 +2454,10 @@ static void renderMenuBar(ClientSim *cs) {
     }
 
     /* ---- Players ------------------------------------- */
+    /* Widen the popup so flag + platform/WBN/Steam icons + name + ping +
+     * checkmark can all fit on one row without overlap. */
+    ImGui::SetNextWindowSizeConstraints(ImVec2(420.0f, 0.0f),
+                                        ImVec2(FLT_MAX, FLT_MAX));
     if (ImGui::BeginMenu(langGetText(STR_MENU_PLAYERS))) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
@@ -2493,8 +2521,18 @@ static void renderMenuBar(ClientSim *cs) {
                 }
             }
             if (s_playerEnabled[i]) {
-                /* Custom row: selectable name on left, colored WBN+ping on right */
-                float fullWidth = ImGui::GetContentRegionAvail().x;
+                /* Row layout: flag, icons, name, ping, check. Icons go inline
+                 * right after the flag (before the name); the checkmark sits
+                 * at the right edge of the popup, to the right of the ping. */
+                ensureWbnIconsLoaded();
+                ensurePlatformIconsLoaded();
+                uint8_t pflags = s_playerFlags[i];
+                uint8_t pct    = s_playerClientType[i];
+                renderPlayerName(NULL, pflags, pct, "", false);
+
+                ImGuiContext &g = *GImGui;
+                float checkSz = g.FontSize * 0.866f;
+                float spacing = ImGui::GetStyle().ItemSpacing.x;
 
                 /* Build ping string */
                 char pingStr[16];
@@ -2503,37 +2541,26 @@ static void renderMenuBar(ClientSim *cs) {
                 } else {
                     snprintf(pingStr, sizeof(pingStr), "---");
                 }
-                /* Measure right-side width: icons + ping + checkmark (rightmost) */
-                ensureWbnIconsLoaded();
-                ensurePlatformIconsLoaded();
-                ImGuiContext &g = *GImGui;
-                float checkSz = g.FontSize * 0.866f;
-                float iconW = (float)WBN_ICON_SIZE;
                 float pingWidth = ImGui::CalcTextSize(pingStr).x;
-                float spacing = ImGui::GetStyle().ItemSpacing.x;
-                uint8_t pflags = s_playerFlags[i];
-                uint8_t pct    = s_playerClientType[i];
-                float iconsWidth = 0.0f;
-                if (sdl3ImguiGetPlatformIcon(pct))                         iconsWidth += iconW + spacing;
-                if ((pflags & PLAYER_FLAG_WBN_VERIFIED) && s_iconGlobe)    iconsWidth += iconW + spacing;
-                if ((pflags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam)
-                    iconsWidth += iconW + spacing;
-                float rightWidth = iconsWidth + pingWidth + spacing + checkSz;
 
-                /* Selectable player name (no highlight) */
+                /* Anchor everything to the row's right edge (window-local). */
+                float rowRightX   = ImGui::GetContentRegionMax().x;
+                float checkLocalX = rowRightX - checkSz;
+                float pingLocalX  = checkLocalX - spacing - pingWidth;
+                float nameWidth   = pingLocalX - ImGui::GetCursorPosX() - spacing;
+                if (nameWidth < 1.0f) nameWidth = 1.0f;
+
+                /* Selectable player name (fills the slot between icons and ping). */
                 char selectLabel[64];
                 snprintf(selectLabel, sizeof(selectLabel), "%s##sel%d", label, i);
-                if (ImGui::Selectable(selectLabel, false, ImGuiSelectableFlags_DontClosePopups, ImVec2(fullWidth - rightWidth - spacing, 0))) {
+                if (ImGui::Selectable(selectLabel, false, ImGuiSelectableFlags_DontClosePopups,
+                                      ImVec2(nameWidth, 0))) {
                     clientSimTogglePlayerCheckState(cs, (BYTE)i);
                 }
                 imguiHandOnHover();
 
-                /* Right-aligned platform/WBN/Steam icons */
-                ImGui::SameLine(fullWidth - rightWidth);
-                renderPlayerName(NULL, pflags, pct, "", false);
-
-                /* Ping with color coding */
-                ImGui::SameLine();
+                /* Ping with color coding — anchored just left of the checkmark slot. */
+                ImGui::SameLine(pingLocalX);
                 ImVec4 pingColor;
                 if (s_playerPing[i] == 0)        pingColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
                 else if (s_playerPing[i] < 50)   pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
@@ -2543,10 +2570,11 @@ static void renderMenuBar(ClientSim *cs) {
                 ImGui::TextUnformatted(pingStr);
                 ImGui::PopStyleColor();
 
-                /* Render checkmark to the right of ping (same as MenuItem tick) */
+                /* Checkmark at the far right of the popup, right of the ping. */
                 if (s_playerChecked[i]) {
-                    float checkX = ImGui::GetWindowPos().x + ImGui::GetStyle().WindowPadding.x + fullWidth - checkSz;
-                    ImVec2 pos = ImVec2(checkX, ImGui::GetItemRectMin().y + g.FontSize * 0.134f * 0.5f);
+                    float checkScreenX = ImGui::GetWindowPos().x + checkLocalX;
+                    ImVec2 pos = ImVec2(checkScreenX,
+                                        ImGui::GetItemRectMin().y + g.FontSize * 0.134f * 0.5f);
                     ImGui::RenderCheckMark(ImGui::GetWindowDrawList(), pos,
                                            ImGui::GetColorU32(ImGuiCol_Text), checkSz);
                 }

@@ -33,8 +33,8 @@
 
 #include "global.h"
 #include "bolo_map.h"
-#include "netpacks.h"   /* LST_* setting ids for serverSimGetSettingLockBit */
-#include "wire_limits.h"
+#include "netpacks.h"
+#include "wire_limits.h"   /* LobbySettingType for serverSimGetSettingLockBit */
 #include "pillbox.h"
 #include "bases.h"
 #include "starts.h"
@@ -1709,7 +1709,7 @@ void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
     if (playerNum >= MAX_TANKS) {
         return;
     }
-    if (teamNumber > 16) {
+    if (teamNumber >= MAX_TANKS) {
         teamNumber = 1;
     }
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
@@ -3588,16 +3588,38 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
     /* Only allow during running game. */
     if (sim->state != serverStateRunning) return;
 
-    /* Surrender precondition: exactly two teams in play. */
-    if (kind == GAME_VOTE_KIND_SURRENDER &&
-        serverSimCountActiveTeams(sim) != 2) {
+    /* Reject malformed toggleMode bytes from the wire before any
+     * state-mutating branch can react to them. The historical else-fall
+     * treated anything that wasn't YES as NO, so 0xFF would be recorded
+     * as a NO vote. */
+    if (toggleMode != GAME_VOTE_TOGGLE_NO &&
+        toggleMode != GAME_VOTE_TOGGLE_YES &&
+        toggleMode != GAME_VOTE_TOGGLE_OPEN_ONLY) {
         return;
+    }
+
+    /* Surrender precondition: exactly two teams in play, and the
+     * caller must be on a real team — an Unassigned (team 0) player
+     * surrendering "team 0" would broadcast a fake side and chain a
+     * back-to-lobby vote against two unrelated playing teams. */
+    if (kind == GAME_VOTE_KIND_SURRENDER) {
+        if (serverSimCountActiveTeams(sim) != 2) return;
+        if (sim->lobbyPlayers[playerNum].teamNumber == 0) return;
     }
 
     uint64_t nowMs = sim->gameVoteWallMs;
     uint8_t teamId = (kind == GAME_VOTE_KIND_SURRENDER)
                      ? sim->lobbyPlayers[playerNum].teamNumber
                      : 0;
+
+    /* A standalone NO has no effect when no vote is running. The
+     * vote-start branch below would otherwise open a fresh vote and
+     * record the caller as NO+answered, which is meaningless. Only
+     * YES or OPEN_ONLY may open a vote. */
+    if (gv->active != GAME_VOTE_ACTIVE_RUNNING &&
+        toggleMode == GAME_VOTE_TOGGLE_NO) {
+        return;
+    }
 
     /* Open-only re-press: if a vote is running, just rebroadcast (so the
      * client can pop the widget back up); if no vote is running, start one
@@ -4817,10 +4839,47 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
         sim->sim.ss->numStarts = 0;
     }
 
-    if (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs,
-                             &sim->sim.ss, (BYTE *)bytes, len) == FALSE) {
+    /* The wire / upload / WBN paths all hand us a full .map file
+     * (starting with the BMAPBOLO magic + version + counts header).
+     * mapLoadCompressedMap expects a different on-the-wire layout
+     * (raw bases/pills/starts struct dump + LZW map), so feeding it
+     * the .map file bytes misaligns every field. Detect the magic
+     * and route through mapRead via a temp file when it matches.
+     * Fall back to the legacy mapLoadCompressedMap path for any
+     * future caller passing compressed-map-format bytes directly. */
+    bool loadedOk = FALSE;
+    if (len >= (int)(sizeof(MAP_HEADER) - 1) &&
+        memcmp(bytes, MAP_HEADER, sizeof(MAP_HEADER) - 1) == 0) {
+        char tmpPath[FILENAME_MAX];
+        SDL_snprintf(tmpPath, sizeof(tmpPath),
+                     "data/maps/.tmp_inmem_reload.map");
+        FILE *tf = fopen(tmpPath, "wb");
+        if (tf == NULL) {
+            WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+                "serverSimReloadCompressedInMemory: temp open failed '%s'",
+                tmpPath);
+            return FALSE;
+        }
+        size_t wrote = fwrite(bytes, 1, (size_t)len, tf);
+        fclose(tf);
+        if (wrote != (size_t)len) {
+            remove(tmpPath);
+            WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+                "serverSimReloadCompressedInMemory: temp write short (%zu/%d)",
+                wrote, len);
+            return FALSE;
+        }
+        loadedOk = (mapRead(tmpPath, &sim->sim.mp, &sim->sim.pb,
+                            &sim->sim.bs, &sim->sim.ss) == TRUE);
+        remove(tmpPath);
+    } else {
+        loadedOk = (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb,
+                                         &sim->sim.bs, &sim->sim.ss,
+                                         (BYTE *)bytes, len) == TRUE);
+    }
+    if (!loadedOk) {
         WB_LOG_ERROR(WB_LOG_CAT_SERVER,
-            "serverSimReloadCompressedInMemory: mapLoadCompressedMap failed (%d bytes)",
+            "serverSimReloadCompressedInMemory: load failed (%d bytes)",
             len);
         return FALSE;
     }
@@ -5284,6 +5343,10 @@ LobbyBotConfig *serverSimGetBotConfigMut(ServerSim *sim, BYTE slot) {
 
 void serverSimSetGameLength(ServerSim *sim, int32_t ticks) {
     if (sim) sim->gameLength = ticks;
+}
+
+gameType serverSimGetGameType(const ServerSim *sim) {
+    return sim ? sim->sim.game : gameOpen;
 }
 
 void serverSimSetGameType(ServerSim *sim, gameType gt) {
