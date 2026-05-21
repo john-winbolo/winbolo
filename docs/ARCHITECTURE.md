@@ -564,6 +564,205 @@ publish recipe does not apply to them:
 - **Never change the on-wire layout of an existing packet** without
   versioning. Add a new packet ID instead.
 
+## Localization
+
+User-facing strings ship through a runtime string-ID table backed by
+per-language override files. Frontends never embed English literals
+directly; they look up an integer ID and the lang module returns the
+loaded translation, falling back to English if the loaded file
+doesn't override that ID.
+
+### What gets localized
+
+In scope: every binary with a UI — desktop (`src/gui/sdl3/`), mobile
+(`src/android/`, `src/ios/`), wasm (`src/wasm/`), log viewer
+(`src/logviewer/`), map editor (`src/mapeditor/`), and the bolo sim's
+user-visible messages from `bases.c`, `lgm.c`, `pillbox.c`,
+`players.c`, `screen.c`, `tank.c`, `tankexp.c`.
+
+Out of scope: dedicated server (`src/server/`) operator CLI, brain
+test (`src/braintest/`), and gym (`src/gym/`) — all developer/operator
+tools, English-only by design.
+
+### Three-file contract
+
+| File | Role |
+|---|---|
+| `src/gui/lang.h` | `#define STR_FOO <int>` — canonical ID header. The integer is wire-stable. |
+| `src/gui/sdl3/lang.c` | `{<int>, "English text"}` — built-in English baseline. |
+| `data/lang/en.txt` | **GENERATED** — never hand-edited. Regenerated from lang.h + lang.c. |
+| `src/gui/sdl3/lang_names.inc` | **GENERATED** — STR_* name → langid lookup used by the file parser. |
+| `data/lang/<code>.txt` | Hand-edited per-language overrides. Missing entries fall back to English at runtime. |
+
+Run `python3 tools/dump_lang_en.py` to regenerate the two derived
+files after editing `lang.h` or `lang.c`. The `--check` mode exits
+non-zero if regeneration would change the output (suitable for CI).
+
+### APIs
+
+```c
+char *langGetText(langid id);
+const char *langGetTextFmt(langid id, const MessageArgs *args);
+```
+
+`langGetText` returns a stable pointer into the lang table for the
+lifetime of the loaded language file — safe to store in long-lived
+locations.
+
+`langGetTextFmt` expands named placeholders from `args` (`MessageArgs`
+in `src/bolo/public/lang_message.h`). The result points into a
+thread-local ring of four buffers — safe for immediate use, but
+`SDL_snprintf` it into a local buffer if the pointer must outlive
+the next three `langGetTextFmt` calls.
+
+### Named placeholders, not printf
+
+Translations use named placeholders so translators can reorder them
+to match target-language word order. POSIX `%1$s` numbered args
+don't work on Windows.
+
+| Placeholder | Source field |
+|---|---|
+| `{player}` | `args.playerName` |
+| `{other}` | `args.otherName` |
+| `{number}`, `{number2..4}` | `args.number`, `args.number2..4` (rendered as `%d`) |
+| `{string1}`, `{string2}` | `args.string1` / `string2` (64-byte buffers for pre-formatted floats, duration labels, etc.) |
+
+Lang-file entry example: `STR_DLGLOBBY_VOTES={number}/{number2} votes to skip`
+
+### Common patterns
+
+**PLAIN** — static text:
+
+```c
+ImGui::Button(langGetText(STR_DLGLOBBY_ADD_TEAM));
+```
+
+**FMT** — has args:
+
+```c
+MessageArgs args = {};
+args.number = teamId;
+ImGui::Text("%s", langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args));
+```
+
+**WIDGET_ID** — ImGui label with `##suffix`:
+
+```c
+char buf[64];
+SDL_snprintf(buf, sizeof(buf), "%s##j%d",
+             langGetText(STR_DLGLOBBY_JOIN_TEAM), teamId);
+if (ImGui::SmallButton(buf)) { ... }
+```
+
+**TOOLTIP_FMT** — `ImGui::SetTooltip` is printf-style, so wrap the
+localized text in `"%s"` to defuse any literal `%` in the
+translation:
+
+```c
+ImGui::SetTooltip("%s", langGetTextFmt(STR_FOO, &args));
+```
+
+**MULTILINE** — adjacent C string literals collapse into one entry
+with literal `\n`:
+
+```c
+/* lang.c */
+{1306, "Remove every bot from the lobby before flagging\n"
+       "the game as Ranked. Ranked matches are humans-only."},
+```
+
+**PLURAL_PAIR** — plurals are two separate IDs branched at the call
+site, not smuggled through `{string1}`. Different languages have
+different plural rules (Polish 3 forms, Russian 3 forms, Japanese
+none); the singular/plural split is the simplest mechanism that
+works everywhere:
+
+```c
+if (count == 1) {
+    ImGui::Text("%s", langGetText(STR_DLGLOBBY_TEAM_MEMBERS_1));
+} else {
+    MessageArgs args = {};
+    args.number = count;
+    ImGui::Text("%s", langGetTextFmt(STR_DLGLOBBY_TEAM_MEMBERS_N, &args));
+}
+```
+
+### Adding a localized string
+
+1. **Allocate an ID.** Append after the highest existing `STR_*` in
+   `lang.h`; gaps in the numbering are historical and fine.
+2. **Add to `src/gui/lang.h`** under a section comment that names
+   the feature area. `dump_lang_en.py` uses these comments to group
+   entries in `en.txt`.
+3. **Add to `src/gui/sdl3/lang.c`** as `{<int>, "<English>"}`,
+   inserted in sorted order by ID.
+4. **Replace the call site** with `langGetText(STR_FOO)` or
+   `langGetTextFmt(STR_FOO, &args)` per the patterns above.
+5. **Regenerate** with `python3 tools/dump_lang_en.py`.
+
+**Reuse vs. new ID.** Short generic UI words (Yes, Cancel, OK) reuse
+the existing generic IDs (`STR_YES`, `STR_CANCEL`, `STR_OK`). Longer
+semantically-distinct strings get their own ID even when the English
+happens to match an existing entry — a translator may want to phrase
+a window title differently from a button that uses the same English
+words.
+
+**Server messages stay English.** The dedicated server's stdout and
+operator CLI use plain `printf` / `fprintf(stderr, ...)`,
+intentionally. Don't reach into the lang module from `src/server/`.
+
+### Translation files
+
+Per-language overrides live at `data/lang/<code>.txt`. The codes are
+SDL's `SDL_GetPreferredLocales()` codes (lowercase ISO 639 + optional
+region: `en`, `de`, `pt-BR`, `zh-CN`). Currently shipped: cs, de, en,
+es, fr, it, ja, ko, nl, pl, pt-BR, ru, sv, tr, uk, zh-CN, zh-TW.
+
+File format:
+
+```
+# Header (shown in the language picker)
+name=Deutsch
+author=Translator Name
+notes=Free-form notes.
+
+# Free-form section comment (ignored by parser, only for humans)
+STR_FOO=Translated text
+STR_BAR=Another translation
+```
+
+Parser behavior (`langLoadFile` in `src/gui/sdl3/lang.c`):
+
+- `name=`, `author=`, `notes=` populate `LangFileMeta` for the
+  picker UI.
+- `STR_*=` lines override the English baseline for that ID. The
+  symbolic name resolves via `lang_names.inc`.
+- Blank lines and `#`-prefixed comments are ignored.
+- Unknown IDs are silently skipped. Missing IDs fall back to
+  English at runtime — partial translation is fine.
+
+### Updating translations after adding strings
+
+After adding new IDs and running `dump_lang_en.py`:
+
+1. The new entries appear in `data/lang/en.txt` under the section
+   comment you added to `lang.h`.
+2. For each `data/lang/<code>.txt`, append the new entries with
+   their translations. Section comments are optional but help the
+   next translator find their place.
+3. Preserve named placeholders verbatim. They may be reordered to
+   fit target-language word order, but not renamed or removed.
+4. Preserve `\n` escape sequences.
+5. Plural pairs (`STR_FOO_1` / `STR_FOO_N`) translate independently
+   — different languages need different forms.
+6. Partial coverage is fine. Untranslated IDs fall back to English.
+
+**Validation tools.** `tools/validate_lang.py` checks placeholder
+consistency between `en.txt` and each translation (catches `{numer}`
+typos). `tools/test_lang_roundtrip.py` confirms `en.txt` round-trips
+through `dump_lang_en.py`.
+
 ## WinBolo.net subsystem
 
 The WinBolo.net (WBN) integration is split across three sibling

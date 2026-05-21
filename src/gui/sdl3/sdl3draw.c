@@ -46,6 +46,9 @@
 #include "sdl3draw.h"
 #include "sdl3draw_status.h"
 #include "sdl3imgui.h"
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
+#include "dialogs/imgui_news.h"
+#endif
 #include "cursor.h"
 #include "mapview.h"
 #include "../clientmutex.h"
@@ -54,7 +57,6 @@
 #include "tileloader.h"
 #include "sdl_bmp.h"
 #include "global.h"
-#include "client_render.h"
 #include "client_sim.h"
 #include "../gamefront.h"
 #include "tilenum.h"
@@ -62,6 +64,7 @@
 #include "screenbullet.h"
 #include "screentank.h"
 #include "screenlgm.h"
+#include "client_render.h"
 #include "macos_pinch.h"
 
 /* From gui/winbolo.h (can't include directly — Win32 headers) */
@@ -409,6 +412,26 @@ static void sdl3RenderStatusPanels(void) {
 
 int sdl3DrawGetZoomFactor(void) {
   return gZoomFactor;
+}
+
+/* Expose the live game-render destination rect + scale so UI code can
+ * position ImGui overlays in actual on-screen pixels.
+ *
+ *   on-screen X = gGameDestRect.x + sourceX * gGameScale
+ *
+ * In CUSTOM/ceiling-integer zoom mode the game is drawn into an
+ * off-screen render target at `gZoomFactor` and then blitted into
+ * gGameDestRect, possibly at a non-integer gGameScale. Multiplying
+ * source unscaled coords by gZoomFactor alone is wrong when the
+ * window has been resized to a fractional effective zoom (e.g.
+ * maximized between 3x and 4x). */
+void sdl3DrawGetGameRect(float *destX, float *destY,
+                          float *destW, float *destH, float *scale) {
+  if (destX) *destX = gGameDestRect.x;
+  if (destY) *destY = gGameDestRect.y;
+  if (destW) *destW = gGameDestRect.w;
+  if (destH) *destH = gGameDestRect.h;
+  if (scale) *scale = gGameScale;
 }
 
 SDL_Window *sdl3DrawGetWindow(void) {
@@ -1005,6 +1028,16 @@ void sdl3DrawCleanup(void) {
 
   /* ImGui cleanup before destroying renderer/window */
   sdl3ImguiCleanup();
+
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
+  /* News popup teardown sits in this process-exit hook (not in
+   * sdl3ImguiCleanup) because sdl3ImguiCleanup also fires on every
+   * game-end / return-to-lobby transition — releasing the fetch
+   * handle there would prevent the View News button from working
+   * after the first game. The SDL renderer is still alive here, so
+   * newsImageCacheShutdown's SDL_DestroyTexture calls land cleanly. */
+  newsPopupShutdown();
+#endif
 
   /* Phase 5 — destroy text/label caches via the status module (which
      owns them since Phase C of plans/ctrailer.md), then close fonts

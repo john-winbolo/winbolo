@@ -40,6 +40,7 @@
 #include "../gui/lang.h"
 #include "../gui/tiles.h"
 #include "../gui/sdl3/minimap_render.h"
+#include "../gui/sdl3/dialogs/dialog_footer.h"
 
 static SDL_Renderer *s_meRenderer = nullptr;
 
@@ -326,33 +327,22 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
 
 int mapEditorImguiUnsavedModal(void) {
     int result = 0;
-    if (ImGui::BeginPopupModal(langGetText(STR_MAPEDIT_UNSAVED_TITLE), nullptr,
+    static bool s_unsavedOpen = true; s_unsavedOpen = true;
+    if (ImGui::BeginPopupModal(langGetText(STR_MAPEDIT_UNSAVED_TITLE), &s_unsavedOpen,
                                ImGuiWindowFlags_AlwaysAutoResize |
                                ImGuiWindowFlags_NoMove)) {
         ImGui::TextUnformatted(langGetText(STR_MAPEDIT_UNSAVED_BLURB));
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        float buttonW = 80.0f;
-        float spacing = ImGui::GetStyle().ItemSpacing.x;
-        float totalW = buttonW * 3 + spacing * 2;
-        float startX = (ImGui::GetContentRegionAvail().x - totalW) * 0.5f;
-        if (startX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
-
-        if (ImGui::Button(langGetText(STR_YES), ImVec2(buttonW, 0))) {
-            result = 1;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_NO), ImVec2(buttonW, 0))) {
-            result = 2;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(buttonW, 0))) {
-            result = 3;
-            ImGui::CloseCurrentPopup();
+        /* [Cancel: stay][Destructive: No=discard][Primary: Yes=save]
+         * Return codes preserved: 1=save, 2=discard, 3=cancel. */
+        int f = WBUI::DialogFooter3(langGetText(STR_CANCEL),
+                                    langGetText(STR_NO),
+                                    langGetText(STR_YES));
+        if (f == WBUI::FOOTER_CONFIRM) {
+            result = 1; ImGui::CloseCurrentPopup();
+        } else if (f == WBUI::FOOTER_DESTRUCTIVE) {
+            result = 2; ImGui::CloseCurrentPopup();
+        } else if (f == WBUI::FOOTER_CANCEL) {
+            result = 3; ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }
@@ -361,17 +351,14 @@ int mapEditorImguiUnsavedModal(void) {
 
 bool mapEditorImguiErrorModal(const char *message) {
     bool dismissed = false;
-    if (ImGui::BeginPopupModal(langGetText(STR_ERR_TITLE), nullptr,
+    static bool s_meErrOpen = true; s_meErrOpen = true;
+    if (ImGui::BeginPopupModal(langGetText(STR_ERR_TITLE), &s_meErrOpen,
                                ImGuiWindowFlags_AlwaysAutoResize |
                                ImGuiWindowFlags_NoMove)) {
         ImGui::TextWrapped("%s", message);
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        float buttonW = 80.0f;
-        float startX = (ImGui::GetContentRegionAvail().x - buttonW) * 0.5f;
-        if (startX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
-        if (ImGui::Button(langGetText(STR_OK), ImVec2(buttonW, 0))) {
+        int f = WBUI::DialogFooter(/*cancelLabel*/ nullptr,
+                                   langGetText(STR_OK));
+        if (f != WBUI::FOOTER_NONE) {
             dismissed = true;
             ImGui::CloseCurrentPopup();
         }
@@ -1295,7 +1282,8 @@ bool mapEditorImguiGotoDialog(int *gotoX, int *gotoY) {
     static int inputY = 128;
     bool confirmed = false;
 
-    if (ImGui::BeginPopupModal(langGetText(STR_MAPEDIT_GOTO_TITLE), nullptr,
+    static bool s_gotoOpen = true; s_gotoOpen = true;
+    if (ImGui::BeginPopupModal(langGetText(STR_MAPEDIT_GOTO_TITLE), &s_gotoOpen,
                                 ImGuiWindowFlags_AlwaysAutoResize |
                                 ImGuiWindowFlags_NoMove)) {
         /* Focus X field on first appearance */
@@ -1305,18 +1293,10 @@ bool mapEditorImguiGotoDialog(int *gotoX, int *gotoY) {
         ImGui::InputInt(langGetText(STR_MAPEDIT_GOTO_X), &inputX);
         ImGui::InputInt(langGetText(STR_MAPEDIT_GOTO_Y), &inputY);
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        float buttonW = 80.0f;
-        float spacing = ImGui::GetStyle().ItemSpacing.x;
-        float totalW = buttonW * 2 + spacing;
-        float startXPos = (ImGui::GetContentRegionAvail().x - totalW) * 0.5f;
-        if (startXPos > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startXPos);
-
-        if (ImGui::Button(langGetText(STR_OK), ImVec2(buttonW, 0)) ||
-            ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+        int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                   langGetText(STR_OK),
+                                   /*enterConfirms*/ true);
+        if (f == WBUI::FOOTER_CONFIRM) {
             /* Clamp to valid range */
             if (inputX < 0) inputX = 0;
             if (inputX > 255) inputX = 255;
@@ -1326,10 +1306,7 @@ bool mapEditorImguiGotoDialog(int *gotoX, int *gotoY) {
             *gotoY = inputY;
             confirmed = true;
             ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(buttonW, 0)) ||
-            ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        } else if (f == WBUI::FOOTER_CANCEL) {
             ImGui::CloseCurrentPopup();
         }
 
@@ -1426,19 +1403,16 @@ void mapEditorImguiValidationPanel(const void *issuesPtr, int count,
 
 bool mapEditorImguiValidationErrorModal(int errorCount) {
     bool dismissed = false;
-    if (ImGui::BeginPopupModal(langGetText(STR_MAPEDIT_VAL_ERRORS_TITLE), nullptr,
+    static bool s_valErrOpen = true; s_valErrOpen = true;
+    if (ImGui::BeginPopupModal(langGetText(STR_MAPEDIT_VAL_ERRORS_TITLE), &s_valErrOpen,
                                 ImGuiWindowFlags_AlwaysAutoResize |
                                 ImGuiWindowFlags_NoMove)) {
         MessageArgs args = {};
         args.number = errorCount;
         ImGui::TextUnformatted(langGetTextFmt(STR_MAPEDIT_VAL_HASERRORS, &args));
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        float buttonW = 80.0f;
-        float startX = (ImGui::GetContentRegionAvail().x - buttonW) * 0.5f;
-        if (startX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
-        if (ImGui::Button(langGetText(STR_OK), ImVec2(buttonW, 0))) {
+        int f = WBUI::DialogFooter(/*cancelLabel*/ nullptr,
+                                   langGetText(STR_OK));
+        if (f != WBUI::FOOTER_NONE) {
             dismissed = true;
             ImGui::CloseCurrentPopup();
         }
@@ -1489,14 +1463,10 @@ bool mapEditorImguiGenerateDialog(bool *open, MapGenConfig *cfg,
 
     bool generated = mapGenImguiControls(cfg) || justOpened;
 
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    float buttonW = 100.0f;
-    float startX = (ImGui::GetContentRegionAvail().x - buttonW) * 0.5f;
-    if (startX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
-
-    if (ImGui::Button(langGetText(STR_CLOSE), ImVec2(buttonW, 0))) {
+    /* Close is affirmative ("I'm done generating"), not a cancel. */
+    int f = WBUI::DialogFooter(/*cancelLabel*/ nullptr,
+                               /*confirmLabel*/ langGetText(STR_CLOSE));
+    if (f != WBUI::FOOTER_NONE) {
         *open = false;
     }
 
@@ -2691,7 +2661,8 @@ int mapEditorImguiStampLibrary(StampLibrary *lib, void *rendererPtr,
 int mapEditorImguiSaveStampModal(char *name, int nameLen) {
     int result = 0;
 
-    if (ImGui::BeginPopupModal(langGetText(STR_MAPEDIT_STAMP_SAVE_TITLE), nullptr,
+    static bool s_stampOpen = true; s_stampOpen = true;
+    if (ImGui::BeginPopupModal(langGetText(STR_MAPEDIT_STAMP_SAVE_TITLE), &s_stampOpen,
                                ImGuiWindowFlags_AlwaysAutoResize |
                                ImGuiWindowFlags_NoMove)) {
         ImGui::TextUnformatted(langGetText(STR_MAPEDIT_STAMP_SAVE_BLURB));
@@ -2703,21 +2674,17 @@ int mapEditorImguiSaveStampModal(char *name, int nameLen) {
         bool enter = ImGui::InputText(langGetText(STR_MAPEDIT_STAMP_SAVE_NAME), name, (size_t)nameLen,
                                        ImGuiInputTextFlags_EnterReturnsTrue);
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
         bool canSave = name[0] != '\0';
 
-        if (!canSave) ImGui::BeginDisabled();
-        if (ImGui::Button(langGetText(STR_MAPEDIT_SAVE_BTN), ImVec2(80, 0)) || (enter && canSave)) {
+        int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                   langGetText(STR_MAPEDIT_SAVE_BTN),
+                                   /*enterConfirms*/ true,
+                                   /*showSeparator*/ true,
+                                   /*confirmDisabled*/ !canSave);
+        if (f == WBUI::FOOTER_CONFIRM || (enter && canSave)) {
             result = 1;
             ImGui::CloseCurrentPopup();
-        }
-        if (!canSave) ImGui::EndDisabled();
-
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(80, 0))) {
+        } else if (f == WBUI::FOOTER_CANCEL) {
             result = 2;
             ImGui::CloseCurrentPopup();
         }
@@ -2815,17 +2782,9 @@ bool mapEditorImguiExportDialog(bool *open, ExportConfig *cfg,
     ImGui::Checkbox(langGetText(STR_MAPEDIT_EXPORT_SHOWGRID), &cfg->showGrid);
     if (cfg->mode == ME_EXPORT_PREVIEW) ImGui::EndDisabled();
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    /* Buttons */
-    float buttonW = 90.0f;
-    float totalW = buttonW * 2 + ImGui::GetStyle().ItemSpacing.x;
-    float avail = ImGui::GetContentRegionAvail().x;
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - totalW) * 0.5f);
-
-    if (ImGui::Button(langGetText(STR_MAPEDIT_EXPORT_BTN), ImVec2(buttonW, 0))) {
+    int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                               langGetText(STR_MAPEDIT_EXPORT_BTN));
+    if (f == WBUI::FOOTER_CONFIRM) {
         if (!s_exportDialogPending) {
             SDL_DialogFileFilter filters[] = {
                 { "PNG Images", "png" },
@@ -2834,9 +2793,7 @@ bool mapEditorImguiExportDialog(bool *open, ExportConfig *cfg,
             s_exportDialogGotResult = false;
             SDL_ShowSaveFileDialog(meExportFileDialogCallback, nullptr, window, filters, 1, nullptr);
         }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(buttonW, 0))) {
+    } else if (f == WBUI::FOOTER_CANCEL) {
         *open = false;
         ImGui::CloseCurrentPopup();
     }

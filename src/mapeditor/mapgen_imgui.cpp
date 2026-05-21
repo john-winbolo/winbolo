@@ -168,6 +168,7 @@ static void restoreLockedTournamentParams(MapGenConfig *cfg,
     if (lk & MAPGEN_LOCK_T_LANDMASS)  t.landMassPct = s.landMassPct;
     if (lk & MAPGEN_LOCK_T_ROUGHNESS) t.roughness = s.roughness;
     if (lk & MAPGEN_LOCK_T_ROADS)     t.includeRoads = s.includeRoads;
+    if (lk & MAPGEN_LOCK_T_WATERBARRIER) t.waterBarrier = s.waterBarrier;
 }
 
 static void restoreLockedNaturalParams(MapGenConfig *cfg,
@@ -248,6 +249,49 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
     }
 
+    /* Slider / combo / input widths default to 50% of the available
+     * column width, with the label (rendered to the right of each
+     * widget) getting the other 50%. As the column shrinks, the
+     * widget compresses ahead of the label: we ensure at least
+     * kLabelReserve px is always left for the label text, so once
+     * the panel gets narrow the widget starts losing more pixels
+     * than the label area. Min widget 40 px so sliders don't
+     * collapse to a track-only hairline. The seed InputText has its
+     * own explicit SetNextItemWidth(200) and is not affected. */
+    {
+        const float kLabelReserve = 100.0f;
+        const float kWidgetMin    = 40.0f;
+        float availW = ImGui::GetContentRegionAvail().x;
+        float widgetW = availW * 0.5f;
+        if (widgetW > availW - kLabelReserve) {
+            widgetW = availW - kLabelReserve;
+        }
+        if (widgetW < kWidgetMin) widgetW = kWidgetMin;
+        ImGui::PushItemWidth(widgetW);
+    }
+
+    /* Lock all / Unlock all — bulk toggles for every per-control
+     * lock. "Lock all" sets every MAPGEN_LOCK_* bit EXCEPT the
+     * seed, so Randomize still rolls a fresh seed (otherwise the
+     * button would freeze randomization entirely). Unlock clears
+     * every bit. */
+    {
+        if (ImGui::Button("Lock all")) {
+            cfg->locks = ~0ULL & ~((uint64_t)MAPGEN_LOCK_SEED);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Except for Seed");
+        }
+        const char *unlockLbl = "Unlock all";
+        float btnW = ImGui::CalcTextSize(unlockLbl).x
+                   + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SameLine();
+        if (ImGui::GetContentRegionAvail().x < btnW) ImGui::NewLine();
+        if (ImGui::Button(unlockLbl)) {
+            cfg->locks = 0ULL;
+        }
+    }
+
     /* Generator type */
     int prevGenType = cfg->genType;
     const char *s_genTypeNames[MAPGEN_TYPE_COUNT] = {
@@ -298,7 +342,17 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     }
     seedFieldActive = ImGui::IsItemActive();
     lockButton("lk_seed", &cfg->locks, MAPGEN_LOCK_SEED);
-    ImGui::SameLine();
+    /* Randomize and Copy Seed are SameLine'd against the seed input
+     * but flow to a new line when the enclosing region is too narrow
+     * to fit them — e.g. when the chooser's list/preview splitter is
+     * dragged left to give the preview most of the width. */
+    {
+        const char *lbl = langGetText(STR_MAPGEN_RANDOMIZE);
+        float btnW = ImGui::CalcTextSize(lbl).x
+                   + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SameLine();
+        if (ImGui::GetContentRegionAvail().x < btnW) ImGui::NewLine();
+    }
     if (ImGui::Button(langGetText(STR_MAPGEN_RANDOMIZE))) {
         uint32_t rng = (uint32_t)SDL_GetTicksNS();
         uint64_t lk = cfg->locks;
@@ -323,6 +377,8 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
             if (!(lk & MAPGEN_LOCK_T_LANDMASS))  t.landMassPct = (int)(mapGenXorshift32(&rng) % 25) + 1;
             if (!(lk & MAPGEN_LOCK_T_ROUGHNESS)) t.roughness = (int)(mapGenXorshift32(&rng) % MAPGEN_ROUGH_COUNT);
             if (!(lk & MAPGEN_LOCK_T_ROADS))     t.includeRoads = (mapGenXorshift32(&rng) & 1) != 0;
+            if (!(lk & MAPGEN_LOCK_T_WATERBARRIER))
+                t.waterBarrier = (int)(mapGenXorshift32(&rng) % 6);
         } else if (cfg->genType == MAPGEN_NATURAL) {
             auto &n = cfg->params.natural;
             if (!(lk & MAPGEN_LOCK_N_STYLE)) {
@@ -367,7 +423,13 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
         generated = true;
     }
-    ImGui::SameLine();
+    {
+        const char *lbl = langGetText(STR_DLGGAMEINFO_COPYSEED);
+        float btnW = ImGui::CalcTextSize(lbl).x
+                   + ImGui::GetStyle().FramePadding.x * 2.0f;
+        ImGui::SameLine();
+        if (ImGui::GetContentRegionAvail().x < btnW) ImGui::NewLine();
+    }
     if (ImGui::Button(langGetText(STR_DLGGAMEINFO_COPYSEED))) {
         mapGenConfigToSeed(cfg, seedBuf, sizeof(seedBuf));
         SDL_SetClipboardText(seedBuf);
@@ -397,6 +459,10 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
         lockButton("lk_rough", &cfg->locks, MAPGEN_LOCK_T_ROUGHNESS);
         ImGui::Checkbox(langGetText(STR_MAPGEN_INCLUDE_ROADS), &t.includeRoads);
         lockButton("lk_roads", &cfg->locks, MAPGEN_LOCK_T_ROADS);
+        /* Water barrier: N-tile-thick RIVER (shallow-water) rim
+         * around every landmass. 0 = none, 5 = thick coastline. */
+        ImGui::SliderInt("Water Barrier", &t.waterBarrier, 0, 5);
+        lockButton("lk_waterbarrier", &cfg->locks, MAPGEN_LOCK_T_WATERBARRIER);
 
     } else if (cfg->genType == MAPGEN_NATURAL) {
         auto &n = cfg->params.natural;
@@ -567,6 +633,9 @@ bool mapGenImguiControls(MapGenConfig *cfg) {
     lockButton("lk_pills", &cfg->locks, MAPGEN_LOCK_PILLS);
     ImGui::SliderInt(langGetText(STR_MAPEDIT_STATS_STARTS), &cfg->starts, 0, 16);
     lockButton("lk_starts", &cfg->locks, MAPGEN_LOCK_STARTS);
+
+    /* Matched with the PushItemWidth at the top of the function. */
+    ImGui::PopItemWidth();
 
     /* Detect parameter changes (ignore lock-only changes) */
     if (!generated) {

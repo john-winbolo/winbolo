@@ -135,6 +135,10 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
                                  password, cfg->maxPlayers) == FALSE) {
       return FALSE;
     }
+    transportUdpServerSetUploadConfig(cfg->uploadPolicy,
+                                      cfg->uploadMaxFiles,
+                                      cfg->uploadMaxStorageBytes);
+    serverSimSetUploadPolicy(sim, cfg->uploadPolicy);
   }
 
   instanceUseWbn = cfg->acceptRemoteClients && cfg->useWbn;
@@ -231,11 +235,16 @@ void serverInstanceTick(ServerSim *sim) {
     /* If game ended during this tick, publish game-over events */
     if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
       if (sim->lobbyEnabled) {
-        /* Capture win message now while game state is intact;
-         * it will be sent after players return to the lobby. */
-        serverSimBuildWinMessage(sim,
-                                 sim->pendingWinMessage,
-                                 sizeof(sim->pendingWinMessage));
+        if (serverSimConsumeSuppressNextWinMessage(sim)) {
+          /* Vote-driven game end already announced itself. */
+          sim->pendingWinMessage[0] = '\0';
+        } else {
+          /* Capture win message now while game state is intact;
+           * it will be sent after players return to the lobby. */
+          serverSimBuildWinMessage(sim,
+                                   sim->pendingWinMessage,
+                                   sizeof(sim->pendingWinMessage));
+        }
         serverSimSendWbnWinEvents(sim);
       }
       {
@@ -536,6 +545,12 @@ void serverInstanceShutdown(ServerSim *sim) {
   probeReflexivePort   = 0;
   manualProbeState     = MANUAL_PROBE_IDLE;
   manualProbeWaitTicks = 0;
+}
+
+bool serverInstanceIsNatPunchActive(void) {
+  /* No mutex needed — these are plain bools written once at startup
+   * / cleared once at shutdown. */
+  return instanceUseNatKeepalive && instanceUseTracker;
 }
 
 void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {

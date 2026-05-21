@@ -31,6 +31,12 @@
 #include "wire_limits.h"  /* PACKET_MAX_PLAYER_NAME */
 #include "client_enums.h" /* netStatus, gameType */
 #include "client_sim.h"   /* ClientLobbySlot */
+#include "brain_list.h"   /* BrainList for CTRL_LOBBY_BRAIN_LIST */
+#include "upload_policy.h" /* UploadPolicy in lobbySettings */
+
+#ifndef LOBBY_TEAM_NAME_LEN
+#define LOBBY_TEAM_NAME_LEN 32
+#endif
 
 typedef enum {
     CTRL_ALLIANCE_REQUEST,
@@ -49,6 +55,14 @@ typedef enum {
     CTRL_SERVER_SHUTDOWN,
     CTRL_CHAT,
     CTRL_PLAYER_LEAVE,
+    /* Lobby state-change variants — per-team metadata, per-bot config,
+     * per-bot brain path, brain-list catalogue. */
+    CTRL_LOBBY_TEAM_META,
+    CTRL_LOBBY_BOT_CONFIG,
+    CTRL_LOBBY_BOT_BRAIN,
+    CTRL_LOBBY_BRAIN_LIST,
+    CTRL_GAME_VOTE_STATE,
+    CTRL_SERVER_TEXT,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -129,6 +143,16 @@ typedef struct ControlEvent {
             bool     mapSkipAvailable;
             netStatus netStat;
             bool     inLobby;
+            /* Layout A flags */
+            bool     lobbyOpenHost;
+            bool     lobbyAutoLockOnGameStart;
+            bool     lobbyRanked;
+            bool     lobbyAllowNewPlayers;
+            bool     lobbyWbnAvailable;  /* host's winbolonetIsRunning() —
+                                          * gates WBN-only UI (Balance
+                                          * from WBN) on remote clients */
+            uint16_t lobbyServerLocks;
+            UploadPolicy uploadPolicy;
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */
@@ -179,6 +203,64 @@ typedef struct ControlEvent {
             uint16_t bodyLen;
             uint8_t  body[CHAT_BODY_MAX];
         } chat;
+
+        /* CTRL_LOBBY_TEAM_META — per-team presentation (name, color,
+         * naming pool, in_use). teamId 0 is the unassigned sentinel
+         * and is never carried by this event. */
+        struct {
+            uint8_t teamId;        /* 1..MAX_TANKS-1 */
+            uint8_t in_use;
+            uint8_t color;
+            uint8_t namingPool;
+            char    name[LOBBY_TEAM_NAME_LEN];
+        } lobbyTeamMeta;
+
+        /* CTRL_LOBBY_BOT_CONFIG — per-bot difficulty/personality +
+         * the display name pulled from the players table at fill
+         * time. (Name is informational here — players.c remains the
+         * source of truth via CTRL_PLAYER_NAME / lobbySlot.) */
+        struct {
+            uint8_t slot;
+            uint8_t difficulty;
+            uint8_t personality;
+            char    name[PACKET_MAX_PLAYER_NAME];
+        } lobbyBotConfig;
+
+        /* CTRL_LOBBY_BOT_BRAIN — per-bot brain selection as an index
+         * into the server's brain catalogue. brainIdx == 0xFF means
+         * "fall back to the server's global bot brain". */
+        struct {
+            uint8_t slot;
+            uint8_t brainIdx;
+        } lobbyBotBrain;
+
+        /* CTRL_LOBBY_BRAIN_LIST — server's discovered brain catalogue,
+         * used to populate the AiConfig combobox. */
+        struct {
+            BrainList list;
+        } lobbyBrainList;
+
+        /* CTRL_SERVER_TEXT — server-originated chat broadcast.
+         * Mirrors what UDP clients receive as
+         * PACKET_CHAT_BROADCAST(fromPlayer=0xFE). Lets in-process
+         * subscribers (SP / host) see the same lines. */
+        struct {
+            char text[PACKET_MAX_CHAT_MESSAGE + 1];
+        } serverText;
+
+        /* CTRL_GAME_VOTE_STATE — mirrors PACKET_GAME_VOTE_STATE. */
+        struct {
+            uint8_t  kind;             /* GAME_VOTE_KIND_* */
+            uint8_t  active;           /* GAME_VOTE_ACTIVE_* */
+            uint8_t  triggerSrc;       /* GAME_VOTE_TRIGGER_* */
+            uint8_t  teamId;           /* surrender only; 0 = all-teams */
+            uint8_t  threshold;        /* yes-count needed to pass */
+            uint8_t  yesCount;
+            uint8_t  noCount;
+            uint8_t  eligibleCount;
+            uint8_t  secondsRemaining; /* 0..60 */
+            uint16_t votes;            /* bitmask of slots that voted yes */
+        } gameVoteState;
     } u;
 } ControlEvent;
 

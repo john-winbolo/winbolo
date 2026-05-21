@@ -422,6 +422,7 @@ STR_DLGLOBBY_BOT_FMT={player} [Bot]
 STR_DLGLOBBY_YOU_FMT={player} (Sie)
 STR_DLGLOBBY_STARTING_FMT=Start in {number}...
 STR_DLGLOBBY_LOSTCONNECTION=Sie haben die Verbindung zum Server verloren.
+STR_DLGLOBBY_KICKED=Sie wurden vom Server gekickt.
 STR_DLGLOBBY_ME=Ich
 STR_DLGLOBBY_PLAYER_COL=Spieler
 STR_DLGLOBBY_PING_COL=Ping
@@ -1071,10 +1072,10 @@ STR_DLGLOBBY_PORTMAP_CHECKING=Erreichbarkeit des Servers wird geprüft…
 STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Server erreichbar
 STR_DLGLOBBY_PORTMAP_UNREACHABLE=Server nicht erreichbar
 STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Versuche, einen Firewall-Port über UPnP / NAT-PMP zu öffnen und zu bestätigen, dass der Tracker dich durch dein Netzwerk erreichen kann. Dies dauert normalerweise weniger als 30 Sekunden.
-STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port automatisch per UPnP/NAT-PMP auf %s:%u weitergeleitet. Beitretende Spieler verbinden sich direkt, ohne weitere Schritte.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port automatisch per UPnP/NAT-PMP auf {string1}:{number} weitergeleitet. Beitretende Spieler verbinden sich direkt, ohne weitere Schritte.
 STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Direkte Portweiterleitung konnte nicht eingerichtet werden, aber NAT-Traversal ist aktiv. Beitretende Spieler koordinieren sich über den Tracker, um die Firewall deines Netzwerks zu durchbrechen. Dies funktioniert in den meisten Heimnetzwerken; Spieler hinter symmetrischem NAT oder Carrier-Grade-NAT können sich möglicherweise trotzdem nicht verbinden.
-STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Symmetrisches NAT erkannt — dein Netzwerk schreibt den Quellport für jedes Ziel um, was verhindert, dass beitretende Spieler dich selbst per NAT-Traversal erreichen können. Um erfolgreich zu hosten, leite den UDP-Port %u manuell auf deinem Router an diesen Rechner weiter.
-STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Es konnte kein Firewall-Port automatisch geöffnet werden (UPnP/NAT-PMP verweigert oder nicht verfügbar) und der Tracker konnte die bidirektionale Erreichbarkeit nicht bestätigen. Um erfolgreich zu hosten, leite den UDP-Port %u manuell auf deinem Router an diesen Rechner weiter.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Symmetrisches NAT erkannt — dein Netzwerk schreibt den Quellport für jedes Ziel um, was verhindert, dass beitretende Spieler dich selbst per NAT-Traversal erreichen können. Um erfolgreich zu hosten, leite den UDP-Port {number} manuell auf deinem Router an diesen Rechner weiter.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Es konnte kein Firewall-Port automatisch geöffnet werden (UPnP/NAT-PMP verweigert oder nicht verfügbar) und der Tracker konnte die bidirektionale Erreichbarkeit nicht bestätigen. Um erfolgreich zu hosten, leite den UDP-Port {number} manuell auf deinem Router an diesen Rechner weiter.
 STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Server-Erreichbarkeit
 STR_DLGLOBBY_TEST_CONNECTIVITY=Verbindung testen
 STR_DLGLOBBY_TEST_TESTING=Teste…
@@ -1156,3 +1157,155 @@ STR_MENU_FIND_LAN_GAME=LAN-Spiel suchen…
 STR_MENU_JOIN_BY_ADDRESS=Mit Adresse beitreten…
 STR_MENU_OPEN_MAP_EDITOR=Karteneditor öffnen
 STR_MENU_OPEN_LOG_VIEWER=Log-Viewer öffnen
+
+# Settings → Network: WinBolo.net news auto-show toggle.
+STR_DLGSETTINGS_NEWS_AUTOSHOW=Neuigkeiten von winbolo.net beim Start anzeigen
+
+# News popup + welcome News button strings.
+STR_DLGWELCOME_NEWS=Neuigkeiten
+STR_DLGNEWS_TITLE=Neuigkeiten
+STR_DLGNEWS_CONSENT_TITLE=WinBolo News
+STR_DLGNEWS_CONSENT_BODY1=WinBolo kann Ihnen beim Spielstart neue Beiträge von winbolo.net anzeigen. WBN wird einmalig beim Start abgefragt und dieses Fenster nur geöffnet, wenn es etwas Neues gibt.
+STR_DLGNEWS_CONSENT_BODY2=Sie können dies jederzeit in den Einstellungen ändern.
+STR_DLGNEWS_SHOW=Neuigkeiten anzeigen
+STR_DLGNEWS_DONT_SHOW=Nicht anzeigen
+STR_DLGNEWS_LOADING=Wird geladen…
+STR_DLGNEWS_DONT_AUTOSHOW=Neuigkeiten künftig nicht automatisch anzeigen
+STR_DLGNEWS_COMMENTS_FMT=Kommentare: {number}
+
+# Map chooser (window title, tabs, action buttons, close-confirm popup)
+STR_DLGLOBBY_CHOOSEMAP_TITLE=Karte wählen
+STR_DLGLOBBY_TAB_SERVERMAPS=Server-Karten
+STR_DLGLOBBY_TAB_LOCALMAPS=Lokale Karten
+STR_DLGLOBBY_TAB_UPLOAD=Hochladen
+STR_DLGLOBBY_TAB_GENERATE=Generieren
+STR_DLGLOBBY_TAB_WBNMAPS=Winbolo.net-Karten
+STR_DLGLOBBY_CLOSEMAP_PROMPT=Sie haben eine andere Karte in der Vorschau angezeigt.
+STR_DLGLOBBY_CLOSEMAP_QUESTION=Was möchten Sie tun?
+STR_DLGLOBBY_USETHISMAP=Diese Karte verwenden
+STR_DLGLOBBY_REVERTCLOSE=Zurücksetzen und schließen
+STR_DLGLOBBY_KEEPPICKING=Weiter suchen
+STR_DLGLOBBY_CANCEL_MAPCHOOSER=Abbrechen
+STR_DLGLOBBY_CHOOSE_MAP_BTN=Karte wählen
+
+# Upload + WBN errors
+STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT=Ein anderer Upload ist bereits im Gange.
+STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Uploads auf diesem Server deaktiviert.
+STR_DLGLOBBY_UPLOAD_ERR_FULL=Karten-Bibliothek des Servers ist voll.
+STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=Zu viele Anfragen \xe2\x80\x94 bitte einen Moment warten, bevor Sie es erneut versuchen.
+STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Upload vom Server abgelehnt.
+STR_DLGLOBBY_WBN_ERR_DOWNLOAD=Download fehlgeschlagen
+STR_DLGLOBBY_WBN_ERR_BADRESPONSE=Ungültige Antwort von WinBolo.net
+STR_DLGLOBBY_WBN_ERR_NETERROR=Netzwerkfehler beim Abrufen der Karte
+STR_DLGLOBBY_WBN_ERR_HTTPERROR=WBN hat HTTP {number} zurückgegeben
+STR_DLGLOBBY_WBN_ERR_MAPFAILED=Karten-Download fehlgeschlagen
+STR_DLGLOBBY_WBN_ERR_TOOBIG=Karte überschreitet Upload-Limit von 64 KB
+STR_DLGLOBBY_WBN_ERR_OOM=Zu wenig Arbeitsspeicher für Upload-Warteschlange
+STR_DLGLOBBY_WBN_ERR_BADSEARCHRESPONSE=Ungültige Suchantwort von WinBolo.net
+
+# Allow-new-players + ranked-game controls
+STR_DLGLOBBY_ALLOW_NOW=Jetzt
+STR_DLGLOBBY_ALLOW_DURING=Während des Spiels
+STR_DLGLOBBY_TOOLTIP_ALLOWNOW=Neue Beitrittsanfragen jetzt annehmen, solange die Lobby offen ist.
+STR_DLGLOBBY_TOOLTIP_ALLOWDURING=Neue Spieler auch nach dem Spielstart annehmen.
+STR_DLGLOBBY_TOOLTIP_RANKED_AUTOLOCK=Ranked-Spiele sperren neue Spieler nach dem Spielstart aus.
+STR_DLGLOBBY_RANKED=Ranked-Spiel
+STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED=Vom Server-Administrator gesperrt.
+STR_DLGLOBBY_TOOLTIP_RANKED_NOTHOST=Nur der Gastgeber oder ein Admin kann das Ranked-Spiel umschalten.
+STR_DLGLOBBY_TOOLTIP_RANKED_BOTS=Entfernen Sie alle Bots aus der Lobby, bevor Sie das Spiel\nals Ranked kennzeichnen. Ranked-Matches sind ausschließlich für Menschen.
+STR_DLGLOBBY_TOOLTIP_RANKED_INFO=Ranked-Spiele verbieten Bots und erzwingen den Turnier-\nSpieltyp — kein „Offenes" vorausgerüstetes Spiel. Das Umschalten\nsetzt den Bereitschaftsstatus jedes Spielers zurück, damit der\nGastgeber die neue Konfiguration bestätigen kann.
+
+# Team-grouped player list + kick modal
+STR_DLGLOBBY_TEAM_HEADER=Team {number}
+STR_DLGLOBBY_TEAM_MEMBERS_1=· 1 Spieler
+STR_DLGLOBBY_TEAM_MEMBERS_N=· {number} Spieler
+STR_DLGLOBBY_TEAM_1BOT=1 Bot
+STR_DLGLOBBY_TEAM_NBOTS=Bots
+STR_DLGLOBBY_JOIN_TEAM=Beitreten
+STR_DLGLOBBY_TOOLTIP_JOIN=Zu Team {number} wechseln.
+STR_DLGLOBBY_BOT_NAMING=Bot-Benennung:
+STR_DLGLOBBY_ADDBOT_LBL=Bot hinzufügen
+STR_DLGLOBBY_TOOLTIP_ADDBOT=Einen Bot zu Team {number} hinzufügen, benannt aus dem gewählten Pool.
+STR_DLGLOBBY_TOOLTIP_RMTEAM=Team {number} entfernen (mitsamt seinen Bots).
+STR_DLGLOBBY_TOOLTIP_DRAG=Auf ein Team ziehen zum Verschieben
+STR_DLGLOBBY_TAG_HOST=HOST
+STR_DLGLOBBY_TAG_ADMIN=ADMIN
+STR_DLGLOBBY_TAG_BOT=BOT
+STR_DLGLOBBY_PILL_READY=BEREIT
+STR_DLGLOBBY_PILL_NOTREADY=NICHT BEREIT
+STR_DLGLOBBY_TOOLTIP_CONFIG=Bot konfigurieren
+STR_DLGLOBBY_TOOLTIP_RMBOT=Bot entfernen
+STR_DLGLOBBY_TOOLTIP_KICK=Spieler entfernen
+STR_DLGLOBBY_ADD_TEAM=Team hinzufügen
+STR_DLGLOBBY_UNASSIGNED_FMT=Ohne Zuordnung ({number}):
+STR_DLGLOBBY_KICK_FMT=„{player}" entfernen?
+
+# Bot AiConfig panel
+STR_DLGLOBBY_BOTCFG_NAME=Name (Überschreibung)
+STR_DLGLOBBY_BOTCFG_REROLL=Neu auswählen
+STR_DLGLOBBY_BOTCFG_REROLL_TIP=Einen neuen zufälligen Namen aus dem Team-Pool auswählen.
+STR_DLGLOBBY_BOTCFG_CODE=Bot-Code
+STR_DLGLOBBY_BOTCFG_NONE=(keine)
+STR_DLGLOBBY_BOTCFG_DIFFICULTY=Schwierigkeit
+STR_DLGLOBBY_BOTCFG_EASY=Einfach
+STR_DLGLOBBY_BOTCFG_NORMAL=Normal
+STR_DLGLOBBY_BOTCFG_HARD=Schwer
+STR_DLGLOBBY_BOTCFG_PERSONALITY=Persönlichkeit
+STR_DLGLOBBY_BOTCFG_AGGRESSIVE=Aggressiv
+STR_DLGLOBBY_BOTCFG_DEFENSIVE=Defensiv
+STR_DLGLOBBY_BOTCFG_SNIPER=Sniper
+STR_DLGLOBBY_BOTCFG_DONE=Fertig
+
+# Balance-from-WBN dialog
+STR_DLGLOBBY_BAL_BTN=Ausgleich von WBN
+STR_DLGLOBBY_BAL_POPUP_TITLE=Teams von WBN ausgleichen
+STR_DLGLOBBY_BAL_POPUP_BODY=Dadurch werden alle Teams in der Lobby gelöscht und durch zwei fähigkeitsbasierte Teams von winbolo.net ersetzt. Die neue Aufteilung tritt sofort in Kraft.
+STR_DLGLOBBY_BAL_POPUP_BOT_SINGULAR=Es befindet sich derzeit 1 Bot in der Lobby. Wählen Sie, ob der Bot an der ausgeglichenen Aufteilung teilnehmen oder für ein reines Mensch-gegen-Mensch-Match entfernt werden soll.
+STR_DLGLOBBY_BAL_POPUP_BOT_PLURAL=Es befinden sich derzeit {number} Bots in der Lobby. Wählen Sie, ob die Bots an der ausgeglichenen Aufteilung teilnehmen oder für ein reines Mensch-gegen-Mensch-Match entfernt werden sollen.
+STR_DLGLOBBY_BAL_BOTS_INCLUDED=Bots einbeziehen
+STR_DLGLOBBY_BAL_HUMANS_ONLY=Nur Menschen
+STR_DLGLOBBY_BAL_GO=Ausgleichen
+STR_DLGLOBBY_BAL_TOOLTIP_NOTHOST=Nur der Gastgeber oder ein Admin kann eine fähigkeits-\nbasierte Teamaufteilung von winbolo.net anfordern.
+STR_DLGLOBBY_BAL_TOOLTIP_NOTENOUGH=Mindestens zwei verbundene Spieler werden benötigt, bevor\ndie Lobby in ausgeglichene Teams aufgeteilt werden kann.
+STR_DLGLOBBY_BAL_TOOLTIP_INFO=winbolo.net bitten, die Lobby in zwei fähigkeitsbasierte\nTeams aufzuteilen. Die Aufteilung wird sofort angewendet,\nsobald WBN antwortet — bestehende Teams werden ersetzt.
+STR_DLGLOBBY_BAL_STATUS_ASKING=WBN wird gefragt\xe2\x80\xa6
+STR_DLGLOBBY_BAL_STATUS_BALANCED=Teams ausgeglichen
+STR_DLGLOBBY_BAL_STATUS_NOREPLY=Keine Antwort von WBN
+
+# Reject toast
+STR_DLGLOBBY_REJECT_DEFAULT=abgelehnt
+STR_DLGLOBBY_REJECT_NOTHOST=nur für Gastgeber
+STR_DLGLOBBY_REJECT_LOCKED=Einstellung vom Server gesperrt
+STR_DLGLOBBY_REJECT_INVALID=ungültige Anfrage
+STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Lobby-Änderung abgelehnt: {string1}
+
+# Lock badge fallback
+STR_DLGLOBBY_LOCK_BADGE=[gesperrt]
+
+# Ranked-shape tooltip
+STR_DLGLOBBY_RANKED_SHAPE_TIP=Ranked-Spiele erfordern genau zwei Teams mit gleicher\nGröße: 1v1, 2v2 oder 3v3 menschliche Spieler.\n(Aktuell {number} {string1}, Größen {number2} vs. {number3}.)
+STR_DLGLOBBY_RANKED_SHAPE_TEAM=Team
+STR_DLGLOBBY_RANKED_SHAPE_TEAMS=Teams
+
+# Game settings panel
+STR_DLGLOBBY_SETTINGS_HEADER=Spieleinstellungen
+STR_DLGLOBBY_OPENHOST_NOTE=Der Gastgeber hat allen Spielern erlaubt, Spieleinstellungen zu ändern.
+STR_DLGLOBBY_GAMETYPE_LBL=Spieltyp
+STR_DLGLOBBY_AI_SECTION_LBL=Computerspieler
+STR_DLGLOBBY_AI_NONE=Keine Computer-Panzer
+STR_DLGLOBBY_AI_ALLOW=Computer-Panzer erlauben
+STR_DLGLOBBY_AI_ADVANTAGE=Mit Vorteil erlauben
+STR_DLGLOBBY_AI_FULLADV=Mit vollem Vorteil erlauben
+STR_DLGLOBBY_OTHER_LBL=Sonstiges
+STR_DLGLOBBY_OPENHOST_CB=Alle Spieler dürfen Einstellungen ändern
+STR_DLGLOBBY_OPENHOST_TOOLTIP=Wenn aktiviert, kann jeder verbundene Spieler die Lobby-\nEinstellungen bearbeiten — einschließlich Kartenänderung,\nHinzufügen oder Entfernen von Bots und Teamwechsel.
+STR_DLGLOBBY_TIMELIMIT_MIN=Min
+STR_DLGLOBBY_PASSWORD_CB=Passwort
+STR_DLGLOBBY_PASSWORD_TOOLTIP=Wenn aktiviert, müssen neue Clients das Passwort eingeben,\num beizutreten. Bereits verbundene Spieler sind nicht betroffen.
+
+# Desktop header
+STR_DLGLOBBY_SERVERDISP_SP=Einzelspieler
+STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
+
+# Connectivity badge tooltip
+STR_DLGLOBBY_CONN_TEST_TIP=Test läuft

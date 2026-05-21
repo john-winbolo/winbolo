@@ -28,6 +28,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "dialog_footer.h"
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -124,6 +125,11 @@ extern "C" int imguiTrackerSetupShow(void) {
                      ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse);
 
+        /* Top-right close X — same as Cancel. */
+        if (WBUI::DrawPanelCloseX()) {
+            running = false;
+        }
+
         ImGui::Checkbox(langGetText(STR_DLGTRACKER_USETRACKER), &trackerEnabled);
         ImGui::Spacing();
 
@@ -145,15 +151,10 @@ extern "C" int imguiTrackerSetupShow(void) {
                          ImGuiInputTextFlags_CharsDecimal);
         if (!trackerEnabled) ImGui::EndDisabled();
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        float btnW = 80.0f;
-        float btnX = ((float)winW - btnW * 2 - 8.0f) / 2.0f;
-        ImGui::SetCursorPosX(btnX);
-
-        if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0))) {
+        int footer = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                        langGetText(STR_OK),
+                                        /*enterConfirms*/ true);
+        if (footer == WBUI::FOOTER_CONFIRM) {
             char *end;
             unsigned long pval = strtoul(portBuf, &end, 10);
             if (*end != '\0' || pval > 65535) {
@@ -165,14 +166,9 @@ extern "C" int imguiTrackerSetupShow(void) {
                 result = 1;
                 running = false;
             }
-        }
-        imguiHandOnHover();
-
-        ImGui::SameLine(0.0f, 8.0f);
-        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0))) {
+        } else if (footer == WBUI::FOOTER_CANCEL) {
             running = false;
         }
-        imguiHandOnHover();
 
         /* Error popup */
         static float s_fadeTrackerErr = 0.0f;

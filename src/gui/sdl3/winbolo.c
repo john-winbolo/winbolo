@@ -256,7 +256,23 @@ int main(int argc, char *argv[]) {
   wb_log_init("WinBolo", "WinBolo", "winbolo.log");
   atexit(wb_log_shutdown);
 
-  winbolonetCoreSetPreferencesPath("WinBolo.ini");
+  {
+    /* Resolve WinBolo.ini to an absolute path under SDL_GetPrefPath.
+     * Win32 WritePrivateProfileString with a relative filename writes
+     * to C:\Windows\<file>, which an unprivileged process can't touch,
+     * so the news / country-cache / WBN-host writes silently fail.
+     * gamefront.c::getPreferenceFilePath already uses this trick for
+     * SETTINGS keys — mirror it here so every WBN consumer hits the
+     * same file. */
+    static char winboloIniPath[FILENAME_MAX];
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir) {
+      SDL_snprintf(winboloIniPath, sizeof(winboloIniPath), "%sWinBolo.ini", prefDir);
+    } else {
+      SDL_snprintf(winboloIniPath, sizeof(winboloIniPath), "%s", "WinBolo.ini");
+    }
+    winbolonetCoreSetPreferencesPath(winboloIniPath);
+  }
 
   steam_init();
   steam_set_join_callback(steamJoinRequested);
@@ -279,7 +295,25 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  /* Threads mutex must exist BEFORE gameFrontStart — the menu's
+   * background bot game (bgGameCreate → serverSimCreateBot →
+   * serverSimPublishControl → clientMutexWaitFor → threadsWaitForMutex)
+   * runs during setup dialogs. Without this, SDL_LockMutex silently
+   * no-ops on the NULL handle and the bg game's "lock" is fictional. */
+  threadsCreate(FALSE);
+
   if (gameFrontStart(cmdLine, &keys, FALSE, &cs) == FALSE) {
+    clientMutexDestroy();
+    SDL_Quit();
+    return 1;
+  }
+
+  /* The server threads mutex outlives every per-session start/end cycle:
+   * SDL's timer thread may still be running hostedServerTimerCb (which waits
+   * on this mutex) while a session shuts down, and SDL_Quit only joins the
+   * timer thread at the very end of main. Destroying the mutex before then
+   * would strand that waiter on freed memory. */
+  if (threadsCreate(FALSE) == FALSE) {
     clientMutexDestroy();
     SDL_Quit();
     return 1;
@@ -302,17 +336,23 @@ int main(int argc, char *argv[]) {
         }
         continue;
       }
-      /* lobbyResult == 1: game started — load the map that was
-       * downloaded in the background during the lobby. */
-      if (!gameFrontLoadDeferredMap(&cs)) {
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, "Failed to load map from server",
-                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-        winboloQuit = FALSE;
-        gameFrontEnd(&keys, TRUE, FALSE);
-        if (gameFrontStart(cmdLine, &keys, TRUE, &cs) == FALSE) {
-          winboloQuit = TRUE;
+      /* lobbyResult == 1: game started.
+       *  MP: load the map that was downloaded in the background
+       *      during the lobby.
+       *  SP: gameFrontStartSinglePlayerGame already prepared the
+       *      world from the local spServerSim; no server map to
+       *      download. */
+      if (!clientSimIsSinglePlayer(cs)) {
+        if (!gameFrontLoadDeferredMap(&cs)) {
+          imguiMessageBoxEx(DIALOG_BOX_TITLE, "Failed to load map from server",
+                            IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+          winboloQuit = FALSE;
+          gameFrontEnd(&keys, TRUE, FALSE);
+          if (gameFrontStart(cmdLine, &keys, TRUE, &cs) == FALSE) {
+            winboloQuit = TRUE;
+          }
+          continue;
         }
-        continue;
       }
       clientSimSetNetStatus(cs, netRunning);
       simTickCounter = 0;
@@ -344,7 +384,8 @@ int main(int argc, char *argv[]) {
       bool done = FALSE;
       SDL_Window *sdlWin = sdl3DrawGetWindow();
 
-      threadsCreate(FALSE);
+      /* threadsCreate now runs earlier (right after clientMutexCreate)
+       * so the menu's background bot game sees a real threads mutex. */
 
       /* Flush any stale SDL_QUIT events that may have been queued during
          dialog teardown. Without this, the main loop would exit immediately
@@ -536,12 +577,20 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  /* Stop the hosted-server tick timer BEFORE we tear down the
+   * mutex it grabs — otherwise SDL_Quit waits for the timer thread,
+   * the timer fires hostedServerTimerCb one last time, and
+   * threadsReleaseMutex hits "mutex not owned by this thread"
+   * because clientMutexDestroy already nuked the mutex. */
+  gameFrontShutdownServer();
+
   clientMutexDestroy();
   /* Explicit cleanup before SDL_Quit so leak checks see freed memory */
   sdl3ImguiCleanup();
   sdl3DrawCleanup();
   steam_shutdown();
   SDL_Quit();
+  threadsDestroy();
   sentryClose();
   return 0;
 }
@@ -1523,6 +1572,14 @@ void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool
   sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
 
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs) {
+  extern bool useAutoslow;
+  extern bool useAutohide;
+  if (cs == NULL) return;
+  clientSimSetTankAutoSlowdown(cs, useAutoslow);
+  clientSimSetTankAutoHideGunsight(cs, useAutohide);
+}
+
 /* -------------------------------------------------------
  * frontEndShowAllianceRequest — called from network thread
  * ------------------------------------------------------- */
@@ -1572,6 +1629,12 @@ void frontEndEnableLeaveAllyMenu(bool enabled) {
  * ------------------------------------------------------- */
 void frontEndRedrawAll(ClientSim *cs) {
   if (!clientSimIsRunning(cs)) return;
+  /* In lobby state the in-game renderer hasn't taken over yet — the
+   * lobby ImGui is the active view. Skip the game-frame blit so a
+   * subscriber-side playersSetPlayer triggered by a CTRL_PLAYER_JOIN
+   * mid-lobby (e.g. another remote adding a bot) doesn't stomp the
+   * lobby render. */
+  if (clientSimIsInLobby(cs)) return;
   windowRedrawAll(cs);
 }
 

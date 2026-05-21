@@ -22,15 +22,19 @@
  *  servercore.c and screen.c.
  *********************************************************/
 
+#include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+#include <limits.h>  /* INT_MAX for default-team load balance */
 /* dirent.h removed — using SDL3 SDL_GlobDirectory for cross-platform directory listing */
 #include <SDL3/SDL.h>
 
 #include "global.h"
 #include "bolo_map.h"
+#include "netpacks.h"
+#include "wire_limits.h"   /* LobbySettingType for serverSimGetSettingLockBit */
 #include "pillbox.h"
 #include "bases.h"
 #include "starts.h"
@@ -63,6 +67,7 @@
 #include "server_sim_internal.h"
 #include "server_lifecycle.h"
 #include "control_event.h"
+#include "client_sim.h"
 #include "client_sim_control.h"
 #include <assert.h>
 #include "interpolation.h"
@@ -320,6 +325,15 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
         sim->sim.pendingStartIdx[count] = MAX_STARTS;
     }
 
+    /* Sentinel "use the CLI-configured default brain" for every slot.
+     * 0 is a valid brain-catalogue index, so memset doesn't suffice. */
+    memset(sim->botBrainIdx, 0xFF, sizeof(sim->botBrainIdx));
+
+    /* Populate the available-brains list so the lobby can advertise
+     * them via PACKET_LOBBY_BRAIN_LIST. Cheap one-shot scan of the
+     * brains/ tree. */
+    brainListScan(&sim->brainList, sim->brainPaths);
+
     sim->startDelay = startDelay;
     sim->gameLength = gameLen;
     sim->originalGameLength = gameLen;
@@ -343,6 +357,9 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     memset(sim->userLogFileName, 0, sizeof(sim->userLogFileName));
     sim->cachedMapData = NULL;
     sim->cachedMapDataLen = 0;
+    sim->previousMapData = NULL;
+    sim->previousMapDataLen = 0;
+    sim->previousMapName[0] = '\0';
     sim->sim.hiddenMines = hiddenMines;
     sim->sim.isServer = TRUE;
     sim->sim.isLocalTransport = TRUE;
@@ -351,6 +368,48 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->serverPort = 0;
     memset(sim->mapName, 0, MAP_STR_SIZE);
     memset(sim->lobbyPlayers, 0, sizeof(sim->lobbyPlayers));
+
+    /* ── Layout A lobby state — initial defaults ─────────────────
+     * teams[] zeroed by the memset above (in_use=0 → renders with
+     * defaults). Same for botConfigs[] (difficulty=easy=0,
+     * personality=normal=0). serverLocks defaults to 0 — bolod
+     * --lock-* CLI flags set bits at server startup. */
+
+    /* Layout A — guarantee at least two teams always exist so the
+     * lobby UI never shows fewer than 2. teams[1] gets the host
+     * by default (see player-join path); teams[2] gets the second
+     * joiner. Marking them in_use here ensures the UI renders both
+     * even before anyone joins. */
+    sim->teams[1].in_use     = 1;
+    sim->teams[1].color      = 0;  /* red */
+    sim->teams[1].namingPool = 0;  /* classic */
+    SDL_strlcpy(sim->teams[1].name, "Team 1", LOBBY_TEAM_NAME_LEN);
+    sim->teams[2].in_use     = 1;
+    sim->teams[2].color      = 1;  /* blue */
+    sim->teams[2].namingPool = 0;
+    SDL_strlcpy(sim->teams[2].name, "Team 2", LOBBY_TEAM_NAME_LEN);
+
+    sim->openHost            = FALSE;
+    sim->allowNewPlayers     = TRUE;   /* lobby starts open */
+    sim->autoLockOnGameStart = FALSE;
+    sim->savedAllowNewPlayers = TRUE;
+    sim->ranked              = FALSE;
+    sim->serverLocks         = 0;
+
+    /* Mirror gameType + hiddenMines + time fields so the lobby change
+     * path can detect locked-setting attempts and emit clean diffs.
+     * aiPolicy is filled in by serverSimSetBotBrainPath / aiType setter
+     * after init when the host configures bots. */
+    sim->aiPolicy    = 0;
+    sim->timeLimit   = (gameLen > 0);
+    /* gameLen is in TICKS (50/sec); convert back to whole minutes for the
+     * user-facing display. Cap to fit uint16. */
+    {
+        int32_t mins = sim->timeLimit ? (gameLen / (50 * 60)) : 30;
+        if (mins < 1) mins = 1;
+        if (mins > 0xFFFF) mins = 0xFFFF;
+        sim->timeMinutes = (uint16_t)mins;
+    }
 
     /* Set up server callbacks */
     sim->sim.callbacks.messageAdd = serverSimCbMessageAdd;
@@ -715,6 +774,11 @@ void serverSimDestroy(ServerSim *sim) {
         sim->cachedMapData = NULL;
         sim->cachedMapDataLen = 0;
     }
+    if (sim->previousMapData != NULL) {
+        free(sim->previousMapData);
+        sim->previousMapData = NULL;
+        sim->previousMapDataLen = 0;
+    }
 
     /* Clear the active sim pointer if it points to this sim */
     if (activeSim == sim) {
@@ -796,6 +860,11 @@ static void simRunHalfStep(ServerSim *sim) {
     lgm *lgmPtrs[MAX_TANKS];
     InputPacket currentInputs[MAX_TANKS];
     bool hasInput[MAX_TANKS];
+
+    /* In-game vote driver — runs in every state so timeouts, heartbeats,
+     * and the post-pass 3/2/1 countdown keep firing in SP, host, and
+     * dedicated builds alike (independent of transport tick). */
+    serverSimGameVoteTick(sim, (uint64_t)SDL_GetTicks());
 
     /* State machine gate — only run simulation in running state */
     switch (sim->state) {
@@ -1236,6 +1305,21 @@ static void simRunHalfStep(ServerSim *sim) {
         return;
     }
 
+    /* Forced return-to-lobby countdown (e.g. from a vote pass). Game
+     * keeps running normally — players can move, shoot, etc. — and
+     * each game tick this decrements. At 0 we transition to
+     * gameOver, which is what triggers the existing lifecycle path
+     * (broadcastGameOver + countdownTicks hold + returnToLobby). */
+    if (sim->returnToLobbyTicks > 0) {
+        sim->returnToLobbyTicks--;
+        if (sim->returnToLobbyTicks == 0) {
+            serverSimSetSuppressNextWinMessage(sim, true);
+            serverSimEnterGameOver(sim);
+            sim->tick++;
+            return;
+        }
+    }
+
     /* The legacy server ticked every 20ms (SERVER_TICK_LENGTH) and wrote
      * one log entry per tick.  Our sim ticks every 10ms alternating
      * keys/game.  Only log on game ticks (every 20ms) to match the
@@ -1338,10 +1422,41 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     sim->playerConnected[playerNum] = TRUE;
     sim->hadPlayersEver = TRUE;
 
-    /* Initialize lobby player state */
-    sim->lobbyPlayers[playerNum].teamNumber = 0;
+    /* Initialize lobby player state. Default-team assignment (Layout A):
+     *   slot 0 (host)             → team 1
+     *   slot 1 (second joiner)    → team 2
+     *   slot 2+ (subsequent)      → smallest existing team (load balance)
+     * Bots take whichever team the bot-add path picks (existing logic).
+     * Players can self-reassign via the team picker after joining. */
     sim->lobbyPlayers[playerNum].ready = FALSE;
     sim->lobbyPlayers[playerNum].isBot = FALSE;
+    {
+        uint8_t defaultTeam = 1;
+        if (playerNum == 0) {
+            defaultTeam = 1;
+        } else if (playerNum == 1) {
+            defaultTeam = 2;
+        } else {
+            /* Smallest in-use team wins. Counts include bots. */
+            int counts[16] = {0};
+            for (int i = 0; i < MAX_TANKS; i++) {
+                if (i == playerNum) continue;
+                if (!sim->playerConnected[i]) continue;
+                uint8_t t = sim->lobbyPlayers[i].teamNumber;
+                if (t > 0 && t < 16) counts[t]++;
+            }
+            int bestTeam = 1, bestCount = INT_MAX;
+            for (int t = 1; t < 16; t++) {
+                if (!sim->teams[t].in_use) continue;
+                if (counts[t] < bestCount) {
+                    bestCount = counts[t];
+                    bestTeam  = t;
+                }
+            }
+            defaultTeam = (uint8_t)bestTeam;
+        }
+        sim->lobbyPlayers[playerNum].teamNumber = defaultTeam;
+    }
 
     /* Set active sim so routing functions access sim state during tankCreate */
     activeSim = sim;
@@ -1357,7 +1472,7 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
     /* Register player in sim's players struct so message formatting
      * (e.g. "Player captured a base") uses the correct name. */
     if (playerName != NULL) {
-        playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, playerNum, (char *)playerName, "??",
+        playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, playerNum, (char *)playerName, "XX",
                          0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
         {
             char pstr[256];
@@ -1397,6 +1512,24 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
         memset(&joinEvt, 0, sizeof(joinEvt));
         serverSimFillPlayerJoinEvent(sim, playerNum, &joinEvt);
         serverSimPublishControl(sim, &joinEvt);
+    }
+}
+
+void serverSimSetPlayerCountry(ServerSim *sim, BYTE playerNum, const char *cc) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    if (cc == NULL) return;
+    if (cc[0] == '\0' || cc[1] == '\0' || cc[2] != '\0') return;
+    if (!isalpha((unsigned char)cc[0]) || !isalpha((unsigned char)cc[1])) return;
+    if (sim->sim.plyrs == NULL) return;
+    sim->sim.plyrs->item[playerNum].location[0] = (char)toupper((unsigned char)cc[0]);
+    sim->sim.plyrs->item[playerNum].location[1] = (char)toupper((unsigned char)cc[1]);
+    sim->sim.plyrs->item[playerNum].location[2] = '\0';
+
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillPlayerJoinEvent(sim, playerNum, &evt);
+        serverSimPublishControl(sim, &evt);
     }
 }
 
@@ -1600,9 +1733,14 @@ void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
     if (playerNum >= MAX_TANKS) {
         return;
     }
-    if (teamNumber > 16) {
+    if (teamNumber >= MAX_TANKS) {
         teamNumber = 1;
     }
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+                "[DIAG] serverSimSetTeam slot=%u oldTeam=%u newTeam=%u",
+                (unsigned)playerNum,
+                (unsigned)sim->lobbyPlayers[playerNum].teamNumber,
+                (unsigned)teamNumber);
     sim->lobbyPlayers[playerNum].teamNumber = teamNumber;
 }
 
@@ -1651,8 +1789,21 @@ void serverSimSetBotPreThinkHook(void (*hook)(int playerNum)) {
 bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
                         const char *brainPath, const char *brainName,
                         aiType ai, gameType game, bool hiddenMines) {
-    return botManagerAddBot(sim, playerNum, brainPath, brainName,
-                            ai, game, hiddenMines);
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+                "[DIAG] serverSimCreateBot ENTRY sim=%p slot=%u brain='%s' name='%s' ai=%d state=%d",
+                (void *)sim, (unsigned)playerNum,
+                brainPath ? brainPath : "(null)",
+                brainName ? brainName : "(null)",
+                (int)ai, sim ? (int)sim->state : -1);
+    bool ok = botManagerAddBot(sim, playerNum, brainPath, brainName,
+                               ai, game, hiddenMines);
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+                "[DIAG] serverSimCreateBot EXIT slot=%u ok=%d (post-state: connected=%d team=%u isBot=%d)",
+                (unsigned)playerNum, (int)ok,
+                sim ? (int)sim->playerConnected[playerNum] : -1,
+                sim ? (unsigned)sim->lobbyPlayers[playerNum].teamNumber : 0,
+                sim ? (int)sim->lobbyPlayers[playerNum].isBot : -1);
+    return ok;
 }
 
 void serverSimRemoveBot(ServerSim *sim, BYTE playerNum) {
@@ -1760,6 +1911,10 @@ void serverSimSetBalanceBroadcastNeeded(ServerSim *sim, bool needed) {
 
 void serverSimSetBalanceRequestInFlight(ServerSim *sim, bool inFlight) {
     sim->balanceProposal.requestInFlight = inFlight;
+}
+
+void serverSimSetBalanceIncludeBots(ServerSim *sim, bool includeBots) {
+    sim->balanceProposal.includeBots = includeBots;
 }
 
 void serverSimSetEmptyResetMinutes(ServerSim *sim, int minutes) {
@@ -1923,6 +2078,13 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
     memset(hdr, 0, sizeof(*hdr));
     hdr->serverTick = sim->tick;
     hdr->lastProcessedInput = sim->lastProcessedInput[clientIdx];
+    /* Forced return-to-lobby countdown — clients render their own
+     * "Returning to lobby in N" off this. 0 means no pending. */
+    hdr->returnToLobbyTicks =
+        (sim->returnToLobbyTicks > 0)
+            ? (uint16_t)((sim->returnToLobbyTicks > 0xFFFF)
+                          ? 0xFFFFu : sim->returnToLobbyTicks)
+            : 0;
 
     /* Primary viewport: client's tank position. Skipped under noCull so
      * the fallback full-map viewport below covers everything. */
@@ -2359,6 +2521,10 @@ void serverSimAbortCountdown(ServerSim *sim) {
     sim->countdownTicks = 0;
 }
 
+void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks) {
+    sim->countdownTicks = ticks;
+}
+
 void serverSimClearBalanceProposal(ServerSim *sim) {
     memset(&sim->balanceProposal, 0, sizeof(BalanceProposal));
 }
@@ -2394,12 +2560,55 @@ void serverSimEnterGameOver(ServerSim *sim) {
 }
 
 void serverSimReturnToLobby(ServerSim *sim) {
-    BYTE i;
+    BYTE i, j;
     bool savedConnected[MAX_TANKS];
     LobbyPlayer savedLobby[MAX_TANKS];
 
     if (!sim->lobbyEnabled) {
         return;
+    }
+
+    /* Clear in-game vote state — any in-flight or just-concluded votes
+     * are scoped to the round we're leaving. */
+    serverSimGameVoteResetAll(sim);
+
+    /* Carry the in-game alliance topology forward into next-round
+     * team assignments. For each alliance group we pick the lowest
+     * existing teamNumber as the representative and reassign every
+     * group member to it; isolated players keep their current team.
+     *
+     * Two original teams that merged in-game collapse to the lower
+     * team id (the higher one becomes unused metadata, fine). A
+     * defector ends up on their new alliance's team. Players who
+     * dropped alliances mid-game without re-forming one keep their
+     * own team. */
+    {
+        uint8_t newTeam[MAX_TANKS] = {0};
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (!sim->playerConnected[i]) continue;
+            if (newTeam[i] != 0) continue;
+            uint8_t repTeam = sim->lobbyPlayers[i].teamNumber;
+            bool inGroup[MAX_TANKS] = {0};
+            inGroup[i] = true;
+            for (j = 0; j < MAX_TANKS; j++) {
+                if (j == i || !sim->playerConnected[j]) continue;
+                if (playersIsAllie(&sim->sim.plyrs, i, j)) {
+                    inGroup[j] = true;
+                    uint8_t t = sim->lobbyPlayers[j].teamNumber;
+                    if (t > 0 && (repTeam == 0 || t < repTeam)) {
+                        repTeam = t;
+                    }
+                }
+            }
+            for (j = 0; j < MAX_TANKS; j++) {
+                if (inGroup[j]) newTeam[j] = repTeam;
+            }
+        }
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (sim->playerConnected[i] && newTeam[i] != 0) {
+                sim->lobbyPlayers[i].teamNumber = newTeam[i];
+            }
+        }
     }
 
     /* Save connection and lobby state before reset */
@@ -2425,6 +2634,27 @@ void serverSimReturnToLobby(ServerSim *sim) {
     sim->hadPlayersEver = TRUE;
     sim->gameLength = sim->originalGameLength;
     sim->emptyResetTicks = -1;
+
+    /* Re-keying on lobby return: the WBN session is about to be torn
+     * down and re-registered with a fresh server_key (see
+     * winbolonetReturnToLobby in the caller). Drop every connected
+     * player's WBN-verified / Steam-linked bits so the subsequent
+     * lobby-state publish carries the cleared flags to the clients.
+     * Each client then notices its own slot has lost
+     * PLAYER_FLAG_WBN_VERIFIED and sends PACKET_WBN_REAUTH so the
+     * server can re-attach them to the new WBN session.
+     *
+     * Other clientFlags bits (CLIENT_TYPE_*, platform, STEAM_BUILD,
+     * SUPPORTER) are intentionally preserved — they're identity bits
+     * tied to the connection, not the WBN session, and clearing them
+     * would lose information the client doesn't re-send on REAUTH. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        uint8_t f = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
+        f &= (uint8_t)~(PLAYER_FLAG_WBN_VERIFIED |
+                        PLAYER_FLAG_WBN_STEAM_LINKED);
+        playersSetClientFlags(&sim->sim.plyrs, (BYTE)i, f);
+    }
 
     sim->state = serverStateLobby;
     serverSimMapSkipVotesReset(sim);
@@ -2585,6 +2815,51 @@ void serverSimReapplyTeamAlliances(ServerSim *sim) {
     }
 }
 
+void serverSimStartGameInPlace(ServerSim *sim) {
+    BYTE i;
+
+    /* Apply team alliances: players with same non-zero teamNumber become allies */
+    serverSimReapplyTeamAlliances(sim);
+
+    /* Pre-compute start indices for the whole batch so teammates land
+     * near each other (see serverSimStartGame for the rationale). */
+    {
+        BYTE batchTeam[MAX_TANKS];
+        for (i = 0; i < MAX_TANKS; i++) {
+            batchTeam[i] = sim->lobbyPlayers[i].teamNumber;
+        }
+        startsAssignBatch(&sim->sim, &sim->sim.ss,
+                          sim->playerConnected, batchTeam,
+                          sim->sim.pendingStartIdx);
+    }
+
+    /* Create tanks for all connected players */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        if (sim->sim.tanks[i] != NULL) {
+            tankDestroy(&sim->sim, &sim->sim.tanks[i]);
+            sim->sim.tanks[i] = NULL;
+        }
+        if (sim->sim.lgmen[i] != NULL) {
+            lgmDestroy(&sim->sim.lgmen[i]);
+            sim->sim.lgmen[i] = NULL;
+        }
+        tankCreate(&sim->sim, &sim->sim.tanks[i]);
+        sim->sim.lgmen[i] = lgmCreate(i);
+        basesUpdateTimer(&sim->sim, i);
+    }
+
+    sim->state = serverStateRunning;
+
+    /* Layout A: autoLockOnGameStart. Save current allowNewPlayers so
+     * we can restore it when the game ends. */
+    sim->savedAllowNewPlayers = sim->allowNewPlayers;
+    if (sim->autoLockOnGameStart && sim->allowNewPlayers) {
+        sim->allowNewPlayers = FALSE;
+        transportUdpServerSetLock(sim, FALSE);
+    }
+}
+
 void serverSimStartGame(ServerSim *sim) {
     BYTE i;
     /* Save connected-player state before resetting – resetGameWorld clears
@@ -2595,6 +2870,9 @@ void serverSimStartGame(ServerSim *sim) {
     }
 
     activeSim = sim;
+
+    /* Fresh round — drop any vote state from the previous game. */
+    serverSimGameVoteResetAll(sim);
 
     /* Reset the game world (map, world systems, queues, tick) */
     serverSimResetGameWorld(sim);
@@ -2622,7 +2900,7 @@ void serverSimStartGame(ServerSim *sim) {
         if (!sim->playerConnected[i]) continue;
         const char *name = transportUdpServerGetPlayerName(i);
         if (name != NULL) {
-            playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, i, (char *)name, "??",
+            playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, i, (char *)name, "XX",
                              0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
         }
     }
@@ -3058,6 +3336,532 @@ void serverSimMapSkipVotesReset(ServerSim *sim) {
     memset(sim->mapSkipVotes, 0, sizeof(sim->mapSkipVotes));
 }
 
+/* ----------------------------------------------------------------------
+ * In-game vote system (back-to-lobby + surrender). See docs/voting_plan.md.
+ *
+ * The state machine lives entirely on the server; clients are mirror-only.
+ * Wire format: PACKET_GAME_VOTE_TOGGLE in, PACKET_GAME_VOTE_STATE out.
+ *
+ * NOTE: this is the data-model + helper layer. Wire serialisation lives
+ * in transport_udp_server.c (broadcastGameVoteState). Tick wiring lives
+ * in the transport tick path.
+ * ---------------------------------------------------------------------- */
+
+/* Server-originated English broadcast via CTRL_CHAT (fromPlayer=0xFE).
+ * Inlined here (instead of calling transportUdpServerSendServerMessage)
+ * so BrainTest / MapEditor — which link server_sim_static but not the
+ * UDP transport — can still announce server messages to subscribers. */
+static void publishServerMessage(ServerSim *sim, const char *message) {
+    ControlEvent evt;
+    if (!sim || !message) return;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SERVER_TEXT;
+    SDL_strlcpy(evt.u.serverText.text, message, sizeof(evt.u.serverText.text));
+    /* In-process subscribers display via client_sim_control.c's
+     * CTRL_SERVER_TEXT handler (newswire / lobby chat); UDP clients
+     * receive the codec-encoded PACKET_CHAT_BROADCAST(fromPlayer=0xFE)
+     * via the encoder table. */
+    serverSimPublishControl(sim, &evt);
+}
+
+/* Publish current vote state through the control-event dispatcher.
+ * In-process subscribers see it directly; remote UDP clients receive
+ * the wire-encoded PACKET_GAME_VOTE_STATE via the codec encoder. */
+static void publishGameVoteState(ServerSim *sim, uint8_t kind) {
+    ServerGameVoteSnapshot snap;
+    ControlEvent evt;
+    if (!serverSimGetGameVoteSnapshot(sim, kind, &snap)) return;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_GAME_VOTE_STATE;
+    evt.u.gameVoteState.kind             = snap.kind;
+    evt.u.gameVoteState.active           = snap.active;
+    evt.u.gameVoteState.triggerSrc       = snap.triggerSrc;
+    evt.u.gameVoteState.teamId           = snap.teamId;
+    evt.u.gameVoteState.threshold        = snap.threshold;
+    evt.u.gameVoteState.yesCount         = snap.yesCount;
+    evt.u.gameVoteState.noCount          = snap.noCount;
+    evt.u.gameVoteState.eligibleCount    = snap.eligibleCount;
+    evt.u.gameVoteState.secondsRemaining = snap.secondsRemaining;
+    evt.u.gameVoteState.votes            = snap.votes;
+    serverSimPublishControl(sim, &evt);
+}
+
+/* Forward declarations for the in-TU helpers — gameVoteThreshold is
+ * called from the public snapshot accessor which sits above the
+ * helper's definition. */
+static uint8_t gameVoteThreshold(const ServerSim *sim, const struct ServerGameVote *gv);
+
+static struct ServerGameVote *gameVoteSlot(ServerSim *sim, uint8_t kind) {
+    if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) return &sim->gameVotes[0];
+    if (kind == GAME_VOTE_KIND_SURRENDER)     return &sim->gameVotes[1];
+    return NULL;
+}
+
+static const struct ServerGameVote *gameVoteSlotConst(const ServerSim *sim, uint8_t kind) {
+    if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) return &sim->gameVotes[0];
+    if (kind == GAME_VOTE_KIND_SURRENDER)     return &sim->gameVotes[1];
+    return NULL;
+}
+
+/* Returns the bitmask of slots eligible to vote on this kind. For
+ * back-to-lobby that's every connected human; for surrender it's the
+ * connected humans on `teamId`. */
+static uint16_t gameVoteEligibleMask(const ServerSim *sim,
+                                     uint8_t kind, uint8_t teamId) {
+    uint16_t mask = 0;
+    BYTE i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        if (sim->lobbyPlayers[i].isBot) continue;
+        if (kind == GAME_VOTE_KIND_SURRENDER &&
+            sim->lobbyPlayers[i].teamNumber != teamId) continue;
+        mask |= (uint16_t)(1u << i);
+    }
+    return mask;
+}
+
+static uint8_t popcount16(uint16_t v) {
+    uint8_t n = 0;
+    while (v) { n += (uint8_t)(v & 1u); v >>= 1; }
+    return n;
+}
+
+uint8_t serverSimCountActiveTeams(const ServerSim *sim) {
+    /* Counts distinct teamNumbers across teams with at least one
+     * connected human. Bots don't count — surrender needs a human
+     * on each side. */
+    bool seen[MAX_TANKS] = {0};
+    uint8_t count = 0;
+    BYTE i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i] || sim->lobbyPlayers[i].isBot) continue;
+        uint8_t t = sim->lobbyPlayers[i].teamNumber;
+        if (t == 0 || t >= MAX_TANKS) continue;
+        if (!seen[t]) { seen[t] = true; count++; }
+    }
+    return count;
+}
+
+bool serverSimGameVoteIsRunning(const ServerSim *sim, uint8_t kind) {
+    const struct ServerGameVote *gv = gameVoteSlotConst(sim, kind);
+    return gv && gv->active == GAME_VOTE_ACTIVE_RUNNING;
+}
+
+bool serverSimConsumeSuppressNextWinMessage(ServerSim *sim) {
+    if (!sim) return false;
+    bool v = sim->suppressNextWinMessage;
+    sim->suppressNextWinMessage = false;
+    return v;
+}
+
+void serverSimSetSuppressNextWinMessage(ServerSim *sim, bool v) {
+    if (sim) sim->suppressNextWinMessage = v;
+}
+
+bool serverSimGetGameVoteSnapshot(const ServerSim *sim, uint8_t kind,
+                                  ServerGameVoteSnapshot *out) {
+    const struct ServerGameVote *gv = gameVoteSlotConst(sim, kind);
+    if (!gv || !out) return false;
+    memset(out, 0, sizeof(*out));
+    out->kind       = gv->kind;
+    out->active     = gv->active;
+    out->triggerSrc = gv->triggerSrc;
+    out->teamId     = gv->teamId;
+    uint16_t eligibleMask = gameVoteEligibleMask(sim, gv->kind, gv->teamId);
+    out->eligibleCount = popcount16(eligibleMask);
+    out->threshold  = gameVoteThreshold(sim, gv);
+    out->yesCount   = popcount16(gv->votesMask);
+    out->noCount    = popcount16(gv->answeredMask & ~gv->votesMask);
+    out->votes      = gv->votesMask;
+    if (gv->active == GAME_VOTE_ACTIVE_RUNNING) {
+        uint64_t now = sim->gameVoteWallMs;
+        /* During the pre-pass grace window, surface that grace's
+         * remaining seconds so the client widget shows the short
+         * "Passing in N..." countdown instead of the long 60-s
+         * timeout. The client infers the state from
+         * (yesCount == threshold) + small secondsRemaining. */
+        uint64_t until = (gv->pendingPassUntilMs != 0)
+                         ? gv->pendingPassUntilMs
+                         : gv->deadlineMs;
+        uint64_t rem = (until > now) ? (until - now) : 0;
+        uint32_t secs = (uint32_t)((rem + 999) / 1000);
+        if (secs > 0xFFu) secs = 0xFFu;
+        out->secondsRemaining = (uint8_t)secs;
+    }
+    return true;
+}
+
+void serverSimGameVoteResetAll(ServerSim *sim) {
+    memset(sim->gameVotes, 0, sizeof(sim->gameVotes));
+    sim->gameVotes[0].kind = GAME_VOTE_KIND_BACK_TO_LOBBY;
+    sim->gameVotes[1].kind = GAME_VOTE_KIND_SURRENDER;
+    sim->baseMonopolyTriggeredThisRound = false;
+    sim->returnToLobbyTicks = 0;
+}
+
+static void gameVoteStart(ServerSim *sim, uint8_t kind, uint8_t triggerSrc,
+                          uint8_t teamId, uint64_t nowMs) {
+    struct ServerGameVote *gv = gameVoteSlot(sim, kind);
+    if (!gv) return;
+    memset(gv, 0, sizeof(*gv));
+    gv->kind        = kind;
+    gv->active      = GAME_VOTE_ACTIVE_RUNNING;
+    gv->triggerSrc  = triggerSrc;
+    gv->teamId      = teamId;
+    gv->startMs     = nowMs;
+    gv->deadlineMs  = nowMs + (uint64_t)GAME_VOTE_DEADLINE_SECONDS * 1000ULL;
+    gv->lastHeartbeatMs = nowMs;
+}
+
+static void gameVoteConclude(ServerSim *sim, struct ServerGameVote *gv,
+                             uint8_t finalState, uint64_t nowMs) {
+    gv->active = finalState;
+    gv->concludedAtMs = nowMs;
+    publishGameVoteState(sim, gv->kind);
+}
+
+/* Fire the actual pass effects (countdown for back-to-lobby,
+ * announcement + chained vote for surrender). Called from the tick
+ * once the pending-pass grace expires. */
+static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
+                             uint64_t nowMs) {
+    uint8_t kind = gv->kind;
+    gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_PASSED, nowMs);
+
+    if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) {
+        /* Game keeps running — players can still move, shoot,
+         * etc. — but each tick decrements sim->returnToLobbyTicks
+         * and at 0 the running tick transitions to gameOver. The
+         * snapshot header carries the remaining ticks every frame
+         * so clients can render their own 3/2/1 countdown.
+         *
+         * Budget: 7 seconds at 100Hz (each serverSimTick call). */
+        sim->returnToLobbyTicks = 700;
+    } else if (kind == GAME_VOTE_KIND_SURRENDER) {
+        char buf[160];
+        const char *tname = sim->teams[gv->teamId].name[0]
+                            ? sim->teams[gv->teamId].name : "?";
+        snprintf(buf, sizeof(buf),
+                 "*** Team %s has surrendered. ***", tname);
+        publishServerMessage(sim, buf);
+
+        /* Auto-start a back-to-lobby vote unless one is already running. */
+        struct ServerGameVote *btl = gameVoteSlot(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
+        if (btl && btl->active != GAME_VOTE_ACTIVE_RUNNING) {
+            gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
+                          GAME_VOTE_TRIGGER_POST_SURRENDER, 0, nowMs);
+            publishGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
+        }
+    }
+}
+
+/* YES-vote count needed for the vote to pass, given the current
+ * eligible voter pool and the configured pass percentage.
+ *
+ *   threshold = ceil(eligible * NUM / DENOM)
+ *
+ * For NUM/DENOM = 100/100 that's exact unanimity (== eligible). */
+static uint8_t gameVoteThreshold(const ServerSim *sim, const struct ServerGameVote *gv) {
+    uint32_t eligible = popcount16(gameVoteEligibleMask(sim, gv->kind, gv->teamId));
+    if (eligible == 0) return 0;
+    uint32_t num = (uint32_t)GAME_VOTE_PASS_PCT_NUM;
+    uint32_t den = (uint32_t)GAME_VOTE_PASS_PCT_DENOM;
+    /* ceil(eligible * num / den) */
+    uint32_t thr = (eligible * num + (den - 1)) / den;
+    if (thr > 0xFFu) thr = 0xFFu;
+    return (uint8_t)thr;
+}
+
+/* Drop bits from votes/answered for slots that disappeared. */
+static void gameVotePruneVotes(const ServerSim *sim, struct ServerGameVote *gv) {
+    uint16_t elig = gameVoteEligibleMask(sim, gv->kind, gv->teamId);
+    gv->votesMask    &= elig;
+    gv->answeredMask &= elig;
+}
+
+void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
+                             uint8_t kind, uint8_t toggleMode) {
+    if (playerNum >= MAX_TANKS) return;
+    if (!sim->playerConnected[playerNum]) return;
+    if (sim->lobbyPlayers[playerNum].isBot) return;
+    struct ServerGameVote *gv = gameVoteSlot(sim, kind);
+    if (!gv) return;
+
+    /* Only allow during running game. */
+    if (sim->state != serverStateRunning) return;
+
+    /* Reject malformed toggleMode bytes from the wire before any
+     * state-mutating branch can react to them. The historical else-fall
+     * treated anything that wasn't YES as NO, so 0xFF would be recorded
+     * as a NO vote. */
+    if (toggleMode != GAME_VOTE_TOGGLE_NO &&
+        toggleMode != GAME_VOTE_TOGGLE_YES &&
+        toggleMode != GAME_VOTE_TOGGLE_OPEN_ONLY) {
+        return;
+    }
+
+    /* Surrender precondition: exactly two teams in play, and the
+     * caller must be on a real team — an Unassigned (team 0) player
+     * surrendering "team 0" would broadcast a fake side and chain a
+     * back-to-lobby vote against two unrelated playing teams. */
+    if (kind == GAME_VOTE_KIND_SURRENDER) {
+        if (serverSimCountActiveTeams(sim) != 2) return;
+        if (sim->lobbyPlayers[playerNum].teamNumber == 0) return;
+    }
+
+    uint64_t nowMs = sim->gameVoteWallMs;
+    uint8_t teamId = (kind == GAME_VOTE_KIND_SURRENDER)
+                     ? sim->lobbyPlayers[playerNum].teamNumber
+                     : 0;
+
+    /* A standalone NO has no effect when no vote is running. The
+     * vote-start branch below would otherwise open a fresh vote and
+     * record the caller as NO+answered, which is meaningless. Only
+     * YES or OPEN_ONLY may open a vote. */
+    if (gv->active != GAME_VOTE_ACTIVE_RUNNING &&
+        toggleMode == GAME_VOTE_TOGGLE_NO) {
+        return;
+    }
+
+    /* Open-only re-press: if a vote is running, just rebroadcast (so the
+     * client can pop the widget back up); if no vote is running, start one
+     * as if the caller voted yes. */
+    if (toggleMode == GAME_VOTE_TOGGLE_OPEN_ONLY) {
+        if (gv->active == GAME_VOTE_ACTIVE_RUNNING) {
+            publishGameVoteState(sim, kind);
+            return;
+        }
+        gameVoteStart(sim, kind, GAME_VOTE_TRIGGER_MANUAL, teamId, nowMs);
+        gv->votesMask    |= (uint16_t)(1u << playerNum);
+        gv->answeredMask |= (uint16_t)(1u << playerNum);
+
+        /* Check whether opening + auto-YES already constitutes a pass.
+         * Solo (threshold==1) starts the 5-s grace immediately so the
+         * very first broadcast carries secondsRemaining=5 instead of
+         * the 60-s timeout (otherwise the widget flashes "60s" before
+         * the next heartbeat brings it down). Multi-voter unanimity
+         * fires the pass right away. */
+        uint8_t thr = gameVoteThreshold(sim, gv);
+        uint8_t yes = popcount16(gv->votesMask);
+        if (thr > 0 && yes >= thr) {
+            if (thr == 1) {
+                gv->pendingPassUntilMs = nowMs +
+                    (uint64_t)GAME_VOTE_PASS_GRACE_SECONDS * 1000ULL;
+                publishGameVoteState(sim, kind);
+            } else {
+                publishGameVoteState(sim, kind);
+                gameVoteFirePass(sim, gv, nowMs);
+            }
+            return;
+        }
+
+        publishGameVoteState(sim, kind);
+        return;
+    }
+
+    if (gv->active != GAME_VOTE_ACTIVE_RUNNING) {
+        /* First voter starts the vote. */
+        gameVoteStart(sim, kind, GAME_VOTE_TRIGGER_MANUAL, teamId, nowMs);
+    } else if (kind == GAME_VOTE_KIND_SURRENDER &&
+               gv->teamId != sim->lobbyPlayers[playerNum].teamNumber) {
+        /* Different-team player can't vote on a team's surrender. */
+        return;
+    }
+
+    gv->answeredMask |= (uint16_t)(1u << playerNum);
+    if (toggleMode == GAME_VOTE_TOGGLE_YES) {
+        gv->votesMask |= (uint16_t)(1u << playerNum);
+    } else {
+        gv->votesMask &= (uint16_t)~(1u << playerNum);
+    }
+
+    gameVotePruneVotes(sim, gv);
+
+    uint8_t thr = gameVoteThreshold(sim, gv);
+    uint8_t yes = popcount16(gv->votesMask);
+
+    if (thr > 0 && yes >= thr) {
+        /* Solo voter ("am I sure?") path: one-human votes get a
+         * 5-second grace before the effect applies so a misclick
+         * is reversible. Multi-human votes fire instantly — by the
+         * time everyone has agreed there's nothing to second-guess. */
+        if (thr == 1) {
+            if (gv->pendingPassUntilMs == 0) {
+                gv->pendingPassUntilMs = nowMs +
+                    (uint64_t)GAME_VOTE_PASS_GRACE_SECONDS * 1000ULL;
+            }
+            publishGameVoteState(sim, kind);
+        } else {
+            publishGameVoteState(sim, kind);
+            gameVoteFirePass(sim, gv, nowMs);
+        }
+        return;
+    }
+
+    /* Lost unanimity during a solo grace — cancel the pending pass. */
+    if (gv->pendingPassUntilMs != 0) {
+        gv->pendingPassUntilMs = 0;
+    }
+
+    publishGameVoteState(sim, kind);
+
+    /* Everyone answered but yes count didn't reach the pass
+     * threshold → fail now instead of waiting for the timeout. */
+    {
+        uint16_t eligibleMask = gameVoteEligibleMask(sim, gv->kind, gv->teamId);
+        uint8_t eligible = popcount16(eligibleMask);
+        uint8_t answered = popcount16(gv->answeredMask & eligibleMask);
+        if (eligible > 0 && answered >= eligible && yes < thr) {
+            gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_FAILED, nowMs);
+        }
+    }
+}
+
+/* Detect "one team owns every base" and auto-start a back-to-lobby vote. */
+static void gameVoteCheckBaseMonopoly(ServerSim *sim, uint64_t nowMs) {
+    if (sim->state != serverStateRunning) return;
+    if (sim->baseMonopolyTriggeredThisRound) return;
+
+    /* Count bases per team-via-owner-player. */
+    int nBases = basesGetNumBases(&sim->sim.bs);
+    if (nBases <= 0) return;
+
+    uint8_t teamCount[MAX_TANKS] = {0};
+    uint8_t neutral = 0;
+    int i;
+    for (i = 0; i < nBases; i++) {
+        BYTE owner = basesGetBaseOwner(&sim->sim.bs, (BYTE)(i + 1));
+        if (owner >= MAX_TANKS) { neutral++; continue; }
+        if (!sim->playerConnected[owner]) { neutral++; continue; }
+        uint8_t t = sim->lobbyPlayers[owner].teamNumber;
+        if (t == 0 || t >= MAX_TANKS) { neutral++; continue; }
+        teamCount[t]++;
+    }
+    if (neutral > 0) return;
+
+    int teamsWithBases = 0;
+    uint8_t monoTeam = 0;
+    int t;
+    for (t = 1; t < MAX_TANKS; t++) {
+        if (teamCount[t] > 0) { teamsWithBases++; monoTeam = (uint8_t)t; }
+    }
+    if (teamsWithBases != 1) return;
+
+    /* Require >1 active team in play to make "monopoly" meaningful. */
+    if (serverSimCountActiveTeams(sim) < 2) return;
+
+    struct ServerGameVote *gv = gameVoteSlot(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
+    if (!gv) return;
+    if (gv->active == GAME_VOTE_ACTIVE_RUNNING) return;
+
+    char buf[128];
+    const char *tname = sim->teams[monoTeam].name[0]
+                        ? sim->teams[monoTeam].name : "?";
+    snprintf(buf, sizeof(buf),
+             "Team %s controls every base. Returning to lobby on unanimous vote.",
+             tname);
+    publishServerMessage(sim, buf);
+
+    gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
+                  GAME_VOTE_TRIGGER_BASE_MONOPOLY, monoTeam, nowMs);
+    /* Pre-cast YES for every eligible voter. */
+    gv->votesMask    = gameVoteEligibleMask(sim, GAME_VOTE_KIND_BACK_TO_LOBBY, 0);
+    gv->answeredMask = gv->votesMask;
+    publishGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
+
+    sim->baseMonopolyTriggeredThisRound = true;
+}
+
+void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
+    sim->gameVoteWallMs = nowMs;
+
+    /* Auto-trigger checks before per-slot servicing. */
+    gameVoteCheckBaseMonopoly(sim, nowMs);
+
+    int k;
+    for (k = 0; k < 2; k++) {
+        struct ServerGameVote *gv = &sim->gameVotes[k];
+
+        if (gv->active == GAME_VOTE_ACTIVE_RUNNING) {
+            /* Prune in case a voter disconnected. */
+            gameVotePruneVotes(sim, gv);
+
+            /* 60s timeout. */
+            if (nowMs >= gv->deadlineMs) {
+                gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_FAILED, nowMs);
+                continue;
+            }
+
+            /* Surrender invalidation: team count must remain == 2. */
+            if (gv->kind == GAME_VOTE_KIND_SURRENDER &&
+                serverSimCountActiveTeams(sim) != 2) {
+                publishServerMessage(sim, "Surrender vote cancelled — team count changed.");
+                gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_CANCELLED, nowMs);
+                continue;
+            }
+
+            /* If the surrendering team or the voter pool has emptied
+             * entirely (everyone disconnected), the vote is moot. */
+            if (popcount16(gameVoteEligibleMask(sim, gv->kind, gv->teamId)) == 0) {
+                if (gv->kind == GAME_VOTE_KIND_SURRENDER) {
+                    publishServerMessage(sim,
+                        "Surrender vote cancelled — surrendering team is empty.");
+                }
+                gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_CANCELLED, nowMs);
+                continue;
+            }
+
+            /* 1Hz heartbeat broadcast (drives client countdown display). */
+            if (nowMs - gv->lastHeartbeatMs >= 1000ULL) {
+                gv->lastHeartbeatMs = nowMs;
+                publishGameVoteState(sim, gv->kind);
+            }
+
+            /* Re-check pass under the live eligible-mask. Eligibility
+             * may have shrunk (disconnect) so unanimity can land here
+             * without a fresh toggle. Solo (threshold==1) votes use
+             * a 5-s grace; everything else fires immediately. */
+            uint16_t eligibleMask = gameVoteEligibleMask(sim, gv->kind, gv->teamId);
+            uint8_t eligible = popcount16(eligibleMask);
+            uint8_t answered = popcount16(gv->answeredMask & eligibleMask);
+            uint8_t thr = gameVoteThreshold(sim, gv);
+            uint8_t yes = popcount16(gv->votesMask);
+
+            if (thr > 0 && yes >= thr) {
+                if (thr == 1) {
+                    if (gv->pendingPassUntilMs == 0) {
+                        gv->pendingPassUntilMs = nowMs +
+                            (uint64_t)GAME_VOTE_PASS_GRACE_SECONDS * 1000ULL;
+                    }
+                } else {
+                    gameVoteFirePass(sim, gv, nowMs);
+                    continue;
+                }
+            } else if (gv->pendingPassUntilMs != 0) {
+                gv->pendingPassUntilMs = 0;
+            }
+
+            /* Solo pre-pass grace expired → fire for real. */
+            if (gv->pendingPassUntilMs != 0 &&
+                nowMs >= gv->pendingPassUntilMs) {
+                gv->pendingPassUntilMs = 0;
+                gameVoteFirePass(sim, gv, nowMs);
+                continue;
+            }
+
+            /* Everyone eligible has answered but the yes side fell
+             * short of the pass threshold → vote fails immediately,
+             * no point waiting on the 60-s timeout. */
+            if (eligible > 0 && answered >= eligible &&
+                yes < thr && gv->pendingPassUntilMs == 0) {
+                gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_FAILED, nowMs);
+                continue;
+            }
+        }
+
+    }
+}
+
 void serverSimMapDirDestroy(ServerSim *sim) {
     if (sim->mapDirFiles != NULL) {
         int i;
@@ -3126,6 +3930,13 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
         (sim->mapDirCount > 1 || sim->randomMapEnabled) ? true : false;
     evt->u.lobbySettings.netStat          = serverPhaseToNetStat(sim->state);
     evt->u.lobbySettings.inLobby          = sim->lobbyEnabled ? true : false;
+    evt->u.lobbySettings.lobbyOpenHost            = sim->openHost;
+    evt->u.lobbySettings.lobbyAutoLockOnGameStart = sim->autoLockOnGameStart;
+    evt->u.lobbySettings.lobbyRanked              = sim->ranked;
+    evt->u.lobbySettings.lobbyAllowNewPlayers     = sim->allowNewPlayers;
+    evt->u.lobbySettings.lobbyWbnAvailable        = winbolonetIsRunning();
+    evt->u.lobbySettings.lobbyServerLocks         = sim->serverLocks;
+    evt->u.lobbySettings.uploadPolicy             = sim->uploadPolicy;
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
@@ -3185,6 +3996,55 @@ void serverSimFillPlayerLeaveEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
     evt->u.playerLeave.country[2] = '\0';
 }
 
+void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, ControlEvent *evt) {
+    evt->type = CTRL_LOBBY_TEAM_META;
+    evt->u.lobbyTeamMeta.teamId = teamId;
+    if (teamId == 0 || teamId >= MAX_TANKS) {
+        evt->u.lobbyTeamMeta.in_use     = 0;
+        evt->u.lobbyTeamMeta.color      = 0;
+        evt->u.lobbyTeamMeta.namingPool = 0;
+        evt->u.lobbyTeamMeta.name[0]    = '\0';
+        return;
+    }
+    evt->u.lobbyTeamMeta.in_use     = sim->teams[teamId].in_use;
+    evt->u.lobbyTeamMeta.color      = sim->teams[teamId].color;
+    evt->u.lobbyTeamMeta.namingPool = sim->teams[teamId].namingPool;
+    memset(evt->u.lobbyTeamMeta.name, 0, LOBBY_TEAM_NAME_LEN);
+    strncpy(evt->u.lobbyTeamMeta.name, sim->teams[teamId].name,
+            LOBBY_TEAM_NAME_LEN - 1);
+}
+
+void serverSimFillLobbyBotConfigEvent(ServerSim *sim, BYTE slot, ControlEvent *evt) {
+    evt->type = CTRL_LOBBY_BOT_CONFIG;
+    evt->u.lobbyBotConfig.slot = slot;
+    memset(evt->u.lobbyBotConfig.name, 0, PACKET_MAX_PLAYER_NAME);
+    if (slot >= MAX_TANKS) {
+        evt->u.lobbyBotConfig.difficulty  = 0;
+        evt->u.lobbyBotConfig.personality = 0;
+        return;
+    }
+    evt->u.lobbyBotConfig.difficulty  = sim->botConfigs[slot].difficulty;
+    evt->u.lobbyBotConfig.personality = sim->botConfigs[slot].personality;
+    if (sim->playerConnected[slot]) {
+        strncpy(evt->u.lobbyBotConfig.name,
+                sim->sim.plyrs->item[slot].playerName,
+                PACKET_MAX_PLAYER_NAME - 1);
+    }
+}
+
+void serverSimFillLobbyBotBrainEvent(const ServerSim *sim, BYTE slot, ControlEvent *evt) {
+    evt->type = CTRL_LOBBY_BOT_BRAIN;
+    evt->u.lobbyBotBrain.slot = slot;
+    evt->u.lobbyBotBrain.brainIdx = 0xFF;
+    if (slot >= MAX_TANKS) return;
+    evt->u.lobbyBotBrain.brainIdx = sim->botBrainIdx[slot];
+}
+
+void serverSimFillLobbyBrainListEvent(const ServerSim *sim, ControlEvent *evt) {
+    evt->type = CTRL_LOBBY_BRAIN_LIST;
+    evt->u.lobbyBrainList.list = sim->brainList;
+}
+
 /* Wrapper used to enforce the documented sync ordering:
  *   CTRL_GAME_PHASE first; CTRL_PLAYER_JOIN events last (a regression
  *   that reorders sync would silently mis-initialize a subscriber, so
@@ -3240,6 +4100,10 @@ static void serverSimSyncSubscriber(
 
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbySettingsEvent(sim, &evt);
+    deliver(ctx, &evt);
+
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyBrainListEvent(sim, &evt);
     deliver(ctx, &evt);
 
     for (i = 0; i < MAX_TANKS; i++) {
@@ -3302,8 +4166,11 @@ SubscriberHandle serverSimRegisterClientSubscriber(ServerSim *sim, ClientSim *cs
 
 void serverSimRequestBalanceProposal(ServerSim *sim,
                                      uint8_t totalPlayers,
-                                     uint8_t teamSize) {
+                                     uint8_t teamSize,
+                                     const uint8_t *botSlots,
+                                     uint8_t numBotSlots) {
     winbolonetServerRequestBalance(totalPlayers, teamSize,
+                                   botSlots, numBotSlots,
                                    &sim->balanceProposal);
 }
 
@@ -3502,6 +4369,11 @@ const char *serverSimGetServerMessageLogFile(const ServerSim *sim) {
 }
 
 const LobbyPlayer *serverSimGetLobbyPlayer(const ServerSim *sim, BYTE n) {
+    if (n >= MAX_TANKS) return NULL;
+    return &sim->lobbyPlayers[n];
+}
+
+LobbyPlayer *serverSimGetLobbyPlayerMut(ServerSim *sim, BYTE n) {
     if (n >= MAX_TANKS) return NULL;
     return &sim->lobbyPlayers[n];
 }
@@ -3718,4 +4590,940 @@ int serverSimGetTankExplosionSnapshot(ServerSim *sim,
 
 bool serverSimMineExistsAt(ServerSim *sim, BYTE x, BYTE y) {
     return minesExistPos(&sim->sim.mns, &sim->sim.mp, x, y);
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * Map preview / map upload — Lobby Layout A
+ * ──────────────────────────────────────────────────────────────── */
+
+static bool serverSimApplyRandomMapConfig(ServerSim *sim,
+                                          const MapGenConfig *cfg) {
+    BYTE tempBuf[131072];
+    int len;
+    int x, y;
+
+    memset((*sim->sim.mp).mapItem, DEEP_SEA, sizeof((*sim->sim.mp).mapItem));
+    for (x = 0; x < 256; x++) {
+        for (y = 0; y < 256; y++) {
+            if (x <= MAP_MINE_EDGE_LEFT || x >= MAP_MINE_EDGE_RIGHT ||
+                y <= MAP_MINE_EDGE_TOP  || y >= MAP_MINE_EDGE_BOTTOM) {
+                (*sim->sim.mp).mapItem[x][y] = DEEP_SEA;
+            }
+        }
+    }
+
+    sim->sim.pb->numPills  = 0;
+    sim->sim.bs->numBases  = 0;
+    sim->sim.ss->numStarts = 0;
+    mapGenRun(sim->sim.mp, sim->sim.bs, sim->sim.pb, sim->sim.ss, cfg);
+
+    {
+        BYTE i;
+        for (i = 0; i < sim->sim.pb->numPills; i++) {
+            pillbox tmp = sim->sim.pb->item[i];
+            pillsSetPill(&sim->sim.pb, &tmp, (BYTE)(i + 1));
+        }
+        for (i = 0; i < sim->sim.bs->numBases; i++) {
+            base tmp = sim->sim.bs->item[i];
+            basesSetBase(&sim->sim.bs, &tmp, (BYTE)(i + 1));
+        }
+        for (i = 0; i < sim->sim.ss->numStarts; i++) {
+            start tmp = sim->sim.ss->item[i];
+            startsSetStart(&sim->sim.ss, &tmp, (BYTE)(i + 1));
+        }
+    }
+    basesClearMines(&sim->sim);
+
+    len = serverSimGetCompressedMap(sim, tempBuf);
+    if (sim->cachedMapData) free(sim->cachedMapData);
+    sim->cachedMapData = (BYTE *)malloc(len);
+    if (sim->cachedMapData == NULL) {
+        sim->cachedMapDataLen = 0;
+        return FALSE;
+    }
+    memcpy(sim->cachedMapData, tempBuf, len);
+    sim->cachedMapDataLen = len;
+
+    mapGenBuildDisplayName(cfg, sim->mapName, MAP_STR_SIZE);
+
+    {
+        int i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (!sim->lobbyPlayers[i].isBot) {
+                sim->lobbyPlayers[i].ready = FALSE;
+            }
+        }
+    }
+    return TRUE;
+}
+
+bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
+    BYTE tempBuf[131072];
+    int len;
+    char msg[256];
+
+    if (sim == NULL || mapFileName == NULL || mapFileName[0] == '\0') {
+        return FALSE;
+    }
+    if (sim->state != serverStateLobby) {
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "serverSimReloadMap rejected: state=%d (not lobby)",
+            (int)sim->state);
+        return FALSE;
+    }
+
+    /* Stash the currently-committed map as the "previous" snapshot
+     * before we touch the sim. Keep the ORIGINAL committed map
+     * across a chain of previews so one Cancel rolls all the way
+     * back to where the user started. */
+    if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
+        sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
+        if (sim->previousMapData) {
+            memcpy(sim->previousMapData, sim->cachedMapData,
+                   sim->cachedMapDataLen);
+            sim->previousMapDataLen = sim->cachedMapDataLen;
+            memcpy(sim->previousMapName, sim->mapName,
+                   sizeof(sim->previousMapName));
+        }
+    }
+
+    /* Wipe the existing map/pill/base/start contents before mapRead
+     * touches them. mapRead's RLE-decoder only writes cells encoded
+     * in the new file — any tile NOT included in the new map's runs
+     * would otherwise keep the previous map's value. */
+    {
+        int x, y;
+        memset((*sim->sim.mp).mapItem, DEEP_SEA,
+               sizeof((*sim->sim.mp).mapItem));
+        for (x = 0; x < 256; x++) {
+            for (y = 0; y < 256; y++) {
+                if (x <= MAP_MINE_EDGE_LEFT || x >= MAP_MINE_EDGE_RIGHT ||
+                    y <= MAP_MINE_EDGE_TOP  || y >= MAP_MINE_EDGE_BOTTOM) {
+                    (*sim->sim.mp).mapItem[x][y] = DEEP_SEA;
+                }
+            }
+        }
+        sim->sim.pb->numPills = 0;
+        sim->sim.bs->numBases = 0;
+        sim->sim.ss->numStarts = 0;
+    }
+
+    if (mapRead((char *)mapFileName,
+                &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
+        /* Roll the wipe back. cachedMapData still holds the previous
+         * map's compressed bytes (the refresh below only runs on the
+         * success path), so restoring from it returns the live
+         * structures to whatever the lobby was showing before this
+         * call — leaving the caller with an unchanged sim is much
+         * less surprising than a half-wiped one, especially for the
+         * upload path where a malformed map shouldn't blank the
+         * host's lobby. */
+        if (sim->cachedMapData != NULL && sim->cachedMapDataLen > 0) {
+            (void)mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb,
+                                        &sim->sim.bs, &sim->sim.ss,
+                                        sim->cachedMapData,
+                                        sim->cachedMapDataLen);
+        }
+        WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+            "serverSimReloadMap: mapRead failed for '%s'", mapFileName);
+        return FALSE;
+    }
+
+    basesClearMines(&sim->sim);
+
+    /* Update map name from basename, strip .map suffix. */
+    {
+        const char *base = mapFileName;
+        const char *p;
+        for (p = mapFileName; *p; p++) {
+            if (*p == '/' || *p == '\\') {
+                base = p + 1;
+            }
+        }
+        strncpy(sim->mapName, base, MAP_STR_SIZE - 1);
+        sim->mapName[MAP_STR_SIZE - 1] = '\0';
+        {
+            size_t nameLen = strlen(sim->mapName);
+            if (nameLen >= 4 &&
+                strcmp(sim->mapName + nameLen - 4, ".map") == 0) {
+                sim->mapName[nameLen - 4] = '\0';
+            }
+        }
+    }
+
+    /* Refresh cached compressed map. */
+    len = serverSimGetCompressedMap(sim, tempBuf);
+    if (sim->cachedMapData) free(sim->cachedMapData);
+    sim->cachedMapData = malloc(len);
+    if (sim->cachedMapData == NULL) {
+        sim->cachedMapDataLen = 0;
+        return FALSE;
+    }
+    memcpy(sim->cachedMapData, tempBuf, len);
+    sim->cachedMapDataLen = len;
+
+    /* Random-map provenance no longer applies. */
+    sim->randomMapEnabled = false;
+
+    /* Reset lobby ready state — humans must re-acknowledge the new
+     * map. Bots stay ready (no UI to click). */
+    {
+        int i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (!sim->lobbyPlayers[i].isBot) {
+                sim->lobbyPlayers[i].ready = FALSE;
+            }
+        }
+    }
+
+    snprintf(msg, sizeof(msg), "Map changed to %s", sim->mapName);
+    serverSimConsoleMessage(msg);
+
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "serverSimReloadMap: now '%s' (%d compressed bytes)",
+        sim->mapName, sim->cachedMapDataLen);
+
+    return TRUE;
+}
+
+bool serverSimReloadCompressedInMemory(ServerSim *sim,
+                                       const uint8_t *bytes, int len,
+                                       const char *mapName) {
+    BYTE tempBuf[131072];
+    int compressedLen;
+    char msg[256];
+
+    if (sim == NULL || bytes == NULL || len <= 0 ||
+        mapName == NULL || mapName[0] == '\0') {
+        return FALSE;
+    }
+    if (sim->state != serverStateLobby) {
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "serverSimReloadCompressedInMemory rejected: state=%d (not lobby)",
+            (int)sim->state);
+        return FALSE;
+    }
+
+    /* Stash the currently-committed map as the "previous" snapshot
+     * before we touch the sim. Keep the ORIGINAL committed map
+     * across a chain of previews so one Cancel rolls all the way
+     * back to where the user started. */
+    if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
+        sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
+        if (sim->previousMapData) {
+            memcpy(sim->previousMapData, sim->cachedMapData,
+                   sim->cachedMapDataLen);
+            sim->previousMapDataLen = sim->cachedMapDataLen;
+            memcpy(sim->previousMapName, sim->mapName,
+                   sizeof(sim->previousMapName));
+        }
+    }
+
+    /* Wipe the existing map/pill/base/start contents before the
+     * decoder touches them. mapLoadCompressedMap's RLE-decoder only
+     * writes cells encoded in the new blob — any tile NOT included
+     * in the new map's runs would otherwise keep the previous map's
+     * value. */
+    {
+        int x, y;
+        memset((*sim->sim.mp).mapItem, DEEP_SEA,
+               sizeof((*sim->sim.mp).mapItem));
+        for (x = 0; x < 256; x++) {
+            for (y = 0; y < 256; y++) {
+                if (x <= MAP_MINE_EDGE_LEFT || x >= MAP_MINE_EDGE_RIGHT ||
+                    y <= MAP_MINE_EDGE_TOP  || y >= MAP_MINE_EDGE_BOTTOM) {
+                    (*sim->sim.mp).mapItem[x][y] = DEEP_SEA;
+                }
+            }
+        }
+        sim->sim.pb->numPills = 0;
+        sim->sim.bs->numBases = 0;
+        sim->sim.ss->numStarts = 0;
+    }
+
+    /* The wire / upload / WBN paths all hand us a full .map file
+     * (starting with the BMAPBOLO magic + version + counts header).
+     * mapLoadCompressedMap expects a different on-the-wire layout
+     * (raw bases/pills/starts struct dump + LZW map), so feeding it
+     * the .map file bytes misaligns every field. Detect the magic
+     * and route through mapRead via a temp file when it matches.
+     * Fall back to the legacy mapLoadCompressedMap path for any
+     * future caller passing compressed-map-format bytes directly. */
+    bool loadedOk = FALSE;
+    if (len >= (int)(sizeof(MAP_HEADER) - 1) &&
+        memcmp(bytes, MAP_HEADER, sizeof(MAP_HEADER) - 1) == 0) {
+        char tmpPath[FILENAME_MAX];
+        SDL_snprintf(tmpPath, sizeof(tmpPath),
+                     "data/maps/.tmp_inmem_reload.map");
+        FILE *tf = fopen(tmpPath, "wb");
+        if (tf == NULL) {
+            WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+                "serverSimReloadCompressedInMemory: temp open failed '%s'",
+                tmpPath);
+            return FALSE;
+        }
+        size_t wrote = fwrite(bytes, 1, (size_t)len, tf);
+        fclose(tf);
+        if (wrote != (size_t)len) {
+            remove(tmpPath);
+            WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+                "serverSimReloadCompressedInMemory: temp write short (%zu/%d)",
+                wrote, len);
+            return FALSE;
+        }
+        loadedOk = (mapRead(tmpPath, &sim->sim.mp, &sim->sim.pb,
+                            &sim->sim.bs, &sim->sim.ss) == TRUE);
+        remove(tmpPath);
+    } else {
+        loadedOk = (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb,
+                                         &sim->sim.bs, &sim->sim.ss,
+                                         (BYTE *)bytes, len) == TRUE);
+    }
+    if (!loadedOk) {
+        WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+            "serverSimReloadCompressedInMemory: load failed (%d bytes)",
+            len);
+        return FALSE;
+    }
+
+    basesClearMines(&sim->sim);
+
+    /* Use caller-supplied display name verbatim — no path or suffix
+     * to strip in the in-memory case. */
+    strncpy(sim->mapName, mapName, MAP_STR_SIZE - 1);
+    sim->mapName[MAP_STR_SIZE - 1] = '\0';
+
+    /* Refresh cached compressed map. */
+    compressedLen = serverSimGetCompressedMap(sim, tempBuf);
+    if (sim->cachedMapData) free(sim->cachedMapData);
+    sim->cachedMapData = malloc(compressedLen);
+    if (sim->cachedMapData == NULL) {
+        sim->cachedMapDataLen = 0;
+        return FALSE;
+    }
+    memcpy(sim->cachedMapData, tempBuf, compressedLen);
+    sim->cachedMapDataLen = compressedLen;
+
+    /* Random-map provenance no longer applies. */
+    sim->randomMapEnabled = false;
+
+    /* Reset lobby ready state — humans must re-acknowledge the new
+     * map. Bots stay ready (no UI to click). */
+    {
+        int i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (!sim->lobbyPlayers[i].isBot) {
+                sim->lobbyPlayers[i].ready = FALSE;
+            }
+        }
+    }
+
+    snprintf(msg, sizeof(msg), "Map changed to %s", sim->mapName);
+    serverSimConsoleMessage(msg);
+
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "serverSimReloadCompressedInMemory: now '%s' (%d compressed bytes)",
+        sim->mapName, sim->cachedMapDataLen);
+
+    return TRUE;
+}
+
+bool serverSimReloadClientMap(ServerSim *sim, ClientSim *cs) {
+    BYTE *buf;
+    int len;
+    bool ok;
+    if (sim == NULL || cs == NULL) return FALSE;
+    buf = (BYTE *)malloc(65536);
+    if (buf == NULL) return FALSE;
+    len = serverSimGetCompressedMap(sim, buf);
+    if (len <= 0) {
+        free(buf);
+        return FALSE;
+    }
+    {
+        GameSim *gs = clientSimGetGameSim(cs);
+        ok = mapLoadCompressedMap(&gs->mp, &gs->pb, &gs->bs, &gs->ss, buf, len);
+    }
+    free(buf);
+    return ok;
+}
+
+bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {
+    if (!sim || !cfg) return FALSE;
+    if (sim->state != serverStateLobby) {
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "serverSimReloadRandomMap rejected: state=%d",
+            (int)sim->state);
+        return FALSE;
+    }
+
+    if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
+        sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
+        if (sim->previousMapData) {
+            memcpy(sim->previousMapData, sim->cachedMapData,
+                   sim->cachedMapDataLen);
+            sim->previousMapDataLen = sim->cachedMapDataLen;
+            memcpy(sim->previousMapName, sim->mapName,
+                   sizeof(sim->previousMapName));
+        }
+    }
+
+    if (!serverSimApplyRandomMapConfig(sim, cfg)) return FALSE;
+
+    {
+        char seedStr[64];
+        char msg[128];
+        mapGenConfigToSeed(cfg, seedStr, sizeof(seedStr));
+        snprintf(msg, sizeof(msg),
+                 "Random preview generated, seed: %s", seedStr);
+        serverSimConsoleMessage(msg);
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+            "serverSimReloadRandomMap: now '%s' (%d compressed bytes)",
+            sim->mapName, sim->cachedMapDataLen);
+    }
+    return TRUE;
+}
+
+bool serverSimHasPreviewMap(const ServerSim *sim) {
+    return sim != NULL && sim->previousMapData != NULL;
+}
+
+const char *serverSimGetPreviousMapName(const ServerSim *sim) {
+    if (!sim || !sim->previousMapData) return "";
+    return sim->previousMapName;
+}
+
+bool serverSimRevertPreview(ServerSim *sim) {
+    BYTE tempBuf[131072];
+    int len;
+    if (!sim || !sim->previousMapData) return FALSE;
+    if (sim->state != serverStateLobby) return FALSE;
+
+    if (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb,
+                              &sim->sim.bs, &sim->sim.ss,
+                              sim->previousMapData,
+                              sim->previousMapDataLen) == FALSE) {
+        WB_LOG_ERROR(WB_LOG_CAT_SERVER,
+            "serverSimRevertPreview: mapLoadCompressedMap failed");
+        return FALSE;
+    }
+    basesClearMines(&sim->sim);
+
+    memcpy(sim->mapName, sim->previousMapName, sizeof(sim->mapName));
+    len = serverSimGetCompressedMap(sim, tempBuf);
+    if (sim->cachedMapData) free(sim->cachedMapData);
+    sim->cachedMapData = (BYTE *)malloc(len);
+    if (sim->cachedMapData) {
+        memcpy(sim->cachedMapData, tempBuf, len);
+        sim->cachedMapDataLen = len;
+    } else {
+        sim->cachedMapDataLen = 0;
+    }
+
+    free(sim->previousMapData);
+    sim->previousMapData = NULL;
+    sim->previousMapDataLen = 0;
+    sim->previousMapName[0] = '\0';
+
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
+    return TRUE;
+}
+
+void serverSimCommitPreview(ServerSim *sim) {
+    if (!sim || !sim->previousMapData) return;
+    free(sim->previousMapData);
+    sim->previousMapData = NULL;
+    sim->previousMapDataLen = 0;
+    sim->previousMapName[0] = '\0';
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "serverSimCommitPreview: committed '%s'", sim->mapName);
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * Map directory enumeration / search
+ * ──────────────────────────────────────────────────────────────── */
+
+static bool relPathIsSafe(const char *p) {
+    if (!p) return true;
+    if (p[0] == '/' || p[0] == '\\') return false;
+    if (p[0] != '\0' && (p[1] == ':' || (p[2] == ':' && p[3] != '\0')))
+        return false; /* "C:..." Windows drive */
+    for (const char *s = p; *s;) {
+        if (s[0] == '.' && s[1] == '.' &&
+            (s[2] == '\0' || s[2] == '/' || s[2] == '\\')) {
+            return false;
+        }
+        while (*s && *s != '/' && *s != '\\') s++;
+        while (*s == '/' || *s == '\\') s++;
+    }
+    return true;
+}
+
+int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
+                              ServerMapEntry *entries, int maxEntries) {
+    (void)sim;
+    if (!entries || maxEntries <= 0) return -1;
+    if (!relPathIsSafe(relPath)) return -1;
+
+    char fullPath[FILENAME_MAX];
+    if (!relPath || relPath[0] == '\0') {
+        SDL_strlcpy(fullPath, "data/maps", sizeof(fullPath));
+    } else {
+        SDL_snprintf(fullPath, sizeof(fullPath), "data/maps/%s", relPath);
+    }
+
+    int count = 0;
+    int globCount = 0;
+    char **list = SDL_GlobDirectory(fullPath, NULL, 0, &globCount);
+    if (!list) return 0;
+
+    for (int i = 0; i < globCount && count < maxEntries; i++) {
+        const char *name = list[i];
+        if (!name || name[0] == '.') continue;
+
+        char child[FILENAME_MAX];
+        SDL_snprintf(child, sizeof(child), "%s/%s", fullPath, name);
+
+        SDL_PathInfo info;
+        if (!SDL_GetPathInfo(child, &info)) continue;
+        bool isDir = (info.type == SDL_PATHTYPE_DIRECTORY);
+
+        if (!isDir) {
+            size_t nlen = SDL_strlen(name);
+            if (nlen <= 4 ||
+                SDL_strcasecmp(name + nlen - 4, ".map") != 0) {
+                continue;
+            }
+        }
+
+        ServerMapEntry *e = &entries[count++];
+        SDL_strlcpy(e->name, name, sizeof(e->name));
+        e->isFolder = isDir;
+        e->modTime  = (int64_t)info.modify_time;
+        e->size     = isDir ? 0 : (int64_t)info.size;
+    }
+    SDL_free(list);
+
+    /* Folders first; alphabetical within each group. */
+    for (int i = 1; i < count; i++) {
+        ServerMapEntry cur = entries[i];
+        int j = i - 1;
+        while (j >= 0) {
+            const ServerMapEntry *a = &entries[j];
+            bool aFirst;
+            if (a->isFolder != cur.isFolder) aFirst = a->isFolder;
+            else aFirst = SDL_strcasecmp(a->name, cur.name) <= 0;
+            if (aFirst) break;
+            entries[j + 1] = entries[j];
+            j--;
+        }
+        entries[j + 1] = cur;
+    }
+
+    return count;
+}
+
+static void searchDirRecursive(const char *fullRoot,
+                                const char *subRel,
+                                const char *queryLower,
+                                size_t queryLen,
+                                ServerMapEntry *entries,
+                                int maxEntries,
+                                int *count,
+                                int depth) {
+    const int kMaxDepth = 8;
+    if (*count >= maxEntries) return;
+    if (depth > kMaxDepth) return;
+
+    char dirPath[FILENAME_MAX];
+    if (subRel[0] == '\0') {
+        SDL_strlcpy(dirPath, fullRoot, sizeof(dirPath));
+    } else {
+        SDL_snprintf(dirPath, sizeof(dirPath), "%s/%s",
+                     fullRoot, subRel);
+    }
+
+    int globCount = 0;
+    char **list = SDL_GlobDirectory(dirPath, NULL, 0, &globCount);
+    if (!list) return;
+
+    for (int i = 0; i < globCount && *count < maxEntries; i++) {
+        const char *name = list[i];
+        if (!name || name[0] == '.') continue;
+
+        char childPath[FILENAME_MAX];
+        SDL_snprintf(childPath, sizeof(childPath), "%s/%s",
+                     dirPath, name);
+
+        SDL_PathInfo info;
+        if (!SDL_GetPathInfo(childPath, &info)) continue;
+        bool isDir = (info.type == SDL_PATHTYPE_DIRECTORY);
+
+        char rel[256];
+        if (subRel[0] == '\0') {
+            SDL_strlcpy(rel, name, sizeof(rel));
+        } else {
+            SDL_snprintf(rel, sizeof(rel), "%s/%s", subRel, name);
+        }
+
+        if (isDir) {
+            searchDirRecursive(fullRoot, rel, queryLower, queryLen,
+                               entries, maxEntries, count, depth + 1);
+            continue;
+        }
+
+        size_t nlen = SDL_strlen(name);
+        if (nlen <= 4 ||
+            SDL_strcasecmp(name + nlen - 4, ".map") != 0) continue;
+
+        bool match = false;
+        for (size_t k = 0; k + queryLen <= nlen; k++) {
+            size_t m;
+            for (m = 0; m < queryLen; m++) {
+                char hc = name[k + m];
+                if (hc >= 'A' && hc <= 'Z') hc = (char)(hc + 32);
+                if (hc != queryLower[m]) break;
+            }
+            if (m == queryLen) { match = true; break; }
+        }
+        if (!match) continue;
+
+        ServerMapEntry *e = &entries[(*count)++];
+        SDL_strlcpy(e->name, rel, sizeof(e->name));
+        e->isFolder = false;
+        e->modTime  = (int64_t)info.modify_time;
+        e->size     = (int64_t)info.size;
+    }
+    SDL_free(list);
+}
+
+int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
+                           const char *query,
+                           ServerMapEntry *entries, int maxEntries) {
+    (void)sim;
+    if (!entries || maxEntries <= 0) return -1;
+    if (!query || query[0] == '\0') return 0;
+    if (!relPathIsSafe(relPath)) return -1;
+
+    char fullRoot[FILENAME_MAX];
+    if (!relPath || relPath[0] == '\0') {
+        SDL_strlcpy(fullRoot, "data/maps", sizeof(fullRoot));
+    } else {
+        SDL_snprintf(fullRoot, sizeof(fullRoot), "data/maps/%s", relPath);
+    }
+
+    char queryLower[128];
+    size_t qlen = SDL_strlen(query);
+    if (qlen >= sizeof(queryLower)) qlen = sizeof(queryLower) - 1;
+    for (size_t i = 0; i < qlen; i++) {
+        char c = query[i];
+        if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+        queryLower[i] = c;
+    }
+    queryLower[qlen] = '\0';
+
+    int count = 0;
+    searchDirRecursive(fullRoot, "", queryLower, qlen,
+                       entries, maxEntries, &count, 0);
+
+    for (int i = 1; i < count; i++) {
+        ServerMapEntry cur = entries[i];
+        int j = i - 1;
+        while (j >= 0 &&
+               SDL_strcasecmp(entries[j].name, cur.name) > 0) {
+            entries[j + 1] = entries[j];
+            j--;
+        }
+        entries[j + 1] = cur;
+    }
+    return count;
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * Lobby Layout A accessors / mutators / publish helpers
+ * ──────────────────────────────────────────────────────────────── */
+
+void serverSimSetBotBrainIdxFor(ServerSim *sim, BYTE slot, uint8_t brainIdx) {
+    if (!sim || slot >= MAX_TANKS) return;
+    /* 0xFF is the "use server default" sentinel; any other in-range
+     * value indexes into the catalogue. Out-of-range is a no-op,
+     * matching the existing "ignore malformed input" pattern. */
+    if (brainIdx != 0xFF && brainIdx >= sim->brainList.count) return;
+    sim->botBrainIdx[slot] = brainIdx;
+}
+
+const char *serverSimGetBrainPathForIdx(const ServerSim *sim, uint8_t brainIdx) {
+    if (!sim) return NULL;
+    if (brainIdx == 0xFF) return sim->botBrainPath;
+    if (brainIdx >= sim->brainList.count) return NULL;
+    return sim->brainPaths[brainIdx];
+}
+
+bool serverSimGetAutoLockOnGameStart(const ServerSim *sim) {
+    return sim ? sim->autoLockOnGameStart : false;
+}
+
+void serverSimSetAutoLockOnGameStart(ServerSim *sim, bool v) {
+    if (sim) sim->autoLockOnGameStart = v;
+}
+
+bool serverSimGetOpenHost(const ServerSim *sim) {
+    return sim ? sim->openHost : false;
+}
+
+void serverSimSetOpenHost(ServerSim *sim, bool v) {
+    if (sim) sim->openHost = v;
+}
+
+bool serverSimGetFirstJoinerBecomesHost(const ServerSim *sim) {
+    return sim ? sim->firstJoinerBecomesHost : false;
+}
+
+void serverSimSetFirstJoinerBecomesHost(ServerSim *sim, bool v) {
+    if (sim) sim->firstJoinerBecomesHost = v;
+}
+
+uint16_t serverSimGetServerLocks(const ServerSim *sim) {
+    return sim ? sim->serverLocks : 0;
+}
+
+uint16_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
+    switch (lstSettingType) {
+        case LST_GAME_TYPE:         return LOBBY_LOCK_GAME_TYPE;
+        case LST_HIDDEN_MINES:      return LOBBY_LOCK_MINES;
+        case LST_AI_POLICY:         return LOBBY_LOCK_AI_POLICY;
+        case LST_TIME_LIMIT:        return LOBBY_LOCK_TIME_LIMIT;
+        case LST_TIME_MINUTES:      return LOBBY_LOCK_TIME_LIMIT;
+        case LST_AUTO_LOCK_ON_GAME: return LOBBY_LOCK_AUTO_LOCK_ON_GAME;
+        case LST_RANKED:            return LOBBY_LOCK_RANKED;
+        default:                    return 0xFFFFu;  /* unknown setting */
+    }
+}
+
+bool serverSimIsSettingLocked(const ServerSim *sim, uint8_t lstSettingType) {
+    if (sim == NULL) return false;
+    uint16_t bit = serverSimGetSettingLockBit(lstSettingType);
+    if (bit == 0u || bit == 0xFFFFu) return false;
+    return (sim->serverLocks & bit) != 0u;
+}
+
+void serverSimSetAiPolicy(ServerSim *sim, uint8_t v) {
+    if (sim) sim->aiPolicy = v;
+}
+
+bool serverSimGetTimeLimit(const ServerSim *sim) {
+    return sim ? sim->timeLimit : false;
+}
+
+void serverSimSetTimeLimit(ServerSim *sim, bool v) {
+    if (sim) sim->timeLimit = v;
+}
+
+uint16_t serverSimGetTimeMinutes(const ServerSim *sim) {
+    return sim ? sim->timeMinutes : 0;
+}
+
+void serverSimSetTimeMinutes(ServerSim *sim, uint16_t v) {
+    if (sim) sim->timeMinutes = v;
+}
+
+TeamMetadata *serverSimGetTeamMetaMut(ServerSim *sim, BYTE teamId) {
+    if (!sim || teamId == 0 || teamId >= MAX_TANKS) return NULL;
+    return &sim->teams[teamId];
+}
+
+const LobbyBotConfig *serverSimGetBotConfig(const ServerSim *sim, BYTE slot) {
+    if (!sim || slot >= MAX_TANKS) return NULL;
+    return &sim->botConfigs[slot];
+}
+
+LobbyBotConfig *serverSimGetBotConfigMut(ServerSim *sim, BYTE slot) {
+    if (!sim || slot >= MAX_TANKS) return NULL;
+    return &sim->botConfigs[slot];
+}
+
+void serverSimSetGameLength(ServerSim *sim, int32_t ticks) {
+    if (sim) sim->gameLength = ticks;
+}
+
+gameType serverSimGetGameType(const ServerSim *sim) {
+    return sim ? sim->sim.game : gameOpen;
+}
+
+void serverSimSetGameType(ServerSim *sim, gameType gt) {
+    if (sim) sim->sim.game = gt;
+}
+
+void serverSimSetHiddenMines(ServerSim *sim, bool hiddenMines) {
+    if (sim) sim->sim.hiddenMines = hiddenMines;
+}
+
+void serverSimSetState(ServerSim *sim, ServerState s) {
+    if (sim) sim->state = s;
+}
+
+void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, uint8_t brainIdx) {
+    if (!sim || slot >= MAX_TANKS) return;
+    serverSimSetBotBrainIdxFor(sim, slot, brainIdx);
+    botManagerSetBrainIdx(sim, slot, sim->botBrainIdx[slot]);
+}
+
+void serverSimRenameBotSlot(ServerSim *sim, BYTE slot, const char *name) {
+    if (!sim || slot >= MAX_TANKS || !name) return;
+    {
+        char nameBuf[32];
+        char loc[3] = "??";
+        SDL_strlcpy(nameBuf, name, sizeof(nameBuf));
+        playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, slot,
+                         nameBuf, loc,
+                         0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
+    }
+    /* Subscriber ClientSims track names in sim.plyrs (what the in-game
+     * players panel reads), not in lobbySlots. Publish so the rename
+     * propagates past the lobby UI into the game view. */
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_PLAYER_NAME;
+        evt.u.playerName.playerNum = slot;
+        snprintf(evt.u.playerName.name, PACKET_MAX_PLAYER_NAME, "%s", name);
+        serverSimPublishControl(sim, &evt);
+    }
+}
+
+void serverSimPublishLobbySlot(ServerSim *sim, BYTE slot) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySlotEvent(sim, slot, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimPublishLobbyBotBrain(ServerSim *sim, BYTE slot) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyBotBrainEvent(sim, slot, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimPublishLobbyBotConfig(ServerSim *sim, BYTE slot) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyBotConfigEvent(sim, slot, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimPublishLobbyTeamMeta(ServerSim *sim, BYTE teamId) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbyTeamMetaEvent(sim, teamId, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
+void serverSimPublishLobbySettings(ServerSim *sim) {
+    ControlEvent evt;
+    if (!sim) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySettingsEvent(sim, &evt);
+    balanceDebugLog("[RANKED SERVER] publishLobbySettings: sim->ranked=%d evt.lobbyRanked=%d",
+                    (int)sim->ranked, (int)evt.u.lobbySettings.lobbyRanked);
+    serverSimPublishControl(sim, &evt);
+    balanceDebugLog("[RANKED SERVER] publishLobbySettings: publishControl returned");
+}
+
+const BrainList *serverSimGetBrainList(const ServerSim *sim) {
+    return sim ? &sim->brainList : NULL;
+}
+
+bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
+                           uint8_t **outBytes, size_t *outLen) {
+    (void)sim;
+    if (!outBytes || !outLen) return false;
+    *outBytes = NULL;
+    *outLen   = 0;
+    if (!relPath || !*relPath) return false;
+    if (!relPathIsSafe(relPath)) return false;
+
+    char fullPath[FILENAME_MAX];
+    SDL_snprintf(fullPath, sizeof(fullPath), "data/maps/%s", relPath);
+    SDL_PathInfo info;
+    if (!SDL_GetPathInfo(fullPath, &info)) return false;
+    if (info.type != SDL_PATHTYPE_FILE) return false;
+
+    FILE *fp = fopen(fullPath, "rb");
+    if (!fp) return false;
+    if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return false; }
+    long sz = ftell(fp);
+    if (sz <= 0 || (size_t)sz > LOBBY_MAP_UPLOAD_MAX_BYTES) { fclose(fp); return false; }
+    if (fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return false; }
+    uint8_t *buf = (uint8_t *)malloc((size_t)sz);
+    if (!buf) { fclose(fp); return false; }
+    size_t got = fread(buf, 1, (size_t)sz, fp);
+    fclose(fp);
+    if (got != (size_t)sz) { free(buf); return false; }
+    *outBytes = buf;
+    *outLen   = (size_t)sz;
+    return true;
+}
+
+void serverSimSetServerLocks(ServerSim *sim, uint16_t locks) {
+    if (sim) sim->serverLocks = locks;
+}
+
+bool serverSimGetRanked(const ServerSim *sim) {
+    return sim ? sim->ranked : false;
+}
+
+void serverSimSetRanked(ServerSim *sim, bool v) {
+    if (sim) sim->ranked = v;
+}
+
+void serverSimSetAllowNewPlayers(ServerSim *sim, bool v) {
+    if (sim) sim->allowNewPlayers = v;
+}
+
+bool serverSimRankedShapeReady(const ServerSim *sim) {
+    if (sim == NULL) return false;
+    int teamSizes[17] = {0};
+    int teamsInUse = 0;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (!serverSimIsPlayerConnected(sim, i)) continue;
+        const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, i);
+        if (lp == NULL || lp->isBot) continue;
+        uint8_t t = lp->teamNumber;
+        if (t == 0 || t > 16) continue;
+        if (teamSizes[t] == 0) teamsInUse++;
+        teamSizes[t]++;
+    }
+    int firstSize = 0, secondSize = 0;
+    for (int t = 1; t <= 16; t++) {
+        if (teamSizes[t] == 0) continue;
+        if (firstSize == 0) firstSize = teamSizes[t];
+        else                secondSize = teamSizes[t];
+    }
+    return (teamsInUse == 2) &&
+           (firstSize == secondSize) &&
+           (firstSize >= 1 && firstSize <= 3);
+}
+
+uint8_t serverSimGetAiPolicy(const ServerSim *sim) {
+    return sim ? sim->aiPolicy : 0;
+}
+
+const TeamMetadata *serverSimGetTeamMeta(const ServerSim *sim, BYTE teamId) {
+    if (!sim || teamId == 0 || teamId >= MAX_TANKS) return NULL;
+    return &sim->teams[teamId];
+}
+
+bool serverSimIsAcceptingJoins(const ServerSim *sim) {
+    return sim && sim->allowNewPlayers;
+}
+
+void serverSimSetUploadPolicy(ServerSim *sim, UploadPolicy policy) {
+    if (!sim) return;
+    sim->uploadPolicy = policy;
 }

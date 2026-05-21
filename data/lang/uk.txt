@@ -422,6 +422,7 @@ STR_DLGLOBBY_BOT_FMT={player} [Бот]
 STR_DLGLOBBY_YOU_FMT={player} (Ви)
 STR_DLGLOBBY_STARTING_FMT=Початок через {number}...
 STR_DLGLOBBY_LOSTCONNECTION=Ви втратили з'єднання з сервером.
+STR_DLGLOBBY_KICKED=Вас було вилучено з сервера.
 STR_DLGLOBBY_ME=Я
 STR_DLGLOBBY_PLAYER_COL=Гравець
 STR_DLGLOBBY_PING_COL=Пінг
@@ -1071,10 +1072,10 @@ STR_DLGLOBBY_PORTMAP_CHECKING=Перевірка доступності серв
 STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Сервер доступний
 STR_DLGLOBBY_PORTMAP_UNREACHABLE=Сервер недоступний
 STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Намагаюся відкрити порт у фаєрволі через UPnP / NAT-PMP і підтвердити, що трекер може дістатися до тебе через твою мережу. Зазвичай це займає до 30 секунд.
-STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Порт автоматично перенаправлено через UPnP/NAT-PMP на %s:%u. Підключені з'єднуються безпосередньо без додаткових кроків.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Порт автоматично перенаправлено через UPnP/NAT-PMP на {string1}:{number}. Підключені з'єднуються безпосередньо без додаткових кроків.
 STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Не вдалося встановити пряме перенаправлення порту, але NAT traversal активний. Підключені координуються через трекер, щоб пробити фаєрвол твоєї мережі. Це працює в більшості домашніх мереж; гравці за симетричним NAT або CGN можуть все одно не підключитися.
-STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Виявлено симетричний NAT — твоя мережа переписує вихідний порт для кожного призначення, через що гравці не можуть дістатися до тебе навіть через NAT traversal. Для успішного хостингу вручну перенаправ UDP-порт %u на роутері на цю машину.
-STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Не вдалося автоматично відкрити порт у фаєрволі (UPnP/NAT-PMP відмовив або недоступний), і трекер не зміг підтвердити двосторонню доступність. Для успішного хостингу вручну перенаправ UDP-порт %u на роутері на цю машину.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Виявлено симетричний NAT — твоя мережа переписує вихідний порт для кожного призначення, через що гравці не можуть дістатися до тебе навіть через NAT traversal. Для успішного хостингу вручну перенаправ UDP-порт {number} на роутері на цю машину.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Не вдалося автоматично відкрити порт у фаєрволі (UPnP/NAT-PMP відмовив або недоступний), і трекер не зміг підтвердити двосторонню доступність. Для успішного хостингу вручну перенаправ UDP-порт {number} на роутері на цю машину.
 STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Доступність сервера
 STR_DLGLOBBY_TEST_CONNECTIVITY=Перевірити з'єднання
 STR_DLGLOBBY_TEST_TESTING=Перевірка…
@@ -1156,3 +1157,155 @@ STR_MENU_FIND_LAN_GAME=Знайти гру в локальній мережі…
 STR_MENU_JOIN_BY_ADDRESS=Приєднатися за адресою…
 STR_MENU_OPEN_MAP_EDITOR=Відкрити редактор карт
 STR_MENU_OPEN_LOG_VIEWER=Відкрити перегляд журналів
+
+# Settings → Network: WinBolo.net news auto-show toggle.
+STR_DLGSETTINGS_NEWS_AUTOSHOW=Показувати новини з winbolo.net при запуску
+
+# News popup + welcome News button strings.
+STR_DLGWELCOME_NEWS=Новини
+STR_DLGNEWS_TITLE=Новини
+STR_DLGNEWS_CONSENT_TITLE=WinBolo — новини
+STR_DLGNEWS_CONSENT_BODY1=WinBolo може показувати нові записи з winbolo.net під час запуску гри. WBN перевіряється один раз при запуску, і це вікно відкриється лише тоді, коли з'явиться щось нове.
+STR_DLGNEWS_CONSENT_BODY2=Це можна змінити будь-коли в розділі Налаштування.
+STR_DLGNEWS_SHOW=Показати новини
+STR_DLGNEWS_DONT_SHOW=Не показувати
+STR_DLGNEWS_LOADING=Завантаження…
+STR_DLGNEWS_DONT_AUTOSHOW=Не відкривати новини автоматично надалі
+STR_DLGNEWS_COMMENTS_FMT=Коментарі: {number}
+
+# Лобі — Вибір карти (1273-1284, 1388)
+STR_DLGLOBBY_CHOOSEMAP_TITLE=Вибрати карту
+STR_DLGLOBBY_TAB_SERVERMAPS=Карти сервера
+STR_DLGLOBBY_TAB_LOCALMAPS=Локальні карти
+STR_DLGLOBBY_TAB_UPLOAD=Завантажити
+STR_DLGLOBBY_TAB_GENERATE=Генерувати
+STR_DLGLOBBY_TAB_WBNMAPS=Карти Winbolo.net
+STR_DLGLOBBY_CLOSEMAP_PROMPT=Ти переглянув іншу карту.
+STR_DLGLOBBY_CLOSEMAP_QUESTION=Що хочеш зробити?
+STR_DLGLOBBY_USETHISMAP=Використати цю карту
+STR_DLGLOBBY_REVERTCLOSE=Повернути і закрити
+STR_DLGLOBBY_KEEPPICKING=Продовжити вибір
+STR_DLGLOBBY_CANCEL_MAPCHOOSER=Скасувати
+STR_DLGLOBBY_CHOOSE_MAP_BTN=Вибрати карту
+
+# Лобі — Помилки завантаження + WBN (1285-1297)
+STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT=Інше завантаження вже виконується.
+STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Завантаження вимкнено на цьому сервері.
+STR_DLGLOBBY_UPLOAD_ERR_FULL=Бібліотека карт сервера заповнена.
+STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=Забагато запитів — зачекай хвилину перед повтором.
+STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Завантаження відхилено сервером.
+STR_DLGLOBBY_WBN_ERR_DOWNLOAD=Завантаження не вдалося
+STR_DLGLOBBY_WBN_ERR_BADRESPONSE=Неправильна відповідь від WinBolo.net
+STR_DLGLOBBY_WBN_ERR_NETERROR=Помилка мережі під час завантаження карти
+STR_DLGLOBBY_WBN_ERR_HTTPERROR=WBN повернув HTTP {number}
+STR_DLGLOBBY_WBN_ERR_MAPFAILED=Завантаження карти не вдалося
+STR_DLGLOBBY_WBN_ERR_TOOBIG=Карта перевищує ліміт завантаження 64 КБ
+STR_DLGLOBBY_WBN_ERR_OOM=Недостатньо пам'яті для черги завантаження
+STR_DLGLOBBY_WBN_ERR_BADSEARCHRESPONSE=Неправильна відповідь пошуку від WinBolo.net
+
+# Лобі — Прийом нових гравців + ranked-керування (1298-1307)
+STR_DLGLOBBY_ALLOW_NOW=Зараз
+STR_DLGLOBBY_ALLOW_DURING=Під час гри
+STR_DLGLOBBY_TOOLTIP_ALLOWNOW=Приймати нові заявки на приєднання прямо зараз, поки лобі відкрите.
+STR_DLGLOBBY_TOOLTIP_ALLOWDURING=Продовжувати приймати нових гравців після початку гри.
+STR_DLGLOBBY_TOOLTIP_RANKED_AUTOLOCK=Ranked-ігри блокують нових гравців після початку гри.
+STR_DLGLOBBY_RANKED=Ranked-гра
+STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED=Заблоковано адміністратором сервера.
+STR_DLGLOBBY_TOOLTIP_RANKED_NOTHOST=Лише хост або адміністратор може перемикати Ranked-гру.
+STR_DLGLOBBY_TOOLTIP_RANKED_BOTS=Видали всіх ботів з лобі перед тим, як позначити\nгру як Ranked. Ranked-матчі — лише для людей.
+STR_DLGLOBBY_TOOLTIP_RANKED_INFO=Ranked-ігри забороняють ботів і вимагають турнірного\nтипу гри — жодного «Відкритого» режиму зі зброєю.\nПеремикання скидає стан готовності всіх гравців,\nщоб хост міг підтвердити нову конфігурацію.
+
+# Лобі — Список гравців по командах + кік (1308-1330)
+STR_DLGLOBBY_TEAM_HEADER=Команда {number}
+STR_DLGLOBBY_TEAM_MEMBERS_1=· 1 гравець
+STR_DLGLOBBY_TEAM_MEMBERS_N=· {number} гравців
+STR_DLGLOBBY_TEAM_1BOT=1 бот
+STR_DLGLOBBY_TEAM_NBOTS=ботів
+STR_DLGLOBBY_JOIN_TEAM=Увійти
+STR_DLGLOBBY_TOOLTIP_JOIN=Перейти до Команди {number}.
+STR_DLGLOBBY_BOT_NAMING=Іменування ботів:
+STR_DLGLOBBY_ADDBOT_LBL=Додати бота
+STR_DLGLOBBY_TOOLTIP_ADDBOT=Додати бота до Команди {number} з іменем з обраного набору.
+STR_DLGLOBBY_TOOLTIP_RMTEAM=Видалити Команду {number} (та її ботів).
+STR_DLGLOBBY_TOOLTIP_DRAG=Перетягни на команду для переміщення
+STR_DLGLOBBY_TAG_HOST=ХОСТ
+STR_DLGLOBBY_TAG_ADMIN=ADMIN
+STR_DLGLOBBY_TAG_BOT=BOT
+STR_DLGLOBBY_PILL_READY=ГОТОВИЙ
+STR_DLGLOBBY_PILL_NOTREADY=НЕ ГОТОВИЙ
+STR_DLGLOBBY_TOOLTIP_CONFIG=Налаштувати бота
+STR_DLGLOBBY_TOOLTIP_RMBOT=Видалити бота
+STR_DLGLOBBY_TOOLTIP_KICK=Вигнати гравця
+STR_DLGLOBBY_ADD_TEAM=Додати команду
+STR_DLGLOBBY_UNASSIGNED_FMT=Без команди ({number}):
+STR_DLGLOBBY_KICK_FMT=Вигнати «{player}»?
+
+# Лобі — Панель AiConfig бота (1331-1344)
+STR_DLGLOBBY_BOTCFG_NAME=Ім'я (власне)
+STR_DLGLOBBY_BOTCFG_REROLL=Перекинути
+STR_DLGLOBBY_BOTCFG_REROLL_TIP=Вибрати нове випадкове ім'я з набору команди.
+STR_DLGLOBBY_BOTCFG_CODE=Код бота
+STR_DLGLOBBY_BOTCFG_NONE=(немає)
+STR_DLGLOBBY_BOTCFG_DIFFICULTY=Складність
+STR_DLGLOBBY_BOTCFG_EASY=Легка
+STR_DLGLOBBY_BOTCFG_NORMAL=Нормальна
+STR_DLGLOBBY_BOTCFG_HARD=Важка
+STR_DLGLOBBY_BOTCFG_PERSONALITY=Особистість
+STR_DLGLOBBY_BOTCFG_AGGRESSIVE=Агресивна
+STR_DLGLOBBY_BOTCFG_DEFENSIVE=Захисна
+STR_DLGLOBBY_BOTCFG_SNIPER=Снайпер
+STR_DLGLOBBY_BOTCFG_DONE=Готово
+
+# Лобі — Діалог балансування з WBN (1345-1358)
+STR_DLGLOBBY_BAL_BTN=Баланс з WBN
+STR_DLGLOBBY_BAL_POPUP_TITLE=Збалансувати команди з WBN
+STR_DLGLOBBY_BAL_POPUP_BODY=Це очистить усі команди в лобі та замінить їх двома збалансованими за навичками командами з winbolo.net. Новий розподіл набуде чинності негайно.
+STR_DLGLOBBY_BAL_POPUP_BOT_SINGULAR=У лобі зараз 1 бот. Обери, чи повинен бот брати участь у збалансованому розподілі, чи бути видаленим для матчу лише людей.
+STR_DLGLOBBY_BAL_POPUP_BOT_PLURAL=У лобі зараз {number} ботів. Обери, чи повинні боти брати участь у збалансованому розподілі, чи бути видаленими для матчу лише людей.
+STR_DLGLOBBY_BAL_BOTS_INCLUDED=Боти включені
+STR_DLGLOBBY_BAL_HUMANS_ONLY=Лише люди
+STR_DLGLOBBY_BAL_GO=Збалансувати
+STR_DLGLOBBY_BAL_TOOLTIP_NOTHOST=Лише хост або адміністратор може запросити\nзбалансований за навичками розподіл команд\nвід winbolo.net.
+STR_DLGLOBBY_BAL_TOOLTIP_NOTENOUGH=Для розподілу лобі на збалансовані команди\nнеобхідно щонайменше два підключені гравці.
+STR_DLGLOBBY_BAL_TOOLTIP_INFO=Попросити winbolo.net розділити лобі на дві\nзбалансовані за навичками команди. Розподіл\nзастосовується негайно після відповіді WBN —\nіснуючі команди замінюються.
+STR_DLGLOBBY_BAL_STATUS_ASKING=Запит до WBN\xe2\x80\xa6
+STR_DLGLOBBY_BAL_STATUS_BALANCED=Команди збалансовано
+STR_DLGLOBBY_BAL_STATUS_NOREPLY=Немає відповіді від WBN
+
+# Лобі — Сповіщення про відхилення (1359-1363)
+STR_DLGLOBBY_REJECT_DEFAULT=відхилено
+STR_DLGLOBBY_REJECT_NOTHOST=дія лише для хоста
+STR_DLGLOBBY_REJECT_LOCKED=налаштування заблоковано сервером
+STR_DLGLOBBY_REJECT_INVALID=невірний запит
+STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Зміну лобі відхилено: {string1}
+
+# Лобі — Значок блокування (1364)
+STR_DLGLOBBY_LOCK_BADGE=[заблоковано]
+
+# Лобі — Підказка форми ranked (1365-1367)
+STR_DLGLOBBY_RANKED_SHAPE_TIP=Ranked-ігри вимагають рівно двох команд однакового\nрозміру: 1v1, 2v2 або 3v3 гравців-людей.\n(Зараз {number} {string1}, розміри {number2} vs {number3}.)
+STR_DLGLOBBY_RANKED_SHAPE_TEAM=команда
+STR_DLGLOBBY_RANKED_SHAPE_TEAMS=команди
+
+# Лобі — Панель налаштувань гри (1368-1381)
+STR_DLGLOBBY_SETTINGS_HEADER=Налаштування гри
+STR_DLGLOBBY_OPENHOST_NOTE=Хост дозволив усім гравцям змінювати налаштування гри.
+STR_DLGLOBBY_GAMETYPE_LBL=Тип гри
+STR_DLGLOBBY_AI_SECTION_LBL=Комп'ютерні гравці
+STR_DLGLOBBY_AI_NONE=Без комп'ютерних танків
+STR_DLGLOBBY_AI_ALLOW=Дозволити комп'ютерні танки
+STR_DLGLOBBY_AI_ADVANTAGE=Дозволити з перевагою
+STR_DLGLOBBY_AI_FULLADV=Дозволити з повною перевагою
+STR_DLGLOBBY_OTHER_LBL=Інше
+STR_DLGLOBBY_OPENHOST_CB=Дозволити всім гравцям змінювати налаштування
+STR_DLGLOBBY_OPENHOST_TOOLTIP=Коли увімкнено, кожен підключений гравець може\nредагувати налаштування лобі — включно зі зміною\nкарти, додаванням або видаленням ботів і\nперемиканням команд.
+STR_DLGLOBBY_TIMELIMIT_MIN=хв
+STR_DLGLOBBY_PASSWORD_CB=Пароль
+STR_DLGLOBBY_PASSWORD_TOOLTIP=Коли увімкнено, нові клієнти повинні ввести\nпароль для підключення. Вже підключені гравці\nне зачіпаються.
+
+# Лобі — Заголовок десктопу (1382-1383)
+STR_DLGLOBBY_SERVERDISP_SP=Одиночна гра
+STR_DLGLOBBY_SERVERDISP_INTERNET=Інтернет
+
+# Лобі — Підказка значка з'єднання (1384)
+STR_DLGLOBBY_CONN_TEST_TIP=Тест виконується

@@ -2,7 +2,7 @@
 *~
 .idea
 build
-/cmake*
+/cmake-build*/
 /*.ps1
 /*.png
 

@@ -86,9 +86,115 @@ void clientSimNetSendLockToggle(ClientSim *cs, bool allow);
 void clientSimNetSendTeamSet(ClientSim *cs, BYTE teamNumber);
 void clientSimNetSendReady(ClientSim *cs, bool ready);
 void clientSimNetSendAddBot(ClientSim *cs);
+/* Add-bot with explicit team, brain, and pool-picked name. The
+ * zero-arg clientSimNetSendAddBot above sends teamNumber=0 / brainIdx=0xFF /
+ * botName="" and lets the server pick defaults.
+ *
+ * The server currently ignores brainIdx on PACKET_LOBBY_ADD_BOT — bots
+ * always start on the server's CLI-configured default. To apply a
+ * non-default brain, callers should follow this with
+ * clientSimNetSendLobbySetBotBrain once the new slot lands. The
+ * parameter is kept on the API for symmetry with the rest of the
+ * lobby-bot send wrappers. */
+void clientSimNetSendAddBotConfigured(ClientSim *cs, BYTE teamNumber,
+                                      uint8_t brainIdx,
+                                      const char *botName);
 void clientSimNetSendRemoveBot(ClientSim *cs, BYTE playerNum);
+void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
+                                    uint8_t difficulty,
+                                    uint8_t personality,
+                                    const char *name);
+/* Assign brain catalogue entry brainIdx to lobby bot slot. 0xFF =
+ * use the server's CLI-configured default brain. */
+void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
+                                      uint8_t brainIdx);
+/* Host (or openHost / admin) only — swap the running lobby map.
+ * mapRelPath is relative to data/maps/ (e.g. "Foo.map" or
+ * "subdir/Foo.map"). Server rejects "..", absolute paths, and
+ * Windows drive letters before opening the file. */
+void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath);
+
+/* Lobby preview cycle. SET_MAP and a completed upload auto-stash
+ * the previous committed map; these two close the loop:
+ *   - Cancel: roll back to the stashed map (server re-broadcasts).
+ *   - Commit: free the stash; the sim already shows the previewed
+ *             map, so no further broadcast is needed. */
+void clientSimNetSendLobbyPreviewCancel(ClientSim *cs);
+void clientSimNetSendLobbyPreviewCommit(ClientSim *cs);
+
+/* Procedural-map preview. seedStr is a mapGenConfigToSeed-encoded
+ * string the server decodes back into a MapGenConfig. Server applies
+ * as a preview (stashes previous map, regenerates, broadcasts
+ * MAP_CHANGE). */
+void clientSimNetSendLobbyPreviewRandom(ClientSim *cs, const char *seedStr);
+
+/* Ask the server to list data/maps/<relPath>. Response arrives async
+ * via PACKET_LOBBY_MAP_LIST_RSP and is stored on the ClientSim
+ * (lobbyMapList* fields). Any lobby client may request — read-only. */
+void clientSimNetSendLobbyMapListRequest(ClientSim *cs,
+                                         const char *relPath);
+
+/* Recursive search variant. Response stored on lobbyMapSearch*. */
+void clientSimNetSendLobbyMapSearchRequest(ClientSim *cs,
+                                           const char *relPath,
+                                           const char *query);
+
+/* Map upload: BEGIN announces a file with its byte length and
+ * server-relative name (e.g. "Uploaded/Foo.map"); CHUNK delivers
+ * data segments at the given offset (1024-byte cap). Server
+ * acknowledges BEGIN with MAP_UPLOAD_ACK and the final chunk with
+ * MAP_UPLOAD_DONE — both update lobbyMapUploadStatus on the
+ * ClientSim. */
+void clientSimNetSendLobbyMapUploadBegin(ClientSim *cs,
+                                         uint32_t totalLen,
+                                         const char *name);
+void clientSimNetSendLobbyMapUploadChunk(ClientSim *cs,
+                                         uint32_t offset,
+                                         const uint8_t *data,
+                                         uint16_t dataLen);
+/* Pre-upload optimisation: if the server already has the same file
+ * (matching MD5) at relPath under its data/maps/, it installs that
+ * file directly and replies MAP_UPLOAD_DONE — no chunk transfer
+ * needed. On a miss it replies MAP_USE_LOCAL_NACK and the caller
+ * falls back to clientSimNetSendLobbyMapUploadBegin. relPath is
+ * the same scheme PACKET_LOBBY_MAP_PREVIEW_REQ uses (relative to
+ * data/maps/, no leading "data/maps/" segment). */
+void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,
+                                      uint32_t totalLen,
+                                      const char *name,
+                                      const char *relPath,
+                                      const uint8_t md5[16]);
+void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
+                                   uint8_t color, uint8_t namingPool,
+                                   const char *name);
+void clientSimNetSendLobbyTeamClear(ClientSim *cs, BYTE teamId);
+void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
+                                  const uint8_t *value, uint8_t valueLen);
+void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost);
+void clientSimNetSendLobbyKick(ClientSim *cs, uint8_t slot);
+
+/* Host- or admin-only: set or clear the server password. NULL or
+ * empty pw clears. Server replies by broadcasting a fresh lobby
+ * state so has_password updates on every client. The password text
+ * itself is never echoed to other clients. */
+void clientSimNetSendLobbySetPassword(ClientSim *cs, const char *pw);
 void clientSimNetSendMapSkipVote(ClientSim *cs);
-void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize);
+
+/* In-game vote toggle. kind = GAME_VOTE_KIND_BACK_TO_LOBBY or
+ * GAME_VOTE_KIND_SURRENDER; toggleMode = GAME_VOTE_TOGGLE_NO/YES/OPEN_ONLY. */
+void clientSimNetSendGameVoteToggle(ClientSim *cs,
+                                    uint8_t kind, uint8_t toggleMode);
+/* `includeBots`: when true the server hands every bot slot to WBN
+ * with a non-WBN-player sentinel so bots end up assigned to one of
+ * the two balanced teams. When false bots are removed from the
+ * lobby as the proposal is applied (humans-only matchup). */
+void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize,
+                                    bool includeBots);
+/* Debug: append a printf-style line to ./balance.log in cwd. Lazily
+ * opens the file on first call, flushes after every write. Safe to
+ * call from any thread (single FILE* + best-effort, no mutex). */
+void balanceDebugLog(const char *fmt, ...);
+
 void clientSimNetSendBalanceApply(ClientSim *cs);
 void clientSimNetSendBalanceDismiss(ClientSim *cs);
 void clientSimNetSendWbnReauth(ClientSim *cs);

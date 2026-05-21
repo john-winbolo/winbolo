@@ -17,11 +17,13 @@
 #include "bases.h"
 #include "starts.h"
 #include "client_mappreview.h"
+#include <SDL3/SDL.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
 #include <ctype.h>
+#include <time.h>
 
 /* xorshift32 PRNG — deterministic, platform-independent */
 static uint32_t xorshift32(uint32_t *state) {
@@ -118,8 +120,52 @@ static bool hexToBytes(const char *hex, uint8_t *bytes, int count) {
  *   + mazeCount(3) + bases(5) + pills(5) + starts(5) + seed(32) = 106 bits
  */
 
+void mapGenBuildDisplayName(const MapGenConfig *cfg, char *out, size_t outLen) {
+    if (!out || outLen == 0) return;
+    out[0] = '\0';
+    if (!cfg) return;
+
+    const char *typeName = "Random";
+    char subStyle[24] = "";
+    switch (cfg->genType) {
+        case MAPGEN_TOURNAMENT: typeName = "Tournament"; break;
+        case MAPGEN_NATURAL: {
+            typeName = "Natural";
+            switch (cfg->params.natural.mapStyle) {
+                case MAPGEN_STYLE_OCEAN:       SDL_strlcpy(subStyle, "_Ocean",       sizeof(subStyle)); break;
+                case MAPGEN_STYLE_CONTINENT:   SDL_strlcpy(subStyle, "_Continent",   sizeof(subStyle)); break;
+                case MAPGEN_STYLE_ISLANDS:     SDL_strlcpy(subStyle, "_Islands",     sizeof(subStyle)); break;
+                case MAPGEN_STYLE_ARCHIPELAGO: SDL_strlcpy(subStyle, "_Archipelago", sizeof(subStyle)); break;
+                case MAPGEN_STYLE_INLAND:      SDL_strlcpy(subStyle, "_Inland",      sizeof(subStyle)); break;
+                default: break;
+            }
+            break;
+        }
+        case MAPGEN_MAZE:    typeName = "Maze";    break;
+        case MAPGEN_FRACTAL: typeName = "Fractal"; break;
+        default: break;
+    }
+
+    /* Seed in 8-char hex. The full encoded seed via
+     * mapGenConfigToSeed captures every config parameter and would
+     * be a better unique key, but at 29+ chars (Natural) it
+     * overflows MAP_STR_SIZE once combined with the type prefix.
+     * The raw uint32 cfg->seed is enough to disambiguate
+     * regenerations and easy to read; Copy Seed in the chooser
+     * still surfaces the full encoded form for reproducibility. */
+    SDL_snprintf(out, outLen, "%s%s_%08X",
+                 typeName, subStyle, cfg->seed);
+}
+
 void mapGenConfigToSeed(const MapGenConfig *cfg, char *out, size_t outLen) {
     if (cfg->genType == MAPGEN_TOURNAMENT) {
+        /* Layout (62 bits used in an 8-byte buf, 2 bits padding):
+         *   genType(1) symmetry(3) landMassPct(5) roughness(2)
+         *   includeRoads(1) bases(5) pills(5) starts(5) seed(32)
+         *   waterBarrier(3)
+         * waterBarrier is appended AFTER seed so legacy seeds
+         * (without those 3 bits) read as waterBarrier=0 — the old
+         * padding zeros stand in for it. */
         uint8_t buf[8];
         memset(buf, 0, sizeof(buf));
         BitWriter bw;
@@ -133,6 +179,7 @@ void mapGenConfigToSeed(const MapGenConfig *cfg, char *out, size_t outLen) {
         bwWrite(&bw, (uint32_t)cfg->pills, 5);
         bwWrite(&bw, (uint32_t)cfg->starts, 5);
         bwWrite(&bw, cfg->seed, 32);
+        bwWrite(&bw, (uint32_t)cfg->params.tournament.waterBarrier, 3);
 
         char hex[17];
         bytesToHex(buf, 8, hex);
@@ -239,6 +286,10 @@ bool mapGenSeedToConfig(const char *seedStr, MapGenConfig *cfg) {
         cfg->pills = (int)brRead(&br, 5);
         cfg->starts = (int)brRead(&br, 5);
         cfg->seed = brRead(&br, 32);
+        /* waterBarrier is the last 3 bits — legacy seeds (written
+         * before this field existed) had zero padding here, which
+         * naturally decodes to waterBarrier=0 (no rim). */
+        cfg->params.tournament.waterBarrier = (int)brRead(&br, 3);
         return true;
     } else if (prefix == 'N') {
         const char *hex = seedStr + 1;
@@ -3612,6 +3663,49 @@ void mapGenRun(struct mapObj *mp, struct basesObj *bs,
     switch (cfg->genType) {
         case MAPGEN_TOURNAMENT:
             mapGenTournament(mp, bs, pb, ss, cfg, &rng);
+            /* Water barrier: paint a RIVER (shallow-water) rim N
+             * tiles thick around every landmass, where N comes from
+             * the Tournament params. Each iteration is an 8-neighbour
+             * dilation of "anything that is not DEEP_SEA" — pass 1
+             * converts deep-water tiles touching land to RIVER,
+             * pass 2 converts deep-water tiles touching those, and
+             * so on. Capped at 5 so it can't drown a small map. */
+            {
+                int barrier = cfg->params.tournament.waterBarrier;
+                if (barrier < 0) barrier = 0;
+                if (barrier > 5) barrier = 5;
+                for (int pass = 0; pass < barrier; pass++) {
+                    /* Two-buffer dilation pass — collect the set of
+                     * DEEP_SEA tiles adjacent (8-neighbour) to any
+                     * non-DEEP_SEA tile, then convert them after the
+                     * sweep so we don't grow the rim mid-iteration. */
+                    BYTE toRiver[256][256];
+                    memset(toRiver, 0, sizeof(toRiver));
+                    for (int x = cfg->x1; x <= cfg->x2; x++) {
+                        for (int y = cfg->y1; y <= cfg->y2; y++) {
+                            if (mp->mapItem[x][y] != DEEP_SEA) continue;
+                            bool touch = false;
+                            for (int dy = -1; dy <= 1 && !touch; dy++) {
+                                for (int dx = -1; dx <= 1 && !touch; dx++) {
+                                    if (dx == 0 && dy == 0) continue;
+                                    int nx = x + dx, ny = y + dy;
+                                    if (nx < 0 || nx > 255 ||
+                                        ny < 0 || ny > 255) continue;
+                                    if (mp->mapItem[nx][ny] != DEEP_SEA) {
+                                        touch = true;
+                                    }
+                                }
+                            }
+                            if (touch) toRiver[x][y] = 1;
+                        }
+                    }
+                    for (int x = cfg->x1; x <= cfg->x2; x++) {
+                        for (int y = cfg->y1; y <= cfg->y2; y++) {
+                            if (toRiver[x][y]) mp->mapItem[x][y] = RIVER;
+                        }
+                    }
+                }
+            }
             break;
         case MAPGEN_NATURAL:
             mapGenNatural(mp, bs, pb, ss, cfg, &rng);
@@ -3658,6 +3752,7 @@ MapGenConfig mapGenDefaultConfig(int genType) {
             cfg.params.tournament.landMassPct = 5;
             cfg.params.tournament.roughness = MAPGEN_ROUGH_MEDIUM;
             cfg.params.tournament.includeRoads = true;
+            cfg.params.tournament.waterBarrier = 0;
             break;
         case MAPGEN_NATURAL:
             cfg.params.natural.mapStyle = MAPGEN_STYLE_OCEAN;

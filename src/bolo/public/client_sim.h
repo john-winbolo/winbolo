@@ -35,6 +35,8 @@
 #include "alliance_enums.h" /* For pillAlliance, baseAlliance */
 #include "screentank.h"     /* For tankAlliance */
 #include "brain.h"  /* For BuildInfo, ObjectInfo */
+#include "brain_list.h"   /* BrainList — value type used by clientSimGetLobbyBrainList */
+#include "upload_policy.h" /* UploadPolicy — clientSimGetUploadPolicy return */
 
 #ifndef GAMESIM_TYPEDEF
 #define GAMESIM_TYPEDEF
@@ -353,6 +355,12 @@ bool         clientSimIsMapSkipAvailable(const ClientSim *cs);
 bool         clientSimIsMapSkipMyVote(const ClientSim *cs);
 bool         clientSimIsLobbyHiddenMines(const ClientSim *cs);
 bool         clientSimIsBalanceProposalActive(const ClientSim *cs);
+/* SDL_GetTicks() at the most recent non-empty CTRL_BALANCE_PROPOSAL
+ * arrival — used by the lobby's "Teams balanced" status label so the
+ * success state outlives the auto-apply clear publish that follows
+ * the proposal arrival on the same mutex hold. Returns 0 if no
+ * proposal has arrived this session. */
+uint64_t     clientSimGetLastBalanceProposalArrivedMs(const ClientSim *cs);
 bool         clientSimIsLabelOwnTank(const ClientSim *cs);
 buildSelect  clientSimGetCurrentBuildSelect(const ClientSim *cs);
 gameType     clientSimGetLobbyGameType(const ClientSim *cs);
@@ -400,6 +408,60 @@ const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n);
 BYTE clientSimGetLobbyNumConnected(const ClientSim *cs);
 bool                   clientSimIsMapSkipVote(const ClientSim *cs, BYTE n);
 uint8_t                clientSimGetBalanceProposal(const ClientSim *cs, BYTE n);
+
+/* In-game vote system — public mirror of wire constants from
+ * netpacks.h. Keep these in lockstep with PACKET_GAME_VOTE_* in
+ * netpacks.h; numeric values are wire-stable. */
+#ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
+#define GAME_VOTE_KIND_BACK_TO_LOBBY  1
+#define GAME_VOTE_KIND_SURRENDER      2
+#define GAME_VOTE_TOGGLE_NO           0
+#define GAME_VOTE_TOGGLE_YES          1
+#define GAME_VOTE_TOGGLE_OPEN_ONLY    2
+#define GAME_VOTE_ACTIVE_NONE         0
+#define GAME_VOTE_ACTIVE_RUNNING      1
+#define GAME_VOTE_ACTIVE_PASSED       2
+#define GAME_VOTE_ACTIVE_FAILED       3
+#define GAME_VOTE_ACTIVE_CANCELLED    4
+#define GAME_VOTE_TRIGGER_MANUAL          0
+#define GAME_VOTE_TRIGGER_BASE_MONOPOLY   1
+#define GAME_VOTE_TRIGGER_POST_SURRENDER  2
+#endif
+
+/* In-game vote mirror accessors. kind = GAME_VOTE_KIND_*. The
+ * snapshot mirrors the wire payload; widgetVisible is local-only. */
+typedef struct {
+    uint8_t  kind;
+    uint8_t  active;
+    uint8_t  triggerSrc;
+    uint8_t  teamId;
+    uint8_t  threshold;
+    uint8_t  yesCount;
+    uint8_t  noCount;
+    uint8_t  eligibleCount;
+    uint8_t  secondsRemaining;
+    uint16_t votes;
+    bool     widgetVisible;
+    uint32_t concludedAtMs;   /* SDL_GetTicks() at conclusion, 0 = still running */
+} ClientGameVoteSnapshot;
+
+bool clientSimGetGameVote(const ClientSim *cs, uint8_t kind,
+                          ClientGameVoteSnapshot *out);
+void clientSimSetGameVoteWidgetVisible(ClientSim *cs, uint8_t kind, bool visible);
+
+/* Per-frame tick that emits "Returning to lobby in N" newswire lines
+ * for a vote-driven back-to-lobby transition. Server just enters
+ * gameOver and lets countdownTicks drain; the client times its own
+ * 3/2/1 announcement off the local clock so we don't pay for a
+ * per-second chat broadcast. Call this from the main render loop. */
+void clientSimTickLobbyReturnCountdown(ClientSim *cs);
+/* Returns true if local player has voted yes on this kind. */
+bool clientSimGameVoteMyVote(const ClientSim *cs, uint8_t kind);
+
+/* Seconds remaining until the server forces a return to lobby (e.g.
+ * triggered by a vote pass). 0 = no pending forced transition.
+ * Sourced from the snapshot header's returnToLobbyTicks. */
+uint8_t clientSimGetReturnToLobbySecs(const ClientSim *cs);
 
 /* Array-pointer accessors (return pointer to backing storage).
  * brainMap is returned non-const because external callers
@@ -511,6 +573,128 @@ void clientSimSetServerPort(ClientSim *cs, unsigned short v);
  * Distinguishes bot sims from human sims (bot sims must not trigger
  * frontend UI calls). */
 void clientSimSetIsBot(ClientSim *cs, bool v);
+
+/* Session-type flags — set by gamefront when starting a single-player
+ * or LAN-only host session. The lobby UI uses these to hide
+ * multiplayer-only controls and strip WBN-verified badges. */
+bool clientSimIsSinglePlayer(const ClientSim *cs);
+
+/* True when the active transport is the UDP client (vs the local /
+ * in-process transport used by SP-host and MP-host's own client).
+ * UI code that needs to differentiate "expects a MAP_CHANGE packet"
+ * vs "the server is in-process and there is no packet" should gate
+ * on this. */
+bool clientSimIsUdpTransport(const ClientSim *cs);
+bool clientSimIsLanOnly(const ClientSim *cs);
+void clientSimSetIsSinglePlayer(ClientSim *cs, bool v);
+void clientSimSetIsLanOnly(ClientSim *cs, bool v);
+
+/* ────────────────────────────────────────────────────────────────
+ * Layout A lobby accessors (client-side mirror of server state).
+ * Indexed accessors return 0 / "" / NULL for out-of-range indices.
+ * ──────────────────────────────────────────────────────────────── */
+bool        clientSimGetLobbyOpenHost(const ClientSim *cs);
+bool        clientSimGetLobbyAutoLockOnGameStart(const ClientSim *cs);
+/* Ranked-game flag (LST_RANKED). When true, the server forbids bots
+ * and the "Open" game type, and removes any existing bots. UI is
+ * visible to every player (so they can see the ranked badge) but
+ * only host/admin may toggle. */
+bool        clientSimGetLobbyRanked(const ClientSim *cs);
+/* Server's authoritative allowNewPlayers flag, mirrored on every client
+ * via CTRL_LOBBY_SETTINGS. The lobby's "Allow New Players: [ ] Now"
+ * checkbox reads this so it reflects real server state rather than the
+ * host's last-clicked intent. */
+bool        clientSimGetLobbyAllowNewPlayers(const ClientSim *cs);
+
+/* True iff the host process has winbolo.net signed in / running. Used
+ * by the lobby UI to hide WBN-only affordances (Balance from WBN) on
+ * remote clients when the host isn't authenticated to WBN — without
+ * this the button would be visible but every click would be dropped
+ * by the server's wbnRunning guard. Mirrored via CTRL_LOBBY_SETTINGS. */
+bool        clientSimGetLobbyWbnAvailable(const ClientSim *cs);
+uint16_t    clientSimGetLobbyServerLocks(const ClientSim *cs);
+
+/* Server map-upload policy as last broadcast in the lobby-settings event.
+ * Defaults to UPLOAD_POLICY_ALLOW until the first event arrives. */
+UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs);
+
+uint8_t     clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId);
+uint8_t     clientSimGetLobbyTeamColor(const ClientSim *cs, BYTE teamId);
+uint8_t     clientSimGetLobbyTeamPool(const ClientSim *cs, BYTE teamId);
+const char *clientSimGetLobbyTeamName(const ClientSim *cs, BYTE teamId);
+
+uint8_t     clientSimGetLobbyBotDifficulty(const ClientSim *cs, BYTE slot);
+uint8_t     clientSimGetLobbyBotPersonality(const ClientSim *cs, BYTE slot);
+/* Returns the catalogue index of the brain assigned to a lobby bot slot.
+ * 0xFF means the bot uses the server's default brain; for any other
+ * value the caller can look up clientSimGetLobbyBrainList(cs)->entries[idx]
+ * to recover the display name and wire path. Out-of-range slot returns
+ * 0xFF. */
+uint8_t     clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot);
+
+const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs);
+
+/* Server-supplied map directory listing — populated asynchronously
+ * by PACKET_LOBBY_MAP_LIST_RSP after the client sends a
+ * MAP_LIST_REQ. Use the InFlight/Ready/Path triple to coordinate
+ * "we asked, waiting" vs "stale response for a different path"
+ * vs "have a fresh listing". */
+const char *clientSimGetLobbyMapListPath(const ClientSim *cs);
+int         clientSimGetLobbyMapListCount(const ClientSim *cs);
+const char *clientSimGetLobbyMapListName(const ClientSim *cs, int idx);
+bool        clientSimGetLobbyMapListIsFolder(const ClientSim *cs, int idx);
+int64_t     clientSimGetLobbyMapListModTime(const ClientSim *cs, int idx);
+bool        clientSimGetLobbyMapListReady(const ClientSim *cs);
+const char *clientSimGetLobbyMapListReqPath(const ClientSim *cs);
+bool        clientSimGetLobbyMapListInFlight(const ClientSim *cs);
+
+/* Monotonic counter, ticked on every PACKET_LOBBY_MAP_CHANGE the
+ * client receives. UI code can cache the last-seen value to detect
+ * map changes even when the download cycle completes inside a single
+ * render frame (the loopback-host case, where the `complete = false;
+ * ...; true` transition is too short for a frame-edge detector). */
+uint32_t    clientSimGetLobbyMapChangeSeq(const ClientSim *cs);
+
+/* Recursive search cache — populated by PACKET_LOBBY_MAP_SEARCH_RSP.
+ * Same shape as the list cache but names are relative paths from
+ * lobbyMapSearchPath. ReqPath/ReqQuery hold the most recent request
+ * so the chooser can tell whether the cached response matches the
+ * currently-active path/query pair. */
+const char *clientSimGetLobbyMapSearchPath(const ClientSim *cs);
+const char *clientSimGetLobbyMapSearchQuery(const ClientSim *cs);
+int         clientSimGetLobbyMapSearchCount(const ClientSim *cs);
+const char *clientSimGetLobbyMapSearchName(const ClientSim *cs, int idx);
+bool        clientSimGetLobbyMapSearchIsFolder(const ClientSim *cs, int idx);
+int64_t     clientSimGetLobbyMapSearchModTime(const ClientSim *cs, int idx);
+bool        clientSimGetLobbyMapSearchReady(const ClientSim *cs);
+const char *clientSimGetLobbyMapSearchReqPath(const ClientSim *cs);
+const char *clientSimGetLobbyMapSearchReqQuery(const ClientSim *cs);
+bool        clientSimGetLobbyMapSearchInFlight(const ClientSim *cs);
+
+/* Map upload progress reflection. status: 0=idle, 1=announce sent,
+ * 2=ack received (chunks in flight), 3=done, 4=rejected. */
+uint8_t     clientSimGetLobbyMapUploadStatus(const ClientSim *cs);
+uint8_t     clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs);
+const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs);
+void        clientSimResetLobbyMapUpload(ClientSim *cs);
+/* True (and clears the flag) if the server NACK'd a USE_LOCAL request
+ * since the last call — the caller should fall back to the regular
+ * UPLOAD_BEGIN/CHUNK flow. */
+bool        clientSimConsumeUseLocalFallback(ClientSim *cs);
+
+/* Winbolo.net preview reflection. status: 0=idle, 1=in-flight,
+ * 2=ok, 3=error. errMsg is server-supplied when status == 3. */
+uint8_t     clientSimGetLobbyWbnPreviewStatus(const ClientSim *cs);
+const char *clientSimGetLobbyWbnPreviewErrMsg(const ClientSim *cs);
+void        clientSimSetLobbyWbnPreviewStatus(ClientSim *cs, uint8_t status);
+void        clientSimSetLobbyWbnPreviewErrMsg(ClientSim *cs, const char *msg);
+
+/* Last reject from server (toast pair). Both 0 = no pending message.
+ * clientSimClearLobbyLastReject clears both fields atomically after
+ * the toast has been rendered. */
+uint8_t clientSimGetLobbyLastRejectPacket(const ClientSim *cs);
+uint8_t clientSimGetLobbyLastRejectReason(const ClientSim *cs);
+void    clientSimClearLobbyLastReject(ClientSim *cs);
 
 /* View control — mutates viewport/cursor state by composing the
  * underlying viewport ops with ClientSim's tank/scroll/gameSim. */
