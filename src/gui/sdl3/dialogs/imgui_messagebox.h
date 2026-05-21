@@ -29,7 +29,8 @@ extern "C" {
 typedef enum {
     IMGUI_MSG_INFO,
     IMGUI_MSG_WARNING,
-    IMGUI_MSG_ERROR
+    IMGUI_MSG_ERROR,
+    IMGUI_MSG_NONE
 } ImguiMsgType;
 
 /* Button configuration. */

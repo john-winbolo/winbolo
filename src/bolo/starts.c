@@ -138,6 +138,12 @@ void startsSetStart(starts *value, start *item, BYTE startNum) {
     startNum--;
     (((*value)->item[startNum]).x) = item->x;
     (((*value)->item[startNum]).y) = item->y;
+    /* Clamp dir to [0, 15]. Downstream defenders (server_sim.c,
+     * client_sim.c, startsConvertDir's default case) all handle
+     * out-of-range dir today, but that's a maintenance burden on
+     * every future caller. Clamp once at the entry point so the
+     * rest of the codebase can trust the field. */
+    if (item->dir > 15) item->dir = 0;
     (((*value)->item[startNum]).dir) = item->dir;
   }
 }

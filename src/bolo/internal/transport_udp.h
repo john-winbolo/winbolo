@@ -178,17 +178,78 @@ void transportUdpClientSendTeamSet(Transport *t, uint8_t teamNumber);
 /* Send ready/unready to server. */
 void transportUdpClientSendReady(Transport *t, bool ready);
 
-/* Request server add a bot. */
-void transportUdpClientSendAddBot(Transport *t);
+/* Request server add a bot. teamNumber=0 and botName=NULL let the
+ * server pick defaults. The on-wire payload keeps the [pathLen 1]
+ * byte for byte-compat with the original ADD_BOT format, but always
+ * emits pathLen=0 — the server has always ignored the brain payload
+ * here, so brain selection rides on a follow-up SET_BOT_BRAIN. */
+void transportUdpClientSendAddBot(Transport *t, uint8_t teamNumber,
+                                  const char *botName);
 
 /* Request server remove a bot at the given slot. */
 void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum);
+
+/* ── Layout A lobby commands — Client → Server ───────────────────── */
+void transportUdpClientSendLobbySetting(Transport *t, uint8_t settingType,
+                                        const uint8_t *value, uint8_t valueLen);
+void transportUdpClientSendLobbyOpenHost(Transport *t, bool openHost);
+void transportUdpClientSendLobbyKick(Transport *t, uint8_t slot);
+void transportUdpClientSendLobbySetPassword(Transport *t, const char *pw);
+void transportUdpClientSendLobbyTeamMeta(Transport *t, uint8_t teamId,
+                                         uint8_t color, uint8_t namingPool,
+                                         const char *name);
+void transportUdpClientSendLobbyTeamClear(Transport *t, uint8_t teamId);
+void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
+                                          uint8_t difficulty, uint8_t personality,
+                                          const char *name);
+void transportUdpClientSendLobbySetBotBrain(Transport *t, uint8_t slot,
+                                            uint8_t brainIdx);
+void transportUdpClientSendLobbySetMap(Transport *t, const char *mapRelPath);
+void transportUdpClientSendLobbyPreviewCancel(Transport *t);
+void transportUdpClientSendLobbyPreviewCommit(Transport *t);
+void transportUdpClientSendLobbyPreviewRandom(Transport *t, const char *seedStr);
+void transportUdpClientSendLobbyMapListRequest(Transport *t, const char *relPath);
+void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
+                                                 const char *relPath,
+                                                 const char *query);
+void transportUdpClientSendLobbyMapUploadBegin(Transport *t, uint32_t totalLen,
+                                               const char *name);
+void transportUdpClientSendLobbyMapUploadChunk(Transport *t, uint32_t offset,
+                                               const uint8_t *data,
+                                               uint16_t dataLen);
+/* Pre-upload optimisation: try to skip the byte transfer if the server
+ * already has an identical file at relPath (relative to data/maps/).
+ * Server replies PACKET_LOBBY_MAP_UPLOAD_DONE on match, or
+ * PACKET_LOBBY_MAP_USE_LOCAL_NACK on miss — caller falls back to
+ * UploadBegin/Chunk on NACK. */
+void transportUdpClientSendLobbyMapUseLocal(Transport *t, uint32_t totalLen,
+                                             const char *name,
+                                             const char *relPath,
+                                             const uint8_t md5[16]);
+
+/* Server-side: validates a length-prefixed upload filename against the
+ * reserved-name / control-char / suffix-cap rules. Exposed for unit
+ * coverage of the validation matrix; production callers live inside
+ * transport_udp_server.c. */
+bool uploadFilenameIsSafe(const char *name, size_t nameLen);
+
+/* Client-side: parsers for the chunked MAP_LIST_RSP / MAP_SEARCH_RSP
+ * responses. The dispatcher in transport_udp_client.c calls these per
+ * packet; exposing them lets unit tests feed crafted byte streams
+ * through the accumulator path without standing up a full transport
+ * context. `buf` includes the 8-byte packet header. */
+struct ClientSim;
+void udpClientHandleLobbyMapListRsp(struct ClientSim *cs,
+                                    const uint8_t *buf, int len);
+void udpClientHandleLobbyMapSearchRsp(struct ClientSim *cs,
+                                      const uint8_t *buf, int len);
 
 /* Re-authenticate WBN token after lobby reset between rounds. */
 void transportUdpClientSendWbnReauth(Transport *t);
 
 /* Request team balance from WBN (host only, enforcement is server-side). */
-void transportUdpClientSendBalanceRequest(Transport *t, uint8_t teamSize);
+void transportUdpClientSendBalanceRequest(Transport *t, uint8_t teamSize,
+                                           bool includeBots);
 
 /* Confirm and apply the current balance proposal. */
 void transportUdpClientSendBalanceApply(Transport *t);
@@ -198,6 +259,11 @@ void transportUdpClientSendBalanceDismiss(Transport *t);
 
 /* Toggle map skip vote (server identifies player by source address). */
 void transportUdpClientSendMapSkipVote(Transport *t);
+
+/* Send a PACKET_GAME_VOTE_TOGGLE. kind is GAME_VOTE_KIND_*,
+ * toggleMode is GAME_VOTE_TOGGLE_* (NO / YES / OPEN_ONLY). */
+void transportUdpClientSendGameVoteToggle(Transport *t,
+                                          uint8_t kind, uint8_t toggleMode);
 
 /* Returns the server's reject reason string after a failed join.
  * Returns NULL if no reject reason is available. */
@@ -321,6 +387,15 @@ BYTE transportUdpServerGetMaxPlayers(void);
 /* Check for client timeouts — safe to call in any server state.
  * Disconnects clients that haven't sent packets within CLIENT_TIMEOUT_TICKS. */
 void transportUdpServerCheckTimeouts(struct ServerSim *sim);
+
+/* Returns true if any flag in `active` (MAX_TANKS-sized boolean
+ * array) is set for an index other than `exceptIdx`. Pure
+ * function — no globals, no side effects. Used by the
+ * UPLOAD_BEGIN and USE_LOCAL handlers to single-thread map
+ * uploads through the sim's lone preview slot: letting two
+ * clients race purely produces data-loss UX. Public so unit
+ * tests can verify the predicate without seeding udpServer. */
+bool lobbyAnyOtherUploadActive(const bool *active, int exceptIdx);
 
 /* Reset per-client and per-slot state for a fresh game.  Marks every
  * connected client as needing a player-list refresh, flags map download

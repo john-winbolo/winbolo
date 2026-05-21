@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <SDL3/SDL.h>
 #include "client_sim.h"
 #include "client_sim_internal.h"
 #include "client_snapshot.h"
@@ -40,6 +41,7 @@
 #include "rubble.h"
 #include "explosions.h"
 #include "messages.h"
+#include <SDL3/SDL.h>
 #include "grass.h"
 #include "swamp.h"
 #include "lgm.h"
@@ -167,22 +169,46 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
    * runs the destroy-internals + clientSimCreate sequence in place to keep
    * the live transport (and its still-valid map blob) intact; fresh
    * clientSimAlloc + clientSimCreate callers have zeroed transport fields
-   * anyway, so save/restore is a no-op there. The test-only control-event
-   * observer is preserved on the same principle — it represents an external
-   * party watching events, with a lifetime independent of map reloads. */
+   * anyway, so save/restore is a no-op there.
+   *
+   * lobbyBrainList is also preserved: the server delivers it once at
+   * subscribe time and never re-broadcasts after a round, so wiping
+   * here would leave the Add Bot controls hidden on every round 2+.
+   *
+   * The test-only control-event observer is preserved on the same
+   * principle — it represents an external party watching events,
+   * with a lifetime independent of map reloads.
+   *
+   * serverAddress / serverPort / isLanOnly are connection-lifetime
+   * state too — set once at join time, never re-published. Without
+   * preserving them, returning to the lobby (which runs this reset
+   * via clientSimResetForMapLoad) clears them, so the lobby UI
+   * shows 0.0.0.0 and loses the LAN-only badges / LAN-IP substitution. */
   Transport savedTransport = cs->transport;
   bool savedHasTransport   = cs->hasTransport;
   bool savedIsUdpTransport = cs->isUdpTransport;
+  BrainList savedBrainList = cs->lobbyBrainList;
   ControlObserverCb savedObserverCb  = cs->controlObserverCb;
   void             *savedObserverCtx = cs->controlObserverCtx;
+  struct in_addr savedServerAddress  = cs->serverAddress;
+  unsigned short savedServerPort     = cs->serverPort;
+  bool           savedIsLanOnly      = cs->isLanOnly;
   memset(cs, 0, sizeof(*cs));
   cs->transport          = savedTransport;
   cs->hasTransport       = savedHasTransport;
   cs->isUdpTransport     = savedIsUdpTransport;
+  cs->lobbyBrainList     = savedBrainList;
   cs->controlObserverCb  = savedObserverCb;
   cs->controlObserverCtx = savedObserverCtx;
+  cs->serverAddress      = savedServerAddress;
+  cs->serverPort         = savedServerPort;
+  cs->isLanOnly          = savedIsLanOnly;
   cs->myPlayerNum = 0;
   cs->sim.viewPlayer = 0;
+  /* Default to "joins accepted" so the UI renders a checked "Now"
+   * box on the very first frame, before the server's first
+   * CTRL_LOBBY_SETTINGS broadcast lands and overwrites this. */
+  cs->lobbyAllowNewPlayers = true;
 
   /* Sentinel value for "no batch start assigned" — clients never run the
    * batch placement, but startsGetStart still checks the slot when bots /
@@ -265,6 +291,11 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   cs->countdownSeconds = 0;
   cs->mapDownloadComplete = false;
   cs->inLobby = false;
+
+  /* 0 is a valid brain-catalogue index, so the bulk memset above can't
+   * be the "no brain assigned" marker — use 0xFF, matching the sentinel
+   * the server uses for botBrainIdx[]. */
+  memset(cs->lobbyBotBrainIdx, 0xFF, sizeof(cs->lobbyBotBrainIdx));
 
   return true;
 }
@@ -1011,6 +1042,9 @@ bool clientSimIsMapSkipAvailable(const ClientSim *cs)     { return cs->mapSkipAv
 bool clientSimIsMapSkipMyVote(const ClientSim *cs)        { return cs->mapSkipMyVote; }
 bool clientSimIsLobbyHiddenMines(const ClientSim *cs)     { return cs->lobbyHiddenMines; }
 bool clientSimIsBalanceProposalActive(const ClientSim *cs){ return cs->balanceProposalActive; }
+uint64_t clientSimGetLastBalanceProposalArrivedMs(const ClientSim *cs) {
+    return cs ? cs->lastBalanceProposalArrivedMs : 0;
+}
 bool clientSimIsLabelOwnTank(const ClientSim *cs)         { return cs->labelOwnTank; }
 
 buildSelect clientSimGetCurrentBuildSelect(const ClientSim *cs) { return cs->currentBuildSelect; }
@@ -1065,6 +1099,62 @@ BYTE clientSimGetLobbyNumConnected(const ClientSim *cs) {
 bool clientSimIsMapSkipVote(const ClientSim *cs, BYTE n) {
   if (n >= 16) return false;
   return cs->mapSkipVotes[n];
+}
+
+static int clientGameVoteIdx(uint8_t kind) {
+  if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) return 0;
+  if (kind == GAME_VOTE_KIND_SURRENDER)     return 1;
+  return -1;
+}
+
+bool clientSimGetGameVote(const ClientSim *cs, uint8_t kind,
+                          ClientGameVoteSnapshot *out) {
+  if (!cs || !out) return false;
+  int idx = clientGameVoteIdx(kind);
+  if (idx < 0) return false;
+  const struct ClientGameVote *gv = &cs->gameVotes[idx];
+  out->kind             = gv->kind ? gv->kind : kind;
+  out->active           = gv->active;
+  out->triggerSrc       = gv->triggerSrc;
+  out->teamId           = gv->teamId;
+  out->threshold        = gv->threshold;
+  out->yesCount         = gv->yesCount;
+  out->noCount          = gv->noCount;
+  out->eligibleCount    = gv->eligibleCount;
+  out->secondsRemaining = gv->secondsRemaining;
+  out->votes            = gv->votes;
+  out->widgetVisible    = gv->widgetVisible;
+  out->concludedAtMs    = gv->concludedAtMs;
+  return true;
+}
+
+void clientSimSetGameVoteWidgetVisible(ClientSim *cs, uint8_t kind, bool visible) {
+  if (!cs) return;
+  int idx = clientGameVoteIdx(kind);
+  if (idx < 0) return;
+  cs->gameVotes[idx].widgetVisible = visible;
+}
+
+/* Stub kept so the public declaration stays linkable. Client-side
+ * countdown rendering didn't work in this build's render-loop
+ * topology (in-game loop exits as soon as gameOver fires when
+ * cs->inLobby is already latched true). The countdown is now
+ * server-driven again via transportUdpServerSendServerMessage. */
+void clientSimTickLobbyReturnCountdown(ClientSim *cs) {
+  (void)cs;
+}
+
+bool clientSimGameVoteMyVote(const ClientSim *cs, uint8_t kind) {
+  if (!cs) return false;
+  int idx = clientGameVoteIdx(kind);
+  if (idx < 0) return false;
+  BYTE me = cs->myPlayerNum;
+  if (me >= 16) return false;
+  return (cs->gameVotes[idx].votes & (uint16_t)(1u << me)) != 0;
+}
+
+uint8_t clientSimGetReturnToLobbySecs(const ClientSim *cs) {
+  return cs ? cs->lastReturnToLobbySecs : 0;
 }
 
 uint8_t clientSimGetBalanceProposal(const ClientSim *cs, BYTE n) {
@@ -1173,6 +1263,160 @@ void clientSimSetMapDownloadComplete(ClientSim *cs, bool v) { cs->mapDownloadCom
 void clientSimSetServerAddress(ClientSim *cs, struct in_addr v) { cs->serverAddress = v; }
 void clientSimSetServerPort(ClientSim *cs, unsigned short v)    { cs->serverPort = v; }
 void clientSimSetIsBot(ClientSim *cs, bool v)                   { cs->isBot = v; }
+
+bool clientSimIsSinglePlayer(const ClientSim *cs)               { return cs->isSinglePlayer; }
+bool clientSimIsUdpTransport(const ClientSim *cs)               { return cs && cs->isUdpTransport; }
+bool clientSimIsLanOnly(const ClientSim *cs)                    { return cs->isLanOnly; }
+void clientSimSetIsSinglePlayer(ClientSim *cs, bool v)          { cs->isSinglePlayer = v; }
+void clientSimSetIsLanOnly(ClientSim *cs, bool v)               { cs->isLanOnly = v; }
+
+bool     clientSimGetLobbyOpenHost(const ClientSim *cs)              { return cs->lobbyOpenHost; }
+bool     clientSimGetLobbyAutoLockOnGameStart(const ClientSim *cs)   { return cs->lobbyAutoLockOnGameStart; }
+bool     clientSimGetLobbyRanked(const ClientSim *cs)                { return cs ? cs->lobbyRanked : false; }
+bool     clientSimGetLobbyAllowNewPlayers(const ClientSim *cs)       { return cs ? cs->lobbyAllowNewPlayers : true; }
+bool     clientSimGetLobbyWbnAvailable(const ClientSim *cs)          { return cs ? cs->lobbyWbnAvailable : false; }
+uint16_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
+UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs)           { return cs ? cs->uploadPolicy : UPLOAD_POLICY_ALLOW; }
+
+uint8_t clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId) {
+  if (teamId >= 16) return 0;
+  return cs->lobbyTeamInUse[teamId];
+}
+uint8_t clientSimGetLobbyTeamColor(const ClientSim *cs, BYTE teamId) {
+  if (teamId >= 16) return 0;
+  return cs->lobbyTeamColor[teamId];
+}
+uint8_t clientSimGetLobbyTeamPool(const ClientSim *cs, BYTE teamId) {
+  if (teamId >= 16) return 0;
+  return cs->lobbyTeamPool[teamId];
+}
+const char *clientSimGetLobbyTeamName(const ClientSim *cs, BYTE teamId) {
+  if (teamId >= 16) return "";
+  return cs->lobbyTeamName[teamId];
+}
+
+uint8_t clientSimGetLobbyBotDifficulty(const ClientSim *cs, BYTE slot) {
+  if (slot >= 16) return 0;
+  return cs->lobbyBotDifficulty[slot];
+}
+uint8_t clientSimGetLobbyBotPersonality(const ClientSim *cs, BYTE slot) {
+  if (slot >= 16) return 0;
+  return cs->lobbyBotPersonality[slot];
+}
+uint8_t clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot) {
+  if (slot >= 16) return 0xFF;
+  return cs->lobbyBotBrainIdx[slot];
+}
+
+const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs) {
+  return &cs->lobbyBrainList;
+}
+
+const char *clientSimGetLobbyMapListPath(const ClientSim *cs) {
+  return cs->lobbyMapListPath;
+}
+int clientSimGetLobbyMapListCount(const ClientSim *cs) {
+  return cs->lobbyMapListCount;
+}
+const char *clientSimGetLobbyMapListName(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapListCount) return "";
+  return cs->lobbyMapListNames[idx];
+}
+bool clientSimGetLobbyMapListIsFolder(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapListCount) return false;
+  return cs->lobbyMapListIsFolder[idx] != 0;
+}
+int64_t clientSimGetLobbyMapListModTime(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapListCount) return 0;
+  return cs->lobbyMapListModTime[idx];
+}
+bool clientSimGetLobbyMapListReady(const ClientSim *cs) {
+  return cs->lobbyMapListReady;
+}
+const char *clientSimGetLobbyMapListReqPath(const ClientSim *cs) {
+  return cs->lobbyMapListReqPath;
+}
+bool clientSimGetLobbyMapListInFlight(const ClientSim *cs) {
+  return cs->lobbyMapListInFlight;
+}
+uint32_t clientSimGetLobbyMapChangeSeq(const ClientSim *cs) {
+  return cs ? cs->lobbyMapChangeSeq : 0;
+}
+
+const char *clientSimGetLobbyMapSearchPath(const ClientSim *cs) {
+  return cs->lobbyMapSearchPath;
+}
+const char *clientSimGetLobbyMapSearchQuery(const ClientSim *cs) {
+  return cs->lobbyMapSearchQuery;
+}
+int clientSimGetLobbyMapSearchCount(const ClientSim *cs) {
+  return cs->lobbyMapSearchCount;
+}
+const char *clientSimGetLobbyMapSearchName(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapSearchCount) return "";
+  return cs->lobbyMapSearchNames[idx];
+}
+bool clientSimGetLobbyMapSearchIsFolder(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapSearchCount) return false;
+  return cs->lobbyMapSearchIsFolder[idx] != 0;
+}
+int64_t clientSimGetLobbyMapSearchModTime(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapSearchCount) return 0;
+  return cs->lobbyMapSearchModTime[idx];
+}
+bool clientSimGetLobbyMapSearchReady(const ClientSim *cs) {
+  return cs->lobbyMapSearchReady;
+}
+const char *clientSimGetLobbyMapSearchReqPath(const ClientSim *cs) {
+  return cs->lobbyMapSearchReqPath;
+}
+const char *clientSimGetLobbyMapSearchReqQuery(const ClientSim *cs) {
+  return cs->lobbyMapSearchReqQuery;
+}
+bool clientSimGetLobbyMapSearchInFlight(const ClientSim *cs) {
+  return cs->lobbyMapSearchInFlight;
+}
+
+uint8_t  clientSimGetLobbyMapUploadStatus(const ClientSim *cs)     { return cs->lobbyMapUploadStatus; }
+uint8_t  clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs) { return cs->lobbyMapUploadRejectCode; }
+const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs){ return cs->lobbyMapUploadFinalPath; }
+void clientSimResetLobbyMapUpload(ClientSim *cs) {
+  cs->lobbyMapUploadStatus     = 0;
+  cs->lobbyMapUploadRejectCode = 0;
+  cs->lobbyMapUploadFinalPath[0] = '\0';
+  cs->lobbyMapUseLocalNeedsFallback = false;
+}
+
+bool clientSimConsumeUseLocalFallback(ClientSim *cs) {
+  if (!cs || !cs->lobbyMapUseLocalNeedsFallback) return false;
+  cs->lobbyMapUseLocalNeedsFallback = false;
+  return true;
+}
+
+uint8_t clientSimGetLobbyWbnPreviewStatus(const ClientSim *cs) {
+  return cs ? cs->lobbyWbnPreviewStatus : 0;
+}
+const char *clientSimGetLobbyWbnPreviewErrMsg(const ClientSim *cs) {
+  return cs ? cs->lobbyWbnPreviewErrMsg : "";
+}
+void clientSimSetLobbyWbnPreviewStatus(ClientSim *cs, uint8_t status) {
+  if (!cs) return;
+  cs->lobbyWbnPreviewStatus = status;
+  if (status != 3) cs->lobbyWbnPreviewErrMsg[0] = '\0';
+}
+void clientSimSetLobbyWbnPreviewErrMsg(ClientSim *cs, const char *msg) {
+  if (!cs) return;
+  if (!msg) msg = "";
+  SDL_strlcpy(cs->lobbyWbnPreviewErrMsg, msg,
+              sizeof(cs->lobbyWbnPreviewErrMsg));
+}
+
+uint8_t clientSimGetLobbyLastRejectPacket(const ClientSim *cs)  { return cs->lobbyLastRejectPacket; }
+uint8_t clientSimGetLobbyLastRejectReason(const ClientSim *cs)  { return cs->lobbyLastRejectReason; }
+void    clientSimClearLobbyLastReject(ClientSim *cs) {
+  cs->lobbyLastRejectPacket = 0;
+  cs->lobbyLastRejectReason = 0;
+}
 
 /* View-control composition helpers. */
 void clientSimTankView(ClientSim *cs) {

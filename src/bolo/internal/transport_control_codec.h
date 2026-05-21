@@ -65,9 +65,15 @@ typedef bool (*ControlDecodeFn)(const uint8_t *buf, size_t len,
                                 ControlEvent *outEvt);
 
 /* Stack-allocation upper bound for any single ControlEvent's wire
- * encoding. Sized for the chat-localized worst case (8 hdr + 1 from +
- * 1 dest + CHAT_BODY_MAX body = 282 bytes), rounded up for headroom. */
-#define MAX_CONTROL_PACKET 320
+ * encoding. Matches UDP_MAX_PAYLOAD (1400) so every control packet
+ * fits in a single datagram below the typical 1500-byte MTU. The
+ * largest variant is the brain-list worst case
+ *   8 hdr + 1 count + BRAIN_LIST_MAX (16) * (2 length bytes +
+ *     BRAIN_LIST_NAME_LEN-1 (31) + BRAIN_LIST_VER_LEN-1 (23))
+ *   = 905 bytes
+ * — well under the cap. The next-largest is the chat-localized case
+ * at ~282 bytes. */
+#define MAX_CONTROL_PACKET 1400
 
 /* Returns the encoder for the given variant, or NULL if the
  * variant has no wire form (CTRL_MAP_DOWNLOAD_COMPLETE is

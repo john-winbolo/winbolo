@@ -24,7 +24,10 @@ typedef enum {
 #define PLAYER_FLAG_WBN_STEAM_LINKED 0x02  /* server-set, trusted */
 #define PLAYER_FLAG_SUPPORTER        0x04  /* server OR client; trusted iff WBN_VERIFIED */
 #define PLAYER_FLAG_STEAM_BUILD      0x08  /* client-set, untrusted */
-/* bits 4-7 reserved */
+#define PLAYER_FLAG_ADMIN            0x10  /* server-set, trusted — joined
+                                            * from an IP in -admins list,
+                                            * has host-level lobby authority */
+/* bits 5-7 reserved */
 
 #define PLAYER_CLIENT_HINT_MASK \
     (PLAYER_FLAG_SUPPORTER | PLAYER_FLAG_STEAM_BUILD)

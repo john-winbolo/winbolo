@@ -29,6 +29,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 
@@ -43,6 +44,7 @@ extern "C" {
 #include "imgui_settings.h"
 #include "imgui_keysetup.h"
 #include "imgui_winbolonet.h"
+#include "imgui_news.h"
 }
 
 /* Frame-rate / zoom constants (mirrors winbolo.h values) */
@@ -343,6 +345,11 @@ extern "C" void imguiSettingsShow(void) {
                      ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse);
+
+        /* Top-right close X. */
+        if (WBUI::DrawPanelCloseX()) {
+            running = false;
+        }
 
         /* Title */
         {
@@ -755,6 +762,16 @@ extern "C" void imguiSettingsShow(void) {
                     gameFrontUseNatTraversal = b;
                 }
             }
+            {
+                const char *cur = newsPrefGetAutoShow();
+                /* "unset" and "show" both default the checkbox to
+                 * checked; only an explicit "dontShow" unchecks it.
+                 * Toggling never writes "unset". */
+                bool b = (strcmp(cur, "dontShow") != 0);
+                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_NEWS_AUTOSHOW), &b)) {
+                    newsPrefSetAutoShow(b ? "show" : "dontShow");
+                }
+            }
         }
 #endif
 
@@ -775,19 +792,15 @@ extern "C" void imguiSettingsShow(void) {
         ImGui::Separator();
         ImGui::Spacing();
 
-        float btnW = 80.0f;
-        float btnX = (panelW - btnW) / 2.0f;
-        ImGui::SetCursorPosX(btnX);
-        if (ImGui::Button(langGetText(STR_CLOSE), ImVec2(btnW, 0)) ||
-            ImGui::IsKeyPressed(ImGuiKey_Escape) ||
-            (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
-#ifdef __APPLE__
-            || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
-#endif
-           ) {
+        /* Close is affirmative here ("I'm done, keep settings"), not a
+         * cancel-equivalent — Settings has no destructive action to
+         * back out of, changes apply live. Use the confirm slot so it
+         * gets default primary styling, not the muted Cancel grey. */
+        int f = WBUI::DialogFooter(/*cancelLabel*/ nullptr,
+                                   /*confirmLabel*/ langGetText(STR_CLOSE));
+        if (f != WBUI::FOOTER_NONE) {
             running = false;
         }
-        imguiHandOnHover();
 
         ImGui::End(); /* ##SettingsPanel */
         ImGui::End(); /* ##SettingsBg */

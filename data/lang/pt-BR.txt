@@ -422,6 +422,7 @@ STR_DLGLOBBY_BOT_FMT={player} [Bot]
 STR_DLGLOBBY_YOU_FMT={player} (Você)
 STR_DLGLOBBY_STARTING_FMT=Começando em {number}...
 STR_DLGLOBBY_LOSTCONNECTION=Você perdeu a conexão com o servidor.
+STR_DLGLOBBY_KICKED=Você foi expulso do servidor.
 STR_DLGLOBBY_ME=Eu
 STR_DLGLOBBY_PLAYER_COL=Jogador
 STR_DLGLOBBY_PING_COL=Ping
@@ -1071,10 +1072,10 @@ STR_DLGLOBBY_PORTMAP_CHECKING=Verificando acessibilidade do servidor…
 STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Servidor acessível
 STR_DLGLOBBY_PORTMAP_UNREACHABLE=Servidor inacessível
 STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Tentando abrir uma porta do firewall via UPnP / NAT-PMP e confirmando que o tracker consegue te alcançar pela sua rede. Isso geralmente é concluído em menos de 30 segundos.
-STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Porta encaminhada automaticamente via UPnP/NAT-PMP em %s:%u. Quem entrar se conecta diretamente, sem passos adicionais.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Porta encaminhada automaticamente via UPnP/NAT-PMP em {string1}:{number}. Quem entrar se conecta diretamente, sem passos adicionais.
 STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Não foi possível estabelecer o encaminhamento direto de porta, mas a travessia de NAT está ativa. Quem entrar coordena pelo tracker para atravessar o firewall da sua rede. Isso funciona para a maioria das redes domésticas; jogadores com NAT simétrico ou NAT de operadora (CGN) ainda podem não conseguir conectar.
-STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=NAT simétrico detectado — sua rede reescreve a porta de origem para cada destino, o que impede que jogadores te alcancem mesmo via travessia de NAT. Para hospedar com sucesso, encaminhe manualmente a porta UDP %u no seu roteador para esta máquina.
-STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Não foi possível abrir uma porta do firewall automaticamente (UPnP/NAT-PMP recusado ou indisponível) e o tracker não conseguiu confirmar a acessibilidade bidirecional. Para hospedar com sucesso, encaminhe manualmente a porta UDP %u no seu roteador para esta máquina.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=NAT simétrico detectado — sua rede reescreve a porta de origem para cada destino, o que impede que jogadores te alcancem mesmo via travessia de NAT. Para hospedar com sucesso, encaminhe manualmente a porta UDP {number} no seu roteador para esta máquina.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Não foi possível abrir uma porta do firewall automaticamente (UPnP/NAT-PMP recusado ou indisponível) e o tracker não conseguiu confirmar a acessibilidade bidirecional. Para hospedar com sucesso, encaminhe manualmente a porta UDP {number} no seu roteador para esta máquina.
 STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Acessibilidade do servidor
 STR_DLGLOBBY_TEST_CONNECTIVITY=Testar conectividade
 STR_DLGLOBBY_TEST_TESTING=Testando…
@@ -1156,3 +1157,155 @@ STR_MENU_FIND_LAN_GAME=Procurar partida na LAN…
 STR_MENU_JOIN_BY_ADDRESS=Entrar por endereço…
 STR_MENU_OPEN_MAP_EDITOR=Abrir editor de mapas
 STR_MENU_OPEN_LOG_VIEWER=Abrir visualizador de logs
+
+# Settings → Network: WinBolo.net news auto-show toggle.
+STR_DLGSETTINGS_NEWS_AUTOSHOW=Mostrar novidades do winbolo.net ao iniciar
+
+# News popup + welcome News button strings.
+STR_DLGWELCOME_NEWS=Novidades
+STR_DLGNEWS_TITLE=Novidades
+STR_DLGNEWS_CONSENT_TITLE=WinBolo Novidades
+STR_DLGNEWS_CONSENT_BODY1=O WinBolo pode mostrar novas publicações do winbolo.net ao iniciar o jogo. O WBN será verificado uma vez na inicialização e esta janela só será aberta quando houver algo novo.
+STR_DLGNEWS_CONSENT_BODY2=Você pode alterar isso a qualquer momento nas Configurações.
+STR_DLGNEWS_SHOW=Mostrar novidades
+STR_DLGNEWS_DONT_SHOW=Não mostrar
+STR_DLGNEWS_LOADING=Carregando…
+STR_DLGNEWS_DONT_AUTOSHOW=Não abrir novidades automaticamente no futuro
+
+# Lobby — seletor de mapa
+STR_DLGLOBBY_CHOOSEMAP_TITLE=Escolher mapa
+STR_DLGLOBBY_TAB_SERVERMAPS=Mapas do servidor
+STR_DLGLOBBY_TAB_LOCALMAPS=Mapas locais
+STR_DLGLOBBY_TAB_UPLOAD=Enviar
+STR_DLGLOBBY_TAB_GENERATE=Gerar
+STR_DLGLOBBY_TAB_WBNMAPS=Mapas do Winbolo.net
+STR_DLGLOBBY_CLOSEMAP_PROMPT=Você visualizou um mapa diferente.
+STR_DLGLOBBY_CLOSEMAP_QUESTION=O que você deseja fazer?
+STR_DLGLOBBY_USETHISMAP=Usar este mapa
+STR_DLGLOBBY_REVERTCLOSE=Reverter e fechar
+STR_DLGLOBBY_KEEPPICKING=Continuar escolhendo
+STR_DLGLOBBY_CANCEL_MAPCHOOSER=Cancelar
+STR_DLGLOBBY_CHOOSE_MAP_BTN=Escolher mapa
+
+# Lobby — erros de envio e WBN
+STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT=Outro envio já está em andamento.
+STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Envios desativados neste servidor.
+STR_DLGLOBBY_UPLOAD_ERR_FULL=A biblioteca de mapas do servidor está cheia.
+STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=Muitas requisições \xe2\x80\x94 aguarde um momento antes de tentar novamente.
+STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Envio recusado pelo servidor.
+STR_DLGLOBBY_WBN_ERR_DOWNLOAD=Download falhou
+STR_DLGLOBBY_WBN_ERR_BADRESPONSE=Resposta inválida do WinBolo.net
+STR_DLGLOBBY_WBN_ERR_NETERROR=Erro de rede ao buscar o mapa
+STR_DLGLOBBY_WBN_ERR_HTTPERROR=WBN retornou HTTP {number}
+STR_DLGLOBBY_WBN_ERR_MAPFAILED=Download do mapa falhou
+STR_DLGLOBBY_WBN_ERR_TOOBIG=O mapa excede o limite de 64 KB para envios
+STR_DLGLOBBY_WBN_ERR_OOM=Sem memória para enfileirar o envio
+STR_DLGLOBBY_WBN_ERR_BADSEARCHRESPONSE=Resposta de busca inválida do WinBolo.net
+
+# Lobby — controles de novos jogadores e partida ranqueada
+STR_DLGLOBBY_ALLOW_NOW=Agora
+STR_DLGLOBBY_ALLOW_DURING=Durante a partida
+STR_DLGLOBBY_TOOLTIP_ALLOWNOW=Aceitar novas solicitações de entrada enquanto o lobby estiver aberto.
+STR_DLGLOBBY_TOOLTIP_ALLOWDURING=Continuar aceitando novos jogadores após o início da partida.
+STR_DLGLOBBY_TOOLTIP_RANKED_AUTOLOCK=Partidas ranqueadas bloqueiam a entrada de novos jogadores quando a partida começa.
+STR_DLGLOBBY_RANKED=Partida ranqueada
+STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED=Bloqueado pelo administrador do servidor.
+STR_DLGLOBBY_TOOLTIP_RANKED_NOTHOST=Apenas o anfitrião ou um administrador pode ativar a partida ranqueada.
+STR_DLGLOBBY_TOOLTIP_RANKED_BOTS=Remova todos os bots do lobby antes de marcar\na partida como ranqueada. Partidas ranqueadas são apenas para humanos.
+STR_DLGLOBBY_TOOLTIP_RANKED_INFO=Partidas ranqueadas proíbem bots e impõem o tipo de partida torneio\n— sem modo «Aberto» pré-armado. Ativar isso reinicia o estado de prontidão\nde cada jogador para que o anfitrião possa confirmar a nova configuração.
+
+# Lobby — lista de jogadores por equipe + modal de expulsão
+STR_DLGLOBBY_TEAM_HEADER=Equipe {number}
+STR_DLGLOBBY_TEAM_MEMBERS_1=· 1 jogador
+STR_DLGLOBBY_TEAM_MEMBERS_N=· {number} jogadores
+STR_DLGLOBBY_TEAM_1BOT=1 bot
+STR_DLGLOBBY_TEAM_NBOTS=bots
+STR_DLGLOBBY_JOIN_TEAM=Entrar
+STR_DLGLOBBY_TOOLTIP_JOIN=Mover-se para a Equipe {number}.
+STR_DLGLOBBY_BOT_NAMING=Nomes dos bots:
+STR_DLGLOBBY_ADDBOT_LBL=Adicionar bot
+STR_DLGLOBBY_TOOLTIP_ADDBOT=Adicionar um bot à Equipe {number} com nome do grupo selecionado.
+STR_DLGLOBBY_TOOLTIP_RMTEAM=Remover a Equipe {number} (e seus bots).
+STR_DLGLOBBY_TOOLTIP_DRAG=Arraste para uma equipe para mover
+STR_DLGLOBBY_TAG_HOST=ANFITRIÃO
+STR_DLGLOBBY_TAG_ADMIN=ADMIN
+STR_DLGLOBBY_TAG_BOT=BOT
+STR_DLGLOBBY_PILL_READY=PRONTO
+STR_DLGLOBBY_PILL_NOTREADY=NÃO PRONTO
+STR_DLGLOBBY_TOOLTIP_CONFIG=Configurar bot
+STR_DLGLOBBY_TOOLTIP_RMBOT=Remover bot
+STR_DLGLOBBY_TOOLTIP_KICK=Expulsar jogador
+STR_DLGLOBBY_ADD_TEAM=Adicionar equipe
+STR_DLGLOBBY_UNASSIGNED_FMT=Sem equipe ({number}):
+STR_DLGLOBBY_KICK_FMT=Expulsar "{player}"?
+
+# Lobby — painel de configuração do bot (AiConfig)
+STR_DLGLOBBY_BOTCFG_NAME=Nome (personalizado)
+STR_DLGLOBBY_BOTCFG_REROLL=Novo nome
+STR_DLGLOBBY_BOTCFG_REROLL_TIP=Escolher um novo nome aleatório do grupo da equipe.
+STR_DLGLOBBY_BOTCFG_CODE=Código do bot
+STR_DLGLOBBY_BOTCFG_NONE=(nenhum)
+STR_DLGLOBBY_BOTCFG_DIFFICULTY=Dificuldade
+STR_DLGLOBBY_BOTCFG_EASY=Fácil
+STR_DLGLOBBY_BOTCFG_NORMAL=Normal
+STR_DLGLOBBY_BOTCFG_HARD=Difícil
+STR_DLGLOBBY_BOTCFG_PERSONALITY=Personalidade
+STR_DLGLOBBY_BOTCFG_AGGRESSIVE=Agressivo
+STR_DLGLOBBY_BOTCFG_DEFENSIVE=Defensivo
+STR_DLGLOBBY_BOTCFG_SNIPER=Sniper
+STR_DLGLOBBY_BOTCFG_DONE=Concluído
+
+# Lobby — balanceamento de equipes via WBN
+STR_DLGLOBBY_BAL_BTN=Balancear via WBN
+STR_DLGLOBBY_BAL_POPUP_TITLE=Balancear equipes via WBN
+STR_DLGLOBBY_BAL_POPUP_BODY=Isso apagará todas as equipes do lobby e as substituirá por duas equipes balanceadas por habilidade do winbolo.net. A nova divisão entra em vigor imediatamente.
+STR_DLGLOBBY_BAL_POPUP_BOT_SINGULAR=Atualmente há 1 bot no lobby. Escolha se o bot deve participar da divisão balanceada ou ser removido para uma partida apenas entre humanos.
+STR_DLGLOBBY_BAL_POPUP_BOT_PLURAL=Atualmente há {number} bots no lobby. Escolha se os bots devem participar da divisão balanceada ou ser removidos para uma partida apenas entre humanos.
+STR_DLGLOBBY_BAL_BOTS_INCLUDED=Bots incluídos
+STR_DLGLOBBY_BAL_HUMANS_ONLY=Apenas humanos
+STR_DLGLOBBY_BAL_GO=Balancear
+STR_DLGLOBBY_BAL_TOOLTIP_NOTHOST=Apenas o anfitrião ou um administrador pode solicitar uma divisão\nde equipes balanceada por habilidade do winbolo.net.
+STR_DLGLOBBY_BAL_TOOLTIP_NOTENOUGH=São necessários pelo menos dois jogadores conectados antes que\no lobby possa ser dividido em equipes balanceadas.
+STR_DLGLOBBY_BAL_TOOLTIP_INFO=Solicitar ao winbolo.net que divida o lobby em duas equipes\nbalanceadas por habilidade. A divisão é aplicada imediatamente\nassim que o WBN responder — as equipes existentes são substituídas.
+STR_DLGLOBBY_BAL_STATUS_ASKING=Consultando WBN\xe2\x80\xa6
+STR_DLGLOBBY_BAL_STATUS_BALANCED=Equipes balanceadas
+STR_DLGLOBBY_BAL_STATUS_NOREPLY=Sem resposta do WBN
+
+# Lobby — notificação de rejeição
+STR_DLGLOBBY_REJECT_DEFAULT=rejeitado
+STR_DLGLOBBY_REJECT_NOTHOST=ação exclusiva do anfitrião
+STR_DLGLOBBY_REJECT_LOCKED=configuração bloqueada pelo servidor
+STR_DLGLOBBY_REJECT_INVALID=requisição inválida
+STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Alteração no lobby rejeitada: {string1}
+
+# Lobby — emblema de bloqueio
+STR_DLGLOBBY_LOCK_BADGE=[bloqueado]
+
+# Lobby — dica de forma ranqueada
+STR_DLGLOBBY_RANKED_SHAPE_TIP=Partidas ranqueadas exigem exatamente duas equipes de tamanho igual:\n1v1, 2v2 ou 3v3 jogadores humanos.\n(Atualmente {number} {string1}, tamanhos {number2} vs {number3}.)
+STR_DLGLOBBY_RANKED_SHAPE_TEAM=equipe
+STR_DLGLOBBY_RANKED_SHAPE_TEAMS=equipes
+
+# Lobby — painel de configurações da partida
+STR_DLGLOBBY_SETTINGS_HEADER=Configurações da partida
+STR_DLGLOBBY_OPENHOST_NOTE=O anfitrião permitiu que todos os jogadores alterem as configurações da partida.
+STR_DLGLOBBY_GAMETYPE_LBL=Tipo de partida
+STR_DLGLOBBY_AI_SECTION_LBL=Jogadores computador
+STR_DLGLOBBY_AI_NONE=Sem tanques computador
+STR_DLGLOBBY_AI_ALLOW=Permitir tanques computador
+STR_DLGLOBBY_AI_ADVANTAGE=Permitir com vantagem
+STR_DLGLOBBY_AI_FULLADV=Permitir com vantagem total
+STR_DLGLOBBY_OTHER_LBL=Outros
+STR_DLGLOBBY_OPENHOST_CB=Permitir que todos os jogadores alterem as configurações
+STR_DLGLOBBY_OPENHOST_TOOLTIP=Quando ativado, qualquer jogador conectado pode editar as\nconfigurações do lobby — incluindo trocar o mapa, adicionar\nou remover bots e trocar de equipe.
+STR_DLGLOBBY_TIMELIMIT_MIN=min
+STR_DLGLOBBY_PASSWORD_CB=Senha
+STR_DLGLOBBY_PASSWORD_TOOLTIP=Quando ativado, novos clientes precisam fornecer a\nsenha para entrar. Jogadores já conectados não são afetados.
+
+# Lobby — cabeçalho da tela inicial
+STR_DLGLOBBY_SERVERDISP_SP=Um jogador
+STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
+
+# Lobby — emblema de conectividade
+STR_DLGLOBBY_CONN_TEST_TIP=Teste em andamento
+STR_DLGNEWS_COMMENTS_FMT=Comentários: {number}

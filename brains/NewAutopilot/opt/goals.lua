@@ -4650,6 +4650,14 @@ local function goal_selection(state, world, info, quiet)
     -- lua_strip removes it from opt/.
 
     if #pool > 0 then
+      -- Dump the FINAL post-everything scores for every candidate so a
+      -- replan tick can be reconstructed after the fact. Stripped from
+      -- opt/ via print2.
+      for i, c in ipairs(pool) do
+        local base = c._base_cost or c.cost
+        local penalty = (c.cost or 0) - base
+      end
+
       local winner = pool[1]
 
       -- Pool log + winner_cands + log.reason are debug/log-only — wrapped

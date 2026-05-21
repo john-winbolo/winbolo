@@ -30,6 +30,8 @@
 #include "gametype.h"          /* gameType enum + brings global.h */
 #include "alliance_enums.h"    /* baseAlliance, pillAlliance */
 #include "screentank.h"        /* tankAlliance */
+#include "brain_list.h"        /* BrainList — returned by serverSimGetBrainList */
+#include "upload_policy.h"     /* UploadPolicy — serverSimSetUploadPolicy arg */
 
 /* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
@@ -107,6 +109,30 @@ typedef struct {
   bool isBot;          /* Managed by bot system, not by player packets */
 } LobbyPlayer;
 
+/* Per-team metadata — used by the Layout A lobby UI for color tinting,
+ * editable team names, and per-team bot naming pools. The `in_use` flag
+ * is 0 for any team number that has no metadata yet (renders with
+ * default name "Team N" and a fallback color). Team membership lives
+ * in LobbyPlayer.teamNumber; this struct carries presentation only. */
+#ifndef LOBBY_TEAM_NAME_LEN
+#define LOBBY_TEAM_NAME_LEN 32
+#endif
+typedef struct {
+  uint8_t in_use;       /* 0 = defaults; 1 = customised */
+  uint8_t color;        /* index into client-side kTeamColors[] */
+  uint8_t namingPool;   /* index into client-side bot pool table */
+  char    name[LOBBY_TEAM_NAME_LEN];
+} TeamMetadata;
+
+/* Per-bot config — extends bot identity with difficulty + personality
+ * the Layout A AiConfig sub-panel writes. Brain consumption is deferred
+ * (NewAutopilot accepts the values via brain.set_config but ignores
+ * them in v1). Indexed by slot (matches bot's playerNum). */
+typedef struct {
+  uint8_t difficulty;   /* 0=easy, 1=normal, 2=hard */
+  uint8_t personality;  /* 0=normal, 1=aggressive, 2=defensive, 3=sniper */
+} LobbyBotConfig;
+
 #ifndef BALANCEPROPOSAL_TYPEDEF
 #define BALANCEPROPOSAL_TYPEDEF
 typedef struct BalanceProposal BalanceProposal;
@@ -117,6 +143,8 @@ struct BalanceProposal {
   bool requestInFlight;           /* True while the HTTP call is running (prevents duplicate requests) */
   bool broadcastNeeded;           /* True when thread finishes; cleared after first broadcast */
   uint8_t teamSize;               /* Requested team size, passed through to WBN API */
+  bool includeBots;               /* TRUE if bots were sent to WBN and end up in the proposal.
+                                   * FALSE means bots are kicked when the proposal is applied. */
   SDL_AtomicInt shutdownFlag;     /* Set to 1 on shutdown; balance thread checks before accessing sim */
 };
 
@@ -157,6 +185,67 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
  *  gameLen     - Game length in ticks (-1 = unlimited)
  *********************************************************/
 ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, const char *mapName, gameType game, bool hiddenMines, int32_t startDelay, int32_t gameLen);
+
+/*********************************************************
+ *NAME:          serverSimReloadMap
+ *PURPOSE:
+ *  In-place swap the current map for the one at mapFileName.
+ *  Reads the new .map file, replaces the running ServerSim's
+ *  mp / pb / bs / ss in place, refreshes the cached compressed
+ *  map blob (used for client downloads and inter-round resets),
+ *  updates the map name, and clears any stale player-ready
+ *  states. Only valid while the sim is in serverStateLobby —
+ *  swapping mid-game would desync clients.
+ *
+ *  On failure (file unreadable, parse error, wrong state) the
+ *  previous map is preserved and the function returns false.
+ *
+ *ARGUMENTS:
+ *  sim         - Running ServerSim (must be in lobby state)
+ *  mapFileName - Path to the .map file to load
+ *RETURNS:      true on successful swap, false otherwise.
+ *********************************************************/
+bool serverSimReloadMap(ServerSim *sim, const char *mapFileName);
+
+/* In-memory analogue of serverSimReloadMap: loads the supplied
+ * compressed map blob directly instead of reading from a file. The
+ * caller-supplied mapName is used as the display name (no basename
+ * or suffix stripping). Same return contract, same side effects as
+ * serverSimReloadMap. */
+bool serverSimReloadCompressedInMemory(ServerSim *sim,
+                                       const uint8_t *bytes, int len,
+                                       const char *mapName);
+
+/* Procedural-map preview variant. Regenerates the map from the
+ * given MapGenConfig, stashes the prior committed map for Cancel
+ * roll-back (same mechanism as serverSimReloadMap), refreshes
+ * cachedMapData, and sets mapName to "rand_<seed>". Caller is
+ * responsible for whatever broadcast / publish follows. Only valid
+ * in lobby state. */
+bool serverSimReloadRandomMap(ServerSim *sim,
+                               const struct MapGenConfig *cfg);
+
+/* Lobby preview-map cycle. serverSimReloadMap stashes the prior
+ * committed map under the hood; these two close the loop:
+ *   - serverSimHasPreviewMap: true if a preview is pending (i.e. a
+ *     stash exists), false otherwise.
+ *   - serverSimRevertPreview: load the stashed map back into the
+ *     sim, refresh cachedMapData, drop the stash. Returns false if
+ *     there was nothing to revert or the rollback failed.
+ *   - serverSimCommitPreview: free the stash; the sim already
+ *     reflects the previewed map so no reload is needed.
+ * Caller is responsible for triggering whatever broadcast / re-
+ * download the transport layer needs after a revert (the sim mp /
+ * pb / bs / ss have changed). */
+bool serverSimHasPreviewMap(const ServerSim *sim);
+bool serverSimRevertPreview(ServerSim *sim);
+void serverSimCommitPreview(ServerSim *sim);
+
+/* The map name that was committed BEFORE the current preview cycle
+ * started — i.e. the name to which a Cancel would roll back. Returns
+ * an empty string when no preview is in flight. Lifetime: valid
+ * until the next ServerSim mutation. */
+const char *serverSimGetPreviousMapName(const ServerSim *sim);
 
 /*********************************************************
  *NAME:          serverSimDestroy
@@ -205,6 +294,28 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input);
  *  wantRejoin - If true, restore ownership of pills/bases from previous session
  *********************************************************/
 void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin);
+
+/*********************************************************
+ *NAME:          serverSimSetPlayerCountry
+ *PURPOSE:
+ *  Sets the ISO 3166-1 alpha-2 country code on a connected
+ *  player slot. Intended for the in-process SP / tutorial
+ *  path, where no GeoIP lookup runs and the local client
+ *  supplies its own resolved country (e.g. from
+ *  winbolonetGetCountryCode). Network-joined slots receive
+ *  their country from the server's GeoIP lookup and should
+ *  not be re-set through this accessor.
+ *
+ *  Input is validated: NULL, length != 2, or any non-alpha
+ *  byte is ignored (the previous value stays). A valid
+ *  two-character code is stored uppercased.
+ *
+ *ARGUMENTS:
+ *  sim       - Pointer to the ServerSim
+ *  playerNum - Player slot (0..MAX_TANKS-1)
+ *  cc        - 2-char ISO 3166-1 alpha-2 country code (any case)
+ *********************************************************/
+void serverSimSetPlayerCountry(ServerSim *sim, BYTE playerNum, const char *cc);
 
 /*********************************************************
  *NAME:          serverSimRemovePlayer
@@ -364,14 +475,15 @@ bool   serverSimToggleAllBrainDebugMode(ServerSim *sim);
 /*********************************************************
  *NAME:          serverSimSetTeam
  *PURPOSE:
- *  Sets a player's lobby team. teamNumber > 16 is coerced
- *  to 1, preserving the existing servermain.c range
- *  behavior. No-op if playerNum >= MAX_TANKS.
+ *  Sets a player's lobby team. teamNumber >= MAX_TANKS is
+ *  coerced to 1 so the value can be used as an index into
+ *  teams[MAX_TANKS] without overrun. No-op if playerNum >=
+ *  MAX_TANKS.
  *
  *ARGUMENTS:
  *  sim        - Pointer to the ServerSim
  *  playerNum  - Player slot (0..MAX_TANKS-1)
- *  teamNumber - 0 = no team; 1-16 = team number
+ *  teamNumber - 0 = no team; 1..MAX_TANKS-1 = team number
  *********************************************************/
 void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber);
 
@@ -488,6 +600,11 @@ void serverSimSetBalanceBroadcastNeeded(ServerSim *sim, bool needed);
  *  cleared once the worker returns or aborts.
  *********************************************************/
 void serverSimSetBalanceRequestInFlight(ServerSim *sim, bool inFlight);
+
+/* Set after the WBN balance call returns so the APPLY handler knows
+ * whether bots are part of the proposal (TRUE) or should be kicked
+ * before the team assignments are written (FALSE). */
+void serverSimSetBalanceIncludeBots(ServerSim *sim, bool includeBots);
 
 /*********************************************************
  *NAME:          serverSimSetEmptyResetMinutes
@@ -624,6 +741,14 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event);
  *           least 65536 bytes)
  *********************************************************/
 int serverSimGetCompressedMap(ServerSim *sim, BYTE *output);
+
+/* Refresh a ClientSim's map/pill/base/start state from this server's
+ * current compressed map cache. Preserves player table, lobby slots,
+ * callbacks, and the existing tank — only the terrain structures get
+ * replaced. Used at SP game-start to sync the host's ClientSim to a
+ * lobby map change. Returns false if the compressed map can't be
+ * read or applied. */
+bool serverSimReloadClientMap(ServerSim *sim, ClientSim *cs);
 
 /*********************************************************
  *NAME:          serverSimGetActive
@@ -800,6 +925,19 @@ void serverSimLobbyCheckAllReady(ServerSim *sim);
 void serverSimStartGame(ServerSim *sim);
 
 /*********************************************************
+ *NAME:          serverSimStartGameInPlace
+ *PURPOSE:
+ *  Lobby → running transition that keeps the world intact:
+ *  reapplies team alliances, batch-assigns start slots,
+ *  creates tanks for all connected players, flips state to
+ *  serverStateRunning, and (when autoLockOnGameStart is set)
+ *  toggles allowNewPlayers off for the duration of the game.
+ *  Used by the SP-host path where the world is already loaded
+ *  and no resetGameWorld is needed.
+ *********************************************************/
+void serverSimStartGameInPlace(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimReapplyTeamAlliances
  *PURPOSE:
  *  Runs the team-pair alliance pass over the currently
@@ -908,6 +1046,50 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum);
 void serverSimMapSkipVotesReset(ServerSim *sim);
 
 /*********************************************************
+ * In-game vote system (back-to-lobby + surrender).
+ *  - serverSimGameVoteTick is called every server frame from the
+ *    transport layer. It handles per-second heartbeats, the 60s
+ *    timeout, the post-pass 3/2/1 chat countdown, and the
+ *    base-monopoly auto-trigger.
+ *  - serverSimGameVoteToggle handles incoming PACKET_GAME_VOTE_TOGGLE.
+ *  - serverSimGameVoteResetAll clears all in-flight votes (called on
+ *    game start / lobby return).
+ *  - serverSimCountActiveTeams returns true iff there is exactly one
+ *    active team count value, populated into outActiveTeamCount.
+ *********************************************************/
+void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs);
+void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
+                             uint8_t kind, uint8_t toggleMode);
+void serverSimGameVoteResetAll(ServerSim *sim);
+bool serverSimGameVoteIsRunning(const ServerSim *sim, uint8_t kind);
+uint8_t serverSimCountActiveTeams(const ServerSim *sim);
+
+/* Snapshot of a single game vote slot, suitable for wire serialisation
+ * by the transport layer. Returns false if `kind` is unknown. */
+typedef struct {
+    uint8_t  kind;
+    uint8_t  active;           /* GAME_VOTE_ACTIVE_* */
+    uint8_t  triggerSrc;       /* GAME_VOTE_TRIGGER_* */
+    uint8_t  teamId;
+    uint8_t  threshold;        /* yes-count needed to pass */
+    uint8_t  yesCount;
+    uint8_t  noCount;
+    uint8_t  eligibleCount;    /* total eligible voters */
+    uint8_t  secondsRemaining; /* 0..60 */
+    uint16_t votes;            /* bitmask of slots that voted yes */
+} ServerGameVoteSnapshot;
+
+bool serverSimGetGameVoteSnapshot(const ServerSim *sim, uint8_t kind,
+                                  ServerGameVoteSnapshot *out);
+
+/* When set, the next running→gameOver transition should skip the
+ * automatic "Game over!" / win-message broadcast (because the
+ * transition was driven by a vote-pass which already announced its
+ * own context). The flag self-clears once lifecycle reads it. */
+bool serverSimConsumeSuppressNextWinMessage(ServerSim *sim);
+void serverSimSetSuppressNextWinMessage(ServerSim *sim, bool v);
+
+/*********************************************************
  *NAME:          serverSimSendWbnWinEvents
  *PURPOSE:
  *  Sends WINBOLO_NET_EVENT_WIN for each player in the
@@ -990,7 +1172,9 @@ SubscriberHandle serverSimRegisterClientSubscriber(ServerSim *sim,
  *********************************************************/
 void serverSimRequestBalanceProposal(ServerSim *sim,
                                      uint8_t totalPlayers,
-                                     uint8_t teamSize);
+                                     uint8_t teamSize,
+                                     const uint8_t *botSlots,
+                                     uint8_t numBotSlots);
 
 /*********************************************************
  *NAME:          serverSimUnregisterSubscriber
@@ -1043,6 +1227,13 @@ void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, struct ControlEvent *ev
 void serverSimFillPlayerJoinEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
 void serverSimFillPlayerLeaveEvent(ServerSim *sim, BYTE i, struct ControlEvent *evt);
 
+/* Layout A — per-team / per-bot / brain-list events. The matching
+ * client-side handlers live in clientSimApplyControl. */
+void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, struct ControlEvent *evt);
+void serverSimFillLobbyBotConfigEvent(ServerSim *sim, BYTE slot, struct ControlEvent *evt);
+void serverSimFillLobbyBotBrainEvent(const ServerSim *sim, BYTE slot, struct ControlEvent *evt);
+void serverSimFillLobbyBrainListEvent(const ServerSim *sim, struct ControlEvent *evt);
+
 /*********************************************************
  * Read accessors.
  *
@@ -1056,6 +1247,7 @@ void serverSimFillPlayerLeaveEvent(ServerSim *sim, BYTE i, struct ControlEvent *
 /* Scalar (bool/enum) accessors */
 bool          serverSimBalanceShutdownRequested(const ServerSim *sim);
 bool          serverSimIsLobbyEnabled(const ServerSim *sim);
+bool          serverSimIsAcceptingJoins(const ServerSim *sim);
 bool          serverSimHasPassword(const ServerSim *sim);
 bool          serverSimIsRandomMapEnabled(const ServerSim *sim);
 bool          serverSimIsQuiet(const ServerSim *sim);
@@ -1082,6 +1274,7 @@ const char *serverSimGetServerMessageLogFile(const ServerSim *sim);
 /* Indexed-array accessors (bounds-checked; out-of-range
  * returns NULL for pointer types, false/0 for scalars). */
 const LobbyPlayer *serverSimGetLobbyPlayer(const ServerSim *sim, BYTE n);
+LobbyPlayer       *serverSimGetLobbyPlayerMut(ServerSim *sim, BYTE n);
 bool               serverSimIsPlayerConnected(const ServerSim *sim, BYTE n);
 uint32_t           serverSimGetLastProcessedInput(const ServerSim *sim, BYTE n);
 bool               serverSimIsMapSkipVote(const ServerSim *sim, BYTE n);
@@ -1097,6 +1290,195 @@ const BalanceProposal *serverSimGetBalanceProposal(const ServerSim *sim);
 /* Cross-struct accessor — returns the embedded GameSim. NOT
  * const-qualified: callers of GameSim mutate it freely. */
 GameSim *serverSimGetGameSim(ServerSim *sim);
+
+/* ────────────────────────────────────────────────────────────────
+ * Lobby Layout A accessors / mutators
+ * ──────────────────────────────────────────────────────────────── */
+
+/* Per-bot brain selection as an index into the server's brain
+ * catalogue. brainIdx == 0xFF means "use the CLI-configured default
+ * brain". Set via PACKET_LOBBY_SET_BOT_BRAIN. */
+void        serverSimSetBotBrainIdxFor(ServerSim *sim, BYTE slot,
+                                       uint8_t brainIdx);
+
+/* Resolve a catalogue index back to its disk path. Returns the
+ * CLI-configured default path for brainIdx == 0xFF, NULL when the
+ * index is out of range. The returned pointer is owned by the sim
+ * and is valid until the sim is destroyed. */
+const char *serverSimGetBrainPathForIdx(const ServerSim *sim,
+                                        uint8_t brainIdx);
+
+/* ── Server-side map directory enumeration ──────────────────────────
+ *
+ * Lists entries (subdirectories and .map files) at a path relative to
+ * the server's data/maps/ root. Used by the lobby's map chooser so a
+ * connected client can browse the *server's* map library.
+ *
+ * relPath:    Relative to data/maps; "" or NULL = root. ".." segments
+ *             are rejected (escape attempts return -1).
+ * entries:    Caller-allocated output array.
+ * maxEntries: Capacity of entries[]; the function writes at most this
+ *             many; if the directory has more, the extras are dropped
+ *             and the function returns maxEntries.
+ *
+ * Returns the number of entries written, or -1 on validation /
+ * read failure. Folders sort first (alphabetically), then files
+ * (alphabetically). */
+typedef struct {
+    char    name[128];
+    bool    isFolder;
+    int64_t modTime;   /* file mtime, ns since UNIX epoch (SDL_Time);
+                          0 if unknown. Folders carry the directory
+                          mtime so the table sort still reads sensibly
+                          for them. */
+    int64_t size;      /* file size in bytes; 0 for folders. */
+} ServerMapEntry;
+
+int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
+                              ServerMapEntry *entries, int maxEntries);
+
+/* Recursive search variant. Walks data/maps/<relPath> and every
+ * nested directory, returning .map files whose basename contains
+ * `query` (case-insensitive substring) up to maxEntries results.
+ * Each returned entry's `name` is the path relative to relPath
+ * (e.g. "Subdir/Foo.map") and isFolder is always false. relPath
+ * "" or NULL = search the whole library. Empty query returns 0
+ * (caller wanted enumerate, not search). */
+int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
+                           const char *query,
+                           ServerMapEntry *entries, int maxEntries);
+
+/* Read the on-disk .map file at data/maps/<relPath> into a heap
+ * buffer. Returns true and fills outBytes (malloc'd; caller frees
+ * with free()) + outLen on success. The client preview-fetch path
+ * calls this from the server's REQ handler, then streams the bytes
+ * back in chunks. Implementation rejects path traversal and any
+ * relPath that doesn't resolve to a regular file.
+ *
+ * Used by the Server Maps preview protocol: server sources the
+ * bytes, client rasterises them locally with the same renderer it
+ * uses for the Upload tab. */
+bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
+                           uint8_t **outBytes, size_t *outLen);
+
+/* autoLockOnGameStart — when true, sets allowNewPlayers=false the
+ * moment the lobby transitions out of serverStateLobby. */
+bool        serverSimGetAutoLockOnGameStart(const ServerSim *sim);
+void        serverSimSetAutoLockOnGameStart(ServerSim *sim, bool v);
+
+/* Ranked-game flag. Setting it true also flips ai=none. The server's
+ * LST_GAME_TYPE handler refuses to switch to gameOpen while ranked,
+ * and the LST_AI_POLICY handler refuses anything but aiNone. Existing
+ * bot slots are NOT removed by this setter — the LST_RANKED packet
+ * handler in the transport layer does that explicitly when the toggle
+ * flips on, and it also resets every player's ready bit so the host
+ * can confirm the new configuration. */
+bool        serverSimGetRanked(const ServerSim *sim);
+
+/* True iff the current lobby shape qualifies as a ranked match —
+ * exactly two teams in use, equal sizes of 1/2/3 connected humans
+ * (1v1, 2v2, 3v3), no bots counted. Independent of whether the
+ * lobby is currently flagged Ranked; callers check both. Used by
+ * the server's PACKET_LOBBY_READY handler to silently drop Ready
+ * requests on ranked lobbies that don't qualify yet, and by the
+ * unit tests to lock the shape rules. */
+bool        serverSimRankedShapeReady(const ServerSim *sim);
+
+/* Setter for the Layout A "Allow New Players: Now" toggle. The
+ * PACKET_LOCK_TOGGLE handler reconciles per-client lock consensus
+ * back into this flag and re-publishes CTRL_LOBBY_SETTINGS so every
+ * client's checkbox reflects the actual server state. */
+void        serverSimSetAllowNewPlayers(ServerSim *sim, bool v);
+void        serverSimSetRanked(ServerSim *sim, bool v);
+
+/* openHost — when true, any connected player has host-level edit
+ * authority on lobby state (see lobbyClientMayEdit). */
+bool        serverSimGetOpenHost(const ServerSim *sim);
+void        serverSimSetOpenHost(ServerSim *sim, bool v);
+
+/* serverLocks — LOBBY_LOCK_* bitmask set from CLI at server start.
+ * Locked settings refuse PACKET_LOBBY_SET_SETTING with REJECT_LOCKED. */
+uint16_t    serverSimGetServerLocks(const ServerSim *sim);
+void        serverSimSetServerLocks(ServerSim *sim, uint16_t locks);
+
+/* Map an LST_* setting id to the LOBBY_LOCK_* bit that gates it.
+ * Returns 0 for settings with no lock, 0xFFFF for unknown ids. The
+ * PACKET_LOBBY_SET_SETTING handler uses this to decide whether to
+ * REJECT_LOCKED; tests use it to verify the lock table is correct. */
+uint16_t    serverSimGetSettingLockBit(uint8_t lstSettingType);
+/* True iff sim has the lock bit for `lstSettingType` set AND that
+ * setting actually has a lock bit (i.e., bit != 0 and bit != 0xFFFF). */
+bool        serverSimIsSettingLocked(const ServerSim *sim,
+                                     uint8_t lstSettingType);
+
+/* firstJoinerBecomesHost — dedicated-server option. When true and slot
+ * 0 is unoccupied at join time, the incoming player is promoted to
+ * host (admin rights). Set via -firstjoinhost; no UI counterpart. */
+bool        serverSimGetFirstJoinerBecomesHost(const ServerSim *sim);
+void        serverSimSetFirstJoinerBecomesHost(ServerSim *sim, bool v);
+
+/* Cached game-settings mirrors. authoritative state lives in GameSim;
+ * these expose the most-recently-broadcast value for lock checks and
+ * SETTING_CHG diffs. */
+void        serverSimSetAiPolicy(ServerSim *sim, uint8_t v);
+bool        serverSimGetTimeLimit(const ServerSim *sim);
+void        serverSimSetTimeLimit(ServerSim *sim, bool v);
+uint16_t    serverSimGetTimeMinutes(const ServerSim *sim);
+void        serverSimSetTimeMinutes(ServerSim *sim, uint16_t v);
+
+/* Per-team metadata (color, name, naming pool, in_use flag). Returns
+ * NULL for out-of-range teamId (0 or >= MAX_TANKS). Mutable so the
+ * UDP TEAM_META handler can write through it. */
+TeamMetadata *serverSimGetTeamMetaMut(ServerSim *sim, BYTE teamId);
+
+/* Per-bot config (difficulty + personality). Mutable for the UDP
+ * BOT_CONFIG handler. */
+const LobbyBotConfig *serverSimGetBotConfig(const ServerSim *sim, BYTE slot);
+LobbyBotConfig       *serverSimGetBotConfigMut(ServerSim *sim, BYTE slot);
+
+/* Mutable game-length (transition-out-of-lobby and time-limit edits
+ * write through this). */
+void serverSimSetGameLength(ServerSim *sim, int32_t ticks);
+
+/* Lobby-time game-setting writers. The lobby UI used to poke
+ * serverSimGetGameSim(sim)->game / ->hiddenMines directly; these
+ * keep the field on GameSim opaque. Only meaningful in lobby state. */
+gameType serverSimGetGameType(const ServerSim *sim);
+void serverSimSetGameType(ServerSim *sim, gameType gt);
+void serverSimSetHiddenMines(ServerSim *sim, bool hiddenMines);
+void serverSimSetState(ServerSim *sim, ServerState s);
+void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
+
+/* Switch a lobby bot to a new brain script. Updates both the
+ * per-slot brain-index mirror (serverSimSetBotBrainIdxFor) and the
+ * bot manager's live state in a single call — these are always
+ * paired at call sites. brainIdx == 0xFF resolves to the
+ * CLI-configured default brain. */
+void serverSimSwitchBotBrain(ServerSim *sim, BYTE slot, uint8_t brainIdx);
+
+/* Rename a bot's display name in the players table without
+ * touching alliance/team/transport state. SP-only path used by the
+ * AiConfig "Bot N" rename UI. */
+void serverSimRenameBotSlot(ServerSim *sim, BYTE slot, const char *name);
+
+/* SP-host lobby publishers.
+ *
+ * The dedicated server's transportUdpServerBroadcastLobby*Chg
+ * functions do two things: (a) send a UDP packet to all clients,
+ * and (b) publish a control event for in-process subscribers.
+ * Single-player has no UDP clients — these wrappers do just (b),
+ * so the local humanSim picks up the state change through the
+ * subscriber chain set up by serverSimRegisterClientSubscriber. */
+void serverSimPublishLobbySlot(ServerSim *sim, BYTE slot);
+void serverSimPublishLobbyBotBrain(ServerSim *sim, BYTE slot);
+void serverSimPublishLobbyBotConfig(ServerSim *sim, BYTE slot);
+void serverSimPublishLobbyTeamMeta(ServerSim *sim, BYTE teamId);
+void serverSimPublishLobbySettings(ServerSim *sim);
+
+/* Mirror the operator-chosen upload policy onto the sim so it can be
+ * broadcast in the lobby-settings event. Called at server startup
+ * after transportUdpServerSetUploadConfig. */
+void serverSimSetUploadPolicy(ServerSim *sim, UploadPolicy policy);
 
 /* viewPlayer — which player perspective the sim renders from. */
 BYTE serverSimGetViewPlayer(const ServerSim *sim);

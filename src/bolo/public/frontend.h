@@ -276,6 +276,26 @@ void frontEndDrawDownload(struct ClientSim *cs, bool justBlack);
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked);
 
 /*********************************************************
+*NAME:          frontEndApplyLocalTankPrefs
+*PURPOSE:
+* Called by client_mapload right after the local player's tank
+* has been created via clientSimSetupSelf, so the frontend can
+* push per-tank preferences (Auto Slowdown, Auto Hide Gunsight)
+* onto the freshly created tank pointer. Previously the
+* preferences were applied earlier in the boot sequence — before
+* clientSimSetupSelf had run — which silently no-op'd against
+* the still-NULL tank pointer; tankCreate then defaulted the
+* tank to autoSlowdown=false, and gameFrontEnd's tank-readback
+* round-tripped that default back into the INI file. Stubs in
+* non-SDL3 frontends are no-ops since they don't expose the
+* preference UI.
+*
+*ARGUMENTS:
+* cs - The local client's ClientSim whose tank was just set up
+*********************************************************/
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs);
+
+/*********************************************************
 *NAME:          frontEndSetActiveClientSim
 *PURPOSE:
 * Register which ClientSim drives the visible player-list UI.

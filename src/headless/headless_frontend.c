@@ -106,6 +106,8 @@ void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool
   (void)cs; (void)value; (void)isChecked;
 }
 
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
+
 void frontEndSetActiveClientSim(struct ClientSim *cs) {
   (void)cs;
 }

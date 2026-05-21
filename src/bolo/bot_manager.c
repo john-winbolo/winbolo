@@ -42,6 +42,7 @@
 #include "allience.h"
 #include "mines.h"
 #include "client_sim.h"
+#include "client_net.h"
 #include "client_sim_internal.h"
 #include "client_sim_control.h"
 #include "control_event.h"
@@ -398,6 +399,104 @@ bool botManagerInit(int threads) {
     }
     g_threadsConfig = threads;
     return true;
+}
+
+/* Extract a display name from a brain path. The path convention is
+ *   "Brains/<DirName>/init.lua"
+ * so the display name is the directory segment. Falls back to the
+ * basename (sans .lua) when the path doesn't fit that shape. */
+static void botManagerBrainNameFromPath(const char *brainPath,
+                                         char *out, size_t outCap) {
+    if (!out || outCap == 0) return;
+    out[0] = '\0';
+    if (!brainPath) return;
+    size_t len = strlen(brainPath);
+    if (len == 0) return;
+    /* fname = last segment after a / or \. */
+    const char *fname = brainPath + len;
+    while (fname > brainPath && fname[-1] != '/' && fname[-1] != '\\') {
+        fname--;
+    }
+    if (fname == brainPath) {
+        SDL_strlcpy(out, brainPath, outCap);
+        size_t ol = strlen(out);
+        if (ol > 4 && SDL_strcasecmp(out + ol - 4, ".lua") == 0) {
+            out[ol - 4] = '\0';
+        }
+        return;
+    }
+    /* Walk back through the separator and grab the previous segment. */
+    const char *dirEnd   = fname - 1;
+    const char *dirStart = dirEnd;
+    while (dirStart > brainPath &&
+           dirStart[-1] != '/' && dirStart[-1] != '\\') {
+        dirStart--;
+    }
+    size_t dirLen = (size_t)(dirEnd - dirStart);
+    if (dirLen >= outCap) dirLen = outCap - 1;
+    memcpy(out, dirStart, dirLen);
+    out[dirLen] = '\0';
+}
+
+/* Tear down a bot's brain instance and re-load it from `brainPath`.
+ * Re-wires lua_getextraspace + abort flag + pathfinder/worldsim
+ * abort plumbing — same setup botManagerAddBot does on first load.
+ * Bot's transport / ClientSim / subscriber registration / lobby
+ * slot stay intact. Returns false on brain-load failure; on failure
+ * the bot's brain is inactive and caller should remove the bot. */
+static bool botManagerReloadBrain(BotContext *bot, const char *brainPath) {
+    if (!bot || !brainPath) return false;
+    char brainName[64];
+    botManagerBrainNameFromPath(brainPath, brainName, sizeof(brainName));
+
+    if (bot->brain.L != NULL || bot->brain.running) {
+        luaBrainInstanceDestroy(&bot->brain);
+    }
+
+    SDL_strlcpy(bot->brainPath, brainPath, sizeof(bot->brainPath));
+
+    if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
+                                bot->cs, bot->ai, s_default_debug_mode)) {
+        fprintf(stderr,
+                "botManager: failed to reload brain '%s' for bot %d\n",
+                brainPath, (int)bot->playerNum);
+        return false;
+    }
+
+    if (bot->brain.L != NULL) {
+        *(BotContext **)lua_getextraspace(bot->brain.L) = bot;
+    }
+    SDL_SetAtomicInt(&bot->abort_flag, 0);
+    bot->thinkDeadlineCounter = 0;
+    bot->wasKilled = false;
+    if (bot->brain.pathfinder != NULL) {
+        brainPathfinderSetAbortFlag(bot->brain.pathfinder, &bot->abort_flag);
+    }
+    if (bot->brain.worldsim != NULL) {
+        brainWorldSimSetAbortFlag(bot->brain.worldsim, &bot->abort_flag);
+    }
+    fprintf(stderr,
+            "botManager: bot %d reloaded with brain '%s'\n",
+            (int)bot->playerNum, brainName);
+    return true;
+}
+
+/* Swap the brain script for an already-added bot. Destroys the
+ * existing Lua VM and re-loads from the disk path resolved through
+ * the server's catalogue mirror so the bot starts ticking the chosen
+ * brain immediately. No-op when the path is unchanged (avoids a
+ * redundant reload on roster resyncs or duplicate UI events). */
+bool botManagerSetBrainIdx(ServerSim *sim, BYTE playerNum,
+                           uint8_t brainIdx) {
+    const char *brainPath;
+    if (sim == NULL || playerNum >= MAX_TANKS) return false;
+    if (!bots[playerNum].active) return false;
+    brainPath = serverSimGetBrainPathForIdx(sim, brainIdx);
+    if (brainPath == NULL) return false;
+    if (SDL_strcasecmp(bots[playerNum].brainPath, brainPath) == 0) {
+        return true;
+    }
+    return botManagerReloadBrain(&bots[playerNum], brainPath);
 }
 
 bool botManagerAddBot(ServerSim *sim, BYTE playerNum,

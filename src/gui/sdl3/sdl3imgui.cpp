@@ -79,6 +79,8 @@ extern "C" {
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "dialogs/imgui_dialog_utils.h"
+#include "dialogs/dialog_footer.h"
+#include "dialogs/imgui_keysetup.h"
 #include "platform/mac_menubar.h"
 
 extern "C" void windowSetQuitting(void);
@@ -102,6 +104,8 @@ extern "C" void utilStripName(char *name);
 /* Key setup helpers */
 extern "C" void windowGetKeys(keyItems *value);
 extern "C" void windowSetKeys(keyItems *value);
+extern "C" bool useAutoslow;
+extern "C" bool useAutohide;
 extern "C" void windowKeyPressed(struct ClientSim *cs, int keyCode);
 extern "C" void inputTouchSetAbsoluteSteering(bool enabled);
 extern "C" bool inputTouchGetAbsoluteSteering(void);
@@ -308,22 +312,14 @@ static char s_joinConfirmUrl[512]   = "";
 static char s_joinConfirmAddr[256]  = "";
 static int  s_joinConfirmPort       = 0;
 
-/* Key Setup modal state */
-/* Which binding is currently being captured; -1 = none */
-enum KeySetupField {
-    ksNone = -1,
-    ksForward, ksBackward, ksTurnLeft, ksTurnRight,
-    ksShoot, ksLayMine, ksGunIncrease, ksGunDecrease,
-    ksTankView, ksPillView,
-    ksScrollUp, ksScrollDown, ksScrollLeft, ksScrollRight,
-    ksQuickTree, ksQuickRoad, ksQuickWall, ksQuickPillbox, ksQuickMine,
-};
-
-static bool         s_showKeySetup        = false;
-static keyItems     s_keySetupKeys;          /* working copy */
-static bool         s_keySetupAutoSlowdown  = false;
-static bool         s_keySetupAutoGunsight  = false;
-static KeySetupField s_keySetupWaiting      = ksNone;
+/* Key Setup modal state is owned by imgui_keysetup.cpp now —
+ * trigger via imguiKeySetupOpenInGame, render each frame via
+ * imguiKeySetupRenderInGamePopup, route key-capture scancodes
+ * through imguiKeySetupHandleInGameScancode. This file used to
+ * carry a parallel copy of the form + state; the two diverged
+ * (Auto Slowdown not persisting from the in-game popup was the
+ * symptom) so it was consolidated into the standalone dialog's
+ * module. */
 
 /* Send Message panel state */
 enum SendMsgRecipient { kSendAll = 0, kSendAllies, kSendNearby, kSendSelected };
@@ -1240,6 +1236,7 @@ static void renderPlayersPanel(ClientSim *cs) {
     /* Alliance actions */
     ImGui::Separator();
     {
+        bool rankedGame   = clientSimGetLobbyRanked(cs);
         bool inCooldown = (s_allianceReqCooldownEnd != 0 &&
                            SDL_GetTicks() < s_allianceReqCooldownEnd);
         if (hasAllies) {
@@ -1247,13 +1244,76 @@ static void renderPlayersPanel(ClientSim *cs) {
                 clientSimLeaveAllianceSelf(cs);
                 imguiHandOnHover();
         } else {
-            if (!canRequest || inCooldown) ImGui::BeginDisabled();
+            bool disabled = !canRequest || inCooldown || rankedGame;
+            if (disabled) ImGui::BeginDisabled();
             if (ImGui::Button(langGetText(STR_REQUEST_ALLIANCE), ImVec2(-1, 0))) {
                 clientSimRequestAllianceSelected(cs);
                 s_allianceReqCooldownEnd = SDL_GetTicks() + ALLIANCE_REQ_WAIT_MS;
             }
             imguiHandOnHover();
-            if (!canRequest || inCooldown) ImGui::EndDisabled();
+            if (disabled) ImGui::EndDisabled();
+            if (rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Alliances are disabled in ranked games.");
+            }
+        }
+    }
+
+    /* In-game vote actions — siblings of Request Alliance, only during
+     * the running game phase. */
+    if (clientSimGetNetStatus(cs) == netRunning) {
+        /* Count active teams (distinct teamNumber across connected
+         * humans) for the surrender precondition. */
+        bool teamSeen[17] = {0};
+        int activeTeams = 0;
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
+            if (!ls || !ls->connected || ls->isBot) continue;
+            uint8_t t = ls->teamNumber;
+            if (t == 0 || t > 16) continue;
+            if (!teamSeen[t]) { teamSeen[t] = true; activeTeams++; }
+        }
+
+        if (ImGui::Button("Vote: Return to lobby", ImVec2(-1, 0))) {
+            clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_BACK_TO_LOBBY,
+                                           GAME_VOTE_TOGGLE_OPEN_ONLY);
+            clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_BACK_TO_LOBBY, true);
+            /* SP / host dispatch — server is in-process. */
+            ServerSim *spSim = gameFrontGetServerSim();
+            if (spSim && !clientSimIsUdpTransport(cs)) {
+                threadsWaitForMutex();
+                serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
+                                        GAME_VOTE_KIND_BACK_TO_LOBBY,
+                                        GAME_VOTE_TOGGLE_OPEN_ONLY);
+                threadsReleaseMutex();
+            }
+        }
+
+        const ClientLobbySlot *meSlot =
+            clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+        bool meUnassigned = (meSlot && meSlot->teamNumber == 0);
+        bool surrDisabled = (activeTeams != 2) || meUnassigned;
+        if (surrDisabled) ImGui::BeginDisabled();
+        if (ImGui::Button("Vote: Surrender", ImVec2(-1, 0))) {
+            clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_SURRENDER,
+                                           GAME_VOTE_TOGGLE_OPEN_ONLY);
+            clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_SURRENDER, true);
+            ServerSim *spSim = gameFrontGetServerSim();
+            if (spSim && !clientSimIsUdpTransport(cs)) {
+                threadsWaitForMutex();
+                serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
+                                        GAME_VOTE_KIND_SURRENDER,
+                                        GAME_VOTE_TOGGLE_OPEN_ONLY);
+                threadsReleaseMutex();
+            }
+        }
+        if (surrDisabled) ImGui::EndDisabled();
+        if (surrDisabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            if (meUnassigned) {
+                ImGui::SetTooltip("Pick a team before voting to surrender.");
+            } else {
+                ImGui::SetTooltip("Surrender is only available when exactly two teams\n"
+                            "with human players remain.");
+            }
         }
     }
 
@@ -1278,7 +1338,8 @@ static void renderAboutModal(void) {
         s_showAbout = false;
     }
     static float s_fadeAbout = 0.0f;
-    if (ImGui::BeginPopupModal(title, nullptr,
+    bool aboutOpen = true;
+    if (ImGui::BeginPopupModal(title, &aboutOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                             imguiPopupFadeAlpha(&s_fadeAbout));
@@ -1287,10 +1348,9 @@ static void renderAboutModal(void) {
         ImGui::TextUnformatted(langGetText(STR_DLGABOUT_COPYRIGHT));
         ImGui::Separator();
         ImGui::TextDisabled("%s", langGetText(STR_DLGABOUT_BOLOCOPYRIGHT));
-        ImGui::Spacing();
-        if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0)))
-            ImGui::CloseCurrentPopup();
-            imguiHandOnHover();
+        int f = WBUI::DialogFooter(/*cancelLabel*/ nullptr,
+                                   langGetText(STR_OK));
+        if (f != WBUI::FOOTER_NONE) ImGui::CloseCurrentPopup();
         ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
@@ -1308,7 +1368,8 @@ static void renderJoinConfirmModal(void) {
         s_showJoinConfirm = false;
     }
     static float s_fadeJoinConfirm = 0.0f;
-    if (ImGui::BeginPopupModal(title, nullptr,
+    bool joinOpen = true;
+    if (ImGui::BeginPopupModal(title, &joinOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                             imguiPopupFadeAlpha(&s_fadeJoinConfirm));
@@ -1320,22 +1381,16 @@ static void renderJoinConfirmModal(void) {
         } else {
             ImGui::TextUnformatted(s_joinConfirmAddr);
         }
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        if (ImGui::Button(langGetText(STR_DLGJOIN_BUTTON), ImVec2(80, 0))) {
+        int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                   langGetText(STR_DLGJOIN_BUTTON));
+        if (f == WBUI::FOOTER_CONFIRM) {
             ImGui::CloseCurrentPopup();
             /* Leave current game and return to menu with the URL queued */
             gameFrontHandleUrlOpen(s_joinConfirmUrl);
             windowNewGame();
-        }
-        imguiHandOnHover();
-        ImGui::SameLine(0.0f, 8.0f);
-        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(80, 0)) ||
-            ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        } else if (f == WBUI::FOOTER_CANCEL) {
             ImGui::CloseCurrentPopup();
         }
-        imguiHandOnHover();
         ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
@@ -1354,7 +1409,8 @@ static void renderChangeNameModal(ClientSim *cs) {
         clientSimGetPlayerName(cs, s_changeNameBuf);
     }
     static float s_fadeChangeName = 0.0f;
-    if (ImGui::BeginPopupModal(title, nullptr,
+    bool changeNameOpen = true;
+    if (ImGui::BeginPopupModal(title, &changeNameOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                             imguiPopupFadeAlpha(&s_fadeChangeName));
@@ -1365,12 +1421,11 @@ static void renderChangeNameModal(ClientSim *cs) {
         bool enter = ImGui::InputText("##name", s_changeNameBuf,
                                       sizeof(s_changeNameBuf),
                                       ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::Spacing();
-        bool doOK     = ImGui::Button(langGetText(STR_OK),     ImVec2(120, 0)) || enter;
-        imguiHandOnHover();
-        ImGui::SameLine();
-        bool doCancel = ImGui::Button(langGetText(STR_CANCEL), ImVec2(120, 0));
-        imguiHandOnHover();
+        int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                   langGetText(STR_OK),
+                                   /*enterConfirms*/ true);
+        bool doOK     = (f == WBUI::FOOTER_CONFIRM) || enter;
+        bool doCancel = (f == WBUI::FOOTER_CANCEL);
 
         if (doOK) {
             s_changeNameBuf[32] = '\0'; /* PLAYER_NAME_LAST - 1 */
@@ -1392,6 +1447,383 @@ static void renderChangeNameModal(ClientSim *cs) {
 }
 
 /* -------------------------------------------------------
+ * In-game vote widget — one floating window per active vote.
+ *
+ * Each widget is its own top-level ImGui window (no parent
+ * constraint) so the OS window decoration / multi-viewport
+ * platform can drag it outside the main game window. We give
+ * it a half-transparent background so it doesn't fully obscure
+ * the battlefield underneath.
+ *
+ * Pressing the title-bar X just hides locally; the vote keeps
+ * running. Re-press the menu item to bring it back.
+ * ------------------------------------------------------- */
+/* Per-kind layout state for the vote widget's auto-positioning.
+ *
+ * Lifecycle:
+ *   - active=false initially. When the widget first becomes visible
+ *     we set the window to (321*zoom, 0) — flush against the right
+ *     edge of the game viewport. After ImGui::Begin we capture the
+ *     real size into capturedW/H but mark sizeKnown for next frame.
+ *   - On the second frame, with size in hand, we re-position the
+ *     window centred in the status-panel column [321, 437], or
+ *     below an already-shown sibling vote widget if that centre
+ *     would overlap it. Then positioned=true and we stop forcing
+ *     SetNextWindowPos so the user can drag the window freely.
+ *   - When the widget hides (X-close, auto-dismiss, vote concludes
+ *     >5s ago) we clear active=false so the next appearance
+ *     re-runs the positioning. */
+/* Shared auto-positioning + sizing state for floating panels that
+ * pin themselves against the status-panel column. Used by the vote
+ * widgets AND the alliance-request modal — anything that wants to
+ * sit in the right-of-game column with the same anti-overlap rules. */
+struct AutoPanelLayout {
+    bool  active;
+    bool  sizeKnown;
+    bool  positioned;
+    float capturedW;
+    float capturedH;
+    float lastX;
+    float lastY;
+};
+static AutoPanelLayout s_voteLayout[2];
+static AutoPanelLayout s_allianceLayout;
+
+/* Source-pixel anchor band for the right-edge column. Status panel
+ * starts at x=321 (MAIN_OFFSET_X + MAIN_SCREEN_SIZE_X * TILE_SIZE_X)
+ * and ends at x=437. Used as the centering bounds before zoom +
+ * gameScale scaling. */
+static constexpr float VOTE_ANCHOR_X_LEFT  = 321.0f;
+static constexpr float VOTE_ANCHOR_X_RIGHT = 437.0f;
+static constexpr float VOTE_ANCHOR_Y_TOP   = 0.0f;
+
+static int voteLayoutIndex(uint8_t kind) {
+    if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) return 0;
+    if (kind == GAME_VOTE_KIND_SURRENDER)     return 1;
+    return -1;
+}
+
+static bool rectsIntersect(float ax, float ay, float aw, float ah,
+                            float bx, float by, float bw, float bh) {
+    return !(ax + aw <= bx || bx + bw <= ax ||
+             ay + ah <= by || by + bh <= ay);
+}
+
+/* Compute the on-screen anchor band in actual pixels, accounting for
+ * integer-zoom render-target plus the non-integer blit scale used
+ * when the window is resized between integer zoom levels.
+ *
+ *   on-screen X = destX + sourceX * zoomFactor * gameScale
+ *
+ * sourceX comes from VOTE_ANCHOR_X_* (game-source coords). */
+static void autoPanelComputeAnchors(float *anchorXL, float *anchorXR,
+                                    float *anchorY) {
+    int rawZoom = sdl3DrawGetZoomFactor();
+    if (rawZoom < 1) rawZoom = 1;
+    float destX = 0.0f, destY = 0.0f, gameScale = 1.0f;
+    sdl3DrawGetGameRect(&destX, &destY, NULL, NULL, &gameScale);
+    if (gameScale <= 0.0f) gameScale = 1.0f;
+    float effZoom = (float)rawZoom * gameScale;
+    if (anchorXL) *anchorXL = destX + VOTE_ANCHOR_X_LEFT  * effZoom;
+    if (anchorXR) *anchorXR = destX + VOTE_ANCHOR_X_RIGHT * effZoom;
+    if (anchorY)  *anchorY  = destY + VOTE_ANCHOR_Y_TOP   * effZoom;
+}
+
+/* Pre-Begin step: set window position, size cap, and background
+ * alpha for an auto-positioned panel. siblings (optional) are other
+ * already-positioned panels we should stack underneath instead of
+ * overlapping. */
+static void autoPanelApply(AutoPanelLayout &lay,
+                            float anchorXL, float anchorXR, float anchorY,
+                            float guessW, float guessH,
+                            AutoPanelLayout *const *siblings,
+                            int numSiblings,
+                            float bgAlpha) {
+    float anchorCenter = 0.5f * (anchorXL + anchorXR);
+
+    if (!lay.active) {
+        /* Stage 1: first frame visible. Pre-guess the size to centre
+         * roughly; stage 2 re-centres precisely once Begin gives us
+         * the real content size. */
+        lay.active = true;
+        lay.sizeKnown = false;
+        lay.positioned = false;
+        float guessX = anchorCenter - guessW * 0.5f;
+        for (int j = 0; j < numSiblings; j++) {
+            const AutoPanelLayout *other = siblings[j];
+            if (!other || !other->active || !other->positioned) continue;
+            if (rectsIntersect(guessX, anchorY, guessW, guessH,
+                               other->lastX, other->lastY,
+                               other->capturedW, other->capturedH)) {
+                guessX = other->lastX;
+            }
+        }
+        if (guessX < anchorXL) guessX = anchorXL;
+        ImGui::SetNextWindowPos(ImVec2(guessX, anchorY), ImGuiCond_Always);
+        lay.lastX = guessX;
+        lay.lastY = anchorY;
+    } else if (lay.sizeKnown && !lay.positioned && lay.capturedW > 60.0f) {
+        /* Stage 2: we now have the real auto-sized width; recentre. */
+        float targetX = anchorCenter - lay.capturedW * 0.5f;
+        float targetY = anchorY;
+        for (int j = 0; j < numSiblings; j++) {
+            const AutoPanelLayout *other = siblings[j];
+            if (!other || !other->active || !other->positioned) continue;
+            if (rectsIntersect(targetX, targetY, lay.capturedW, lay.capturedH,
+                               other->lastX, other->lastY,
+                               other->capturedW, other->capturedH)) {
+                targetX = other->lastX;
+                targetY = other->lastY + other->capturedH;
+            }
+        }
+        if (targetX < anchorXL) targetX = anchorXL;
+        ImGui::SetNextWindowPos(ImVec2(targetX, targetY), ImGuiCond_Always);
+        lay.lastX = targetX;
+        lay.lastY = targetY;
+        lay.positioned = true;
+    }
+    /* Stage 3 (positioned): no SetNextWindowPos — user can drag. */
+
+    /* Width cap: never extend past the WinBolo window's right edge.
+     * AutoResize still fits to content; when capped, the height grows
+     * downward instead. */
+    {
+        float windowRight = ImGui::GetIO().DisplaySize.x;
+        float maxW = windowRight - lay.lastX;
+        if (maxW < 60.0f) maxW = 60.0f;
+        ImGui::SetNextWindowSizeConstraints(
+            ImVec2(40.0f, 40.0f),
+            ImVec2(maxW,  FLT_MAX));
+    }
+
+    ImGui::SetNextWindowBgAlpha(bgAlpha);
+}
+
+/* Post-Begin step: refresh captured size + on-screen position so
+ * stage 2 can centre using the real size and stage 3 can honor user
+ * drags. */
+static void autoPanelCapture(AutoPanelLayout &lay) {
+    ImVec2 wPos  = ImGui::GetWindowPos();
+    ImVec2 wSize = ImGui::GetWindowSize();
+    lay.capturedW = wSize.x;
+    lay.capturedH = wSize.y;
+    lay.sizeKnown = true;
+    if (lay.positioned) {
+        lay.lastX = wPos.x;
+        lay.lastY = wPos.y;
+    }
+}
+
+static void autoPanelReset(AutoPanelLayout &lay) {
+    lay.active = false;
+    lay.sizeKnown = false;
+    lay.positioned = false;
+}
+
+static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
+                                    const ClientGameVoteSnapshot *snap) {
+    int li = voteLayoutIndex(kind);
+    if (li < 0) return;
+    AutoPanelLayout &lay = s_voteLayout[li];
+
+    /* Only render while a vote is in-flight or recently concluded
+     * and the user hasn't dismissed. */
+    if (snap->active == GAME_VOTE_ACTIVE_NONE) { autoPanelReset(lay); return; }
+    if (!snap->widgetVisible)                  { autoPanelReset(lay); return; }
+
+    /* Auto-dismiss 5 seconds after the vote concludes (pass / fail /
+     * cancel). Back-to-lobby with the server's return-to-lobby
+     * countdown still active is exempt — keep the widget through the
+     * full N → 1 countdown. */
+    if (snap->active != GAME_VOTE_ACTIVE_RUNNING && snap->concludedAtMs != 0) {
+        bool lobbyCountdownActive =
+            (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) &&
+            (clientSimGetReturnToLobbySecs(cs) > 0);
+        uint32_t age = SDL_GetTicks() - snap->concludedAtMs;
+        if (age >= 5000u && !lobbyCountdownActive) {
+            clientSimSetGameVoteWidgetVisible(cs, kind, false);
+            autoPanelReset(lay);
+            return;
+        }
+    }
+
+    /* Apply the shared auto-panel layout (anti-overlap clamp + width
+     * cap + transparency). Siblings: the other vote widget (so they
+     * stack instead of overlapping each other). */
+    float anchorXL, anchorXR, anchorY;
+    autoPanelComputeAnchors(&anchorXL, &anchorXR, &anchorY);
+    AutoPanelLayout *siblings[1] = { &s_voteLayout[1 - li] };
+    autoPanelApply(lay, anchorXL, anchorXR, anchorY,
+                    200.0f, 140.0f, siblings, 1, 0.55f);
+
+    /* Build the title — includes (Draw) tag for ranked manual
+     * back-to-lobby votes. */
+    char title[128];
+    const char *kindName = (kind == GAME_VOTE_KIND_BACK_TO_LOBBY)
+                           ? "Lobby" : "Surrender";
+    bool drawTag = (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) &&
+                   (snap->triggerSrc == GAME_VOTE_TRIGGER_MANUAL) &&
+                   clientSimGetLobbyRanked(cs);
+    snprintf(title, sizeof(title), "Vote: %s%s###gamevote_%u",
+             kindName, drawTag ? " (Draw)" : "", (unsigned)kind);
+
+    bool open = true;
+    if (!ImGui::Begin(title, &open,
+                      ImGuiWindowFlags_AlwaysAutoResize |
+                      ImGuiWindowFlags_NoCollapse |
+                      ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::End();
+        if (!open) { clientSimSetGameVoteWidgetVisible(cs, kind, false); autoPanelReset(lay); }
+        return;
+    }
+
+    autoPanelCapture(lay);
+
+    /* Tally + circular progress.
+     *
+     * Ring is split into one slice per eligible voter:
+     *   - green  : voted yes
+     *   - red    : voted no
+     *   - gray   : not yet voted (background)
+     *
+     * When eligibleCount is unknown (legacy server / not running) we
+     * fall back to a single yes-vs-threshold green arc on a gray
+     * background, matching the pre-noCount behavior. */
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImVec2 base = ImGui::GetCursorScreenPos();
+    float radius = 22.0f;
+    ImVec2 centre(base.x + radius + 2.0f, base.y + radius + 2.0f);
+
+    /* Background ring (drawn always; the colored arcs paint over it). */
+    dl->AddCircle(centre, radius, IM_COL32(120, 120, 120, 200), 36, 3.0f);
+
+    const ImU32 kYes  = IM_COL32(80, 200, 80, 255);
+    const ImU32 kNo   = IM_COL32(220, 70, 70, 255);
+    const float kStart = -IM_PI * 0.5f;   /* 12 o'clock */
+
+    if (snap->eligibleCount > 0) {
+        float slice = (2.0f * IM_PI) / (float)snap->eligibleCount;
+        if (snap->yesCount > 0) {
+            float a0 = kStart;
+            float a1 = a0 + slice * (float)snap->yesCount;
+            dl->PathArcTo(centre, radius, a0, a1, 36);
+            dl->PathStroke(kYes, 0, 3.5f);
+        }
+        if (snap->noCount > 0) {
+            float a0 = kStart + slice * (float)snap->yesCount;
+            float a1 = a0 + slice * (float)snap->noCount;
+            dl->PathArcTo(centre, radius, a0, a1, 36);
+            dl->PathStroke(kNo, 0, 3.5f);
+        }
+    } else if (snap->threshold > 0 && snap->yesCount > 0) {
+        float progress = (float)snap->yesCount / (float)snap->threshold;
+        if (progress > 1.0f) progress = 1.0f;
+        float a0 = kStart;
+        float a1 = a0 + progress * IM_PI * 2.0f;
+        dl->PathArcTo(centre, radius, a0, a1, 36);
+        dl->PathStroke(kYes, 0, 3.5f);
+    }
+
+    /* Reserve the space for the ring + put the tally text next to it. */
+    ImGui::Dummy(ImVec2(radius * 2 + 8, radius * 2 + 4));
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    ImGui::Text("%u / %u",
+                (unsigned)snap->yesCount, (unsigned)snap->threshold);
+    if (snap->active == GAME_VOTE_ACTIVE_RUNNING) {
+        /* Solo (single eligible voter) "are you sure?" grace: server
+         * gives one-human votes 5 s after the yes before firing, so
+         * a misclick is reversible. Multi-human votes fire instantly
+         * on unanimity, so this branch only ever shows for solo. */
+        bool soloPendingPass = (snap->threshold == 1 &&
+                                snap->yesCount >= snap->threshold);
+        if (soloPendingPass) {
+            ImGui::TextColored(ImVec4(0.0f, 0.85f, 0.0f, 1.0f),
+                               "Passing in %us...",
+                               (unsigned)snap->secondsRemaining);
+        } else if (snap->eligibleCount > 1) {
+            /* Only show the 60-s deadline when there's more than one
+             * voter — for a solo vote it's meaningless since the
+             * single voter decides instantly on yes. */
+            ImGui::TextDisabled("%us left", (unsigned)snap->secondsRemaining);
+        }
+    } else if (snap->active == GAME_VOTE_ACTIVE_PASSED) {
+        /* For back-to-lobby: show "Return to lobby in N" while the
+         * server's snapshot-driven countdown is still running, then
+         * fall back to plain "Passed" once it's expired (or for
+         * surrender, which doesn't drive the countdown itself). */
+        uint8_t rtlSecs = clientSimGetReturnToLobbySecs(cs);
+        if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY && rtlSecs > 0) {
+            /* Wrap so the line fits when the widget is width-capped
+             * against a narrow status column (e.g. at 1x zoom). */
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                                  ImVec4(0.0f, 0.9f, 0.0f, 1.0f));
+            ImGui::TextWrapped("Return to lobby in %u", (unsigned)rtlSecs);
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.0f, 1.0f), "Passed");
+        }
+    } else if (snap->active == GAME_VOTE_ACTIVE_FAILED) {
+        ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.2f, 1.0f), "Failed");
+    } else if (snap->active == GAME_VOTE_ACTIVE_CANCELLED) {
+        ImGui::TextDisabled("Cancelled");
+    }
+    ImGui::EndGroup();
+
+    /* Yes / No buttons — only meaningful while the vote is running.
+     * Highlight the user's current choice so they can see their stance. */
+    if (snap->active == GAME_VOTE_ACTIVE_RUNNING) {
+        ImGui::Spacing();
+        BYTE me = clientSimGetMyPlayerNum(cs);
+        bool myYes = (me < 16) && ((snap->votes >> me) & 1u);
+        bool myAns = clientSimGameVoteMyVote(cs, kind) || myYes;
+        (void)myAns;
+
+        if (myYes) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.6f, 0.0f, 1.0f));
+        if (ImGui::Button("Yes", ImVec2(80, 0))) {
+            clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_YES);
+            ServerSim *spSim = gameFrontGetServerSim();
+            if (spSim && !clientSimIsUdpTransport(cs)) {
+                threadsWaitForMutex();
+                serverSimGameVoteToggle(spSim, me, kind, GAME_VOTE_TOGGLE_YES);
+                threadsReleaseMutex();
+            }
+        }
+        if (myYes) ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+        if (ImGui::Button("No", ImVec2(80, 0))) {
+            clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_NO);
+            ServerSim *spSim = gameFrontGetServerSim();
+            if (spSim && !clientSimIsUdpTransport(cs)) {
+                threadsWaitForMutex();
+                serverSimGameVoteToggle(spSim, me, kind, GAME_VOTE_TOGGLE_NO);
+                threadsReleaseMutex();
+            }
+        }
+    }
+
+    ImGui::End();
+    if (!open) {
+        clientSimSetGameVoteWidgetVisible(cs, kind, false);
+        autoPanelReset(lay);
+    }
+}
+
+static void renderGameVoteWidgets(ClientSim *cs) {
+    if (!cs) return;
+    if (clientSimGetNetStatus(cs) != netRunning) return;
+    static const uint8_t kinds[] = {
+        GAME_VOTE_KIND_BACK_TO_LOBBY, GAME_VOTE_KIND_SURRENDER
+    };
+    for (size_t i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++) {
+        ClientGameVoteSnapshot snap = {};
+        if (!clientSimGetGameVote(cs, kinds[i], &snap)) continue;
+        renderOneGameVoteWidget(cs, kinds[i], &snap);
+    }
+}
+
+/* -------------------------------------------------------
  * Alliance Request modal
  * ------------------------------------------------------- */
 static bool s_allianceVisible = false;
@@ -1401,39 +1833,44 @@ static void renderAllianceRequest(ClientSim *cs) {
         s_allianceVisible = true;
         s_showAllianceOpen = false;
     }
-    if (!s_allianceVisible) return;
+    if (!s_allianceVisible) { autoPanelReset(s_allianceLayout); return; }
 
-    /* Pin to the top of the status panel (right of the main game view).
-     * MAIN_OFFSET_X=81, MAIN_SCREEN_SIZE_X=15, TILE_SIZE_X=16  =>  321 px at zoom 1 */
-    float menuH      = (float)MENU_BAR_HEIGHT;
-    float statusLeft = (float)(zoomFactor * 321);
-    ImGui::SetNextWindowPos(ImVec2(statusLeft, menuH), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_Always);
+    /* Use the same auto-positioning + width cap + transparency as
+     * the vote widgets. Siblings: both vote widgets so the alliance
+     * request stacks below any active vote. */
+    float anchorXL, anchorXR, anchorY;
+    autoPanelComputeAnchors(&anchorXL, &anchorXR, &anchorY);
+    AutoPanelLayout *siblings[2] = { &s_voteLayout[0], &s_voteLayout[1] };
+    autoPanelApply(s_allianceLayout, anchorXL, anchorXR, anchorY,
+                    220.0f, 100.0f, siblings, 2, 0.55f);
+
     char title[128];
     snprintf(title, sizeof(title), "%s###alliancereq", langGetText(STR_DLGALLIANCE_TITLE));
     if (ImGui::Begin(title, &s_allianceVisible,
                      ImGuiWindowFlags_AlwaysAutoResize |
-                     ImGuiWindowFlags_NoMove |
-                     ImGuiWindowFlags_NoCollapse)) {
+                     ImGuiWindowFlags_NoCollapse |
+                     ImGuiWindowFlags_NoSavedSettings)) {
+        autoPanelCapture(s_allianceLayout);
         {
             MessageArgs args = {};
             strncpy(args.playerName, s_alliancePlayerName, sizeof(args.playerName) - 1);
             args.playerFlags = clientSimGetPlayerAccountFlags(cs, s_alliancePlayerNum);
             clientSimGetPlayerCountryCode(cs, s_alliancePlayerNum, args.playerCountry);
-            ImGui::TextUnformatted(langGetTextFmt(STR_DLGALLIANCE_BLURB, &args));
+            ImGui::TextWrapped("%s", langGetTextFmt(STR_DLGALLIANCE_BLURB, &args));
         }
         ImGui::Spacing();
-        if (ImGui::Button(langGetText(STR_DLGALLIANCE_ACCEPT), ImVec2(120, 0))) {
+        if (ImGui::Button(langGetText(STR_DLGALLIANCE_ACCEPT), ImVec2(80, 0))) {
             clientSimAllianceAccept(cs, s_alliancePlayerNum);
             s_allianceVisible = false;
         }
         imguiHandOnHover();
         ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(120, 0)))
+        if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(80, 0)))
             s_allianceVisible = false;
             imguiHandOnHover();
     }
     ImGui::End();
+    if (!s_allianceVisible) autoPanelReset(s_allianceLayout);
 }
 
 /* -------------------------------------------------------
@@ -1448,7 +1885,8 @@ static void renderPasswordModal(void) {
         s_passwordBuf[0]   = '\0';
     }
     static float s_fadePassword = 0.0f;
-    if (ImGui::BeginPopupModal(title, nullptr,
+    bool passOpen = true;
+    if (ImGui::BeginPopupModal(title, &passOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                             imguiPopupFadeAlpha(&s_fadePassword));
@@ -1460,224 +1898,26 @@ static void renderPasswordModal(void) {
                                       sizeof(s_passwordBuf),
                                       ImGuiInputTextFlags_Password |
                                       ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::Spacing();
-        if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0)) || enter) {
+        int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                   langGetText(STR_OK),
+                                   /*enterConfirms*/ true);
+        if (f == WBUI::FOOTER_CONFIRM || enter) {
             /* gameOpen=1, aiNone=0, justPass=TRUE */
             gameFrontSetGameOptions(s_passwordBuf, (gameType)1, false, (aiType)0, 0, 0, true);
             ImGui::CloseCurrentPopup();
+        } else if (f == WBUI::FOOTER_CANCEL) {
+            /* Abort the join attempt. */
+            ImGui::CloseCurrentPopup();
         }
-        imguiHandOnHover();
         ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
 }
 
-/* -------------------------------------------------------
- * Key Setup modal
- * Mirrors dialogKeySetup.c — allows the user to rebind
- * all game keys.  Key capture is driven by the SDL event
- * loop in sdl3ImguiProcessEvents().
- * ------------------------------------------------------- */
-
-/* Return a human-readable name for a scancode. */
-static const char *keySetupScancodeLabel(int scancode) {
-    const char *name = SDL_GetScancodeName((SDL_Scancode)scancode);
-    if (name && name[0] != '\0') return name;
-    return langGetText(STR_DLGKEYSETUP_NONE_VAL);
-}
-
-/* Map a KeySetupField to the corresponding keyItems member and label. */
-static int *keySetupFieldPtr(KeySetupField f, keyItems *ki) {
-    switch (f) {
-        case ksForward:    return &ki->kiForward;
-        case ksBackward:   return &ki->kiBackward;
-        case ksTurnLeft:   return &ki->kiLeft;
-        case ksTurnRight:  return &ki->kiRight;
-        case ksShoot:      return &ki->kiShoot;
-        case ksLayMine:    return &ki->kiLayMine;
-        case ksGunIncrease:return &ki->kiGunIncrease;
-        case ksGunDecrease:return &ki->kiGunDecrease;
-        case ksTankView:   return &ki->kiTankView;
-        case ksPillView:   return &ki->kiPillView;
-        case ksScrollUp:   return &ki->kiScrollUp;
-        case ksScrollDown: return &ki->kiScrollDown;
-        case ksScrollLeft: return &ki->kiScrollLeft;
-        case ksScrollRight:return &ki->kiScrollRight;
-        case ksQuickTree:  return &ki->kiQuickTree;
-        case ksQuickRoad:  return &ki->kiQuickRoad;
-        case ksQuickWall:  return &ki->kiQuickWall;
-        case ksQuickPillbox:return &ki->kiQuickPillbox;
-        case ksQuickMine:  return &ki->kiQuickMine;
-        default:           return nullptr;
-    }
-}
-
-/* Render a single key-binding row: "Label   [Key Name]  [Change]" */
-static void keySetupRow(const char *label, KeySetupField field) {
-    int *ptr = keySetupFieldPtr(field, &s_keySetupKeys);
-    if (!ptr) return;
-
-    bool waiting = (s_keySetupWaiting == field);
-
-    ImGui::TableNextRow();
-    ImGui::TableSetColumnIndex(0);
-    ImGui::TextUnformatted(label);
-
-    ImGui::TableSetColumnIndex(1);
-    if (waiting) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
-                           langGetText(STR_DLGKEYSETUP_PRESSAKEY));
-    } else {
-        ImGui::TextUnformatted(keySetupScancodeLabel(*ptr));
-    }
-
-    ImGui::TableSetColumnIndex(2);
-    ImGui::PushID((int)field);
-    if (waiting) {
-        if (ImGui::SmallButton(langGetText(STR_CANCEL))) {
-            s_keySetupWaiting = ksNone;
-        }
-        imguiHandOnHover();
-    } else {
-        if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
-            s_keySetupWaiting = field;
-        }
-        imguiHandOnHover();
-    }
-    ImGui::PopID();
-}
-
-static void renderKeySetupModal(ClientSim *cs) {
-    char title[128];
-    snprintf(title, sizeof(title), "%s###keysetup", langGetText(STR_DLGKEYSETUP_TITLE));
-    if (s_showKeySetup) {
-        ImGui::OpenPopup(title);
-        s_showKeySetup = false;
-        windowGetKeys(&s_keySetupKeys);
-        s_keySetupAutoSlowdown = clientSimGetTankAutoSlowdown(cs);
-        s_keySetupAutoGunsight = clientSimGetTankAutoHideGunsight(cs);
-        s_keySetupWaiting      = ksNone;
-    }
-
-    /* Keep the popup centered on first use */
-    ImGuiIO &io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
-                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(420, 560), ImGuiCond_Always);
-
-    /* ImGuiWindowFlags_NoMove so the user cannot accidentally drag it off-screen */
-    bool open = true;
-    static float s_fadeKeySetup = 0.0f;
-    if (!ImGui::BeginPopupModal(title, &open,
-                                ImGuiWindowFlags_NoResize |
-                                ImGuiWindowFlags_NoMove)) {
-        return;
-    }
-    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
-                        imguiPopupFadeAlpha(&s_fadeKeySetup));
-    if (s_closeAllPopups) { ImGui::PopStyleVar(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-
-    /* While this modal is open ALL keyboard/mouse events are consumed by ImGui
-     * (BeginPopupModal sets WantCaptureKeyboard + WantCaptureMouse).
-     * sdl3ImguiProcessEvents additionally intercepts SDL_EVENT_KEY_DOWN when
-     * s_keySetupWaiting != ksNone to route the raw scancode here. */
-
-    if (s_keySetupWaiting != ksNone) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
-                           langGetText(STR_DLGKEYSETUP_PRESS_OR_CANCEL));
-        ImGui::Separator();
-    }
-
-    /* Scrollable region containing all binding rows */
-    float footerH = ImGui::GetFrameHeightWithSpacing() * 3.0f + ImGui::GetStyle().ItemSpacing.y * 2.0f;
-    ImGui::BeginChild("##bindings", ImVec2(0.0f, -footerH), false);
-
-    constexpr ImGuiTableFlags tflags =
-        ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit |
-        ImGuiTableFlags_RowBg;
-
-    auto section = [&](const char *sectionTitle) {
-        ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "%s", sectionTitle);
-        ImGui::BeginTable(sectionTitle, 3, tflags, ImVec2(-1, 0));
-        ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_ACTION),
-                                ImGuiTableColumnFlags_WidthFixed, 140.0f);
-        ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_KEY),
-                                ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("",        ImGuiTableColumnFlags_WidthFixed,  68.0f);
-    };
-    auto endSection = [&]() { ImGui::EndTable(); };
-
-    section(langGetText(STR_DLGKEYSETUP_DRIVETANK));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_FASTER),    ksForward);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SLOWER),    ksBackward);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_TURNLEFT),  ksTurnLeft);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_TURNRIGHT), ksTurnRight);
-    endSection();
-
-    section(langGetText(STR_DLGKEYSETUP_WEAPONS));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SHOOT),    ksShoot);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_LAYMINE),  ksLayMine);
-    endSection();
-
-    section(langGetText(STR_DLGKEYSETUP_GUNRANGE));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_INCREASE), ksGunIncrease);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_DECREASE), ksGunDecrease);
-    endSection();
-
-    section(langGetText(STR_DLGKEYSETUP_VIEW));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_TANKVIEW), ksTankView);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_PILLVIEW), ksPillView);
-    endSection();
-
-    section(langGetText(STR_DLGKEYSETUP_SCROLL));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SCROLLUP),    ksScrollUp);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SCROLLDOWN),  ksScrollDown);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SCROLLLEFT),  ksScrollLeft);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SCROLLRIGHT), ksScrollRight);
-    endSection();
-
-    section(langGetText(STR_DLGKEYSETUP_QUICKKEYS));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_TREE),         ksQuickTree);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_ROAD),         ksQuickRoad);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_WALL),         ksQuickWall);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_QUICKPILLBOX), ksQuickPillbox);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_QUICKMINE),    ksQuickMine);
-    endSection();
-
-    ImGui::EndChild();
-
-    ImGui::Separator();
-    ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_AUTOSLOWDOWN), &s_keySetupAutoSlowdown);
-    ImGui::SameLine();
-    ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_AUTOGUNSIGHT), &s_keySetupAutoGunsight);
-    ImGui::Spacing();
-
-    /* OK / Cancel — disabled while a key-capture is pending so the user
-     * must press a key or click Cancel on the row first. */
-    bool busy = (s_keySetupWaiting != ksNone);
-    if (busy) ImGui::BeginDisabled();
-
-    if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0))) {
-        windowSetKeys(&s_keySetupKeys);
-        clientSimSetTankAutoSlowdown(cs, s_keySetupAutoSlowdown);
-        clientSimSetTankAutoHideGunsight(cs, s_keySetupAutoGunsight);
-        s_keySetupWaiting = ksNone;
-        ImGui::CloseCurrentPopup();
-    }
-    imguiHandOnHover();
-    ImGui::SameLine();
-    if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(120, 0))) {
-        s_keySetupWaiting = ksNone;
-        ImGui::CloseCurrentPopup();
-    }
-    imguiHandOnHover();
-
-    if (busy) ImGui::EndDisabled();
-
-    ImGui::PopStyleVar();
-    ImGui::EndPopup();
-}
+/* The in-game Key Setup popup lives in imgui_keysetup.cpp now —
+ * see imguiKeySetupRenderInGamePopup. This file used to carry a
+ * parallel copy. Removing it pinned the persistence bug (only
+ * one OK handler now to keep in sync with INI write). */
 
 /* -------------------------------------------------------
  * Settings panel — collects Edit + WinBolo menu options
@@ -2134,14 +2374,90 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::MenuItem(langGetText(STR_MENU_NETSTATUS_MSGS),  nullptr, (bool)showNetworkStatusMessages)) windowMenuNetwork_toggle(cs);
         if (ImGui::MenuItem(langGetText(STR_MENU_NETDEBUG_MSGS),   nullptr, (bool)showNetworkDebugMessages))  windowMenuNetworkDebug_toggle(cs);
         ImGui::Separator();
-        if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     KMOD_PRIMARY_LABEL "R"))                                 clientSimRequestAllianceSelected(cs);
-        if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))                                                 clientSimLeaveAllianceSelf(cs);
+        {
+            bool rankedGame = clientSimGetLobbyRanked(cs);
+            if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     KMOD_PRIMARY_LABEL "R", false, !rankedGame))
+                clientSimRequestAllianceSelected(cs);
+            if (rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Alliances are disabled in ranked games.");
+            }
+            if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))                                             clientSimLeaveAllianceSelf(cs);
+        }
+
+        /* In-game votes — only enabled while the game is running. */
+        ImGui::Separator();
+        {
+            bool running = clientSimGetNetStatus(cs) == netRunning;
+            /* Count active teams for the surrender precondition. */
+            int activeTeams = 0;
+            bool teamSeen[17] = {0};
+            if (running) {
+                for (int i = 0; i < MAX_PLAYERS; i++) {
+                    const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
+                    if (!ls || !ls->connected || ls->isBot) continue;
+                    uint8_t t = ls->teamNumber;
+                    if (t == 0 || t > 16) continue;
+                    if (!teamSeen[t]) { teamSeen[t] = true; activeTeams++; }
+                }
+            }
+
+            if (ImGui::MenuItem("Vote: Return to lobby", nullptr, false, running)) {
+                clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_BACK_TO_LOBBY,
+                                               GAME_VOTE_TOGGLE_OPEN_ONLY);
+                clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_BACK_TO_LOBBY, true);
+                ServerSim *spSim = gameFrontGetServerSim();
+                if (spSim && !clientSimIsUdpTransport(cs)) {
+                    threadsWaitForMutex();
+                    serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
+                                            GAME_VOTE_KIND_BACK_TO_LOBBY,
+                                            GAME_VOTE_TOGGLE_OPEN_ONLY);
+                    threadsReleaseMutex();
+                }
+            }
+            if (!running && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Available once the game is running.");
+            }
+
+            const ClientLobbySlot *meSlot =
+                clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+            bool meUnassigned = (meSlot && meSlot->teamNumber == 0);
+            bool surrEnabled = running && (activeTeams == 2) && !meUnassigned;
+            if (ImGui::MenuItem("Vote: Surrender", nullptr, false, surrEnabled)) {
+                clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_SURRENDER,
+                                               GAME_VOTE_TOGGLE_OPEN_ONLY);
+                clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_SURRENDER, true);
+                ServerSim *spSim = gameFrontGetServerSim();
+                if (spSim && !clientSimIsUdpTransport(cs)) {
+                    threadsWaitForMutex();
+                    serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
+                                            GAME_VOTE_KIND_SURRENDER,
+                                            GAME_VOTE_TOGGLE_OPEN_ONLY);
+                    threadsReleaseMutex();
+                }
+            }
+            if (!surrEnabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                if (!running) {
+                    ImGui::SetTooltip("Available once the game is running.");
+                } else if (meUnassigned) {
+                    ImGui::SetTooltip("Pick a team before voting to surrender.");
+                } else {
+                    ImGui::SetTooltip(
+                        "Surrender is only available when exactly two teams\n"
+                        "with human players remain.");
+                }
+            }
+        }
+
         ImGui::Separator();
         if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS)))                                                  sdl3ImguiShowSettings();
         ImGui::EndMenu();
     }
 
     /* ---- Players ------------------------------------- */
+    /* Widen the popup so flag + platform/WBN/Steam icons + name + ping +
+     * checkmark can all fit on one row without overlap. */
+    ImGui::SetNextWindowSizeConstraints(ImVec2(420.0f, 0.0f),
+                                        ImVec2(FLT_MAX, FLT_MAX));
     if (ImGui::BeginMenu(langGetText(STR_MENU_PLAYERS))) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
@@ -2205,8 +2521,18 @@ static void renderMenuBar(ClientSim *cs) {
                 }
             }
             if (s_playerEnabled[i]) {
-                /* Custom row: selectable name on left, colored WBN+ping on right */
-                float fullWidth = ImGui::GetContentRegionAvail().x;
+                /* Row layout: flag, icons, name, ping, check. Icons go inline
+                 * right after the flag (before the name); the checkmark sits
+                 * at the right edge of the popup, to the right of the ping. */
+                ensureWbnIconsLoaded();
+                ensurePlatformIconsLoaded();
+                uint8_t pflags = s_playerFlags[i];
+                uint8_t pct    = s_playerClientType[i];
+                renderPlayerName(NULL, pflags, pct, "", false);
+
+                ImGuiContext &g = *GImGui;
+                float checkSz = g.FontSize * 0.866f;
+                float spacing = ImGui::GetStyle().ItemSpacing.x;
 
                 /* Build ping string */
                 char pingStr[16];
@@ -2215,37 +2541,26 @@ static void renderMenuBar(ClientSim *cs) {
                 } else {
                     snprintf(pingStr, sizeof(pingStr), "---");
                 }
-                /* Measure right-side width: icons + ping + checkmark (rightmost) */
-                ensureWbnIconsLoaded();
-                ensurePlatformIconsLoaded();
-                ImGuiContext &g = *GImGui;
-                float checkSz = g.FontSize * 0.866f;
-                float iconW = (float)WBN_ICON_SIZE;
                 float pingWidth = ImGui::CalcTextSize(pingStr).x;
-                float spacing = ImGui::GetStyle().ItemSpacing.x;
-                uint8_t pflags = s_playerFlags[i];
-                uint8_t pct    = s_playerClientType[i];
-                float iconsWidth = 0.0f;
-                if (sdl3ImguiGetPlatformIcon(pct))                         iconsWidth += iconW + spacing;
-                if ((pflags & PLAYER_FLAG_WBN_VERIFIED) && s_iconGlobe)    iconsWidth += iconW + spacing;
-                if ((pflags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam)
-                    iconsWidth += iconW + spacing;
-                float rightWidth = iconsWidth + pingWidth + spacing + checkSz;
 
-                /* Selectable player name (no highlight) */
+                /* Anchor everything to the row's right edge (window-local). */
+                float rowRightX   = ImGui::GetContentRegionMax().x;
+                float checkLocalX = rowRightX - checkSz;
+                float pingLocalX  = checkLocalX - spacing - pingWidth;
+                float nameWidth   = pingLocalX - ImGui::GetCursorPosX() - spacing;
+                if (nameWidth < 1.0f) nameWidth = 1.0f;
+
+                /* Selectable player name (fills the slot between icons and ping). */
                 char selectLabel[64];
                 snprintf(selectLabel, sizeof(selectLabel), "%s##sel%d", label, i);
-                if (ImGui::Selectable(selectLabel, false, ImGuiSelectableFlags_DontClosePopups, ImVec2(fullWidth - rightWidth - spacing, 0))) {
+                if (ImGui::Selectable(selectLabel, false, ImGuiSelectableFlags_DontClosePopups,
+                                      ImVec2(nameWidth, 0))) {
                     clientSimTogglePlayerCheckState(cs, (BYTE)i);
                 }
                 imguiHandOnHover();
 
-                /* Right-aligned platform/WBN/Steam icons */
-                ImGui::SameLine(fullWidth - rightWidth);
-                renderPlayerName(NULL, pflags, pct, "", false);
-
-                /* Ping with color coding */
-                ImGui::SameLine();
+                /* Ping with color coding — anchored just left of the checkmark slot. */
+                ImGui::SameLine(pingLocalX);
                 ImVec4 pingColor;
                 if (s_playerPing[i] == 0)        pingColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
                 else if (s_playerPing[i] < 50)   pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
@@ -2255,10 +2570,11 @@ static void renderMenuBar(ClientSim *cs) {
                 ImGui::TextUnformatted(pingStr);
                 ImGui::PopStyleColor();
 
-                /* Render checkmark to the right of ping (same as MenuItem tick) */
+                /* Checkmark at the far right of the popup, right of the ping. */
                 if (s_playerChecked[i]) {
-                    float checkX = ImGui::GetWindowPos().x + ImGui::GetStyle().WindowPadding.x + fullWidth - checkSz;
-                    ImVec2 pos = ImVec2(checkX, ImGui::GetItemRectMin().y + g.FontSize * 0.134f * 0.5f);
+                    float checkScreenX = ImGui::GetWindowPos().x + checkLocalX;
+                    ImVec2 pos = ImVec2(checkScreenX,
+                                        ImGui::GetItemRectMin().y + g.FontSize * 0.134f * 0.5f);
                     ImGui::RenderCheckMark(ImGui::GetWindowDrawList(), pos,
                                            ImGui::GetColorU32(ImGuiCol_Text), checkSz);
                 }
@@ -2798,18 +3114,13 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         }
 #endif
 
-        /* Key capture for the Key Setup modal — intercept before the game sees it. */
-        if (s_keySetupWaiting != ksNone && ev.type == SDL_EVENT_KEY_DOWN &&
+        /* Key capture for the Key Setup modal — intercept before the
+         * game sees it. State + the actual binding write live in
+         * imgui_keysetup.cpp now; we just feed it the scancode. */
+        if (imguiKeySetupIsCapturingInGameKey() &&
+            ev.type == SDL_EVENT_KEY_DOWN &&
             ev.key.windowID == SDL_GetWindowID(s_window)) {
-            SDL_Scancode sc = ev.key.scancode;
-            if (sc == SDL_SCANCODE_ESCAPE) {
-                /* Escape cancels the current capture but leaves the modal open. */
-                s_keySetupWaiting = ksNone;
-            } else {
-                int *ptr = keySetupFieldPtr(s_keySetupWaiting, &s_keySetupKeys);
-                if (ptr) *ptr = (int)sc;
-                s_keySetupWaiting = ksNone;
-            }
+            imguiKeySetupHandleInGameScancode((int)ev.key.scancode);
             /* Do NOT forward to the game — key was consumed by the dialog. */
             continue;
         }
@@ -3192,8 +3503,13 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     renderAboutModal();
     renderChangeNameModal(cs);
     renderAllianceRequest(cs);
+    renderGameVoteWidgets(cs);
+    /* Per-frame tick that emits the 3/2/1 newswire lines while a
+     * vote-driven back-to-lobby is in-flight. Counts off the local
+     * clock; no per-second server broadcast involved. */
+    clientSimTickLobbyReturnCountdown(cs);
     renderPasswordModal();
-    renderKeySetupModal(cs);
+    imguiKeySetupRenderInGamePopup(cs);
     renderJoinConfirmModal();
 
     /* Extra render callback (e.g. Android players panel) */
@@ -3650,7 +3966,8 @@ void sdl3ImguiSetPlayerCheckState(unsigned char playerNum, bool isChecked) {
 }
 
 void sdl3ImguiShowKeySetup(void) {
-    s_showKeySetup = true;
+    /* Hands off to imgui_keysetup.cpp's in-game popup wrapper. */
+    imguiKeySetupOpenInGame();
 }
 
 void sdl3ImguiCleanup(void) {

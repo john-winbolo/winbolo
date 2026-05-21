@@ -209,7 +209,9 @@ void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
 * for the current lobby players.
 * Returns TRUE on success, FALSE on failure.
 *********************************************************/
-bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, BalanceProposal *outProposal) {
+bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize,
+                                     const uint8_t *botSlots, uint8_t numBotSlots,
+                                     BalanceProposal *outProposal) {
   cJSON *body = NULL;
   cJSON *resp = NULL;
   cJSON *playerKeys = NULL;
@@ -220,6 +222,7 @@ bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, Bala
   BYTE count;
   int teamIdx;
   char teamId[16];
+  char botKey[16];
 
   memset(outProposal, 0, sizeof(BalanceProposal));
 
@@ -228,16 +231,51 @@ bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, Bala
   cJSON_AddNumberToObject(body, "total_players", totalPlayers);
   cJSON_AddNumberToObject(body, "team_size", teamSize);
 
+  /* Player keys array carries one entry per slot we want WBN to
+   * place. Human keys are real WBN player_key strings; bot slots
+   * are sent as "bot:<slot>" sentinels that WBN treats as
+   * non-WBN players when computing skill-balanced teams. The slot
+   * number is embedded so the response parser can map the entry
+   * back to a slot without a separate index. */
   playerKeys = cJSON_CreateArray();
   for (count = 0; count < MAX_TANKS; count++) {
     if (winboloNetPlayerKey[count][0] != '\0') {
       cJSON_AddItemToArray(playerKeys, cJSON_CreateString(winboloNetPlayerKey[count]));
     }
   }
+  for (BYTE bi = 0; bi < numBotSlots; bi++) {
+    BYTE slot = botSlots[bi];
+    snprintf(botKey, sizeof(botKey), "bot:%u", (unsigned)slot);
+    cJSON_AddItemToArray(playerKeys, cJSON_CreateString(botKey));
+  }
   cJSON_AddItemToObject(body, "player_keys", playerKeys);
 
+  /* Dump the request body before sending so the WBN traffic is
+   * inspectable from the server's stderr without an external proxy.
+   * Same shape on the way back below so request/response can be
+   * eyeballed as a pair. */
+  {
+    char *reqDump = cJSON_PrintUnformatted(body);
+    if (reqDump != NULL) {
+      balanceDebugLog("[WBN balance] REQUEST  server/balance %s", reqDump);
+      free(reqDump);
+    } else {
+      balanceDebugLog("[WBN balance] REQUEST  server/balance (cJSON_PrintUnformatted returned NULL)");
+    }
+  }
+
+  balanceDebugLog("[WBN balance] calling wbn_api_call_server(\"server/balance\")...");
   status = wbn_api_call_server("server/balance", body, &resp);
+  balanceDebugLog("[WBN balance] wbn_api_call_server returned status=%d resp=%p",
+                  status, (void *)resp);
   cJSON_Delete(body);
+
+  {
+    char *respDump = resp ? cJSON_PrintUnformatted(resp) : NULL;
+    balanceDebugLog("[WBN balance] RESPONSE status=%d body=%s",
+                    status, respDump ? respDump : "(null)");
+    if (respDump) free(respDump);
+  }
 
   if (status != 200 || resp == NULL) {
     serverSimConsoleMessage("WBN: Balance request failed");
@@ -256,20 +294,25 @@ bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, Bala
     }
   }
 
-  /* Parse response teams object */
+  /* Parse response `teams`. WBN returns this as a JSON array of
+   * per-team arrays, e.g. teams:[[k1,k2],[k3,null]]. teamIdx is the
+   * outer array position; entries are player_key strings or null
+   * placeholders for unregistered slots. */
   teams = cJSON_GetObjectItemCaseSensitive(resp, "teams");
-  if (teams == NULL || !cJSON_IsObject(teams)) {
+  if (teams == NULL || !cJSON_IsArray(teams)) {
     serverSimConsoleMessage("WBN: Balance response missing teams");
     cJSON_Delete(resp);
     return FALSE;
   }
+  (void)teamId; /* legacy buffer kept for ABI; unused under array layout */
 
-  /* Iterate each team in the teams object */
   for (teamIdx = 0; ; teamIdx++) {
-    snprintf(teamId, sizeof(teamId), "%d", teamIdx);
-    teamArray = cJSON_GetObjectItemCaseSensitive(teams, teamId);
+    teamArray = cJSON_GetArrayItem(teams, teamIdx);
     if (teamArray == NULL) {
       break;
+    }
+    if (!cJSON_IsArray(teamArray)) {
+      continue;
     }
 
     cJSON_ArrayForEach(entry, teamArray) {
@@ -279,10 +322,21 @@ bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, Bala
       if (!cJSON_IsString(entry) || entry->valuestring == NULL) {
         continue;
       }
-      /* Map player_key back to slot index */
+      /* Map player_key back to slot index. Bot sentinels carry the
+       * slot in the key itself ("bot:N") so they round-trip without
+       * needing the WBN-key lookup table. */
+      if (strncmp(entry->valuestring, "bot:", 4) == 0) {
+        int botSlot = atoi(entry->valuestring + 4);
+        if (botSlot >= 0 && botSlot < MAX_TANKS) {
+          if (teamIdx + 1 >= MAX_TANKS) continue;
+          outProposal->teamForSlot[botSlot] = (uint8_t)(teamIdx + 1);
+        }
+        continue;
+      }
       for (count = 0; count < MAX_TANKS; count++) {
         if (winboloNetPlayerKey[count][0] != '\0' &&
             strcmp(winboloNetPlayerKey[count], entry->valuestring) == 0) {
+          if (teamIdx + 1 >= MAX_TANKS) continue;
           outProposal->teamForSlot[count] = (uint8_t)(teamIdx + 1); /* 1-indexed */
           break;
         }
@@ -696,3 +750,4 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
   }
   cJSON_Delete(body);
 }
+
