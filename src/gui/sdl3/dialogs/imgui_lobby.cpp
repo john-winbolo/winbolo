@@ -39,6 +39,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 
@@ -58,6 +59,7 @@ extern "C" {
 #include "../sdl3imgui.h"
 #include "../minimap_render.h"
 #include "../../../bolo/public/client_mappreview.h"
+#include "../../../bolo/public/wire_limits.h"
 #include <errno.h>
 
 /* stb_image entry points used by lobbyWbnGeneratePreview (defined in
@@ -366,6 +368,10 @@ static void lobbySendAddBotDebounced(ClientSim *cs,
  * window opened so Cancel can restore it (no undo packet is wired
  * yet — the field is reserved for that future work). */
 static bool             s_chooseMapOpen          = false;
+/* Edge-trigger: SetNextWindowFocus the chooser on the frame it opens so
+ * it draws above the scrim windows, but NOT every frame after — that
+ * yanks focus away from anything the user clicks into the chat-hole. */
+static bool             s_chooseMapFocusedOnce   = false;
 /* Screen-space rect of the lobby's chat block, captured each frame so
  * the map-chooser scrim can punch a hole over it. We deliberately
  * leave the chat reachable while the chooser is open so players can
@@ -427,6 +433,16 @@ static bool             s_uploadActive   = false;
  * fallback path so the pump knows what to re-announce without
  * having to re-derive it from a path it no longer holds. */
 static char             s_uploadName[128];
+/* Watchdog timestamps so a server that goes silent mid-handshake
+ * (e.g. dropped BEGIN ACK) doesn't strand the upload slot at
+ * lobbyMapUploadStatus=1 forever. Reset whenever we observe forward
+ * progress: status advances, or bytes drain. */
+static uint64_t         s_uploadStartedMs = 0;
+static uint8_t          s_uploadPrevStatus = 0;
+static uint64_t         s_uploadPrevProgressMs = 0;
+static uint32_t         s_uploadPrevOffset = 0;
+#define UPLOAD_ACK_TIMEOUT_MS   5000   /* BEGIN → ACK */
+#define UPLOAD_STALL_TIMEOUT_MS 10000  /* no chunk progress */
 
 static void lobbyUploadFree(void) {
     if (s_uploadBuf) { SDL_free(s_uploadBuf); s_uploadBuf = NULL; }
@@ -434,6 +450,10 @@ static void lobbyUploadFree(void) {
     s_uploadOffset = 0;
     s_uploadActive = false;
     s_uploadName[0] = '\0';
+    s_uploadStartedMs       = 0;
+    s_uploadPrevStatus      = 0;
+    s_uploadPrevProgressMs  = 0;
+    s_uploadPrevOffset      = 0;
 }
 
 /* Read `srcPath` into s_uploadBuf and announce the upload to the
@@ -521,6 +541,49 @@ static void lobbyUploadPump(ClientSim *cs) {
          * starts fresh. */
         lobbyUploadFree();
         return;
+    }
+
+    /* Watchdog: if the server goes silent mid-handshake, the pump
+     * can otherwise sit at status=1 forever (BEGIN sent, awaiting
+     * ACK) and reject every future pick with "another upload in
+     * flight". Bail and free the slot once we cross either timeout. */
+    {
+        uint64_t now = SDL_GetTicks();
+        bool advanced = (s_uploadPrevStatus != st) ||
+                        (s_uploadPrevOffset != s_uploadOffset);
+        /* Treat the moment the last chunk goes out as one final
+         * forward-progress event. After this, offset stays pinned
+         * at s_uploadTotal while we wait for MAP_UPLOAD_DONE; without
+         * this reset the stall timer would count against a server
+         * that's merely slow to load + reply. */
+        if (st >= 2 && s_uploadOffset == s_uploadTotal &&
+            s_uploadPrevOffset < s_uploadTotal) {
+            advanced = true;
+        }
+        if (advanced) {
+            s_uploadPrevStatus      = st;
+            s_uploadPrevOffset      = s_uploadOffset;
+            s_uploadPrevProgressMs  = now;
+        }
+        if (s_uploadStartedMs == 0) s_uploadStartedMs = now;
+        uint64_t sinceProgress = now - s_uploadPrevProgressMs;
+        uint64_t sinceStart    = now - s_uploadStartedMs;
+        bool timedOut = false;
+        if (st < 2 && sinceStart > UPLOAD_ACK_TIMEOUT_MS) {
+            WB_LOG_WARN(WB_LOG_CAT_GUI,
+                "[MAPPICK] upload watchdog: no BEGIN ACK in %llums — freeing",
+                (unsigned long long)sinceStart);
+            timedOut = true;
+        } else if (st >= 2 && sinceProgress > UPLOAD_STALL_TIMEOUT_MS) {
+            WB_LOG_WARN(WB_LOG_CAT_GUI,
+                "[MAPPICK] upload watchdog: no chunk progress in %llums — freeing",
+                (unsigned long long)sinceProgress);
+            timedOut = true;
+        }
+        if (timedOut) {
+            lobbyUploadFree();
+            return;
+        }
     }
     /* USE_LOCAL was NACK'd: server doesn't have the file at the
      * relative path with that MD5. Fall back to the regular byte
@@ -810,6 +873,9 @@ static void lobbyServerMapsOnSelect(MapChooserState *state, void *ctx) {
     if (!cs) return;
     const char *sel = state->selectedPath;
     if (!sel || !sel[0]) return;
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[MAPPICK] server-maps onSelect sel='%s' sp=%d",
+                sel, (int)clientSimIsSinglePlayer(cs));
     if (clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (sim && serverSimReloadMap(sim, sel)) {
@@ -824,6 +890,9 @@ static void lobbyServerMapsOnSelect(MapChooserState *state, void *ctx) {
         }
         clientSimNetSendLobbySetMap(cs, relPath);
         s_chooseMapPreviewPending = true;
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
+                    "[MAPPICK] server-maps SET_MAP relPath='%s' previewPending=1",
+                    relPath);
     }
 }
 
@@ -950,18 +1019,31 @@ static void lobbyUploadOnSelect(MapChooserState *state, void *ctx) {
     if (!cs) return;
     const char *picked = state->selectedPath;
     if (!picked || !picked[0]) return;
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[MAPPICK] upload onSelect picked='%s' sp=%d",
+                picked, (int)clientSimIsSinglePlayer(cs));
     if (clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (sim && serverSimReloadMap(sim, picked)) {
             serverSimPublishLobbySettings(sim);
             s_chooseMapPreviewPending = true;
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[MAPPICK] upload SP reload ok previewPending=1");
+        } else {
+            WB_LOG_WARN(WB_LOG_CAT_GUI,
+                        "[MAPPICK] upload SP reload FAILED for '%s'", picked);
         }
     } else if (clientSimHasTransport(cs)) {
         uint8_t upStatus = clientSimGetLobbyMapUploadStatus(cs);
         bool inFlight = (upStatus == 1 || upStatus == 2);
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
+                    "[MAPPICK] upload MP upStatus=%u inFlight=%d",
+                    (unsigned)upStatus, (int)inFlight);
         if (!inFlight) {
             lobbyUploadKick(cs, picked);
             s_chooseMapPreviewPending = true;
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[MAPPICK] upload kicked previewPending=1");
         }
     }
 }
@@ -1014,28 +1096,6 @@ static bool lobbyUploadGeneratePreview(const char *entryPath,
     outBuf->h      = MINIMAP_SIZE;
     outBuf->pixels = pixels;
     return true;
-}
-
-/* MP-only rejection footer. SP loads instantly; in-flight "Uploading…"
- * messages flash for a tick before preview takes over and just feel
- * like noise — only the rejection surfaces because the user needs
- * to know it failed. */
-static void lobbyUploadStatusFooter(MapChooserState *state, void *ctx) {
-    (void)state;
-    ClientSim *cs = (ClientSim *)ctx;
-    if (!cs) return;
-    if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
-        clientSimGetLobbyMapUploadStatus(cs) == 4) {
-        const char *msg = "Upload rejected by server.";
-        switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
-            case 5: /* LOBBY_REJECT_UPLOAD_DISABLED */
-                msg = "Uploads disabled on this server."; break;
-            case 6: /* LOBBY_REJECT_UPLOAD_LIMIT_HIT */
-                msg = "Server map library is full."; break;
-            default: break;
-        }
-        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f), "%s", msg);
-    }
 }
 
 /* onFolderJump for the Upload provider. Upload's currentDir is the
@@ -1170,7 +1230,7 @@ static void wbnMapsParseFolderJson(const char *json) {
     cJSON *root = cJSON_Parse(json);
     if (!root) {
         std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
-        s_wbnMapsError = "Bad response from WinBolo.net";
+        s_wbnMapsError = langGetText(STR_DLGLOBBY_WBN_ERR_BADRESPONSE);
         s_wbnMapsHasData = false;
         return;
     }
@@ -1282,7 +1342,7 @@ static void wbnMapsParseSearchJson(const char *json, const char *query) {
     cJSON *root = cJSON_Parse(json);
     if (!root) {
         std::lock_guard<std::mutex> lk(s_wbnMapsMutex);
-        s_wbnSearchError = "Bad search response from WinBolo.net";
+        s_wbnSearchError = langGetText(STR_DLGLOBBY_WBN_ERR_BADSEARCHRESPONSE);
         return;
     }
     std::vector<WbnMapsEntry> entries;
@@ -1472,11 +1532,13 @@ static void spWbnSubmit(uint32_t mapId) {
         if (dlStatus == 200 && bytes) {
             out.bytes.assign(bytes, bytes + bytesLen);
         } else if (dlStatus == -1) {
-            out.err = "Network error fetching map";
+            out.err = langGetText(STR_DLGLOBBY_WBN_ERR_NETERROR);
         } else {
             char msg[64];
-            SDL_snprintf(msg, sizeof(msg),
-                         "WBN returned HTTP %d", dlStatus);
+            MessageArgs args = {};
+            args.number = dlStatus;
+            SDL_snprintf(msg, sizeof(msg), "%s",
+                         langGetTextFmt(STR_DLGLOBBY_WBN_ERR_HTTPERROR, &args));
             out.err = msg;
         }
         free(bytes);
@@ -1504,7 +1566,7 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
     if (res.httpStatus != 200 || res.bytes.empty()) {
         clientSimSetLobbyWbnPreviewStatus(cs, 3);
         clientSimSetLobbyWbnPreviewErrMsg(cs,
-            res.err.empty() ? "Map download failed" : res.err.c_str());
+            res.err.empty() ? langGetText(STR_DLGLOBBY_WBN_ERR_MAPFAILED) : res.err.c_str());
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                     "[WBN-SP] fetch failed: %s",
                     res.err.empty() ? "(unknown)" : res.err.c_str());
@@ -1568,7 +1630,7 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
         if (res.bytes.size() > LOBBY_MAP_UPLOAD_MAX_BYTES) {
             clientSimSetLobbyWbnPreviewStatus(cs, 3);
             clientSimSetLobbyWbnPreviewErrMsg(cs,
-                "Map exceeds 64KB upload cap");
+                langGetText(STR_DLGLOBBY_WBN_ERR_TOOBIG));
             return;
         }
         lobbyUploadFree();
@@ -1576,7 +1638,7 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
         if (!s_uploadBuf) {
             clientSimSetLobbyWbnPreviewStatus(cs, 3);
             clientSimSetLobbyWbnPreviewErrMsg(cs,
-                "Out of memory queuing upload");
+                langGetText(STR_DLGLOBBY_WBN_ERR_OOM));
             return;
         }
         memcpy(s_uploadBuf, res.bytes.data(), res.bytes.size());
@@ -2017,11 +2079,21 @@ static void lobbyWbnMapsOnSelect(MapChooserState *state, void *ctx) {
     if (!cs) return;
     const char *sel = state->selectedPath;
     static const char kPrefix[] = "wbn:";
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[MAPPICK] wbn onSelect sel='%s' sp=%d",
+                sel ? sel : "(null)",
+                (int)clientSimIsSinglePlayer(cs));
     if (!sel || strncmp(sel, kPrefix, sizeof(kPrefix) - 1) != 0) return;
     uint32_t mapId = (uint32_t)SDL_atoi(sel + sizeof(kPrefix) - 1);
     if (mapId > 0) {
         clientSimSetLobbyWbnPreviewStatus(cs, 1);
         spWbnSubmit(mapId);
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
+                    "[MAPPICK] wbn submitted mapId=%u previewStatus=1",
+                    (unsigned)mapId);
+    } else {
+        WB_LOG_WARN(WB_LOG_CAT_GUI,
+                    "[MAPPICK] wbn parse failed for '%s'", sel);
     }
 }
 
@@ -2109,31 +2181,6 @@ static void lobbyWbnMapsTooltipPrefix(MapChooserState *state, void *ctx) {
                 sizeof(state->pathTooltipPrefix));
 }
 
-/* WBN footer: two failure modes. spWbnPoll surfaces HTTP download
- * errors via the lobby preview-status field; the MP upload path can
- * reject the bytes after the download lands (same shape as Upload). */
-static void lobbyWbnMapsStatusFooter(MapChooserState *state, void *ctx) {
-    (void)state;
-    ClientSim *cs = (ClientSim *)ctx;
-    if (!cs) return;
-    if (clientSimGetLobbyWbnPreviewStatus(cs) == 3) {
-        const char *m = clientSimGetLobbyWbnPreviewErrMsg(cs);
-        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f),
-                           "%s", m && *m ? m : "Download failed");
-    } else if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
-               clientSimGetLobbyMapUploadStatus(cs) == 4) {
-        const char *msg = "Upload rejected by server.";
-        switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
-            case 5: /* LOBBY_REJECT_UPLOAD_DISABLED */
-                msg = "Uploads disabled on this server."; break;
-            case 6: /* LOBBY_REJECT_UPLOAD_LIMIT_HIT */
-                msg = "Server map library is full."; break;
-            default: break;
-        }
-        ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.5f, 1.0f), "%s", msg);
-    }
-}
-
 /* Shared per-tab render helper. Manages the chooser-area size,
  * refreshes the tooltip prefix, runs a per-frame enumerate when the
  * provider asks for it, hands the widget the supplied render slot,
@@ -2166,11 +2213,11 @@ static void lobbyRenderMapTab(MapChooserState *state, SDL_Renderer *renderer,
         state->provider.refreshTooltipPrefix(state, state->provider.ctx);
     }
 
-    /* Chooser fills the entire body region. The provider's status
-     * footer is rendered OUTSIDE this helper, immediately above the
-     * action buttons (see lobbyRenderActiveTabFooter), so the
-     * chooser's bottom border can extend flush against the action
-     * bar without leaving an idle reservation gap. */
+    /* Chooser fills the entire body region. Any per-tab error
+     * message is drawn via the foreground draw list (see
+     * lobbyGetActiveTabError) anchored over the preview area, so the
+     * body can sit flush against the action bar without leaving a
+     * reservation gap for an inline footer. */
     float availW = ImGui::GetContentRegionAvail().x;
     float availH = ImGui::GetContentRegionAvail().y;
     if (availH < 120.0f) availH = 120.0f;
@@ -2202,19 +2249,43 @@ static void lobbyRenderMapTab(MapChooserState *state, SDL_Renderer *renderer,
 
 }
 
-/* Dispatch the active tab's status footer (called outside the body
- * child, just before the action bar). Looks up the active state via
- * s_chooseMapActiveTab and invokes its provider hook if set. */
-static void lobbyRenderActiveTabFooter(void) {
-    MapChooserState *st = nullptr;
+/* Returns a short error message for the active tab (NULL if none).
+ * The chooser body overlays the result top-right of the preview via
+ * the foreground draw list, so a wrapped message can't push the
+ * action bar out of the window. */
+static const char *lobbyGetActiveTabError(ClientSim *cs) {
+    if (!cs) return NULL;
     switch (s_chooseMapActiveTab) {
-        case 0: st = &s_chooseMapState;       break;
-        case 1: st = &s_chooseMapUploadState; break;
-        case 3: st = &s_chooseMapWbnState;    break;
-        default: return;  /* Generate tab — no footer. */
-    }
-    if (st && st->provider.renderStatusFooter) {
-        st->provider.renderStatusFooter(st, st->provider.ctx);
+        case 1: /* Local upload */
+            if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
+                clientSimGetLobbyMapUploadStatus(cs) == 4) {
+                switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
+                    case 4: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT);
+                    case 5: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_DISABLED);
+                    case 6: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_FULL);
+                    case 7: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN);
+                    default: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_REJECTED);
+                }
+            }
+            return NULL;
+        case 3: /* WBN */
+            if (clientSimGetLobbyWbnPreviewStatus(cs) == 3) {
+                const char *m = clientSimGetLobbyWbnPreviewErrMsg(cs);
+                return (m && *m) ? m : langGetText(STR_DLGLOBBY_WBN_ERR_DOWNLOAD);
+            }
+            if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
+                clientSimGetLobbyMapUploadStatus(cs) == 4) {
+                switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
+                    case 4: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT);
+                    case 5: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_DISABLED);
+                    case 6: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_FULL);
+                    case 7: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN);
+                    default: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_REJECTED);
+                }
+            }
+            return NULL;
+        default:
+            return NULL;
     }
 }
 
@@ -2243,7 +2314,6 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapUploadState.provider.onSelect             = lobbyUploadOnSelect;
         s_chooseMapUploadState.provider.onFolderJump         = lobbyUploadOnFolderJump;
         s_chooseMapUploadState.provider.refreshTooltipPrefix = lobbyUploadTooltipPrefix;
-        s_chooseMapUploadState.provider.renderStatusFooter   = lobbyUploadStatusFooter;
         s_chooseMapUploadState.provider.generatePreview      = lobbyUploadGeneratePreview;
         s_chooseMapUploadState.provider.cacheScope           = "upload";
         SDL_strlcpy(s_chooseMapUploadState.crumbsRootLabel, "Maps",
@@ -2280,7 +2350,6 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapWbnState.provider.onSelect             = lobbyWbnMapsOnSelect;
         s_chooseMapWbnState.provider.onFolderJump         = lobbyWbnMapsOnFolderJump;
         s_chooseMapWbnState.provider.refreshTooltipPrefix = lobbyWbnMapsTooltipPrefix;
-        s_chooseMapWbnState.provider.renderStatusFooter   = lobbyWbnMapsStatusFooter;
         s_chooseMapWbnState.provider.tick                 = lobbyWbnMapsTick;
         s_chooseMapWbnState.provider.generatePreview      = lobbyWbnGeneratePreview;
         s_chooseMapWbnState.provider.cacheScope           = "wbn";
@@ -2382,8 +2451,10 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
                            | ImGuiWindowFlags_NoScrollWithMouse
                            | ImGuiWindowFlags_NoResize
                            | ImGuiWindowFlags_NoMove;
-    bool visible = ImGui::Begin("Choose Map##LobbyMapChooserMax",
-                                &open, flags);
+    char titleBufMax[64];
+    SDL_snprintf(titleBufMax, sizeof(titleBufMax), "%s##LobbyMapChooserMax",
+                 langGetText(STR_DLGLOBBY_CHOOSEMAP_TITLE));
+    bool visible = ImGui::Begin(titleBufMax, &open, flags);
     /* X closes the maximized window → restore the normal one. The
      * dialog remains open the whole time. */
     if (!open) {
@@ -2563,7 +2634,10 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                            | ImGuiWindowFlags_NoCollapse
                            | ImGuiWindowFlags_NoScrollbar
                            | ImGuiWindowFlags_NoScrollWithMouse;
-    if (!ImGui::Begin("Choose Map##LobbyMapChooser", &open, flags)) {
+    char titleBuf[64];
+    SDL_snprintf(titleBuf, sizeof(titleBuf), "%s##LobbyMapChooser",
+                 langGetText(STR_DLGLOBBY_CHOOSEMAP_TITLE));
+    if (!ImGui::Begin(titleBuf, &open, flags)) {
         ImGui::End();
         if (!open) s_chooseMapOpen = false;
         return;
@@ -2599,7 +2673,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
      * its data/maps/ tree is distinct from the client's. */
     bool inProcessServer = (gameFrontGetServerSim() != NULL);
     if (ImGui::BeginTabBar("##MapChooserTabs", ImGuiTabBarFlags_None)) {
-        if (!inProcessServer && ImGui::BeginTabItem("Server Maps")) {
+        if (!inProcessServer && ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_SERVERMAPS))) {
             s_chooseMapActiveTab = 0;
             if (s_lastActiveTab != 0 && activeTabBefore != 0) {
                 lobbyMapTabClearSelection(&s_chooseMapState);
@@ -2608,7 +2682,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             ImGui::EndTabItem();
         }
         if ((inProcessServer || clientSimGetUploadPolicy(cs) != UPLOAD_POLICY_OFF) &&
-            ImGui::BeginTabItem(inProcessServer ? "Local Maps" : "Upload")) {
+            ImGui::BeginTabItem(langGetText(inProcessServer ? STR_DLGLOBBY_TAB_LOCALMAPS : STR_DLGLOBBY_TAB_UPLOAD))) {
             s_chooseMapActiveTab = 1;
             if (s_lastActiveTab != 1 && activeTabBefore != 1) {
                 lobbyMapTabClearSelection(&s_chooseMapUploadState);
@@ -2616,7 +2690,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             lobbyRenderMapTab(&s_chooseMapUploadState, renderer, s);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Generate")) {
+        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_GENERATE))) {
             s_chooseMapActiveTab = 2;
             float availW = ImGui::GetContentRegionAvail().x;
             float availH = ImGui::GetContentRegionAvail().y;
@@ -2654,7 +2728,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             }
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Winbolo.net Maps")) {
+        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_WBNMAPS))) {
             s_chooseMapActiveTab = 3;
             if (s_lastActiveTab != 3 && activeTabBefore != 3) {
                 lobbyMapTabClearSelection(&s_chooseMapWbnState);
@@ -2667,11 +2741,37 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     }
     s_lastActiveTab = s_chooseMapActiveTab;
     ImGui::EndChild(); /* ##MapChooserBody */
+    /* The child window becomes the "last item" after EndChild — its
+     * screen rect is what we want to anchor the error overlay to. */
+    ImVec2 chooserBodyMin = ImGui::GetItemRectMin();
+    ImVec2 chooserBodyMax = ImGui::GetItemRectMax();
 
-    /* Status footer for the active tab, rendered between the chooser
-     * body and the action bar so the chooser's bottom border sits
-     * flush against the buttons when no footer is visible. */
-    lobbyRenderActiveTabFooter();
+    /* Error overlay — anchored top-right of the chooser body (over the
+     * map preview's empty header area). Old behaviour rendered the
+     * footer text below the body, which pushed the Cancel / Use This
+     * Map buttons past the window bottom when the message wrapped. */
+    const char *errMsg = lobbyGetActiveTabError(cs);
+    if (errMsg && *errMsg) {
+        ImDrawList *fg = ImGui::GetForegroundDrawList();
+        float pad = 8.0f * s;
+        const float maxW =
+            (chooserBodyMax.x - chooserBodyMin.x) * 0.6f - pad * 3.0f;
+        ImFont *font = ImGui::GetFont();
+        float   fsz  = ImGui::GetFontSize();
+        ImVec2  textSz = font->CalcTextSizeA(fsz, FLT_MAX, maxW, errMsg);
+
+        ImVec2 boxMin(chooserBodyMax.x - textSz.x - pad * 2.0f,
+                      chooserBodyMin.y + pad * 0.5f);
+        ImVec2 boxMax(chooserBodyMax.x - pad * 0.5f,
+                      boxMin.y + textSz.y + pad);
+
+        fg->AddRectFilled(boxMin, boxMax,
+                          IM_COL32(40, 0, 0, 200), 4.0f * s);
+        fg->AddText(font, fsz,
+                    ImVec2(boxMin.x + pad, boxMin.y + pad * 0.5f),
+                    IM_COL32(230, 130, 130, 255), errMsg,
+                    nullptr, maxW);
+    }
 
     /* Action bar: Cancel rolls back the server's preview; Set Map
      * commits it. Selecting any row already pushed the map to the
@@ -2684,8 +2784,8 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
      *               the stash; nothing else needs to change. */
     ImGui::Separator();
     {
-        const char *cancelLbl = "Cancel";
-        const char *setLbl    = "Use This Map";
+        const char *cancelLbl = langGetText(STR_DLGLOBBY_CANCEL_MAPCHOOSER);
+        const char *setLbl    = langGetText(STR_DLGLOBBY_USETHISMAP);
         float wCancel = ImGui::CalcTextSize(cancelLbl).x
                       + ImGui::GetStyle().FramePadding.x * 2.0f;
         float wSet    = ImGui::CalcTextSize(setLbl).x
@@ -2695,6 +2795,10 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         float startX  = (ImGui::GetContentRegionAvail().x - total) * 0.5f;
         if (startX > 0.0f) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
         if (ImGui::Button(cancelLbl)) {
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[MAPPICK] action-bar Cancel sp=%d previewPending=%d",
+                        cs ? (int)clientSimIsSinglePlayer(cs) : -1,
+                        (int)s_chooseMapPreviewPending);
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
@@ -2710,6 +2814,10 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         }
         ImGui::SameLine();
         if (ImGui::Button(setLbl)) {
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
+                        "[MAPPICK] action-bar UseThisMap sp=%d previewPending=%d",
+                        cs ? (int)clientSimIsSinglePlayer(cs) : -1,
+                        (int)s_chooseMapPreviewPending);
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
@@ -2723,13 +2831,19 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         }
     }
 
-    /* Title-bar X (or Esc). If the user fired at least one live
-     * preview since opening the chooser, route through a 3-way
-     * confirmation instead of silently reverting — they've been
-     * showing this map on every client and may well want to keep
-     * it. With no pending preview, X falls back to the original
-     * cancel-and-close path. */
-    if (!open) {
+    /* Title-bar X (or Esc / Ctrl+W / Cmd+.). If the user fired at
+     * least one live preview since opening the chooser, route through
+     * a 3-way confirmation instead of silently reverting — they've
+     * been showing this map on every client and may well want to keep
+     * it. With no pending preview, the close path silently reverts.
+     * CancelKeyPressed self-gates on window focus so the keypress
+     * won't fire here when the preview-close confirmation popup below
+     * is open over the chooser. */
+    bool wantClose = !open;
+    if (!wantClose && WBUI::CancelKeyPressed()) {
+        wantClose = true;
+    }
+    if (wantClose) {
         if (s_chooseMapPreviewPending) {
             s_chooseMapWantCloseConfirm = true;
         } else {
@@ -2746,12 +2860,16 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         ImGui::OpenPopup("##MapPreviewCloseConfirm");
         s_chooseMapWantCloseConfirm = false;
     }
-    if (ImGui::BeginPopupModal("##MapPreviewCloseConfirm", NULL,
+    static bool s_mpccOpen = true; s_mpccOpen = true;
+    if (ImGui::BeginPopupModal("##MapPreviewCloseConfirm", &s_mpccOpen,
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-        ImGui::TextUnformatted("You've previewed a different map.");
-        ImGui::TextUnformatted("What would you like to do?");
-        ImGui::Spacing();
-        if (ImGui::Button("Use This Map")) {
+        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_CLOSEMAP_PROMPT));
+        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_CLOSEMAP_QUESTION));
+        /* [Cancel: Keep picking] [Destructive: Revert and Close] [Primary: Use This Map]. */
+        int f = WBUI::DialogFooter3(langGetText(STR_DLGLOBBY_KEEPPICKING),
+                                    langGetText(STR_DLGLOBBY_REVERTCLOSE),
+                                    langGetText(STR_DLGLOBBY_USETHISMAP));
+        if (f == WBUI::FOOTER_CONFIRM) {
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
@@ -2763,9 +2881,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             s_chooseMapPreviewPending = false;
             s_chooseMapOpen           = false;
             ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Revert and Close")) {
+        } else if (f == WBUI::FOOTER_DESTRUCTIVE) {
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
@@ -2779,9 +2895,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             s_chooseMapPreviewPending = false;
             s_chooseMapOpen           = false;
             ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Keep picking")) {
+        } else if (f == WBUI::FOOTER_CANCEL) {
             /* Re-open the chooser window — Begin's `open` flag was
              * flipped false when the user hit X, so without this
              * we'd close on the very next frame. */
@@ -3026,7 +3140,7 @@ static void lobbySendTeamPool(ClientSim *cs,
     }
 }
 
-/* Game-settings dispatcher. settingType is one of LST_* (netpacks.h);
+/* Game-settings dispatcher. settingType is one of LST_* (wire_limits.h);
  * payload is 1 or 2 bytes per server-side parser. Mirrors what
  * transport_udp_server.c::PACKET_LOBBY_SET_SETTING does to spServerSim
  * for the single-player path, then re-syncs so the lobby UI's read
@@ -3041,7 +3155,7 @@ static void lobbySendSetting(ClientSim *cs,
      * (transport_udp_server.c) and emits LOBBY_REJECT_INVALID; this
      * mirrors the cap so the SP-host local apply path doesn't bypass
      * it either. */
-    if (settingType == 5 /* LST_TIME_MINUTES */ && valueLen == 2) {
+    if (settingType == LST_TIME_MINUTES && valueLen == 2) {
         uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
         if (mins < LOBBY_TIME_MINUTES_MIN ||
             mins > LOBBY_TIME_MINUTES_MAX) {
@@ -3053,18 +3167,32 @@ static void lobbySendSetting(ClientSim *cs,
         if (!sim) return;
         if (serverSimGetState(sim) != serverStateLobby) return;
         switch (settingType) {
-            case 1 /* LST_GAME_TYPE */:
+            case LST_GAME_TYPE:
                 /* gameType enum is 1..3 (Open / Tournament / Strict).
                  * The wire carries the raw enum value. */
                 if (valueLen == 1 && value[0] >= 1 && value[0] <= 3) {
+                    /* mirror of transport_udp_server.c:2881-2886 —
+                     * ranked games forbid the "Open" type. SP has no
+                     * wire to reject on; drop the change silently. */
+                    if (serverSimGetRanked(sim) &&
+                        (gameType)value[0] == gameOpen) {
+                        break;
+                    }
                     serverSimSetGameType(sim, (gameType)value[0]);
                 }
                 break;
-            case 2 /* LST_HIDDEN_MINES */:
+            case LST_HIDDEN_MINES:
                 if (valueLen == 1) serverSimSetHiddenMines(sim, value[0] != 0);
                 break;
-            case 3 /* LST_AI_POLICY */:
+            case LST_AI_POLICY:
                 if (valueLen == 1 && value[0] <= 3) {
+                    /* mirror of transport_udp_server.c:2898-2903 —
+                     * ranked games forbid any AI policy other than
+                     * "none". SP drops the change silently. */
+                    if (serverSimGetRanked(sim) &&
+                        (aiType)value[0] != aiNone) {
+                        break;
+                    }
                     serverSimSetAiPolicy(sim, value[0]);
                     serverSimSetBotAiType(sim, (aiType)value[0]);
                     /* Switching to "No computer tanks" should clear every
@@ -3082,7 +3210,7 @@ static void lobbySendSetting(ClientSim *cs,
                     }
                 }
                 break;
-            case 4 /* LST_TIME_LIMIT */: {
+            case LST_TIME_LIMIT: {
                 if (valueLen == 1) {
                     bool tl = value[0] != 0;
                     serverSimSetTimeLimit(sim, tl);
@@ -3098,7 +3226,7 @@ static void lobbySendSetting(ClientSim *cs,
                 }
                 break;
             }
-            case 5 /* LST_TIME_MINUTES */: {
+            case LST_TIME_MINUTES: {
                 if (valueLen == 2) {
                     uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
                     serverSimSetTimeMinutes(sim, mins);
@@ -3109,10 +3237,18 @@ static void lobbySendSetting(ClientSim *cs,
                 }
                 break;
             }
-            case 6 /* LST_AUTO_LOCK_ON_GAME */:
-                if (valueLen == 1) serverSimSetAutoLockOnGameStart(sim, value[0] != 0);
+            case LST_AUTO_LOCK_ON_GAME:
+                if (valueLen == 1) {
+                    bool v = value[0] != 0;
+                    /* mirror of transport_udp_server.c:2956-2959 —
+                     * ranked games keep autoLock forced ON. */
+                    if (serverSimGetRanked(sim) && !v) {
+                        break;
+                    }
+                    serverSimSetAutoLockOnGameStart(sim, v);
+                }
                 break;
-            case 7 /* LST_RANKED */:
+            case LST_RANKED:
                 if (valueLen == 1) {
                     bool r = value[0] != 0;
                     serverSimSetRanked(sim, r);
@@ -3126,6 +3262,12 @@ static void lobbySendSetting(ClientSim *cs,
                         }
                         if (clientSimGetLobbyGameType(cs) == gameOpen) {
                             serverSimSetGameType(sim, gameTournament);
+                        }
+                        /* mirror of transport_udp_server.c:2990-2997 —
+                         * force autoLockOnGameStart=true so new players
+                         * can't slip into a ranked game mid-round. */
+                        if (!serverSimGetAutoLockOnGameStart(sim)) {
+                            serverSimSetAutoLockOnGameStart(sim, true);
                         }
                     }
                 }
@@ -3376,6 +3518,13 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
 /* Currently-expanded bot slot for the AiConfig sub-row, or -1. */
 static int s_expandedBotSlot = -1;
 
+/* Kick-confirm dialog state. Populated when an authorised player picks
+ * "Kick" from a row's right-click context menu; the modal at the bottom
+ * of renderTeamGroupedPlayers reads it on the next frame. */
+static int  s_kickPendingSlot = -1;
+static char s_kickPendingName[64] = {0};
+static bool s_kickPendingOpen = false;
+
 /* Forward decl — defined below the team renderer. */
 static void renderBotAiConfig(ClientSim *cs,
                               int slot, int teamId, float s);
@@ -3422,12 +3571,16 @@ static RankedEligibility computeRankedEligibility(ClientSim *cs) {
     return r;
 }
 static void rankedShapeTooltip(const RankedEligibility &r) {
-    ImGui::SetTooltip(
-        "Ranked games require exactly two teams with equal\n"
-        "sizes: 1v1, 2v2, or 3v3 human players.\n"
-        "(Currently %d %s, sizes %d vs %d.)",
-        r.teamsInUse, r.teamsInUse == 1 ? "team" : "teams",
-        r.firstSize, r.secondSize);
+    MessageArgs args = {};
+    args.number  = r.teamsInUse;
+    SDL_strlcpy(args.string1,
+                langGetText(r.teamsInUse == 1 ? STR_DLGLOBBY_RANKED_SHAPE_TEAM
+                                               : STR_DLGLOBBY_RANKED_SHAPE_TEAMS),
+                sizeof(args.string1));
+    args.number2 = r.firstSize;
+    args.number3 = r.secondSize;
+    ImGui::SetTooltip("%s",
+        langGetTextFmt(STR_DLGLOBBY_RANKED_SHAPE_TIP, &args));
 }
 
 /* Compact "Allow New Players:  [ ] Now   [ ] During game" row. Host
@@ -3477,7 +3630,9 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
     bool allowJoin = clientSimGetLobbyAllowNewPlayers(cs);
     bool allowJoinPrev = allowJoin;
     ImGui::SameLine();
-    if (ImGui::Checkbox("Now##allowNow", &allowJoin)) {
+    char allowNowId[64];
+    SDL_snprintf(allowNowId, sizeof(allowNowId), "%s##allowNow", langGetText(STR_DLGLOBBY_ALLOW_NOW));
+    if (ImGui::Checkbox(allowNowId, &allowJoin)) {
         balanceDebugLog("[ALLOW CLIENT] checkbox toggled: prevSim=%d newLocal=%d "
                         "sending LockToggle(allow=%d) cs=%p",
                         (int)allowJoinPrev, (int)allowJoin,
@@ -3487,19 +3642,20 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                         (int)clientSimGetLobbyAllowNewPlayers(cs));
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip(
-            "Accept new join requests right now while the lobby is open.");
+        ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_ALLOWNOW));
     }
-    bool autoLockLocked = (clientSimGetLobbyServerLocks(cs) & 0x10) != 0;
+    bool autoLockLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_AUTO_LOCK_ON_GAME) != 0;
     bool rankedForcesAutoLock = clientSimGetLobbyRanked(cs);
     bool duringGame = !clientSimGetLobbyAutoLockOnGameStart(cs);
     if (rankedForcesAutoLock) duringGame = false;
     bool autoLockDisabled = autoLockLocked || rankedForcesAutoLock;
     if (autoLockDisabled) ImGui::BeginDisabled();
     ImGui::SameLine();
-    if (ImGui::Checkbox("During game##allowDuring", &duringGame)) {
+    char allowDuringId[64];
+    SDL_snprintf(allowDuringId, sizeof(allowDuringId), "%s##allowDuring", langGetText(STR_DLGLOBBY_ALLOW_DURING));
+    if (ImGui::Checkbox(allowDuringId, &duringGame)) {
         uint8_t v = duringGame ? 0 : 1;  /* invert */
-        lobbySendSetting(cs, 6 /*LST_AUTO_LOCK_ON_GAME*/, &v, 1);
+        lobbySendSetting(cs, LST_AUTO_LOCK_ON_GAME, &v, 1);
     }
     if (autoLockDisabled) ImGui::EndDisabled();
     if (autoLockLocked) {
@@ -3508,11 +3664,9 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         if (rankedForcesAutoLock) {
-            ImGui::SetTooltip(
-                "Ranked games lock new players out once the game starts.");
+            ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_AUTOLOCK));
         } else if (!autoLockLocked) {
-            ImGui::SetTooltip(
-                "Keep accepting new players after the game has started.");
+            ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_ALLOWDURING));
         }
     }
     if (!effectiveHost) ImGui::EndDisabled();
@@ -3556,11 +3710,13 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
         bool botsBlock = (botCount > 0) && !rankedV;
         RankedEligibility re = computeRankedEligibility(cs);
 
-        bool rankedLocked = (clientSimGetLobbyServerLocks(cs) & 0x40) != 0;  /* LOBBY_LOCK_RANKED */
+        bool rankedLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_RANKED) != 0;
         bool canToggle = effectiveHost && !botsBlock && !rankedLocked;
         bool rankedReadAtRender = rankedV;
         if (!canToggle) ImGui::BeginDisabled();
-        if (ImGui::Checkbox("Ranked game##ranked", &rankedV)) {
+        char rankedId[64];
+        SDL_snprintf(rankedId, sizeof(rankedId), "%s##ranked", langGetText(STR_DLGLOBBY_RANKED));
+        if (ImGui::Checkbox(rankedId, &rankedV)) {
             uint8_t v = rankedV ? 1 : 0;
             balanceDebugLog("[RANKED CLIENT] checkbox toggled: prevSim=%d newLocal=%d "
                             "effectiveHost=%d botCount=%d isSP=%d isLanOnly=%d",
@@ -3568,7 +3724,7 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                             (int)effectiveHost, botCount,
                             (int)clientSimIsSinglePlayer(cs),
                             (int)clientSimIsLanOnly(cs));
-            lobbySendSetting(cs, 7 /*LST_RANKED*/, &v, 1);
+            lobbySendSetting(cs, LST_RANKED, &v, 1);
             balanceDebugLog("[RANKED CLIENT] lobbySendSetting returned; "
                             "post-call sim ranked=%d",
                             (int)clientSimGetLobbyRanked(cs));
@@ -3577,23 +3733,15 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
         if (rankedLocked) renderLockBadge();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
             if (rankedLocked) {
-                ImGui::SetTooltip(
-                    "Locked by the server admin.");
+                ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED));
             } else if (!effectiveHost) {
-                ImGui::SetTooltip(
-                    "Only the host or an admin can toggle Ranked game.");
+                ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_NOTHOST));
             } else if (botsBlock) {
-                ImGui::SetTooltip(
-                    "Remove every bot from the lobby before flagging\n"
-                    "the game as Ranked. Ranked matches are humans-only.");
+                ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_BOTS));
             } else if (rankedV && !re.sizesEligible) {
                 rankedShapeTooltip(re);
             } else {
-                ImGui::SetTooltip(
-                    "Ranked games forbid bots and force the tournament\n"
-                    "game type — no \"Open\" pre-armed mode. Toggling\n"
-                    "this resets every player's ready state so the host\n"
-                    "can confirm the new configuration.");
+                ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_INFO));
             }
         }
     }
@@ -3618,7 +3766,9 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
         bool proposalActive = clientSimIsBalanceProposalActive(cs);
         bool enoughForBalance = (connectedCount >= 2);
         bool canBalance = effectiveHost && enoughForBalance && !proposalActive;
-        const char *kBalancePopup = "Balance teams from WBN##balwbn";
+        char kBalancePopup[64];
+        SDL_snprintf(kBalancePopup, sizeof(kBalancePopup), "%s##balwbn",
+                     langGetText(STR_DLGLOBBY_BAL_POPUP_TITLE));
 
         /* Status feedback for the most recent Balance request — read
          * after the popup confirm sets s_balReqSentMs, displayed in
@@ -3670,7 +3820,10 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
             }
         }
         if (!canBalance) ImGui::BeginDisabled();
-        bool outerClicked = ImGui::Button("Balance from WBN##balwbn_btn");
+        char balBtnLabel[64];
+        SDL_snprintf(balBtnLabel, sizeof(balBtnLabel), "%s##balwbn_btn",
+                     langGetText(STR_DLGLOBBY_BAL_BTN));
+        bool outerClicked = ImGui::Button(balBtnLabel);
         bool btnHovered  = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
         bool btnActive   = ImGui::IsItemActive();
         bool mouseDown   = ImGui::IsMouseDown(ImGuiMouseButton_Left);
@@ -3697,15 +3850,15 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                      * proposal event arrives — proposalActive itself is
                      * cleared on the same mutex hold, so reading it
                      * here would always miss the success transition. */
-                    s_balLastResultText  = "Teams balanced";
+                    s_balLastResultText  = langGetText(STR_DLGLOBBY_BAL_STATUS_BALANCED);
                     s_balLastResultColor = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
                     s_balLastResultUntilMs = now + 6000;
                     s_balReqSentMs = 0;
                 } else if (now - s_balReqSentMs < 8000) {
-                    liveText  = "Asking WBN…";
+                    liveText  = langGetText(STR_DLGLOBBY_BAL_STATUS_ASKING);
                     liveColor = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
                 } else {
-                    s_balLastResultText  = "No response from WBN";
+                    s_balLastResultText  = langGetText(STR_DLGLOBBY_BAL_STATUS_NOREPLY);
                     s_balLastResultColor = ImVec4(0.9f, 0.4f, 0.3f, 1.0f);
                     s_balLastResultUntilMs = now + 8000;
                     s_balReqSentMs = 0;
@@ -3740,18 +3893,11 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
             if (!effectiveHost) {
-                ImGui::SetTooltip(
-                    "Only the host or an admin can request a skill-\n"
-                    "balanced team split from winbolo.net.");
+                ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_BAL_TOOLTIP_NOTHOST));
             } else if (!enoughForBalance) {
-                ImGui::SetTooltip(
-                    "At least two connected players are needed before\n"
-                    "the lobby can be split into balanced teams.");
+                ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_BAL_TOOLTIP_NOTENOUGH));
             } else {
-                ImGui::SetTooltip(
-                    "Ask winbolo.net to split the lobby into two skill-\n"
-                    "balanced teams. The split is applied immediately\n"
-                    "once WBN responds — existing teams are replaced.");
+                ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_BAL_TOOLTIP_INFO));
             }
         }
 
@@ -3759,7 +3905,8 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
          * variant — it dims everything underneath and traps focus
          * until the user picks a button. */
         ImGui::SetNextWindowSize(ImVec2(420.0f * s, 0.0f), ImGuiCond_Appearing);
-        if (ImGui::BeginPopupModal(kBalancePopup, NULL,
+        static bool s_balOpen = true; s_balOpen = true;
+        if (ImGui::BeginPopupModal(kBalancePopup, &s_balOpen,
                                     ImGuiWindowFlags_AlwaysAutoResize
                                     | ImGuiWindowFlags_NoSavedSettings)) {
             /* Per-frame log while the popup body is being drawn so we
@@ -3772,32 +3919,37 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                                 ImGui::GetFrameCount(), botCount);
                 s_lastBodyFrame = ImGui::GetFrameCount();
             }
-            ImGui::TextWrapped(
-                "This will clear every team in the lobby and replace "
-                "them with two skill-balanced teams from winbolo.net. "
-                "The new split takes effect immediately.");
+            ImGui::TextWrapped("%s", langGetText(STR_DLGLOBBY_BAL_POPUP_BODY));
             if (botCount > 0) {
                 ImGui::Spacing();
-                ImGui::TextWrapped(
-                    "There %s currently %d bot%s in the lobby. Choose "
-                    "whether the bots should take part in the balanced "
-                    "split or be removed for a humans-only matchup.",
-                    botCount == 1 ? "is" : "are",
-                    botCount,
-                    botCount == 1 ? "" : "s");
+                if (botCount == 1) {
+                    ImGui::TextWrapped("%s", langGetText(STR_DLGLOBBY_BAL_POPUP_BOT_SINGULAR));
+                } else {
+                    MessageArgs args = {};
+                    args.number = botCount;
+                    ImGui::TextWrapped("%s", langGetTextFmt(STR_DLGLOBBY_BAL_POPUP_BOT_PLURAL, &args));
+                }
             }
             ImGui::Spacing();
 
             float btnW = 140.0f * s;
             float btnH = 0.0f;
-            if (ImGui::Button("Cancel##balcancel", ImVec2(btnW, btnH))) {
+            WBUI::PushCancelStyle();
+            bool balCancel = ImGui::Button("Cancel##balcancel", ImVec2(btnW, btnH));
+            WBUI::PopCancelStyle();
+            if (balCancel || WBUI::CancelKeyPressed()) {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
             uint8_t teamSize = (uint8_t)(connectedCount / 2);
             if (teamSize == 0) teamSize = 1;
             if (botCount > 0) {
-                if (ImGui::Button("Bots included##balbots", ImVec2(btnW, btnH))) {
+                char balBotsLabel[64], balHumanLabel[64];
+                SDL_snprintf(balBotsLabel,  sizeof(balBotsLabel),  "%s##balbots",
+                             langGetText(STR_DLGLOBBY_BAL_BOTS_INCLUDED));
+                SDL_snprintf(balHumanLabel, sizeof(balHumanLabel), "%s##balhuman",
+                             langGetText(STR_DLGLOBBY_BAL_HUMANS_ONLY));
+                if (ImGui::Button(balBotsLabel, ImVec2(btnW, btnH))) {
                     balanceDebugLog("[BAL POPUP] Bots included clicked: teamSize=%u",
                                     (unsigned)teamSize);
                     s_balReqSentMs = SDL_GetTicks();
@@ -3806,7 +3958,7 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Humans only##balhuman", ImVec2(btnW, btnH))) {
+                if (ImGui::Button(balHumanLabel, ImVec2(btnW, btnH))) {
                     balanceDebugLog("[BAL POPUP] Humans only clicked: teamSize=%u",
                                     (unsigned)teamSize);
                     s_balReqSentMs = SDL_GetTicks();
@@ -3815,7 +3967,10 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                     ImGui::CloseCurrentPopup();
                 }
             } else {
-                if (ImGui::Button("Balance##balgo", ImVec2(btnW, btnH))) {
+                char balGoLabel[64];
+                SDL_snprintf(balGoLabel, sizeof(balGoLabel), "%s##balgo",
+                             langGetText(STR_DLGLOBBY_BAL_GO));
+                if (ImGui::Button(balGoLabel, ImVec2(btnW, btnH))) {
                     balanceDebugLog("[BAL POPUP] Balance clicked: teamSize=%u",
                                     (unsigned)teamSize);
                     s_balReqSentMs = SDL_GetTicks();
@@ -3927,7 +4082,11 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
          * vertically centers both text spans with the frame-padded
          * widgets on the same row (matches the "Bot Naming:" label). */
         char defaultName[16];
-        SDL_snprintf(defaultName, sizeof(defaultName), "Team %d", teamId);
+        {
+            MessageArgs args = {};
+            args.number = teamId;
+            SDL_snprintf(defaultName, sizeof(defaultName), "%s", langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args));
+        }
         ImGui::AlignTextToFramePadding();
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(tc));
         ImGui::Text("%s", defaultName);
@@ -3935,10 +4094,23 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
 
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("· %d player%s%s%s",
-            memberCount[teamId], memberCount[teamId] == 1 ? "" : "s",
-            botCount[teamId] > 0 ? " · " : "",
-            botCount[teamId] > 0 ? (botCount[teamId] == 1 ? "1 bot" : "bots") : "");
+        {
+            char membersStr[64];
+            if (memberCount[teamId] == 1) {
+                SDL_snprintf(membersStr, sizeof(membersStr), "%s",
+                             langGetText(STR_DLGLOBBY_TEAM_MEMBERS_1));
+            } else {
+                MessageArgs args = {};
+                args.number = memberCount[teamId];
+                SDL_snprintf(membersStr, sizeof(membersStr), "%s",
+                             langGetTextFmt(STR_DLGLOBBY_TEAM_MEMBERS_N, &args));
+            }
+            const char *botsPart = "";
+            if (botCount[teamId] == 1)      botsPart = langGetText(STR_DLGLOBBY_TEAM_1BOT);
+            else if (botCount[teamId] > 1)  botsPart = langGetText(STR_DLGLOBBY_TEAM_NBOTS);
+            const char *sep = botCount[teamId] > 0 ? " · " : "";
+            ImGui::TextDisabled("%s%s%s", membersStr, sep, botsPart);
+        }
 
         /* "Join Team" — moves the local player to this team. Available
          * to every client regardless of permissions (you can always
@@ -3947,14 +4119,16 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
         if (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
             clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->teamNumber != teamId) {
             ImGui::SameLine();
-            char joinId[24];
-            SDL_snprintf(joinId, sizeof(joinId), "Join##j%d", teamId);
+            char joinId[64];
+            SDL_snprintf(joinId, sizeof(joinId), "%s##j%d", langGetText(STR_DLGLOBBY_JOIN_TEAM), teamId);
             if (ImGui::SmallButton(joinId)) {
                 lobbySendTeamSet(cs,
                                  (uint8_t)myPlayerNum, (uint8_t)teamId);
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Move yourself to Team %d.", teamId);
+                MessageArgs args = {};
+                args.number = teamId;
+                ImGui::SetTooltip("%s", langGetTextFmt(STR_DLGLOBBY_TOOLTIP_JOIN, &args));
             }
         }
 
@@ -3979,7 +4153,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
             const float namingShift = 6.0f * s;
             const float botBtnW  = 95.0f * s;
             const float xBtnW    = 22.0f * s;
-            const float labelW   = ImGui::CalcTextSize("Bot Naming:").x;
+            const float labelW   = ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOT_NAMING)).x;
             const float gap      = 6.0f * s;
             /* Bots are only addable when the server's AI policy allows
              * it (lobbyAiType != aiNone) AND the server has at least
@@ -4010,7 +4184,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
             if (curPool < 0 || curPool >= lobbyBotPoolCount()) curPool = 0;
             if (showNaming) {
                 ImGui::AlignTextToFramePadding();
-                ImGui::TextDisabled("Bot Naming:");
+                ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOT_NAMING));
                 ImGui::SameLine(0.0f, gap);
                 char poolId[16];
                 SDL_snprintf(poolId, sizeof(poolId), "##pool%d", teamId);
@@ -4061,7 +4235,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
             {
                 float btnH = ImGui::GetFrameHeight();
                 ImDrawList *dl = ImGui::GetWindowDrawList();
-                const char *addLbl = "Add Bot";
+                const char *addLbl = langGetText(STR_DLGLOBBY_ADDBOT_LBL);
                 ImVec2 textSz = ImGui::CalcTextSize(addLbl);
                 ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
                 /* Centered horizontally, then shifted right by 10px
@@ -4112,8 +4286,9 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                 lobbySendAddBotDebounced(cs, effectivePool, (uint8_t)teamId);
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Add a bot to Team %d, named from the selected pool.",
-                                  teamId);
+                MessageArgs args = {};
+                args.number = teamId;
+                ImGui::SetTooltip("%s", langGetTextFmt(STR_DLGLOBBY_TOOLTIP_ADDBOT, &args));
             }
             /* Pin the X to the right edge so it lines up across teams.
              * Use ImGui::CloseButton (imgui_internal.h) — the same
@@ -4147,7 +4322,9 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     lobbySendTeamClear(cs, (uint8_t)teamId);
                 }
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Remove Team %d (and its bots).", teamId);
+                    MessageArgs args = {};
+                    args.number = teamId;
+                    ImGui::SetTooltip("%s", langGetTextFmt(STR_DLGLOBBY_TOOLTIP_RMTEAM, &args));
                 }
                 /* CloseButton uses an explicit screen pos and only calls
                  * ItemAdd (no ItemSize), so the layout cursor is NOT
@@ -4346,7 +4523,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     }
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                        ImGui::SetTooltip("Drag onto a team to move");
+                        ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_DRAG));
                     }
                     ImGui::SameLine(0.0f, 4.0f * s);
                     /* Reset Y for the tank-icon block below. */
@@ -4455,6 +4632,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     ImGui::Text("%s", clientSimGetLobbySlot(cs, (BYTE)(i))->playerName);
                 }
 
+
                 /* Inline tag pills after the name. Drawn via
                  * WindowDrawList so we can size them tightly and
                  * tint each one independently (HOST = yellow,
@@ -4497,7 +4675,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                 if (i == 0) {
                     /* Host is always player slot 0. Themable bg /
                      * border / text triple lives in wb_theme.cpp. */
-                    drawNameTag("HOST",
+                    drawNameTag(langGetText(STR_DLGLOBBY_TAG_HOST),
                                 g_theme->hostTagBg,
                                 g_theme->hostTagText,
                                 g_theme->hostTagBorder);
@@ -4507,12 +4685,12 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     /* IP-matched admin (server -admins). Shown beside the
                      * name like HOST but in a distinct teal so it reads
                      * as a separate "host-level authority" badge. */
-                    drawNameTag("ADMIN",
+                    drawNameTag(langGetText(STR_DLGLOBBY_TAG_ADMIN),
                                 IM_COL32(70, 160, 175, 255),
                                 IM_COL32(10, 30, 35, 255));
                 }
                 if (isBot) {
-                    drawNameTag("BOT",
+                    drawNameTag(langGetText(STR_DLGLOBBY_TAG_BOT),
                                 g_theme->botTagBg,
                                 g_theme->botTagText,
                                 g_theme->botTagBorder);
@@ -4559,7 +4737,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                             s_expandedBotSlot = (s_expandedBotSlot == i) ? -1 : i;
                         }
                         if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("Configure bot");
+                            ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_CONFIG));
                         }
                     } else {
                         cyAbs(ImGui::GetFrameHeight());
@@ -4587,7 +4765,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                 rowTopY = ImGui::GetCursorPosY();
                 if (!isBot) {
                     bool isReady = clientSimGetLobbySlot(cs, (BYTE)(i))->ready;
-                    const char *lbl = isReady ? "READY" : "NOT READY";
+                    const char *lbl = isReady ? langGetText(STR_DLGLOBBY_PILL_READY) : langGetText(STR_DLGLOBBY_PILL_NOTREADY);
                     /* Render the badge text at 80% of the row font
                      * size — a touch smaller than the player name
                      * so the pill reads as a status tag rather than
@@ -4622,7 +4800,10 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     ImGui::Dummy(ImVec2(pillW, pillH));
                 }
 
-                /* ── Column 6: remove bot X (CloseButton) ────────── */
+                /* ── Column 6: remove bot X / kick player X (CloseButton) ──
+                 * Bots get an immediate remove; humans (non-self, non-host)
+                 * stage a kick-confirm modal. Both visible only to host /
+                 * admin / openHost — server re-validates either way. */
                 ImGui::TableSetColumnIndex(6);
                 rowTopY = ImGui::GetCursorPosY();
                 if (isBot && effectiveHost) {
@@ -4636,7 +4817,23 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                         if (s_expandedBotSlot == i) s_expandedBotSlot = -1;
                     }
                     if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Remove bot");
+                        ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RMBOT));
+                    }
+                } else if (!isBot && !isMe && i != 0 && effectiveHost) {
+                    cyAbs(closeSz);
+                    ImVec2 closePos = ImGui::GetCursorScreenPos();
+                    char kbStr[24];
+                    SDL_snprintf(kbStr, sizeof(kbStr), "##kb%d", i);
+                    ImGuiID kbId = ImGui::GetID(kbStr);
+                    if (ImGui::CloseButton(kbId, closePos)) {
+                        s_kickPendingSlot = i;
+                        SDL_strlcpy(s_kickPendingName,
+                                    clientSimGetLobbySlot(cs, (BYTE)i)->playerName,
+                                    sizeof(s_kickPendingName));
+                        s_kickPendingOpen = true;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_KICK));
                     }
                 }
 
@@ -4715,14 +4912,18 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                               ImVec4(baseTxt.x, baseTxt.y, baseTxt.z, baseTxt.w * 0.65f));
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
                             ImVec2(ImGui::GetStyle().FramePadding.x, 2.0f * s));
-        bool addTeamClicked = ImGui::Button("Add Team", ImVec2(-1, 0));
+        bool addTeamClicked = ImGui::Button(langGetText(STR_DLGLOBBY_ADD_TEAM), ImVec2(-1, 0));
         ImGui::PopStyleVar();
         ImGui::PopStyleColor(3);
         if (addTeamClicked) {
             for (int t = 1; t < 16; t++) {
                 if (memberCount[t] == 0 && !clientSimGetLobbyTeamInUse(cs, (BYTE)(t))) {
                     char defaultName[16];
-                    SDL_snprintf(defaultName, sizeof(defaultName), "Team %d", t);
+                    {
+                        MessageArgs args = {};
+                        args.number = t;
+                        SDL_snprintf(defaultName, sizeof(defaultName), "%s", langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args));
+                    }
                     uint8_t color = (uint8_t)((t - 1) & 7);
                     if (clientSimIsSinglePlayer(cs)) {
                         ServerSim *spSim = gameFrontGetSinglePlayerServerSim();
@@ -4748,19 +4949,60 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
 
     /* Unassigned tray. */
     if (unassignedCount > 0) {
-        ImGui::TextDisabled("Unassigned (%d):", unassignedCount);
+        {
+            MessageArgs args = {};
+            args.number = unassignedCount;
+            ImGui::TextDisabled("%s", langGetTextFmt(STR_DLGLOBBY_UNASSIGNED_FMT, &args));
+        }
         for (int i = 0; i < MAX_TANKS; i++) {
             if (!clientSimGetLobbySlot(cs, (BYTE)(i))->connected) continue;
             if (clientSimGetLobbySlot(cs, (BYTE)(i))->teamNumber != 0) continue;
             ImGui::Bullet();
-            ImGui::Text("%s%s", clientSimGetLobbySlot(cs, (BYTE)(i))->playerName,
-                        i == myPlayerNum ? " (you)" : "");
+            if (i == myPlayerNum) {
+                MessageArgs args = {};
+                SDL_strlcpy(args.playerName,
+                            clientSimGetLobbySlot(cs, (BYTE)(i))->playerName,
+                            sizeof(args.playerName));
+                ImGui::Text("%s", langGetTextFmt(STR_DLGLOBBY_YOU_FMT, &args));
+            } else {
+                ImGui::Text("%s", clientSimGetLobbySlot(cs, (BYTE)(i))->playerName);
+            }
         }
     }
 
     /* No bottom team picker — Layout A relies on drag-to-assign + the
      * default-team logic on the server. Players who want to switch
      * teams can be dragged by the host (planned) or via context menu. */
+
+    /* Deferred-open kick-confirm modal. OpenPopup must happen in the
+     * same ID scope as BeginPopupModal, so we set a flag inside the
+     * team child windows and pop it open here at the outer scope. */
+    if (s_kickPendingOpen) {
+        ImGui::OpenPopup("##kickConfirm");
+        s_kickPendingOpen = false;
+    }
+    if (ImGui::BeginPopupModal("##kickConfirm", NULL,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        {
+            MessageArgs args = {};
+            SDL_strlcpy(args.playerName, s_kickPendingName, sizeof(args.playerName));
+            ImGui::Text("%s", langGetTextFmt(STR_DLGLOBBY_KICK_FMT, &args));
+        }
+        ImGui::Spacing();
+        if (ImGui::Button(langGetText(STR_YES), ImVec2(80.0f * s, 0))) {
+            if (s_kickPendingSlot > 0 && s_kickPendingSlot < MAX_TANKS) {
+                clientSimNetSendLobbyKick(cs, (uint8_t)s_kickPendingSlot);
+            }
+            s_kickPendingSlot = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(80.0f * s, 0))) {
+            s_kickPendingSlot = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 /* ── Layout A — bot AiConfig sub-row ──────────────────────────────
@@ -4823,16 +5065,16 @@ static void renderBotAiConfig(ClientSim *cs,
     /* Name group. */
     ImGui::SetCursorScreenPos(formAnchor);
     ImGui::BeginGroup();
-    ImGui::TextDisabled("Name (override)");
+    ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_NAME));
     ImGui::SetNextItemWidth(180.0f * s);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
     nameChanged = ImGui::InputText("##botname", nameBuf, sizeof(nameBuf),
                                    ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::PopStyleVar();
     ImGui::SameLine();
-    diceClicked = ImGui::Button("Reroll");
+    diceClicked = ImGui::Button(langGetText(STR_DLGLOBBY_BOTCFG_REROLL));
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Pick a fresh random name from the team's pool.");
+        ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_BOTCFG_REROLL_TIP));
     }
     ImGui::EndGroup();
     float nameGroupRightX = ImGui::GetItemRectMax().x;
@@ -4849,7 +5091,7 @@ static void renderBotAiConfig(ClientSim *cs,
         botCodeStartX = bcX;
         botCodeStartY = formAnchor.y;
         ImGui::BeginGroup();
-        ImGui::TextDisabled("Bot Code");
+        ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_CODE));
         uint8_t curIdx = clientSimGetLobbyBotBrain(cs, (BYTE)(slot));
         const BrainListEntry *curEntry =
             (curIdx != 0xFF && curIdx < bl->count) ? &bl->entries[curIdx] : NULL;
@@ -4861,7 +5103,7 @@ static void renderBotAiConfig(ClientSim *cs,
             else
                 SDL_snprintf(preview, sizeof(preview), "%s", curEntry->name);
         } else {
-            SDL_snprintf(preview, sizeof(preview), "(none)");
+            SDL_snprintf(preview, sizeof(preview), "%s", langGetText(STR_DLGLOBBY_BOTCFG_NONE));
         }
         ImGui::SetNextItemWidth(comboW);
         if (ImGui::BeginCombo("##botbrain", preview)) {
@@ -4921,9 +5163,11 @@ static void renderBotAiConfig(ClientSim *cs,
     /* ── Difficulty dropdown ──────────────────────────────────── */
     if (kShowAiOptions) {
         ImGui::SameLine(0.0f, 16.0f * s);
-        ImGui::TextDisabled("Difficulty");
+        ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_DIFFICULTY));
         ImGui::SameLine();
-        const char *diffItems[] = { "Easy", "Normal", "Hard" };
+        const char *diffItems[] = { langGetText(STR_DLGLOBBY_BOTCFG_EASY),
+                                    langGetText(STR_DLGLOBBY_BOTCFG_NORMAL),
+                                    langGetText(STR_DLGLOBBY_BOTCFG_HARD) };
         int diff = clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot));
         if (diff < 0 || diff > 2) diff = 1;
         ImGui::SetNextItemWidth(90.0f * s);
@@ -4937,9 +5181,12 @@ static void renderBotAiConfig(ClientSim *cs,
     /* ── Personality dropdown ─────────────────────────────────── */
     if (kShowAiOptions) {
         ImGui::SameLine(0.0f, 16.0f * s);
-        ImGui::TextDisabled("Personality");
+        ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_PERSONALITY));
         ImGui::SameLine();
-        const char *persItems[] = { "Normal", "Aggressive", "Defensive", "Sniper" };
+        const char *persItems[] = { langGetText(STR_DLGLOBBY_BOTCFG_NORMAL),
+                                    langGetText(STR_DLGLOBBY_BOTCFG_AGGRESSIVE),
+                                    langGetText(STR_DLGLOBBY_BOTCFG_DEFENSIVE),
+                                    langGetText(STR_DLGLOBBY_BOTCFG_SNIPER) };
         int pers = clientSimGetLobbyBotPersonality(cs, (BYTE)(slot));
         if (pers < 0 || pers > 3) pers = 0;
         ImGui::SetNextItemWidth(110.0f * s);
@@ -4955,7 +5202,7 @@ static void renderBotAiConfig(ClientSim *cs,
      * "Hello" spacer above the button is a temporary debug label;
      * change back to a blank string once alignment is confirmed. */
     {
-        const char *doneLbl = "Done";
+        const char *doneLbl = langGetText(STR_DLGLOBBY_BOTCFG_DONE);
         float doneW = ImGui::CalcTextSize(doneLbl).x
                     + ImGui::GetStyle().FramePadding.x * 2.0f;
         ImVec2 winPos  = ImGui::GetWindowPos();
@@ -5086,23 +5333,33 @@ static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
         ImGui::OpenPopup(popupTitle);
     }
 
-    if (ImGui::BeginPopupModal(popupTitle, nullptr,
+    static bool s_pmOpen = true; s_pmOpen = true;
+    if (ImGui::BeginPopupModal(popupTitle, &s_pmOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ServerPortmapInfo pm2;
         serverInstanceGetPortmapInfo(&pm2);
         ImGui::PushTextWrapPos(420.0f * s);
         switch (pm2.status) {
-            case SERVER_PORTMAP_SUCCEEDED:
-                ImGui::Text(detailFmt, pm2.externalIp,
-                            (unsigned)pm2.externalPort);
+            case SERVER_PORTMAP_SUCCEEDED: {
+                MessageArgs args = {};
+                SDL_strlcpy(args.string1, pm2.externalIp, sizeof(args.string1));
+                args.number = (int)(unsigned)pm2.externalPort;
+                ImGui::Text("%s",
+                    langGetTextFmt(STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED, &args));
                 break;
+            }
             case SERVER_PORTMAP_SYMMETRIC_NAT:
-            case SERVER_PORTMAP_FAILED:
-                ImGui::Text(detailFmt,
-                            (unsigned)(pm2.internalPort != 0
-                                           ? pm2.internalPort
-                                           : 27500));
+            case SERVER_PORTMAP_FAILED: {
+                MessageArgs args = {};
+                args.number = (int)(unsigned)(pm2.internalPort != 0
+                                              ? pm2.internalPort : 27500);
+                ImGui::Text("%s",
+                    langGetTextFmt(pm2.status == SERVER_PORTMAP_SYMMETRIC_NAT
+                                       ? STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC
+                                       : STR_DLGLOBBY_PORTMAP_DETAIL_FAILED,
+                                   &args));
                 break;
+            }
             default:
                 ImGui::TextUnformatted(detailFmt);
                 break;
@@ -5126,7 +5383,7 @@ static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
         if (!canTest) ImGui::EndDisabled();
         if (!canTest &&
             ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            ImGui::SetTooltip("Test in progress");
+            ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_CONN_TEST_TIP));
         }
         if (mps != MANUAL_PROBE_IDLE) {
             ImGui::SameLine();
@@ -5147,15 +5404,11 @@ static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
                     break;
             }
         }
-        ImGui::Spacing();
-
-        if (ImGui::Button(langGetText(STR_CLOSE)) ||
-            ImGui::IsKeyPressed(ImGuiKey_Escape) ||
-            (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
-#ifdef __APPLE__
-            || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
-#endif
-           ) {
+        /* [Close] only — affirmative "I'm done viewing", not cancel.
+         * Use confirm slot so it gets default primary styling. */
+        int closeFooter = WBUI::DialogFooter(/*cancelLabel*/ nullptr,
+                                             /*confirmLabel*/ langGetText(STR_CLOSE));
+        if (closeFooter != WBUI::FOOTER_NONE) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -5168,15 +5421,19 @@ static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
  * subsequent rejects re-trigger naturally. */
 static void renderLobbyRejectToast(ClientSim *cs, float s) {
     if (clientSimGetLobbyLastRejectPacket(cs) == 0) return;
-    const char *reason = "rejected";
+    const char *reason = langGetText(STR_DLGLOBBY_REJECT_DEFAULT);
     switch (clientSimGetLobbyLastRejectReason(cs)) {
-        case 1: reason = "host-only action";       break;  /* LOBBY_REJECT_NOT_HOST */
-        case 2: reason = "setting locked by server"; break; /* LOBBY_REJECT_LOCKED */
-        case 3: reason = "invalid request";         break; /* LOBBY_REJECT_INVALID */
+        case 1: reason = langGetText(STR_DLGLOBBY_REJECT_NOTHOST); break;  /* LOBBY_REJECT_NOT_HOST */
+        case 2: reason = langGetText(STR_DLGLOBBY_REJECT_LOCKED);  break;  /* LOBBY_REJECT_LOCKED */
+        case 3: reason = langGetText(STR_DLGLOBBY_REJECT_INVALID); break;  /* LOBBY_REJECT_INVALID */
         default: break;
     }
     ImGui::PushStyleColor(ImGuiCol_Text, wbThemeColor(g_theme->lockBadge));
-    ImGui::Text("⚠ Lobby change rejected: %s", reason);
+    {
+        MessageArgs args = {};
+        SDL_strlcpy(args.string1, reason, sizeof(args.string1));
+        ImGui::Text("%s", langGetTextFmt(STR_DLGLOBBY_REJECT_FMT, &args));
+    }
     ImGui::PopStyleColor();
     ImGui::SameLine();
     if (ImGui::SmallButton("X##rejdismiss")) {
@@ -5198,11 +5455,11 @@ static void renderLockBadge(void) {
                           wbThemeColor(g_theme->lockBadge));
     } else {
         ImGui::PushStyleColor(ImGuiCol_Text, wbThemeColor(g_theme->lockBadge));
-        ImGui::Text("[locked]");
+        ImGui::Text("%s", langGetText(STR_DLGLOBBY_LOCK_BADGE));
         ImGui::PopStyleColor();
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Locked by the server admin.");
+        ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED));
     }
 }
 
@@ -5235,7 +5492,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
      * right-aligned openHost control can be overlaid on the same
      * line via SetCursorScreenPos. */
     ImVec2 headerStart = ImGui::GetCursorScreenPos();
-    bool headerOpen = ImGui::CollapsingHeader("Game settings");
+    bool headerOpen = ImGui::CollapsingHeader(langGetText(STR_DLGLOBBY_SETTINGS_HEADER));
 
     /* When the host has flipped on "Allow all players to change
      * settings", surface that on the header so non-host players
@@ -5243,8 +5500,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
      * within the header's row using the captured headerStart Y plus
      * the row's right edge minus the label width. */
     if (clientSimGetLobbyOpenHost(cs)) {
-        const char *noteText =
-            "The host has allowed all players to change game settings.";
+        const char *noteText = langGetText(STR_DLGLOBBY_OPENHOST_NOTE);
         ImVec2 textSize = ImGui::CalcTextSize(noteText);
         float headerH   = ImGui::GetFrameHeight();
         float availW    = ImGui::GetWindowContentRegionMax().x
@@ -5281,16 +5537,16 @@ static void renderGameSettingsPanel(ClientSim *cs,
     ImGui::Columns(3, "##settingsCols", false);
 
     /* ── Game Type ──────────────────────────────────────────── */
-    bool gtLocked = (clientSimGetLobbyServerLocks(cs) & 0x01) != 0;  /* LOBBY_LOCK_GAME_TYPE */
+    bool gtLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_GAME_TYPE) != 0;
     {
-        ImGui::Text("Game Type");
+        ImGui::Text("%s", langGetText(STR_DLGLOBBY_GAMETYPE_LBL));
         if (gtLocked) renderLockBadge();
         bool disable = !effectiveHost || gtLocked;
         if (disable) ImGui::BeginDisabled();
         const char *items[] = {
-            "Open Game (pre-armed)",
-            "Tournament (free ammo early)",
-            "Strict Tournament (no free ammo)",
+            langGetText(STR_DLGGAMESETUP_RADIO1),
+            langGetText(STR_DLGGAMESETUP_RADIO2),
+            langGetText(STR_DLGGAMESETUP_RADIO3),
         };
         bool rankedNow = clientSimGetLobbyRanked(cs);
         for (int i = 0; i < 3; i++) {
@@ -5308,7 +5564,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
             bool checked = (clientSimGetLobbyGameType(cs) == (gameType)enumVal);
             if (ImGui::RadioButton(rid, checked) && !checked) {
                 uint8_t v = (uint8_t)enumVal;
-                lobbySendSetting(cs, 1 /*LST_GAME_TYPE*/, &v, 1);
+                lobbySendSetting(cs, LST_GAME_TYPE, &v, 1);
             }
             if (optDisabled) ImGui::EndDisabled();
         }
@@ -5317,9 +5573,9 @@ static void renderGameSettingsPanel(ClientSim *cs,
     ImGui::NextColumn();
 
     /* ── Computer Players ────────────────────────────────────── */
-    bool aiLocked = (clientSimGetLobbyServerLocks(cs) & 0x02) != 0;  /* LOBBY_LOCK_AI_POLICY */
+    bool aiLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_AI_POLICY) != 0;
     {
-        ImGui::Text("Computer Players");
+        ImGui::Text("%s", langGetText(STR_DLGLOBBY_AI_SECTION_LBL));
         if (aiLocked) renderLockBadge();
         /* Ranked games force "No computer tanks" — disable the
          * whole AI block since none of the alternatives are valid. */
@@ -5327,10 +5583,10 @@ static void renderGameSettingsPanel(ClientSim *cs,
                         || clientSimGetLobbyRanked(cs);
         if (disable) ImGui::BeginDisabled();
         const char *items[] = {
-            "No computer tanks",
-            "Allow computer tanks",
-            "Allow with advantage",
-            "Allow with full advantage",
+            langGetText(STR_DLGLOBBY_AI_NONE),
+            langGetText(STR_DLGLOBBY_AI_ALLOW),
+            langGetText(STR_DLGLOBBY_AI_ADVANTAGE),
+            langGetText(STR_DLGLOBBY_AI_FULLADV),
         };
         for (int i = 0; i < 4; i++) {
             /* Same trick as the Game Type radios — embed the label so
@@ -5340,7 +5596,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
             bool checked = (clientSimGetLobbyAiType(cs) == (uint8_t)i);
             if (ImGui::RadioButton(rid, checked) && !checked) {
                 uint8_t v = (uint8_t)i;
-                lobbySendSetting(cs, 3 /*LST_AI_POLICY*/, &v, 1);
+                lobbySendSetting(cs, LST_AI_POLICY, &v, 1);
             }
         }
         if (disable) ImGui::EndDisabled();
@@ -5349,15 +5605,15 @@ static void renderGameSettingsPanel(ClientSim *cs,
 
     /* ── Other (mines / time limit / autoLockOnGameStart) ────── */
     {
-        ImGui::Text("Other");
+        ImGui::Text("%s", langGetText(STR_DLGLOBBY_OTHER_LBL));
 
-        bool minesLocked = (clientSimGetLobbyServerLocks(cs) & 0x04) != 0;
+        bool minesLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MINES) != 0;
         bool minesV = clientSimIsLobbyHiddenMines(cs);
         bool minesDisabled = !effectiveHost || minesLocked;
         if (minesDisabled) ImGui::BeginDisabled();
-        if (ImGui::Checkbox("Allow Hidden Mines", &minesV)) {
+        if (ImGui::Checkbox(langGetText(STR_DLGGAMESETUP_HIDDENMINES), &minesV)) {
             uint8_t v = minesV ? 1 : 0;
-            lobbySendSetting(cs, 2 /*LST_HIDDEN_MINES*/, &v, 1);
+            lobbySendSetting(cs, LST_HIDDEN_MINES, &v, 1);
         }
         if (minesDisabled) ImGui::EndDisabled();
         if (minesLocked) renderLockBadge();
@@ -5379,9 +5635,9 @@ static void renderGameSettingsPanel(ClientSim *cs,
                                   & PLAYER_FLAG_ADMIN));
             if (isHostLocal || isAdminLocal) {
                 bool oh = clientSimGetLobbyOpenHost(cs);
-                bool openHostLocked = (clientSimGetLobbyServerLocks(cs) & 0x80) != 0;  /* LOBBY_LOCK_OPEN_HOST */
+                bool openHostLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_OPEN_HOST) != 0;
                 if (openHostLocked) ImGui::BeginDisabled();
-                if (ImGui::Checkbox("Allow all players to change settings",
+                if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_OPENHOST_CB),
                                     &oh)) {
                     clientSimNetSendLobbyOpenHost(cs, oh);
                 }
@@ -5389,25 +5645,21 @@ static void renderGameSettingsPanel(ClientSim *cs,
                 if (openHostLocked) renderLockBadge();
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     if (openHostLocked) {
-                        ImGui::SetTooltip(
-                            "Locked by the server admin.");
+                        ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED));
                     } else {
-                        ImGui::SetTooltip(
-                            "When on, every connected player can edit lobby\n"
-                            "settings — including changing the map, adding\n"
-                            "or removing bots, and switching teams.");
+                        ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_OPENHOST_TOOLTIP));
                     }
                 }
             }
         }
 
-        bool timeLocked = (clientSimGetLobbyServerLocks(cs) & 0x08) != 0;
+        bool timeLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_TIME_LIMIT) != 0;
         bool timeV = clientSimGetLobbyTimeLimit(cs) > 0;
         bool timeDisabled = !effectiveHost || timeLocked;
         if (timeDisabled) ImGui::BeginDisabled();
-        if (ImGui::Checkbox("Game time limit", &timeV)) {
+        if (ImGui::Checkbox(langGetText(STR_DLGGAMESETUP_TIMELIMIT), &timeV)) {
             uint8_t v = timeV ? 1 : 0;
-            lobbySendSetting(cs, 4 /*LST_TIME_LIMIT*/, &v, 1);
+            lobbySendSetting(cs, LST_TIME_LIMIT, &v, 1);
         }
         if (timeV) {
             int mins = clientSimGetLobbyTimeLimit(cs) > 0
@@ -5417,14 +5669,14 @@ static void renderGameSettingsPanel(ClientSim *cs,
             ImGui::SetNextItemWidth(80.0f * s);
             if (ImGui::InputInt("##tmin", &mins, 1, 5,
                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
-                if (mins < 1) mins = 1;
-                if (mins > 999) mins = 999;
+                if (mins < LOBBY_TIME_MINUTES_MIN) mins = LOBBY_TIME_MINUTES_MIN;
+                if (mins > LOBBY_TIME_MINUTES_MAX) mins = LOBBY_TIME_MINUTES_MAX;
                 uint8_t v[2] = { (uint8_t)((mins >> 8) & 0xFF),
                                  (uint8_t)(mins & 0xFF) };
-                lobbySendSetting(cs, 5 /*LST_TIME_MINUTES*/, v, 2);
+                lobbySendSetting(cs, LST_TIME_MINUTES, v, 2);
             }
             ImGui::SameLine();
-            ImGui::TextUnformatted("min");
+            ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_TIMELIMIT_MIN));
         }
         if (timeDisabled) ImGui::EndDisabled();
         if (timeLocked) renderLockBadge();
@@ -5451,9 +5703,9 @@ static void renderGameSettingsPanel(ClientSim *cs,
                 static char s_pwBuf[200] = {0};
                 static bool s_pwOn       = false;
 
-                bool pwLocked = (clientSimGetLobbyServerLocks(cs) & 0x20) != 0;  /* LOBBY_LOCK_PASSWORD */
+                bool pwLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_PASSWORD) != 0;
                 if (pwLocked) ImGui::BeginDisabled();
-                if (ImGui::Checkbox("Password", &s_pwOn)) {
+                if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_PASSWORD_CB), &s_pwOn)) {
                     if (!s_pwOn) {
                         s_pwBuf[0] = '\0';
                         clientSimNetSendLobbySetPassword(cs, "");
@@ -5465,13 +5717,9 @@ static void renderGameSettingsPanel(ClientSim *cs,
                 if (pwLocked) renderLockBadge();
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     if (pwLocked) {
-                        ImGui::SetTooltip(
-                            "Locked by the server admin.");
+                        ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED));
                     } else {
-                        ImGui::SetTooltip(
-                            "When on, new clients must supply the\n"
-                            "password to join. Already-connected players\n"
-                            "are unaffected.");
+                        ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_PASSWORD_TOOLTIP));
                     }
                 }
                 if (s_pwOn && !pwLocked) {
@@ -5699,10 +5947,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         /* Check for server disconnect/shutdown */
         if (hasTransport) {
             ClientConnectState js = clientSimGetConnectState(cs);
-            if (js == CLIENT_CONNECT_SERVER_SHUTDOWN || js == CLIENT_CONNECT_ERROR) {
+            if (js == CLIENT_CONNECT_SERVER_SHUTDOWN ||
+                js == CLIENT_CONNECT_ERROR ||
+                js == CLIENT_CONNECT_KICKED) {
+                bool kicked = (js == CLIENT_CONNECT_KICKED);
                 imguiMessageBoxEx(DIALOG_BOX_TITLE,
-                    langGetText(STR_DLGLOBBY_LOSTCONNECTION),
-                    IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+                    langGetText(kicked
+                                ? STR_DLGLOBBY_KICKED
+                                : STR_DLGLOBBY_LOSTCONNECTION),
+                    kicked ? IMGUI_MSG_NONE : IMGUI_MSG_ERROR,
+                    IMGUI_MSG_OK);
                 result = 0;
                 running = false;
                 break;
@@ -5977,8 +6231,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 (myPlayerNum != 0) &&
                 !clientSimIsSinglePlayer(cs) && !clientSimIsLanOnly(cs);
             const char *serverDisplay =
-                clientSimIsSinglePlayer(cs) ? "Single player" :
-                serverIsPrivate             ? "Internet"      :
+                clientSimIsSinglePlayer(cs) ? langGetText(STR_DLGLOBBY_SERVERDISP_SP) :
+                serverIsPrivate             ? langGetText(STR_DLGLOBBY_SERVERDISP_INTERNET) :
                                               serverStr;
 
             char timeStr[32];
@@ -6274,8 +6528,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     bool effHostMap = isHostLocal || isAdminLocal ||
                                       clientSimGetLobbyOpenHost(cs);
                     if (effHostMap &&
-                        !(clientSimGetLobbyServerLocks(cs) & 0x100 /* LOBBY_LOCK_MAP */)) {
-                        if (ImGui::Button("Choose Map")) {
+                        !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
+                        if (ImGui::Button(langGetText(STR_DLGLOBBY_CHOOSE_MAP_BTN))) {
                             lobbyChooseMapOpen(cs, renderer);
                         }
                         ImGui::Spacing();
@@ -6353,7 +6607,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     /* Skip-map vote is gated by LOBBY_LOCK_MAP — locking
                      * the map blocks both manual change and skip-vote. */
                     if (clientSimIsMapSkipAvailable(cs) && clientSimIsInLobby(cs) &&
-                        !(clientSimGetLobbyServerLocks(cs) & 0x100 /* LOBBY_LOCK_MAP */)) {
+                        !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
                         ImGui::Spacing();
                         bool countdownActive = clientSimGetCountdownSeconds(cs) > 0;
                         if (countdownActive) ImGui::BeginDisabled();
@@ -6657,11 +6911,15 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                              "", false);
                         }
                         if (slot->isBot) {
-                            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f),
-                                               "%s [Bot]", slot->playerName);
+                            MessageArgs args = {};
+                            strncpy(args.playerName, slot->playerName, sizeof(args.playerName) - 1);
+                            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "%s",
+                                               langGetTextFmt(STR_DLGLOBBY_BOT_FMT, &args));
                         } else if (isMe) {
-                            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f),
-                                               "%s (You)", slot->playerName);
+                            MessageArgs args = {};
+                            strncpy(args.playerName, slot->playerName, sizeof(args.playerName) - 1);
+                            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "%s",
+                                               langGetTextFmt(STR_DLGLOBBY_YOU_FMT, &args));
                         } else {
                             ImGui::Text("%s", slot->playerName);
                         }
@@ -6908,8 +7166,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                  * preview block rather than as a footer at the bottom.
                  * Hidden when LOBBY_LOCK_MAP is set (server pins map). */
                 if (effHostMap &&
-                    !(clientSimGetLobbyServerLocks(cs) & 0x100 /* LOBBY_LOCK_MAP */)) {
-                    if (ImGui::Button("Choose Map", ImVec2(-1, 0))) {
+                    !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
+                    if (ImGui::Button(langGetText(STR_DLGLOBBY_CHOOSE_MAP_BTN), ImVec2(-1, 0))) {
                         lobbyChooseMapOpen(cs, renderer);
                     }
                 }
@@ -6934,7 +7192,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
              * the map is pinned even though the Choose Map / Skip-Map
              * affordances aren't drawn. */
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_MAP_LBL), clientSimGetMapName(cs));
-            if ((clientSimGetLobbyServerLocks(cs) & 0x100) != 0) {  /* LOBBY_LOCK_MAP */
+            if ((clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP) != 0) {
                 ImGui::SameLine(0.0f, 4.0f * s);
                 renderLockBadge();
             }
@@ -6943,7 +7201,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), clientSimGetLobbyStartCount(cs));
 
             if (clientSimIsMapSkipAvailable(cs) && clientSimIsInLobby(cs) &&
-                !(clientSimGetLobbyServerLocks(cs) & 0x100 /* LOBBY_LOCK_MAP */)) {
+                !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
                 ImGui::Spacing();
                 bool countdownActive = clientSimGetCountdownSeconds(cs) > 0;
                 if (countdownActive) ImGui::BeginDisabled();
@@ -7061,23 +7319,21 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         /* --- Leave confirmation popup --- */
         char leavePopupModalId[64];
         SDL_snprintf(leavePopupModalId, sizeof(leavePopupModalId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
-        if (ImGui::BeginPopupModal(leavePopupModalId, nullptr,
+        static bool s_llOpen = true; s_llOpen = true;
+        if (ImGui::BeginPopupModal(leavePopupModalId, &s_llOpen,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_LEAVE_BLURB));
-            ImGui::Spacing();
-            if (ImGui::Button(langGetText(STR_YES), ImVec2(80 * s, 0))) {
+            /* [No (stay)] [Yes (leave)] — Yes is the destructive primary; No
+             * is the cancel-equivalent. Reordering keeps the localized Yes/No
+             * labels while matching the [Cancel][Confirm] spec convention.
+             * No Enter-confirm: destructive action requires an explicit click. */
+            int f = WBUI::DialogFooter(langGetText(STR_NO),
+                                       langGetText(STR_YES));
+            if (f == WBUI::FOOTER_CONFIRM) {
                 ImGui::CloseCurrentPopup();
                 result = 0;
                 running = false;
-            }
-            ImGui::SameLine(0.0f, 8.0f);
-            if (ImGui::Button(langGetText(STR_NO), ImVec2(80 * s, 0)) ||
-                ImGui::IsKeyPressed(ImGuiKey_Escape) ||
-                (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
-#ifdef __APPLE__
-                || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
-#endif
-               ) {
+            } else if (f == WBUI::FOOTER_CANCEL) {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();
@@ -7171,9 +7427,19 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor();
-            /* Force the chooser's next Begin to take focus so it
-             * always sits above the scrim windows we just opened. */
-            ImGui::SetNextWindowFocus();
+            /* Focus the chooser on the frame it OPENS so it draws above
+             * the scrim windows we just begun. Doing this every frame
+             * snatches focus back from anything the user clicks into the
+             * chat-hole (the chat InputText loses its cursor on the very
+             * next frame). Once the chooser is on top, ImGui's natural
+             * focus follows the click. */
+            if (!s_chooseMapFocusedOnce) {
+                ImGui::SetNextWindowFocus();
+                s_chooseMapFocusedOnce = true;
+            }
+        } else {
+            /* Reset the edge-trigger so re-opening focuses again. */
+            s_chooseMapFocusedOnce = false;
         }
 
         /* Map chooser sub-window (Phase 1). Rendered after the main

@@ -193,6 +193,7 @@ void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum);
 void transportUdpClientSendLobbySetting(Transport *t, uint8_t settingType,
                                         const uint8_t *value, uint8_t valueLen);
 void transportUdpClientSendLobbyOpenHost(Transport *t, bool openHost);
+void transportUdpClientSendLobbyKick(Transport *t, uint8_t slot);
 void transportUdpClientSendLobbySetPassword(Transport *t, const char *pw);
 void transportUdpClientSendLobbyTeamMeta(Transport *t, uint8_t teamId,
                                          uint8_t color, uint8_t namingPool,

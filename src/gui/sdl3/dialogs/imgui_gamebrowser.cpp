@@ -37,6 +37,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 
@@ -1059,15 +1060,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             }
             imguiHandOnHover();
 
-            /* Cancel - right-aligned */
+            /* Cancel - right-aligned, muted-grey styling per dialog spec. */
             ImGui::SameLine(panelW - btnW - 16.0f * s);
-            bool escPressed = (ImGui::IsKeyPressed(ImGuiKey_Escape) ||
-                               (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
-#ifdef __APPLE__
-                               || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
-#endif
-                              ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup);
-            if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH)) || escPressed) {
+            WBUI::PushCancelStyle();
+            bool cancelClicked = ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH));
+            WBUI::PopCancelStyle();
+            if (cancelClicked || WBUI::CancelKeyPressed()) {
                 gameFrontSetDlgState(openWelcome);
                 running = false;
             }
@@ -1076,7 +1074,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
         /* ---- Error popup ---- */
         static float s_fadeGbErr = 0.0f;
-        if (ImGui::BeginPopupModal(errPopupId, nullptr,
+        static bool s_gbErrOpen = true; s_gbErrOpen = true;
+        if (ImGui::BeginPopupModal(errPopupId, &s_gbErrOpen,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                                 imguiPopupFadeAlpha(&s_fadeGbErr));
@@ -1096,7 +1095,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
         /* ---- Set Player Name popup ---- */
         static float s_fadeGbSetName = 0.0f;
-        if (ImGui::BeginPopupModal(setNamePopupId, nullptr,
+        static bool s_gbSetNameOpen = true; s_gbSetNameOpen = true;
+        if (ImGui::BeginPopupModal(setNamePopupId, &s_gbSetNameOpen,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                                 imguiPopupFadeAlpha(&s_fadeGbSetName));
@@ -1105,28 +1105,23 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             ImGui::SameLine(120 * s);
             ImGui::SetNextItemWidth(200 * s);
             if (wbnActive) ImGui::BeginDisabled();
-            ImGui::InputText("##nameEdit", nameEditBuf, PLAYER_NAME_LEN);
+            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+            bool nameEnter = ImGui::InputText("##nameEdit", nameEditBuf, PLAYER_NAME_LEN,
+                                              ImGuiInputTextFlags_EnterReturnsTrue);
             if (wbnActive) ImGui::EndDisabled();
             if (wbnActive) {
                 ImGui::TextUnformatted(langGetText(STR_DLGSETNAME_WBN_LOCKED));
             }
-            ImGui::Spacing();
-            {
-                char okBuf[64], cancelBuf[64];
-                snprintf(okBuf,     sizeof(okBuf),     "%s##name", langGetText(STR_OK));
-                snprintf(cancelBuf, sizeof(cancelBuf), "%s##name", langGetText(STR_CANCEL));
-                if (wbnActive) ImGui::BeginDisabled();
-                if (ImGui::Button(okBuf, ImVec2(80 * s, 0))) {
-                    gameFrontSetPlayerName(nameEditBuf);
-                    ImGui::CloseCurrentPopup();
-                }
-                imguiHandOnHover();
-                if (wbnActive) ImGui::EndDisabled();
-                ImGui::SameLine(0.0f, 8.0f);
-                if (ImGui::Button(cancelBuf, ImVec2(80 * s, 0))) {
-                    ImGui::CloseCurrentPopup();
-                }
-                imguiHandOnHover();
+            int nameFooter = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                                langGetText(STR_OK),
+                                                /*enterConfirms*/ true,
+                                                /*showSeparator*/ true,
+                                                /*confirmDisabled*/ wbnActive);
+            if (nameFooter == WBUI::FOOTER_CONFIRM || (nameEnter && !wbnActive)) {
+                gameFrontSetPlayerName(nameEditBuf);
+                ImGui::CloseCurrentPopup();
+            } else if (nameFooter == WBUI::FOOTER_CANCEL) {
+                ImGui::CloseCurrentPopup();
             }
             ImGui::PopStyleVar();
             ImGui::EndPopup();

@@ -521,6 +521,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_lobby.cpp
     src/gui/sdl3/dialogs/imgui_settings.cpp
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
+    src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_stars.cpp
@@ -1004,7 +1005,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_stars.cpp
@@ -1989,6 +1990,7 @@ set(MAPEDITOR_SOURCES
     src/server/server_stubs.c
     src/server/server_dedicated_log_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    src/gui/sdl3/dialogs/dialog_footer.cpp
     src/third_party/stb/stb_image_write_impl.c
     src/mapeditor/mapeditor_main.c
     src/braintest/braintest_frontend.c
@@ -2304,6 +2306,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_ini_reader_writer.c
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_game_vote_control.c
+    tests/unit/test_vote_surrender.c
+    tests/unit/test_vote_toggle_modes.c
+    tests/unit/test_lobby_set_team_clamps.c
     tests/unit/test_md5.c
     tests/unit/test_ranked_lobby.c
     tests/unit/test_lobby_locks.c
@@ -2313,6 +2318,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_upload_busy.c
     tests/unit/test_upload_filename_safe.c
     tests/unit/test_lobby_time_minutes_valid.c
+    tests/unit/test_lobby_bot_name.c
     tests/unit/test_lobby_map_list_chunked.c
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
@@ -2396,6 +2402,17 @@ set(_unit_test_names
     lobby_bot_config_codec_and_apply
     lobby_bot_brain_codec_and_apply
     lobby_brain_list_codec_and_apply
+    vote_surrender_rejects_unassigned_caller
+    vote_surrender_starts_for_real_team_caller
+    vote_surrender_rejects_three_active_teams
+    vote_toggle_standalone_no_does_nothing
+    vote_toggle_invalid_mode_dropped
+    vote_toggle_yes_opens_vote
+    vote_toggle_no_during_running_records_answered
+    lobby_set_team_clamps_max_tanks
+    lobby_set_team_accepts_max_legal
+    lobby_set_team_accepts_unassigned
+    lobby_set_team_clamps_above_max
     ranked_flag_persists_with_one_player
     ranked_shape_gate
     lobby_lock_bit_lookup
@@ -2408,6 +2425,13 @@ set(_unit_test_names
     map_reload_rollback
     upload_busy_predicate
     upload_filename_safe
+    lobby_bot_name_rejects_reserved_prefix
+    lobby_bot_name_rejects_disallowed_char
+    lobby_bot_name_rejects_collision
+    lobby_bot_name_skip_does_not_bypass_validator_prefix
+    lobby_bot_name_skip_does_not_bypass_validator_control
+    lobby_bot_name_skip_excludes_self_from_uniqueness
+    lobby_bot_name_accepts_clean_unique
     lobby_map_list_chunked
     lobby_map_search_chunked
     wbn_bearer_state

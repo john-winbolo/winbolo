@@ -63,6 +63,28 @@
  * UI can validate the user's value before sending. Authoritative
  * range check is wire-side (transport_udp_server.c). */
 #define LOBBY_TIME_MINUTES_MIN 1
-#define LOBBY_TIME_MINUTES_MAX 240
+#define LOBBY_TIME_MINUTES_MAX 4320
+
+/* Setting types used inside PACKET_LOBBY_SET_SETTING /
+ * PACKET_LOBBY_SETTING_CHG payloads. Surfaced publicly so the GUI
+ * lobby can name the wire value it's sending. Wire ids are PINNED —
+ * each member's byte value is part of the protocol. New settings
+ * append with the next free id; existing ids are NEVER renumbered.
+ * Forward-compat: receivers must skip unknown types via valueLen. */
+typedef enum {
+    LST_GAME_TYPE         = 1,  /* 1 byte enum: open|tournament|strict */
+    LST_HIDDEN_MINES      = 2,  /* 1 byte bool */
+    LST_AI_POLICY         = 3,  /* 1 byte enum: none|allow|advantage|full */
+    LST_TIME_LIMIT        = 4,  /* 1 byte bool */
+    LST_TIME_MINUTES      = 5,  /* 2 bytes uint16 BE */
+    LST_AUTO_LOCK_ON_GAME = 6,  /* 1 byte bool */
+    LST_RANKED            = 7   /* 1 byte bool. When true the server
+                                 * forces ai=none, refuses game_type
+                                 * Open, and removes any existing
+                                 * bots. The client mirrors the value
+                                 * so every viewer sees the ranked
+                                 * badge — toggle is still host /
+                                 * admin only. */
+} LobbySettingType;
 
 #endif /* WIRE_LIMITS_H */

@@ -475,14 +475,15 @@ bool   serverSimToggleAllBrainDebugMode(ServerSim *sim);
 /*********************************************************
  *NAME:          serverSimSetTeam
  *PURPOSE:
- *  Sets a player's lobby team. teamNumber > 16 is coerced
- *  to 1, preserving the existing servermain.c range
- *  behavior. No-op if playerNum >= MAX_TANKS.
+ *  Sets a player's lobby team. teamNumber >= MAX_TANKS is
+ *  coerced to 1 so the value can be used as an index into
+ *  teams[MAX_TANKS] without overrun. No-op if playerNum >=
+ *  MAX_TANKS.
  *
  *ARGUMENTS:
  *  sim        - Pointer to the ServerSim
  *  playerNum  - Player slot (0..MAX_TANKS-1)
- *  teamNumber - 0 = no team; 1-16 = team number
+ *  teamNumber - 0 = no team; 1..MAX_TANKS-1 = team number
  *********************************************************/
 void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber);
 
@@ -1486,6 +1487,7 @@ void serverSimSetGameLength(ServerSim *sim, int32_t ticks);
 /* Lobby-time game-setting writers. The lobby UI used to poke
  * serverSimGetGameSim(sim)->game / ->hiddenMines directly; these
  * keep the field on GameSim opaque. Only meaningful in lobby state. */
+gameType serverSimGetGameType(const ServerSim *sim);
 void serverSimSetGameType(ServerSim *sim, gameType gt);
 void serverSimSetHiddenMines(ServerSim *sim, bool hiddenMines);
 void serverSimSetState(ServerSim *sim, ServerState s);
