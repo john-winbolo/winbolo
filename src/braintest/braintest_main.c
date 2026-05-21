@@ -3748,16 +3748,10 @@ static void appRender(BrainTestApp *app) {
             patched = true;
         }
 
-        /* Set perspective to followed bot for correct coloring */
-        BYTE prevSelf = gs->viewPlayer;
-        gs->viewPlayer = app->followBot;
-
         MapViewCtx ctx = { app->renderer, app->tilesTex, app->zoomFactor, 1 };
         mapViewRenderCentered(&ctx, app->sim,
                               app->viewCenterX, app->viewCenterY,
                               0, 0, screenW, screenH, app->followBot);
-
-        gs->viewPlayer = prevSelf;
 
         /* Debug overlays */
         renderOverlay(app, screenW, screenH);

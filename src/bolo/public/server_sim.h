@@ -1401,9 +1401,9 @@ void serverSimSetPaused(ServerSim *sim, bool paused);
 BYTE         serverSimGetMapTerrain(const ServerSim *sim, BYTE x, BYTE y);
 bool         serverSimMapIsMine(const ServerSim *sim, BYTE x, BYTE y);
 bool         serverSimPillExistsAt(const ServerSim *sim, BYTE x, BYTE y);
-BYTE         serverSimPillGetScreenHealthAt(ServerSim *sim, BYTE x, BYTE y);
+BYTE         serverSimPillGetScreenHealthAt(ServerSim *sim, BYTE x, BYTE y, BYTE viewPlayer);
 bool         serverSimBaseExistsAt(const ServerSim *sim, BYTE x, BYTE y);
-baseAlliance serverSimBaseGetAllianceAt(ServerSim *sim, BYTE x, BYTE y);
+baseAlliance serverSimBaseGetAllianceAt(ServerSim *sim, BYTE x, BYTE y, BYTE viewPlayer);
 bool         serverSimBaseAmOwnerAt(ServerSim *sim, BYTE player, BYTE x, BYTE y);
 
 BYTE         serverSimGetPillCount(const ServerSim *sim);

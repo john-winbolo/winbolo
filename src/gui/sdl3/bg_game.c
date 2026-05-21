@@ -27,12 +27,9 @@
 #include "global.h"
 #include "everard_map.h"
 #include "control_event.h"
-#include "server_sim_lifecycle.h"  /* viewPlayer / setTeam — bg_game holds
-                                    * a per-file T2 grant for the
-                                    * rendering camera-perspective
-                                    * override around bgGameRender and
-                                    * the bot bot-team assignment in
-                                    * setup (see CMakeLists.txt). */
+#include "server_sim_lifecycle.h"  /* setTeam — bg_game holds a per-file
+                                    * T2 grant for the bot-team assignment
+                                    * in setup (see CMakeLists.txt). */
 #include "../../server/server_lifecycle.h"
 
 #include <stdio.h>
@@ -250,6 +247,10 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
             for (BYTE i = 0; i < bg->numBots; i++) {
                 serverSimSetTeam(bg->sim, i, (BYTE)((i % numTeams) + 1));
             }
+            /* serverInstanceStartup ran the team-alliance pass before
+             * any bot existed, so plrs->item[].allie is empty. Rebake
+             * it now that teamNumber is populated. */
+            serverSimReapplyTeamAlliances(bg->sim);
             bg->numTeams = (BYTE)numTeams;
             WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Set up %d teams for %d bots", numTeams, bg->numBots);
         } else {
@@ -411,14 +412,6 @@ static void bgGameRenderMapName(BgGame *bg, SDL_Renderer *renderer, int screenW,
 void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) {
     if (!bg || !bg->valid) return;
 
-    /* Temporarily set the sim's "self" player to the camera player so
-     * base-alliance / pill-screen-health queries colour bases and pills
-     * correctly from this player's perspective (own = good, enemy = evil).
-     * The serverSim wrappers read viewPlayer off the underlying GameSim,
-     * so we still need this mutation around the render. */
-    BYTE prevSelf = serverSimGetViewPlayer(bg->sim);
-    serverSimSetViewPlayer(bg->sim, bg->cameraPlayer);
-
     /* Pick zoom factor so the map content area fits the screen.
      * mapTilesW/H = number of tiles in the bounding box.
      * We want mapTilesW * 16 * zf >= screenW (and same for height).
@@ -434,8 +427,6 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     mapViewRenderCentered(&ctx, bg->sim,
                           bg->viewCenterX, bg->viewCenterY,
                           0, 0, screenW, screenH, bg->cameraPlayer);
-
-    serverSimSetViewPlayer(bg->sim, prevSelf);
 
     /* Draw "Map: <name>" next to play/pause button, fading out after 10 seconds */
     bgGameRenderMapName(bg, renderer, screenW, screenH);

@@ -367,13 +367,13 @@ BYTE mapViewCalcSquare(ServerSim *sim, BYTE xValue, BYTE yValue, bool *outMine, 
 
   /* Pillbox check */
   if (serverSimPillExistsAt(sim, xValue, yValue) == TRUE) {
-    returnValue = serverSimPillGetScreenHealthAt(sim, xValue, yValue);
+    returnValue = serverSimPillGetScreenHealthAt(sim, xValue, yValue, selfPlayer);
     return returnValue;
   }
 
   /* Base check */
   if (serverSimBaseExistsAt(sim, xValue, yValue) == TRUE) {
-    baseAlliance ba = serverSimBaseGetAllianceAt(sim, xValue, yValue);
+    baseAlliance ba = serverSimBaseGetAllianceAt(sim, xValue, yValue, selfPlayer);
     switch (ba) {
     case baseOwnGood:
     case baseAllieGood:

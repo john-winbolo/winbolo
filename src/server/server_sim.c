@@ -4674,16 +4674,16 @@ bool serverSimPillExistsAt(const ServerSim *sim, BYTE x, BYTE y) {
     return pillsExistPos(&((ServerSim *)sim)->sim.pb, x, y);
 }
 
-BYTE serverSimPillGetScreenHealthAt(ServerSim *sim, BYTE x, BYTE y) {
-    return pillsGetScreenHealth(&sim->sim, &sim->sim.pb, x, y);
+BYTE serverSimPillGetScreenHealthAt(ServerSim *sim, BYTE x, BYTE y, BYTE viewPlayer) {
+    return pillsGetScreenHealth(&sim->sim, &sim->sim.pb, x, y, viewPlayer);
 }
 
 bool serverSimBaseExistsAt(const ServerSim *sim, BYTE x, BYTE y) {
     return basesExistPos(&((ServerSim *)sim)->sim.bs, x, y);
 }
 
-baseAlliance serverSimBaseGetAllianceAt(ServerSim *sim, BYTE x, BYTE y) {
-    return basesGetAlliancePos(&sim->sim, x, y);
+baseAlliance serverSimBaseGetAllianceAt(ServerSim *sim, BYTE x, BYTE y, BYTE viewPlayer) {
+    return basesGetAlliancePos(&sim->sim, x, y, viewPlayer);
 }
 
 bool serverSimBaseAmOwnerAt(ServerSim *sim, BYTE player, BYTE x, BYTE y) {

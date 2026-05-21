@@ -1137,16 +1137,11 @@ target_include_directories(WinBolo PRIVATE
     src/third_party/imgui_markdown
 )
 bolo_apply_include_rules(WinBolo gui)
-# bg_game.c: dev-mode lobby-background animation that overrides the
-# in-process sim's viewPlayer for the duration of a render call so
-# base/pill alliance queries colour from the camera-player's view,
-# and assigns bot teams directly because the background loop has no
-# ClientSim per bot. Both writes go through privatised setters; the
-# clean endpoint is to thread viewPlayer through the renderer and
-# move bot team-assignment into serverSimCreateBot, at which point
-# the grant deletes — until then this is a "rendering camera-
-# perspective override" grant, distinct from the compile-def
-# divergence grants below.
+# bg_game.c: dev-mode lobby-background animation that assigns bot
+# teams directly because the background loop has no ClientSim per
+# bot. The write goes through a privatised setter; the clean
+# endpoint is moving bot team-assignment into serverSimCreateBot,
+# at which point the grant deletes.
 bolo_grant_internal_source_access(WinBolo
     src/bolo/transport_udp_client.c
     src/gui/sdl3/bg_game.c

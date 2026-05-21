@@ -1642,7 +1642,7 @@ bool clientSimPillExistsAt(const ClientSim *cs, BYTE x, BYTE y) {
 
 BYTE clientSimPillGetScreenHealthAt(ClientSim *cs, BYTE x, BYTE y) {
   GameSim *gs = clientSimGetGameSim(cs);
-  return pillsGetScreenHealth(gs, &gs->pb, x, y);
+  return pillsGetScreenHealth(gs, &gs->pb, x, y, gs->viewPlayer);
 }
 
 bool clientSimBaseExistsAt(const ClientSim *cs, BYTE x, BYTE y) {
@@ -1650,7 +1650,8 @@ bool clientSimBaseExistsAt(const ClientSim *cs, BYTE x, BYTE y) {
 }
 
 baseAlliance clientSimBaseGetAllianceAt(ClientSim *cs, BYTE x, BYTE y) {
-  return basesGetAlliancePos(clientSimGetGameSim(cs), x, y);
+  GameSim *gs = clientSimGetGameSim(cs);
+  return basesGetAlliancePos(gs, x, y, gs->viewPlayer);
 }
 
 bool clientSimBaseAmOwnerAt(ClientSim *cs, BYTE player, BYTE x, BYTE y) {
