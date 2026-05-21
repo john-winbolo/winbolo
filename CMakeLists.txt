@@ -665,6 +665,7 @@ endif()
 
 target_sources(WinBoloIOS PRIVATE src/steam/steam_wrapper_stub.c)
 target_sources(WinBoloIOS PRIVATE src/common/wb_log.c)
+target_sources(WinBoloIOS PRIVATE src/common/md5.c)
 set_flat_output(WinBoloIOS "${CMAKE_BINARY_DIR}")
 
 # Hide dependency targets from the Xcode project — only WinBoloIOS should
@@ -1419,6 +1420,7 @@ endif()
 # Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
 target_sources(WinBoloDS PRIVATE src/common/sentry_integration.c)
 target_sources(WinBoloDS PRIVATE src/common/wb_log.c)
+target_sources(WinBoloDS PRIVATE src/common/md5.c)
 if(HAVE_SENTRY)
     target_compile_definitions(WinBoloDS PRIVATE HAVE_SENTRY=1)
     if(SENTRY_DSN)
@@ -2311,6 +2313,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_vote_toggle_modes.c
     tests/unit/test_lobby_set_team_clamps.c
     tests/unit/test_md5.c
+    src/common/md5.c
     tests/unit/test_ranked_lobby.c
     tests/unit/test_lobby_locks.c
     tests/unit/test_upload_cap.c

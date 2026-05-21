@@ -41,7 +41,7 @@
 #include "server_lifecycle.h"
 #include "control_event.h"
 #include "lobby_bot_pools.h"
-#include "md5.h"
+#include "../common/md5.h"
 #include "mapgen.h"
 #include "brain_list_internal.h"   /* BRAIN_LIST_PATH_LEN — ADD_BOT pathLen bound */
 #include "transport_control_codec.h"

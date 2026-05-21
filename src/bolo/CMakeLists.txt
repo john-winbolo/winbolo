@@ -52,7 +52,6 @@ add_library(bolo_static STATIC
     log.c
     mapgen.c
     mapgen_maze.c
-    md5.c
     messages.c
     mines.c
     minesexp.c

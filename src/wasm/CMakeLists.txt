@@ -209,6 +209,7 @@ set(WASM_SOURCES
     ${SRC_ROOT}/steam/steam_wrapper_stub.c
     ${SRC_ROOT}/common/sentry_integration.c
     ${SRC_ROOT}/common/wb_log.c
+    ${SRC_ROOT}/common/md5.c
 )
 
 ###

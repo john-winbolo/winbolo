@@ -184,6 +184,8 @@ set(ANDROID_SOURCES
     # Per-target bolo source (HAVE_STEAM-divergent).
     ${PROJ_ROOT}/src/bolo/transport_udp_client.c
 
+    ${PROJ_ROOT}/src/common/md5.c
+
     # SDL3 GUI (rendering, sound, input, etc.)
     ${PROJ_ROOT}/src/gui/ui_mode.c
     ${PROJ_ROOT}/src/gui/sdl3/clientmutex.c

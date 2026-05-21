@@ -38,7 +38,7 @@
 #include "wbn_key_codec.h"
 #include "bolo_map_validate.h"
 #include "wire_limits.h"
-#include "md5.h"
+#include "../common/md5.h"
 #include "../gui/lang.h"
 #include "../gui/winbolo.h"
 #include "../gui/dialogAlliance.h"
