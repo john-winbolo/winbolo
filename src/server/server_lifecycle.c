@@ -143,6 +143,8 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
     sim->uploadPolicy = cfg->uploadPolicy;
   }
 
+  sim->sim.viewPlayer = cfg->viewPlayer;
+
   serverSimSetEmptyResetEnabled(sim, cfg->emptyResetEnabled);
   serverSimSetHasPassword(sim, cfg->hasPassword);
   if (cfg->botBrainPath != NULL) {

@@ -1288,7 +1288,6 @@ bool gameFrontSetDlgState(openingStates newState) {
               spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
               returnValue = FALSE;
             } else {
-            serverSimSetViewPlayer(spServerSim, 0);
             spServerSimActive = TRUE;
             /* Phase 2 leaves the legacy spHumanSubHandle field unset —
              * the auto-subscriber registered by connect lives inside
@@ -1328,7 +1327,7 @@ bool gameFrontSetDlgState(openingStates newState) {
               }
             }
             /* Add bot brains for local game if AI is enabled.
-             * Serialise bot-pool init, serverSimCreateBot / serverSimSetTeam
+             * Serialise bot-pool init, bot creation, team assignment,
              * and the reapply-alliances pass against the host timer thread,
              * which is already calling serverInstanceTick on spServerSim. */
             threadsWaitForMutex();
@@ -1351,30 +1350,19 @@ bool gameFrontSetDlgState(openingStates newState) {
                   /* Apply team number */
                   uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
                   if (team > 0) {
-                    serverSimSetTeam(spServerSim, slot, team);
-                    {
-                      ControlEvent slotEvt;
-                      memset(&slotEvt, 0, sizeof(slotEvt));
-                      serverSimFillLobbySlotEvent(spServerSim, slot, &slotEvt);
-                      serverSimPublishControl(spServerSim, &slotEvt);
-                    }
+                    clientSimNetSendTeamSet(humanSim, slot, team);
                   }
                 }
                 /* Apply human player team number */
                 if (gameFrontBotSetupData.playerTeamNumber > 0) {
-                  serverSimSetTeam(spServerSim, 0, gameFrontBotSetupData.playerTeamNumber);
-                  {
-                    ControlEvent slotEvt;
-                    memset(&slotEvt, 0, sizeof(slotEvt));
-                    serverSimFillLobbySlotEvent(spServerSim, 0, &slotEvt);
-                    serverSimPublishControl(spServerSim, &slotEvt);
-                  }
+                  clientSimNetSendTeamSet(humanSim, 0,
+                                          gameFrontBotSetupData.playerTeamNumber);
                 }
                 /* Apply team alliances — players with same non-zero team become
-                 * allies. serverSimStartGame already did this pass when it ran
-                 * at the top of this block, but at that point neither the
-                 * human player nor the bots had been added yet, so it found
-                 * no pairs. Re-run it now that the lobby is populated. */
+                 * allies. The alliance pass that runs as part of round
+                 * start at the top of this block saw an empty lobby (the
+                 * human and bots hadn't been added yet) and found no
+                 * pairs. Re-run it now that the lobby is populated. */
                 serverSimReapplyTeamAlliances(spServerSim);
               }
             }

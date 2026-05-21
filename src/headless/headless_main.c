@@ -648,7 +648,7 @@ static bool cmdDispatchServer(const CmdLine *cmd) {
                 cmd->lineNumber, (unsigned)selfSlot);
         exit(2);
       }
-      clientSimNetSendTeamSet(humanSim, cmd->team);
+      clientSimNetSendTeamSet(humanSim, cmd->slot, cmd->team);
       return true;
     case CMD_OP_SET_READY:
       if (cmd->slot != selfSlot) {

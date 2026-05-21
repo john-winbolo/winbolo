@@ -25,6 +25,7 @@
 #include "everard_map.h"
 #include "frontend.h"
 #include "server_sim.h"
+#include "../server/server_lifecycle.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../gui/gamefront.h"
@@ -400,10 +401,22 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       }
     }
 
-    /* WASM single-player: no lobby, run immediately */
-    serverSimSetLobbyEnabled(wasmServerSim, false);
-    serverSimStartGame(wasmServerSim);
-    serverSimSetViewPlayer(wasmServerSim, 0);
+    /* WASM single-player: no lobby, run immediately. acceptRemoteClients
+     * is zero-init false so the UDP / WBN / tracker bring-up is
+     * skipped; skipLobby drives the StartGameInPlace transition;
+     * viewPlayer 0 is the SP convention. */
+    {
+      ServerInstanceConfig cfg;
+      memset(&cfg, 0, sizeof(cfg));
+      cfg.skipLobby = true;
+      if (!serverInstanceStartup(wasmServerSim, &cfg)) {
+        printf("[WASM] serverInstanceStartup failed\n");
+        free(wasmServerSim);
+        wasmServerSim = NULL;
+        clientSimDestroy(humanSim);
+        return FALSE;
+      }
+    }
 
     /* Run the 12-step join+install in one call. */
     if (!clientSimConnectLocal(humanSim, wasmServerSim,

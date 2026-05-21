@@ -27,6 +27,12 @@
 #include "global.h"
 #include "everard_map.h"
 #include "control_event.h"
+#include "server_sim_lifecycle.h"  /* viewPlayer / setTeam — bg_game holds
+                                    * a per-file T2 grant for the
+                                    * rendering camera-perspective
+                                    * override around bgGameRender and
+                                    * the bot bot-team assignment in
+                                    * setup (see CMakeLists.txt). */
 #include "../../server/server_lifecycle.h"
 
 #include <stdio.h>
@@ -117,9 +123,9 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
     }
     /* bg_game is a local headless sim — no lobby, run immediately.
      * acceptRemoteClients=false short-circuits UDP/WBN/tracker/NAT
-     * inside serverInstanceStartup; cfg.skipLobby flips lobbyEnabled
-     * off and runs serverSimStartGame so the subsequent
-     * serverSimCreateBot calls hit the running-state branch. */
+     * inside serverInstanceStartup; cfg.skipLobby transitions the
+     * sim to running state so the subsequent serverSimCreateBot
+     * calls hit the running-state branch. */
     {
         ServerInstanceConfig cfg;
         memset(&cfg, 0, sizeof(cfg));

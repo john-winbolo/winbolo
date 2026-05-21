@@ -100,6 +100,11 @@ typedef struct {
                                        * autoLockOnGameStart inside startup. */
   bool           openHost;            /* serverSimSetOpenHost */
   uint16_t       serverLocks;         /* serverSimSetServerLocks bitmask */
+  BYTE           viewPlayer;          /* sim->sim.viewPlayer at startup —
+                                       * SP/host/headless designate which
+                                       * slot the in-process renderer
+                                       * watches. Zero-init = slot 0, the
+                                       * SP convention. */
 } ServerInstanceConfig;
 
 /* Bind UDP transport, optionally register with WBN, store tracker config

@@ -103,7 +103,14 @@ void clientSimNetSendAllianceRequest(ClientSim *cs, BYTE toPlayer);
 void clientSimNetSendAllianceAccept(ClientSim *cs, BYTE toPlayer);
 void clientSimNetSendAllianceLeave(ClientSim *cs);
 void clientSimNetSendLockToggle(ClientSim *cs, bool allow);
-void clientSimNetSendTeamSet(ClientSim *cs, BYTE teamNumber);
+/* Move `slot` to team `teamNumber`. Over UDP the slot byte is packed
+ * into the wire but the server uses the sender's clientIdx for the
+ * apply (so a non-host client can only change its own team — the slot
+ * arg is informational). On the SP-host local transport, the apply
+ * uses the supplied slot directly, which is how the lobby UI moves
+ * bots / drags one human into another team's column. Self-team
+ * callers pass clientSimGetMyPlayerNum(cs). */
+void clientSimNetSendTeamSet(ClientSim *cs, BYTE slot, BYTE teamNumber);
 void clientSimNetSendReady(ClientSim *cs, bool ready);
 void clientSimNetSendAddBot(ClientSim *cs);
 /* Add-bot with explicit team, brain, and pool-picked name. The

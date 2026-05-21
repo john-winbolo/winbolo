@@ -45,6 +45,7 @@
 #include "../winbolonet/winbolonet_core.h"
 #include "../winbolonet/winbolonet_server.h"
 #include "server_sim.h"
+#include "server_sim_lifecycle.h"
 #include "mapgen.h"
 #include "log.h"
 #include "transport_udp.h"

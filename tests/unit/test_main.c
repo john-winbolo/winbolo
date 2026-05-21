@@ -16,6 +16,7 @@
 
 #include "everard_map.h"
 #include "server_sim.h"
+#include "server_sim_lifecycle.h"
 
 typedef struct {
     const char *name;

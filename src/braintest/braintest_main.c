@@ -76,6 +76,7 @@
 #include "brain_pathfinder.h"
 #include "gui_message.h"
 #include "server_sim.h"
+#include "server_sim_lifecycle.h"
 #include "game_sim.h"
 #include "../server/server_lifecycle.h"
 #include "../server/threads.h"

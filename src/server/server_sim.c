@@ -5635,6 +5635,106 @@ void serverSimPublishLobbySettings(ServerSim *sim) {
     balanceDebugLog("[RANKED SERVER] publishLobbySettings: publishControl returned");
 }
 
+/* Shared apply path for the LST_* setting cluster carried in
+ * PACKET_LOBBY_SET_SETTING and its SP-host local-transport
+ * equivalent. The caller (UDP packet handler or client_net.c
+ * wrapper) is responsible for upstream lock-bit / authority gates
+ * and for the post-apply publish + auto-unready pass; this helper
+ * just mutates sim state for the one setting.
+ *
+ * Returns true if the setting was applied, false if the payload
+ * was malformed, out of range, or rejected by a cross-setting
+ * invariant (e.g. ranked forbids gameOpen / non-aiNone / autoLock
+ * off). */
+bool serverSimApplyLobbySetting(ServerSim *sim,
+                                uint8_t lst,
+                                const uint8_t *value, size_t len) {
+    if (sim == NULL || value == NULL) return false;
+    switch (lst) {
+        case LST_GAME_TYPE:
+            if (len != 1 || value[0] < 1 || value[0] > 3) return false;
+            if (serverSimGetRanked(sim) &&
+                (gameType)value[0] == gameOpen) return false;
+            serverSimSetGameType(sim, (gameType)value[0]);
+            return true;
+        case LST_HIDDEN_MINES:
+            if (len != 1) return false;
+            serverSimSetHiddenMines(sim, value[0] != 0);
+            return true;
+        case LST_AI_POLICY:
+            if (len != 1 || value[0] > 3) return false;
+            if (serverSimGetRanked(sim) &&
+                (aiType)value[0] != aiNone) return false;
+            serverSimSetAiPolicy(sim, value[0]);
+            serverSimSetBotAiType(sim, (aiType)value[0]);
+            if ((aiType)value[0] == aiNone) {
+                for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
+                    if (botManagerIsBot(bi)) {
+                        botManagerRemoveBot(sim, bi);
+                        serverSimPublishLobbySlot(sim, bi);
+                    }
+                }
+            }
+            return true;
+        case LST_TIME_LIMIT: {
+            if (len != 1) return false;
+            bool tl = value[0] != 0;
+            serverSimSetTimeLimit(sim, tl);
+            if (tl) {
+                uint16_t mins = serverSimGetTimeMinutes(sim) > 0
+                    ? serverSimGetTimeMinutes(sim) : 30;
+                serverSimSetGameLength(sim,
+                    (int32_t)mins * 60 * GAME_NUMGAMETICKS_SEC);
+            } else {
+                serverSimSetGameLength(sim, UNLIMITED_GAME_TIME);
+            }
+            return true;
+        }
+        case LST_TIME_MINUTES: {
+            if (len != 2) return false;
+            uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
+            if (!lobbyTimeMinutesIsValid(mins)) return false;
+            serverSimSetTimeMinutes(sim, mins);
+            if (serverSimGetTimeLimit(sim)) {
+                serverSimSetGameLength(sim,
+                    (int32_t)mins * 60 * GAME_NUMGAMETICKS_SEC);
+            }
+            return true;
+        }
+        case LST_AUTO_LOCK_ON_GAME: {
+            if (len != 1) return false;
+            bool v = value[0] != 0;
+            if (serverSimGetRanked(sim) && !v) return false;
+            serverSimSetAutoLockOnGameStart(sim, v);
+            return true;
+        }
+        case LST_RANKED: {
+            if (len != 1) return false;
+            bool r = value[0] != 0;
+            serverSimSetRanked(sim, r);
+            if (r) {
+                serverSimSetAiPolicy(sim, (uint8_t)aiNone);
+                serverSimSetBotAiType(sim, aiNone);
+                for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
+                    if (botManagerIsBot(bi)) {
+                        botManagerRemoveBot(sim, bi);
+                        serverSimPublishLobbySlot(sim, bi);
+                    }
+                }
+                if (serverSimGetGameType(sim) == gameOpen) {
+                    serverSimSetGameType(sim, gameTournament);
+                }
+                if (!serverSimGetAutoLockOnGameStart(sim)) {
+                    serverSimSetAutoLockOnGameStart(sim, true);
+                }
+            }
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
 /* Auto-unready: any meaningful lobby change clears every human's
  * ready flag and aborts an in-flight countdown. The per-slot
  * CTRL_LOBBY_SLOT publishes (plus the CTRL_GAME_PHASE publish if the

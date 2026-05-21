@@ -31,7 +31,6 @@
 #include "alliance_enums.h"    /* baseAlliance, pillAlliance */
 #include "screentank.h"        /* tankAlliance */
 #include "brain_list.h"        /* BrainList — returned by serverSimGetBrainList */
-#include "upload_policy.h"     /* UploadPolicy — sim->uploadPolicy field */
 
 /* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
@@ -207,14 +206,10 @@ ServerSim *serverSimCreateCompressed(BYTE *buff, int buffLen, const char *mapNam
  *********************************************************/
 bool serverSimReloadMap(ServerSim *sim, const char *mapFileName);
 
-/* In-memory analogue of serverSimReloadMap: loads the supplied
- * compressed map blob directly instead of reading from a file. The
- * caller-supplied mapName is used as the display name (no basename
- * or suffix stripping). Same return contract, same side effects as
- * serverSimReloadMap. */
-bool serverSimReloadCompressedInMemory(ServerSim *sim,
-                                       const uint8_t *bytes, int len,
-                                       const char *mapName);
+/* serverSimReloadCompressedInMemory: moved to
+ * internal/server_sim_lifecycle.h — applied by the UDP
+ * MAP_UPLOAD_DONE handler and the SP-host local-transport branch
+ * of clientSimNetSendLobbyMapUploadBytes. */
 
 /* Procedural-map preview variant. Regenerates the map from the
  * given MapGenConfig, stashes the prior committed map for Cancel
@@ -472,28 +467,13 @@ bool   serverSimGetBotInfo(ServerSim *sim, BYTE playerNum, BotInfo *out);
 void   serverSimGetBotPoolStats(ServerSim *sim, BotPoolStats *out);
 bool   serverSimToggleAllBrainDebugMode(ServerSim *sim);
 
-/*********************************************************
- *NAME:          serverSimSetTeam
- *PURPOSE:
- *  Sets a player's lobby team. teamNumber >= MAX_TANKS is
- *  coerced to 1 so the value can be used as an index into
- *  teams[MAX_TANKS] without overrun. No-op if playerNum >=
- *  MAX_TANKS.
- *
- *ARGUMENTS:
- *  sim        - Pointer to the ServerSim
- *  playerNum  - Player slot (0..MAX_TANKS-1)
- *  teamNumber - 0 = no team; 1..MAX_TANKS-1 = team number
- *********************************************************/
-void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber);
-
-/*********************************************************
- *NAME:          serverSimSetBotAiType
- *PURPOSE:
- *  Sets the AI advantage level cached for lobby bot
- *  creation.
- *********************************************************/
-void serverSimSetBotAiType(ServerSim *sim, aiType ai);
+/* serverSimSetTeam: moved to internal/server_sim_lifecycle.h —
+ * applied by UDP PACKET_LOBBY_TEAM_SET / PACKET_LOBBY_ADD_BOT
+ * handlers and the SP-host local-transport branch of
+ * clientSimNetSendTeamSet. */
+/* serverSimSetBotAiType: moved to internal/server_sim_lifecycle.h
+ * — applied by serverInstanceStartup from cfg.botAiType and by
+ * the shared serverSimApplyLobbySetting helper. */
 
 /*********************************************************
  *NAME:          serverSimSetEmptyResetEnabled
@@ -503,15 +483,9 @@ void serverSimSetBotAiType(ServerSim *sim, aiType ai);
  *********************************************************/
 void serverSimSetEmptyResetEnabled(ServerSim *sim, bool enabled);
 
-/*********************************************************
- *NAME:          serverSimSetLobbyEnabled
- *PURPOSE:
- *  Marks whether the lobby phase is active. false = no
- *  lobby (run immediately on the local-headless setup
- *  paths). Today this is also set false by some round-
- *  start logic; do NOT alter that.
- *********************************************************/
-void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled);
+/* serverSimSetLobbyEnabled: moved to internal/server_sim_lifecycle.h
+ * — applied by serverInstanceStartup (skipLobby / lobbyEnabled
+ * branches). */
 
 /*********************************************************
  *NAME:          serverSimEnableRandomMap
@@ -872,14 +846,9 @@ void serverSimAbortCountdown(ServerSim *sim);
  *********************************************************/
 void serverSimClearBalanceProposal(ServerSim *sim);
 
-/*********************************************************
- *NAME:          serverSimStartGame
- *PURPOSE:
- *  Called when countdown reaches zero. Resets the game
- *  world, applies team alliances, creates tanks for all
- *  connected players, and transitions to running state.
- *********************************************************/
-void serverSimStartGame(ServerSim *sim);
+/* serverSimStartGame: moved to internal/server_sim_lifecycle.h —
+ * applied by serverInstanceStartup (skipLobby branch) and by the
+ * UDP server's countdown-finished handler. */
 
 /*********************************************************
  *NAME:          serverSimReapplyTeamAlliances
@@ -1308,7 +1277,9 @@ bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
 /* autoLockOnGameStart — when true, sets allowNewPlayers=false the
  * moment the lobby transitions out of serverStateLobby. */
 bool        serverSimGetAutoLockOnGameStart(const ServerSim *sim);
-void        serverSimSetAutoLockOnGameStart(ServerSim *sim, bool v);
+/* serverSimSetAutoLockOnGameStart: moved to
+ * internal/server_sim_lifecycle.h — applied by serverInstanceStartup
+ * and by the shared serverSimApplyLobbySetting helper. */
 
 /* Ranked-game flag. Setting it true also flips ai=none. The server's
  * LST_GAME_TYPE handler refuses to switch to gameOpen while ranked,
@@ -1328,7 +1299,9 @@ bool        serverSimGetRanked(const ServerSim *sim);
  * unit tests to lock the shape rules. */
 bool        serverSimRankedShapeReady(const ServerSim *sim);
 
-void        serverSimSetRanked(ServerSim *sim, bool v);
+/* serverSimSetRanked: moved to internal/server_sim_lifecycle.h —
+ * applied by serverInstanceStartup and by the shared
+ * serverSimApplyLobbySetting helper. */
 
 /* openHost — when true, any connected player has host-level edit
  * authority on lobby state (see lobbyClientMayEdit). */
@@ -1407,7 +1380,10 @@ void serverSimPublishLobbySettings(ServerSim *sim);
 
 /* viewPlayer — which player perspective the sim renders from. */
 BYTE serverSimGetViewPlayer(const ServerSim *sim);
-void serverSimSetViewPlayer(ServerSim *sim, BYTE playerNum);
+/* serverSimSetViewPlayer: moved to internal/server_sim_lifecycle.h
+ * — applied by serverInstanceStartup from cfg.viewPlayer and by
+ * the bg_game rendering camera-perspective override (under a
+ * per-file T2 grant). */
 
 /* Tutorial-mode flag mirrored on the embedded GameSim. */
 bool serverSimIsTutorial(const ServerSim *sim);

@@ -28,6 +28,7 @@
 #include "../gui/lang.h"
 #include "../common/wb_log.h"
 
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -399,9 +400,29 @@ void clientSimNetSendLockToggle(ClientSim *cs, bool allow) {
   transportUdpClientSendLockToggle(&cs->transport, allow);
 }
 
-void clientSimNetSendTeamSet(ClientSim *cs, BYTE teamNumber) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendTeamSet(&cs->transport, teamNumber);
+void clientSimNetSendTeamSet(ClientSim *cs, BYTE slot, BYTE teamNumber) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (cs->isUdpTransport) {
+    /* Wire side: server uses clientIdx for the apply regardless of
+     * the slot byte we send; non-self moves are SP-host-only. */
+    transportUdpClientSendTeamSet(&cs->transport, teamNumber);
+    return;
+  }
+  /* Local transport: mirror PACKET_LOBBY_TEAM_SET's server-side
+   * handler. Slot comes from the caller (SP-host can move any
+   * lobby slot, including bot slots); team must fit MAX_TANKS. */
+  if (cs->boundServerSim == NULL) return;
+  threadsWaitForMutex();
+  do {
+    ServerSim *sim = cs->boundServerSim;
+    if (!serverSimIsLobbyEnabled(sim) ||
+        serverSimGetState(sim) != serverStateLobby) break;
+    if (slot >= MAX_TANKS || teamNumber >= MAX_TANKS) break;
+    serverSimSetTeam(sim, slot, teamNumber);
+    serverSimPublishLobbySlot(sim, slot);
+    lobbyAutoUnreadyOnChange(sim);
+  } while (0);
+  threadsReleaseMutex();
 }
 
 void clientSimNetSendReady(ClientSim *cs, bool ready) {
@@ -563,9 +584,30 @@ bool clientSimNetSendLobbyMapUpload(ClientSim *cs, const char *localFilePath) {
 bool clientSimNetSendLobbyMapUploadBytes(ClientSim *cs,
                                          const uint8_t *buf, size_t len,
                                          const char *mapName) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return false;
-  return transportUdpClientStartLobbyMapUploadFromBytes(&cs->transport,
-                                                        buf, len, mapName);
+  if (cs == NULL || !cs->hasTransport) return false;
+  if (cs->isUdpTransport) {
+    return transportUdpClientStartLobbyMapUploadFromBytes(&cs->transport,
+                                                          buf, len, mapName);
+  }
+  /* Local transport: SP-host has no chunked upload — the bytes are
+   * already in process, so install them straight onto the sim as a
+   * lobby preview. Mirrors the wire-side UPLOAD_DONE tail in
+   * transport_udp_server.c (reload + publish settings; the multi-
+   * client MAP_CHANGE broadcast is wire-only). */
+  if (cs->boundServerSim == NULL) return false;
+  bool ok = false;
+  threadsWaitForMutex();
+  do {
+    ServerSim *sim = cs->boundServerSim;
+    if (!serverSimIsLobbyEnabled(sim) ||
+        serverSimGetState(sim) != serverStateLobby) break;
+    if (buf == NULL || len == 0 || len > (size_t)INT_MAX) break;
+    if (!serverSimReloadCompressedInMemory(sim, buf, (int)len, mapName)) break;
+    serverSimPublishLobbySettings(sim);
+    ok = true;
+  } while (0);
+  threadsReleaseMutex();
+  return ok;
 }
 
 uint8_t clientSimGetLobbyMapUploadProgressPercent(const ClientSim *cs) {
@@ -676,8 +718,26 @@ void clientSimNetSendLobbyTeamClear(ClientSim *cs, BYTE teamId) {
 
 void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
                                   const uint8_t *value, uint8_t valueLen) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbySetting(&cs->transport, settingType, value, valueLen);
+  if (cs == NULL || !cs->hasTransport) return;
+  if (cs->isUdpTransport) {
+    transportUdpClientSendLobbySetting(&cs->transport, settingType, value, valueLen);
+    return;
+  }
+  /* Local transport: SP-host is its own operator, so the lock-bit /
+   * authority gates the UDP handler runs aren't applicable. Apply
+   * the setting via the shared helper and re-publish + auto-unready
+   * to match the wire path's tail. */
+  if (cs->boundServerSim == NULL) return;
+  threadsWaitForMutex();
+  do {
+    ServerSim *sim = cs->boundServerSim;
+    if (!serverSimIsLobbyEnabled(sim) ||
+        serverSimGetState(sim) != serverStateLobby) break;
+    if (!serverSimApplyLobbySetting(sim, settingType, value, valueLen)) break;
+    serverSimPublishLobbySettings(sim);
+    lobbyAutoUnreadyOnChange(sim);
+  } while (0);
+  threadsReleaseMutex();
 }
 
 void clientSimNetSendLobbySetPassword(ClientSim *cs, const char *pw) {
