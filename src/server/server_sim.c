@@ -61,6 +61,7 @@
 #include "transport_udp.h"
 #include "playersrejoin.h"
 #include "bot_manager.h"
+#include "bot_worker_pool.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../winbolonet/winbolonet_server.h"
 #include "../winbolonet/http.h"
@@ -1829,6 +1830,10 @@ void serverSimSetBotAiType(ServerSim *sim, aiType ai) {
 
 bool serverSimBotPoolInit(int threads) {
     return botManagerInit(threads);
+}
+
+void serverSimBotPoolDestroy(void) {
+    botWorkerPoolDestroy();
 }
 
 void serverSimRequestBotThreads(ServerSim *sim, int total_runners) {

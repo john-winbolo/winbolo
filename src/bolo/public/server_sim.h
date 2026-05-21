@@ -444,6 +444,11 @@ typedef struct {
  * logical CPU cores. */
 bool serverSimBotPoolInit(int threads);
 
+/* Tear down the process-wide worker pool. Call once at
+ * shutdown, after every ServerSim that may dispatch to the
+ * pool has been destroyed. Idempotent. */
+void serverSimBotPoolDestroy(void);
+
 /* Request a live resize of the worker pool. Stashes the
  * value as pending; the next serverSimBotTick applies it. */
 void serverSimRequestBotThreads(ServerSim *sim, int total_runners);

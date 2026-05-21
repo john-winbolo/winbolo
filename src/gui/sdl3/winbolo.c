@@ -255,6 +255,11 @@ int main(int argc, char *argv[]) {
   wb_log_init("WinBolo", "WinBolo", "winbolo.log");
   atexit(wb_log_shutdown);
 
+  if (!serverSimBotPoolInit(0)) {
+    fprintf(stderr, "serverSimBotPoolInit failed\n");
+    return 1;
+  }
+
   {
     /* Resolve WinBolo.ini to an absolute path under SDL_GetPrefPath.
      * Win32 WritePrivateProfileString with a relative filename writes
@@ -575,6 +580,7 @@ int main(int argc, char *argv[]) {
   sdl3ImguiCleanup();
   sdl3DrawCleanup();
   steam_shutdown();
+  serverSimBotPoolDestroy();
   SDL_Quit();
   threadsDestroy();
   sentryClose();

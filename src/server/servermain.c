@@ -50,6 +50,7 @@
 #include "log.h"
 #include "transport_udp.h"
 #include "bot_manager.h"
+#include "bot_worker_pool.h"
 #include "server_lifecycle.h"
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
@@ -1576,6 +1577,7 @@ int main(int argc, char **argv) {
   geoLookupDestroy();
   serverSimMapDirDestroy(serverSim);
   serverSimDestroy(serverSim);
+  botWorkerPoolDestroy();
 #ifdef _WIN32
   WSACleanup();
 #endif

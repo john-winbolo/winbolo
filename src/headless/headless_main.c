@@ -2094,6 +2094,11 @@ int main(int argc, char *argv[]) {
   wb_log_init("WinBolo", "WinBoloHeadless", "winbolo-headless.log");
   atexit(wb_log_shutdown);
 
+  if (!serverSimBotPoolInit(0)) {
+    fprintf(stderr, "serverSimBotPoolInit failed\n");
+    return 1;
+  }
+
   winbolonetCoreSetPreferencesPath("WinBolo.ini");
 
   if (!clientMutexCreate()) {
@@ -2117,6 +2122,7 @@ int main(int argc, char *argv[]) {
 
   clientMutexDestroy();
   langCleanup();
+  serverSimBotPoolDestroy();
   SDL_Quit();
 
   return result;

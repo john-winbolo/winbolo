@@ -76,6 +76,7 @@
 #include "gui_message.h"
 #include "server_sim.h"
 #include "server_sim_lifecycle.h"
+#include "bot_worker_pool.h"
 #include "game_sim.h"
 #include "../server/server_lifecycle.h"
 #include "../server/threads.h"
@@ -5251,6 +5252,7 @@ int main(int argc, char *argv[]) {
     langCleanup();
     clientMutexDestroy();
     threadsDestroy();
+    botWorkerPoolDestroy();
     SDL_Quit();
 
     return 0;
