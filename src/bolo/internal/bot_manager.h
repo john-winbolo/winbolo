@@ -465,7 +465,7 @@ void botManagerRecordSerialMs(struct ServerSim *sim, double ms);
  *  Returns whether any bot slot is currently active. Used
  *  by the server `info` command to decide whether to print
  *  the bot pool summary block. Producer-thread only — caller
- *  must hold the server mutex; reads bots[] without
+ *  must hold the server mutex; reads sim->botMgr.bots[] without
  *  synchronisation.
  *********************************************************/
 bool botManagerHasAnyBot(const struct ServerSim *sim);
@@ -479,8 +479,8 @@ bool botManagerHasAnyBot(const struct ServerSim *sim);
  *
  *  Producer-thread only — caller must hold the server mutex
  *  so no brain tick is in flight; the accessor reads the
- *  bot's lastThinkMs / overrunCount and walks bots[] without
- *  synchronisation.
+ *  bot's lastThinkMs / overrunCount and walks sim->botMgr.bots[]
+ *  without synchronisation.
  *
  *ARGUMENTS:
  *  playerNum - Player slot to query
@@ -498,7 +498,7 @@ bool botManagerGetBotInfo(const struct ServerSim *sim, BYTE playerNum,
  *  wall-clock, and the sum of per-bot overrun counters.
  *
  *  Producer-thread only — caller must hold the server mutex;
- *  reads file-static EWMAs and walks bots[] without
+ *  reads sim->botMgr EWMAs and walks sim->botMgr.bots[] without
  *  synchronisation.
  *
  *ARGUMENTS:

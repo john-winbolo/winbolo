@@ -1378,44 +1378,40 @@ bool gameFrontSetDlgState(openingStates newState) {
               clientSimNetSetupTankGo(humanSim);
             }
             /* Add bot brains for local game if AI is enabled.
-             * Serialise bot-pool init, bot creation, team assignment,
-             * and the reapply-alliances pass against the host timer thread,
+             * Serialise bot creation, team assignment, and the
+             * reapply-alliances pass against the host timer thread,
              * which is already calling serverInstanceTick on spServerSim. */
             threadsWaitForMutex();
-            if (!serverSimBotPoolInit(0)) {
-              fprintf(stderr, "[gameFront] serverSimBotPoolInit failed; bots disabled for this session\n");
-            } else {
-              /* botBrainPath / botAiType were already pushed into the
-               * sim via cfg above; here we only need brainPath as a
-               * per-bot default for the serverSimCreateBot loop. */
-              bool haveBrain = (spBrainPath[0] != '\0');
-              if (compTanks != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
-                for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS; bi++) {
-                  BYTE slot = (BYTE)(bi + 1);
-                  char botName[32];
-                  snprintf(botName, sizeof(botName), "Bot %d", slot);
-                  /* Use per-bot brain path if set, otherwise fall back to default */
-                  const char *botBrain = gameFrontBotSetupData.bots[bi].brainPath;
-                  if (botBrain[0] == '\0') botBrain = spBrainPath;
-                  serverSimCreateBot(spServerSim, slot, botBrain, botName, compTanks, gametype, hiddenMines);
-                  /* Apply team number */
-                  uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
-                  if (team > 0) {
-                    clientSimNetSendTeamSet(humanSim, slot, team);
-                  }
+            /* botBrainPath / botAiType were already pushed into the
+             * sim via cfg above; here we only need brainPath as a
+             * per-bot default for the serverSimCreateBot loop. */
+            bool haveBrain = (spBrainPath[0] != '\0');
+            if (compTanks != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
+              for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS; bi++) {
+                BYTE slot = (BYTE)(bi + 1);
+                char botName[32];
+                snprintf(botName, sizeof(botName), "Bot %d", slot);
+                /* Use per-bot brain path if set, otherwise fall back to default */
+                const char *botBrain = gameFrontBotSetupData.bots[bi].brainPath;
+                if (botBrain[0] == '\0') botBrain = spBrainPath;
+                serverSimCreateBot(spServerSim, slot, botBrain, botName, compTanks, gametype, hiddenMines);
+                /* Apply team number */
+                uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
+                if (team > 0) {
+                  clientSimNetSendTeamSet(humanSim, slot, team);
                 }
-                /* Apply human player team number */
-                if (gameFrontBotSetupData.playerTeamNumber > 0) {
-                  clientSimNetSendTeamSet(humanSim, 0,
-                                          gameFrontBotSetupData.playerTeamNumber);
-                }
-                /* Apply team alliances — players with same non-zero team become
-                 * allies. The alliance pass that runs as part of round
-                 * start at the top of this block saw an empty lobby (the
-                 * human and bots hadn't been added yet) and found no
-                 * pairs. Re-run it now that the lobby is populated. */
-                serverSimReapplyTeamAlliances(spServerSim);
               }
+              /* Apply human player team number */
+              if (gameFrontBotSetupData.playerTeamNumber > 0) {
+                clientSimNetSendTeamSet(humanSim, 0,
+                                        gameFrontBotSetupData.playerTeamNumber);
+              }
+              /* Apply team alliances — players with same non-zero team become
+               * allies. The alliance pass that runs as part of round
+               * start at the top of this block saw an empty lobby (the
+               * human and bots hadn't been added yet) and found no
+               * pairs. Re-run it now that the lobby is populated. */
+              serverSimReapplyTeamAlliances(spServerSim);
             }
             threadsReleaseMutex();
             gameFrontUpdateSteamPresence(humanSim);
@@ -1833,10 +1829,6 @@ bool gameFrontSetupServer(void) {
   } else {
     findBrainPath(brainPath, sizeof(brainPath));
   }
-  if (!serverSimBotPoolInit(0)) {
-    fprintf(stderr, "[gameFront] serverSimBotPoolInit failed; bots disabled for this session\n");
-  }
-
   memset(&cfg, 0, sizeof(cfg));
   cfg.udpPort             = gameFrontMyUdp;
   cfg.bindAddr            = "";

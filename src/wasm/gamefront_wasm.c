@@ -458,7 +458,6 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   brainsHandlerShutdown();
   if (wasmTransportActive) {
     if (wasmServerSim != NULL) {
-      serverSimDestroyBots(wasmServerSim);
       serverSimUnregisterSubscriber(wasmServerSim, wasmControlSub);
       wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
       serverSimDestroy(wasmServerSim);
