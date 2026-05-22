@@ -17,8 +17,8 @@
  *Filename:      client_sim_control.c
  *Purpose:
  *  Dispatcher implementation. Mutates ClientSim game state
- *  only — UI, achievement, transport-internal, and wire-
- *  protocol housekeeping live in their respective callers.
+ *  only — UI, transport-internal, and wire-protocol
+ *  housekeeping live in their respective callers.
  *
  *  All wire decoders in transport_udp_client.c build a
  *  ControlEvent and route through clientSimApplyControl.
@@ -38,6 +38,7 @@
 #include "netpacks.h"
 #include "players.h"
 #include "server_sim.h"  /* serverSimGetCompressedMap / serverSimGetMapName */
+#include "../steam/steam_wrapper.h"
 #include "global.h"      /* balanceDebugLog */
 #include "../common/wb_log.h"
 
@@ -367,13 +368,71 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         break;
 
-    case CTRL_GAME_OVER:
+    case CTRL_GAME_OVER: {
+        /* Win-detection + Steam achievements. Fires once per game-over
+         * event on every audience — wire clients, SP host's in-process
+         * ClientSim, bots — because the apply funnel is the single
+         * convergence point for all three. Reads cs->sim.{bs,plyrs,game}
+         * and the per-game counters set by client_snapshot during play. */
+        BYTE numBases = basesGetNumBases(&cs->sim.bs);
+        BYTE first    = NEUTRAL;
+        bool allOwned = true;
+        bool localWon = false;
+        BYTE b;
+
+        for (b = 1; b <= numBases && allOwned; b++) {
+            BYTE owner = basesGetBaseOwner(&cs->sim.bs, b);
+            BYTE shellsAmt, minesAmt, armourAmt;
+            basesGetStats(&cs->sim.bs, b, &shellsAmt, &minesAmt, &armourAmt);
+            if (owner == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
+                allOwned = false;
+            } else if (b == 1) {
+                first = owner;
+            } else {
+                allOwned = playersIsAllie(&cs->sim.plyrs, owner, first);
+            }
+        }
+
+        if (allOwned && numBases > 0) {
+            localWon = (cs->myPlayerNum == first) ||
+                       playersIsAllie(&cs->sim.plyrs, cs->myPlayerNum, first);
+
+            gameType gt = gameTypeGet(&cs->sim.game);
+            BYTE numPlayers = playersGetNumPlayers(&cs->sim.plyrs);
+
+            if (gt == gameTournament || gt == gameStrictTournament) {
+                if (localWon) {
+                    steam_increment_stat("STAT_TOURN_WINS", 1);
+                    if (numPlayers == 2) {
+                        steam_set_achievement("ACH_TOURN_WIN_1V1");
+                    }
+                } else {
+                    steam_increment_stat("STAT_TOURN_LOSSES", 1);
+                    if (numPlayers == 2) {
+                        steam_set_achievement("ACH_TOURN_LOSE_1V1");
+                    }
+                }
+            }
+
+            if (localWon) {
+                if (cs->myLgmLossesThisGame == 0) {
+                    steam_set_achievement("ACH_WIN_NO_LGM_LOSS");
+                }
+                if (cs->myDeathsThisGame == 0 && numPlayers == 2) {
+                    steam_set_achievement("ACH_1V1_FLAWLESS");
+                }
+            }
+
+            steam_store_stats();
+        }
+
         if (cs->inLobby) {
             cs->netStat = netLobby;
             cs->countdownSeconds = 0;
             cs->lobbyChatHistory[0] = '\0';
         }
         break;
+    }
 
     case CTRL_SERVER_TEXT: {
         const char *text = evt->u.serverText.text;
