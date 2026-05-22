@@ -593,22 +593,24 @@ funnel.
 
 ### Load-bearing wire-only exceptions
 
-Three categories of packet stay wire-only by design; the single-
+Two categories of packet stay wire-only by design; the single-
 publish recipe does not apply to them:
 
-- **Periodic lobby refresh.** The 25-tick cosmetic refresh in
-  `src/server/server_lifecycle.c` calls
-  `transportUdpServerSendPeriodicLobbyRefresh`, which drives the
-  same codec encoders the bus path uses but bypasses the bus. It
-  carries ping and country data that bots, SP, and replay logs
-  ignore — publishing it would wake every in-process subscriber
-  400×/sec for nothing.
 - **Per-tick world snapshots.** Tank positions, shells, and per-tick
-  deltas live in the snapshot module, not the codec.
+  deltas live in the snapshot module, not the codec. Snapshots also
+  carry the per-client reliable control-event tail (see
+  `PACKET_CONTROL_TICK` below for the lobby-phase equivalent), but
+  that tail is fed by the bus — the snapshot module is the carrier,
+  not the publisher.
 - **Per-client handshake and reliability.** `JOIN_ACCEPT`,
   `JOIN_REJECT`, `NAME_CHANGE_REJECT`, `MAP_DOWNLOAD` chunks,
-  `PONG`, and `PLAYER_LIST` resync responses are point-to-point
-  transport mechanics with no in-process audience.
+  `PONG`, `PLAYER_LIST` resync responses, `PACKET_CONTROL_TICK`
+  (lobby/countdown/gameover carrier for the per-client control
+  queue), and `PACKET_CONTROL_ACK` (the matching client→server
+  ACK) are point-to-point transport mechanics. The two control
+  packets are the wire carrier for events that DO ride the bus —
+  the bus publishes into the per-client queue, and the queue
+  drains via these packets when snapshots aren't flowing.
 
 ### Compatibility rules
 
