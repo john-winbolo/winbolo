@@ -2192,22 +2192,8 @@ void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
         serverInitMapDownload(i);
     }
 
-    {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_LOBBY_MAP_CHANGE;
-        serverSimPublishControl(sim, &evt);
-    }
-
     fprintf(stderr, "[UDP SERVER] Map change prep: %u bytes compressed map\n",
             udpServer.compressedMapSize);
-
-    /* Any meaningful change auto-unreadies every human in lobby state;
-     * mid-game map swaps (random regeneration etc.) skip the unready
-     * since everyone's mid-round. */
-    if (serverSimGetState(sim) == serverStateLobby) {
-        lobbyAutoUnreadyOnChange(sim);
-    }
 }
 
 void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
@@ -3360,7 +3346,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             }
 
             udpServer.pendingPersistActive = false;
-            transportUdpServerOnLobbyMapChange(sim);
             serverSimPublishLobbySettings(sim);
             WB_LOG_INFO(WB_LOG_CAT_NET,
                         "[LOBBY] SET_MAP ok: '%s'", fullPath);
@@ -3577,7 +3562,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     }
                 }
                 serverSimSetMapName(sim, displayName);
-                transportUdpServerOnLobbyMapChange(sim);
                 serverSimPublishLobbySettings(sim);
                 previewed = true;
             }
@@ -3772,7 +3756,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 udpServer.clientUploadTotal[clientIdx]  = 0;
 
                 if (previewed) {
-                    transportUdpServerOnLobbyMapChange(sim);
                     serverSimPublishLobbySettings(sim);
                 }
 
@@ -3882,7 +3865,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             }
             if (serverSimRevertPreview(sim)) {
                 udpServer.pendingPersistActive = false;
-                transportUdpServerOnLobbyMapChange(sim);
                 serverSimPublishLobbySettings(sim);
                 WB_LOG_INFO(WB_LOG_CAT_NET,
                             "[LOBBY] PREVIEW_CANCEL: rolled back");
@@ -4002,7 +3984,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 break;
             }
             udpServer.pendingPersistActive = false;
-            transportUdpServerOnLobbyMapChange(sim);
             serverSimPublishLobbySettings(sim);
             WB_LOG_INFO(WB_LOG_CAT_NET,
                         "[LOBBY] PREVIEW_RANDOM ok: '%s'", seedStr);

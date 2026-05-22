@@ -112,6 +112,10 @@ static int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut);
 void serverSimLobbyCheckAllReady(ServerSim *sim);
 void serverSimStartGame(ServerSim *sim);
 
+/* Every server-side map mutator calls this at the end of its success
+ * path; defined alongside lobbyAutoUnreadyOnChange below. */
+static void serverSimApplyMapChange(ServerSim *sim);
+
 /* Active sim pointer — when non-NULL, servercore.c routing functions
  * access sim state directly instead of using legacy globals. */
 static THREAD_LOCAL ServerSim *activeSim = NULL;
@@ -721,14 +725,7 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
     snprintf(msg, sizeof(msg), "Random map regenerated, seed: %s", seedStr);
     serverSimConsoleMessage(msg);
 
-    /* Reset lobby ready state */
-    {
-        int i;
-        for (i = 0; i < MAX_TANKS; i++) {
-            sim->lobbyPlayers[i].ready = FALSE;
-        }
-    }
-
+    serverSimApplyMapChange(sim);
     return TRUE;
 }
 
@@ -1729,13 +1726,6 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
                 serverSimMapDirPickRandom(sim);
             }
             serverSimMapSkipVotesReset(sim);
-            transportUdpServerOnLobbyMapChange(sim);
-            {
-                ControlEvent mapEvt;
-                memset(&mapEvt, 0, sizeof(mapEvt));
-                mapEvt.type = CTRL_LOBBY_MAP_CHANGE;
-                serverSimPublishControl(sim, &mapEvt);
-            }
             {
                 ControlEvent skipEvt;
                 BYTE m;
@@ -2802,13 +2792,6 @@ void serverSimReturnToLobby(ServerSim *sim) {
     /* Regenerate random map between rounds */
     if (sim->randomMapEnabled) {
         serverSimRandomMapRegenerate(sim);
-        transportUdpServerOnLobbyMapChange(sim);
-        {
-            ControlEvent evt;
-            memset(&evt, 0, sizeof(evt));
-            evt.type = CTRL_LOBBY_MAP_CHANGE;
-            serverSimPublishControl(sim, &evt);
-        }
     }
 
     serverSimConsoleMessage("Returned to lobby.");
@@ -3429,6 +3412,7 @@ bool serverSimMapDirPickRandom(ServerSim *sim) {
 
     snprintf(msg, sizeof(msg), "Map rotation: loaded '%s'", sim->mapName);
     serverSimConsoleMessage(msg);
+    serverSimApplyMapChange(sim);
     return TRUE;
 }
 
@@ -3477,13 +3461,6 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
             logAddEvent(log_MapSkipApplied, 0, 0, 0, 0, 0, pstr);
         }
         serverSimMapSkipVotesReset(sim);
-        transportUdpServerOnLobbyMapChange(sim);
-        {
-            ControlEvent mapEvt;
-            memset(&mapEvt, 0, sizeof(mapEvt));
-            mapEvt.type = CTRL_LOBBY_MAP_CHANGE;
-            serverSimPublishControl(sim, &mapEvt);
-        }
         {
             ControlEvent skipEvt;
             BYTE m;
@@ -5033,17 +5010,6 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
     /* Random-map provenance no longer applies. */
     sim->randomMapEnabled = false;
 
-    /* Reset lobby ready state — humans must re-acknowledge the new
-     * map. Bots stay ready (no UI to click). */
-    {
-        int i;
-        for (i = 0; i < MAX_TANKS; i++) {
-            if (!sim->lobbyPlayers[i].isBot) {
-                sim->lobbyPlayers[i].ready = FALSE;
-            }
-        }
-    }
-
     snprintf(msg, sizeof(msg), "Map changed to %s", sim->mapName);
     serverSimConsoleMessage(msg);
 
@@ -5051,6 +5017,7 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
         "serverSimReloadMap: now '%s' (%d compressed bytes)",
         sim->mapName, sim->cachedMapDataLen);
 
+    serverSimApplyMapChange(sim);
     return TRUE;
 }
 
@@ -5175,17 +5142,6 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
     /* Random-map provenance no longer applies. */
     sim->randomMapEnabled = false;
 
-    /* Reset lobby ready state — humans must re-acknowledge the new
-     * map. Bots stay ready (no UI to click). */
-    {
-        int i;
-        for (i = 0; i < MAX_TANKS; i++) {
-            if (!sim->lobbyPlayers[i].isBot) {
-                sim->lobbyPlayers[i].ready = FALSE;
-            }
-        }
-    }
-
     snprintf(msg, sizeof(msg), "Map changed to %s", sim->mapName);
     serverSimConsoleMessage(msg);
 
@@ -5193,6 +5149,7 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
         "serverSimReloadCompressedInMemory: now '%s' (%d compressed bytes)",
         sim->mapName, sim->cachedMapDataLen);
 
+    serverSimApplyMapChange(sim);
     return TRUE;
 }
 
@@ -5249,6 +5206,7 @@ bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {
             "serverSimReloadRandomMap: now '%s' (%d compressed bytes)",
             sim->mapName, sim->cachedMapDataLen);
     }
+    serverSimApplyMapChange(sim);
     return TRUE;
 }
 
@@ -5295,6 +5253,7 @@ bool serverSimRevertPreview(ServerSim *sim) {
 
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
+    serverSimApplyMapChange(sim);
     return TRUE;
 }
 
@@ -5801,6 +5760,24 @@ bool serverSimApplyLobbySetting(ServerSim *sim,
         default:
             return false;
     }
+}
+
+/* Side-effects every server-side map change owes its audience:
+ * refresh the per-client compressed-map blob on the wire helper,
+ * publish the map-change control event so in-process subscribers
+ * (SP host's ClientSim, bots, replay log writers) react, and clear
+ * humans' ready state — which aborts any in-flight countdown via
+ * lobbyAutoUnreadyOnChange. Called from every map-mutator at the
+ * end of its success path. */
+static void serverSimApplyMapChange(ServerSim *sim) {
+    transportUdpServerOnLobbyMapChange(sim);
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_LOBBY_MAP_CHANGE;
+        serverSimPublishControl(sim, &evt);
+    }
+    lobbyAutoUnreadyOnChange(sim);
 }
 
 /* Auto-unready: any meaningful lobby change clears every human's

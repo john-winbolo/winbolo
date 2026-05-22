@@ -398,13 +398,6 @@ void serverInstanceTick(ServerSim *sim) {
       /* Pick next map from rotation if mapdir is configured */
       if (sim->mapDirFiles != NULL) {
         serverSimMapDirPickRandom(sim);
-        transportUdpServerOnLobbyMapChange(sim);
-        {
-          ControlEvent evt;
-          memset(&evt, 0, sizeof(evt));
-          evt.type = CTRL_LOBBY_MAP_CHANGE;
-          serverSimPublishControl(sim, &evt);
-        }
       }
       /* Re-register with WBN for the new round */
       if (winbolonetIsRunning()) {
@@ -480,13 +473,6 @@ void serverInstanceTick(ServerSim *sim) {
     /* Pick next map from rotation if mapdir is configured */
     if (sim->mapDirFiles != NULL) {
       serverSimMapDirPickRandom(sim);
-      transportUdpServerOnLobbyMapChange(sim);
-      {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        evt.type = CTRL_LOBBY_MAP_CHANGE;
-        serverSimPublishControl(sim, &evt);
-      }
     }
     /* Re-register with WBN for the new round */
     if (winbolonetIsRunning()) {
