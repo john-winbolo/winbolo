@@ -64,6 +64,20 @@ typedef EncodeResult (*ControlEncodeFn)(const ControlEvent *evt,
 typedef bool (*ControlDecodeFn)(const uint8_t *buf, size_t len,
                                 ControlEvent *outEvt);
 
+/* Body-only encoder/decoder shape. Identical signature to the
+ * full-packet pair above, but each function writes/reads only the
+ * codec body — no PacketHeader, no PACKET_ALLIANCE_UPDATE sub-type
+ * discriminator. Indexed by ControlEventType so the carrier-side
+ * delivery path (Phase 4+) can encode straight into a reliable
+ * carrier without going through wire-packet framing. */
+typedef EncodeResult (*ControlEncodeBodyFn)(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen);
+
+typedef bool (*ControlDecodeBodyFn)(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt);
+
 /* Stack-allocation upper bound for any single ControlEvent's wire
  * encoding. Matches UDP_MAX_PAYLOAD (1400) so every control packet
  * fits in a single datagram below the typical 1500-byte MTU. The
@@ -84,5 +98,13 @@ ControlEncodeFn transportControlCodecEncoder(ControlEventType type);
  * the packet isn't backed by a control event (snapshot, handshake,
  * ping, etc). */
 ControlDecodeFn transportControlCodecDecoder(uint16_t packetType);
+
+/* Body-only lookups indexed by ControlEventType. Used by the
+ * reliable carrier path (Phase 4+) to encode/decode a single
+ * control event's body without the legacy wire-packet framing.
+ * Return NULL for out-of-range types and for variants with no body
+ * codec (CTRL_MAP_DOWNLOAD_COMPLETE is client-internal). */
+ControlEncodeBodyFn transportControlCodecBodyEncoder(ControlEventType type);
+ControlDecodeBodyFn transportControlCodecBodyDecoder(ControlEventType type);
 
 #endif /* TRANSPORT_CONTROL_CODEC_H */
