@@ -70,6 +70,7 @@
 #include "brain_data.h"
 #include "client_sim.h"
 #include "control_event.h"
+#include "discovery.h"
 #include "frontend.h"
 #include "../gui/lang.h"
 #include "brain.h"
@@ -1867,6 +1868,37 @@ static int runNetworkMode(void) {
   /* Connect to the server via new UDP transport */
   if (!optQuiet) {
     fprintf(stderr, "Connecting to %s:%u...\n", optServer, optPort);
+  }
+
+  /* Pre-flight version negotiation. The legacy info-request is the
+   * universal cross-version handshake — any server answers regardless
+   * of build, so we can read the server's version triple before
+   * committing to a JOIN_REQUEST whose new-protocol length gate would
+   * silently drop on mismatch. On mismatch surface a clear stderr
+   * message and exit non-zero; on timeout, mirror the SDL3 frontend
+   * by aborting with the standard "server unreachable" wording. */
+  {
+    DiscoveryPingResult dpr;
+    if (!discoveryPingServer(optServer, optPort, &dpr)) {
+      fprintf(stderr, "Error: failed to connect: server unreachable\n");
+      clientSimDestroy(humanSim);
+      return 1;
+    }
+    if (dpr.versionMajor    != BOLO_VERSION_MAJOR ||
+        dpr.versionMinor    != BOLO_VERSION_MINOR ||
+        dpr.versionRevision != BOLO_VERSION_REVISION) {
+      fprintf(stderr,
+              "Error: server is version %u.%u.%u, you have %u.%u.%u "
+              "— please update.\n",
+              (unsigned)dpr.versionMajor,
+              (unsigned)dpr.versionMinor,
+              (unsigned)dpr.versionRevision,
+              (unsigned)BOLO_VERSION_MAJOR,
+              (unsigned)BOLO_VERSION_MINOR,
+              (unsigned)BOLO_VERSION_REVISION);
+      clientSimDestroy(humanSim);
+      return 1;
+    }
   }
 
   clientSimConnectUdp(humanSim, optServer, optPort, optName,
