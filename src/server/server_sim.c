@@ -78,7 +78,6 @@
 #include "screenbullet.h"
 #include "mapgen.h"
 #include "../common/wb_log.h"
-#include "server_dedicated_log.h"
 #include "server_sim_join.h"
 #include "playername_validate.h"
 
@@ -2692,8 +2691,6 @@ void serverSimConsoleMessage(const char *msg) {
 }
 
 void serverSimEnterGameOver(ServerSim *sim) {
-    serverDedicatedLogOnEnterGameOver(sim);
-
     if (!sim->lobbyEnabled) {
         /* No lobby — game over means server should shut down */
         sim->state = serverStateGameOver;
@@ -2820,7 +2817,16 @@ void serverSimReturnToLobby(ServerSim *sim) {
     /* Lobby state fan-out happens via the control-event bus — the
      * caller publishes CTRL_LOBBY_SLOT + CTRL_LOBBY_SETTINGS. */
 
-    serverDedicatedLogOnReturnToLobby(sim);
+    /* Publish CTRL_GAME_PHASE_LOBBY so subscribers (e.g. the
+     * dedicated-server log writer) see the GAME_OVER→LOBBY
+     * transition. Existing CTRL_LOBBY_SLOT / CTRL_LOBBY_SETTINGS
+     * fan-out happens elsewhere — this is the phase event proper. */
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillGamePhaseEvent(sim, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 void serverSimLobbyCheckAllReady(ServerSim *sim) {
@@ -3141,7 +3147,6 @@ void serverSimStartGame(ServerSim *sim) {
 
     /* A snapshot will be written on the first running tick
      * (tick 0 % FULL_SYNC_INTERVAL == 0). */
-    serverDedicatedLogOnLobbyExit(sim);
 }
 
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {

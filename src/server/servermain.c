@@ -51,6 +51,7 @@
 #include "transport_udp.h"
 #include "bot_manager.h"
 #include "bot_worker_pool.h"
+#include "server_dedicated_log.h"
 #include "server_lifecycle.h"
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
@@ -1387,60 +1388,21 @@ int main(int argc, char **argv) {
   }
   dontSendLog = argExist(argc, argv, "dontsendlog");
 
-  /* Log file recording */
+  /* Log file recording — configure the sim's wantLogging /
+   * userLogFileName state, then register the dedicated-server log
+   * subscriber. The subscriber's sync-replay opens the log on the
+   * current phase (LOBBY for lobby mode, RUNNING for no-lobby). */
   if (argExist(argc, argv, "log") == TRUE) {
     int logArg = findArg(argc, argv, "log");
     char userLogFile[MAX_PATH] = {0};
     if (logArg != ARG_NOT_FOUND && argv[logArg][0] != '-') {
       strncpy(userLogFile, (char *)argv[logArg], MAX_PATH - 1);
     }
-    if (!serverSimIsLobbyEnabled(serverSim)) {
-      /* No-lobby: game is already running, start logging immediately */
-      if (userLogFile[0] != '\0') {
-        strncpy(fileName, userLogFile, MAX_PATH - 1);
-      } else {
-        makeLogFileName(fileName, serverSimGetMapName(serverSim));
-      }
-      /* Ensure .wbv extension */
-      {
-        size_t flen = strlen(fileName);
-        if (flen <= 4 || strcmp(fileName + flen - 4, ".wbv") != 0) {
-          strncat(fileName, ".wbv", sizeof(fileName) - flen - 1);
-        }
-      }
-      isLogging = logStart(fileName, serverSim,
-                           (BYTE)ai, (BYTE)maxPlayers,
-                           serverSimHasPassword(serverSim));
-      if (isLogging) {
-        fprintf(stderr, "Logging to %s\n", fileName);
-      } else {
-        fprintf(stderr, "Warning: failed to start logging\n");
-      }
-    } else {
-      /* Lobby mode: start logging now so lobby joins/chat are captured */
-      serverSimSetWantLogging(serverSim, true);
-      if (userLogFile[0] != '\0') {
-        strncpy(fileName, userLogFile, MAX_PATH - 1);
-        serverSimSetUserLogFileName(serverSim, userLogFile);
-      } else {
-        makeLogFileName(fileName, serverSimGetMapName(serverSim));
-      }
-      {
-        size_t flen = strlen(fileName);
-        if (flen <= 4 || strcmp(fileName + flen - 4, ".wbv") != 0) {
-          strncat(fileName, ".wbv", sizeof(fileName) - flen - 1);
-        }
-      }
-      isLogging = logStart(fileName, serverSim,
-                           (BYTE)ai, (BYTE)maxPlayers,
-                           serverSimHasPassword(serverSim));
-      if (isLogging) {
-        fprintf(stderr, "Logging to %s (lobby)\n", fileName);
-        logAddEvent(log_LobbyEnter, 0, 0, 0, 0, 0, NULL);
-      } else {
-        fprintf(stderr, "Warning: failed to start logging\n");
-      }
+    serverSimSetWantLogging(serverSim, true);
+    if (userLogFile[0] != '\0') {
+      serverSimSetUserLogFileName(serverSim, userLogFile);
     }
+    serverDedicatedLogInstall(serverSim);
   }
 
   /* Initialize and add bot players */

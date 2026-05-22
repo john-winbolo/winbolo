@@ -478,7 +478,6 @@ add_subdirectory(brains)
 # threads.c comes from threads_static.
 set(IOS_SERVER_SOURCES
     src/server/server_stubs.c
-    src/server/server_dedicated_log_stubs.c
     src/mapeditor/mapgen_imgui.cpp
 )
 
@@ -1014,7 +1013,6 @@ set(CLIENT_SOURCES
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/server_dedicated_log_stubs.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -1652,7 +1650,6 @@ set(HEADLESS_SOURCES
     src/headless/headless_main.c src/headless/headless_frontend.c
     src/headless/cmd_stdin.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/server_dedicated_log_stubs.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -1767,7 +1764,6 @@ set(GYM_SOURCES
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_frontend.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/server_dedicated_log_stubs.c
     src/gym/winbolonet_stub.c
     src/gym/winbolo_gym.c
 )
@@ -1878,7 +1874,6 @@ set(BRAINTEST_SOURCES
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
-    src/server/server_dedicated_log_stubs.c
     src/braintest/braintest_lifecycle_stub.c
     src/braintest/braintest_main.c src/braintest/braintest_frontend.c
     src/braintest/braintest_viz_registry.c
@@ -1987,7 +1982,6 @@ set(MAPEDITOR_SOURCES
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
-    src/server/server_dedicated_log_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
     src/mapeditor/mapeditor_main.c
@@ -2346,7 +2340,6 @@ set(WINBOLO_UNITTESTS_SOURCES
     # natPortMap* in src/bolo/nat_portmap.c) stay stubbed in
     # test_stubs.c — acceptRemoteClients=false keeps them off the
     # tick-time call paths.
-    src/server/server_dedicated_log_stubs.c
     src/lzw/dcodlzw.c
     src/lzw/ecodlzw.c
 )

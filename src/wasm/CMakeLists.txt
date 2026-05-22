@@ -141,7 +141,6 @@ set(BOLO_SOURCES
 set(SERVER_SOURCES
     ${SRC_ROOT}/server/geolookup.c
     ${SRC_ROOT}/server/server_stubs.c
-    ${SRC_ROOT}/server/server_dedicated_log_stubs.c
     ${SRC_ROOT}/server/posix_stubs.c
 )
 

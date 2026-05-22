@@ -43,10 +43,9 @@
 #                                — stubs the transportUdpServer* and
 #                                serverLifecycle* symbols those binaries
 #                                don't pull in via server_static
-#   server_dedicated_log.c     — WinBoloDS only (real log bodies that
-#                                touch servermain.c-owned globals)
-#   server_dedicated_log_stubs.c — every binary other than WinBoloDS
-#                                  (no-op bodies for the same hooks)
+#   server_dedicated_log.c     — WinBoloDS only (registers the replay-log
+#                                bus subscriber that touches
+#                                servermain.c-owned globals)
 #   posix_stubs.c              — every non-Windows target (incl. LogViewer
 #                                standalone for its WBN http INI shims)
 
