@@ -438,6 +438,14 @@ void transportUdpServerOnLobbyMapChange(struct ServerSim *sim);
  * in-process control-event bus.  Called from server_lifecycle.c. */
 void transportUdpServerSendPeriodicLobbyRefresh(struct ServerSim *sim);
 
+/* Drive the lobby/countdown/gameover retransmit scan.  For every
+ * connected client with unacked control events, sends a fresh
+ * PACKET_CONTROL_TICK carrying the unacked tail.  Snapshots cover
+ * retransmit automatically during running; this exists for the phases
+ * where snapshots don't flow.  Called from server_lifecycle.c at a
+ * 4-tick (~80ms at 50 Hz) cadence. */
+void transportUdpServerRetransmitUnackedControl(void);
+
 /* Broadcast PACKET_WBN_REKEY to every connected WBN-participating client
  * carrying the current server_key.  Called after each
  * winbolonetReturnToLobby succeeds so still-connected clients can mint a

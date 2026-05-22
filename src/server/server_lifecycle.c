@@ -472,6 +472,14 @@ void serverInstanceTick(ServerSim *sim) {
       transportUdpServerSendPeriodicLobbyRefresh(sim);
     }
 
+    /* Retransmit unacked control events every 4 ticks (~80ms at 50 Hz)
+     * for loss recovery during lobby/countdown/gameover.  During running,
+     * the snapshot tail carries the per-client unacked tail every tick,
+     * so this scan only matters when snapshots aren't flowing. */
+    if (sim->tick % 4 == 0) {
+      transportUdpServerRetransmitUnackedControl();
+    }
+
     /* Timeout check — not called via transportUdpServerSend() during lobby */
     transportUdpServerCheckTimeouts(sim);
   }

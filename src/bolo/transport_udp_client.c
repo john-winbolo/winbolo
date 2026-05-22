@@ -88,6 +88,14 @@ typedef struct {
     uint32_t reliableEventAck;  /* Next expected reliable game event seq (init to 1) */
     uint32_t mapEventAck;       /* Next expected reliable map event seq (init to 1) */
     uint32_t controlEventAck;   /* Next expected reliable control event seq (init to 1) */
+    /* Coalesce PACKET_CONTROL_ACK emission to ~50ms — only relevant
+     * during non-running phases when PACKET_CONTROL_TICK is the
+     * carrier.  controlAckPendingTick: localTick when the first
+     * post-ACK tick arrived (0 = no ack pending).  lastSentControlAck:
+     * the controlEventAck value carried in the most recent ACK packet,
+     * used to avoid resending an unchanged ACK. */
+    uint32_t controlAckPendingTick;
+    uint32_t lastSentControlAck;
 
     /* Join handshake state */
     uint32_t joinAttempts;
@@ -500,6 +508,11 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
         c->reliableEventAck = 1;
         c->mapEventAck = 1;
         c->controlEventAck = 1;
+        /* The control-event seq space resets here too; drop any pending
+         * coalesced ACK so we don't emit a stale next-expected-seq for
+         * the new game's queue. */
+        c->controlAckPendingTick = 0;
+        c->lastSentControlAck = 0;
         /* Reset input ring so stale inputs from the previous game are
          * not sent as redundant packets in the new game. */
         c->inputRingCount = 0;
@@ -1409,15 +1422,58 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
     }
 
-    /* PACKET_GAME_START is no longer dispatched on the client: the
-     * lobby→running flip arrives as CTRL_GAME_PHASE_RUNNING in the
-     * snapshot control-event tail, and clientSimApplyControlOrdered
-     * runs the side-effects (install map, reset acks, clear input ring,
-     * drop pre-flip snapshot) before the same snapshot's prior-game
-     * tails would otherwise replay against the new map. The server
-     * still emits PACKET_GAME_START during the lobby/countdown phases
-     * via the legacy direct send; those packets arrive here and fall
-     * through to the default branch (silently dropped). */
+    /* PACKET_GAME_START is no longer dispatched on the client and no
+     * longer emitted by the server: the lobby→running flip arrives as
+     * CTRL_GAME_PHASE_RUNNING in the snapshot control-event tail, and
+     * clientSimApplyControlOrdered runs the side-effects (install map,
+     * reset acks, clear input ring, drop pre-flip snapshot) before the
+     * same snapshot's prior-game tails would otherwise replay against
+     * the new map. */
+
+    case PACKET_CONTROL_TICK: {
+        /* Server → client reliable carrier for control events during
+         * non-running phases (lobby / countdown / gameover).  Wire layout
+         * matches the snapshot control-event tail: each event is
+         * type(1) + bodyLen(2 BE) + body(N), and we dedup against
+         * controlEventAck so retransmits don't re-apply. */
+        int pos = PACKET_HEADER_SIZE;
+        uint32_t baseSeq;
+        uint8_t count;
+        int i;
+        if (len < pos + 5) break;
+        baseSeq = unpackU32(buf + pos); pos += 4;
+        count = buf[pos++];
+        for (i = 0; i < count; i++) {
+            uint32_t evSeq = baseSeq + (uint32_t)i;
+            uint8_t type;
+            uint16_t bodyLen;
+            ControlEvent evt;
+            ControlDecodeBodyFn dec;
+            if (pos + 3 > len) break;
+            type = buf[pos++];
+            bodyLen = unpackU16(buf + pos); pos += 2;
+            if (pos + bodyLen > len) break;
+            dec = transportControlCodecBodyDecoder((ControlEventType)type);
+            if (dec == NULL || !dec(buf + pos, bodyLen, &evt)) {
+                pos += bodyLen;
+                continue;
+            }
+            pos += bodyLen;
+            if (evSeq >= c->controlEventAck) {
+                /* PACKET_CONTROL_TICK arrives outside the snapshot
+                 * context — no game/map tails ride alongside it, so
+                 * skipPriorGameTails has nothing to skip. */
+                clientSimApplyControlOrdered(c, &evt, evSeq, NULL);
+                c->controlEventAck = evSeq + 1;
+            }
+        }
+        /* Schedule a coalesced ACK — the actual send rides
+         * udpClientTick's per-tick driver below. */
+        if (c->controlAckPendingTick == 0) {
+            c->controlAckPendingTick = c->localTick;
+        }
+        break;
+    }
 
     case PACKET_GAME_OVER:
         /* [header 8] */
@@ -1745,6 +1801,29 @@ static bool udpClientTick(void *ctx) {
         udpClientProcessPacket(c, buf, len);
     }
 
+    /* Coalesced PACKET_CONTROL_ACK emission.  Only fires when a
+     * PACKET_CONTROL_TICK has armed controlAckPendingTick — during
+     * running, PACKET_INPUT already carries controlEventAck so no
+     * dedicated ACK packet is needed.  localTick advances at 50 Hz
+     * (20ms/tick — see PING_INTERVAL_TICKS = 100 → 2s), so 3 ticks
+     * is ~60ms, close to the plan's ~50ms target.  Send earlier when
+     * a single TICK delivered 2+ new events at once, to free server
+     * queue slots promptly. */
+    if (c->joinState == UDP_CLIENT_CONNECTED &&
+        c->controlAckPendingTick != 0 &&
+        c->controlEventAck > c->lastSentControlAck) {
+        bool overdue = (c->localTick - c->controlAckPendingTick) >= 3;
+        bool eagerSend = (c->controlEventAck > c->lastSentControlAck + 1);
+        if (overdue || eagerSend) {
+            uint8_t ackBuf[PACKET_HEADER_SIZE + 4];
+            packHeader(ackBuf, PACKET_CONTROL_ACK, c->outSequence++);
+            packU32(ackBuf + PACKET_HEADER_SIZE, c->controlEventAck);
+            udpClientSendTo(c, ackBuf, sizeof(ackBuf));
+            c->lastSentControlAck = c->controlEventAck;
+            c->controlAckPendingTick = 0;
+        }
+    }
+
     /* Handle join handshake — send/resend join requests */
     if (c->joinState == UDP_CLIENT_JOINING) {
         c->ticksSinceJoinSent++;
@@ -2041,6 +2120,8 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->reliableEventAck = 1;  /* First valid seq is 1 */
     c->mapEventAck = 1;       /* First valid map event seq is 1 */
     c->controlEventAck = 1;   /* First valid control event seq is 1 */
+    c->controlAckPendingTick = 0;
+    c->lastSentControlAck = 0;
     c->localTick = 0;
     c->lastPingSentTick = 0;
     c->pingMs = 0;
