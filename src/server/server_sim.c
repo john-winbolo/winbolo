@@ -35,6 +35,7 @@
 #include "bolo_map.h"
 #include "netpacks.h"
 #include "wire_limits.h"   /* LobbySettingType for serverSimGetSettingLockBit */
+#include "lobby_bot_pools.h"   /* lobbyBotPoolCount for serverSimSetTeamMeta */
 #include "pillbox.h"
 #include "bases.h"
 #include "starts.h"
@@ -1957,7 +1958,12 @@ void serverSimSetEmptyResetEnabled(ServerSim *sim, bool enabled) {
 }
 
 void serverSimSetHasPassword(ServerSim *sim, bool hasPassword) {
+    if (sim == NULL) return;
     sim->hasPassword = hasPassword;
+    /* Settings publish only — password changes are allowed mid-game
+     * (they only gate new joiners) and must NOT clear humans' ready
+     * state or abort an in-flight countdown. */
+    serverSimPublishLobbySettings(sim);
 }
 
 void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled) {
@@ -5483,6 +5489,8 @@ void serverSimSetBotBrainIdxFor(ServerSim *sim, BYTE slot, uint8_t brainIdx) {
      * matching the existing "ignore malformed input" pattern. */
     if (brainIdx != 0xFF && brainIdx >= sim->brainList.count) return;
     sim->botBrainIdx[slot] = brainIdx;
+    serverSimPublishLobbyBotBrain(sim, slot);
+    lobbyAutoUnreadyOnChange(sim);
 }
 
 const char *serverSimGetBrainPathForIdx(const ServerSim *sim, uint8_t brainIdx) {
@@ -5505,7 +5513,10 @@ bool serverSimGetOpenHost(const ServerSim *sim) {
 }
 
 void serverSimSetOpenHost(ServerSim *sim, bool v) {
-    if (sim) sim->openHost = v;
+    if (sim == NULL) return;
+    sim->openHost = v;
+    serverSimPublishLobbySettings(sim);
+    lobbyAutoUnreadyOnChange(sim);
 }
 
 bool serverSimGetFirstJoinerBecomesHost(const ServerSim *sim) {
@@ -5573,6 +5584,25 @@ const LobbyBotConfig *serverSimGetBotConfig(const ServerSim *sim, BYTE slot) {
 LobbyBotConfig *serverSimGetBotConfigMut(ServerSim *sim, BYTE slot) {
     if (!sim || slot >= MAX_TANKS) return NULL;
     return &sim->botConfigs[slot];
+}
+
+void serverSimSetBotConfig(ServerSim *sim, BYTE slot,
+                            uint8_t difficulty, uint8_t personality,
+                            const char *validatedName) {
+    if (!sim || slot >= MAX_TANKS) return;
+    {
+        LobbyBotConfig *bc = serverSimGetBotConfigMut(sim, slot);
+        if (bc) {
+            bc->difficulty  = difficulty;
+            bc->personality = personality;
+        }
+    }
+    if (validatedName != NULL && validatedName[0] != '\0') {
+        serverSimRenameBotSlot(sim, slot, validatedName);
+    }
+    serverSimPublishLobbyBotConfig(sim, slot);
+    serverSimPublishLobbySlot(sim, slot);
+    lobbyAutoUnreadyOnChange(sim);
 }
 
 void serverSimSetGameLength(ServerSim *sim, int32_t ticks) {
@@ -5656,6 +5686,63 @@ void serverSimPublishLobbyTeamMeta(ServerSim *sim, BYTE teamId) {
     serverSimPublishControl(sim, &evt);
 }
 
+void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
+                           uint8_t color, uint8_t namingPool,
+                           const uint8_t *name, uint8_t nameLen) {
+    if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
+    TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
+    if (t == NULL) return;
+    t->in_use = 1;
+    t->color = color;
+    /* Per-team uniqueness on namingPool: if another in_use team
+     * already owns this pool, pick the lowest pool index not
+     * used by any other team. Falls back to the requested value
+     * if every pool is taken. */
+    {
+        int poolCount = lobbyBotPoolCount();
+        bool poolTaken = false;
+        for (BYTE other = 1; other < MAX_TANKS; other++) {
+            if (other == teamId) continue;
+            const TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
+            if (ot && ot->in_use && ot->namingPool == namingPool) {
+                poolTaken = true;
+                break;
+            }
+        }
+        if (poolTaken && poolCount > 0) {
+            for (int p = 0; p < poolCount; p++) {
+                bool used = false;
+                for (BYTE other = 1; other < MAX_TANKS; other++) {
+                    if (other == teamId) continue;
+                    const TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
+                    if (ot && ot->in_use && ot->namingPool == p) {
+                        used = true;
+                        break;
+                    }
+                }
+                if (!used) { namingPool = (uint8_t)p; break; }
+            }
+        }
+    }
+    t->namingPool = namingPool;
+    memset(t->name, 0, LOBBY_TEAM_NAME_LEN);
+    if (nameLen > 0 && name != NULL) {
+        memcpy(t->name, name, nameLen);
+    }
+    serverSimPublishLobbyTeamMeta(sim, teamId);
+    lobbyAutoUnreadyOnChange(sim);
+}
+
+void serverSimClearTeamMeta(ServerSim *sim, BYTE teamId) {
+    if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
+    TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
+    if (t != NULL) {
+        memset(t, 0, sizeof(TeamMetadata));
+    }
+    serverSimPublishLobbyTeamMeta(sim, teamId);
+    lobbyAutoUnreadyOnChange(sim);
+}
+
 void serverSimPublishLobbySettings(ServerSim *sim) {
     ControlEvent evt;
     if (!sim) return;
@@ -5669,18 +5756,18 @@ void serverSimPublishLobbySettings(ServerSim *sim) {
 
 /* Shared apply path for the LST_* setting cluster carried in
  * PACKET_LOBBY_SET_SETTING and its SP-host local-transport
- * equivalent. The caller (UDP packet handler or client_net.c
- * wrapper) is responsible for upstream lock-bit / authority gates
- * and for the post-apply publish + auto-unready pass; this helper
- * just mutates sim state for the one setting.
+ * equivalent. The caller is responsible for upstream lock-bit /
+ * authority gates; on success this helper publishes
+ * CTRL_LOBBY_SETTINGS and clears humans' ready state before
+ * returning true.
  *
  * Returns true if the setting was applied, false if the payload
  * was malformed, out of range, or rejected by a cross-setting
  * invariant (e.g. ranked forbids gameOpen / non-aiNone / autoLock
  * off). */
-bool serverSimApplyLobbySetting(ServerSim *sim,
-                                uint8_t lst,
-                                const uint8_t *value, size_t len) {
+static bool serverSimApplyLobbySettingInner(ServerSim *sim,
+                                            uint8_t lst,
+                                            const uint8_t *value, size_t len) {
     if (sim == NULL || value == NULL) return false;
     switch (lst) {
         case LST_GAME_TYPE:
@@ -5767,10 +5854,21 @@ bool serverSimApplyLobbySetting(ServerSim *sim,
     }
 }
 
+bool serverSimApplyLobbySetting(ServerSim *sim,
+                                uint8_t lst,
+                                const uint8_t *value, size_t len) {
+    if (!serverSimApplyLobbySettingInner(sim, lst, value, len)) return false;
+    serverSimPublishLobbySettings(sim);
+    lobbyAutoUnreadyOnChange(sim);
+    return true;
+}
+
 /* Side-effects every server-side map change owes its audience:
  * refresh the per-client compressed-map blob on the wire helper,
  * publish the map-change control event so in-process subscribers
- * (SP host's ClientSim, bots, replay log writers) react, and clear
+ * (SP host's ClientSim, bots, replay log writers) react, re-publish
+ * settings so the mapName / pillCount / baseCount / startCount
+ * fields in CTRL_LOBBY_SETTINGS reflect the new map, and clear
  * humans' ready state — which aborts any in-flight countdown via
  * lobbyAutoUnreadyOnChange. Called from every map-mutator at the
  * end of its success path. */
@@ -5782,6 +5880,7 @@ static void serverSimApplyMapChange(ServerSim *sim) {
         evt.type = CTRL_LOBBY_MAP_CHANGE;
         serverSimPublishControl(sim, &evt);
     }
+    serverSimPublishLobbySettings(sim);
     lobbyAutoUnreadyOnChange(sim);
 }
 

@@ -238,9 +238,10 @@ static void lobbySendAddBot(ClientSim *cs,
         }
         /* Bot's name came from the pool — not an override. */
         s_botNameOverridden[slot] = false;
-        /* Publish the slot's new state and the bot's brain path. */
+        /* Publish the slot's new state. serverSimSetBotBrainIdxFor
+         * (called via either branch above) publishes the bot-brain
+         * event itself. */
         serverSimPublishLobbySlot(sim, slot);
-        serverSimPublishLobbyBotBrain(sim, slot);
         if (teamNumber > 0 && teamNumber < MAX_TANKS) {
             clientSimNetSendTeamSet(cs, slot, teamNumber);
         }
@@ -687,7 +688,6 @@ static void lobbyServerMapsOnSelect(MapChooserState *state, void *ctx) {
     if (clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (sim && serverSimReloadMap(sim, sel)) {
-            serverSimPublishLobbySettings(sim);
             s_chooseMapPreviewPending = true;
         }
     } else {
@@ -833,7 +833,6 @@ static void lobbyUploadOnSelect(MapChooserState *state, void *ctx) {
     if (clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (sim && serverSimReloadMap(sim, picked)) {
-            serverSimPublishLobbySettings(sim);
             s_chooseMapPreviewPending = true;
             WB_LOG_INFO(WB_LOG_CAT_GUI,
                         "[MAPPICK] upload SP reload ok previewPending=1");
@@ -2511,7 +2510,6 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
                     if (sim && serverSimReloadRandomMap(sim,
                             &s_chooseMapRandomState.genConfig)) {
-                        serverSimPublishLobbySettings(sim);
                         s_chooseMapPreviewPending = true;
                     }
                 } else {
@@ -2595,9 +2593,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-                    if (sim && serverSimRevertPreview(sim)) {
-                        serverSimPublishLobbySettings(sim);
-                    }
+                    if (sim) serverSimRevertPreview(sim);
                 } else {
                     clientSimNetSendLobbyPreviewCancel(cs);
                 }
@@ -2670,9 +2666,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-                    if (sim && serverSimRevertPreview(sim)) {
-                        serverSimPublishLobbySettings(sim);
-                    }
+                    if (sim) serverSimRevertPreview(sim);
                 } else {
                     clientSimNetSendLobbyPreviewCancel(cs);
                 }
@@ -2769,8 +2763,9 @@ static void lobbySendSetBotBrain(ClientSim *cs,
         if (!sim || slot >= MAX_TANKS) return;
         if (serverSimGetState(sim) != serverStateLobby) return;
         if (!serverSimGetLobbyPlayer(sim, slot)->isBot) return;
+        /* serverSimSwitchBotBrain calls serverSimSetBotBrainIdxFor,
+         * which publishes CTRL_LOBBY_BOT_BRAIN itself. */
         serverSimSwitchBotBrain(sim, slot, brainIdx);
-        serverSimPublishLobbyBotBrain(sim, slot);
         return;
     }
     clientSimNetSendLobbySetBotBrain(cs, slot, brainIdx);

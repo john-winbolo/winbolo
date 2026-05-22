@@ -503,24 +503,13 @@ void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
       }
     }
 
-    {
-      LobbyBotConfig *bc = serverSimGetBotConfigMut(sim, slot);
-      if (bc) {
-        bc->difficulty  = difficulty;
-        bc->personality = personality;
-      }
-    }
-    if (haveName) {
-      /* SP-host has no UDP server, so the wire handler's
-       * transportUdpServerSetBotName step would be a no-op here.
-       * serverSimRenameBotSlot writes sim.plyrs and emits
-       * CTRL_PLAYER_NAME so the in-game players panel stays in
-       * sync — that's the canonical local apply. */
-      serverSimRenameBotSlot(sim, slot, validatedName);
-    }
-    serverSimPublishLobbyBotConfig(sim, slot);
-    serverSimPublishLobbySlot(sim, slot);
-    lobbyAutoUnreadyOnChange(sim);
+    /* SP-host has no UDP server, so the wire handler's
+     * transportUdpServerSetBotName step is a no-op here.
+     * serverSimSetBotConfig handles the write, the optional rename
+     * (sim.plyrs + CTRL_PLAYER_NAME via serverSimRenameBotSlot), the
+     * config + slot publishes, and the auto-unready tail. */
+    serverSimSetBotConfig(sim, slot, difficulty, personality,
+                          haveName ? validatedName : NULL);
   } while (0);
   threadsReleaseMutex();
 }
@@ -593,7 +582,6 @@ bool clientSimNetSendLobbyMapUploadBytes(ClientSim *cs,
         serverSimGetState(sim) != serverStateLobby) break;
     if (buf == NULL || len == 0 || len > (size_t)INT_MAX) break;
     if (!serverSimReloadCompressedInMemory(sim, buf, (int)len, mapName)) break;
-    serverSimPublishLobbySettings(sim);
     ok = true;
   } while (0);
   threadsReleaseMutex();
@@ -625,10 +613,9 @@ void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
                                         namingPool, name);
     return;
   }
-  /* Local transport: mirror the PACKET_LOBBY_TEAM_META handler in
-   * transport_udp_server.c. Pool uniqueness is rewritten the same
-   * way the wire handler does so SP-host can't end up with two
-   * teams sharing a namingPool. */
+  /* Local transport: delegate to the shared setter so SP-host and
+   * wire follow one code path (including the pool-uniqueness rewrite
+   * and the publish + auto-unready tail). */
   if (cs->boundServerSim == NULL) return;
   threadsWaitForMutex();
   do {
@@ -638,44 +625,8 @@ void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
     if (teamId == 0 || teamId >= MAX_TANKS) break;
     size_t nameLen = (name != NULL) ? strlen(name) : 0;
     if (nameLen > LOBBY_TEAM_NAME_LEN - 1) break;
-
-    TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
-    if (t == NULL) break;
-    t->in_use = 1;
-    t->color = color;
-    {
-      int poolCount = lobbyBotPoolCount();
-      bool poolTaken = false;
-      for (BYTE other = 1; other < MAX_TANKS; other++) {
-        if (other == teamId) continue;
-        const TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
-        if (ot && ot->in_use && ot->namingPool == namingPool) {
-          poolTaken = true;
-          break;
-        }
-      }
-      if (poolTaken && poolCount > 0) {
-        for (int p = 0; p < poolCount; p++) {
-          bool used = false;
-          for (BYTE other = 1; other < MAX_TANKS; other++) {
-            if (other == teamId) continue;
-            const TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
-            if (ot && ot->in_use && ot->namingPool == p) {
-              used = true;
-              break;
-            }
-          }
-          if (!used) { namingPool = (uint8_t)p; break; }
-        }
-      }
-    }
-    t->namingPool = namingPool;
-    memset(t->name, 0, LOBBY_TEAM_NAME_LEN);
-    if (nameLen > 0) {
-      memcpy(t->name, name, nameLen);
-    }
-    serverSimPublishLobbyTeamMeta(sim, teamId);
-    lobbyAutoUnreadyOnChange(sim);
+    serverSimSetTeamMeta(sim, teamId, color, namingPool,
+                         (const uint8_t *)name, (uint8_t)nameLen);
   } while (0);
   threadsReleaseMutex();
 }
@@ -686,7 +637,7 @@ void clientSimNetSendLobbyTeamClear(ClientSim *cs, BYTE teamId) {
     transportUdpClientSendLobbyTeamClear(&cs->transport, teamId);
     return;
   }
-  /* Local transport: mirror the PACKET_LOBBY_TEAM_CLEAR handler. */
+  /* Local transport: delegate to the shared setter. */
   if (cs->boundServerSim == NULL) return;
   threadsWaitForMutex();
   do {
@@ -694,14 +645,7 @@ void clientSimNetSendLobbyTeamClear(ClientSim *cs, BYTE teamId) {
     if (!serverSimIsLobbyEnabled(sim) ||
         serverSimGetState(sim) != serverStateLobby) break;
     if (teamId == 0 || teamId >= MAX_TANKS) break;
-    {
-      TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
-      if (t != NULL) {
-        memset(t, 0, sizeof(TeamMetadata));
-      }
-    }
-    serverSimPublishLobbyTeamMeta(sim, teamId);
-    lobbyAutoUnreadyOnChange(sim);
+    serverSimClearTeamMeta(sim, teamId);
   } while (0);
   threadsReleaseMutex();
 }
@@ -714,18 +658,16 @@ void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
     return;
   }
   /* Local transport: SP-host is its own operator, so the lock-bit /
-   * authority gates the UDP handler runs aren't applicable. Apply
-   * the setting via the shared helper and re-publish + auto-unready
-   * to match the wire path's tail. */
+   * authority gates the UDP handler runs aren't applicable. The
+   * shared helper publishes settings + clears humans' ready state
+   * on success. */
   if (cs->boundServerSim == NULL) return;
   threadsWaitForMutex();
   do {
     ServerSim *sim = cs->boundServerSim;
     if (!serverSimIsLobbyEnabled(sim) ||
         serverSimGetState(sim) != serverStateLobby) break;
-    if (!serverSimApplyLobbySetting(sim, settingType, value, valueLen)) break;
-    serverSimPublishLobbySettings(sim);
-    lobbyAutoUnreadyOnChange(sim);
+    serverSimApplyLobbySetting(sim, settingType, value, valueLen);
   } while (0);
   threadsReleaseMutex();
 }

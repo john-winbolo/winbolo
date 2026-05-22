@@ -2933,135 +2933,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 break;
             }
 
-            switch (settingType) {
-                case LST_GAME_TYPE:
-                    if (valueLen == 1 && value[0] >= 1 && value[0] <= 3) {
-                        /* Ranked games forbid the "Open" type — every
-                         * tank must start with the same loadout. */
-                        if (serverSimGetRanked(sim) &&
-                            (gameType)value[0] == gameOpen) {
-                            lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
-                                          LOBBY_REJECT_INVALID);
-                            break;
-                        }
-                        serverSimGetGameSim(sim)->game = (gameType)value[0];
-                    } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
-                                           LOBBY_REJECT_INVALID); break; }
-                    break;
-                case LST_HIDDEN_MINES:
-                    if (valueLen == 1) serverSimGetGameSim(sim)->hiddenMines = value[0] != 0;
-                    break;
-                case LST_AI_POLICY:
-                    if (valueLen == 1 && value[0] <= 3) {
-                        /* Ranked games forbid any AI policy other
-                         * than "none". */
-                        if (serverSimGetRanked(sim) &&
-                            (aiType)value[0] != aiNone) {
-                            lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
-                                          LOBBY_REJECT_INVALID);
-                            break;
-                        }
-                        serverSimSetAiPolicy(sim, value[0]);
-                        /* botAiType gates the AddBot handler and rides
-                         * in CTRL_LOBBY_SETTINGS — keep them in sync or
-                         * the next settings publish snaps clients back
-                         * to the CLI startup value. */
-                        serverSimSetBotAiType(sim, (aiType)value[0]);
-                        if ((aiType)value[0] == aiNone) {
-                            for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
-                                if (serverSimIsBot(sim, bi)) {
-                                    serverSimRemoveBot(sim, bi);
-                                    serverSimPublishLobbySlot(sim, bi);
-                                }
-                            }
-                        }
-                    } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
-                                           LOBBY_REJECT_INVALID); break; }
-                    break;
-                case LST_TIME_LIMIT:
-                    if (valueLen == 1) {
-                        bool tl = value[0] != 0;
-                        serverSimSetTimeLimit(sim, tl);
-                        if (tl) {
-                            uint16_t mins = serverSimGetTimeMinutes(sim) > 0
-                                ? serverSimGetTimeMinutes(sim) : 30;
-                            serverSimSetGameLength(sim,
-                                (int32_t)mins * 60 * GAME_NUMGAMETICKS_SEC);
-                        } else {
-                            serverSimSetGameLength(sim, UNLIMITED_GAME_TIME);
-                        }
-                    }
-                    break;
-                case LST_TIME_MINUTES:
-                    if (valueLen == 2) {
-                        uint16_t mins =
-                            (uint16_t)((value[0] << 8) | value[1]);
-                        if (!lobbyTimeMinutesIsValid(mins)) {
-                            lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
-                                          LOBBY_REJECT_INVALID);
-                            break;
-                        }
-                        serverSimSetTimeMinutes(sim, mins);
-                        if (serverSimGetTimeLimit(sim)) {
-                            serverSimSetGameLength(sim,
-                                (int32_t)mins * 60 * GAME_NUMGAMETICKS_SEC);
-                        }
-                    } else { lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
-                                           LOBBY_REJECT_INVALID); break; }
-                    break;
-                case LST_AUTO_LOCK_ON_GAME:
-                    if (valueLen == 1) {
-                        bool v = value[0] != 0;
-                        /* Ranked games keep autoLock forced ON. */
-                        if (serverSimGetRanked(sim) && !v) {
-                            lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
-                                          LOBBY_REJECT_INVALID); break;
-                        }
-                        serverSimSetAutoLockOnGameStart(sim, v);
-                    }
-                    break;
-                case LST_RANKED:
-                    if (valueLen == 1) {
-                        bool r = value[0] != 0;
-                        balanceDebugLog("[RANKED SERVER] LST_RANKED received: newValue=%d "
-                                        "clientIdx=%d prevRanked=%d locks=0x%x",
-                                        (int)r, (int)clientIdx,
-                                        (int)serverSimGetRanked(sim),
-                                        (unsigned)serverSimGetServerLocks(sim));
-                        serverSimSetRanked(sim, r);
-                        balanceDebugLog("[RANKED SERVER] after setRanked: sim->ranked=%d",
-                                        (int)serverSimGetRanked(sim));
-                        if (r) {
-                            /* Force AI policy to "none" and clear any
-                             * bots that were already in the lobby. */
-                            serverSimSetAiPolicy(sim, (uint8_t)aiNone);
-                            serverSimSetBotAiType(sim, aiNone);
-                            for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
-                                if (serverSimIsBot(sim, bi)) {
-                                    serverSimRemoveBot(sim, bi);
-                                    serverSimPublishLobbySlot(sim, bi);
-                                }
-                            }
-                            /* Force game type away from Open if it
-                             * was set there. Default to Tournament. */
-                            if (serverSimGetGameType(sim) == gameOpen) {
-                                serverSimSetGameType(sim, gameTournament);
-                            }
-                            /* Force autoLockOnGameStart=true so new players
-                             * can't slip into a ranked game mid-round. */
-                            if (!serverSimGetAutoLockOnGameStart(sim)) {
-                                serverSimSetAutoLockOnGameStart(sim, true);
-                                /* Settings publish below carries the new
-                                 * autoLockOnGameStart value; no separate
-                                 * setting-changed broadcast needed. */
-                            }
-                        }
-                    }
-                    break;
+            if (!serverSimApplyLobbySetting(sim, settingType, value, valueLen)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                              LOBBY_REJECT_INVALID);
+                break;
             }
-
-            serverSimPublishLobbySettings(sim);
-            lobbyAutoUnreadyOnChange(sim);
             break;
         }
         case PACKET_LOBBY_OPEN_HOST: {
@@ -3080,8 +2956,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 break;
             }
             serverSimSetOpenHost(sim, buf[PACKET_HEADER_SIZE] != 0);
-            serverSimPublishLobbySettings(sim);
-            lobbyAutoUnreadyOnChange(sim);
             break;
         }
         case PACKET_LOBBY_TEAM_META: {
@@ -3105,47 +2979,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_META,
                               LOBBY_REJECT_INVALID); break;
             }
-            TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
-            if (t == NULL) break;
-            t->in_use = 1;
-            t->color = color;
-            /* Per-team uniqueness on namingPool: if another in_use team
-             * already owns this pool, pick the lowest pool index not
-             * used by any other team. Falls back to the requested value
-             * if every pool is taken. */
-            {
-                int poolCount = lobbyBotPoolCount();
-                bool poolTaken = false;
-                for (BYTE other = 1; other < MAX_TANKS; other++) {
-                    if (other == teamId) continue;
-                    const TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
-                    if (ot && ot->in_use && ot->namingPool == namingPool) {
-                        poolTaken = true;
-                        break;
-                    }
-                }
-                if (poolTaken && poolCount > 0) {
-                    for (int p = 0; p < poolCount; p++) {
-                        bool used = false;
-                        for (BYTE other = 1; other < MAX_TANKS; other++) {
-                            if (other == teamId) continue;
-                            const TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
-                            if (ot && ot->in_use && ot->namingPool == p) {
-                                used = true;
-                                break;
-                            }
-                        }
-                        if (!used) { namingPool = (uint8_t)p; break; }
-                    }
-                }
-            }
-            t->namingPool = namingPool;
-            memset(t->name, 0, LOBBY_TEAM_NAME_LEN);
-            if (nameLen > 0) {
-                memcpy(t->name, buf + PACKET_HEADER_SIZE + 4, nameLen);
-            }
-            serverSimPublishLobbyTeamMeta(sim, teamId);
-            lobbyAutoUnreadyOnChange(sim);
+            serverSimSetTeamMeta(sim, teamId, color, namingPool,
+                                 buf + PACKET_HEADER_SIZE + 4, nameLen);
             break;
         }
         case PACKET_LOBBY_TEAM_CLEAR: {
@@ -3163,14 +2998,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_CLEAR,
                               LOBBY_REJECT_INVALID); break;
             }
-            {
-                TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
-                if (t != NULL) {
-                    memset(t, 0, sizeof(TeamMetadata));
-                }
-            }
-            serverSimPublishLobbyTeamMeta(sim, teamId);
-            lobbyAutoUnreadyOnChange(sim);
+            serverSimClearTeamMeta(sim, teamId);
             break;
         }
         case PACKET_LOBBY_BOT_CONFIG: {
@@ -3220,18 +3048,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     break;
                 }
             }
-            {
-                LobbyBotConfig *bc = serverSimGetBotConfigMut(sim, slot);
-                if (bc) {
-                    bc->difficulty  = difficulty;
-                    bc->personality = personality;
-                }
-            }
             if (nameLen > 0) {
                 transportUdpServerSetBotName(slot, validatedName);
             }
-            serverSimPublishLobbyBotConfig(sim, slot);
-            lobbyAutoUnreadyOnChange(sim);
+            serverSimSetBotConfig(sim, slot, difficulty, personality,
+                                  nameLen > 0 ? validatedName : NULL);
             break;
         }
         case PACKET_LOBBY_KICK: {
@@ -3281,8 +3102,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             }
             serverSimSetBotBrainIdxFor(sim, slot, brainIdx);
             botManagerSetBrainIdx(sim, slot, brainIdx);
-            serverSimPublishLobbyBotBrain(sim, slot);
-            lobbyAutoUnreadyOnChange(sim);
             break;
         }
         case PACKET_LOBBY_SET_MAP: {
@@ -3347,7 +3166,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             }
 
             udpServer.pendingPersistActive = false;
-            serverSimPublishLobbySettings(sim);
             WB_LOG_INFO(WB_LOG_CAT_NET,
                         "[LOBBY] SET_MAP ok: '%s'", fullPath);
             break;
@@ -3563,7 +3381,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     }
                 }
                 serverSimSetMapName(sim, displayName);
-                serverSimPublishLobbySettings(sim);
                 previewed = true;
             }
 
@@ -3756,10 +3573,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 udpServer.clientUploadHave[clientIdx]   = 0;
                 udpServer.clientUploadTotal[clientIdx]  = 0;
 
-                if (previewed) {
-                    serverSimPublishLobbySettings(sim);
-                }
-
                 char relReturn[256];
                 SDL_snprintf(relReturn, sizeof(relReturn), "Uploads/%s",
                              origName);
@@ -3866,7 +3679,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             }
             if (serverSimRevertPreview(sim)) {
                 udpServer.pendingPersistActive = false;
-                serverSimPublishLobbySettings(sim);
                 WB_LOG_INFO(WB_LOG_CAT_NET,
                             "[LOBBY] PREVIEW_CANCEL: rolled back");
             }
@@ -3985,7 +3797,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 break;
             }
             udpServer.pendingPersistActive = false;
-            serverSimPublishLobbySettings(sim);
             WB_LOG_INFO(WB_LOG_CAT_NET,
                         "[LOBBY] PREVIEW_RANDOM ok: '%s'", seedStr);
             break;

@@ -95,12 +95,40 @@ void lobbyAutoUnreadyOnChange(ServerSim *sim);
 /* Apply the LST_* setting cluster shared by PACKET_LOBBY_SET_SETTING
  * (UDP) and the SP-host local-transport branch of
  * clientSimNetSendLobbySetting. Caller validates lock-bit / authority
- * gates and runs the post-apply publish + auto-unready pass. Returns
- * false on malformed payload, out-of-range value, or cross-setting
- * invariant rejection (e.g. ranked forbids gameOpen / non-aiNone /
- * autoLock off). */
+ * gates; on success this publishes CTRL_LOBBY_SETTINGS and clears
+ * humans' ready state before returning true. Returns false on
+ * malformed payload, out-of-range value, or cross-setting invariant
+ * rejection (e.g. ranked forbids gameOpen / non-aiNone / autoLock
+ * off). */
 bool serverSimApplyLobbySetting(ServerSim *sim,
                                 uint8_t lst,
                                 const uint8_t *value, size_t len);
+
+/* Apply a bot-config change atomically — write difficulty / personality
+ * to the slot, optionally rename the bot (when validatedName is
+ * non-NULL and non-empty), publish CTRL_LOBBY_BOT_CONFIG +
+ * CTRL_LOBBY_SLOT, and clear humans' ready state. Callers (UDP
+ * PACKET_LOBBY_BOT_CONFIG handler, SP-host clientSimNetSendLobbyBotConfig)
+ * must validate the name beforehand — see lobbyBotNameAcceptable.
+ * Pass NULL or an empty string to leave the name unchanged. */
+void serverSimSetBotConfig(ServerSim *sim, BYTE slot,
+                            uint8_t difficulty, uint8_t personality,
+                            const char *validatedName);
+
+/* Apply a team-metadata change atomically — write color, naming pool
+ * (with the in-use-pool rewrite when another team owns the requested
+ * pool), and name, publish CTRL_LOBBY_TEAM_META, and clear humans'
+ * ready state. Callers (UDP PACKET_LOBBY_TEAM_META handler, SP-host
+ * clientSimNetSendLobbyTeamMeta) just hand over the validated payload.
+ * nameLen 0 leaves the team's name empty. */
+void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
+                           uint8_t color, uint8_t namingPool,
+                           const uint8_t *name, uint8_t nameLen);
+
+/* Clear a team's metadata back to zero (in_use=0, color=0, pool=0,
+ * empty name), publish CTRL_LOBBY_TEAM_META, and clear humans' ready
+ * state. Callers (UDP PACKET_LOBBY_TEAM_CLEAR handler, SP-host
+ * clientSimNetSendLobbyTeamClear). */
+void serverSimClearTeamMeta(ServerSim *sim, BYTE teamId);
 
 #endif
