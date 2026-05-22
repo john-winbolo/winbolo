@@ -37,6 +37,7 @@
 
 #include "everard_map.h"
 
+#include "bolo_rand.h"
 #include "debug_file_output.h"
 #include "geolookup.h"
 #include "global.h"
@@ -574,7 +575,7 @@ void printArgs() {
   fprintf(stderr, "-logfile      - Write all output to file instead of console.\n");
   fprintf(stderr, "-maxplayers   - Specifies the maximum number of players that can be on this\n");
   fprintf(stderr, "                server.\n");
-  fprintf(stderr, "-seed <N>     - Seed the RNG with N for reproducible runs.\n");
+  fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
   fprintf(stderr, "-log          - Create game log file (filename optional)\n");
   fprintf(stderr, "-dontsendlog  - Don't upload game log to winbolo.net\n");
   fprintf(stderr, "-statusFile	 - Save list of unlocked players to a file.\n");
@@ -874,11 +875,11 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
 #include <time.h>
 
 int main(int argc, char **argv) {
-  srand((unsigned int)(time(NULL) ^ getpid()));
+  bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
   {
     int seedArg = findArg(argc, argv, "seed");
     if (seedArg != ARG_NOT_FOUND) {
-      srand((unsigned int)strtoul((char *)argv[seedArg], NULL, 0));
+      bolo_srand(strtoull((char *)argv[seedArg], NULL, 0));
     }
   }
   sentryInit("WinBoloDS", argc, argv);
@@ -1007,7 +1008,7 @@ int main(int argc, char **argv) {
     } else {
       /* Plain "-randommap" — fully random */
       int types[] = { MAPGEN_TOURNAMENT, MAPGEN_NATURAL, MAPGEN_MAZE, MAPGEN_FRACTAL };
-      cfg = mapGenDefaultConfig(types[rand() % 4]);
+      cfg = mapGenDefaultConfig(types[bolo_rand_below(4)]);
     }
 
     /* Force tournament maps to max objects */
@@ -1079,7 +1080,7 @@ int main(int argc, char **argv) {
 #endif
       return 0;
     }
-    serverSim = serverSimCreate(scannedFiles[rand() % scannedCount], game, hiddenMines, srtDelay, gmeLen);
+    serverSim = serverSimCreate(scannedFiles[bolo_rand_below((uint32_t)scannedCount)], game, hiddenMines, srtDelay, gmeLen);
     if (serverSim == NULL) {
       int i;
       for (i = 0; i < scannedCount; i++) SDL_free(scannedFiles[i]);

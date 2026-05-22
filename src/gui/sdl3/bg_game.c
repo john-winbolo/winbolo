@@ -24,6 +24,7 @@
 #include "mapview.h"
 #include "tileloader.h"
 #include "../../common/wb_log.h"
+#include "bolo_rand.h"
 #include "global.h"
 #include "everard_map.h"
 #include "control_event.h"
@@ -210,7 +211,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
     char brainPath[512];
     if (findBrainPath(brainPath, sizeof(brainPath))) {
         WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Found brain: %s", brainPath);
-        int numBots = BG_MIN_BOTS + (rand() % (BG_MAX_BOTS - BG_MIN_BOTS + 1));
+        int numBots = BG_MIN_BOTS + (int)bolo_rand_below((uint32_t)(BG_MAX_BOTS - BG_MIN_BOTS + 1));
         for (BYTE i = 0; i < numBots; i++) {
             char name[32];
             SDL_snprintf(name, sizeof(name), "Bot %d", i + 1);
@@ -223,7 +224,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         /* Randomize teams: 0 = no teams, 2-4 = number of teams */
         int numTeams = 0;
         {
-            int r = rand() % 5;  /* 0 = no teams, 1-4 maps to 2-4 teams */
+            int r = (int)bolo_rand_below(5);  /* 0 = no teams, 1-4 maps to 2-4 teams */
             if (r >= 1 && r <= 2) numTeams = 2;
             else if (r == 3) numTeams = 3;
             else if (r == 4) numTeams = 4;

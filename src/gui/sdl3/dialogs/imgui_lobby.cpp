@@ -21,7 +21,7 @@
 
 #include <cstdio>
 #include <cstring>
-#include <cstdlib>  /* rand() — used to randomise the default naming pool */
+#include <cstdlib>
 #include <cfloat>   /* FLT_MAX — unbounded max for window size constraints */
 #include <algorithm>  /* std::sort — used for chooser list order */
 #include <atomic>
@@ -47,6 +47,7 @@ extern "C" {
 #include "../sdl3draw.h"
 #include "../../gamefront.h"
 #include "global.h"
+#include "bolo_rand.h"
 #include "client_sim.h"
 #include "client_net.h"
 #include "md5.h"
@@ -4277,7 +4278,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * host can still override via the dropdown. */
                 int effectivePool = curPool;
                 if (botCount[teamId] == 0 && lobbyBotPoolCount() > 0) {
-                    effectivePool = rand() % lobbyBotPoolCount();
+                    effectivePool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
                     const char *nameForMeta = clientSimGetLobbyTeamInUse(cs, (BYTE)(teamId))
                         ? clientSimGetLobbyTeamName(cs, (BYTE)(teamId)) : defaultName;
                     lobbySendTeamPool(cs, (uint8_t)teamId,

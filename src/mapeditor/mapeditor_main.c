@@ -20,6 +20,7 @@
 
 #include "../common/wb_log.h"
 #include "../server/threads.h"
+#include "bolo_rand.h"
 #ifdef _WIN32
 #include <process.h>
 #define getpid _getpid
@@ -69,7 +70,7 @@ static void mapEditorSetWindowIcon(SDL_Window *window) {
 }
 
 int main(int argc, char *argv[]) {
-    srand((unsigned int)(time(NULL) ^ getpid()));
+    bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
 
     const char *mapPath = NULL;
     if (argc > 1) {

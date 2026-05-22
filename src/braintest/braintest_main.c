@@ -64,6 +64,7 @@
 #include <unistd.h>
 #endif
 
+#include "bolo_rand.h"
 #include "global.h"
 #include "everard_map.h"
 #include "tank.h"
@@ -4257,7 +4258,7 @@ static void appRender(BrainTestApp *app) {
 int main(int argc, char *argv[]) {
     if (!parseArgs(argc, argv)) return 1;
 
-    srand((unsigned int)(time(NULL) ^ getpid()));
+    bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
 
     /* Clear optimize.log from any previous run so each BrainTest session
      * starts with a fresh diagnostic log. Lua-side writers open with "a"

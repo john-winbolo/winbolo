@@ -48,6 +48,7 @@
 
 #include "../../common/wb_log.h"
 #include "../../winbolonet/winbolonet_core.h"
+#include "bolo_rand.h"
 #include "client_mapload.h"
 #include "client_render.h"
 #include "client_sim.h"
@@ -226,7 +227,7 @@ int main(int argc, char *argv[]) {
   const char *cmdLine = "";
   ClientSim *cs = NULL;
 
-  srand((unsigned int)(time(NULL) ^ getpid()));
+  bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
 
   for (int i = 1; i < argc; i++) {
     if (cmdLine[0] == '\0') {

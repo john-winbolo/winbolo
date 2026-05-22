@@ -100,6 +100,7 @@ int run_wbn_news_parse(void);
 int run_wbn_country_cache(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
+int run_bolo_rand_golden_sequence(void);
 
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map
  * with one player added at slot 0. Caller is responsible for

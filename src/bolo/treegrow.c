@@ -29,6 +29,7 @@
 
 #include <stdlib.h>
 #include <time.h>
+#include "bolo_rand.h"
 #include "global.h"
 #include "types.h"
 #include "bolo_map.h"
@@ -53,7 +54,7 @@
 *
 *********************************************************/
 void treeGrowCreate(GameSim *sim) {
-  sim->treeGrowSeed = (WORD) rand();
+  sim->treeGrowSeed = (WORD)(bolo_rand() | 1);
   sim->treeGrowTime = TREEGROW_INITIAL_TIME;
   sim->treeGrowScore = TREEGROW_INITIAL_SCORE;
 }

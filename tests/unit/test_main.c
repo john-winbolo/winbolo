@@ -81,6 +81,7 @@ static const UnitTestEntry s_tests[] = {
     { "wbn_country_cache",                       run_wbn_country_cache                       },
     { "brain_crash_log_writes_file",             run_brain_crash_log_writes_file             },
     { "brain_crash_log_falls_back_to_luaptr",    run_brain_crash_log_falls_back_to_luaptr    },
+    { "bolo_rand_golden_sequence",               run_bolo_rand_golden_sequence               },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

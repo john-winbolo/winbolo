@@ -67,6 +67,7 @@
 #include <math.h>
 #include "cJSON.h"
 
+#include "bolo_rand.h"
 #include "brain_data.h"
 #include "client_mapload.h"
 #include "client_sim.h"
@@ -122,7 +123,7 @@ static bool optFast = FALSE;
 static char optMap[512] = "";
 static bool optStdin = FALSE;
 static bool optLogBinary = FALSE;
-static unsigned int optSeed = 0;
+static uint64_t optSeed = 0;
 static bool optSeedSet = FALSE;
 static aiType optAi = aiYes;
 
@@ -1409,7 +1410,7 @@ static bool parseArgs(int argc, char **argv) {
     } else if (strcmp(argv[i], "--cmd-stdin") == 0 && i + 1 < argc) {
       strncpy(optCmdStdin, argv[++i], sizeof(optCmdStdin) - 1);
     } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
-      optSeed = (unsigned int)strtoul(argv[++i], NULL, 0);
+      optSeed = strtoull(argv[++i], NULL, 0);
       optSeedSet = TRUE;
     } else if (strcmp(argv[i], "--password") == 0 && i + 1 < argc) {
       strncpy(optPassword, argv[++i], sizeof(optPassword) - 1);
@@ -2117,7 +2118,7 @@ static int runNetworkMode(void) {
 int main(int argc, char *argv[]) {
   int result;
 
-  srand((unsigned int)(time(NULL) ^ getpid()));
+  bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
   sentryInit("WinBoloHeadless", argc, argv);
   atexit(sentryClose);
 
@@ -2126,7 +2127,7 @@ int main(int argc, char *argv[]) {
   }
 
   if (optSeedSet) {
-    srand(optSeed);
+    bolo_srand((uint64_t)optSeed);
   }
 
   signal(SIGINT, signalHandler);
