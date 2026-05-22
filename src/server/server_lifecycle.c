@@ -444,6 +444,17 @@ void serverInstanceTick(ServerSim *sim) {
       }
       /* Returned to lobby — broadcast full lobby state */
       publishLobbyStateAll(sim);
+      /* Republish the bot brain catalogue.  Mid-game joiners were gated
+       * out of the BrainList during their sync replay (see
+       * serverSimSyncSubscriber), so they need it now before the lobby
+       * UI's AiConfig combobox appears.  In-lobby clients get it as a
+       * (cheap) refresh. */
+      {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillLobbyBrainListEvent(sim, &evt);
+        serverSimPublishControl(sim, &evt);
+      }
       /* Send the win message now that players are back in the lobby */
       if (sim->pendingWinMessage[0] != '\0') {
         transportUdpServerSendServerMessage(sim->pendingWinMessage);

@@ -40,6 +40,7 @@
 #include "netpacks.h"
 #include "input_packet.h"
 #include "gametype.h"
+#include "control_event.h"
 
 /* Maximum UDP datagram payload we'll send.
  * Sits under the standard 1500-byte Ethernet MTU minus IPv4 (20) + UDP (8)
@@ -68,6 +69,29 @@ typedef struct {
  * buffer would wrap and overwrite unacked entries. */
 static inline bool eventQueueHasSpace(const ClientEventQueue *q) {
     return (q->nextSeq - q->ackedSeq) < RELIABLE_EVENT_BUFFER_SIZE;
+}
+
+/* Per-client reliable control event queues.  Smaller than the game /
+ * map queues because control events are produced at lower rates, but
+ * sized large enough that a sync-replay burst (~15 events) plus any
+ * concurrent publishes cannot overflow under normal operation —
+ * silently dropping an overflow event would resurrect exactly the
+ * lobby-desync bug class this plan exists to fix. */
+#define CONTROL_EVENT_QUEUE_SIZE 128
+
+typedef struct {
+    uint32_t      seq;
+    ControlEvent  event;
+} ReliableControlEvent;
+
+typedef struct {
+    ReliableControlEvent buffer[CONTROL_EVENT_QUEUE_SIZE];
+    uint32_t             nextSeq;
+    uint32_t             ackedSeq;
+} ClientControlEventQueue;
+
+static inline bool controlEventQueueHasSpace(const ClientControlEventQueue *q) {
+    return (q->nextSeq - q->ackedSeq) < CONTROL_EVENT_QUEUE_SIZE;
 }
 
 /* Join retry interval in ticks (1 second) */

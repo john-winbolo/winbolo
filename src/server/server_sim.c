@@ -4314,9 +4314,16 @@ static void serverSimSyncSubscriber(
     serverSimFillLobbySettingsEvent(sim, &evt);
     deliver(ctx, &evt);
 
-    memset(&evt, 0, sizeof(evt));
-    serverSimFillLobbyBrainListEvent(sim, &evt);
-    deliver(ctx, &evt);
+    /* BrainList (~900 bytes) is only used by the lobby AiConfig combobox.
+     * Mid-game joiners don't need it during sync replay; embedding it in a
+     * snapshot would risk exceeding MTU room.  The game-over → lobby
+     * transition re-publishes it so the mid-game joiner gets it before
+     * the lobby UI needs it. */
+    if (sim->state == serverStateLobby || sim->state == serverStateCountdown) {
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillLobbyBrainListEvent(sim, &evt);
+        deliver(ctx, &evt);
+    }
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (sim->playerConnected[i]) {

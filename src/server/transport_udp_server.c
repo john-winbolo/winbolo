@@ -232,6 +232,18 @@ static struct {
     /* Per-client reliable map event queues (EVENT_MAP_CHANGE only) */
     ClientEventQueue mapEventQueues[MAX_TANKS];
 
+    /* Per-client reliable control event queues — every control event
+     * (lobby, chat, alliance, game phase, etc.) lands here so the
+     * carrier path can retransmit it until ACKed.  Phase 3 keeps the
+     * legacy udpSendTo running in parallel; nothing reads back yet. */
+    ClientControlEventQueue controlEventQueues[MAX_TANKS];
+    /* Suppress immediate-send-on-enqueue during the sync-replay burst
+     * fired by serverSimRegisterSubscriber, so one carrier datagram
+     * packs all replayed events instead of one per event.  Set/cleared
+     * by the UDP server around the register call; consumed by the
+     * carrier path (Phase 5).  Unused in Phase 3. */
+    bool                    controlSyncInProgress[MAX_TANKS];
+
     /* Game lock — prevents new players from joining */
     bool gameLocked;           /* Server admin lock */
     bool clientLocked[MAX_TANKS]; /* Per-player lock votes */
@@ -283,6 +295,7 @@ static PunchQueueEntry punchQueue[PUNCH_QUEUE_SIZE];
 
 /* Forward declaration */
 static bool serverClientsAllLocked(void);
+static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful);
 
 /* Find client slot by address. Returns player index or -1. */
 static int serverFindClient(const struct sockaddr_in *addr) {
@@ -485,12 +498,16 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
     size_t len = 0;
     ControlEncodeFn enc;
     EncodeResult r;
+    int idx;
+    ClientControlEventQueue *q;
+    uint32_t seq;
 
     if (!client->connected) return;
 
     /* Per-recipient filtering for single-target variants.  The codec
      * stays UdpServerClient-agnostic; the slot comparison lives here
-     * where the recipient's player number is in scope. */
+     * where the recipient's player number is in scope.  Same gate
+     * blocks both the new enqueue and the legacy direct send. */
     if (evt->type == CTRL_ALLIANCE_REQUEST &&
         evt->u.allianceRequest.toPlayer != client->playerNum) {
         return;
@@ -507,6 +524,32 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
         }
     }
 
+    /* Enqueue into this client's reliable control queue.  Read-only
+     * diagnostic in Phase 3 — nothing pops yet.  Phase 4/5 wire the
+     * carrier path that retransmits this tail until ACKed. */
+    idx = (int)(client - udpServer.clients);
+    q = &udpServer.controlEventQueues[idx];
+    if (!controlEventQueueHasSpace(q)) {
+        /* Don't silently drop — every control event carries state-sync
+         * semantics.  Log and disconnect.  The 500-tick unacked-control
+         * timeout (Phase 7) catches the offending client first in
+         * practice; this is the belt-and-braces. */
+        WB_LOG_ERROR(WB_LOG_CAT_NET,
+                     "control queue overflow for slot %d, disconnecting",
+                     idx);
+        serverDisconnectClient(serverSimGetActive(), idx, false);
+        return;
+    }
+    seq = q->nextSeq;
+    q->buffer[seq % CONTROL_EVENT_QUEUE_SIZE].seq   = seq;
+    q->buffer[seq % CONTROL_EVENT_QUEUE_SIZE].event = *evt;
+    q->nextSeq++;
+    WB_LOG_INFO(WB_LOG_CAT_NET,
+                "ctrl enqueue slot=%d seq=%u type=%d",
+                idx, (unsigned)seq, (int)evt->type);
+
+    /* Legacy direct send — stays through Phase 3/4; Phase 5 deletes it
+     * once the carrier path is the only reliability mechanism. */
     enc = transportControlCodecEncoder(evt->type);
     if (enc == NULL) return;
     r = enc(evt, client, buf, sizeof(buf), &len);
@@ -1222,6 +1265,9 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     udpServer.mapEventQueues[slot].nextSeq = 1;
     udpServer.mapEventQueues[slot].ackedSeq = 1;
     memset(udpServer.mapEventQueues[slot].buffer, 0, sizeof(udpServer.mapEventQueues[slot].buffer));
+    udpServer.controlEventQueues[slot].nextSeq = 1;
+    udpServer.controlEventQueues[slot].ackedSeq = 1;
+    memset(udpServer.controlEventQueues[slot].buffer, 0, sizeof(udpServer.controlEventQueues[slot].buffer));
 
     /* Merge client-supplied hints with server-determined WBN trust into a
      * single clientFlags byte, then run the four-step join sequence so a
@@ -1277,10 +1323,18 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
      * table.  Register's sync-replay walks the lobby settings, every
      * connected slot, and every player-join and feeds them through
      * the codec encoder to this client's socket — replacing the old
-     * composite PACKET_LOBBY_STATE handshake. */
+     * composite PACKET_LOBBY_STATE handshake.
+     *
+     * controlSyncInProgress brackets the synchronous replay burst
+     * (~10-15 events) so the future carrier path (Phase 5) can pack
+     * them into one datagram instead of one per event.  The flag has
+     * no behavioral effect in Phase 3 — nothing reads it yet — but
+     * the wrapper lives here so Phase 5 is a one-line consumer. */
+    udpServer.controlSyncInProgress[slot] = true;
     udpServer.clients[slot].controlSub =
         serverSimRegisterSubscriber(sim, udpClientDeliverControl,
                                     &udpServer.clients[slot]);
+    udpServer.controlSyncInProgress[slot] = false;
 
     winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
                        (BYTE)slot, WINBOLO_NET_NO_PLAYER);
@@ -1629,6 +1683,13 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     memset(udpServer.clients[idx].playerName, 0, PACKET_MAX_PLAYER_NAME);
     udpServer.clientLocked[idx] = false;
 
+    /* Reset the control event queue so a re-using slot starts fresh. */
+    udpServer.controlEventQueues[idx].nextSeq = 1;
+    udpServer.controlEventQueues[idx].ackedSeq = 1;
+    memset(udpServer.controlEventQueues[idx].buffer, 0,
+           sizeof(udpServer.controlEventQueues[idx].buffer));
+    udpServer.controlSyncInProgress[idx] = false;
+
     /* Release any in-flight upload state. Without this, a client
      * who drops mid-upload would leave clientUploadActive set,
      * blocking every subsequent UPLOAD_BEGIN from a different
@@ -1843,6 +1904,9 @@ bool transportUdpServerCreate(unsigned short port,
         udpServer.clients[i].nameStickySuffix = false;
         udpServer.clients[i].controlSub = SUBSCRIBER_HANDLE_INVALID;
         memset(&udpServer.mapDownload[i], 0, sizeof(ClientMapDownload));
+        udpServer.controlEventQueues[i].nextSeq = 1;
+        udpServer.controlEventQueues[i].ackedSeq = 1;
+        udpServer.controlSyncInProgress[i] = false;
     }
 
     /* Start dedicated recv thread (skip under simulated latency) */
@@ -2018,12 +2082,24 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
             udpServer.mapDownload[i].downloadComplete = TRUE;
         }
         /* Reset reliable event queues — stale events from the previous game
-         * must not be resent after clients load the fresh map. */
+         * must not be resent after clients load the fresh map.  Reset all
+         * three queues here, BEFORE the caller publishes
+         * CTRL_GAME_PHASE_RUNNING, so that event enters every slot's
+         * control queue at seq 1 as the first event of the new game. */
         udpServer.eventQueues[i].nextSeq = 1;
         udpServer.eventQueues[i].ackedSeq = 1;
+        memset(udpServer.eventQueues[i].buffer, 0,
+               sizeof(udpServer.eventQueues[i].buffer));
         udpServer.mapEventQueues[i].nextSeq = 1;
         udpServer.mapEventQueues[i].ackedSeq = 1;
+        memset(udpServer.mapEventQueues[i].buffer, 0,
+               sizeof(udpServer.mapEventQueues[i].buffer));
+        udpServer.controlEventQueues[i].nextSeq = 1;
+        udpServer.controlEventQueues[i].ackedSeq = 1;
+        memset(udpServer.controlEventQueues[i].buffer, 0,
+               sizeof(udpServer.controlEventQueues[i].buffer));
     }
+    WB_LOG_INFO(WB_LOG_CAT_NET, "ctrl queue reset all slots (game start)");
 }
 
 void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
