@@ -558,12 +558,46 @@ static bool brc_read_session_dir(lua_State *L, char *out, size_t outsz) {
   return ok;
 }
 
+/* Rate-limit key in the Lua registry: stores the last UNIX timestamp
+ * a crash file was written for this brain. Per-brain (each brain has
+ * its own lua_State + registry) so two brains crashing at the same
+ * time both get logged; only repeats from the SAME brain are throttled.
+ * Address-of a static is the standard light-userdata key idiom. */
+static const char kBrcCrashRateLimitKey;
+
+/* Crashes within this many seconds of a previous crash on the same
+ * brain get suppressed (stderr still fires, file is skipped). 30s
+ * is short enough that a transient crash from one tick re-arms quickly
+ * but long enough that a chronic per-tick crash can't fill the disk
+ * (50 ticks/sec × 30s = at most 1 file per 1500 crashes). */
+#define BRC_CRASH_RATE_LIMIT_SECS 30
+
+/* Returns true if this crash should be suppressed (rate-limited).
+ * Updates the registry timestamp on a non-suppressed call so the next
+ * caller can see we just logged. */
+static bool brc_should_suppress_crash_file(lua_State *L, time_t now) {
+  lua_pushlightuserdata(L, (void *)&kBrcCrashRateLimitKey);
+  lua_rawget(L, LUA_REGISTRYINDEX);
+  time_t last = (time_t)lua_tointeger(L, -1);
+  lua_pop(L, 1);
+
+  if (last != 0 && (now - last) < BRC_CRASH_RATE_LIMIT_SECS) {
+    return true;
+  }
+  lua_pushlightuserdata(L, (void *)&kBrcCrashRateLimitKey);
+  lua_pushinteger(L, (lua_Integer)now);
+  lua_rawset(L, LUA_REGISTRYINDEX);
+  return false;
+}
+
 /* Write a brain crash report. err_or_traceback is the pcall payload
  * (error string + "\nstack traceback:\n..." from the msgh). method is
- * "think" / "init" / whatever — used in the banner and filename. */
-static void brc_write_crash_log(lua_State *L,
-                                const char *method,
-                                const char *err_or_traceback) {
+ * "think" / "init" / whatever — used in the banner and filename. Not
+ * static so the unit test in tests/unit/test_brain_crash_log.c can
+ * invoke it directly without standing up a full BrainInfo. */
+void brc_write_crash_log(lua_State *L,
+                         const char *method,
+                         const char *err_or_traceback) {
   if (err_or_traceback == NULL) err_or_traceback = "(no error message)";
   if (method == NULL) method = "?";
 
@@ -590,6 +624,13 @@ static void brc_write_crash_log(lua_State *L,
   char session_dir[512];
   bool has_session = brc_read_session_dir(L, session_dir, sizeof(session_dir));
 
+  /* Rate-limit: if this brain crashed within the last
+   * BRC_CRASH_RATE_LIMIT_SECS, skip the file write so a perpetually-
+   * crashing brain (we no longer remove the bot on Lua error — see
+   * bot_manager.c runBotThinkJobImpl) can't fill the disk. Stderr
+   * still fires below so the crash is never invisible. */
+  bool suppress_file = brc_should_suppress_crash_file(L, now);
+
   /* Filename: bot index if known, else lua_State pointer. Goes inside
    * DEBUG_SESSION_DIR if BrainTest set one (so each session's crashes
    * are colocated with its other logs); else CWD. Unique per crash. */
@@ -605,7 +646,7 @@ static void brc_write_crash_log(lua_State *L,
                  prefix, ts_utc, pid, (void *)lptr);
   }
 
-  FILE *f = fopen(path, "wb");
+  FILE *f = suppress_file ? NULL : fopen(path, "wb");
   if (f) {
     fprintf(f, "===== BRAIN CRASH =====\n");
     fprintf(f, "[BRAIN_CRASH] method=brain.%s\n", method);
@@ -624,23 +665,37 @@ static void brc_write_crash_log(lua_State *L,
     fclose(f);
   }
 
-  /* Stderr surface so the failure is visible without grepping. */
-  fprintf(stderr,
-          "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) — see %s\n",
-          method, ts_local, bot_idx, tick, (void *)lptr, path);
+  /* Stderr surface so the failure is visible without grepping. Always
+   * fires (even when the file was suppressed) so a chronically-crashing
+   * brain stays loud in the console — just with a clear note that the
+   * file isn't being re-emitted. */
+  if (suppress_file) {
+    fprintf(stderr,
+            "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) "
+            "— file SUPPRESSED (rate-limit: same brain crashed within %ds)\n",
+            method, ts_local, bot_idx, tick, (void *)lptr,
+            BRC_CRASH_RATE_LIMIT_SECS);
+  } else {
+    fprintf(stderr,
+            "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) — see %s\n",
+            method, ts_local, bot_idx, tick, (void *)lptr, path);
+  }
   fprintf(stderr, "[BRAIN_CRASH] %s\n", err_or_traceback);
   fflush(stderr);
 
   /* One-line index entry in brain_error.log (inside the session dir if
-   * applicable) for tail-watchers; back-points at the full crash file. */
-  char idx_path[1024];
-  SDL_snprintf(idx_path, sizeof(idx_path), "%s/brain_error.log", prefix);
-  FILE *idx = fopen(idx_path, "a");
-  if (idx) {
-    fprintf(idx,
-            "[BRAIN_CRASH] %s (%s) bot=%d tick=%d pid=%d L=%p method=%s file=%s\n",
-            ts_utc, ts_local, bot_idx, tick, pid, (void *)lptr, method, path);
-    fclose(idx);
+   * applicable) for tail-watchers; back-points at the full crash file.
+   * Skipped on rate-limit so the index doesn't grow without bound. */
+  if (!suppress_file) {
+    char idx_path[1024];
+    SDL_snprintf(idx_path, sizeof(idx_path), "%s/brain_error.log", prefix);
+    FILE *idx = fopen(idx_path, "a");
+    if (idx) {
+      fprintf(idx,
+              "[BRAIN_CRASH] %s (%s) bot=%d tick=%d pid=%d L=%p method=%s file=%s\n",
+              ts_utc, ts_local, bot_idx, tick, pid, (void *)lptr, method, path);
+      fclose(idx);
+    }
   }
 }
 

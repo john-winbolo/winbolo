@@ -432,12 +432,14 @@ function M.decide(state, world, info, now)
       viz.text("repair_pill_viz", tank_fx + 0.6, tank_fy - 1.2,
                string.format("Repair d=%d/%.1f tr=%d dgr=%d lgm=%d",
                              dist, effective_max, info.trees,
-                             danger_at_tank, ticks),
+                             math.floor(danger_at_tank or 0),
+                             math.floor(ticks or 0)),
                "topleft", r, g, b, 240)
       print2(string.format(
         "REPAIR_DISPATCH_CHECK pill=(%d,%d) tank=(%d,%d) dist=%d eff_max=%.1f trees=%d danger=%d lgm_ticks=%d can=%s",
         px, py, tmx, tmy, dist, effective_max, info.trees,
-        danger_at_tank, ticks, tostring(can_dispatch)))
+        math.floor(danger_at_tank or 0),
+        math.floor(ticks or 0), tostring(can_dispatch)))
     end
 
     if can_dispatch then

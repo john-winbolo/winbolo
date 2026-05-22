@@ -2428,6 +2428,12 @@ function M.update_attack_substate(goal, state, world, info)
         local decision_msg
         if needs_build then
           goal.substate = "build_walls"
+          goal._wall_build_last_progress  = now
+          goal._wall_build_start          = now
+          goal._wall_idx_started          = nil
+          goal._wall_idx_prev_tt          = nil
+          goal._wall_build_prev_man       = nil
+          goal._wall_build_prev_idx       = nil
           decision_msg = string.format("BUILD_WALLS: %d slots (%s, score=%d, trees=%d/%d)",
                                        #pots, target_for_build.kind or "?",
                                        target_for_build.score or 0,
@@ -2548,9 +2554,10 @@ function M.update_attack_substate(goal, state, world, info)
       goal._wall_build_prev_man  = nil
       goal._wall_build_prev_idx  = nil
       goal._wall_idx_started     = nil
-      goal._build_decision_msg   = nil
-      goal._build_decision_until = nil
-      goal._build_timeout_total  = nil
+      goal._build_decision_msg        = nil
+      goal._build_decision_until      = nil
+      goal._build_decision_is_failure = nil
+      goal._build_timeout_total       = nil
       if BRAIN_DEBUG_MODE and BRAIN_LOG_BUILDER then
         print(string.format(TAG .. " BUILD_WALLS: queued %d walls (closest-to-pill first)",
                             #sorted))
@@ -2703,11 +2710,11 @@ function M.update_attack_substate(goal, state, world, info)
               end
             else
               if #parts > 0 then
-                why = string.format("each wall per-stall — last skip: %s — %d/%d unbuilt",
+                why = string.format("per-wall stall (5s each) — last skip: %s — %d/%d unbuilt",
                                     table.concat(parts, "+"), unbuilt_n, list_n)
               else
-                why = string.format("%d/%d slots advanced as pre-built but %d/%d unbuilt — check queue ordering",
-                                    preexisting_n, list_n, unbuilt_n, list_n)
+                why = string.format("per-wall stall (5s each, no _wall_shield_skip logged) — %d/%d unbuilt — LGM unreachable or builder rejected silently",
+                                    unbuilt_n, list_n)
               end
             end
           end
