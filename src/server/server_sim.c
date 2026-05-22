@@ -117,6 +117,12 @@ void serverSimStartGame(ServerSim *sim);
  * path; defined alongside lobbyAutoUnreadyOnChange below. */
 static void serverSimApplyMapChange(ServerSim *sim);
 
+/* Forward declarations for map-skip publish path — definitions live
+ * further down the file. */
+static void serverSimFillMapSkipStateEvent(const ServerSim *sim,
+                                           ControlEvent *evt);
+static void publishMapSkipState(ServerSim *sim);
+
 /* Active sim pointer — when non-NULL, servercore.c routing functions
  * access sim state directly instead of using legacy globals. */
 static THREAD_LOCAL ServerSim *activeSim = NULL;
@@ -1727,16 +1733,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
                 serverSimMapDirPickRandom(sim);
             }
             serverSimMapSkipVotesReset(sim);
-            {
-                ControlEvent skipEvt;
-                BYTE m;
-                memset(&skipEvt, 0, sizeof(skipEvt));
-                skipEvt.type = CTRL_MAP_SKIP_STATE;
-                for (m = 0; m < MAX_TANKS; m++) {
-                    skipEvt.u.mapSkipState.votes[m] = sim->mapSkipVotes[m] ? 1 : 0;
-                }
-                serverSimPublishControl(sim, &skipEvt);
-            }
+            publishMapSkipState(sim);
             winbolonetSendMapChange(sim->mapName,
                 basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb),
                 basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb));
@@ -1763,6 +1760,18 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         memset(ev.data, 0, sizeof(ev.data));
         ev.data[0] = playerNum;
         serverSimAddEvent(sim, &ev);
+    }
+
+    /* Player composition changed — any pending balance proposal is now
+     * sized against a stale roster. Dismiss and broadcast the cleared
+     * state so balanceProposalActive flips back to false on every
+     * subscriber. */
+    if (serverSimGetBalanceProposal(sim)->pending) {
+        ControlEvent evt;
+        serverSimClearBalanceProposal(sim);
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_BALANCE_PROPOSAL;
+        serverSimPublishControl(sim, &evt);
     }
 }
 
@@ -1874,7 +1883,9 @@ bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
 }
 
 void serverSimRemoveBot(ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
     botManagerRemoveBot(sim, playerNum);
+    serverSimPublishLobbySlot(sim, playerNum);
 }
 
 void serverSimDestroyBots(ServerSim *sim) {
@@ -2835,6 +2846,12 @@ void serverSimLobbyCheckAllReady(ServerSim *sim) {
         sim->state = serverStateCountdown;
         sim->countdownTicks = LOBBY_COUNTDOWN_TICKS;
         serverSimConsoleMessage("All players ready! Starting countdown...");
+        {
+            ControlEvent evt;
+            memset(&evt, 0, sizeof(evt));
+            serverSimFillGamePhaseEvent(sim, &evt);
+            serverSimPublishControl(sim, &evt);
+        }
     }
 }
 
@@ -3427,6 +3444,14 @@ bool serverSimMapDirPickRandom(ServerSim *sim) {
     return TRUE;
 }
 
+static void publishMapSkipState(ServerSim *sim) {
+    ControlEvent evt;
+    if (sim == NULL) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillMapSkipStateEvent(sim, &evt);
+    serverSimPublishControl(sim, &evt);
+}
+
 void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
     int voteCount = 0;
     int connectedHumans = 0;
@@ -3472,20 +3497,11 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
             logAddEvent(log_MapSkipApplied, 0, 0, 0, 0, 0, pstr);
         }
         serverSimMapSkipVotesReset(sim);
-        {
-            ControlEvent skipEvt;
-            BYTE m;
-            memset(&skipEvt, 0, sizeof(skipEvt));
-            skipEvt.type = CTRL_MAP_SKIP_STATE;
-            for (m = 0; m < MAX_TANKS; m++) {
-                skipEvt.u.mapSkipState.votes[m] = sim->mapSkipVotes[m] ? 1 : 0;
-            }
-            serverSimPublishControl(sim, &skipEvt);
-        }
         winbolonetSendMapChange(sim->mapName,
             basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb),
             basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb));
     }
+    publishMapSkipState(sim);
 }
 
 void serverSimMapSkipVotesReset(ServerSim *sim) {
@@ -5789,8 +5805,7 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
             if ((aiType)value[0] == aiNone) {
                 for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
                     if (botManagerIsBot(sim, bi)) {
-                        botManagerRemoveBot(sim, bi);
-                        serverSimPublishLobbySlot(sim, bi);
+                        serverSimRemoveBot(sim, bi);
                     }
                 }
             }
@@ -5836,8 +5851,7 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
                 serverSimSetBotAiType(sim, aiNone);
                 for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
                     if (botManagerIsBot(sim, bi)) {
-                        botManagerRemoveBot(sim, bi);
-                        serverSimPublishLobbySlot(sim, bi);
+                        serverSimRemoveBot(sim, bi);
                     }
                 }
                 if (serverSimGetGameType(sim) == gameOpen) {
@@ -5974,7 +5988,9 @@ void serverSimSetRanked(ServerSim *sim, bool v) {
 }
 
 void serverSimSetAllowNewPlayers(ServerSim *sim, bool v) {
-    if (sim) sim->allowNewPlayers = v;
+    if (sim == NULL) return;
+    sim->allowNewPlayers = v;
+    serverSimPublishLobbySettings(sim);
 }
 
 bool serverSimRankedShapeReady(const ServerSim *sim) {

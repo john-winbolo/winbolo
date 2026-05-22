@@ -381,7 +381,6 @@ static int balanceThreadFunc(void *data) {
             for (i = 0; i < MAX_TANKS; i++) {
                 if (serverSimIsBot(sim, (BYTE)i)) {
                     serverSimRemoveBot(sim, (BYTE)i);
-                    serverSimPublishLobbySlot(sim, (BYTE)i);
                 }
             }
         }
@@ -2590,14 +2589,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 if (serverSimIsLobbyEnabled(sim) &&
                     (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown)) {
                     serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
-                    /* Dismiss any pending balance proposal — player composition changed */
-                    if (serverSimGetBalanceProposal(sim)->pending) {
-                        ControlEvent evt;
-                        serverSimClearBalanceProposal(sim);
-                        memset(&evt, 0, sizeof(evt));
-                        evt.type = CTRL_BALANCE_PROPOSAL;
-                        serverSimPublishControl(sim, &evt);
-                    }
                 }
             }
             break;
@@ -2639,8 +2630,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             if (!udpServer.gameLocked) {
                 winboloNetSendLock(allow ? FALSE : TRUE);
             }
-
-            serverSimPublishLobbySettings(sim);
             break;
         }
         case PACKET_ALLIANCE_REQUEST: {
@@ -2763,15 +2752,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     logAddEvent(ready ? log_PlayerReady : log_PlayerUnready, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
                     serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
                     serverSimLobbyCheckAllReady(sim);
-                    /* If all-ready check triggered countdown, broadcast it */
                     if (serverSimGetState(sim) == serverStateCountdown) {
                         logAddEvent(log_CountdownStart, 0, 0, 0, 0, 0, NULL);
-                        uint8_t secs = (uint8_t)((serverSimGetCountdownTicks(sim) + 49) / 50);
-                        ControlEvent evt;
-                        memset(&evt, 0, sizeof(evt));
-                        evt.type = CTRL_GAME_PHASE_COUNTDOWN;
-                        evt.u.gamePhase.countdownSeconds = secs;
-                        serverSimPublishControl(sim, &evt);
                     }
                 } else if (serverSimGetState(sim) == serverStateCountdown && !ready) {
                     /* Someone unreadied during countdown — revert to lobby */
@@ -2893,7 +2875,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 uint8_t targetSlot = buf[PACKET_HEADER_SIZE];
                 if (targetSlot < MAX_TANKS && serverSimIsBot(sim, targetSlot)) {
                     serverSimRemoveBot(sim, targetSlot);
-                    serverSimPublishLobbySlot(sim, targetSlot);
                 }
             }
             break;
@@ -4062,7 +4043,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     for (i = 0; i < MAX_TANKS; i++) {
                         if (serverSimIsBot(sim, (BYTE)i)) {
                             serverSimRemoveBot(sim, (BYTE)i);
-                            serverSimPublishLobbySlot(sim, (BYTE)i);
                         }
                     }
                 }
@@ -4107,15 +4087,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 &&
                 !(serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP)) {
-                ControlEvent evt;
-                int i;
                 serverSimMapSkipVoteToggle(sim, (uint8_t)clientIdx);
-                memset(&evt, 0, sizeof(evt));
-                evt.type = CTRL_MAP_SKIP_STATE;
-                for (i = 0; i < MAX_TANKS; i++) {
-                    evt.u.mapSkipState.votes[i] = serverSimIsMapSkipVote(sim, i) ? 1 : 0;
-                }
-                serverSimPublishControl(sim, &evt);
             }
             break;
         }
@@ -4492,13 +4464,6 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
                 (serverSimGetState(sim) == serverStateLobby ||
                  serverSimGetState(sim) == serverStateCountdown)) {
                 serverSimPublishLobbySlot(sim, (BYTE)i);
-                if (serverSimGetBalanceProposal(sim)->pending) {
-                    ControlEvent evt;
-                    serverSimClearBalanceProposal(sim);
-                    memset(&evt, 0, sizeof(evt));
-                    evt.type = CTRL_BALANCE_PROPOSAL;
-                    serverSimPublishControl(sim, &evt);
-                }
             }
             continue;
         }
@@ -4520,14 +4485,6 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
             if (serverSimIsLobbyEnabled(sim) &&
                 (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown)) {
                 serverSimPublishLobbySlot(sim, (BYTE)i);
-                /* Dismiss any pending balance proposal — player composition changed */
-                if (serverSimGetBalanceProposal(sim)->pending) {
-                    ControlEvent evt;
-                    serverSimClearBalanceProposal(sim);
-                    memset(&evt, 0, sizeof(evt));
-                    evt.type = CTRL_BALANCE_PROPOSAL;
-                    serverSimPublishControl(sim, &evt);
-                }
             }
         }
     }
