@@ -324,11 +324,6 @@ typedef struct {
     bool       includeBots;
 } BalanceThreadData;
 
-/* Forward declaration — defined below, but balanceThreadFunc needs it
- * to auto-apply WBN's split in place of the old propose-then-approve
- * flow. */
-static void publishLobbySlot(ServerSim *sim, BYTE slot);
-
 /* Background thread: calls WBN balance API (blocks on HTTP) then writes
  * results back under the game mutex so the timer can broadcast them. */
 static int balanceThreadFunc(void *data) {
@@ -386,7 +381,7 @@ static int balanceThreadFunc(void *data) {
             for (i = 0; i < MAX_TANKS; i++) {
                 if (serverSimIsBot(sim, (BYTE)i)) {
                     serverSimRemoveBot(sim, (BYTE)i);
-                    publishLobbySlot(sim, (BYTE)i);
+                    serverSimPublishLobbySlot(sim, (BYTE)i);
                 }
             }
         }
@@ -394,7 +389,7 @@ static int balanceThreadFunc(void *data) {
             if (serverSimGetBalanceProposal(sim)->teamForSlot[i] != 0) {
                 serverSimSetTeam(sim, (BYTE)i,
                                  serverSimGetBalanceProposal(sim)->teamForSlot[i]);
-                publishLobbySlot(sim, (BYTE)i);
+                serverSimPublishLobbySlot(sim, (BYTE)i);
             }
         }
         serverSimClearBalanceProposal(sim);
@@ -625,15 +620,6 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
     transportUdpServerSendControlTick(idx);
 }
 
-/* Publish a single CTRL_LOBBY_SLOT — the codec encoder fans out
- * PACKET_LOBBY_UPDATE to each connected client via its subscriber. */
-static void publishLobbySlot(ServerSim *sim, BYTE slot) {
-    ControlEvent evt;
-    memset(&evt, 0, sizeof(evt));
-    serverSimFillLobbySlotEvent(sim, slot, &evt);
-    serverSimPublishControl(sim, &evt);
-}
-
 /* Per-recipient reject: sent only to the originator of a rejected
  * lobby command. Reason codes in netpacks.h (LOBBY_REJECT_*). */
 static void lobbyRejectTo(struct sockaddr_in *addr, uint8_t origPacket,
@@ -850,7 +836,7 @@ static void serverPreemptRename(ServerSim *sim, int victimSlot,
 
     /* Publish a single-slot lobby update so other surfaces (lobby
      * table, players panel) refresh. */
-    publishLobbySlot(sim, (BYTE)victimSlot);
+    serverSimPublishLobbySlot(sim, (BYTE)victimSlot);
 
     /* Post a newswire announcement. The server's messageAdd callback
      * drops newswire messages today (see server_sim.c:serverSimCbMessageAdd),
@@ -1354,7 +1340,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
          * CTRL_PLAYER_JOIN already fanned out from serverSimAddPlayer
          * carries name/country/clientType, but not the lobby-slot
          * extras). */
-        publishLobbySlot(sim, (BYTE)slot);
+        serverSimPublishLobbySlot(sim, (BYTE)slot);
         /* Dismiss any pending balance proposal — player composition changed */
         if (serverSimGetBalanceProposal(sim)->pending) {
             ControlEvent evt;
@@ -1847,7 +1833,7 @@ void transportUdpServerKickPlayer(ServerSim *sim, const char *playerName) {
             /* Broadcast lobby update if in lobby/countdown state */
             if (serverSimIsLobbyEnabled(sim) &&
                 (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown)) {
-                publishLobbySlot(sim, (BYTE)i);
+                serverSimPublishLobbySlot(sim, (BYTE)i);
             }
             return;
         }
@@ -2621,7 +2607,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 /* Broadcast lobby update if in lobby/countdown state */
                 if (serverSimIsLobbyEnabled(sim) &&
                     (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown)) {
-                    publishLobbySlot(sim, (BYTE)clientIdx);
+                    serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
                     /* Dismiss any pending balance proposal — player composition changed */
                     if (serverSimGetBalanceProposal(sim)->pending) {
                         ControlEvent evt;
@@ -2763,7 +2749,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 if (teamNum < MAX_TANKS) {
                     serverSimSetTeam(sim, (BYTE)clientIdx, teamNum);
                     logAddEvent(log_TeamSet, (BYTE)clientIdx, teamNum, 0, 0, 0, NULL);
-                    publishLobbySlot(sim, (BYTE)clientIdx);
+                    serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
                     lobbyAutoUnreadyOnChange(sim);
                 }
             }
@@ -2793,7 +2779,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 if (serverSimGetState(sim) == serverStateLobby) {
                     serverSimSetReady(sim, (BYTE)clientIdx, ready);
                     logAddEvent(ready ? log_PlayerReady : log_PlayerUnready, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
-                    publishLobbySlot(sim, (BYTE)clientIdx);
+                    serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
                     serverSimLobbyCheckAllReady(sim);
                     /* If all-ready check triggered countdown, broadcast it */
                     if (serverSimGetState(sim) == serverStateCountdown) {
@@ -2812,7 +2798,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     logAddEvent(log_PlayerUnready, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
                     logAddEvent(log_CountdownCancel, 0, 0, 0, 0, 0, NULL);
                     serverSimConsoleMessage("Countdown cancelled — player unreadied.");
-                    publishLobbySlot(sim, (BYTE)clientIdx);
+                    serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
                 }
             }
             break;
@@ -2904,7 +2890,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                         if (teamNumber > 0 && teamNumber < MAX_TANKS) {
                             serverSimSetTeam(sim, slot, teamNumber);
                         }
-                        publishLobbySlot(sim, slot);
+                        serverSimPublishLobbySlot(sim, slot);
                         serverSimPublishLobbyBotBrain(sim, slot);
                         lobbyAutoUnreadyOnChange(sim);
                     } else {
@@ -2925,7 +2911,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 uint8_t targetSlot = buf[PACKET_HEADER_SIZE];
                 if (targetSlot < MAX_TANKS && serverSimIsBot(sim, targetSlot)) {
                     serverSimRemoveBot(sim, targetSlot);
-                    publishLobbySlot(sim, targetSlot);
+                    serverSimPublishLobbySlot(sim, targetSlot);
                 }
             }
             break;
@@ -3003,7 +2989,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                             for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
                                 if (serverSimIsBot(sim, bi)) {
                                     serverSimRemoveBot(sim, bi);
-                                    publishLobbySlot(sim, bi);
+                                    serverSimPublishLobbySlot(sim, bi);
                                 }
                             }
                         }
@@ -3071,7 +3057,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                             for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
                                 if (serverSimIsBot(sim, bi)) {
                                     serverSimRemoveBot(sim, bi);
-                                    publishLobbySlot(sim, bi);
+                                    serverSimPublishLobbySlot(sim, bi);
                                 }
                             }
                             /* Force game type away from Open if it
@@ -4188,7 +4174,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                         }
                         /* Broadcast updated flags so other clients see WBN badge */
                         if (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown) {
-                            publishLobbySlot(sim, (BYTE)clientIdx);
+                            serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
                         }
                     } else {
                         fprintf(stderr, "[UDP SERVER] Player %d WBN re-auth failed: %s\n",
@@ -4288,14 +4274,14 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     for (i = 0; i < MAX_TANKS; i++) {
                         if (serverSimIsBot(sim, (BYTE)i)) {
                             serverSimRemoveBot(sim, (BYTE)i);
-                            publishLobbySlot(sim, (BYTE)i);
+                            serverSimPublishLobbySlot(sim, (BYTE)i);
                         }
                     }
                 }
                 for (i = 0; i < MAX_TANKS; i++) {
                     if (serverSimGetBalanceProposal(sim)->teamForSlot[i] != 0) {
                         serverSimSetTeam(sim, (BYTE)i, serverSimGetBalanceProposal(sim)->teamForSlot[i]);
-                        publishLobbySlot(sim, (BYTE)i);
+                        serverSimPublishLobbySlot(sim, (BYTE)i);
                     }
                 }
                 serverSimClearBalanceProposal(sim);
@@ -4716,7 +4702,7 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
             if (serverSimIsLobbyEnabled(sim) &&
                 (serverSimGetState(sim) == serverStateLobby ||
                  serverSimGetState(sim) == serverStateCountdown)) {
-                publishLobbySlot(sim, (BYTE)i);
+                serverSimPublishLobbySlot(sim, (BYTE)i);
                 if (serverSimGetBalanceProposal(sim)->pending) {
                     ControlEvent evt;
                     serverSimClearBalanceProposal(sim);
@@ -4744,7 +4730,7 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
             /* Broadcast lobby update if in lobby/countdown state */
             if (serverSimIsLobbyEnabled(sim) &&
                 (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown)) {
-                publishLobbySlot(sim, (BYTE)i);
+                serverSimPublishLobbySlot(sim, (BYTE)i);
                 /* Dismiss any pending balance proposal — player composition changed */
                 if (serverSimGetBalanceProposal(sim)->pending) {
                     ControlEvent evt;

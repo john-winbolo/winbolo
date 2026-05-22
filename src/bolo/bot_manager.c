@@ -64,10 +64,6 @@
 /* View size for brain map updates — 15x15 centered on tank */
 #define BOT_VIEW_HALF 7
 
-static void botDeliverControl(void *ctx, const ControlEvent *evt) {
-    clientSimApplyControl((ClientSim *)ctx, evt);
-}
-
 void botManagerRequestThreads(ServerSim *sim, int total_runners) {
     if (sim == NULL) return;
     if (total_runners < 1) total_runners = 1;
@@ -510,8 +506,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
      * the same way snapshots do. Sync runs inside register and uses the
      * dispatcher's self-skip to leave the playersSetSelf record above
      * untouched. */
-    bot->controlSub = serverSimRegisterSubscriber(sim, botDeliverControl,
-                                                  bot->cs);
+    bot->controlSub = serverSimRegisterClientSubscriber(sim, bot->cs);
 
     /* Initialize the brain map (fog-of-war) */
     /* screenBrainMapCreate already called by clientSimCreate,

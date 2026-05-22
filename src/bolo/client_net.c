@@ -441,7 +441,7 @@ void clientSimNetSendReady(ClientSim *cs, bool ready) {
   }
   /* Local transport: drive the server-side ready toggle directly.
    * Mirrors the PACKET_LOBBY_READY handler at transport_udp_server.c:
-   *   setReady → publishLobbySlot → LobbyCheckAllReady. The all-ready
+   *   setReady → serverSimPublishLobbySlot → LobbyCheckAllReady. The all-ready
    * detector picks the worldPreLoaded branch (StartGameInPlace) on a
    * fresh SP sim, or the countdown branch on subsequent rounds. */
   if (cs->boundServerSim == NULL) return;
