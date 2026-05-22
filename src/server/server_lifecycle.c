@@ -30,24 +30,6 @@
 #include "server_sim_lifecycle.h"
 #include "server_lifecycle.h"
 
-/* Publish CTRL_LOBBY_SLOT for every connected slot plus
- * CTRL_LOBBY_SETTINGS — the codec encoder fans each event out as an
- * individual wire packet to every per-client subscriber. */
-static void publishLobbyStateAll(struct ServerSim *sim) {
-    BYTE k;
-    ControlEvent evt;
-    for (k = 0; k < MAX_TANKS; k++) {
-        if (serverSimIsPlayerConnected(sim, k)) {
-            memset(&evt, 0, sizeof(evt));
-            serverSimFillLobbySlotEvent(sim, k, &evt);
-            serverSimPublishControl(sim, &evt);
-        }
-    }
-    memset(&evt, 0, sizeof(evt));
-    serverSimFillLobbySettingsEvent(sim, &evt);
-    serverSimPublishControl(sim, &evt);
-}
-
 static char  instanceTrackerAddr[FILENAME_MAX] = "";
 static unsigned short instanceTrackerPort = 0;
 static unsigned short instanceUdpPort = 0;
@@ -442,8 +424,6 @@ void serverInstanceTick(ServerSim *sim) {
          * inside; no-op when WBN isn't running. */
         transportUdpServerBroadcastWbnRekey(sim);
       }
-      /* Returned to lobby — broadcast full lobby state */
-      publishLobbyStateAll(sim);
       /* Republish the bot brain catalogue.  Mid-game joiners were gated
        * out of the BrainList during their sync replay (see
        * serverSimSyncSubscriber), so they need it now before the lobby
@@ -460,16 +440,6 @@ void serverInstanceTick(ServerSim *sim) {
         transportUdpServerSendServerMessage(sim->pendingWinMessage);
         sim->pendingWinMessage[0] = '\0';
       }
-    }
-
-    /* Periodic lobby snapshot — twice per second (every 25 ticks) for
-     * ping/country updates and state consistency.  Goes through the
-     * wire-only fan-out helper because the refresh is cosmetic data
-     * that in-process subscribers (bots, SP, replay-log) ignore — the
-     * bus would wake them every 25 ticks × MAX_TANKS for nothing. */
-    if ((sim->state == serverStateLobby || sim->state == serverStateCountdown) &&
-        sim->tick % 25 == 0) {
-      transportUdpServerSendPeriodicLobbyRefresh(sim);
     }
 
     /* Retransmit unacked control events every 4 ticks (~80ms at 50 Hz)
@@ -534,7 +504,6 @@ void serverInstanceTick(ServerSim *sim) {
       /* Same rotation push as the game-over → lobby site. */
       transportUdpServerBroadcastWbnRekey(sim);
     }
-    publishLobbyStateAll(sim);
   }
 
   threadsReleaseMutex();

@@ -433,11 +433,6 @@ void transportUdpServerOnGameStart(struct ServerSim *sim);
  * PACKET_LOBBY_MAP_CHANGE notification through the subscriber path. */
 void transportUdpServerOnLobbyMapChange(struct ServerSim *sim);
 
-/* Wire-only fan-out for the periodic lobby refresh — drives the codec
- * encoders directly so cosmetic ping/country updates don't wake the
- * in-process control-event bus.  Called from server_lifecycle.c. */
-void transportUdpServerSendPeriodicLobbyRefresh(struct ServerSim *sim);
-
 /* Drive the lobby/countdown/gameover retransmit scan.  For every
  * connected client with unacked control events, sends a fresh
  * PACKET_CONTROL_TICK carrying the unacked tail.  Snapshots cover

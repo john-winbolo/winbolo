@@ -24,8 +24,6 @@
  *    - Periodic ping/pong for latency measurement.
  *********************************************************/
 
-#include <assert.h>
-
 #include "transport_udp_internal.h"
 #include "bases.h"
 #include "pillbox.h"
@@ -321,11 +319,10 @@ typedef struct {
     bool       includeBots;
 } BalanceThreadData;
 
-/* Forward declarations for slot/state publish helpers — defined below
- * but balanceThreadFunc needs them to auto-apply WBN's split in place
- * of the old propose-then-approve flow. */
+/* Forward declaration — defined below, but balanceThreadFunc needs it
+ * to auto-apply WBN's split in place of the old propose-then-approve
+ * flow. */
 static void publishLobbySlot(ServerSim *sim, BYTE slot);
-static void publishLobbyStateAll(ServerSim *sim);
 
 /* Background thread: calls WBN balance API (blocks on HTTP) then writes
  * results back under the game mutex so the timer can broadcast them. */
@@ -392,6 +389,7 @@ static int balanceThreadFunc(void *data) {
             if (serverSimGetBalanceProposal(sim)->teamForSlot[i] != 0) {
                 serverSimSetTeam(sim, (BYTE)i,
                                  serverSimGetBalanceProposal(sim)->teamForSlot[i]);
+                publishLobbySlot(sim, (BYTE)i);
             }
         }
         serverSimClearBalanceProposal(sim);
@@ -405,7 +403,6 @@ static int balanceThreadFunc(void *data) {
             serverSimPublishControl(sim, &clrEvt);
         }
         logAddEvent(log_BalanceApplied, 0, 0, 0, 0, 0, NULL);
-        publishLobbyStateAll(sim);
         serverSimConsoleMessage("Team balance applied (WBN)");
     }
     threadsReleaseMutex();
@@ -632,22 +629,6 @@ static void publishLobbySlot(ServerSim *sim, BYTE slot) {
     serverSimPublishControl(sim, &evt);
 }
 
-/* Publish CTRL_LOBBY_SETTINGS + CTRL_LOBBY_SLOT for every connected
- * slot — equivalent to the old composite PACKET_LOBBY_STATE broadcast,
- * but each event flows through the per-variant codec encoder. */
-static void publishLobbyStateAll(ServerSim *sim) {
-    BYTE i;
-    ControlEvent evt;
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (serverSimIsPlayerConnected(sim, i)) {
-            publishLobbySlot(sim, i);
-        }
-    }
-    memset(&evt, 0, sizeof(evt));
-    serverSimFillLobbySettingsEvent(sim, &evt);
-    serverSimPublishControl(sim, &evt);
-}
-
 /* Per-recipient reject: sent only to the originator of a rejected
  * lobby command. Reason codes in netpacks.h (LOBBY_REJECT_*). */
 static void lobbyRejectTo(struct sockaddr_in *addr, uint8_t origPacket,
@@ -695,52 +676,6 @@ static bool lobbyClientMayEdit(ServerSim *sim, int clientIdx) {
         return TRUE;
     }
     return serverSimGetOpenHost(sim) && serverSimIsPlayerConnected(sim, clientIdx);
-}
-
-/* Wire-only fan-out for the cosmetic ping/country refresh fired
- * every 25 ticks while in lobby/countdown.  Drives the same codec
- * encoders the bus path uses, but bypasses serverSimPublishControl
- * so in-process subscribers (bots, SP, replay-log writers) don't
- * wake up for cosmetic data they ignore.  Remote UDP clients still
- * receive the same wire packets they would have via the bus path. */
-void transportUdpServerSendPeriodicLobbyRefresh(ServerSim *sim) {
-    uint8_t buf[MAX_CONTROL_PACKET];
-    size_t len;
-    ControlEncodeFn slotEnc = transportControlCodecEncoder(CTRL_LOBBY_SLOT);
-    ControlEncodeFn settingsEnc = transportControlCodecEncoder(CTRL_LOBBY_SETTINGS);
-    BYTE i;
-    int j;
-
-    if (slotEnc != NULL) {
-        for (i = 0; i < MAX_TANKS; i++) {
-            ControlEvent evt;
-            if (!serverSimIsPlayerConnected(sim, i)) continue;
-            memset(&evt, 0, sizeof(evt));
-            serverSimFillLobbySlotEvent(sim, i, &evt);
-            for (j = 0; j < MAX_TANKS; j++) {
-                if (!udpServer.clients[j].connected) continue;
-                if (slotEnc(&evt, &udpServer.clients[j], buf, sizeof(buf), &len) == ENCODE_OK) {
-                    /* wire-only: cosmetic ping/country refresh — remote audiences only */
-                    udpSendTo(udpServer.sock, buf, (int)len,
-                              &udpServer.clients[j].addr);
-                }
-            }
-        }
-    }
-
-    if (settingsEnc != NULL) {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        serverSimFillLobbySettingsEvent(sim, &evt);
-        for (j = 0; j < MAX_TANKS; j++) {
-            if (!udpServer.clients[j].connected) continue;
-            if (settingsEnc(&evt, &udpServer.clients[j], buf, sizeof(buf), &len) == ENCODE_OK) {
-                /* wire-only: cosmetic ping/country refresh — remote audiences only */
-                udpSendTo(udpServer.sock, buf, (int)len,
-                          &udpServer.clients[j].addr);
-            }
-        }
-    }
 }
 
 /* Build and send the join accept packet with game settings and map size */
@@ -4118,12 +4053,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 udpServer.password[pwLen] = '\0';
             }
             serverSimSetHasPassword(sim, udpServer.password[0] != '\0');
-            /* Rebroadcast lobby state so every connected client's
-             * has_password mirror updates. */
-            if (serverSimGetState(sim) == serverStateLobby ||
-                serverSimGetState(sim) == serverStateCountdown) {
-                publishLobbyStateAll(sim);
-            }
             WB_LOG_INFO(WB_LOG_CAT_NET,
                 "lobby: password %s by slot %d",
                 pwLen > 0 ? "set" : "cleared", clientIdx);
@@ -4357,11 +4286,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 for (i = 0; i < MAX_TANKS; i++) {
                     if (serverSimGetBalanceProposal(sim)->teamForSlot[i] != 0) {
                         serverSimSetTeam(sim, (BYTE)i, serverSimGetBalanceProposal(sim)->teamForSlot[i]);
+                        publishLobbySlot(sim, (BYTE)i);
                     }
                 }
                 serverSimClearBalanceProposal(sim);
                 logAddEvent(log_BalanceApplied, 0, 0, 0, 0, 0, NULL);
-                publishLobbyStateAll(sim);
                 serverSimConsoleMessage("Team balance applied");
             }
             break;
