@@ -18,11 +18,22 @@ void serverSimLobbyCheckAllReady(ServerSim *sim);
  * and by client_net.c's local-transport branches. */
 void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready);
 
-/* Per-slot team assignment. Driven by UDP PACKET_LOBBY_TEAM_SET /
+/* Per-slot team assignment. Writes lobbyPlayers[playerNum].teamNumber
+ * and rebakes the alliance graph so any same-team pairs become allies
+ * before the call returns. Drivers: UDP PACKET_LOBBY_TEAM_SET /
  * PACKET_LOBBY_ADD_BOT handlers, the SP-host local-transport branch
- * of clientSimNetSendTeamSet, the gamefront SP-host setup loop, and
- * the bg_game lobby-background animation (per-file T2 grant). */
+ * of clientSimNetSendTeamSet, the headless cmd-stdin CMD_OP_SET_TEAM
+ * handler. Loop callers use serverSimSetTeamBatch instead — see that
+ * declaration. */
 void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber);
+
+/* Same write as serverSimSetTeam but skips the alliance rebake; the
+ * caller must follow up with serverSimReapplyTeamAlliances when its
+ * batch of set calls is done. Suitable for loop callers where the
+ * O(N²) rebake would otherwise run on every iteration: balance apply,
+ * the bg_game lobby-background animation, the servermain CLI bot
+ * setup, and the braintest setup loop. */
+void serverSimSetTeamBatch(ServerSim *sim, BYTE playerNum, BYTE teamNumber);
 
 /* viewPlayer — which player perspective the sim renders from.
  * Set at startup from cfg->viewPlayer; mutated transiently by the

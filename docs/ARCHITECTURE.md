@@ -1187,12 +1187,13 @@ ClientSim per bot, so the wire-wrapper migration that routes SP-host
 lobby mutations through the local transport doesn't apply.
 
 - `src/gui/sdl3/bg_game.c` — the lobby-background animation. Mutates
-  `lobbyPlayers[].teamNumber` via `serverSimSetTeam` directly because
-  there's no ClientSim per bot to call `clientSimNetSendTeamSet` on.
-  The grant is bounded to that single setter; the rendering helpers
-  read `viewPlayer` via a parameter threaded from the render entry
-  point, not via the sim's `viewPlayer` field, so they don't need
-  privileged access.
+  `lobbyPlayers[].teamNumber` via `serverSimSetTeamBatch` (paired with
+  `serverSimReapplyTeamAlliances` after the batch) because there's no
+  ClientSim per bot to call `clientSimNetSendTeamSet` on. The grant is
+  bounded to that team-setter pair; the rendering helpers read
+  `viewPlayer` via a parameter threaded from the render entry point,
+  not via the sim's `viewPlayer` field, so they don't need privileged
+  access.
 
 This is not a third tier of privileged exception. The grants are a
 CMake-level workaround for archive packaging, not an architectural

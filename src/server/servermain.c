@@ -1487,10 +1487,11 @@ int main(int argc, char **argv) {
            * pass converts matching teamNumber into alliances, and the lobby
            * protocol already broadcasts teamNumber to clients so the lobby
            * UI shows the bots on this team. */
-          serverSimSetTeam(serverSim, (BYTE)i, (uint8_t)allyTeam);
+          serverSimSetTeamBatch(serverSim, (BYTE)i, (uint8_t)allyTeam);
         }
       }
       if (allyTeam > 0) {
+        serverSimReapplyTeamAlliances(serverSim);
         fprintf(stderr, "Added %d bot(s) with brain '%s' (allied on team %d)\n",
                 numBots, brainPath, allyTeam);
       } else {

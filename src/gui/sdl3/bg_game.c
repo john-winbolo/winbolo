@@ -215,14 +215,6 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
     }
 
     /* Add brain bots with randomized count and teams */
-    if (!serverSimBotPoolInit(0)) {
-        WB_LOG_ERROR(WB_LOG_CAT_GUI, "[BgGame] serverSimBotPoolInit failed");
-        SDL_DestroyTexture(bg->tilesTex);
-        bg->tilesTex = NULL;
-        serverSimDestroy(bg->sim);
-        bg->valid = false;
-        return false;
-    }
     char brainPath[512];
     if (findBrainPath(brainPath, sizeof(brainPath))) {
         WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Found brain: %s", brainPath);
@@ -247,7 +239,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         if (numTeams > 0 && bg->numBots >= 2) {
             if (numTeams > bg->numBots) numTeams = bg->numBots;
             for (BYTE i = 0; i < bg->numBots; i++) {
-                serverSimSetTeam(bg->sim, i, (BYTE)((i % numTeams) + 1));
+                serverSimSetTeamBatch(bg->sim, i, (BYTE)((i % numTeams) + 1));
             }
             /* serverInstanceStartup ran the team-alliance pass before
              * any bot existed, so plrs->item[].allie is empty. Rebake
@@ -273,9 +265,6 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
 
 void bgGameDestroy(BgGame *bg) {
     if (!bg) return;
-    if (bg->valid) {
-        serverSimDestroyBots(bg->sim);
-    }
     if (bg->tilesTex) {
         SDL_DestroyTexture(bg->tilesTex);
         bg->tilesTex = NULL;

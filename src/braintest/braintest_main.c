@@ -4449,9 +4449,10 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "  Added %d bots\n", app.numBots);
         if (optNumTeams >= 2) {
             for (int i = 0; i < optNumPlayers; i++) {
-                serverSimSetTeam(app.sim, (BYTE)i,
-                                 (BYTE)((i % optNumTeams) + 1));
+                serverSimSetTeamBatch(app.sim, (BYTE)i,
+                                      (BYTE)((i % optNumTeams) + 1));
             }
+            serverSimReapplyTeamAlliances(app.sim);
             fprintf(stderr, "  Assigned %d bots to %d teams (round-robin)\n",
                     optNumPlayers, optNumTeams);
         }
@@ -5228,7 +5229,6 @@ int main(int argc, char *argv[]) {
     free(app.costToGrid);
     if (app.costToMutex) SDL_DestroyMutex(app.costToMutex);
     recordingDestroy(&app.recording);
-    serverSimDestroyBots(app.sim);
     if (app.debugPF) brainPathfinderDestroy(app.debugPF);
     if (app.overlayTex) SDL_DestroyTexture(app.overlayTex);
     if (app.tilesTex) SDL_DestroyTexture(app.tilesTex);

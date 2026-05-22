@@ -387,11 +387,12 @@ static int balanceThreadFunc(void *data) {
         }
         for (i = 0; i < MAX_TANKS; i++) {
             if (serverSimGetBalanceProposal(sim)->teamForSlot[i] != 0) {
-                serverSimSetTeam(sim, (BYTE)i,
-                                 serverSimGetBalanceProposal(sim)->teamForSlot[i]);
+                serverSimSetTeamBatch(sim, (BYTE)i,
+                                      serverSimGetBalanceProposal(sim)->teamForSlot[i]);
                 serverSimPublishLobbySlot(sim, (BYTE)i);
             }
         }
+        serverSimReapplyTeamAlliances(sim);
         serverSimClearBalanceProposal(sim);
         /* Publish the cleared proposal so balanceProposalActive flips
          * back to false on every client — keeps canBalance gating
@@ -4256,10 +4257,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 }
                 for (i = 0; i < MAX_TANKS; i++) {
                     if (serverSimGetBalanceProposal(sim)->teamForSlot[i] != 0) {
-                        serverSimSetTeam(sim, (BYTE)i, serverSimGetBalanceProposal(sim)->teamForSlot[i]);
+                        serverSimSetTeamBatch(sim, (BYTE)i, serverSimGetBalanceProposal(sim)->teamForSlot[i]);
                         serverSimPublishLobbySlot(sim, (BYTE)i);
                     }
                 }
+                serverSimReapplyTeamAlliances(sim);
                 serverSimClearBalanceProposal(sim);
                 /* Publish the cleared proposal so balanceProposalActive flips
                  * back to false on every client — keeps canBalance gating

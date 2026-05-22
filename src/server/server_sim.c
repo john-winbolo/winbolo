@@ -1785,7 +1785,7 @@ bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
     return true;
 }
 
-void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
+void serverSimSetTeamBatch(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
     if (playerNum >= MAX_TANKS) {
         return;
     }
@@ -1793,11 +1793,16 @@ void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
         teamNumber = 1;
     }
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
-                "[DIAG] serverSimSetTeam slot=%u oldTeam=%u newTeam=%u",
+                "[DIAG] serverSimSetTeamBatch slot=%u oldTeam=%u newTeam=%u",
                 (unsigned)playerNum,
                 (unsigned)sim->lobbyPlayers[playerNum].teamNumber,
                 (unsigned)teamNumber);
     sim->lobbyPlayers[playerNum].teamNumber = teamNumber;
+}
+
+void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
+    serverSimSetTeamBatch(sim, playerNum, teamNumber);
+    serverSimReapplyTeamAlliances(sim);
 }
 
 void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready) {
