@@ -999,11 +999,10 @@ snapshot tick. Both call sites are gated on
 `winbolonetIsRunning()` so non-WBN servers pay nothing.
 
 `PACKET_WBN_REKEY` sits alongside the existing wire-only
-exceptions (JOIN_ACCEPT, MAP_DOWNLOAD, PONG, PLAYER_LIST resync,
-periodic lobby refresh): per-client reliability with no
-in-process audience. Routing through `ControlEvent` would put a
-WBN-specific concept on the sim's T1 surface where nothing else
-in the sim references it.
+exceptions (JOIN_ACCEPT, MAP_DOWNLOAD, PONG, PLAYER_LIST resync):
+per-client reliability with no in-process audience. Routing through
+`ControlEvent` would put a WBN-specific concept on the sim's T1
+surface where nothing else in the sim references it.
 
 ### Cross-tier dependency: `transport_udp_client.c` → `winbolonet_client`
 
