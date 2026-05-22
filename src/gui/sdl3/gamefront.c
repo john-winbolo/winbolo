@@ -49,6 +49,7 @@
 #include "../../common/wb_log.h"
 #include "client_sim.h"
 #include "control_event.h"
+#include "discovery.h"
 #include "global.h"
 #include "util.h"
 #include "gui_message.h"
@@ -1049,6 +1050,47 @@ bool gameFrontSetDlgState(openingStates newState) {
   if ((dlgState == openInternet || dlgState == openLan || dlgState == openUdp ||
        dlgState == openLanManual || dlgState == openInternetManual) &&
       newState == openUdpJoin) {
+    /* Pre-flight version negotiation. The legacy info-request is the
+     * universal cross-version handshake — any server answers regardless
+     * of build, so we can read the server's version triple before
+     * committing to a JOIN_REQUEST whose new-protocol length gate would
+     * silently drop on mismatch. On version mismatch surface a
+     * localized "Server is version X, you have Y" error; on timeout
+     * fall through to the standard "server unreachable" error. */
+    {
+      DiscoveryPingResult dpr;
+      if (!discoveryPingServer(gameFrontUdpAddress, gameFrontTargetUdp, &dpr)) {
+        imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                          langGetText(NETERR_SERVERCONNECT),
+                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+        gameFrontShutdownServer();
+        dlgState = prevState;
+        s_joinAttemptFailed = TRUE;
+        return FALSE;
+      }
+      if (dpr.versionMajor    != BOLO_VERSION_MAJOR ||
+          dpr.versionMinor    != BOLO_VERSION_MINOR ||
+          dpr.versionRevision != BOLO_VERSION_REVISION) {
+        MessageArgs args;
+        memset(&args, 0, sizeof(args));
+        SDL_snprintf(args.string1, sizeof(args.string1), "%u.%u.%u",
+                     (unsigned)dpr.versionMajor,
+                     (unsigned)dpr.versionMinor,
+                     (unsigned)dpr.versionRevision);
+        SDL_snprintf(args.string2, sizeof(args.string2), "%u.%u.%u",
+                     (unsigned)BOLO_VERSION_MAJOR,
+                     (unsigned)BOLO_VERSION_MINOR,
+                     (unsigned)BOLO_VERSION_REVISION);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                          langGetTextFmt(STR_REJECT_VERSION_MISMATCH, &args),
+                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+        gameFrontShutdownServer();
+        dlgState = prevState;
+        s_joinAttemptFailed = TRUE;
+        return FALSE;
+      }
+    }
+
     gameFrontValidateWbnBeforeJoin();
     humanSim = clientSimAlloc(); clientSimCreate(humanSim);
     clientSimSetIsLanOnly(humanSim, s_isLanOnly);

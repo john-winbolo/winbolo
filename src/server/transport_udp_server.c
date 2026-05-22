@@ -2059,13 +2059,16 @@ static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
 }
 
 /* Check if a packet is an old-protocol info request.
- * Old protocol: 8-byte BOLOHEADER with "Bolo" signature + version + type. */
+ * Gate is magic + length + type only — the info-request is the universal
+ * version-negotiation primitive, so a v1.0 client asking a v2.0 server
+ * (or vice versa) must receive an INFO_RESPONSE carrying the server's
+ * own version triple.  Mismatched-version joiners then see a localized
+ * pre-flight error rather than a silent JOIN_REQUEST length-gate drop.
+ * The version bytes inside the request body are still parsed elsewhere
+ * for logging but no longer gate the response. */
 static bool isOldProtocolInfoRequest(const uint8_t *buf, int len) {
     return len == BOLOPACKET_REQUEST_SIZE &&
            memcmp(buf, BOLO_SIGNITURE, BOLO_SIGNITURE_SIZE) == 0 &&
-           buf[BOLO_VERSION_MAJORPOS] == BOLO_VERSION_MAJOR &&
-           buf[BOLO_VERSION_MINORPOS] == BOLO_VERSION_MINOR &&
-           buf[BOLO_VERSION_REVISIONPOS] == BOLO_VERSION_REVISION &&
            buf[BOLOPACKET_REQUEST_TYPEPOS] == BOLOPACKET_INFOREQUEST;
 }
 

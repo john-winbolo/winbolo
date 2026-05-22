@@ -975,23 +975,21 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
             if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, btnH))) {
                 const ServerEntry &e = servers[selectedItem];
-                if (strlen(e.version) < STRVER_LEN ||
-                    strncmp(e.version, STRVER, STRVER_LEN) != 0) {
-                    errorMsg = langGetText(STR_DLGBROWSER_ERR_VERSION);
+                /* No version-equality gate — the pre-flight info-request
+                 * inside gameFrontSetDlgState(openUdpJoin) surfaces a
+                 * localized "Server is version X, you have Y" error if
+                 * the build mismatches. */
+                char playerName[PLAYER_NAME_LEN];
+                gameFrontGetPlayerName(playerName);
+                if (strlen(playerName) == 0) {
+                    errorMsg = langGetText(STR_DLGBROWSER_ERR_NEEDNAME);
                     ImGui::OpenPopup(errPopupId);
                 } else {
-                    char playerName[PLAYER_NAME_LEN];
-                    gameFrontGetPlayerName(playerName);
-                    if (strlen(playerName) == 0) {
-                        errorMsg = langGetText(STR_DLGBROWSER_ERR_NEEDNAME);
-                        ImGui::OpenPopup(errPopupId);
-                    } else {
-                        gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
-                        gameFrontSetAIType(e.ai);
-                        gameFrontSetDlgState(openUdpJoin);
-                        result = (int)openUdpJoin;
-                        running = false;
-                    }
+                    gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
+                    gameFrontSetAIType(e.ai);
+                    gameFrontSetDlgState(openUdpJoin);
+                    result = (int)openUdpJoin;
+                    running = false;
                 }
             }
             imguiHandOnHover();
@@ -1002,24 +1000,18 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (!hasSelection) ImGui::BeginDisabled();
             if (ImGui::Button(langGetText(STR_DLGTCP_REJOIN), ImVec2(btnW, btnH))) {
                 const ServerEntry &e = servers[selectedItem];
-                if (strlen(e.version) < STRVER_LEN ||
-                    strncmp(e.version, STRVER, STRVER_LEN) != 0) {
-                    errorMsg = langGetText(STR_DLGBROWSER_ERR_VERSION);
+                char playerName[PLAYER_NAME_LEN];
+                gameFrontGetPlayerName(playerName);
+                if (strlen(playerName) == 0) {
+                    errorMsg = langGetText(STR_DLGBROWSER_ERR_NEEDNAME);
                     ImGui::OpenPopup(errPopupId);
                 } else {
-                    char playerName[PLAYER_NAME_LEN];
-                    gameFrontGetPlayerName(playerName);
-                    if (strlen(playerName) == 0) {
-                        errorMsg = langGetText(STR_DLGBROWSER_ERR_NEEDNAME);
-                        ImGui::OpenPopup(errPopupId);
-                    } else {
-                        gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
-                        gameFrontSetAIType(e.ai);
-                        gameFrontEnableRejoin();
-                        gameFrontSetDlgState(openUdpJoin);
-                        result = (int)openUdpJoin;
-                        running = false;
-                    }
+                    gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
+                    gameFrontSetAIType(e.ai);
+                    gameFrontEnableRejoin();
+                    gameFrontSetDlgState(openUdpJoin);
+                    result = (int)openUdpJoin;
+                    running = false;
                 }
             }
             imguiHandOnHover();
