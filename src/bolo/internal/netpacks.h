@@ -303,7 +303,7 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_LOBBY_SETTINGS       159
 
 /* ── Lobby Layout A — Client → Server (160-174) ─────────────────── */
-#define PACKET_LOBBY_SET_SETTING    160  /* { settingType 1, valueLen 1, value N } */
+#define PACKET_LOBBY_SET_SETTING    199  /* { settingType 1, valueLen 1, value N } */
 #define PACKET_LOBBY_OPEN_HOST      161  /* { bool 1 } */
 #define PACKET_LOBBY_TEAM_META      162  /* { teamId 1, color 1, namingPool 1,
                                           *   nameLen 1, name N } */
