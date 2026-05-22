@@ -481,47 +481,51 @@ void udpClientHandleLobbyMapSearchRsp(ClientSim *cs,
  * inside the standalone PACKET_GAME_START handler (install buffered
  * map, reset all three reliable-event acks, clear the input ring, drop
  * any pre-flip snapshot) and they must fire BEFORE the same snapshot's
- * game-event and map-event tails are applied. On RUNNING we set
- * *skipPriorGameTails so the caller drops the same-snapshot tails —
- * they belong to the prior game and would replay against the freshly
- * installed map. */
+ * game-event and map-event tails are applied. Those side effects and
+ * the skip-prior-tails signal only apply on a real lobby→running flip;
+ * a no-lobby joiner's first event is also CTRL_GAME_PHASE_RUNNING (a
+ * sync-replay echo from serverSimFillGamePhaseEvent), and for that
+ * joiner the same snapshot's tails are current-game state that must
+ * not be dropped. We capture wasInLobby up front and gate on it. */
 static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
                                          const ControlEvent *evt,
                                          uint32_t evSeq,
                                          bool *skipPriorGameTails) {
     (void)evSeq;
     if (evt->type == CTRL_GAME_PHASE_RUNNING) {
-        /* LOBBY→RUNNING transition. Read inLobby BEFORE the dispatch —
-         * clientSimApplyControl clears it on CTRL_GAME_PHASE_RUNNING.
-         * Order: install → flag → reset acks → clear ring → drop snap
-         * → dispatch → mark skip. */
-        if (c->clientSim->inLobby && !c->mapInstalled &&
+        /* Capture before any side effects or the dispatch —
+         * clientSimApplyControl clears inLobby on CTRL_GAME_PHASE_RUNNING. */
+        bool wasInLobby = c->clientSim->inLobby;
+        if (wasInLobby && !c->mapInstalled &&
             c->mapDownloadBuf != NULL &&
             c->mapDownloadReceived == c->mapDownloadTotal) {
             installCompressedMap(c->clientSim, c->mapDownloadBuf,
                                  (int)c->mapDownloadTotal, NULL);
             c->mapInstalled = true;
         }
-        /* Reset reliable event acks so they match the server's reset
-         * queues. Stale events from the previous game must not be
-         * applied to the freshly-loaded map. */
-        c->reliableEventAck = 1;
-        c->mapEventAck = 1;
-        c->controlEventAck = 1;
-        /* The control-event seq space resets here too; drop any pending
-         * coalesced ACK so we don't emit a stale next-expected-seq for
-         * the new game's queue. */
-        c->controlAckPendingTick = 0;
-        c->lastSentControlAck = 0;
-        /* Reset input ring so stale inputs from the previous game are
-         * not sent as redundant packets in the new game. */
-        c->inputRingCount = 0;
-        /* Drop any pre-flip snapshot still buffered in hasSnapshot. */
-        c->hasSnapshot = false;
+        if (wasInLobby) {
+            /* Reset reliable event acks so they match the server's reset
+             * queues. Stale events from the previous game must not be
+             * applied to the freshly-loaded map. */
+            c->reliableEventAck = 1;
+            c->mapEventAck = 1;
+            c->controlEventAck = 1;
+            /* The control-event seq space resets here too; drop any pending
+             * coalesced ACK so we don't emit a stale next-expected-seq for
+             * the new game's queue. */
+            c->controlAckPendingTick = 0;
+            c->lastSentControlAck = 0;
+            /* Reset input ring so stale inputs from the previous game are
+             * not sent as redundant packets in the new game. */
+            c->inputRingCount = 0;
+            /* Drop any pre-flip snapshot still buffered in hasSnapshot. */
+            c->hasSnapshot = false;
+        }
         /* Dispatch the event itself — flips netStat to running, clears
-         * inLobby on the sim, etc. */
+         * inLobby on the sim, etc. The no-lobby joiner still needs this
+         * to flip netStat → netRunning even though wasInLobby is false. */
         clientSimApplyControl(c->clientSim, evt);
-        if (skipPriorGameTails != NULL) {
+        if (skipPriorGameTails != NULL && wasInLobby) {
             *skipPriorGameTails = true;
         }
         return;

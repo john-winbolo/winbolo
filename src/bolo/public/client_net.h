@@ -216,9 +216,10 @@ void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost);
 void clientSimNetSendLobbyKick(ClientSim *cs, uint8_t slot);
 
 /* Host- or admin-only: set or clear the server password. NULL or
- * empty pw clears. Server replies by broadcasting a fresh lobby
- * state so has_password updates on every client. The password text
- * itself is never echoed to other clients. */
+ * empty pw clears. The server stores it locally; remote clients
+ * learn about the new flag via the next INFO_RESPONSE query (LAN
+ * browser refresh). The password text itself is never echoed to
+ * other clients. */
 void clientSimNetSendLobbySetPassword(ClientSim *cs, const char *pw);
 void clientSimNetSendMapSkipVote(ClientSim *cs);
 
