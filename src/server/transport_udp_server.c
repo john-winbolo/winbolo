@@ -241,6 +241,11 @@ static struct {
      * by the UDP server around the register call; consumed by the
      * carrier path (Phase 5).  Unused in Phase 3. */
     bool                    controlSyncInProgress[MAX_TANKS];
+    /* Most recent tick at which controlEventQueues[i].ackedSeq advanced
+     * (or the tick the slot connected, for a fresh slot).  Bounds how
+     * long the queue may sit unacked before the per-client retransmit
+     * timeout in transportUdpServerCheckTimeouts disconnects the slot. */
+    uint32_t                controlEventLastAckProgressTick[MAX_TANKS];
 
     /* Game lock — prevents new players from joining */
     bool gameLocked;           /* Server admin lock */
@@ -1267,6 +1272,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     udpServer.controlEventQueues[slot].nextSeq = 1;
     udpServer.controlEventQueues[slot].ackedSeq = 1;
     memset(udpServer.controlEventQueues[slot].buffer, 0, sizeof(udpServer.controlEventQueues[slot].buffer));
+    udpServer.controlEventLastAckProgressTick[slot] = udpServer.tickCount;
 
     /* Merge client-supplied hints with server-determined WBN trust into a
      * single clientFlags byte, then run the four-step join sequence so a
@@ -1418,6 +1424,7 @@ static void serverHandleInput(const uint8_t *buf, int len,
         }
         if (pkt.controlEventAck > udpServer.controlEventQueues[clientIdx].ackedSeq) {
             udpServer.controlEventQueues[clientIdx].ackedSeq = pkt.controlEventAck;
+            udpServer.controlEventLastAckProgressTick[clientIdx] = udpServer.tickCount;
         }
 
         /* Only apply if this is a newer input than what we last processed */
@@ -1444,6 +1451,7 @@ static void serverHandleControlAck(const uint8_t *buf, int len,
     ack = unpackU32(buf + PACKET_HEADER_SIZE);
     if (ack > udpServer.controlEventQueues[clientIdx].ackedSeq) {
         udpServer.controlEventQueues[clientIdx].ackedSeq = ack;
+        udpServer.controlEventLastAckProgressTick[clientIdx] = udpServer.tickCount;
     }
     udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
 }
@@ -1747,6 +1755,7 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     memset(udpServer.controlEventQueues[idx].buffer, 0,
            sizeof(udpServer.controlEventQueues[idx].buffer));
     udpServer.controlSyncInProgress[idx] = false;
+    udpServer.controlEventLastAckProgressTick[idx] = udpServer.tickCount;
 
     /* Release any in-flight upload state. Without this, a client
      * who drops mid-upload would leave clientUploadActive set,
@@ -4662,6 +4671,12 @@ void transportUdpServerSend(ServerSim *sim) {
     transportUdpServerCheckTimeouts(sim);
 }
 
+/* Second per-client timeout: covers the failure mode where the client is
+ * reachable (sending pings / inputs, so lastReceivedTick keeps advancing)
+ * but is not ACKing control events.  Well above the worst-case retransmit
+ * budget and well below CLIENT_TIMEOUT_TICKS (1000). */
+#define CONTROL_UNACKED_TIMEOUT_TICKS 500   /* ~10 s @ 50 Hz */
+
 /* Check for client timeouts — call from any server state (lobby, running, etc.) */
 void transportUdpServerCheckTimeouts(ServerSim *sim) {
     int i;
@@ -4670,6 +4685,40 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (!udpServer.clients[i].connected) continue;
+
+        /* Unacked-control disconnect — fires when the queue has events
+         * in flight (ackedSeq < nextSeq) and the ack hasn't advanced for
+         * CONTROL_UNACKED_TIMEOUT_TICKS.  Independent of the no-traffic
+         * timeout below, which only watches lastReceivedTick. */
+        if (udpServer.controlEventQueues[i].ackedSeq <
+                udpServer.controlEventQueues[i].nextSeq &&
+            (udpServer.tickCount -
+             udpServer.controlEventLastAckProgressTick[i]) >
+                CONTROL_UNACKED_TIMEOUT_TICKS) {
+            WB_LOG_ERROR(WB_LOG_CAT_NET,
+                "control queue stuck unacked for slot %d "
+                "(%u ticks since last progress), disconnecting",
+                i,
+                (unsigned)(udpServer.tickCount -
+                           udpServer.controlEventLastAckProgressTick[i]));
+            serverCleanupMapDownload(i);
+            serverDisconnectClient(sim, i, FALSE);
+            serverSimRemovePlayer(sim, (BYTE)i);
+            if (serverSimIsLobbyEnabled(sim) &&
+                (serverSimGetState(sim) == serverStateLobby ||
+                 serverSimGetState(sim) == serverStateCountdown)) {
+                publishLobbySlot(sim, (BYTE)i);
+                if (serverSimGetBalanceProposal(sim)->pending) {
+                    ControlEvent evt;
+                    serverSimClearBalanceProposal(sim);
+                    memset(&evt, 0, sizeof(evt));
+                    evt.type = CTRL_BALANCE_PROPOSAL;
+                    serverSimPublishControl(sim, &evt);
+                }
+            }
+            continue;
+        }
+
         if (udpServer.tickCount - udpServer.clients[i].lastReceivedTick
             > CLIENT_TIMEOUT_TICKS) {
             WB_LOG_WARN(WB_LOG_CAT_NET,
