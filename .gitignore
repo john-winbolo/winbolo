@@ -35,5 +35,11 @@ __pycache__/
 /*.log
 /debug_sessions/
 
+# Brain crash dumps written by src/bolo/braincore.c on a Lua error in
+# brain.think / brain.<method>. Unique per crash and may land anywhere
+# the bot's CWD or DEBUG_SESSION_DIR points; not root-anchored.
+brain_crash_*.log
+brain_error.log
+
 # Backup files from manual merges (e.g. data/tiles_odd.svg.orig)
 *.orig

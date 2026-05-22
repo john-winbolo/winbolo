@@ -2324,6 +2324,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
     tests/unit/test_wbn_country_cache.c
+    tests/unit/test_brain_crash_log.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2438,6 +2439,8 @@ set(_unit_test_names
     wbn_rekey_codec
     wbn_news_parse
     wbn_country_cache
+    brain_crash_log_writes_file
+    brain_crash_log_falls_back_to_luaptr
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
