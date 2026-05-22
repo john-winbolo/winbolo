@@ -4299,6 +4299,15 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     }
                 }
                 serverSimClearBalanceProposal(sim);
+                /* Publish the cleared proposal so balanceProposalActive flips
+                 * back to false on every client — keeps canBalance gating
+                 * from staying disabled on the Balance-from-WBN button. */
+                {
+                    ControlEvent clrEvt;
+                    memset(&clrEvt, 0, sizeof(clrEvt));
+                    clrEvt.type = CTRL_BALANCE_PROPOSAL;
+                    serverSimPublishControl(sim, &clrEvt);
+                }
                 logAddEvent(log_BalanceApplied, 0, 0, 0, 0, 0, NULL);
                 serverSimConsoleMessage("Team balance applied");
             }
