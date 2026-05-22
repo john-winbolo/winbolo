@@ -87,6 +87,7 @@ typedef struct {
     /* Reliable event dedup */
     uint32_t reliableEventAck;  /* Next expected reliable game event seq (init to 1) */
     uint32_t mapEventAck;       /* Next expected reliable map event seq (init to 1) */
+    uint32_t controlEventAck;   /* Next expected reliable control event seq (init to 1) */
 
     /* Join handshake state */
     uint32_t joinAttempts;
@@ -234,6 +235,7 @@ static void udpClientRecordInput(void *ctx, const InputPacket *input) {
         InputPacket stamped = *input;
         stamped.eventAck = c->reliableEventAck;
         stamped.mapEventAck = c->mapEventAck;
+        stamped.controlEventAck = c->controlEventAck;
         stamped.pingMs = c->pingMs;
         c->inputRing[c->inputRingCount % CLIENT_INPUT_RING_SIZE] = stamped;
     }
@@ -465,6 +467,56 @@ void udpClientHandleLobbyMapSearchRsp(ClientSim *cs,
     }
 }
 
+/* Snapshot-time ordered dispatch for control events arriving on the
+ * snapshot tail. Almost all variants forward to clientSimApplyControl;
+ * the lobby→running flip carries side-effects that previously lived
+ * inside the standalone PACKET_GAME_START handler (install buffered
+ * map, reset all three reliable-event acks, clear the input ring, drop
+ * any pre-flip snapshot) and they must fire BEFORE the same snapshot's
+ * game-event and map-event tails are applied. On RUNNING we set
+ * *skipPriorGameTails so the caller drops the same-snapshot tails —
+ * they belong to the prior game and would replay against the freshly
+ * installed map. */
+static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
+                                         const ControlEvent *evt,
+                                         uint32_t evSeq,
+                                         bool *skipPriorGameTails) {
+    (void)evSeq;
+    if (evt->type == CTRL_GAME_PHASE_RUNNING) {
+        /* LOBBY→RUNNING transition. Read inLobby BEFORE the dispatch —
+         * clientSimApplyControl clears it on CTRL_GAME_PHASE_RUNNING.
+         * Order: install → flag → reset acks → clear ring → drop snap
+         * → dispatch → mark skip. */
+        if (c->clientSim->inLobby && !c->mapInstalled &&
+            c->mapDownloadBuf != NULL &&
+            c->mapDownloadReceived == c->mapDownloadTotal) {
+            installCompressedMap(c->clientSim, c->mapDownloadBuf,
+                                 (int)c->mapDownloadTotal, NULL);
+            c->mapInstalled = true;
+        }
+        /* Reset reliable event acks so they match the server's reset
+         * queues. Stale events from the previous game must not be
+         * applied to the freshly-loaded map. */
+        c->reliableEventAck = 1;
+        c->mapEventAck = 1;
+        c->controlEventAck = 1;
+        /* Reset input ring so stale inputs from the previous game are
+         * not sent as redundant packets in the new game. */
+        c->inputRingCount = 0;
+        /* Drop any pre-flip snapshot still buffered in hasSnapshot. */
+        c->hasSnapshot = false;
+        /* Dispatch the event itself — flips netStat to running, clears
+         * inLobby on the sim, etc. */
+        clientSimApplyControl(c->clientSim, evt);
+        if (skipPriorGameTails != NULL) {
+            *skipPriorGameTails = true;
+        }
+        return;
+    }
+    /* Default path — identical to the legacy direct-dispatch route. */
+    clientSimApplyControl(c->clientSim, evt);
+}
+
 /* Process a single incoming packet (used by both direct and delayed paths) */
 static void udpClientProcessPacket(TransportUdpClientCtx *c,
                                    const uint8_t *buf, int len) {
@@ -615,7 +667,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 /* No-lobby joiner: server is already running, so install
                  * the buffered map onto the ClientSim immediately. The
                  * lobby case defers install until the LOBBY→RUNNING
-                 * phase transition runs it (see PACKET_GAME_START below).
+                 * phase transition runs it (see clientSimApplyControlOrdered).
                  * Order: install → flag → event. */
                 if (!c->clientSim->inLobby) {
                     installCompressedMap(c->clientSim, c->mapDownloadBuf,
@@ -671,9 +723,16 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         uint32_t reliableBaseSeq;
         uint8_t mapEventCount;
         uint32_t mapEventBaseSeq;
+        uint8_t controlEventCount;
+        uint32_t controlEventBaseSeq;
         int newEventCount = (c->hasSnapshot) ? c->snapshotHdr.reliableEventCount : 0;
         int actuallyUnpacked = 0;
         int actuallyUnpackedMap = 0;
+        bool skipPriorGameTails = false;
+        /* Game and map event indices into snapshotEvents where the
+         * prior-game tails landed.  Used to retroactively drop those
+         * entries if CTRL_GAME_PHASE_RUNNING fires on this snapshot. */
+        int eventTailStartIdx = newEventCount;
 
         /* Ignore stale snapshots. lastSnapshotSeq stays 0 until the
          * first valid arrival and only advances forward, so it's the
@@ -684,25 +743,24 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             break;
         }
 
-        /* Drop snapshots until the buffered map is installed onto the
-         * ClientSim. Covers the asymmetric-arrival case where a snapshot
-         * for the new map lands before the install completes (mid-lobby
-         * map swap, or a lobby joiner whose first PHASE_RUNNING is still
-         * pending). */
-        if (!c->mapInstalled) {
-            WB_LOG_DEBUG(WB_LOG_CAT_NET,
-                "snapshot dropped — map not yet installed (seq=%u)",
-                (unsigned)seq);
-            break;
-        }
+        /* The !mapInstalled gate fires AFTER the control-tail decode
+         * loop below, not here.  CTRL_GAME_PHASE_RUNNING arriving in
+         * this snapshot's control tail is what installs the buffered
+         * map for a lobby joiner (via clientSimApplyControlOrdered);
+         * gating on mapInstalled before decoding would deadlock that
+         * path.  The post-decode check still abandons the snapshot —
+         * scratch arrays go unused and get overwritten by the next
+         * decode — covering the asymmetric-arrival case (mid-lobby
+         * map swap, joiner whose first PHASE_RUNNING is still pending). */
 
         /* Header: serverTick(4) + lastProcessedInput(4) + tankCount(1)
          * + shellCount(1) + tkExplosionCount(1)
          * + baseCount(1) + pillCount(1)
          * + reliableEventCount(1) + reliableBaseSeq(4)
          * + mapEventCount(1) + mapEventBaseSeq(4)
-         * + mapChecksum(2) + returnToLobbyTicks(2) = 27 bytes */
-        if (len < pos + 27) { c->netErrors++; break; }
+         * + controlEventCount(1) + controlEventBaseSeq(4)
+         * + mapChecksum(2) + returnToLobbyTicks(2) = 32 bytes */
+        if (len < pos + 32) { c->netErrors++; break; }
 
         c->snapshotHdr.serverTick = unpackU32(buf + pos);
         pos += 4;
@@ -719,6 +777,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         mapEventCount = buf[pos++];
         mapEventBaseSeq = unpackU32(buf + pos);
         pos += 4;
+        controlEventCount = buf[pos++];
+        controlEventBaseSeq = unpackU32(buf + pos);
+        pos += 4;
+        c->snapshotHdr.controlEventCount = controlEventCount;
+        c->snapshotHdr.controlEventBaseSeq = controlEventBaseSeq;
         c->snapshotHdr.mapChecksum = unpackU16(buf + pos);
         pos += 2;
         c->snapshotHdr.returnToLobbyTicks = unpackU16(buf + pos);
@@ -852,6 +915,60 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             if (lastSeq > c->mapEventAck) {
                 c->mapEventAck = lastSeq;
             }
+        }
+
+        /* Decode the control-event tail.  Events are applied EAGERLY
+         * via clientSimApplyControlOrdered — they must run before the
+         * snapshot's game/map tails make it to the sim so the lobby
+         * →running flip can install the new map and drop any pre-flip
+         * tail.  Per-event wire layout: type(1) + bodyLen(2) + body(N).
+         * The body decoder is looked up by ControlEventType through the
+         * body-only codec table. */
+        for (i = 0; i < controlEventCount; i++) {
+            uint32_t evSeq = controlEventBaseSeq + (uint32_t)i;
+            uint8_t type;
+            uint16_t bodyLen;
+            ControlEvent evt;
+            ControlDecodeBodyFn dec;
+            if (pos + 3 > len) break;          /* Truncated header */
+            type = buf[pos++];
+            bodyLen = unpackU16(buf + pos); pos += 2;
+            if (pos + bodyLen > len) break;    /* Truncated body */
+            dec = transportControlCodecBodyDecoder((ControlEventType)type);
+            if (dec == NULL || !dec(buf + pos, bodyLen, &evt)) {
+                pos += bodyLen;
+                continue;
+            }
+            pos += bodyLen;
+            if (evSeq >= c->controlEventAck) {
+                clientSimApplyControlOrdered(c, &evt, evSeq,
+                                             &skipPriorGameTails);
+                c->controlEventAck = evSeq + 1;
+            }
+        }
+
+        /* Map-install gate, moved past the control-tail decode so
+         * CTRL_GAME_PHASE_RUNNING in this same snapshot has a chance
+         * to flip mapInstalled = true (via clientSimApplyControlOrdered)
+         * before we decide to apply.  If the control tail didn't carry
+         * the running flip and the joiner is still pre-install, abandon
+         * the snapshot — scratch decode arrays are reused on the next
+         * arrival, and we leave hasSnapshot / lastSnapshotSeq /
+         * lastSnapshotTick unadvanced. */
+        if (!c->mapInstalled) {
+            WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                "snapshot dropped post-decode — map still not installed (seq=%u)",
+                (unsigned)seq);
+            break;
+        }
+
+        /* If CTRL_GAME_PHASE_RUNNING fired in this snapshot's tail, the
+         * game/map events decoded earlier in the same packet are pre-
+         * flip and must not reach the sim — they would replay against
+         * the freshly-installed new-game map. Roll the staged-event
+         * count back so they're never passed to clientSimSyncFromSnapshot. */
+        if (skipPriorGameTails) {
+            newEventCount = eventTailStartIdx;
         }
 
         c->snapshotHdr.reliableEventCount = (uint8_t)newEventCount;
@@ -1292,48 +1409,15 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
     }
 
-    case PACKET_GAME_START: {
-        /* [header 8] */
-        ControlDecodeFn dec = transportControlCodecDecoder(pktType);
-        if (dec != NULL) {
-            ControlEvent evt;
-            if (dec(buf + PACKET_HEADER_SIZE,
-                    (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
-                /* LOBBY→RUNNING transition: if the map blob is fully
-                 * buffered but not yet installed (lobby joiner deferred
-                 * the install at MAP_DOWNLOAD completion), run it now
-                 * BEFORE dispatching the event so any in-process
-                 * subscriber that reads map state from the running flip
-                 * sees an installed map. Order: install → flag → dispatch.
-                 * Read inLobby BEFORE the dispatch — clientSimApplyControl
-                 * clears it on CTRL_GAME_PHASE_RUNNING. */
-                if (c->clientSim->inLobby && !c->mapInstalled &&
-                    c->mapDownloadBuf != NULL &&
-                    c->mapDownloadReceived == c->mapDownloadTotal) {
-                    installCompressedMap(c->clientSim, c->mapDownloadBuf,
-                                         (int)c->mapDownloadTotal, NULL);
-                    c->mapInstalled = true;
-                }
-                clientSimApplyControl(c->clientSim, &evt);
-            }
-        }
-        /* Reset input ring so stale inputs from the previous game
-         * are not sent as redundant packets in the new game. */
-        c->inputRingCount = 0;
-        /* Reset reliable event acks so they match the server's reset queues.
-         * Stale events from the previous game must not be applied to
-         * the freshly-loaded map. */
-        c->reliableEventAck = 1;
-        c->mapEventAck = 1;
-        /* Discard any snapshot buffered during the lobby/gameOver
-         * transition.  A late STATE_SNAPSHOT from the previous game
-         * can sit in hasSnapshot because the lobby tick path calls
-         * transport->tick() but never getSnapshot().  If this stale
-         * snapshot carries EVENT_MAP_CHANGE events from the old game,
-         * they would overwrite the freshly-loaded new map. */
-        c->hasSnapshot = false;
-        break;
-    }
+    /* PACKET_GAME_START is no longer dispatched on the client: the
+     * lobby→running flip arrives as CTRL_GAME_PHASE_RUNNING in the
+     * snapshot control-event tail, and clientSimApplyControlOrdered
+     * runs the side-effects (install map, reset acks, clear input ring,
+     * drop pre-flip snapshot) before the same snapshot's prior-game
+     * tails would otherwise replay against the new map. The server
+     * still emits PACKET_GAME_START during the lobby/countdown phases
+     * via the legacy direct send; those packets arrive here and fall
+     * through to the default branch (silently dropped). */
 
     case PACKET_GAME_OVER:
         /* [header 8] */
@@ -1956,6 +2040,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->hasSnapshot = false;
     c->reliableEventAck = 1;  /* First valid seq is 1 */
     c->mapEventAck = 1;       /* First valid map event seq is 1 */
+    c->controlEventAck = 1;   /* First valid control event seq is 1 */
     c->localTick = 0;
     c->lastPingSentTick = 0;
     c->pingMs = 0;

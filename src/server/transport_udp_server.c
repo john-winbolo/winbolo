@@ -548,8 +548,14 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
                 "ctrl enqueue slot=%d seq=%u type=%d",
                 idx, (unsigned)seq, (int)evt->type);
 
-    /* Legacy direct send — stays through Phase 3/4; Phase 5 deletes it
-     * once the carrier path is the only reliability mechanism. */
+    /* Legacy direct send — phase-gated off during running, where the
+     * snapshot tail is now the sole carrier (Phase 4). Sending here
+     * during running would double-apply on the client. Lobby /
+     * countdown / gameover still rely on the legacy send until
+     * Phase 5 adds PACKET_CONTROL_TICK. */
+    if (serverSimGetState(serverSimGetActive()) == serverStateRunning) {
+        return;
+    }
     enc = transportControlCodecEncoder(evt->type);
     if (enc == NULL) return;
     r = enc(evt, client, buf, sizeof(buf), &len);
@@ -1413,6 +1419,9 @@ static void serverHandleInput(const uint8_t *buf, int len,
         if (pkt.mapEventAck > udpServer.mapEventQueues[clientIdx].ackedSeq) {
             udpServer.mapEventQueues[clientIdx].ackedSeq = pkt.mapEventAck;
         }
+        if (pkt.controlEventAck > udpServer.controlEventQueues[clientIdx].ackedSeq) {
+            udpServer.controlEventQueues[clientIdx].ackedSeq = pkt.controlEventAck;
+        }
 
         /* Only apply if this is a newer input than what we last processed */
         if (pkt.tick > serverSimGetLastProcessedInput(sim, clientIdx)) {
@@ -1476,6 +1485,8 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     uint32_t reliableBaseSeq = 0;
     int mapEventCount = 0;
     uint32_t mapEventBaseSeq = 0;
+    int controlEventCount = 0;
+    uint32_t controlEventBaseSeq = 0;
     SnapshotHeader hdr;
     TankSnapshot tankSnaps[MAX_TANKS];
     ShellSnapshot shellSnaps[MAX_SNAPSHOT_SHELLS];
@@ -1485,6 +1496,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     GameEvent eventSnaps[MAX_SNAPSHOT_EVENTS];
     ClientEventQueue *evQ = &udpServer.eventQueues[clientIdx];
     ClientEventQueue *mapQ = &udpServer.mapEventQueues[clientIdx];
+    ClientControlEventQueue *controlQ = &udpServer.controlEventQueues[clientIdx];
     UdpServerClient *client = &udpServer.clients[clientIdx];
 
     /* Build snapshot from sim state (same code as local transport) */
@@ -1507,13 +1519,14 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
      * + baseCount(1) + pillCount(1)
      * + reliableEventCount(1) + reliableBaseSeq(4)
      * + mapEventCount(1) + mapEventBaseSeq(4)
-     * + mapChecksum(2) + returnToLobbyTicks(2) = 27 bytes */
+     * + controlEventCount(1) + controlEventBaseSeq(4)
+     * + mapChecksum(2) + returnToLobbyTicks(2) = 32 bytes */
     packU32(buf + pos, hdr.serverTick);
     pos += 4;
     packU32(buf + pos, hdr.lastProcessedInput);
     pos += 4;
     countsPos = pos;
-    pos += 19; /* 7 count bytes + 4 byte reliableBaseSeq + 4 byte mapEventBaseSeq + 2 byte mapChecksum + 2 byte returnToLobbyTicks */
+    pos += 24; /* 8 count bytes + 4 byte reliableBaseSeq + 4 byte mapEventBaseSeq + 4 byte controlEventBaseSeq + 2 byte mapChecksum + 2 byte returnToLobbyTicks */
 
     /* Pack tank snapshots — variable length: stubs are 1 byte, full
      * entries are TANK_SNAPSHOT_WIRE_SIZE bytes. */
@@ -1593,6 +1606,33 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
         }
     }
 
+    /* Pack reliable control events from dedicated per-client queue.
+     * Per-event wire layout: type(1) + bodyLen(2) + body(N). The
+     * receiver dispatches each event to its decoder via the body-only
+     * codec table (transportControlCodecBodyDecoder). */
+    controlEventBaseSeq = controlQ->ackedSeq;
+    {
+        uint32_t seq;
+        for (seq = controlQ->ackedSeq; seq < controlQ->nextSeq; seq++) {
+            uint32_t idx = seq % CONTROL_EVENT_QUEUE_SIZE;
+            ControlEncodeBodyFn enc;
+            size_t bodyLen = 0;
+            if (controlQ->buffer[idx].seq != seq) break; /* wrapped — slot got reused */
+            enc = transportControlCodecBodyEncoder(controlQ->buffer[idx].event.type);
+            if (enc == NULL) continue; /* no body codec — silently skip */
+            if (pos + 3 > (int)sizeof(buf)) break;
+            if (enc(&controlQ->buffer[idx].event, client,
+                    buf + pos + 3, sizeof(buf) - pos - 3, &bodyLen) != ENCODE_OK) {
+                break;
+            }
+            buf[pos]   = (uint8_t)controlQ->buffer[idx].event.type;
+            packU16(buf + pos + 1, (uint16_t)bodyLen);
+            pos += 3 + (int)bodyLen;
+            controlEventCount++;
+            if (controlEventCount >= 255) break; /* Cap to uint8_t max */
+        }
+    }
+
     /* Fill in counts */
     buf[countsPos]     = hdr.tankCount;
     buf[countsPos + 1] = hdr.shellCount;
@@ -1603,8 +1643,10 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     packU32(buf + countsPos + 6, reliableBaseSeq);
     buf[countsPos + 10] = (uint8_t)mapEventCount;
     packU32(buf + countsPos + 11, mapEventBaseSeq);
-    packU16(buf + countsPos + 15, hdr.mapChecksum);
-    packU16(buf + countsPos + 17, hdr.returnToLobbyTicks);
+    buf[countsPos + 15] = (uint8_t)controlEventCount;
+    packU32(buf + countsPos + 16, controlEventBaseSeq);
+    packU16(buf + countsPos + 20, hdr.mapChecksum);
+    packU16(buf + countsPos + 22, hdr.returnToLobbyTicks);
 
     /* wire-only: per-tick snapshot — high-volume delta-encoded path with its own reliability discipline */
     udpSendTo(udpServer.sock, buf, pos, &client->addr);
