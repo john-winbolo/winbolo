@@ -183,16 +183,6 @@ static bool clientSimConnectLocalBody(ClientSim *cs, struct ServerSim *sim,
   /* 7. Set up the self-record (tank + name + client type/flags). */
   clientSimSetupSelf(cs, slot, playerName, clientType, clientFlags);
 
-  /* 7b. Push the server's authoritative game-timing settings into the
-   *     ClientSim. The UDP path applies these from JOIN_ACCEPT
-   *     (transport_udp_client.c). On local transport there is no
-   *     JOIN_ACCEPT, so the equivalent setters run here. Without
-   *     gmeLength in particular, client_ui_events.c sees gmeLength==0
-   *     on tick 1 and immediately fires frontEndGameOver. */
-  clientSimSetGameType(cs, serverSimGetGameType(sim));
-  clientSimSetGmeStartDelay(cs, (int)serverSimGetStartDelay(sim));
-  clientSimSetGmeLength(cs, serverSimGetGameLength(sim));
-
   /* 8. Push per-tank user preferences now that the tank exists. */
   frontEndApplyLocalTankPrefs(cs);
 
@@ -364,14 +354,6 @@ const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen) {
   if (outLen) *outLen = 0;
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return NULL;
   return transportUdpClientGetMapData((Transport *)&cs->transport, outLen);
-}
-
-void clientSimGetServerGameSettings(const ClientSim *cs, gameType *game,
-                                    bool *hiddenMines, int32_t *startDelay,
-                                    int32_t *gameLen) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientGetGameSettings((Transport *)&cs->transport, game,
-                                    hiddenMines, startDelay, gameLen);
 }
 
 /* === Send wrappers ===

@@ -173,6 +173,18 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyWbnAvailable = evt->u.lobbySettings.lobbyWbnAvailable;
         cs->lobbyServerLocks         = evt->u.lobbySettings.lobbyServerLocks;
         cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;
+        /* Adopt the server's authoritative game-timing settings while in
+         * lobby. Mid-game CTRL_LOBBY_SETTINGS arrivals (e.g. sync-replay
+         * for a late join during an active game) must NOT clobber the
+         * running gameLength / gameType, so gate on inLobby &&
+         * !netRunning. */
+        if (evt->u.lobbySettings.inLobby &&
+            evt->u.lobbySettings.netStat != netRunning) {
+            clientSimSetGameType(cs,       evt->u.lobbySettings.lobbyGameType);
+            clientSimSetHiddenMines(cs,    evt->u.lobbySettings.lobbyHiddenMines);
+            clientSimSetGmeStartDelay(cs,  evt->u.lobbySettings.lobbyStartDelay);
+            clientSimSetGmeLength(cs,      evt->u.lobbySettings.lobbyTimeLimit);
+        }
         break;
 
     case CTRL_LOBBY_TEAM_META: {

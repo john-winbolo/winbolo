@@ -298,11 +298,6 @@ const BYTE *transportUdpClientGetMapData(Transport *t, int *outLen);
  * happens in practice). */
 uint8_t transportUdpClientGetMapDownloadPercent(Transport *t);
 
-/* Returns the game settings received from the server during join. */
-void transportUdpClientGetGameSettings(Transport *t, gameType *game,
-                                       bool *hiddenMines, int32_t *startDelay,
-                                       int32_t *gameLen);
-
 
 /*********************************************************
  * UDP Transport — Server Side

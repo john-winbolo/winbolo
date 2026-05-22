@@ -92,9 +92,6 @@ ClientConnectState clientSimGetConnectState(const ClientSim *cs);
 const char *clientSimGetConnectErrorReason(const ClientSim *cs);
 BYTE        clientSimGetServerPlayerNum(const ClientSim *cs);
 const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen);
-void        clientSimGetServerGameSettings(const ClientSim *cs, gameType *game,
-                                           bool *hiddenMines, int32_t *startDelay,
-                                           int32_t *gameLen);
 
 /* === Send wrappers === */
 void clientSimNetSendChat(ClientSim *cs, BYTE destPlayer, const char *message);

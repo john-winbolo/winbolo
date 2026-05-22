@@ -4086,6 +4086,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyHiddenMines = sim->sim.hiddenMines ? true : false;
     evt->u.lobbySettings.lobbyAiType      = (uint8_t)sim->botAiType;
     evt->u.lobbySettings.lobbyTimeLimit   = sim->gameLength;
+    evt->u.lobbySettings.lobbyStartDelay  = serverSimGetStartDelay(sim);
     evt->u.lobbySettings.lobbyPillCount   = pillsGetNumPills(&sim->sim.pb);
     evt->u.lobbySettings.lobbyBaseCount   = basesGetNumBases(&sim->sim.bs);
     evt->u.lobbySettings.lobbyStartCount  = startsGetNumStarts(&sim->sim.ss);

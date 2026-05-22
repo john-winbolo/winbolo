@@ -122,12 +122,6 @@ typedef struct {
      * installed. */
     bool     mapInstalled;
 
-    /* Game settings received from server */
-    gameType serverGameType;
-    bool     serverHiddenMines;
-    int32_t  serverStartDelay;
-    int32_t  serverGameLen;
-
     /* Join reject reason from server, rendered locally via langGetTextFmt
      * after Phase 9d wire format change. Sized for the longest expected
      * localized rendering. */
@@ -553,27 +547,20 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     switch (pktType) {
     case PACKET_JOIN_ACCEPT:
         /* Accept packet format:
-         *   [header 8] [playerNum 1] [serverTick 4] [gameType 1]
-         *   [hiddenMines 1] [startDelay 4] [gameLen 4] [mapSize 4]
-         * Total: 8 + 19 = 27 bytes minimum */
+         *   [header 8] [playerNum 1] [serverTick 4] [mapSize 4]
+         * Total: 8 + 9 = 17 bytes */
         WB_LOG_INFO(WB_LOG_CAT_NET,
             "PACKET_JOIN_ACCEPT received: state=%d len=%d (need>=%d)",
-            (int)c->joinState, len, PACKET_HEADER_SIZE + 19);
+            (int)c->joinState, len, PACKET_HEADER_SIZE + 9);
         if ((c->joinState == UDP_CLIENT_JOINING ||
              c->joinState == UDP_CLIENT_DOWNLOADING_MAP) &&
-            len >= PACKET_HEADER_SIZE + 19) {
+            len >= PACKET_HEADER_SIZE + 9) {
             int pos = PACKET_HEADER_SIZE;
             uint32_t mapSize;
 
             c->playerNum = buf[pos++];
             clientSimSetPlayerNum(c->clientSim, c->playerNum);
             pos += 4; /* skip serverTick */
-            c->serverGameType = (gameType)buf[pos++];
-            c->serverHiddenMines = buf[pos++] ? TRUE : FALSE;
-            c->serverStartDelay = (int32_t)unpackU32(buf + pos);
-            pos += 4;
-            c->serverGameLen = (int32_t)unpackU32(buf + pos);
-            pos += 4;
             mapSize = unpackU32(buf + pos);
             pos += 4;
 
@@ -581,17 +568,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 c->joinState = UDP_CLIENT_ERROR;
                 break;
             }
-
-            /* Apply game settings to the ClientSim directly. The frontend
-             * still pre-constructs the ClientSim with defaults; these
-             * setters correct them once the server's authoritative values
-             * land. minesCreate already consumed hiddenMines at construct
-             * time, so this is a forward-going write — later mines state
-             * changes that read sim.hiddenMines pick up the new value. */
-            clientSimSetGameType(c->clientSim, c->serverGameType);
-            clientSimSetHiddenMines(c->clientSim, c->serverHiddenMines);
-            clientSimSetGmeStartDelay(c->clientSim, c->serverStartDelay);
-            clientSimSetGmeLength(c->clientSim, c->serverGameLen);
 
             /* Allocate map download buffer. A fresh allocation also resets
              * mapInstalled — snapshots stay gated until the new buffer is
@@ -2287,18 +2263,6 @@ uint8_t transportUdpClientGetMapDownloadPercent(Transport *t) {
     if (c->mapDownloadTotal == 0) return 100;
     uint32_t pct = (c->mapDownloadReceived * 100u) / c->mapDownloadTotal;
     return pct > 100 ? 100 : (uint8_t)pct;
-}
-
-void transportUdpClientGetGameSettings(Transport *t, gameType *game,
-                                       bool *hiddenMines, int32_t *startDelay,
-                                       int32_t *gameLen) {
-    TransportUdpClientCtx *c;
-    if (t == NULL || t->ctx == NULL) return;
-    c = (TransportUdpClientCtx *)t->ctx;
-    if (game != NULL) *game = c->serverGameType;
-    if (hiddenMines != NULL) *hiddenMines = c->serverHiddenMines;
-    if (startDelay != NULL) *startDelay = c->serverStartDelay;
-    if (gameLen != NULL) *gameLen = c->serverGameLen;
 }
 
 /* Send a chat message to the server.

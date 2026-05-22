@@ -369,7 +369,9 @@ static EncodeResult encodeLobbySlot(const ControlEvent *evt,
  * field in the codec (packU16/packU32). */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD_BASE \
     (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 2)
-#define LOBBY_SETTINGS_WIRE_PAYLOAD (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4)
+/* Trailing optional tail: ranked(1) + allowNewPlayers(1) + wbnAvailable(1)
+ * + uploadPolicy(1) + lobbyStartDelay(4). */
+#define LOBBY_SETTINGS_WIRE_PAYLOAD (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4)
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
@@ -405,6 +407,8 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     buf[pos++] = evt->u.lobbySettings.lobbyAllowNewPlayers ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyWbnAvailable ? 1 : 0;
     buf[pos++] = (uint8_t)evt->u.lobbySettings.uploadPolicy;
+    packU32(buf + pos, (uint32_t)evt->u.lobbySettings.lobbyStartDelay);
+    pos += 4;
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -1158,6 +1162,10 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     }
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.uploadPolicy = (UploadPolicy)buf[pos++];
+    }
+    if (len >= pos + 4) {
+        outEvt->u.lobbySettings.lobbyStartDelay = (int32_t)unpackU32(buf + pos);
+        pos += 4;
     }
     return true;
 }

@@ -133,6 +133,7 @@ typedef struct ControlEvent {
             bool     lobbyHiddenMines;
             uint8_t  lobbyAiType;
             int32_t  lobbyTimeLimit;
+            int32_t  lobbyStartDelay;
             uint8_t  lobbyPillCount;
             uint8_t  lobbyBaseCount;
             uint8_t  lobbyStartCount;

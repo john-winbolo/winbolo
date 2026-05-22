@@ -669,10 +669,11 @@ static bool lobbyClientMayEdit(ServerSim *sim, int clientIdx) {
     return serverSimGetOpenHost(sim) && serverSimIsPlayerConnected(sim, clientIdx);
 }
 
-/* Build and send the join accept packet with game settings and map size */
+/* Build and send the join accept packet with the slot, current server
+ * tick, and compressed map size. */
 static void serverSendJoinAccept(int slot, ServerSim *sim,
                                  const struct sockaddr_in *addr) {
-    uint8_t acceptBuf[PACKET_HEADER_SIZE + 19];
+    uint8_t acceptBuf[PACKET_HEADER_SIZE + 9];
     int pos;
 
     packHeader(acceptBuf, PACKET_JOIN_ACCEPT,
@@ -680,12 +681,6 @@ static void serverSendJoinAccept(int slot, ServerSim *sim,
     pos = PACKET_HEADER_SIZE;
     acceptBuf[pos++] = (uint8_t)slot;
     packU32(acceptBuf + pos, serverSimGetTick(sim));
-    pos += 4;
-    acceptBuf[pos++] = (uint8_t)gameTypeGet(&serverSimGetGameSim(sim)->game);
-    acceptBuf[pos++] = serverSimGetGameSim(sim)->hiddenMines ? 1 : 0;
-    packU32(acceptBuf + pos, (uint32_t)serverSimGetStartDelay(sim));
-    pos += 4;
-    packU32(acceptBuf + pos, (uint32_t)serverSimGetGameLength(sim));
     pos += 4;
     packU32(acceptBuf + pos, udpServer.compressedMapSize);
     pos += 4;
