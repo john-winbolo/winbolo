@@ -464,7 +464,7 @@ end
 -- existing walls and friendly pills count toward the protection
 -- score. attack.lua passes this when info.man_status == LGM_DEAD.
 function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
-                standoff_cx, standoff_cy, radius, no_builder)
+                standoff_cx, standoff_cy, radius, no_builder, tank_armour)
   if not pill or not world then return { candidates = {}, best = nil } end
   local pmx, pmy = pill.mx, pill.my
   -- Caller can override the standoff circle radius (PPT uses a tighter
@@ -501,6 +501,13 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       n_fav = 1; fs1 = M.WOUNDED_HP_LOW_FAV_BLOCKERS; fb1 = M.WOUNDED_FAVOR_BONUS
       min_chain = M.WOUNDED_HP_LOW_MIN_CHAIN; max_bonus = M.WOUNDED_FAVOR_BONUS
       fav_bonus_by_size[fs1] = fb1; tier_label = "LOW"
+    end
+
+    -- Low-armour shield demote: when our own HP is below ARMOUR_LOW we
+    -- can't soak the extra return fire that comes from a too-thin shield,
+    -- so raise the min_chain floor by 1 (cap 3) regardless of pill HP.
+    if tank_armour and tank_armour < (C.ARMOUR_LOW or 15) then
+      min_chain = math.min(min_chain + 1, 3)
     end
 
     local pill_table = {}
@@ -990,6 +997,12 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
     fav_bonus_by_size[M.WOUNDED_HP_LOW_FAV_BLOCKERS] = M.WOUNDED_FAVOR_BONUS
     min_chain  = M.WOUNDED_HP_LOW_MIN_CHAIN
     tier_label = "LOW"
+  end
+  -- Low-armour shield demote: when our own HP is below ARMOUR_LOW we
+  -- can't soak the extra return fire that comes from a too-thin shield,
+  -- so raise the min_chain floor by 1 (cap 3) regardless of pill HP.
+  if tank_armour and tank_armour < (C.ARMOUR_LOW or 15) then
+    min_chain = math.min(min_chain + 1, 3)
   end
   -- Largest bonus in the tier — drives the hard-exclusion magnitude
   -- so an excluded subset always loses against any favored one.

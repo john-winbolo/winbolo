@@ -5660,6 +5660,7 @@ function M.draw_attack_tank_viz(state, info)
   if not bd then return end
 
   for _, b in ipairs(bd) do
+    if (b.mx or 0) < 0 or (b.my or 0) < 0 then goto continue_bd end
     local ex, ey = b.mx + 0.5, b.my + 0.5
 
     -- Line from bot to enemy tank
@@ -5692,6 +5693,7 @@ function M.draw_attack_tank_viz(state, info)
       vizmod.rect("tank_combat_viz", b.standoff_mx, b.standoff_my,
         b.standoff_mx + 1, b.standoff_my + 1, NR, NG, NB, 60)
     end
+    ::continue_bd::
   end
 end
 

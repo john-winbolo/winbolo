@@ -4507,11 +4507,15 @@ int main(int argc, char *argv[]) {
      * --opt CLI flag flips the default off so bots load from stripped
      * opt/ source with BRAIN_DEBUG_MODE=false — true production feel. */
     botManagerSetDefaultDebugMode(!optProduction);
-    /* Effective profiling flags. In dev mode (no --opt) both default to
-     * on so the Y panel + logs Just Work. In --opt mode you opt in via
-     * --profile (memory only) or --profile-log (memory + files). */
+    /* Effective profiling flags.
+     * - Memory profiling (Y panel + slow-tick warnings): on by default
+     *   in dev mode (no --opt), opt-in via --profile in --opt mode.
+     * - File-writing profile logs (performance.ticks.log,
+     *   optimize.log): ONLY when --profile-log is explicitly passed.
+     *   Used to auto-enable in dev mode too, which silently wrote
+     *   tens of MB per game during normal BrainTest use. */
     int effProfile    = (!optProduction) || optProfile    || optProfileLog;
-    int effProfileLog = (!optProduction) || optProfileLog;
+    int effProfileLog = optProfileLog;
     /* JSONL behavior trace: dev mode = on, --opt = off unless --log-json. */
     int effLogJson    = (!optProduction) || optLogJson;
     luaBrainsSetProfile(effProfile, effProfileLog);
