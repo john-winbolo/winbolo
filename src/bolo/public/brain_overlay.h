@@ -50,7 +50,11 @@ typedef struct {
 } OverlayCmd;
 #define OVERLAY_VIZ_IDX_NONE 0xFF
 
-typedef struct {
+#ifndef OVERLAYCMDBUFFER_TYPEDEF
+#define OVERLAYCMDBUFFER_TYPEDEF
+typedef struct OverlayCmdBuffer OverlayCmdBuffer;
+#endif
+struct OverlayCmdBuffer {
     OverlayCmd *cmds;
     int count;
     int capacity;
@@ -58,7 +62,7 @@ typedef struct {
     /* Raw RGBA pixel buffer (4096x4096, map-pixel resolution) */
     uint8_t *pixels;    /* NULL until first use (lazy alloc, 64MB) */
     int pixelsDirty;    /* Non-zero if pixels were written this tick */
-} OverlayCmdBuffer;
+};
 
 void overlayCmdBufferInit(OverlayCmdBuffer *buf);
 void overlayCmdBufferDestroy(OverlayCmdBuffer *buf);

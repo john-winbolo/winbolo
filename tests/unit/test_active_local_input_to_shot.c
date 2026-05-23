@@ -34,9 +34,11 @@ int run_active_local_input_to_shot(void) {
 
     ClientSim *cs = clientSimAlloc();
     UT_ASSERT(cs != NULL);
-    clientSimCreate(cs, gameOpen, false, 0, -1);
-    clientSimSetPlayerNum(cs, 0);
-    clientSimConnectLocal(cs, sim, 0);
+    clientSimCreate(cs);
+    /* New signature: connect runs serverSimLocalJoin internally, which
+     * picks slot 0 in this empty harness; playerName is the input
+     * the join validator accepts. */
+    UT_ASSERT(clientSimConnectLocal(cs, sim, "Shooter", "", 0, 0));
 
     /* Pre-fire warmup. Each input carries a strictly-increasing tick
      * so the server's jitter buffer reaches its initial target depth

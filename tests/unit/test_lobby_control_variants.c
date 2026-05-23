@@ -61,7 +61,7 @@ static int codec_roundtrip(ControlEventType type,
 static ClientSim *fresh_client_sim(void) {
     ClientSim *cs = clientSimAlloc();
     if (cs == NULL) return NULL;
-    clientSimCreate(cs, gameOpen, false, 0, -1);
+    clientSimCreate(cs);
     clientSimSetPlayerNum(cs, 0);
     return cs;
 }

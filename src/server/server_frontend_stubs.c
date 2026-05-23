@@ -81,6 +81,7 @@ void frontEndGameOver(ClientSim *cs) {
 }
 void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) { (void)cs; (void)value; }
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) { (void)cs; (void)value; (void)str; (void)countryCode; (void)ping; (void)clientType; (void)clientFlags; }
+void frontEndUpdatePlayerPing(struct ClientSim *cs, playerNumbers value, uint16_t ping) { (void)cs; (void)value; (void)ping; }
 void frontEndDrawDownload(ClientSim *cs, bool justBlack) { (void)cs; (void)justBlack; }
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) { (void)cs; (void)value; (void)isChecked; }
 void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }

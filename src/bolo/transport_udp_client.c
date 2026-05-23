@@ -31,16 +31,21 @@
 #include "util.h"
 #include "messages.h"
 #include "client_sim.h"
+#include "frontend.h"                  /* frontEndApplyLocalTankPrefs */
 #include "client_sim_internal.h"
 #include "control_event.h"
 #include "client_sim_control.h"
 #include "transport_control_codec.h"
 #include "wbn_key_codec.h"
+#include "bolo_map_validate.h"
+#include "wire_limits.h"
+#include "../common/md5.h"
 #include "../gui/lang.h"
 #include "../gui/winbolo.h"
 #include "../gui/dialogAlliance.h"
 #include "../steam/steam_wrapper.h"
 #include "../common/wb_log.h"
+#include "../common/mp_diag_log.h"
 #include "../winbolonet/winbolonet_client.h"
 #include "../winbolonet/winbolonet_core.h"
 
@@ -84,6 +89,15 @@ typedef struct {
     /* Reliable event dedup */
     uint32_t reliableEventAck;  /* Next expected reliable game event seq (init to 1) */
     uint32_t mapEventAck;       /* Next expected reliable map event seq (init to 1) */
+    uint32_t controlEventAck;   /* Next expected reliable control event seq (init to 1) */
+    /* Coalesce PACKET_CONTROL_ACK emission to ~50ms — only relevant
+     * during non-running phases when PACKET_CONTROL_TICK is the
+     * carrier.  controlAckPendingTick: localTick when the first
+     * post-ACK tick arrived (0 = no ack pending).  lastSentControlAck:
+     * the controlEventAck value carried in the most recent ACK packet,
+     * used to avoid resending an unchanged ACK. */
+    uint32_t controlAckPendingTick;
+    uint32_t lastSentControlAck;
 
     /* Join handshake state */
     uint32_t joinAttempts;
@@ -102,12 +116,13 @@ typedef struct {
     uint16_t mapChunksExpected;  /* Total chunks expected */
     uint16_t mapChunksReceived;  /* Number of unique chunks received */
     bool    *mapChunkReceived;   /* Bitfield: which chunks we've gotten */
-
-    /* Game settings received from server */
-    gameType serverGameType;
-    bool     serverHiddenMines;
-    int32_t  serverStartDelay;
-    int32_t  serverGameLen;
+    /* True once the buffered map has been installed onto the ClientSim
+     * (mp/pb/bs/ss populated). Distinct from mapDownloadComplete on the
+     * ClientSim (bytes-received) — this tracks "applied". Reset to false
+     * when a fresh download begins (JOIN_ACCEPT reallocates the buffer)
+     * so a mid-lobby map swap re-gates snapshots until the new map is
+     * installed. */
+    bool     mapInstalled;
 
     /* Join reject reason from server, rendered locally via langGetTextFmt
      * after Phase 9d wire format change. Sized for the longest expected
@@ -138,14 +153,80 @@ typedef struct {
     struct in_addr targetIp;       /* host IP (network order) for PUNCH_REQUEST body */
     unsigned short targetPort;     /* host port (host order) for PUNCH_REQUEST body */
     bool           punchSent;      /* sent at least one PUNCH_REQUEST */
+
+    /* ISO-3166 fallback country (2 chars + NUL). Empty when the caller
+     * passed NULL/"". Written verbatim into the trailing slot of every
+     * JOIN_REQUEST so the server's GeoIP-failed fallback path can use
+     * it uniformly (loopback, LAN, missing MMDB). */
+    char fallbackCountry[3];
+
+    /* Lobby map upload — the chunked PACKET_LOBBY_MAP_UPLOAD_* state
+     * machine that used to live in imgui_lobby's per-frame pump. The
+     * frontend kicks it off via transportUdpClientStartLobbyMapUpload*
+     * and reads progress back via clientSimGetLobbyMapUpload* status +
+     * Percent getters. Pump fires from udpClientTick once per tick. */
+    bool      uploadActive;
+    uint8_t  *uploadBuf;                  /* malloc'd, sized to uploadTotal */
+    uint32_t  uploadTotal;
+    uint32_t  uploadOffset;               /* bytes already sent via CHUNK */
+    char      uploadName[128];            /* wire-side filename announced to server */
+    /* USE_LOCAL pre-check: when the source path resolves under
+     * data/maps/, the kick computes md5 + the data/maps-relative
+     * filename and sends PACKET_LOBBY_MAP_USE_LOCAL first. On
+     * USE_LOCAL_NACK the pump transitions to BEGIN+CHUNK using the
+     * bytes already buffered. */
+    bool      uploadUseLocalPending;      /* USE_LOCAL sent, awaiting ACK/NACK */
+    bool      uploadBeginSent;            /* BEGIN sent (USE_LOCAL never tried, or NACKed) */
+    /* Watchdog timestamps (SDL ticks ms). Reset on forward progress:
+     * status flip, offset advance, or the transition to awaiting-DONE
+     * after the last chunk. */
+    uint64_t  uploadStartedMs;
+    uint8_t   uploadPrevStatus;
+    uint64_t  uploadPrevProgressMs;
+    uint32_t  uploadPrevOffset;
 } TransportUdpClientCtx;
+
+#define UPLOAD_ACK_TIMEOUT_MS   5000   /* BEGIN/USE_LOCAL → ACK */
+#define UPLOAD_STALL_TIMEOUT_MS 10000  /* no chunk progress */
+#define UPLOAD_CHUNK_SIZE       1024
+#define UPLOAD_CHUNKS_PER_TICK  8
+
+/* Diagnostic-only: one-shot guard so we log the kernel-assigned local
+ * port once per process the first time getsockname() returns a non-zero
+ * port (i.e. after the implicit bind from the first sendto). File scope
+ * keeps the declaration off MSVC's C89 mixed-decl-and-statement path. */
+static int udpClientLoggedLocalPort = 0;
 
 /* Client send wrapper — tracks packet and byte counters */
 static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int len) {
     udpSendTo(c->sock, buf, len, &c->serverAddr);
     c->packetsSentThisSec++;
     c->bytesSentThisSec += len;
+    if (!udpClientLoggedLocalPort) {
+        /* NB: don't name this `local` — brain.h does `#define local static`
+         * for its Lua-flavoured pseudo-keyword and that macro is in scope
+         * through the include chain.  `local sockaddr_in foo;` then
+         * preprocesses to `static sockaddr_in foo;` which MSVC parses as
+         * a bare type declaration with no variable name (C4091/C2059). */
+        struct sockaddr_in localAddr;
+        socklen_t locLen;
+        memset(&localAddr, 0, sizeof(localAddr));
+        locLen = (socklen_t)sizeof(localAddr);
+        if (getsockname(c->sock, (struct sockaddr *)&localAddr, &locLen) == 0
+            && localAddr.sin_port != 0) {
+            mpDiagLog("[cli] local socket bound at %s:%u (kernel-assigned ephemeral; SO_REUSEADDR=on) -> server %s:%u",
+                      inet_ntoa(localAddr.sin_addr),
+                      (unsigned)ntohs(localAddr.sin_port),
+                      inet_ntoa(c->serverAddr.sin_addr),
+                      (unsigned)ntohs(c->serverAddr.sin_port));
+            udpClientLoggedLocalPort = 1;
+        }
+    }
 }
+
+/* Forward decl: defined alongside the upload state machine below;
+ * called from the connected-state branch of udpClientTick. */
+static void udpClientUploadPump(TransportUdpClientCtx *c);
 
 /* Build an input packet into buf, returns length */
 static int buildInputPacket(TransportUdpClientCtx *c, uint8_t *buf) {
@@ -184,6 +265,7 @@ static void udpClientRecordInput(void *ctx, const InputPacket *input) {
         InputPacket stamped = *input;
         stamped.eventAck = c->reliableEventAck;
         stamped.mapEventAck = c->mapEventAck;
+        stamped.controlEventAck = c->controlEventAck;
         stamped.pingMs = c->pingMs;
         c->inputRing[c->inputRingCount % CLIENT_INPUT_RING_SIZE] = stamped;
     }
@@ -415,6 +497,132 @@ void udpClientHandleLobbyMapSearchRsp(ClientSim *cs,
     }
 }
 
+/* Short name for a ControlEventType — diagnostic logging only. */
+static const char *mpDiagCtrlName(int type) {
+    switch (type) {
+    case CTRL_ALLIANCE_REQUEST: return "ALLIANCE_REQUEST";
+    case CTRL_ALLIANCE_ACCEPT:  return "ALLIANCE_ACCEPT";
+    case CTRL_ALLIANCE_LEAVE:   return "ALLIANCE_LEAVE";
+    case CTRL_PLAYER_JOIN:      return "PLAYER_JOIN";
+    case CTRL_PLAYER_NAME:      return "PLAYER_NAME";
+    case CTRL_LOBBY_SLOT:       return "LOBBY_SLOT";
+    case CTRL_LOBBY_SETTINGS:   return "LOBBY_SETTINGS";
+    case CTRL_LOBBY_MAP_CHANGE: return "LOBBY_MAP_CHANGE";
+    case CTRL_MAP_DOWNLOAD_COMPLETE: return "MAP_DOWNLOAD_COMPLETE";
+    case CTRL_BALANCE_PROPOSAL: return "BALANCE_PROPOSAL";
+    case CTRL_MAP_SKIP_STATE:   return "MAP_SKIP_STATE";
+    case CTRL_GAME_PHASE_LOBBY: return "GAME_PHASE_LOBBY";
+    case CTRL_GAME_PHASE_COUNTDOWN: return "GAME_PHASE_COUNTDOWN";
+    case CTRL_GAME_PHASE_RUNNING:   return "GAME_PHASE_RUNNING";
+    case CTRL_GAME_PHASE_GAME_OVER: return "GAME_PHASE_GAME_OVER";
+    case CTRL_GAME_OVER:        return "GAME_OVER";
+    case CTRL_SERVER_SHUTDOWN:  return "SERVER_SHUTDOWN";
+    case CTRL_CHAT:             return "CHAT";
+    case CTRL_PLAYER_LEAVE:     return "PLAYER_LEAVE";
+    case CTRL_LOBBY_TEAM_META:  return "LOBBY_TEAM_META";
+    case CTRL_LOBBY_BOT_CONFIG: return "LOBBY_BOT_CONFIG";
+    case CTRL_LOBBY_BOT_BRAIN:  return "LOBBY_BOT_BRAIN";
+    case CTRL_LOBBY_BRAIN_LIST: return "LOBBY_BRAIN_LIST";
+    case CTRL_GAME_VOTE_STATE:  return "GAME_VOTE_STATE";
+    case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
+    default:                    return "<unknown>";
+    }
+}
+
+/* Snapshot-time ordered dispatch for control events arriving on the
+ * snapshot tail. Almost all variants forward to clientSimApplyControl;
+ * the lobby→running flip carries side-effects that previously lived
+ * inside the standalone PACKET_GAME_START handler (install buffered
+ * map, reset all three reliable-event acks, clear the input ring, drop
+ * any pre-flip snapshot) and they must fire BEFORE the same snapshot's
+ * game-event and map-event tails are applied. Those side effects and
+ * the skip-prior-tails signal only apply on a real lobby→running flip;
+ * a no-lobby joiner's first event is also CTRL_GAME_PHASE_RUNNING (a
+ * sync-replay echo from serverSimFillGamePhaseEvent), and for that
+ * joiner the same snapshot's tails are current-game state that must
+ * not be dropped. We capture wasInLobby up front and gate on it. */
+static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
+                                         const ControlEvent *evt,
+                                         uint32_t evSeq,
+                                         bool *skipPriorGameTails) {
+    {
+        char extra[256];
+        extra[0] = '\0';
+        if (evt->type == CTRL_LOBBY_SLOT) {
+            snprintf(extra, sizeof(extra),
+                     " lobbySlot[player=%d team=%d ready=%d connected=%d isBot=%d name='%.12s']",
+                     (int)evt->u.lobbySlot.playerNum,
+                     (int)evt->u.lobbySlot.slot.teamNumber,
+                     (int)evt->u.lobbySlot.slot.ready,
+                     (int)evt->u.lobbySlot.slot.connected,
+                     (int)evt->u.lobbySlot.slot.isBot,
+                     evt->u.lobbySlot.slot.playerName);
+        } else if (evt->type == CTRL_PLAYER_JOIN) {
+            snprintf(extra, sizeof(extra),
+                     " playerJoin[player=%d name='%.16s']",
+                     (int)evt->u.playerJoin.playerNum,
+                     evt->u.playerJoin.name);
+        } else if (evt->type == CTRL_LOBBY_SETTINGS) {
+            snprintf(extra, sizeof(extra),
+                     " settings[map='%.16s' gameType=%d hiddenMines=%d aiType=%d timeLimit=%d startDelay=%d open=%d autoLock=%d ranked=%d allowNew=%d locks=0x%04x]",
+                     evt->u.lobbySettings.mapName,
+                     (int)evt->u.lobbySettings.lobbyGameType,
+                     (int)evt->u.lobbySettings.lobbyHiddenMines,
+                     (int)evt->u.lobbySettings.lobbyAiType,
+                     (int)evt->u.lobbySettings.lobbyTimeLimit,
+                     (int)evt->u.lobbySettings.lobbyStartDelay,
+                     (int)evt->u.lobbySettings.lobbyOpenHost,
+                     (int)evt->u.lobbySettings.lobbyAutoLockOnGameStart,
+                     (int)evt->u.lobbySettings.lobbyRanked,
+                     (int)evt->u.lobbySettings.lobbyAllowNewPlayers,
+                     (unsigned)evt->u.lobbySettings.lobbyServerLocks);
+        }
+        mpDiagLog("[cli] APPLY evSeq=%u type=%s%s inLobby=%d mapInstalled=%d",
+                  (unsigned)evSeq, mpDiagCtrlName((int)evt->type), extra,
+                  (int)c->clientSim->inLobby, (int)c->mapInstalled);
+    }
+    if (evt->type == CTRL_GAME_PHASE_RUNNING) {
+        /* Capture before any side effects or the dispatch —
+         * clientSimApplyControl clears inLobby on CTRL_GAME_PHASE_RUNNING. */
+        bool wasInLobby = c->clientSim->inLobby;
+        if (wasInLobby && !c->mapInstalled &&
+            c->mapDownloadBuf != NULL &&
+            c->mapDownloadReceived == c->mapDownloadTotal) {
+            installCompressedMap(c->clientSim, c->mapDownloadBuf,
+                                 (int)c->mapDownloadTotal, NULL);
+            c->mapInstalled = true;
+        }
+        if (wasInLobby) {
+            /* Reset reliable event acks so they match the server's reset
+             * queues. Stale events from the previous game must not be
+             * applied to the freshly-loaded map. */
+            c->reliableEventAck = 1;
+            c->mapEventAck = 1;
+            c->controlEventAck = 1;
+            /* The control-event seq space resets here too; drop any pending
+             * coalesced ACK so we don't emit a stale next-expected-seq for
+             * the new game's queue. */
+            c->controlAckPendingTick = 0;
+            c->lastSentControlAck = 0;
+            /* Reset input ring so stale inputs from the previous game are
+             * not sent as redundant packets in the new game. */
+            c->inputRingCount = 0;
+            /* Drop any pre-flip snapshot still buffered in hasSnapshot. */
+            c->hasSnapshot = false;
+        }
+        /* Dispatch the event itself — flips netStat to running, clears
+         * inLobby on the sim, etc. The no-lobby joiner still needs this
+         * to flip netStat → netRunning even though wasInLobby is false. */
+        clientSimApplyControl(c->clientSim, evt);
+        if (skipPriorGameTails != NULL && wasInLobby) {
+            *skipPriorGameTails = true;
+        }
+        return;
+    }
+    /* Default path — identical to the legacy direct-dispatch route. */
+    clientSimApplyControl(c->clientSim, evt);
+}
+
 /* Process a single incoming packet (used by both direct and delayed paths) */
 static void udpClientProcessPacket(TransportUdpClientCtx *c,
                                    const uint8_t *buf, int len) {
@@ -434,27 +642,31 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     switch (pktType) {
     case PACKET_JOIN_ACCEPT:
         /* Accept packet format:
-         *   [header 8] [playerNum 1] [serverTick 4] [gameType 1]
-         *   [hiddenMines 1] [startDelay 4] [gameLen 4] [mapSize 4]
-         * Total: 8 + 19 = 27 bytes minimum */
+         *   [header 8] [playerNum 1] [serverTick 4] [mapSize 4]
+         * Total: 8 + 9 = 17 bytes */
         WB_LOG_INFO(WB_LOG_CAT_NET,
             "PACKET_JOIN_ACCEPT received: state=%d len=%d (need>=%d)",
-            (int)c->joinState, len, PACKET_HEADER_SIZE + 19);
+            (int)c->joinState, len, PACKET_HEADER_SIZE + 9);
         if ((c->joinState == UDP_CLIENT_JOINING ||
              c->joinState == UDP_CLIENT_DOWNLOADING_MAP) &&
-            len >= PACKET_HEADER_SIZE + 19) {
+            len >= PACKET_HEADER_SIZE + 9) {
             int pos = PACKET_HEADER_SIZE;
             uint32_t mapSize;
 
             c->playerNum = buf[pos++];
-            clientSimSetPlayerNum(c->clientSim, c->playerNum);
+
+            /* Slot-assignment funnel — same function the SP
+             * local-transport path calls.  Both transports MUST funnel
+             * here so neither can drift.  clientType/clientFlags are
+             * placeholders; the authoritative values arrive via
+             * CTRL_PLAYER_JOIN during the subscriber's sync replay
+             * (clientSimApplyControl(CTRL_PLAYER_JOIN) writes the
+             * server-authoritative type/flags onto the Players
+             * struct). */
+            clientSimOnAssignedSlot(c->clientSim, c->playerNum,
+                                    c->playerName, 0, 0);
+
             pos += 4; /* skip serverTick */
-            c->serverGameType = (gameType)buf[pos++];
-            c->serverHiddenMines = buf[pos++] ? TRUE : FALSE;
-            c->serverStartDelay = (int32_t)unpackU32(buf + pos);
-            pos += 4;
-            c->serverGameLen = (int32_t)unpackU32(buf + pos);
-            pos += 4;
             mapSize = unpackU32(buf + pos);
             pos += 4;
 
@@ -463,7 +675,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 break;
             }
 
-            /* Allocate map download buffer */
+            /* Allocate map download buffer. A fresh allocation also resets
+             * mapInstalled — snapshots stay gated until the new buffer is
+             * applied (covers the mid-lobby PACKET_LOBBY_MAP_CHANGE swap,
+             * which routes through JOIN_REQUEST → JOIN_ACCEPT). */
             if (c->mapDownloadBuf != NULL) {
                 free(c->mapDownloadBuf);
             }
@@ -475,6 +690,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             memset(c->mapDownloadBuf, 0, mapSize);
             c->mapDownloadTotal = mapSize;
             c->mapDownloadReceived = 0;
+            c->mapInstalled = false;
 
             /* Calculate expected chunks */
             c->mapChunksExpected = (uint16_t)((mapSize + MAP_DOWNLOAD_CHUNK_SIZE - 1) / MAP_DOWNLOAD_CHUNK_SIZE);
@@ -547,6 +763,16 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     (unsigned)c->mapDownloadTotal,
                     (unsigned)c->playerNum);
                 c->joinState = UDP_CLIENT_CONNECTED;
+                /* No-lobby joiner: server is already running, so install
+                 * the buffered map onto the ClientSim immediately. The
+                 * lobby case defers install until the LOBBY→RUNNING
+                 * phase transition runs it (see clientSimApplyControlOrdered).
+                 * Order: install → flag → event. */
+                if (!c->clientSim->inLobby) {
+                    installCompressedMap(c->clientSim, c->mapDownloadBuf,
+                                         (int)c->mapDownloadTotal, NULL);
+                    c->mapInstalled = true;
+                }
                 {
                     ControlEvent evt = { .type = CTRL_MAP_DOWNLOAD_COMPLETE };
                     clientSimApplyControl(c->clientSim, &evt);
@@ -579,6 +805,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         WB_LOG_WARN(WB_LOG_CAT_NET,
             "PACKET_JOIN_REJECT: langid=%u reason='%s'",
             (unsigned)id, c->joinRejectReason);
+        /* Mirror into the unified accessor's source buffer so the
+         * frontend's clientSimGetConnectErrorReason call returns the
+         * same rendered string for both local and UDP rejects. */
+        clientSimSetConnectErrorReason(c->clientSim, c->joinRejectReason);
         c->joinState = UDP_CLIENT_ERROR;
         break;
     }
@@ -592,23 +822,44 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         uint32_t reliableBaseSeq;
         uint8_t mapEventCount;
         uint32_t mapEventBaseSeq;
+        uint8_t controlEventCount;
+        uint32_t controlEventBaseSeq;
         int newEventCount = (c->hasSnapshot) ? c->snapshotHdr.reliableEventCount : 0;
         int actuallyUnpacked = 0;
         int actuallyUnpackedMap = 0;
+        bool skipPriorGameTails = false;
+        /* Game and map event indices into snapshotEvents where the
+         * prior-game tails landed.  Used to retroactively drop those
+         * entries if CTRL_GAME_PHASE_RUNNING fires on this snapshot. */
+        int eventTailStartIdx = newEventCount;
 
-        /* Ignore stale snapshots */
-        if (c->hasSnapshot && seq <= c->lastSnapshotSeq) {
+        /* Ignore stale snapshots. lastSnapshotSeq stays 0 until the
+         * first valid arrival and only advances forward, so it's the
+         * authoritative high-water mark — independent of whether the
+         * staged snapshot has been consumed yet. */
+        if (c->lastSnapshotSeq != 0 && seq <= c->lastSnapshotSeq) {
             c->netErrors++;
             break;
         }
+
+        /* The !mapInstalled gate fires AFTER the control-tail decode
+         * loop below, not here.  CTRL_GAME_PHASE_RUNNING arriving in
+         * this snapshot's control tail is what installs the buffered
+         * map for a lobby joiner (via clientSimApplyControlOrdered);
+         * gating on mapInstalled before decoding would deadlock that
+         * path.  The post-decode check still abandons the snapshot —
+         * scratch arrays go unused and get overwritten by the next
+         * decode — covering the asymmetric-arrival case (mid-lobby
+         * map swap, joiner whose first PHASE_RUNNING is still pending). */
 
         /* Header: serverTick(4) + lastProcessedInput(4) + tankCount(1)
          * + shellCount(1) + tkExplosionCount(1)
          * + baseCount(1) + pillCount(1)
          * + reliableEventCount(1) + reliableBaseSeq(4)
          * + mapEventCount(1) + mapEventBaseSeq(4)
-         * + mapChecksum(2) + returnToLobbyTicks(2) = 27 bytes */
-        if (len < pos + 27) { c->netErrors++; break; }
+         * + controlEventCount(1) + controlEventBaseSeq(4)
+         * + mapChecksum(2) + returnToLobbyTicks(2) = 32 bytes */
+        if (len < pos + 32) { c->netErrors++; break; }
 
         c->snapshotHdr.serverTick = unpackU32(buf + pos);
         pos += 4;
@@ -625,6 +876,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         mapEventCount = buf[pos++];
         mapEventBaseSeq = unpackU32(buf + pos);
         pos += 4;
+        controlEventCount = buf[pos++];
+        controlEventBaseSeq = unpackU32(buf + pos);
+        pos += 4;
+        c->snapshotHdr.controlEventCount = controlEventCount;
+        c->snapshotHdr.controlEventBaseSeq = controlEventBaseSeq;
         c->snapshotHdr.mapChecksum = unpackU16(buf + pos);
         pos += 2;
         c->snapshotHdr.returnToLobbyTicks = unpackU16(buf + pos);
@@ -760,12 +1016,131 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             }
         }
 
+        /* Decode the control-event tail.  Events are applied EAGERLY
+         * via clientSimApplyControlOrdered — they must run before the
+         * snapshot's game/map tails make it to the sim so the lobby
+         * →running flip can install the new map and drop any pre-flip
+         * tail.  Per-event wire layout: type(1) + bodyLen(2) + body(N).
+         * The body decoder is looked up by ControlEventType through the
+         * body-only codec table. */
+        if (controlEventCount > 0) {
+            mpDiagLog("[cli] SNAPSHOT-tail recv baseSeq=%u count=%u localAck=%u",
+                      (unsigned)controlEventBaseSeq, (unsigned)controlEventCount,
+                      (unsigned)c->controlEventAck);
+        }
+        /* Server-queue-restart detection.  The server resets its per-client
+         * control queue to (ackedSeq=1, nextSeq=1) inside
+         * transportUdpServerOnGameStart, immediately before publishing
+         * CTRL_GAME_PHASE_RUNNING — so the running flip always lands at
+         * seq=1 of a new sequence space.  Without intervention the dedup
+         * gate below (evSeq >= controlEventAck) filters that seq=1 out
+         * because controlEventAck is still high from the lobby phase, and
+         * clientSimApplyControlOrdered's own ack-reset never gets to run.
+         *
+         * Gate on inLobby.  The queue-restart detection is only meaningful
+         * during the lobby→running transition itself.  Once inLobby has
+         * flipped to false (i.e. we've already processed the running flip
+         * once), every subsequent retransmit of seq=1 RUNNING is plain
+         * dedup territory — the server keeps sending it until its own
+         * ackedSeq catches up, and re-firing RESET-DETECT on every retransmit
+         * would cause a snap-then-reapply loop that starves the main loop. */
+        if (controlEventCount > 0 &&
+            c->clientSim != NULL &&
+            c->clientSim->inLobby &&
+            controlEventBaseSeq < c->controlEventAck &&
+            pos + 3 <= len &&
+            buf[pos] == (uint8_t)CTRL_GAME_PHASE_RUNNING) {
+            mpDiagLog("[cli] SNAPSHOT-tail RESET-DETECT baseSeq=%u localAck=%u (server queues restarted; snapping back)",
+                      (unsigned)controlEventBaseSeq,
+                      (unsigned)c->controlEventAck);
+            c->controlEventAck = controlEventBaseSeq;
+        }
+        for (i = 0; i < controlEventCount; i++) {
+            uint32_t evSeq = controlEventBaseSeq + (uint32_t)i;
+            uint8_t type;
+            uint16_t bodyLen;
+            ControlEvent evt;
+            ControlDecodeBodyFn dec;
+            if (pos + 3 > len) break;          /* Truncated header */
+            type = buf[pos++];
+            bodyLen = unpackU16(buf + pos); pos += 2;
+            if (pos + bodyLen > len) break;    /* Truncated body */
+            dec = transportControlCodecBodyDecoder((ControlEventType)type);
+            if (dec == NULL || !dec(buf + pos, bodyLen, &evt)) {
+                mpDiagLog("[cli] SNAPSHOT-tail decode SKIP seq=%u type=%s reason=%s",
+                          (unsigned)evSeq, mpDiagCtrlName((int)type),
+                          dec == NULL ? "no decoder" : "decode failed");
+                pos += bodyLen;
+                /* Advance the ack past the skipped event. Without this,
+                 * an undecodable event at the tail of the queue stalls
+                 * controlEventAck and the server retransmits until the
+                 * unacked-control timeout fires and disconnects both
+                 * sides. The event is dropped — retransmitting won't
+                 * make it decodable — but the queue stays healthy. */
+                if (evSeq >= c->controlEventAck) {
+                    c->controlEventAck = evSeq + 1;
+                }
+                continue;
+            }
+            pos += bodyLen;
+            if (evSeq >= c->controlEventAck) {
+                clientSimApplyControlOrdered(c, &evt, evSeq,
+                                             &skipPriorGameTails);
+                c->controlEventAck = evSeq + 1;
+            } else {
+                mpDiagLog("[cli] SNAPSHOT-tail dedup seq=%u type=%s localAck=%u",
+                          (unsigned)evSeq, mpDiagCtrlName((int)type),
+                          (unsigned)c->controlEventAck);
+            }
+        }
+
+        /* Map-install gate, moved past the control-tail decode so
+         * CTRL_GAME_PHASE_RUNNING in this same snapshot has a chance
+         * to flip mapInstalled = true (via clientSimApplyControlOrdered)
+         * before we decide to apply.  If the control tail didn't carry
+         * the running flip and the joiner is still pre-install, abandon
+         * the snapshot — scratch decode arrays are reused on the next
+         * arrival, and we leave hasSnapshot / lastSnapshotSeq /
+         * lastSnapshotTick unadvanced. */
+        if (!c->mapInstalled) {
+            WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                "snapshot dropped post-decode — map still not installed (seq=%u)",
+                (unsigned)seq);
+            break;
+        }
+
+        /* If CTRL_GAME_PHASE_RUNNING fired in this snapshot's tail, the
+         * game/map events decoded earlier in the same packet are pre-
+         * flip and must not reach the sim — they would replay against
+         * the freshly-installed new-game map. Roll the staged-event
+         * count back so they're never passed to clientSimSyncFromSnapshot. */
+        if (skipPriorGameTails) {
+            newEventCount = eventTailStartIdx;
+        }
+
         c->snapshotHdr.reliableEventCount = (uint8_t)newEventCount;
         c->snapshotHdr.reliableBaseSeq = reliableBaseSeq;
 
         c->hasSnapshot = true;
         c->lastSnapshotSeq = seq;
         c->lastSnapshotTick = c->localTick;
+
+        /* Apply the freshly-staged snapshot directly onto the ClientSim.
+         * The frontend's per-frame clientSimNetSyncSnapshot also reads
+         * via the getSnapshot vtable; that path stays for the local
+         * transport's first-snapshot pull and the headless cmd-stdin
+         * loop. */
+        clientSimSyncFromSnapshot(c->clientSim, &c->snapshotHdr,
+                                  c->snapshotTanks, c->snapshotHdr.tankCount,
+                                  c->snapshotShells, c->snapshotHdr.shellCount,
+                                  c->snapshotTkExplosions, c->snapshotHdr.tkExplosionCount,
+                                  c->snapshotBases, c->snapshotHdr.baseCount,
+                                  c->snapshotPills, c->snapshotHdr.pillCount,
+                                  c->snapshotEvents, c->snapshotHdr.reliableEventCount,
+                                  c->playerNum);
+        c->hasSnapshot = false;   /* Consumed inline — per-frame
+                                   * syncSnapshot no-ops until the
+                                   * next arrival. */
         break;
     }
 
@@ -823,6 +1198,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             uint8_t plCount = buf[PACKET_HEADER_SIZE];
             int plPos = PACKET_HEADER_SIZE + 1;
             int p;
+            mpDiagLog("[cli] PLAYER_LIST recv count=%u", (unsigned)plCount);
             for (p = 0; p < plCount; p++) {
                 uint8_t pNum;
                 char pName[PACKET_MAX_PLAYER_NAME];
@@ -863,6 +1239,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     if (numAllies > 0) {
                         memcpy(evt.u.playerJoin.allies, allies, numAllies);
                     }
+                    mpDiagLog("[cli] PLAYER_LIST entry player=%d name='%.16s' type=%d flags=0x%02x allies=%d",
+                              (int)pNum, pName, (int)clientType,
+                              (int)clientFlags, (int)numAllies);
                     clientSimApplyControl(c->clientSim, &evt);
                 }
             }
@@ -1181,109 +1560,85 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
     }
 
-    case PACKET_GAME_START: {
-        /* [header 8] */
-        ControlDecodeFn dec = transportControlCodecDecoder(pktType);
-        if (dec != NULL) {
+    /* PACKET_GAME_START is no longer dispatched on the client and no
+     * longer emitted by the server: the lobby→running flip arrives as
+     * CTRL_GAME_PHASE_RUNNING in the snapshot control-event tail, and
+     * clientSimApplyControlOrdered runs the side-effects (install map,
+     * reset acks, clear input ring, drop pre-flip snapshot) before the
+     * same snapshot's prior-game tails would otherwise replay against
+     * the new map. */
+
+    case PACKET_CONTROL_TICK: {
+        /* Server → client reliable carrier for control events during
+         * non-running phases (lobby / countdown / gameover).  Wire layout
+         * matches the snapshot control-event tail: each event is
+         * type(1) + bodyLen(2 BE) + body(N), and we dedup against
+         * controlEventAck so retransmits don't re-apply. */
+        int pos = PACKET_HEADER_SIZE;
+        uint32_t baseSeq;
+        uint8_t count;
+        int i;
+        if (len < pos + 5) break;
+        baseSeq = unpackU32(buf + pos); pos += 4;
+        count = buf[pos++];
+        mpDiagLog("[cli] CONTROL_TICK recv baseSeq=%u count=%u localAck=%u",
+                  (unsigned)baseSeq, (unsigned)count,
+                  (unsigned)c->controlEventAck);
+        for (i = 0; i < count; i++) {
+            uint32_t evSeq = baseSeq + (uint32_t)i;
+            uint8_t type;
+            uint16_t bodyLen;
             ControlEvent evt;
-            if (dec(buf + PACKET_HEADER_SIZE,
-                    (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
-                clientSimApplyControl(c->clientSim, &evt);
+            ControlDecodeBodyFn dec;
+            if (pos + 3 > len) break;
+            type = buf[pos++];
+            bodyLen = unpackU16(buf + pos); pos += 2;
+            if (pos + bodyLen > len) break;
+            dec = transportControlCodecBodyDecoder((ControlEventType)type);
+            if (dec == NULL || !dec(buf + pos, bodyLen, &evt)) {
+                mpDiagLog("[cli] CONTROL_TICK decode SKIP seq=%u type=%s reason=%s",
+                          (unsigned)evSeq, mpDiagCtrlName((int)type),
+                          dec == NULL ? "no decoder" : "decode failed");
+                pos += bodyLen;
+                /* Same belt-and-suspenders as the snapshot-tail path:
+                 * undecodable events at the tail of the queue otherwise
+                 * stall the ack and trigger the unacked-control timeout
+                 * disconnect. Drop the event but keep the queue moving. */
+                if (evSeq >= c->controlEventAck) {
+                    c->controlEventAck = evSeq + 1;
+                }
+                continue;
+            }
+            pos += bodyLen;
+            if (evSeq >= c->controlEventAck) {
+                /* PACKET_CONTROL_TICK arrives outside the snapshot
+                 * context — no game/map tails ride alongside it, so
+                 * skipPriorGameTails has nothing to skip. */
+                clientSimApplyControlOrdered(c, &evt, evSeq, NULL);
+                c->controlEventAck = evSeq + 1;
+            } else {
+                mpDiagLog("[cli] CONTROL_TICK dedup seq=%u type=%s localAck=%u",
+                          (unsigned)evSeq, mpDiagCtrlName((int)type),
+                          (unsigned)c->controlEventAck);
             }
         }
-        /* Reset input ring so stale inputs from the previous game
-         * are not sent as redundant packets in the new game. */
-        c->inputRingCount = 0;
-        /* Reset reliable event acks so they match the server's reset queues.
-         * Stale events from the previous game must not be applied to
-         * the freshly-loaded map. */
-        c->reliableEventAck = 1;
-        c->mapEventAck = 1;
-        /* Discard any snapshot buffered during the lobby/gameOver
-         * transition.  A late STATE_SNAPSHOT from the previous game
-         * can sit in hasSnapshot because the lobby tick path calls
-         * transport->tick() but never getSnapshot().  If this stale
-         * snapshot carries EVENT_MAP_CHANGE events from the old game,
-         * they would overwrite the freshly-loaded new map. */
-        c->hasSnapshot = false;
+        /* Schedule a coalesced ACK — the actual send rides
+         * udpClientTick's per-tick driver below. */
+        if (c->controlAckPendingTick == 0) {
+            c->controlAckPendingTick = c->localTick;
+        }
         break;
     }
 
     case PACKET_GAME_OVER:
         /* [header 8] */
-        /* Check win/loss achievements before transitioning state.
-         * Determine winner using same logic as serverSimCheckGameWin:
-         * one alliance owns all bases with armour above capture threshold. */
         {
-            ClientSim *cs = c->clientSim;
-            BYTE numBases = basesGetNumBases(&cs->sim.bs);
-            BYTE first = NEUTRAL;
-            bool allOwned = true;
-            bool localWon = false;
-            BYTE b;
-
-            for (b = 1; b <= numBases && allOwned; b++) {
-                BYTE owner = basesGetBaseOwner(&cs->sim.bs, b);
-                BYTE shellsAmt, minesAmt, armourAmt;
-                basesGetStats(&cs->sim.bs, b, &shellsAmt, &minesAmt, &armourAmt);
-                if (owner == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
-                    allOwned = false;
-                } else if (b == 1) {
-                    first = owner;
-                } else {
-                    allOwned = playersIsAllie(&cs->sim.plyrs, owner, first);
-                }
-            }
-
-            if (allOwned && numBases > 0) {
-                /* Game was won by the alliance owning 'first' */
-                localWon = (c->playerNum == first) ||
-                           playersIsAllie(&cs->sim.plyrs, c->playerNum, first);
-            }
-            /* else: time limit or other end condition — no winner */
-
-            if (allOwned && numBases > 0) {
-                gameType gt = gameTypeGet(&cs->sim.game);
-                BYTE numPlayers = playersGetNumPlayers(&cs->sim.plyrs);
-
-                /* Tournament/strict tournament stats */
-                if (gt == gameTournament || gt == gameStrictTournament) {
-                    if (localWon) {
-                        steam_increment_stat("STAT_TOURN_WINS", 1);
-                        if (numPlayers == 2) {
-                            steam_set_achievement("ACH_TOURN_WIN_1V1");
-                        }
-                    } else {
-                        steam_increment_stat("STAT_TOURN_LOSSES", 1);
-                        if (numPlayers == 2) {
-                            steam_set_achievement("ACH_TOURN_LOSE_1V1");
-                        }
-                    }
-                }
-
-                /* Any game type win achievements */
-                if (localWon) {
-                    if (cs->myLgmLossesThisGame == 0) {
-                        steam_set_achievement("ACH_WIN_NO_LGM_LOSS");
-                    }
-                    if (cs->myDeathsThisGame == 0 && numPlayers == 2) {
-                        steam_set_achievement("ACH_1V1_FLAWLESS");
-                    }
-                }
-
-                steam_store_stats();
-            }
-        }
-
-        {
-            /* Synthesize the matching CTRL_GAME_PHASE(GAME_OVER)
+            /* Synthesize the matching CTRL_GAME_PHASE_GAME_OVER
              * locally so the client's bus sees the same publish
              * order as the server (PHASE then OVER); the server
              * encoder skips PACKET_GAME_OVER for the PHASE event so
              * only the CTRL_GAME_OVER side crosses the wire. */
-            ControlEvent phaseEvt = { .type = CTRL_GAME_PHASE };
-            phaseEvt.u.gamePhase.phase = CTRL_PHASE_GAME_OVER;
-            phaseEvt.u.gamePhase.countdownSeconds = 0;
+            ControlEvent phaseEvt = { .type = CTRL_GAME_PHASE_GAME_OVER };
             clientSimApplyControl(c->clientSim, &phaseEvt);
 
             ControlDecodeFn dec = transportControlCodecDecoder(pktType);
@@ -1448,16 +1803,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
-    case PACKET_LOBBY_AUTO_UNREADY:
-        /* No payload. Server cleared everyone's ready flag. */
-        {
-            int i;
-            for (i = 0; i < MAX_TANKS; i++) {
-                c->clientSim->lobbySlots[i].ready = false;
-            }
-        }
-        break;
-
     case PACKET_PUNCH_REQUEST_ACK:
         /* Tracker acked our PUNCH_REQUEST. Status byte at PACKET_HEADER_SIZE
          * could drive UX someday; for now just consume so it doesn't fall
@@ -1537,6 +1882,34 @@ static bool udpClientTick(void *ctx) {
         udpClientProcessPacket(c, buf, len);
     }
 
+    /* Coalesced PACKET_CONTROL_ACK emission.  Only fires when a
+     * PACKET_CONTROL_TICK has armed controlAckPendingTick — during
+     * running, PACKET_INPUT already carries controlEventAck so no
+     * dedicated ACK packet is needed.  localTick advances at 50 Hz
+     * (20ms/tick — see PING_INTERVAL_TICKS = 100 → 2s), so 3 ticks
+     * is ~60ms, close to the plan's ~50ms target.  Send earlier when
+     * a single TICK delivered 2+ new events at once, to free server
+     * queue slots promptly. */
+    if (c->joinState == UDP_CLIENT_CONNECTED &&
+        c->controlAckPendingTick != 0 &&
+        c->controlEventAck > c->lastSentControlAck) {
+        bool overdue = (c->localTick - c->controlAckPendingTick) >= 3;
+        bool eagerSend = (c->controlEventAck > c->lastSentControlAck + 1);
+        if (overdue || eagerSend) {
+            uint8_t ackBuf[PACKET_HEADER_SIZE + 4];
+            packHeader(ackBuf, PACKET_CONTROL_ACK, c->outSequence++);
+            packU32(ackBuf + PACKET_HEADER_SIZE, c->controlEventAck);
+            udpClientSendTo(c, ackBuf, sizeof(ackBuf));
+            mpDiagLog("[cli] CONTROL_ACK send ack=%u prevSent=%u localTick=%u overdue=%d eager=%d",
+                      (unsigned)c->controlEventAck,
+                      (unsigned)c->lastSentControlAck,
+                      (unsigned)c->localTick,
+                      (int)overdue, (int)eagerSend);
+            c->lastSentControlAck = c->controlEventAck;
+            c->controlAckPendingTick = 0;
+        }
+    }
+
     /* Handle join handshake — send/resend join requests */
     if (c->joinState == UDP_CLIENT_JOINING) {
         c->ticksSinceJoinSent++;
@@ -1547,7 +1920,12 @@ static bool udpClientTick(void *ctx) {
                     (int)c->joinAttempts, (int)JOIN_MAX_RETRIES);
                 c->joinState = UDP_CLIENT_ERROR;
             } else {
-                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_JOIN_KEY_WIRE_LEN + 1 + 2];
+                /* Buffer holds: header + name + pass + 3 version bytes
+                 * + WBN token + flags + clientType + clientHints
+                 * + 2-byte trailing fallbackCountry (additive, per the
+                 * connect-driven model). Server treats the trailing
+                 * field as optional for backward compatibility. */
+                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_JOIN_KEY_WIRE_LEN + 1 + 2 + 2];
                 int joffset = PACKET_HEADER_SIZE;
                 char playerKey[WBN_JOIN_KEY_WIRE_LEN];
                 memset(playerKey, 0, sizeof(playerKey));
@@ -1587,6 +1965,12 @@ static bool udpClientTick(void *ctx) {
                     if (bolo_steam_has_supporter_dlc()) clientHints |= PLAYER_FLAG_SUPPORTER;
                     jbuf[joffset++] = clientHints;
                 }
+                /* fallbackCountry (2 bytes). Set at create time from
+                 * clientSimConnectUdp's parameter; empty when the
+                 * caller passed NULL/"". Server reads as the GeoIP
+                 * fallback when the joiner's IP doesn't resolve. */
+                jbuf[joffset++] = (uint8_t)c->fallbackCountry[0];
+                jbuf[joffset++] = (uint8_t)c->fallbackCountry[1];
                 /* Join requests bypass delay — they're control plane */
                 udpClientSendTo(c, jbuf, joffset);
                 WB_LOG_DEBUG(WB_LOG_CAT_NET,
@@ -1639,6 +2023,9 @@ static bool udpClientTick(void *ctx) {
                 (int)CLIENT_TIMEOUT_TICKS);
             c->joinState = UDP_CLIENT_SERVER_SHUTDOWN;
         }
+
+        /* Drive in-flight lobby map upload (no-op when none active). */
+        udpClientUploadPump(c);
     }
 
     return true;
@@ -1702,6 +2089,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
                                    const char *serverAddr,
                                    unsigned short serverPort,
                                    const char *playerName,
+                                   const char *fallbackCountry,
                                    const char *password,
                                    const char *wbnApiToken,
                                    const char *wbnServerKey,
@@ -1722,6 +2110,15 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         (wbnServerKey && *wbnServerKey) ? "yes" : "no",
         (trackerAddr && *trackerAddr) ? trackerAddr : "(none)",
         (unsigned)trackerPort);
+
+    /* Enable the MP diagnostic log on the joiner side too — the host
+     * already turns it on via serverInstanceStartup, but the joiner
+     * never runs that path.  Without this, the joiner's log file is
+     * never created. */
+    mpDiagLogEnable(1);
+    mpDiagLog("[cli] transportUdpClientCreate target=%s:%u name='%s' wantRejoin=%d",
+              serverAddr ? serverAddr : "(null)", (unsigned)serverPort,
+              playerName ? playerName : "(null)", (int)wantRejoin);
 
     memset(&t, 0, sizeof(t));
     c = (TransportUdpClientCtx *)malloc(sizeof(TransportUdpClientCtx));
@@ -1788,6 +2185,17 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
 
     c->wantRejoin = wantRejoin;
 
+    /* Cache fallback country for the JOIN_REQUEST encoder. Two chars
+     * + NUL; NULL/"" lands as \0\0 on the wire, which the server
+     * treats as "no fallback supplied". */
+    memset(c->fallbackCountry, 0, sizeof(c->fallbackCountry));
+    if (fallbackCountry != NULL) {
+        size_t i;
+        for (i = 0; i < 2 && fallbackCountry[i] != '\0'; i++) {
+            c->fallbackCountry[i] = fallbackCountry[i];
+        }
+    }
+
     c->trackerAddr[0] = '\0';
     if (trackerAddr != NULL) {
         strncpy(c->trackerAddr, trackerAddr, sizeof(c->trackerAddr) - 1);
@@ -1806,6 +2214,9 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->hasSnapshot = false;
     c->reliableEventAck = 1;  /* First valid seq is 1 */
     c->mapEventAck = 1;       /* First valid map event seq is 1 */
+    c->controlEventAck = 1;   /* First valid control event seq is 1 */
+    c->controlAckPendingTick = 0;
+    c->lastSentControlAck = 0;
     c->localTick = 0;
     c->lastPingSentTick = 0;
     c->pingMs = 0;
@@ -1826,6 +2237,12 @@ void transportUdpClientDestroy(Transport *t) {
         "client destroy: joinState=%d localTick=%u lastSnapshot=%u",
         (int)c->joinState, (unsigned)c->localTick,
         (unsigned)c->lastSnapshotTick);
+    mpDiagLog("[cli] transportUdpClientDestroy joinState=%d localTick=%u",
+              (int)c->joinState, (unsigned)c->localTick);
+    /* Mirror serverInstanceShutdown's disable.  Safe even if this is
+     * the host's own loopback client — serverInstanceShutdown will
+     * have already disabled, this is just an idempotent no-op then. */
+    mpDiagLogEnable(0);
     if (c->sock != INVALID_SOCKET) {
         /* Send graceful quit packet to server before closing */
         if (c->joinState == UDP_CLIENT_CONNECTED) {
@@ -1841,6 +2258,9 @@ void transportUdpClientDestroy(Transport *t) {
     }
     if (c->mapChunkReceived != NULL) {
         free(c->mapChunkReceived);
+    }
+    if (c->uploadBuf != NULL) {
+        free(c->uploadBuf);
     }
     free(c);
     t->ctx = NULL;
@@ -1957,16 +2377,13 @@ const BYTE *transportUdpClientGetMapData(Transport *t, int *outLen) {
     return c->mapDownloadBuf;
 }
 
-void transportUdpClientGetGameSettings(Transport *t, gameType *game,
-                                       bool *hiddenMines, int32_t *startDelay,
-                                       int32_t *gameLen) {
+uint8_t transportUdpClientGetMapDownloadPercent(Transport *t) {
     TransportUdpClientCtx *c;
-    if (t == NULL || t->ctx == NULL) return;
+    if (t == NULL || t->ctx == NULL) return 100;
     c = (TransportUdpClientCtx *)t->ctx;
-    if (game != NULL) *game = c->serverGameType;
-    if (hiddenMines != NULL) *hiddenMines = c->serverHiddenMines;
-    if (startDelay != NULL) *startDelay = c->serverStartDelay;
-    if (gameLen != NULL) *gameLen = c->serverGameLen;
+    if (c->mapDownloadTotal == 0) return 100;
+    uint32_t pct = (c->mapDownloadReceived * 100u) / c->mapDownloadTotal;
+    return pct > 100 ? 100 : (uint8_t)pct;
 }
 
 /* Send a chat message to the server.
@@ -2475,10 +2892,15 @@ void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
     }
 }
 
-void transportUdpClientSendLobbyMapUploadBegin(Transport *t,
-                                                uint32_t totalLen,
-                                                const char *name) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+/* === Lobby map upload — packet emitters ============================
+ *
+ * The wire-side packet builders are factored as ctx-flavoured helpers
+ * so both the public Transport*-flavoured entry points and the
+ * transport-internal pump can drive the same packet layout. */
+
+static void udpClientUploadSendBegin(TransportUdpClientCtx *c,
+                                      uint32_t totalLen,
+                                      const char *name) {
     uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255];
     int nameLen, len;
 
@@ -2504,12 +2926,11 @@ void transportUdpClientSendLobbyMapUploadBegin(Transport *t,
     }
 }
 
-void transportUdpClientSendLobbyMapUseLocal(Transport *t,
-                                             uint32_t totalLen,
-                                             const char *name,
-                                             const char *relPath,
-                                             const uint8_t md5[16]) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+static void udpClientUploadSendUseLocal(TransportUdpClientCtx *c,
+                                         uint32_t totalLen,
+                                         const char *name,
+                                         const char *relPath,
+                                         const uint8_t md5[16]) {
     /* Wire: [hdr 8][totalLen 4][nameLen 1][name N][relPathLen 1][relPath M][md5 16] */
     uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255 + 1 + 255 + 16];
     int nameLen, relLen, pos;
@@ -2545,16 +2966,15 @@ void transportUdpClientSendLobbyMapUseLocal(Transport *t,
     }
 }
 
-void transportUdpClientSendLobbyMapUploadChunk(Transport *t,
-                                                uint32_t offset,
-                                                const uint8_t *data,
-                                                uint16_t dataLen) {
-    if (dataLen == 0 || data == NULL) return;
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    if (dataLen > 1024) return;
+static void udpClientUploadSendChunk(TransportUdpClientCtx *c,
+                                      uint32_t offset,
+                                      const uint8_t *data,
+                                      uint16_t dataLen) {
     uint8_t buf[PACKET_HEADER_SIZE + 4 + 2 + 1024];
     int len;
 
+    if (dataLen == 0 || data == NULL) return;
+    if (dataLen > UPLOAD_CHUNK_SIZE) return;
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
     packHeader(buf, PACKET_LOBBY_MAP_UPLOAD_CHUNK, c->outSequence++);
@@ -2567,4 +2987,285 @@ void transportUdpClientSendLobbyMapUploadChunk(Transport *t,
     memcpy(buf + PACKET_HEADER_SIZE + 6, data, dataLen);
     len = PACKET_HEADER_SIZE + 6 + dataLen;
     udpClientSendTo(c, buf, len);
+}
+
+void transportUdpClientSendLobbyMapUploadBegin(Transport *t,
+                                                uint32_t totalLen,
+                                                const char *name) {
+    udpClientUploadSendBegin((TransportUdpClientCtx *)t->ctx, totalLen, name);
+}
+
+void transportUdpClientSendLobbyMapUseLocal(Transport *t,
+                                             uint32_t totalLen,
+                                             const char *name,
+                                             const char *relPath,
+                                             const uint8_t md5[16]) {
+    udpClientUploadSendUseLocal((TransportUdpClientCtx *)t->ctx, totalLen,
+                                 name, relPath, md5);
+}
+
+void transportUdpClientSendLobbyMapUploadChunk(Transport *t,
+                                                uint32_t offset,
+                                                const uint8_t *data,
+                                                uint16_t dataLen) {
+    udpClientUploadSendChunk((TransportUdpClientCtx *)t->ctx, offset,
+                              data, dataLen);
+}
+
+/* === Lobby map upload — state machine =============================
+ *
+ * Moved from imgui_lobby.cpp (lobbyUploadKick / lobbyUploadPump). The
+ * transport owns the bytes, the BEGIN/USE_LOCAL handshake, the chunk
+ * pump (paced from udpClientTick), and the watchdog. */
+
+static void udpClientUploadCleanup(TransportUdpClientCtx *c) {
+    if (c->uploadBuf != NULL) {
+        free(c->uploadBuf);
+        c->uploadBuf = NULL;
+    }
+    c->uploadActive          = false;
+    c->uploadTotal           = 0;
+    c->uploadOffset          = 0;
+    c->uploadName[0]         = '\0';
+    c->uploadUseLocalPending = false;
+    c->uploadBeginSent       = false;
+    c->uploadStartedMs       = 0;
+    c->uploadPrevStatus      = 0;
+    c->uploadPrevProgressMs  = 0;
+    c->uploadPrevOffset      = 0;
+}
+
+/* Shared kick: stash the bytes on the transport, optionally try
+ * USE_LOCAL first when the caller derived a data/maps-relative path,
+ * else announce via BEGIN. `buf` is copied; caller retains ownership. */
+static bool udpClientUploadStart(TransportUdpClientCtx *c,
+                                  const uint8_t *buf, size_t len,
+                                  const char *name,
+                                  const char *relPath, /* nullable */
+                                  const uint8_t *md5   /* required iff relPath */) {
+    if (c == NULL || buf == NULL || name == NULL || name[0] == '\0') {
+        return false;
+    }
+    if (len == 0 || len > LOBBY_MAP_UPLOAD_MAX_BYTES) return false;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return false;
+    if (c->uploadActive) return false;
+
+    udpClientUploadCleanup(c);
+
+    c->uploadBuf = (uint8_t *)malloc(len);
+    if (c->uploadBuf == NULL) return false;
+    memcpy(c->uploadBuf, buf, len);
+    c->uploadTotal  = (uint32_t)len;
+    c->uploadOffset = 0;
+    c->uploadName[0] = '\0';
+    {
+        size_t copy = strlen(name);
+        if (copy >= sizeof(c->uploadName)) copy = sizeof(c->uploadName) - 1;
+        memcpy(c->uploadName, name, copy);
+        c->uploadName[copy] = '\0';
+    }
+    c->uploadActive = true;
+
+    if (c->clientSim != NULL) {
+        c->clientSim->lobbyMapUploadStatus     = 0;
+        c->clientSim->lobbyMapUploadRejectCode = 0;
+        c->clientSim->lobbyMapUploadFinalPath[0] = '\0';
+        c->clientSim->lobbyMapUseLocalNeedsFallback = false;
+    }
+
+    if (relPath != NULL && relPath[0] != '\0' && md5 != NULL) {
+        udpClientUploadSendUseLocal(c, c->uploadTotal, c->uploadName,
+                                     relPath, md5);
+        c->uploadUseLocalPending = true;
+        c->uploadBeginSent       = false;
+    } else {
+        udpClientUploadSendBegin(c, c->uploadTotal, c->uploadName);
+        c->uploadUseLocalPending = false;
+        c->uploadBeginSent       = true;
+    }
+    return true;
+}
+
+/* Per-tick pump. Drives the upload through the USE_LOCAL → BEGIN →
+ * CHUNK → DONE/REJECT lifecycle. */
+static void udpClientUploadPump(TransportUdpClientCtx *c) {
+    uint8_t st;
+    uint64_t now, sinceProgress, sinceStart;
+    bool advanced, timedOut;
+
+    if (!c->uploadActive) return;
+    if (c->clientSim == NULL) {
+        udpClientUploadCleanup(c);
+        return;
+    }
+
+    st = c->clientSim->lobbyMapUploadStatus;
+    if (st == 3 || st == 4) {
+        /* Done or rejected — drop the buffer so the next upload starts
+         * fresh. The frontend still sees status/rejectCode/finalPath
+         * because those live on the ClientSim. */
+        udpClientUploadCleanup(c);
+        return;
+    }
+
+    /* Watchdog. Treat the moment the last chunk goes out as one final
+     * forward-progress event (lobby-misc item 10): after the last
+     * CHUNK send, offset stays pinned at uploadTotal while we wait
+     * for MAP_UPLOAD_DONE; without this reset the stall timer would
+     * count against a server that's merely slow to load + reply. */
+    now = SDL_GetTicks();
+    advanced = (c->uploadPrevStatus != st) ||
+               (c->uploadPrevOffset != c->uploadOffset);
+    if (st >= 2 && c->uploadOffset == c->uploadTotal &&
+        c->uploadPrevOffset < c->uploadTotal) {
+        advanced = true;
+    }
+    if (advanced) {
+        c->uploadPrevStatus     = st;
+        c->uploadPrevOffset     = c->uploadOffset;
+        c->uploadPrevProgressMs = now;
+    }
+    if (c->uploadStartedMs == 0) c->uploadStartedMs = now;
+    sinceProgress = now - c->uploadPrevProgressMs;
+    sinceStart    = now - c->uploadStartedMs;
+    timedOut = false;
+    if (st < 2 && sinceStart > UPLOAD_ACK_TIMEOUT_MS) {
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+            "upload watchdog: no BEGIN ACK in %llums — freeing",
+            (unsigned long long)sinceStart);
+        timedOut = true;
+    } else if (st >= 2 && sinceProgress > UPLOAD_STALL_TIMEOUT_MS) {
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+            "upload watchdog: no chunk progress in %llums — freeing",
+            (unsigned long long)sinceProgress);
+        timedOut = true;
+    }
+    if (timedOut) {
+        udpClientUploadCleanup(c);
+        return;
+    }
+
+    /* USE_LOCAL was NACKed: the server doesn't have a matching file at
+     * the relative path / MD5. Fall back to BEGIN + CHUNK against the
+     * bytes already buffered. */
+    if (c->uploadUseLocalPending &&
+        clientSimConsumeUseLocalFallback(c->clientSim)) {
+        udpClientUploadSendBegin(c, c->uploadTotal, c->uploadName);
+        c->uploadUseLocalPending = false;
+        c->uploadBeginSent       = true;
+        return; /* wait one more tick for ACK */
+    }
+
+    /* Still waiting on ACK to BEGIN (status flips to 2 on ACK). */
+    if (st != 2) return;
+
+    /* Chunk pump — UPLOAD_CHUNKS_PER_TICK chunks per tick paces a 1 MB
+     * upload to roughly 130 ticks (~2.5 s at 50 fps) without flooding
+     * the server's receive window. */
+    {
+        int i;
+        for (i = 0; i < UPLOAD_CHUNKS_PER_TICK &&
+                    c->uploadOffset < c->uploadTotal; i++) {
+            uint32_t remaining = c->uploadTotal - c->uploadOffset;
+            uint16_t cur = (remaining > UPLOAD_CHUNK_SIZE)
+                           ? UPLOAD_CHUNK_SIZE
+                           : (uint16_t)remaining;
+            udpClientUploadSendChunk(c, c->uploadOffset,
+                                      c->uploadBuf + c->uploadOffset, cur);
+            c->uploadOffset += cur;
+        }
+    }
+}
+
+bool transportUdpClientStartLobbyMapUploadFromBytes(Transport *t,
+                                                     const uint8_t *buf,
+                                                     size_t len,
+                                                     const char *mapName) {
+    return udpClientUploadStart((TransportUdpClientCtx *)t->ctx,
+                                 buf, len, mapName,
+                                 /*relPath=*/NULL, /*md5=*/NULL);
+}
+
+bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
+                                                    const char *localFilePath) {
+    TransportUdpClientCtx *c;
+    size_t fileLen = 0;
+    void *fileData = NULL;
+    char nameBuf[128];
+    char relPath[256];
+    bool haveRelPath;
+    uint8_t md5[16];
+    bool ok;
+
+    if (t == NULL || localFilePath == NULL || localFilePath[0] == '\0') {
+        return false;
+    }
+    c = (TransportUdpClientCtx *)t->ctx;
+
+    /* Pre-flight validation. boloMapValidate opens, decodes against
+     * scratch buffers, and discards — caller never sees the decoded
+     * sim. Bail on any rejection (file-not-found, malformed map,
+     * truncated). */
+    if (!boloMapValidate(localFilePath, NULL, 0)) return false;
+
+    fileData = SDL_LoadFile(localFilePath, &fileLen);
+    if (fileData == NULL) return false;
+    if (fileLen == 0 || fileLen > LOBBY_MAP_UPLOAD_MAX_BYTES) {
+        SDL_free(fileData);
+        return false;
+    }
+
+    /* Basename of the local path (drop directory components). */
+    {
+        const char *base = localFilePath;
+        const char *p;
+        for (p = localFilePath; *p; p++) {
+            if (*p == '/' || *p == '\\') base = p + 1;
+        }
+        SDL_strlcpy(nameBuf, base, sizeof(nameBuf));
+    }
+
+    /* Derive a data/maps-relative path for the USE_LOCAL pre-check.
+     * Local FS provider hands us paths like "data/maps/Foo/Bar.map";
+     * on Windows the separators may be backslashes. Strip the prefix
+     * to get a path like "Foo/Bar.map" — same scheme
+     * PACKET_LOBBY_MAP_PREVIEW_REQ uses. If the path doesn't sit
+     * under data/maps/, skip USE_LOCAL and go straight to BEGIN. */
+    relPath[0] = '\0';
+    {
+        char normalized[FILENAME_MAX];
+        char *p;
+        const char *kPrefix = "data/maps/";
+        const size_t kPrefixLen = 10;
+        SDL_strlcpy(normalized, localFilePath, sizeof(normalized));
+        for (p = normalized; *p; p++) {
+            if (*p == '\\') *p = '/';
+        }
+        if (strncmp(normalized, kPrefix, kPrefixLen) == 0) {
+            SDL_strlcpy(relPath, normalized + kPrefixLen, sizeof(relPath));
+        }
+    }
+    haveRelPath = (relPath[0] != '\0');
+    if (haveRelPath) {
+        md5Compute(fileData, fileLen, md5);
+    }
+
+    ok = udpClientUploadStart(c, (const uint8_t *)fileData, fileLen, nameBuf,
+                               haveRelPath ? relPath : NULL,
+                               haveRelPath ? md5     : NULL);
+    SDL_free(fileData);
+    return ok;
+}
+
+uint8_t transportUdpClientGetLobbyMapUploadProgressPercent(Transport *t) {
+    TransportUdpClientCtx *c;
+    if (t == NULL) return 0;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (!c->uploadActive || c->uploadTotal == 0) return 0;
+    {
+        uint64_t pct = (uint64_t)c->uploadOffset * 100 /
+                       (uint64_t)c->uploadTotal;
+        if (pct > 100) pct = 100;
+        return (uint8_t)pct;
+    }
 }

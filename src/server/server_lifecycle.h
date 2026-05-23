@@ -76,6 +76,35 @@ typedef struct {
   UploadPolicy   uploadPolicy;
   uint8_t        uploadMaxFiles;        /* 0 = leave transport default (64) */
   uint32_t       uploadMaxStorageBytes; /* 0 = leave transport default (8 MiB) */
+
+  /* Initial state + lobby/per-sim toggles applied by serverInstanceStartup.
+   * Zero-init means "don't touch what serverSimCreate* set" for the lobby
+   * branch, and "match the new-cfg defaults (false / 0 / NULL / aiNone)"
+   * for the rest. lobbyEnabled and skipLobby are mutually exclusive;
+   * skipLobby wins if both are set. */
+  bool           lobbyEnabled;        /* true → host wants a lobby. Joiners
+                                       * follow whatever phase the server
+                                       * reports. */
+  bool           skipLobby;           /* true → enter running state directly
+                                       * (tutorial, gym, bg_game, braintest,
+                                       * headless --fast). Mutually exclusive
+                                       * with lobbyEnabled. */
+  bool           emptyResetEnabled;   /* serverSimSetEmptyResetEnabled */
+  bool           hasPassword;         /* serverSimSetHasPassword */
+  const char    *botBrainPath;        /* serverSimSetBotBrainPath; NULL =
+                                       * leave unset */
+  BYTE           botAiType;           /* serverSimSetBotAiType; aiNone =
+                                       * leave unset */
+  bool           autoLockOnGameStart; /* serverSimSetAutoLockOnGameStart */
+  bool           ranked;              /* serverSimSetRanked. ranked forces
+                                       * autoLockOnGameStart inside startup. */
+  bool           openHost;            /* serverSimSetOpenHost */
+  uint16_t       serverLocks;         /* serverSimSetServerLocks bitmask */
+  BYTE           viewPlayer;          /* sim->sim.viewPlayer at startup —
+                                       * SP/host/headless designate which
+                                       * slot the in-process renderer
+                                       * watches. Zero-init = slot 0, the
+                                       * SP convention. */
 } ServerInstanceConfig;
 
 /* Bind UDP transport, optionally register with WBN, store tracker config

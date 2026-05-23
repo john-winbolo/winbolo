@@ -20,10 +20,23 @@
  *  Encoder table (keyed by ControlEventType) and decoder
  *  table (keyed by wire packet type) for ControlEvent.
  *
- *  All encoders return ENCODE_SKIP and all decoders return
- *  false in this scaffold revision; bodies are filled in as
- *  each variant migrates from its dedicated transportUdp
- *  broadcast helper to the per-client subscriber path.
+ *  Each variant has two flavors:
+ *    - encodeFooBody / decodeFooBody — body-only, no
+ *      PacketHeader. Drives the reliable carrier path
+ *      indexed by ControlEventType (s_bodyEncoders /
+ *      s_bodyDecoders).
+ *    - encodeFoo / decodeFoo — legacy full-packet form
+ *      used by the still-direct-send code paths. Each
+ *      encoder wrapper packs the PacketHeader and (for
+ *      alliance) the sub-type discriminator, then delegates
+ *      to the body sibling. Wire output is byte-identical
+ *      to the pre-split code.
+ *
+ *  Above every encodeFooBody is a one-line classification
+ *  of how its body uses the `recipient` argument. The
+ *  carrier path encodes lazily at send time against the
+ *  recipient's then-current state, so anything mutable
+ *  matters for Phase 3+.
  *********************************************************/
 
 #include "transport_control_codec.h"
@@ -39,37 +52,68 @@
 #include "transport_udp_internal.h"
 
 /* ================================================================
- * Encoders — one per ControlEventType variant with a wire form.
+ * Encoders — paired body + full-packet wrapper for each variant.
  *
- * Signature: (const ControlEvent *evt,
- *             const struct UdpServerClient *recipient,
- *             uint8_t *buf, size_t bufCap, size_t *outLen)
+ * Signature (both body and wrapper):
+ *   (const ControlEvent *evt,
+ *    const struct UdpServerClient *recipient,
+ *    uint8_t *buf, size_t bufCap, size_t *outLen)
  *
- * Recipient context lets the encoder filter single-target events
- * (e.g. alliance request to a specific player) or stamp per-client
- * sequence numbers. Stubs ignore it and return ENCODE_SKIP.
+ * Wrappers preserve today's wire layout. Body encoders write only
+ * the post-header bytes; for the three alliance siblings the body
+ * also drops the sub-type discriminator (the carrier byte is
+ * authoritative in the reliable path).
  * ================================================================ */
 
 /* PACKET_ALLIANCE_UPDATE shares one wire shape across the three
  * sub-events: [header 8][event 1][fromPlayer 1][toPlayer 1].  For
- * LEAVE the third byte is unused on the wire and on the decode side. */
+ * LEAVE the third byte is unused on the wire and on the decode side.
+ * The body-only flavor drops the leading event byte (the carrier's
+ * ControlEventType already discriminates request/accept/leave). */
 #define ALLIANCE_UPDATE_PAYLOAD 3
+#define ALLIANCE_BODY_PAYLOAD   2
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeAllianceRequestBody(const ControlEvent *evt,
+                                              const struct UdpServerClient *recipient,
+                                              uint8_t *buf, size_t bufCap,
+                                              size_t *outLen) {
+    (void)recipient;
+    if (bufCap < ALLIANCE_BODY_PAYLOAD) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.allianceRequest.fromPlayer;
+    buf[1] = evt->u.allianceRequest.toPlayer;
+    *outLen = ALLIANCE_BODY_PAYLOAD;
+    return ENCODE_OK;
+}
 
 static EncodeResult encodeAllianceRequest(const ControlEvent *evt,
                                           const struct UdpServerClient *recipient,
                                           uint8_t *buf, size_t bufCap,
                                           size_t *outLen) {
     const size_t needed = PACKET_HEADER_SIZE + ALLIANCE_UPDATE_PAYLOAD;
-    /* Single-target filtering lives in the per-client deliver
-     * callback — the codec stays agnostic to UdpServerClient internals
-     * (forward-declared here on purpose). */
-    (void)recipient;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     packHeader(buf, PACKET_ALLIANCE_UPDATE, 0);
-    buf[PACKET_HEADER_SIZE]     = ALLIANCE_EVENT_REQUEST;
-    buf[PACKET_HEADER_SIZE + 1] = evt->u.allianceRequest.fromPlayer;
-    buf[PACKET_HEADER_SIZE + 2] = evt->u.allianceRequest.toPlayer;
-    *outLen = needed;
+    buf[PACKET_HEADER_SIZE] = ALLIANCE_EVENT_REQUEST;
+    size_t bodyLen = 0;
+    EncodeResult r = encodeAllianceRequestBody(
+        evt, recipient,
+        buf + PACKET_HEADER_SIZE + 1,
+        bufCap - PACKET_HEADER_SIZE - 1, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + 1 + bodyLen;
+    return ENCODE_OK;
+}
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeAllianceAcceptBody(const ControlEvent *evt,
+                                             const struct UdpServerClient *recipient,
+                                             uint8_t *buf, size_t bufCap,
+                                             size_t *outLen) {
+    (void)recipient;
+    if (bufCap < ALLIANCE_BODY_PAYLOAD) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.allianceAccept.acceptedBy;
+    buf[1] = evt->u.allianceAccept.newMember;
+    *outLen = ALLIANCE_BODY_PAYLOAD;
     return ENCODE_OK;
 }
 
@@ -78,13 +122,29 @@ static EncodeResult encodeAllianceAccept(const ControlEvent *evt,
                                          uint8_t *buf, size_t bufCap,
                                          size_t *outLen) {
     const size_t needed = PACKET_HEADER_SIZE + ALLIANCE_UPDATE_PAYLOAD;
-    (void)recipient;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     packHeader(buf, PACKET_ALLIANCE_UPDATE, 0);
-    buf[PACKET_HEADER_SIZE]     = ALLIANCE_EVENT_ACCEPT;
-    buf[PACKET_HEADER_SIZE + 1] = evt->u.allianceAccept.acceptedBy;
-    buf[PACKET_HEADER_SIZE + 2] = evt->u.allianceAccept.newMember;
-    *outLen = needed;
+    buf[PACKET_HEADER_SIZE] = ALLIANCE_EVENT_ACCEPT;
+    size_t bodyLen = 0;
+    EncodeResult r = encodeAllianceAcceptBody(
+        evt, recipient,
+        buf + PACKET_HEADER_SIZE + 1,
+        bufCap - PACKET_HEADER_SIZE - 1, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + 1 + bodyLen;
+    return ENCODE_OK;
+}
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeAllianceLeaveBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    (void)recipient;
+    if (bufCap < ALLIANCE_BODY_PAYLOAD) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.allianceLeave.playerNum;
+    buf[1] = 0; /* unused for leave — preserved for wire compat */
+    *outLen = ALLIANCE_BODY_PAYLOAD;
     return ENCODE_OK;
 }
 
@@ -93,13 +153,16 @@ static EncodeResult encodeAllianceLeave(const ControlEvent *evt,
                                         uint8_t *buf, size_t bufCap,
                                         size_t *outLen) {
     const size_t needed = PACKET_HEADER_SIZE + ALLIANCE_UPDATE_PAYLOAD;
-    (void)recipient;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     packHeader(buf, PACKET_ALLIANCE_UPDATE, 0);
-    buf[PACKET_HEADER_SIZE]     = ALLIANCE_EVENT_LEAVE;
-    buf[PACKET_HEADER_SIZE + 1] = evt->u.allianceLeave.playerNum;
-    buf[PACKET_HEADER_SIZE + 2] = 0; /* unused for leave */
-    *outLen = needed;
+    buf[PACKET_HEADER_SIZE] = ALLIANCE_EVENT_LEAVE;
+    size_t bodyLen = 0;
+    EncodeResult r = encodeAllianceLeaveBody(
+        evt, recipient,
+        buf + PACKET_HEADER_SIZE + 1,
+        bufCap - PACKET_HEADER_SIZE - 1, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + 1 + bodyLen;
     return ENCODE_OK;
 }
 
@@ -109,18 +172,18 @@ static EncodeResult encodeAllianceLeave(const ControlEvent *evt,
  * The trailing numAllies/allies pair is an additive change from the
  * pre-codec wire format — receiving clients now have the join's full
  * alliance bitmap on the wire instead of waiting for PACKET_PLAYER_LIST. */
-static EncodeResult encodePlayerJoin(const ControlEvent *evt,
-                                     const struct UdpServerClient *recipient,
-                                     uint8_t *buf, size_t bufCap,
-                                     size_t *outLen) {
+
+/* recipient: safe — ignored. */
+static EncodeResult encodePlayerJoinBody(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
     (void)recipient;
     BYTE numAllies = evt->u.playerJoin.numAllies;
     if (numAllies > MAX_TANKS) numAllies = MAX_TANKS;
-    const size_t needed = PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME
-                          + 2 + 1 + 1 + 1 + numAllies;
+    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME + 2 + 1 + 1 + 1 + numAllies;
     if (bufCap < needed) return ENCODE_OVERFLOW;
-    size_t pos = PACKET_HEADER_SIZE;
-    packHeader(buf, PACKET_PLAYER_JOINED, 0);
+    size_t pos = 0;
     buf[pos++] = evt->u.playerJoin.playerNum;
     memset(buf + pos, 0, PACKET_MAX_PLAYER_NAME);
     {
@@ -141,18 +204,34 @@ static EncodeResult encodePlayerJoin(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+static EncodeResult encodePlayerJoin(const ControlEvent *evt,
+                                     const struct UdpServerClient *recipient,
+                                     uint8_t *buf, size_t bufCap,
+                                     size_t *outLen) {
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_PLAYER_JOINED, 0);
+    size_t bodyLen = 0;
+    EncodeResult r = encodePlayerJoinBody(evt, recipient,
+                                          buf + PACKET_HEADER_SIZE,
+                                          bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
 /* PACKET_PLAYER_LEFT wire format:
  *   [header 8] [playerNum 1] [name PACKET_MAX_PLAYER_NAME (NUL-padded)]
  *   [cc 2] */
-static EncodeResult encodePlayerLeave(const ControlEvent *evt,
-                                      const struct UdpServerClient *recipient,
-                                      uint8_t *buf, size_t bufCap,
-                                      size_t *outLen) {
+
+/* recipient: safe — ignored. */
+static EncodeResult encodePlayerLeaveBody(const ControlEvent *evt,
+                                          const struct UdpServerClient *recipient,
+                                          uint8_t *buf, size_t bufCap,
+                                          size_t *outLen) {
     (void)recipient;
-    const size_t needed = PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME + 2;
+    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME + 2;
     if (bufCap < needed) return ENCODE_OVERFLOW;
-    size_t pos = PACKET_HEADER_SIZE;
-    packHeader(buf, PACKET_PLAYER_LEFT, 0);
+    size_t pos = 0;
     buf[pos++] = evt->u.playerLeave.playerNum;
     memset(buf + pos, 0, PACKET_MAX_PLAYER_NAME);
     {
@@ -166,25 +245,54 @@ static EncodeResult encodePlayerLeave(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+static EncodeResult encodePlayerLeave(const ControlEvent *evt,
+                                      const struct UdpServerClient *recipient,
+                                      uint8_t *buf, size_t bufCap,
+                                      size_t *outLen) {
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_PLAYER_LEFT, 0);
+    size_t bodyLen = 0;
+    EncodeResult r = encodePlayerLeaveBody(evt, recipient,
+                                           buf + PACKET_HEADER_SIZE,
+                                           bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
 /* PACKET_NAME_CHANGE wire format:
  *   [header 8] [playerNum 1] [newName PACKET_MAX_PLAYER_NAME (NUL-padded)] */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodePlayerNameBody(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    (void)recipient;
+    const size_t needed = 1 + PACKET_MAX_PLAYER_NAME;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.playerName.playerNum;
+    memset(buf + 1, 0, PACKET_MAX_PLAYER_NAME);
+    {
+        size_t nameLen = strnlen(evt->u.playerName.name, PACKET_MAX_PLAYER_NAME - 1);
+        if (nameLen > 0) memcpy(buf + 1, evt->u.playerName.name, nameLen);
+    }
+    *outLen = needed;
+    return ENCODE_OK;
+}
+
 static EncodeResult encodePlayerName(const ControlEvent *evt,
                                      const struct UdpServerClient *recipient,
                                      uint8_t *buf, size_t bufCap,
                                      size_t *outLen) {
-    (void)recipient;
-    const size_t needed = PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME;
-    if (bufCap < needed) return ENCODE_OVERFLOW;
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
     packHeader(buf, PACKET_NAME_CHANGE, 0);
-    buf[PACKET_HEADER_SIZE] = evt->u.playerName.playerNum;
-    memset(buf + PACKET_HEADER_SIZE + 1, 0, PACKET_MAX_PLAYER_NAME);
-    {
-        size_t nameLen = strnlen(evt->u.playerName.name, PACKET_MAX_PLAYER_NAME - 1);
-        if (nameLen > 0) {
-            memcpy(buf + PACKET_HEADER_SIZE + 1, evt->u.playerName.name, nameLen);
-        }
-    }
-    *outLen = needed;
+    size_t bodyLen = 0;
+    EncodeResult r = encodePlayerNameBody(evt, recipient,
+                                          buf + PACKET_HEADER_SIZE,
+                                          bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
     return ENCODE_OK;
 }
 
@@ -193,21 +301,22 @@ static EncodeResult encodePlayerName(const ControlEvent *evt,
  *   If connected:
  *     [nameLen 1] [name nameLen bytes] [teamNumber 1] [ready 1]
  *     [isBot 1] [pingMs 2 BE] [cc 2] [clientType 1] [clientFlags 1] */
-static EncodeResult encodeLobbySlot(const ControlEvent *evt,
-                                    const struct UdpServerClient *recipient,
-                                    uint8_t *buf, size_t bufCap,
-                                    size_t *outLen) {
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeLobbySlotBody(const ControlEvent *evt,
+                                        const struct UdpServerClient *recipient,
+                                        uint8_t *buf, size_t bufCap,
+                                        size_t *outLen) {
     (void)recipient;
     const ClientLobbySlot *slot = &evt->u.lobbySlot.slot;
     size_t nameLen = 0;
     if (slot->connected) {
         nameLen = strnlen(slot->playerName, PACKET_MAX_PLAYER_NAME - 1);
     }
-    const size_t needed = PACKET_HEADER_SIZE + 1 + 1
+    const size_t needed = 1 + 1
                           + (slot->connected ? (1 + nameLen + 1 + 1 + 1 + 2 + 2 + 1 + 1) : 0);
     if (bufCap < needed) return ENCODE_OVERFLOW;
-    size_t pos = PACKET_HEADER_SIZE;
-    packHeader(buf, PACKET_LOBBY_UPDATE, 0);
+    size_t pos = 0;
     buf[pos++] = evt->u.lobbySlot.playerNum;
     buf[pos++] = slot->connected ? 1 : 0;
     if (slot->connected) {
@@ -230,6 +339,21 @@ static EncodeResult encodeLobbySlot(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+static EncodeResult encodeLobbySlot(const ControlEvent *evt,
+                                    const struct UdpServerClient *recipient,
+                                    uint8_t *buf, size_t bufCap,
+                                    size_t *outLen) {
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_LOBBY_UPDATE, 0);
+    size_t bodyLen = 0;
+    EncodeResult r = encodeLobbySlotBody(evt, recipient,
+                                         buf + PACKET_HEADER_SIZE,
+                                         bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
 /* PACKET_LOBBY_SETTINGS wire format:
  *   [header 8] [mapName MAP_STR_SIZE] [gameType 1] [hiddenMines 1]
  *   [aiType 1] [gameLength 4 BE] [pillCount 1] [baseCount 1]
@@ -245,17 +369,19 @@ static EncodeResult encodeLobbySlot(const ControlEvent *evt,
  * field in the codec (packU16/packU32). */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD_BASE \
     (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 2)
-#define LOBBY_SETTINGS_WIRE_PAYLOAD (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4)
+/* Trailing optional tail: ranked(1) + allowNewPlayers(1) + wbnAvailable(1)
+ * + uploadPolicy(1) + lobbyStartDelay(4). */
+#define LOBBY_SETTINGS_WIRE_PAYLOAD (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4)
 
-static EncodeResult encodeLobbySettings(const ControlEvent *evt,
-                                        const struct UdpServerClient *recipient,
-                                        uint8_t *buf, size_t bufCap,
-                                        size_t *outLen) {
+/* recipient: safe — ignored. */
+static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
     (void)recipient;
-    const size_t needed = PACKET_HEADER_SIZE + LOBBY_SETTINGS_WIRE_PAYLOAD;
+    const size_t needed = LOBBY_SETTINGS_WIRE_PAYLOAD;
     if (bufCap < needed) return ENCODE_OVERFLOW;
-    size_t pos = PACKET_HEADER_SIZE;
-    packHeader(buf, PACKET_LOBBY_SETTINGS, 0);
+    size_t pos = 0;
     memset(buf + pos, 0, MAP_STR_SIZE);
     {
         size_t mapLen = strnlen(evt->u.lobbySettings.mapName, MAP_STR_SIZE - 1);
@@ -281,7 +407,24 @@ static EncodeResult encodeLobbySettings(const ControlEvent *evt,
     buf[pos++] = evt->u.lobbySettings.lobbyAllowNewPlayers ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyWbnAvailable ? 1 : 0;
     buf[pos++] = (uint8_t)evt->u.lobbySettings.uploadPolicy;
+    packU32(buf + pos, (uint32_t)evt->u.lobbySettings.lobbyStartDelay);
+    pos += 4;
     *outLen = pos;
+    return ENCODE_OK;
+}
+
+static EncodeResult encodeLobbySettings(const ControlEvent *evt,
+                                        const struct UdpServerClient *recipient,
+                                        uint8_t *buf, size_t bufCap,
+                                        size_t *outLen) {
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_LOBBY_SETTINGS, 0);
+    size_t bodyLen = 0;
+    EncodeResult r = encodeLobbySettingsBody(evt, recipient,
+                                             buf + PACKET_HEADER_SIZE,
+                                             bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
     return ENCODE_OK;
 }
 
@@ -292,20 +435,21 @@ static EncodeResult encodeLobbySettings(const ControlEvent *evt,
  * The `in_use` flag is not on the wire — the decoder reconstructs it
  * from (nameLen > 0 || color != 0 || pool != 0), matching the existing
  * PACKET_LOBBY_TEAM_META_CHG decoder in transport_udp_client.c. */
-static EncodeResult encodeLobbyTeamMeta(const ControlEvent *evt,
-                                        const struct UdpServerClient *recipient,
-                                        uint8_t *buf, size_t bufCap,
-                                        size_t *outLen) {
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeLobbyTeamMetaBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
     (void)recipient;
     if (evt->u.lobbyTeamMeta.teamId == 0 ||
         evt->u.lobbyTeamMeta.teamId >= MAX_TANKS) {
         return ENCODE_SKIP;
     }
     size_t nameLen = strnlen(evt->u.lobbyTeamMeta.name, LOBBY_TEAM_NAME_LEN - 1);
-    const size_t needed = PACKET_HEADER_SIZE + 4 + nameLen;
+    const size_t needed = 4 + nameLen;
     if (bufCap < needed) return ENCODE_OVERFLOW;
-    size_t pos = PACKET_HEADER_SIZE;
-    packHeader(buf, PACKET_LOBBY_TEAM_META_CHG, 0);
+    size_t pos = 0;
     buf[pos++] = evt->u.lobbyTeamMeta.teamId;
     buf[pos++] = evt->u.lobbyTeamMeta.color;
     buf[pos++] = evt->u.lobbyTeamMeta.namingPool;
@@ -318,22 +462,45 @@ static EncodeResult encodeLobbyTeamMeta(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+static EncodeResult encodeLobbyTeamMeta(const ControlEvent *evt,
+                                        const struct UdpServerClient *recipient,
+                                        uint8_t *buf, size_t bufCap,
+                                        size_t *outLen) {
+    /* Reproduce the body's validation guard before touching buf so the
+     * wrapper short-circuits to ENCODE_SKIP without writing a header
+     * the caller would then discard. */
+    if (evt->u.lobbyTeamMeta.teamId == 0 ||
+        evt->u.lobbyTeamMeta.teamId >= MAX_TANKS) {
+        return ENCODE_SKIP;
+    }
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_LOBBY_TEAM_META_CHG, 0);
+    size_t bodyLen = 0;
+    EncodeResult r = encodeLobbyTeamMetaBody(evt, recipient,
+                                             buf + PACKET_HEADER_SIZE,
+                                             bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
 /* PACKET_LOBBY_BOT_CONFIG_CHG wire format (ported verbatim from
  * branch's transportUdpServerBroadcastLobbyBotConfigChg):
  *   [header 8] [slot 1] [difficulty 1] [personality 1] [nameLen 1]
  *   [name nameLen] */
-static EncodeResult encodeLobbyBotConfig(const ControlEvent *evt,
-                                         const struct UdpServerClient *recipient,
-                                         uint8_t *buf, size_t bufCap,
-                                         size_t *outLen) {
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeLobbyBotConfigBody(const ControlEvent *evt,
+                                             const struct UdpServerClient *recipient,
+                                             uint8_t *buf, size_t bufCap,
+                                             size_t *outLen) {
     (void)recipient;
     if (evt->u.lobbyBotConfig.slot >= MAX_TANKS) return ENCODE_SKIP;
     size_t nameLen = strnlen(evt->u.lobbyBotConfig.name,
                              PACKET_MAX_PLAYER_NAME - 1);
-    const size_t needed = PACKET_HEADER_SIZE + 4 + nameLen;
+    const size_t needed = 4 + nameLen;
     if (bufCap < needed) return ENCODE_OVERFLOW;
-    size_t pos = PACKET_HEADER_SIZE;
-    packHeader(buf, PACKET_LOBBY_BOT_CONFIG_CHG, 0);
+    size_t pos = 0;
     buf[pos++] = evt->u.lobbyBotConfig.slot;
     buf[pos++] = evt->u.lobbyBotConfig.difficulty;
     buf[pos++] = evt->u.lobbyBotConfig.personality;
@@ -346,23 +513,56 @@ static EncodeResult encodeLobbyBotConfig(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+static EncodeResult encodeLobbyBotConfig(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    /* Mirror the body's guard at the wrapper so an invalid slot
+     * short-circuits before we stamp a header. */
+    if (evt->u.lobbyBotConfig.slot >= MAX_TANKS) return ENCODE_SKIP;
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_LOBBY_BOT_CONFIG_CHG, 0);
+    size_t bodyLen = 0;
+    EncodeResult r = encodeLobbyBotConfigBody(evt, recipient,
+                                              buf + PACKET_HEADER_SIZE,
+                                              bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
 /* PACKET_LOBBY_BOT_BRAIN_CHG wire format:
  *   [header 8] [slot 1] [brainIdx 1]
  * brainIdx == 0xFF signals "use the server's global bot brain";
  * any other value indexes into the server's brain catalogue. */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeLobbyBotBrainBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    (void)recipient;
+    if (evt->u.lobbyBotBrain.slot >= MAX_TANKS) return ENCODE_SKIP;
+    if (bufCap < 2) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.lobbyBotBrain.slot;
+    buf[1] = evt->u.lobbyBotBrain.brainIdx;
+    *outLen = 2;
+    return ENCODE_OK;
+}
+
 static EncodeResult encodeLobbyBotBrain(const ControlEvent *evt,
                                         const struct UdpServerClient *recipient,
                                         uint8_t *buf, size_t bufCap,
                                         size_t *outLen) {
-    (void)recipient;
     if (evt->u.lobbyBotBrain.slot >= MAX_TANKS) return ENCODE_SKIP;
-    const size_t needed = PACKET_HEADER_SIZE + 2;
-    if (bufCap < needed) return ENCODE_OVERFLOW;
-    size_t pos = PACKET_HEADER_SIZE;
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
     packHeader(buf, PACKET_LOBBY_BOT_BRAIN_CHG, 0);
-    buf[pos++] = evt->u.lobbyBotBrain.slot;
-    buf[pos++] = evt->u.lobbyBotBrain.brainIdx;
-    *outLen = pos;
+    size_t bodyLen = 0;
+    EncodeResult r = encodeLobbyBotBrainBody(evt, recipient,
+                                             buf + PACKET_HEADER_SIZE,
+                                             bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
     return ENCODE_OK;
 }
 
@@ -375,10 +575,12 @@ static EncodeResult encodeLobbyBotBrain(const ControlEvent *evt,
  * payload is 1 + BRAIN_LIST_MAX * (2 + (NAME_LEN-1) + (VER_LEN-1))
  * = 1 + 16 * (2 + 31 + 23) = 897 bytes, which fits comfortably in
  * a single UDP datagram. */
-static EncodeResult encodeLobbyBrainList(const ControlEvent *evt,
-                                         const struct UdpServerClient *recipient,
-                                         uint8_t *buf, size_t bufCap,
-                                         size_t *outLen) {
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeLobbyBrainListBody(const ControlEvent *evt,
+                                             const struct UdpServerClient *recipient,
+                                             uint8_t *buf, size_t bufCap,
+                                             size_t *outLen) {
     (void)recipient;
     const BrainList *list = &evt->u.lobbyBrainList.list;
     int count = list->count;
@@ -386,7 +588,7 @@ static EncodeResult encodeLobbyBrainList(const ControlEvent *evt,
     if (count > BRAIN_LIST_MAX) count = BRAIN_LIST_MAX;
     /* Pre-compute total size; bail with ENCODE_OVERFLOW before any
      * write if the recipient buffer can't hold the worst case. */
-    size_t needed = PACKET_HEADER_SIZE + 1;
+    size_t needed = 1;
     for (int i = 0; i < count; i++) {
         const BrainListEntry *e = &list->entries[i];
         needed += 2
@@ -394,8 +596,7 @@ static EncodeResult encodeLobbyBrainList(const ControlEvent *evt,
                 + strnlen(e->version, BRAIN_LIST_VER_LEN  - 1);
     }
     if (bufCap < needed) return ENCODE_OVERFLOW;
-    size_t pos = PACKET_HEADER_SIZE;
-    packHeader(buf, PACKET_LOBBY_BRAIN_LIST, 0);
+    size_t pos = 0;
     buf[pos++] = (uint8_t)count;
     for (int i = 0; i < count; i++) {
         const BrainListEntry *e = &list->entries[i];
@@ -407,6 +608,21 @@ static EncodeResult encodeLobbyBrainList(const ControlEvent *evt,
         if (v > 0) { memcpy(buf + pos, e->version, v); pos += v; }
     }
     *outLen = pos;
+    return ENCODE_OK;
+}
+
+static EncodeResult encodeLobbyBrainList(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_LOBBY_BRAIN_LIST, 0);
+    size_t bodyLen = 0;
+    EncodeResult r = encodeLobbyBrainListBody(evt, recipient,
+                                              buf + PACKET_HEADER_SIZE,
+                                              bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
     return ENCODE_OK;
 }
 
@@ -424,14 +640,41 @@ BOLO_STATIC_ASSERT(
  * The lobbyMapChange union member carries no fields — receipt of
  * the packet is itself the signal that the server has loaded a new
  * map and the client should reset and re-download. */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeLobbyMapChangeBody(const ControlEvent *evt,
+                                             const struct UdpServerClient *recipient,
+                                             uint8_t *buf, size_t bufCap,
+                                             size_t *outLen) {
+    (void)evt; (void)recipient; (void)buf; (void)bufCap;
+    *outLen = 0;
+    return ENCODE_OK;
+}
+
 static EncodeResult encodeLobbyMapChange(const ControlEvent *evt,
                                          const struct UdpServerClient *recipient,
                                          uint8_t *buf, size_t bufCap,
                                          size_t *outLen) {
-    (void)evt; (void)recipient;
     if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
     packHeader(buf, PACKET_LOBBY_MAP_CHANGE, 0);
-    *outLen = PACKET_HEADER_SIZE;
+    size_t bodyLen = 0;
+    EncodeResult r = encodeLobbyMapChangeBody(evt, recipient,
+                                              buf + PACKET_HEADER_SIZE,
+                                              bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeBalanceProposalBody(const ControlEvent *evt,
+                                              const struct UdpServerClient *recipient,
+                                              uint8_t *buf, size_t bufCap,
+                                              size_t *outLen) {
+    (void)recipient;
+    if (bufCap < MAX_TANKS) return ENCODE_OVERFLOW;
+    memcpy(buf, evt->u.balanceProposal.teamForSlot, MAX_TANKS);
+    *outLen = MAX_TANKS;
     return ENCODE_OK;
 }
 
@@ -439,12 +682,26 @@ static EncodeResult encodeBalanceProposal(const ControlEvent *evt,
                                           const struct UdpServerClient *recipient,
                                           uint8_t *buf, size_t bufCap,
                                           size_t *outLen) {
-    (void)recipient;
-    const size_t needed = PACKET_HEADER_SIZE + MAX_TANKS;
-    if (bufCap < needed) return ENCODE_OVERFLOW;
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
     packHeader(buf, PACKET_BALANCE_PROPOSAL, 0);
-    memcpy(buf + PACKET_HEADER_SIZE, evt->u.balanceProposal.teamForSlot, MAX_TANKS);
-    *outLen = needed;
+    size_t bodyLen = 0;
+    EncodeResult r = encodeBalanceProposalBody(evt, recipient,
+                                               buf + PACKET_HEADER_SIZE,
+                                               bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeMapSkipStateBody(const ControlEvent *evt,
+                                           const struct UdpServerClient *recipient,
+                                           uint8_t *buf, size_t bufCap,
+                                           size_t *outLen) {
+    (void)recipient;
+    if (bufCap < MAX_TANKS) return ENCODE_OVERFLOW;
+    memcpy(buf, evt->u.mapSkipState.votes, MAX_TANKS);
+    *outLen = MAX_TANKS;
     return ENCODE_OK;
 }
 
@@ -452,53 +709,136 @@ static EncodeResult encodeMapSkipState(const ControlEvent *evt,
                                        const struct UdpServerClient *recipient,
                                        uint8_t *buf, size_t bufCap,
                                        size_t *outLen) {
-    (void)recipient;
-    const size_t needed = PACKET_HEADER_SIZE + MAX_TANKS;
-    if (bufCap < needed) return ENCODE_OVERFLOW;
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
     packHeader(buf, PACKET_MAP_SKIP_STATE, 0);
-    memcpy(buf + PACKET_HEADER_SIZE, evt->u.mapSkipState.votes, MAX_TANKS);
-    *outLen = needed;
+    size_t bodyLen = 0;
+    EncodeResult r = encodeMapSkipStateBody(evt, recipient,
+                                            buf + PACKET_HEADER_SIZE,
+                                            bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
     return ENCODE_OK;
 }
 
-/* encodeGamePhase produces PACKET_COUNTDOWN for the COUNTDOWN phase and
- * PACKET_GAME_START for RUNNING.  GAME_OVER is owned by encodeGameOver
- * (via CTRL_GAME_OVER → PACKET_GAME_OVER); the phase encoder returns
- * SKIP so the GAME_OVER transition isn't sent twice on the wire. */
+/* CTRL_GAME_PHASE_* — four sibling types, three of which (LOBBY,
+ * RUNNING, GAME_OVER) carry no payload. Only COUNTDOWN puts a byte
+ * on the wire (the seconds remaining). The full-packet wrapper
+ * encodeGamePhase preserves today's direct-send behavior: COUNTDOWN
+ * → PACKET_COUNTDOWN, RUNNING → PACKET_GAME_START, LOBBY/GAME_OVER
+ * → ENCODE_SKIP (LOBBY has no wire form at all; CTRL_GAME_PHASE_GAME_OVER
+ * is the phase transition — CTRL_GAME_OVER owns PACKET_GAME_OVER, so
+ * emitting one here would double-send). */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeGamePhaseLobbyBody(const ControlEvent *evt,
+                                             const struct UdpServerClient *recipient,
+                                             uint8_t *buf, size_t bufCap,
+                                             size_t *outLen) {
+    (void)evt; (void)recipient; (void)buf; (void)bufCap;
+    *outLen = 0;
+    return ENCODE_OK;
+}
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeGamePhaseCountdownBody(const ControlEvent *evt,
+                                                 const struct UdpServerClient *recipient,
+                                                 uint8_t *buf, size_t bufCap,
+                                                 size_t *outLen) {
+    (void)recipient;
+    if (bufCap < 1) return ENCODE_OVERFLOW;
+    buf[0] = (uint8_t)evt->u.gamePhase.countdownSeconds;
+    *outLen = 1;
+    return ENCODE_OK;
+}
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeGamePhaseRunningBody(const ControlEvent *evt,
+                                               const struct UdpServerClient *recipient,
+                                               uint8_t *buf, size_t bufCap,
+                                               size_t *outLen) {
+    (void)evt; (void)recipient; (void)buf; (void)bufCap;
+    *outLen = 0;
+    return ENCODE_OK;
+}
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeGamePhaseGameOverBody(const ControlEvent *evt,
+                                                const struct UdpServerClient *recipient,
+                                                uint8_t *buf, size_t bufCap,
+                                                size_t *outLen) {
+    (void)evt; (void)recipient; (void)buf; (void)bufCap;
+    *outLen = 0;
+    return ENCODE_OK;
+}
+
 static EncodeResult encodeGamePhase(const ControlEvent *evt,
                                     const struct UdpServerClient *recipient,
                                     uint8_t *buf, size_t bufCap,
                                     size_t *outLen) {
-    (void)recipient;
-    switch (evt->u.gamePhase.phase) {
-        case CTRL_PHASE_COUNTDOWN: {
-            const size_t needed = PACKET_HEADER_SIZE + 1;
-            if (bufCap < needed) return ENCODE_OVERFLOW;
+    switch (evt->type) {
+        case CTRL_GAME_PHASE_COUNTDOWN: {
+            if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
             packHeader(buf, PACKET_COUNTDOWN, 0);
-            buf[PACKET_HEADER_SIZE] = (uint8_t)evt->u.gamePhase.countdownSeconds;
-            *outLen = needed;
+            size_t bodyLen = 0;
+            EncodeResult r = encodeGamePhaseCountdownBody(
+                evt, recipient,
+                buf + PACKET_HEADER_SIZE,
+                bufCap - PACKET_HEADER_SIZE, &bodyLen);
+            if (r != ENCODE_OK) return r;
+            *outLen = PACKET_HEADER_SIZE + bodyLen;
             return ENCODE_OK;
         }
-        case CTRL_PHASE_RUNNING: {
+        case CTRL_GAME_PHASE_RUNNING: {
             if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
             packHeader(buf, PACKET_GAME_START, 0);
-            *outLen = PACKET_HEADER_SIZE;
+            size_t bodyLen = 0;
+            EncodeResult r = encodeGamePhaseRunningBody(
+                evt, recipient,
+                buf + PACKET_HEADER_SIZE,
+                bufCap - PACKET_HEADER_SIZE, &bodyLen);
+            if (r != ENCODE_OK) return r;
+            *outLen = PACKET_HEADER_SIZE + bodyLen;
             return ENCODE_OK;
         }
-        case CTRL_PHASE_GAME_OVER:
+        case CTRL_GAME_PHASE_LOBBY:
+        case CTRL_GAME_PHASE_GAME_OVER:
         default:
             return ENCODE_SKIP;
     }
+}
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeGameOverBody(const ControlEvent *evt,
+                                       const struct UdpServerClient *recipient,
+                                       uint8_t *buf, size_t bufCap,
+                                       size_t *outLen) {
+    (void)evt; (void)recipient; (void)buf; (void)bufCap;
+    *outLen = 0;
+    return ENCODE_OK;
 }
 
 static EncodeResult encodeGameOver(const ControlEvent *evt,
                                    const struct UdpServerClient *recipient,
                                    uint8_t *buf, size_t bufCap,
                                    size_t *outLen) {
-    (void)evt; (void)recipient;
     if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
     packHeader(buf, PACKET_GAME_OVER, 0);
-    *outLen = PACKET_HEADER_SIZE;
+    size_t bodyLen = 0;
+    EncodeResult r = encodeGameOverBody(evt, recipient,
+                                        buf + PACKET_HEADER_SIZE,
+                                        bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeServerShutdownBody(const ControlEvent *evt,
+                                             const struct UdpServerClient *recipient,
+                                             uint8_t *buf, size_t bufCap,
+                                             size_t *outLen) {
+    (void)evt; (void)recipient; (void)buf; (void)bufCap;
+    *outLen = 0;
     return ENCODE_OK;
 }
 
@@ -506,10 +846,14 @@ static EncodeResult encodeServerShutdown(const ControlEvent *evt,
                                          const struct UdpServerClient *recipient,
                                          uint8_t *buf, size_t bufCap,
                                          size_t *outLen) {
-    (void)evt; (void)recipient;
     if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
     packHeader(buf, PACKET_SERVER_SHUTDOWN, 0);
-    *outLen = PACKET_HEADER_SIZE;
+    size_t bodyLen = 0;
+    EncodeResult r = encodeServerShutdownBody(evt, recipient,
+                                              buf + PACKET_HEADER_SIZE,
+                                              bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
     return ENCODE_OK;
 }
 
@@ -520,22 +864,37 @@ static EncodeResult encodeServerShutdown(const ControlEvent *evt,
  * or == 0xFE, packed langid+args when fromPlayer == 0xFF.  Per-
  * recipient filtering (broadcast-skip-sender, unicast-only-dest)
  * lives in udpClientDeliverControl, matching CTRL_ALLIANCE_REQUEST. */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeChatBody(const ControlEvent *evt,
+                                   const struct UdpServerClient *recipient,
+                                   uint8_t *buf, size_t bufCap,
+                                   size_t *outLen) {
+    (void)recipient;
+    if (evt->u.chat.bodyLen > CHAT_BODY_MAX) return ENCODE_OVERFLOW;
+    const size_t needed = 2 + evt->u.chat.bodyLen;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.chat.fromPlayer;
+    buf[1] = evt->u.chat.destPlayer;
+    if (evt->u.chat.bodyLen > 0) {
+        memcpy(buf + 2, evt->u.chat.body, evt->u.chat.bodyLen);
+    }
+    *outLen = needed;
+    return ENCODE_OK;
+}
+
 static EncodeResult encodeChat(const ControlEvent *evt,
                                const struct UdpServerClient *recipient,
                                uint8_t *buf, size_t bufCap,
                                size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + 2 + evt->u.chat.bodyLen;
-    (void)recipient;
-    if (evt->u.chat.bodyLen > CHAT_BODY_MAX) return ENCODE_OVERFLOW;
-    if (bufCap < needed) return ENCODE_OVERFLOW;
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
     packHeader(buf, PACKET_CHAT_BROADCAST, 0);
-    buf[PACKET_HEADER_SIZE]     = evt->u.chat.fromPlayer;
-    buf[PACKET_HEADER_SIZE + 1] = evt->u.chat.destPlayer;
-    if (evt->u.chat.bodyLen > 0) {
-        memcpy(buf + PACKET_HEADER_SIZE + 2, evt->u.chat.body,
-               evt->u.chat.bodyLen);
-    }
-    *outLen = needed;
+    size_t bodyLen = 0;
+    EncodeResult r = encodeChatBody(evt, recipient,
+                                    buf + PACKET_HEADER_SIZE,
+                                    bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
     return ENCODE_OK;
 }
 
@@ -543,89 +902,162 @@ static EncodeResult encodeChat(const ControlEvent *evt,
  * format is the same as a regular chat broadcast so existing UDP
  * clients keep their PACKET_CHAT_BROADCAST handler unchanged.
  * In-process subscribers consume CTRL_SERVER_TEXT directly. */
-static EncodeResult encodeServerText(const ControlEvent *evt,
-                                     const struct UdpServerClient *recipient,
-                                     uint8_t *buf, size_t bufCap,
-                                     size_t *outLen) {
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeServerTextBody(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
     (void)recipient;
     size_t textLen = strnlen(evt->u.serverText.text,
                              sizeof(evt->u.serverText.text));
     if (textLen > CHAT_BODY_MAX) textLen = CHAT_BODY_MAX;
-    const size_t needed = PACKET_HEADER_SIZE + 2 + textLen;
+    const size_t needed = 2 + textLen;
     if (bufCap < needed) return ENCODE_OVERFLOW;
-    packHeader(buf, PACKET_CHAT_BROADCAST, 0);
-    buf[PACKET_HEADER_SIZE]     = 0xFE; /* server raw English */
-    buf[PACKET_HEADER_SIZE + 1] = 0xFF; /* broadcast */
+    buf[0] = 0xFE; /* server raw English */
+    buf[1] = 0xFF; /* broadcast */
     if (textLen > 0) {
-        memcpy(buf + PACKET_HEADER_SIZE + 2, evt->u.serverText.text, textLen);
+        memcpy(buf + 2, evt->u.serverText.text, textLen);
     }
     *outLen = needed;
     return ENCODE_OK;
+}
+
+static EncodeResult encodeServerText(const ControlEvent *evt,
+                                     const struct UdpServerClient *recipient,
+                                     uint8_t *buf, size_t bufCap,
+                                     size_t *outLen) {
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_CHAT_BROADCAST, 0);
+    size_t bodyLen = 0;
+    EncodeResult r = encodeServerTextBody(evt, recipient,
+                                          buf + PACKET_HEADER_SIZE,
+                                          bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
+/* Pair for encodeServerTextBody: reads [0xFE][0xFF][text...] back into
+ * a CTRL_SERVER_TEXT event. Without this, server-text broadcasts (the
+ * "<team> has won the game" message and similar) ride CONTROL_TICK but
+ * the client has no decoder, drops the event, and previously stalled
+ * the reliable queue. */
+static bool decodeServerTextBody(const uint8_t *buf, size_t bodyLen,
+                                 ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL) return false;
+    if (bodyLen < 2) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SERVER_TEXT;
+    size_t textLen = bodyLen - 2;
+    if (textLen >= sizeof(outEvt->u.serverText.text)) {
+        textLen = sizeof(outEvt->u.serverText.text) - 1;
+    }
+    if (textLen > 0) {
+        memcpy(outEvt->u.serverText.text, buf + 2, textLen);
+    }
+    outEvt->u.serverText.text[textLen] = '\0';
+    return true;
 }
 
 /* Wire: [header 8] [kind 1] [active 1] [triggerSrc 1] [teamId 1]
  *   [threshold 1] [yes 1] [no 1] [eligible 1] [secsRemaining 1]
  *   [votes 2 BE] — 11-byte body. Same shape on every recipient. */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeGameVoteStateBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    (void)recipient;
+    if (bufCap < 11) return ENCODE_OVERFLOW;
+    buf[0]  = evt->u.gameVoteState.kind;
+    buf[1]  = evt->u.gameVoteState.active;
+    buf[2]  = evt->u.gameVoteState.triggerSrc;
+    buf[3]  = evt->u.gameVoteState.teamId;
+    buf[4]  = evt->u.gameVoteState.threshold;
+    buf[5]  = evt->u.gameVoteState.yesCount;
+    buf[6]  = evt->u.gameVoteState.noCount;
+    buf[7]  = evt->u.gameVoteState.eligibleCount;
+    buf[8]  = evt->u.gameVoteState.secondsRemaining;
+    packU16(buf + 9, evt->u.gameVoteState.votes);
+    *outLen = 11;
+    return ENCODE_OK;
+}
+
 static EncodeResult encodeGameVoteState(const ControlEvent *evt,
                                         const struct UdpServerClient *recipient,
                                         uint8_t *buf, size_t bufCap,
                                         size_t *outLen) {
-    (void)recipient;
-    const size_t needed = PACKET_HEADER_SIZE + 11;
-    if (bufCap < needed) return ENCODE_OVERFLOW;
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
     packHeader(buf, PACKET_GAME_VOTE_STATE, 0);
-    buf[PACKET_HEADER_SIZE + 0] = evt->u.gameVoteState.kind;
-    buf[PACKET_HEADER_SIZE + 1] = evt->u.gameVoteState.active;
-    buf[PACKET_HEADER_SIZE + 2] = evt->u.gameVoteState.triggerSrc;
-    buf[PACKET_HEADER_SIZE + 3] = evt->u.gameVoteState.teamId;
-    buf[PACKET_HEADER_SIZE + 4] = evt->u.gameVoteState.threshold;
-    buf[PACKET_HEADER_SIZE + 5] = evt->u.gameVoteState.yesCount;
-    buf[PACKET_HEADER_SIZE + 6] = evt->u.gameVoteState.noCount;
-    buf[PACKET_HEADER_SIZE + 7] = evt->u.gameVoteState.eligibleCount;
-    buf[PACKET_HEADER_SIZE + 8] = evt->u.gameVoteState.secondsRemaining;
-    packU16(buf + PACKET_HEADER_SIZE + 9, evt->u.gameVoteState.votes);
-    *outLen = needed;
+    size_t bodyLen = 0;
+    EncodeResult r = encodeGameVoteStateBody(evt, recipient,
+                                             buf + PACKET_HEADER_SIZE,
+                                             bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
     return ENCODE_OK;
 }
 
 /* ================================================================
- * Decoders — keyed by wire packet type.
+ * Decoders — body-only (the existing wire-packet dispatcher in
+ * transportControlCodecDecoder already strips the PacketHeader
+ * before calling into the codec). For PACKET_ALLIANCE_UPDATE the
+ * thin wrapper decodeAllianceUpdate consumes the 1-byte sub-type
+ * discriminator and delegates to one of three body decoders.
  *
- * Three thin decoders for the game-phase wire family
- * (PACKET_COUNTDOWN/GAME_START/GAME_OVER) keep the dispatcher's
- * lookup 1:1 with wire packets. decodeAllianceUpdate is the single
- * entry for PACKET_ALLIANCE_UPDATE; it inspects the sub-event byte
- * and produces the matching CTRL_ALLIANCE_REQUEST/ACCEPT/LEAVE
- * event.
+ * Body decoder names match their ControlEventType for use in
+ * s_bodyDecoders[].
  * ================================================================ */
+
+static bool decodeAllianceRequestBody(const uint8_t *buf, size_t len,
+                                      ControlEvent *outEvt) {
+    if (len < ALLIANCE_BODY_PAYLOAD) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_ALLIANCE_REQUEST;
+    outEvt->u.allianceRequest.fromPlayer = buf[0];
+    outEvt->u.allianceRequest.toPlayer   = buf[1];
+    return true;
+}
+
+static bool decodeAllianceAcceptBody(const uint8_t *buf, size_t len,
+                                     ControlEvent *outEvt) {
+    if (len < ALLIANCE_BODY_PAYLOAD) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_ALLIANCE_ACCEPT;
+    outEvt->u.allianceAccept.acceptedBy = buf[0];
+    outEvt->u.allianceAccept.newMember  = buf[1];
+    return true;
+}
+
+static bool decodeAllianceLeaveBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    if (len < ALLIANCE_BODY_PAYLOAD) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_ALLIANCE_LEAVE;
+    outEvt->u.allianceLeave.playerNum = buf[0];
+    return true;
+}
 
 static bool decodeAllianceUpdate(const uint8_t *buf, size_t len,
                                  ControlEvent *outEvt) {
     if (len < ALLIANCE_UPDATE_PAYLOAD) return false;
-    memset(outEvt, 0, sizeof(*outEvt));
     switch (buf[0]) {
         case ALLIANCE_EVENT_REQUEST:
-            outEvt->type = CTRL_ALLIANCE_REQUEST;
-            outEvt->u.allianceRequest.fromPlayer = buf[1];
-            outEvt->u.allianceRequest.toPlayer   = buf[2];
-            return true;
+            return decodeAllianceRequestBody(buf + 1, len - 1, outEvt);
         case ALLIANCE_EVENT_ACCEPT:
-            outEvt->type = CTRL_ALLIANCE_ACCEPT;
-            outEvt->u.allianceAccept.acceptedBy = buf[1];
-            outEvt->u.allianceAccept.newMember  = buf[2];
-            return true;
+            return decodeAllianceAcceptBody(buf + 1, len - 1, outEvt);
         case ALLIANCE_EVENT_LEAVE:
-            outEvt->type = CTRL_ALLIANCE_LEAVE;
-            outEvt->u.allianceLeave.playerNum = buf[1];
-            return true;
+            return decodeAllianceLeaveBody(buf + 1, len - 1, outEvt);
         default:
             return false;
     }
 }
 
-static bool decodePlayerJoin(const uint8_t *buf, size_t len,
-                             ControlEvent *outEvt) {
-    /* Layout matches encodePlayerJoin's wire format. */
+static bool decodePlayerJoinBody(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
+    /* Layout matches encodePlayerJoinBody's wire format. */
     const size_t fixedLen = 1 + PACKET_MAX_PLAYER_NAME + 2 + 1 + 1 + 1;
     if (len < fixedLen) return false;
     memset(outEvt, 0, sizeof(*outEvt));
@@ -652,8 +1084,8 @@ static bool decodePlayerJoin(const uint8_t *buf, size_t len,
     return true;
 }
 
-static bool decodePlayerName(const uint8_t *buf, size_t len,
-                             ControlEvent *outEvt) {
+static bool decodePlayerNameBody(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
     if (len < (size_t)(1 + PACKET_MAX_PLAYER_NAME)) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_PLAYER_NAME;
@@ -663,9 +1095,9 @@ static bool decodePlayerName(const uint8_t *buf, size_t len,
     return true;
 }
 
-static bool decodePlayerLeave(const uint8_t *buf, size_t len,
-                              ControlEvent *outEvt) {
-    /* Layout matches encodePlayerLeave's wire format. */
+static bool decodePlayerLeaveBody(const uint8_t *buf, size_t len,
+                                  ControlEvent *outEvt) {
+    /* Layout matches encodePlayerLeaveBody's wire format. */
     const size_t fixedLen = 1 + PACKET_MAX_PLAYER_NAME + 2;
     if (len < fixedLen) return false;
     memset(outEvt, 0, sizeof(*outEvt));
@@ -681,8 +1113,8 @@ static bool decodePlayerLeave(const uint8_t *buf, size_t len,
     return true;
 }
 
-static bool decodeLobbySlot(const uint8_t *buf, size_t len,
-                            ControlEvent *outEvt) {
+static bool decodeLobbySlotBody(const uint8_t *buf, size_t len,
+                                ControlEvent *outEvt) {
     if (len < 2) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_LOBBY_SLOT;
@@ -716,8 +1148,8 @@ static bool decodeLobbySlot(const uint8_t *buf, size_t len,
     return true;
 }
 
-static bool decodeLobbySettings(const uint8_t *buf, size_t len,
-                                ControlEvent *outEvt) {
+static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
     if (len < LOBBY_SETTINGS_WIRE_PAYLOAD_BASE) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_LOBBY_SETTINGS;
@@ -753,12 +1185,16 @@ static bool decodeLobbySettings(const uint8_t *buf, size_t len,
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.uploadPolicy = (UploadPolicy)buf[pos++];
     }
+    if (len >= pos + 4) {
+        outEvt->u.lobbySettings.lobbyStartDelay = (int32_t)unpackU32(buf + pos);
+        pos += 4;
+    }
     return true;
 }
 
-static bool decodeLobbyTeamMeta(const uint8_t *buf, size_t len,
-                                ControlEvent *outEvt) {
-    /* Layout matches encodeLobbyTeamMeta. */
+static bool decodeLobbyTeamMetaBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    /* Layout matches encodeLobbyTeamMetaBody. */
     if (len < 4) return false;
     uint8_t teamId  = buf[0];
     uint8_t color   = buf[1];
@@ -784,9 +1220,9 @@ static bool decodeLobbyTeamMeta(const uint8_t *buf, size_t len,
     return true;
 }
 
-static bool decodeLobbyBotConfig(const uint8_t *buf, size_t len,
-                                 ControlEvent *outEvt) {
-    /* Layout matches encodeLobbyBotConfig. */
+static bool decodeLobbyBotConfigBody(const uint8_t *buf, size_t len,
+                                     ControlEvent *outEvt) {
+    /* Layout matches encodeLobbyBotConfigBody. */
     if (len < 4) return false;
     uint8_t slot    = buf[0];
     uint8_t diff    = buf[1];
@@ -807,9 +1243,9 @@ static bool decodeLobbyBotConfig(const uint8_t *buf, size_t len,
     return true;
 }
 
-static bool decodeLobbyBotBrain(const uint8_t *buf, size_t len,
-                                ControlEvent *outEvt) {
-    /* Layout matches encodeLobbyBotBrain: [slot 1][brainIdx 1]. */
+static bool decodeLobbyBotBrainBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    /* Layout matches encodeLobbyBotBrainBody: [slot 1][brainIdx 1]. */
     if (len < 2) return false;
     uint8_t slot     = buf[0];
     uint8_t brainIdx = buf[1];
@@ -821,10 +1257,10 @@ static bool decodeLobbyBotBrain(const uint8_t *buf, size_t len,
     return true;
 }
 
-static bool decodeLobbyBrainList(const uint8_t *buf, size_t len,
-                                 ControlEvent *outEvt) {
-    /* Layout matches encodeLobbyBrainList: [count 1] then per entry
-     * [nameLen 1][name][verLen 1][version]. */
+static bool decodeLobbyBrainListBody(const uint8_t *buf, size_t len,
+                                     ControlEvent *outEvt) {
+    /* Layout matches encodeLobbyBrainListBody: [count 1] then per
+     * entry [nameLen 1][name][verLen 1][version]. */
     if (len < 1) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_LOBBY_BRAIN_LIST;
@@ -852,16 +1288,16 @@ static bool decodeLobbyBrainList(const uint8_t *buf, size_t len,
     return true;
 }
 
-static bool decodeLobbyMapChange(const uint8_t *buf, size_t len,
-                                 ControlEvent *outEvt) {
+static bool decodeLobbyMapChangeBody(const uint8_t *buf, size_t len,
+                                     ControlEvent *outEvt) {
     (void)buf; (void)len;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_LOBBY_MAP_CHANGE;
     return true;
 }
 
-static bool decodeBalanceProposal(const uint8_t *buf, size_t len,
-                                  ControlEvent *outEvt) {
+static bool decodeBalanceProposalBody(const uint8_t *buf, size_t len,
+                                      ControlEvent *outEvt) {
     if (len < MAX_TANKS) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_BALANCE_PROPOSAL;
@@ -869,8 +1305,8 @@ static bool decodeBalanceProposal(const uint8_t *buf, size_t len,
     return true;
 }
 
-static bool decodeMapSkipState(const uint8_t *buf, size_t len,
-                               ControlEvent *outEvt) {
+static bool decodeMapSkipStateBody(const uint8_t *buf, size_t len,
+                                   ControlEvent *outEvt) {
     if (len < MAX_TANKS) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_MAP_SKIP_STATE;
@@ -878,44 +1314,57 @@ static bool decodeMapSkipState(const uint8_t *buf, size_t len,
     return true;
 }
 
-static bool decodeCountdown(const uint8_t *buf, size_t len,
-                            ControlEvent *outEvt) {
+static bool decodeGamePhaseLobbyBody(const uint8_t *buf, size_t len,
+                                     ControlEvent *outEvt) {
+    (void)buf; (void)len;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_GAME_PHASE_LOBBY;
+    return true;
+}
+
+static bool decodeGamePhaseCountdownBody(const uint8_t *buf, size_t len,
+                                         ControlEvent *outEvt) {
     if (len < 1) return false;
     memset(outEvt, 0, sizeof(*outEvt));
-    outEvt->type = CTRL_GAME_PHASE;
-    outEvt->u.gamePhase.phase = CTRL_PHASE_COUNTDOWN;
+    outEvt->type = CTRL_GAME_PHASE_COUNTDOWN;
     outEvt->u.gamePhase.countdownSeconds = buf[0];
     return true;
 }
 
-static bool decodeGameStart(const uint8_t *buf, size_t len,
-                            ControlEvent *outEvt) {
+static bool decodeGamePhaseRunningBody(const uint8_t *buf, size_t len,
+                                       ControlEvent *outEvt) {
     (void)buf; (void)len;
     memset(outEvt, 0, sizeof(*outEvt));
-    outEvt->type = CTRL_GAME_PHASE;
-    outEvt->u.gamePhase.phase = CTRL_PHASE_RUNNING;
-    outEvt->u.gamePhase.countdownSeconds = 0;
+    outEvt->type = CTRL_GAME_PHASE_RUNNING;
     return true;
 }
 
-static bool decodeGameOver(const uint8_t *buf, size_t len,
-                           ControlEvent *outEvt) {
+static bool decodeGamePhaseGameOverBody(const uint8_t *buf, size_t len,
+                                        ControlEvent *outEvt) {
+    (void)buf; (void)len;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_GAME_PHASE_GAME_OVER;
+    return true;
+}
+
+static bool decodeGameOverBody(const uint8_t *buf, size_t len,
+                               ControlEvent *outEvt) {
     (void)buf; (void)len;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_GAME_OVER;
     return true;
 }
 
-static bool decodeServerShutdown(const uint8_t *buf, size_t len,
-                                 ControlEvent *outEvt) {
+static bool decodeServerShutdownBody(const uint8_t *buf, size_t len,
+                                     ControlEvent *outEvt) {
     (void)buf; (void)len;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_SERVER_SHUTDOWN;
     return true;
 }
 
-static bool decodeChat(const uint8_t *buf, size_t len,
-                       ControlEvent *outEvt) {
+static bool decodeChatBody(const uint8_t *buf, size_t len,
+                           ControlEvent *outEvt) {
     if (len < 2) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_CHAT;
@@ -930,8 +1379,8 @@ static bool decodeChat(const uint8_t *buf, size_t len,
     return true;
 }
 
-static bool decodeGameVoteState(const uint8_t *buf, size_t len,
-                                ControlEvent *outEvt) {
+static bool decodeGameVoteStateBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
     if (len < 11) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_GAME_VOTE_STATE;
@@ -967,7 +1416,10 @@ static const ControlEncodeFn s_encoders[CTRL_EVENT_TYPE_COUNT] = {
     /* CTRL_MAP_DOWNLOAD_COMPLETE intentionally absent (NULL). */
     [CTRL_BALANCE_PROPOSAL]   = encodeBalanceProposal,
     [CTRL_MAP_SKIP_STATE]     = encodeMapSkipState,
-    [CTRL_GAME_PHASE]         = encodeGamePhase,
+    [CTRL_GAME_PHASE_LOBBY]      = encodeGamePhase,
+    [CTRL_GAME_PHASE_COUNTDOWN]  = encodeGamePhase,
+    [CTRL_GAME_PHASE_RUNNING]    = encodeGamePhase,
+    [CTRL_GAME_PHASE_GAME_OVER]  = encodeGamePhase,
     [CTRL_GAME_OVER]          = encodeGameOver,
     [CTRL_SERVER_SHUTDOWN]    = encodeServerShutdown,
     [CTRL_CHAT]               = encodeChat,
@@ -980,6 +1432,69 @@ static const ControlEncodeFn s_encoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SERVER_TEXT]        = encodeServerText,
 };
 
+/* ================================================================
+ * Body lookups — indexed by ControlEventType, 1:1 with s_encoders
+ * above. Used by the reliable carrier path (Phase 4+); no callers
+ * outside this file today. Same NULL slots as s_encoders for
+ * variants that have no wire form (CTRL_MAP_DOWNLOAD_COMPLETE).
+ * ================================================================ */
+
+static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
+    [CTRL_ALLIANCE_REQUEST]      = encodeAllianceRequestBody,
+    [CTRL_ALLIANCE_ACCEPT]       = encodeAllianceAcceptBody,
+    [CTRL_ALLIANCE_LEAVE]        = encodeAllianceLeaveBody,
+    [CTRL_PLAYER_JOIN]           = encodePlayerJoinBody,
+    [CTRL_PLAYER_NAME]           = encodePlayerNameBody,
+    [CTRL_LOBBY_SLOT]            = encodeLobbySlotBody,
+    [CTRL_LOBBY_SETTINGS]        = encodeLobbySettingsBody,
+    [CTRL_LOBBY_MAP_CHANGE]      = encodeLobbyMapChangeBody,
+    /* CTRL_MAP_DOWNLOAD_COMPLETE intentionally absent (NULL). */
+    [CTRL_BALANCE_PROPOSAL]      = encodeBalanceProposalBody,
+    [CTRL_MAP_SKIP_STATE]        = encodeMapSkipStateBody,
+    [CTRL_GAME_PHASE_LOBBY]      = encodeGamePhaseLobbyBody,
+    [CTRL_GAME_PHASE_COUNTDOWN]  = encodeGamePhaseCountdownBody,
+    [CTRL_GAME_PHASE_RUNNING]    = encodeGamePhaseRunningBody,
+    [CTRL_GAME_PHASE_GAME_OVER]  = encodeGamePhaseGameOverBody,
+    [CTRL_GAME_OVER]             = encodeGameOverBody,
+    [CTRL_SERVER_SHUTDOWN]       = encodeServerShutdownBody,
+    [CTRL_CHAT]                  = encodeChatBody,
+    [CTRL_PLAYER_LEAVE]          = encodePlayerLeaveBody,
+    [CTRL_LOBBY_TEAM_META]       = encodeLobbyTeamMetaBody,
+    [CTRL_LOBBY_BOT_CONFIG]      = encodeLobbyBotConfigBody,
+    [CTRL_LOBBY_BOT_BRAIN]       = encodeLobbyBotBrainBody,
+    [CTRL_LOBBY_BRAIN_LIST]      = encodeLobbyBrainListBody,
+    [CTRL_GAME_VOTE_STATE]       = encodeGameVoteStateBody,
+    [CTRL_SERVER_TEXT]           = encodeServerTextBody,
+};
+
+static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
+    [CTRL_ALLIANCE_REQUEST]      = decodeAllianceRequestBody,
+    [CTRL_ALLIANCE_ACCEPT]       = decodeAllianceAcceptBody,
+    [CTRL_ALLIANCE_LEAVE]        = decodeAllianceLeaveBody,
+    [CTRL_PLAYER_JOIN]           = decodePlayerJoinBody,
+    [CTRL_PLAYER_NAME]           = decodePlayerNameBody,
+    [CTRL_LOBBY_SLOT]            = decodeLobbySlotBody,
+    [CTRL_LOBBY_SETTINGS]        = decodeLobbySettingsBody,
+    [CTRL_LOBBY_MAP_CHANGE]      = decodeLobbyMapChangeBody,
+    /* CTRL_MAP_DOWNLOAD_COMPLETE intentionally absent (NULL). */
+    [CTRL_BALANCE_PROPOSAL]      = decodeBalanceProposalBody,
+    [CTRL_MAP_SKIP_STATE]        = decodeMapSkipStateBody,
+    [CTRL_GAME_PHASE_LOBBY]      = decodeGamePhaseLobbyBody,
+    [CTRL_GAME_PHASE_COUNTDOWN]  = decodeGamePhaseCountdownBody,
+    [CTRL_GAME_PHASE_RUNNING]    = decodeGamePhaseRunningBody,
+    [CTRL_GAME_PHASE_GAME_OVER]  = decodeGamePhaseGameOverBody,
+    [CTRL_GAME_OVER]             = decodeGameOverBody,
+    [CTRL_SERVER_SHUTDOWN]       = decodeServerShutdownBody,
+    [CTRL_CHAT]                  = decodeChatBody,
+    [CTRL_PLAYER_LEAVE]          = decodePlayerLeaveBody,
+    [CTRL_LOBBY_TEAM_META]       = decodeLobbyTeamMetaBody,
+    [CTRL_LOBBY_BOT_CONFIG]      = decodeLobbyBotConfigBody,
+    [CTRL_LOBBY_BOT_BRAIN]       = decodeLobbyBotBrainBody,
+    [CTRL_LOBBY_BRAIN_LIST]      = decodeLobbyBrainListBody,
+    [CTRL_GAME_VOTE_STATE]       = decodeGameVoteStateBody,
+    [CTRL_SERVER_TEXT]           = decodeServerTextBody,
+};
+
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
     if (type < 0 || type >= CTRL_EVENT_TYPE_COUNT) return NULL;
     return s_encoders[type];
@@ -988,24 +1503,34 @@ ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
 ControlDecodeFn transportControlCodecDecoder(uint16_t packetType) {
     switch (packetType) {
         case PACKET_ALLIANCE_UPDATE:  return decodeAllianceUpdate;
-        case PACKET_PLAYER_JOINED:    return decodePlayerJoin;
-        case PACKET_NAME_CHANGE:      return decodePlayerName;
-        case PACKET_LOBBY_UPDATE:     return decodeLobbySlot;
-        case PACKET_LOBBY_SETTINGS:   return decodeLobbySettings;
-        case PACKET_LOBBY_MAP_CHANGE: return decodeLobbyMapChange;
-        case PACKET_BALANCE_PROPOSAL: return decodeBalanceProposal;
-        case PACKET_MAP_SKIP_STATE:   return decodeMapSkipState;
-        case PACKET_COUNTDOWN:        return decodeCountdown;
-        case PACKET_GAME_START:       return decodeGameStart;
-        case PACKET_GAME_OVER:        return decodeGameOver;
-        case PACKET_SERVER_SHUTDOWN:  return decodeServerShutdown;
-        case PACKET_CHAT_BROADCAST:   return decodeChat;
-        case PACKET_PLAYER_LEFT:      return decodePlayerLeave;
-        case PACKET_LOBBY_TEAM_META_CHG:  return decodeLobbyTeamMeta;
-        case PACKET_LOBBY_BOT_CONFIG_CHG: return decodeLobbyBotConfig;
-        case PACKET_LOBBY_BOT_BRAIN_CHG:  return decodeLobbyBotBrain;
-        case PACKET_LOBBY_BRAIN_LIST:     return decodeLobbyBrainList;
-        case PACKET_GAME_VOTE_STATE:      return decodeGameVoteState;
+        case PACKET_PLAYER_JOINED:    return decodePlayerJoinBody;
+        case PACKET_NAME_CHANGE:      return decodePlayerNameBody;
+        case PACKET_LOBBY_UPDATE:     return decodeLobbySlotBody;
+        case PACKET_LOBBY_SETTINGS:   return decodeLobbySettingsBody;
+        case PACKET_LOBBY_MAP_CHANGE: return decodeLobbyMapChangeBody;
+        case PACKET_BALANCE_PROPOSAL: return decodeBalanceProposalBody;
+        case PACKET_MAP_SKIP_STATE:   return decodeMapSkipStateBody;
+        case PACKET_COUNTDOWN:        return decodeGamePhaseCountdownBody;
+        case PACKET_GAME_START:       return decodeGamePhaseRunningBody;
+        case PACKET_GAME_OVER:        return decodeGameOverBody;
+        case PACKET_SERVER_SHUTDOWN:  return decodeServerShutdownBody;
+        case PACKET_CHAT_BROADCAST:   return decodeChatBody;
+        case PACKET_PLAYER_LEFT:      return decodePlayerLeaveBody;
+        case PACKET_LOBBY_TEAM_META_CHG:  return decodeLobbyTeamMetaBody;
+        case PACKET_LOBBY_BOT_CONFIG_CHG: return decodeLobbyBotConfigBody;
+        case PACKET_LOBBY_BOT_BRAIN_CHG:  return decodeLobbyBotBrainBody;
+        case PACKET_LOBBY_BRAIN_LIST:     return decodeLobbyBrainListBody;
+        case PACKET_GAME_VOTE_STATE:      return decodeGameVoteStateBody;
         default:                      return NULL;
     }
+}
+
+ControlEncodeBodyFn transportControlCodecBodyEncoder(ControlEventType type) {
+    if (type < 0 || type >= CTRL_EVENT_TYPE_COUNT) return NULL;
+    return s_bodyEncoders[type];
+}
+
+ControlDecodeBodyFn transportControlCodecBodyDecoder(ControlEventType type) {
+    if (type < 0 || type >= CTRL_EVENT_TYPE_COUNT) return NULL;
+    return s_bodyDecoders[type];
 }

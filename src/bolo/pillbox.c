@@ -520,7 +520,7 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue) {
+BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BYTE viewPlayer) {
   bool done;        /* Finished searching */
   BYTE returnValue; /* Value to return */
   BYTE count;       /* Looping Variable */
@@ -533,8 +533,8 @@ BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yVal
     if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].inTank == FALSE) {
       /* Pillbox has been Hit */
       done = TRUE;
-      
-      if (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, sim->viewPlayer ) == FALSE) {
+
+      if (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, viewPlayer ) == FALSE) {
         switch((*value)->item[count].armour) {
         case PILLBOX_15:
           returnValue = PILL_EVIL_15;

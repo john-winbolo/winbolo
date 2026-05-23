@@ -248,6 +248,20 @@ void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value);
 void frontEndSetPlayer(struct ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags);
 
 /*********************************************************
+*NAME:          frontEndUpdatePlayerPing
+*PURPOSE:
+* Per-tick ping refresh.  client_snapshot calls this for every
+* player slot whose tank snapshot carries a pingMs so the HUD
+* ping column tracks the live value rather than freezing at the
+* value cached when the player joined.
+*
+*ARGUMENTS:
+*  value - The player number
+*  ping  - Player ping in ms, 0 = unknown
+*********************************************************/
+void frontEndUpdatePlayerPing(struct ClientSim *cs, playerNumbers value, uint16_t ping);
+
+/*********************************************************
 *NAME:          frontEndDrawDownload
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/3/99
@@ -278,8 +292,9 @@ void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool
 /*********************************************************
 *NAME:          frontEndApplyLocalTankPrefs
 *PURPOSE:
-* Called by client_mapload right after the local player's tank
-* has been created via clientSimSetupSelf, so the frontend can
+* Called by the client connect path right after the local
+* player's tank has been created via clientSimSetupSelf, so
+* the frontend can
 * push per-tank preferences (Auto Slowdown, Auto Hide Gunsight)
 * onto the freshly created tank pointer. Previously the
 * preferences were applied earlier in the boot sequence — before

@@ -37,12 +37,18 @@ struct currentGamesObj;
 
 /* Result of a single discoveryPingServer() call. rttMs is the round-trip
  * time in milliseconds when the function returns true; the rest of the
- * fields carry the server-reported counts. */
+ * fields carry the server-reported counts. The version triple is the
+ * server's build (from the INFO_RESPONSE header) — populated regardless
+ * of whether it matches the client, so callers can pre-flight a join
+ * against a mixed-version server. */
 typedef struct {
   int  rttMs;
   WORD freePills;
   WORD freeBases;
   WORD numPlayers;
+  BYTE versionMajor;
+  BYTE versionMinor;
+  BYTE versionRevision;
 } DiscoveryPingResult;
 
 /* A server discovered via LAN broadcast. Plain data — no wire-format

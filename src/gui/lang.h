@@ -1214,6 +1214,12 @@
 /* Lobby — map chooser (continued) */
 #define STR_DLGLOBBY_CHOOSE_MAP_BTN         1388
 
+/* Client-side pre-flight version-mismatch error. Surfaced by the
+ * direct-connect / rejoin entry when an info-request reveals the
+ * server runs a different build than this client. {string1} = server
+ * version (X.Y.Z), {string2} = client version (X.Y.Z). */
+#define STR_REJECT_VERSION_MISMATCH         1389
+
 /* Lobby — upload + WBN errors */
 #define STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT        1285
 #define STR_DLGLOBBY_UPLOAD_ERR_DISABLED        1286

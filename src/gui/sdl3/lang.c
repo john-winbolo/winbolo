@@ -1236,6 +1236,10 @@ static const LangEntry langTable[] = {
     {1383, "Internet"},
     {1384, "Test in progress"},
     {1388, "Choose Map"},
+
+    /* Pre-flight version-mismatch error (client-side, surfaced by the
+     * direct-connect / rejoin entry). */
+    {1389, "Server is version {string1}, you have {string2} \xE2\x80\x94 please update."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
