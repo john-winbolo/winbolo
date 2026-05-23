@@ -2619,6 +2619,127 @@ function Brain.think(info)
       refuel_needed = need_armour or need_shells or need_mines
       refuel_complete = not refuel_needed
 
+      -- Wait-for-ally substate.  When closing in on the base, if an ally
+      -- tank is already standing on the goal tile we yield rather than
+      -- pile on (each base supplies one tank at a time; two of us on the
+      -- same tile is wasted time + a coordination headache).  Hold up to
+      -- REFUEL_ALLY_WAIT_TICKS; if the ally hasn't moved by then they
+      -- aren't leaving soon — blocklist the base and let goal selection
+      -- find us another one.
+      if state.goal.mx and state.goal.my then
+        local our_mx = info.tankx >> 8
+        local our_my = info.tanky >> 8
+        local dist_cheb = math.max(math.abs(our_mx - state.goal.mx),
+                                   math.abs(our_my - state.goal.my))
+        local on_base_ourselves = (dist_cheb == 0)
+        -- Always scan when refuel_at_base is active so the
+        -- hud_refuel_ally_check overlay can show the live answer.
+        -- Cheap (info.objects is short).
+        local ally_on_base = false
+        for _, ob in ipairs(info.objects) do
+          if ob.type == 0   -- OBJECT_TANK
+             and (ob.info & 1) == 0   -- not OBJECT_HOSTILE → ally (excludes self; self isn't in info.objects)
+             and (ob.x >> 8) == state.goal.mx
+             and (ob.y >> 8) == state.goal.my then
+            ally_on_base = true
+            break
+          end
+        end
+
+        -- HUD line — always when refuel_at_base is the goal.
+        if BRAIN_DEBUG_MODE then
+          local wait_str
+          if state.goal.wait_mx and state.goal.wait_my then
+            wait_str = string.format("(%d,%d)", state.goal.wait_mx, state.goal.wait_my)
+          else
+            wait_str = "(-)"
+          end
+          viz.hud_text("hud_refuel_ally_check", 10, 220,
+            string.format("Ally occupied check [%d/%d tiles] (%d,%d): %s, wait at %s",
+                          dist_cheb, C.REFUEL_ALLY_WAIT_DIST,
+                          state.goal.mx, state.goal.my,
+                          ally_on_base and "occupied" or "empty",
+                          wait_str),
+            "topleft",
+            ally_on_base and 255 or 180,
+            ally_on_base and 180 or 220,
+            ally_on_base and 80  or 180,
+            230)
+        end
+
+        if refuel_needed
+           and not on_base_ourselves
+           and dist_cheb <= C.REFUEL_ALLY_WAIT_DIST
+           and ally_on_base then
+          if state.goal.substate ~= "wait_for_ally" then
+            state.goal.substate = "wait_for_ally"
+            state.goal.wait_started_tick = now
+            -- Pick a low-danger park spot in an 11x11 square around the
+            -- base.  Hanging out next to the base is fine but we don't
+            -- want to idle next to a heating-up pillbox; rank candidates
+            -- by danger first, then by Dijkstra cost from our current
+            -- position.  Cap the path cost at ~500 so we don't wander
+            -- across the map to wait.
+            local WAIT_RADIUS    = 5      -- 11x11 square
+            local WAIT_COST_CAP  = 500
+            local best_mx, best_my = nil, nil
+            local best_d, best_c = math.huge, math.huge
+            local bmx, bmy = state.goal.mx, state.goal.my
+            for dy = -WAIT_RADIUS, WAIT_RADIUS do
+              for dx = -WAIT_RADIUS, WAIT_RADIUS do
+                local cx = U.mclamp(bmx + dx)
+                local cy = U.mclamp(bmy + dy)
+                if (cx ~= bmx or cy ~= bmy)
+                   and not U.is_water(U.ttype(cx, cy)) then
+                  local pcost = cpf.dijkstra_lookup_by_kind(0 --[[KIND_NORMAL]], cx, cy, 0)
+                  if pcost and pcost < WAIT_COST_CAP then
+                    local d = threat.at(cx, cy) or 0
+                    if d < best_d or (d == best_d and pcost < best_c) then
+                      best_d, best_c = d, pcost
+                      best_mx, best_my = cx, cy
+                    end
+                  end
+                end
+              end
+            end
+            state.goal.wait_mx = best_mx
+            state.goal.wait_my = best_my
+            if BRAIN_DEBUG_MODE then
+              print(string.format(TAG .. " t=%d REFUEL: ally on base (%d,%d), wait_for_ally → park (%s,%s) danger=%.1f cost=%.0f",
+                    now, state.goal.mx, state.goal.my,
+                    tostring(best_mx), tostring(best_my),
+                    best_d == math.huge and -1 or best_d,
+                    best_c == math.huge and -1 or best_c))
+            end
+          end
+          local waited = now - (state.goal.wait_started_tick or now)
+          if waited >= C.REFUEL_ALLY_WAIT_TICKS then
+            -- Timed out — ally is camping.  Block this base and replan.
+            local bk = U.mkey(state.goal.mx, state.goal.my)
+            state.blocked[bk] = now + 200
+            attack.clear_attack_goal(state)
+            if BRAIN_DEBUG_MODE then
+              print(string.format(TAG .. " t=%d REFUEL: wait_for_ally timed out at (%d,%d) after %d ticks, blocking base",
+                    now, state.goal.mx, state.goal.my, waited))
+            end
+          else
+            -- Hold position; suppress timer/position-based replan while waiting.
+            refuel_hold = true
+          end
+        elseif state.goal.substate == "wait_for_ally" then
+          -- Base cleared (or we got far enough away that nobody's on
+          -- it) — resume normal approach.
+          state.goal.substate = nil
+          state.goal.wait_started_tick = nil
+          state.goal.wait_mx = nil
+          state.goal.wait_my = nil
+          if BRAIN_DEBUG_MODE then
+            print(string.format(TAG .. " t=%d REFUEL: ally cleared base (%d,%d), resuming approach",
+                  now, state.goal.mx, state.goal.my))
+          end
+        end
+      end
+
       -- Depleted-base detection runs regardless of lock-in: if we arrive
       -- at a base that has nothing to give us, block it and replan.
       if refuel_needed and info.base then

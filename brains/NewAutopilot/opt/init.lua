@@ -2166,6 +2166,91 @@ function Brain.think(info)
       refuel_needed = need_armour or need_shells or need_mines
       refuel_complete = not refuel_needed
 
+      if state.goal.mx and state.goal.my then
+        local our_mx = info.tankx >> 8
+        local our_my = info.tanky >> 8
+        local dist_cheb = math.max(math.abs(our_mx - state.goal.mx),
+                                   math.abs(our_my - state.goal.my))
+        local on_base_ourselves = (dist_cheb == 0)
+        local ally_on_base = false
+        for _, ob in ipairs(info.objects) do
+          if ob.type == 0
+             and (ob.info & 1) == 0
+             and (ob.x >> 8) == state.goal.mx
+             and (ob.y >> 8) == state.goal.my then
+            ally_on_base = true
+            break
+          end
+        end
+
+        if BRAIN_DEBUG_MODE then
+          local wait_str
+          if state.goal.wait_mx and state.goal.wait_my then
+            wait_str = string.format("(%d,%d)", state.goal.wait_mx, state.goal.wait_my)
+          else
+            wait_str = "(-)"
+          end
+          viz.hud_text("hud_refuel_ally_check", 10, 220,
+            string.format("Ally occupied check [%d/%d tiles] (%d,%d): %s, wait at %s",
+                          dist_cheb, C.REFUEL_ALLY_WAIT_DIST,
+                          state.goal.mx, state.goal.my,
+                          ally_on_base and "occupied" or "empty",
+                          wait_str),
+            "topleft",
+            ally_on_base and 255 or 180,
+            ally_on_base and 180 or 220,
+            ally_on_base and 80  or 180,
+            230)
+        end
+
+        if refuel_needed
+           and not on_base_ourselves
+           and dist_cheb <= C.REFUEL_ALLY_WAIT_DIST
+           and ally_on_base then
+          if state.goal.substate ~= "wait_for_ally" then
+            state.goal.substate = "wait_for_ally"
+            state.goal.wait_started_tick = now
+            local WAIT_RADIUS    = 5
+            local WAIT_COST_CAP  = 500
+            local best_mx, best_my = nil, nil
+            local best_d, best_c = math.huge, math.huge
+            local bmx, bmy = state.goal.mx, state.goal.my
+            for dy = -WAIT_RADIUS, WAIT_RADIUS do
+              for dx = -WAIT_RADIUS, WAIT_RADIUS do
+                local cx = U.mclamp(bmx + dx)
+                local cy = U.mclamp(bmy + dy)
+                if (cx ~= bmx or cy ~= bmy)
+                   and not U.is_water(U.ttype(cx, cy)) then
+                  local pcost = cpf.dijkstra_lookup_by_kind(0, cx, cy, 0)
+                  if pcost and pcost < WAIT_COST_CAP then
+                    local d = threat.at(cx, cy) or 0
+                    if d < best_d or (d == best_d and pcost < best_c) then
+                      best_d, best_c = d, pcost
+                      best_mx, best_my = cx, cy
+                    end
+                  end
+                end
+              end
+            end
+            state.goal.wait_mx = best_mx
+            state.goal.wait_my = best_my
+          end
+          local waited = now - (state.goal.wait_started_tick or now)
+          if waited >= C.REFUEL_ALLY_WAIT_TICKS then
+            local bk = U.mkey(state.goal.mx, state.goal.my)
+            state.blocked[bk] = now + 200
+            attack.clear_attack_goal(state)
+          else
+            refuel_hold = true
+          end
+        elseif state.goal.substate == "wait_for_ally" then
+          state.goal.substate = nil
+          state.goal.wait_started_tick = nil
+          state.goal.wait_mx = nil
+          state.goal.wait_my = nil
+        end
+      end
+
       -- Depleted-base detection runs regardless of lock-in: if we arrive
       -- at a base that has nothing to give us, block it and replan.
       if refuel_needed and info.base then

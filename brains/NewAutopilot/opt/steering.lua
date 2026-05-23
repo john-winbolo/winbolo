@@ -1725,11 +1725,18 @@ function M.steer(state, world, info, goal)
     return keys, taps
 
   elseif goal.kind == "refuel_at_base" then
-    -- Navigate to the base if not on it yet; brake if already there
-    local on_base = (tmx == goal.mx and tmy == goal.my)
+    local nav_mx, nav_my = goal.mx, goal.my
+    if goal.substate == "wait_for_ally" then
+      if goal.wait_mx and goal.wait_my then
+        nav_mx, nav_my = goal.wait_mx, goal.wait_my
+      else
+        return keys, taps
+      end
+    end
+    local on_base = (tmx == nav_mx and tmy == nav_my)
     if not on_base then
       local _t_p0 = BRAIN_PROFILE and clock_us() or 0
-      local nx, ny = cpf_path_to(state, info, goal.mx, goal.my)
+      local nx, ny = cpf_path_to(state, info, nav_mx, nav_my)
       if nx then
         local _t_la0 = BRAIN_PROFILE and clock_us() or 0
         local lx, ly = path_lookahead(state, info, nx, ny)
@@ -1742,7 +1749,7 @@ function M.steer(state, world, info, goal)
         target_dist = U.wdist(info.tankx, info.tanky, U.m2w(lx), U.m2w(ly))
       end
       if BRAIN_PROFILE then _t_path_us = _t_path_us + (clock_us() - _t_p0) end
-      goal_dist = U.wdist(info.tankx, info.tanky, goal.wx, goal.wy)
+      goal_dist = U.wdist(info.tankx, info.tanky, U.m2w(nav_mx), U.m2w(nav_my))
 
       -- Nav debug overlay (same as the generic navigate branch below)
     end

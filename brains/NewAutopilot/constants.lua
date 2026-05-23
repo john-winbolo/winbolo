@@ -185,6 +185,13 @@ M.REFUEL_OBS_STALE = 500  -- ignore observed stock older than this many ticks (b
 -- attack/capture mid-refuel. Disable to test how the bot behaves with
 -- normal replanning during refuel.
 M.REFUEL_LOCK_IN = false
+-- Wait-for-ally on refuel base. If we close to within REFUEL_ALLY_WAIT_DIST
+-- (chebyshev tiles) of our target base and an ally tank is currently
+-- standing on the base tile, enter the `wait_for_ally` substate and brake
+-- until they leave or REFUEL_ALLY_WAIT_TICKS elapses (then we blocklist
+-- the base and replan).  Keeps two bots from piling onto one base.
+M.REFUEL_ALLY_WAIT_DIST  = 2     -- tiles
+M.REFUEL_ALLY_WAIT_TICKS = 500   -- ~10 s @ 50 Hz
 M.PILLS_MAX_HEALTH = 15   -- fully repaired pill
 M.BASE_MIN_ARMOUR_CAPTURE = 0  -- engine reports 1 for all hostile bases (fog of war); 0 means truly dead/capturable
 

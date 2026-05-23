@@ -205,6 +205,12 @@ M.IDS = {
   chat_log_overlay   = { short = "Chat log",
                          long  = "Ring of recent incoming + outgoing chat messages (in particular /info traffic)" },
 
+  -- HUD line shown whenever refuel_at_base is the active goal: reports
+  -- the chebyshev distance to the base, whether an ally tank is on the
+  -- base tile, and (when in wait_for_ally) the chosen park tile.
+  hud_refuel_ally_check = { short = "HUD: refuel ally check",
+                            long  = "When refuel_at_base is the active goal, shows ally-on-base check distance, occupancy, and the wait_for_ally park tile." },
+
   -- Tank combat standoff scan (attack_tank substate).
   tank_combat_standoff_scan = { short = "Tank combat standoff scan",
                                 long  = "Per-spot score boxes, maneuver tiles, chosen standoff circle/ellipse for attack_tank" },

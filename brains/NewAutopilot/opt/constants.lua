@@ -185,6 +185,8 @@ M.REFUEL_OBS_STALE = 500  -- ignore observed stock older than this many ticks (b
 -- attack/capture mid-refuel. Disable to test how the bot behaves with
 -- normal replanning during refuel.
 M.REFUEL_LOCK_IN = false
+M.REFUEL_ALLY_WAIT_DIST  = 2
+M.REFUEL_ALLY_WAIT_TICKS = 500
 M.PILLS_MAX_HEALTH = 15   -- fully repaired pill
 M.BASE_MIN_ARMOUR_CAPTURE = 0  -- engine reports 1 for all hostile bases (fog of war); 0 means truly dead/capturable
 
