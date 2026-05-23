@@ -3165,6 +3165,19 @@ function Brain.think(info)
       if state.goal.target_id and state.goal.target_id >= 0 then
         bsi.target = tostring(state.goal.target_id)
       end
+      if state.pool_cache then
+        for pi = 0, 12 do
+          local pce = state.pool_cache[pi]
+          if pce and pce.goal
+             and pce.goal.kind == state.goal.kind
+             and pce.goal.mx   == state.goal.mx
+             and pce.goal.my   == state.goal.my
+             and pce.cost ~= nil then
+            bsi.cost = string.format("%.0f", pce.cost)
+            break
+          end
+        end
+      end
     end
 
     local last = state.last_broadcasted_state_info
