@@ -1513,6 +1513,7 @@ set(LOGVIEWER_IMGUI_SOURCES
 # LOGVIEWER_LIB_SOURCES because the WinBolo client already links its own copy.
 set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
+    src/gui/sdl3/dialogs/dialog_footer.cpp
     src/logviewer/imgui/imgui_lv_browser_stubs.cpp
 )
 
