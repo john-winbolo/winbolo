@@ -467,7 +467,7 @@ M.GOAL_ABANDON_COOLDOWN    = 0     -- ticks before an abandoned goal can be pick
 M.WALL_SHIELD_COMMITMENT        = 200  -- extra switch penalty when wall-shield attack is in progress
 M.ATTACK_TANK_COMMITMENT_BONUS  = 50   -- extra commitment when currently fighting a tank (see it through)
 M.ATTACK_PILL_COMMITMENT_BONUS  = 80   -- extra commitment when mid-attack on a pill; also revokes hysteresis exemption for attack_tank/capture_pill so they can't interrupt for free
-M.REFUEL_URGENCY_MIN       = 0.15  -- minimum urgency multiplier for refuel cost
+M.REFUEL_URGENCY_MIN       = 0.37  -- minimum urgency multiplier for refuel cost
 M.PILL_HEALTH_WEIGHT       = 5     -- cost per HP of hostile pill (full 15HP pill = +75)
 M.REPAIR_DAMAGE_BONUS      = 3     -- cost reduction per missing HP on friendly pill
 M.ATTACK_BASE_EXTRA_COST   = 80    -- flat cost added to hostile base attacks

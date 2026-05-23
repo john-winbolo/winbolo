@@ -614,6 +614,8 @@ local function eval_refuel(state, world, info, tmx, tmy, boat, ammo)
   if not base then return nil end
   local arm_u = math.min(1.0, info.armour / C.ARMOUR_LOW)
   local sh_u  = math.min(1.0, info.shells / C.SHELLS_LOW)
+  arm_u = arm_u * arm_u
+  sh_u  = sh_u  * sh_u
   local urgency = math.max(C.REFUEL_URGENCY_MIN, math.min(arm_u, sh_u))
   local cost = bscore * urgency
   -- Surface the hysteresis state in the desc so the user can see when
@@ -872,6 +874,9 @@ local function eval_attack_pill(state, world, info, tmx, tmy, boat, ammo)
   local shells_on_arrival = cpf.dijkstra_shells_at(KIND_NORMAL, pill.mx, pill.my)
                          or cpf.astar_shells_at(pill.mx, pill.my)
   local adj_cost, antic_desc = attack_pill_adjustments(pill, pcost, state, world)
+  if pill.health >= 12 and info.armour <= (C.ARMOUR_LOW or 15) then
+    adj_cost = adj_cost + 200
+  end
   local lm, lr = strategic_location_mult(pill.mx, pill.my, state, world, info, "attack_pill", pill)
 
   return {
@@ -3554,9 +3559,10 @@ function M.finalize_pools(state, world, info)
     local bid = pr1.best_id
     local bscore = pr1.best_cost
 
-    -- Base urgency from current supplies vs low thresholds
     local arm_u = math.min(1.0, info.armour / C.ARMOUR_LOW)
     local sh_u  = math.min(1.0, info.shells / C.SHELLS_LOW)
+    arm_u = arm_u * arm_u
+    sh_u  = sh_u  * sh_u
     local urgency = math.max(C.REFUEL_URGENCY_MIN, math.min(arm_u, sh_u))
 
     -- Combat look-ahead: check if attack_pill is the likely next goal
@@ -3566,9 +3572,10 @@ function M.finalize_pools(state, world, info)
       local needed_armour = target_hp * C.ARMOUR_PER_PILL_HP
       local needed_shells = target_hp  -- ~1 shell per HP
       if info.armour < needed_armour or info.shells < needed_shells then
-        -- We'd be under-supplied for this fight — boost refuel urgency
         local combat_arm_u = math.min(1.0, info.armour / math.max(1, needed_armour))
         local combat_sh_u  = math.min(1.0, info.shells / math.max(1, needed_shells))
+        combat_arm_u = combat_arm_u * combat_arm_u
+        combat_sh_u  = combat_sh_u  * combat_sh_u
         local combat_urgency = math.max(C.REFUEL_URGENCY_MIN, math.min(combat_arm_u, combat_sh_u))
         if combat_urgency < urgency then
           urgency = combat_urgency  -- use the more urgent (lower = cheaper refuel)
@@ -4132,18 +4139,20 @@ local function goal_selection(state, world, info, quiet)
       -- skips normal pool-1 shaping so BASE_COST/DEFICIT/LGM_WAIT don't
       -- layer on top. `cands` seeded so the display has a real row (not
       -- (pending)) and the WINNERS section picks the right representative.
-      local flee_desc = BRAIN_POOL_VIZ and string.format("CRITICAL flee_to_base#%d arm=%.0f<%d dist=%.0f",
-                                       bid, info.armour, flee_threshold, bdist) or ""
+      local _prev_cost = (state.pool_cache[1] and state.pool_cache[1].cost) or math.huge
+      local _crit_cost = math.min(40, _prev_cost)
+      local flee_desc = BRAIN_POOL_VIZ and string.format("CRITICAL flee_to_base#%d arm=%.0f<%d dist=%.0f cost=%.0f",
+                                       bid, info.armour, flee_threshold, bdist, _crit_cost) or ""
       state.pool_cache[1] = {
         goal = {
           kind = "flee_to_base", mx = base.mx, my = base.my,
           wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid,
         },
-        cost = 40,
+        cost = _crit_cost,
         desc = flee_desc,
         cands = {
           { id = bid, mx = base.mx, my = base.my,
-            cost = 40,
+            cost = _crit_cost,
             own = "friendly", hp = 0,
             stale = 0 },
         },
@@ -4152,14 +4161,14 @@ local function goal_selection(state, world, info, quiet)
       -- Seed cost_cache so the display row can find a non-nil cost + formula.
       if not state.cost_cache then state.cost_cache = {} end
       state.cost_cache["1:" .. bid] = {
-        cost = 40, raw = bdist, tick = state.tick or 0, _p = 1,
+        cost = _crit_cost, raw = bdist, tick = state.tick or 0, _p = 1,
         _mx = base.mx, _my = base.my,
         _dv = 0, _dang = 0, _age = 0,
         _stale = 0, _contest = 0,
         _hyst = 0, _ratio = 1, _dep = 0,
-        formula = string.format("CRITICAL flee_to_base#%d arm{%.0f}<thr{%d} dist{%.0f} cost{40}"..
-                                "||Critical-armour refuel injection: pool-1 shaping bypassed, fixed cost=40",
-                                bid, info.armour, flee_threshold, bdist),
+        formula = string.format("CRITICAL flee_to_base#%d arm{%.0f}<thr{%d} dist{%.0f} cost{%.0f}"..
+                                "||Critical-armour refuel injection: min(40, prior_pool1_cost)",
+                                bid, info.armour, flee_threshold, bdist, _crit_cost),
       }
       state.flee_breakdown = {
         bid = bid, mx = base.mx, my = base.my, dist = bdist,

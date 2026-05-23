@@ -1866,6 +1866,12 @@ function M.steer(state, world, info, goal)
         if pf.next_mx and pf.next_mx >= 0 then
           viz.rect("steering_text", pf.next_mx, pf.next_my, pf.next_mx + 1, pf.next_my + 1,
                        255, 255, 0, 200)
+          -- Show which pathfinder produced this step. path_to picks
+          -- Dijkstra slate KIND_NORMAL first; falls back to A* on miss.
+          local method = cpf._last_method or "?"
+          local label  = (method == "dij") and "dij/NORMAL" or method
+          viz.text("steering_text", pf.next_mx + 0.05, pf.next_my + 0.05, label,
+                   "topleft", 255, 255, 0, 220)
         end
         if state._steer_lx then
           viz.circle("nav_lookahead_marker", state._steer_lx + 0.5, state._steer_ly + 0.5, 0.4,
@@ -2025,10 +2031,12 @@ function M.steer(state, world, info, goal)
         local cheb = math.max(dmx, dmy)
         local pf_status = pf.status or "?"
         -- Detailed info at top: coords + chebyshev + status.
+        local method = cpf._last_method or "?"
+        local m_label = (method == "dij") and "dij/NORMAL" or method
         viz.text("steering_text",
                  pf.next_mx + 0.5, pf.next_my - 0.3,
-                 string.format("pf.next=(%d,%d) cheb=%d [%s]",
-                               pf.next_mx, pf.next_my, cheb, pf_status),
+                 string.format("pf.next=(%d,%d) cheb=%d [%s] %s",
+                               pf.next_mx, pf.next_my, cheb, pf_status, m_label),
                  "center", 255, 255, 120, 230, 0.5)
         -- Tiny "pf.next" tag at bottom, paired with the cliff-safety
         -- tag on the scan squares so the two yellows are distinguishable.
