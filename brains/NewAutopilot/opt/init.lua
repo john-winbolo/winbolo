@@ -1573,7 +1573,9 @@ function Brain.think(info)
   if info.messages then
     for _, m in ipairs(info.messages) do
       if m.text and m.text ~= "" then
-        ally_state.chat_log_add("in", m.sender, m.text, now)
+        if BRAIN_DEBUG_MODE then
+          ally_state.chat_log_add("in", m.sender, m.text, now)
+        end
         comms.process_message(m.sender, m.text, now)
 
         local cmd = cmds.parse(m.text)
@@ -3197,7 +3199,7 @@ function Brain.think(info)
     end
   end
 
-  if send_msg and send_msg ~= "" then
+  if BRAIN_DEBUG_MODE and send_msg and send_msg ~= "" then
     ally_state.chat_log_add("out", state.player_number, send_msg, now)
   end
 
