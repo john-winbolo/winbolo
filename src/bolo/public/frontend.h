@@ -248,6 +248,20 @@ void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value);
 void frontEndSetPlayer(struct ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags);
 
 /*********************************************************
+*NAME:          frontEndUpdatePlayerPing
+*PURPOSE:
+* Per-tick ping refresh.  client_snapshot calls this for every
+* player slot whose tank snapshot carries a pingMs so the HUD
+* ping column tracks the live value rather than freezing at the
+* value cached when the player joined.
+*
+*ARGUMENTS:
+*  value - The player number
+*  ping  - Player ping in ms, 0 = unknown
+*********************************************************/
+void frontEndUpdatePlayerPing(struct ClientSim *cs, playerNumbers value, uint16_t ping);
+
+/*********************************************************
 *NAME:          frontEndDrawDownload
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/3/99

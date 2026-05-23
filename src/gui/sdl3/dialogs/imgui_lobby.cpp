@@ -53,6 +53,7 @@ extern "C" {
 #include "playername_validate.h" /* playerNameValidate — client-side bot name gate */
 #include "../../../server/server_lifecycle.h"
 #include "platform_net.h"
+#include "../../../common/mp_diag_log.h"
 #include "../flags.h"
 #include "../sdl3imgui.h"
 #include "../minimap_render.h"
@@ -2904,8 +2905,22 @@ static void lobbySendSetting(ClientSim *cs,
         uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
         if (mins < LOBBY_TIME_MINUTES_MIN ||
             mins > LOBBY_TIME_MINUTES_MAX) {
+            mpDiagLog("[ui] lobbySendSetting REJECTED type=%d (time-minutes out of range)",
+                      (int)settingType);
             return;
         }
+    }
+    /* Surface the click at the UI boundary so we can distinguish
+     * "click never reached the wire" from "click reached the wire but
+     * the server rejected/no-op'd it" from "click reached the server,
+     * was applied, but the radio's checked-state isn't updating". */
+    {
+        uint32_t valDump = 0;
+        for (uint8_t k = 0; k < valueLen && k < 4; k++) {
+            valDump = (valDump << 8) | value[k];
+        }
+        mpDiagLog("[ui] lobbySendSetting type=%d valueLen=%d value=0x%08x",
+                  (int)settingType, (int)valueLen, valDump);
     }
     clientSimNetSendLobbySetting(cs, settingType, value, valueLen);
 }

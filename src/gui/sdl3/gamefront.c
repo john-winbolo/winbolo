@@ -1800,6 +1800,18 @@ static bool gameFrontStartServerSim(ServerSim *sim,
 bool gameFrontSetupServer(void) {
   ServerInstanceConfig cfg;
 
+  /* Idempotently clear any prior host session. Backing out of the
+   * lobby to the LAN/Internet game finder doesn't fire shutdown on
+   * its own — the dlgState machine just transitions back to openLan
+   * while the old timer thread, UDP socket, and ServerSim are still
+   * alive. Without this, the second "New" overwrites spServerSim
+   * (leaking the first) and memsets the global udpServer struct
+   * (orphaning the first socket and recv thread). The subsequent
+   * discoveryPingServer then sees no info-reply and hangs the main
+   * thread for the full 5-second recvfrom timeout. Shutdown no-ops
+   * when spServerSimActive is false, so this is safe on first entry. */
+  gameFrontShutdownServer();
+
   if (strncmp(fileName, "randommap:", 10) == 0) {
     MapGenConfig mcfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
     const char *seedStr = fileName + 10;

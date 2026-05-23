@@ -41,6 +41,7 @@
 #include "../steam/steam_wrapper.h"
 #include "global.h"      /* balanceDebugLog */
 #include "../common/wb_log.h"
+#include "../common/mp_diag_log.h"
 
 void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     if (cs == NULL || evt == NULL) {
@@ -132,6 +133,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                     (int)evt->u.lobbySlot.slot.isBot,
                     evt->u.lobbySlot.slot.playerName,
                     (int)evt->u.lobbySlot.slot.connected);
+        mpDiagLog("[clientSim] APPLY CTRL_LOBBY_SLOT cs=%p myPlayerNum=%d slot=%u team=%u ready=%d isBot=%d name='%.12s' connected=%d",
+                  (void *)cs, (int)cs->myPlayerNum,
+                  (unsigned)evt->u.lobbySlot.playerNum,
+                  (unsigned)evt->u.lobbySlot.slot.teamNumber,
+                  (int)evt->u.lobbySlot.slot.ready,
+                  (int)evt->u.lobbySlot.slot.isBot,
+                  evt->u.lobbySlot.slot.playerName,
+                  (int)evt->u.lobbySlot.slot.connected);
         cs->lobbySlots[evt->u.lobbySlot.playerNum] = evt->u.lobbySlot.slot;
         break;
 
@@ -174,18 +183,19 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyWbnAvailable = evt->u.lobbySettings.lobbyWbnAvailable;
         cs->lobbyServerLocks         = evt->u.lobbySettings.lobbyServerLocks;
         cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;
-        /* Adopt the server's authoritative game-timing settings while in
-         * lobby. Mid-game CTRL_LOBBY_SETTINGS arrivals (e.g. sync-replay
-         * for a late join during an active game) must NOT clobber the
-         * running gameLength / gameType, so gate on inLobby &&
-         * !netRunning. */
-        if (evt->u.lobbySettings.inLobby &&
-            evt->u.lobbySettings.netStat != netRunning) {
-            clientSimSetGameType(cs,       evt->u.lobbySettings.lobbyGameType);
-            clientSimSetHiddenMines(cs,    evt->u.lobbySettings.lobbyHiddenMines);
-            clientSimSetGmeStartDelay(cs,  evt->u.lobbySettings.lobbyStartDelay);
-            clientSimSetGmeLength(cs,      evt->u.lobbySettings.lobbyTimeLimit);
-        }
+        /* Adopt the server's authoritative game-timing settings. The
+         * server's lobbyTimeLimit field carries its current remaining
+         * gameLength (it decrements every running tick), so applying it
+         * mid-game refreshes the client's local view rather than
+         * clobbering it. The previous inLobby && !netRunning gate
+         * prevented mid-game sync-replay arrivals from ever delivering
+         * gmeLength to a late joiner; their default zero then fired
+         * the gmeLength==0 game-over branch in clientUiOnTick the
+         * first display tick after the snapshot landed. */
+        clientSimSetGameType(cs,       evt->u.lobbySettings.lobbyGameType);
+        clientSimSetHiddenMines(cs,    evt->u.lobbySettings.lobbyHiddenMines);
+        clientSimSetGmeStartDelay(cs,  evt->u.lobbySettings.lobbyStartDelay);
+        clientSimSetGmeLength(cs,      evt->u.lobbySettings.lobbyTimeLimit);
         break;
 
     case CTRL_LOBBY_TEAM_META: {

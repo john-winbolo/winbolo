@@ -188,6 +188,33 @@ void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
                         const char *playerName,
                         uint8_t clientType, uint8_t clientFlags);
 
+/*********************************************************
+ *NAME:          clientSimOnAssignedSlot
+ *PURPOSE:
+ *  Single entry point for "we just learned our slot from
+ *  the server."  Both the SP local-transport connect path
+ *  (clientSimConnectLocalBody) and the UDP JOIN_ACCEPT
+ *  handler MUST call this and only this — internally it
+ *  runs the setPlayerNum + setupSelf + applyLocalTankPrefs
+ *  sequence that both transports need.
+ *
+ *  Centralising removes the asymmetric-runtime bug class
+ *  where the UDP path forgot to call clientSimSetupSelf
+ *  and ran with MY_TANK(cs) == NULL for the lifetime of
+ *  the session, crashing every per-frame code path the
+ *  moment inLobby flipped to false.
+ *
+ *ARGUMENTS:
+ *  cs          - Freshly-allocated ClientSim
+ *  playerNum   - Slot the server assigned us
+ *  playerName  - Display name (must outlive the call)
+ *  clientType  - CLIENT_TYPE_* from JOIN context
+ *  clientFlags - PLAYER_FLAG_* bitmask
+ *********************************************************/
+void clientSimOnAssignedSlot(ClientSim *cs, BYTE playerNum,
+                             const char *playerName,
+                             uint8_t clientType, uint8_t clientFlags);
+
 void clientSimKeysTick(ClientSim *cs, const InputPacket *pkt);
 void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain);
 void clientSimSyncFromSnapshot(ClientSim *cs, const SnapshotHeader *hdr,

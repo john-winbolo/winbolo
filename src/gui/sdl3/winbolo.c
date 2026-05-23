@@ -1570,6 +1570,12 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
   sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, clientType, clientFlags);
 }
 
+void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientSimIsRunning(cs)) return;
+  sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
+}
+
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);

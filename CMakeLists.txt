@@ -665,6 +665,7 @@ endif()
 target_sources(WinBoloIOS PRIVATE src/steam/steam_wrapper_stub.c)
 target_sources(WinBoloIOS PRIVATE src/common/wb_log.c)
 target_sources(WinBoloIOS PRIVATE src/common/md5.c)
+target_sources(WinBoloIOS PRIVATE src/common/mp_diag_log.c)
 set_flat_output(WinBoloIOS "${CMAKE_BINARY_DIR}")
 
 # Hide dependency targets from the Xcode project — only WinBoloIOS should
@@ -1414,6 +1415,7 @@ endif()
 target_sources(WinBoloDS PRIVATE src/common/sentry_integration.c)
 target_sources(WinBoloDS PRIVATE src/common/wb_log.c)
 target_sources(WinBoloDS PRIVATE src/common/md5.c)
+target_sources(WinBoloDS PRIVATE src/common/mp_diag_log.c)
 if(HAVE_SENTRY)
     target_compile_definitions(WinBoloDS PRIVATE HAVE_SENTRY=1)
     if(SENTRY_DSN)
@@ -2303,6 +2305,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_set_team_clamps.c
     tests/unit/test_md5.c
     src/common/md5.c
+    src/common/mp_diag_log.c
     tests/unit/test_ranked_lobby.c
     tests/unit/test_lobby_locks.c
     tests/unit/test_upload_cap.c
@@ -2317,6 +2320,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
     tests/unit/test_wbn_country_cache.c
+    tests/unit/test_control_event_queue.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2430,6 +2434,13 @@ set(_unit_test_names
     wbn_rekey_codec
     wbn_news_parse
     wbn_country_cache
+    queue_init_is_valid
+    queue_enqueue_advances_nextSeq
+    queue_ack_advance_within_range
+    queue_stale_ack_above_nextSeq
+    queue_wipe_resets_both_seqs
+    queue_enqueue_into_empty_after_wipe
+    queue_hasspace_at_capacity
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}

@@ -325,11 +325,45 @@ void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
         MY_TANK(cs) = NULL;
     }
     tankCreate(&cs->sim, &MY_TANK(cs));
+    /* LGM lifecycle must mirror the tank's. setupSelf runs on
+     * first-time slot assignment (clientSimCreate pre-allocated
+     * lgmen[0]; clientSimSetPlayerNum then moved it to
+     * lgmen[playerNum]) and on re-assignment — a mid-lobby
+     * PACKET_LOBBY_MAP_CHANGE round-trips the joiner through
+     * JOIN_REQUEST → JOIN_ACCEPT a second time, and that second
+     * setPlayerNum nulls lgmen[playerNum] because lgmen[0] is
+     * already NULL from the first move. Recreate here so MY_LGM is
+     * always valid by the time the first per-frame lgmGetStatus
+     * runs after game start. */
+    if (MY_LGM(cs) != NULL) {
+        lgmDestroy(&MY_LGM(cs));
+        MY_LGM(cs) = NULL;
+    }
+    MY_LGM(cs) = lgmCreate(playerNum);
+    SDL_assert(MY_TANK(cs) != NULL);
+    SDL_assert(MY_LGM(cs)  != NULL);
     playersSetSelf(cs, &cs->sim, &cs->sim.plyrs,
                    (playerNumbers)playerNum,
                    (char *)playerName, TRUE);
     playersSetClientType (&cs->sim.plyrs, playerNum, clientType);
     playersSetClientFlags(&cs->sim.plyrs, playerNum, clientFlags);
+}
+
+void clientSimOnAssignedSlot(ClientSim *cs, BYTE playerNum,
+                             const char *playerName,
+                             uint8_t clientType, uint8_t clientFlags) {
+    /* Single entry point for "we just learned our slot."  Both the SP
+     * local-transport connect path and the UDP JOIN_ACCEPT handler call
+     * here so they cannot drift.  Pre-consolidation, the SP path called
+     * setPlayerNum + setupSelf + frontEndApplyLocalTankPrefs by hand,
+     * the UDP path called only setPlayerNum — and MY_TANK stayed NULL
+     * for the lifetime of every UDP session, crashing every per-frame
+     * code path the moment inLobby flipped to false.  Funnel both
+     * paths through one function so future maintainers cannot drop a
+     * step on one side without breaking it on the other. */
+    clientSimSetPlayerNum(cs, playerNum);
+    clientSimSetupSelf(cs, playerNum, playerName, clientType, clientFlags);
+    frontEndApplyLocalTankPrefs(cs);
 }
 
 /*********************************************************
@@ -523,6 +557,20 @@ void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr) {
 }
 
 void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
+  /* Master gate for the per-frame game-render pipeline.  Both
+   * clientUiOnTick and basesTickMessageQueue assume the local tank
+   * exists — clientUiOnTick reads MY_TANK at ~7 sites for scroll,
+   * status bars, kills/deaths, gunsight, etc.  In the gap between
+   * CTRL_GAME_PHASE_RUNNING flipping inLobby=false on the client and
+   * the first post-running snapshot's clientSimSyncFromSnapshot creating
+   * the tank, those derefs crash (stack: clientUiOnTick → tankGetSpeed
+   * → NULL+0x7).  Skip the per-frame render until the tank shows up;
+   * the lobby/menu rendering paths run elsewhere, gated by inLobby/
+   * netStatus, so the user just sees the previous frame for a tick
+   * or two rather than a NULL dereference. */
+  if (cs == NULL || cs->sim.tanks[cs->myPlayerNum] == NULL) {
+    return;
+  }
   clientUiOnTick(cs, isBrain);
   basesTickMessageQueue(&cs->sim, cs);
 }

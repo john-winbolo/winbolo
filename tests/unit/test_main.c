@@ -80,6 +80,13 @@ static const UnitTestEntry s_tests[] = {
     { "wbn_rekey_codec",                         run_wbn_rekey_codec                         },
     { "wbn_news_parse",                          run_wbn_news_parse                          },
     { "wbn_country_cache",                       run_wbn_country_cache                       },
+    { "queue_init_is_valid",                     run_queue_init_is_valid                     },
+    { "queue_enqueue_advances_nextSeq",          run_queue_enqueue_advances_nextSeq          },
+    { "queue_ack_advance_within_range",          run_queue_ack_advance_within_range          },
+    { "queue_stale_ack_above_nextSeq",           run_queue_stale_ack_above_nextSeq           },
+    { "queue_wipe_resets_both_seqs",             run_queue_wipe_resets_both_seqs             },
+    { "queue_enqueue_into_empty_after_wipe",     run_queue_enqueue_into_empty_after_wipe     },
+    { "queue_hasspace_at_capacity",              run_queue_hasspace_at_capacity              },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

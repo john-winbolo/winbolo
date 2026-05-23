@@ -357,11 +357,10 @@ bool transportUdpServerCreate(unsigned short port,
 /* Destroys the server-side UDP transport. */
 void transportUdpServerDestroy(void);
 
-/* Server tick: receive all pending inputs, broadcast snapshots.
- * Call this once per tick after serverSimTick(). */
-void transportUdpServerTick(struct ServerSim *sim);
-
-/* Split receive/send for callers that need to tick the sim in between. */
+/* Server per-tick API. Call once per tick after serverSimTick().
+ * Use the recv/drainRecvQueue pair (selected via
+ * transportUdpServerHasRecvThread) to receive inputs, then
+ * transportUdpServerDrainEvents and transportUdpServerSend. */
 void transportUdpServerRecv(struct ServerSim *sim);
 void transportUdpServerSend(struct ServerSim *sim);
 
@@ -420,6 +419,23 @@ bool lobbyAnyOtherUploadActive(const bool *active, int exceptIdx);
  * before publishing the CTRL_GAME_PHASE_RUNNING event so the resets
  * land before the codec encodes PACKET_GAME_START. */
 void transportUdpServerOnGameStart(struct ServerSim *sim);
+
+/* The transport's own monotonic tick counter — advances every call to
+ * transportUdpServerRecv / transportUdpServerDrainRecvQueue regardless of
+ * sim state.  Used by callers that need a "clock that never freezes"
+ * (e.g. the lobby retransmit cadence in server_lifecycle.c, which can't
+ * gate on sim->tick because that field stops advancing during countdown
+ * and gameOver states). */
+uint32_t transportUdpServerGetTickCount(void);
+
+/* Returns true if the UDP server has any connected client (including
+ * the host's own loopback client when the host runs in
+ * acceptRemoteClients mode).  Used by serverSimLobbyCheckAllReady to
+ * decide between the in-place start (no countdown, pure in-process SP)
+ * and the countdown path (anything that fans state over the wire and
+ * therefore needs a settling window before client UIs flip to game
+ * render mode). */
+bool transportUdpServerHasAnyClient(void);
 
 /* Refresh the server's compressed map data and re-prime each connected
  * client for download (resend JOIN_ACCEPT, reset chunk tracking).

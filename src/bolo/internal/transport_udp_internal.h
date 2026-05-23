@@ -94,6 +94,24 @@ static inline bool controlEventQueueHasSpace(const ClientControlEventQueue *q) {
     return (q->nextSeq - q->ackedSeq) < CONTROL_EVENT_QUEUE_SIZE;
 }
 
+/* Queue maintenance contract — the invariants that must hold at every
+ * observable point.  Call from every site that mutates ackedSeq, nextSeq,
+ * or buffer (enqueue, ack-advance, reset/wipe, slot-init).  In release
+ * builds this expands to nothing.
+ *
+ * History: every queue corruption we've shipped to date violated one of
+ * these.  The stale-ack-after-wipe bug pushed ackedSeq past nextSeq; the
+ * empty-queue-idle-timer bug doesn't violate these invariants but exposed
+ * how absent the maintenance-contract documentation was.  Wire-checking
+ * here surfaces the next sibling at first occurrence rather than waiting
+ * for the symptom. */
+static inline void controlEventQueueAssertValid(const ClientControlEventQueue *q,
+                                                const char *site) {
+    (void)site;
+    SDL_assert(q->ackedSeq <= q->nextSeq);
+    SDL_assert((q->nextSeq - q->ackedSeq) <= CONTROL_EVENT_QUEUE_SIZE);
+}
+
 /* Join retry interval in ticks (1 second) */
 #define JOIN_RETRY_INTERVAL 50
 

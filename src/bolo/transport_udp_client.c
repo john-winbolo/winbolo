@@ -31,6 +31,7 @@
 #include "util.h"
 #include "messages.h"
 #include "client_sim.h"
+#include "frontend.h"                  /* frontEndApplyLocalTankPrefs */
 #include "client_sim_internal.h"
 #include "control_event.h"
 #include "client_sim_control.h"
@@ -44,6 +45,7 @@
 #include "../gui/dialogAlliance.h"
 #include "../steam/steam_wrapper.h"
 #include "../common/wb_log.h"
+#include "../common/mp_diag_log.h"
 #include "../winbolonet/winbolonet_client.h"
 #include "../winbolonet/winbolonet_core.h"
 
@@ -189,11 +191,37 @@ typedef struct {
 #define UPLOAD_CHUNK_SIZE       1024
 #define UPLOAD_CHUNKS_PER_TICK  8
 
+/* Diagnostic-only: one-shot guard so we log the kernel-assigned local
+ * port once per process the first time getsockname() returns a non-zero
+ * port (i.e. after the implicit bind from the first sendto). File scope
+ * keeps the declaration off MSVC's C89 mixed-decl-and-statement path. */
+static int udpClientLoggedLocalPort = 0;
+
 /* Client send wrapper — tracks packet and byte counters */
 static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int len) {
     udpSendTo(c->sock, buf, len, &c->serverAddr);
     c->packetsSentThisSec++;
     c->bytesSentThisSec += len;
+    if (!udpClientLoggedLocalPort) {
+        /* NB: don't name this `local` — brain.h does `#define local static`
+         * for its Lua-flavoured pseudo-keyword and that macro is in scope
+         * through the include chain.  `local sockaddr_in foo;` then
+         * preprocesses to `static sockaddr_in foo;` which MSVC parses as
+         * a bare type declaration with no variable name (C4091/C2059). */
+        struct sockaddr_in localAddr;
+        socklen_t locLen;
+        memset(&localAddr, 0, sizeof(localAddr));
+        locLen = (socklen_t)sizeof(localAddr);
+        if (getsockname(c->sock, (struct sockaddr *)&localAddr, &locLen) == 0
+            && localAddr.sin_port != 0) {
+            mpDiagLog("[cli] local socket bound at %s:%u (kernel-assigned ephemeral; SO_REUSEADDR=on) -> server %s:%u",
+                      inet_ntoa(localAddr.sin_addr),
+                      (unsigned)ntohs(localAddr.sin_port),
+                      inet_ntoa(c->serverAddr.sin_addr),
+                      (unsigned)ntohs(c->serverAddr.sin_port));
+            udpClientLoggedLocalPort = 1;
+        }
+    }
 }
 
 /* Forward decl: defined alongside the upload state machine below;
@@ -469,6 +497,38 @@ void udpClientHandleLobbyMapSearchRsp(ClientSim *cs,
     }
 }
 
+/* Short name for a ControlEventType — diagnostic logging only. */
+static const char *mpDiagCtrlName(int type) {
+    switch (type) {
+    case CTRL_ALLIANCE_REQUEST: return "ALLIANCE_REQUEST";
+    case CTRL_ALLIANCE_ACCEPT:  return "ALLIANCE_ACCEPT";
+    case CTRL_ALLIANCE_LEAVE:   return "ALLIANCE_LEAVE";
+    case CTRL_PLAYER_JOIN:      return "PLAYER_JOIN";
+    case CTRL_PLAYER_NAME:      return "PLAYER_NAME";
+    case CTRL_LOBBY_SLOT:       return "LOBBY_SLOT";
+    case CTRL_LOBBY_SETTINGS:   return "LOBBY_SETTINGS";
+    case CTRL_LOBBY_MAP_CHANGE: return "LOBBY_MAP_CHANGE";
+    case CTRL_MAP_DOWNLOAD_COMPLETE: return "MAP_DOWNLOAD_COMPLETE";
+    case CTRL_BALANCE_PROPOSAL: return "BALANCE_PROPOSAL";
+    case CTRL_MAP_SKIP_STATE:   return "MAP_SKIP_STATE";
+    case CTRL_GAME_PHASE_LOBBY: return "GAME_PHASE_LOBBY";
+    case CTRL_GAME_PHASE_COUNTDOWN: return "GAME_PHASE_COUNTDOWN";
+    case CTRL_GAME_PHASE_RUNNING:   return "GAME_PHASE_RUNNING";
+    case CTRL_GAME_PHASE_GAME_OVER: return "GAME_PHASE_GAME_OVER";
+    case CTRL_GAME_OVER:        return "GAME_OVER";
+    case CTRL_SERVER_SHUTDOWN:  return "SERVER_SHUTDOWN";
+    case CTRL_CHAT:             return "CHAT";
+    case CTRL_PLAYER_LEAVE:     return "PLAYER_LEAVE";
+    case CTRL_LOBBY_TEAM_META:  return "LOBBY_TEAM_META";
+    case CTRL_LOBBY_BOT_CONFIG: return "LOBBY_BOT_CONFIG";
+    case CTRL_LOBBY_BOT_BRAIN:  return "LOBBY_BOT_BRAIN";
+    case CTRL_LOBBY_BRAIN_LIST: return "LOBBY_BRAIN_LIST";
+    case CTRL_GAME_VOTE_STATE:  return "GAME_VOTE_STATE";
+    case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
+    default:                    return "<unknown>";
+    }
+}
+
 /* Snapshot-time ordered dispatch for control events arriving on the
  * snapshot tail. Almost all variants forward to clientSimApplyControl;
  * the lobby→running flip carries side-effects that previously lived
@@ -485,7 +545,42 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
                                          const ControlEvent *evt,
                                          uint32_t evSeq,
                                          bool *skipPriorGameTails) {
-    (void)evSeq;
+    {
+        char extra[256];
+        extra[0] = '\0';
+        if (evt->type == CTRL_LOBBY_SLOT) {
+            snprintf(extra, sizeof(extra),
+                     " lobbySlot[player=%d team=%d ready=%d connected=%d isBot=%d name='%.12s']",
+                     (int)evt->u.lobbySlot.playerNum,
+                     (int)evt->u.lobbySlot.slot.teamNumber,
+                     (int)evt->u.lobbySlot.slot.ready,
+                     (int)evt->u.lobbySlot.slot.connected,
+                     (int)evt->u.lobbySlot.slot.isBot,
+                     evt->u.lobbySlot.slot.playerName);
+        } else if (evt->type == CTRL_PLAYER_JOIN) {
+            snprintf(extra, sizeof(extra),
+                     " playerJoin[player=%d name='%.16s']",
+                     (int)evt->u.playerJoin.playerNum,
+                     evt->u.playerJoin.name);
+        } else if (evt->type == CTRL_LOBBY_SETTINGS) {
+            snprintf(extra, sizeof(extra),
+                     " settings[map='%.16s' gameType=%d hiddenMines=%d aiType=%d timeLimit=%d startDelay=%d open=%d autoLock=%d ranked=%d allowNew=%d locks=0x%04x]",
+                     evt->u.lobbySettings.mapName,
+                     (int)evt->u.lobbySettings.lobbyGameType,
+                     (int)evt->u.lobbySettings.lobbyHiddenMines,
+                     (int)evt->u.lobbySettings.lobbyAiType,
+                     (int)evt->u.lobbySettings.lobbyTimeLimit,
+                     (int)evt->u.lobbySettings.lobbyStartDelay,
+                     (int)evt->u.lobbySettings.lobbyOpenHost,
+                     (int)evt->u.lobbySettings.lobbyAutoLockOnGameStart,
+                     (int)evt->u.lobbySettings.lobbyRanked,
+                     (int)evt->u.lobbySettings.lobbyAllowNewPlayers,
+                     (unsigned)evt->u.lobbySettings.lobbyServerLocks);
+        }
+        mpDiagLog("[cli] APPLY evSeq=%u type=%s%s inLobby=%d mapInstalled=%d",
+                  (unsigned)evSeq, mpDiagCtrlName((int)evt->type), extra,
+                  (int)c->clientSim->inLobby, (int)c->mapInstalled);
+    }
     if (evt->type == CTRL_GAME_PHASE_RUNNING) {
         /* Capture before any side effects or the dispatch —
          * clientSimApplyControl clears inLobby on CTRL_GAME_PHASE_RUNNING. */
@@ -559,7 +654,18 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             uint32_t mapSize;
 
             c->playerNum = buf[pos++];
-            clientSimSetPlayerNum(c->clientSim, c->playerNum);
+
+            /* Slot-assignment funnel — same function the SP
+             * local-transport path calls.  Both transports MUST funnel
+             * here so neither can drift.  clientType/clientFlags are
+             * placeholders; the authoritative values arrive via
+             * CTRL_PLAYER_JOIN during the subscriber's sync replay
+             * (clientSimApplyControl(CTRL_PLAYER_JOIN) writes the
+             * server-authoritative type/flags onto the Players
+             * struct). */
+            clientSimOnAssignedSlot(c->clientSim, c->playerNum,
+                                    c->playerName, 0, 0);
+
             pos += 4; /* skip serverTick */
             mapSize = unpackU32(buf + pos);
             pos += 4;
@@ -917,6 +1023,38 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * tail.  Per-event wire layout: type(1) + bodyLen(2) + body(N).
          * The body decoder is looked up by ControlEventType through the
          * body-only codec table. */
+        if (controlEventCount > 0) {
+            mpDiagLog("[cli] SNAPSHOT-tail recv baseSeq=%u count=%u localAck=%u",
+                      (unsigned)controlEventBaseSeq, (unsigned)controlEventCount,
+                      (unsigned)c->controlEventAck);
+        }
+        /* Server-queue-restart detection.  The server resets its per-client
+         * control queue to (ackedSeq=1, nextSeq=1) inside
+         * transportUdpServerOnGameStart, immediately before publishing
+         * CTRL_GAME_PHASE_RUNNING — so the running flip always lands at
+         * seq=1 of a new sequence space.  Without intervention the dedup
+         * gate below (evSeq >= controlEventAck) filters that seq=1 out
+         * because controlEventAck is still high from the lobby phase, and
+         * clientSimApplyControlOrdered's own ack-reset never gets to run.
+         *
+         * Gate on inLobby.  The queue-restart detection is only meaningful
+         * during the lobby→running transition itself.  Once inLobby has
+         * flipped to false (i.e. we've already processed the running flip
+         * once), every subsequent retransmit of seq=1 RUNNING is plain
+         * dedup territory — the server keeps sending it until its own
+         * ackedSeq catches up, and re-firing RESET-DETECT on every retransmit
+         * would cause a snap-then-reapply loop that starves the main loop. */
+        if (controlEventCount > 0 &&
+            c->clientSim != NULL &&
+            c->clientSim->inLobby &&
+            controlEventBaseSeq < c->controlEventAck &&
+            pos + 3 <= len &&
+            buf[pos] == (uint8_t)CTRL_GAME_PHASE_RUNNING) {
+            mpDiagLog("[cli] SNAPSHOT-tail RESET-DETECT baseSeq=%u localAck=%u (server queues restarted; snapping back)",
+                      (unsigned)controlEventBaseSeq,
+                      (unsigned)c->controlEventAck);
+            c->controlEventAck = controlEventBaseSeq;
+        }
         for (i = 0; i < controlEventCount; i++) {
             uint32_t evSeq = controlEventBaseSeq + (uint32_t)i;
             uint8_t type;
@@ -929,7 +1067,19 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             if (pos + bodyLen > len) break;    /* Truncated body */
             dec = transportControlCodecBodyDecoder((ControlEventType)type);
             if (dec == NULL || !dec(buf + pos, bodyLen, &evt)) {
+                mpDiagLog("[cli] SNAPSHOT-tail decode SKIP seq=%u type=%s reason=%s",
+                          (unsigned)evSeq, mpDiagCtrlName((int)type),
+                          dec == NULL ? "no decoder" : "decode failed");
                 pos += bodyLen;
+                /* Advance the ack past the skipped event. Without this,
+                 * an undecodable event at the tail of the queue stalls
+                 * controlEventAck and the server retransmits until the
+                 * unacked-control timeout fires and disconnects both
+                 * sides. The event is dropped — retransmitting won't
+                 * make it decodable — but the queue stays healthy. */
+                if (evSeq >= c->controlEventAck) {
+                    c->controlEventAck = evSeq + 1;
+                }
                 continue;
             }
             pos += bodyLen;
@@ -937,6 +1087,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 clientSimApplyControlOrdered(c, &evt, evSeq,
                                              &skipPriorGameTails);
                 c->controlEventAck = evSeq + 1;
+            } else {
+                mpDiagLog("[cli] SNAPSHOT-tail dedup seq=%u type=%s localAck=%u",
+                          (unsigned)evSeq, mpDiagCtrlName((int)type),
+                          (unsigned)c->controlEventAck);
             }
         }
 
@@ -1044,6 +1198,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             uint8_t plCount = buf[PACKET_HEADER_SIZE];
             int plPos = PACKET_HEADER_SIZE + 1;
             int p;
+            mpDiagLog("[cli] PLAYER_LIST recv count=%u", (unsigned)plCount);
             for (p = 0; p < plCount; p++) {
                 uint8_t pNum;
                 char pName[PACKET_MAX_PLAYER_NAME];
@@ -1084,6 +1239,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     if (numAllies > 0) {
                         memcpy(evt.u.playerJoin.allies, allies, numAllies);
                     }
+                    mpDiagLog("[cli] PLAYER_LIST entry player=%d name='%.16s' type=%d flags=0x%02x allies=%d",
+                              (int)pNum, pName, (int)clientType,
+                              (int)clientFlags, (int)numAllies);
                     clientSimApplyControl(c->clientSim, &evt);
                 }
             }
@@ -1423,6 +1581,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         if (len < pos + 5) break;
         baseSeq = unpackU32(buf + pos); pos += 4;
         count = buf[pos++];
+        mpDiagLog("[cli] CONTROL_TICK recv baseSeq=%u count=%u localAck=%u",
+                  (unsigned)baseSeq, (unsigned)count,
+                  (unsigned)c->controlEventAck);
         for (i = 0; i < count; i++) {
             uint32_t evSeq = baseSeq + (uint32_t)i;
             uint8_t type;
@@ -1435,7 +1596,17 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             if (pos + bodyLen > len) break;
             dec = transportControlCodecBodyDecoder((ControlEventType)type);
             if (dec == NULL || !dec(buf + pos, bodyLen, &evt)) {
+                mpDiagLog("[cli] CONTROL_TICK decode SKIP seq=%u type=%s reason=%s",
+                          (unsigned)evSeq, mpDiagCtrlName((int)type),
+                          dec == NULL ? "no decoder" : "decode failed");
                 pos += bodyLen;
+                /* Same belt-and-suspenders as the snapshot-tail path:
+                 * undecodable events at the tail of the queue otherwise
+                 * stall the ack and trigger the unacked-control timeout
+                 * disconnect. Drop the event but keep the queue moving. */
+                if (evSeq >= c->controlEventAck) {
+                    c->controlEventAck = evSeq + 1;
+                }
                 continue;
             }
             pos += bodyLen;
@@ -1445,6 +1616,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                  * skipPriorGameTails has nothing to skip. */
                 clientSimApplyControlOrdered(c, &evt, evSeq, NULL);
                 c->controlEventAck = evSeq + 1;
+            } else {
+                mpDiagLog("[cli] CONTROL_TICK dedup seq=%u type=%s localAck=%u",
+                          (unsigned)evSeq, mpDiagCtrlName((int)type),
+                          (unsigned)c->controlEventAck);
             }
         }
         /* Schedule a coalesced ACK — the actual send rides
@@ -1628,16 +1803,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
-    case PACKET_LOBBY_AUTO_UNREADY:
-        /* No payload. Server cleared everyone's ready flag. */
-        {
-            int i;
-            for (i = 0; i < MAX_TANKS; i++) {
-                c->clientSim->lobbySlots[i].ready = false;
-            }
-        }
-        break;
-
     case PACKET_PUNCH_REQUEST_ACK:
         /* Tracker acked our PUNCH_REQUEST. Status byte at PACKET_HEADER_SIZE
          * could drive UX someday; for now just consume so it doesn't fall
@@ -1735,6 +1900,11 @@ static bool udpClientTick(void *ctx) {
             packHeader(ackBuf, PACKET_CONTROL_ACK, c->outSequence++);
             packU32(ackBuf + PACKET_HEADER_SIZE, c->controlEventAck);
             udpClientSendTo(c, ackBuf, sizeof(ackBuf));
+            mpDiagLog("[cli] CONTROL_ACK send ack=%u prevSent=%u localTick=%u overdue=%d eager=%d",
+                      (unsigned)c->controlEventAck,
+                      (unsigned)c->lastSentControlAck,
+                      (unsigned)c->localTick,
+                      (int)overdue, (int)eagerSend);
             c->lastSentControlAck = c->controlEventAck;
             c->controlAckPendingTick = 0;
         }
@@ -1941,6 +2111,15 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         (trackerAddr && *trackerAddr) ? trackerAddr : "(none)",
         (unsigned)trackerPort);
 
+    /* Enable the MP diagnostic log on the joiner side too — the host
+     * already turns it on via serverInstanceStartup, but the joiner
+     * never runs that path.  Without this, the joiner's log file is
+     * never created. */
+    mpDiagLogEnable(1);
+    mpDiagLog("[cli] transportUdpClientCreate target=%s:%u name='%s' wantRejoin=%d",
+              serverAddr ? serverAddr : "(null)", (unsigned)serverPort,
+              playerName ? playerName : "(null)", (int)wantRejoin);
+
     memset(&t, 0, sizeof(t));
     c = (TransportUdpClientCtx *)malloc(sizeof(TransportUdpClientCtx));
     memset(c, 0, sizeof(TransportUdpClientCtx));
@@ -2058,6 +2237,12 @@ void transportUdpClientDestroy(Transport *t) {
         "client destroy: joinState=%d localTick=%u lastSnapshot=%u",
         (int)c->joinState, (unsigned)c->localTick,
         (unsigned)c->lastSnapshotTick);
+    mpDiagLog("[cli] transportUdpClientDestroy joinState=%d localTick=%u",
+              (int)c->joinState, (unsigned)c->localTick);
+    /* Mirror serverInstanceShutdown's disable.  Safe even if this is
+     * the host's own loopback client — serverInstanceShutdown will
+     * have already disabled, this is just an idempotent no-op then. */
+    mpDiagLogEnable(0);
     if (c->sock != INVALID_SOCKET) {
         /* Send graceful quit packet to server before closing */
         if (c->joinState == UDP_CLIENT_CONNECTED) {

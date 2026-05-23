@@ -24,6 +24,7 @@
 #include "transport_udp.h"
 #include "bot_manager.h"
 #include "../winbolonet/winbolonet_core.h"
+#include "../common/mp_diag_log.h"
 #include "../winbolonet/winbolonet_server.h"
 #include "threads.h"
 #include "server_sim_internal.h"
@@ -112,6 +113,15 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   const char *password = (cfg->password != NULL) ? cfg->password : "";
 
   instanceAcceptRemoteClients = cfg->acceptRemoteClients;
+
+  /* Gate the MP diagnostic log on acceptRemoteClients so bg_game's own
+   * ServerSim (which also runs serverInstanceStartup at welcome-screen
+   * boot) doesn't fill the log with its publishes.  Enable BEFORE
+   * serverSimApplyInstanceConfig below so the very first lobby-settings
+   * publish for the real MP host is captured. */
+  if (cfg->acceptRemoteClients) {
+    mpDiagLogEnable(1);
+  }
 
   if (cfg->acceptRemoteClients) {
     sim->maxPlayers = (cfg->maxPlayers > 0) ? cfg->maxPlayers : (BYTE)MAX_TANKS;
@@ -428,6 +438,22 @@ void serverInstanceTick(ServerSim *sim) {
         serverSimFillLobbyBrainListEvent(sim, &evt);
         serverSimPublishControl(sim, &evt);
       }
+      /* Republish lobby state so every client's mirror reflects the
+       * fresh lobby. serverSimReturnToLobby's contract says the caller
+       * does this fan-out; CTRL_GAME_PHASE_LOBBY alone doesn't carry
+       * the inLobby flag or per-slot data, so without these the host's
+       * own UDP loopback ClientSim leaves cs->inLobby false and never
+       * opens the lobby dialog — the window looks frozen because there
+       * is no game view either. */
+      serverSimPublishLobbySettings(sim);
+      {
+        BYTE pi;
+        for (pi = 0; pi < MAX_TANKS; pi++) {
+          if (sim->playerConnected[pi]) {
+            serverSimPublishLobbySlot(sim, pi);
+          }
+        }
+      }
       /* Send the win message now that players are back in the lobby */
       if (sim->pendingWinMessage[0] != '\0') {
         transportUdpServerSendServerMessage(sim->pendingWinMessage);
@@ -438,9 +464,34 @@ void serverInstanceTick(ServerSim *sim) {
     /* Retransmit unacked control events every 4 ticks (~80ms at 50 Hz)
      * for loss recovery during lobby/countdown/gameover.  During running,
      * the snapshot tail carries the per-client unacked tail every tick,
-     * so this scan only matters when snapshots aren't flowing. */
-    if (sim->tick % 4 == 0) {
+     * so this scan only matters when snapshots aren't flowing.
+     *
+     * Gate on udpServer.tickCount (always-advancing) rather than sim->tick
+     * because sim->tick freezes during serverStateCountdown and
+     * serverStateGameOver (see serverSimTick in server_sim.c).  A frozen
+     * sim->tick whose residue mod 4 isn't 0 would silently disable
+     * retransmit for the entire countdown / game-over window. */
+    if (transportUdpServerGetTickCount() % 4 == 0) {
       transportUdpServerRetransmitUnackedControl();
+    }
+
+    /* Periodic lobby-slot republish so the ping column in the lobby
+     * UI tracks live values instead of freezing between unrelated
+     * slot changes (ready toggle, bot config, etc.). CTRL_LOBBY_SLOT
+     * carries pingMs; without this heartbeat a quiet lobby shows the
+     * value from whenever someone last clicked something. 250 ticks
+     * at 50 Hz is ~5 s, well under the perceptible-staleness window
+     * and far below the wire cost the queue can absorb. Skipped in
+     * running state — snapshots already carry pingMs per tick there. */
+    if (transportUdpServerGetTickCount() % 250 == 0 &&
+        (sim->state == serverStateLobby ||
+         sim->state == serverStateCountdown)) {
+      BYTE pi;
+      for (pi = 0; pi < MAX_TANKS; pi++) {
+        if (sim->playerConnected[pi]) {
+          serverSimPublishLobbySlot(sim, pi);
+        }
+      }
     }
 
     /* Timeout check — not called via transportUdpServerSend() during lobby */
@@ -564,6 +615,9 @@ void serverInstanceTick(ServerSim *sim) {
 }
 
 void serverInstanceShutdown(ServerSim *sim) {
+  if (instanceAcceptRemoteClients) {
+    mpDiagLogEnable(0);
+  }
   if (instanceUseNatPortmap) {
     natPortMapRelease(&instancePortMap);
   }

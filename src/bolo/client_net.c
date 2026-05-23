@@ -90,6 +90,13 @@ bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
   cs->hasTransport = true;
   cs->isUdpTransport = true;
   clientSimSetLocalTransport(cs, false);
+  /* Symmetric with the SP path's clientSimSetNetType(cs, netSingle) at
+   * the bottom of clientSimConnectLocalBody.  Multiple sim sites branch
+   * on `networkGameType == netUdp` (client_sim.c:974, :1013, :1024,
+   * client_snapshot.c:737, :781); leaving it at netNone caused those
+   * branches to silently take the wrong path for UDP joiners.  Set
+   * here at connect time so the value is right from the first tick. */
+  clientSimSetNetType(cs, netUdp);
   return true;
 }
 
@@ -175,16 +182,15 @@ static bool clientSimConnectLocalBody(ClientSim *cs, struct ServerSim *sim,
     return false;
   }
 
-  /* 6. Record the assigned slot on the ClientSim and refine the
-   *    transport's snapshot-target slot from the placeholder 0. */
-  clientSimSetPlayerNum(cs, slot);
+  /* 6. Refine the transport's snapshot-target slot from the placeholder 0
+   *    (local-transport-specific; not symmetric with UDP). */
   transportLocalSetPlayerNum(&tr, slot);
 
-  /* 7. Set up the self-record (tank + name + client type/flags). */
-  clientSimSetupSelf(cs, slot, playerName, clientType, clientFlags);
-
-  /* 8. Push per-tank user preferences now that the tank exists. */
-  frontEndApplyLocalTankPrefs(cs);
+  /* 7. Slot-assignment funnel: setPlayerNum + setupSelf (tank + name +
+   *    client type/flags) + applyLocalTankPrefs.  Same function the
+   *    UDP JOIN_ACCEPT handler calls, so the two transports cannot
+   *    drift out of sync. */
+  clientSimOnAssignedSlot(cs, slot, playerName, clientType, clientFlags);
 
   /* 9. Commit the transport binding. boundServerSim drives the
    *     local-transport branch of CTRL_LOBBY_MAP_CHANGE; the

@@ -938,6 +938,28 @@ static EncodeResult encodeServerText(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+/* Pair for encodeServerTextBody: reads [0xFE][0xFF][text...] back into
+ * a CTRL_SERVER_TEXT event. Without this, server-text broadcasts (the
+ * "<team> has won the game" message and similar) ride CONTROL_TICK but
+ * the client has no decoder, drops the event, and previously stalled
+ * the reliable queue. */
+static bool decodeServerTextBody(const uint8_t *buf, size_t bodyLen,
+                                 ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL) return false;
+    if (bodyLen < 2) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SERVER_TEXT;
+    size_t textLen = bodyLen - 2;
+    if (textLen >= sizeof(outEvt->u.serverText.text)) {
+        textLen = sizeof(outEvt->u.serverText.text) - 1;
+    }
+    if (textLen > 0) {
+        memcpy(outEvt->u.serverText.text, buf + 2, textLen);
+    }
+    outEvt->u.serverText.text[textLen] = '\0';
+    return true;
+}
+
 /* Wire: [header 8] [kind 1] [active 1] [triggerSrc 1] [teamId 1]
  *   [threshold 1] [yes 1] [no 1] [eligible 1] [secsRemaining 1]
  *   [votes 2 BE] — 11-byte body. Same shape on every recipient. */
@@ -1470,10 +1492,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_BOT_BRAIN]       = decodeLobbyBotBrainBody,
     [CTRL_LOBBY_BRAIN_LIST]      = decodeLobbyBrainListBody,
     [CTRL_GAME_VOTE_STATE]       = decodeGameVoteStateBody,
-    /* CTRL_SERVER_TEXT: NULL — the legacy wire form shares
-     * PACKET_CHAT_BROADCAST with fromPlayer=0xFE and decodes to
-     * CTRL_CHAT today. A real body decoder lands when the carrier
-     * path (Phase 4+) needs to distinguish the two on the wire. */
+    [CTRL_SERVER_TEXT]           = decodeServerTextBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

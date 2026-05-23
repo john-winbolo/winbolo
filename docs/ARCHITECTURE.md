@@ -604,13 +604,31 @@ publish recipe does not apply to them:
   not the publisher.
 - **Per-client handshake and reliability.** `JOIN_ACCEPT`,
   `JOIN_REJECT`, `NAME_CHANGE_REJECT`, `MAP_DOWNLOAD` chunks,
-  `PONG`, `PLAYER_LIST` resync responses, `PACKET_CONTROL_TICK`
-  (lobby/countdown/gameover carrier for the per-client control
-  queue), and `PACKET_CONTROL_ACK` (the matching client→server
-  ACK) are point-to-point transport mechanics. The two control
-  packets are the wire carrier for events that DO ride the bus —
-  the bus publishes into the per-client queue, and the queue
-  drains via these packets when snapshots aren't flowing.
+  `PONG`, `PACKET_CONTROL_TICK` (lobby/countdown/gameover carrier
+  for the per-client control queue), and `PACKET_CONTROL_ACK` (the
+  matching client→server ACK) are point-to-point transport
+  mechanics. The two control packets are the wire carrier for
+  events that DO ride the bus — the bus publishes into the
+  per-client queue, and the queue drains via these packets when
+  snapshots aren't flowing.
+- **`PLAYER_LIST` resync** is a load-bearing wire-only exception
+  for a failure mode the reliable control queue does not reach:
+  `transportUdpServerOnGameStart` wipes every per-client
+  control-event queue at countdown end
+  (`nextSeq = 1; ackedSeq = 1; memset(buffer, 0)`) before
+  publishing `CTRL_GAME_PHASE_RUNNING`. A late-countdown joiner's
+  `CTRL_PLAYER_JOIN` may still be in-flight (un-ACKed) for one or
+  more existing clients at that instant; the memset destroys it
+  and the next event published is `CTRL_GAME_PHASE_RUNNING` at
+  seq=1, with no retransmit path back to the dropped JOIN. The
+  server flips `needsPlayerList = true` for every connected client
+  inside the same reset, and the per-tick send loop fires an
+  unsolicited `PACKET_PLAYER_LIST` after the reset completes,
+  restoring the missing roster entries. (The JOIN-time use of the
+  same flag — `serverHandleJoinRequest` setting it for the new
+  client — is redundant with `serverSimSyncSubscriber`'s replay of
+  `CTRL_PLAYER_JOIN` per in-use player, and is kept as a
+  belt-and-braces overlap.)
 
 ### Compatibility rules
 
