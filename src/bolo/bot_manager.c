@@ -64,6 +64,13 @@
 /* View size for brain map updates — 15x15 centered on tank */
 #define BOT_VIEW_HALF 7
 
+/* Consecutive brain.think() Lua errors before we give up and kick the
+ * bot. A single bad tick (e.g. transient pill-take edge case) just
+ * skips that frame — bot survives. 100 in a row (= 2 s at 50 Hz) is
+ * "this brain is unrecoverable, stop wasting CPU on it" and triggers
+ * removal + a server-text broadcast naming the kicked bot. */
+#define BOT_CRASH_KICK_THRESHOLD 100
+
 void botManagerRequestThreads(ServerSim *sim, int total_runners) {
     if (sim == NULL) return;
     if (total_runners < 1) total_runners = 1;
@@ -387,7 +394,8 @@ static bool botManagerReloadBrain(ServerSim *sim, BotContext *bot,
 
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
                                 bot->cs, bot->ai,
-                                sim->botMgr.defaultDebugMode)) {
+                                sim->botMgr.defaultDebugMode,
+                                (int)bot->playerNum)) {
         fprintf(stderr,
                 "botManager: failed to reload brain '%s' for bot %d\n",
                 brainPath, (int)bot->playerNum);
@@ -517,7 +525,8 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
      * default (host-controlled): BrainTest sets it to true; the release
      * game leaves it false so brains load from stripped opt/ source. */
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
-                                bot->cs, ai, sim->botMgr.defaultDebugMode)) {
+                                bot->cs, ai, sim->botMgr.defaultDebugMode,
+                                playerNum)) {
         fprintf(stderr, "botManager: failed to create brain for bot %d\n", playerNum);
         serverSimUnregisterSubscriber(sim, bot->controlSub);
         bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
@@ -572,23 +581,43 @@ static void runBotThinkJobImpl(BotJobCtx *j, BotContext *bot, Uint64 t0) {
                        / (double)SDL_GetPerformanceFrequency();
 
     if (!ok) {
-        /* Distinguish a budget abort (recoverable: bot stays, brain.wasKilled
-         * fires next tick) from a real Lua error (existing path: producer
-         * removes the bot in Phase 3). Both signals must agree: the
-         * suffix match on the error string is brain-spoofable (a brain
-         * could raise error("tick_budget_exceeded") to dodge removal),
-         * but the atomic flag is only ever stamped by brainBudgetHook.
-         * AND-ing them proves the count hook actually ran. */
+        /* Two failure modes:
+         *   1. Budget abort (brain.wasKilled + atomic abort flag set
+         *      by brainBudgetHook). Recoverable. brain.wasKilled
+         *      signals the bot next tick so it can self-throttle.
+         *      Does NOT count against the crash-streak — slow ticks
+         *      aren't bugs, they're throttle signals.
+         *   2. Real Lua error in brain.think(). A single error skips
+         *      this tick — most are transient (one bad pill-take
+         *      config, a rare race) and the bot recovers next frame.
+         *      braincore.c writes a rate-limited crash file with the
+         *      full traceback.
+         *      We count consecutive Lua errors; once we hit
+         *      BOT_CRASH_KICK_THRESHOLD in a row (= 2 s at 50 Hz of
+         *      uninterrupted crashing), the brain is unrecoverable
+         *      and we set needRemove for the producer phase to kick
+         *      with a network broadcast.  A single successful tick
+         *      resets the streak. */
         if (bot->brain.wasKilled &&
             SDL_GetAtomicInt(&bot->abort_flag) != 0) {
             j->wasKilled = true;
         } else {
-            /* Producer handles botManagerRemoveBot in the input-send stage —
-             * never call it from a worker thread. */
-            j->needRemove = true;
+            bot->consecutiveCrashes++;
+            if (bot->consecutiveCrashes >= BOT_CRASH_KICK_THRESHOLD) {
+                /* Producer broadcasts + removes — never call
+                 * botManagerRemoveBot or serverSimPublishControl
+                 * from a worker thread. */
+                j->needRemove = true;
+            }
         }
+        /* Skip this tick. j->hasInput stays false → no input packet
+         * built → bot is idle this frame but still in the roster. */
         return;
     }
+
+    /* Successful tick — clear the crash streak so a flaky brain that
+     * recovers between crashes never trips the kick threshold. */
+    bot->consecutiveCrashes = 0;
 
     if (MY_TANK(bot->cs) != NULL) {
         MY_TANK(bot->cs)->newTank = FALSE;
@@ -782,8 +811,28 @@ void botManagerTick(ServerSim *sim, aiType ai) {
         BotJobCtx *j = &sim->botMgr.jobs[i];
 
         if (j->needRemove) {
+            /* Crash-streak kick. Broadcast a server-text message to all
+             * connected clients (UDP + in-process subscribers) BEFORE
+             * removing the bot, so the kick reason is visible and other
+             * players know why a tank just disappeared. fromPlayer=0xFE
+             * (server-originated English) is implicit in CTRL_SERVER_TEXT;
+             * the codec produces PACKET_CHAT_BROADCAST on the UDP path
+             * and in-process subscribers (the host's own newswire / chat
+             * window) handle the event directly. */
+            char msg[128];
+            SDL_snprintf(msg, sizeof(msg),
+                         "Bot at slot %d kicked: brain crashed %u ticks in a row",
+                         i, (unsigned)sim->botMgr.bots[i].consecutiveCrashes);
+            ControlEvent evt;
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_SERVER_TEXT;
+            SDL_strlcpy(evt.u.serverText.text, msg,
+                        sizeof(evt.u.serverText.text));
+            serverSimPublishControl(sim, &evt);
+
             WB_LOG_WARN(WB_LOG_CAT_LUA,
-                        "bot %d brain tick failed, removing", i);
+                        "bot %d kicked: %u consecutive brain crashes",
+                        i, (unsigned)sim->botMgr.bots[i].consecutiveCrashes);
             botManagerRemoveBot(sim, (BYTE)i);
             continue;
         }

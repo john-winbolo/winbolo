@@ -2094,28 +2094,46 @@ local FINALIZE_POOLS = { 2, 8, 9 }  -- defend_pill, place_pill, attack_tank
 
 -- Filter functions for each incremental pool.
 -- Return true if the object is a valid candidate.
+-- filter_refuel: returns nil if the base qualifies for scoring, or a
+-- reject descriptor table { reason = "<short>", remaining = <ticks> }
+-- when it should be SHOWN in the pool grid but greyed out (so the
+-- user can see "this base exists, here's why we're not picking it").
+-- The only HARD reject (drop from queue entirely) is "hostile" — we
+-- never refuel at an enemy base.
 local function filter_refuel(obj, state, info)
-  if not (obj.owner == "friendly" or obj.owner == "neutral") then return false end
-  -- Skip blocked
+  if not (obj.owner == "friendly" or obj.owner == "neutral") then
+    return { reason = "hostile" }
+  end
+  -- Blocked tile
   if state and state.blocked then
     local bk = U.mkey(obj.mx, obj.my)
-    if state.blocked[bk] and (state.tick or 0) < state.blocked[bk] then return false end
+    local until_tick = state.blocked[bk]
+    if until_tick and (state.tick or 0) < until_tick then
+      return { reason = "blocked", remaining = until_tick - (state.tick or 0) }
+    end
   end
-  -- Skip neutral bases unseen too long
+  -- Neutral and unseen too long
   local now = state and state.tick or 0
   if obj.owner == "neutral" and obj.last_seen and now > 0
-     and (now - obj.last_seen) > C.STALE_SKIP_TICKS then return false end
-  -- Skip bases with recently observed low stock
+     and (now - obj.last_seen) > C.STALE_SKIP_TICKS then
+    return { reason = "stale", remaining = (now - obj.last_seen) - C.STALE_SKIP_TICKS }
+  end
+  -- Recently observed depleted of what we actually need
   if obj.obs_tick and now > 0 and (now - obj.obs_tick) < C.REFUEL_OBS_STALE then
     local obs_low = true
     if info.armour < C.TANK_FULL_ARMOUR and (obj.obs_armour or 0) >= C.REFUEL_MIN_STOCK then obs_low = false end
     if info.shells < C.TANK_FULL_SHELLS and (obj.obs_shells or 0) >= C.REFUEL_MIN_STOCK then obs_low = false end
-    if obs_low then return false end
+    if obs_low then
+      return { reason = "depleted",
+               remaining = C.REFUEL_OBS_STALE - (now - obj.obs_tick) }
+    end
   end
-  -- Reject bases too dangerous (pill fire)
+  -- Too dangerous (pill fire)
   local danger = threat.at(obj.mx, obj.my)
-  if danger > C.REFUEL_DANGER_REJECT then return false end
-  return true
+  if danger > C.REFUEL_DANGER_REJECT then
+    return { reason = "danger" }
+  end
+  return nil
 end
 
 local function filter_capture_base(obj, state)
@@ -2311,11 +2329,32 @@ function M.build_eval_queue(state, world, info)
       pool_idx, pool_name, state.tick or 0))
   end
 
+  -- Pool 1: refuel. Friendly/neutral bases that pass filter_refuel get
+  -- scored normally. Bases that fail soft (blocked / stale / depleted /
+  -- danger) ride along with cost = INF and a _reject tag so the pool
+  -- grid can show them dimmed with the reason — same pattern as
+  -- pool 4 (capture_pill). Hostile bases are HARD-rejected (not queued).
   if needs_refuel then
     for id, obj in pairs(world.bases) do
-      if filter_refuel(obj, state, info) then
-        queue[#queue + 1] = { pool = 1, id = id, obj = obj }
+      local reject = filter_refuel(obj, state, info)
+      if not reject or reject.reason ~= "hostile" then
+        queue[#queue + 1] = { pool = 1, id = id, obj = obj, reject = reject }
         _diag_log_first_pool_add(1, "refuel", id, obj)
+        if reject then
+          local ck = "1:" .. id
+          if not state.cost_cache then state.cost_cache = {} end
+          if not state.cost_cache[ck] or state.cost_cache[ck]._reject ~= reject.reason then
+            state.cost_cache[ck] = {
+              cost = 1e30, raw = 1e30, tick = now, _p = 1,
+              _mx = obj.mx, _my = obj.my,
+              _dv = 0, _dang = 0, _age = 0,
+              _stale = 0, _contest = 0, _hyst = 0,
+              _ratio = 0, _dep = 0,
+              _reject = reject.reason,
+              _reject_remaining = reject.remaining or 0,
+            }
+          end
+        end
       end
     end
   end
@@ -2505,6 +2544,26 @@ local function get_formula_inner(e)
   local raw = e.raw
   local f
   if p == 1 then
+    -- Rejected refuel base: short-circuit with REJECT formula so the
+    -- breakdown panel makes clear why the row exists with INF cost.
+    -- Cost compute was skipped at queue-build time.
+    if e._reject then
+      local rem = e._reject_remaining or 0
+      local rem_tok = (e._reject == "blocked" or e._reject == "stale"
+                       or e._reject == "depleted")
+                      and string.format(" %dt", rem) or ""
+      local desc = ({
+        blocked  = "tile blocked (cooldown)",
+        stale    = "neutral, unseen too long",
+        depleted = "recently observed low on stock we need",
+        danger   = "pill fire on base — too dangerous to refuel",
+      })[e._reject] or e._reject
+      e.formula = string.format(
+        "REJECT %s%s @(%d,%d)||reject:%s%s — %s",
+        e._reject, rem_tok, e._mx or 0, e._my or 0,
+        e._reject, rem_tok, desc)
+      return e.formula
+    end
     local _d_danger  = string.format("%.1f[danger_val] x %.1f[REFUEL_DANGER_WEIGHT] = %.0f",
       e._dv, C.REFUEL_DANGER_WEIGHT, e._dang)
     local _d_stale   = fmt_stale_detail(e._age, e._stale)
@@ -2803,6 +2862,9 @@ function M.step_eval_queue(state, world, info)
           if entry._reject_remaining < 0 then entry._reject_remaining = 0 end
         elseif item.reject.reason == "stale" and obj.last_seen then
           entry._reject_remaining = (now - obj.last_seen) - C.STALE_SKIP_TICKS
+          if entry._reject_remaining < 0 then entry._reject_remaining = 0 end
+        elseif item.reject.reason == "depleted" and obj.obs_tick then
+          entry._reject_remaining = C.REFUEL_OBS_STALE - (now - obj.obs_tick)
           if entry._reject_remaining < 0 then entry._reject_remaining = 0 end
         end
         entry.tick = now
@@ -3707,11 +3769,24 @@ function M.finalize_pools(state, world, info)
       if cur_pill then
         pill  = cur_pill
         pid   = cur_pid
-        -- Soft mid-take lock. 10 is low enough to beat normal alternatives
-        -- (refuel, capture_*, attack_base, attack_pill on a different pill)
-        -- but stays beatable by an attack_tank goal that drops itself
-        -- under 10 — see eval_attack_tank's mid-take engage discount.
-        pcost = 10
+        -- Mid-take cost override, scoped tight: only when ACTIVELY
+        -- firing at the pill (engage / shoot_pill) AND we've already
+        -- committed >= 3 shells. At that point pulling off the take
+        -- wastes the shells, so drop pcost to 10 — low enough that
+        -- nothing short of attack_tank engage-break (<9) or
+        -- IMMINENT_CAPTURE_FLOOR (5) can interrupt.
+        --
+        -- All other locked substates (plan_position, approach, aim,
+        -- charge, build_walls, in_range_*, ws_*) keep the natural
+        -- pool-6 cost. The pill SWAP above still happens so we don't
+        -- flip targets mid-substate-transition, but the cost rides
+        -- on real merit — a genuinely-cheaper alternative wins
+        -- before we've sunk shells.
+        local sub = state.goal.substate or ""
+        local fired = state.goal._fired or 0
+        if (sub == "engage" or sub == "shoot_pill") and fired >= 3 then
+          pcost = 10
+        end
       end
     end
     local lm6, lr6 = strategic_location_mult(pill.mx, pill.my, state, world, info, "attack_pill", pill)
@@ -4465,17 +4540,18 @@ local function goal_selection(state, world, info, quiet)
     end
 
     -- ── Apply hysteresis to discourage thrashing ──
-    -- High-value opportunistic goals are normally exempt so they can win on
-    -- raw cost (flee_to_base / rescue_lgm skip this pool entirely as
-    -- overrides). But when we're mid-attack on a pill, even those get
-    -- penalised — otherwise an incidental capture or a passing enemy tank
-    -- yanks us off an attack we've already invested shells/position in.
+    -- High-value opportunistic goals are exempt so they can win on raw
+    -- cost (flee_to_base / rescue_lgm skip this pool entirely as
+    -- overrides). capture_pill is ALWAYS exempt — pills die in finite
+    -- time and the capture window is short, so paying switch+commitment
+    -- to skip it would lose us the resource. attack_tank only exempts
+    -- when we're NOT mid-attack_pill — during a take, the engage-break
+    -- lock (cost < 9) handles real tank threats; everything else
+    -- shouldn't yank us off the attack.
     local cur_is_attack_pill = (state.goal.kind == "attack_pill")
-    local HYST_EXEMPT
-    if cur_is_attack_pill then
-      HYST_EXEMPT = {}   -- nothing is exempt mid-attack_pill
-    else
-      HYST_EXEMPT = { capture_pill = true, attack_tank = true }
+    local HYST_EXEMPT = { capture_pill = true }
+    if not cur_is_attack_pill then
+      HYST_EXEMPT.attack_tank = true
     end
     local cur_group = goal_group(state.goal.kind)
     local ticks_on_goal = (state.tick or 0) - (state.goal_set_tick or 0)
@@ -4540,6 +4616,10 @@ local function goal_selection(state, world, info, quiet)
           and c.goal.mx   == state.goal.mx
           and c.goal.my   == state.goal.my
         if is_current then goto continue_hist end
+        -- capture_pill is exempt from history thrash penalty too —
+        -- same rationale as the HYST_EXEMPT block above: pills die in
+        -- finite time and the capture window is short.
+        if HYST_EXEMPT[c.goal.kind] then goto continue_hist end
         local target_count = 0
         local kind_count = 0
         for _, h in ipairs(hist) do
@@ -5891,6 +5971,13 @@ function M.draw_attack_tank_viz(state, info)
   if not bd then return end
 
   for _, b in ipairs(bd) do
+    -- Skip world-space viz for rows without a real position (e.g. the
+    -- "not_visible" stubs inserted with mx=my=-1 so the pool panel
+    -- still lists hidden enemies). Otherwise we draw a line from the
+    -- tank all the way to (0.5, 0.5) — the top-left corner of the map.
+    -- Panel/HUD readers still see the row; only the spatial overlay
+    -- is suppressed here.
+    if (b.mx or 0) < 0 or (b.my or 0) < 0 then goto continue_bd end
     local ex, ey = b.mx + 0.5, b.my + 0.5
 
     -- Line from bot to enemy tank
@@ -5923,6 +6010,7 @@ function M.draw_attack_tank_viz(state, info)
       vizmod.rect("tank_combat_viz", b.standoff_mx, b.standoff_my,
         b.standoff_mx + 1, b.standoff_my + 1, NR, NG, NB, 60)
     end
+    ::continue_bd::
   end
 end
 

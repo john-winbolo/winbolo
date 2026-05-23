@@ -272,8 +272,17 @@ local function na_threat_configure_once()
     PILL_DANGER_EDGE_FALLOFF = C.PILL_DANGER_EDGE_FALLOFF,
     PILL_DANGER_BASE         = C.PILL_DANGER_BASE,
     PILL_DANGER_ANGER        = C.PILL_DANGER_ANGER,
-    LOW_HP1_MULT             = 0.8,
-    LOW_HP2_MULT             = 0.9,
+    -- Damaged-pill stamp scaling. C uses the formula:
+    --   mult = HP_DAMAGE_FLOOR + HP_DAMAGE_SCALE * (hp / FULL_HP)^HP_DAMAGE_EXP
+    -- Default (0.60 floor, 0.40 scale, 0.6 exp) gives:
+    --   hp=1 → 0.69, hp=5 → 0.81, hp=10 → 0.90, hp=15 → 1.00.
+    -- "It's still a pill that shoots" — wounded penalty is real but mild;
+    -- a 1-HP pill is still 69% as scary as a fresh one. Replaces the old
+    -- LOW_HP1_MULT / LOW_HP2_MULT ladder which only touched hp==1/hp==2.
+    HP_DAMAGE_FLOOR          = 0.60,
+    HP_DAMAGE_SCALE          = 0.40,
+    HP_DAMAGE_EXP            = 0.6,
+    PILLS_MAX_HEALTH         = C.PILLS_MAX_HEALTH,
     TREE_FULL_HIDE_MULT      = 0.1,
     TREE_PARTIAL_HIDE_MULT   = 0.7,
     FOREST_TERRAIN_MULT      = 1.5,

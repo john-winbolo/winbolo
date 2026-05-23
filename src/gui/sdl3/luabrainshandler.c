@@ -577,7 +577,8 @@ static void setup_brain_package_path(lua_State *L, const char *path) {
 
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, ClientSim *cs,
-                            aiType aiMode, bool debug_mode) {
+                            aiType aiMode, bool debug_mode,
+                            int player_num) {
   lua_State *L;
 
   memset(inst, 0, sizeof(*inst));
@@ -624,13 +625,31 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   lua_pushboolean(L, s_profile_log);
   lua_setglobal(L, "BRAIN_PROFILE_LOG");
 
-  lua_pushboolean(L, s_log_json);
+  /* BRAIN_LOG_JSON drives the brain's JSONL behavior log. Force it on
+   * whenever debug mode is on — there's no scenario where you'd want
+   * debug logging without the structured trace too. _JSONL_LOGGER_ENABLED
+   * is the parallel player-0 gate inside init.lua's log-open; set it
+   * here too so player 0's brain_p0.jsonl actually opens. */
+  bool log_json_eff = s_log_json || debug_mode;
+  lua_pushboolean(L, log_json_eff);
   lua_setglobal(L, "BRAIN_LOG_JSON");
+  lua_pushboolean(L, log_json_eff);
+  lua_setglobal(L, "_JSONL_LOGGER_ENABLED");
 
   /* Pool visualizer strings (desc, loc_reason, etc.) — on in debug mode,
    * off in --opt production mode to eliminate GC pressure. */
   lua_pushboolean(L, debug_mode);
   lua_setglobal(L, "BRAIN_POOL_VIZ");
+
+  /* Per-category debug log gates. All require BRAIN_DEBUG_MODE to be on
+   * (debug builds strip the whole block via lua_strip's --strip-block
+   * "if BRAIN_DEBUG_MODE" prefix). Signal-rich categories default ON
+   * when debug is on; chatty ones default OFF so print2_bot<N>.log
+   * stays grep-able. */
+  lua_pushboolean(L, debug_mode);  lua_setglobal(L, "BRAIN_LOG_GOALS");   /* goal transitions */
+  lua_pushboolean(L, debug_mode);  lua_setglobal(L, "BRAIN_LOG_BUILDER"); /* wall/build decisions */
+  lua_pushboolean(L, false);       lua_setglobal(L, "BRAIN_LOG_SCORES");  /* FINAL_SCORES dump every replan */
+  lua_pushboolean(L, false);       lua_setglobal(L, "BRAIN_LOG_SWERVE");  /* per-tick swerve trace */
 
   /* RUN_SCRIPT_PATH: non-empty string = script to run after Brain.open; nil otherwise. */
   if (s_run_script_path[0]) {
@@ -701,7 +720,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * for the per-pill danger overlay (shift-2 in BrainTest). NULL-callback
    * no-op outside BrainTest. NewAutopilot-specific — lives in the bot's
    * own C directory so the engine's brain runtime stays generic. */
-  naPillContribRegister(L);
+  naPillContribRegister(L, player_num);
   /* na_threat — NewAutopilot threat-grid C kernel. Provides terrain
    * factor cache + pill stamping. Tunables are set from Lua via
    * na_threat.configure so cloners can tweak constants without
@@ -950,10 +969,15 @@ void luaBrainInstanceSetDebugMode(LuaBrainInstance *inst, bool enabled) {
   if (!inst || !inst->L) return;
   lua_pushboolean(inst->L, enabled);
   lua_setglobal(inst->L, "BRAIN_DEBUG_MODE");
-  /* Keep print2 gate in sync with debug mode (set initially in instance
-   * create; updated here so the BrainTest toggle flips it live). */
+  /* Keep print2 gate in sync — flipping debug mode mid-run should
+   * also start/stop the per-tick log file. */
   lua_pushboolean(inst->L, enabled);
   lua_setglobal(inst->L, "_PRINT2_ENABLED");
+  /* Per-category gates follow the master debug flag for the signal-rich
+   * categories; chatty ones (SCORES/SWERVE) stay off unless user toggles
+   * them in their Lua state separately. */
+  lua_pushboolean(inst->L, enabled); lua_setglobal(inst->L, "BRAIN_LOG_GOALS");
+  lua_pushboolean(inst->L, enabled); lua_setglobal(inst->L, "BRAIN_LOG_BUILDER");
 }
 
 LuaBrainSetting *luaBrainInstanceGetSettings(LuaBrainInstance *inst,
@@ -1297,9 +1321,14 @@ bool luaBrainStart(const char *path, const char *name, ClientSim *cs) {
   }
 
   clientMutexWaitFor();
+  /* Singleton path (legacy "human player loads a script directly")
+   * has no notion of a bot player_num — pillcontrib bindings will
+   * write into slot 0 and the BrainTest viewer (which only ever
+   * follows real bot indices) won't read it. Pass 0 explicitly. */
   if (!luaBrainInstanceCreate(&singletonInst, path, name,
                               cs,
-                              *clientSimGetAllowComputerTanks(cs), false)) {
+                              *clientSimGetAllowComputerTanks(cs), false,
+                              0)) {
     clientMutexRelease();
     return false;
   }

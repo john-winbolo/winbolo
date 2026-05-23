@@ -39,6 +39,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 
@@ -2621,13 +2622,19 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         }
     }
 
-    /* Title-bar X (or Esc). If the user fired at least one live
-     * preview since opening the chooser, route through a 3-way
-     * confirmation instead of silently reverting — they've been
-     * showing this map on every client and may well want to keep
-     * it. With no pending preview, X falls back to the original
-     * cancel-and-close path. */
-    if (!open) {
+    /* Title-bar X (or Esc / Ctrl+W / Cmd+.). If the user fired at
+     * least one live preview since opening the chooser, route through
+     * a 3-way confirmation instead of silently reverting — they've
+     * been showing this map on every client and may well want to keep
+     * it. With no pending preview, the close path silently reverts.
+     * CancelKeyPressed self-gates on window focus so the keypress
+     * won't fire here when the preview-close confirmation popup below
+     * is open over the chooser. */
+    bool wantClose = !open;
+    if (!wantClose && WBUI::CancelKeyPressed()) {
+        wantClose = true;
+    }
+    if (wantClose) {
         if (s_chooseMapPreviewPending) {
             s_chooseMapWantCloseConfirm = true;
         } else {
@@ -2644,12 +2651,16 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         ImGui::OpenPopup("##MapPreviewCloseConfirm");
         s_chooseMapWantCloseConfirm = false;
     }
-    if (ImGui::BeginPopupModal("##MapPreviewCloseConfirm", NULL,
+    static bool s_mpccOpen = true; s_mpccOpen = true;
+    if (ImGui::BeginPopupModal("##MapPreviewCloseConfirm", &s_mpccOpen,
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_CLOSEMAP_PROMPT));
         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_CLOSEMAP_QUESTION));
-        ImGui::Spacing();
-        if (ImGui::Button(langGetText(STR_DLGLOBBY_USETHISMAP))) {
+        /* [Cancel: Keep picking] [Destructive: Revert and Close] [Primary: Use This Map]. */
+        int f = WBUI::DialogFooter3(langGetText(STR_DLGLOBBY_KEEPPICKING),
+                                    langGetText(STR_DLGLOBBY_REVERTCLOSE),
+                                    langGetText(STR_DLGLOBBY_USETHISMAP));
+        if (f == WBUI::FOOTER_CONFIRM) {
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
@@ -2661,9 +2672,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             s_chooseMapPreviewPending = false;
             s_chooseMapOpen           = false;
             ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_DLGLOBBY_REVERTCLOSE))) {
+        } else if (f == WBUI::FOOTER_DESTRUCTIVE) {
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
@@ -2675,9 +2684,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             s_chooseMapPreviewPending = false;
             s_chooseMapOpen           = false;
             ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_DLGLOBBY_KEEPPICKING))) {
+        } else if (f == WBUI::FOOTER_CANCEL) {
             /* Re-open the chooser window — Begin's `open` flag was
              * flipped false when the user hit X, so without this
              * we'd close on the very next frame. */
@@ -3551,7 +3558,8 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
          * variant — it dims everything underneath and traps focus
          * until the user picks a button. */
         ImGui::SetNextWindowSize(ImVec2(420.0f * s, 0.0f), ImGuiCond_Appearing);
-        if (ImGui::BeginPopupModal(kBalancePopup, NULL,
+        static bool s_balOpen = true; s_balOpen = true;
+        if (ImGui::BeginPopupModal(kBalancePopup, &s_balOpen,
                                     ImGuiWindowFlags_AlwaysAutoResize
                                     | ImGuiWindowFlags_NoSavedSettings)) {
             /* Per-frame log while the popup body is being drawn so we
@@ -3579,7 +3587,10 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
 
             float btnW = 140.0f * s;
             float btnH = 0.0f;
-            if (ImGui::Button("Cancel##balcancel", ImVec2(btnW, btnH))) {
+            WBUI::PushCancelStyle();
+            bool balCancel = ImGui::Button("Cancel##balcancel", ImVec2(btnW, btnH));
+            WBUI::PopCancelStyle();
+            if (balCancel || WBUI::CancelKeyPressed()) {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
@@ -4962,7 +4973,8 @@ static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
         ImGui::OpenPopup(popupTitle);
     }
 
-    if (ImGui::BeginPopupModal(popupTitle, nullptr,
+    static bool s_pmOpen = true; s_pmOpen = true;
+    if (ImGui::BeginPopupModal(popupTitle, &s_pmOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ServerPortmapInfo pm2;
         serverInstanceGetPortmapInfo(&pm2);
@@ -5032,15 +5044,11 @@ static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
                     break;
             }
         }
-        ImGui::Spacing();
-
-        if (ImGui::Button(langGetText(STR_CLOSE)) ||
-            ImGui::IsKeyPressed(ImGuiKey_Escape) ||
-            (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
-#ifdef __APPLE__
-            || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
-#endif
-           ) {
+        /* [Close] only — affirmative "I'm done viewing", not cancel.
+         * Use confirm slot so it gets default primary styling. */
+        int closeFooter = WBUI::DialogFooter(/*cancelLabel*/ nullptr,
+                                             /*confirmLabel*/ langGetText(STR_CLOSE));
+        if (closeFooter != WBUI::FOOTER_NONE) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -6944,23 +6952,21 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         /* --- Leave confirmation popup --- */
         char leavePopupModalId[64];
         SDL_snprintf(leavePopupModalId, sizeof(leavePopupModalId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
-        if (ImGui::BeginPopupModal(leavePopupModalId, nullptr,
+        static bool s_llOpen = true; s_llOpen = true;
+        if (ImGui::BeginPopupModal(leavePopupModalId, &s_llOpen,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_LEAVE_BLURB));
-            ImGui::Spacing();
-            if (ImGui::Button(langGetText(STR_YES), ImVec2(80 * s, 0))) {
+            /* [No (stay)] [Yes (leave)] — Yes is the destructive primary; No
+             * is the cancel-equivalent. Reordering keeps the localized Yes/No
+             * labels while matching the [Cancel][Confirm] spec convention.
+             * No Enter-confirm: destructive action requires an explicit click. */
+            int f = WBUI::DialogFooter(langGetText(STR_NO),
+                                       langGetText(STR_YES));
+            if (f == WBUI::FOOTER_CONFIRM) {
                 ImGui::CloseCurrentPopup();
                 result = 0;
                 running = false;
-            }
-            ImGui::SameLine(0.0f, 8.0f);
-            if (ImGui::Button(langGetText(STR_NO), ImVec2(80 * s, 0)) ||
-                ImGui::IsKeyPressed(ImGuiKey_Escape) ||
-                (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
-#ifdef __APPLE__
-                || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
-#endif
-               ) {
+            } else if (f == WBUI::FOOTER_CANCEL) {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();

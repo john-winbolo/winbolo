@@ -66,8 +66,14 @@ typedef struct NaThreatCtx {
     float pill_danger_edge_falloff;
     float pill_danger_base;
     float pill_danger_anger;
-    float low_hp1_mult;
-    float low_hp2_mult;
+    /* Damaged-pill stamp scaling.
+     *   mult = hp_damage_floor + hp_damage_scale * (hp / pills_max_health)^hp_damage_exp
+     * Floor/scale/exp set from threat.lua's configure call. Replaces the
+     * old low_hp1_mult/low_hp2_mult ladder which only fired at hp==1/2. */
+    float hp_damage_floor;
+    float hp_damage_scale;
+    float hp_damage_exp;
+    int   pills_max_health;
     float tree_full_hide_mult;
     float tree_partial_hide_mult;
     float forest_terrain_mult;
@@ -316,8 +322,10 @@ static int l_naThreatConfigure(lua_State *L) {
     ctx->pill_danger_edge_falloff = 0.5f;
     ctx->pill_danger_base         = 8.0f;
     ctx->pill_danger_anger        = 200.0f;
-    ctx->low_hp1_mult             = 0.8f;
-    ctx->low_hp2_mult             = 0.9f;
+    ctx->hp_damage_floor          = 0.60f;
+    ctx->hp_damage_scale          = 0.40f;
+    ctx->hp_damage_exp            = 0.6f;
+    ctx->pills_max_health         = 15;
     ctx->tree_full_hide_mult      = 0.1f;
     ctx->tree_partial_hide_mult   = 0.7f;
     ctx->forest_terrain_mult      = 1.5f;
@@ -342,8 +350,10 @@ static int l_naThreatConfigure(lua_State *L) {
     READ_NUM("PILL_DANGER_EDGE_FALLOFF", ctx->pill_danger_edge_falloff);
     READ_NUM("PILL_DANGER_BASE",         ctx->pill_danger_base);
     READ_NUM("PILL_DANGER_ANGER",        ctx->pill_danger_anger);
-    READ_NUM("LOW_HP1_MULT",             ctx->low_hp1_mult);
-    READ_NUM("LOW_HP2_MULT",             ctx->low_hp2_mult);
+    READ_NUM("HP_DAMAGE_FLOOR",          ctx->hp_damage_floor);
+    READ_NUM("HP_DAMAGE_SCALE",          ctx->hp_damage_scale);
+    READ_NUM("HP_DAMAGE_EXP",            ctx->hp_damage_exp);
+    READ_INT("PILLS_MAX_HEALTH",         ctx->pills_max_health);
     READ_NUM("TREE_FULL_HIDE_MULT",      ctx->tree_full_hide_mult);
     READ_NUM("TREE_PARTIAL_HIDE_MULT",   ctx->tree_partial_hide_mult);
     READ_NUM("FOREST_TERRAIN_MULT",      ctx->forest_terrain_mult);
@@ -486,8 +496,21 @@ static int l_naThreatStampPill(lua_State *L) {
     if (!ctx->disk_built) build_disk(ctx);
 
     float base = ctx->pill_danger_base + ctx->pill_danger_anger * anger;
-    if      (hp == 1) base *= ctx->low_hp1_mult;
-    else if (hp == 2) base *= ctx->low_hp2_mult;
+    /* Smooth HP scaling across the whole damage range. Formula:
+     *   mult = floor + scale * (hp / max_hp)^exp
+     * With defaults (floor=0.60, scale=0.40, exp=0.6) this gives:
+     *   hp=1 → 0.69, hp=5 → 0.81, hp=10 → 0.90, hp=15 → 1.00.
+     * hp <= 0 collapses to floor; hp >= max_hp pins at floor+scale.
+     * Replaces the old hp==1/hp==2 ladder which left hp 3..14 unscaled. */
+    if (hp >= ctx->pills_max_health) {
+        base *= (ctx->hp_damage_floor + ctx->hp_damage_scale);
+    } else if (hp <= 0) {
+        base *= ctx->hp_damage_floor;
+    } else {
+        float frac = (float)hp / (float)ctx->pills_max_health;
+        float curve = powf(frac, ctx->hp_damage_exp);
+        base *= (ctx->hp_damage_floor + ctx->hp_damage_scale * curve);
+    }
 
     /* Fresh contrib table — sized hint = disk_len */
     lua_createtable(L, 0, ctx->disk_len);

@@ -37,6 +37,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <math.h>
 #include <float.h>
 #include <SDL3/SDL.h>
@@ -136,7 +137,7 @@ static inline int next_boat_state(int cur_boat, int type) {
 /* Heap operations (array-based 4-ary min-heap)                         */
 /*                                                                      */
 /* 4-ary heap: each node has 4 children. Tree height is half a binary   */
-/* heap, sift_down does ~1.3× the comparisons but ~0.5× the cache       */
+/* heap, sift_down does ~1.3Ã— the comparisons but ~0.5Ã— the cache       */
 /* misses since 4 siblings live in adjacent memory. Net ~25% faster on  */
 /* the heap-heavy phases of A-star and Dijkstra.                       */
 /* ------------------------------------------------------------------ */
@@ -1312,7 +1313,7 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
   float result;
   FILE *alog = astar_log;
 
-  /* ── Performance counters (always tallied; only printed if alog) ── */
+  /* â”€â”€ Performance counters (always tallied; only printed if alog) â”€â”€ */
   int n_pops = 0;          /* heap_pop calls */
   int n_stale_pops = 0;    /* popped a node that was already closed */
   int n_pushes = 0;        /* heap_push calls */
@@ -1519,9 +1520,9 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
   return result;
 }
 
-/* ── Full Dijkstra from a source ──────────────────────────────────────── */
+/* â”€â”€ Full Dijkstra from a source â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
-/* ── Precomputed neighbor edge cost grid ──
+/* â”€â”€ Precomputed neighbor edge cost grid â”€â”€
  *
  * For each (tile, direction) pair, store the static base cost of stepping
  * from that tile in that direction:
@@ -1609,7 +1610,7 @@ void brainPathfinderRebuildEdgeCosts(BrainPathfinder *pf) {
   pf->cache_dirty = 1;
 }
 
-/* ── Incremental Dijkstra ──
+/* â”€â”€ Incremental Dijkstra â”€â”€
  *
  * Splits one full Dijkstra search across multiple ticks. Brain calls
  * Start once when it wants a fresh search, then Step every tick with a
@@ -2118,7 +2119,8 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
 
   /* Walk parent chain from dest back to source via dir_at. Source tile
    * has dir_at = 0xFF and contributes 0 to g_cost (no danger added at
-   * start), so we exclude it from the subtraction. */
+   * start), so we exclude it from the subtraction. Each step's
+   * subtract is scaled by DMUL8[d] to match the slate's expansion. */
   float subtract = 0.0f;
   float dscale = chosen->danger_scale;
   int cur = node_idx(x, y, chosen_layer);
@@ -2126,20 +2128,77 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
   int safety = 2048;
   while (safety-- > 0) {
     uint8_t dval = chosen->dir_at[cur];
-    if (dval == 0xFF) break; /* source — exclude */
-
+    if (dval == 0xFF) break;
     int cx = node_x(cur);
     int cy = node_y(cur);
     int tile_key = cy * MAP_SIZE + cx;
     float p = pcontrib_lookup(user, tile_key);
-    if (p > 0.0f) {
-      int tt = pf->map[tile_key] & 0x0F;
-      float inv_spd = cur_boat ? inv_speed_boat[tt] : inv_speed_foot[tt];
-      subtract += p * dscale * inv_spd;
-    }
-
     int d = dval & 0x07;
     int parent_boat = (dval & 0x08) ? 1 : 0;
+    if (p > 0.0f) {
+      int tt = pf->map[tile_key] & 0x0F;
+      /* Mirror the three slate-expansion branches exactly so the
+       * subtract removes the same per-pill contribution the slate
+       * actually added. See the matching code around lines
+       * 1837-1903 (wall-shoot, normal, road-build short-circuit). */
+      float p_term;
+      int is_wall_tile = !cur_boat && (tt == TT_BUILDING || tt == TT_HALFBUILD);
+      if (is_wall_tile) {
+        /* Wall-shoot expansion: tc = wall_shoot_cost + danger*dscale*16/3
+         * (the LGM stops to shoot at speed ~3 so inv_spd = 16/3, not
+         * the terrain table's value which would be ~160 for a wall).
+         * Per-pill contribution to that danger term is the same
+         * formula with pcontrib in place of total danger. */
+        p_term = p * dscale * (16.0f / 3.0f);
+      } else {
+        /* Normal tile: tc = ec + danger*dscale*inv_spd + overlay + mine_pen.
+         * Per-pill contribution: p*dscale*inv_spd. */
+        float inv_spd = cur_boat ? inv_speed_boat[tt] : inv_speed_foot[tt];
+        p_term = p * dscale * inv_spd;
+        /* Road-build short-circuit: on foot in slow terrain
+         * (swamp/crater/rubble/river) with total tile danger below
+         * threshold AND the uncapped tc exceeding road_build_cost,
+         * the slate clamps tc flat at road_build_cost — effectively
+         * discarding the part of (danger + water_drain) that was
+         * over budget. Reconstruct the uncapped tc here; if the
+         * clamp would have fired, replace p_term with pcontrib's
+         * proportional share of the SURVIVING danger budget
+         * (road_build_cost - ec - overlay - mine_pen, floored at 0).
+         * Pre-existing under-subtract before this branch was added. */
+        if (!cur_boat
+            && (tt == TT_SWAMP || tt == TT_CRATER
+                || tt == TT_RUBBLE || tt == TT_RIVER)) {
+          float total_danger = (float)pf->danger_grid[tile_key]
+                             + (float)pf->danger_offset_grid[tile_key];
+          if (total_danger < 0.0f) total_danger = 0.0f;
+          if (total_danger < pf->road_build_danger_max) {
+            float ec       = pf->terrain_cost_table[tt];
+            float overlay  = (float)pf->overlay_grid[tile_key];
+            float mine_pen = (pf->map[tile_key] & 0x80) ? pf->mine_penalty : 0.0f;
+            float danger_term = total_danger * dscale * inv_spd;
+            float water_drain = 0.0f;
+            if (tt == TT_RIVER && pf->water_drain_rate > 0.0f) {
+              water_drain = pf->water_drain_rate
+                          * (pf->shell_loss_cost + pf->mine_loss_cost);
+            }
+            float tc_uncapped = ec + danger_term + overlay + mine_pen + water_drain;
+            if (tc_uncapped > pf->road_build_cost) {
+              /* Clamp fired. Effective danger contribution that
+               * survived in tc = road_build_cost minus the
+               * non-danger fixed components (water_drain is also
+               * clamped away with the rest). Pcontrib's share is
+               * proportional to its fraction of total_danger. */
+              float effective_danger = pf->road_build_cost - ec - overlay - mine_pen;
+              if (effective_danger < 0.0f) effective_danger = 0.0f;
+              p_term = (total_danger > 0.0f)
+                       ? (p / total_danger) * effective_danger
+                       : 0.0f;
+            }
+          }
+        }
+      }
+      subtract += p_term * DMUL8[d];
+    }
     int px = cx - DX8[d];
     int py = cy - DY8[d];
     if (px < 0 || px > 255 || py < 0 || py > 255) break;
@@ -2523,7 +2582,7 @@ double brainPathfinderDijkstraFrom(BrainPathfinder *pf,
   return t1 - t0;
 }
 
-/* ── Incremental cost_to ──────────────────────────────────────── */
+/* â”€â”€ Incremental cost_to â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 /* Reset: initialize g_cost/closed/heap from a source position.
  * Call once at the start of a replan cycle. */

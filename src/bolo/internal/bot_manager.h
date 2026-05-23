@@ -89,6 +89,12 @@ typedef struct {
      * so a brain only sees it for the single tick that follows an
      * abort. */
     bool            wasKilled;
+    /* Consecutive crashes (brain.think Lua errors) since the last
+     * successful tick. Reset to 0 on any successful tick. Once it
+     * reaches BOT_CRASH_KICK_THRESHOLD the producer kicks the bot
+     * with a server-text broadcast naming it. See runBotThinkJobImpl
+     * and the kick loop in botManagerTick. */
+    Uint32          consecutiveCrashes;
     /* The bot's lua_State stores BotContext * via lua_getextraspace(L).
      * Set up exactly once during botManagerAddBot after the brain
      * instance is created; the count hook and every cpf_/wsim_/NA

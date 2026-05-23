@@ -87,6 +87,8 @@ static const UnitTestEntry s_tests[] = {
     { "queue_wipe_resets_both_seqs",             run_queue_wipe_resets_both_seqs             },
     { "queue_enqueue_into_empty_after_wipe",     run_queue_enqueue_into_empty_after_wipe     },
     { "queue_hasspace_at_capacity",              run_queue_hasspace_at_capacity              },
+    { "brain_crash_log_writes_file",             run_brain_crash_log_writes_file             },
+    { "brain_crash_log_falls_back_to_luaptr",    run_brain_crash_log_falls_back_to_luaptr    },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

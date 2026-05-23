@@ -29,6 +29,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "dialog_footer.h"
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -363,17 +364,14 @@ extern "C" int imguiUdpSetupShow(void) {
 
         ImGui::Spacing();
 
-        /* --- Cancel --- */
+        /* --- Cancel --- muted grey, right-aligned (panel-screen convention). */
         {
             float cancelX = panelW - btnW - 16.0f * s;
             ImGui::SetCursorPosX(cancelX);
-            if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0)) ||
-                ((ImGui::IsKeyPressed(ImGuiKey_Escape) ||
-                  (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
-#ifdef __APPLE__
-                  || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
-#endif
-                 ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
+            WBUI::PushCancelStyle();
+            bool cancelClicked = ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0));
+            WBUI::PopCancelStyle();
+            if (cancelClicked || WBUI::CancelKeyPressed()) {
                 gameFrontSetDlgState(openWelcome);
                 running = false;
             }
@@ -398,7 +396,8 @@ extern "C" int imguiUdpSetupShow(void) {
 
         /* --- Tracker Config popup --- */
         static float s_fadeUdpTracker = 0.0f;
-        if (ImGui::BeginPopupModal(langGetText(STR_DLGTRACKER_TITLE), nullptr,
+        static bool s_udpTrkOpen = true; s_udpTrkOpen = true;
+        if (ImGui::BeginPopupModal(langGetText(STR_DLGTRACKER_TITLE), &s_udpTrkOpen,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                                 imguiPopupFadeAlpha(&s_fadeUdpTracker));
@@ -419,25 +418,18 @@ extern "C" int imguiUdpSetupShow(void) {
 
             ImGui::Checkbox(langGetText(STR_DLGTRACKER_USETRACKER), &trackerEnabled);
 
-            ImGui::Spacing();
-            {
-                char okBuf[64], cancelBuf[64];
-                snprintf(okBuf,     sizeof(okBuf),     "%s##tracker", langGetText(STR_OK));
-                snprintf(cancelBuf, sizeof(cancelBuf), "%s##tracker", langGetText(STR_CANCEL));
-                if (ImGui::Button(okBuf, ImVec2(80, 0))) {
-                    char *end;
-                    unsigned long pval = strtoul(trackerPortBuf, &end, 10);
-                    if (pval > 65535) pval = 65535;
-                    gameFrontSetTrackerOptions(trackerAddr, (unsigned short)pval,
-                                               trackerEnabled);
-                    ImGui::CloseCurrentPopup();
-                }
-                imguiHandOnHover();
-                ImGui::SameLine(0.0f, 8.0f);
-                if (ImGui::Button(cancelBuf, ImVec2(80, 0))) {
-                    ImGui::CloseCurrentPopup();
-                }
-                imguiHandOnHover();
+            int trackerFooter = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                                   langGetText(STR_OK),
+                                                   /*enterConfirms*/ true);
+            if (trackerFooter == WBUI::FOOTER_CONFIRM) {
+                char *end;
+                unsigned long pval = strtoul(trackerPortBuf, &end, 10);
+                if (pval > 65535) pval = 65535;
+                gameFrontSetTrackerOptions(trackerAddr, (unsigned short)pval,
+                                           trackerEnabled);
+                ImGui::CloseCurrentPopup();
+            } else if (trackerFooter == WBUI::FOOTER_CANCEL) {
+                ImGui::CloseCurrentPopup();
             }
             ImGui::PopStyleVar();
             ImGui::EndPopup();

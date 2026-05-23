@@ -98,6 +98,8 @@ int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);
 int run_wbn_news_parse(void);
 int run_wbn_country_cache(void);
+int run_brain_crash_log_writes_file(void);
+int run_brain_crash_log_falls_back_to_luaptr(void);
 
 /* Reliable control-event queue regression tests (test_control_event_queue.c).
  * Each captures a specific bug that shipped during the
