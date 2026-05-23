@@ -28,6 +28,7 @@
 
 #include "global.h"
 #include "server_sim.h"
+#include "server_sim_lifecycle.h"
 #include "wire_limits.h"     /* LobbySettingType (LST_* enum) */
 #include "netpacks.h"
 #include "everard_map.h"

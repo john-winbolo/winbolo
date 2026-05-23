@@ -113,6 +113,7 @@ Transport transportUdpClientCreate(struct ClientSim *clientSim,
                                    const char *serverAddr,
                                    unsigned short serverPort,
                                    const char *playerName,
+                                   const char *fallbackCountry,
                                    const char *password,
                                    const char *wbnApiToken,
                                    const char *wbnServerKey,
@@ -227,6 +228,24 @@ void transportUdpClientSendLobbyMapUseLocal(Transport *t, uint32_t totalLen,
                                              const char *relPath,
                                              const uint8_t md5[16]);
 
+/* Lobby map upload entry points — the chunked PACKET_LOBBY_MAP_UPLOAD_*
+ * state machine that used to live in imgui_lobby's per-frame pump. The
+ * transport owns the read, validation, USE_LOCAL pre-check, chunk
+ * dispatch, ACK/DONE state machine, and the watchdog. Both return
+ * false on file-not-found / validate-failed / no-transport /
+ * upload-already-in-flight; on true the transport pump (driven by
+ * udpClientTick) carries the upload to completion. The frontend reads
+ * progress via the lobbyMapUpload* status fields on ClientSim. */
+bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
+                                                    const char *localFilePath);
+bool transportUdpClientStartLobbyMapUploadFromBytes(Transport *t,
+                                                     const uint8_t *buf,
+                                                     size_t len,
+                                                     const char *mapName);
+
+/* Current upload progress as 0..100 (bytesSent / fileLen * 100). */
+uint8_t transportUdpClientGetLobbyMapUploadProgressPercent(Transport *t);
+
 /* Server-side: validates a length-prefixed upload filename against the
  * reserved-name / control-char / suffix-cap rules. Exposed for unit
  * coverage of the validation matrix; production callers live inside
@@ -274,10 +293,10 @@ const char *transportUdpClientGetJoinRejectReason(Transport *t);
  * outLen receives the length of the compressed data. */
 const BYTE *transportUdpClientGetMapData(Transport *t, int *outLen);
 
-/* Returns the game settings received from the server during join. */
-void transportUdpClientGetGameSettings(Transport *t, gameType *game,
-                                       bool *hiddenMines, int32_t *startDelay,
-                                       int32_t *gameLen);
+/* Returns map-download progress as 0..100. Returns 100 when nothing is
+ * in flight (no buffer allocated yet, or zero-sized total — neither
+ * happens in practice). */
+uint8_t transportUdpClientGetMapDownloadPercent(Transport *t);
 
 
 /*********************************************************
@@ -327,22 +346,21 @@ typedef struct UdpServerClient {
 /* Creates a server-side UDP transport.
  * Binds to the given port and starts accepting connections.
  * sim: the authoritative ServerSim that inputs will be applied to.
- * password: game password (empty string if none).
- * maxPlayers: maximum allowed players (0 = MAX_TANKS). */
+ *      sim->maxPlayers is the join-slot cap (set by the lifecycle layer
+ *      before calling here).
+ * password: game password (empty string if none). */
 bool transportUdpServerCreate(unsigned short port,
                               const char *addrToUse,
                               struct ServerSim *sim,
-                              const char *password,
-                              BYTE maxPlayers);
+                              const char *password);
 
 /* Destroys the server-side UDP transport. */
 void transportUdpServerDestroy(void);
 
-/* Server tick: receive all pending inputs, broadcast snapshots.
- * Call this once per tick after serverSimTick(). */
-void transportUdpServerTick(struct ServerSim *sim);
-
-/* Split receive/send for callers that need to tick the sim in between. */
+/* Server per-tick API. Call once per tick after serverSimTick().
+ * Use the recv/drainRecvQueue pair (selected via
+ * transportUdpServerHasRecvThread) to receive inputs, then
+ * transportUdpServerDrainEvents and transportUdpServerSend. */
 void transportUdpServerRecv(struct ServerSim *sim);
 void transportUdpServerSend(struct ServerSim *sim);
 
@@ -381,9 +399,6 @@ void transportUdpServerSendServerMessage(const char *message);
  * If toFile is TRUE, also write to "status.txt". */
 void transportUdpServerPrintStatus(bool toFile);
 
-/* Returns the max players setting. */
-BYTE transportUdpServerGetMaxPlayers(void);
-
 /* Check for client timeouts — safe to call in any server state.
  * Disconnects clients that haven't sent packets within CLIENT_TIMEOUT_TICKS. */
 void transportUdpServerCheckTimeouts(struct ServerSim *sim);
@@ -401,9 +416,26 @@ bool lobbyAnyOtherUploadActive(const bool *active, int exceptIdx);
  * connected client as needing a player-list refresh, flags map download
  * complete, and clears reliable / map event queue sequence numbers for
  * all slots.  Callers run this on the countdown→running transition
- * before publishing the CTRL_GAME_PHASE(RUNNING) event so the resets
+ * before publishing the CTRL_GAME_PHASE_RUNNING event so the resets
  * land before the codec encodes PACKET_GAME_START. */
 void transportUdpServerOnGameStart(struct ServerSim *sim);
+
+/* The transport's own monotonic tick counter — advances every call to
+ * transportUdpServerRecv / transportUdpServerDrainRecvQueue regardless of
+ * sim state.  Used by callers that need a "clock that never freezes"
+ * (e.g. the lobby retransmit cadence in server_lifecycle.c, which can't
+ * gate on sim->tick because that field stops advancing during countdown
+ * and gameOver states). */
+uint32_t transportUdpServerGetTickCount(void);
+
+/* Returns true if the UDP server has any connected client (including
+ * the host's own loopback client when the host runs in
+ * acceptRemoteClients mode).  Used by serverSimLobbyCheckAllReady to
+ * decide between the in-place start (no countdown, pure in-process SP)
+ * and the countdown path (anything that fans state over the wire and
+ * therefore needs a settling window before client UIs flip to game
+ * render mode). */
+bool transportUdpServerHasAnyClient(void);
 
 /* Refresh the server's compressed map data and re-prime each connected
  * client for download (resend JOIN_ACCEPT, reset chunk tracking).
@@ -412,10 +444,13 @@ void transportUdpServerOnGameStart(struct ServerSim *sim);
  * PACKET_LOBBY_MAP_CHANGE notification through the subscriber path. */
 void transportUdpServerOnLobbyMapChange(struct ServerSim *sim);
 
-/* Wire-only fan-out for the periodic lobby refresh — drives the codec
- * encoders directly so cosmetic ping/country updates don't wake the
- * in-process control-event bus.  Called from server_lifecycle.c. */
-void transportUdpServerSendPeriodicLobbyRefresh(struct ServerSim *sim);
+/* Drive the lobby/countdown/gameover retransmit scan.  For every
+ * connected client with unacked control events, sends a fresh
+ * PACKET_CONTROL_TICK carrying the unacked tail.  Snapshots cover
+ * retransmit automatically during running; this exists for the phases
+ * where snapshots don't flow.  Called from server_lifecycle.c at a
+ * 4-tick (~80ms at 50 Hz) cadence. */
+void transportUdpServerRetransmitUnackedControl(void);
 
 /* Broadcast PACKET_WBN_REKEY to every connected WBN-participating client
  * carrying the current server_key.  Called after each

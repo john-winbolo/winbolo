@@ -1,18 +1,16 @@
 #ifndef SERVER_DEDICATED_LOG_H
 #define SERVER_DEDICATED_LOG_H
 
-/* Server-side log-recording hooks invoked from server_sim's lifecycle
- * transitions. The real implementation lives in server_dedicated_log.c
- * and is linked only into the WinBoloDS dedicated-server binary, where
- * servermain.c owns the global log state (fileName / isLogging /
- * dontSendLog) plus the makeLogFileName helper. Every other binary
- * links server_dedicated_log_stubs.c, which supplies empty-body
- * versions so server_sim.c can call these unconditionally. */
+/* Registers the dedicated-server log writer as a bus subscriber
+ * against the supplied ServerSim. The subscriber listens for
+ * CTRL_GAME_PHASE_LOBBY / RUNNING / GAME_OVER and manages the
+ * replay-log file lifecycle accordingly. Called by servermain.c
+ * once at startup when --log is set. Ships only in WinBoloDS — no
+ * other binary references this symbol, so no companion stub file
+ * is needed. */
 
-#include "server_sim.h"
+struct ServerSim;
 
-void serverDedicatedLogOnEnterGameOver(ServerSim *sim);
-void serverDedicatedLogOnReturnToLobby(ServerSim *sim);
-void serverDedicatedLogOnLobbyExit(ServerSim *sim);
+void serverDedicatedLogInstall(struct ServerSim *sim);
 
 #endif /* SERVER_DEDICATED_LOG_H */

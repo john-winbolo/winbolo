@@ -98,6 +98,10 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
   (void)cs; (void)value; (void)str; (void)countryCode; (void)ping; (void)clientType; (void)clientFlags;
 }
 
+void frontEndUpdatePlayerPing(struct ClientSim *cs, playerNumbers value, uint16_t ping) {
+  (void)cs; (void)value; (void)ping;
+}
+
 void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   (void)cs; (void)justBlack;
 }

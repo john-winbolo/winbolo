@@ -40,6 +40,7 @@
 #include "netpacks.h"
 #include "input_packet.h"
 #include "gametype.h"
+#include "control_event.h"
 
 /* Maximum UDP datagram payload we'll send.
  * Sits under the standard 1500-byte Ethernet MTU minus IPv4 (20) + UDP (8)
@@ -70,6 +71,47 @@ static inline bool eventQueueHasSpace(const ClientEventQueue *q) {
     return (q->nextSeq - q->ackedSeq) < RELIABLE_EVENT_BUFFER_SIZE;
 }
 
+/* Per-client reliable control event queues.  Smaller than the game /
+ * map queues because control events are produced at lower rates, but
+ * sized large enough that a sync-replay burst (~15 events) plus any
+ * concurrent publishes cannot overflow under normal operation —
+ * silently dropping an overflow event would resurrect exactly the
+ * lobby-desync bug class this plan exists to fix. */
+#define CONTROL_EVENT_QUEUE_SIZE 128
+
+typedef struct {
+    uint32_t      seq;
+    ControlEvent  event;
+} ReliableControlEvent;
+
+typedef struct {
+    ReliableControlEvent buffer[CONTROL_EVENT_QUEUE_SIZE];
+    uint32_t             nextSeq;
+    uint32_t             ackedSeq;
+} ClientControlEventQueue;
+
+static inline bool controlEventQueueHasSpace(const ClientControlEventQueue *q) {
+    return (q->nextSeq - q->ackedSeq) < CONTROL_EVENT_QUEUE_SIZE;
+}
+
+/* Queue maintenance contract — the invariants that must hold at every
+ * observable point.  Call from every site that mutates ackedSeq, nextSeq,
+ * or buffer (enqueue, ack-advance, reset/wipe, slot-init).  In release
+ * builds this expands to nothing.
+ *
+ * History: every queue corruption we've shipped to date violated one of
+ * these.  The stale-ack-after-wipe bug pushed ackedSeq past nextSeq; the
+ * empty-queue-idle-timer bug doesn't violate these invariants but exposed
+ * how absent the maintenance-contract documentation was.  Wire-checking
+ * here surfaces the next sibling at first occurrence rather than waiting
+ * for the symptom. */
+static inline void controlEventQueueAssertValid(const ClientControlEventQueue *q,
+                                                const char *site) {
+    (void)site;
+    SDL_assert(q->ackedSeq <= q->nextSeq);
+    SDL_assert((q->nextSeq - q->ackedSeq) <= CONTROL_EVENT_QUEUE_SIZE);
+}
+
 /* Join retry interval in ticks (1 second) */
 #define JOIN_RETRY_INTERVAL 50
 
@@ -90,7 +132,7 @@ static inline bool eventQueueHasSpace(const ClientEventQueue *q) {
  * decoders length-check each field and reject malformed packets. */
 #define LOBBY_SLOT_WIRE_SIZE (1 + 1 + PACKET_MAX_PLAYER_NAME + 1 + 1 + 1 + 2 + 2 + 1 + 1)
 
-#define INPUT_PACKET_WIRE_SIZE 21
+#define INPUT_PACKET_WIRE_SIZE 25
 #define TANK_SNAPSHOT_WIRE_SIZE 27
 
 /* ---- Serialization helpers ---- */

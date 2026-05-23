@@ -91,6 +91,18 @@ void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, b
   pkt->tick = tick;
   pkt->playerNum = playerNum;
 
+  /* If our local tank doesn't exist yet, leave the packet otherwise empty.
+   * This is the brief window between CTRL_GAME_PHASE_RUNNING flipping
+   * inLobby=false on the client and the first tank-bearing snapshot
+   * arriving — over UDP loopback that's a multi-tick gap, and the frontend
+   * may have already entered windowRunGameTick before MY_TANK is populated.
+   * Sending an empty input keeps the server's pingMs / ack piggyback
+   * channel alive without dereferencing a NULL tank in any of the
+   * autoslowdown / brain-keys / build-action paths below. */
+  if (MY_TANK(csPtr) == NULL) {
+    return;
+  }
+
   /* Pack autoslowdown state into flags (sent every packet so server stays in sync) */
   if (tankGetAutoSlowdown(&MY_TANK(csPtr))) {
     pkt->flags |= INPUT_FLAG_AUTOSLOW;
@@ -242,6 +254,11 @@ void clientApplySnapshot(ClientSim *csPtr,
 
     /* Update ping and client flags for all players from snapshot */
     playersSetPing(&csPtr->sim.plyrs, pn, tanks[i].pingMs);
+    /* Push the fresh ping into the frontend's per-slot cache too —
+     * the HUD player rows read from that cache, not from the players
+     * struct, and it would otherwise stay frozen at the value set by
+     * the join-time frontEndSetPlayer call. */
+    frontEndUpdatePlayerPing(csPtr, (playerNumbers)pn, tanks[i].pingMs);
     {
       /* Snapshot is authoritative only for these bits — preserve any others
        * (e.g. STEAM_BUILD set once from JOIN_REQUEST) across snapshot ticks. */

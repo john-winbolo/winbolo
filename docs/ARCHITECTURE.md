@@ -11,7 +11,7 @@ document is the stable reference for the rules themselves.
 
 | Tier | Purpose | Representative headers |
 |---|---|---|
-| **T1 — Sim runtime (public API)** | The official front door to the simulation. Opaque handles; no direct struct access. | `server_sim.h`, `client_sim.h`, `client_mapload.h`, `client_enums.h` |
+| **T1 — Sim runtime (public API)** | The official front door to the simulation. Opaque handles; no direct struct access. | `server_sim.h`, `client_sim.h`, `client_net.h`, `client_enums.h`, `bolo_map_validate.h` |
 | **T2 — Sim internals** | Implementation details of the sim: state structs, wire protocol, sub-systems. | `tank.h`, `players.h`, `game_sim.h`, `allience.h`, `client_sim_internal.h`, `server_sim_internal.h`, `client_sim_control.h`, `bot_manager.h`, `shells.h`, `mines.h`, `lgm.h`, `viewport.h`, `bolo_packets.h`, `netpacks.h`, `transport_udp.h`, `bolo_map.h`, `starts.h`, `pillbox.h`, `bases.h` |
 | **T3 — Presentation data** | Read-only per-frame views the sim publishes for the renderer. | `viewport_types.h`, `client_render.h`, `client_ui_events.h`, `screentank.h`, `screenbullet.h`, `screenlgm.h`, `screencalc.h`, `frontend.h` |
 | **T4 — Shared leaves** | Plain types and constants with no dependencies. | `types.h`, `global.h`, `tilenum.h`, `gametype.h`, `platform_types.h` |
@@ -26,7 +26,7 @@ document is the stable reference for the rules themselves.
 | `src/braintest/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — dev visualisation tool, not shipped to players. |
 | `src/gym/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — ML training harness, not shipped in player builds. |
 | `brains/` | T1 + T2 + T3 + T4 | Builds `bot_brains_static` (bot brain implementations — NewAutopilot, ONNX backends). Compiles under the `sim_owner` profile because brain evaluation reads sim state directly. Not a frontend; every binary that ships bots links the same `bot_brains_static`, so the asymmetric-runtime bug class doesn't apply. |
-| `src/server/` | T1 + T2 + T3 + T4 | Co-owner of the sim alongside `src/bolo/`. Most files compile via three libraries: `server_sim_static` (sim core: `server_sim.c`, `servermessages.c`); `server_static` (dedicated-server runtime on top of it: `transport_udp_server.c`, `server_lifecycle.c`, `geolookup.c`, plus `threads_static` PUBLIC-linked); and `threads_static` (the SDL-mutex thread manager — `threads.c` on every platform except Emscripten, where `threads_wasm.c` substitutes single-threaded no-ops with the same symbol surface). `threads_static` is consumed by every binary that ticks a sim, not only the dedicated server: in-process single-player builds (WinBoloIOS, android main, wasm winbolo, WinBoloUnitTests) link it directly; the four dedicated-server binaries get it transitively through `server_static`. Three more files are per-target sim runtime that ship inside WinBoloDS with T2 access via `bolo_grant_internal_source_access`: `servermain.c` (owns the dedicated-server `main()` and module globals), `server_frontend_stubs.c` (stubs the T2 callbacks bolo's sim TUs expect when there is no UI), and `server_dedicated_log.c` (real bodies for the dedicated-server's replay-log hooks; `server_dedicated_log_stubs.c` is the no-op pair every other binary picks). See "Per-file T2 grants" below for the mechanism. |
+| `src/server/` | T1 + T2 + T3 + T4 | Co-owner of the sim alongside `src/bolo/`. Most files compile via three libraries: `server_sim_static` (sim core: `server_sim.c`, `servermessages.c`); `server_static` (dedicated-server runtime on top of it: `transport_udp_server.c`, `server_lifecycle.c`, `geolookup.c`, plus `threads_static` PUBLIC-linked); and `threads_static` (the SDL-mutex thread manager — `threads.c` on every platform except Emscripten, where `threads_wasm.c` substitutes single-threaded no-ops with the same symbol surface). `threads_static` is consumed by every binary that ticks a sim, not only the dedicated server: in-process single-player builds (WinBoloIOS, android main, wasm winbolo, WinBoloUnitTests) link it directly; the four dedicated-server binaries get it transitively through `server_static`. Three more files are per-target sim runtime that ship inside WinBoloDS with T2 access via `bolo_grant_internal_source_access`: `servermain.c` (owns the dedicated-server `main()` and module globals), `server_frontend_stubs.c` (stubs the T2 callbacks bolo's sim TUs expect when there is no UI), and `server_dedicated_log.c` (the dedicated-server's replay-log subscriber, registered against the ServerSim bus from `servermain.c`). See "Per-file T2 grants" below for the mechanism. |
 | `src/headless/` | T1 + T3 + T4 | Same as server. |
 | `src/wasm/` | T1 + T3 + T4 | Web build of the desktop client. |
 | `src/android/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
@@ -152,53 +152,77 @@ implements `frontEndDrawMainScreen` against the per-frame view
 buffers (`screen *`, `screenTanks *`, `screenBullets *`, `screenLgm *`)
 the sim passes in.
 
-**Setting up a client.**
+**Setting up a client and connecting.** The complete frontend setup
+for any game — SP, LAN host, LAN join, internet host, internet join —
+is alloc-create-set-active-connect:
 
 ```c
 ClientSim *cs = clientSimAlloc();
-clientSimCreate(cs, gameType, hiddenMines, startDelay, gameLen);
-clientSimSetPlayerNum(cs, myPlayerNum);
-clientSimSetupSelf(cs, myPlayerNum, "PlayerName", clientType, clientFlags);
+clientSimCreate(cs);
+frontEndSetActiveClientSim(cs);
 ```
 
 `clientSimAlloc` heap-allocates and zero-initialises. `clientSimCreate`
-applies game settings. `clientSimSetupSelf` populates the local
-self-record (tank/LGM) once `setPlayerNum` has been called.
+prepares the ClientSim for a connect call; game settings (gameType,
+hiddenMines, startDelay, gameLength) install later via setters driven
+by the connect handshake — the frontend never threads them through
+construction. `frontEndSetActiveClientSim` must run **before** the
+connect call: sync-replay fires `frontEndSetPlayer` /
+`frontEndUpdateTankStatusBars` from inside the connect body and those
+hooks look at the active-sim pointer to dispatch.
 
-**Loading a map.** From disk:
-
-```c
-clientLoadMap(cs, "maps/everard.map", gameType, hiddenMines,
-              startDelay, gameLen, "PlayerName", /*wantFree=*/false);
-```
-
-From an in-memory compressed blob (the UDP-join flow — server sends
-the map during the join handshake):
+Then connect, either to an in-process ServerSim (single-player or
+host-with-self):
 
 ```c
-clientSimResetForMapLoad(cs);   /* drops map state, keeps transport */
-clientLoadCompressedMap(cs, buff, buffLen, "mapname", gameType,
-                        hiddenMines, startDelay, gameLen,
-                        "PlayerName", playerNum, /*wantFree=*/false);
+clientSimConnectLocalPassive(cs, serverSim,
+                             playerName,
+                             winbolonetGetCountryCode(),
+                             clientType, clientFlags);
+/* clientSimConnectLocal (active) for headless / gym — same shape,
+ * but the local transport's tick also drives serverSimTick. Passive
+ * leaves that to the host's timer thread. */
 ```
 
-**Connecting.** Network (LAN, or internet via tracker — see `client_net.h`):
+…or to a remote server via UDP (LAN, or internet via tracker — see
+`client_net.h`):
 
 ```c
-clientSimConnectUdp(cs, serverAddr, serverPort, playerName,
-                    password, wbnToken, wantRejoin,
-                    trackerAddr, trackerPort);
+clientSimConnectUdp(cs, serverAddr, serverPort,
+                   playerName,
+                   winbolonetGetCountryCode(),
+                   password, wbnApiToken, wbnServerKey,
+                   wantRejoin,
+                   trackerAddr, trackerPort);
 ```
 
-In-process (single-player, or host-with-self):
+The connect call does everything the frontend used to drive by hand:
+picks the slot, installs the map blob the server sends, registers the
+auto-subscriber so control events fan into the ClientSim, creates the
+local tank, and applies the first snapshot. The frontend never sees
+the map bytes, never picks a slot, never stamps a country code — it
+supplies a `fallbackCountry` (cached from WBN) so the server has
+something to fall back to when GeoIP can't resolve the joiner's IP,
+and that's the only piece of identity the frontend hands over.
 
-```c
-clientSimConnectLocal(cs, serverSim, playerNum);
-```
+Post-conditions of `clientSimConnectLocal{,Passive}` are **synchronous**:
+on successful return the map is installed, the local tank exists in
+the assigned slot, the initial snapshot has been applied,
+`clientSimGetConnectState(cs) == CLIENT_CONNECT_CONNECTED`. Post-
+conditions of `clientSimConnectUdp` are **asynchronous**: transport is
+bound and `JOIN_REQUEST` is queued; `clientSimGetConnectState(cs) ==
+CLIENT_CONNECT_JOINING`. The remaining state arrives over subsequent
+`clientSimNetTick` calls — frontends observe progress via
+`clientSimGetConnectState` / `clientSimGetMapDownloadPercent` /
+`clientSimIsInLobby` / `clientSimIsMapDownloadComplete`. No additional
+install call is required; the transport drives the map install
+internally on `CTRL_GAME_PHASE` transition or on no-lobby
+`MAP_DOWNLOAD` completion.
 
-The transport stays bound to the ClientSim across
-`clientSimResetForMapLoad`, which is what makes UDP-join work:
-connect → handshake → reset for map load → load compressed map.
+On failure, the connect call writes a localised rejection reason into
+the ClientSim that the frontend reads via
+`clientSimGetConnectErrorReason(cs)`. One error-handling path covers
+SP, LAN host, LAN join, internet host, and internet join.
 
 **Ticking.** Alternating cadence — keys on odd ticks, full game on
 even ticks. From `src/headless/headless_main.c`:
@@ -254,31 +278,66 @@ ServerSim *sim = serverSimCreate("maps/everard.map", gameType,
  */
 ```
 
-**Player management.**
+**Startup config.** `serverInstanceStartup` is the single entry point
+that takes a `ServerInstanceConfig` and applies every cfg field
+(lobbyEnabled / skipLobby / emptyResetEnabled / hasPassword /
+botBrainPath / botAiType / autoLockOnGameStart / ranked / openHost /
+serverLocks / viewPlayer / uploadPolicy / maxPlayers / …) onto the
+sim, plus drives the UDP transport / WBN / tracker / NAT-portmap
+bring-up when `cfg.acceptRemoteClients` is true.
 
 ```c
-serverSimAddPlayer(sim, playerNum, "Name", /*wantRejoin=*/false);
+ServerInstanceConfig cfg;
+memset(&cfg, 0, sizeof(cfg));
+cfg.acceptRemoteClients = true;            /* false for SP, gym, braintest, bg_game */
+cfg.lobbyEnabled        = true;            /* mutually exclusive with skipLobby */
+cfg.emptyResetEnabled   = true;
+cfg.hasPassword         = (password[0] != '\0');
+cfg.botBrainPath        = "brains/NewAutopilot/init.lua";
+cfg.botAiType           = aiFull;
+cfg.udpPort             = port;
+/* …other transport / WBN / tracker fields… */
+
+serverInstanceStartup(sim, &cfg);
+```
+
+For headless callers that don't run the UDP / WBN stack (gym,
+braintest, bg_game, headless `--fast`), pass `cfg.acceptRemoteClients
+= false` and `cfg.skipLobby = true` to enter running state directly.
+
+**Player management.** Players join through the connect path on the
+**client** side — `clientSimConnectLocal{,Passive}` calls
+`serverSimLocalJoin` internally for in-process joins;
+`clientSimConnectUdp` queues `PACKET_JOIN_REQUEST`, which the UDP
+server handler turns into a join. Frontends never call into the
+server's join machinery directly. Bots flow through a separate
+publish path:
+
+```c
 serverSimRemovePlayer(sim, playerNum);
-serverSimAddBot(sim, playerNum, &botCfg);
+serverSimCreateBot(sim, playerNum, brainPath, "Name", aiFull,
+                   gameType, hiddenMines);
 ```
 
 The bot pool is process-global — call `serverSimBotPoolInit` once at
 startup; multiple ServerSims share it.
 
-**Lobby and start.**
+**Lobby → running transition.** Driven by the all-ready detector
+inside `serverSimLobbyCheckAllReady`, which the UDP packet handlers
+and the SP-host local-transport branch of `clientSimNetSendReady` both
+fire after a ready-toggle. The detector branches on
+`sim->worldPreLoaded`:
 
-```c
-serverSimEnterLobby(sim);
-serverSimSetTeam(sim, playerNum, teamNumber);
-serverSimSetReady(sim, playerNum, true);
-serverSimLobbyCheckAllReady(sim);   /* transitions to countdown */
-serverSimStartGame(sim);            /* countdown done; world begins */
-```
+- Fresh sim from `serverSimCreate*` → `serverSimStartGameInPlace`
+  (synchronous; no countdown). Used by SP host on first round.
+- Subsequent rounds (after a `serverSimResetGameWorld`) → countdown
+  state, then `serverSimStartGame` on countdown expiry. Used by MP
+  and by SP's second-and-later rounds.
 
-If players are added after `serverSimStartGame`, the server frontend
-must call `serverSimReapplyTeamAlliances` to re-fix alliances. This is
-tech debt — new frontends should add players and set teams before
-calling `serverSimStartGame`.
+The detector entry points are private to `src/server/` — frontends
+never call `serverSimStartGame` directly; they fire
+`clientSimNetSendReady(cs, true)` and the server side decides what to
+do with that signal.
 
 **Ticking.**
 
@@ -534,22 +593,42 @@ funnel.
 
 ### Load-bearing wire-only exceptions
 
-Three categories of packet stay wire-only by design; the single-
+Two categories of packet stay wire-only by design; the single-
 publish recipe does not apply to them:
 
-- **Periodic lobby refresh.** The 25-tick cosmetic refresh in
-  `src/server/server_lifecycle.c` calls
-  `transportUdpServerSendPeriodicLobbyRefresh`, which drives the
-  same codec encoders the bus path uses but bypasses the bus. It
-  carries ping and country data that bots, SP, and replay logs
-  ignore — publishing it would wake every in-process subscriber
-  400×/sec for nothing.
 - **Per-tick world snapshots.** Tank positions, shells, and per-tick
-  deltas live in the snapshot module, not the codec.
+  deltas live in the snapshot module, not the codec. Snapshots also
+  carry the per-client reliable control-event tail (see
+  `PACKET_CONTROL_TICK` below for the lobby-phase equivalent), but
+  that tail is fed by the bus — the snapshot module is the carrier,
+  not the publisher.
 - **Per-client handshake and reliability.** `JOIN_ACCEPT`,
   `JOIN_REJECT`, `NAME_CHANGE_REJECT`, `MAP_DOWNLOAD` chunks,
-  `PONG`, and `PLAYER_LIST` resync responses are point-to-point
-  transport mechanics with no in-process audience.
+  `PONG`, `PACKET_CONTROL_TICK` (lobby/countdown/gameover carrier
+  for the per-client control queue), and `PACKET_CONTROL_ACK` (the
+  matching client→server ACK) are point-to-point transport
+  mechanics. The two control packets are the wire carrier for
+  events that DO ride the bus — the bus publishes into the
+  per-client queue, and the queue drains via these packets when
+  snapshots aren't flowing.
+- **`PLAYER_LIST` resync** is a load-bearing wire-only exception
+  for a failure mode the reliable control queue does not reach:
+  `transportUdpServerOnGameStart` wipes every per-client
+  control-event queue at countdown end
+  (`nextSeq = 1; ackedSeq = 1; memset(buffer, 0)`) before
+  publishing `CTRL_GAME_PHASE_RUNNING`. A late-countdown joiner's
+  `CTRL_PLAYER_JOIN` may still be in-flight (un-ACKed) for one or
+  more existing clients at that instant; the memset destroys it
+  and the next event published is `CTRL_GAME_PHASE_RUNNING` at
+  seq=1, with no retransmit path back to the dropped JOIN. The
+  server flips `needsPlayerList = true` for every connected client
+  inside the same reset, and the per-tick send loop fires an
+  unsolicited `PACKET_PLAYER_LIST` after the reset completes,
+  restoring the missing roster entries. (The JOIN-time use of the
+  same flag — `serverHandleJoinRequest` setting it for the new
+  client — is redundant with `serverSimSyncSubscriber`'s replay of
+  `CTRL_PLAYER_JOIN` per in-use player, and is kept as a
+  belt-and-braces overlap.)
 
 ### Compatibility rules
 
@@ -938,11 +1017,10 @@ snapshot tick. Both call sites are gated on
 `winbolonetIsRunning()` so non-WBN servers pay nothing.
 
 `PACKET_WBN_REKEY` sits alongside the existing wire-only
-exceptions (JOIN_ACCEPT, MAP_DOWNLOAD, PONG, PLAYER_LIST resync,
-periodic lobby refresh): per-client reliability with no
-in-process audience. Routing through `ControlEvent` would put a
-WBN-specific concept on the sim's T1 surface where nothing else
-in the sim references it.
+exceptions (JOIN_ACCEPT, MAP_DOWNLOAD, PONG, PLAYER_LIST resync):
+per-client reliability with no in-process audience. Routing through
+`ControlEvent` would put a WBN-specific concept on the sim's T1
+surface where nothing else in the sim references it.
 
 ### Cross-tier dependency: `transport_udp_client.c` → `winbolonet_client`
 
@@ -1095,23 +1173,50 @@ own defines. Files in this category:
 
 - `src/bolo/transport_udp_client.c` — `HAVE_STEAM` flips the
   `PLAYER_FLAG_STEAM_BUILD` bit in the JOIN_REQUEST path.
-- `src/bolo/client_mapload.c` — same flag.
 
-**Per-target globals or `main()`.** A TU owns target-specific globals
-or the binary's entry point, so it can't live in a shared archive:
+**Per-target globals, `main()`, or target-specific stubs.** A TU
+owns target-specific globals or the binary's entry point, or stubs a
+sim-internal function whose production body lives in a static archive
+the target deliberately doesn't link:
 
 - `src/server/servermain.c` — the dedicated-server `main()` and the
   module globals it owns.
 - `src/server/server_frontend_stubs.c` — stubs the T2 callbacks
   bolo's sim TUs expect when there is no UI. Stubbing a T2 function
   requires its signature visible.
-- `src/server/server_dedicated_log.c` — real bodies for the replay-
-  log hooks; the no-op pair (`server_dedicated_log_stubs.c`) ships
-  in every other binary, so the two can't both link.
+- `src/server/server_dedicated_log.c` — registers a bus subscriber
+  that maintains the WinBoloDS replay log in response to
+  `CTRL_GAME_PHASE_*` events. T2 access is needed because the
+  subscriber reads `sim->wantLogging`, `sim->mapName`,
+  `sim->userLogFileName`, `sim->hasPassword`, `sim->playerConnected[]`,
+  and routes through `playersGetAccountFlags`. Ships only in
+  WinBoloDS; no other binary references the symbol surface, so no
+  companion stub file exists.
+- `src/braintest/braintest_lifecycle_stub.c` — BrainTest deliberately
+  omits `server_static`'s transport/WBN/maxmind chain, so the real
+  `serverInstanceStartup` body in `server_lifecycle.c` isn't on its
+  link line. The stub is a thin wrapper that forwards to
+  `serverSimApplyInstanceConfig` (which lives in `server_sim_static`,
+  reachable by both call paths) and stubs `serverInstanceTick` /
+  `serverInstanceShutdown` as no-ops.
 - WinBolo's embedded map editor TUs (`src/mapeditor/mapeditor.c`,
   `mapeditor_export.c`, `mapeditor_validate.c`) — sim-co-owner files
   from the editor that need T2 access regardless of which binary
   they're compiled into.
+
+**Frontend sim-driver without per-actor ClientSim.** A frontend that
+drives an in-process ServerSim with bots but doesn't allocate a
+ClientSim per bot, so the wire-wrapper migration that routes SP-host
+lobby mutations through the local transport doesn't apply.
+
+- `src/gui/sdl3/bg_game.c` — the lobby-background animation. Mutates
+  `lobbyPlayers[].teamNumber` via `serverSimSetTeamBatch` (paired with
+  `serverSimReapplyTeamAlliances` after the batch) because there's no
+  ClientSim per bot to call `clientSimNetSendTeamSet` on. The grant is
+  bounded to that team-setter pair; the rendering helpers read
+  `viewPlayer` via a parameter threaded from the render entry point,
+  not via the sim's `viewPlayer` field, so they don't need privileged
+  access.
 
 This is not a third tier of privileged exception. The grants are a
 CMake-level workaround for archive packaging, not an architectural

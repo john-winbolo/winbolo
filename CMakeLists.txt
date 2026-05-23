@@ -461,9 +461,8 @@ file(GLOB IOS_LANG_FILES "${CMAKE_SOURCE_DIR}/data/lang/*.txt")
 # Bolo engine sources that stay per-target (HAVE_STEAM-divergent).
 # Everything else now lives in bolo_static (added via add_subdirectory
 # below). iOS doesn't define HAVE_STEAM, so PLAYER_FLAG_STEAM_BUILD is
-# never OR'd into selfFlags / clientHints by these two TUs.
+# never OR'd into selfFlags / clientHints by this TU.
 set(IOS_BOLO_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
 )
 
@@ -479,7 +478,6 @@ add_subdirectory(brains)
 # threads.c comes from threads_static.
 set(IOS_SERVER_SOURCES
     src/server/server_stubs.c
-    src/server/server_dedicated_log_stubs.c
     src/mapeditor/mapgen_imgui.cpp
 )
 
@@ -635,7 +633,6 @@ target_include_directories(WinBoloIOS PRIVATE
 )
 bolo_apply_include_rules(WinBoloIOS gui)
 bolo_grant_internal_source_access(WinBoloIOS
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c)
 
 target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
@@ -668,6 +665,8 @@ endif()
 
 target_sources(WinBoloIOS PRIVATE src/steam/steam_wrapper_stub.c)
 target_sources(WinBoloIOS PRIVATE src/common/wb_log.c)
+target_sources(WinBoloIOS PRIVATE src/common/md5.c)
+target_sources(WinBoloIOS PRIVATE src/common/mp_diag_log.c)
 set_flat_output(WinBoloIOS "${CMAKE_BINARY_DIR}")
 
 # Hide dependency targets from the Xcode project — only WinBoloIOS should
@@ -924,9 +923,9 @@ endif()
 # and the shared server-peer files. Added here so every desktop target
 # below can link them. server_sim_static holds server_sim.c + servermessages.c;
 # server_static (the dedicated-server runtime) PUBLIC-links it.
-# Per-target conditional sources (client_mapload, transport_udp_client,
-# nat_portmap, servermain, server_frontend_stubs, server_stubs, posix_stubs)
-# stay in their respective *_SOURCES lists.
+# Per-target conditional sources (transport_udp_client, nat_portmap,
+# servermain, server_frontend_stubs, server_stubs, posix_stubs) stay
+# in their respective *_SOURCES lists.
 # ---------------------------------------------------------------------------
 
 add_subdirectory(src/bolo)
@@ -998,7 +997,6 @@ bolo_apply_include_rules(winbolonet_client runtime_only)
 # ---------------------------------------------------------------------------
 
 set(CLIENT_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/gui/ui_mode.c
@@ -1017,7 +1015,6 @@ set(CLIENT_SOURCES
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/server_dedicated_log_stubs.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -1140,9 +1137,14 @@ target_include_directories(WinBolo PRIVATE
     src/third_party/imgui_markdown
 )
 bolo_apply_include_rules(WinBolo gui)
+# bg_game.c: dev-mode lobby-background animation that assigns bot
+# teams directly because the background loop has no ClientSim per
+# bot. The write goes through a privatised setter; the clean
+# endpoint is moving bot team-assignment into serverSimCreateBot,
+# at which point the grant deletes.
 bolo_grant_internal_source_access(WinBolo
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
+    src/gui/sdl3/bg_game.c
     src/mapeditor/mapeditor.c
     src/mapeditor/mapeditor_export.c
     src/mapeditor/mapeditor_validate.c)
@@ -1413,6 +1415,8 @@ endif()
 # Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
 target_sources(WinBoloDS PRIVATE src/common/sentry_integration.c)
 target_sources(WinBoloDS PRIVATE src/common/wb_log.c)
+target_sources(WinBoloDS PRIVATE src/common/md5.c)
+target_sources(WinBoloDS PRIVATE src/common/mp_diag_log.c)
 if(HAVE_SENTRY)
     target_compile_definitions(WinBoloDS PRIVATE HAVE_SENTRY=1)
     if(SENTRY_DSN)
@@ -1509,6 +1513,7 @@ set(LOGVIEWER_IMGUI_SOURCES
 # LOGVIEWER_LIB_SOURCES because the WinBolo client already links its own copy.
 set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
+    src/gui/sdl3/dialogs/dialog_footer.cpp
     src/logviewer/imgui/imgui_lv_browser_stubs.cpp
 )
 
@@ -1641,7 +1646,6 @@ endif()
 # ---------------------------------------------------------------------------
 
 set(HEADLESS_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
@@ -1650,7 +1654,6 @@ set(HEADLESS_SOURCES
     src/headless/headless_main.c src/headless/headless_frontend.c
     src/headless/cmd_stdin.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/server_dedicated_log_stubs.c
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -1689,7 +1692,6 @@ target_include_directories(WinBoloHeadless PRIVATE
 )
 bolo_apply_include_rules(WinBoloHeadless runtime_only)
 bolo_grant_internal_source_access(WinBoloHeadless
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c)
 
 if(WIN32)
@@ -1759,7 +1761,6 @@ endif()
 # ---------------------------------------------------------------------------
 
 set(GYM_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
@@ -1767,7 +1768,6 @@ set(GYM_SOURCES
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_frontend.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/server_dedicated_log_stubs.c
     src/gym/winbolonet_stub.c
     src/gym/winbolo_gym.c
 )
@@ -1872,14 +1872,13 @@ endif()
 # ---------------------------------------------------------------------------
 
 set(BRAINTEST_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
-    src/server/server_dedicated_log_stubs.c
+    src/braintest/braintest_lifecycle_stub.c
     src/braintest/braintest_main.c src/braintest/braintest_frontend.c
     src/braintest/braintest_viz_registry.c
     src/braintest/braintest_vizwindow.cpp
@@ -1979,7 +1978,6 @@ add_custom_command(TARGET BrainTest POST_BUILD
 # ---------------------------------------------------------------------------
 
 set(MAPEDITOR_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/minimap_render.c
@@ -1988,7 +1986,6 @@ set(MAPEDITOR_SOURCES
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
-    src/server/server_dedicated_log_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/third_party/stb/stb_image_write_impl.c
@@ -2310,6 +2307,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_vote_toggle_modes.c
     tests/unit/test_lobby_set_team_clamps.c
     tests/unit/test_md5.c
+    src/common/md5.c
+    src/common/mp_diag_log.c
     tests/unit/test_ranked_lobby.c
     tests/unit/test_lobby_locks.c
     tests/unit/test_upload_cap.c
@@ -2324,6 +2323,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
     tests/unit/test_wbn_country_cache.c
+    tests/unit/test_control_event_queue.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
@@ -2349,7 +2349,6 @@ set(WINBOLO_UNITTESTS_SOURCES
     # natPortMap* in src/bolo/nat_portmap.c) stay stubbed in
     # test_stubs.c — acceptRemoteClients=false keeps them off the
     # tick-time call paths.
-    src/server/server_dedicated_log_stubs.c
     src/lzw/dcodlzw.c
     src/lzw/ecodlzw.c
 )
@@ -2440,6 +2439,13 @@ set(_unit_test_names
     wbn_rekey_codec
     wbn_news_parse
     wbn_country_cache
+    queue_init_is_valid
+    queue_enqueue_advances_nextSeq
+    queue_ack_advance_within_range
+    queue_stale_ack_above_nextSeq
+    queue_wipe_resets_both_seqs
+    queue_enqueue_into_empty_after_wipe
+    queue_hasspace_at_capacity
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_inbox_push_peek_fifo

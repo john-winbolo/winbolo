@@ -48,7 +48,6 @@
 
 #include "../../common/wb_log.h"
 #include "../../winbolonet/winbolonet_core.h"
-#include "client_mapload.h"
 #include "client_render.h"
 #include "client_sim.h"
 #include "frontend.h"
@@ -69,6 +68,7 @@
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
 #include "luabrainshandler.h"
+#include "bg_game.h"
 
 #include "dialog_backend.h"
 #include "dialogs/imgui_messagebox.h"
@@ -256,6 +256,11 @@ int main(int argc, char *argv[]) {
   wb_log_init("WinBolo", "WinBolo", "winbolo.log");
   atexit(wb_log_shutdown);
 
+  if (!serverSimBotPoolInit(0)) {
+    fprintf(stderr, "serverSimBotPoolInit failed\n");
+    return 1;
+  }
+
   {
     /* Resolve WinBolo.ini to an absolute path under SDL_GetPrefPath.
      * Win32 WritePrivateProfileString with a relative filename writes
@@ -336,24 +341,11 @@ int main(int argc, char *argv[]) {
         }
         continue;
       }
-      /* lobbyResult == 1: game started.
-       *  MP: load the map that was downloaded in the background
-       *      during the lobby.
-       *  SP: gameFrontStartSinglePlayerGame already prepared the
-       *      world from the local spServerSim; no server map to
-       *      download. */
-      if (!clientSimIsSinglePlayer(cs)) {
-        if (!gameFrontLoadDeferredMap(&cs)) {
-          imguiMessageBoxEx(DIALOG_BOX_TITLE, "Failed to load map from server",
-                            IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-          winboloQuit = FALSE;
-          gameFrontEnd(&keys, TRUE, FALSE);
-          if (gameFrontStart(cmdLine, &keys, TRUE, &cs) == FALSE) {
-            winboloQuit = TRUE;
-          }
-          continue;
-        }
-      }
+      /* lobbyResult == 1: game started. Both MP and SP have already
+       * had their world installed (MP via the UDP transport's
+       * CTRL_GAME_PHASE LOBBY→RUNNING watcher; SP via the local
+       * transport's localTick path), so the main loop just flips the
+       * net status and falls into the per-frame game tick. */
       clientSimSetNetStatus(cs, netRunning);
       simTickCounter = 0;
       justKeysFlag = FALSE;
@@ -587,8 +579,23 @@ int main(int argc, char *argv[]) {
   clientMutexDestroy();
   /* Explicit cleanup before SDL_Quit so leak checks see freed memory */
   sdl3ImguiCleanup();
+  /* Tear down the process-lifetime welcome-screen bg before the renderer
+   * and the bot pool: bgGameDestroy calls SDL_DestroyTexture on
+   * bg->tilesTex (renderer must still be alive — SDL3 docs say destroying
+   * a renderer invalidates its child textures, so destroying a texture
+   * afterwards is UB), and bg destruction publishes control events through
+   * its sim's subscribers (worker pool must still be live for that flush). */
+  {
+    BgGame *bg = bgGameGetShared();
+    if (bg != NULL) {
+      bgGameSetShared(NULL);
+      bgGameDestroy(bg);
+      SDL_free(bg);
+    }
+  }
   sdl3DrawCleanup();
   steam_shutdown();
+  serverSimBotPoolDestroy();
   SDL_Quit();
   threadsDestroy();
   sentryClose();
@@ -676,9 +683,6 @@ static void windowRunGameTick(ClientSim *cs) {
           clientMutexRelease();
           clientSimNetRecordInput(cs, &pkt);
           clientSimNetTick(cs);
-          clientMutexWaitFor();
-          clientSimNetSyncSnapshot(cs);
-          clientMutexRelease();
           simTickCounter++;
           justKeysFlag = FALSE;
         } else {
@@ -713,7 +717,6 @@ static void windowRunGameTick(ClientSim *cs) {
            * to do here. */
           clientSimNetTick(cs);
           clientMutexWaitFor();
-          clientSimNetSyncSnapshot(cs);
           clientSimDisplayTick(cs, brainRunning);
           clientMutexRelease();
           simTickCounter++;
@@ -1565,6 +1568,12 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
   WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[FLAGS] frontEndSetPlayer: player=%d name='%s' cc='%s' (0x%02X 0x%02X)", (int)value, str, cc, (unsigned char)cc[0], (unsigned char)cc[1]);
   sdl3ImguiSetPlayer((unsigned char)value, str, cc);
   sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, clientType, clientFlags);
+}
+
+void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientSimIsRunning(cs)) return;
+  sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
 }
 
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {

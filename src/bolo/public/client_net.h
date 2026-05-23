@@ -14,6 +14,8 @@
 #ifndef CLIENT_NET_H
 #define CLIENT_NET_H
 
+#include <stddef.h>
+
 #include "client_sim.h"
 #include "client_connect_state.h"
 #include "input_packet.h"        /* SnapshotHeader, TankSnapshot, etc. */
@@ -22,19 +24,37 @@
 struct ServerSim;
 
 /* === Lifecycle === */
+/* fallbackCountry is the ISO-3166 two-letter code the server falls
+ * back to when GeoIP doesn't resolve the joiner's IP (loopback joins,
+ * private LAN, missing MMDB). Pass NULL or "" to leave the slot empty
+ * — the server treats both the same. */
 bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
                          unsigned short serverPort, const char *playerName,
+                         const char *fallbackCountry,
                          const char *password,
                          const char *wbnApiToken,
                          const char *wbnServerKey,
                          bool wantRejoin, const char *trackerAddr,
                          unsigned short trackerPort);
-bool clientSimConnectLocal(ClientSim *cs, struct ServerSim *sim, BYTE playerNum);
+/* Run the full local-join handshake against an in-process ServerSim:
+ * pick a slot via serverSimLocalJoin, install the server's compressed
+ * map, set up the local tank, register the auto-subscriber, apply the
+ * initial snapshot. Returns false and writes a rendered rejection
+ * reason into cs (readable via clientSimGetConnectErrorReason) on
+ * failure. clientType / clientFlags are recorded on the slot at join
+ * time; fallbackCountry is used directly (no GeoIP). */
+bool clientSimConnectLocal(ClientSim *cs, struct ServerSim *sim,
+                           const char *playerName,
+                           const char *fallbackCountry,
+                           uint8_t clientType, uint8_t clientFlags);
 /* Like clientSimConnectLocal, but constructs the local transport in
  * passive mode — the transport's tick path will NOT drive
  * serverSimTick. The caller is responsible for stepping the ServerSim
  * itself (e.g. via a host-side timer/finisher). */
-bool clientSimConnectLocalPassive(ClientSim *cs, struct ServerSim *sim, BYTE playerNum);
+bool clientSimConnectLocalPassive(ClientSim *cs, struct ServerSim *sim,
+                                  const char *playerName,
+                                  const char *fallbackCountry,
+                                  uint8_t clientType, uint8_t clientFlags);
 void clientSimDisconnect(ClientSim *cs);
 bool clientSimHasTransport(const ClientSim *cs);
 
@@ -63,8 +83,8 @@ bool clientSimNetGetSnapshot(ClientSim *cs, SnapshotHeader *hdr,
 bool clientSimNetSyncSnapshot(ClientSim *cs);
 
 /* Finalize the local tank after the server has placed it. Called by
- * GUI frontends once clientLoadCompressedMap + the first snapshot
- * have populated the sim. */
+ * GUI frontends once the map install + the first snapshot have
+ * populated the sim. */
 void clientSimNetSetupTankGo(ClientSim *cs);
 
 /* === State queries === */
@@ -72,9 +92,6 @@ ClientConnectState clientSimGetConnectState(const ClientSim *cs);
 const char *clientSimGetConnectErrorReason(const ClientSim *cs);
 BYTE        clientSimGetServerPlayerNum(const ClientSim *cs);
 const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen);
-void        clientSimGetServerGameSettings(const ClientSim *cs, gameType *game,
-                                           bool *hiddenMines, int32_t *startDelay,
-                                           int32_t *gameLen);
 
 /* === Send wrappers === */
 void clientSimNetSendChat(ClientSim *cs, BYTE destPlayer, const char *message);
@@ -83,7 +100,14 @@ void clientSimNetSendAllianceRequest(ClientSim *cs, BYTE toPlayer);
 void clientSimNetSendAllianceAccept(ClientSim *cs, BYTE toPlayer);
 void clientSimNetSendAllianceLeave(ClientSim *cs);
 void clientSimNetSendLockToggle(ClientSim *cs, bool allow);
-void clientSimNetSendTeamSet(ClientSim *cs, BYTE teamNumber);
+/* Move `slot` to team `teamNumber`. Over UDP the slot byte is packed
+ * into the wire but the server uses the sender's clientIdx for the
+ * apply (so a non-host client can only change its own team — the slot
+ * arg is informational). On the SP-host local transport, the apply
+ * uses the supplied slot directly, which is how the lobby UI moves
+ * bots / drags one human into another team's column. Self-team
+ * callers pass clientSimGetMyPlayerNum(cs). */
+void clientSimNetSendTeamSet(ClientSim *cs, BYTE slot, BYTE teamNumber);
 void clientSimNetSendReady(ClientSim *cs, bool ready);
 void clientSimNetSendAddBot(ClientSim *cs);
 /* Add-bot with explicit team, brain, and pool-picked name. The
@@ -139,26 +163,41 @@ void clientSimNetSendLobbyMapSearchRequest(ClientSim *cs,
                                            const char *relPath,
                                            const char *query);
 
-/* Map upload: BEGIN announces a file with its byte length and
- * server-relative name (e.g. "Uploaded/Foo.map"); CHUNK delivers
- * data segments at the given offset (1024-byte cap). Server
- * acknowledges BEGIN with MAP_UPLOAD_ACK and the final chunk with
- * MAP_UPLOAD_DONE — both update lobbyMapUploadStatus on the
- * ClientSim. */
-void clientSimNetSendLobbyMapUploadBegin(ClientSim *cs,
-                                         uint32_t totalLen,
-                                         const char *name);
-void clientSimNetSendLobbyMapUploadChunk(ClientSim *cs,
-                                         uint32_t offset,
-                                         const uint8_t *data,
-                                         uint16_t dataLen);
+/* Map upload — file flavour. Read `localFilePath`, validate it via
+ * boloMapValidate, and drive the chunked PACKET_LOBBY_MAP_UPLOAD_*
+ * state machine over the wire. Returns false on file-not-found /
+ * validate-failed / no-transport / upload-already-in-flight; on true
+ * the transport owns the rest. The frontend polls
+ * clientSimGetLobbyMapUpload* status getters for progress, completion,
+ * and reject. When `localFilePath` lives under data/maps/, the
+ * transport tries PACKET_LOBBY_MAP_USE_LOCAL first (server installs
+ * directly if it already has a matching MD5) and falls back to a
+ * regular byte upload on NACK. */
+bool clientSimNetSendLobbyMapUpload(ClientSim *cs, const char *localFilePath);
+
+/* Map upload — bytes flavour. Same as above but the bytes are already
+ * in memory (e.g. a WinBolo.net blob with no on-disk identity). The
+ * transport copies into its own state immediately; caller retains
+ * ownership of `buf`. `mapName` is the wire-side filename the server
+ * records. USE_LOCAL is skipped (no on-disk identity to claim) — the
+ * upload always goes via BEGIN+CHUNK. */
+bool clientSimNetSendLobbyMapUploadBytes(ClientSim *cs,
+                                         const uint8_t *buf, size_t len,
+                                         const char *mapName);
+
+/* Upload progress as 0..100 driven by bytesSent / fileLen. Returns 0
+ * when no upload is in flight. */
+uint8_t clientSimGetLobbyMapUploadProgressPercent(const ClientSim *cs);
+
 /* Pre-upload optimisation: if the server already has the same file
  * (matching MD5) at relPath under its data/maps/, it installs that
  * file directly and replies MAP_UPLOAD_DONE — no chunk transfer
  * needed. On a miss it replies MAP_USE_LOCAL_NACK and the caller
- * falls back to clientSimNetSendLobbyMapUploadBegin. relPath is
- * the same scheme PACKET_LOBBY_MAP_PREVIEW_REQ uses (relative to
- * data/maps/, no leading "data/maps/" segment). */
+ * falls back to clientSimNetSendLobbyMapUpload. relPath is the same
+ * scheme PACKET_LOBBY_MAP_PREVIEW_REQ uses (relative to data/maps/,
+ * no leading "data/maps/" segment). Vestigial: the new
+ * clientSimNetSendLobbyMapUpload runs USE_LOCAL internally, so no
+ * frontend caller remains; kept for symmetry pending a later sweep. */
 void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,
                                       uint32_t totalLen,
                                       const char *name,
@@ -174,9 +213,10 @@ void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost);
 void clientSimNetSendLobbyKick(ClientSim *cs, uint8_t slot);
 
 /* Host- or admin-only: set or clear the server password. NULL or
- * empty pw clears. Server replies by broadcasting a fresh lobby
- * state so has_password updates on every client. The password text
- * itself is never echoed to other clients. */
+ * empty pw clears. The server stores it locally; remote clients
+ * learn about the new flag via the next INFO_RESPONSE query (LAN
+ * browser refresh). The password text itself is never echoed to
+ * other clients. */
 void clientSimNetSendLobbySetPassword(ClientSim *cs, const char *pw);
 void clientSimNetSendMapSkipVote(ClientSim *cs);
 

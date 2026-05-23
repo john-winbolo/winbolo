@@ -23,7 +23,8 @@ void naPillContribSetBeginPillCallback(NaPillContribBeginPillFunc cb) { g_beginP
 void naPillContribSetAddTileCallback(NaPillContribAddTileFunc cb)     { g_addTileCb   = cb; }
 
 /* pillcontrib_begin_pill(pill_id, mx, my) -> slot (opaque; -1 on
- * overflow). The bot's player_num is the closure's upvalue. */
+ * overflow). The bot's player_num is the closure's upvalue, so the
+ * host callback can route the push into this bot's own slot range. */
 static int l_pillcontrib_begin_pill(lua_State *L) {
   int bot     = (int)lua_tointeger(L, lua_upvalueindex(1));
   int pill_id = (int)luaL_checkinteger(L, 1);
