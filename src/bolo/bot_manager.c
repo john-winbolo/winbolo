@@ -125,6 +125,33 @@ static void botDeliverControl(void *ctx, const ControlEvent *evt) {
 
 static BotContext bots[MAX_TANKS];
 
+/* Shared serverSim used by the bot chat-send callback to publish
+ * CTRL_CHAT events. Stashed by botManagerAddBot on first call (single
+ * game = single sim, so subsequent adds set the same pointer). NULL
+ * before any bot is added — botChatSendCallback no-ops in that case. */
+static ServerSim *s_bot_sim = NULL;
+
+/* chatSendFunc wired into every bot ClientSim. The brain layer pushes
+ * outbound chat via brain.sendmessage; that flows through
+ * playersSendAiMessage → clientSimMessageSendPlayer → this callback.
+ * We route through serverSimReceiveChat — the authoritative entry per
+ * docs/ARCHITECTURE.md "Worked example — adding a chat message" — so
+ * bot-originated chat takes the same server-side path as wire-
+ * originated chat from a UDP client. From there:
+ *   - in-process subscribers (other bots' / host's ClientSims) see
+ *     CTRL_CHAT and the handler in client_sim_control.c materializes
+ *     the message into the recipient's MessageState.
+ *   - UDP-connected clients receive PACKET_CHAT_BROADCAST via the
+ *     per-client codec encoder in transport_udp_server.c.
+ * Pre-fix this callback was NULL on bots and outbound chat was
+ * silently dropped at clientSimMessageSendPlayer's NULL check. */
+static void botChatSendCallback(uint8_t fromPlayer, uint8_t destPlayer,
+                                  const char *message) {
+    if (s_bot_sim == NULL || message == NULL) return;
+    size_t msgLen = strlen(message);
+    serverSimReceiveChat(s_bot_sim, fromPlayer, destPlayer, message, msgLen);
+}
+
 /* Consecutive brain.think() Lua errors before we give up and kick the
  * bot. A single bad tick (e.g. transient pill-take edge case) just
  * skips that frame — bot survives. 100 in a row (= 2 s at 50 Hz) is
@@ -557,6 +584,10 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     clientSimCreate(bot->cs, game, hiddenMines, 0, -1);
     clientSimSetIsBot(bot->cs, true);
     clientSimSetPlayerNum(bot->cs, playerNum);
+    /* Wire the chat-send callback so brain.sendmessage actually flows to
+     * other bots / humans. See botChatSendCallback above for the path. */
+    s_bot_sim = sim;
+    clientSimSetChatSendFunc(bot->cs, botChatSendCallback);
 
     /* Load map data from the server before tankCreate so the bot's local
      * starts/pills/bases are populated when startsGetStart() runs — without

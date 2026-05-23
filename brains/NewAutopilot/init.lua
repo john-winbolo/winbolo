@@ -48,6 +48,8 @@ local print2   = require("print2")
 local opt      = require("optimize")
 local shot_tracker = require("shot_tracker")
 local viz      = require("viz")
+local ally_state = require("ally_state")
+ally_state.init()
 
 local Brain = {}
 
@@ -486,6 +488,20 @@ function Brain.open(info)
   state.goal_set_tick     = 0    -- tick when current goal was chosen (for commitment hysteresis)
   state.goal_cooldowns    = {}   -- abandoned goals: { [key] = expiry_tick }
   state.goal_history      = {}   -- circular buffer of last N picked goals (oscillation detection)
+
+  -- /info state broadcast scratch buffers.
+  --   broadcast_state_info      — scratch hash any code can write to during
+  --                                the tick (or reset to empty). End-of-tick
+  --                                comparator builds the wire message from
+  --                                this.
+  --   last_broadcasted_state_info — authoritative copy of what we last sent
+  --                                to allies. Compared against
+  --                                broadcast_state_info to detect change.
+  --   last_broadcast_state_tick — tick of the last broadcast; drives the
+  --                                30 s (1500 tick @ 50 Hz) heartbeat.
+  state.broadcast_state_info       = {}
+  state.last_broadcasted_state_info = {}
+  state.last_broadcast_state_tick   = 0
 
   -- Stuck detection
   state.last_mx   = -1
@@ -1923,26 +1939,34 @@ function Brain.think(info)
     state.send_open_msg = false
   end
 
-  -- Process incoming newswire message
-  if info.message and info.message.text then
-    -- Brain-to-brain coordination (ally claims)
-    comms.process_message(info.message.sender, info.message.text, now)
+  -- Process EVERY incoming chat message this tick. info.messages is
+  -- the new multi-message inbox added in the brain inbox C-side change;
+  -- the legacy info.message field still works but only surfaces the
+  -- first one. Iterating the array lets us see all ally /info traffic
+  -- when several bots broadcast on the same tick (previously the bus
+  -- silently dropped all but one).
+  if info.messages then
+    for _, m in ipairs(info.messages) do
+      if m.text and m.text ~= "" then
+        ally_state.chat_log_add("in", m.sender, m.text, now)
+        comms.process_message(m.sender, m.text, now)
 
-    local cmd = cmds.parse(info.message.text)
-    if cmd then
-      if BRAIN_DEBUG_MODE then
-        print(string.format(TAG .. " t=%d RECV from player %d: '%s'",
-              now, info.message.sender, info.message.text))
-      end
-      log.event("cmd_recv", info.message.text)
-      local reply = cmds.execute(cmd, state, world)
-      if reply and not send_msg then
-        send_msg = reply
-        msg_dest = 1 << state.player_number
+        local cmd = cmds.parse(m.text)
+        if cmd then
+          if BRAIN_DEBUG_MODE then
+            print(string.format(TAG .. " t=%d RECV from player %d: '%s'",
+                  now, m.sender, m.text))
+          end
+          log.event("cmd_recv", m.text)
+          local reply = cmds.execute(cmd, state, world)
+          if reply and not send_msg then
+            send_msg = reply
+            msg_dest = 1 << state.player_number
+          end
+        end
       end
     end
   end
-  comms.expire_claims(now)
 
   -- Paused: accept commands but do nothing else
   if state.paused then
@@ -2811,21 +2835,11 @@ function Brain.think(info)
       end
     end
 
-    -- Broadcast target claim to allies (brain-to-brain coordination)
-    if not send_msg then
-      local gk = state.goal.kind
-      local gid = state.goal.target_id
-      if gid and gid >= 0 then
-        if gk == "attack_pill" or gk == "capture_pill"
-           or gk == "defend_pill" or gk == "repair_pill" then
-          send_msg = comms.format_pill_claim(gid, state.goal_cost or 0)
-          msg_dest = 0xFFFF  -- broadcast to all
-        elseif gk == "capture_base" or gk == "attack_base" then
-          send_msg = comms.format_base_claim(gid, state.goal_cost or 0)
-          msg_dest = 0xFFFF
-        end
-      end
-    end
+    -- Legacy aIndy /info pt + /info gbt claim broadcasts removed:
+    -- the /info state path (in the end-of-tick block below) carries
+    -- goal/sub/target/cost in one canonical message, and the
+    -- ally_state slate is the single source of truth for de-conflict
+    -- comparisons.
 
     -- Auto-expire: A* says we arrived or path impossible
     if state.pf.status == "failed" then
@@ -3635,6 +3649,20 @@ function Brain.think(info)
   local t_pbh_ally = clock_us()
   opt(string.format("  ally-LGM viz done %.2f ms", (t_pbh_ally - t_pbh_barrier) / 1000))
 
+  -- Ally-state overlay (right-middle table of every active player's
+  -- goal / sub / target / k=v data). The slate is populated from the
+  -- chat-based shared-state protocol; if no protocol traffic has
+  -- landed yet the table is empty.
+  if BRAIN_DEBUG_MODE then
+    -- Heartbeat is 30 s; stale at 35 s (1750 ticks @ 50 Hz). 5 s
+    -- grace window after the expected next heartbeat — any longer
+    -- gap and we don't trust their state.
+    ally_state.draw(viz, state.tick, info.player_number, 1750)
+    ally_state.draw_chat_log(viz, state.tick, info.player_number)
+  end
+  local t_pbh_ally_state = clock_us()
+  opt(string.format("  ally-state overlay done %.2f ms", (t_pbh_ally_state - t_pbh_ally) / 1000))
+
   -- Log this tick
   log.log_tick(state, info, state.goal, keys, taps, build_cmd)
   opt(string.format("  log.log_tick done %.2f ms", (clock_us() - t_pbh_ally) / 1000))
@@ -3878,6 +3906,58 @@ function Brain.think(info)
   -- block above, just before get_capacity_state_json reads it. Doing
   -- it there instead of here means the JSON's think_total_ms value
   -- is fresh for the current tick.)
+
+  -- /info state broadcast — runs EVERY tick (not gated by goal selection)
+  -- so heartbeat actually fires on its 30 s cadence and any goal change
+  -- surfaces immediately. Phase 1 populator: clobber broadcast_state_info
+  -- with goal/sub/target read off the current goal.
+  do
+    -- Lazy init in case the brain was created before these state fields
+    -- were added (state. is set in open()) — keeps a hot-reload from
+    -- erroring out on nil.
+    if state.broadcast_state_info == nil       then state.broadcast_state_info       = {} end
+    if state.last_broadcasted_state_info == nil then state.last_broadcasted_state_info = {} end
+    if state.last_broadcast_state_tick == nil  then state.last_broadcast_state_tick  = 0  end
+    local bsi = state.broadcast_state_info
+    for k in pairs(bsi) do bsi[k] = nil end
+    if state.goal and state.goal.kind and state.goal.kind ~= "none" then
+      bsi.goal = state.goal.kind
+      if state.goal.substate and state.goal.substate ~= "" then
+        bsi.sub = state.goal.substate
+      end
+      if state.goal.target_id and state.goal.target_id >= 0 then
+        bsi.target = tostring(state.goal.target_id)
+      end
+    end
+
+    local last = state.last_broadcasted_state_info
+    local differs = false
+    for k, v in pairs(bsi) do if last[k] ~= v then differs = true break end end
+    if not differs then
+      for k, v in pairs(last) do if bsi[k] ~= v then differs = true break end end
+    end
+    local heartbeat_due = (now - state.last_broadcast_state_tick) >= 1500
+    if (differs or heartbeat_due) and not send_msg then
+      send_msg = comms.format_state(bsi)
+      -- Only allies see our state — broadcasting to enemies would
+      -- leak strategy (goal, target, cost). info.allies is the
+      -- engine's alliance bitmap including self; that's fine since
+      -- self-sends are filtered out at the in-process CTRL_CHAT
+      -- handler. If we have no allies the message is dropped by
+      -- playersSendAiMessage (no bits set).
+      msg_dest = info.allies and info.allies or 0
+      for k in pairs(last) do last[k] = nil end
+      for k, v in pairs(bsi) do last[k] = v end
+      state.last_broadcast_state_tick = now
+    end
+  end
+
+  -- Capture outbound for the chat_log overlay. Catches every path that
+  -- writes send_msg (state broadcast, claim broadcast, command reply,
+  -- open/goodbye message) — one place beats sprinkling.
+  if send_msg and send_msg ~= "" then
+    ally_state.chat_log_add("out", state.player_number, send_msg, now)
+  end
 
   -- Output
   return {

@@ -48,6 +48,8 @@ local print2   = require("print2")
 local opt      = require("optimize")
 local shot_tracker = require("shot_tracker")
 local viz      = require("viz")
+local ally_state = require("ally_state")
+ally_state.init()
 
 local Brain = {}
 
@@ -478,6 +480,11 @@ function Brain.open(info)
   state.goal_set_tick     = 0    -- tick when current goal was chosen (for commitment hysteresis)
   state.goal_cooldowns    = {}   -- abandoned goals: { [key] = expiry_tick }
   state.goal_history      = {}   -- circular buffer of last N picked goals (oscillation detection)
+
+  -- /info state broadcast scratch + snapshot (see root init.lua for details).
+  state.broadcast_state_info        = {}
+  state.last_broadcasted_state_info = {}
+  state.last_broadcast_state_tick   = 0
 
   -- Stuck detection
   state.last_mx   = -1
@@ -1560,22 +1567,27 @@ function Brain.think(info)
     state.send_open_msg = false
   end
 
-  -- Process incoming newswire message
-  if info.message and info.message.text then
-    -- Brain-to-brain coordination (ally claims)
-    comms.process_message(info.message.sender, info.message.text, now)
+  -- Iterate every chat message addressed to this brain this tick.
+  -- info.messages is the multi-message inbox (brain inbox C-side change);
+  -- the legacy info.message only surfaces the first.
+  if info.messages then
+    for _, m in ipairs(info.messages) do
+      if m.text and m.text ~= "" then
+        ally_state.chat_log_add("in", m.sender, m.text, now)
+        comms.process_message(m.sender, m.text, now)
 
-    local cmd = cmds.parse(info.message.text)
-    if cmd then
-      log.event("cmd_recv", info.message.text)
-      local reply = cmds.execute(cmd, state, world)
-      if reply and not send_msg then
-        send_msg = reply
-        msg_dest = 1 << state.player_number
+        local cmd = cmds.parse(m.text)
+        if cmd then
+          log.event("cmd_recv", m.text)
+          local reply = cmds.execute(cmd, state, world)
+          if reply and not send_msg then
+            send_msg = reply
+            msg_dest = 1 << state.player_number
+          end
+        end
       end
     end
   end
-  comms.expire_claims(now)
 
   -- Paused: accept commands but do nothing else
   if state.paused then
@@ -2356,21 +2368,7 @@ function Brain.think(info)
       end
     end
 
-    -- Broadcast target claim to allies (brain-to-brain coordination)
-    if not send_msg then
-      local gk = state.goal.kind
-      local gid = state.goal.target_id
-      if gid and gid >= 0 then
-        if gk == "attack_pill" or gk == "capture_pill"
-           or gk == "defend_pill" or gk == "repair_pill" then
-          send_msg = comms.format_pill_claim(gid, state.goal_cost or 0)
-          msg_dest = 0xFFFF  -- broadcast to all
-        elseif gk == "capture_base" or gk == "attack_base" then
-          send_msg = comms.format_base_claim(gid, state.goal_cost or 0)
-          msg_dest = 0xFFFF
-        end
-      end
-    end
+    -- Legacy aIndy /info pt + /info gbt claims removed (see init.lua).
 
     -- Auto-expire: A* says we arrived or path impossible
     if state.pf.status == "failed" then
@@ -3151,6 +3149,44 @@ function Brain.think(info)
   -- block above, just before get_capacity_state_json reads it. Doing
   -- it there instead of here means the JSON's think_total_ms value
   -- is fresh for the current tick.)
+
+  -- /info state broadcast (every tick).
+  do
+    if state.broadcast_state_info == nil       then state.broadcast_state_info       = {} end
+    if state.last_broadcasted_state_info == nil then state.last_broadcasted_state_info = {} end
+    if state.last_broadcast_state_tick == nil  then state.last_broadcast_state_tick  = 0  end
+    local bsi = state.broadcast_state_info
+    for k in pairs(bsi) do bsi[k] = nil end
+    if state.goal and state.goal.kind and state.goal.kind ~= "none" then
+      bsi.goal = state.goal.kind
+      if state.goal.substate and state.goal.substate ~= "" then
+        bsi.sub = state.goal.substate
+      end
+      if state.goal.target_id and state.goal.target_id >= 0 then
+        bsi.target = tostring(state.goal.target_id)
+      end
+    end
+
+    local last = state.last_broadcasted_state_info
+    local differs = false
+    for k, v in pairs(bsi) do if last[k] ~= v then differs = true break end end
+    if not differs then
+      for k, v in pairs(last) do if bsi[k] ~= v then differs = true break end end
+    end
+    local heartbeat_due = (now - state.last_broadcast_state_tick) >= 1500
+    if (differs or heartbeat_due) and not send_msg then
+      send_msg = comms.format_state(bsi)
+      -- Only allies see our state (see init.lua for the rationale).
+      msg_dest = info.allies or 0
+      for k in pairs(last) do last[k] = nil end
+      for k, v in pairs(bsi) do last[k] = v end
+      state.last_broadcast_state_tick = now
+    end
+  end
+
+  if send_msg and send_msg ~= "" then
+    ally_state.chat_log_add("out", state.player_number, send_msg, now)
+  end
 
   -- Output
   return {

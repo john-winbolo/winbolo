@@ -369,12 +369,34 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * transport-internal per the architectural commitment. */
         break;
 
-    case CTRL_CHAT:
-        /* Display side effects stay at the wire boundary
-         * (transport_udp_client.c PACKET_CHAT_BROADCAST branch); the
-         * bus publish exists so in-process subscribers can observe
-         * chat alongside the other control events. */
+    case CTRL_CHAT: {
+        /* In-process delivery for chat. Mirrors the UDP path in
+         * transport_udp_client.c (PACKET_CHAT_BROADCAST), but for
+         * subscribers that aren't UDP clients (host humanSim, bot
+         * ClientSims). Without this, a bot publishing CTRL_CHAT via
+         * bot_manager.c's botChatSendCallback would never materialize
+         * in any recipient's MessageState — so /info traffic between
+         * bots was invisible. */
+        BYTE fromPlayer = evt->u.chat.fromPlayer;
+        BYTE destPlayer = evt->u.chat.destPlayer;
+        uint16_t bodyLen = evt->u.chat.bodyLen;
+        BYTE myPN = clientSimGetMyPlayerNum(cs);
+        /* Only deliver if I'm the recipient or it's a broadcast.
+         * Self-sends still surface in the sender's chat_log via the
+         * Lua side (init.lua's outbound capture), so we don't need
+         * a self-echo here. */
+        bool for_me = (destPlayer == 0xFF) || (destPlayer == myPN);
+        if (for_me && fromPlayer < MAX_TANKS && bodyLen > 0
+            && fromPlayer != myPN) {
+            char msg[PACKET_MAX_CHAT_MESSAGE + 1];
+            uint16_t copyLen = bodyLen;
+            if (copyLen > PACKET_MAX_CHAT_MESSAGE) copyLen = PACKET_MAX_CHAT_MESSAGE;
+            memcpy(msg, evt->u.chat.body, copyLen);
+            msg[copyLen] = '\0';
+            clientSimIncomingMessage(cs, fromPlayer, msg);
+        }
         break;
+    }
 
     case CTRL_PLAYER_LEAVE:
         /* Lobby chat "X has left" rendering stays at the wire boundary

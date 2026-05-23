@@ -311,7 +311,11 @@ static BYTE udpPlayerNum = 0;
 /* Send callbacks for ClientSim — route through the client_net.h wrappers.
  * (The callback layer is retained for this transition; future cleanup
  * will let ClientSim callers call clientSimNetSend* directly.) */
-static void gameFrontChatSendCallback(uint8_t destPlayer, const char *message) {
+static void gameFrontChatSendCallback(uint8_t fromPlayer, uint8_t destPlayer, const char *message) {
+    /* fromPlayer is always the local human's own slot for this callback —
+     * the only sender wired up here is humanSim itself. Ignore it; UDP
+     * transport stamps fromPlayer server-side from the connection. */
+    (void)fromPlayer;
     clientSimNetSendChat(humanSim, destPlayer, message);
 }
 

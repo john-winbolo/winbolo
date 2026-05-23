@@ -722,13 +722,13 @@ void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *messa
 
 void clientSimMessageSendAllPlayers(ClientSim *cs, BYTE playerNum, char *message) {
   if (cs->chatSendFunc != NULL) {
-    cs->chatSendFunc(0xFF, message);
+    cs->chatSendFunc(playerNum, 0xFF, message);
   }
 }
 
 void clientSimMessageSendPlayer(ClientSim *cs, BYTE playerNum, BYTE destPlayer, char *message) {
   if (cs->chatSendFunc != NULL) {
-    cs->chatSendFunc(destPlayer, message);
+    cs->chatSendFunc(playerNum, destPlayer, message);
   }
 }
 

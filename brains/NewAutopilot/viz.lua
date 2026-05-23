@@ -195,6 +195,16 @@ M.IDS = {
   tank_combat_viz   = { short = "Tank combat detection",
                         long  = "Navy detection/engage range circles, gate HUD, per-enemy lines/labels" },
 
+  -- Ally-state overlay (right middle): per-player table populated from
+  -- the chat-based shared-state messages. One row per active slot
+  -- (bot #, goal, substate, target, k=v data).
+  ally_state_overlay = { short = "Ally state table",
+                         long  = "Right-middle HUD showing each ally's goal / sub / target / k=v data, fed by the chat-based ally_state slate" },
+
+  -- Chat log overlay (right side, below ally_state_overlay).
+  chat_log_overlay   = { short = "Chat log",
+                         long  = "Ring of recent incoming + outgoing chat messages (in particular /info traffic)" },
+
   -- Tank combat standoff scan (attack_tank substate).
   tank_combat_standoff_scan = { short = "Tank combat standoff scan",
                                 long  = "Per-spot score boxes, maneuver tiles, chosen standoff circle/ellipse for attack_tank" },

@@ -79,8 +79,14 @@ typedef struct {
     uint8_t clientType;    /* ClientType enum */
 } ClientLobbySlot;
 
-/* Callback typedefs for new transport message sending */
-typedef void (*NetChatSendFunc)(uint8_t destPlayer, const char *message);
+/* Callback typedefs for new transport message sending.
+ *
+ * NetChatSendFunc: fromPlayer is the sender slot.  For human chat the
+ * callback can ignore it (the human only ever sends as themselves); for
+ * the bot-pool callback fromPlayer is essential — it identifies which
+ * bot to attribute the outbound chat to when publishing into the
+ * serverSim's control bus. */
+typedef void (*NetChatSendFunc)(uint8_t fromPlayer, uint8_t destPlayer, const char *message);
 typedef void (*NetNameChangeSendFunc)(const char *newName);
 typedef void (*NetAllianceRequestFunc)(uint8_t toPlayer);
 typedef void (*NetAllianceAcceptFunc)(uint8_t toPlayer);
