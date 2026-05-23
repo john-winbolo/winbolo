@@ -53,6 +53,7 @@ extern "C" {
 #include "lobby_bot_pools.h"     /* lobbyBotPool* — public utility */
 #include "playername_validate.h" /* playerNameValidate — client-side bot name gate */
 #include "../../../server/server_lifecycle.h"
+#include "../../../server/threads.h"  /* threadsWaitForMutex / Release — SP-host server calls */
 #include "platform_net.h"
 #include "../../../common/mp_diag_log.h"
 #include "../flags.h"
@@ -223,11 +224,15 @@ static void lobbySendAddBot(ClientSim *cs,
                     "[DIAG]   about to serverSimCreateBot slot=%u name='%s' aiType=%d gameType=%d",
                     (unsigned)slot, botName, (int)serverSimGetBotAiType(sim),
                     (int)clientSimGetLobbyGameType(cs));
+        /* Serialise against the SDL timer thread's serverInstanceTick.
+         * The publish flag inside serverSim is single-thread; without the
+         * mutex the lobby heartbeat in serverInstanceTick can re-enter
+         * publishControl while this thread is mid-publish. */
+        threadsWaitForMutex();
         serverSimCreateBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
                            (aiType)serverSimGetBotAiType(sim),
                            (gameType)clientSimGetLobbyGameType(cs),
                            clientSimIsLobbyHiddenMines(cs));
-        WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   serverSimCreateBot returned slot=%u", (unsigned)slot);
         /* Mirror the per-bot brain selection so the AiConfig combo
          * reflects "this bot's brain" rather than a global default.
          * stickyBrainIdx == 0xFF picks up the server's CLI-configured
@@ -238,12 +243,14 @@ static void lobbySendAddBot(ClientSim *cs,
         } else {
             serverSimSetBotBrainIdxFor(sim, slot, 0xFF);
         }
-        /* Bot's name came from the pool — not an override. */
-        s_botNameOverridden[slot] = false;
         /* Publish the slot's new state. serverSimSetBotBrainIdxFor
          * (called via either branch above) publishes the bot-brain
          * event itself. */
         serverSimPublishLobbySlot(sim, slot);
+        threadsReleaseMutex();
+        WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   serverSimCreateBot returned slot=%u", (unsigned)slot);
+        /* Bot's name came from the pool — not an override. */
+        s_botNameOverridden[slot] = false;
         if (teamNumber > 0 && teamNumber < MAX_TANKS) {
             clientSimNetSendTeamSet(cs, slot, teamNumber);
         }
@@ -689,8 +696,11 @@ static void lobbyServerMapsOnSelect(MapChooserState *state, void *ctx) {
                 sel, (int)clientSimIsSinglePlayer(cs));
     if (clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-        if (sim && serverSimReloadMap(sim, sel)) {
-            s_chooseMapPreviewPending = true;
+        if (sim) {
+            threadsWaitForMutex();
+            bool ok = serverSimReloadMap(sim, sel);
+            threadsReleaseMutex();
+            if (ok) s_chooseMapPreviewPending = true;
         }
     } else {
         const char *relPath = sel;
@@ -834,7 +844,13 @@ static void lobbyUploadOnSelect(MapChooserState *state, void *ctx) {
                 picked, (int)clientSimIsSinglePlayer(cs));
     if (clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-        if (sim && serverSimReloadMap(sim, picked)) {
+        bool ok = false;
+        if (sim) {
+            threadsWaitForMutex();
+            ok = serverSimReloadMap(sim, picked);
+            threadsReleaseMutex();
+        }
+        if (ok) {
             s_chooseMapPreviewPending = true;
             WB_LOG_INFO(WB_LOG_CAT_GUI,
                         "[MAPPICK] upload SP reload ok previewPending=1");
@@ -2510,8 +2526,14 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                 }
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-                    if (sim && serverSimReloadRandomMap(sim,
-                            &s_chooseMapRandomState.genConfig)) {
+                    bool ok = false;
+                    if (sim) {
+                        threadsWaitForMutex();
+                        ok = serverSimReloadRandomMap(sim,
+                                &s_chooseMapRandomState.genConfig);
+                        threadsReleaseMutex();
+                    }
+                    if (ok) {
                         s_chooseMapPreviewPending = true;
                     }
                 } else {
@@ -2595,7 +2617,11 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-                    if (sim) serverSimRevertPreview(sim);
+                    if (sim) {
+                        threadsWaitForMutex();
+                        serverSimRevertPreview(sim);
+                        threadsReleaseMutex();
+                    }
                 } else {
                     clientSimNetSendLobbyPreviewCancel(cs);
                 }
@@ -2612,7 +2638,11 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-                    if (sim) serverSimCommitPreview(sim);
+                    if (sim) {
+                        threadsWaitForMutex();
+                        serverSimCommitPreview(sim);
+                        threadsReleaseMutex();
+                    }
                 } else {
                     clientSimNetSendLobbyPreviewCommit(cs);
                 }
@@ -2664,7 +2694,11 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-                    if (sim) serverSimCommitPreview(sim);
+                    if (sim) {
+                        threadsWaitForMutex();
+                        serverSimCommitPreview(sim);
+                        threadsReleaseMutex();
+                    }
                 } else {
                     clientSimNetSendLobbyPreviewCommit(cs);
                 }
@@ -2676,7 +2710,11 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-                    if (sim) serverSimRevertPreview(sim);
+                    if (sim) {
+                        threadsWaitForMutex();
+                        serverSimRevertPreview(sim);
+                        threadsReleaseMutex();
+                    }
                 } else {
                     clientSimNetSendLobbyPreviewCancel(cs);
                 }
@@ -2702,9 +2740,11 @@ static void lobbySendRemoveBot(ClientSim *cs, uint8_t slot) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim) return;
         if (serverSimGetState(sim) != serverStateLobby) return;
+        threadsWaitForMutex();
         serverSimRemoveBot(sim, slot);
-        if (slot < MAX_TANKS) s_botNameOverridden[slot] = false;
         serverSimPublishLobbySlot(sim, slot);
+        threadsReleaseMutex();
+        if (slot < MAX_TANKS) s_botNameOverridden[slot] = false;
         return;
     }
     clientSimNetSendRemoveBot(cs, slot);
@@ -2773,7 +2813,9 @@ static void lobbySendSetBotBrain(ClientSim *cs,
         if (!serverSimGetLobbyPlayer(sim, slot)->isBot) return;
         /* serverSimSwitchBotBrain calls serverSimSetBotBrainIdxFor,
          * which publishes CTRL_LOBBY_BOT_BRAIN itself. */
+        threadsWaitForMutex();
         serverSimSwitchBotBrain(sim, slot, brainIdx);
+        threadsReleaseMutex();
         return;
     }
     clientSimNetSendLobbySetBotBrain(cs, slot, brainIdx);
