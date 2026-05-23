@@ -1990,6 +1990,12 @@ local WS_SUBS = {
   in_range_aim_finetune=true, shoot_pill=true,
 }
 
+local ATTACK_PILL_HP_MULT = {
+  0.05, 0.10, 0.18, 0.28,
+  0.40, 0.46, 0.52, 0.58, 0.64, 0.70,
+  0.76, 0.82, 0.88, 0.94, 1.00,
+}
+
 -- Inject a low-cost wait_for_lgm candidate so the bot prefers to wait
 -- when the LGM is out (e.g. farming) and we'd otherwise wander off.
 -- Skipped during goals that ARE actively driving the LGM to do
@@ -3009,11 +3015,11 @@ function M.step_eval_queue(state, world, info)
         _threat_val = threat.at(obj.mx, obj.my)
         threat_cost = _threat_val * C.ATTACK_BASE_THREAT_WEIGHT
       end
-      -- HP multiplier for attack_pill: weaker pills scale the entire cost down
       local hp_mult = 1.0
       if pool_idx == 6 then
         local hp = obj.health or C.PILLS_MAX_HEALTH
-        hp_mult = (hp / C.PILLS_MAX_HEALTH) ^ 2  -- squared: 0.11 for 5hp, 0.44 for 10hp, 1.0 for 15hp
+        if hp < 1 then hp = 1 elseif hp > 15 then hp = 15 end
+        hp_mult = ATTACK_PILL_HP_MULT[hp]
       end
       local travel = raw_cost
       local capture_mult = 1.0  -- pool 4 uses its own formula below

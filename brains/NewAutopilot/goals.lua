@@ -2030,6 +2030,19 @@ local WS_SUBS = {
   in_range_aim_finetune=true, shoot_pill=true,
 }
 
+-- HP multiplier lookup for attack_pill cost shaping.  Indexed by remaining
+-- pill HP (1..15); applied to the entire combat_cost block, so wounded
+-- pills get scaled down.  Hand-tuned: aggressive discount on near-dead
+-- pills (HP 1-3) to make them snap-pickups, a knee at HP=4 (28%) to keep
+-- non-snap-pickup wounded pills attractive but not free, then linear
+-- 40% -> 100% from HP=5 to HP=15.  Replaces the previous (hp/15)^2 curve
+-- which was too aggressive in the mid-range (10HP came out at 0.44).
+local ATTACK_PILL_HP_MULT = {
+  0.05, 0.10, 0.18, 0.28,
+  0.40, 0.46, 0.52, 0.58, 0.64, 0.70,
+  0.76, 0.82, 0.88, 0.94, 1.00,
+}
+
 -- Inject a low-cost wait_for_lgm candidate so the bot prefers to wait
 -- when the LGM is out (e.g. farming) and we'd otherwise wander off.
 -- Skipped during goals that ARE actively driving the LGM to do
@@ -2649,8 +2662,8 @@ local function get_formula_inner(e)
       _d_danger, _d_stale, _d_contest, _d_hyst, _d_deplete, _shape_detail)
   elseif p == 6 then
     local _d_hp = string.format(
-      "(%.0f[hp] / %.0f[PILLS_MAX_HEALTH])^2 = (%.2f)^2 = %.2f",
-      e._hpv, C.PILLS_MAX_HEALTH, e._hpv / C.PILLS_MAX_HEALTH, e._hp)
+      "ATTACK_PILL_HP_MULT[%d] = %.2f (hand-tuned table: 5/10/18/28%% for hp 1-4, then linear 40%%→100%% over hp 5-15)",
+      e._hpv, e._hp)
     local _d_anger = e._ttc > 0
       and string.format(
         "anger=%.0f > %.0f[ANGER_ATTACK_THRESHOLD]; ticks_to_calm=(%.0f-%.0f)x%.2f[PILL_ANGER_DECAY]=%.2f;"
@@ -3067,11 +3080,14 @@ function M.step_eval_queue(state, world, info)
         _threat_val = threat.at(obj.mx, obj.my)
         threat_cost = _threat_val * C.ATTACK_BASE_THREAT_WEIGHT
       end
-      -- HP multiplier for attack_pill: weaker pills scale the entire cost down
+      -- HP multiplier for attack_pill: weaker pills scale the entire cost
+      -- down.  Lookup table (see ATTACK_PILL_HP_MULT at module top) — knee
+      -- at HP 1-4 keeps near-dead pills cheap; linear 40-100% over 5-15.
       local hp_mult = 1.0
       if pool_idx == 6 then
         local hp = obj.health or C.PILLS_MAX_HEALTH
-        hp_mult = (hp / C.PILLS_MAX_HEALTH) ^ 2  -- squared: 0.11 for 5hp, 0.44 for 10hp, 1.0 for 15hp
+        if hp < 1 then hp = 1 elseif hp > 15 then hp = 15 end
+        hp_mult = ATTACK_PILL_HP_MULT[hp]
       end
       local travel = raw_cost
       local capture_mult = 1.0  -- pool 4 uses its own formula below
