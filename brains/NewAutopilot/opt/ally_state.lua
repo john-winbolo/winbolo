@@ -162,9 +162,6 @@ function M.draw(viz, now, self_player_num, max_age)
   local y0     = 200
   local row_dy = 14
 
-  viz.hud_text("ally_state_overlay", x, y0,
-               string.format(_HEADER_FMT, "#", "goal", "sub", "target", "cost", "stale", "data"),
-               "topright", 200, 200, 200, 220)
 
   local y = y0 + row_dy
   for pn = 0, MAX_TANKS - 1 do
@@ -181,16 +178,6 @@ function M.draw(viz, now, self_player_num, max_age)
         r, g, b, a = 160, 255, 160, 240
       end
       local info = slot.info
-      viz.hud_text("ally_state_overlay", x, y,
-                   string.format(_ROW_FMT,
-                                 pn,
-                                 info.goal   or "",
-                                 info.sub    or "",
-                                 info.target or "",
-                                 info.cost   or "",
-                                 now - slot.last_tick,
-                                 _build_data_string(info)),
-                   "topright", r, g, b, a)
       y = y + row_dy
     end
   end
@@ -240,9 +227,6 @@ function M.draw_chat_log(viz, now, self_player_num)
   local y0     = 460
   local row_dy = 14
 
-  viz.hud_text("chat_log_overlay", x, y0,
-               string.format("chat log (tick %d)", now), "topright",
-               200, 200, 200, 220)
 
   local y = y0 + row_dy
   for i = 0, _cl_count - 1 do
@@ -258,7 +242,6 @@ function M.draw_chat_log(viz, now, self_player_num)
       end
       local arrow = (e.dir == "out") and ">" or "<"
       local line = string.format("%s p%-2d %s", arrow, e.sender, e.text)
-      viz.hud_text("chat_log_overlay", x, y, line, "topright", r, g, b, a)
       y = y + row_dy
     end
   end

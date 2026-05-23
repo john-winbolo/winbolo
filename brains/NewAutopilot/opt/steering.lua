@@ -1268,56 +1268,6 @@ local function tank_combat_steer(state, world, info, goal)
   local twy = target.wy
 
   -- ── Draw persistent scan spots from standoff evaluation ──
-  if BRAIN_DEBUG_MODE and goal.tank_scan_spots then
-    local safe_r = C.ATTACK_SAFE_RADIUS
-    for _, s in ipairs(goal.tank_scan_spots) do
-      if s.has_los then
-        -- Inner box: green=safe, orange=dangerous
-        local sr, sg = s.total_score < 10 and 0 or 255, s.total_score < 10 and 200 or 165
-        -- Maneuver tiles (yellow)
-        if s.maneuver_tiles then
-          for _, t in ipairs(s.maneuver_tiles) do
-          end
-        end
-        -- Score label
-        if s.total_score < 900 then
-        end
-      else
-        -- Blocked: red box
-      end
-    end
-    -- Chosen standoff: green circle + ellipse outline
-    if goal.tank_standoff_mx then
-    end
-    if goal.tank_standoff_mx then
-      -- Ellipse outline on chosen standoff
-      local chosen = nil
-      for _, s in ipairs(goal.tank_scan_spots) do
-        if s.deg == goal.tank_standoff_deg and s.has_los then chosen = s; break end
-      end
-      if chosen then
-        local edx = goal.mx + 0.5 - chosen.cx
-        local edy = goal.my + 0.5 - chosen.cy
-        local elen = math.sqrt(edx * edx + edy * edy)
-        if elen < 0.01 then edx, edy, elen = 0, -1, 1 end
-        local ux, uy = edx / elen, edy / elen
-        local vx, vy = -uy, ux
-        local rl, rs = 4, safe_r / 3.0
-        local segs = 24
-        local px, py
-        for i = 0, segs do
-          local a = (i / segs) * 2 * math.pi
-          local eu = math.cos(a) * rl
-          local ev = math.sin(a) * rs
-          local nx = chosen.cx + eu * ux + ev * vx
-          local ny = chosen.cy + eu * uy + ev * vy
-          if px then
-          end
-          px, py = nx, ny
-        end
-      end
-    end
-  end
 
   -- Gunsight at max range
   if info.gunrange < C.GUNSIGHT_MAX then
@@ -1725,14 +1675,20 @@ function M.steer(state, world, info, goal)
     return keys, taps
 
   elseif goal.kind == "refuel_at_base" then
+    -- wait_for_ally: an ally is camping our target base, so we park at
+    -- a low-danger tile in the surrounding 11x11 square (picked at
+    -- substate entry in init.lua) instead of crowding the base.  Fall
+    -- back to braking if no park spot was found.
     local nav_mx, nav_my = goal.mx, goal.my
     if goal.substate == "wait_for_ally" then
       if goal.wait_mx and goal.wait_my then
         nav_mx, nav_my = goal.wait_mx, goal.wait_my
       else
-        return keys, taps
+        return keys, taps  -- no park spot — brake in place
       end
     end
+    -- Navigate to the (possibly-overridden) destination if not on it
+    -- yet; brake if already there.
     local on_base = (tmx == nav_mx and tmy == nav_my)
     if not on_base then
       local _t_p0 = BRAIN_PROFILE and clock_us() or 0
@@ -2303,35 +2259,6 @@ function M.steer(state, world, info, goal)
     --   turn_max_speed: final cap used for speed control while turning. In
     --                   plow with a far target this goes back to 256.
     -- ───────────────────────────────────────────────────────────────────────
-    if BRAIN_DEBUG_MODE and plow_through then
-      local twx, twy = info.tankx / 256.0, info.tanky / 256.0
-      local deg = correction * (360.0 / 256.0)
-      local target_kind = lookahead_active and "next_goal" or "current nav dest"
-
-      local state_line = string.format(
-        "PLOW  target_dist=%.1f tiles (to %s)  heading_err=%+d° (|%d| brad)",
-        plow_dist_t, target_kind, math.floor(deg + 0.5), abs_corr)
-
-      local decision_line
-      if abs_corr <= ramp_start then
-        decision_line = string.format(
-          "|err|=%d <= ramp_start=%d brad  ->  no cap  (turn_max_speed=%d)",
-          abs_corr, ramp_start, turn_max_speed)
-      else
-        local ease_note
-        if plow_ease >= 1 then
-          ease_note = "dist>=10t -> full ease, cap lifts to 256"
-        elseif plow_ease <= 0 then
-          ease_note = "dist<=4t -> full cap applies"
-        else
-          ease_note = string.format("dist in 4-10t -> ease=%.2f blend", plow_ease)
-        end
-        decision_line = string.format(
-          "base_cap=%d x ramp_factor=%.2f = %d  ->  %s  ->  turn_max_speed=%d",
-          turn_base_cap, turn_factor, turn_capped, ease_note, turn_max_speed)
-      end
-
-    end
 
     -- Pace the LGM: if the builder is out on a *build* mission, limit tank
     -- speed so we don't outrun him (important when building bridges).

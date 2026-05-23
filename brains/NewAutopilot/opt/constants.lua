@@ -185,8 +185,13 @@ M.REFUEL_OBS_STALE = 500  -- ignore observed stock older than this many ticks (b
 -- attack/capture mid-refuel. Disable to test how the bot behaves with
 -- normal replanning during refuel.
 M.REFUEL_LOCK_IN = false
-M.REFUEL_ALLY_WAIT_DIST  = 2
-M.REFUEL_ALLY_WAIT_TICKS = 500
+-- Wait-for-ally on refuel base. If we close to within REFUEL_ALLY_WAIT_DIST
+-- (chebyshev tiles) of our target base and an ally tank is currently
+-- standing on the base tile, enter the `wait_for_ally` substate and brake
+-- until they leave or REFUEL_ALLY_WAIT_TICKS elapses (then we blocklist
+-- the base and replan).  Keeps two bots from piling onto one base.
+M.REFUEL_ALLY_WAIT_DIST  = 2     -- tiles
+M.REFUEL_ALLY_WAIT_TICKS = 500   -- ~10 s @ 50 Hz
 M.PILLS_MAX_HEALTH = 15   -- fully repaired pill
 M.BASE_MIN_ARMOUR_CAPTURE = 0  -- engine reports 1 for all hostile bases (fog of war); 0 means truly dead/capturable
 
@@ -418,6 +423,15 @@ M.FLEE_SLOW_TERRAIN_BONUS   = 3    -- extra armour buffer when standing on slow 
 -- Cost-based goal selection (unified scoring — all goals compete on same scale)
 M.GOAL_SWITCH_PENALTY      = 30    -- base cost added when switching to a different goal group
 M.GOAL_TARGET_SWITCH_PENALTY = 15  -- cost added when same group but different target
+-- Ally-claimed cost penalty: if any other bot is broadcasting the same
+-- goal (matched by kind + target_id, or kind + mx,my for tile-keyed
+-- goals) we add this penalty so we prefer a different objective.
+-- attack_tank is exempt — tank threats are time-critical and locally
+-- observed; a stale ally broadcast shouldn't pull us off a fight.
+-- refuel_at_base uses a much smaller penalty (just steer us to a
+-- different base when possible) since refuel is fungible.
+M.ALLY_CLAIMED_PENALTY        = 10000
+M.ALLY_CLAIMED_REFUEL_PENALTY = 100
 M.GOAL_COMMITMENT_PER_TICK = 0.5   -- extra switch penalty per tick spent on current goal
 M.GOAL_COMMITMENT_CAP      = 75    -- max commitment penalty (reached after 150 ticks / 3s)
 M.REFUEL_FULL_COST_MULT    = 3.0   -- pool-1 cost multiplier when tank is between low and full thresholds; applied at goal-selection time so stale cache costs scale with current state. At max fullness the entry is skipped entirely.
@@ -425,7 +439,7 @@ M.REFUEL_FULL_COST_MULT    = 3.0   -- pool-1 cost multiplier when tank is betwee
 -- the bot can peel off to a closer opportunity as armour/shells climb):
 --   final = (cached + BASE_COST - BONUS * deficit_ratio) * full_mult
 -- deficit_ratio = max((ARMOUR_LOW - armour)/ARMOUR_LOW, (SHELLS_LOW - shells)/SHELLS_LOW)
-M.REFUEL_BASE_COST         = 30    -- flat floor so refuel-at-own-base isn't ~0
+M.REFUEL_BASE_COST         = 45    -- flat floor so refuel-at-own-base isn't ~0
 M.REFUEL_DEFICIT_BONUS     = 25    -- max discount when fully depleted
 M.ANGRY_PILL_AT_BASE_PENALTY = 200 -- added to pool-1 cost when an angry hostile pill is in fire range of the base
 -- Critical-armour flee: when true, injects a cost=40 flee_to_base candidate
@@ -470,6 +484,8 @@ M.WALL_SHIELD_COMMITMENT        = 200  -- extra switch penalty when wall-shield 
 M.ATTACK_TANK_COMMITMENT_BONUS  = 50   -- extra commitment when currently fighting a tank (see it through)
 M.ATTACK_PILL_COMMITMENT_BONUS  = 80   -- extra commitment when mid-attack on a pill; also revokes hysteresis exemption for attack_tank/capture_pill so they can't interrupt for free
 M.REFUEL_URGENCY_MIN       = 0.37  -- minimum urgency multiplier for refuel cost
+                                   -- (with squared urgency: floor cost at
+                                   -- bscore × 0.37; e.g. bscore=60 → ~22)
 M.PILL_HEALTH_WEIGHT       = 5     -- cost per HP of hostile pill (full 15HP pill = +75)
 M.REPAIR_DAMAGE_BONUS      = 3     -- cost reduction per missing HP on friendly pill
 M.ATTACK_BASE_EXTRA_COST   = 80    -- flat cost added to hostile base attacks

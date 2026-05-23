@@ -18,6 +18,8 @@ local print2 = require("print2")
 local threat = require("threat")
 local vizmod = require("viz")
 local json   = require("json")
+local ally_state = require("ally_state")
+local _SELF_PN = -1   -- updated each tick by step_eval_queue / get_pool_breakdown_json
 
 local M = {}
 
@@ -2017,6 +2019,15 @@ local POOL_NAMES = {
   [12] = "wait_for_lgm",
 }
 
+-- Reverse map: actual goal.kind → pool index, for looking up cost_cache
+-- entries by candidate.  Note pool 1 (refuel) and pool 8 (place_strategic)
+-- have different UI labels than their goal.kind values.
+local KIND_TO_POOL = {
+  refuel_at_base = 1, defend_pill = 2, capture_base = 3, capture_pill = 4,
+  repair_pill = 5, attack_pill = 6, attack_base = 7,
+  place_pill_strategic = 8, attack_tank = 9, wait_for_lgm = 12,
+}
+
 -- (LOCK_SUBS defined above eval_attack_tank.)
 
 -- Wall-shield investment substates; gain extra commitment penalty
@@ -2800,18 +2811,39 @@ local function get_formula_inner(e)
 end
 
 local function get_formula(e)
-  if e.formula then return e.formula end
-  if not e._p or not e.raw then return "" end
-  local ok, f = pcall(get_formula_inner, e)
-  if ok and f then
-    return f
+  local f = e.formula
+  if f == nil then
+    if not e._p or not e.raw then return "" end
+    local ok, ff = pcall(get_formula_inner, e)
+    if ok and ff then
+      f = ff
+    else
+      e.formula = ""
+      return ""
+    end
+  end
+  -- Always-on ally_claimed term.  Value is 0 when no ally claims this
+  -- candidate, ALLY_CLAIMED_REFUEL_PENALTY (100) for pool 1 claims, or
+  -- ALLY_CLAIMED_PENALTY (10000) for everything else.  Computed at
+  -- read time (not baked into e.formula) so it tracks live changes
+  -- to e.ally_claimed_pen without cache invalidation.
+  local pen = e.ally_claimed_pen or 0
+  local by  = e.ally_claimed_by  or "-"
+  local term_disp = string.format(" + ally_claimed{%d}", pen)
+  local term_map  = string.format("|ally_claimed:%s (p%s)",
+                                  pen > 0 and "yielding to ally" or "no ally claim",
+                                  tostring(by))
+  local sep_start = f:find("||", 1, true)
+  if sep_start then
+    return f:sub(1, sep_start - 1) .. term_disp .. " "
+           .. f:sub(sep_start) .. term_map
   else
-    e.formula = ""
-    return ""
+    return f .. term_disp .. " ||" .. term_map:sub(2)
   end
 end
 
 function M.step_eval_queue(state, world, info)
+  _SELF_PN = info.player_number or -1
   -- Skip if pathfinder is actively running — cost_to would destroy its state
   local pf = state.pf
   if pf and pf.status == "running" then return end
@@ -3052,11 +3084,41 @@ function M.step_eval_queue(state, world, info)
       end
       local score = raw_cost + danger_cost + stale_cost + contested_cost + hysteresis_cost + depletion_cost
 
+      -- Ally-claimed penalty (refuel-specific small value).  Live look
+      -- up so the per-target cost reflects ally claims regardless of
+      -- whether goal_selection has run yet.  "We were here first"
+      -- exemption: if we're already committed to refueling at this
+      -- base, don't yield to a later-arriving ally claim.
+      local _p1_we_are_here = state.goal
+                              and state.goal.kind == "refuel_at_base"
+                              and state.goal.mx   == obj.mx
+                              and state.goal.my   == obj.my
+      local _p1_ac_pen, _p1_ac_by = 0, nil
+      if not _p1_we_are_here then
+        for ally_pn, slot in ally_state.iter_active(now, 1750) do
+          if ally_pn ~= info.player_number then
+            local info_h = slot.info
+            if info_h.goal == "refuel_at_base" then
+              local aid = tonumber(info_h.target)
+              if (aid and id and aid == id)
+                 or (tonumber(info_h.mx) == obj.mx and tonumber(info_h.my) == obj.my) then
+                _p1_ac_pen = C.ALLY_CLAIMED_REFUEL_PENALTY
+                _p1_ac_by  = ally_pn
+                score = score + _p1_ac_pen
+                break
+              end
+            end
+          end
+        end
+      end
+
       state.cost_cache[cache_key] = {
         cost = score, raw = raw_cost, tick = now, _p = 1,
         _dv=danger_val, _dang=danger_cost, _age=_p1_age,
         _stale=stale_cost, _contest=contested_cost,
         _hyst=hysteresis_cost, _ratio=supply_ratio, _dep=depletion_cost,
+        ally_claimed_pen = _p1_ac_pen > 0 and _p1_ac_pen or nil,
+        ally_claimed_by  = _p1_ac_by,
       }
 
       pr.candidates[#pr.candidates + 1] = {
@@ -3486,10 +3548,63 @@ function M.step_eval_queue(state, world, info)
         raw_cost = _cpill_dist_raw
       end
 
+      -- Ally-claimed penalty: applied here in the per-target evaluate
+      -- phase (not goal_selection) so the elevated cost is baked into
+      -- cost_cache and the per-pool row shows the +10000 in its cost
+      -- column AND the term breakdown.  Only pool 9 (attack_tank) is
+      -- exempt — tank threats are time-critical and locally observed;
+      -- a stale ally broadcast shouldn't pull us off a fight.  Pool 1
+      -- (refuel_at_base) uses the smaller refuel-specific penalty.
+      -- Map pool_idx → broadcast goal.kind string.  Pool 1's broadcast
+      -- kind is "refuel_at_base", not "refuel".
+      local _ac_expected_kind = (pool_idx == 1) and "refuel_at_base"
+                                or (pool_idx == 8) and "place_pill_strategic"
+                                or POOL_NAMES[pool_idx]
+      -- "We were here first" exemption: if our currently-committed
+      -- goal matches this candidate, we don't yield to a later-arriving
+      -- ally claim.  Compared on (kind, mx, my) since target_id isn't
+      -- always set the same way across goal types.
+      local _ac_we_are_here = state.goal
+                              and state.goal.kind == _ac_expected_kind
+                              and state.goal.mx   == obj.mx
+                              and state.goal.my   == obj.my
+      local _ac_pen, _ac_by = 0, nil
+      if pool_idx ~= 9 and not _ac_we_are_here then
+        for ally_pn, slot in ally_state.iter_active(now, 1750) do
+          if ally_pn ~= info.player_number then
+            local info_h = slot.info
+            if info_h.goal == _ac_expected_kind then
+              local aid = tonumber(info_h.target)
+              local matched
+              if aid and id then
+                matched = (aid == id)
+              else
+                local amx = tonumber(info_h.mx)
+                local amy = tonumber(info_h.my)
+                if amx and amy then
+                  matched = (amx == obj.mx and amy == obj.my)
+                end
+              end
+              if matched then
+                _ac_pen = (pool_idx == 1) and C.ALLY_CLAIMED_REFUEL_PENALTY
+                          or C.ALLY_CLAIMED_PENALTY
+                _ac_by  = ally_pn
+                c = c + _ac_pen
+                break
+              end
+            end
+          end
+        end
+      end
+
       -- Store raw components for lazy formula building (get_formula on cold path).
       -- Fields are flattened directly into the cache entry (no sub-table) to
       -- avoid an extra Lua table allocation per candidate per tick.
       local entry = { cost = c, raw = raw_cost, tick = now, _p = pool_idx, _mx = obj.mx, _my = obj.my }
+      if _ac_pen > 0 then
+        entry.ally_claimed_pen = _ac_pen
+        entry.ally_claimed_by  = _ac_by
+      end
       if pool_idx == 6 then
         entry._travel=travel; entry._travel_wound=travel_wound; entry._stale=stale_cost; entry._age=_gen_age
         entry._diff=diff_cost; entry._spot=spot_cost
@@ -4646,6 +4761,25 @@ local function goal_selection(state, world, info, quiet)
       ::continue_hyst::
     end
 
+    -- ── Ally-claimed pass-through ──
+    -- The actual cost penalty is applied per-target in step_eval_queue
+    -- (so cost_cache + per-pool row reflect it regardless of whether
+    -- goal_selection has run yet).  Here we just propagate the flag
+    -- from cost_cache onto the pool entry so the WINNERS row breakdown
+    -- can carry ally_claimed_pen through to goal_competition.
+    for _, c in ipairs(pool) do
+      local pidx = KIND_TO_POOL[c.goal.kind]
+      if pidx and c.goal.target_id and state.cost_cache then
+        local ce = state.cost_cache[pidx .. ":" .. c.goal.target_id]
+        if ce and ce.ally_claimed_pen and ce.ally_claimed_pen > 0 then
+          c.ally_claimed_pen = ce.ally_claimed_pen
+          c.ally_claimed_by  = ce.ally_claimed_by
+          -- (per-match audit log is now in step_eval_queue where the
+          -- cost is actually applied.)
+        end
+      end
+    end
+
     -- ── Oscillation history penalty (exponential by recurrence count) ──
     -- Count how often each candidate's (kind, mx, my) and just (kind)
     -- have appeared in the recent goal history. Apply 2^count * BASE
@@ -4740,6 +4874,8 @@ local function goal_selection(state, world, info, quiet)
         density_n    = c.density_n or 0,
         pickup_value = c.pickup_value or 0,
         wsim_add     = 0,
+        ally_claimed_pen = c.ally_claimed_pen or 0,
+        ally_claimed_by  = c.ally_claimed_by,
       }
     end
     end -- BRAIN_DEBUG_MODE
@@ -5794,7 +5930,9 @@ function M.get_pool_breakdown_json(state)
       -- hist go negative and drop wsim_add from the displayed sum.
       local switch_flat = gc and gc.switch_flat or 0
       local commit_val  = gc and gc.commit_val  or 0
-      local hist_pen    = penalty - switch_flat - commit_val
+      local ally_pen    = gc and gc.ally_claimed_pen or 0
+      local ally_by     = gc and gc.ally_claimed_by
+      local hist_pen    = penalty - switch_flat - commit_val - ally_pen
 
       -- Build a rich formula for the detail popup
       local detail_formula = string.format("%s(x%.1f): %s", pname, pw, w.formula)
@@ -5818,6 +5956,9 @@ function M.get_pool_breakdown_json(state)
         if hist_pen > 1 then
           parts[#parts + 1] = string.format("hist{%.0f}", hist_pen)
         end
+        if ally_pen > 0 then
+          parts[#parts + 1] = string.format("ally_claimed{%.0f}", ally_pen)
+        end
         if wsim_add > 0 then
           parts[#parts + 1] = string.format("wsim{%.0f}", wsim_add)
         end
@@ -5834,6 +5975,10 @@ function M.get_pool_breakdown_json(state)
         end
         if hist_pen > 1 then
           detail_map[#detail_map + 1] = string.format("hist:recurrence_penalty(%.0f)", hist_pen)
+        end
+        if ally_pen > 0 then
+          detail_map[#detail_map + 1] = string.format("ally_claimed:p%s holds same goal(+%.0f)",
+                                                       tostring(ally_by), ally_pen)
         end
         if wsim_add > 0 then
           detail_map[#detail_map + 1] = string.format("wsim:damage_prediction(%.0f)", wsim_add)
@@ -5866,6 +6011,9 @@ function M.get_pool_breakdown_json(state)
         end
         if hist_pen > 1 then
           parts[#parts + 1] = string.format("%.0f HT", hist_pen)
+        end
+        if ally_pen > 0 then
+          parts[#parts + 1] = string.format("%.0f AC", ally_pen)
         end
         if wsim_add > 0 then
           parts[#parts + 1] = string.format("%.0f WS", wsim_add)

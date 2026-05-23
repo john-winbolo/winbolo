@@ -432,6 +432,7 @@ function Brain.open(info)
 
   state.tick          = 0
   state.player_number = info.player_number
+  _G._BRAIN_SELF_PN   = info.player_number
   state.player_name   = (info.player_names and info.player_names[info.player_number + 1]) or ""
   state.debug_log     = (state.player_name == "Bot 1" or info.player_number == 0)
   state.send_open_msg = true
@@ -3742,9 +3743,7 @@ function Brain.think(info)
   opt(string.format("  bait-pill viz done %.2f ms", (t_pbh_bait - t_pbh_repos) / 1000))
 
   -- Friendly pill barrier overlay: mark friendly pills used as shields
-  if BRAIN_DEBUG_MODE and state.goal and
-     (state.goal.kind == "attack_pill" or state.goal.kind == "attack_pill")
-     and viz.is_on("friendly_pill_shield") then
+  if BRAIN_DEBUG_MODE and state.goal and (state.goal.kind == "attack_pill" or state.goal.kind == "attack_pill") and viz.is_on("friendly_pill_shield") then
     local gmx, gmy = state.goal.mx, state.goal.my
     local smx = state.goal.standoff_mx or (info.tankx >> 8)
     local smy = state.goal.standoff_my or (info.tanky >> 8)
@@ -3786,6 +3785,37 @@ function Brain.think(info)
     -- gap and we don't trust their state.
     ally_state.draw(viz, state.tick, info.player_number, 1750)
     ally_state.draw_chat_log(viz, state.tick, info.player_number)
+    -- Semi-transparent gray rectangle over each pill/base currently
+    -- claimed by another bot (per ally_state slate).  Maps the ally's
+    -- broadcast goal+target to a world tile and draws a 1x1 rect.
+    if viz.is_on("ally_claimed_marker") then
+      local _PILL_KIND = {
+        attack_pill = true, capture_pill = true,
+        repair_pill = true, defend_pill = true,
+      }
+      local _BASE_KIND = {
+        capture_base = true, attack_base = true, refuel_at_base = true,
+      }
+      for pn, slot in ally_state.iter_active(state.tick, 1750) do
+        if pn ~= info.player_number then
+          local g = slot.info.goal
+          local tgt = tonumber(slot.info.target)
+          local mx, my
+          if tgt and _PILL_KIND[g] and world.pills and world.pills[tgt] then
+            mx, my = world.pills[tgt].mx, world.pills[tgt].my
+          elseif tgt and _BASE_KIND[g] and world.bases and world.bases[tgt] then
+            mx, my = world.bases[tgt].mx, world.bases[tgt].my
+          else
+            mx = tonumber(slot.info.mx)
+            my = tonumber(slot.info.my)
+          end
+          if mx and my then
+            viz.rect("ally_claimed_marker", mx, my, mx + 1, my + 1,
+                     40, 40, 40, 210, true)  -- filled, dark gray, mostly opaque
+          end
+        end
+      end
+    end
   end
   local t_pbh_ally_state = clock_us()
   opt(string.format("  ally-state overlay done %.2f ms", (t_pbh_ally_state - t_pbh_ally) / 1000))
@@ -4023,7 +4053,7 @@ function Brain.think(info)
           parts[#parts + 1] = string.format("%s%d:--", marker, t)
         end
       end
-      viz.hud_text("hud_tick_info", 8, 56,
+      viz.hud_text("hud_tick_info", 8, 81,
         "tier ms: " .. table.concat(parts, " "),
         "topleft", 180, 200, 180, 200, 0.85)
     end

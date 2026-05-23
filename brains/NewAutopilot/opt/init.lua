@@ -424,6 +424,7 @@ function Brain.open(info)
 
   state.tick          = 0
   state.player_number = info.player_number
+  _G._BRAIN_SELF_PN   = info.player_number
   state.player_name   = (info.player_names and info.player_names[info.player_number + 1]) or ""
   state.debug_log     = (state.player_name == "Bot 1" or info.player_number == 0)
   state.send_open_msg = true
@@ -481,8 +482,17 @@ function Brain.open(info)
   state.goal_cooldowns    = {}   -- abandoned goals: { [key] = expiry_tick }
   state.goal_history      = {}   -- circular buffer of last N picked goals (oscillation detection)
 
-  -- /info state broadcast scratch + snapshot (see root init.lua for details).
-  state.broadcast_state_info        = {}
+  -- /info state broadcast scratch buffers.
+  --   broadcast_state_info      — scratch hash any code can write to during
+  --                                the tick (or reset to empty). End-of-tick
+  --                                comparator builds the wire message from
+  --                                this.
+  --   last_broadcasted_state_info — authoritative copy of what we last sent
+  --                                to allies. Compared against
+  --                                broadcast_state_info to detect change.
+  --   last_broadcast_state_tick — tick of the last broadcast; drives the
+  --                                30 s (1500 tick @ 50 Hz) heartbeat.
+  state.broadcast_state_info       = {}
   state.last_broadcasted_state_info = {}
   state.last_broadcast_state_tick   = 0
 
@@ -717,16 +727,10 @@ function Brain.think(info)
   state.tick = state.tick + 1
   state._last_info = info
   local now  = state.tick
-  -- At tick 1 emit a BOT_START marker so log readers can correlate
-  -- bot index ↔ map quadrant. (opt build strips this whole block.)
-  if BRAIN_DEBUG_MODE and now == 1 then
-    print2(string.format(
-      "BOT_START player_number=%s name=%s tank=(%.1f,%.1f) tile=(%d,%d)",
-      tostring(info.player_number),
-      tostring(info.player_name),
-      (info.tankx or 0) / 256.0, (info.tanky or 0) / 256.0,
-      (info.tankx or 0) >> 8, (info.tanky or 0) >> 8))
-  end
+  -- At tick 1 the engine has populated info.tankx/y with the bot's
+  -- real spawn position. Brain.open is too early — info isn't
+  -- populated yet there. Emit a BOT_START marker so log readers can
+  -- correlate bot index ↔ map quadrant.
 
   -- Open the optimize.log section timer at the EARLIEST possible point
   -- so prelude work (capacity tier calc, debug-mode viz refresh, the
@@ -1047,35 +1051,13 @@ function Brain.think(info)
 
 
   -- Adjacent tile highlights
-  if BRAIN_DEBUG_MODE and viz.is_on("adjacent_tiles") then
-    local tx = math.floor(info.tankx / 256)
-    local ty = math.floor(info.tanky / 256)
-    local adj = {{tx-1, ty}, {tx+1, ty}, {tx, ty-1}, {tx, ty+1}}
-    for _, pos in ipairs(adj) do
-    end
-  end
 
   -- HUD: tank stats in bottom-left (offset up so the kill-attempt
   -- indicator can sit under it without overlap on shorter window heights).
-  if BRAIN_DEBUG_MODE and viz.is_on("hud_resources") then
-    local y = 90
-    local bld_str, bld_r, bld_g, bld_b = hud_builder_status(info, state)
-  end
 
   -- HUD: last attack-goal clear (set by attack.clear_attack_goal). Stays
   -- visible for ~300 ticks after the abort so a silent "goal went to
   -- none mid-finetune" leaves a breadcrumb pointing at the cause.
-  if BRAIN_DEBUG_MODE and state._last_attack_clear and viz.is_on("attack_clear_reason") then
-    local lc  = state._last_attack_clear
-    local age = (state.tick or 0) - (lc.tick or 0)
-    if age >= 0 and age <= 300 then
-      local fade = math.max(80, 255 - math.floor(age * 0.5))
-      local sub_str = lc.sub_was and ("/" .. lc.sub_was) or ""
-      local pos_str = (lc.mx_was and lc.my_was)
-                      and string.format(" @(%d,%d)", lc.mx_was, lc.my_was)
-                      or  ""
-    end
-  end
 
   -- HUD: click-cost panel — moved back to C side (braintest_main.c
   -- renderHUD) so it can use the live Dijkstra slate when not in
@@ -1083,13 +1065,6 @@ function Brain.think(info)
   -- state.click_inspect handler is no longer needed.
 
   -- HUD: replan countdown (left side, middle)
-  if BRAIN_DEBUG_MODE and viz.is_on("hud_replan") then
-    local ticks_left = C.GOAL_REPLAN_INTERVAL - ((now + state.replan_offset) % C.GOAL_REPLAN_INTERVAL)
-    if ticks_left == C.GOAL_REPLAN_INTERVAL then ticks_left = 0 end
-    local r, g, b = 150, 150, 150
-    if ticks_left <= 5 then r, g, b = 255, 255, 0 end
-    if ticks_left == 0 then r, g, b = 0, 255, 0 end
-  end
 
   -- HUD: goal info in top-right + per-tick goal log (logging always runs;
   -- HUD draws gated by viz toggles). The log captures the goal on every
@@ -1106,14 +1081,10 @@ function Brain.think(info)
       goal_str = string.format("Goal: %s (%d,%d)",
         gkind, g.mx or 0, g.my or 0)
     end
-    -- Goal-change trace consolidated into print2_bot<N>.log. The
-    -- "if BRAIN_DEBUG_MODE and ..." prefix matches strip.bat so opt
-    -- builds drop this whole block; opt/ source is left as-is for
-    -- completeness but lua_strip will have already removed it.
-    if BRAIN_DEBUG_MODE and BRAIN_LOG_GOALS then
-      local sub = (g.substate and g.substate ~= "" and g.substate ~= "-") and (" sub=" .. g.substate) or ""
-      print2(string.format("GOAL_CHANGE %s%s", goal_str, sub))
-    end
+    -- Goal-change trace — one print2 line per change. Lands in
+    -- print2_bot<N>.log under the rest of the bot's debug trace. The
+    -- outer "if BRAIN_DEBUG_MODE and ..." matches strip.bat's
+    -- --strip-block prefix so opt builds drop this entirely.
     -- HUD draws (gated)
   end
 
@@ -1567,15 +1538,19 @@ function Brain.think(info)
     state.send_open_msg = false
   end
 
-  -- Iterate every chat message addressed to this brain this tick.
-  -- info.messages is the multi-message inbox (brain inbox C-side change);
-  -- the legacy info.message only surfaces the first.
+  -- Process EVERY incoming chat message this tick. info.messages is
+  -- the new multi-message inbox added in the brain inbox C-side change;
+  -- the legacy info.message field still works but only surfaces the
+  -- first one. Iterating the array lets us see all ally /info traffic
+  -- when several bots broadcast on the same tick (previously the bus
+  -- silently dropped all but one).
   if info.messages then
     for _, m in ipairs(info.messages) do
       if m.text and m.text ~= "" then
-        if BRAIN_DEBUG_MODE then
-          ally_state.chat_log_add("in", m.sender, m.text, now)
-        end
+        -- chat_log ring is debug-only (read only by the chat_log_overlay
+        -- HUD); skip the ring writes entirely in production. Slate update
+        -- via comms.process_message stays unconditional since coordination
+        -- logic reads it.
         comms.process_message(m.sender, m.text, now)
 
         local cmd = cmds.parse(m.text)
@@ -1611,12 +1586,21 @@ function Brain.think(info)
     state.command_reply = nil
   end
 
-  -- Respawn handling. Trigger on either newtank (1-tick flag) or
-  -- the death-pending-respawn state (armour > TANK_FULL_ARMOUR is
-  -- held by the engine through the whole deathWait window). The
-  -- belt-and-suspenders armour check catches the case where a
-  -- missed think tick lets newtank flip back to false before we
-  -- saw it; build_walls state would otherwise survive the death.
+  -- Respawn handling. Use clear_attack_goal so any in-progress
+  -- attack_pill / PPT state (substate, _shield_scan, _aim_locked,
+  -- _wall_build_list, etc.) doesn't leak through into the next
+  -- goal selection on the new tank.
+  --
+  -- Belt-and-suspenders: info.newtank is only true for a SINGLE
+  -- tick after respawn (tank.c:463/491). If anything (GC pause, a
+  -- long previous Brain.think, a Lua error mid-body) ate that one
+  -- tick, in-flight state survives the death — observed as a
+  -- respawned tank still in build_walls. Also check for the dead
+  -- waiting-to-respawn state: the engine holds armour at
+  -- TANK_FULL_ARMOUR+1 (= 41) through the whole deathWait
+  -- countdown (~200 ticks), giving us a wide window we can't miss.
+  -- Idempotent re-clearing during deathWait is harmless — the
+  -- brain has no control anyway while the tank is dead.
   local _is_dead = (info.armour or 0) > C.TANK_FULL_ARMOUR
   if info.newtank or _is_dead then
     state.stuck_for = 0
@@ -1626,7 +1610,12 @@ function Brain.think(info)
     end
   end
 
-  -- Early return while dead — see init.lua for notes.
+  -- Early return while dead. info.tankx/y hold the LAST-living tile
+  -- through the whole deathWait window (~200 ticks) — running threat,
+  -- perception, pcontrib, planning, etc. against those stale coords
+  -- pushes garbage into the danger map and the pillcontrib registry
+  -- for the duration. Just emit a no-op brain output (engine ignores
+  -- input from a dead tank anyway). Goal already cleared above.
   if _is_dead then
     return {
       holdkeys    = 0,
@@ -2093,9 +2082,6 @@ function Brain.think(info)
     local attack_tank_done = state.goal.kind == "attack_tank"
         and (not state.perc or not state.perc.enemy_tanks
              or #state.perc.enemy_tanks == 0)
-    if BRAIN_DEBUG_MODE and state.goal.kind == "attack_tank" then
-      local et_count = (state.perc and state.perc.enemy_tanks) and #state.perc.enemy_tanks or 0
-    end
     -- Trigger a one-shot urgent replan the first tick an enemy tank enters
     -- combat range while we're doing something else.  attack_tank is HYST_EXEMPT
     -- so if it's genuinely cheaper (LOS engage) it wins immediately; if not,
@@ -2166,16 +2152,26 @@ function Brain.think(info)
       refuel_needed = need_armour or need_shells or need_mines
       refuel_complete = not refuel_needed
 
+      -- Wait-for-ally substate.  When closing in on the base, if an ally
+      -- tank is already standing on the goal tile we yield rather than
+      -- pile on (each base supplies one tank at a time; two of us on the
+      -- same tile is wasted time + a coordination headache).  Hold up to
+      -- REFUEL_ALLY_WAIT_TICKS; if the ally hasn't moved by then they
+      -- aren't leaving soon — blocklist the base and let goal selection
+      -- find us another one.
       if state.goal.mx and state.goal.my then
         local our_mx = info.tankx >> 8
         local our_my = info.tanky >> 8
         local dist_cheb = math.max(math.abs(our_mx - state.goal.mx),
                                    math.abs(our_my - state.goal.my))
         local on_base_ourselves = (dist_cheb == 0)
+        -- Always scan when refuel_at_base is active so the
+        -- hud_refuel_ally_check overlay can show the live answer.
+        -- Cheap (info.objects is short).
         local ally_on_base = false
         for _, ob in ipairs(info.objects) do
-          if ob.type == 0
-             and (ob.info & 1) == 0
+          if ob.type == 0   -- OBJECT_TANK
+             and (ob.info & 1) == 0   -- not OBJECT_HOSTILE → ally (excludes self; self isn't in info.objects)
              and (ob.x >> 8) == state.goal.mx
              and (ob.y >> 8) == state.goal.my then
             ally_on_base = true
@@ -2183,25 +2179,7 @@ function Brain.think(info)
           end
         end
 
-        if BRAIN_DEBUG_MODE then
-          local wait_str
-          if state.goal.wait_mx and state.goal.wait_my then
-            wait_str = string.format("(%d,%d)", state.goal.wait_mx, state.goal.wait_my)
-          else
-            wait_str = "(-)"
-          end
-          viz.hud_text("hud_refuel_ally_check", 10, 220,
-            string.format("Ally occupied check [%d/%d tiles] (%d,%d): %s, wait at %s",
-                          dist_cheb, C.REFUEL_ALLY_WAIT_DIST,
-                          state.goal.mx, state.goal.my,
-                          ally_on_base and "occupied" or "empty",
-                          wait_str),
-            "topleft",
-            ally_on_base and 255 or 180,
-            ally_on_base and 180 or 220,
-            ally_on_base and 80  or 180,
-            230)
-        end
+        -- HUD line — always when refuel_at_base is the goal.
 
         if refuel_needed
            and not on_base_ourselves
@@ -2210,7 +2188,13 @@ function Brain.think(info)
           if state.goal.substate ~= "wait_for_ally" then
             state.goal.substate = "wait_for_ally"
             state.goal.wait_started_tick = now
-            local WAIT_RADIUS    = 5
+            -- Pick a low-danger park spot in an 11x11 square around the
+            -- base.  Hanging out next to the base is fine but we don't
+            -- want to idle next to a heating-up pillbox; rank candidates
+            -- by danger first, then by Dijkstra cost from our current
+            -- position.  Cap the path cost at ~500 so we don't wander
+            -- across the map to wait.
+            local WAIT_RADIUS    = 5      -- 11x11 square
             local WAIT_COST_CAP  = 500
             local best_mx, best_my = nil, nil
             local best_d, best_c = math.huge, math.huge
@@ -2221,7 +2205,7 @@ function Brain.think(info)
                 local cy = U.mclamp(bmy + dy)
                 if (cx ~= bmx or cy ~= bmy)
                    and not U.is_water(U.ttype(cx, cy)) then
-                  local pcost = cpf.dijkstra_lookup_by_kind(0, cx, cy, 0)
+                  local pcost = cpf.dijkstra_lookup_by_kind(0 --[[KIND_NORMAL]], cx, cy, 0)
                   if pcost and pcost < WAIT_COST_CAP then
                     local d = threat.at(cx, cy) or 0
                     if d < best_d or (d == best_d and pcost < best_c) then
@@ -2237,13 +2221,17 @@ function Brain.think(info)
           end
           local waited = now - (state.goal.wait_started_tick or now)
           if waited >= C.REFUEL_ALLY_WAIT_TICKS then
+            -- Timed out — ally is camping.  Block this base and replan.
             local bk = U.mkey(state.goal.mx, state.goal.my)
             state.blocked[bk] = now + 200
             attack.clear_attack_goal(state)
           else
+            -- Hold position; suppress timer/position-based replan while waiting.
             refuel_hold = true
           end
         elseif state.goal.substate == "wait_for_ally" then
+          -- Base cleared (or we got far enough away that nobody's on
+          -- it) — resume normal approach.
           state.goal.substate = nil
           state.goal.wait_started_tick = nil
           state.goal.wait_mx = nil
@@ -2291,8 +2279,6 @@ function Brain.think(info)
     -- interesting happens (timer fire, urgent replan, or refuel done).
     -- The vast majority of ticks just print "replan=false" with the
     -- same fields as the previous tick — pure noise.
-    if BRAIN_DEBUG_MODE and (replan or timer_fire) then
-    end
     if timer_fire and not replan and BRAIN_DEBUG_MODE then
       print(string.format(TAG .. " t=%d REPLAN BLOCKED: hold=%s cmd=%s urgent=%s atk_done=%s refuel_done=%s",
         now, tostring(refuel_hold), tostring(state.command_goal ~= nil),
@@ -2322,18 +2308,7 @@ function Brain.think(info)
       end
       opt(string.format("  pick_goal done %.2f ms", (clock_us() - t_pg0) / 1000))
       -- Dump all pool_cache winners with costs for diagnosing goal switches
-      if BRAIN_DEBUG_MODE and state.pool_cache then
-        for pi = 0, 10 do
-          local pce = state.pool_cache[pi]
-          if pce and pce.goal then
-          end
-        end
-      end
       -- Dump goal_competition entries
-      if BRAIN_DEBUG_MODE and state.goal_competition then
-        for _, gc in ipairs(state.goal_competition) do
-        end
-      end
       -- During active pill engage, only allow switching to critical
       -- flee_to_base. Routine refuel_at_base (cost-competition or
       -- Override 2) is NOT a valid preemption — it would skip the
@@ -2455,7 +2430,11 @@ function Brain.think(info)
       end
     end
 
-    -- Legacy aIndy /info pt + /info gbt claims removed (see init.lua).
+    -- Legacy aIndy /info pt + /info gbt claim broadcasts removed:
+    -- the /info state path (in the end-of-tick block below) carries
+    -- goal/sub/target/cost in one canonical message, and the
+    -- ally_state slate is the single source of truth for de-conflict
+    -- comparisons.
 
     -- Auto-expire: A* says we arrived or path impossible
     if state.pf.status == "failed" then
@@ -2513,19 +2492,6 @@ function Brain.think(info)
   -- cache entry that has a stored spot→pill A* path. Independent of which
   -- goal is active so you can see paths for every candidate the planner
   -- has scored. Toggle via "Attack pickup path" in V dialog.
-  if BRAIN_DEBUG_MODE and state.cost_cache and viz.is_on("attack_pill_pickup_path") then
-    for k, entry in pairs(state.cost_cache) do
-      if entry._pickup_path and #entry._pickup_path >= 2
-         and string.sub(k, 1, 2) == "6:" then
-        local pp = entry._pickup_path
-        local is_active = state.goal and state.goal.kind == "attack_pill"
-                          and ("6:" .. tostring(state.goal.target_id)) == k
-        local a = is_active and 230 or 130
-        for i = 1, #pp - 1 do
-        end
-      end
-    end
-  end
 
   -- Compute near-edge aim point before steering (so engage can use it).
   -- Skipped when the shield scan has chosen a specific corner — its
@@ -2661,11 +2627,6 @@ function Brain.think(info)
 
   -- Always-on crosshairs (drawn after steering so they show every tick)
   -- Yellow crosshairs: ALWAYS on
-  if BRAIN_DEBUG_MODE and viz.is_on("tank_aim_marker") then
-    local ax, ay = U.crosshair_at(info.tankx, info.tanky, info.direction, 7.0)
-    local shooting = (keys & KEY_SHOOT) ~= 0
-    local cg = shooting and 0 or 255
-  end
 
   -- Target crosshairs + range circles when attacking
 
@@ -2684,39 +2645,6 @@ function Brain.think(info)
   --     (HP > threshold or time decay finished).
   -- Drawn every tick state.wounded_pill is set; cleared by the
   -- 500-tick expiry in the housekeeping block above.
-  if BRAIN_DEBUG_MODE and state.wounded_pill and viz.is_on("wounded_pill_marker") then
-    local wp = state.wounded_pill
-    local wp_now = wp.id and world.pills and world.pills[wp.id] or nil
-    local wp_hp  = wp_now and wp_now.health or wp.hp or 0
-    local wpx, wpy = wp.mx + 0.5, wp.my + 0.5
-    -- Pulse rate slows as the marker ages out — visual countdown so
-    -- you can see at a glance whether the wounded effects are about
-    -- to expire. Fresh: ~30-tick cycle (0.21 rad/tick). Fully
-    -- decayed: ~120-tick cycle (0.05 rad/tick), barely throbbing.
-    local age         = (state.tick or 0) - (wp.tick or 0)
-    local time_factor = math.max(0, 1.0 - age / (C.WOUNDED_FINISH_DECAY_TICKS or 500))
-    local pulse_speed = 0.05 + 0.16 * time_factor   -- 0.21 fresh -> 0.05 expired
-    local pulse = 0.5 + 0.35 * (0.5 + 0.5 * math.sin(now * pulse_speed))
-    -- Header line shows the in-pool 0.30x AND the cross-goal commit
-    -- discount (decays alongside finish_other; 1.0x once expired).
-    local commit_mult = 1.0 - (1.0 - (C.WOUNDED_COMMIT_DISCOUNT or 0.5)) * time_factor
-    -- Live "finish_other" multiplier for OTHER pill takes.
-    local thresh = C.WOUNDED_FINISH_THRESHOLD or 10
-    local mult, mr, mg, mb
-    if wp_hp > 0 and wp_hp <= thresh then
-      local hp_factor   = (thresh - wp_hp) / thresh
-      local peak_mult   = C.WOUNDED_FINISH_OTHER_PENALTY or 3.0
-      mult = 1.0 + (peak_mult - 1.0) * hp_factor * time_factor
-      if mult > 1.001 then
-        mr, mg, mb = 255, 200, 80
-      else
-        mr, mg, mb = 150, 150, 150
-      end
-    else
-      mult = 1.0
-      mr, mg, mb = 150, 150, 150
-    end
-  end
   local t_psv_wounded = clock_us()
   opt(string.format("  crosshairs+wounded viz done %.2f ms", (t_psv_wounded - t_steer1) / 1000))
 
@@ -2732,96 +2660,10 @@ function Brain.think(info)
   -- Each pool-6 entry has _self_dr stashed alongside its position.
   -- We render every entry whose value is non-zero; tiles with no
   -- discount stay unannotated.
-  if BRAIN_DEBUG_MODE and state.cost_cache and viz.is_on("pool6_self_dr") then
-    for _, e in pairs(state.cost_cache) do
-      if e._p == 6 and (e._self_dr or 0) > 0
-         and e._mx and e._my then
-        local px, py = e._mx + 0.5, e._my + 0.5
-        -- Color ramps with magnitude: faint blue at small discounts,
-        -- bright cyan at large ones. Cap perception around 200 cost-
-        -- units (typical pool-6 spot cost is in low hundreds).
-        local mag    = math.min(1.0, e._self_dr / 200.0)
-        local r      = math.floor(60 + 30  * mag)
-        local g      = math.floor(180 + 60 * mag)
-        local b      = math.floor(220 + 35 * mag)
-      end
-    end
-  end
   local t_psv_self_dr = clock_us()
   opt(string.format("  pool6 self_dr labels done %.2f ms", (t_psv_self_dr - t_psv_wounded) / 1000))
 
   -- Shift+click pill inspect overlay (computed once on click, toggle off/on to refresh)
-  if BRAIN_DEBUG_MODE and state.inspect_pill and viz.is_on("inspect_pill") then
-    local ip = state.inspect_pill
-    local ipill = nil
-    for id, p in pairs(world.pills) do
-      if p.mx == ip.mx and p.my == ip.my then ipill = p; break end
-    end
-    if ipill and (ipill.owner == "hostile" or ipill.owner == "neutral") and ipill.health > 0 then
-      -- Compute on first display only; stored in inspect_pill table
-      if not ip._spots then
-        local _, spots = attack.evaluate_pill_difficulty(ipill, world, true, nil, state.phase, state)
-        ip._spots = spots or {}
-      end
-      local spots = ip._spots
-      local ipmx, ipmy = ip.mx + 0.5, ip.my + 0.5
-      -- Range and standoff circles
-      local safe_r = C.ATTACK_SAFE_RADIUS
-      if spots then
-        for _, s in ipairs(spots) do
-          local cr, cg = s.has_los and 0 or 200, s.has_los and 200 or 0
-          if s.has_los then
-            local sr, sg = (s.total_score <= C.ATTACK_DANGER_THRESHOLD) and 0 or 255,
-                           (s.total_score <= C.ATTACK_DANGER_THRESHOLD) and 200 or 165
-            if s.maneuver_tiles then
-              for _, t in ipairs(s.maneuver_tiles) do
-                -- Show coverage count on each maneuver tile
-                local cov = threat.coverage_at(t.x, t.y)
-                if cov > 0 then
-                  local cr, cg = 255, 255
-                  if cov > 1 then cr, cg = 255, 0 end  -- red if crossfire
-                end
-              end
-            end
-            -- Draw maneuver ellipse outline with line segments
-            do
-              local edx = ip.mx + 0.5 - s.cx
-              local edy = ip.my + 0.5 - s.cy
-              local elen = math.sqrt(edx * edx + edy * edy)
-              if elen < 0.01 then edx, edy, elen = 0, -1, 1 end
-              local ux, uy = edx / elen, edy / elen
-              local vx, vy = -uy, ux
-              local rl, rs = safe_r, safe_r / 3.0
-              local segs = 24
-              local px, py
-              for i = 0, segs do
-                local a = (i / segs) * 2 * math.pi
-                local eu = math.cos(a) * rl
-                local ev = math.sin(a) * rs
-                local nx = s.cx + eu * ux + ev * vx
-                local ny = s.cy + eu * uy + ev * vy
-                if px then
-                  local er, eg = s.total_score < 10 and 0 or 255, s.total_score < 10 and 200 or 165
-                end
-                px, py = nx, ny
-              end
-            end
-            if s.total_score < 900 then
-              local label = string.format("A%.0f+B%.0f+D%.0f+E%.0f=%.0f",
-                s.score_a, s.score_b, s.score_d or 0, s.score_e or 0, s.total_score)
-            end
-          end
-        end
-      end
-      do
-        -- Legend
-        local lx, ly = ip.mx + 12, ip.my - 6
-      end
-    else
-      -- Pill gone or captured — clear inspect
-      state.inspect_pill = nil
-    end
-  end
   local t_psv_inspect = clock_us()
   opt(string.format("  inspect_pill done %.2f ms (active=%s)",
     (t_psv_inspect - t_psv_self_dr) / 1000, tostring(state.inspect_pill ~= nil)))
@@ -2929,52 +2771,20 @@ function Brain.think(info)
   -- Draw attack_tank detection/precondition overlays (navy blue)
 
   -- Base shield visualization: show wall target, pill source, and blocking line
-  if BRAIN_DEBUG_MODE and state._base_shield_viz and viz.is_on("base_shield_viz") then
-    local bsv = state._base_shield_viz
-    -- Only show for 50 ticks after trigger (5 seconds)
-    if now - (bsv.tick or 0) < 50 then
-      -- Wall target: cyan filled square
-      -- Base: green outline
-      -- Pill source: red circle
-      -- Line from pill to base (blocked by wall)
-      -- Line from base to wall target (LGM path)
-      -- Label
-    else
-      state._base_shield_viz = nil
-    end
-  end
 
   -- Coverage grid visualization (E key toggle)
   -- Shows how many hostile/neutral pills can fire on each tile (+1 per pill).
   -- Green=1, gradient to red=5+. Circle outlines show each pill's stamp radius.
-  if BRAIN_DEBUG_MODE and _G._SHOW_COVERAGE then
-    if viz.is_on("coverage_grid") then
-      for k = 0, 65535 do
-        local cov = na_threat.cov_grid_at(k)
-        if cov > 0 then
-          local tx = k % 256
-          local ty = k // 256
-          local t = math.min((cov - 1) / 4, 1.0)  -- 1=green, 5+=red
-          local cr = math.floor(255 * t)
-          local cg = math.floor(255 * (1 - t))
-        end
-      end
-    end
-    if viz.is_on("pill_threat_overlay") then
-      -- Draw stamp radius circle for each hostile/neutral pill
-      for _, pm in pairs(world.pills) do
-        if (pm.owner == "hostile" or pm.owner == "neutral") and pm.health > 0 then
-        end
-      end
-    end
-  end
   metrics.set("us_post_steer_viz", t_build0 - t_steer1)
   opt(string.format("post-steer viz done %.2f ms", (t_build0 - t_steer1) / 1000))
   builder.set_mode(state, world, info, state.goal)
   local t_build_setmode = clock_us()
   opt(string.format("  builder.set_mode done %.2f ms", (t_build_setmode - t_build0) / 1000))
   local build_cmd = builder.decide(state, world, info, now)
-  -- Repair-pill completion: see init.lua for notes.
+  -- Repair-pill completion: the builder dispatched the LGM onto a
+  -- friendly damaged pill (engine auto-repairs on arrival). Clear the
+  -- goal so this tick's downstream goal-tracking and next tick's
+  -- pick_goal see a clean slate — repair runs autonomously from here.
   if state._repair_dispatched then
     state._repair_dispatched = nil
     attack.clear_attack_goal(state)
@@ -2995,82 +2805,36 @@ function Brain.think(info)
   opt(string.format("  LGM/stuck HUD done %.2f ms", (t_pbh_lgm - t_pbh_start) / 1000))
 
   -- Blocked destinations (show on map)
-  if BRAIN_DEBUG_MODE and state.blocked and viz.is_on("blocked_tiles") then
-    for k, expires in pairs(state.blocked) do
-      if expires > (state.tick or 0) then
-        local bx = k % 256
-        local by = math.floor(k / 256)
-      end
-    end
-  end
 
   local t_pbh_blocked = clock_us()
   opt(string.format("  blocked-tiles viz done %.2f ms", (t_pbh_blocked - t_pbh_lgm) / 1000))
 
   -- Pill reposition overlay: mark badly-positioned friendly pills
-  if BRAIN_DEBUG_MODE and C.PILL_REPOSITION_ENABLED and viz.is_on("pill_reposition_marker") then
-    for pid, p in pairs(world.pills) do
-      if p.owner == "friendly" and p.health > 0 then
-        -- Quick badness check (same logic as eval_reposition_pill)
-        local nearest_bd = math.huge
-        for _, b in pairs(world.bases) do
-          if b.owner == "friendly" then
-            local bd = U.mdist(p.mx, p.my, b.mx, b.my)
-            if bd < nearest_bd then nearest_bd = bd end
-          end
-        end
-        if nearest_bd > C.PILL_REPOSITION_ORPHAN_DIST then
-          -- Orphaned pill: orange outline
-        end
-      end
-    end
-  end
 
   local t_pbh_repos = clock_us()
   opt(string.format("  pill-reposition viz done %.2f ms", (t_pbh_repos - t_pbh_blocked) / 1000))
 
   -- Deep sea bait pill overlay: mark dead pills on known deep sea
-  if BRAIN_DEBUG_MODE and state.perc and state.perc.deepsea_pill_ids and viz.is_on("bait_pill_marker") then
-    for pid, _ in pairs(state.perc.deepsea_pill_ids) do
-      local p = world.pills[pid]
-      if p then
-      end
-    end
-  end
 
   local t_pbh_bait = clock_us()
   opt(string.format("  bait-pill viz done %.2f ms", (t_pbh_bait - t_pbh_repos) / 1000))
 
   -- Friendly pill barrier overlay: mark friendly pills used as shields
-  if BRAIN_DEBUG_MODE and state.goal and
-     (state.goal.kind == "attack_pill" or state.goal.kind == "attack_pill")
-     and viz.is_on("friendly_pill_shield") then
-    local gmx, gmy = state.goal.mx, state.goal.my
-    local smx = state.goal.standoff_mx or (info.tankx >> 8)
-    local smy = state.goal.standoff_my or (info.tanky >> 8)
-    for _, fp in pairs(world.pills) do
-      if fp.owner == "friendly" and fp.health > 0 then
-        local d_fp_target = U.mdist(fp.mx, fp.my, gmx, gmy)
-        local d_fp_us = U.mdist(fp.mx, fp.my, smx, smy)
-        local d_total = U.mdist(smx, smy, gmx, gmy)
-        if d_fp_target < d_total and d_fp_us < d_total and d_fp_target >= 1 then
-          -- This pill is between us and the target: shield icon
-        end
-      end
-    end
-  end
 
   local t_pbh_barrier = clock_us()
   opt(string.format("  friendly-pill-barrier viz done %.2f ms", (t_pbh_barrier - t_pbh_bait) / 1000))
 
   -- Allied LGM protection overlay: mark allied LGM positions
-  if BRAIN_DEBUG_MODE and state.perc and state.perc.allied_lgm_positions and viz.is_on("ally_lgm_marker") then
-    for _, alm in ipairs(state.perc.allied_lgm_positions) do
-    end
-  end
 
   local t_pbh_ally = clock_us()
   opt(string.format("  ally-LGM viz done %.2f ms", (t_pbh_ally - t_pbh_barrier) / 1000))
+
+  -- Ally-state overlay (right-middle table of every active player's
+  -- goal / sub / target / k=v data). The slate is populated from the
+  -- chat-based shared-state protocol; if no protocol traffic has
+  -- landed yet the table is empty.
+  local t_pbh_ally_state = clock_us()
+  opt(string.format("  ally-state overlay done %.2f ms", (t_pbh_ally_state - t_pbh_ally) / 1000))
 
   -- Log this tick
   log.log_tick(state, info, state.goal, keys, taps, build_cmd)
@@ -3109,14 +2873,6 @@ function Brain.think(info)
 
 
   -- Label all pills and bases with their IDs (centered on tile)
-  if BRAIN_DEBUG_MODE and viz.is_on("pill_id_label") then
-    local t_label0 = clock_us()
-    for id, p in pairs(world.pills) do
-    end
-    for id, b in pairs(world.bases) do
-    end
-    opt(string.format("  pill+base id labels done %.2f ms", (clock_us() - t_label0) / 1000))
-  end
 
   -- Debugger: end trace capture
   if dbg.is_tracing() then
@@ -3237,8 +2993,14 @@ function Brain.think(info)
   -- it there instead of here means the JSON's think_total_ms value
   -- is fresh for the current tick.)
 
-  -- /info state broadcast (every tick).
+  -- /info state broadcast — runs EVERY tick (not gated by goal selection)
+  -- so heartbeat actually fires on its 30 s cadence and any goal change
+  -- surfaces immediately. Phase 1 populator: clobber broadcast_state_info
+  -- with goal/sub/target read off the current goal.
   do
+    -- Lazy init in case the brain was created before these state fields
+    -- were added (state. is set in open()) — keeps a hot-reload from
+    -- erroring out on nil.
     if state.broadcast_state_info == nil       then state.broadcast_state_info       = {} end
     if state.last_broadcasted_state_info == nil then state.last_broadcasted_state_info = {} end
     if state.last_broadcast_state_tick == nil  then state.last_broadcast_state_tick  = 0  end
@@ -3252,6 +3014,10 @@ function Brain.think(info)
       if state.goal.target_id and state.goal.target_id >= 0 then
         bsi.target = tostring(state.goal.target_id)
       end
+      -- Cost: pool_cache holds per-pool winners with .cost. Find the
+      -- entry whose .goal matches our current goal (same kind + tile)
+      -- and pluck its cost. state.goal_cost was the legacy slot but
+      -- nothing ever assigned it; pool_cache is the actual source.
       if state.pool_cache then
         for pi = 0, 12 do
           local pce = state.pool_cache[pi]
@@ -3276,17 +3042,20 @@ function Brain.think(info)
     local heartbeat_due = (now - state.last_broadcast_state_tick) >= 1500
     if (differs or heartbeat_due) and not send_msg then
       send_msg = comms.format_state(bsi)
-      -- Only allies see our state (see init.lua for the rationale).
-      msg_dest = info.allies or 0
+      -- Only allies see our state — broadcasting to enemies would
+      -- leak strategy (goal, target, cost). info.allies is the
+      -- engine's alliance bitmap including self; that's fine since
+      -- self-sends are filtered out at the in-process CTRL_CHAT
+      -- handler. If we have no allies the message is dropped by
+      -- playersSendAiMessage (no bits set).
+      msg_dest = info.allies and info.allies or 0
       for k in pairs(last) do last[k] = nil end
       for k, v in pairs(bsi) do last[k] = v end
       state.last_broadcast_state_tick = now
     end
   end
 
-  if BRAIN_DEBUG_MODE and send_msg and send_msg ~= "" then
-    ally_state.chat_log_add("out", state.player_number, send_msg, now)
-  end
+  -- Capture outbound for the chat_log overlay (debug-only).
 
   -- Output
   return {
