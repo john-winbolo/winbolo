@@ -2017,15 +2017,20 @@ local POOL_NAMES = {
   "refuel", "defend_pill", "capture_base", "capture_pill", "repair_pill",
   "attack_pill", "attack_base", "place_strategic", "attack_tank",
   [12] = "wait_for_lgm",
+  [13] = "kill_lgm",
 }
 
 -- Reverse map: actual goal.kind → pool index, for looking up cost_cache
 -- entries by candidate.  Note pool 1 (refuel) and pool 8 (place_strategic)
 -- have different UI labels than their goal.kind values.
+-- Pool 10 in the JSON is the WINNERS section, 11 is def_build, 12 is
+-- wait_for_lgm, 13 is kill_lgm — those four render as strips below the
+-- main 2x5 grid.
 local KIND_TO_POOL = {
   refuel_at_base = 1, defend_pill = 2, capture_base = 3, capture_pill = 4,
   repair_pill = 5, attack_pill = 6, attack_base = 7,
   place_pill_strategic = 8, attack_tank = 9, wait_for_lgm = 12,
+  kill_lgm = 13,
 }
 
 -- (LOCK_SUBS defined above eval_attack_tank.)
@@ -3569,7 +3574,10 @@ function M.step_eval_queue(state, world, info)
                               and state.goal.mx   == obj.mx
                               and state.goal.my   == obj.my
       local _ac_pen, _ac_by = 0, nil
-      if pool_idx ~= 9 and not _ac_we_are_here then
+      -- Pools exempt from ally_claimed: 9 (attack_tank) and 13
+      -- (kill_lgm).  Both are time-critical, locally-observed kills
+      -- — a stale ally broadcast shouldn't pull us off the shot.
+      if pool_idx ~= 9 and pool_idx ~= 13 and not _ac_we_are_here then
         for ally_pn, slot in ally_state.iter_active(now, 1750) do
           if ally_pn ~= info.player_number then
             local info_h = slot.info
@@ -4061,6 +4069,65 @@ function M.update_pool_cache(state, world, info)
         attack.draw_pill_eval_spots(dc.spots, dc.mx, dc.my,
                                     "attack_scan_spots_all_pills",
                                     mode, cdeg)
+      end
+    end
+  end
+
+  -- ── Kill-LGM injection ─────────────────────────────────────────────
+  -- Cheap pool-10 override: when perception sees a hostile LGM, inject
+  -- it as a high-priority goal so the bot will pursue it.  Cost is
+  -- intentionally low so a fresh LGM sighting preempts capture_base /
+  -- attack_pill / refuel; closer LGMs win over farther ones.  Requires
+  -- shells > 0 to fire.  attack_tank-style preempt logic — if we have
+  -- no LGMs in view, pool_cache[10] is cleared so this goal goes away
+  -- next replan.
+  if state.pool_cache then
+    local elgms = state.perc and state.perc.enemy_lgms
+    if elgms and #elgms > 0 and (info.shells or 0) > 0 then
+      local best = nil
+      for _, e in ipairs(elgms) do
+        if best == nil or e.dist < best.dist then best = e end
+      end
+      if best then
+        local cost = 20 + (best.dist or 0) * 1.5
+        local now_t = state.tick or 0
+        state.pool_cache[13] = {
+          goal = {
+            kind = "kill_lgm", mx = best.mx, my = best.my,
+            wx = U.m2w(best.mx), wy = U.m2w(best.my),
+            target_id = best.idnum or -1,
+            _lgm_track = best,  -- carry through for steering / aim
+          },
+          cost = cost,
+          desc = string.format("kill_lgm@(%d,%d) dist=%d near_tank=%s",
+                               best.mx, best.my, best.dist or -1,
+                               tostring(best.near_tank_idnum)),
+          cands = {
+            { id = best.idnum or 0, mx = best.mx, my = best.my,
+              cost = cost, own = "hostile", hp = 0, stale = 0 },
+          },
+        }
+        if not state.cost_cache then state.cost_cache = {} end
+        state.cost_cache["13:" .. (best.idnum or 0)] = {
+          cost = cost, raw = best.dist or 0, tick = now_t, _p = 13,
+          _mx = best.mx, _my = best.my,
+          formula = string.format(
+            "kill_lgm@(%d,%d) base{20} + dist{%.0f}*1.5 = %.0f"..
+            "||base:flat kill_lgm priority floor|dist:Manhattan from tank, near_tank=%s",
+            best.mx, best.my, best.dist or 0, cost,
+            tostring(best.near_tank_idnum)),
+        }
+      end
+    else
+      -- No LGM in view → drop the override so we don't chase a stale
+      -- ghost target.
+      state.pool_cache[13] = nil
+      if state.cost_cache then
+        for k in pairs(state.cost_cache) do
+          if type(k) == "string" and k:sub(1, 3) == "13:" then
+            state.cost_cache[k] = nil
+          end
+        end
       end
     end
   end
@@ -5879,6 +5946,9 @@ function M.get_pool_breakdown_json(state)
 
   local sections = {}
   local winners = {}
+  -- Iterate 1..9 (main grid pools) plus 13 (kill_lgm strip), so the
+  -- WINNERS cross-pool table includes a kill_lgm row whenever an LGM
+  -- is in view and pool 13 holds a candidate.
   for idx = 1, 9 do
     local sec, w = build_section(idx)
     sections[#sections + 1] = sec
@@ -6047,6 +6117,28 @@ function M.get_pool_breakdown_json(state)
     end
   end
 
+  -- Strip pools (11/12/13) — injected directly into pool_cache by
+  -- their respective evaluators, not routed through eval_queue or
+  -- goal_competition.  We synthesize a WINNERS row from pool_cache so
+  -- they compete on the same cost axis as the regular pools.  Note:
+  -- 11 (def_build) is reserved but currently unused — the entry will
+  -- show up here as soon as something writes pool_cache[11].
+  for _, idx in ipairs({11, 12, 13}) do
+    local sw = pc[idx]
+    if sw and sw.goal and sw.cost and sw.cost >= 0 and sw.cost < 1e29 then
+      local synthetic_id = (idx << 16) | (sw.goal.target_id or 0)
+      winners[#winners + 1] = {
+        id = synthetic_id, src_pool = idx,
+        mx = sw.goal.mx, my = sw.goal.my,
+        cost = sw.cost, weighted = sw.cost,
+        is_winner = false,
+        active_goal = (active_pool == idx and active_id == (sw.goal.target_id or 0)),
+        stale = 0,
+        formula = sw.desc or "",
+      }
+    end
+  end
+
   -- Cell 10 = cross-pool WINNERS table (ranked ascending).
   table.sort(winners, function(a, b) return a.cost < b.cost end)
   if winners[1] then winners[1].is_winner = true end
@@ -6056,11 +6148,15 @@ function M.get_pool_breakdown_json(state)
     layout_cell = LAYOUT_CELL[10], rows = winners,
   }
 
-  -- Strips below the grid: def_build (11) and wait_for_lgm (12).
-  -- Only emit the section if the brain actually produced candidates
-  -- for that pool this tick — keeps the renderer from drawing empty
-  -- placeholders when the brain doesn't use the slot.
-  for _, idx in ipairs({11, 12}) do
+  -- Strips below the grid: def_build (11), wait_for_lgm (12),
+  -- kill_lgm (13).  Only emit the section if the brain actually
+  -- produced candidates for that pool this tick — keeps the renderer
+  -- from drawing empty placeholders when the brain doesn't use the slot.
+  -- kill_lgm doesn't go through eval_queue (it's injected directly into
+  -- pool_cache from perception); seed by_pool[13] from pool_cache[13]
+  -- here so build_section finds rows.
+  if pc[13] and pc[13].cands then by_pool[13] = pc[13].cands end
+  for _, idx in ipairs({11, 12, 13}) do
     if by_pool[idx] and #by_pool[idx] > 0 then
       sections[#sections + 1] = (build_section(idx))
     end

@@ -50,6 +50,8 @@ local shot_tracker = require("shot_tracker")
 local viz      = require("viz")
 local ally_state = require("ally_state")
 ally_state.init()
+local lgm_registry = require("lgm_registry")
+lgm_registry.init()
 
 local Brain = {}
 
@@ -745,6 +747,34 @@ function Brain.think(info)
   state.tick = state.tick + 1
   state._last_info = info
   local now  = state.tick
+
+  -- LGM registry: self slot updated every tick from info.man_*.
+  -- A status transition (in_tank ↔ ground ↔ dead) sets the
+  -- pending_lgm_broadcast flag so the periodic /info state broadcast
+  -- block fires immediately rather than waiting for the next heartbeat
+  -- — allies need fast notification of "LGM back" so they stop yielding
+  -- to our cooldown.
+  local _lgm_self_pn = info.player_number
+  if _lgm_self_pn ~= nil then
+    local _lgm_self_mx = (info.man_x or 0) >> 8
+    local _lgm_self_my = (info.man_y or 0) >> 8
+    local _lgm_prev_slot = lgm_registry.get(_lgm_self_pn)
+    local _lgm_prev_status = _lgm_prev_slot and _lgm_prev_slot.status or "unknown"
+    local _lgm_transitioned = lgm_registry.update_self(
+      _lgm_self_pn, info.man_status or 0,
+      _lgm_self_mx, _lgm_self_my, now)
+    if _lgm_transitioned then
+      state.pending_lgm_broadcast = true
+      -- Set lgm_back flag for one broadcast when we transition FROM
+      -- dead to anything else (ground / in_tank).  Allies use this to
+      -- drop the dead-cooldown bookkeeping immediately rather than
+      -- waiting for respawn_eta.  Cleared by the broadcast block.
+      local _lgm_new_status = lgm_registry.get(_lgm_self_pn).status
+      if _lgm_prev_status == "dead" and _lgm_new_status ~= "dead" then
+        state.pending_lgm_back = true
+      end
+    end
+  end
   -- At tick 1 the engine has populated info.tankx/y with the bot's
   -- real spawn position. Brain.open is too early — info isn't
   -- populated yet there. Emit a BOT_START marker so log readers can
@@ -3466,6 +3496,107 @@ function Brain.think(info)
     end
   end
 
+  -- Kill-LGM aim+fire.  Fires opportunistically whenever ANY hostile
+  -- LGM is within KILL_LGM_SHOOT_RANGE — works even when our active
+  -- goal is something else (e.g. mid-attack_pill).  We aim at the
+  -- LGM's lead-predicted position based on its tracked velocity:
+  --   ttl = dist_wu / SHELL_SPEED
+  --   predicted = (lgm_wx + vx*ttl, lgm_wy + vy*ttl)
+  -- Gated on shells > SHELL_RESERVE and not-in-boat, same as the
+  -- opportunistic-tank-shot above.
+  --
+  -- Wall-LOS check: run cpf.simulate_shot to trace the real shell tile
+  -- path; if it crosses a T_BUILDING or T_HALFBUILD BEFORE reaching the
+  -- LGM tile, suppress the fire (keep driving — we'll re-evaluate from
+  -- a clearer angle).  Walls *after* the LGM don't count.  Cached
+  -- per-LGM-idnum for KILL_LGM_LOS_CHECK_INTERVAL ticks to keep the
+  -- per-tick cost bounded.
+  local KILL_LGM_LOS_CHECK_INTERVAL = 10
+  -- Per-tick evaluation table — populated for every visible LGM so the
+  -- kill_lgm_status viz can show a label per LGM regardless of whether
+  -- we actually fired this tick.  Cleared at the top of the block.
+  state._kill_lgm_eval = {}
+  local _no_shells = info.shells <= C.SHELL_RESERVE
+  local _shoot_busy = (keys & KEY_SHOOT) ~= 0 or (taps & KEY_SHOOT) ~= 0
+  local _already_fired = false
+  if state.perc and state.perc.enemy_lgms then
+    state._kill_lgm_los = state._kill_lgm_los or {}
+    local los_cache = state._kill_lgm_los
+    for _, elm in ipairs(state.perc.enemy_lgms) do
+      local _ev = { mx = elm.mx, my = elm.my, dist = elm.dist,
+                    idnum = elm.idnum, vx = elm.vx or 0, vy = elm.vy or 0 }
+      state._kill_lgm_eval[#state._kill_lgm_eval + 1] = _ev
+      if info.inboat then
+        _ev.status = "in_boat"
+      elseif _no_shells then
+        _ev.status = "no_shells"
+      elseif elm.dist > C.KILL_LGM_SHOOT_RANGE then
+        _ev.status = "out_of_range"
+      else
+        -- Lead-predict.  dist_wu = |dx| + |dy|; shell takes
+        -- approximately dist_wu / SHELL_SPEED ticks to arrive.
+        local dx_now = elm.wx - info.tankx
+        local dy_now = elm.wy - info.tanky
+        local dist_wu = math.abs(dx_now) + math.abs(dy_now)
+        local ttl = dist_wu / C.SHELL_SPEED
+        local aim_wx = elm.wx + (elm.vx or 0) * ttl
+        local aim_wy = elm.wy + (elm.vy or 0) * ttl
+        local aim_dir = U.aim_at(info.tankx, info.tanky, aim_wx, aim_wy)
+        local aim_corr = U.adiff(info.direction, aim_dir)
+        _ev.aim_corr = aim_corr
+        _ev.ttl = ttl
+        _ev.aim_mx = math.floor(aim_wx + 0.5) >> 8
+        _ev.aim_my = math.floor(aim_wy + 0.5) >> 8
+        if math.abs(aim_corr) > C.KILL_LGM_SHOOT_AIM then
+          _ev.status = "off_aim"
+        else
+          -- LOS check (cached).  Key by idnum if stable, else tile.
+          local cache_key = elm.idnum and ("i" .. elm.idnum)
+                            or ("t" .. elm.mx .. "," .. elm.my)
+          local ce = los_cache[cache_key]
+          local los_blocked
+          if ce and (now - ce.tick) < KILL_LGM_LOS_CHECK_INTERVAL then
+            los_blocked = ce.blocked
+          else
+            los_blocked = false
+            local tiles = cpf.simulate_shot
+                          and cpf.simulate_shot(info.tankx, info.tanky,
+                                                aim_wx, aim_wy,
+                                                cpf.SHOT_TANK or 0, 0)
+            if tiles then
+              local origin_mx, origin_my = info.tankx >> 8, info.tanky >> 8
+              for ti = 1, #tiles do
+                local t = tiles[ti]
+                if t.mx == elm.mx and t.my == elm.my then break end
+                if not (t.mx == origin_mx and t.my == origin_my) then
+                  local tt = U.ttype(t.mx, t.my)
+                  if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
+                    los_blocked = true; break
+                  end
+                end
+              end
+            end
+            los_cache[cache_key] = { tick = now, blocked = los_blocked }
+          end
+          _ev.los_blocked = los_blocked
+          if los_blocked then
+            _ev.status = "los_blocked"
+          elseif _shoot_busy or _already_fired then
+            _ev.status = "ready_busy"
+          else
+            _ev.status = "shooting"
+            taps = taps | KEY_SHOOT
+            _already_fired = true
+            log.event("kill_lgm_shot",
+              string.format("lgm@(%d,%d) dist=%d aim=%.0f ttl=%.1f v=(%d,%d)",
+                            elm.mx, elm.my, elm.dist, aim_corr,
+                            ttl, elm.vx or 0, elm.vy or 0))
+          end
+        end
+      end
+    end
+  end
+
   -- Navigation debug -- verbose prints for command goals
   if state.command_goal then
     local pf = state.pf
@@ -3772,6 +3903,78 @@ function Brain.think(info)
     end
   end
 
+  -- Enemy LGM marker: yellow X + tracked velocity arrow.  Tile coords
+  -- center on (mx+0.5, my+0.5).  Velocity is in wu/tick (~1/256 tiles)
+  -- so we scale by 1/64 to get a visible-but-small arrow tip.
+  if BRAIN_DEBUG_MODE and state.perc and state.perc.enemy_lgms and viz.is_on("enemy_lgm_marker") then
+    for _, elm in ipairs(state.perc.enemy_lgms) do
+      local cx, cy = elm.mx + 0.5, elm.my + 0.5
+      viz.line("enemy_lgm_marker", cx - 0.35, cy - 0.35, cx + 0.35, cy + 0.35, 255, 230, 0, 240)
+      viz.line("enemy_lgm_marker", cx - 0.35, cy + 0.35, cx + 0.35, cy - 0.35, 255, 230, 0, 240)
+      if elm.vx ~= 0 or elm.vy ~= 0 then
+        local tipx = cx + (elm.vx or 0) / 64.0
+        local tipy = cy + (elm.vy or 0) / 64.0
+        viz.line("enemy_lgm_marker", cx, cy, tipx, tipy, 255, 180, 0, 220)
+      end
+      viz.text("enemy_lgm_marker", cx, cy - 0.45,
+               elm.near_tank_idnum and string.format("LGM(t%d)", elm.near_tank_idnum) or "LGM",
+               "center", 255, 230, 0, 200)
+    end
+  end
+
+  -- Kill-LGM status: per-LGM label under the marker showing the
+  -- shoot-evaluation state (out_of_range / off_aim / los_blocked /
+  -- ready_busy / shooting / no_shells / in_boat), plus a top-left
+  -- HUD line summarizing the chosen target.  Always on when there's
+  -- at least one visible LGM and the viz toggle is enabled.
+  if state._kill_lgm_eval and #state._kill_lgm_eval > 0 and viz.is_on("kill_lgm_status") then
+    local _STATUS_COLOR = {
+      shooting      = { 255,  80,  80, 240 },   -- red: firing this tick
+      ready_busy    = { 255, 200,  80, 220 },   -- amber: would fire but shoot key already used
+      off_aim       = { 200, 200, 200, 220 },   -- light gray
+      los_blocked   = { 160, 100, 220, 220 },   -- purple: wall in the way
+      out_of_range  = { 130, 130, 130, 200 },
+      no_shells     = { 100, 100, 100, 200 },
+      in_boat       = { 100, 100, 100, 200 },
+    }
+    local _shooting_target
+    for _, ev in ipairs(state._kill_lgm_eval) do
+      local cx, cy = ev.mx + 0.5, ev.my + 0.5
+      local col = _STATUS_COLOR[ev.status] or _STATUS_COLOR.out_of_range
+      local label
+      if ev.aim_corr ~= nil then
+        label = string.format("%s d=%d aim=%+d%s",
+                              ev.status, ev.dist or -1,
+                              math.floor(ev.aim_corr + 0.5),
+                              ev.los_blocked and " LOS✗" or "")
+      else
+        label = string.format("%s d=%d", ev.status, ev.dist or -1)
+      end
+      viz.text("kill_lgm_status", cx, cy + 0.5, label, "center",
+               col[1], col[2], col[3], col[4])
+      if ev.status == "shooting" then _shooting_target = ev end
+    end
+    if viz.hud_text then
+      local hud_msg, r, g, b
+      if _shooting_target then
+        hud_msg = string.format("KILL_LGM: SHOOTING lgm@(%d,%d) d=%d",
+                                _shooting_target.mx, _shooting_target.my,
+                                _shooting_target.dist or -1)
+        r, g, b = 255, 100, 100
+      else
+        -- pick worst-state to surface
+        local best = state._kill_lgm_eval[1]
+        for _, ev in ipairs(state._kill_lgm_eval) do
+          if best.status ~= "ready_busy" and ev.status == "ready_busy" then best = ev end
+        end
+        hud_msg = string.format("KILL_LGM: %s lgm@(%d,%d) d=%d",
+                                best.status, best.mx, best.my, best.dist or -1)
+        r, g, b = 220, 220, 100
+      end
+      viz.hud_text("kill_lgm_status", 8, 96, hud_msg, "topleft", r, g, b, 230)
+    end
+  end
+
   local t_pbh_ally = clock_us()
   opt(string.format("  ally-LGM viz done %.2f ms", (t_pbh_ally - t_pbh_barrier) / 1000))
 
@@ -3785,6 +3988,8 @@ function Brain.think(info)
     -- gap and we don't trust their state.
     ally_state.draw(viz, state.tick, info.player_number, 1750)
     ally_state.draw_chat_log(viz, state.tick, info.player_number)
+    lgm_registry.draw_hud(viz, state.tick, info.player_number)
+    lgm_registry.draw_map(viz, state.tick, info.player_number, info.allies)
     -- Semi-transparent gray rectangle over each pill/base currently
     -- claimed by another bot (per ally_state slate).  Maps the ally's
     -- broadcast goal+target to a world tile and draws a 1x1 rect.
@@ -4077,6 +4282,20 @@ function Brain.think(info)
     if state.last_broadcast_state_tick == nil  then state.last_broadcast_state_tick  = 0  end
     local bsi = state.broadcast_state_info
     for k in pairs(bsi) do bsi[k] = nil end
+    -- LGM fields (always populated when we have a self slot, so allies
+    -- always know our LGM status — even when our goal is "none").
+    local _bsi_self_slot = lgm_registry.get(info.player_number or -1)
+    if _bsi_self_slot and _bsi_self_slot.status ~= "unknown" then
+      bsi.lgm_st = _bsi_self_slot.status
+      if _bsi_self_slot.mx and _bsi_self_slot.my
+         and _bsi_self_slot.status ~= "dead" then
+        bsi.lgmx = tostring(_bsi_self_slot.mx)
+        bsi.lgmy = tostring(_bsi_self_slot.my)
+      end
+      if state.pending_lgm_back then
+        bsi.lgm_back = "1"
+      end
+    end
     if state.goal and state.goal.kind and state.goal.kind ~= "none" then
       bsi.goal = state.goal.kind
       if state.goal.substate and state.goal.substate ~= "" then
@@ -4111,7 +4330,8 @@ function Brain.think(info)
       for k, v in pairs(last) do if bsi[k] ~= v then differs = true break end end
     end
     local heartbeat_due = (now - state.last_broadcast_state_tick) >= 1500
-    if (differs or heartbeat_due) and not send_msg then
+    local lgm_change_due = state.pending_lgm_broadcast == true
+    if (differs or heartbeat_due or lgm_change_due) and not send_msg then
       send_msg = comms.format_state(bsi)
       -- Only allies see our state — broadcasting to enemies would
       -- leak strategy (goal, target, cost). info.allies is the
@@ -4123,6 +4343,8 @@ function Brain.think(info)
       for k in pairs(last) do last[k] = nil end
       for k, v in pairs(bsi) do last[k] = v end
       state.last_broadcast_state_tick = now
+      state.pending_lgm_broadcast = nil
+      state.pending_lgm_back = nil
     end
   end
 

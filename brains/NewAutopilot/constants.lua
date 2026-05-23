@@ -723,6 +723,13 @@ M.TANK_COMBAT_JINK_PERIOD       = 10    -- ticks between jink direction changes
 M.TANK_COMBAT_JINK_ANGLE        = 32    -- bolo angle offset for lateral jink (~45°)
 M.TANK_COMBAT_OPPORTUNISTIC_RANGE = 4   -- tiles: fire at enemy if already aimed near them
 M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11°) aim tolerance for opportunistic shot
+
+-- Kill-LGM shoot gates.  LGMs are small (1 tile, hitbox even smaller),
+-- move slowly (~3 wu/tick), and die in one hit — so we fire from
+-- farther than tank-combat opportunistic but require tighter aim.
+M.KILL_LGM_SHOOT_RANGE = 8   -- tiles: open fire when within this distance
+M.KILL_LGM_SHOOT_AIM   = 5   -- bolo angle units (~7°): tight tolerance for tiny target
+
 M.TANK_COMBAT_LOS_EXTRA_RANGE       = 3    -- tiles beyond ENGAGE_RANGE that qualify for LOS fast-engage
 M.TANK_COMBAT_LOS_BASE_COST         = 5    -- very cheap base cost when enemy is in-range with clear LOS
 M.TANK_COMBAT_LOS_COST_PER_TILE     = 3    -- added cost per tile of separation in LOS engage

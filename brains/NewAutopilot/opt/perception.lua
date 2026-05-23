@@ -254,15 +254,63 @@ function M.update(state, world, info)
   end
 
   -- ----- Allied LGM protection (aIndy: avoid driving over allied LGMs) -----
+  -- ----- Enemy LGM tracking (live sightings in 15x15 view) --------------
+  -- Both passes share one scan over info.objects.  Enemy LGMs are
+  -- frame-to-frame proximity-matched against last tick's sightings
+  -- (LGMs move ~3 wu/tick, so a 1-tile match radius is tight).  We
+  -- also try to associate each enemy LGM with the nearest enemy tank
+  -- by idnum on first sighting — useful both for "this LGM came out
+  -- of tank K" attribution and for predicting where it's heading.
   local allied_lgm_positions = {}
+  local enemy_lgms = {}
+  local prev_enemy_lgms = state._prev_enemy_lgms or {}
   for _, ob in ipairs(info.objects) do
-    if ob.type == OBJECT_BUILDMAN and (ob.info & OBJECT_HOSTILE) == 0 then
+    if ob.type == OBJECT_BUILDMAN then
       local lmx = ob.x >> 8
       local lmy = ob.y >> 8
-      allied_lgm_positions[#allied_lgm_positions + 1] = { mx = lmx, my = lmy }
+      if (ob.info & OBJECT_HOSTILE) == 0 then
+        allied_lgm_positions[#allied_lgm_positions + 1] = { mx = lmx, my = lmy }
+      else
+        -- Match to last tick's nearest enemy LGM (by wu distance) so
+        -- we keep stable identity / velocity even when ObjectInfo
+        -- idnum changes across frames.
+        local best_match, best_d = nil, 6 * 256  -- 6 wu tolerance
+        for _, pl in ipairs(prev_enemy_lgms) do
+          local md = math.abs(ob.x - pl.wx) + math.abs(ob.y - pl.wy)
+          if md < best_d then best_d = md; best_match = pl end
+        end
+        local vx, vy = 0, 0
+        local seen_since = now
+        local near_tank_idnum = nil
+        if best_match then
+          vx = ob.x - best_match.wx
+          vy = ob.y - best_match.wy
+          seen_since = best_match.seen_since
+          near_tank_idnum = best_match.near_tank_idnum
+        end
+        -- First sighting: associate with the nearest visible enemy tank.
+        if near_tank_idnum == nil then
+          local best_t_d = 4 * 256  -- 4 tile tolerance
+          for _, et in ipairs(enemy_tanks) do
+            local md = math.abs(et.wx - ob.x) + math.abs(et.wy - ob.y)
+            if md < best_t_d then best_t_d = md; near_tank_idnum = et.id end
+          end
+        end
+        enemy_lgms[#enemy_lgms + 1] = {
+          mx = lmx, my = lmy,
+          wx = ob.x, wy = ob.y,
+          vx = vx, vy = vy,
+          idnum = ob.idnum,
+          seen_since = seen_since,
+          near_tank_idnum = near_tank_idnum,
+          dist = U.mdist(tmx, tmy, lmx, lmy),
+        }
+      end
     end
   end
+  state._prev_enemy_lgms = enemy_lgms
   perc.allied_lgm_positions = allied_lgm_positions
+  perc.enemy_lgms = enemy_lgms
 
   -- ----- Under fire: shell danger or angry pill in range -----
   local threat_at_tank = danger.danger_at(tmx, tmy, now, world)

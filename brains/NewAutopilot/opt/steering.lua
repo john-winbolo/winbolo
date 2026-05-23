@@ -1674,6 +1674,23 @@ function M.steer(state, world, info, goal)
     end
     return keys, taps
 
+  elseif goal.kind == "kill_lgm" then
+    -- Drive straight toward the LGM tile.  Firing happens in parallel
+    -- from the opportunistic-fire block in init.lua as soon as the
+    -- LGM is within KILL_LGM_SHOOT_RANGE — so we don't need a
+    -- standoff.  Continuing to close means we either kill via shells
+    -- en route or, worst case, squish the LGM by driving onto it.
+    -- Walls / line-of-sight not yet considered.
+    local nx, ny = cpf_path_to(state, info, goal.mx, goal.my)
+    if nx then
+      local lx, ly = path_lookahead(state, info, nx, ny)
+      state._steer_lx = lx
+      state._steer_ly = ly
+      move_dir    = U.aim_at(info.tankx, info.tanky, U.m2w(lx), U.m2w(ly))
+      target_dist = U.wdist(info.tankx, info.tanky, U.m2w(lx), U.m2w(ly))
+    end
+    goal_dist = U.wdist(info.tankx, info.tanky, U.m2w(goal.mx), U.m2w(goal.my))
+
   elseif goal.kind == "refuel_at_base" then
     -- wait_for_ally: an ally is camping our target base, so we park at
     -- a low-danger tile in the surrounding 11x11 square (picked at

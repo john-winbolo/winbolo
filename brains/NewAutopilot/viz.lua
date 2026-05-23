@@ -214,6 +214,18 @@ M.IDS = {
   ally_claimed_marker = { short = "Ally claimed marker",
                           long  = "Semi-transparent gray rectangle over each pill/base another bot is currently broadcasting as their goal (sourced from ally_state slate)." },
 
+  enemy_lgm_marker = { short = "Enemy LGM marker",
+                       long  = "Yellow X over every visible hostile LGM with a small velocity arrow when it's moving. Sourced from perc.enemy_lgms." },
+
+  kill_lgm_status = { short = "Kill-LGM status",
+                      long  = "Per-LGM kill-evaluation labels (dist / aim corr / LOS clear-blocked / would-fire) plus a HUD summary line for the chosen target. Always shows when at least one hostile LGM is in view." },
+
+  lgm_registry_hud = { short = "HUD: LGM registry",
+                       long  = "Right-side HUD table with one row per known player_num's LGM state (status / tile / source / respawn countdown). Sourced from lgm_registry." },
+
+  lgm_registry_map = { short = "LGM registry map markers",
+                       long  = "Per-player tile rings on the map for every LGM the registry knows about: green=alive ally, red=alive enemy, gray=dead with respawn countdown. Skips self (covered by ally_lgm_marker / own-LGM overlay)." },
+
   -- Tank combat standoff scan (attack_tank substate).
   tank_combat_standoff_scan = { short = "Tank combat standoff scan",
                                 long  = "Per-spot score boxes, maneuver tiles, chosen standoff circle/ellipse for attack_tank" },

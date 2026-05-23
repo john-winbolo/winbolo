@@ -338,8 +338,13 @@ function M.process_events(world, info, state)
       -- Player left; downstream systems will notice missing objects.
 
     elseif ev.type == EVENT_LGM_LOST and d then
-      -- data: [playerNum] — a player's builder was killed.
-      -- Informational; could be used for tactical decisions.
+      -- data: [victim_pn, killer_pn] — a player's builder was killed.
+      -- Stamp the death + respawn ETA on the lgm_registry so
+      -- attack_pill cost shaping, ally coordination, etc. can react.
+      local _lgmreg = package.loaded["lgm_registry"]
+      if _lgmreg then
+        _lgmreg.note_death(d[1] or 0, d[2] or 0, tick or 0)
+      end
     end
   end
 end
