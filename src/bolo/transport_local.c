@@ -33,6 +33,9 @@
 #include "transport.h"
 #include "server_sim.h"
 #include "client_sim.h"  /* clientSimSyncFromSnapshot — per-tick snapshot apply */
+#include "control_event.h" /* ControlEvent + CTRL_CHAT — local sendBytes publishes directly */
+#include "netpacks.h"    /* PACKET_HEADER_SIZE, PACKET_CHAT_MESSAGE, etc. */
+#include "wire_limits.h" /* PACKET_MAX_CHAT_MESSAGE */
 /* The passive variant is driven from a different thread than the one that
  * ticks ServerSim, so it self-serialises on the server's threadsMutex. */
 #include "../server/threads.h"
@@ -150,6 +153,78 @@ static bool localTick(void *ctx) {
     return TRUE;
 }
 
+/* Local transport's sendBytes: decode the packet type out of the
+ * standard 8-byte header and dispatch the same way the UDP server's
+ * serverProcessPacket would. This is what makes a local-transport
+ * client (SP host human, in-process bot) reach the server through
+ * the SAME client_net.h send wrappers a UDP-connected client uses —
+ * without this hook, the isUdpTransport gate in client_net.c would
+ * silently drop every non-input send for any client on a local
+ * transport.
+ *
+ * Sender attribution: the wire packets don't carry fromPlayer (the
+ * UDP server resolves it via serverFindClient(fromAddr) from the
+ * source IP). For local transport we use lctx->playerNum, which is
+ * the slot this transport was set up for (and refined by
+ * transportLocalSetPlayerNum after the join).
+ *
+ * Each handler block here is the same shape as the matching case in
+ * transport_udp_server.c's serverProcessPacket — keep them in sync. */
+static void localSendBytes(void *ctx, const uint8_t *buf, size_t len) {
+    TransportLocalCtx *lctx = (TransportLocalCtx *)ctx;
+    uint8_t pktType;
+
+    if (lctx == NULL || lctx->sim == NULL || buf == NULL) return;
+    if (len < PACKET_HEADER_SIZE) return;
+    /* Same magic-check shape as getPacketType() in transport_udp_common.c —
+     * inlined here to avoid pulling in transport_udp_internal.h (which
+     * drags SDL + platform_net) from the local transport TU. */
+    if (buf[0] != BOLO_NEW_MAGIC_0 || buf[1] != BOLO_NEW_MAGIC_1) return;
+    pktType = buf[2];
+
+    switch (pktType) {
+        case PACKET_CHAT_MESSAGE: {
+            /* [header 8][destPlayer 1][message...] — same layout the
+             * UDP server expects. Build a CTRL_CHAT and publish; this
+             * mirrors the PACKET_CHAT_MESSAGE case in
+             * transport_udp_server.c's serverProcessPacket. The
+             * subscriber fanout (in-process MessageState delivery
+             * via client_sim_control.c's CTRL_CHAT handler + the
+             * per-client UDP codec encoder) is shared, so a single
+             * publish reaches every audience just like the UDP path. */
+            if (len > PACKET_HEADER_SIZE + 1) {
+                ControlEvent evt;
+                BYTE destPlayer = buf[PACKET_HEADER_SIZE];
+                size_t msgLen   = len - PACKET_HEADER_SIZE - 1;
+                if (msgLen > PACKET_MAX_CHAT_MESSAGE) {
+                    msgLen = PACKET_MAX_CHAT_MESSAGE;
+                }
+                memset(&evt, 0, sizeof(evt));
+                evt.type = CTRL_CHAT;
+                evt.u.chat.fromPlayer = lctx->playerNum;
+                evt.u.chat.destPlayer = destPlayer;
+                evt.u.chat.bodyLen    = (uint16_t)msgLen;
+                if (msgLen > 0) {
+                    memcpy(evt.u.chat.body,
+                           buf + PACKET_HEADER_SIZE + 1, msgLen);
+                }
+                serverSimPublishControl(lctx->sim, &evt);
+            }
+            break;
+        }
+        default:
+            /* Other client→server packet types (NAME_CHANGE,
+             * ALLIANCE_REQUEST, TEAM_SET, READY, VOTE_TOGGLE,
+             * SURRENDER_VOTE, etc.) are not yet wired through the
+             * local-transport dispatch. Their client_net.h wrappers
+             * still UDP-gate, so the bot-pool and SP-host paths
+             * don't exercise them. As features that need bot
+             * participation come online, mirror the matching
+             * serverProcessPacket case here. */
+            break;
+    }
+}
+
 Transport transportLocalCreate(ServerSim *sim, ClientSim *cs, BYTE playerNum) {
     Transport t;
     TransportLocalCtx *lctx = (TransportLocalCtx *)malloc(sizeof(TransportLocalCtx));
@@ -161,6 +236,7 @@ Transport transportLocalCreate(ServerSim *sim, ClientSim *cs, BYTE playerNum) {
     lctx->ticksServer = true;
     t.recordInput = localSendInput;
     t.sendInput = localSendInput;
+    t.sendBytes = localSendBytes;
     t.tick = localTick;
     t.getSnapshot = localGetSnapshot;
     t.ctx = lctx;

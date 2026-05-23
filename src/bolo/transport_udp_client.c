@@ -288,6 +288,16 @@ static void udpClientSendInput(void *ctx, const InputPacket *input) {
     udpClientSendTo(c, buf, len);
 }
 
+/* Client sendBytes: thin wrapper around udpClientSendTo. Lets
+ * client_net.h send wrappers build the wire packet themselves and
+ * push it through a transport-agnostic interface (see the local
+ * transport's localSendBytes for the in-process counterpart). */
+static void udpClientSendBytes(void *ctx, const uint8_t *buf, size_t len) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    udpClientSendTo(c, buf, (int)len);
+}
+
 /* Decode a localized payload (langid + arg list) at buf[startPos..len)
  * into outId and outArgs.  Mirrors packLocalizedPayload on the server.
  * Args land in MessageArgs slots in order: #1->playerName, #2->otherName,
@@ -2133,6 +2143,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         c->joinState = UDP_CLIENT_ERROR;
         t.recordInput = udpClientRecordInput;
         t.sendInput = udpClientSendInput;
+        t.sendBytes = udpClientSendBytes;
         t.tick = udpClientTick;
         t.getSnapshot = udpClientGetSnapshotVtable;
         t.ctx = c;
@@ -2159,6 +2170,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
             c->joinState = UDP_CLIENT_ERROR;
             t.recordInput = udpClientRecordInput;
             t.sendInput = udpClientSendInput;
+            t.sendBytes = udpClientSendBytes;
             t.tick = udpClientTick;
             t.getSnapshot = udpClientGetSnapshotVtable;
             t.ctx = c;
@@ -2223,6 +2235,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
 
     t.recordInput = udpClientRecordInput;
     t.sendInput = udpClientSendInput;
+    t.sendBytes = udpClientSendBytes;
     t.tick = udpClientTick;
     t.getSnapshot = udpClientGetSnapshotVtable;
     t.ctx = c;
@@ -2384,28 +2397,6 @@ uint8_t transportUdpClientGetMapDownloadPercent(Transport *t) {
     if (c->mapDownloadTotal == 0) return 100;
     uint32_t pct = (c->mapDownloadReceived * 100u) / c->mapDownloadTotal;
     return pct > 100 ? 100 : (uint8_t)pct;
-}
-
-/* Send a chat message to the server.
- * destPlayer: 0xFF = all players, else specific player number. */
-void transportUdpClientSendChat(Transport *t, uint8_t destPlayer,
-                                const char *message) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_CHAT_MESSAGE];
-    int msgLen;
-    int len;
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    if (message == NULL || message[0] == '\0') return;
-
-    msgLen = (int)strlen(message);
-    if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
-
-    packHeader(buf, PACKET_CHAT_MESSAGE, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = destPlayer;
-    memcpy(buf + PACKET_HEADER_SIZE + 1, message, msgLen);
-    len = PACKET_HEADER_SIZE + 1 + msgLen;
-    udpClientSendTo(c, buf, len);
 }
 
 /* Send a name change request to the server. */

@@ -155,10 +155,8 @@ uint16_t transportUdpClientGetPing(Transport *t);
 void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
                                    int *bpsRecv, int *bpsSent, int *numErrors);
 
-/* Send a chat message to the server.
- * destPlayer: 0xFF = all players, else specific player number. */
-void transportUdpClientSendChat(Transport *t, uint8_t destPlayer,
-                                const char *message);
+/* Chat sends go through clientSimNetSendChat → transport->sendBytes
+ * now — the per-transport sendChat helper is gone. */
 
 /* Send a name change request to the server.
  * newName: the desired new player name. */
