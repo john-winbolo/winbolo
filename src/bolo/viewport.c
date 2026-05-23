@@ -108,9 +108,9 @@ BYTE viewportCalcSquare(ViewPort *vp, struct GameSim *sim, BYTE myPlayerNum,
   vp->mineView->mineItem[scrX][scrY] = FALSE;
   /* Set up Items */
   if ((pillsExistPos(&sim->pb, xValue, yValue)) == TRUE) {
-    returnValue = pillsGetScreenHealth(sim, &sim->pb, xValue, yValue);
+    returnValue = pillsGetScreenHealth(sim, &sim->pb, xValue, yValue, myPlayerNum);
   } else if ((basesExistPos(&sim->bs, xValue, yValue)) == TRUE) {
-    ba = basesGetAlliancePos(sim, xValue, yValue);
+    ba = basesGetAlliancePos(sim, xValue, yValue, myPlayerNum);
     switch (ba) {
     case baseOwnGood:
       returnValue = BASE_GOOD;

@@ -44,6 +44,8 @@ void serverLifecycleGetSimStats(double *outLastMs, double *outEwmaMs) {
 struct ServerSim;
 void transportUdpServerEnforcePing(struct ServerSim *sim) { (void)sim; }
 void transportUdpServerOnLobbyMapChange(struct ServerSim *sim) { (void)sim; }
+void transportUdpServerOnGameStart(struct ServerSim *sim) { (void)sim; }
 void transportUdpServerSetLock(struct ServerSim *sim, bool locked) { (void)sim; (void)locked; }
 uint16_t transportUdpServerGetClientPing(BYTE playerNum) { (void)playerNum; return 0; }
 const char *transportUdpServerGetPlayerName(BYTE playerNum) { (void)playerNum; return ""; }
+bool transportUdpServerHasAnyClient(void) { return false; }

@@ -12,9 +12,12 @@
  * GNU General Public License for more details.
  */
 
-/* Real implementations of the server-side log-recording hooks for the
- * WinBoloDS dedicated-server binary. servermain.c owns the global log
- * state these bodies read and mutate. */
+/* Bus subscriber that maintains the dedicated-server replay log in
+ * response to CTRL_GAME_PHASE_* events. Registered from servermain.c
+ * when the --log argument is present. The subscriber's sync-replay
+ * delivers the current phase at registration time, so the log file is
+ * opened immediately for both lobby (CTRL_GAME_PHASE_LOBBY) and
+ * no-lobby (CTRL_GAME_PHASE_RUNNING) startup paths. */
 
 #include <string.h>
 #include <stdio.h>
@@ -25,6 +28,7 @@
 #include "players.h"
 #include "transport_udp.h"
 #include "server_sim_internal.h"
+#include "control_event.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../winbolonet/winbolonet_server.h"
 #include "../winbolonet/http.h"
@@ -37,25 +41,26 @@ extern char fileName[];
 
 void makeLogFileName(char *outFileName, const char *mapName);
 
-void serverDedicatedLogOnEnterGameOver(ServerSim *sim) {
+static void handleGameOver(ServerSim *sim) {
     (void)sim;
-    if (isLogging) {
-        logStop();
-        isLogging = FALSE;
+    if (!isLogging) {
+        return;
+    }
+    logStop();
+    isLogging = FALSE;
 
-        if (!dontSendLog && winbolonetIsRunning()) {
-            char key[WINBOLONET_KEY_LEN];
-            winboloNetGetServerKey(key);
-            if (key[0] != '\0') {
-                httpCreate();
-                httpSendLogFile(fileName, key, FALSE);
-                httpDestroy();
-            }
+    if (!dontSendLog && winbolonetIsRunning()) {
+        char key[WINBOLONET_KEY_LEN];
+        winboloNetGetServerKey(key);
+        if (key[0] != '\0') {
+            httpCreate();
+            httpSendLogFile(fileName, key, FALSE);
+            httpDestroy();
         }
     }
 }
 
-void serverDedicatedLogOnReturnToLobby(ServerSim *sim) {
+static void handleLobbyEnter(ServerSim *sim) {
     BYTE i;
 
     if (!sim->wantLogging) {
@@ -95,7 +100,7 @@ void serverDedicatedLogOnReturnToLobby(ServerSim *sim) {
     }
 }
 
-void serverDedicatedLogOnLobbyExit(ServerSim *sim) {
+static void handleGameStart(ServerSim *sim) {
     if (!sim->wantLogging) {
         return;
     }
@@ -105,7 +110,7 @@ void serverDedicatedLogOnLobbyExit(ServerSim *sim) {
         return;
     }
 
-    /* Logging was requested but not yet started — start now */
+    /* No-lobby case — start the log on the running transition. */
     if (sim->userLogFileName[0] != '\0') {
         strncpy(fileName, sim->userLogFileName, 512 - 1);
     } else {
@@ -122,4 +127,28 @@ void serverDedicatedLogOnLobbyExit(ServerSim *sim) {
     if (isLogging) {
         fprintf(stderr, "Logging to %s\n", fileName);
     }
+}
+
+static void serverDedicatedLogDeliver(void *ctx, const ControlEvent *evt) {
+    ServerSim *sim = (ServerSim *)ctx;
+    switch (evt->type) {
+        case CTRL_GAME_PHASE_LOBBY:
+            handleLobbyEnter(sim);
+            break;
+        case CTRL_GAME_PHASE_RUNNING:
+            handleGameStart(sim);
+            break;
+        case CTRL_GAME_PHASE_GAME_OVER:
+            handleGameOver(sim);
+            break;
+        default:
+            break;
+    }
+}
+
+void serverDedicatedLogInstall(ServerSim *sim) {
+    if (sim == NULL) {
+        return;
+    }
+    serverSimRegisterSubscriber(sim, serverDedicatedLogDeliver, sim);
 }

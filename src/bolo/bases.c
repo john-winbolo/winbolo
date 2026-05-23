@@ -242,7 +242,7 @@ bool basesExistPos(bases *value, BYTE xValue, BYTE yValue) {
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-baseAlliance basesGetAlliancePos(GameSim *sim, BYTE xValue, BYTE yValue) {
+baseAlliance basesGetAlliancePos(GameSim *sim, BYTE xValue, BYTE yValue, BYTE viewPlayer) {
   bases *value = &sim->bs;
   baseAlliance returnValue; /* Value to return */
   bool done;                /* Finished looping */
@@ -257,9 +257,9 @@ baseAlliance basesGetAlliancePos(GameSim *sim, BYTE xValue, BYTE yValue) {
         returnValue = baseDead;
       } else if ((*value)->item[count].owner == NEUTRAL) {
         returnValue = baseNeutral;
-      } else if ((*value)->item[count].owner == sim->viewPlayer) {
+      } else if ((*value)->item[count].owner == viewPlayer) {
         returnValue = baseOwnGood;
-      } else if (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, sim->viewPlayer) == TRUE) {
+      } else if (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, viewPlayer) == TRUE) {
         returnValue = baseAllieGood;
       } else {
         returnValue = baseEvil;

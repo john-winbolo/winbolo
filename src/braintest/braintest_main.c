@@ -67,7 +67,6 @@
 #include "global.h"
 #include "everard_map.h"
 #include "tank.h"
-#include "bot_manager.h"
 #include "players.h"
 #include "allience.h"
 #include "explosions.h"
@@ -76,7 +75,10 @@
 #include "brain_pathfinder.h"
 #include "gui_message.h"
 #include "server_sim.h"
+#include "server_sim_lifecycle.h"
+#include "bot_worker_pool.h"
 #include "game_sim.h"
+#include "../server/server_lifecycle.h"
 #include "../server/threads.h"
 #include "../gui/sdl3/mapview.h"
 #include "../gui/sdl3/tileloader.h"
@@ -777,7 +779,7 @@ static void mapTileToScreen(BrainTestApp *app, float tx, float ty,
 static void renderCellValues(BrainTestApp *app, int screenW, int screenH) {
     if (!vizFlag(app->regIdxValues)) return;
     if (!vizFlag(app->regIdxDanger) && !vizFlag(app->regIdxInfluence)) return;
-    BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
+    BrainPathfinder *pf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     if (!pf) return;
 
     int zf = app->zoomFactor;
@@ -869,7 +871,7 @@ static void mapTileWindow(BrainTestApp *app, int screenW, int screenH,
  * brainPathfinderSetMap). */
 static void renderFogOverlay(BrainTestApp *app, int screenW, int screenH) {
     if (!vizFlag(app->regIdxFog)) return;
-    BrainPathfinder *bpf = botManagerGetBrainPathfinder(app->followBot);
+    BrainPathfinder *bpf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     if (!bpf || !bpf->map) return;
 
     int   tp, startX, startY, endX, endY;
@@ -1147,7 +1149,7 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
  * cheaper. Shift+7 cycles which slate (0..3) is being viewed. */
 static void renderDijkstraHeatmap(BrainTestApp *app, int screenW, int screenH) {
     if (!vizFlag(app->regIdxDijkstra)) return;
-    BrainPathfinder *botPf = botManagerGetBrainPathfinder(app->followBot);
+    BrainPathfinder *botPf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     if (!botPf) return;
 
     int viewSlate = app->dijViewSlate;
@@ -1230,7 +1232,7 @@ static void renderStratPlaceHeatmap(BrainTestApp *app, int screenW, int screenH)
         if (!app->stratPlaceText || nowMs - sLastStratPoll > 500) {
             sLastStratPoll = nowMs;
             SDL_free(app->stratPlaceText);
-            app->stratPlaceText = botManagerEvalLuaString(app->followBot,
+            app->stratPlaceText = serverSimBotEvalLuaString(app->sim, app->followBot,
                 "return brain.get_strategic_place_heatmap()");
         }
         stratText = app->stratPlaceText;
@@ -1327,7 +1329,7 @@ static void vizToggleSaveCallback(int idx) {
  * X-key suppress flag into every active bot's Lua state. Also
  * pushes _BT_VIZ_IDS (the table viz.lua's vid() reads to learn
  * which integer to stamp on each overlay command). */
-static void pushVizStateToBots(bool vizSuppressActive);
+static void pushVizStateToBots(ServerSim *sim, bool vizSuppressActive);
 
 static int vizRegisterCallback(const char *id, const char *label,
                                 const char *short_desc, const char *long_desc,
@@ -1479,6 +1481,18 @@ static int shotSimPoiRegisterCallback(const char *name,
  * followBot + recording-enabled flag + sim tick in file-statics the
  * callback can read. Updated every frame the panel window is visible. */
 static BYTE     g_panelPollFollowBot   = 0;
+/* The poll callback is invoked from inside the ImGui panel renderer
+ * with no app handle. Stash the sim here so it can route through the
+ * per-sim BotManager. Updated alongside g_panelPollFollowBot each
+ * frame the panel window is visible. */
+static ServerSim *g_panelPollSim       = NULL;
+/* Exposed via braintest_panel_registry.h so per-brain panel
+ * renderers (under brains/<name>/braintest_panels/) can route
+ * through serverSim* wrappers without holding an app handle. */
+ServerSim *braintestGetCurrentSim(void) {
+    return g_panelPollSim;
+}
+
 /* Off by default: recording produces one file per polled tick per
  * panel, which adds up fast over long sessions and has no rotation
  * yet. Opt in with --record-panels when you want offline replay. */
@@ -1552,7 +1566,8 @@ static char *panelPollCallback(int panel_idx) {
         if (copy) memcpy(copy, kNoData, n + 1);
         return copy;
     }
-    char *body = botManagerEvalLuaString(g_panelPollFollowBot, e->lua_expr);
+    char *body = serverSimBotEvalLuaString(g_panelPollSim,
+                                           g_panelPollFollowBot, e->lua_expr);
     /* Persist to disk so the same per-tick snapshot can be inspected
      * offline (great for "look at the queue at tick 4321" — files
      * are JSON for typed panels, raw text for the "text" type). */
@@ -1870,7 +1885,7 @@ static bool screenToWU(BrainTestApp *app, float sx, float sy,
 
 /* Copy terrain/danger/influence/config from brain's pathfinder to debug PF */
 static void syncDebugPathfinder(BrainTestApp *app) {
-    BrainPathfinder *src = botManagerGetBrainPathfinder(app->followBot);
+    BrainPathfinder *src = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     BrainPathfinder *dst = app->debugPF;
     if (!src || !dst) return;
 
@@ -2012,7 +2027,7 @@ static inline void blendPixel(uint8_t *pixels, int pitch, int x, int y,
 }
 
 static void updateOverlayTexture(BrainTestApp *app) {
-    BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
+    BrainPathfinder *pf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     if (!pf) return;
     if (!vizFlag(app->regIdxInfluence) && !vizFlag(app->regIdxDanger) && !vizFlag(app->regIdxFrontLine)) return;
 
@@ -2093,7 +2108,7 @@ static void updateCachedPath(BrainTestApp *app) {
     /* In playback the path was already patched in from the recorded
      * frame; re-tracing the live brain's slate would clobber it. */
     if (app->playbackMode) return;
-    BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
+    BrainPathfinder *pf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     if (!pf) return;
 
     /* The brain mostly navigates by Dijkstra slate lookup now —
@@ -2107,7 +2122,7 @@ static void updateCachedPath(BrainTestApp *app) {
      * trace which uses pf->dest_x/y from the last A* search. */
     int n = 0;
     BrainGoalInfo gi;
-    if (botManagerGetGoalInfo(app->followBot, &gi)
+    if (serverSimGetBotGoalInfo(app->sim, app->followBot, &gi)
         && gi.kind[0] != '\0'
         && strcmp(gi.kind, "none") != 0) {
         /* Ask the pathfinder which slate currently holds the freshest
@@ -2229,7 +2244,7 @@ static void renderOverlay(BrainTestApp *app, int screenW, int screenH) {
  * the bot's Lua globals: _BT_VIZ_<UPPER_ID> per-id booleans plus
  * _BT_VIZ_IDS = {id=idx, ...} lookup. Pushed every brain frame so
  * a freshly-spawned bot sees current state on its first think. */
-static void pushVizStateToBots(bool vizSuppressActive) {
+static void pushVizStateToBots(ServerSim *sim, bool vizSuppressActive) {
     char buf[16384];
     int  off = 0;
     int  n = vizRegistryCount();
@@ -2275,7 +2290,7 @@ static void pushVizStateToBots(bool vizSuppressActive) {
     }
     if (off == 0) return;
     for (int i = 0; i < MAX_TANKS; i++) {
-        if (botManagerIsBot((BYTE)i)) botManagerExecLua((BYTE)i, buf);
+        if (serverSimIsBot(sim, (BYTE)i)) serverSimBotExecLua(sim, (BYTE)i, buf);
     }
 }
 
@@ -2377,7 +2392,7 @@ static void recordingCapture(BrainTestApp *app) {
     memcpy(rb->prevMap, curMap, mapSz);
 
     /* ── Pathfinder grids (followed bot) ── */
-    BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
+    BrainPathfinder *pf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     if (pf) {
         if (needKeyframe) {
             f->fullDanger = (uint16_t *)malloc(gridSz * sizeof(uint16_t));
@@ -2510,10 +2525,10 @@ static void recordingCapture(BrainTestApp *app) {
     /* ── Camera + brain perf for HUD ── */
     f->viewCenterX = app->viewCenterX;
     f->viewCenterY = app->viewCenterY;
-    f->thinkMs     = (float)botManagerGetLastThinkMs(app->followBot);
+    f->thinkMs     = (float)serverSimGetBotLastThinkMs(app->sim, app->followBot);
 
     /* ── Goal info (drives scrubber goal-change tick markers) ── */
-    if (botManagerGetGoalInfo(app->followBot, &f->goalInfo)) {
+    if (serverSimGetBotGoalInfo(app->sim, app->followBot, &f->goalInfo)) {
         f->goalInfoValid = true;
     }
 
@@ -2522,7 +2537,7 @@ static void recordingCapture(BrainTestApp *app) {
      * playback still shows that bot's overlays for the scrubbed
      * tick (not whatever they emitted most recently live). */
     for (BYTE oi = 0; oi < MAX_TANKS; oi++) {
-        OverlayCmdBuffer *ovl = botManagerGetOverlayCmds(oi);
+        OverlayCmdBuffer *ovl = serverSimGetBotOverlayCmds(app->sim, oi);
         if (ovl && ovl->count > 0) {
             f->botOverlayCmdCount[oi] = ovl->count;
             f->botOverlayCmds[oi] = (OverlayCmd *)malloc(
@@ -2562,7 +2577,7 @@ static void recordingCapture(BrainTestApp *app) {
         const PanelRegistryEntry *e = panelRegistryGet(pi);
         if (!e || !e->lua_expr[0]) continue;
         f->recordedPanels[pi] =
-            botManagerEvalLuaString(e->bot_owner, e->lua_expr);
+            serverSimBotEvalLuaString(app->sim, e->bot_owner, e->lua_expr);
     }
 
     /* ── Shot-sim POI poll snapshots ── eval every POI owned by the
@@ -2671,8 +2686,8 @@ static void recordingCapture(BrainTestApp *app) {
 
     /* Strategic placement heatmap — only poll Lua when [8] is on so
      * recordings don't pay the brain query cost on every tick. */
-    if (vizFlag(app->regIdxStratPlace) && botManagerIsBot(app->followBot)) {
-        f->stratPlaceText = botManagerEvalLuaString(app->followBot,
+    if (vizFlag(app->regIdxStratPlace) && serverSimIsBot(app->sim, app->followBot)) {
+        f->stratPlaceText = serverSimBotEvalLuaString(app->sim, app->followBot,
             "return brain.get_strategic_place_heatmap()");
     } else {
         f->stratPlaceText = NULL;
@@ -2739,7 +2754,7 @@ static void mapTileToScreenPrecise(BrainTestApp *app, float tx, float ty,
 }
 
 static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
-    OverlayCmdBuffer *buf = botManagerGetOverlayCmds(app->followBot);
+    OverlayCmdBuffer *buf = serverSimGetBotOverlayCmds(app->sim, app->followBot);
     if (!buf || buf->count == 0) return;
 
     SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
@@ -2887,7 +2902,7 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
      * what's actually rendered, not where the live sim has advanced
      * to in the background. */
     uint32_t hudTick = serverSimGetTick(app->sim) / 2;
-    double   thinkMs = botManagerGetLastThinkMs(app->followBot);
+    double   thinkMs = serverSimGetBotLastThinkMs(app->sim, app->followBot);
     if (app->playbackMode
         && app->playbackFrame >= 0
         && app->playbackFrame < app->recording.count) {
@@ -3012,7 +3027,7 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
              * Shift+7) so the panel agrees with the heatmap pixel
              * under the cursor. The slate's g_cost array is
              * initialized to COST_INF for unreached nodes. */
-            BrainPathfinder *pfDij = botManagerGetBrainPathfinder(app->followBot);
+            BrainPathfinder *pfDij = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
             const DijkstraSlate *s = pfDij
                 ? brainPathfinderDijkstraGetSlate(pfDij, app->dijViewSlate)
                 : NULL;
@@ -3136,7 +3151,7 @@ static void appTickBrain(BrainTestApp *app) {
 
     serverSimGetGameSim(app->sim)->isInMenu = isInMenu;
 
-    pushVizStateToBots(app->vizSuppressActive || optProduction);
+    pushVizStateToBots(app->sim, app->vizSuppressActive || optProduction);
 
     /* Clear the viz_detail registry ONCE before any bot's think runs.
      * The registry is global, so if each bot called overlay_detail_clear
@@ -3150,9 +3165,9 @@ static void appTickBrain(BrainTestApp *app) {
      * Brain.think then appends to its own slot range — no race. */
     pillContribClearAll();
 
-    botManagerTick(app->sim, optAI);
+    serverSimBotTick(app->sim, optAI);
     {
-        double ms = botManagerGetLastThinkMs(app->followBot);
+        double ms = serverSimGetBotLastThinkMs(app->sim, app->followBot);
         app->cpuHist[app->cpuHistHead] = (float)ms;
         app->cpuHistHead = (app->cpuHistHead + 1) % CPU_HIST_BARS;
         if (app->cpuHistCount < CPU_HIST_BARS) app->cpuHistCount++;
@@ -3161,7 +3176,7 @@ static void appTickBrain(BrainTestApp *app) {
     /* Update goal-info cache for the scrubber's goal-change ticks
      * and per-frame replan markers. */
     app->goalInfoValid =
-        botManagerGetGoalInfo(app->followBot, &app->goalInfo);
+        serverSimGetBotGoalInfo(app->sim, app->followBot, &app->goalInfo);
 }
 
 static void appTickSim(BrainTestApp *app) {
@@ -3195,9 +3210,9 @@ static void appTick(BrainTestApp *app) {
 }
 
 static void refreshGoalInfo(BrainTestApp *app) {
-    app->goalInfoValid = botManagerGetGoalInfo(app->followBot, &app->goalInfo);
+    app->goalInfoValid = serverSimGetBotGoalInfo(app->sim, app->followBot, &app->goalInfo);
 
-    BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
+    BrainPathfinder *pf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     if (pf && app->goalInfoValid && app->goalInfo.mx > 0) {
         WORLD twx, twy;
         bool hasTank = serverSimGetTankState(app->sim, app->followBot, &twx, &twy);
@@ -3592,7 +3607,7 @@ static bool shotSimPoiPollLive(int idx, BrainTestApp *app, int *outWX, int *outW
         "if _x == nil or _y == nil then return nil end "
         "return tostring(math.floor(_x))..','..tostring(math.floor(_y))",
         e->lua_expr);
-    char *body = botManagerEvalLuaString(app->followBot, wrap);
+    char *body = serverSimBotEvalLuaString(app->sim, app->followBot, wrap);
     if (!body || !body[0]) { free(body); return false; }
     int wx = 0, wy = 0;
     bool ok = (sscanf(body, "%d,%d", &wx, &wy) == 2);
@@ -3675,7 +3690,7 @@ static void appRender(BrainTestApp *app) {
         static int16_t  *savedInflu     = NULL;
         static uint16_t *savedOverl     = NULL;
         const  BYTE     *savedBrainMapPtr = NULL;  /* pointer-swap, not byte-copy */
-        BrainPathfinder *pbPf = botManagerGetBrainPathfinder(app->followBot);
+        BrainPathfinder *pbPf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
         struct basesObj  savedBases;
         struct pillsObj  savedPills;
         /* Temp objects for tanks/lgm/shells. The sim holds POINTERS to
@@ -3854,7 +3869,7 @@ static void appRender(BrainTestApp *app) {
              * We don't memcpy the whole buffer; we just retarget its
              * cmds/count fields and reset them after render. */
             for (BYTE oi = 0; oi < MAX_TANKS; oi++) {
-                OverlayCmdBuffer *ovl = botManagerGetOverlayCmds(oi);
+                OverlayCmdBuffer *ovl = serverSimGetBotOverlayCmds(app->sim, oi);
                 if (!ovl) continue;
                 savedOvlBufs[oi]  = ovl;
                 savedOvlCmds[oi]  = ovl->cmds;
@@ -3914,16 +3929,10 @@ static void appRender(BrainTestApp *app) {
             patched = true;
         }
 
-        /* Set perspective to followed bot for correct coloring */
-        BYTE prevSelf = gs->viewPlayer;
-        gs->viewPlayer = app->followBot;
-
         MapViewCtx ctx = { app->renderer, app->tilesTex, app->zoomFactor, 1 };
         mapViewRenderCentered(&ctx, app->sim,
                               app->viewCenterX, app->viewCenterY,
                               0, 0, screenW, screenH, app->followBot);
-
-        gs->viewPlayer = prevSelf;
 
         /* Debug overlays */
         renderOverlay(app, screenW, screenH);
@@ -4237,6 +4246,7 @@ static void appRender(BrainTestApp *app) {
         int pw, ph;
         SDL_GetWindowSize(app->panelWindow, &pw, &ph);
         g_panelPollFollowBot = app->followBot;
+        g_panelPollSim       = app->sim;
         g_panelPollTick      = serverSimGetTick(app->sim) / 2; /* brain tick */
         panelWindowRender(app->panelRenderer, pw, ph,
                           (int)app->followBot, panelPollCallback);
@@ -4246,6 +4256,7 @@ static void appRender(BrainTestApp *app) {
      * when its slot is visible, so the cost is bounded by what the
      * user actually opened. */
     g_panelPollFollowBot = app->followBot;
+    g_panelPollSim       = app->sim;
     g_panelPollTick      = serverSimGetTick(app->sim) / 2;
     botWindowRenderAll((int)app->followBot, panelPollCallback);
 }
@@ -4423,10 +4434,10 @@ int main(int argc, char *argv[]) {
     brainCoreSetVizDetailAppendBodyCallback(vizDetailAppendBodyCallback);
     brainCoreSetVizDetailClearCallback(vizDetailClearCallback);
     brainCoreSetYieldCallback(SDL_PumpEvents);
-    botManagerSetPreThinkHook(preThinkHook);
     /* Clear is host-driven now (called once per tick before bot loop
      * via pillContribClearAll), so there's no Lua-side clear binding
-     * to wire up. */
+     * to wire up. preThinkHook is installed below via the sim-owned
+     * serverSimSetBotPreThinkHook once app.sim exists. */
     naPillContribSetBeginPillCallback(pillContribBeginPillCallback);
     naPillContribSetAddTileCallback(pillContribAddTileCallback);
     /* Built-in panel renderer: type "text" → plain unformatted
@@ -4487,7 +4498,17 @@ int main(int argc, char *argv[]) {
             return 1;
         }
     }
-    serverSimSetLobbyEnabled(app.sim, false);
+    /* braintest is a local headless sim — no lobby, run immediately.
+     * cfg.skipLobby drives SetLobbyEnabled(false) + StartGame inside
+     * serverInstanceStartup; the manual StartGame later in this
+     * function is dropped accordingly. */
+    {
+        ServerInstanceConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.acceptRemoteClients = false;
+        cfg.skipLobby           = true;
+        serverInstanceStartup(app.sim, &cfg);
+    }
     app.simValid = true;
 
     /* Calculate map bounds */
@@ -4500,13 +4521,17 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "botManagerInit failed\n");
         return 1;
     }
+    /* Pre-think hook needs the per-sim BotManager; install it now that
+     * app.sim exists. Bots have not been added yet, so no tick can fire
+     * before this returns. */
+    serverSimSetBotPreThinkHook(app.sim, preThinkHook);
     /* BrainTest defaults to debug-mode brains: viz-supporting code
      * runs, brain loads from un-stripped source. Toggle with 'B' at
      * runtime to feel production perf without reloading.
      *
      * --opt CLI flag flips the default off so bots load from stripped
      * opt/ source with BRAIN_DEBUG_MODE=false — true production feel. */
-    botManagerSetDefaultDebugMode(!optProduction);
+    serverSimSetBotDefaultDebugMode(app.sim, !optProduction);
     /* Effective profiling flags.
      * - Memory profiling (Y panel + slow-tick warnings): on by default
      *   in dev mode (no --opt), opt-in via --profile in --opt mode.
@@ -4598,7 +4623,7 @@ int main(int argc, char *argv[]) {
             SDL_snprintf(g_currentInitBrainName,
                          sizeof(g_currentInitBrainName), "%s", brainName);
             SDL_PumpEvents(); /* keep window responsive during brain.open() */
-            bool ok = botManagerAddBot(app.sim, (BYTE)i, brainPath, name,
+            bool ok = serverSimCreateBot(app.sim, (BYTE)i, brainPath, name,
                                        optAI, optGame, false);
             SDL_PumpEvents();
             g_currentInitBot = -1;
@@ -4608,13 +4633,13 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "  Added %d bots\n", app.numBots);
         if (optNumTeams >= 2) {
             for (int i = 0; i < optNumPlayers; i++) {
-                serverSimSetTeam(app.sim, (BYTE)i,
-                                 (BYTE)((i % optNumTeams) + 1));
+                serverSimSetTeamBatch(app.sim, (BYTE)i,
+                                      (BYTE)((i % optNumTeams) + 1));
             }
+            serverSimReapplyTeamAlliances(app.sim);
             fprintf(stderr, "  Assigned %d bots to %d teams (round-robin)\n",
                     optNumPlayers, optNumTeams);
         }
-        serverSimStartGame(app.sim);
         /* Publish the per-run session dir to each bot's Lua state so the
          * brain's optimize.log + performance.ticks.log writers land
          * inside debug_sessions/<ts>/ instead of cwd. Forward-slashes so
@@ -4625,8 +4650,8 @@ int main(int argc, char *argv[]) {
             SDL_snprintf(setSession, sizeof(setSession),
                          "_G.DEBUG_SESSION_DIR=\"%s\"", g_sessionDir);
             for (int i = 0; i < optNumPlayers; i++) {
-                if (botManagerIsBot((BYTE)i)) {
-                    botManagerExecLua((BYTE)i, setSession);
+                if (serverSimIsBot(app.sim, (BYTE)i)) {
+                    serverSimBotExecLua(app.sim, (BYTE)i, setSession);
                 }
             }
         }
@@ -4699,7 +4724,7 @@ int main(int argc, char *argv[]) {
                     SDL_snprintf(buf, sizeof(buf),
                         "if brain and brain.manual_key then "
                         "brain.manual_key('%s',false) end", role);
-                    botManagerExecLua(app.followBot, buf);
+                    serverSimBotExecLua(app.sim, app.followBot, buf);
                 }
                 break;
             }
@@ -4718,7 +4743,7 @@ int main(int argc, char *argv[]) {
                         SDL_snprintf(buf, sizeof(buf),
                             "if brain and brain.manual_key then "
                             "brain.manual_key('%s',true) end", role);
-                        botManagerExecLua(app.followBot, buf);
+                        serverSimBotExecLua(app.sim, app.followBot, buf);
                         /* Suppress BrainTest hotkey conflict — the
                          * configured key has been consumed by the
                          * brain. */
@@ -4745,7 +4770,7 @@ int main(int argc, char *argv[]) {
                      * be meaningless (or out of range). */
                     for (int tries = 0; tries < MAX_TANKS; tries++) {
                         app.followBot = (app.followBot + 1) % MAX_TANKS;
-                        if (botManagerIsBot(app.followBot)) break;
+                        if (serverSimIsBot(app.sim, app.followBot)) break;
                     }
                     app.pillContribSel = 0;
                     break;
@@ -4762,7 +4787,7 @@ int main(int argc, char *argv[]) {
                      *     blocks (and any code branching on the global).
                      *   - Stripped allocations / overlays in opt/ are
                      *     not reachable from this build at all. */
-                    bool now_on = botManagerToggleAllBrainDebugMode();
+                    bool now_on = serverSimToggleAllBrainDebugMode(app.sim);
                     fprintf(stderr, "BRAIN_DEBUG_MODE = %s\n",
                             now_on ? "true" : "false");
                     break;
@@ -4921,7 +4946,7 @@ int main(int argc, char *argv[]) {
                         "if brain and brain.set_manual_mode then "
                         "brain.set_manual_mode(%d) end",
                         app.manualControl ? 1 : 0);
-                    botManagerExecLua(app.followBot, buf);
+                    serverSimBotExecLua(app.sim, app.followBot, buf);
                     break;
                 }
                 case SDLK_F1:
@@ -5249,7 +5274,7 @@ int main(int argc, char *argv[]) {
                             (mod & SDL_KMOD_SHIFT) ? "true" : "false",
                             (mod & SDL_KMOD_CTRL)  ? "true" : "false",
                             (mod & SDL_KMOD_ALT)   ? "true" : "false");
-                        botManagerExecLua(app.followBot, luaBuf);
+                        serverSimBotExecLua(app.sim, app.followBot, luaBuf);
                     }
                 } else if (ev.button.button == SDL_BUTTON_RIGHT) {
                     app.rightDown = true;
@@ -5390,7 +5415,6 @@ int main(int argc, char *argv[]) {
     free(app.costToGrid);
     if (app.costToMutex) SDL_DestroyMutex(app.costToMutex);
     recordingDestroy(&app.recording);
-    botManagerDestroy(app.sim);
     if (app.debugPF) brainPathfinderDestroy(app.debugPF);
     if (app.overlayTex) SDL_DestroyTexture(app.overlayTex);
     if (app.tilesTex) SDL_DestroyTexture(app.tilesTex);
@@ -5421,6 +5445,7 @@ int main(int argc, char *argv[]) {
     langCleanup();
     clientMutexDestroy();
     threadsDestroy();
+    botWorkerPoolDestroy();
     SDL_Quit();
 
     return 0;

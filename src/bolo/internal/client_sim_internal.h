@@ -9,7 +9,7 @@
  * Allowed includers: src/bolo/client_sim.c,
  * src/bolo/client_sim_control.c, src/bolo/client_snapshot.c,
  * src/bolo/transport_udp_client.c, src/bolo/viewport.c,
- * src/bolo/client_mapload.c.
+ * src/bolo/client_net.c.
  * All other callers must include client_sim.h and use the
  * public accessor API.
  *********************************************************/
@@ -19,6 +19,7 @@
 #include <stddef.h>
 #include "client_sim.h"
 #include "game_sim.h"
+#include "server_sim.h"   /* SubscriberHandle */
 #include "viewport.h"
 #include "transport.h"
 #include "client_state.h"
@@ -372,11 +373,28 @@ struct ClientSim {
      * transport constructors return Transport by value.
      *
      * clientSimCreate preserves these three fields across its memset
-     * (save/restore in the function body) so that clientSimResetForMapLoad
-     * can keep the connection alive while wiping map-dependent state. */
+     * (save/restore in the function body). */
     Transport transport;
     bool      hasTransport;
     bool      isUdpTransport;
+
+    /* In-process server bound by clientSimConnectLocal{,Passive}. NULL
+     * for UDP and disconnected clients. Read by the local-transport
+     * branch of CTRL_LOBBY_MAP_CHANGE to fetch the freshly-compressed
+     * map without going through the wire MAP_DOWNLOAD machinery.
+     * Preserved across clientSimCreate's memset alongside the
+     * transport fields (connection-lifetime state). */
+    struct ServerSim *boundServerSim;
+
+    /* Unified rejection-reason buffer. Local connect failures write
+     * directly here; UDP JOIN_REJECT mirrors its reason here too. The
+     * clientSimGetConnectErrorReason accessor reads from this field. */
+    char      connectErrorReason[256];
+
+    SubscriberHandle autoSubHandle;    /* Returned by serverSimRegisterClientSubscriber
+                                        * inside clientSimConnectLocal{,Passive}; cleared
+                                        * to SUBSCRIBER_HANDLE_INVALID at create-time and
+                                        * after clientSimDisconnect unregisters it. */
 
     /* Read-only ControlEvent observer (test-only — see
      * clientSimSetControlObserver in client_sim.h). Preserved across
@@ -387,5 +405,22 @@ struct ClientSim {
 
 BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
                    ClientSim_sim_must_be_first_member);
+
+/* Internal accessors for the connect-path fields. The local-transport
+ * branch of CTRL_LOBBY_MAP_CHANGE reads the bound server through
+ * clientSimGetBoundServerSim; clientSimConnectLocal{,Passive} record
+ * the binding via clientSimSetBoundServerSim. clientSimSetConnectErrorReason
+ * is the single writer used by both connect paths and (Phase 2) the UDP
+ * JOIN_REJECT handler. */
+void                    clientSimSetBoundServerSim(ClientSim *cs, struct ServerSim *sim);
+struct ServerSim       *clientSimGetBoundServerSim(const ClientSim *cs);
+void                    clientSimSetConnectErrorReason(ClientSim *cs, const char *str);
+
+/* Decompress `buf`/`len` into the ClientSim's map/pills/bases/starts,
+ * stash the map name, and prime the viewport + mine-visibility state.
+ * Does NOT call clientSimCreate; the ClientSim must already be alive
+ * and initialised. The caller is responsible for clientSimSetupSelf
+ * and for the snapshot apply that follows. */
+bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name);
 
 #endif /* CLIENT_SIM_INTERNAL_H */

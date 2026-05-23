@@ -35,6 +35,7 @@
 #include "bolo_map.h"
 #include "netpacks.h"
 #include "wire_limits.h"   /* LobbySettingType for serverSimGetSettingLockBit */
+#include "lobby_bot_pools.h"   /* lobbyBotPoolCount for serverSimSetTeamMeta */
 #include "pillbox.h"
 #include "bases.h"
 #include "starts.h"
@@ -61,10 +62,12 @@
 #include "transport_udp.h"
 #include "playersrejoin.h"
 #include "bot_manager.h"
+#include "bot_worker_pool.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../winbolonet/winbolonet_server.h"
 #include "../winbolonet/http.h"
 #include "server_sim_internal.h"
+#include "server_sim_lifecycle.h"
 #include "server_lifecycle.h"
 #include "control_event.h"
 #include "client_sim.h"
@@ -75,7 +78,9 @@
 #include "screenbullet.h"
 #include "mapgen.h"
 #include "../common/wb_log.h"
-#include "server_dedicated_log.h"
+#include "../common/mp_diag_log.h"
+#include "server_sim_join.h"
+#include "playername_validate.h"
 
 /* Viewport culling — margin in map squares beyond the visible 15×15 screen */
 #define SNAPSHOT_SCREEN_SIZE 15
@@ -107,6 +112,16 @@ static int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut);
 /* Forward declarations for lobby functions used before their definitions */
 void serverSimLobbyCheckAllReady(ServerSim *sim);
 void serverSimStartGame(ServerSim *sim);
+
+/* Every server-side map mutator calls this at the end of its success
+ * path; defined alongside lobbyAutoUnreadyOnChange below. */
+static void serverSimApplyMapChange(ServerSim *sim);
+
+/* Forward declarations for map-skip publish path — definitions live
+ * further down the file. */
+static void serverSimFillMapSkipStateEvent(const ServerSim *sim,
+                                           ControlEvent *evt);
+static void publishMapSkipState(ServerSim *sim);
 
 /* Active sim pointer — when non-NULL, servercore.c routing functions
  * access sim state directly instead of using legacy globals. */
@@ -395,6 +410,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->savedAllowNewPlayers = TRUE;
     sim->ranked              = FALSE;
     sim->serverLocks         = 0;
+    sim->maxPlayers          = MAX_TANKS;
+    sim->worldPreLoaded      = TRUE;
 
     /* Mirror gameType + hiddenMines + time fields so the lobby change
      * path can detect locked-setting attempts and emit clean diffs.
@@ -436,6 +453,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.lgmPosHistoryPtr = sim->lgmPosHistory;
     sim->sim.lagCompTicks = 0;
     memset(sim->sim.perPlayerCompTicks, 0, sizeof(sim->sim.perPlayerCompTicks));
+
+    botManagerInitInSim(&sim->botMgr, sim, 0);
 
     gameTypeSet(&sim->sim.game, game);
     logCreate();
@@ -713,14 +732,7 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
     snprintf(msg, sizeof(msg), "Random map regenerated, seed: %s", seedStr);
     serverSimConsoleMessage(msg);
 
-    /* Reset lobby ready state */
-    {
-        int i;
-        for (i = 0; i < MAX_TANKS; i++) {
-            sim->lobbyPlayers[i].ready = FALSE;
-        }
-    }
-
+    serverSimApplyMapChange(sim);
     return TRUE;
 }
 
@@ -738,6 +750,14 @@ void serverSimDestroy(ServerSim *sim) {
     while (sim->balanceProposal.requestInFlight) {
         SDL_Delay(10);
     }
+
+    /* Tear down the per-sim BotManager before anything else.
+     * botManagerRemoveBot reaches back into sim->plyrs and the
+     * subscriber list, both of which the destroy steps below
+     * dismantle. Idempotent: callers that still pair an explicit
+     * botManagerDestroy(sim) / serverSimDestroyBots(sim) before
+     * this destroy walk an already-empty bots[] on this call. */
+    botManagerDestroy(sim);
 
     for (count = 0; count < MAX_TANKS; count++) {
         if (sim->sim.tanks[count] != NULL) {
@@ -1296,8 +1316,14 @@ static void simRunHalfStep(ServerSim *sim) {
         sim->prevBaseCount = (uint8_t)nb;
     }
 
-    /* Check game-win condition */
-    if (sim->quitOnWin && serverSimCheckGameWin(sim, TRUE)) {
+    /* Check game-win condition. Fires when one alliance owns every
+     * base above the capture-armour threshold. Lobby-enabled rounds
+     * always check — winning ends the round and returns to lobby via
+     * the existing serverSimEnterGameOver path. quitOnWin is the
+     * legacy dedicated-server flag that also shuts the process down
+     * when no lobby is configured. */
+    if ((sim->quitOnWin || sim->lobbyEnabled) &&
+        serverSimCheckGameWin(sim, TRUE)) {
         mapSetChangeCallback(NULL);
         serverSimConsoleMessage("Game won!");
         serverSimEnterGameOver(sim);
@@ -1387,7 +1413,7 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
     sim->playerPing[p] = transportUdpServerGetClientPing(p);
 }
 
-void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
+void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "addPlayer slot=%u name='%s' wantRejoin=%d state=%d",
         (unsigned)playerNum,
@@ -1503,19 +1529,17 @@ void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, 
         serverSimPublishControl(sim, &skipEvt);
     }
 
-    /* Notify in-process subscribers that a player joined. The just-added
-     * player is not yet a subscriber (bot register happens after this in
-     * botManagerAddBot; SP humanSim register happens after this in
-     * gamefront), so this fans out only to peers. */
-    {
-        ControlEvent joinEvt;
-        memset(&joinEvt, 0, sizeof(joinEvt));
-        serverSimFillPlayerJoinEvent(sim, playerNum, &joinEvt);
-        serverSimPublishControl(sim, &joinEvt);
-    }
 }
 
-void serverSimSetPlayerCountry(ServerSim *sim, BYTE playerNum, const char *cc) {
+void fillAndPublishPlayerJoin(ServerSim *sim, BYTE playerNum) {
+    ControlEvent joinEvt;
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    memset(&joinEvt, 0, sizeof(joinEvt));
+    serverSimFillPlayerJoinEvent(sim, playerNum, &joinEvt);
+    serverSimPublishControl(sim, &joinEvt);
+}
+
+void setPlayerCountryInternal(ServerSim *sim, BYTE playerNum, const char *cc) {
     if (sim == NULL || playerNum >= MAX_TANKS) return;
     if (cc == NULL) return;
     if (cc[0] == '\0' || cc[1] == '\0' || cc[2] != '\0') return;
@@ -1524,13 +1548,89 @@ void serverSimSetPlayerCountry(ServerSim *sim, BYTE playerNum, const char *cc) {
     sim->sim.plyrs->item[playerNum].location[0] = (char)toupper((unsigned char)cc[0]);
     sim->sim.plyrs->item[playerNum].location[1] = (char)toupper((unsigned char)cc[1]);
     sim->sim.plyrs->item[playerNum].location[2] = '\0';
+}
+
+void setClientTypeFlagsInternal(ServerSim *sim, BYTE playerNum,
+                                uint8_t clientType, uint8_t clientFlags) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
+    playersSetClientType(&sim->sim.plyrs, playerNum, clientType);
+    playersSetClientFlags(&sim->sim.plyrs, playerNum, clientFlags);
+}
+
+void serverSimAddPlayer(ServerSim *sim, BYTE playerNum, const char *playerName, bool wantRejoin) {
+    addPlayerInternal(sim, playerNum, playerName, wantRejoin);
+    fillAndPublishPlayerJoin(sim, playerNum);
+}
+
+void serverSimSetPlayerCountry(ServerSim *sim, BYTE playerNum, const char *cc) {
+    setPlayerCountryInternal(sim, playerNum, cc);
+    fillAndPublishPlayerJoin(sim, playerNum);
+}
+
+int serverSimFindFreeSlot(const ServerSim *sim) {
+    int  i;
+    BYTE limit;
+    if (sim == NULL) return -1;
+    limit = (sim->maxPlayers > 0) ? sim->maxPlayers : (BYTE)MAX_TANKS;
+    for (i = 0; i < limit; i++) {
+        if (!sim->playerConnected[i] && !botManagerIsBot(sim, (BYTE)i)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+LocalJoinResult serverSimLocalJoin(ServerSim *sim,
+                                   const char *playerName,
+                                   const char *fallbackCountry,
+                                   uint8_t clientType,
+                                   uint8_t clientFlags,
+                                   BYTE *outSlot) {
+    char validatedName[PLAYER_NAME_LEN];
+    int  slot;
+    const char *country;
+
+    if (sim == NULL || playerName == NULL || outSlot == NULL) {
+        return LOCAL_JOIN_INVALID_INPUT;
+    }
+
+    if (!playerNameValidate(playerName, validatedName, sizeof(validatedName), NULL)) {
+        return LOCAL_JOIN_INVALID_NAME;
+    }
+
+    /* Mirror the UDP-side game-lock predicate (transport_udp_server.c). The
+     * lobby gate is the only one we can replicate locally; the UDP-only
+     * gameLocked flag has no local-join analogue. */
+    if (!serverSimIsAcceptingJoins(sim)) {
+        return LOCAL_JOIN_GAME_LOCKED;
+    }
+
+    slot = serverSimFindFreeSlot(sim);
+    if (slot < 0) {
+        return LOCAL_JOIN_SLOT_FULL;
+    }
+
+    country = (fallbackCountry != NULL) ? fallbackCountry : "";
+
+    addPlayerInternal(sim, (BYTE)slot, validatedName, false);
+    setPlayerCountryInternal(sim, (BYTE)slot, country);
+    setClientTypeFlagsInternal(sim, (BYTE)slot, clientType, clientFlags);
+    fillAndPublishPlayerJoin(sim, (BYTE)slot);
 
     {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        serverSimFillPlayerJoinEvent(sim, playerNum, &evt);
-        serverSimPublishControl(sim, &evt);
+        char serverKey[WINBOLONET_KEY_LEN];
+        serverKey[0] = '\0';
+        if (winbolonetIsRunning()) {
+            winboloNetGetServerKey(serverKey);
+            if (serverKey[0] != '\0') {
+                winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
+                                   (BYTE)slot, WINBOLO_NET_NO_PLAYER);
+            }
+        }
     }
+
+    *outSlot = (BYTE)slot;
+    return LOCAL_JOIN_OK;
 }
 
 void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
@@ -1663,23 +1763,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
                 serverSimMapDirPickRandom(sim);
             }
             serverSimMapSkipVotesReset(sim);
-            transportUdpServerOnLobbyMapChange(sim);
-            {
-                ControlEvent mapEvt;
-                memset(&mapEvt, 0, sizeof(mapEvt));
-                mapEvt.type = CTRL_LOBBY_MAP_CHANGE;
-                serverSimPublishControl(sim, &mapEvt);
-            }
-            {
-                ControlEvent skipEvt;
-                BYTE m;
-                memset(&skipEvt, 0, sizeof(skipEvt));
-                skipEvt.type = CTRL_MAP_SKIP_STATE;
-                for (m = 0; m < MAX_TANKS; m++) {
-                    skipEvt.u.mapSkipState.votes[m] = sim->mapSkipVotes[m] ? 1 : 0;
-                }
-                serverSimPublishControl(sim, &skipEvt);
-            }
+            publishMapSkipState(sim);
             winbolonetSendMapChange(sim->mapName,
                 basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb),
                 basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb));
@@ -1707,6 +1791,18 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         ev.data[0] = playerNum;
         serverSimAddEvent(sim, &ev);
     }
+
+    /* Player composition changed — any pending balance proposal is now
+     * sized against a stale roster. Dismiss and broadcast the cleared
+     * state so balanceProposalActive flips back to false on every
+     * subscriber. */
+    if (serverSimGetBalanceProposal(sim)->pending) {
+        ControlEvent evt;
+        serverSimClearBalanceProposal(sim);
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_BALANCE_PROPOSAL;
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
@@ -1729,7 +1825,7 @@ bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
     return true;
 }
 
-void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
+void serverSimSetTeamBatch(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
     if (playerNum >= MAX_TANKS) {
         return;
     }
@@ -1737,11 +1833,16 @@ void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
         teamNumber = 1;
     }
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
-                "[DIAG] serverSimSetTeam slot=%u oldTeam=%u newTeam=%u",
+                "[DIAG] serverSimSetTeamBatch slot=%u oldTeam=%u newTeam=%u",
                 (unsigned)playerNum,
                 (unsigned)sim->lobbyPlayers[playerNum].teamNumber,
                 (unsigned)teamNumber);
     sim->lobbyPlayers[playerNum].teamNumber = teamNumber;
+}
+
+void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
+    serverSimSetTeamBatch(sim, playerNum, teamNumber);
+    serverSimReapplyTeamAlliances(sim);
 }
 
 void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready) {
@@ -1766,24 +1867,29 @@ bool serverSimBotPoolInit(int threads) {
     return botManagerInit(threads);
 }
 
-void serverSimRequestBotThreads(int total_runners) {
-    botManagerRequestThreads(total_runners);
+void serverSimBotPoolDestroy(void) {
+    botWorkerPoolDestroy();
 }
 
-int serverSimGetBotThreads(void) {
-    return botManagerGetThreads();
+void serverSimRequestBotThreads(ServerSim *sim, int total_runners) {
+    botManagerRequestThreads(sim, total_runners);
 }
 
-int serverSimGetPendingBotThreads(void) {
-    return botManagerGetPendingThreads();
+int serverSimGetBotThreads(ServerSim *sim) {
+    return botManagerGetThreads(sim);
 }
 
-void serverSimSetBotDefaultDebugMode(bool enabled) {
-    botManagerSetDefaultDebugMode(enabled);
+int serverSimGetPendingBotThreads(ServerSim *sim) {
+    return botManagerGetPendingThreads(sim);
 }
 
-void serverSimSetBotPreThinkHook(void (*hook)(int playerNum)) {
-    botManagerSetPreThinkHook(hook);
+void serverSimSetBotDefaultDebugMode(ServerSim *sim, bool enabled) {
+    botManagerSetDefaultDebugMode(sim, enabled);
+}
+
+void serverSimSetBotPreThinkHook(ServerSim *sim,
+                                 void (*hook)(int playerNum)) {
+    botManagerSetPreThinkHook(sim, hook);
 }
 
 bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
@@ -1807,15 +1913,13 @@ bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
 }
 
 void serverSimRemoveBot(ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return;
     botManagerRemoveBot(sim, playerNum);
+    serverSimPublishLobbySlot(sim, playerNum);
 }
 
 void serverSimDestroyBots(ServerSim *sim) {
     botManagerDestroy(sim);
-}
-
-void serverSimOnBotGameStart(ServerSim *sim) {
-    botManagerOnGameStart(sim);
 }
 
 void serverSimSetBotTeams(ServerSim *sim,
@@ -1828,38 +1932,57 @@ void serverSimBotTick(ServerSim *sim, aiType ai) {
 }
 
 BYTE serverSimGetNumBots(ServerSim *sim) {
-    (void)sim;
-    return botManagerGetNumBots();
+    return botManagerGetNumBots(sim);
 }
 
 bool serverSimHasAnyBot(ServerSim *sim) {
-    (void)sim;
-    return botManagerHasAnyBot();
+    return botManagerHasAnyBot(sim);
 }
 
 bool serverSimIsBot(ServerSim *sim, BYTE playerNum) {
-    (void)sim;
-    return botManagerIsBot(playerNum);
+    return botManagerIsBot(sim, playerNum);
 }
 
 double serverSimGetBotLastThinkMs(ServerSim *sim, BYTE playerNum) {
-    (void)sim;
-    return botManagerGetLastThinkMs(playerNum);
+    return botManagerGetLastThinkMs(sim, playerNum);
 }
 
 bool serverSimGetBotInfo(ServerSim *sim, BYTE playerNum, BotInfo *out) {
-    (void)sim;
-    return botManagerGetBotInfo(playerNum, out);
+    return botManagerGetBotInfo(sim, playerNum, out);
 }
 
 void serverSimGetBotPoolStats(ServerSim *sim, BotPoolStats *out) {
-    (void)sim;
-    botManagerGetPoolStats(out);
+    botManagerGetPoolStats(sim, out);
 }
 
 bool serverSimToggleAllBrainDebugMode(ServerSim *sim) {
-    (void)sim;
-    return botManagerToggleAllBrainDebugMode();
+    return botManagerToggleAllBrainDebugMode(sim);
+}
+
+int serverSimGetActiveBotCount(ServerSim *sim) {
+    return botManagerGetActiveBotCount(sim);
+}
+
+BrainPathfinder *serverSimGetBotBrainPathfinder(ServerSim *sim, BYTE playerNum) {
+    return botManagerGetBrainPathfinder(sim, playerNum);
+}
+
+OverlayCmdBuffer *serverSimGetBotOverlayCmds(ServerSim *sim, BYTE playerNum) {
+    return botManagerGetOverlayCmds(sim, playerNum);
+}
+
+bool serverSimGetBotGoalInfo(ServerSim *sim, BYTE playerNum,
+                             BrainGoalInfo *out) {
+    return botManagerGetGoalInfo(sim, playerNum, out);
+}
+
+bool serverSimBotExecLua(ServerSim *sim, BYTE playerNum, const char *src) {
+    return botManagerExecLua(sim, playerNum, src);
+}
+
+char *serverSimBotEvalLuaString(ServerSim *sim, BYTE playerNum,
+                                const char *src) {
+    return botManagerEvalLuaString(sim, playerNum, src);
 }
 
 void serverSimSetBotBrainPath(ServerSim *sim, const char *path) {
@@ -1876,7 +1999,12 @@ void serverSimSetEmptyResetEnabled(ServerSim *sim, bool enabled) {
 }
 
 void serverSimSetHasPassword(ServerSim *sim, bool hasPassword) {
+    if (sim == NULL) return;
     sim->hasPassword = hasPassword;
+    /* Settings publish only — password changes are allowed mid-game
+     * (they only gate new joiners) and must NOT clear humans' ready
+     * state or abort an in-flight countdown. */
+    serverSimPublishLobbySettings(sim);
 }
 
 void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled) {
@@ -1893,6 +2021,38 @@ void serverSimEnableRandomMap(ServerSim *sim,
 
 void serverSimEnterLobby(ServerSim *sim) {
     sim->state = serverStateLobby;
+}
+
+void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cfg) {
+  sim->sim.viewPlayer = cfg->viewPlayer;
+
+  serverSimSetEmptyResetEnabled(sim, cfg->emptyResetEnabled);
+  serverSimSetHasPassword(sim, cfg->hasPassword);
+  if (cfg->botBrainPath != NULL) {
+    serverSimSetBotBrainPath(sim, cfg->botBrainPath);
+  }
+  if ((aiType)cfg->botAiType != aiNone) {
+    serverSimSetBotAiType(sim, (aiType)cfg->botAiType);
+  }
+  /* ranked forces autolock-on-game-start (matches the server-side
+   * LST_RANKED handler at PACKET_LOBBY_SET_SETTING and the existing
+   * servermain.c -ranked CLI behaviour). */
+  serverSimSetAutoLockOnGameStart(sim,
+      cfg->autoLockOnGameStart || cfg->ranked);
+  serverSimSetRanked(sim, cfg->ranked);
+  serverSimSetOpenHost(sim, cfg->openHost);
+  serverSimSetServerLocks(sim, cfg->serverLocks);
+
+  /* lobbyEnabled and skipLobby drive state transitions. If neither is
+   * set, the sim stays in whatever state serverSimCreate* left it
+   * (today's dedicated-server-with-no-cfg-fields behaviour). */
+  if (cfg->skipLobby) {
+    serverSimSetLobbyEnabled(sim, false);
+    serverSimStartGame(sim);
+  } else if (cfg->lobbyEnabled) {
+    serverSimSetLobbyEnabled(sim, true);
+    serverSimEnterLobby(sim);
+  }
 }
 
 void serverSimInstallMapDirList(ServerSim *sim,
@@ -2365,7 +2525,7 @@ void serverSimInformation(ServerSim *sim, bool locked) {
              * the brain's most recent timing. Mute fields suppressed
              * when zero — see commit message. */
             BotInfo bi;
-            if (botManagerGetBotInfo(count, &bi)) {
+            if (botManagerGetBotInfo(sim, count, &bi)) {
                 if (bi.hasBrain) {
                     if (bi.overrunCount == 0) {
                         fprintf(stdout,
@@ -2388,9 +2548,9 @@ void serverSimInformation(ServerSim *sim, bool locked) {
      * active. Shows the per-bot budget against the 20ms server tick
      * plus per-stage last + EWMA wall-clock so operators can spot
      * spikes against averages at a glance. */
-    if (botManagerHasAnyBot()) {
+    if (botManagerHasAnyBot(sim)) {
         BotPoolStats ps;
-        botManagerGetPoolStats(&ps);
+        botManagerGetPoolStats(sim, &ps);
         if (ps.workerCount == 0) {
             fprintf(stdout,
                     "Bot pool: single-thread (%d active bots), target=%.1fms/bot\n",
@@ -2540,8 +2700,6 @@ void serverSimConsoleMessage(const char *msg) {
 }
 
 void serverSimEnterGameOver(ServerSim *sim) {
-    serverDedicatedLogOnEnterGameOver(sim);
-
     if (!sim->lobbyEnabled) {
         /* No lobby — game over means server should shut down */
         sim->state = serverStateGameOver;
@@ -2552,7 +2710,7 @@ void serverSimEnterGameOver(ServerSim *sim) {
         sim->state = serverStateGameOver;
         sim->countdownTicks = GAMEOVER_HOLD_TICKS;
         serverSimConsoleMessage("Game over! Returning to lobby...");
-        /* CTRL_GAME_PHASE(GAME_OVER) and CTRL_GAME_OVER are published
+        /* CTRL_GAME_PHASE_GAME_OVER and CTRL_GAME_OVER are published
          * by the server lifecycle when it observes the state change;
          * the per-client codec subscriber turns each into the matching
          * wire packet (PACKET_GAME_OVER). */
@@ -2662,20 +2820,22 @@ void serverSimReturnToLobby(ServerSim *sim) {
     /* Regenerate random map between rounds */
     if (sim->randomMapEnabled) {
         serverSimRandomMapRegenerate(sim);
-        transportUdpServerOnLobbyMapChange(sim);
-        {
-            ControlEvent evt;
-            memset(&evt, 0, sizeof(evt));
-            evt.type = CTRL_LOBBY_MAP_CHANGE;
-            serverSimPublishControl(sim, &evt);
-        }
     }
 
     serverSimConsoleMessage("Returned to lobby.");
     /* Lobby state fan-out happens via the control-event bus — the
      * caller publishes CTRL_LOBBY_SLOT + CTRL_LOBBY_SETTINGS. */
 
-    serverDedicatedLogOnReturnToLobby(sim);
+    /* Publish CTRL_GAME_PHASE_LOBBY so subscribers (e.g. the
+     * dedicated-server log writer) see the GAME_OVER→LOBBY
+     * transition. Existing CTRL_LOBBY_SLOT / CTRL_LOBBY_SETTINGS
+     * fan-out happens elsewhere — this is the phase event proper. */
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillGamePhaseEvent(sim, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 void serverSimLobbyCheckAllReady(ServerSim *sim) {
@@ -2691,10 +2851,34 @@ void serverSimLobbyCheckAllReady(ServerSim *sim) {
     }
     if (numConnected == 0) return;
 
-    /* All ready — start countdown */
-    sim->state = serverStateCountdown;
-    sim->countdownTicks = LOBBY_COUNTDOWN_TICKS;
-    serverSimConsoleMessage("All players ready! Starting countdown...");
+    /* In-place is the no-countdown optimisation for fresh-sim SP where
+     * everything stays in-process and the UI's lobby→running flip can
+     * land in the same packet as the tank-bearing snapshot.  Over UDP
+     * (including the host's own loopback client in acceptRemoteClients
+     * mode), there's a multi-tick gap between CTRL_GAME_PHASE_RUNNING
+     * (which flips inLobby on the client and therefore the UI's render
+     * mode) and the first snapshot that actually populates client-side
+     * tanks.  windowRunGameTick running in that gap dereferences a
+     * still-NULL MY_TANK and crashes.  Countdown closes the gap by
+     * giving the wire path a settling window where the UI stays in
+     * lobby mode and the snapshot stream warms up before the flip. */
+    if (sim->worldPreLoaded && !transportUdpServerHasAnyClient()) {
+        /* Pure in-process SP — fresh sim, no wire clients.  Skip the
+         * countdown overhead.  Used by SP host first round. */
+        serverSimStartGameInPlace(sim);
+    } else {
+        /* Anything fanning over the wire, or a subsequent round (full
+         * reset via countdown + StartGame). */
+        sim->state = serverStateCountdown;
+        sim->countdownTicks = LOBBY_COUNTDOWN_TICKS;
+        serverSimConsoleMessage("All players ready! Starting countdown...");
+        {
+            ControlEvent evt;
+            memset(&evt, 0, sizeof(evt));
+            serverSimFillGamePhaseEvent(sim, &evt);
+            serverSimPublishControl(sim, &evt);
+        }
+    }
 }
 
 void serverSimResetGameWorld(ServerSim *sim) {
@@ -2793,6 +2977,12 @@ void serverSimResetGameWorld(ServerSim *sim) {
     sim->hadPlayersEver = FALSE;
     playersDestroy(&sim->sim.plyrs);
     playersCreate(&sim->sim.plyrs, TRUE);
+
+    /* The world is no longer the pristine one set up by
+     * serverSimCreate* — subsequent lobby→running transitions
+     * must go through countdown + serverSimStartGame (full reset),
+     * not StartGameInPlace. */
+    sim->worldPreLoaded = FALSE;
 }
 
 void serverSimReapplyTeamAlliances(ServerSim *sim) {
@@ -2817,6 +3007,10 @@ void serverSimReapplyTeamAlliances(ServerSim *sim) {
 
 void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
+
+    /* Wire any bots in the roster into the running game (idempotent on
+     * a fresh sim with zero bots). */
+    botManagerOnGameStart(sim);
 
     /* Apply team alliances: players with same non-zero teamNumber become allies */
     serverSimReapplyTeamAlliances(sim);
@@ -2857,6 +3051,27 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     if (sim->autoLockOnGameStart && sim->allowNewPlayers) {
         sim->allowNewPlayers = FALSE;
         transportUdpServerSetLock(sim, FALSE);
+    }
+
+    /* Reset per-client reliable-event queues BEFORE publishing the
+     * RUNNING phase, so CTRL_GAME_PHASE_RUNNING enters every queue at
+     * seq=1 as the first event of the new game.  Skipping this pair
+     * leaves stale seqs on any remote-client queue and the per-client
+     * controlEventAck reset on the client side then desyncs against
+     * the server's still-advancing nextSeq.  The countdown→running
+     * path in server_lifecycle.c does the same pair; this is its
+     * in-place (worldPreLoaded) counterpart. */
+    transportUdpServerOnGameStart(sim);
+
+    /* Announce the RUNNING phase to subscribers. The countdown→running
+     * transition in server_lifecycle.c publishes the same event for
+     * the full-reset path; this is the analogue for the in-place
+     * (worldPreLoaded) path which bypasses countdown. */
+    {
+        ControlEvent phaseEvt;
+        memset(&phaseEvt, 0, sizeof(phaseEvt));
+        phaseEvt.type = CTRL_GAME_PHASE_RUNNING;
+        serverSimPublishControl(sim, &phaseEvt);
     }
 }
 
@@ -2962,7 +3177,6 @@ void serverSimStartGame(ServerSim *sim) {
 
     /* A snapshot will be written on the first running tick
      * (tick 0 % FULL_SYNC_INTERVAL == 0). */
-    serverDedicatedLogOnLobbyExit(sim);
 }
 
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
@@ -3261,7 +3475,16 @@ bool serverSimMapDirPickRandom(ServerSim *sim) {
 
     snprintf(msg, sizeof(msg), "Map rotation: loaded '%s'", sim->mapName);
     serverSimConsoleMessage(msg);
+    serverSimApplyMapChange(sim);
     return TRUE;
+}
+
+static void publishMapSkipState(ServerSim *sim) {
+    ControlEvent evt;
+    if (sim == NULL) return;
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillMapSkipStateEvent(sim, &evt);
+    serverSimPublishControl(sim, &evt);
 }
 
 void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
@@ -3309,27 +3532,11 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
             logAddEvent(log_MapSkipApplied, 0, 0, 0, 0, 0, pstr);
         }
         serverSimMapSkipVotesReset(sim);
-        transportUdpServerOnLobbyMapChange(sim);
-        {
-            ControlEvent mapEvt;
-            memset(&mapEvt, 0, sizeof(mapEvt));
-            mapEvt.type = CTRL_LOBBY_MAP_CHANGE;
-            serverSimPublishControl(sim, &mapEvt);
-        }
-        {
-            ControlEvent skipEvt;
-            BYTE m;
-            memset(&skipEvt, 0, sizeof(skipEvt));
-            skipEvt.type = CTRL_MAP_SKIP_STATE;
-            for (m = 0; m < MAX_TANKS; m++) {
-                skipEvt.u.mapSkipState.votes[m] = sim->mapSkipVotes[m] ? 1 : 0;
-            }
-            serverSimPublishControl(sim, &skipEvt);
-        }
         winbolonetSendMapChange(sim->mapName,
             basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb),
             basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb));
     }
+    publishMapSkipState(sim);
 }
 
 void serverSimMapSkipVotesReset(ServerSim *sim) {
@@ -3883,16 +4090,6 @@ void serverSimMapDirDestroy(ServerSim *sim) {
 #define SUBSCRIBER_HANDLE_SLOT(h)           (((h) >> 16) & 0xFFFF)
 #define SUBSCRIBER_HANDLE_GEN(h)            ((uint16_t)((h) & 0xFFFF))
 
-static ControlGamePhase serverPhaseToCtrlPhase(ServerState s) {
-    switch (s) {
-    case serverStateLobby:     return CTRL_PHASE_LOBBY;
-    case serverStateCountdown: return CTRL_PHASE_COUNTDOWN;
-    case serverStateRunning:   return CTRL_PHASE_RUNNING;
-    case serverStateGameOver:  return CTRL_PHASE_GAME_OVER;
-    }
-    return CTRL_PHASE_LOBBY;
-}
-
 static netStatus serverPhaseToNetStat(ServerState s) {
     switch (s) {
     case serverStateLobby:     return netLobby;
@@ -3904,8 +4101,13 @@ static netStatus serverPhaseToNetStat(ServerState s) {
 }
 
 void serverSimFillGamePhaseEvent(const ServerSim *sim, ControlEvent *evt) {
-    evt->type = CTRL_GAME_PHASE;
-    evt->u.gamePhase.phase = serverPhaseToCtrlPhase(sim->state);
+    switch (sim->state) {
+    case serverStateLobby:     evt->type = CTRL_GAME_PHASE_LOBBY;     break;
+    case serverStateCountdown: evt->type = CTRL_GAME_PHASE_COUNTDOWN; break;
+    case serverStateRunning:   evt->type = CTRL_GAME_PHASE_RUNNING;   break;
+    case serverStateGameOver:  evt->type = CTRL_GAME_PHASE_GAME_OVER; break;
+    default:                   evt->type = CTRL_GAME_PHASE_LOBBY;     break;
+    }
     /* countdownTicks is a 50Hz counter; round up so a partial second still
      * surfaces as 1 rather than 0 to a freshly-synced subscriber. */
     if (sim->countdownTicks > 0) {
@@ -3923,6 +4125,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyHiddenMines = sim->sim.hiddenMines ? true : false;
     evt->u.lobbySettings.lobbyAiType      = (uint8_t)sim->botAiType;
     evt->u.lobbySettings.lobbyTimeLimit   = sim->gameLength;
+    evt->u.lobbySettings.lobbyStartDelay  = serverSimGetStartDelay(sim);
     evt->u.lobbySettings.lobbyPillCount   = pillsGetNumPills(&sim->sim.pb);
     evt->u.lobbySettings.lobbyBaseCount   = basesGetNumBases(&sim->sim.bs);
     evt->u.lobbySettings.lobbyStartCount  = startsGetNumStarts(&sim->sim.ss);
@@ -3950,7 +4153,11 @@ void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
         slot.teamNumber = sim->lobbyPlayers[i].teamNumber;
         slot.ready      = sim->lobbyPlayers[i].ready;
         slot.isBot      = sim->lobbyPlayers[i].isBot;
-        slot.pingMs     = sim->playerPing[i];
+        /* sim->playerPing[i] is only refreshed by queueInput; in lobby
+         * no inputs flow, so it sits at 0 the whole time. The PING/PONG
+         * handler keeps udpServer.clients[i].pingMs live across every
+         * state, so route through that for the lobby fill. */
+        slot.pingMs     = transportUdpServerGetClientPing(i);
         slot.countryCode[0] = sim->sim.plyrs->item[i].location[0];
         slot.countryCode[1] = sim->sim.plyrs->item[i].location[1];
         slot.countryCode[2] = '\0';
@@ -4045,10 +4252,55 @@ void serverSimFillLobbyBrainListEvent(const ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbyBrainList.list = sim->brainList;
 }
 
+/* Fill a CTRL_GAME_VOTE_STATE event for the given vote kind. Returns false
+ * if there's no snapshot (caller must not deliver). Mirrors the inline
+ * publish at publishGameVoteState. */
+static bool serverSimFillGameVoteStateEvent(const ServerSim *sim, uint8_t kind,
+                                            ControlEvent *evt) {
+    ServerGameVoteSnapshot snap;
+    if (!serverSimGetGameVoteSnapshot(sim, kind, &snap)) return false;
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_GAME_VOTE_STATE;
+    evt->u.gameVoteState.kind             = snap.kind;
+    evt->u.gameVoteState.active           = snap.active;
+    evt->u.gameVoteState.triggerSrc       = snap.triggerSrc;
+    evt->u.gameVoteState.teamId           = snap.teamId;
+    evt->u.gameVoteState.threshold        = snap.threshold;
+    evt->u.gameVoteState.yesCount         = snap.yesCount;
+    evt->u.gameVoteState.noCount          = snap.noCount;
+    evt->u.gameVoteState.eligibleCount    = snap.eligibleCount;
+    evt->u.gameVoteState.secondsRemaining = snap.secondsRemaining;
+    evt->u.gameVoteState.votes            = snap.votes;
+    return true;
+}
+
+/* Fill a CTRL_BALANCE_PROPOSAL event with the current proposed team
+ * assignment. Mirrors the publish at server_lifecycle.c. */
+static void serverSimFillBalanceProposalEvent(const ServerSim *sim,
+                                              ControlEvent *evt) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_BALANCE_PROPOSAL;
+    memcpy(evt->u.balanceProposal.teamForSlot,
+           sim->balanceProposal.teamForSlot, MAX_TANKS);
+}
+
+/* Fill a CTRL_MAP_SKIP_STATE event with the current per-slot skip votes.
+ * Mirrors the inline builders at the join + map-change publish sites. */
+static void serverSimFillMapSkipStateEvent(const ServerSim *sim,
+                                           ControlEvent *evt) {
+    BYTE k;
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_MAP_SKIP_STATE;
+    for (k = 0; k < MAX_TANKS; k++) {
+        evt->u.mapSkipState.votes[k] = sim->mapSkipVotes[k] ? 1 : 0;
+    }
+}
+
 /* Wrapper used to enforce the documented sync ordering:
- *   CTRL_GAME_PHASE first; CTRL_PLAYER_JOIN events last (a regression
- *   that reorders sync would silently mis-initialize a subscriber, so
- *   catch it loudly in debug builds). Asserts compile out under NDEBUG.
+ *   a CTRL_GAME_PHASE_* event first; CTRL_PLAYER_JOIN events last
+ *   (a regression that reorders sync would silently mis-initialize a
+ *   subscriber, so catch it loudly in debug builds). Asserts compile
+ *   out under NDEBUG.
  */
 typedef struct {
     void (*inner)(void *, const struct ControlEvent *);
@@ -4060,10 +4312,14 @@ typedef struct {
 static void serverSimSyncOrderingDeliver(void *ctx,
                                          const struct ControlEvent *evt) {
     SyncOrderingCheck *check = (SyncOrderingCheck *)ctx;
+    bool isPhase = (evt->type == CTRL_GAME_PHASE_LOBBY ||
+                    evt->type == CTRL_GAME_PHASE_COUNTDOWN ||
+                    evt->type == CTRL_GAME_PHASE_RUNNING ||
+                    evt->type == CTRL_GAME_PHASE_GAME_OVER);
 
-    if (evt->type == CTRL_GAME_PHASE) {
+    if (isPhase) {
         assert(!check->sawNonPhase &&
-               "CTRL_GAME_PHASE must be the first event in sync");
+               "a CTRL_GAME_PHASE_* event must be the first event in sync");
     } else {
         check->sawNonPhase = true;
     }
@@ -4086,6 +4342,24 @@ static void serverSimSyncSubscriber(
     ControlEvent evt;
     BYTE i;
     SyncOrderingCheck check;
+    {
+        int connectedCount = 0;
+        char connectedSlots[64];
+        int csPos = 0;
+        connectedSlots[0] = '\0';
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (sim->playerConnected[i]) {
+                connectedCount++;
+                if (csPos < (int)sizeof(connectedSlots) - 8) {
+                    csPos += snprintf(connectedSlots + csPos,
+                                      sizeof(connectedSlots) - csPos,
+                                      "%s%d", csPos == 0 ? "" : ",", (int)i);
+                }
+            }
+        }
+        mpDiagLog("[bus] SYNC-REPLAY begin state=%d connectedCount=%d connectedSlots=[%s]",
+                  (int)sim->state, connectedCount, connectedSlots);
+    }
 
     check.inner         = deliver;
     check.innerCtx      = ctx;
@@ -4102,9 +4376,16 @@ static void serverSimSyncSubscriber(
     serverSimFillLobbySettingsEvent(sim, &evt);
     deliver(ctx, &evt);
 
-    memset(&evt, 0, sizeof(evt));
-    serverSimFillLobbyBrainListEvent(sim, &evt);
-    deliver(ctx, &evt);
+    /* BrainList (~900 bytes) is only used by the lobby AiConfig combobox.
+     * Mid-game joiners don't need it during sync replay; embedding it in a
+     * snapshot would risk exceeding MTU room.  The game-over → lobby
+     * transition re-publishes it so the mid-game joiner gets it before
+     * the lobby UI needs it. */
+    if (sim->state == serverStateLobby || sim->state == serverStateCountdown) {
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillLobbyBrainListEvent(sim, &evt);
+        deliver(ctx, &evt);
+    }
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (sim->playerConnected[i]) {
@@ -4114,6 +4395,54 @@ static void serverSimSyncSubscriber(
         }
     }
 
+    /* Team metadata for every team in use (skip team 0 — unassigned). */
+    for (i = 1; i < MAX_TANKS; i++) {
+        if (sim->teams[i].in_use) {
+            memset(&evt, 0, sizeof(evt));
+            serverSimFillLobbyTeamMetaEvent(sim, i, &evt);
+            deliver(ctx, &evt);
+        }
+    }
+
+    /* Bot config + brain for each connected bot slot. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->playerConnected[i] && sim->lobbyPlayers[i].isBot) {
+            memset(&evt, 0, sizeof(evt));
+            serverSimFillLobbyBotConfigEvent(sim, i, &evt);
+            deliver(ctx, &evt);
+
+            memset(&evt, 0, sizeof(evt));
+            serverSimFillLobbyBotBrainEvent(sim, i, &evt);
+            deliver(ctx, &evt);
+        }
+    }
+
+    /* Game vote state per kind. Each fill returns false when no snapshot
+     * exists, so an inactive vote contributes nothing to the replay. */
+    {
+        if (serverSimFillGameVoteStateEvent(sim, GAME_VOTE_KIND_BACK_TO_LOBBY, &evt)) {
+            deliver(ctx, &evt);
+        }
+        if (serverSimFillGameVoteStateEvent(sim, GAME_VOTE_KIND_SURRENDER, &evt)) {
+            deliver(ctx, &evt);
+        }
+    }
+
+    /* Balance proposal — only emitted when one is pending (matches the
+     * predicate the join handler uses to dismiss the proposal). */
+    if (sim->balanceProposal.pending) {
+        serverSimFillBalanceProposalEvent(sim, &evt);
+        deliver(ctx, &evt);
+    }
+
+    /* Map skip state — emitted under the same gate as the inline publish:
+     * lobby phase with a map-skip pool available. */
+    if (sim->lobbyEnabled && sim->state == serverStateLobby
+        && (sim->mapDirCount > 1 || sim->randomMapEnabled)) {
+        serverSimFillMapSkipStateEvent(sim, &evt);
+        deliver(ctx, &evt);
+    }
+
     for (i = 0; i < MAX_TANKS; i++) {
         if (playersIsInUse(&sim->sim.plyrs, i) == TRUE) {
             memset(&evt, 0, sizeof(evt));
@@ -4121,6 +4450,7 @@ static void serverSimSyncSubscriber(
             deliver(ctx, &evt);
         }
     }
+    mpDiagLog("[bus] SYNC-REPLAY end");
 }
 
 SubscriberHandle serverSimRegisterSubscriber(
@@ -4146,17 +4476,55 @@ SubscriberHandle serverSimRegisterSubscriber(
 
     assert(sim->subscriberGen[slot] < UINT16_MAX);
     sim->subscriberGen[slot]++;
+
+    /* Fire the sync replay BEFORE inserting the slot into the bus
+     * array, so that any side-effect publish triggered by a deliver
+     * during replay reaches the existing subscribers only — not this
+     * new one mid-way through its own snapshot.
+     *
+     * (The serverSimPublishControl reentrancy assert (!sim->publishing)
+     * is the primary guard against deliver-publishes-during-replay; this
+     * ordering is defence-in-depth so a release build that bypasses the
+     * assert still gives the new subscriber a coherent replay rather
+     * than an interleaved one.)
+     *
+     * The deliver function must already be ready to receive events at
+     * this point — for the wire transport that means
+     * udpServer.clients[slot] is fully populated before the caller
+     * invokes serverSimRegisterSubscriber. */
+    serverSimSyncSubscriber(sim, deliver, ctx);
+
     sim->subscribers[slot].deliver    = deliver;
     sim->subscribers[slot].ctx        = ctx;
     sim->subscribers[slot].generation = sim->subscriberGen[slot];
     sim->numSubscribers++;
 
-    serverSimSyncSubscriber(sim, deliver, ctx);
-
     return SUBSCRIBER_HANDLE_ENCODE(slot, sim->subscriberGen[slot]);
 }
 
 static void serverSimDeliverToClientSim(void *ctx, const struct ControlEvent *evt) {
+    /* In-process bus delivery — the host's local ClientSim (and bots) land here.
+     * Log so we can tell whether the host's view divergence is at the publish
+     * stage or the wire stage. */
+    char extra[160];
+    extra[0] = '\0';
+    if (evt->type == CTRL_LOBBY_SLOT) {
+        snprintf(extra, sizeof(extra),
+                 " lobbySlot[player=%d team=%d ready=%d connected=%d isBot=%d name='%.12s']",
+                 (int)evt->u.lobbySlot.playerNum,
+                 (int)evt->u.lobbySlot.slot.teamNumber,
+                 (int)evt->u.lobbySlot.slot.ready,
+                 (int)evt->u.lobbySlot.slot.connected,
+                 (int)evt->u.lobbySlot.slot.isBot,
+                 evt->u.lobbySlot.slot.playerName);
+    } else if (evt->type == CTRL_PLAYER_JOIN) {
+        snprintf(extra, sizeof(extra),
+                 " playerJoin[player=%d name='%.16s']",
+                 (int)evt->u.playerJoin.playerNum,
+                 evt->u.playerJoin.name);
+    }
+    mpDiagLog("[bus] in-process deliver cs=%p type=%d%s",
+              ctx, (int)evt->type, extra);
     clientSimApplyControl((ClientSim *)ctx, evt);
 }
 
@@ -4272,6 +4640,41 @@ void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
         if (sim->subscribers[i].deliver != NULL) {
             snapshot[snapCount++] = sim->subscribers[i];
         }
+    }
+    {
+        char extra[256];
+        extra[0] = '\0';
+        if (evt->type == CTRL_LOBBY_SLOT) {
+            snprintf(extra, sizeof(extra),
+                     " lobbySlot[player=%d team=%d ready=%d connected=%d isBot=%d name='%.12s']",
+                     (int)evt->u.lobbySlot.playerNum,
+                     (int)evt->u.lobbySlot.slot.teamNumber,
+                     (int)evt->u.lobbySlot.slot.ready,
+                     (int)evt->u.lobbySlot.slot.connected,
+                     (int)evt->u.lobbySlot.slot.isBot,
+                     evt->u.lobbySlot.slot.playerName);
+        } else if (evt->type == CTRL_PLAYER_JOIN) {
+            snprintf(extra, sizeof(extra),
+                     " playerJoin[player=%d name='%.16s']",
+                     (int)evt->u.playerJoin.playerNum,
+                     evt->u.playerJoin.name);
+        } else if (evt->type == CTRL_LOBBY_SETTINGS) {
+            snprintf(extra, sizeof(extra),
+                     " settings[map='%.16s' gameType=%d hiddenMines=%d aiType=%d timeLimit=%d startDelay=%d open=%d autoLock=%d ranked=%d allowNew=%d locks=0x%04x]",
+                     evt->u.lobbySettings.mapName,
+                     (int)evt->u.lobbySettings.lobbyGameType,
+                     (int)evt->u.lobbySettings.lobbyHiddenMines,
+                     (int)evt->u.lobbySettings.lobbyAiType,
+                     (int)evt->u.lobbySettings.lobbyTimeLimit,
+                     (int)evt->u.lobbySettings.lobbyStartDelay,
+                     (int)evt->u.lobbySettings.lobbyOpenHost,
+                     (int)evt->u.lobbySettings.lobbyAutoLockOnGameStart,
+                     (int)evt->u.lobbySettings.lobbyRanked,
+                     (int)evt->u.lobbySettings.lobbyAllowNewPlayers,
+                     (unsigned)evt->u.lobbySettings.lobbyServerLocks);
+        }
+        mpDiagLog("[bus] PUBLISH type=%d subscribers=%d%s",
+                  (int)evt->type, snapCount, extra);
     }
     for (i = 0; i < snapCount; i++) {
         snapshot[i].deliver(snapshot[i].ctx, evt);
@@ -4447,16 +4850,16 @@ bool serverSimPillExistsAt(const ServerSim *sim, BYTE x, BYTE y) {
     return pillsExistPos(&((ServerSim *)sim)->sim.pb, x, y);
 }
 
-BYTE serverSimPillGetScreenHealthAt(ServerSim *sim, BYTE x, BYTE y) {
-    return pillsGetScreenHealth(&sim->sim, &sim->sim.pb, x, y);
+BYTE serverSimPillGetScreenHealthAt(ServerSim *sim, BYTE x, BYTE y, BYTE viewPlayer) {
+    return pillsGetScreenHealth(&sim->sim, &sim->sim.pb, x, y, viewPlayer);
 }
 
 bool serverSimBaseExistsAt(const ServerSim *sim, BYTE x, BYTE y) {
     return basesExistPos(&((ServerSim *)sim)->sim.bs, x, y);
 }
 
-baseAlliance serverSimBaseGetAllianceAt(ServerSim *sim, BYTE x, BYTE y) {
-    return basesGetAlliancePos(&sim->sim, x, y);
+baseAlliance serverSimBaseGetAllianceAt(ServerSim *sim, BYTE x, BYTE y, BYTE viewPlayer) {
+    return basesGetAlliancePos(&sim->sim, x, y, viewPlayer);
 }
 
 bool serverSimBaseAmOwnerAt(ServerSim *sim, BYTE player, BYTE x, BYTE y) {
@@ -4663,12 +5066,16 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
     char msg[256];
 
     if (sim == NULL || mapFileName == NULL || mapFileName[0] == '\0') {
+        mpDiagLog("[srv] reloadMap REJECTED (null arg)");
         return FALSE;
     }
+    mpDiagLog("[srv] reloadMap ENTER file='%.64s'", mapFileName);
     if (sim->state != serverStateLobby) {
         WB_LOG_INFO(WB_LOG_CAT_SERVER,
             "serverSimReloadMap rejected: state=%d (not lobby)",
             (int)sim->state);
+        mpDiagLog("[srv] reloadMap REJECTED state=%d (not lobby)",
+                  (int)sim->state);
         return FALSE;
     }
 
@@ -4765,17 +5172,6 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
     /* Random-map provenance no longer applies. */
     sim->randomMapEnabled = false;
 
-    /* Reset lobby ready state — humans must re-acknowledge the new
-     * map. Bots stay ready (no UI to click). */
-    {
-        int i;
-        for (i = 0; i < MAX_TANKS; i++) {
-            if (!sim->lobbyPlayers[i].isBot) {
-                sim->lobbyPlayers[i].ready = FALSE;
-            }
-        }
-    }
-
     snprintf(msg, sizeof(msg), "Map changed to %s", sim->mapName);
     serverSimConsoleMessage(msg);
 
@@ -4783,6 +5179,7 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
         "serverSimReloadMap: now '%s' (%d compressed bytes)",
         sim->mapName, sim->cachedMapDataLen);
 
+    serverSimApplyMapChange(sim);
     return TRUE;
 }
 
@@ -4795,12 +5192,17 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
 
     if (sim == NULL || bytes == NULL || len <= 0 ||
         mapName == NULL || mapName[0] == '\0') {
+        mpDiagLog("[srv] reloadCompressedInMemory REJECTED (null/empty arg)");
         return FALSE;
     }
+    mpDiagLog("[srv] reloadCompressedInMemory ENTER name='%.32s' len=%d",
+              mapName, len);
     if (sim->state != serverStateLobby) {
         WB_LOG_INFO(WB_LOG_CAT_SERVER,
             "serverSimReloadCompressedInMemory rejected: state=%d (not lobby)",
             (int)sim->state);
+        mpDiagLog("[srv] reloadCompressedInMemory REJECTED state=%d (not lobby)",
+                  (int)sim->state);
         return FALSE;
     }
 
@@ -4907,17 +5309,6 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
     /* Random-map provenance no longer applies. */
     sim->randomMapEnabled = false;
 
-    /* Reset lobby ready state — humans must re-acknowledge the new
-     * map. Bots stay ready (no UI to click). */
-    {
-        int i;
-        for (i = 0; i < MAX_TANKS; i++) {
-            if (!sim->lobbyPlayers[i].isBot) {
-                sim->lobbyPlayers[i].ready = FALSE;
-            }
-        }
-    }
-
     snprintf(msg, sizeof(msg), "Map changed to %s", sim->mapName);
     serverSimConsoleMessage(msg);
 
@@ -4925,6 +5316,7 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
         "serverSimReloadCompressedInMemory: now '%s' (%d compressed bytes)",
         sim->mapName, sim->cachedMapDataLen);
 
+    serverSimApplyMapChange(sim);
     return TRUE;
 }
 
@@ -4949,11 +5341,17 @@ bool serverSimReloadClientMap(ServerSim *sim, ClientSim *cs) {
 }
 
 bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {
-    if (!sim || !cfg) return FALSE;
+    if (!sim || !cfg) {
+        mpDiagLog("[srv] reloadRandomMap REJECTED (null arg)");
+        return FALSE;
+    }
+    mpDiagLog("[srv] reloadRandomMap ENTER");
     if (sim->state != serverStateLobby) {
         WB_LOG_INFO(WB_LOG_CAT_SERVER,
             "serverSimReloadRandomMap rejected: state=%d",
             (int)sim->state);
+        mpDiagLog("[srv] reloadRandomMap REJECTED state=%d (not lobby)",
+                  (int)sim->state);
         return FALSE;
     }
 
@@ -4981,6 +5379,7 @@ bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {
             "serverSimReloadRandomMap: now '%s' (%d compressed bytes)",
             sim->mapName, sim->cachedMapDataLen);
     }
+    serverSimApplyMapChange(sim);
     return TRUE;
 }
 
@@ -4996,8 +5395,16 @@ const char *serverSimGetPreviousMapName(const ServerSim *sim) {
 bool serverSimRevertPreview(ServerSim *sim) {
     BYTE tempBuf[131072];
     int len;
-    if (!sim || !sim->previousMapData) return FALSE;
-    if (sim->state != serverStateLobby) return FALSE;
+    if (!sim || !sim->previousMapData) {
+        mpDiagLog("[srv] revertPreview REJECTED (no preview to revert)");
+        return FALSE;
+    }
+    if (sim->state != serverStateLobby) {
+        mpDiagLog("[srv] revertPreview REJECTED state=%d (not lobby)",
+                  (int)sim->state);
+        return FALSE;
+    }
+    mpDiagLog("[srv] revertPreview ENTER prevMap='%.32s'", sim->previousMapName);
 
     if (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb,
                               &sim->sim.bs, &sim->sim.ss,
@@ -5027,6 +5434,7 @@ bool serverSimRevertPreview(ServerSim *sim) {
 
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
+    serverSimApplyMapChange(sim);
     return TRUE;
 }
 
@@ -5251,6 +5659,8 @@ void serverSimSetBotBrainIdxFor(ServerSim *sim, BYTE slot, uint8_t brainIdx) {
      * matching the existing "ignore malformed input" pattern. */
     if (brainIdx != 0xFF && brainIdx >= sim->brainList.count) return;
     sim->botBrainIdx[slot] = brainIdx;
+    serverSimPublishLobbyBotBrain(sim, slot);
+    lobbyAutoUnreadyOnChange(sim);
 }
 
 const char *serverSimGetBrainPathForIdx(const ServerSim *sim, uint8_t brainIdx) {
@@ -5273,7 +5683,10 @@ bool serverSimGetOpenHost(const ServerSim *sim) {
 }
 
 void serverSimSetOpenHost(ServerSim *sim, bool v) {
-    if (sim) sim->openHost = v;
+    if (sim == NULL) return;
+    sim->openHost = v;
+    serverSimPublishLobbySettings(sim);
+    lobbyAutoUnreadyOnChange(sim);
 }
 
 bool serverSimGetFirstJoinerBecomesHost(const ServerSim *sim) {
@@ -5341,6 +5754,25 @@ const LobbyBotConfig *serverSimGetBotConfig(const ServerSim *sim, BYTE slot) {
 LobbyBotConfig *serverSimGetBotConfigMut(ServerSim *sim, BYTE slot) {
     if (!sim || slot >= MAX_TANKS) return NULL;
     return &sim->botConfigs[slot];
+}
+
+void serverSimSetBotConfig(ServerSim *sim, BYTE slot,
+                            uint8_t difficulty, uint8_t personality,
+                            const char *validatedName) {
+    if (!sim || slot >= MAX_TANKS) return;
+    {
+        LobbyBotConfig *bc = serverSimGetBotConfigMut(sim, slot);
+        if (bc) {
+            bc->difficulty  = difficulty;
+            bc->personality = personality;
+        }
+    }
+    if (validatedName != NULL && validatedName[0] != '\0') {
+        serverSimRenameBotSlot(sim, slot, validatedName);
+    }
+    serverSimPublishLobbyBotConfig(sim, slot);
+    serverSimPublishLobbySlot(sim, slot);
+    lobbyAutoUnreadyOnChange(sim);
 }
 
 void serverSimSetGameLength(ServerSim *sim, int32_t ticks) {
@@ -5424,6 +5856,63 @@ void serverSimPublishLobbyTeamMeta(ServerSim *sim, BYTE teamId) {
     serverSimPublishControl(sim, &evt);
 }
 
+void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
+                           uint8_t color, uint8_t namingPool,
+                           const uint8_t *name, uint8_t nameLen) {
+    if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
+    TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
+    if (t == NULL) return;
+    t->in_use = 1;
+    t->color = color;
+    /* Per-team uniqueness on namingPool: if another in_use team
+     * already owns this pool, pick the lowest pool index not
+     * used by any other team. Falls back to the requested value
+     * if every pool is taken. */
+    {
+        int poolCount = lobbyBotPoolCount();
+        bool poolTaken = false;
+        for (BYTE other = 1; other < MAX_TANKS; other++) {
+            if (other == teamId) continue;
+            const TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
+            if (ot && ot->in_use && ot->namingPool == namingPool) {
+                poolTaken = true;
+                break;
+            }
+        }
+        if (poolTaken && poolCount > 0) {
+            for (int p = 0; p < poolCount; p++) {
+                bool used = false;
+                for (BYTE other = 1; other < MAX_TANKS; other++) {
+                    if (other == teamId) continue;
+                    const TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
+                    if (ot && ot->in_use && ot->namingPool == p) {
+                        used = true;
+                        break;
+                    }
+                }
+                if (!used) { namingPool = (uint8_t)p; break; }
+            }
+        }
+    }
+    t->namingPool = namingPool;
+    memset(t->name, 0, LOBBY_TEAM_NAME_LEN);
+    if (nameLen > 0 && name != NULL) {
+        memcpy(t->name, name, nameLen);
+    }
+    serverSimPublishLobbyTeamMeta(sim, teamId);
+    lobbyAutoUnreadyOnChange(sim);
+}
+
+void serverSimClearTeamMeta(ServerSim *sim, BYTE teamId) {
+    if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
+    TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
+    if (t != NULL) {
+        memset(t, 0, sizeof(TeamMetadata));
+    }
+    serverSimPublishLobbyTeamMeta(sim, teamId);
+    lobbyAutoUnreadyOnChange(sim);
+}
+
 void serverSimPublishLobbySettings(ServerSim *sim) {
     ControlEvent evt;
     if (!sim) return;
@@ -5433,6 +5922,179 @@ void serverSimPublishLobbySettings(ServerSim *sim) {
                     (int)sim->ranked, (int)evt.u.lobbySettings.lobbyRanked);
     serverSimPublishControl(sim, &evt);
     balanceDebugLog("[RANKED SERVER] publishLobbySettings: publishControl returned");
+}
+
+/* Shared apply path for the LST_* setting cluster carried in
+ * PACKET_LOBBY_SET_SETTING and its SP-host local-transport
+ * equivalent. The caller is responsible for upstream lock-bit /
+ * authority gates; on success this helper publishes
+ * CTRL_LOBBY_SETTINGS and clears humans' ready state before
+ * returning true.
+ *
+ * Returns true if the setting was applied, false if the payload
+ * was malformed, out of range, or rejected by a cross-setting
+ * invariant (e.g. ranked forbids gameOpen / non-aiNone / autoLock
+ * off). */
+static bool serverSimApplyLobbySettingInner(ServerSim *sim,
+                                            uint8_t lst,
+                                            const uint8_t *value, size_t len) {
+    if (sim == NULL || value == NULL) return false;
+    switch (lst) {
+        case LST_GAME_TYPE:
+            if (len != 1 || value[0] < 1 || value[0] > 3) return false;
+            if (serverSimGetRanked(sim) &&
+                (gameType)value[0] == gameOpen) return false;
+            serverSimSetGameType(sim, (gameType)value[0]);
+            return true;
+        case LST_HIDDEN_MINES:
+            if (len != 1) return false;
+            serverSimSetHiddenMines(sim, value[0] != 0);
+            return true;
+        case LST_AI_POLICY:
+            if (len != 1 || value[0] > 3) return false;
+            if (serverSimGetRanked(sim) &&
+                (aiType)value[0] != aiNone) return false;
+            serverSimSetAiPolicy(sim, value[0]);
+            serverSimSetBotAiType(sim, (aiType)value[0]);
+            if ((aiType)value[0] == aiNone) {
+                for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
+                    if (botManagerIsBot(sim, bi)) {
+                        serverSimRemoveBot(sim, bi);
+                    }
+                }
+            }
+            return true;
+        case LST_TIME_LIMIT: {
+            if (len != 1) return false;
+            bool tl = value[0] != 0;
+            serverSimSetTimeLimit(sim, tl);
+            if (tl) {
+                uint16_t mins = serverSimGetTimeMinutes(sim) > 0
+                    ? serverSimGetTimeMinutes(sim) : 30;
+                serverSimSetGameLength(sim,
+                    (int32_t)mins * 60 * GAME_NUMGAMETICKS_SEC);
+            } else {
+                serverSimSetGameLength(sim, UNLIMITED_GAME_TIME);
+            }
+            return true;
+        }
+        case LST_TIME_MINUTES: {
+            if (len != 2) return false;
+            uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
+            if (!lobbyTimeMinutesIsValid(mins)) return false;
+            serverSimSetTimeMinutes(sim, mins);
+            if (serverSimGetTimeLimit(sim)) {
+                serverSimSetGameLength(sim,
+                    (int32_t)mins * 60 * GAME_NUMGAMETICKS_SEC);
+            }
+            return true;
+        }
+        case LST_AUTO_LOCK_ON_GAME: {
+            if (len != 1) return false;
+            bool v = value[0] != 0;
+            if (serverSimGetRanked(sim) && !v) return false;
+            serverSimSetAutoLockOnGameStart(sim, v);
+            return true;
+        }
+        case LST_RANKED: {
+            if (len != 1) return false;
+            bool r = value[0] != 0;
+            serverSimSetRanked(sim, r);
+            if (r) {
+                serverSimSetAiPolicy(sim, (uint8_t)aiNone);
+                serverSimSetBotAiType(sim, aiNone);
+                for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
+                    if (botManagerIsBot(sim, bi)) {
+                        serverSimRemoveBot(sim, bi);
+                    }
+                }
+                if (serverSimGetGameType(sim) == gameOpen) {
+                    serverSimSetGameType(sim, gameTournament);
+                }
+                if (!serverSimGetAutoLockOnGameStart(sim)) {
+                    serverSimSetAutoLockOnGameStart(sim, true);
+                }
+            }
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+bool serverSimApplyLobbySetting(ServerSim *sim,
+                                uint8_t lst,
+                                const uint8_t *value, size_t len) {
+    if (!serverSimApplyLobbySettingInner(sim, lst, value, len)) return false;
+    serverSimPublishLobbySettings(sim);
+    lobbyAutoUnreadyOnChange(sim);
+    return true;
+}
+
+/* Side-effects every server-side map change owes its audience:
+ * refresh the per-client compressed-map blob on the wire helper,
+ * publish the map-change control event so in-process subscribers
+ * (SP host's ClientSim, bots, replay log writers) react, re-publish
+ * settings so the mapName / pillCount / baseCount / startCount
+ * fields in CTRL_LOBBY_SETTINGS reflect the new map, and clear
+ * humans' ready state — which aborts any in-flight countdown via
+ * lobbyAutoUnreadyOnChange. Called from every map-mutator at the
+ * end of its success path. */
+static void serverSimApplyMapChange(ServerSim *sim) {
+    mpDiagLog("[srv] applyMapChange map='%.32s' cachedLen=%d random=%d",
+              sim->mapName, sim->cachedMapDataLen,
+              (int)sim->randomMapEnabled);
+    transportUdpServerOnLobbyMapChange(sim);
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_LOBBY_MAP_CHANGE;
+        serverSimPublishControl(sim, &evt);
+    }
+    serverSimPublishLobbySettings(sim);
+    lobbyAutoUnreadyOnChange(sim);
+}
+
+/* Auto-unready: any meaningful lobby change clears every human's
+ * ready flag and aborts an in-flight countdown. The per-slot
+ * CTRL_LOBBY_SLOT publishes (plus the CTRL_GAME_PHASE_LOBBY publish
+ * if the countdown was aborted) fan out to both in-process subscribers and
+ * remote UDP clients via the codec — no wire-only blast needed. Bots
+ * stay permanently ready by design (set in botManagerAddBot) so the
+ * next all-ready check still triggers a countdown when the human
+ * re-confirms. */
+void lobbyAutoUnreadyOnChange(ServerSim *sim) {
+    BYTE i;
+    bool countdownWasRunning = (serverSimGetState(sim) == serverStateCountdown);
+    bool toggled[MAX_TANKS];
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, i);
+        toggled[i] = false;
+        if (lp == NULL) continue;
+        if (lp->isBot) continue;
+        if (lp->ready) {
+            serverSimSetReady(sim, i, false);
+            toggled[i] = true;
+        }
+    }
+
+    if (countdownWasRunning) {
+        serverSimAbortCountdown(sim);
+    }
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (toggled[i]) {
+            serverSimPublishLobbySlot(sim, i);
+        }
+    }
+
+    if (countdownWasRunning) {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillGamePhaseEvent(sim, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 const BrainList *serverSimGetBrainList(const ServerSim *sim) {
@@ -5483,7 +6145,9 @@ void serverSimSetRanked(ServerSim *sim, bool v) {
 }
 
 void serverSimSetAllowNewPlayers(ServerSim *sim, bool v) {
-    if (sim) sim->allowNewPlayers = v;
+    if (sim == NULL) return;
+    sim->allowNewPlayers = v;
+    serverSimPublishLobbySettings(sim);
 }
 
 bool serverSimRankedShapeReady(const ServerSim *sim) {
@@ -5523,7 +6187,8 @@ bool serverSimIsAcceptingJoins(const ServerSim *sim) {
     return sim && sim->allowNewPlayers;
 }
 
-void serverSimSetUploadPolicy(ServerSim *sim, UploadPolicy policy) {
-    if (!sim) return;
-    sim->uploadPolicy = policy;
+BYTE serverSimGetMaxPlayers(const ServerSim *sim) {
+    if (sim == NULL) return MAX_TANKS;
+    return (sim->maxPlayers > 0) ? sim->maxPlayers : (BYTE)MAX_TANKS;
 }
+

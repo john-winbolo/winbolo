@@ -86,7 +86,9 @@ int run_transport_local_passive_threads(void) {
     ServerSim *sim = ut_make_running_sim("Writer");
     UT_ASSERT_MSG(sim != NULL, "serverSimCreateCompressed returned NULL");
 
-    Transport transport = transportLocalCreatePassive(sim, 0);
+    /* Pass NULL for cs — this test exercises the raw transport without
+     * a bound ClientSim, so the per-tick snapshot-apply hook stays off. */
+    Transport transport = transportLocalCreatePassive(sim, NULL, 0);
     /* delay_ticks = 1 forces inputs through the internal delay queue,
      * which is the actual structure the planned self-lock protects. */
     transportLocalSetDelay(&transport, 20);

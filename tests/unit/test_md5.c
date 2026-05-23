@@ -26,7 +26,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "md5.h"
+#include "common/md5.h"
 #include "test_harness.h"
 
 static void hex_of(const uint8_t digest[16], char out[33]) {

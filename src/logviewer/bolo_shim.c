@@ -176,8 +176,8 @@ bool serverSimBaseExistsAt(const struct ServerSim *sim, BYTE x, BYTE y) {
   abort();
 }
 
-baseAlliance serverSimBaseGetAllianceAt(struct ServerSim *sim, BYTE x, BYTE y) {
-  (void)sim; (void)x; (void)y;
+baseAlliance serverSimBaseGetAllianceAt(struct ServerSim *sim, BYTE x, BYTE y, BYTE viewPlayer) {
+  (void)sim; (void)x; (void)y; (void)viewPlayer;
   abort();
 }
 
@@ -191,8 +191,8 @@ bool serverSimPillExistsAt(const struct ServerSim *sim, BYTE x, BYTE y) {
   abort();
 }
 
-BYTE serverSimPillGetScreenHealthAt(struct ServerSim *sim, BYTE x, BYTE y) {
-  (void)sim; (void)x; (void)y;
+BYTE serverSimPillGetScreenHealthAt(struct ServerSim *sim, BYTE x, BYTE y, BYTE viewPlayer) {
+  (void)sim; (void)x; (void)y; (void)viewPlayer;
   abort();
 }
 

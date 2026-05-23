@@ -20,6 +20,7 @@
 #include "mapgen.h" /* MapGenConfig — embedded by value in randomMapConfig */
 #include "brain_list_internal.h" /* BRAIN_LIST_PATH_LEN — brainPaths mirror */
 #include "upload_policy.h"  /* UploadPolicy — broadcast in lobby-settings event */
+#include "bot_manager.h"    /* BotManager — embedded by value below */
 
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
@@ -45,6 +46,8 @@ struct ServerSim {
      * the lobby state. */
     TeamMetadata    teams[MAX_TANKS];
     LobbyBotConfig  botConfigs[MAX_TANKS];
+
+    BotManager      botMgr;  /* per-sim bot manager — initialised by botManagerInitInSim */
 
     /* Per-bot brain selection as an index into brainList. 0xFF means
      * "use the global botBrainPath" (the CLI-configured default). The
@@ -79,6 +82,12 @@ struct ServerSim {
                                       * Consumed by the join handler. */
     uint16_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
+    BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
+    bool     worldPreLoaded;       /* TRUE while the world is fresh from
+                                    * serverSimCreate*; FALSE after the first
+                                    * serverSimResetGameWorld. Drives the
+                                    * all-ready detector to pick
+                                    * StartGameInPlace vs countdown+StartGame. */
 
     /* Game-settings mirrors — needed for live mid-lobby change broadcasts.
      * The authoritative values live in GameSim/serverSim CLI args; these

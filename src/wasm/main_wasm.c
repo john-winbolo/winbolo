@@ -146,9 +146,6 @@ static void windowRunGameTick(ClientSim *cs) {
       clientMutexRelease();
       clientSimNetRecordInput(cs, &pkt);
       clientSimNetTick(cs);
-      clientMutexWaitFor();
-      clientSimNetSyncSnapshot(cs);
-      clientMutexRelease();
       simTickCounter++;
       justKeys = FALSE;
     } else {
@@ -170,7 +167,6 @@ static void windowRunGameTick(ClientSim *cs) {
       clientSimNetSendInput(cs, &pkt);
       clientSimNetTick(cs);
       clientMutexWaitFor();
-      clientSimNetSyncSnapshot(cs);
       clientSimDisplayTick(cs, brainRunning);
       clientMutexRelease();
       simTickCounter++;

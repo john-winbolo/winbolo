@@ -303,7 +303,7 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_LOBBY_SETTINGS       159
 
 /* ── Lobby Layout A — Client → Server (160-174) ─────────────────── */
-#define PACKET_LOBBY_SET_SETTING    160  /* { settingType 1, valueLen 1, value N } */
+#define PACKET_LOBBY_SET_SETTING    199  /* { settingType 1, valueLen 1, value N } */
 #define PACKET_LOBBY_OPEN_HOST      161  /* { bool 1 } */
 #define PACKET_LOBBY_TEAM_META      162  /* { teamId 1, color 1, namingPool 1,
                                           *   nameLen 1, name N } */
@@ -345,7 +345,6 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_LOBBY_TEAM_META_CHG  177  /* same payload as TEAM_META */
 #define PACKET_LOBBY_BOT_CONFIG_CHG 178  /* same payload as BOT_CONFIG */
 #define PACKET_LOBBY_REJECT         179  /* { origPacket 1, reasonCode 1 } */
-#define PACKET_LOBBY_AUTO_UNREADY   180  /* (empty payload) */
 #define PACKET_LOBBY_BRAIN_LIST     181  /* { count 1, for each: nameLen 1, name,
                                           *   verLen 1, ver, pathLen 1, path } */
 #define PACKET_LOBBY_BOT_BRAIN_CHG  182  /* { slot 1, pathLen 1, path N } */
@@ -353,6 +352,19 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_LOBBY_MAP_UPLOAD_ACK 184  /* { status 1 } */
 #define PACKET_LOBBY_MAP_UPLOAD_DONE 185 /* { status 1, pathLen 1, path N } */
 #define PACKET_LOBBY_MAP_SEARCH_RSP 186  /* server reply to MAP_SEARCH_REQ */
+
+/* Reliable control-event carrier (lobby / countdown / gameover) and its
+ * dedicated ACK packet.  During running, control events ride in the
+ * snapshot's control-event tail; outside running, snapshots don't flow,
+ * so PACKET_CONTROL_TICK carries the unacked tail of each per-client
+ * control queue and the client ACKs with PACKET_CONTROL_ACK.
+ *   PACKET_CONTROL_TICK wire format:
+ *     [header 8] [controlEventBaseSeq 4 BE] [count 1]
+ *     [count × ( type 1 + bodyLen 2 BE + body N )]
+ *   PACKET_CONTROL_ACK wire format:
+ *     [header 8] [controlEventAck 4 BE]  — next expected control seq */
+#define PACKET_CONTROL_TICK     187  /* server -> client */
+#define PACKET_CONTROL_ACK      188  /* client -> server */
 
 /* Server Maps preview-fetch protocol. The client never reads
  * server map files directly: in MP the file lives on a remote

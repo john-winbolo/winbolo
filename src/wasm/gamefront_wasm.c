@@ -15,7 +15,6 @@
 #include <emscripten.h>
 #include <emscripten/html5.h>
 
-#include "client_mapload.h"
 #include "client_sim.h"
 #include "control_event.h"
 #include "global.h"
@@ -25,6 +24,7 @@
 #include "everard_map.h"
 #include "frontend.h"
 #include "server_sim.h"
+#include "../server/server_lifecycle.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../gui/gamefront.h"
@@ -33,6 +33,7 @@
 #include "../gui/sound.h"
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
+#include "../winbolonet/winbolonet_core.h"
 #include "../gui/sdl3/sdl3imgui.h"
 #include "../gui/sdl3/luabrainshandler.h"
 
@@ -200,51 +201,6 @@ static void gameFrontSetDefaultKeys(keyItems *keys) {
 }
 
 /* -------------------------------------------------------
- * gameFrontLoadInBuiltMap
- * ------------------------------------------------------- */
-bool gameFrontLoadInBuiltMap(void) {
-  /* In WASM, maps are preloaded into the virtual filesystem */
-  const char *paths[] = {
-    "/data/EverardIsland.map",
-    "/data/Everard Island.map",
-    "Everard Island.map",
-    NULL
-  };
-
-  for (int i = 0; paths[i] != NULL; i++) {
-    FILE *fp = fopen(paths[i], "rb");
-    if (fp != NULL) {
-      fclose(fp);
-      printf("[WASM] Loading map: %s\n", paths[i]);
-      return clientLoadMap(humanSim, (char *)paths[i], gametype, hiddenMines,
-                         startDelay, timeLen, gameFrontName, FALSE);
-    }
-  }
-
-  printf("[WASM] ERROR: Could not find Everard Island.map\n");
-  return FALSE;
-}
-
-bool gameFrontLoadTutorial(void) {
-  const char *paths[] = {
-    "/data/InbuiltTutorial.map",
-    "/data/Inbuilt Tutorial.map",
-    "Inbuilt Tutorial.map",
-    NULL
-  };
-
-  for (int i = 0; paths[i] != NULL; i++) {
-    FILE *fp = fopen(paths[i], "rb");
-    if (fp != NULL) {
-      fclose(fp);
-      return clientLoadMap(humanSim, (char *)paths[i], gameStrictTournament, FALSE,
-                         0, UNLIMITED_GAME_TIME, gameFrontName, FALSE);
-    }
-  }
-  return FALSE;
-}
-
-/* -------------------------------------------------------
  * gameFrontStart — skip all dialogs, start practice game
  * ------------------------------------------------------- */
 bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSim **out_cs) {
@@ -354,7 +310,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   /* Start the game directly — no dialogs */
   printf("[WASM] Setting up screen...\n");
   humanSim = clientSimAlloc();
-  clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+  clientSimCreate(humanSim);
   frontEndSetActiveClientSim(humanSim);
 
   if (urlNetType == netUdp) {
@@ -362,7 +318,9 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     printf("[WASM] Connecting via UDP transport...\n");
     clientSimConnectUdp(humanSim, gameFrontUdpAddress,
                         gameFrontTargetUdp,
-                        gameFrontName, password,
+                        gameFrontName,
+                        winbolonetGetCountryCode(),
+                        password,
                         gameFrontWbnUse ? gameFrontWbnToken : "",
                         "",
                         wantRejoin,
@@ -409,44 +367,9 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       clientSimSetServerPort(humanSim, gameFrontTargetUdp);
     }
 
-    /* Load map from server */
-    {
-      const BYTE *mapData;
-      int mapLen = 0;
-      gameType serverGame;
-      bool serverHiddenMines;
-      int32_t serverStartDelay, serverGameLen;
-
-      mapData = clientSimGetServerMapData(humanSim, &mapLen);
-      clientSimGetServerGameSettings(humanSim, &serverGame,
-                                     &serverHiddenMines,
-                                     &serverStartDelay, &serverGameLen);
-
-      if (mapData != NULL && mapLen > 0) {
-        char savedMapName[MAP_STR_SIZE];
-        strncpy(savedMapName, clientSimGetMapName(humanSim), MAP_STR_SIZE - 1);
-        savedMapName[MAP_STR_SIZE - 1] = '\0';
-        /* Reset map-dependent state in place; the transport (and the
-         * mapData pointer that lives inside it) survive the reset. */
-        clientSimResetForMapLoad(humanSim);
-        if (clientLoadCompressedMap(humanSim, (BYTE *)mapData, mapLen, savedMapName,
-                                   serverGame, serverHiddenMines,
-                                   serverStartDelay, serverGameLen,
-                                   gameFrontName, wasmPlayerNum, FALSE) == FALSE) {
-          printf("[WASM] Failed to load map from server\n");
-          clientSimDisconnect(humanSim);
-          wasmTransportActive = FALSE;
-          return FALSE;
-        }
-        clientSimSetLocalTransport(humanSim, false);
-      } else {
-        printf("[WASM] No map data from server\n");
-        clientSimDestroy(humanSim);
-        wasmTransportActive = FALSE;
-        return FALSE;
-      }
-    }
-
+    /* Map install + snapshot apply happen inside the UDP transport
+     * (MAP_DOWNLOAD inline install + CTRL_GAME_PHASE LOBBY→RUNNING
+     * watcher). The wasm frontend just finalises the local tank. */
     clientSimNetSetupTankGo(humanSim);
     /* Gate lobby vs running: if we received CTRL_LOBBY_SETTINGS during
      * join, stay in lobby state; otherwise proceed to running */
@@ -477,36 +400,16 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       }
     }
 
-    /* WASM single-player: no lobby, run immediately */
-    serverSimSetLobbyEnabled(wasmServerSim, false);
-    serverSimStartGame(wasmServerSim);
-    serverSimAddPlayer(wasmServerSim, 0, gameFrontName, false);
-    serverSimSetViewPlayer(wasmServerSim, 0);
-    clientSimConnectLocal(humanSim, wasmServerSim, 0);
-    wasmTransportActive = TRUE;
-    wasmPlayerNum = 0;
-
-    /* Load compressed map on client side */
+    /* WASM single-player: no lobby, run immediately. acceptRemoteClients
+     * is zero-init false so the UDP / WBN / tracker bring-up is
+     * skipped; skipLobby drives the StartGameInPlace transition;
+     * viewPlayer 0 is the SP convention. */
     {
-      BYTE compressedMap[65536];
-      int compLen = serverSimGetCompressedMap(wasmServerSim, compressedMap);
-      printf("[WASM] serverSimGetCompressedMap returned %d bytes\n", compLen);
-      if (compLen > 0) {
-        bool mapOk = clientLoadCompressedMap(humanSim, compressedMap, compLen, "Local Game",
-                                 gametype, hiddenMines, startDelay,
-                                 timeLen, gameFrontName, 0, FALSE);
-        printf("[WASM] clientLoadCompressedMap returned %s\n", mapOk ? "TRUE" : "FALSE");
-        if (!mapOk) {
-          printf("[WASM] Map load failed; humanSim has been destroyed by clientLoadCompressedMap\n");
-          wasmTransportActive = FALSE;
-          free(wasmServerSim);
-          wasmServerSim = NULL;
-          return FALSE;
-        }
-      } else {
-        printf("[WASM] serverSimGetCompressedMap returned no data\n");
-        clientSimDisconnect(humanSim);
-        wasmTransportActive = FALSE;
+      ServerInstanceConfig cfg;
+      memset(&cfg, 0, sizeof(cfg));
+      cfg.skipLobby = true;
+      if (!serverInstanceStartup(wasmServerSim, &cfg)) {
+        printf("[WASM] serverInstanceStartup failed\n");
         free(wasmServerSim);
         wasmServerSim = NULL;
         clientSimDestroy(humanSim);
@@ -514,36 +417,22 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       }
     }
 
-    /* Sync initial snapshot */
-    {
-      SnapshotHeader snapHdr;
-      TankSnapshot snapTanks[MAX_TANKS];
-      ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-      TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
-      BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
-      PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
-      GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-      serverSimBuildSnapshot(wasmServerSim, 0, &snapHdr,
-                             snapTanks, MAX_TANKS,
-                             snapShells, MAX_SNAPSHOT_SHELLS,
-                             snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                             snapBases, MAX_SNAPSHOT_BASES,
-                             snapPills, MAX_SNAPSHOT_PILLS,
-                             snapEvents, MAX_SNAPSHOT_EVENTS,
-                             false);
-      clientSimSyncFromSnapshot(humanSim, &snapHdr, snapTanks, snapHdr.tankCount,
-                             snapShells, snapHdr.shellCount,
-                             snapTkExplosions, snapHdr.tkExplosionCount,
-                             snapBases, snapHdr.baseCount,
-                             snapPills, snapHdr.pillCount,
-                             snapEvents, snapHdr.reliableEventCount, 0);
+    /* Run the 12-step join+install in one call. */
+    if (!clientSimConnectLocal(humanSim, wasmServerSim,
+                               gameFrontName, "", 0, 0)) {
+      printf("[WASM] clientSimConnectLocal failed: %s\n",
+             clientSimGetConnectErrorReason(humanSim));
+      free(wasmServerSim);
+      wasmServerSim = NULL;
+      clientSimDestroy(humanSim);
+      return FALSE;
     }
+    wasmTransportActive = TRUE;
+    wasmPlayerNum = 0;
     clientSimNetSetupTankGo(humanSim);
-    /* Register the WASM client as a control-event subscriber. Placed
-     * after clientLoadCompressedMap (which calls clientSimCreate) so
-     * humanSim->myPlayerNum is initialized to 0 — matching the SP
-     * slot — before sync's self-skip runs. */
-    wasmControlSub = serverSimRegisterClientSubscriber(wasmServerSim, humanSim);
+    /* Phase 2: connect registers the auto-subscriber. Clear the
+     * legacy handle so the teardown path's unregister is a no-op. */
+    wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
     printf("[WASM] Single-player ServerSim ready\n");
   }
 
@@ -569,7 +458,6 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   brainsHandlerShutdown();
   if (wasmTransportActive) {
     if (wasmServerSim != NULL) {
-      serverSimDestroyBots(wasmServerSim);
       serverSimUnregisterSubscriber(wasmServerSim, wasmControlSub);
       wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
       serverSimDestroy(wasmServerSim);
@@ -690,7 +578,6 @@ bool gameFrontGetWinbolonetUse(void) {
   return gameFrontWbnUse;
 }
 
-bool gameFrontLoadDeferredMap(ClientSim **cs)  { (void)cs; return FALSE; }
 void gameFrontGetBotOptions(int *count, char *brainPath, size_t brainPathSize) {
   *count = 0; brainPath[0] = '\0'; (void)brainPathSize;
 }
