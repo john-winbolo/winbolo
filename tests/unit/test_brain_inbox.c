@@ -118,7 +118,7 @@ int run_brain_inbox_overflow_drops_oldest(void) {
     for (int i = 0; i < total; i++) {
         char pbuf[BRAIN_INBOX_MSG_LEN];
         char body[32];
-        SDL_snprintf(body, sizeof(body), "msg-%d", i);
+        snprintf(body, sizeof(body), "msg-%d", i);
         pascalize(body, pbuf);
         messageInboxPush(&ms, (BYTE)(i % 16), pbuf);
     }
@@ -139,7 +139,7 @@ int run_brain_inbox_overflow_drops_oldest(void) {
     messageInboxPeek(&ms, BRAIN_INBOX_CAP - 1, pbuf);
     depascalize(pbuf, body);
     char expectedLast[32];
-    SDL_snprintf(expectedLast, sizeof(expectedLast), "msg-%d", total - 1);
+    snprintf(expectedLast, sizeof(expectedLast), "msg-%d", total - 1);
     UT_ASSERT_MSG(strcmp(body, expectedLast) == 0,
                   "newest should be %s, got \"%s\"", expectedLast, body);
 
