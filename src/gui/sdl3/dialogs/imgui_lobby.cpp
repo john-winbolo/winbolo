@@ -5471,6 +5471,48 @@ static void renderGameSettingsPanel(ClientSim *cs,
 #endif
 }
 
+/* Render the lobby chat InputText + Send button pair, with the
+ * 2-frame refocus-after-send and nav-highlight suppression logic
+ * shared between the chat tab and the in-game lobby chat panel.
+ * SetKeyboardFocusHere(0) is issued before the InputText (targeting
+ * the next widget) rather than SetKeyboardFocusHere(-1) after the
+ * Send button (which would target Send, not the input). The 2-frame
+ * counter survives ImGui's internal InputText deactivation on Enter,
+ * which stomps a single-frame focus request. */
+static void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
+                                        BYTE myPlayerNum, bool hasTransport,
+                                        float s) {
+    float btnW = 60.0f * s;
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - btnW - 8.0f);
+    if (s_chatRefocusFrames > 0) {
+        ImGui::SetKeyboardFocusHere(0);
+        s_chatRefocusFrames--;
+    }
+    if (s_chatHideNav)
+        ImGui::GetCurrentWindow()->DC.NavHideHighlightOneFrame = true;
+    bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
+                                         ImGuiInputTextFlags_EnterReturnsTrue);
+    if (s_chatHideNav) {
+        ImGui::GetCurrentContext()->NavCursorVisible = false;
+        if (ImGui::IsItemActive()) s_chatHideNav = false;
+    }
+    ImGui::SameLine();
+    bool chatEmpty = (chatInput[0] == '\0');
+    if (chatEmpty) ImGui::BeginDisabled();
+    bool sendClicked = ImGui::Button(langGetText(STR_DLGMSG_BUTTON), ImVec2(btnW, 0));
+    if (chatEmpty) ImGui::EndDisabled();
+    if ((sendClicked || enterPressed) && !chatEmpty && hasTransport) {
+        clientSimNetSendChat(cs, 0xFF, chatInput);
+        const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
+        const char *myName = (mySlot && mySlot->connected)
+            ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
+        clientSimAppendLobbyChat(cs, myName, chatInput);
+        chatInput[0] = '\0';
+        s_chatRefocusFrames = 2;
+        s_chatHideNav = true;
+    }
+}
+
 extern "C" int imguiLobbyShow(ClientSim *cs) {
     WB_LOG_INFO(WB_LOG_CAT_GUI, "[LOBBY] imguiLobbyShow called cs=%p inLobby=%d netStat=%d isSP=%d",
             (void*)cs, cs ? (int)clientSimIsInLobby(cs) : -1, cs ? (int)clientSimGetNetStatus(cs) : -1,
@@ -6353,38 +6395,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         }
                         ImGui::EndChild();
 
-                        {
-                            float btnW = 60.0f * s;
-                            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - btnW - 8.0f);
-                            if (s_chatRefocusFrames > 0) {
-                                ImGui::SetKeyboardFocusHere(0);
-                                s_chatRefocusFrames--;
-                            }
-                            if (s_chatHideNav)
-                                ImGui::GetCurrentWindow()->DC.NavHideHighlightOneFrame = true;
-                            bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
-                                                                  ImGuiInputTextFlags_EnterReturnsTrue);
-                            if (s_chatHideNav) {
-                                ImGui::GetCurrentContext()->NavCursorVisible = false;
-                                if (ImGui::IsItemActive()) s_chatHideNav = false;
-                            }
-                            ImGui::SameLine();
-                            bool chatEmpty = (chatInput[0] == '\0');
-                            if (chatEmpty) ImGui::BeginDisabled();
-                            bool sendClicked = ImGui::Button(langGetText(STR_DLGMSG_BUTTON), ImVec2(btnW, 0));
-                            if (chatEmpty) ImGui::EndDisabled();
-                            if ((sendClicked || enterPressed) &&
-                                !chatEmpty && hasTransport) {
-                                clientSimNetSendChat(cs, 0xFF, chatInput);
-                                const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
-                                const char *myName = (mySlot && mySlot->connected)
-                                    ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
-                                clientSimAppendLobbyChat(cs, myName, chatInput);
-                                chatInput[0] = '\0';
-                                s_chatRefocusFrames = 2;
-                                s_chatHideNav = true;
-                            }
-                        }
+                        lobbyRenderChatInputAndSend(cs, chatInput, myPlayerNum, hasTransport, s);
 
                         ImGui::EndTabItem();
                     }
@@ -6710,38 +6721,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
                 ImGui::EndChild();
             }
-            {
-                float btnW = 60.0f * s;
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - btnW - 8.0f);
-                if (s_chatRefocusFrames > 0) {
-                    ImGui::SetKeyboardFocusHere(0);
-                    s_chatRefocusFrames--;
-                }
-                if (s_chatHideNav)
-                    ImGui::GetCurrentWindow()->DC.NavHideHighlightOneFrame = true;
-                bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
-                                                      ImGuiInputTextFlags_EnterReturnsTrue);
-                if (s_chatHideNav) {
-                    ImGui::GetCurrentContext()->NavCursorVisible = false;
-                    if (ImGui::IsItemActive()) s_chatHideNav = false;
-                }
-                ImGui::SameLine();
-                bool chatEmpty = (chatInput[0] == '\0');
-                if (chatEmpty) ImGui::BeginDisabled();
-                bool sendClicked = ImGui::Button(langGetText(STR_DLGMSG_BUTTON), ImVec2(btnW, 0));
-                if (chatEmpty) ImGui::EndDisabled();
-                if ((sendClicked || enterPressed) &&
-                    !chatEmpty && hasTransport) {
-                    clientSimNetSendChat(cs, 0xFF, chatInput);
-                    const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
-                    const char *myName = (mySlot && mySlot->connected)
-                        ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
-                    clientSimAppendLobbyChat(cs, myName, chatInput);
-                    chatInput[0] = '\0';
-                    s_chatRefocusFrames = 2;
-                    s_chatHideNav = true;
-                }
-            }
+            lobbyRenderChatInputAndSend(cs, chatInput, myPlayerNum, hasTransport, s);
             ImGui::EndChild();
             /* Record chat block rect for the map-chooser scrim. Use the
              * stored cursor position (chatBlockCursor) plus the panel's
