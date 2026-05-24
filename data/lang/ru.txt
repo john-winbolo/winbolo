@@ -1307,3 +1307,11 @@ STR_DLGLOBBY_SERVERDISP_INTERNET=Интернет
 
 # Лобби — Подсказка значка соединения (1384)
 STR_DLGLOBBY_CONN_TEST_TIP=Тест выполняется
+
+# In-game votes
+STR_VOTE_BACK_TO_LOBBY=Голосование: Вернуться в лобби
+STR_VOTE_SURRENDER=Голосование: Сдаться
+STR_VOTE_DRAW_TAG= (Ничья)
+STR_VOTE_NEEDS_RUNNING_TIP=Доступно после начала игры.
+STR_VOTE_SURRENDER_PICK_TEAM_TIP=Выберите команду перед голосованием о сдаче.
+STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Сдача доступна только когда остаётся ровно две команды\nс живыми игроками.

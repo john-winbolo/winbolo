@@ -36,6 +36,7 @@
 #include "game_sim.h"
 #include "geolookup.h"
 #include "server_sim.h"
+#include "server_sim_internal.h" /* serverSimGameVoteToggle — T2 (sim co-owner) */
 #include "server_lifecycle.h"
 #include "control_event.h"
 #include "lobby_bot_pools.h"

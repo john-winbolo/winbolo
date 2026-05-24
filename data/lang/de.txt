@@ -1309,3 +1309,11 @@ STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
 
 # Connectivity badge tooltip
 STR_DLGLOBBY_CONN_TEST_TIP=Test läuft
+
+# In-game votes
+STR_VOTE_BACK_TO_LOBBY=Abstimmung: Zurück zur Lobby
+STR_VOTE_SURRENDER=Abstimmung: Aufgeben
+STR_VOTE_DRAW_TAG= (Unentschieden)
+STR_VOTE_NEEDS_RUNNING_TIP=Verfügbar, sobald das Spiel läuft.
+STR_VOTE_SURRENDER_PICK_TEAM_TIP=Wähle ein Team, bevor du über die Aufgabe abstimmst.
+STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Aufgeben ist nur verfügbar, wenn genau zwei Teams\nmit menschlichen Spielern verbleiben.

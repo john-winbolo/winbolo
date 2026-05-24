@@ -1309,3 +1309,11 @@ STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
 # Lobby — badge de connectivité
 STR_DLGLOBBY_CONN_TEST_TIP=Test en cours
 STR_DLGNEWS_COMMENTS_FMT=Commentaires : {number}
+
+# In-game votes
+STR_VOTE_BACK_TO_LOBBY=Vote : Retour au lobby
+STR_VOTE_SURRENDER=Vote : Abandonner
+STR_VOTE_DRAW_TAG= (Nul)
+STR_VOTE_NEEDS_RUNNING_TIP=Disponible une fois la partie lancée.
+STR_VOTE_SURRENDER_PICK_TEAM_TIP=Choisissez une équipe avant de voter pour l'abandon.
+STR_VOTE_SURRENDER_TWO_TEAMS_TIP=L'abandon n'est disponible que lorsqu'il reste exactement deux équipes\navec des joueurs humains.

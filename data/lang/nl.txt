@@ -1309,3 +1309,11 @@ STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
 
 # Connectivity badge tooltip
 STR_DLGLOBBY_CONN_TEST_TIP=Test bezig
+
+# In-game votes
+STR_VOTE_BACK_TO_LOBBY=Stemmen: Terug naar lobby
+STR_VOTE_SURRENDER=Stemmen: Overgeven
+STR_VOTE_DRAW_TAG= (Gelijkspel)
+STR_VOTE_NEEDS_RUNNING_TIP=Beschikbaar zodra het spel bezig is.
+STR_VOTE_SURRENDER_PICK_TEAM_TIP=Kies een team voordat je stemt om over te geven.
+STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Overgeven is alleen beschikbaar als er precies twee teams\nmet menselijke spelers over zijn.

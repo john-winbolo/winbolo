@@ -1309,3 +1309,11 @@ STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
 
 # Lobby — Connectivity badge tooltip (1384)
 STR_DLGLOBBY_CONN_TEST_TIP=Probíhá test
+
+# In-game votes
+STR_VOTE_BACK_TO_LOBBY=Hlasování: Vrátit se do lobby
+STR_VOTE_SURRENDER=Hlasování: Vzdát se
+STR_VOTE_DRAW_TAG= (Remíza)
+STR_VOTE_NEEDS_RUNNING_TIP=Dostupné po spuštění hry.
+STR_VOTE_SURRENDER_PICK_TEAM_TIP=Před hlasováním o kapitulaci vyberte tým.
+STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Vzdání je dostupné pouze tehdy, kdy zbývají právě dva týmy\ns lidskými hráči.

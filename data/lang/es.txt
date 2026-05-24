@@ -1309,3 +1309,11 @@ STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
 # Lobby — insignia de conectividad
 STR_DLGLOBBY_CONN_TEST_TIP=Prueba en curso
 STR_DLGNEWS_COMMENTS_FMT=Comentarios: {number}
+
+# In-game votes
+STR_VOTE_BACK_TO_LOBBY=Votar: Volver al lobby
+STR_VOTE_SURRENDER=Votar: Rendirse
+STR_VOTE_DRAW_TAG= (Empate)
+STR_VOTE_NEEDS_RUNNING_TIP=Disponible una vez que la partida esté en curso.
+STR_VOTE_SURRENDER_PICK_TEAM_TIP=Elige un equipo antes de votar para rendirse.
+STR_VOTE_SURRENDER_TWO_TEAMS_TIP=La rendición solo está disponible cuando quedan exactamente dos equipos\ncon jugadores humanos.
