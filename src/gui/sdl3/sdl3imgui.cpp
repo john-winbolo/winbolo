@@ -1273,19 +1273,10 @@ static void renderPlayersPanel(ClientSim *cs) {
             if (!teamSeen[t]) { teamSeen[t] = true; activeTeams++; }
         }
 
-        if (ImGui::Button("Vote: Return to lobby", ImVec2(-1, 0))) {
+        if (ImGui::Button(langGetText(STR_VOTE_BACK_TO_LOBBY), ImVec2(-1, 0))) {
             clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_BACK_TO_LOBBY,
                                            GAME_VOTE_TOGGLE_OPEN_ONLY);
             clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_BACK_TO_LOBBY, true);
-            /* SP / host dispatch — server is in-process. */
-            ServerSim *spSim = gameFrontGetServerSim();
-            if (spSim && !clientSimIsUdpTransport(cs)) {
-                threadsWaitForMutex();
-                serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
-                                        GAME_VOTE_KIND_BACK_TO_LOBBY,
-                                        GAME_VOTE_TOGGLE_OPEN_ONLY);
-                threadsReleaseMutex();
-            }
         }
 
         const ClientLobbySlot *meSlot =
@@ -1293,26 +1284,17 @@ static void renderPlayersPanel(ClientSim *cs) {
         bool meUnassigned = (meSlot && meSlot->teamNumber == 0);
         bool surrDisabled = (activeTeams != 2) || meUnassigned;
         if (surrDisabled) ImGui::BeginDisabled();
-        if (ImGui::Button("Vote: Surrender", ImVec2(-1, 0))) {
+        if (ImGui::Button(langGetText(STR_VOTE_SURRENDER), ImVec2(-1, 0))) {
             clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_SURRENDER,
                                            GAME_VOTE_TOGGLE_OPEN_ONLY);
             clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_SURRENDER, true);
-            ServerSim *spSim = gameFrontGetServerSim();
-            if (spSim && !clientSimIsUdpTransport(cs)) {
-                threadsWaitForMutex();
-                serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
-                                        GAME_VOTE_KIND_SURRENDER,
-                                        GAME_VOTE_TOGGLE_OPEN_ONLY);
-                threadsReleaseMutex();
-            }
         }
         if (surrDisabled) ImGui::EndDisabled();
         if (surrDisabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
             if (meUnassigned) {
-                ImGui::SetTooltip("Pick a team before voting to surrender.");
+                ImGui::SetTooltip("%s", langGetText(STR_VOTE_SURRENDER_PICK_TEAM_TIP));
             } else {
-                ImGui::SetTooltip("Surrender is only available when exactly two teams\n"
-                            "with human players remain.");
+                ImGui::SetTooltip("%s", langGetText(STR_VOTE_SURRENDER_TWO_TEAMS_TIP));
             }
         }
     }
@@ -1657,15 +1639,19 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
                     200.0f, 140.0f, siblings, 1, 0.55f);
 
     /* Build the title — includes (Draw) tag for ranked manual
-     * back-to-lobby votes. */
+     * back-to-lobby votes. The ###id suffix is ImGui's internal
+     * window identifier and stays out of the localized portion. */
     char title[128];
     const char *kindName = (kind == GAME_VOTE_KIND_BACK_TO_LOBBY)
-                           ? "Lobby" : "Surrender";
+                           ? langGetText(STR_VOTE_BACK_TO_LOBBY)
+                           : langGetText(STR_VOTE_SURRENDER);
     bool drawTag = (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) &&
                    (snap->triggerSrc == GAME_VOTE_TRIGGER_MANUAL) &&
                    clientSimGetLobbyRanked(cs);
-    snprintf(title, sizeof(title), "Vote: %s%s###gamevote_%u",
-             kindName, drawTag ? " (Draw)" : "", (unsigned)kind);
+    snprintf(title, sizeof(title), "%s%s###gamevote_%u",
+             kindName,
+             drawTag ? langGetText(STR_VOTE_DRAW_TAG) : "",
+             (unsigned)kind);
 
     bool open = true;
     if (!ImGui::Begin(title, &open,
@@ -1783,26 +1769,14 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
         (void)myAns;
 
         if (myYes) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.6f, 0.0f, 1.0f));
-        if (ImGui::Button("Yes", ImVec2(80, 0))) {
+        if (ImGui::Button(langGetText(STR_YES), ImVec2(80, 0))) {
             clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_YES);
-            ServerSim *spSim = gameFrontGetServerSim();
-            if (spSim && !clientSimIsUdpTransport(cs)) {
-                threadsWaitForMutex();
-                serverSimGameVoteToggle(spSim, me, kind, GAME_VOTE_TOGGLE_YES);
-                threadsReleaseMutex();
-            }
         }
         if (myYes) ImGui::PopStyleColor();
 
         ImGui::SameLine();
-        if (ImGui::Button("No", ImVec2(80, 0))) {
+        if (ImGui::Button(langGetText(STR_NO), ImVec2(80, 0))) {
             clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_NO);
-            ServerSim *spSim = gameFrontGetServerSim();
-            if (spSim && !clientSimIsUdpTransport(cs)) {
-                threadsWaitForMutex();
-                serverSimGameVoteToggle(spSim, me, kind, GAME_VOTE_TOGGLE_NO);
-                threadsReleaseMutex();
-            }
         }
     }
 
@@ -2554,49 +2528,31 @@ static void renderMenuBar(ClientSim *cs) {
                 }
             }
 
-            if (ImGui::MenuItem("Vote: Return to lobby", nullptr, false, running)) {
+            if (ImGui::MenuItem(langGetText(STR_VOTE_BACK_TO_LOBBY), nullptr, false, running)) {
                 clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_BACK_TO_LOBBY,
                                                GAME_VOTE_TOGGLE_OPEN_ONLY);
                 clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_BACK_TO_LOBBY, true);
-                ServerSim *spSim = gameFrontGetServerSim();
-                if (spSim && !clientSimIsUdpTransport(cs)) {
-                    threadsWaitForMutex();
-                    serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
-                                            GAME_VOTE_KIND_BACK_TO_LOBBY,
-                                            GAME_VOTE_TOGGLE_OPEN_ONLY);
-                    threadsReleaseMutex();
-                }
             }
             if (!running && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Available once the game is running.");
+                ImGui::SetTooltip("%s", langGetText(STR_VOTE_NEEDS_RUNNING_TIP));
             }
 
             const ClientLobbySlot *meSlot =
                 clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
             bool meUnassigned = (meSlot && meSlot->teamNumber == 0);
             bool surrEnabled = running && (activeTeams == 2) && !meUnassigned;
-            if (ImGui::MenuItem("Vote: Surrender", nullptr, false, surrEnabled)) {
+            if (ImGui::MenuItem(langGetText(STR_VOTE_SURRENDER), nullptr, false, surrEnabled)) {
                 clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_SURRENDER,
                                                GAME_VOTE_TOGGLE_OPEN_ONLY);
                 clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_SURRENDER, true);
-                ServerSim *spSim = gameFrontGetServerSim();
-                if (spSim && !clientSimIsUdpTransport(cs)) {
-                    threadsWaitForMutex();
-                    serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
-                                            GAME_VOTE_KIND_SURRENDER,
-                                            GAME_VOTE_TOGGLE_OPEN_ONLY);
-                    threadsReleaseMutex();
-                }
             }
             if (!surrEnabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 if (!running) {
-                    ImGui::SetTooltip("Available once the game is running.");
+                    ImGui::SetTooltip("%s", langGetText(STR_VOTE_NEEDS_RUNNING_TIP));
                 } else if (meUnassigned) {
-                    ImGui::SetTooltip("Pick a team before voting to surrender.");
+                    ImGui::SetTooltip("%s", langGetText(STR_VOTE_SURRENDER_PICK_TEAM_TIP));
                 } else {
-                    ImGui::SetTooltip(
-                        "Surrender is only available when exactly two teams\n"
-                        "with human players remain.");
+                    ImGui::SetTooltip("%s", langGetText(STR_VOTE_SURRENDER_TWO_TEAMS_TIP));
                 }
             }
         }

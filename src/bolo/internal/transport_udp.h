@@ -276,11 +276,6 @@ void transportUdpClientSendBalanceDismiss(Transport *t);
 /* Toggle map skip vote (server identifies player by source address). */
 void transportUdpClientSendMapSkipVote(Transport *t);
 
-/* Send a PACKET_GAME_VOTE_TOGGLE. kind is GAME_VOTE_KIND_*,
- * toggleMode is GAME_VOTE_TOGGLE_* (NO / YES / OPEN_ONLY). */
-void transportUdpClientSendGameVoteToggle(Transport *t,
-                                          uint8_t kind, uint8_t toggleMode);
-
 /* Returns the server's reject reason string after a failed join.
  * Returns NULL if no reject reason is available. */
 const char *transportUdpClientGetJoinRejectReason(Transport *t);

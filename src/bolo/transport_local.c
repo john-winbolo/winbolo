@@ -32,6 +32,7 @@
 #include "global.h"
 #include "transport.h"
 #include "server_sim.h"
+#include "server_sim_internal.h" /* serverSimGameVoteToggle — T2 (sim co-owner) */
 #include "client_sim.h"  /* clientSimSyncFromSnapshot — per-tick snapshot apply */
 #include "control_event.h" /* ControlEvent + CTRL_CHAT — local sendBytes publishes directly */
 #include "netpacks.h"    /* PACKET_HEADER_SIZE, PACKET_CHAT_MESSAGE, etc. */
@@ -258,14 +259,28 @@ static void localSendBytes(void *ctx, const uint8_t *buf, size_t len) {
             }
             break;
         }
+        case PACKET_GAME_VOTE_TOGGLE: {
+            /* [header 8][kind 1][toggleMode 1] — mirrors the UDP-side
+             * case in transport_udp_server.c. The UDP path runs a
+             * per-client cooldown (clientReqCooldownTicks); local SP
+             * host is rate-limited by the user's own clicks so the
+             * cooldown is unnecessary here. */
+            if (len >= PACKET_HEADER_SIZE + 2) {
+                uint8_t kind   = buf[PACKET_HEADER_SIZE + 0];
+                uint8_t toggle = buf[PACKET_HEADER_SIZE + 1];
+                serverSimGameVoteToggle(lctx->sim, lctx->playerNum,
+                                        kind, toggle);
+            }
+            break;
+        }
         default:
             /* Other client→server packet types (NAME_CHANGE, TEAM_SET,
-             * READY, LOCK_TOGGLE, VOTE_TOGGLE, SURRENDER_VOTE, etc.)
-             * are not yet wired through the local-transport dispatch.
-             * Their client_net.h wrappers still UDP-gate, so the
-             * bot-pool and SP-host paths don't exercise them. As
-             * features that need bot participation come online, mirror
-             * the matching serverProcessPacket case here. */
+             * READY, LOCK_TOGGLE, SURRENDER_VOTE, etc.) are not yet
+             * wired through the local-transport dispatch. Their
+             * client_net.h wrappers still UDP-gate, so the bot-pool
+             * and SP-host paths don't exercise them. As features that
+             * need bot participation come online, mirror the matching
+             * serverProcessPacket case here. */
             break;
     }
 }

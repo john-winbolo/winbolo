@@ -252,4 +252,13 @@ struct ServerSim {
 BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
                    ServerSim_sim_must_be_first_member);
 
+/* Server-side handler for PACKET_GAME_VOTE_TOGGLE. T2 because the only
+ * legitimate callers are the two transport-layer dispatch sites — the
+ * UDP wire handler (src/server/transport_udp_server.c) and the
+ * in-process local-transport handler (src/bolo/transport_local.c).
+ * GUI code reaches it indirectly via clientSimNetSendGameVoteToggle on
+ * the T1 surface. */
+void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
+                             uint8_t kind, uint8_t toggleMode);
+
 #endif /* SERVER_SIM_INTERNAL_H */

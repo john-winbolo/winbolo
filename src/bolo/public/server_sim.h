@@ -964,15 +964,17 @@ void serverSimMapSkipVotesReset(ServerSim *sim);
  *    transport layer. It handles per-second heartbeats, the 60s
  *    timeout, the post-pass 3/2/1 chat countdown, and the
  *    base-monopoly auto-trigger.
- *  - serverSimGameVoteToggle handles incoming PACKET_GAME_VOTE_TOGGLE.
+ *  - serverSimGameVoteToggle (declared in server_sim_internal.h)
+ *    handles incoming PACKET_GAME_VOTE_TOGGLE. Callers are the wire
+ *    handler in transport_udp_server.c and the in-process handler in
+ *    transport_local.c — both sim co-owners; clients reach it through
+ *    clientSimNetSendGameVoteToggle.
  *  - serverSimGameVoteResetAll clears all in-flight votes (called on
  *    game start / lobby return).
  *  - serverSimCountActiveTeams returns true iff there is exactly one
  *    active team count value, populated into outActiveTeamCount.
  *********************************************************/
 void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs);
-void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
-                             uint8_t kind, uint8_t toggleMode);
 void serverSimGameVoteResetAll(ServerSim *sim);
 bool serverSimGameVoteIsRunning(const ServerSim *sim, uint8_t kind);
 uint8_t serverSimCountActiveTeams(const ServerSim *sim);

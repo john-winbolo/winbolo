@@ -2570,20 +2570,6 @@ void transportUdpClientSendMapSkipVote(Transport *t) {
     udpClientSendTo(c, buf, sizeof(buf));
 }
 
-void transportUdpClientSendGameVoteToggle(Transport *t,
-                                          uint8_t kind, uint8_t toggleMode) {
-    if (!t) return;
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_GAME_VOTE_TOGGLE, c->outSequence++);
-    buf[PACKET_HEADER_SIZE + 0] = kind;
-    buf[PACKET_HEADER_SIZE + 1] = toggleMode;
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
 /* ── Layout A lobby commands — Client → Server ───────────────────── */
 
 void transportUdpClientSendLobbySetting(Transport *t,
