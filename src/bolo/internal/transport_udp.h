@@ -162,10 +162,9 @@ void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
  * newName: the desired new player name. */
 void transportUdpClientSendNameChange(Transport *t, const char *newName);
 
-/* Alliance operations */
-void transportUdpClientSendAllianceRequest(Transport *t, uint8_t toPlayer);
-void transportUdpClientSendAllianceAccept(Transport *t, uint8_t toPlayer);
-void transportUdpClientSendAllianceLeave(Transport *t);
+/* Alliance ops go through clientSimNetSendAlliance{Request,Accept,Leave}
+ * → transport->sendBytes now — the per-transport sendAlliance* helpers
+ * are gone (same pattern as the chat helper). */
 
 /* Send a lock toggle to the server.
  * allow: TRUE = allow new players, FALSE = disallow. */

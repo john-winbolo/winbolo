@@ -2415,48 +2415,6 @@ void transportUdpClientSendNameChange(Transport *t, const char *newName) {
     udpClientSendTo(c, buf, sizeof(buf));
 }
 
-/* Send an alliance request to another player via server.
- * Wire: [header 8] [fromPlayer 1] [toPlayer 1] */
-void transportUdpClientSendAllianceRequest(Transport *t, uint8_t toPlayer) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_ALLIANCE_REQUEST, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = c->playerNum;
-    buf[PACKET_HEADER_SIZE + 1] = toPlayer;
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-/* Send an alliance accept to server.
- * Wire: [header 8] [fromPlayer 1] [toPlayer 1]
- * fromPlayer = us (the accepter), toPlayer = who requested */
-void transportUdpClientSendAllianceAccept(Transport *t, uint8_t toPlayer) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_ALLIANCE_ACCEPT, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = c->playerNum;
-    buf[PACKET_HEADER_SIZE + 1] = toPlayer;
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-/* Send a leave alliance request to server.
- * Wire: [header 8] [playerNum 1] */
-void transportUdpClientSendAllianceLeave(Transport *t) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_ALLIANCE_LEAVE, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = c->playerNum;
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
 /* Send a lock toggle to the server.
  * Wire: [header 8] [allow 1] */
 void transportUdpClientSendLockToggle(Transport *t, bool allow) {

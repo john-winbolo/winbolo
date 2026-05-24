@@ -36,6 +36,7 @@
 #include "control_event.h" /* ControlEvent + CTRL_CHAT — local sendBytes publishes directly */
 #include "netpacks.h"    /* PACKET_HEADER_SIZE, PACKET_CHAT_MESSAGE, etc. */
 #include "wire_limits.h" /* PACKET_MAX_CHAT_MESSAGE */
+#include "log.h"         /* logAddEvent — replay-log parity with UDP server handlers */
 /* The passive variant is driven from a different thread than the one that
  * ticks ServerSim, so it self-serialises on the server's threadsMutex. */
 #include "../server/threads.h"
@@ -212,15 +213,59 @@ static void localSendBytes(void *ctx, const uint8_t *buf, size_t len) {
             }
             break;
         }
+        case PACKET_ALLIANCE_REQUEST: {
+            /* [header 8][fromPlayer 1][toPlayer 1] — fromPlayer byte
+             * on the wire is informational; we use lctx->playerNum as
+             * the authoritative sender just like the UDP server uses
+             * serverFindClient(fromAddr). Mirrors the request case in
+             * transport_udp_server.c (ranked-mode block, publish
+             * CTRL_ALLIANCE_REQUEST, log_AllyRequest). The toPlayer-
+             * connected check the UDP path does is UDP-table state
+             * (udpServer.clients[].connected); for local we just
+             * range-check the slot. */
+            if (serverSimGetRanked(lctx->sim)) break;
+            if (len >= PACKET_HEADER_SIZE + 2) {
+                BYTE toPlayer = buf[PACKET_HEADER_SIZE + 1];
+                if (toPlayer < MAX_TANKS) {
+                    ControlEvent evt;
+                    memset(&evt, 0, sizeof(evt));
+                    evt.type = CTRL_ALLIANCE_REQUEST;
+                    evt.u.allianceRequest.fromPlayer = lctx->playerNum;
+                    evt.u.allianceRequest.toPlayer   = toPlayer;
+                    serverSimPublishControl(lctx->sim, &evt);
+                    logAddEvent(log_AllyRequest, lctx->playerNum, toPlayer,
+                                0, 0, 0, NULL);
+                }
+            }
+            break;
+        }
+        case PACKET_ALLIANCE_ACCEPT: {
+            /* [header 8][fromPlayer 1][toPlayer 1] — accepter is us
+             * (lctx->playerNum); newMember = buf[+1]. T1 entry handles
+             * both the alliance mutation and the WBN + log side
+             * effects, so this case stays a one-liner. */
+            if (len >= PACKET_HEADER_SIZE + 2) {
+                BYTE newMember = buf[PACKET_HEADER_SIZE + 1];
+                serverSimAcceptAlliance(lctx->sim, lctx->playerNum, newMember);
+            }
+            break;
+        }
+        case PACKET_ALLIANCE_LEAVE: {
+            /* [header 8][playerNum 1] — leaver is always us. T1 entry
+             * handles mutation + WBN + log. */
+            if (len >= PACKET_HEADER_SIZE + 1) {
+                serverSimLeaveAlliance(lctx->sim, lctx->playerNum);
+            }
+            break;
+        }
         default:
-            /* Other client→server packet types (NAME_CHANGE,
-             * ALLIANCE_REQUEST, TEAM_SET, READY, VOTE_TOGGLE,
-             * SURRENDER_VOTE, etc.) are not yet wired through the
-             * local-transport dispatch. Their client_net.h wrappers
-             * still UDP-gate, so the bot-pool and SP-host paths
-             * don't exercise them. As features that need bot
-             * participation come online, mirror the matching
-             * serverProcessPacket case here. */
+            /* Other client→server packet types (NAME_CHANGE, TEAM_SET,
+             * READY, LOCK_TOGGLE, VOTE_TOGGLE, SURRENDER_VOTE, etc.)
+             * are not yet wired through the local-transport dispatch.
+             * Their client_net.h wrappers still UDP-gate, so the
+             * bot-pool and SP-host paths don't exercise them. As
+             * features that need bot participation come online, mirror
+             * the matching serverProcessPacket case here. */
             break;
     }
 }
