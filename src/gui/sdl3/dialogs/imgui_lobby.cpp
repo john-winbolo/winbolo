@@ -7146,14 +7146,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     }
     mapPreviewPopupDestroy();
 
-    /* Reset Choose-Map dialog visibility statics. These live at file
-     * scope so they survive across lobby invocations — a disconnect
-     * (or any other exit) while the chooser was open would otherwise
-     * leave s_chooseMapOpen=true and the next imguiLobbyShow would
-     * render the chooser on top of a freshly joined lobby. The
-     * MapChooserState instances themselves stay populated as caches
-     * (next open re-uses the discovered map list / preview view);
-     * only the visibility / focus / pending-action flags reset. The
+    /* Reset every file-scope flag that could render UI on the next
+     * imguiLobbyShow if a disconnect (or any other exit) caught the
+     * dialog mid-action. The MapChooserState instances themselves
+     * stay populated as caches (next open re-uses the discovered
+     * map list / preview view); the WBN HTTP caches stay too. Only
+     * the visibility / focus / pending-action flags reset. The
      * cached ClientSim pointer also clears since the lobby that
      * captured it is being torn down. */
     s_chooseMapOpen             = false;
@@ -7162,6 +7160,33 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     s_chooseMapWantCloseConfirm = false;
     s_chooseMapPreviewPending   = false;
     s_chooseMapCs               = NULL;
+
+    /* Kick-confirmation modal — same bug class as the chooser
+     * modal: a disconnect while the kick popup was up would leave
+     * s_kickPendingOpen=true and the next lobby would render the
+     * dialog over a fresh roster with a stale slot/name. */
+    s_kickPendingOpen = false;
+    s_kickPendingSlot = -1;
+    s_kickPendingName[0] = '\0';
+
+    /* Add-bot debounce — the in-flight gate that disables the Add Bot
+     * button until lobbyAddBotPending clears. If a click was in
+     * flight at exit, next lobby would briefly disable Add Bot for
+     * up to the debounce window. Plus the per-slot bot-name override
+     * flags, which mark slots whose names were edited mid-session
+     * and should not auto-rename when the team's naming pool
+     * changes; carrying them into a fresh lobby would block legitimate
+     * auto-renames on slots that the user never touched in this
+     * session. */
+    s_addBotSentMs        = 0;
+    s_addBotExpectedConn  = 0;
+    s_addBotFrame         = -1;
+    memset(s_botNameOverridden, 0, sizeof(s_botNameOverridden));
+
+    /* Cosmetic — whichever bot row had its AiConfig sub-row expanded
+     * is meaningless once we're in a different lobby. Reset so the
+     * next lobby starts with all rows collapsed. */
+    s_expandedBotSlot = -1;
 
     /* Dismiss soft keyboard and tear down ImGui */
     dialogDismissKeyboard(window);
