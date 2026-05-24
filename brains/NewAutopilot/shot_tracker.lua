@@ -285,6 +285,21 @@ function M.draw_overlay(tick)
                  0.22, 255, 0, 200, 180)
     end
   end
+  -- ── Color legend ──────────────────────────────────────────────────
+  -- One viz.hud_text row per marker so the user doesn't have to dig
+  -- through code to know what each color means.  Anchored top-right
+  -- so it doesn't fight with the kill_lgm / replan HUD on the left.
+  if viz.hud_text then
+    local x  = -10           -- right-anchored (negative = from right edge)
+    local y0 = 220           -- below the existing top-right HUD stack
+    local dy = 14
+    viz.hud_text("shot_tracker_viz", x, y0,             "shot_tracker:",            "topright", 220, 220, 220, 230)
+    viz.hud_text("shot_tracker_viz", x, y0 + dy * 1,    "● matched (engine-OK)",    "topright",   0, 255,   0, 230)
+    viz.hud_text("shot_tracker_viz", x, y0 + dy * 2,    "● predicted (unverified)", "topright",   0, 255, 255, 230)
+    viz.hud_text("shot_tracker_viz", x, y0 + dy * 3,    "● dead (sim diverged)",    "topright", 255,   0, 200, 230)
+    viz.hud_text("shot_tracker_viz", x, y0 + dy * 4,    "— trajectory line",        "topright",   0, 200, 220, 230)
+    viz.hud_text("shot_tracker_viz", x, y0 + dy * 5,    "✕ recorded crosshair",     "topright", 200, 200,   0, 230)
+  end
 end
 
 return M

@@ -1699,18 +1699,37 @@ function M.steer(state, world, info, goal)
     -- the firing block in init.lua to gate on aim_corr.
     local in_shooting_range = matched_elm and matched_elm.dist
                               and matched_elm.dist <= C.KILL_LGM_SHOOT_RANGE
+    state._kill_lgm_halt = false
     if in_shooting_range and matched_elm.predicted_wx then
       move_dir    = U.aim_at(info.tankx, info.tanky,
                               matched_elm.predicted_wx,
                               matched_elm.predicted_wy)
-      target_dist = U.wdist(info.tankx, info.tanky,
-                             matched_elm.predicted_wx,
-                             matched_elm.predicted_wy)
+      -- target_dist = 0 tells the throttle dispatcher we've arrived,
+      -- and the _kill_lgm_halt flag below makes it brake even when
+      -- the generic brake-when-close code would still let the tank
+      -- creep at ~20 wu/tick.  Combined: full stop, only the turn
+      -- keys fire so the tank rotates in place to aim.
+      target_dist = 0
       state._steer_lx = matched_elm.predicted_mx
       state._steer_ly = matched_elm.predicted_my
+      state._kill_lgm_halt = true
     else
-      -- Far / behind obstacles — path-find toward the predicted tile.
-      local nx, ny = cpf_path_to(state, info, target_mx, target_my)
+      -- Out of shooting range: drive to the ENGAGE SPOT (the closest
+      -- in-range boundary tile, computed live in refresh_kill_lgm),
+      -- not to the LGM tile itself.  The engage spot sits at the
+      -- maximum shooting distance from the LGM along whichever
+      -- approach is cheapest — bot stops naturally on arrival and
+      -- only needs to pivot + fire.  Pulled live from pool_cache[13]
+      -- since state.goal.shoot_mx is only refreshed on replans.
+      local engage_mx, engage_my = target_mx, target_my
+      local pc13 = state.pool_cache and state.pool_cache[13]
+      if pc13 and pc13.goal and pc13.goal.shoot_mx and pc13.goal.shoot_my then
+        engage_mx = pc13.goal.shoot_mx
+        engage_my = pc13.goal.shoot_my
+      end
+      state._kill_lgm_engage_mx = engage_mx
+      state._kill_lgm_engage_my = engage_my
+      local nx, ny = cpf_path_to(state, info, engage_mx, engage_my)
       if nx then
         local lx, ly = path_lookahead(state, info, nx, ny)
         state._steer_lx = lx
@@ -2363,6 +2382,13 @@ function M.steer(state, world, info, goal)
       keys = (keys & ~KEY_FASTER) | KEY_SLOWER
     elseif goal.kind == "escape_water" then
       keys = keys | KEY_FASTER
+    elseif state._kill_lgm_halt then
+      -- kill_lgm in shooting range: full stop, only the turn keys
+      -- above (set from move_dir aimed at the predicted LGM tile)
+      -- fire so the tank pivots in place to align the crosshair.
+      -- Init.lua's kill_lgm fire block handles the gunrange driver
+      -- + fire trigger.
+      if info.speed > 0 then keys = keys | KEY_SLOWER end
     elseif goal.kind == "attack_pill" and goal.substate == "approach" then
       -- BPC approach: navigate to standoff position, braking to stop exactly
       -- on it.  Uses distance to standoff (not pill) for braking calc.

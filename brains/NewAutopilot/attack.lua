@@ -1876,18 +1876,136 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
 end
 
 -- =========================================================================
--- evaluate_tank_standoff — find best engagement position around enemy tank
+-- evaluate_tank_standoff — find best engagement position around enemy tank.
 --
--- Same concept as evaluate_pill_difficulty but for tank combat:
--- sample 8 positions at TANK_COMBAT_STANDOFF_RANGE around the target,
--- score each for terrain, maneuver space (ellipse), crossfire from
--- hostile pills, and wall obstructions. Returns the best standoff
--- tile coordinates and score, plus the A* cost to reach it.
+-- Walks the Manhattan-distance==R boundary around the enemy tank
+-- (R = TANK_COMBAT_STANDOFF_RANGE), filters tiles that are impassable
+-- or wall-blocked LOS, and picks the cheapest reachable one from the
+-- tank-rooted Dijkstra slate (KIND_NORMAL).  Mirror of the kill_lgm
+-- engage-spot picker in goals.refresh_kill_lgm — same pattern,
+-- different range and target.
 --
--- Returns: best_mx, best_my, best_score, path_cost, shells_on_arrival
---          or nil if no valid standoff position found.
+-- Falls back to a geometric point on the direct line enemy→tank at
+-- distance R when the Dijkstra slate hasn't reached any boundary tile
+-- (cold start / unreachable).
+--
+-- See M.evaluate_tank_standoff_ring8 for the prior 8-position ring
+-- approach (preserved for reference, currently unused).
+--
+-- Returns: best_mx, best_my, best_score, path_cost, shells_on_arrival,
+--          scan_spots, best_deg, or nil if no valid standoff position.
 -- =========================================================================
 function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
+  local R = C.TANK_COMBAT_STANDOFF_RANGE
+  local boat = (info.inboat and 1) or 0
+  local best_cost = math.huge
+  local best_mx, best_my = nil, nil
+  local scan_spots = {}
+
+  -- Walk Manhattan boundary (|dx| + |dy| == R) around the enemy tank.
+  -- ~4*R tiles total (28 for R=7) — cheap.
+  for dx = -R, R do
+    local dy_abs = R - math.abs(dx)
+    local _ys = (dy_abs == 0) and { 0 } or { dy_abs, -dy_abs }
+    for _, dy in ipairs(_ys) do
+      local mx = et.mx + dx
+      local my = et.my + dy
+      if U.in_map(mx, my) then
+        local tt = U.ttype(mx, my)
+        local passable = (C.TERRAIN_COST_LAND[tt] or 9999) < 9999
+                         and not U.is_water(tt)
+        if passable then
+          -- Need clear LOS to the enemy tank from this position — a
+          -- walled-off engage spot is worthless.
+          local wall_hp = PF.wall_hp_between(mx, my, et.mx, et.my)
+          if wall_hp == 0 then
+            local c = cpf.smart_cost_dij_only(cpf.KIND_NORMAL, mx, my, boat)
+            scan_spots[#scan_spots + 1] = {
+              cx = mx + 0.5, cy = my + 0.5, mx = mx, my = my,
+              has_los = true, total_score = c or 99999,
+            }
+            if c and c < best_cost then
+              best_cost = c
+              best_mx, best_my = mx, my
+            end
+          else
+            scan_spots[#scan_spots + 1] = {
+              cx = mx + 0.5, cy = my + 0.5, mx = mx, my = my,
+              has_los = false, total_score = 999, reason = "wall_blocked",
+            }
+          end
+        else
+          scan_spots[#scan_spots + 1] = {
+            cx = mx + 0.5, cy = my + 0.5, mx = mx, my = my,
+            has_los = false, total_score = 999, reason = "impassable",
+          }
+        end
+      end
+    end
+  end
+
+  -- Geometric fallback: Dijkstra slate hasn't reached any boundary
+  -- tile yet (cold start / unreachable).  Pick the point on the
+  -- direct line enemy→tank at distance R so we still have a sensible
+  -- engage target.
+  if not best_mx then
+    local vdx = tmx - et.mx
+    local vdy = tmy - et.my
+    local vlen = math.sqrt(vdx * vdx + vdy * vdy)
+    if vlen > 0.5 then
+      best_mx = math.floor(et.mx + (vdx / vlen) * R + 0.5)
+      best_my = math.floor(et.my + (vdy / vlen) * R + 0.5)
+    else
+      best_mx, best_my = tmx, tmy
+    end
+    if best_mx < 0   then best_mx = 0   end
+    if best_mx > 255 then best_mx = 255 end
+    if best_my < 0   then best_my = 0   end
+    if best_my > 255 then best_my = 255 end
+    if not U.in_map(best_mx, best_my) then
+      return nil
+    end
+    best_cost = cpf.estimate_cost(tmx, tmy, best_mx, best_my, boat) * 0.1
+  end
+
+  local best_deg = math.deg(math.atan(best_mx - et.mx, -(best_my - et.my))) % 360
+  local shells_on_arrival = cpf.dijkstra_shells_at(cpf.KIND_NORMAL, best_mx, best_my)
+                         or cpf.astar_shells_at(best_mx, best_my)
+
+  if BRAIN_DEBUG_MODE then
+    print2(string.format("  attack_tank boundary-scan: enemy@(%d,%d) R=%d → standoff (%d,%d) dij=%.1f deg=%.0f",
+      et.mx, et.my, R, best_mx, best_my, best_cost, best_deg))
+  end
+
+  return best_mx, best_my, best_cost, best_cost, shells_on_arrival, scan_spots, best_deg
+end
+
+-- =========================================================================
+-- evaluate_tank_standoff_ring8 — LEGACY 8-position ring scoring (preserved
+-- for reference; not called from live code).
+--
+-- Samples 8 candidate tiles at TANK_COMBAT_STANDOFF_RANGE around the
+-- target (every 45°), scores each by terrain + maneuver-ellipse danger +
+-- crossfire + wall LOS, and returns the best one + its A* cost.  Same
+-- structure as evaluate_pill_difficulty.
+--
+-- We swapped to a Manhattan-boundary-scan version (see
+-- M.evaluate_tank_standoff below) that mirrors the kill_lgm engage-spot
+-- picker: walks every tile on the engage-range boundary and picks the
+-- one with the lowest Dijkstra cost.  Boundary scan trades the per-spot
+-- ellipse/crossfire scoring for far more position candidates (~28 vs 8)
+-- and shares the slate the steering layer already uses, so the chosen
+-- standoff is reachable by definition rather than being "best ring spot
+-- but maybe walled off."
+--
+-- Kept around in case we want to revisit the per-spot maneuver/crossfire
+-- scoring.  Safe to delete once the boundary-scan version has been in
+-- use for a while.
+--
+-- Returns: best_mx, best_my, best_score, path_cost, shells_on_arrival,
+--          scan_spots, best_deg, or nil if no valid standoff position.
+-- =========================================================================
+function M.evaluate_tank_standoff_ring8(et, tmx, tmy, info, world, state)
   if BRAIN_DEBUG_MODE then
     print2(string.format("attack_tank standoff: evaluating enemy@(%d,%d) from tank@(%d,%d) R=%d",
       et.mx, et.my, tmx, tmy, C.TANK_COMBAT_STANDOFF_RANGE))

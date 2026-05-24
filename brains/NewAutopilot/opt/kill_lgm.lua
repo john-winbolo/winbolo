@@ -90,63 +90,59 @@ function M.purge_stale(state, now)
 end
 
 -- --------------------------------------------------------------------------
--- M.sightlen_for(distance_wu) → integer sightLen in [2, 13]
+-- M.sightlen_for(distance_wu) → integer sightLen in [2, 14]
 --
 -- Returns the GUNSIGHT step that lands a shell closest to distance_wu.
--- Inverse of the shell-travel formula (256*sightLen - 192 wu).
--- Clamps to [2, 13] (engine limits min 2 max 14; 13 is the practical
--- integer max since GUNSIGHT_MAX is 13.875).
+-- sightLen is in HALF-TILES per the brain's convention (see GUNSIGHT_MAX
+-- comment in constants.lua: max=14 → 7 map tiles), so per-unit shell
+-- travel = 128 wu.  Inverse: sightLen = round(distance_wu / 128).
 -- --------------------------------------------------------------------------
 function M.sightlen_for(distance_wu)
-  local s = math.floor((distance_wu + 192) / 256 + 0.5)
+  local s = math.floor(distance_wu / 128 + 0.5)
   if s < 2  then return 2  end
-  if s > 13 then return 13 end
+  if s > 14 then return 14 end
   return s
 end
 
 -- --------------------------------------------------------------------------
 -- M.flight_ticks(sightLen) → ticks until shell explodes
 --
--- shellLifeTicks(len) = SHELL_LIFE * len - SHELL_START_ADD = 8*len - 6.
--- Used by the convergence loop to walk the LGM forward by the same
--- number of ticks the shell takes to arrive.
+-- Each sightLen unit of shell travel = 128 wu (½ tile, per the brain's
+-- half-tile sightLen convention).  At SHELL_SPEED ≈ 32 wu/tick effective,
+-- that's 4 ticks of flight per sightLen unit.
 -- --------------------------------------------------------------------------
 function M.flight_ticks(sightLen)
-  return 8 * sightLen - 6
+  return sightLen * 4
 end
 
 -- --------------------------------------------------------------------------
 -- M.predict_aim(tank_wx, tank_wy, lgm_wx, lgm_wy, vx, vy)
 --   → aim_wx, aim_wy, sightLen, flight_ticks, distance_wu
 --
--- Converges the lead-predict feedback loop:
---   T = flight_ticks(sightLen(D))
---   D' = wdist(tank, lgm + v*T)
--- repeat until |D' - D| < SPLASH_WU or MAX_ITERS hit.  Returns the
--- world-unit aim point + the integer sightLen we should drive crosshair
--- toward.  Cost: ~3 iters * a handful of FP ops + integer divs.
+-- Single-pass lead predictor (no convergence loop).  Computes the
+-- shell's flight time from current distance, projects the LGM along
+-- v_ema by that many ticks, returns the projected aim point + the
+-- sightLen needed to reach it.  Replaces the older 3-iter fixed-point
+-- version (archived in kill_lgm_convergence_DELETEME.lua).
 -- --------------------------------------------------------------------------
 function M.predict_aim(tank_wx, tank_wy, lgm_wx, lgm_wy, vx, vy)
   vx = vx or 0
   vy = vy or 0
-  local aim_wx, aim_wy = lgm_wx, lgm_wy
-  local D = math.abs(tank_wx - aim_wx) + math.abs(tank_wy - aim_wy)
+  local dx = tank_wx - lgm_wx
+  local dy = tank_wy - lgm_wy
+  local D = math.sqrt(dx * dx + dy * dy)
   local sightLen = M.sightlen_for(D)
   local T = M.flight_ticks(sightLen)
-  for _ = 1, MAX_ITERS do
-    local new_aim_wx = lgm_wx + vx * T
-    local new_aim_wy = lgm_wy + vy * T
-    local new_D = math.abs(tank_wx - new_aim_wx) + math.abs(tank_wy - new_aim_wy)
-    local new_sightLen = M.sightlen_for(new_D)
-    local new_T = M.flight_ticks(new_sightLen)
-    -- Converged: distance change below splash tolerance.
-    if math.abs(new_D - D) < SPLASH_WU then
-      aim_wx, aim_wy, sightLen, T = new_aim_wx, new_aim_wy, new_sightLen, new_T
-      break
-    end
-    aim_wx, aim_wy, sightLen, T, D = new_aim_wx, new_aim_wy, new_sightLen, new_T, new_D
-  end
-  return aim_wx, aim_wy, sightLen, T, D
+  local aim_wx = lgm_wx + vx * T
+  local aim_wy = lgm_wy + vy * T
+  -- Re-fit sightLen to the projected distance so the caller sees a
+  -- gun-range that actually lands on the lead point, not on the
+  -- current LGM tile.
+  local pdx = tank_wx - aim_wx
+  local pdy = tank_wy - aim_wy
+  local pD  = math.sqrt(pdx * pdx + pdy * pdy)
+  sightLen = M.sightlen_for(pD)
+  return aim_wx, aim_wy, sightLen, M.flight_ticks(sightLen), pD
 end
 
 -- --------------------------------------------------------------------------

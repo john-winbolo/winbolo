@@ -242,11 +242,21 @@ M.IDS = {
   kill_lgm_status = { short = "Kill-LGM status",
                       long  = "Per-LGM kill-evaluation labels (dist / aim corr / LOS clear-blocked / would-fire) plus a HUD summary line for the chosen target. Always shows when at least one hostile LGM is in view." },
 
+
   lgm_registry_hud = { short = "HUD: LGM registry",
                        long  = "Right-side HUD table with one row per known player_num's LGM state (status / tile / source / respawn countdown). Sourced from lgm_registry." },
 
   lgm_registry_map = { short = "LGM registry map markers",
                        long  = "Per-player tile rings on the map for every LGM the registry knows about: green=alive ally, red=alive enemy, gray=dead with respawn countdown. Skips self (covered by ally_lgm_marker / own-LGM overlay)." },
+
+  kill_lgm_engage  = { short = "Kill-LGM engage spot",
+                       long  = "Magenta ring on the chosen engage tile (the closest-reachable in-range boundary tile around the LGM, picked by refresh_kill_lgm) + a line from the tank to that tile. Shows where the bot is driving while out of range." },
+
+  test_lgm_target    = { short = "Test: LGM victim target",
+                         long  = "Cyan rect on the tile the victim bot's LGM is currently being dispatched to build. Test-harness only; only renders when the bot was flagged via BrainTest's -victim_ids <ids> CLI option (sets _BT_VICTIM=true)." },
+
+  test_victim_marker = { short = "Test: VICTIM marker",
+                         long  = "Big red VICTIM label + outline above the victim bot's own tank so it's instantly visible which bot is in test-victim mode (vs. the real attackers being tested). Renders whenever _BT_VICTIM is true (set by BrainTest's -victim_ids CLI flag)." },
 
   -- Tank combat standoff scan (attack_tank substate).
   tank_combat_standoff_scan = { short = "Tank combat standoff scan",

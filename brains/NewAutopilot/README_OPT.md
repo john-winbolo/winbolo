@@ -76,7 +76,13 @@ Authoring checklist:
 
 1. The block opens with exactly `if BRAIN_DEBUG_MODE then` (the
    stripper matches that prefix). Don't fold an existing condition in
-   front of it.
+   front of it, and the entire `if ... then` MUST be on a single line.
+   Multi-line compound conditions like
+   `if BRAIN_DEBUG_MODE and foo and bar then` (with `and bar then` on
+   line 2) break the stripper — it removes through the `then` on the
+   first line and leaves the `and bar then` dangling. If you need a
+   compound gate, nest as outer `if BRAIN_DEBUG_MODE then` with the
+   compound condition on an inner if.
 2. Initialize any field the non-debug path reads OUTSIDE the wrap. For
    example, `local cands = {}` then `if BRAIN_DEBUG_MODE then ...
    populate cands ... end` — readers see an empty table in `opt/`, not

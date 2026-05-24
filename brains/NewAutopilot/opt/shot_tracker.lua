@@ -276,6 +276,15 @@ function M.draw_overlay(tick)
     elseif tick and s.dead_tick and (tick - s.dead_tick) < 30 then
     end
   end
+  -- ── Color legend ──────────────────────────────────────────────────
+  -- One viz.hud_text row per marker so the user doesn't have to dig
+  -- through code to know what each color means.  Anchored top-right
+  -- so it doesn't fight with the kill_lgm / replan HUD on the left.
+  if viz.hud_text then
+    local x  = -10           -- right-anchored (negative = from right edge)
+    local y0 = 220           -- below the existing top-right HUD stack
+    local dy = 14
+  end
 end
 
 return M

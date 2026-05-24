@@ -1141,9 +1141,13 @@ function Brain.think(info)
       viz.hud_text("hud_resources", 10, y + 60, string.format("Speed  %d", info.speed), "bottomleft", 200, 200, 255)
       viz.hud_text("hud_resources", 10, y + 72, string.format("Boat   %s", info.inboat and "YES" or "no"),
         "bottomleft", info.inboat and 100 or 200, info.inboat and 200 or 200, 255)
-      -- Still draw crosshairs
+      -- Still draw crosshairs at the actual shell-landing distance.
+      -- sightLen is in half-tiles (see constants.lua GUNSIGHT_MAX
+      -- comment): shell travels sightLen/2 map tiles.  At max
+      -- gunrange=14 the shell lands 7 tiles away; at min gunrange=2
+      -- it lands 1 tile away.
       local twx, twy = info.tankx / 256.0, info.tanky / 256.0
-      local gun_range = 7.0
+      local gun_range = (info.gunrange or 14) / 2.0
       local aim_wx = twx + U.bsin_f(info.direction) * gun_range
       local aim_wy = twy - U.bcos_f(info.direction) * gun_range
       viz.line("tank_aim_marker", aim_wx - 0.3, aim_wy, aim_wx + 0.3, aim_wy, 255, 255, 0, 150)
@@ -2619,23 +2623,39 @@ function Brain.think(info)
     for _ in pairs(world.bases) do base_count = base_count + 1 end
     local new_base_appeared = base_count > (state.prev_known_base_count or 0)
     state.prev_known_base_count = base_count
+    -- Trigger a one-shot urgent replan the first tick a hostile LGM
+    -- appears in perception while our goal isn't already kill_lgm.
+    -- kill_lgm is HYST_EXEMPT and cheap (20 + dist*1.5), so it'll win
+    -- cost competition immediately on visible LGM — but only if the
+    -- replan actually fires. Without this trigger, pool_cache[13]
+    -- shows the win but state.goal stays at its old value (explore /
+    -- capture_base / attack_pill) until the next timer-fired replan,
+    -- which can be up to GOAL_REPLAN_INTERVAL ticks away — long
+    -- enough that the LGM has already retreated to its tank.
+    local enemy_lgm_count = (state.perc and state.perc.enemy_lgms)
+                            and #state.perc.enemy_lgms or 0
+    local lgm_appeared = enemy_lgm_count > 0
+                       and enemy_lgm_count > (state.prev_enemy_lgm_count or 0)
+                       and state.goal.kind ~= "kill_lgm"
+    state.prev_enemy_lgm_count = enemy_lgm_count
     local urgent_replan = state.goal.kind == "none" or attack_tank_done
                        or tank_appeared or dead_pill_appeared
-                       or new_base_appeared
+                       or new_base_appeared or lgm_appeared
     if urgent_replan then
       -- Record which factor(s) tripped the urgent replan so the HUD
       -- below can flash a banner that's visible for a few seconds.
       -- Most-specific reason wins when more than one is true.
       local reason
-      if tank_appeared        then reason = "TANK APPEARED"
+      if lgm_appeared           then reason = "LGM APPEARED"
+      elseif tank_appeared      then reason = "TANK APPEARED"
       elseif dead_pill_appeared then reason = "DEAD PILL"
       elseif new_base_appeared  then reason = "BASE DISCOVERED"
-      elseif attack_tank_done  then reason = "ATTACK_TANK DONE"
-      else                          reason = "GOAL=NONE"
+      elseif attack_tank_done   then reason = "ATTACK_TANK DONE"
+      else                           reason = "GOAL=NONE"
       end
       state._last_urgent_replan = { tick = now, reason = reason }
-      if BRAIN_DEBUG_MODE then print2(string.format("URGENT_REPLAN t=%d reason=%s goal=%s atk_done=%s tank_appeared=%s dead_pill=%s",
-        now, reason, state.goal.kind, tostring(attack_tank_done), tostring(tank_appeared), tostring(dead_pill_appeared))) end
+      if BRAIN_DEBUG_MODE then print2(string.format("URGENT_REPLAN t=%d reason=%s goal=%s atk_done=%s tank_appeared=%s dead_pill=%s lgm_appeared=%s",
+        now, reason, state.goal.kind, tostring(attack_tank_done), tostring(tank_appeared), tostring(dead_pill_appeared), tostring(lgm_appeared))) end
     end
 
     -- Refuel state machine.  Three independent flags computed here:
@@ -2900,7 +2920,8 @@ function Brain.think(info)
         new_goal = state.goal  -- swerve is never interrupted, not even by flee
       elseif engage_locked and new_goal.kind ~= "flee_to_base"
                              and new_goal.kind ~= "attack_tank"
-                             and new_goal.kind ~= "capture_pill" then
+                             and new_goal.kind ~= "capture_pill"
+                             and new_goal.kind ~= "kill_lgm" then
         new_goal = state.goal  -- keep current goal
       end
       -- Compare on (kind, mx, my, target_id). Without target_id in
@@ -3228,9 +3249,12 @@ function Brain.think(info)
   end
 
   -- Always-on crosshairs (drawn after steering so they show every tick)
-  -- Yellow crosshairs: ALWAYS on
+  -- Yellow crosshairs: ALWAYS on.  Position = actual shell-landing
+  -- distance.  sightLen is in half-tiles (GUNSIGHT_MAX = 14 → 7 tile
+  -- shot range), so shell travel in tiles = info.gunrange / 2.
   if BRAIN_DEBUG_MODE and viz.is_on("tank_aim_marker") then
-    local ax, ay = U.crosshair_at(info.tankx, info.tanky, info.direction, 7.0)
+    local ax, ay = U.crosshair_at(info.tankx, info.tanky, info.direction,
+                                   (info.gunrange or 14) / 2.0)
     local shooting = (keys & KEY_SHOOT) ~= 0
     local cg = shooting and 0 or 255
     viz.line("tank_aim_marker", ax - 0.3, ay, ax + 0.3, ay, 255, cg, 0, 150)
@@ -3540,7 +3564,13 @@ function Brain.think(info)
     state._kill_lgm_los = state._kill_lgm_los or {}
     local los_cache = state._kill_lgm_los
     for _, elm in ipairs(state.perc.enemy_lgms) do
-      local _ev = { mx = elm.mx, my = elm.my, dist = elm.dist,
+      -- Euclidean distance in tiles (was Manhattan).  The shoot-range
+      -- gate + status label both want true distance, not the
+      -- grid-walking estimate perception stamps via U.mdist.
+      local _ddx = (elm.wx - info.tankx) / 256.0
+      local _ddy = (elm.wy - info.tanky) / 256.0
+      local _ev = { mx = elm.mx, my = elm.my,
+                    dist = math.sqrt(_ddx * _ddx + _ddy * _ddy),
                     idnum = elm.idnum, vx = elm.vx or 0, vy = elm.vy or 0,
                     v_ema_x = elm.v_ema_x, v_ema_y = elm.v_ema_y,
                     target_sightLen = elm.target_sightLen,
@@ -3550,7 +3580,7 @@ function Brain.think(info)
         _ev.status = "in_boat"
       elseif _no_shells then
         _ev.status = "no_shells"
-      elseif elm.dist > C.KILL_LGM_SHOOT_RANGE then
+      elseif _ev.dist > C.KILL_LGM_SHOOT_RANGE then
         _ev.status = "out_of_range"
       else
         -- Use perception's lead-predicted aim point (EMA velocity +
@@ -3598,17 +3628,27 @@ function Brain.think(info)
             los_cache[cache_key] = { tick = now, blocked = los_blocked }
           end
           _ev.los_blocked = los_blocked
-          -- Range-alignment gate: don't fire unless the crosshair is
-          -- at (or within 1 of) the lead-predicted target sightLen.
-          -- The bot adjusts gunrange via KEY_MORERANGE/LESSRANGE one
-          -- step per tick, so a 1-step tolerance lets the fire trigger
-          -- within a tick of arriving on target rather than oscillating.
-          local sl_diff = target_sl and math.abs((info.gunrange or 14) - target_sl) or 99
-          _ev.gunrange     = info.gunrange
-          _ev.gunrange_off = sl_diff
+          -- Range-alignment gate: fire only when the shell will
+          -- physically land within splash (128 wu = ½ tile) of the
+          -- predicted LGM position.
+          --
+          -- Shell travel in wu = 128 * sightLen — sightLen is in
+          -- HALF-TILES per the brain's convention (see GUNSIGHT_MAX
+          -- comment in constants.lua: max sightLen=14 → 7 map tiles
+          -- of shell travel, so per-unit = 128 wu).
+          local cur_sl = info.gunrange or 14
+          local shell_travel_wu = 128 * cur_sl
+          local pred_dx = aim_wx - info.tankx
+          local pred_dy = aim_wy - info.tanky
+          local pred_dist_wu = math.sqrt(pred_dx * pred_dx + pred_dy * pred_dy)
+          local landing_offset = math.abs(shell_travel_wu - pred_dist_wu)
+          _ev.gunrange     = cur_sl
+          _ev.gunrange_off = target_sl and math.abs(cur_sl - target_sl) or 99
+          _ev.land_off_wu  = landing_offset
+          local SPLASH_WU = 128  -- kill_lgm.SPLASH_WU (half-tile)
           if los_blocked then
             _ev.status = "los_blocked"
-          elseif sl_diff > 1 then
+          elseif landing_offset > SPLASH_WU then
             _ev.status = "gunrange_off"
           elseif _shoot_busy or _already_fired then
             _ev.status = "ready_busy"
@@ -3625,8 +3665,8 @@ function Brain.think(info)
           -- Track closest non-LOS-blocked LGM in range as primary for
           -- the crosshair driver below.  Picking by raw dist (not
           -- predicted dist) keeps the choice stable as the LGM moves.
-          if not los_blocked and elm.dist < _primary_dist then
-            _primary_dist = elm.dist
+          if not los_blocked and _ev.dist < _primary_dist then
+            _primary_dist = _ev.dist
             _primary_lgm  = elm
           end
         end
@@ -3634,26 +3674,136 @@ function Brain.think(info)
     end
   end
 
-  -- Crosshair driver: when the active goal IS kill_lgm and we have a
-  -- viable primary LGM, nudge info.gunrange toward its target sightLen
-  -- every tick.  KEY_MORERANGE/LESSRANGE step by 1 per tick (tank.c).
-  -- Gated on goal.kind so attack_pill / attack_tank / etc. keep their
-  -- own crosshair management — they have their own KEY_MORERANGE logic
-  -- in steering.lua that would conflict with ours.
+  -- ── Kill-LGM crosshair pre-charge ────────────────────────────────
+  -- While goal is kill_lgm but the LGM is still out of shooting
+  -- range (no _primary_lgm yet), drive info.gunrange toward MAX so
+  -- the crosshair is already fully extended by the time we arrive
+  -- in range and the 27-candidate search starts pulling it in.
+  -- Saves ~5-7 ticks of "pull crosshair out from wherever attack_pill
+  -- left it" the moment we get into firing position.
   if state.goal and state.goal.kind == "kill_lgm"
-     and _primary_lgm and _primary_lgm.target_sightLen
+     and not _primary_lgm
+     and not info.inboat
+     and (info.gunrange or 14) < 14 then
+    keys = keys | KEY_MORERANGE
+  end
+
+  -- ── Kill-LGM 27-candidate greedy search ──────────────────────────
+  -- Replaces the old "convergence loop + dumb crosshair driver" pair
+  -- with a stateless per-tick search: enumerate every (turn × speed
+  -- × gunsight) action combination, predict the resulting crosshair
+  -- position one tick out, score by distance to where the LGM will
+  -- be one tick out, pick the minimum.  Override the relevant key
+  -- bits with the winner.
+  --
+  -- Why 27 candidates: each axis has 3 options (none / + / −) so
+  -- 3 × 3 × 3 = 27.  Each candidate is a few FP ops + one sqrt.
+  -- Sub-µs total, no allocation.
+  --
+  -- Why every tick is enough: we re-run the search next tick with
+  -- the new tank state, so the action chosen each tick locally
+  -- minimizes error; the global trajectory falls out naturally
+  -- (greedy descent on the crosshair-to-LGM distance metric).
+  --
+  -- Gated on goal == kill_lgm so attack_pill / attack_tank etc.
+  -- keep their own steering + crosshair management.
+  if state.goal and state.goal.kind == "kill_lgm"
+     and _primary_lgm
      and not info.inboat then
-    local cur_sl = info.gunrange or 14
-    local tgt_sl = _primary_lgm.target_sightLen
-    if cur_sl < tgt_sl then
-      keys = keys | KEY_MORERANGE
-    elseif cur_sl > tgt_sl then
-      keys = keys | KEY_LESSRANGE
+    -- Per-tick deltas. Approximate; engine ramps each over time
+    -- but the search re-runs every tick so picking the right
+    -- DIRECTION matters more than the exact magnitude.
+    local TURN_DELTA  = 6   -- bolo brads/tick when turn key held
+    local SPEED_DELTA = 2   -- speed units/tick when throttle held
+    local GUN_DELTA   = 2   -- sightLen units/tick when range held
+                            -- (2 input packets/tick @ 1 step each)
+    local cur_dir    = info.direction or 0
+    local cur_speed  = info.speed or 0
+    local cur_gun    = info.gunrange or 14
+    local tank_wx    = info.tankx
+    local tank_wy    = info.tanky
+    -- Where the LGM will be NEXT tick (this tick's action takes
+    -- effect on the tank's NEXT-tick state, so target one tick
+    -- ahead).
+    local lgm_wx = _primary_lgm.wx + (_primary_lgm.v_ema_x or 0)
+    local lgm_wy = _primary_lgm.wy + (_primary_lgm.v_ema_y or 0)
+    local TURNS  = { { k = 0,             d =  0,          n = "T:none" },
+                     { k = KEY_TURNLEFT,  d = -TURN_DELTA, n = "T:L"    },
+                     { k = KEY_TURNRIGHT, d =  TURN_DELTA, n = "T:R"    } }
+    local SPEEDS = { { k = 0,             d =  0,           n = "S:none" },
+                     { k = KEY_FASTER,    d =  SPEED_DELTA, n = "S:+"    },
+                     { k = KEY_SLOWER,    d = -SPEED_DELTA, n = "S:-"    } }
+    local GUNS   = { { k = 0,             d =  0,         n = "G:none" },
+                     { k = KEY_MORERANGE, d =  GUN_DELTA, n = "G:+"    },
+                     { k = KEY_LESSRANGE, d = -GUN_DELTA, n = "G:-"    } }
+    local TWO_PI_OVER_256 = math.pi * 2 / 256
+    local best_score = math.huge
+    local best_keys  = 0
+    local cands
+    if BRAIN_DEBUG_MODE then cands = {} end
+    for _, t in ipairs(TURNS) do
+      local new_dir = (cur_dir + t.d) % 256
+      local rad = new_dir * TWO_PI_OVER_256
+      local sin_d = math.sin(rad)
+      local cos_d = math.cos(rad)
+      for _, s in ipairs(SPEEDS) do
+        local new_speed = cur_speed + s.d
+        if new_speed < 0   then new_speed = 0   end
+        if new_speed > 128 then new_speed = 128 end
+        -- 1-tick tank position update (small but non-trivial at
+        -- speed; ~0.5 tile/tick at max).
+        local pred_tank_wx = tank_wx + sin_d * new_speed
+        local pred_tank_wy = tank_wy - cos_d * new_speed
+        for _, g in ipairs(GUNS) do
+          local new_gun = cur_gun + g.d
+          if new_gun < 2  then new_gun = 2  end
+          if new_gun > 14 then new_gun = 14 end
+          -- Crosshair = tank + (gunrange/2 tiles in heading dir),
+          -- converted to wu (× 256).  sightLen is in half-tiles
+          -- (see GUNSIGHT_MAX comment in constants.lua).
+          local cross_wu = (new_gun / 2.0) * 256
+          local cross_wx = pred_tank_wx + sin_d * cross_wu
+          local cross_wy = pred_tank_wy - cos_d * cross_wu
+          local dx = cross_wx - lgm_wx
+          local dy = cross_wy - lgm_wy
+          local score = math.sqrt(dx * dx + dy * dy)
+          if BRAIN_DEBUG_MODE then
+            cands[#cands + 1] = {
+              name = t.n .. " " .. s.n .. " " .. g.n,
+              score = score,
+              new_dir = new_dir, new_speed = new_speed, new_gun = new_gun,
+              cross_wx = cross_wx, cross_wy = cross_wy,
+              keys = t.k | s.k | g.k,
+            }
+          end
+          if score < best_score then
+            best_score = score
+            best_keys  = t.k | s.k | g.k
+          end
+        end
+      end
     end
-    state._kill_lgm_crosshair_drive = {
-      cur = cur_sl, tgt = tgt_sl, idnum = _primary_lgm.idnum,
-    }
+    -- Override the action bits: clear the six we manage, set the
+    -- winning combination.  Anything else (KEY_SHOOT, KEY_DROPMINE,
+    -- etc.) is preserved.
+    local CLEAR = KEY_TURNLEFT | KEY_TURNRIGHT | KEY_FASTER
+                | KEY_SLOWER   | KEY_MORERANGE | KEY_LESSRANGE
+    keys = (keys & ~CLEAR) | best_keys
+    if BRAIN_DEBUG_MODE then
+      state._kill_lgm_search = {
+        score  = best_score,
+        keys   = best_keys,
+        tank_wx = tank_wx, tank_wy = tank_wy,
+        lgm_wx  = lgm_wx,  lgm_wy  = lgm_wy,
+        cur_dir = cur_dir, cur_speed = cur_speed, cur_gun = cur_gun,
+        cands  = cands,
+        lgm_mx = _primary_lgm.mx, lgm_my = _primary_lgm.my,
+        lgm_idnum = _primary_lgm.idnum,
+      }
+    end
+    state._kill_lgm_crosshair_drive = nil
   else
+    if BRAIN_DEBUG_MODE then state._kill_lgm_search = nil end
     state._kill_lgm_crosshair_drive = nil
   end
 
@@ -3987,6 +4137,27 @@ function Brain.think(info)
   -- ready_busy / shooting / no_shells / in_boat), plus a top-left
   -- HUD line summarizing the chosen target.  Always on when there's
   -- at least one visible LGM and the viz toggle is enabled.
+  -- Engage-spot viz: line + ring on the tile the bot is driving to
+  -- when out of range.  Lives next to the eval HUD on its own toggle
+  -- so it can be enabled/disabled independently.
+  if BRAIN_DEBUG_MODE then
+    if viz.is_on("kill_lgm_engage")
+       and state.pool_cache and state.pool_cache[13]
+       and state.pool_cache[13].goal then
+      local g = state.pool_cache[13].goal
+      if g.shoot_mx and g.shoot_my then
+        local twx = info.tankx / 256.0
+        local twy = info.tanky / 256.0
+        local sx = g.shoot_mx + 0.5
+        local sy = g.shoot_my + 0.5
+        viz.line("kill_lgm_engage", twx, twy, sx, sy, 220, 80, 220, 200)
+        viz.circle("kill_lgm_engage", sx, sy, 0.45, 220, 80, 220, 230)
+        viz.circle("kill_lgm_engage", sx, sy, 0.08, 220, 80, 220, 255)
+        viz.text("kill_lgm_engage", sx, sy + 0.6, "ENGAGE",
+                 "center", 220, 80, 220, 255, 0.4)
+      end
+    end
+  end
   if state._kill_lgm_eval and #state._kill_lgm_eval > 0 and viz.is_on("kill_lgm_status") then
     local _STATUS_COLOR = {
       shooting      = { 255,  80,  80, 240 },   -- red: firing this tick
@@ -4003,21 +4174,59 @@ function Brain.think(info)
       local col = _STATUS_COLOR[ev.status] or _STATUS_COLOR.out_of_range
       local label
       if ev.aim_corr ~= nil then
-        label = string.format("%s d=%d aim=%+d%s",
+        label = string.format("%s d=%.1f aim=%+d%s",
                               ev.status, ev.dist or -1,
                               math.floor(ev.aim_corr + 0.5),
                               ev.los_blocked and " LOS✗" or "")
       else
-        label = string.format("%s d=%d", ev.status, ev.dist or -1)
+        label = string.format("%s d=%.1f", ev.status, ev.dist or -1)
       end
       viz.text("kill_lgm_status", cx, cy + 0.5, label, "center",
                col[1], col[2], col[3], col[4])
       if ev.status == "shooting" then _shooting_target = ev end
     end
+
+    -- Clickable detail overlay: click the primary LGM tile to see the
+    -- 27-candidate greedy search dump (every turn × speed × gun combo
+    -- with its predicted crosshair-to-LGM euclidean distance).  Same
+    -- pattern as attack_shield's per-candidate detail panel.
+    if BRAIN_DEBUG_MODE then
+    local _ksrch = state._kill_lgm_search
+    if viz.detail_circle and _ksrch and _ksrch.cands then
+      local sorted = {}
+      for i, c in ipairs(_ksrch.cands) do sorted[i] = c end
+      table.sort(sorted, function(a, b) return a.score < b.score end)
+      local hdr = string.format("LGM t%s  best=%s score=%.1fwu (%.2ft)",
+                                tostring(_ksrch.lgm_idnum or "?"),
+                                sorted[1] and sorted[1].name or "?",
+                                _ksrch.score or 0,
+                                (_ksrch.score or 0) / 256)
+      local did = string.format("kill_lgm_search_%s",
+                                tostring(_ksrch.lgm_idnum or "p"))
+      viz.detail_circle(did, _ksrch.lgm_mx + 0.5, _ksrch.lgm_my + 0.5,
+                        0.5, hdr)
+      viz.detail_text(did, string.format(
+        "tank: dir=%d speed=%d gun=%d  (deltas: turn=%d speed=%d gun=%d per tick)",
+        _ksrch.cur_dir or 0, _ksrch.cur_speed or 0, _ksrch.cur_gun or 0,
+        6, 2, 2))
+      viz.detail_text(did, string.format(
+        "lgm next-tick: wu=(%.0f,%.0f)  score = euclidean(crosshair_after, lgm_next) in wu",
+        _ksrch.lgm_wx or 0, _ksrch.lgm_wy or 0))
+      viz.detail_text(did, "")
+      viz.detail_text(did, "candidates (sorted by score, lower = better):")
+      for i, c in ipairs(sorted) do
+        local marker = (i == 1) and " <- WINNER" or ""
+        viz.detail_text(did, string.format(
+          "  [%2d] %s  score=%7.1fwu (%.2ft)  -> dir=%d spd=%d gun=%d%s",
+          i, c.name, c.score, c.score / 256,
+          c.new_dir, c.new_speed, c.new_gun, marker))
+      end
+    end
+    end
     if viz.hud_text then
       local hud_msg, r, g, b
       if _shooting_target then
-        hud_msg = string.format("KILL_LGM: SHOOTING lgm@(%d,%d) d=%d",
+        hud_msg = string.format("KILL_LGM: SHOOTING lgm@(%d,%d) d=%.1f",
                                 _shooting_target.mx, _shooting_target.my,
                                 _shooting_target.dist or -1)
         r, g, b = 255, 100, 100
@@ -4027,13 +4236,38 @@ function Brain.think(info)
         for _, ev in ipairs(state._kill_lgm_eval) do
           if best.status ~= "ready_busy" and ev.status == "ready_busy" then best = ev end
         end
-        hud_msg = string.format("KILL_LGM: %s lgm@(%d,%d) d=%d",
+        hud_msg = string.format("KILL_LGM: %s lgm@(%d,%d) d=%.1f",
                                 best.status, best.mx, best.my, best.dist or -1)
         r, g, b = 220, 220, 100
       end
       viz.hud_text("kill_lgm_status", 8, 96, hud_msg, "topleft", r, g, b, 230)
+      -- 27-candidate search readout: shows which action combination
+      -- this tick's greedy descent picked + the resulting crosshair-
+      -- to-LGM error.  Replaces the old crosshair_drive line.
+      local s = state._kill_lgm_search
+      if s then
+        -- Decode the chosen key set into short labels.
+        local parts = {}
+        if (s.keys & KEY_TURNLEFT)  ~= 0 then parts[#parts + 1] = "L"     end
+        if (s.keys & KEY_TURNRIGHT) ~= 0 then parts[#parts + 1] = "R"     end
+        if (s.keys & KEY_FASTER)    ~= 0 then parts[#parts + 1] = "FWD"   end
+        if (s.keys & KEY_SLOWER)    ~= 0 then parts[#parts + 1] = "BACK"  end
+        if (s.keys & KEY_MORERANGE) ~= 0 then parts[#parts + 1] = "GUN+"  end
+        if (s.keys & KEY_LESSRANGE) ~= 0 then parts[#parts + 1] = "GUN-"  end
+        local action = #parts > 0 and table.concat(parts, "+") or "(no action — aligned)"
+        viz.hud_text("kill_lgm_status", 8, 112,
+          string.format("  search: err=%.0fwu (%.1ft)  pick=[%s]",
+                        s.score, s.score / 256.0, action),
+          "topleft", 220, 220, 100, 230)
+        viz.hud_text("kill_lgm_status", 8, 124,
+          string.format("  state: dir=%d  speed=%d  gunrange=%d (→ %.1ft)",
+                        s.cur_dir, s.cur_speed, s.cur_gun,
+                        s.cur_gun / 2.0),
+          "topleft", 180, 180, 180, 220)
+      end
     end
   end
+
 
   local t_pbh_ally = clock_us()
   opt(string.format("  ally-LGM viz done %.2f ms", (t_pbh_ally - t_pbh_barrier) / 1000))
@@ -4165,6 +4399,13 @@ function Brain.think(info)
     arrow(60, 60, "<", (keys & KEY_TURNLEFT)  ~= 0, (taps & KEY_TURNLEFT)  ~= 0)
     arrow(40, 60, "v", (keys & KEY_SLOWER)    ~= 0, (taps & KEY_SLOWER)    ~= 0)
     arrow(20, 60, ">", (keys & KEY_TURNRIGHT) ~= 0, (taps & KEY_TURNRIGHT) ~= 0)
+    -- Gunrange (crosshair) keys, second row directly below the cross.
+    -- "−" = LESSRANGE (retract / pull crosshair in toward tank)
+    -- "+" = MORERANGE (expand / push crosshair out toward max)
+    -- Same color scheme as the arrow keys: green=held, yellow=tap,
+    -- dim grey when not pressed.
+    arrow(50, 40, "-", (keys & KEY_LESSRANGE) ~= 0, (taps & KEY_LESSRANGE) ~= 0)
+    arrow(30, 40, "+", (keys & KEY_MORERANGE) ~= 0, (taps & KEY_MORERANGE) ~= 0)
   end end -- BRAIN_DEBUG_MODE (arrow HUD)
 
   -- Flush print2 log for this tick
@@ -4442,6 +4683,116 @@ function Brain.think(info)
   -- Capture outbound for the chat_log overlay (debug-only).
   if BRAIN_DEBUG_MODE and send_msg and send_msg ~= "" then
     ally_state.chat_log_add("out", state.player_number, send_msg, now)
+  end
+
+  -- ────────────────────────────────────────────────────────────────────
+  -- LGM-kill test harness: victim mode.
+  --
+  -- Bots marked with _G._BT_VICTIM=true (set by BrainTest's
+  -- `-victims <ids>` CLI flag, injected via serverSimBotExecLua after
+  -- Brain.open) dispatch their LGM to build walls at random tiles
+  -- within 6 of an enemy tank and park their own tank, so the OTHER
+  -- bots' kill_lgm targeting can be exercised + observed.  No-op
+  -- without the flag (default for production runs).
+  -- ────────────────────────────────────────────────────────────────────
+  if _G._BT_VICTIM then
+    state.test_lgm = state.test_lgm or {}
+    local tl = state.test_lgm
+    -- Pick a fresh target tile when:
+    --   * we don't have one yet
+    --   * the LGM has been dispatched for > 300 ticks (~6s) without
+    --     the engine turning the tile into a wall (LGM dead / stuck /
+    --     enemy shot the wall down / etc.)
+    --   * the target tile became a wall (or building / halfbuild) —
+    --     LGM succeeded, time to send it out again
+    local need_new = not tl.target_mx
+    if not need_new and tl.dispatched_tick
+       and now - tl.dispatched_tick > 300 then
+      need_new = true
+    end
+    if not need_new and tl.target_mx then
+      local tt = U.ttype(tl.target_mx, tl.target_my)
+      if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
+        need_new = true
+      end
+    end
+    if need_new then
+      -- Anchor for "random within 6": enemy tank if visible (real
+      -- test scenario), otherwise our own tank tile so the LGM goes
+      -- out IMMEDIATELY at tick ~0 without waiting for perception to
+      -- spot the hunter. The hunter will discover the LGM once it
+      -- closes — the test still exercises kill_lgm cleanly.
+      local anchor_mx, anchor_my, anchor_src
+      if state.perc and state.perc.enemy_tanks
+         and state.perc.enemy_tanks[1] then
+        anchor_mx = state.perc.enemy_tanks[1].mx
+        anchor_my = state.perc.enemy_tanks[1].my
+        anchor_src = "enemy"
+      else
+        anchor_mx = info.tankx >> 8
+        anchor_my = info.tanky >> 8
+        anchor_src = "self"
+      end
+      -- Random tile in ±6 box around anchor.  Must be a terrain the
+      -- engine will accept BUILDMODE_BUILD on (grass / road). Forest
+      -- works too but BUILDMODE_BUILD just farms it; we want the LGM
+      -- to put up an actual wall so the action + location is bait.
+      for _ = 1, 20 do
+        local mx = anchor_mx + math.random(-6, 6)
+        local my = anchor_my + math.random(-6, 6)
+        if U.in_map(mx, my) then
+          local tt = U.ttype(mx, my)
+          if tt == C.T_GRASS or tt == C.T_ROAD then
+            tl.target_mx, tl.target_my = mx, my
+            tl.dispatched_tick = now
+            if BRAIN_DEBUG_MODE then
+              print(string.format(
+                "[VICTIM] dispatch LGM to (%d,%d) near %s@(%d,%d)",
+                mx, my, anchor_src, anchor_mx, anchor_my))
+            end
+            break
+          end
+        end
+      end
+    end
+    if tl.target_mx then
+      build_cmd = { x = tl.target_mx, y = tl.target_my,
+                    action = BUILDMODE_BUILD }
+      -- Park: drop movement so the tank doesn't compete for
+      -- the hunter's attention as a tank target.  KEY_SLOWER lets
+      -- engine decel naturally without us holding speed up.
+      keys = KEY_SLOWER
+      taps = 0
+    end
+    -- Viz: cyan rect on the LGM's current build target + big VICTIM
+    -- label over the tank so it's instantly clear which bot is in
+    -- test-victim mode.  (Nested if's rather than a compound
+    -- BRAIN_DEBUG_MODE-and-... so lua_strip can match its single-line
+    -- block pattern.)
+    if BRAIN_DEBUG_MODE then
+      if tl.target_mx and viz.is_on("test_lgm_target") then
+        viz.rect("test_lgm_target",
+                 tl.target_mx, tl.target_my,
+                 tl.target_mx + 1, tl.target_my + 1,
+                 80, 220, 220, 200, false)
+        viz.text("test_lgm_target",
+                 tl.target_mx + 0.5, tl.target_my + 0.5,
+                 "VICTIM LGM", "center", 80, 220, 220, 255, 0.45)
+      end
+      if viz.is_on("test_victim_marker") then
+        local twx = info.tankx / 256.0
+        local twy = info.tanky / 256.0
+        -- Big red outline two tiles wide centered on the tank.
+        viz.rect("test_victim_marker",
+                 twx - 1.0, twy - 1.0, twx + 1.0, twy + 1.0,
+                 255, 60, 60, 230, false)
+        -- VICTIM label sits ABOVE the tank so it doesn't overlap the
+        -- tank sprite or the tank-position HUD text.  Big scale so
+        -- it's readable from any zoom.
+        viz.text("test_victim_marker", twx, twy - 1.6,
+                 "VICTIM", "center", 255, 60, 60, 255, 1.2)
+      end
+    end
   end
 
   -- Output
