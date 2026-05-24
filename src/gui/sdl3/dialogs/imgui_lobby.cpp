@@ -2115,6 +2115,16 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapState.provider.generatePreview      = lobbyServerMapsGeneratePreview;
         s_chooseMapState.provider.cacheScope           = "server";
         s_chooseMapState.provider.ctx                  = s_chooseMapCs;
+        /* Network clients fetch the map list over the wire via
+         * PACKET_LOBBY_MAP_LIST_REQ; the response lands asynchronously
+         * after lobbyChooseMapEnsureInit's one-shot discoverMaps has
+         * already returned an empty list. Without refreshEveryFrame
+         * the chooser never re-polls the cache and shows nothing for
+         * the lifetime of the dialog. The provider's own in-flight
+         * gate prevents request spam. SP-host's synchronous branch
+         * pays a no-op per-frame discoverMaps; the in-process scan
+         * is already cheap so leave the flag on unconditionally. */
+        s_chooseMapState.provider.refreshEveryFrame    = true;
         SDL_strlcpy(s_chooseMapState.crumbsRootLabel, "Maps",
                     sizeof(s_chooseMapState.crumbsRootLabel));
         /* Upload provider: local-filesystem scan via the chooser's
