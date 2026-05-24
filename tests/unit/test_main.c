@@ -94,6 +94,10 @@ static const UnitTestEntry s_tests[] = {
     { "brain_inbox_legacy_drain_fifo",           run_brain_inbox_legacy_drain_fifo           },
     { "brain_inbox_clear_resets",                run_brain_inbox_clear_resets                },
     { "bolo_rand_golden_sequence",               run_bolo_rand_golden_sequence               },
+    { "countdown_abort_publishes_phase",         run_countdown_abort_publishes_phase         },
+    { "lobby_auto_unready_clears_humans_keeps_bots",
+                                                 run_lobby_auto_unready_clears_humans_keeps_bots },
+    { "mapdir_root_fallback",                    run_mapdir_root_fallback                    },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 
