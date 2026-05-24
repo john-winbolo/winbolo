@@ -48,4 +48,6 @@ void transportUdpServerOnGameStart(struct ServerSim *sim) { (void)sim; }
 void transportUdpServerSetLock(struct ServerSim *sim, bool locked) { (void)sim; (void)locked; }
 uint16_t transportUdpServerGetClientPing(BYTE playerNum) { (void)playerNum; return 0; }
 const char *transportUdpServerGetPlayerName(BYTE playerNum) { (void)playerNum; return ""; }
+const char *transportUdpServerGetClientCountryCode(BYTE playerNum) { (void)playerNum; return ""; }
+uint8_t transportUdpServerGetClientType(BYTE playerNum) { (void)playerNum; return 0; /* CLIENT_TYPE_UNKNOWN */ }
 bool transportUdpServerHasAnyClient(void) { return false; }

@@ -106,6 +106,11 @@ int run_brain_inbox_legacy_drain_fifo(void);
 int run_brain_inbox_clear_resets(void);
 int run_bolo_rand_golden_sequence(void);
 
+/* Lobby runtime fixes (test_lobby_runtime_fixes.c). */
+int run_countdown_abort_publishes_phase(void);
+int run_lobby_auto_unready_clears_humans_keeps_bots(void);
+int run_mapdir_root_fallback(void);
+
 /* Reliable control-event queue regression tests (test_control_event_queue.c).
  * Each captures a specific bug that shipped during the
  * reliable-control-events rollout. */
