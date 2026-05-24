@@ -470,9 +470,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * transport_udp_client.c (PACKET_CHAT_BROADCAST), but for
          * subscribers that aren't UDP clients (host humanSim, bot
          * ClientSims). Without this, a bot publishing CTRL_CHAT via
-         * bot_manager.c's botChatSendCallback would never materialize
-         * in any recipient's MessageState — so /info traffic between
-         * bots was invisible. */
+         * the local transport's sendBytes dispatch would never
+         * materialize in any recipient's MessageState — so /info
+         * traffic between bots would be invisible. */
         BYTE fromPlayer = evt->u.chat.fromPlayer;
         BYTE destPlayer = evt->u.chat.destPlayer;
         uint16_t bodyLen = evt->u.chat.bodyLen;

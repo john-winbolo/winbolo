@@ -2677,31 +2677,37 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         case PACKET_CHAT_MESSAGE: {
             /* Chat message format:
-             *   [header 8] [destPlayer 1] [message up to PACKET_MAX_CHAT_MESSAGE]
-             * Route through serverSimReceiveChat (the authoritative
-             * entry per docs/ARCHITECTURE.md) so wire-originated and
-             * in-process bot chat take the same path. */
+             *   [header 8] [destPlayer 1] [message up to PACKET_MAX_CHAT_MESSAGE] */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len > PACKET_HEADER_SIZE + 1) {
                 uint8_t destPlayer = buf[PACKET_HEADER_SIZE];
                 int msgLen = len - PACKET_HEADER_SIZE - 1;
                 if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
 
-                serverSimReceiveChat(sim, (BYTE)clientIdx, destPlayer,
-                                     buf + PACKET_HEADER_SIZE + 1,
-                                     (size_t)msgLen);
-
-                /* Replay log only — same format as before. */
                 {
-                    char pstr[256];
-                    int pLen = msgLen;
-                    if (pLen > 255) pLen = 255;
-                    pstr[0] = (char)pLen;
-                    memcpy(pstr + 1, buf + PACKET_HEADER_SIZE + 1, pLen);
-                    if (destPlayer == 0xFF) {
-                        logAddEvent(log_MessageAll, (BYTE)clientIdx, 0, 0, 0, 0, pstr);
-                    } else {
-                        logAddEvent(log_MessagePlayers, (BYTE)clientIdx, destPlayer, 0, 0, 0, pstr);
+                    ControlEvent evt;
+                    memset(&evt, 0, sizeof(evt));
+                    evt.type = CTRL_CHAT;
+                    evt.u.chat.fromPlayer = (BYTE)clientIdx;
+                    evt.u.chat.destPlayer = destPlayer;
+                    evt.u.chat.bodyLen = (uint16_t)msgLen;
+                    if (msgLen > 0) {
+                        memcpy(evt.u.chat.body,
+                               buf + PACKET_HEADER_SIZE + 1, msgLen);
+                    }
+                    serverSimPublishControl(sim, &evt);
+
+                    {
+                        char pstr[256];
+                        int pLen = msgLen;
+                        if (pLen > 255) pLen = 255;
+                        pstr[0] = (char)pLen;
+                        memcpy(pstr + 1, buf + PACKET_HEADER_SIZE + 1, pLen);
+                        if (destPlayer == 0xFF) {
+                            logAddEvent(log_MessageAll, (BYTE)clientIdx, 0, 0, 0, 0, pstr);
+                        } else {
+                            logAddEvent(log_MessagePlayers, (BYTE)clientIdx, destPlayer, 0, 0, 0, pstr);
+                        }
                     }
                 }
             }
@@ -2880,26 +2886,24 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         }
         case PACKET_ALLIANCE_ACCEPT: {
             /* Wire: [header 8] [fromPlayer 1] [toPlayer 1]
-             * fromPlayer = the accepter, toPlayer = who requested */
+             * fromPlayer = the accepter, toPlayer = who requested.
+             * WBN tracker + replay-log side effects fire inside
+             * serverSimAcceptAlliance so every input source (wire,
+             * local transport, headless cmd-stdin) gets them. */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 2) {
                 uint8_t newMember = buf[PACKET_HEADER_SIZE + 1];
                 serverSimAcceptAlliance(serverSimGetActive(),
                                         (BYTE)clientIdx, newMember);
-                winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE,
-                                   (BYTE)clientIdx, newMember);
-                logAddEvent(log_AllyAccept, (BYTE)clientIdx, newMember, 0, 0, 0, NULL);
             }
             break;
         }
         case PACKET_ALLIANCE_LEAVE: {
-            /* Wire: [header 8] [playerNum 1] */
+            /* Wire: [header 8] [playerNum 1] — WBN + log side effects
+             * inside serverSimLeaveAlliance, same reasoning. */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 1) {
                 serverSimLeaveAlliance(serverSimGetActive(), (BYTE)clientIdx);
-                winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_LEAVE, TRUE,
-                                   (BYTE)clientIdx, WINBOLO_NET_NO_PLAYER);
-                logAddEvent(log_AllyLeave, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
             }
             break;
         }

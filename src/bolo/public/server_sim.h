@@ -1106,34 +1106,6 @@ void serverSimUnregisterSubscriber(ServerSim *sim, SubscriberHandle h);
 void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt);
 
 /*********************************************************
- *NAME:          serverSimReceiveChat
- *PURPOSE:
- *  Authoritative entry for any chat the server accepts,
- *  regardless of transport. Per docs/ARCHITECTURE.md the
- *  same event must reach in-process subscribers AND any
- *  UDP-connected clients — this function publishes
- *  CTRL_CHAT which fans out via both paths (in-process
- *  CTRL_CHAT handler in client_sim_control.c +
- *  per-client codec encoder in transport_udp_server.c).
- *
- *  Called from:
- *    - transport_udp_server.c PACKET_CHAT_MESSAGE handler
- *      after decoding a wire packet from a remote client.
- *    - bot_manager.c botChatSendCallback after a bot's
- *      brain.sendmessage flows through playersSendAiMessage.
- *
- *ARGUMENTS:
- *  sim          - The server sim
- *  fromPlayer   - Sender slot (must be < MAX_TANKS)
- *  destPlayer   - Recipient slot, or 0xFF for broadcast
- *  body         - Raw chat bytes (no Pascal-length prefix)
- *  bodyLen      - Length of body (clamped to
- *                  PACKET_MAX_CHAT_MESSAGE)
- *********************************************************/
-void serverSimReceiveChat(ServerSim *sim, BYTE fromPlayer, BYTE destPlayer,
-                          const void *body, size_t bodyLen);
-
-/*********************************************************
  *NAME:          serverSimAcceptAlliance
  *               serverSimLeaveAlliance
  *               serverSimSetPlayerName

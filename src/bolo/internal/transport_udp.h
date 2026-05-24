@@ -155,19 +155,16 @@ uint16_t transportUdpClientGetPing(Transport *t);
 void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
                                    int *bpsRecv, int *bpsSent, int *numErrors);
 
-/* Send a chat message to the server.
- * destPlayer: 0xFF = all players, else specific player number. */
-void transportUdpClientSendChat(Transport *t, uint8_t destPlayer,
-                                const char *message);
+/* Chat sends go through clientSimNetSendChat → transport->sendBytes
+ * now — the per-transport sendChat helper is gone. */
 
 /* Send a name change request to the server.
  * newName: the desired new player name. */
 void transportUdpClientSendNameChange(Transport *t, const char *newName);
 
-/* Alliance operations */
-void transportUdpClientSendAllianceRequest(Transport *t, uint8_t toPlayer);
-void transportUdpClientSendAllianceAccept(Transport *t, uint8_t toPlayer);
-void transportUdpClientSendAllianceLeave(Transport *t);
+/* Alliance ops go through clientSimNetSendAlliance{Request,Accept,Leave}
+ * → transport->sendBytes now — the per-transport sendAlliance* helpers
+ * are gone (same pattern as the chat helper). */
 
 /* Send a lock toggle to the server.
  * allow: TRUE = allow new players, FALSE = disallow. */

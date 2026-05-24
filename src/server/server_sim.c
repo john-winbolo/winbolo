@@ -3571,40 +3571,6 @@ static void publishServerMessage(ServerSim *sim, const char *message) {
     serverSimPublishControl(sim, &evt);
 }
 
-/* serverSimReceiveChat — authoritative entry for any chat the server
- * accepts, regardless of which transport delivered the input.
- *
- * Per docs/ARCHITECTURE.md "Worked example — adding a chat message":
- * every audience (in-process subscribers + UDP-connected clients) must
- * see the same event. We achieve that by routing both inputs (the UDP
- * server's PACKET_CHAT_MESSAGE handler and the bot pool's chat-send
- * callback) through here, then publishing a single CTRL_CHAT — the
- * per-client subscriber in transport_udp_server.c fans it back out on
- * the wire (via the codec encoder) and the in-process CTRL_CHAT
- * handler in client_sim_control.c materializes it into recipient
- * MessageStates.
- *
- * fromPlayer must be a real slot (0..MAX_TANKS-1); destPlayer is the
- * single recipient or 0xFF for broadcast. body/bodyLen is the raw chat
- * payload (no length prefix). Caller is responsible for keeping
- * bodyLen <= PACKET_MAX_CHAT_MESSAGE. */
-void serverSimReceiveChat(ServerSim *sim, BYTE fromPlayer, BYTE destPlayer,
-                          const void *body, size_t bodyLen) {
-    ControlEvent evt;
-    if (sim == NULL || body == NULL || fromPlayer >= MAX_TANKS) return;
-    if (bodyLen > PACKET_MAX_CHAT_MESSAGE) bodyLen = PACKET_MAX_CHAT_MESSAGE;
-
-    memset(&evt, 0, sizeof(evt));
-    evt.type = CTRL_CHAT;
-    evt.u.chat.fromPlayer = fromPlayer;
-    evt.u.chat.destPlayer = destPlayer;
-    evt.u.chat.bodyLen    = (uint16_t)bodyLen;
-    if (bodyLen > 0) {
-        memcpy(evt.u.chat.body, body, bodyLen);
-    }
-    serverSimPublishControl(sim, &evt);
-}
-
 /* Publish current vote state through the control-event dispatcher.
  * In-process subscribers see it directly; remote UDP clients receive
  * the wire-encoded PACKET_GAME_VOTE_STATE via the codec encoder. */
@@ -4613,6 +4579,13 @@ void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember) {
     evt.u.allianceAccept.acceptedBy = accepter;
     evt.u.allianceAccept.newMember  = newMember;
     serverSimPublishControl(sim, &evt);
+    /* WBN tracker + replay-log side effects live here so every input
+     * source (UDP wire, local transport, headless cmd-stdin) fires
+     * them uniformly. winbolonetAddEvent is gated internally by
+     * winbolonetIsRunning(), so SP / non-WBN-aware builds pay nothing.
+     * logAddEvent is gated by whether a replay log is open. */
+    winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE, accepter, newMember);
+    logAddEvent(log_AllyAccept, accepter, newMember, 0, 0, 0, NULL);
 }
 
 void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
@@ -4627,6 +4600,10 @@ void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
     evt.type = CTRL_ALLIANCE_LEAVE;
     evt.u.allianceLeave.playerNum = playerNum;
     serverSimPublishControl(sim, &evt);
+    /* WBN + replay-log side effects — see serverSimAcceptAlliance. */
+    winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_LEAVE, TRUE,
+                       playerNum, WINBOLO_NET_NO_PLAYER);
+    logAddEvent(log_AllyLeave, playerNum, 0, 0, 0, 0, NULL);
 }
 
 void serverSimSetPlayerName(ServerSim *sim, BYTE playerNum, const char *name) {
