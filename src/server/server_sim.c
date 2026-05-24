@@ -1771,10 +1771,17 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         }
     }
 
-    /* If in countdown and someone disconnects, revert to lobby */
+    /* If in countdown and someone disconnects, revert to lobby. Route
+     * through serverSimAbortCountdown rather than mutating state inline
+     * so the CTRL_GAME_PHASE_LOBBY publish fires — without it, remote
+     * clients' netStat stays at netLobbyCountdown and their overlay
+     * doesn't clear. The disconnect path through serverDisconnectClient
+     * already aborts via lobbyAutoUnreadyOnChange, so this site is a
+     * no-op there (state is already Lobby); it carries the abort for
+     * the non-UDP callers — bot removal and local-transport
+     * disconnect via client_net.c — that don't share that path. */
     if (sim->lobbyEnabled && sim->state == serverStateCountdown) {
-        sim->state = serverStateLobby;
-        sim->countdownTicks = 0;
+        serverSimAbortCountdown(sim);
         logAddEvent(log_CountdownCancel, 0, 0, 0, 0, 0, NULL);
         serverSimConsoleMessage("Countdown cancelled — player disconnected.");
     }
