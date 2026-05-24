@@ -7146,6 +7146,23 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     }
     mapPreviewPopupDestroy();
 
+    /* Reset Choose-Map dialog visibility statics. These live at file
+     * scope so they survive across lobby invocations — a disconnect
+     * (or any other exit) while the chooser was open would otherwise
+     * leave s_chooseMapOpen=true and the next imguiLobbyShow would
+     * render the chooser on top of a freshly joined lobby. The
+     * MapChooserState instances themselves stay populated as caches
+     * (next open re-uses the discovered map list / preview view);
+     * only the visibility / focus / pending-action flags reset. The
+     * cached ClientSim pointer also clears since the lobby that
+     * captured it is being torn down. */
+    s_chooseMapOpen             = false;
+    s_chooseMapFocusedOnce      = false;
+    s_chooseMapMaximized        = false;
+    s_chooseMapWantCloseConfirm = false;
+    s_chooseMapPreviewPending   = false;
+    s_chooseMapCs               = NULL;
+
     /* Dismiss soft keyboard and tear down ImGui */
     dialogDismissKeyboard(window);
     ImGui_ImplSDLRenderer3_Shutdown();
