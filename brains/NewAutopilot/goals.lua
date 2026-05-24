@@ -2896,6 +2896,51 @@ function M.step_eval_queue(state, world, info)
   local partial = state.pool_partial
   if not partial then partial = {}; state.pool_partial = partial end
 
+  -- Chunked pill-eval pre-probe (BRAIN_DEBUG_MODE only — the C fast path
+  -- is plenty fast outside debug). Peek the next GOAL_CANDS_PER_TICK
+  -- pool-6 candidates and advance one chunk on each whose diff_cache
+  -- entry is stale.  If any is still in_progress, bail without draining
+  -- the queue this tick so the bar can fill across ticks and the work
+  -- is actually spread over time at lower capacity tiers.
+  if BRAIN_DEBUG_MODE then
+    local _probe_pos = pos
+    local _probe_count = 0
+    local _any_in_progress = false
+    while _probe_pos <= #queue and _probe_count < C.GOAL_CANDS_PER_TICK do
+      local _it = queue[_probe_pos]
+      _probe_pos = _probe_pos + 1
+      _probe_count = _probe_count + 1
+      if _it.pool == 6 and not _it.reject then
+        local _pid = _it.id
+        local _pill = _it.obj
+        if _pill and _pid and _pid >= 0 then
+          local _dck = _pill.mx .. ":" .. _pill.my .. ":" .. (state.phase or "")
+          local _dc = (state._pill_diff_cache or {})[_dck]
+          local _dx_t = _pill.mx - tmx
+          local _dy_t = _pill.my - tmy
+          local _sqdist = _dx_t * _dx_t + _dy_t * _dy_t
+          local _ttl
+          if     _sqdist < 100 then _ttl = 50
+          elseif _sqdist < 900 then _ttl = 150
+          else                       _ttl = 500
+          end
+          local _ttl_mult = (state._capacity and state._capacity.ttl_mult) or 1.0
+          if _ttl_mult ~= 1.0 then _ttl = math.floor(_ttl * _ttl_mult) end
+          local _needs = (not _dc)
+              or (_dc.hp ~= (_pill.health or 0))
+              or (not _dc.spots)
+              or ((now - _dc.tick) >= _ttl)
+          if _needs then
+            local _status = attack.advance_pill_eval_chunk(
+              state, world, info, tmx, tmy, _pid, _pill)
+            if _status == "in_progress" then _any_in_progress = true end
+          end
+        end
+      end
+    end
+    if _any_in_progress then return end
+  end
+
   local count = 0
   while pos <= #queue and count < C.GOAL_CANDS_PER_TICK do
     local item = queue[pos]
@@ -3270,9 +3315,21 @@ function M.step_eval_queue(state, world, info)
           end
         else
           local _scan_step = (state._capacity and state._capacity.scan_step) or 5
-          diff_score, _spots, best_spot =
-            attack.evaluate_pill_difficulty(obj, world, force_detailed,
-                                            _scan_step, state.phase, state, tmx, tmy)
+          -- In debug mode the chunked pre-probe at the top of this fn
+          -- has already produced a fresh result in state._pill_eval_cache
+          -- before we ever get here (the probe bails the whole tick when
+          -- any in-flight sweep is still running). Read from the cache
+          -- instead of re-doing the 72-angle sweep inline.
+          local _pe = state._pill_eval_cache and state._pill_eval_cache[id]
+          if BRAIN_DEBUG_MODE and _pe and (now - _pe.tick) <= 250 then
+            diff_score = _pe.best_score
+            _spots     = _pe.spots
+            best_spot  = _pe.best_spot
+          else
+            diff_score, _spots, best_spot =
+              attack.evaluate_pill_difficulty(obj, world, force_detailed,
+                                              _scan_step, state.phase, state, tmx, tmy)
+          end
           diff_cache[dck] = { score = diff_score, spot = best_spot,
                               spots = _spots,  -- nil unless force_detailed
                               mx = obj.mx, my = obj.my,

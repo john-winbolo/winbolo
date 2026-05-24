@@ -860,25 +860,33 @@ M.WSIM_LGM_DEATH_PENALTY   = 200    -- extra cost if sim predicts LGM will die
 --   dij_short  : SHORT-slate nodes/tick (default 500). Powers steering nav.
 --   dij_long   : LONG-slate nodes/tick (default ~560 from 70k/125 ticks).
 --   scan_step  : eval_pill_difficulty step in degrees (5/10/20/45).
---   pp_spread  : plan_position scan spread over N ticks (1=sync). NOT WIRED YET.
---   sb_spread  : shield-blocker scan spread over N ticks (1=sync).  NOT WIRED YET.
+--   pp_spread  : plan_position scan spread over N ticks. 1=do all 72
+--                angles in one tick (best). N=spread across N ticks
+--                (~72/N angles per tick). At tier 1 (spread=50) the
+--                full 72-angle sweep completes in ~1 s. No resolution
+--                loss — always 5° / 72 angles regardless of tier.
 --   ttl_mult   : multiplier on pool-6 diff_cache distance-tier TTLs.
 --   eval_iv    : ticks between step_eval_queue pops (1=every tick).
 --   wsim       : sims top-N of the merged ~9-entry pool[]. nil=all, false=skip.
 --   place_r    : STRATEGIC_PLACE_SEARCH_RADIUS for pool-8 heatmap (default 8).
 --   tank_step  : eval_attack_tank standoff scan step in degrees (default 5).
+--   sb_positions / sb_step : shield-blocker ring scan density.
+--                positions × step ≈ angular coverage. Tier 10 keeps the
+--                legacy 28 × 0.5° (~±7°) sweep. Lower tiers drop to
+--                fewer positions across a proportionally wider step so
+--                coverage stays similar but per-scan cost drops.
 -- =========================================================================
 M.BRAIN_CAPACITY_LEVELS = {
-  [10] = { dij_short=500, dij_long=560, scan_step=5,  pp_spread=1,  sb_spread=1,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=8, tank_step=5  },
-  [9]  = { dij_short=500, dij_long=450, scan_step=5,  pp_spread=1,  sb_spread=1,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=8, tank_step=5  },
-  [8]  = { dij_short=450, dij_long=350, scan_step=10, pp_spread=2,  sb_spread=2,  ttl_mult=1.1, eval_iv=1, wsim=5,     place_r=7, tank_step=10 },
-  [7]  = { dij_short=400, dij_long=275, scan_step=10, pp_spread=2,  sb_spread=2,  ttl_mult=1.3, eval_iv=1, wsim=5,     place_r=7, tank_step=10 },
-  [6]  = { dij_short=350, dij_long=200, scan_step=20, pp_spread=3,  sb_spread=3,  ttl_mult=1.5, eval_iv=2, wsim=3,     place_r=6, tank_step=10 },
-  [5]  = { dij_short=300, dij_long=150, scan_step=20, pp_spread=4,  sb_spread=4,  ttl_mult=1.7, eval_iv=2, wsim=3,     place_r=5, tank_step=20 },
-  [4]  = { dij_short=250, dij_long=100, scan_step=20, pp_spread=5,  sb_spread=5,  ttl_mult=2.0, eval_iv=3, wsim=1,     place_r=5, tank_step=20 },
-  [3]  = { dij_short=200, dij_long=75,  scan_step=45, pp_spread=6,  sb_spread=6,  ttl_mult=2.5, eval_iv=3, wsim=1,     place_r=4, tank_step=45 },
-  [2]  = { dij_short=150, dij_long=50,  scan_step=45, pp_spread=8,  sb_spread=8,  ttl_mult=3.0, eval_iv=4, wsim=false, place_r=3, tank_step=45 },
-  [1]  = { dij_short=100, dij_long=25,  scan_step=45, pp_spread=10, sb_spread=10, ttl_mult=4.0, eval_iv=5, wsim=false, place_r=2, tank_step=45 },
+  [10] = { dij_short=500, dij_long=560, scan_step=5,  pp_spread=1,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=8, tank_step=5,  sb_positions=28, sb_step=0.5 },
+  [9]  = { dij_short=500, dij_long=450, scan_step=5,  pp_spread=6,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=8, tank_step=5,  sb_positions=24, sb_step=0.6 },
+  [8]  = { dij_short=450, dij_long=350, scan_step=10, pp_spread=12, ttl_mult=1.1, eval_iv=1, wsim=5,     place_r=7, tank_step=10, sb_positions=20, sb_step=0.7 },
+  [7]  = { dij_short=400, dij_long=275, scan_step=10, pp_spread=17, ttl_mult=1.3, eval_iv=1, wsim=5,     place_r=7, tank_step=10, sb_positions=16, sb_step=0.9 },
+  [6]  = { dij_short=350, dij_long=200, scan_step=20, pp_spread=22, ttl_mult=1.5, eval_iv=2, wsim=3,     place_r=6, tank_step=10, sb_positions=14, sb_step=1.0 },
+  [5]  = { dij_short=300, dij_long=150, scan_step=20, pp_spread=28, ttl_mult=1.7, eval_iv=2, wsim=3,     place_r=5, tank_step=20, sb_positions=12, sb_step=1.2 },
+  [4]  = { dij_short=250, dij_long=100, scan_step=20, pp_spread=33, ttl_mult=2.0, eval_iv=3, wsim=1,     place_r=5, tank_step=20, sb_positions=10, sb_step=1.4 },
+  [3]  = { dij_short=200, dij_long=75,  scan_step=45, pp_spread=39, ttl_mult=2.5, eval_iv=3, wsim=1,     place_r=4, tank_step=45, sb_positions=8,  sb_step=1.75},
+  [2]  = { dij_short=150, dij_long=50,  scan_step=45, pp_spread=44, ttl_mult=3.0, eval_iv=4, wsim=false, place_r=3, tank_step=45, sb_positions=6,  sb_step=2.5 },
+  [1]  = { dij_short=100, dij_long=25,  scan_step=45, pp_spread=50, ttl_mult=4.0, eval_iv=5, wsim=false, place_r=2, tank_step=45, sb_positions=4,  sb_step=3.5 },
 }
 
 -- Tier control: per-tier ms history corroborates raise decisions; drops

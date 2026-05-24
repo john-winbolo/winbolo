@@ -464,8 +464,14 @@ end
 -- existing walls and friendly pills count toward the protection
 -- score. attack.lua passes this when info.man_status == LGM_DEAD.
 function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
-                standoff_cx, standoff_cy, radius, no_builder, tank_armour)
+                standoff_cx, standoff_cy, radius, no_builder, tank_armour,
+                positions, step_deg)
   if not pill or not world then return { candidates = {}, best = nil } end
+  -- Tier-gated ring density.  Defaults preserve the legacy 28×0.5° sweep.
+  -- Lua fallback path uses these locals below; C scan_c receives them
+  -- via the new args 20/21.
+  local NUM = positions or M.NUM_CANDIDATES
+  local SDG = step_deg  or M.STEP_DEG
   local pmx, pmy = pill.mx, pill.my
   -- Caller can override the standoff circle radius (PPT uses a tighter
   -- one). Defaults to the standard ATTACK_PILL_STANDOFF.
@@ -530,7 +536,8 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       pill_table,
       standoff_mx or math.floor(sx), standoff_my or math.floor(sy),
       no_builder and true or false,
-      n_fav, fs1, fb1, fs2, fb2, min_chain, max_bonus)
+      n_fav, fs1, fb1, fs2, fb2, min_chain, max_bonus,
+      NUM, SDG)
 
     if r then
       local standoff_cand = { cx = sx, cy = sy,
@@ -577,9 +584,9 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   candidates[1].mx = standoff_mx
   candidates[1].my = standoff_my
 
-  local half = M.NUM_CANDIDATES * 0.5
-  for i = 1, M.NUM_CANDIDATES do
-    local offset = (i - half - 0.5) * M.STEP_DEG
+  local half = NUM * 0.5
+  for i = 1, NUM do
+    local offset = (i - half - 0.5) * SDG
     local deg = standoff_deg + offset
     local rad = math.rad(deg)
     local cx = pcx + math.sin(rad) * R

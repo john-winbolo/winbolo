@@ -176,9 +176,9 @@ function Brain.get_capacity_state_json()
   local function lvl(t)
     local L = lvls[t] or {}
     return string.format(
-      '{"tier":%d,"dij_short":%d,"dij_long":%d,"scan_step":%d,"pp_spread":%d,"sb_spread":%d,"ttl_mult":%.2f,"eval_iv":%d,"wsim":%s,"place_r":%d,"tank_step":%d,"ms":%s}',
+      '{"tier":%d,"dij_short":%d,"dij_long":%d,"scan_step":%d,"pp_spread":%d,"ttl_mult":%.2f,"eval_iv":%d,"wsim":%s,"place_r":%d,"tank_step":%d,"ms":%s}',
       t, L.dij_short or 0, L.dij_long or 0, L.scan_step or 0,
-      L.pp_spread or 1, L.sb_spread or 1, L.ttl_mult or 1.0,
+      L.pp_spread or 1, L.ttl_mult or 1.0,
       L.eval_iv or 1,
       (L.wsim == nil and "null") or (L.wsim == false and "false") or tostring(L.wsim),
       L.place_r or 0, L.tank_step or 0,
@@ -1173,7 +1173,7 @@ function Brain.think(info)
   -- Optional debug log — keeps the per-tick shell positions in
   -- hitboxes.log for one-off bug hunts. Rendering is handled by
   -- draw_shell_hitbox_viz above; this block ONLY writes the log.
-  if BRAIN_DEBUG_MODE then
+  if BRAIN_DEBUG_MODE and viz.is_on("hitbox_logs") then
   local t_hb0 = clock_us()
   do
     local hb_log = io.open("hitboxes.log", "a")
@@ -1374,7 +1374,7 @@ function Brain.think(info)
           end
         end
       end
-      if #hits > 0 and BRAIN_DEBUG_MODE then
+      if #hits > 0 and BRAIN_DEBUG_MODE and viz.is_on("hitbox_logs") then
         local f = io.open("intersect.log", "a")
         if f then
           for _, h in ipairs(hits) do f:write(h, "\n") end
@@ -1633,7 +1633,11 @@ function Brain.think(info)
   -- NOTE: clear is done host-side once per tick (BrainTest's
   -- appTickBrain) so multi-bot games don't have one bot wipe
   -- another's entries. We just append from here.
-  if pillcontrib_begin_pill then
+  if pillcontrib_begin_pill and _G._BT_PCONTRIB_NEEDED then
+    -- Host pushes _BT_PCONTRIB_NEEDED each tick: true only when the
+    -- shift-2 pill_contrib overlay is active OR --record-pcontrib is on.
+    -- Everything else (typical debug-mode runs) skips the per-pill push
+    -- entirely — saves a measurable chunk of think_ms.
     -- Walk pills in id-stable order so the cycle index stays
     -- consistent across ticks. Skip dead pills (no contribution).
     if world.pills and threat.pill_contrib then
@@ -2564,6 +2568,11 @@ function Brain.think(info)
       goals.update_pool_cache(state, world, info)
     end
     opt(string.format("  update_pool_cache done %.2f ms", (clock_us() - t_pc0) / 1000))
+
+    -- Purge stale per-pill plan_position cache entries (pills that
+    -- have been destroyed / picked up / captured friendly since last
+    -- check). Cheap iteration over ~10-20 cached pills.
+    attack.purge_dead_pill_eval_entries(state, world)
 
     -- Goal selection (not in water)
     -- Also trigger an urgent replan if attack_tank is active but the enemy
@@ -3988,6 +3997,8 @@ function Brain.think(info)
     -- gap and we don't trust their state.
     ally_state.draw(viz, state.tick, info.player_number, 1750)
     ally_state.draw_chat_log(viz, state.tick, info.player_number)
+    attack.draw_pill_eval_progress(viz, state)
+    attack.draw_plan_trace(viz, state, info)
     lgm_registry.draw_hud(viz, state.tick, info.player_number)
     lgm_registry.draw_map(viz, state.tick, info.player_number, info.allies)
     -- Semi-transparent gray rectangle over each pill/base currently
@@ -4238,12 +4249,40 @@ function Brain.think(info)
     end
     local _last  = (_G.brain and _G.brain.lastThinkMs) or 0
     local _tgt   = (_G.brain and _G.brain.targetMs)    or 0
-    local _killed_str = ""
-    if _G.brain and _G.brain.wasKilled then _killed_str = " KILLED" end
+    local _killed = _G.brain and _G.brain.wasKilled
+    local _killed_str = _killed and " KILLED" or ""
     viz.hud_text("hud_tick_info", 8, 44,
       string.format("capacity: tier %d/10  (ratio %.2f, last %.1fms / target %.1fms)%s",
         _tier, _ratio, _last, _tgt, _killed_str),
       "topleft", _r, _g, _b)
+    -- ── Prominent budget + kill banner ──
+    -- Top-center: large status line color-coded by usage; flashing red
+    -- KILLED banner when the previous tick was force-killed by the
+    -- count hook.  Gated on its own viz toggle so users who don't want
+    -- another HUD element can hide it.
+    if viz.is_on("hud_budget") then
+      local _usage = (_tgt > 0) and (_last / _tgt) or 0
+      local _br, _bg, _bb
+      if     _usage >= 1.10 then _br, _bg, _bb = 255,  60,  60   -- red: over budget
+      elseif _usage >= 0.90 then _br, _bg, _bb = 255, 140,  60   -- orange
+      elseif _usage >= 0.60 then _br, _bg, _bb = 240, 220, 100   -- yellow
+      else                       _br, _bg, _bb = 120, 220, 120   -- green
+      end
+      viz.hud_text("hud_budget", 8, 116,
+        string.format("BUDGET  %.1f / %.1f ms  (%.0f%%)",
+                      _last, _tgt, _usage * 100),
+        "topright", _br, _bg, _bb, 255)
+      if _killed then
+        -- 6-tick flash cycle so the kill banner can't be missed.
+        local _phase = (now % 6) < 3
+        local _kr, _kg, _kb = _phase and 255 or 100,
+                              _phase and 30  or 30,
+                              _phase and 30  or 100
+        viz.hud_text("hud_budget", 8, 134,
+          "*** BRAIN KILLED LAST TICK -- tick_budget_exceeded ***",
+          "topright", _kr, _kg, _kb, 255)
+      end
+    end
     -- Per-tier ms history line: shows what we've seen each tier cost.
     -- Dashes for tiers we haven't visited yet. Useful for verifying the
     -- raise corroboration logic is making sensible choices.

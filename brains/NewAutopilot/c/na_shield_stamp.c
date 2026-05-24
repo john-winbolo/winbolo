@@ -900,6 +900,22 @@ static int l_scan_c(lua_State *L) {
         cfg.max_bonus    = luaL_checknumber(L, 19);
     }
 
+    /* Tier-gated ring density (args 20..21, optional).  Defaults preserve
+     * the legacy 28×0.5° (~±7°) sweep.  Lua callers compute these from
+     * the active capacity tier so lower tiers scan with fewer positions
+     * across a wider step (keeps total angular coverage similar but
+     * cuts candidate count proportionally). */
+    int   ring_n    = 28;
+    float ring_step = 0.5f;
+    if (lua_gettop(L) >= 21) {
+        ring_n    = (int)luaL_checkinteger(L, 20);
+        ring_step = (float)luaL_checknumber(L, 21);
+        if (ring_n < 1) ring_n = 1;
+        /* +1 for the standoff slot at index 0; SCAN_MAX_CANDS = 32. */
+        if (ring_n > SCAN_MAX_CANDS - 1) ring_n = SCAN_MAX_CANDS - 1;
+        if (ring_step <= 0.0f) ring_step = 0.5f;
+    }
+
     /* Stack-local 17×17 local pill map centred on pill tile */
     uint8_t pill_map[17 * 17];
     memset(pill_map, 0, sizeof(pill_map));
@@ -940,8 +956,8 @@ static int l_scan_c(lua_State *L) {
 
     /* Candidates 1..NUM_CANDIDATES: ring around pill */
     float pcx = pmx + 0.5f, pcy = pmy + 0.5f;
-    int NUM_CANDS = 28;  /* M.NUM_CANDIDATES */
-    float STEP    = 0.5f; /* M.STEP_DEG */
+    int   NUM_CANDS = ring_n;     /* default 28, tier-gated via args 20-21 */
+    float STEP      = ring_step;  /* default 0.5° */
     for (int i = 1; i <= NUM_CANDS && n_cands < SCAN_MAX_CANDS; i++) {
         float offset = (i - NUM_CANDS * 0.5f - 0.5f) * STEP;
         float deg    = chosen_deg + offset;

@@ -172,9 +172,9 @@ function Brain.get_capacity_state_json()
   local function lvl(t)
     local L = lvls[t] or {}
     return string.format(
-      '{"tier":%d,"dij_short":%d,"dij_long":%d,"scan_step":%d,"pp_spread":%d,"sb_spread":%d,"ttl_mult":%.2f,"eval_iv":%d,"wsim":%s,"place_r":%d,"tank_step":%d,"ms":%s}',
+      '{"tier":%d,"dij_short":%d,"dij_long":%d,"scan_step":%d,"pp_spread":%d,"ttl_mult":%.2f,"eval_iv":%d,"wsim":%s,"place_r":%d,"tank_step":%d,"ms":%s}',
       t, L.dij_short or 0, L.dij_long or 0, L.scan_step or 0,
-      L.pp_spread or 1, L.sb_spread or 1, L.ttl_mult or 1.0,
+      L.pp_spread or 1, L.ttl_mult or 1.0,
       L.eval_iv or 1,
       (L.wsim == nil and "null") or (L.wsim == false and "false") or tostring(L.wsim),
       L.place_r or 0, L.tank_step or 0,
@@ -1239,7 +1239,11 @@ function Brain.think(info)
   -- NOTE: clear is done host-side once per tick (BrainTest's
   -- appTickBrain) so multi-bot games don't have one bot wipe
   -- another's entries. We just append from here.
-  if pillcontrib_begin_pill then
+  if pillcontrib_begin_pill and _G._BT_PCONTRIB_NEEDED then
+    -- Host pushes _BT_PCONTRIB_NEEDED each tick: true only when the
+    -- shift-2 pill_contrib overlay is active OR --record-pcontrib is on.
+    -- Everything else (typical debug-mode runs) skips the per-pill push
+    -- entirely — saves a measurable chunk of think_ms.
     -- Walk pills in id-stable order so the cycle index stays
     -- consistent across ticks. Skip dead pills (no contribution).
     if world.pills and threat.pill_contrib then
@@ -2103,6 +2107,11 @@ function Brain.think(info)
       goals.update_pool_cache(state, world, info)
     end
     opt(string.format("  update_pool_cache done %.2f ms", (clock_us() - t_pc0) / 1000))
+
+    -- Purge stale per-pill plan_position cache entries (pills that
+    -- have been destroyed / picked up / captured friendly since last
+    -- check). Cheap iteration over ~10-20 cached pills.
+    attack.purge_dead_pill_eval_entries(state, world)
 
     -- Goal selection (not in water)
     -- Also trigger an urgent replan if attack_tank is active but the enemy

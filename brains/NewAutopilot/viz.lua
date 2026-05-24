@@ -51,6 +51,18 @@ M.IDS = {
                      long  = "Orange/red dot at each shell's exact wu" },
   lgm_hitbox     = { short = "LGM hitbox dbg",
                      long  = "LGM orange dot + wu/tile coord text" },
+  -- Heavy per-tick disk I/O for shell hitbox + intersect diagnostics.
+  -- Default off: the file writes are expensive (one io.open/close per
+  -- visible shell per tick).  Enable when actively debugging hitbox
+  -- collisions.  Gates writes to hitboxes.log and intersect.log; the
+  -- visual overlays (shell_hitbox / shell_hit_dot) stay separately
+  -- togglable.
+  hitbox_logs    = { short = "Hitbox/intersect log files",
+                     long  = "Write hitboxes.log + intersect.log every tick (heavy disk I/O). Off by default; flip on only when debugging shell-hit-detection issues.",
+                     default_on = false },
+
+  hud_budget = { short = "HUD: budget + kill",
+                 long  = "Prominent top-of-screen banner showing last_ms / target_ms ratio (green/yellow/orange/red) plus a flashing red KILLED banner when brain.wasKilled was set last tick.  Reads _G.brain.{lastThinkMs,targetMs,wasKilled}." },
   cliff_safety   = { short = "Cliff safety",
                      long  = "Yellow look-ahead tiles + cliff brake label" },
   lgm_stranded   = { short = "LGM stranded dbg",
@@ -121,6 +133,8 @@ M.IDS = {
                         long  = "DETREE N/M (left=K) overlay above tank" },
 
   -- Pill take / shield system.
+  plan_trace             = { short = "Plan-pos trace",
+                             long  = "Always-on multiline label above tank showing each plan_position gate state: chunk status, spots/los/greens counts, best pick, shield scan result. Lets you see at a glance where the chain breaks." },
   shield_scan_candidates = { short = "Shield: candidates",
                              long  = "Per-candidate score boxes for the 8 ring positions + standoff" },
   shield_scan_blockers   = { short = "Shield: blockers",
@@ -200,6 +214,14 @@ M.IDS = {
   -- (bot #, goal, substate, target, k=v data).
   ally_state_overlay = { short = "Ally state table",
                          long  = "Right-middle HUD showing each ally's goal / sub / target / k=v data, fed by the chat-based ally_state slate" },
+
+  -- plan_position chunked-sweep progress (low-tier multi-tick sweep).
+  plan_position_progress = { short = "Plan-pos progress",
+                             long  = "When the plan_position 72-angle sweep is chunked across N ticks at lower tiers, shows angle progress + tick counter near the tank" },
+
+  -- Chunked plan_position pill-eval sweep (one pill at a time, only the committed attack target).
+  pill_eval_progress     = { short = "Pill eval progress",
+                             long  = "Progress bar above the pill being evaluated by the chunked plan_position 72-angle sweep" },
 
   -- Chat log overlay (right side, below ally_state_overlay).
   chat_log_overlay   = { short = "Chat log",

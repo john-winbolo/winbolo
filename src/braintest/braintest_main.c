@@ -3165,6 +3165,23 @@ static void appTickBrain(BrainTestApp *app) {
      * Brain.think then appends to its own slot range — no race. */
     pillContribClearAll();
 
+    /* Push the "do we need pillcontrib export this tick" flag to every
+     * bot.  Brain skips the per-pill add_all loop when false, saving a
+     * non-trivial chunk of think_ms on debug runs that aren't actually
+     * looking at the shift-2 overlay or recording pcontrib snapshots. */
+    {
+        bool need_pc = (app->pillContribSel > 0) || g_recordPcontribEnabled;
+        char line[64];
+        SDL_snprintf(line, sizeof(line),
+                     "_G._BT_PCONTRIB_NEEDED=%s",
+                     need_pc ? "true" : "false");
+        for (BYTE i = 0; i < MAX_TANKS; i++) {
+            if (serverSimIsBot(app->sim, i)) {
+                serverSimBotExecLua(app->sim, i, line);
+            }
+        }
+    }
+
     serverSimBotTick(app->sim, optAI);
     {
         double ms = serverSimGetBotLastThinkMs(app->sim, app->followBot);
@@ -4516,10 +4533,19 @@ int main(int argc, char *argv[]) {
     app.viewCenterX = ((app.mapMinX + app.mapMaxX) / 2) << 8;
     app.viewCenterY = ((app.mapMinY + app.mapMaxY) / 2) << 8;
 
-    /* Add bots */
-    if (!botManagerInit(0)) {
-        fprintf(stderr, "botManagerInit failed\n");
-        return 1;
+    /* Add bots.  Default the brain dispatch-thread count to the number
+     * of bot players so each bot gets the full per-bot budget instead
+     * of having brainBudget × threadsConfig / activeBots divide it
+     * down.  Capped by logical core count (botManagerInit returns false
+     * otherwise) and by MAX_TANKS. */
+    {
+        int desired_threads = optNumPlayers;
+        int cores = SDL_GetNumLogicalCPUCores();
+        if (desired_threads > cores) desired_threads = cores;
+        if (!botManagerInit(desired_threads)) {
+            fprintf(stderr, "botManagerInit failed\n");
+            return 1;
+        }
     }
     /* Pre-think hook needs the per-sim BotManager; install it now that
      * app.sim exists. Bots have not been added yet, so no tick can fire

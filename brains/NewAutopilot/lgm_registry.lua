@@ -161,7 +161,7 @@ function M.draw_hud(viz, now, self_pn)
       local tile_str = (s.mx and s.my) and string.format("%d,%d", s.mx, s.my) or "—"
       local src_str  = s.source or "?"
       local resp_str = (s.status == "dead" and s.respawn_eta)
-                       and string.format("%ds", math.max(0, (s.respawn_eta - now) / 50))
+                       and string.format("%ds", math.max(0, math.floor((s.respawn_eta - now) / 50)))
                        or  "—"
       viz.hud_text("lgm_registry_hud", x, y,
                    string.format("%-4d %-7s %-9s %-5s %-7s",
