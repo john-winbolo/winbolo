@@ -3000,19 +3000,33 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_LOBBY_TEAM_SET: {
-            /* Wire: [header 8] [playerNum 1] [teamNumber 1] */
+            /* Wire: [header 8] [targetSlot 1] [teamNumber 1].
+             *
+             * Authority: anyone may change their own team. Moving
+             * another player's slot (including bot slots) requires
+             * host / admin / openHost — same gate the drag-and-drop
+             * UI uses. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && serverSimIsLobbyEnabled(sim) &&
-                serverSimGetState(sim) == serverStateLobby &&
-                len >= PACKET_HEADER_SIZE + 2) {
-                uint8_t teamNum = buf[PACKET_HEADER_SIZE + 1];
-                if (teamNum < MAX_TANKS) {
-                    serverSimSetTeam(sim, (BYTE)clientIdx, teamNum);
-                    logAddEvent(log_TeamSet, (BYTE)clientIdx, teamNum, 0, 0, 0, NULL);
-                    serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
-                    lobbyAutoUnreadyOnChange(sim);
-                }
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 2) break;
+            uint8_t targetSlot = buf[PACKET_HEADER_SIZE];
+            uint8_t teamNum    = buf[PACKET_HEADER_SIZE + 1];
+            if (targetSlot >= MAX_TANKS || teamNum >= MAX_TANKS) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_SET,
+                              LOBBY_REJECT_INVALID);
+                break;
             }
+            if ((int)targetSlot != clientIdx &&
+                !lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_SET,
+                              LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            serverSimSetTeam(sim, (BYTE)targetSlot, teamNum);
+            logAddEvent(log_TeamSet, (BYTE)targetSlot, teamNum, 0, 0, 0, NULL);
+            serverSimPublishLobbySlot(sim, (BYTE)targetSlot);
+            lobbyAutoUnreadyOnChange(sim);
             break;
         }
         case PACKET_LOBBY_READY: {
