@@ -87,6 +87,14 @@ TeamMetadata    *serverSimGetTeamMetaMut(ServerSim *sim, BYTE teamId);
 LobbyBotConfig  *serverSimGetBotConfigMut(ServerSim *sim, BYTE slot);
 LobbyPlayer     *serverSimGetLobbyPlayerMut(ServerSim *sim, BYTE n);
 
+/* Server-side map I/O root. Returns the operator-configured -mapdir
+ * path when set, otherwise the built-in "data/maps". Callers: the
+ * server's directory enumerate/search functions and the
+ * PACKET_LOBBY_SET_MAP / PACKET_LOBBY_MAP_USE_LOCAL path resolvers in
+ * transport_udp_server.c. The returned pointer has no trailing slash;
+ * concatenate with "/<rel>". */
+const char *serverSimGetMapDirRoot(const ServerSim *sim);
+
 /* Auto-unready on meaningful lobby change. Called after each apply
  * from PACKET_LOBBY_* handlers and client_net.c local-transport
  * branches. */

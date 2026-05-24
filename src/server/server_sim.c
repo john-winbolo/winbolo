@@ -3467,9 +3467,35 @@ bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
     }
     sim->mapDirFiles = files;
     sim->mapDirCount = count;
+
+    /* Capture the dirPath as the canonical server-side map root so
+     * serverSimEnumerateMapDir / serverSimSearchMapDir / SET_MAP path
+     * resolution all read from the same place the rotation list was
+     * built from. Strip a trailing slash to keep concatenations
+     * ("<root>/<rel>") clean. */
+    if (sim->mapDirPath) {
+        free(sim->mapDirPath);
+        sim->mapDirPath = NULL;
+    }
+    sim->mapDirPath = SDL_strdup(dirPath);
+    if (sim->mapDirPath != NULL) {
+        size_t plen = SDL_strlen(sim->mapDirPath);
+        while (plen > 1 && (sim->mapDirPath[plen - 1] == '/' ||
+                            sim->mapDirPath[plen - 1] == '\\')) {
+            sim->mapDirPath[--plen] = '\0';
+        }
+    }
+
     fprintf(stderr, "Map directory: %d valid map(s) loaded from '%s'\n",
             count, dirPath);
     return TRUE;
+}
+
+const char *serverSimGetMapDirRoot(const ServerSim *sim) {
+    if (sim != NULL && sim->mapDirPath != NULL && sim->mapDirPath[0] != '\0') {
+        return sim->mapDirPath;
+    }
+    return "data/maps";
 }
 
 bool serverSimMapDirPickRandom(ServerSim *sim) {
@@ -4116,6 +4142,10 @@ void serverSimMapDirDestroy(ServerSim *sim) {
         free(sim->mapDirFiles);
         sim->mapDirFiles = NULL;
         sim->mapDirCount = 0;
+    }
+    if (sim->mapDirPath != NULL) {
+        SDL_free(sim->mapDirPath);
+        sim->mapDirPath = NULL;
     }
 }
 
@@ -5305,7 +5335,8 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
         memcmp(bytes, MAP_HEADER, sizeof(MAP_HEADER) - 1) == 0) {
         char tmpPath[FILENAME_MAX];
         SDL_snprintf(tmpPath, sizeof(tmpPath),
-                     "data/maps/.tmp_inmem_reload.map");
+                     "%s/.tmp_inmem_reload.map",
+                     serverSimGetMapDirRoot(sim));
         FILE *tf = fopen(tmpPath, "wb");
         if (tf == NULL) {
             WB_LOG_ERROR(WB_LOG_CAT_SERVER,
@@ -5519,15 +5550,15 @@ static bool relPathIsSafe(const char *p) {
 
 int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
                               ServerMapEntry *entries, int maxEntries) {
-    (void)sim;
     if (!entries || maxEntries <= 0) return -1;
     if (!relPathIsSafe(relPath)) return -1;
 
+    const char *root = serverSimGetMapDirRoot(sim);
     char fullPath[FILENAME_MAX];
     if (!relPath || relPath[0] == '\0') {
-        SDL_strlcpy(fullPath, "data/maps", sizeof(fullPath));
+        SDL_strlcpy(fullPath, root, sizeof(fullPath));
     } else {
-        SDL_snprintf(fullPath, sizeof(fullPath), "data/maps/%s", relPath);
+        SDL_snprintf(fullPath, sizeof(fullPath), "%s/%s", root, relPath);
     }
 
     int count = 0;
@@ -5658,16 +5689,16 @@ static void searchDirRecursive(const char *fullRoot,
 int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
                            const char *query,
                            ServerMapEntry *entries, int maxEntries) {
-    (void)sim;
     if (!entries || maxEntries <= 0) return -1;
     if (!query || query[0] == '\0') return 0;
     if (!relPathIsSafe(relPath)) return -1;
 
+    const char *root = serverSimGetMapDirRoot(sim);
     char fullRoot[FILENAME_MAX];
     if (!relPath || relPath[0] == '\0') {
-        SDL_strlcpy(fullRoot, "data/maps", sizeof(fullRoot));
+        SDL_strlcpy(fullRoot, root, sizeof(fullRoot));
     } else {
-        SDL_snprintf(fullRoot, sizeof(fullRoot), "data/maps/%s", relPath);
+        SDL_snprintf(fullRoot, sizeof(fullRoot), "%s/%s", root, relPath);
     }
 
     char queryLower[128];
@@ -6147,7 +6178,6 @@ const BrainList *serverSimGetBrainList(const ServerSim *sim) {
 
 bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
                            uint8_t **outBytes, size_t *outLen) {
-    (void)sim;
     if (!outBytes || !outLen) return false;
     *outBytes = NULL;
     *outLen   = 0;
@@ -6155,7 +6185,8 @@ bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
     if (!relPathIsSafe(relPath)) return false;
 
     char fullPath[FILENAME_MAX];
-    SDL_snprintf(fullPath, sizeof(fullPath), "data/maps/%s", relPath);
+    SDL_snprintf(fullPath, sizeof(fullPath), "%s/%s",
+                 serverSimGetMapDirRoot(sim), relPath);
     SDL_PathInfo info;
     if (!SDL_GetPathInfo(fullPath, &info)) return false;
     if (info.type != SDL_PATHTYPE_FILE) return false;
