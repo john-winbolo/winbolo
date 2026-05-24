@@ -389,6 +389,8 @@ static bool             s_chooseMapFocusedOnce   = false;
  * non-chat area. ImVec2(0,0) on both means "no chat rect yet". */
 static ImVec2           s_chatBlockMin           = ImVec2(0.0f, 0.0f);
 static ImVec2           s_chatBlockMax           = ImVec2(0.0f, 0.0f);
+static int              s_chatRefocusFrames      = 0;
+static bool             s_chatHideNav            = false;
 /* Two chooser instances: one for the Server Maps tab (routes its
  * directory listing through serverSimEnumerateMapDir so it reflects
  * the server's actual map library), one for the Upload tab (always
@@ -6354,8 +6356,18 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         {
                             float btnW = 60.0f * s;
                             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - btnW - 8.0f);
+                            if (s_chatRefocusFrames > 0) {
+                                ImGui::SetKeyboardFocusHere(0);
+                                s_chatRefocusFrames--;
+                            }
+                            if (s_chatHideNav)
+                                ImGui::GetCurrentWindow()->DC.NavHideHighlightOneFrame = true;
                             bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
                                                                   ImGuiInputTextFlags_EnterReturnsTrue);
+                            if (s_chatHideNav) {
+                                ImGui::GetCurrentContext()->NavCursorVisible = false;
+                                if (ImGui::IsItemActive()) s_chatHideNav = false;
+                            }
                             ImGui::SameLine();
                             bool chatEmpty = (chatInput[0] == '\0');
                             if (chatEmpty) ImGui::BeginDisabled();
@@ -6369,11 +6381,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                     ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
                                 clientSimAppendLobbyChat(cs, myName, chatInput);
                                 chatInput[0] = '\0';
-                                /* Re-focus the input so the user can keep
-                                 * typing without clicking back in. Enter
-                                 * within an EnterReturnsTrue input loses
-                                 * focus by default; this restores it. */
-                                ImGui::SetKeyboardFocusHere(-1);
+                                s_chatRefocusFrames = 2;
+                                s_chatHideNav = true;
                             }
                         }
 
@@ -6704,8 +6713,18 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             {
                 float btnW = 60.0f * s;
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - btnW - 8.0f);
+                if (s_chatRefocusFrames > 0) {
+                    ImGui::SetKeyboardFocusHere(0);
+                    s_chatRefocusFrames--;
+                }
+                if (s_chatHideNav)
+                    ImGui::GetCurrentWindow()->DC.NavHideHighlightOneFrame = true;
                 bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
                                                       ImGuiInputTextFlags_EnterReturnsTrue);
+                if (s_chatHideNav) {
+                    ImGui::GetCurrentContext()->NavCursorVisible = false;
+                    if (ImGui::IsItemActive()) s_chatHideNav = false;
+                }
                 ImGui::SameLine();
                 bool chatEmpty = (chatInput[0] == '\0');
                 if (chatEmpty) ImGui::BeginDisabled();
@@ -6719,10 +6738,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
                     clientSimAppendLobbyChat(cs, myName, chatInput);
                     chatInput[0] = '\0';
-                    /* Restore focus to the input so a stream of chat
-                     * messages doesn't require clicking back in between
-                     * sends. */
-                    ImGui::SetKeyboardFocusHere(-1);
+                    s_chatRefocusFrames = 2;
+                    s_chatHideNav = true;
                 }
             }
             ImGui::EndChild();
