@@ -2680,6 +2680,16 @@ bool serverSimIsRunning(void) {
 void serverSimAbortCountdown(ServerSim *sim) {
     sim->state = serverStateLobby;
     sim->countdownTicks = 0;
+    /* Tell every subscriber the countdown is over — without this the
+     * client's netStat stays at netLobbyCountdown and the lobby UI
+     * leaves the "Game starting in N…" overlay drawn even though the
+     * server has reverted to lobby. */
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillGamePhaseEvent(sim, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks) {
@@ -6112,6 +6122,8 @@ void lobbyAutoUnreadyOnChange(ServerSim *sim) {
     }
 
     if (countdownWasRunning) {
+        /* serverSimAbortCountdown publishes the CTRL_GAME_PHASE_LOBBY
+         * transition itself; no separate publish needed here. */
         serverSimAbortCountdown(sim);
     }
 
@@ -6119,13 +6131,6 @@ void lobbyAutoUnreadyOnChange(ServerSim *sim) {
         if (toggled[i]) {
             serverSimPublishLobbySlot(sim, i);
         }
-    }
-
-    if (countdownWasRunning) {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        serverSimFillGamePhaseEvent(sim, &evt);
-        serverSimPublishControl(sim, &evt);
     }
 }
 
