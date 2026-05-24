@@ -1356,9 +1356,12 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          *   == 0xFF      : server localized, payload is langid + args
          *   == 0xFE      : server raw English (transitional), payload is plain message
          *
-         * Route through the codec so in-process subscribers see the
-         * CTRL_CHAT event, then keep the existing fromPlayer-discriminated
-         * display path below — chat rendering stays at the wire boundary. */
+         * Player-to-player chat is delivered to MessageState by the
+         * CTRL_CHAT subscriber in client_sim_control.c — do not deliver
+         * here too or the recipient sees every line twice. The 0xFE/0xFF
+         * server-message branches below stay because their display path
+         * (clientSimAppendLobbyChat / clientSimNetStatusMessage) is
+         * transport-aware and not replicated by the in-process handler. */
         {
             ControlDecodeFn dec = transportControlCodecDecoder(pktType);
             if (dec != NULL) {
@@ -1399,15 +1402,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 } else {
                     clientSimNetStatusMessage(c->clientSim, message);
                 }
-            } else {
-                /* Player-to-player chat: payload is plain message bytes. */
-                int msgLen = len - PACKET_HEADER_SIZE - 2;
-                char message[PACKET_MAX_CHAT_MESSAGE + 1];
-                if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
-                memcpy(message, buf + PACKET_HEADER_SIZE + 2, msgLen);
-                message[msgLen] = '\0';
-                clientSimIncomingMessage(c->clientSim, fromPlayer, message);
             }
+            /* Player-to-player case (fromPlayer < MAX_TANKS) intentionally
+             * falls through with no further action: the CTRL_CHAT subscriber
+             * in client_sim_control.c handles MessageState delivery for
+             * every subscriber (UDP clients, host, bots) uniformly. */
         }
         break;
     }

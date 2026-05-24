@@ -483,6 +483,10 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     clientSimCreate(bot->cs);
     clientSimSetIsBot(bot->cs, true);
     clientSimSetPlayerNum(bot->cs, playerNum);
+    /* Chat send: bot's ClientSim inherits clientSimDefaultChatSend from
+     * clientSimCreate. Outbound chat from brain.sendmessage flows through
+     * the same client_net.h path human chat uses → local transport's
+     * sendBytes publishes CTRL_CHAT. No bot-specific wiring needed. */
 
     /* Load map data from the server before tankCreate so the bot's local
      * starts/pills/bases are populated when startsGetStart() runs — without

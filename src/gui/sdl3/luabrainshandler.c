@@ -267,9 +267,30 @@ static void push_brain_info_REMOVED(lua_State *L, const BrainInfo *info) {
   }
   lua_setfield(L, -2, "objects");
 
-  /* Received message this tick, or nil.
-   * info->message->message is a pascal string (byte 0 = length, bytes 1..N = text).
-   * Convert to a C string before passing to Lua. */
+  /* Received messages this tick — array of {sender, receivers, text}
+   * tables. info.message (singular) is the legacy alias to messages[1].
+   * Pascal-string conversion is the same as before. */
+  {
+    char msgBuf[256];
+    lua_newtable(L);
+    for (u_short mi = 0; mi < info->num_messages; mi++) {
+      const MessageInfo *m = &info->messages[mi];
+      lua_newtable(L);
+      lua_pushinteger(L, m->sender);
+      lua_setfield(L, -2, "sender");
+      lua_pushinteger(L, m->receivers ? *(m->receivers) : 0);
+      lua_setfield(L, -2, "receivers");
+      if (m->message != NULL && m->message[0] != 0) {
+        utilPtoCString((char *)m->message, msgBuf);
+        lua_pushstring(L, msgBuf);
+      } else {
+        lua_pushstring(L, "");
+      }
+      lua_setfield(L, -2, "text");
+      lua_rawseti(L, -2, mi + 1);
+    }
+    lua_setfield(L, -2, "messages");
+  }
   if (info->message != NULL) {
     char msgBuf[256];
     lua_newtable(L);
