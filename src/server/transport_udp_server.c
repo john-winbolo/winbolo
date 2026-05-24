@@ -1486,6 +1486,21 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
      * the game-start race (see transportUdpServerOnGameStart) also fires
      * once for fresh joiners — belt-and-braces; harmless overlap. */
     udpServer.clients[slot].needsPlayerList = true;
+
+    /* Surface the join in everyone's lobby chat and unready any humans
+     * who were ready. The chat line rides CTRL_SERVER_TEXT, which the
+     * bus fans to both in-process subscribers and UDP clients via the
+     * codec — same path serverSendServerEnglishBroadcast already uses
+     * for lock-toggle / ping-enforcement announcements. The unready
+     * call is a no-op outside lobby/countdown (no human is ready in
+     * running state), so it stays unconditional. */
+    {
+        char chatMsg[32 + PACKET_MAX_PLAYER_NAME];
+        snprintf(chatMsg, sizeof(chatMsg), "%s has joined.",
+                 udpServer.clients[slot].playerName);
+        serverSendServerEnglishBroadcast(sim, chatMsg);
+    }
+    lobbyAutoUnreadyOnChange(sim);
 }
 
 /* Handle input packet from a connected client */
@@ -1902,6 +1917,22 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     fprintf(stderr, "[UDP SERVER] %s\n", msg);
     serverSimConsoleMessage(msg);
 
+    /* Mirror the leave into every client's lobby chat panel via
+     * CTRL_SERVER_TEXT. Console keeps the graceful-vs-timeout detail
+     * (`msg` above); the chat line is the uniform "X has left." form
+     * — players don't need the distinction and it matches what the
+     * client-side wire-packet branch used to render. Done before the
+     * subscriber/slot teardown below so the leaving client's
+     * still-attached subscriber sees it if they're reachable, and
+     * the formatted name is still in udpServer.clients[idx].playerName
+     * (wiped below). */
+    {
+        char chatMsg[32 + PACKET_MAX_PLAYER_NAME];
+        snprintf(chatMsg, sizeof(chatMsg), "%s has left.",
+                 udpServer.clients[idx].playerName);
+        serverSendServerEnglishBroadcast(sim, chatMsg);
+    }
+
     /* Notify WinBolo.net that the player is leaving (must happen before
      * clearing the slot so the player key is still valid) */
     winboloNetClientLeaveGame((BYTE)idx,
@@ -1932,6 +1963,13 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
      * blocking every subsequent UPLOAD_BEGIN from a different
      * client with LOBBY_REJECT_UPLOAD_BUSY until server restart. */
     udpServerClearClientUploadState(idx);
+
+    /* Unready any humans who were ready — a leaver changes the lobby
+     * composition. A no-op in running state (no one is ready then).
+     * Outer callers also fire serverSimRemovePlayer immediately after
+     * this; running this here rather than in each caller keeps the
+     * leave-side hook centralized alongside the chat broadcast above. */
+    lobbyAutoUnreadyOnChange(sim);
 }
 
 /* Send a localized server-originated message to all connected clients
@@ -2445,6 +2483,30 @@ const char *transportUdpServerGetPlayerName(BYTE playerNum) {
         return NULL;
     }
     return udpServer.clients[playerNum].playerName;
+}
+
+const char *transportUdpServerGetClientCountryCode(BYTE playerNum) {
+    if (playerNum >= MAX_TANKS) {
+        return NULL;
+    }
+    ServerSim *active = serverSimGetActive();
+    if (!udpServer.clients[playerNum].connected &&
+        (active == NULL || !serverSimIsBot(active, playerNum))) {
+        return NULL;
+    }
+    return udpServer.clients[playerNum].countryCode;
+}
+
+uint8_t transportUdpServerGetClientType(BYTE playerNum) {
+    if (playerNum >= MAX_TANKS) {
+        return CLIENT_TYPE_UNKNOWN;
+    }
+    ServerSim *active = serverSimGetActive();
+    if (!udpServer.clients[playerNum].connected &&
+        (active == NULL || !serverSimIsBot(active, playerNum))) {
+        return CLIENT_TYPE_UNKNOWN;
+    }
+    return udpServer.clients[playerNum].clientType;
 }
 
 /* Send an INFO_RESPONSE packet to the tracker so the game is listed. */
