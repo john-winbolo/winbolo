@@ -463,6 +463,17 @@ void transportUdpServerSetBotName(BYTE playerNum, const char *name);
 /* Get a connected client's player name (NULL if slot invalid/disconnected). */
 const char *transportUdpServerGetPlayerName(BYTE playerNum);
 
+/* Get a connected client's 2-char ISO country code (NULL if slot invalid
+ * or disconnected). The pointer is into the transport's per-slot storage
+ * — durable across serverSimResetGameWorld, which destroys the sim's
+ * mirror in `players->item[i].location`. */
+const char *transportUdpServerGetClientCountryCode(BYTE playerNum);
+
+/* Get a connected client's clientType (CLIENT_TYPE_* constant) as
+ * recorded at join time. Returns CLIENT_TYPE_UNKNOWN if slot invalid
+ * or disconnected. Durable across serverSimResetGameWorld. */
+uint8_t transportUdpServerGetClientType(BYTE playerNum);
+
 /* Send an INFO_RESPONSE packet to the tracker server so the game
  * appears in the server browser. */
 void transportUdpServerSendTrackerUpdate(struct ServerSim *sim,
