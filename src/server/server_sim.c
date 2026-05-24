@@ -3043,6 +3043,26 @@ void serverSimReapplyTeamAlliances(ServerSim *sim) {
     }
 }
 
+/* At game start, all connected players' restock timers would otherwise
+ * be armed on the same tick, collapsing N players' cadence into one
+ * shared 800-tick cycle. Spread initial values across the window so the
+ * +1 events arrive smoothly. Mid-game joins (one at a time, naturally
+ * on different ticks) don't need this. */
+static void serverSimStaggerBaseTimers(ServerSim *sim) {
+    int numConnected = 0;
+    int orderIdx = 0;
+    BYTE i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->playerConnected[i]) numConnected++;
+    }
+    if (numConnected == 0) return;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        sim->sim.baseTimer[i] = (BASE_TICKS_BETWEEN_REFUEL * (orderIdx + 1)) / numConnected;
+        orderIdx++;
+    }
+}
+
 void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
 
@@ -3078,8 +3098,8 @@ void serverSimStartGameInPlace(ServerSim *sim) {
         }
         tankCreate(&sim->sim, &sim->sim.tanks[i]);
         sim->sim.lgmen[i] = lgmCreate(i);
-        basesUpdateTimer(&sim->sim, i);
     }
+    serverSimStaggerBaseTimers(sim);
 
     sim->state = serverStateRunning;
 
@@ -3207,8 +3227,8 @@ void serverSimStartGame(ServerSim *sim) {
         }
         tankCreate(&sim->sim, &sim->sim.tanks[i]);
         sim->sim.lgmen[i] = lgmCreate(i);
-        basesUpdateTimer(&sim->sim, i);
     }
+    serverSimStaggerBaseTimers(sim);
 
     sim->state = serverStateRunning;
     serverSimConsoleMessage("Game started!");
