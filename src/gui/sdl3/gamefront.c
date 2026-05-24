@@ -307,9 +307,16 @@ static BYTE udpPlayerNum = 0;
 
 /* Send callbacks for ClientSim — route through the client_net.h wrappers.
  * (The callback layer is retained for this transition; future cleanup
- * will let ClientSim callers call clientSimNetSend* directly.) */
-static void gameFrontChatSendCallback(uint8_t destPlayer, const char *message) {
-    clientSimNetSendChat(humanSim, destPlayer, message);
+ * will let ClientSim callers call clientSimNetSend* directly.)
+ *
+ * Chat callback uses the passed cs (not the module-static humanSim) so
+ * the same function can be wired onto a bot's ClientSim too — bot chat
+ * then flows down the same path human chat does: clientSimNetSendChat
+ * → cs->transport.sendBytes → local transport publishes CTRL_CHAT. */
+static void gameFrontChatSendCallback(struct ClientSim *cs, uint8_t fromPlayer,
+                                      uint8_t destPlayer, const char *message) {
+    (void)fromPlayer;
+    clientSimNetSendChat(cs, destPlayer, message);
 }
 
 static void gameFrontNameChangeSendCallback(const char *newName) {

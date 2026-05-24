@@ -572,6 +572,13 @@ static inline bool lobbyBotNameAcceptable(
 #define BOLO_NEW_MAGIC_0  'W'
 #define BOLO_NEW_MAGIC_1  'B'
 
+/* Wire packet header layout (8 bytes):
+ *   [magic0 1][magic1 1][packetType 1][reserved 1][sequence 4]
+ * Used by every packet type below; client_net.c builds packets
+ * directly and transport_local.c decodes them, so the constant
+ * is exposed here rather than buried in transport_udp_internal.h. */
+#define PACKET_HEADER_SIZE 8
+
 /* PACKET_MAX_PLAYER_NAME lives in public/wire_limits.h (included above
  * via the file-top include list) alongside PACKET_MAX_CHAT_MESSAGE. */
 
