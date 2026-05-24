@@ -306,6 +306,11 @@ function M.update(state, world, info)
           near_tank_idnum = near_tank_idnum,
           dist = U.mdist(tmx, tmy, lmx, lmy),
         }
+        -- Lead-predict for kill_lgm targeting.  EMA-smoothed velocity +
+        -- convergence loop (D ↔ flight_ticks) produces the aim point and
+        -- the gunrange we need to drive the crosshair to.  Used by both
+        -- steering (heading lead) and init.lua's fire block (gunrange
+        -- key + fire trigger).
         local v_ex, v_ey = kill_lgm.update_velocity(state, _ent, now)
         _ent.v_ema_x = v_ex
         _ent.v_ema_y = v_ey

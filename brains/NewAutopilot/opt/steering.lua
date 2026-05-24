@@ -1675,6 +1675,7 @@ function M.steer(state, world, info, goal)
     return keys, taps
 
   elseif goal.kind == "kill_lgm" then
+    -- Match the goal's target LGM in perception's predicted list.
     local target_mx, target_my = goal.mx, goal.my
     local matched_elm = nil
     if state.perc and state.perc.enemy_lgms then
@@ -1689,6 +1690,13 @@ function M.steer(state, world, info, goal)
         end
       end
     end
+    -- When in shooting range, aim heading at the SUB-TILE predicted
+    -- world position (predicted_wx/wy), not the path's tile-center
+    -- lookahead.  At realistic LGM speeds the lead is < 1 tile, so
+    -- predicted_mx/my == current tile and tile-snapped pathing loses
+    -- the lateral lead entirely.  Bypassing the pathfinder here also
+    -- keeps the tank turret pointed precisely at the lead point for
+    -- the firing block in init.lua to gate on aim_corr.
     local in_shooting_range = matched_elm and matched_elm.dist
                               and matched_elm.dist <= C.KILL_LGM_SHOOT_RANGE
     if in_shooting_range and matched_elm.predicted_wx then
@@ -1701,6 +1709,7 @@ function M.steer(state, world, info, goal)
       state._steer_lx = matched_elm.predicted_mx
       state._steer_ly = matched_elm.predicted_my
     else
+      -- Far / behind obstacles — path-find toward the predicted tile.
       local nx, ny = cpf_path_to(state, info, target_mx, target_my)
       if nx then
         local lx, ly = path_lookahead(state, info, nx, ny)

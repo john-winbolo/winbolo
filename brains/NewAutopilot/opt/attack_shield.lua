@@ -1407,6 +1407,12 @@ end
 
 function M.draw_overlay(scan, now_tick)
   if not BRAIN_DEBUG_MODE then return end
+  -- Need at least one of: candidates array (Lua scan path) or a best
+  -- winner / standoff fallback (C scan path).  The C path doesn't
+  -- surface scan.candidates; Pass A/B short-circuit on nil so only
+  -- Pass C (the winner's blocker borders) draws — which is what we
+  -- want.  Without this looser gate, the entire blocker viz silently
+  -- disappeared whenever scan_c was used.
   if not scan or (not scan.candidates and not scan.best and not scan.standoff) then
     return
   end

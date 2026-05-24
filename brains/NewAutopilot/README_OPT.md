@@ -1,5 +1,12 @@
 # Building the stripped `opt/` brain
 
+> **⚠ DO NOT HAND-EDIT FILES IN `opt/`.** Every file in `opt/` is
+> generated from the matching source `.lua` by `lua_strip.exe` via
+> `strip.bat`. Hand edits are silently overwritten the next time the
+> stripper runs and double the maintenance + merge-conflict surface
+> for every brain change. Edit the source files in
+> `brains/NewAutopilot/*.lua` only, then run `strip.bat` to regenerate.
+
 `opt/` holds the production version of the brain — the same Lua sources
 with debug-only calls (`viz.*`, `overlay_*`, `print2`, and
 `if BRAIN_DEBUG_MODE then ... end` blocks) removed. WinBolo loads `opt/`

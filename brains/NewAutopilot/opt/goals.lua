@@ -3551,6 +3551,9 @@ function M.step_eval_queue(state, world, info)
                               and state.goal.mx   == obj.mx
                               and state.goal.my   == obj.my
       local _ac_pen, _ac_by = 0, nil
+      -- Pools exempt from ally_claimed: 9 (attack_tank) and 13
+      -- (kill_lgm).  Both are time-critical, locally-observed kills
+      -- — a stale ally broadcast shouldn't pull us off the shot.
       if pool_idx ~= 9 and pool_idx ~= 13 and not _ac_we_are_here then
         for ally_pn, slot in ally_state.iter_active(now, 1750) do
           if ally_pn ~= info.player_number then
@@ -3570,6 +3573,7 @@ function M.step_eval_queue(state, world, info)
               if matched then
                 local their_cost = tonumber(info_h.cost)
                 if their_cost and (their_cost - c) >= C.ALLY_CLAIMED_STEAL_THRESHOLD then
+                  -- We're cheaper by at least the threshold — steal it
                   break
                 end
                 _ac_pen = (pool_idx == 1) and C.ALLY_CLAIMED_REFUEL_PENALTY

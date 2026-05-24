@@ -2218,7 +2218,15 @@ function M.update_attack_substate(goal, state, world, info)
       -- Otherwise spots is nil — chunking still in progress; the goal
       -- re-enters plan_position next tick and continues the sweep.
       if spots then
-      -- (goal.scan_spots = spots moved to end of block; see source.)
+      -- (goal.scan_spots = spots is set AT THE END of this block — see
+      -- the matching assignment just before the `end` below.  If we set
+      -- it here, a tick_budget_exceeded abort mid-flow would leave the
+      -- substate stuck: scan_spots set → next tick skips this block →
+      -- greens/best never re-run, _shield_scan_pending never set.
+      -- Deferring the gate-bit until ALL the setup is done makes the
+      -- whole block idempotent across budget aborts — the cache in
+      -- state._pill_eval_cache survives, so re-entry just re-runs
+      -- greens/best from the same cached spots.)
       -- plan-trace: count spots + LOS subset
       if BRAIN_PROFILE_LOG then
         opt.append("optimize.log", string.format(
@@ -2375,12 +2383,25 @@ function M.update_attack_substate(goal, state, world, info)
         -- blow the per-tick budget at low capacity tiers (the budget
         -- hook then raises tick_budget_exceeded mid-influence-pass).
         -- Splitting it across two ticks lets each stage fit naturally.
+        --
+        -- These two assignments are paired: scan_spots is the gate that
+        -- prevents re-entry into the chunked block; pending is the gate
+        -- that triggers the deferred shield-scan block.  Setting them
+        -- together (and last) makes the whole block idempotent under
+        -- budget abort — if we don't reach this point, scan_spots
+        -- stays nil and next tick re-runs the cheap re-derivation
+        -- (cached chunk, fresh greens/best) without losing the shield
+        -- step.
         goal.scan_spots = spots
         goal._shield_scan_pending = true
       else
         local smx, smy = M.pick_standoff(world, info, pill, state)
         goal.standoff_mx = smx
         goal.standoff_my = smy
+        -- Fallback path: no shield scan needed (no winner from greens).
+        -- Pair scan_spots assignment with the end of this branch so the
+        -- block is idempotent under budget abort, same as the if-best
+        -- branch above.
         goal.scan_spots = spots
       end
       end -- if spots (chunk done or cache hit)
@@ -2414,6 +2435,9 @@ function M.update_attack_substate(goal, state, world, info)
         sscan = sscan_or_err
       else
         local msg = tostring(sscan_or_err)
+        -- Re-raise budget abort so the brain runtime sees its own signal
+        -- and aborts the tick properly. Only catch genuine shield-scan
+        -- bugs (everything else).
         if msg:find("tick_budget_exceeded", 1, true) then
           error(sscan_or_err)
         end
@@ -3819,6 +3843,10 @@ function M.update_attack_substate(goal, state, world, info)
     -- (no trees, angry pill, LGM can't reach, path unsafe) right next
     -- to the build queue so the user sees why a wall isn't going up
     -- instead of staring at an idle tank.
+    --
+    -- Window is generous (200 ticks ≈ 4 s) so a one-off skip stays
+    -- legible long enough to read; once a skip is older than that
+    -- it's stale and likely no longer the active blocker.
     if goal.substate == "build_walls" and state._wall_shield_skip
        and (now - state._wall_shield_skip.tick) < 200 then
       local s = state._wall_shield_skip
@@ -3840,6 +3868,10 @@ function M.update_attack_substate(goal, state, world, info)
       end
     end
 
+    -- LGM status during build_walls: if the LGM isn't on the ground
+    -- (in tank / dead / parachuting) it physically cannot go out to
+    -- build walls.  Surface that directly rather than letting the
+    -- user wonder why nothing's happening.
     if goal.substate == "build_walls" and info.man_status ~= nil then
       local lgm_msg
       if info.man_status == C.LGM_INTANK then

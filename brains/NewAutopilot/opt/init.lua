@@ -729,6 +729,7 @@ function Brain.think(info)
   state.tick = state.tick + 1
   state._last_info = info
   local now  = state.tick
+
   -- LGM registry: self slot updated every tick from info.man_*.
   -- A status transition (in_tank ↔ ground ↔ dead) sets the
   -- pending_lgm_broadcast flag so the periodic /info state broadcast
@@ -2754,6 +2755,12 @@ function Brain.think(info)
   local _no_shells = info.shells <= C.SHELL_RESERVE
   local _shoot_busy = (keys & KEY_SHOOT) ~= 0 or (taps & KEY_SHOOT) ~= 0
   local _already_fired = false
+  -- Crosshair driver state: track the closest viable LGM (in range, LOS
+  -- clear) so we can drive info.gunrange toward its target sightLen
+  -- when the bot's active goal is kill_lgm.  Other goals (attack_pill
+  -- etc.) keep their own crosshair logic — we don't disturb them just
+  -- to catch opportunistic LGMs, those shots only fire when crosshair
+  -- happens to already align.
   local _primary_lgm = nil
   local _primary_dist = math.huge
   if state.perc and state.perc.enemy_lgms then
@@ -2773,6 +2780,10 @@ function Brain.think(info)
       elseif elm.dist > C.KILL_LGM_SHOOT_RANGE then
         _ev.status = "out_of_range"
       else
+        -- Use perception's lead-predicted aim point (EMA velocity +
+        -- convergence loop, see kill_lgm.lua).  Falls back to current
+        -- LGM position if perception didn't populate the predicted
+        -- fields (shouldn't happen, but be defensive).
         local aim_wx = elm.predicted_wx or elm.wx
         local aim_wy = elm.predicted_wy or elm.wy
         local target_sl = elm.target_sightLen
@@ -2785,6 +2796,7 @@ function Brain.think(info)
         if math.abs(aim_corr) > C.KILL_LGM_SHOOT_AIM then
           _ev.status = "off_aim"
         else
+          -- LOS check (cached).  Key by idnum if stable, else tile.
           local cache_key = elm.idnum and ("i" .. elm.idnum)
                             or ("t" .. elm.mx .. "," .. elm.my)
           local ce = los_cache[cache_key]
@@ -2813,6 +2825,11 @@ function Brain.think(info)
             los_cache[cache_key] = { tick = now, blocked = los_blocked }
           end
           _ev.los_blocked = los_blocked
+          -- Range-alignment gate: don't fire unless the crosshair is
+          -- at (or within 1 of) the lead-predicted target sightLen.
+          -- The bot adjusts gunrange via KEY_MORERANGE/LESSRANGE one
+          -- step per tick, so a 1-step tolerance lets the fire trigger
+          -- within a tick of arriving on target rather than oscillating.
           local sl_diff = target_sl and math.abs((info.gunrange or 14) - target_sl) or 99
           _ev.gunrange     = info.gunrange
           _ev.gunrange_off = sl_diff
@@ -2832,6 +2849,9 @@ function Brain.think(info)
                             info.gunrange or 0, target_sl or 0,
                             elm.v_ema_x or 0, elm.v_ema_y or 0))
           end
+          -- Track closest non-LOS-blocked LGM in range as primary for
+          -- the crosshair driver below.  Picking by raw dist (not
+          -- predicted dist) keeps the choice stable as the LGM moves.
           if not los_blocked and elm.dist < _primary_dist then
             _primary_dist = elm.dist
             _primary_lgm  = elm
@@ -2841,6 +2861,12 @@ function Brain.think(info)
     end
   end
 
+  -- Crosshair driver: when the active goal IS kill_lgm and we have a
+  -- viable primary LGM, nudge info.gunrange toward its target sightLen
+  -- every tick.  KEY_MORERANGE/LESSRANGE step by 1 per tick (tank.c).
+  -- Gated on goal.kind so attack_pill / attack_tank / etc. keep their
+  -- own crosshair management — they have their own KEY_MORERANGE logic
+  -- in steering.lua that would conflict with ours.
   if state.goal and state.goal.kind == "kill_lgm"
      and _primary_lgm and _primary_lgm.target_sightLen
      and not info.inboat then
