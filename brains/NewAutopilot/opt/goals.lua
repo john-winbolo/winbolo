@@ -2003,6 +2003,15 @@ local KIND_TO_POOL = {
   kill_lgm = 13,
 }
 
+-- Reverse map: actual goal.kind → pool index, for looking up cost_cache
+-- entries by candidate.  Note pool 1 (refuel) and pool 8 (place_strategic)
+-- have different UI labels than their goal.kind values.
+local KIND_TO_POOL = {
+  refuel_at_base = 1, defend_pill = 2, capture_base = 3, capture_pill = 4,
+  repair_pill = 5, attack_pill = 6, attack_base = 7,
+  place_pill_strategic = 8, attack_tank = 9, wait_for_lgm = 12,
+}
+
 -- (LOCK_SUBS defined above eval_attack_tank.)
 
 -- Wall-shield investment substates; gain extra commitment penalty
@@ -3542,9 +3551,6 @@ function M.step_eval_queue(state, world, info)
                               and state.goal.mx   == obj.mx
                               and state.goal.my   == obj.my
       local _ac_pen, _ac_by = 0, nil
-      -- Pools exempt from ally_claimed: 9 (attack_tank) and 13
-      -- (kill_lgm).  Both are time-critical, locally-observed kills
-      -- — a stale ally broadcast shouldn't pull us off the shot.
       if pool_idx ~= 9 and pool_idx ~= 13 and not _ac_we_are_here then
         for ally_pn, slot in ally_state.iter_active(now, 1750) do
           if ally_pn ~= info.player_number then

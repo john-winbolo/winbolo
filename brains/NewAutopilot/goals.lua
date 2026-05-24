@@ -2033,6 +2033,15 @@ local KIND_TO_POOL = {
   kill_lgm = 13,
 }
 
+-- Reverse map: actual goal.kind → pool index, for looking up cost_cache
+-- entries by candidate.  Note pool 1 (refuel) and pool 8 (place_strategic)
+-- have different UI labels than their goal.kind values.
+local KIND_TO_POOL = {
+  refuel_at_base = 1, defend_pill = 2, capture_base = 3, capture_pill = 4,
+  repair_pill = 5, attack_pill = 6, attack_base = 7,
+  place_pill_strategic = 8, attack_tank = 9, wait_for_lgm = 12,
+}
+
 -- (LOCK_SUBS defined above eval_attack_tank.)
 
 -- Wall-shield investment substates; gain extra commitment penalty

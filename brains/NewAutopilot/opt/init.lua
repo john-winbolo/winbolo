@@ -729,7 +729,6 @@ function Brain.think(info)
   state.tick = state.tick + 1
   state._last_info = info
   local now  = state.tick
-
   -- LGM registry: self slot updated every tick from info.man_*.
   -- A status transition (in_tank ↔ ground ↔ dead) sets the
   -- pending_lgm_broadcast flag so the periodic /info state broadcast

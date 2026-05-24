@@ -1360,6 +1360,15 @@
 #define STR_MAPVALIDATE_START_BASE_OVERLAP  835
 #define STR_MAPVALIDATE_START_PILL_OVERLAP  836
 
+/* In-game votes — back-to-lobby and surrender (menu items, widget
+ * titles, ready-screen buttons, disabled-state tooltips) */
+#define STR_VOTE_BACK_TO_LOBBY              1390
+#define STR_VOTE_SURRENDER                  1391
+#define STR_VOTE_DRAW_TAG                   1392
+#define STR_VOTE_NEEDS_RUNNING_TIP          1393
+#define STR_VOTE_SURRENDER_PICK_TEAM_TIP    1394
+#define STR_VOTE_SURRENDER_TWO_TEAMS_TIP    1395
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

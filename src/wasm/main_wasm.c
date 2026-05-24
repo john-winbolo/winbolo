@@ -16,6 +16,7 @@
 #include <emscripten.h>
 #include <emscripten/html5.h>
 
+#include "bolo_rand.h"
 #include "client_render.h"
 #include "client_sim.h"
 #include "frontend.h"
@@ -290,7 +291,7 @@ int main(int argc, char *argv[]) {
   (void)argc;
   (void)argv;
 
-  srand((unsigned int)(time(NULL) ^ getpid()));
+  bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
 
   if (argc > 1) {
     cmdLine = argv[1];

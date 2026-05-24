@@ -36,9 +36,11 @@
 #include "game_sim.h"
 #include "geolookup.h"
 #include "server_sim.h"
+#include "server_sim_internal.h" /* serverSimGameVoteToggle — T2 (sim co-owner) */
 #include "server_lifecycle.h"
 #include "control_event.h"
 #include "lobby_bot_pools.h"
+#include "client_sim_internal.h"  /* LOBBY_MAP_LIST_MAX cap shared with the wire */
 #include "../common/md5.h"
 #include "mapgen.h"
 #include "brain_list_internal.h"   /* BRAIN_LIST_PATH_LEN — ADD_BOT pathLen bound */
@@ -1486,6 +1488,21 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
      * the game-start race (see transportUdpServerOnGameStart) also fires
      * once for fresh joiners — belt-and-braces; harmless overlap. */
     udpServer.clients[slot].needsPlayerList = true;
+
+    /* Surface the join in everyone's lobby chat and unready any humans
+     * who were ready. The chat line rides CTRL_SERVER_TEXT, which the
+     * bus fans to both in-process subscribers and UDP clients via the
+     * codec — same path serverSendServerEnglishBroadcast already uses
+     * for lock-toggle / ping-enforcement announcements. The unready
+     * call is a no-op outside lobby/countdown (no human is ready in
+     * running state), so it stays unconditional. */
+    {
+        char chatMsg[32 + PACKET_MAX_PLAYER_NAME];
+        snprintf(chatMsg, sizeof(chatMsg), "%s has joined.",
+                 udpServer.clients[slot].playerName);
+        serverSendServerEnglishBroadcast(sim, chatMsg);
+    }
+    lobbyAutoUnreadyOnChange(sim);
 }
 
 /* Handle input packet from a connected client */
@@ -1902,6 +1919,22 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     fprintf(stderr, "[UDP SERVER] %s\n", msg);
     serverSimConsoleMessage(msg);
 
+    /* Mirror the leave into every client's lobby chat panel via
+     * CTRL_SERVER_TEXT. Console keeps the graceful-vs-timeout detail
+     * (`msg` above); the chat line is the uniform "X has left." form
+     * — players don't need the distinction and it matches what the
+     * client-side wire-packet branch used to render. Done before the
+     * subscriber/slot teardown below so the leaving client's
+     * still-attached subscriber sees it if they're reachable, and
+     * the formatted name is still in udpServer.clients[idx].playerName
+     * (wiped below). */
+    {
+        char chatMsg[32 + PACKET_MAX_PLAYER_NAME];
+        snprintf(chatMsg, sizeof(chatMsg), "%s has left.",
+                 udpServer.clients[idx].playerName);
+        serverSendServerEnglishBroadcast(sim, chatMsg);
+    }
+
     /* Notify WinBolo.net that the player is leaving (must happen before
      * clearing the slot so the player key is still valid) */
     winboloNetClientLeaveGame((BYTE)idx,
@@ -1932,6 +1965,13 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
      * blocking every subsequent UPLOAD_BEGIN from a different
      * client with LOBBY_REJECT_UPLOAD_BUSY until server restart. */
     udpServerClearClientUploadState(idx);
+
+    /* Unready any humans who were ready — a leaver changes the lobby
+     * composition. A no-op in running state (no one is ready then).
+     * Outer callers also fire serverSimRemovePlayer immediately after
+     * this; running this here rather than in each caller keeps the
+     * leave-side hook centralized alongside the chat broadcast above. */
+    lobbyAutoUnreadyOnChange(sim);
 }
 
 /* Send a localized server-originated message to all connected clients
@@ -2447,6 +2487,30 @@ const char *transportUdpServerGetPlayerName(BYTE playerNum) {
     return udpServer.clients[playerNum].playerName;
 }
 
+const char *transportUdpServerGetClientCountryCode(BYTE playerNum) {
+    if (playerNum >= MAX_TANKS) {
+        return NULL;
+    }
+    ServerSim *active = serverSimGetActive();
+    if (!udpServer.clients[playerNum].connected &&
+        (active == NULL || !serverSimIsBot(active, playerNum))) {
+        return NULL;
+    }
+    return udpServer.clients[playerNum].countryCode;
+}
+
+uint8_t transportUdpServerGetClientType(BYTE playerNum) {
+    if (playerNum >= MAX_TANKS) {
+        return CLIENT_TYPE_UNKNOWN;
+    }
+    ServerSim *active = serverSimGetActive();
+    if (!udpServer.clients[playerNum].connected &&
+        (active == NULL || !serverSimIsBot(active, playerNum))) {
+        return CLIENT_TYPE_UNKNOWN;
+    }
+    return udpServer.clients[playerNum].clientType;
+}
+
 /* Send an INFO_RESPONSE packet to the tracker so the game is listed. */
 void transportUdpServerSendTrackerUpdate(ServerSim *sim,
                                          const char *trackerAddr,
@@ -2880,26 +2944,24 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         }
         case PACKET_ALLIANCE_ACCEPT: {
             /* Wire: [header 8] [fromPlayer 1] [toPlayer 1]
-             * fromPlayer = the accepter, toPlayer = who requested */
+             * fromPlayer = the accepter, toPlayer = who requested.
+             * WBN tracker + replay-log side effects fire inside
+             * serverSimAcceptAlliance so every input source (wire,
+             * local transport, headless cmd-stdin) gets them. */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 2) {
                 uint8_t newMember = buf[PACKET_HEADER_SIZE + 1];
                 serverSimAcceptAlliance(serverSimGetActive(),
                                         (BYTE)clientIdx, newMember);
-                winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE,
-                                   (BYTE)clientIdx, newMember);
-                logAddEvent(log_AllyAccept, (BYTE)clientIdx, newMember, 0, 0, 0, NULL);
             }
             break;
         }
         case PACKET_ALLIANCE_LEAVE: {
-            /* Wire: [header 8] [playerNum 1] */
+            /* Wire: [header 8] [playerNum 1] — WBN + log side effects
+             * inside serverSimLeaveAlliance, same reasoning. */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 1) {
                 serverSimLeaveAlliance(serverSimGetActive(), (BYTE)clientIdx);
-                winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_LEAVE, TRUE,
-                                   (BYTE)clientIdx, WINBOLO_NET_NO_PLAYER);
-                logAddEvent(log_AllyLeave, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
             }
             break;
         }
@@ -2932,19 +2994,33 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_LOBBY_TEAM_SET: {
-            /* Wire: [header 8] [playerNum 1] [teamNumber 1] */
+            /* Wire: [header 8] [targetSlot 1] [teamNumber 1].
+             *
+             * Authority: anyone may change their own team. Moving
+             * another player's slot (including bot slots) requires
+             * host / admin / openHost — same gate the drag-and-drop
+             * UI uses. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && serverSimIsLobbyEnabled(sim) &&
-                serverSimGetState(sim) == serverStateLobby &&
-                len >= PACKET_HEADER_SIZE + 2) {
-                uint8_t teamNum = buf[PACKET_HEADER_SIZE + 1];
-                if (teamNum < MAX_TANKS) {
-                    serverSimSetTeam(sim, (BYTE)clientIdx, teamNum);
-                    logAddEvent(log_TeamSet, (BYTE)clientIdx, teamNum, 0, 0, 0, NULL);
-                    serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
-                    lobbyAutoUnreadyOnChange(sim);
-                }
+            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+                serverSimGetState(sim) != serverStateLobby ||
+                len < PACKET_HEADER_SIZE + 2) break;
+            uint8_t targetSlot = buf[PACKET_HEADER_SIZE];
+            uint8_t teamNum    = buf[PACKET_HEADER_SIZE + 1];
+            if (targetSlot >= MAX_TANKS || teamNum >= MAX_TANKS) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_SET,
+                              LOBBY_REJECT_INVALID);
+                break;
             }
+            if ((int)targetSlot != clientIdx &&
+                !lobbyClientMayEdit(sim, clientIdx)) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_SET,
+                              LOBBY_REJECT_NOT_HOST);
+                break;
+            }
+            serverSimSetTeam(sim, (BYTE)targetSlot, teamNum);
+            logAddEvent(log_TeamSet, (BYTE)targetSlot, teamNum, 0, 0, 0, NULL);
+            serverSimPublishLobbySlot(sim, (BYTE)targetSlot);
+            lobbyAutoUnreadyOnChange(sim);
             break;
         }
         case PACKET_LOBBY_READY: {
@@ -3356,8 +3432,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             }
 
             char fullPath[FILENAME_MAX];
-            SDL_snprintf(fullPath, sizeof(fullPath), "data/maps/%s",
-                         relPath);
+            SDL_snprintf(fullPath, sizeof(fullPath), "%s/%s",
+                         serverSimGetMapDirRoot(sim), relPath);
 
             if (!serverSimReloadMap(sim, fullPath)) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
@@ -3406,12 +3482,16 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 }
             }
 
-            ServerMapEntry entries[64];
+            /* Cap matches LOBBY_MAP_LIST_MAX on the client so a
+             * directory's full content survives end-to-end. Stack-
+             * resident; each ServerMapEntry is ~152 bytes → ~76 KB,
+             * fine for any normal thread stack. */
+            ServerMapEntry entries[LOBBY_MAP_LIST_MAX];
             int got = -1;
             if (safe) {
                 got = serverSimEnumerateMapDir(sim,
                     relPath[0] == '\0' ? NULL : relPath,
-                    entries, 64);
+                    entries, LOBBY_MAP_LIST_MAX);
             }
             if (got < 0) got = 0;
 
@@ -3569,7 +3649,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             free(bytes);  /* serverSimReloadMap re-reads it via its own path */
 
             char localPath[FILENAME_MAX];
-            SDL_snprintf(localPath, sizeof(localPath), "data/maps/%s", relBuf);
+            SDL_snprintf(localPath, sizeof(localPath), "%s/%s",
+                         serverSimGetMapDirRoot(sim), relBuf);
             bool previewed = false;
             if (serverSimReloadMap(sim, localPath)) {
                 /* Display name: the announce name without ".map". */
@@ -3820,10 +3901,10 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 memcpy(query, buf + rpos, qLen);
             }
 
-            ServerMapEntry entries[64];
+            ServerMapEntry entries[LOBBY_MAP_LIST_MAX];
             int got = serverSimSearchMapDir(sim,
                 relPath[0] == '\0' ? NULL : relPath,
-                query, entries, 64);
+                query, entries, LOBBY_MAP_LIST_MAX);
             if (got < 0) got = 0;
 
             /* Chunked send — every chunk repeats the full path+query

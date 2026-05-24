@@ -21,7 +21,7 @@
 
 #include <cstdio>
 #include <cstring>
-#include <cstdlib>  /* rand() — used to randomise the default naming pool */
+#include <cstdlib>
 #include <cfloat>   /* FLT_MAX — unbounded max for window size constraints */
 #include <algorithm>  /* std::sort — used for chooser list order */
 #include <atomic>
@@ -47,6 +47,7 @@ extern "C" {
 #include "../sdl3draw.h"
 #include "../../gamefront.h"
 #include "global.h"
+#include "bolo_rand.h"
 #include "client_sim.h"
 #include "client_net.h"
 #include "server_sim.h"          /* serverSim* T1 wrappers for SP-host paths */
@@ -388,6 +389,8 @@ static bool             s_chooseMapFocusedOnce   = false;
  * non-chat area. ImVec2(0,0) on both means "no chat rect yet". */
 static ImVec2           s_chatBlockMin           = ImVec2(0.0f, 0.0f);
 static ImVec2           s_chatBlockMax           = ImVec2(0.0f, 0.0f);
+static int              s_chatRefocusFrames      = 0;
+static bool             s_chatHideNav            = false;
 /* Two chooser instances: one for the Server Maps tab (routes its
  * directory listing through serverSimEnumerateMapDir so it reflects
  * the server's actual map library), one for the Upload tab (always
@@ -2114,6 +2117,16 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapState.provider.generatePreview      = lobbyServerMapsGeneratePreview;
         s_chooseMapState.provider.cacheScope           = "server";
         s_chooseMapState.provider.ctx                  = s_chooseMapCs;
+        /* Network clients fetch the map list over the wire via
+         * PACKET_LOBBY_MAP_LIST_REQ; the response lands asynchronously
+         * after lobbyChooseMapEnsureInit's one-shot discoverMaps has
+         * already returned an empty list. Without refreshEveryFrame
+         * the chooser never re-polls the cache and shows nothing for
+         * the lifetime of the dialog. The provider's own in-flight
+         * gate prevents request spam. SP-host's synchronous branch
+         * pays a no-op per-frame discoverMaps; the in-process scan
+         * is already cheap so leave the flag on unconditionally. */
+        s_chooseMapState.provider.refreshEveryFrame    = true;
         SDL_strlcpy(s_chooseMapState.crumbsRootLabel, "Maps",
                     sizeof(s_chooseMapState.crumbsRootLabel));
         /* Upload provider: local-filesystem scan via the chooser's
@@ -2750,11 +2763,10 @@ static void lobbySendRemoveBot(ClientSim *cs, uint8_t slot) {
     clientSimNetSendRemoveBot(cs, slot);
 }
 
-/* Move `targetSlot` to `teamNumber`. On SP-host the wrapper's
- * local-transport branch applies the supplied slot directly; over
- * UDP the server uses the sender's clientIdx and a non-host client
- * can only change its own team (the slot byte rides along but is
- * advisory). */
+/* Move `targetSlot` to `teamNumber`. SP-host applies via the
+ * wrapper's local-transport branch; over UDP the server allows any
+ * client to change its own team and gates other-target moves on
+ * host / admin / openHost (matches the drag-and-drop UI gate). */
 static void lobbySendTeamSet(ClientSim *cs,
                              uint8_t targetSlot, uint8_t teamNumber) {
     clientSimNetSendTeamSet(cs, targetSlot, teamNumber);
@@ -3972,7 +3984,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * host can still override via the dropdown. */
                 int effectivePool = curPool;
                 if (botCount[teamId] == 0 && lobbyBotPoolCount() > 0) {
-                    effectivePool = rand() % lobbyBotPoolCount();
+                    effectivePool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
                     const char *nameForMeta = clientSimGetLobbyTeamInUse(cs, (BYTE)(teamId))
                         ? clientSimGetLobbyTeamName(cs, (BYTE)(teamId)) : defaultName;
                     lobbySendTeamPool(cs, (uint8_t)teamId,
@@ -5468,6 +5480,48 @@ static void renderGameSettingsPanel(ClientSim *cs,
 #endif
 }
 
+/* Render the lobby chat InputText + Send button pair, with the
+ * 2-frame refocus-after-send and nav-highlight suppression logic
+ * shared between the chat tab and the in-game lobby chat panel.
+ * SetKeyboardFocusHere(0) is issued before the InputText (targeting
+ * the next widget) rather than SetKeyboardFocusHere(-1) after the
+ * Send button (which would target Send, not the input). The 2-frame
+ * counter survives ImGui's internal InputText deactivation on Enter,
+ * which stomps a single-frame focus request. */
+static void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
+                                        BYTE myPlayerNum, bool hasTransport,
+                                        float s) {
+    float btnW = 60.0f * s;
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - btnW - 8.0f);
+    if (s_chatRefocusFrames > 0) {
+        ImGui::SetKeyboardFocusHere(0);
+        s_chatRefocusFrames--;
+    }
+    if (s_chatHideNav)
+        ImGui::GetCurrentWindow()->DC.NavHideHighlightOneFrame = true;
+    bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
+                                         ImGuiInputTextFlags_EnterReturnsTrue);
+    if (s_chatHideNav) {
+        ImGui::GetCurrentContext()->NavCursorVisible = false;
+        if (ImGui::IsItemActive()) s_chatHideNav = false;
+    }
+    ImGui::SameLine();
+    bool chatEmpty = (chatInput[0] == '\0');
+    if (chatEmpty) ImGui::BeginDisabled();
+    bool sendClicked = ImGui::Button(langGetText(STR_DLGMSG_BUTTON), ImVec2(btnW, 0));
+    if (chatEmpty) ImGui::EndDisabled();
+    if ((sendClicked || enterPressed) && !chatEmpty && hasTransport) {
+        clientSimNetSendChat(cs, 0xFF, chatInput);
+        const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
+        const char *myName = (mySlot && mySlot->connected)
+            ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
+        clientSimAppendLobbyChat(cs, myName, chatInput);
+        chatInput[0] = '\0';
+        s_chatRefocusFrames = 2;
+        s_chatHideNav = true;
+    }
+}
+
 extern "C" int imguiLobbyShow(ClientSim *cs) {
     WB_LOG_INFO(WB_LOG_CAT_GUI, "[LOBBY] imguiLobbyShow called cs=%p inLobby=%d netStat=%d isSP=%d",
             (void*)cs, cs ? (int)clientSimIsInLobby(cs) : -1, cs ? (int)clientSimGetNetStatus(cs) : -1,
@@ -6350,31 +6404,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         }
                         ImGui::EndChild();
 
-                        {
-                            float btnW = 60.0f * s;
-                            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - btnW - 8.0f);
-                            bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
-                                                                  ImGuiInputTextFlags_EnterReturnsTrue);
-                            ImGui::SameLine();
-                            bool chatEmpty = (chatInput[0] == '\0');
-                            if (chatEmpty) ImGui::BeginDisabled();
-                            bool sendClicked = ImGui::Button(langGetText(STR_DLGMSG_BUTTON), ImVec2(btnW, 0));
-                            if (chatEmpty) ImGui::EndDisabled();
-                            if ((sendClicked || enterPressed) &&
-                                !chatEmpty && hasTransport) {
-                                clientSimNetSendChat(cs, 0xFF, chatInput);
-                                const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
-                                const char *myName = (mySlot && mySlot->connected)
-                                    ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
-                                clientSimAppendLobbyChat(cs, myName, chatInput);
-                                chatInput[0] = '\0';
-                                /* Re-focus the input so the user can keep
-                                 * typing without clicking back in. Enter
-                                 * within an EnterReturnsTrue input loses
-                                 * focus by default; this restores it. */
-                                ImGui::SetKeyboardFocusHere(-1);
-                            }
-                        }
+                        lobbyRenderChatInputAndSend(cs, chatInput, myPlayerNum, hasTransport, s);
 
                         ImGui::EndTabItem();
                     }
@@ -6700,30 +6730,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
                 ImGui::EndChild();
             }
-            {
-                float btnW = 60.0f * s;
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - btnW - 8.0f);
-                bool enterPressed = ImGui::InputText("##ChatInput", chatInput, CHAT_INPUT_SIZE,
-                                                      ImGuiInputTextFlags_EnterReturnsTrue);
-                ImGui::SameLine();
-                bool chatEmpty = (chatInput[0] == '\0');
-                if (chatEmpty) ImGui::BeginDisabled();
-                bool sendClicked = ImGui::Button(langGetText(STR_DLGMSG_BUTTON), ImVec2(btnW, 0));
-                if (chatEmpty) ImGui::EndDisabled();
-                if ((sendClicked || enterPressed) &&
-                    !chatEmpty && hasTransport) {
-                    clientSimNetSendChat(cs, 0xFF, chatInput);
-                    const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
-                    const char *myName = (mySlot && mySlot->connected)
-                        ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
-                    clientSimAppendLobbyChat(cs, myName, chatInput);
-                    chatInput[0] = '\0';
-                    /* Restore focus to the input so a stream of chat
-                     * messages doesn't require clicking back in between
-                     * sends. */
-                    ImGui::SetKeyboardFocusHere(-1);
-                }
-            }
+            lobbyRenderChatInputAndSend(cs, chatInput, myPlayerNum, hasTransport, s);
             ImGui::EndChild();
             /* Record chat block rect for the map-chooser scrim. Use the
              * stored cursor position (chatBlockCursor) plus the panel's
@@ -7144,6 +7151,48 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         popupCompressedLen = 0;
     }
     mapPreviewPopupDestroy();
+
+    /* Reset every file-scope flag that could render UI on the next
+     * imguiLobbyShow if a disconnect (or any other exit) caught the
+     * dialog mid-action. The MapChooserState instances themselves
+     * stay populated as caches (next open re-uses the discovered
+     * map list / preview view); the WBN HTTP caches stay too. Only
+     * the visibility / focus / pending-action flags reset. The
+     * cached ClientSim pointer also clears since the lobby that
+     * captured it is being torn down. */
+    s_chooseMapOpen             = false;
+    s_chooseMapFocusedOnce      = false;
+    s_chooseMapMaximized        = false;
+    s_chooseMapWantCloseConfirm = false;
+    s_chooseMapPreviewPending   = false;
+    s_chooseMapCs               = NULL;
+
+    /* Kick-confirmation modal — same bug class as the chooser
+     * modal: a disconnect while the kick popup was up would leave
+     * s_kickPendingOpen=true and the next lobby would render the
+     * dialog over a fresh roster with a stale slot/name. */
+    s_kickPendingOpen = false;
+    s_kickPendingSlot = -1;
+    s_kickPendingName[0] = '\0';
+
+    /* Add-bot debounce — the in-flight gate that disables the Add Bot
+     * button until lobbyAddBotPending clears. If a click was in
+     * flight at exit, next lobby would briefly disable Add Bot for
+     * up to the debounce window. Plus the per-slot bot-name override
+     * flags, which mark slots whose names were edited mid-session
+     * and should not auto-rename when the team's naming pool
+     * changes; carrying them into a fresh lobby would block legitimate
+     * auto-renames on slots that the user never touched in this
+     * session. */
+    s_addBotSentMs        = 0;
+    s_addBotExpectedConn  = 0;
+    s_addBotFrame         = -1;
+    memset(s_botNameOverridden, 0, sizeof(s_botNameOverridden));
+
+    /* Cosmetic — whichever bot row had its AiConfig sub-row expanded
+     * is meaningless once we're in a different lobby. Reset so the
+     * next lobby starts with all rows collapsed. */
+    s_expandedBotSlot = -1;
 
     /* Dismiss soft keyboard and tear down ImGui */
     dialogDismissKeyboard(window);

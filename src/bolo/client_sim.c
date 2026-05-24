@@ -28,6 +28,7 @@
 #include <SDL3/SDL.h>
 #include "client_sim.h"
 #include "client_sim_internal.h"
+#include "client_net.h"   /* clientSimNetSendChat — default chatSendFunc body */
 #include "client_snapshot.h"
 #include "client_state.h"
 #include "client_ui_events.h"
@@ -137,6 +138,12 @@ static void csCallbackMineVisible(void *ctx, BYTE mx, BYTE my, BYTE sourcePlayer
 /* Brain state now lives inside the ClientSim struct (see client_sim.h).
  * The static globals were removed in the Phase 0 refactor. */
 
+/* Forward declaration — definition lives further down with the other
+ * chatSendFunc helpers. clientSimCreate references this as the default
+ * value for cs->chatSendFunc. */
+void clientSimDefaultChatSend(ClientSim *cs, BYTE fromPlayer, BYTE destPlayer,
+                              const char *message);
+
 /*********************************************************
  *NAME:          clientSimAlloc
  *PURPOSE:
@@ -208,6 +215,14 @@ bool clientSimCreate(ClientSim *cs) {
   cs->serverAddress      = savedServerAddress;
   cs->serverPort         = savedServerPort;
   cs->isLanOnly          = savedIsLanOnly;
+  /* Default chat-send callback: route outbound chat through this cs's
+   * own transport. Bots, SP host humans, and UDP-connected humans all
+   * use the same path out of the box. Frontends that want different
+   * behavior override via clientSimSetChatSendFunc. The other 5 send
+   * callbacks (name change, alliance, vote, etc.) stay NULL —
+   * client_net.h's wrappers for those still UDP-gate, so a local-
+   * transport client can't use them yet. */
+  cs->chatSendFunc = clientSimDefaultChatSend;
   cs->myPlayerNum = 0;
   cs->sim.viewPlayer = 0;
   /* Default to "joins accepted" so the UI renders a checked "Now"
@@ -753,15 +768,28 @@ void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *messa
   }
 }
 
+/* Default chatSendFunc: route outbound chat through the sim's own
+ * transport. Set as the default for every ClientSim — frontends that
+ * want different behavior can override via clientSimSetChatSendFunc,
+ * but the default is correct for both UDP-connected humans and
+ * in-process bots (their respective transport's sendBytes does the
+ * right thing). fromPlayer is unused — the transport stamps the slot
+ * either from the connection (UDP) or from lctx->playerNum (local). */
+void clientSimDefaultChatSend(ClientSim *cs, BYTE fromPlayer, BYTE destPlayer,
+                              const char *message) {
+  (void)fromPlayer;
+  clientSimNetSendChat(cs, destPlayer, message);
+}
+
 void clientSimMessageSendAllPlayers(ClientSim *cs, BYTE playerNum, char *message) {
   if (cs->chatSendFunc != NULL) {
-    cs->chatSendFunc(playerNum, 0xFF, message);
+    cs->chatSendFunc(cs, playerNum, 0xFF, message);
   }
 }
 
 void clientSimMessageSendPlayer(ClientSim *cs, BYTE playerNum, BYTE destPlayer, char *message) {
   if (cs->chatSendFunc != NULL) {
-    cs->chatSendFunc(playerNum, destPlayer, message);
+    cs->chatSendFunc(cs, playerNum, destPlayer, message);
   }
 }
 

@@ -81,12 +81,14 @@ typedef struct {
 
 /* Callback typedefs for new transport message sending.
  *
- * NetChatSendFunc: fromPlayer is the sender slot.  For human chat the
- * callback can ignore it (the human only ever sends as themselves); for
- * the bot-pool callback fromPlayer is essential — it identifies which
- * bot to attribute the outbound chat to when publishing into the
- * serverSim's control bus. */
-typedef void (*NetChatSendFunc)(uint8_t fromPlayer, uint8_t destPlayer, const char *message);
+ * NetChatSendFunc receives the owning ClientSim so the callback body
+ * can route the chat through the sim's own transport — making it safe
+ * to reuse a single callback function for every ClientSim (host human,
+ * bots) instead of one closure per sim. Pre-cs argument, the SDL3
+ * frontend's callback hard-coded `humanSim` as the routing target,
+ * which broke when wired onto a bot's ClientSim. */
+typedef void (*NetChatSendFunc)(struct ClientSim *cs, uint8_t fromPlayer,
+                                uint8_t destPlayer, const char *message);
 typedef void (*NetNameChangeSendFunc)(const char *newName);
 typedef void (*NetAllianceRequestFunc)(uint8_t toPlayer);
 typedef void (*NetAllianceAcceptFunc)(uint8_t toPlayer);

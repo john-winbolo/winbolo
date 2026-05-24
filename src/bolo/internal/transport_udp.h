@@ -155,26 +155,26 @@ uint16_t transportUdpClientGetPing(Transport *t);
 void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
                                    int *bpsRecv, int *bpsSent, int *numErrors);
 
-/* Send a chat message to the server.
- * destPlayer: 0xFF = all players, else specific player number. */
-void transportUdpClientSendChat(Transport *t, uint8_t destPlayer,
-                                const char *message);
+/* Chat sends go through clientSimNetSendChat → transport->sendBytes
+ * now — the per-transport sendChat helper is gone. */
 
 /* Send a name change request to the server.
  * newName: the desired new player name. */
 void transportUdpClientSendNameChange(Transport *t, const char *newName);
 
-/* Alliance operations */
-void transportUdpClientSendAllianceRequest(Transport *t, uint8_t toPlayer);
-void transportUdpClientSendAllianceAccept(Transport *t, uint8_t toPlayer);
-void transportUdpClientSendAllianceLeave(Transport *t);
+/* Alliance ops go through clientSimNetSendAlliance{Request,Accept,Leave}
+ * → transport->sendBytes now — the per-transport sendAlliance* helpers
+ * are gone (same pattern as the chat helper). */
 
 /* Send a lock toggle to the server.
  * allow: TRUE = allow new players, FALSE = disallow. */
 void transportUdpClientSendLockToggle(Transport *t, bool allow);
 
-/* Send team selection to server. teamNumber: 0-16. */
-void transportUdpClientSendTeamSet(Transport *t, uint8_t teamNumber);
+/* Send team selection to server. slot is the target lobby slot
+ * (sender's own slot for self-moves, anyone for host/admin/openHost
+ * moves). teamNumber: 0-16. */
+void transportUdpClientSendTeamSet(Transport *t, uint8_t slot,
+                                   uint8_t teamNumber);
 
 /* Send ready/unready to server. */
 void transportUdpClientSendReady(Transport *t, bool ready);
@@ -278,11 +278,6 @@ void transportUdpClientSendBalanceDismiss(Transport *t);
 
 /* Toggle map skip vote (server identifies player by source address). */
 void transportUdpClientSendMapSkipVote(Transport *t);
-
-/* Send a PACKET_GAME_VOTE_TOGGLE. kind is GAME_VOTE_KIND_*,
- * toggleMode is GAME_VOTE_TOGGLE_* (NO / YES / OPEN_ONLY). */
-void transportUdpClientSendGameVoteToggle(Transport *t,
-                                          uint8_t kind, uint8_t toggleMode);
 
 /* Returns the server's reject reason string after a failed join.
  * Returns NULL if no reject reason is available. */
@@ -465,6 +460,17 @@ void transportUdpServerSetBotName(BYTE playerNum, const char *name);
 
 /* Get a connected client's player name (NULL if slot invalid/disconnected). */
 const char *transportUdpServerGetPlayerName(BYTE playerNum);
+
+/* Get a connected client's 2-char ISO country code (NULL if slot invalid
+ * or disconnected). The pointer is into the transport's per-slot storage
+ * — durable across serverSimResetGameWorld, which destroys the sim's
+ * mirror in `players->item[i].location`. */
+const char *transportUdpServerGetClientCountryCode(BYTE playerNum);
+
+/* Get a connected client's clientType (CLIENT_TYPE_* constant) as
+ * recorded at join time. Returns CLIENT_TYPE_UNKNOWN if slot invalid
+ * or disconnected. Durable across serverSimResetGameWorld. */
+uint8_t transportUdpServerGetClientType(BYTE playerNum);
 
 /* Send an INFO_RESPONSE packet to the tracker server so the game
  * appears in the server browser. */

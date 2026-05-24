@@ -363,6 +363,7 @@ void basesUpdate(GameSim *sim, tank *tnk) {
 		  {
 			if (isServer == TRUE)
 			{
+				count = 0;
 				while (count < (*value)->numBases)
 				{
 					basesUpdateStock(sim, (BYTE) (count+1));

@@ -118,7 +118,11 @@ static inline void controlEventQueueAssertValid(const ClientControlEventQueue *q
 /* Max join attempts before giving up */
 #define JOIN_MAX_RETRIES 10
 
-#define PACKET_HEADER_SIZE 8
+/* PACKET_HEADER_SIZE lives in netpacks.h next to the rest of the
+ * wire constants — clients that need to build a wire packet from
+ * outside the UDP transport (e.g. client_net.c building chat) can
+ * see it without dragging this header's SDL + platform_net
+ * dependencies. */
 
 /* Lobby slot wire format (variable length).
  *   Disconnected slot: connected(0) — 1 byte total.

@@ -18,6 +18,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "bolo_rand.h"
+
 /* Loose upper bound for "names in any one pool" — used to size the
  * uniform-pick scratch buffer in lobbyBotPoolPick.  Generous so a new
  * pool added below doesn't silently truncate. */
@@ -183,7 +185,7 @@ char *lobbyBotPoolPick(int poolIdx,
         }
     }
     if (unusedCount > 0) {
-        int pick = rand() % unusedCount;
+        int pick = (int)bolo_rand_below((uint32_t)unusedCount);
         cand = lobbyBotPoolName(poolIdx, unusedIdx[pick]);
         strncpy(outBuf, cand, (size_t)outBufLen - 1);
         outBuf[outBufLen - 1] = '\0';

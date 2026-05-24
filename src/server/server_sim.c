@@ -31,6 +31,7 @@
 /* dirent.h removed — using SDL3 SDL_GlobDirectory for cross-platform directory listing */
 #include <SDL3/SDL.h>
 
+#include "bolo_rand.h"
 #include "global.h"
 #include "bolo_map.h"
 #include "netpacks.h"
@@ -1770,10 +1771,17 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         }
     }
 
-    /* If in countdown and someone disconnects, revert to lobby */
+    /* If in countdown and someone disconnects, revert to lobby. Route
+     * through serverSimAbortCountdown rather than mutating state inline
+     * so the CTRL_GAME_PHASE_LOBBY publish fires — without it, remote
+     * clients' netStat stays at netLobbyCountdown and their overlay
+     * doesn't clear. The disconnect path through serverDisconnectClient
+     * already aborts via lobbyAutoUnreadyOnChange, so this site is a
+     * no-op there (state is already Lobby); it carries the abort for
+     * the non-UDP callers — bot removal and local-transport
+     * disconnect via client_net.c — that don't share that path. */
     if (sim->lobbyEnabled && sim->state == serverStateCountdown) {
-        sim->state = serverStateLobby;
-        sim->countdownTicks = 0;
+        serverSimAbortCountdown(sim);
         logAddEvent(log_CountdownCancel, 0, 0, 0, 0, 0, NULL);
         serverSimConsoleMessage("Countdown cancelled — player disconnected.");
     }
@@ -2679,6 +2687,16 @@ bool serverSimIsRunning(void) {
 void serverSimAbortCountdown(ServerSim *sim) {
     sim->state = serverStateLobby;
     sim->countdownTicks = 0;
+    /* Tell every subscriber the countdown is over — without this the
+     * client's netStat stays at netLobbyCountdown and the lobby UI
+     * leaves the "Game starting in N…" overlay drawn even though the
+     * server has reverted to lobby. */
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillGamePhaseEvent(sim, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks) {
@@ -2769,10 +2787,19 @@ void serverSimReturnToLobby(ServerSim *sim) {
         }
     }
 
-    /* Save connection and lobby state before reset */
+    /* Save connection, lobby state, and the identity bits the lobby UI
+     * sources from `sim->sim.plyrs->item[i]` — serverSimResetGameWorld
+     * destroys the Players struct (step 11), so name / country /
+     * clientType / clientFlags would otherwise come back empty and
+     * every roster row would render with a blank name. Name, country,
+     * and clientType have a durable mirror in udpServer.clients[i]
+     * which survives the reset; clientFlags is sim-side only, so it
+     * has to be snapshotted here. */
+    uint8_t savedClientFlags[MAX_TANKS];
     for (i = 0; i < MAX_TANKS; i++) {
         savedConnected[i] = sim->playerConnected[i];
         savedLobby[i] = sim->lobbyPlayers[i];
+        savedClientFlags[i] = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
     }
 
     /* Full world reset — reloads map from cached data */
@@ -2793,22 +2820,33 @@ void serverSimReturnToLobby(ServerSim *sim) {
     sim->gameLength = sim->originalGameLength;
     sim->emptyResetTicks = -1;
 
-    /* Re-keying on lobby return: the WBN session is about to be torn
-     * down and re-registered with a fresh server_key (see
-     * winbolonetReturnToLobby in the caller). Drop every connected
-     * player's WBN-verified / Steam-linked bits so the subsequent
-     * lobby-state publish carries the cleared flags to the clients.
-     * Each client then notices its own slot has lost
-     * PLAYER_FLAG_WBN_VERIFIED and sends PACKET_WBN_REAUTH so the
-     * server can re-attach them to the new WBN session.
-     *
-     * Other clientFlags bits (CLIENT_TYPE_*, platform, STEAM_BUILD,
-     * SUPPORTER) are intentionally preserved — they're identity bits
-     * tied to the connection, not the WBN session, and clearing them
-     * would lose information the client doesn't re-send on REAUTH. */
+    /* Re-register identity into the freshly-recreated Players struct.
+     * Name / country / clientType come from the transport's per-slot
+     * array (durable across serverSimResetGameWorld). clientFlags
+     * comes from the pre-reset snapshot above with the WBN-session
+     * bits cleared — the WBN session is about to be torn down and
+     * re-registered with a fresh server_key (see
+     * winbolonetReturnToLobby in the caller), so each client must
+     * re-auth via PACKET_WBN_REAUTH against the new session. Other
+     * clientFlags bits (CLIENT_TYPE_*, platform, STEAM_BUILD,
+     * SUPPORTER, ADMIN) are identity bits tied to the connection,
+     * not the WBN session, and stay preserved across the reset. */
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
-        uint8_t f = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
+        const char *name = transportUdpServerGetPlayerName(i);
+        const char *country = transportUdpServerGetClientCountryCode(i);
+        uint8_t clientType = transportUdpServerGetClientType(i);
+        if (name == NULL) continue;
+        char countryBuf[3] = "XX";
+        if (country != NULL) {
+            countryBuf[0] = country[0];
+            countryBuf[1] = country[1];
+        }
+        playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, (BYTE)i,
+                         (char *)name, countryBuf,
+                         0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
+        playersSetClientType(&sim->sim.plyrs, (BYTE)i, clientType);
+        uint8_t f = savedClientFlags[i];
         f &= (uint8_t)~(PLAYER_FLAG_WBN_VERIFIED |
                         PLAYER_FLAG_WBN_STEAM_LINKED);
         playersSetClientFlags(&sim->sim.plyrs, (BYTE)i, f);
@@ -3005,6 +3043,26 @@ void serverSimReapplyTeamAlliances(ServerSim *sim) {
     }
 }
 
+/* At game start, all connected players' restock timers would otherwise
+ * be armed on the same tick, collapsing N players' cadence into one
+ * shared 800-tick cycle. Spread initial values across the window so the
+ * +1 events arrive smoothly. Mid-game joins (one at a time, naturally
+ * on different ticks) don't need this. */
+static void serverSimStaggerBaseTimers(ServerSim *sim) {
+    int numConnected = 0;
+    int orderIdx = 0;
+    BYTE i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->playerConnected[i]) numConnected++;
+    }
+    if (numConnected == 0) return;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i]) continue;
+        sim->sim.baseTimer[i] = (BASE_TICKS_BETWEEN_REFUEL * (orderIdx + 1)) / numConnected;
+        orderIdx++;
+    }
+}
+
 void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
 
@@ -3040,8 +3098,8 @@ void serverSimStartGameInPlace(ServerSim *sim) {
         }
         tankCreate(&sim->sim, &sim->sim.tanks[i]);
         sim->sim.lgmen[i] = lgmCreate(i);
-        basesUpdateTimer(&sim->sim, i);
     }
+    serverSimStaggerBaseTimers(sim);
 
     sim->state = serverStateRunning;
 
@@ -3169,8 +3227,8 @@ void serverSimStartGame(ServerSim *sim) {
         }
         tankCreate(&sim->sim, &sim->sim.tanks[i]);
         sim->sim.lgmen[i] = lgmCreate(i);
-        basesUpdateTimer(&sim->sim, i);
     }
+    serverSimStaggerBaseTimers(sim);
 
     sim->state = serverStateRunning;
     serverSimConsoleMessage("Game started!");
@@ -3429,9 +3487,35 @@ bool serverSimMapDirBuild(ServerSim *sim, const char *dirPath) {
     }
     sim->mapDirFiles = files;
     sim->mapDirCount = count;
+
+    /* Capture the dirPath as the canonical server-side map root so
+     * serverSimEnumerateMapDir / serverSimSearchMapDir / SET_MAP path
+     * resolution all read from the same place the rotation list was
+     * built from. Strip a trailing slash to keep concatenations
+     * ("<root>/<rel>") clean. */
+    if (sim->mapDirPath) {
+        free(sim->mapDirPath);
+        sim->mapDirPath = NULL;
+    }
+    sim->mapDirPath = SDL_strdup(dirPath);
+    if (sim->mapDirPath != NULL) {
+        size_t plen = SDL_strlen(sim->mapDirPath);
+        while (plen > 1 && (sim->mapDirPath[plen - 1] == '/' ||
+                            sim->mapDirPath[plen - 1] == '\\')) {
+            sim->mapDirPath[--plen] = '\0';
+        }
+    }
+
     fprintf(stderr, "Map directory: %d valid map(s) loaded from '%s'\n",
             count, dirPath);
     return TRUE;
+}
+
+const char *serverSimGetMapDirRoot(const ServerSim *sim) {
+    if (sim != NULL && sim->mapDirPath != NULL && sim->mapDirPath[0] != '\0') {
+        return sim->mapDirPath;
+    }
+    return "data/maps";
 }
 
 bool serverSimMapDirPickRandom(ServerSim *sim) {
@@ -3442,7 +3526,7 @@ bool serverSimMapDirPickRandom(ServerSim *sim) {
         return FALSE;
     }
 
-    idx = rand() % sim->mapDirCount;
+    idx = (int)bolo_rand_below((uint32_t)sim->mapDirCount);
 
     /* Try to avoid picking the same map we're already on */
     if (sim->mapDirCount > 1) {
@@ -3454,7 +3538,7 @@ bool serverSimMapDirPickRandom(ServerSim *sim) {
                 if (*p == '/' || *p == '\\') base = p + 1;
             }
             if (strcmp(base, sim->mapName) != 0) break;
-            idx = rand() % sim->mapDirCount;
+            idx = (int)bolo_rand_below((uint32_t)sim->mapDirCount);
         }
     }
 
@@ -4113,6 +4197,10 @@ void serverSimMapDirDestroy(ServerSim *sim) {
         sim->mapDirFiles = NULL;
         sim->mapDirCount = 0;
     }
+    if (sim->mapDirPath != NULL) {
+        SDL_free(sim->mapDirPath);
+        sim->mapDirPath = NULL;
+    }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -4613,6 +4701,13 @@ void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember) {
     evt.u.allianceAccept.acceptedBy = accepter;
     evt.u.allianceAccept.newMember  = newMember;
     serverSimPublishControl(sim, &evt);
+    /* WBN tracker + replay-log side effects live here so every input
+     * source (UDP wire, local transport, headless cmd-stdin) fires
+     * them uniformly. winbolonetAddEvent is gated internally by
+     * winbolonetIsRunning(), so SP / non-WBN-aware builds pay nothing.
+     * logAddEvent is gated by whether a replay log is open. */
+    winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE, accepter, newMember);
+    logAddEvent(log_AllyAccept, accepter, newMember, 0, 0, 0, NULL);
 }
 
 void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
@@ -4627,6 +4722,10 @@ void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
     evt.type = CTRL_ALLIANCE_LEAVE;
     evt.u.allianceLeave.playerNum = playerNum;
     serverSimPublishControl(sim, &evt);
+    /* WBN + replay-log side effects — see serverSimAcceptAlliance. */
+    winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_LEAVE, TRUE,
+                       playerNum, WINBOLO_NET_NO_PLAYER);
+    logAddEvent(log_AllyLeave, playerNum, 0, 0, 0, 0, NULL);
 }
 
 void serverSimSetPlayerName(ServerSim *sim, BYTE playerNum, const char *name) {
@@ -5290,7 +5389,8 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
         memcmp(bytes, MAP_HEADER, sizeof(MAP_HEADER) - 1) == 0) {
         char tmpPath[FILENAME_MAX];
         SDL_snprintf(tmpPath, sizeof(tmpPath),
-                     "data/maps/.tmp_inmem_reload.map");
+                     "%s/.tmp_inmem_reload.map",
+                     serverSimGetMapDirRoot(sim));
         FILE *tf = fopen(tmpPath, "wb");
         if (tf == NULL) {
             WB_LOG_ERROR(WB_LOG_CAT_SERVER,
@@ -5504,15 +5604,15 @@ static bool relPathIsSafe(const char *p) {
 
 int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
                               ServerMapEntry *entries, int maxEntries) {
-    (void)sim;
     if (!entries || maxEntries <= 0) return -1;
     if (!relPathIsSafe(relPath)) return -1;
 
+    const char *root = serverSimGetMapDirRoot(sim);
     char fullPath[FILENAME_MAX];
     if (!relPath || relPath[0] == '\0') {
-        SDL_strlcpy(fullPath, "data/maps", sizeof(fullPath));
+        SDL_strlcpy(fullPath, root, sizeof(fullPath));
     } else {
-        SDL_snprintf(fullPath, sizeof(fullPath), "data/maps/%s", relPath);
+        SDL_snprintf(fullPath, sizeof(fullPath), "%s/%s", root, relPath);
     }
 
     int count = 0;
@@ -5643,16 +5743,16 @@ static void searchDirRecursive(const char *fullRoot,
 int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
                            const char *query,
                            ServerMapEntry *entries, int maxEntries) {
-    (void)sim;
     if (!entries || maxEntries <= 0) return -1;
     if (!query || query[0] == '\0') return 0;
     if (!relPathIsSafe(relPath)) return -1;
 
+    const char *root = serverSimGetMapDirRoot(sim);
     char fullRoot[FILENAME_MAX];
     if (!relPath || relPath[0] == '\0') {
-        SDL_strlcpy(fullRoot, "data/maps", sizeof(fullRoot));
+        SDL_strlcpy(fullRoot, root, sizeof(fullRoot));
     } else {
-        SDL_snprintf(fullRoot, sizeof(fullRoot), "data/maps/%s", relPath);
+        SDL_snprintf(fullRoot, sizeof(fullRoot), "%s/%s", root, relPath);
     }
 
     char queryLower[128];
@@ -6114,6 +6214,8 @@ void lobbyAutoUnreadyOnChange(ServerSim *sim) {
     }
 
     if (countdownWasRunning) {
+        /* serverSimAbortCountdown publishes the CTRL_GAME_PHASE_LOBBY
+         * transition itself; no separate publish needed here. */
         serverSimAbortCountdown(sim);
     }
 
@@ -6121,13 +6223,6 @@ void lobbyAutoUnreadyOnChange(ServerSim *sim) {
         if (toggled[i]) {
             serverSimPublishLobbySlot(sim, i);
         }
-    }
-
-    if (countdownWasRunning) {
-        ControlEvent evt;
-        memset(&evt, 0, sizeof(evt));
-        serverSimFillGamePhaseEvent(sim, &evt);
-        serverSimPublishControl(sim, &evt);
     }
 }
 
@@ -6137,7 +6232,6 @@ const BrainList *serverSimGetBrainList(const ServerSim *sim) {
 
 bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
                            uint8_t **outBytes, size_t *outLen) {
-    (void)sim;
     if (!outBytes || !outLen) return false;
     *outBytes = NULL;
     *outLen   = 0;
@@ -6145,7 +6239,8 @@ bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
     if (!relPathIsSafe(relPath)) return false;
 
     char fullPath[FILENAME_MAX];
-    SDL_snprintf(fullPath, sizeof(fullPath), "data/maps/%s", relPath);
+    SDL_snprintf(fullPath, sizeof(fullPath), "%s/%s",
+                 serverSimGetMapDirRoot(sim), relPath);
     SDL_PathInfo info;
     if (!SDL_GetPathInfo(fullPath, &info)) return false;
     if (info.type != SDL_PATHTYPE_FILE) return false;

@@ -288,6 +288,16 @@ static void udpClientSendInput(void *ctx, const InputPacket *input) {
     udpClientSendTo(c, buf, len);
 }
 
+/* Client sendBytes: thin wrapper around udpClientSendTo. Lets
+ * client_net.h send wrappers build the wire packet themselves and
+ * push it through a transport-agnostic interface (see the local
+ * transport's localSendBytes for the in-process counterpart). */
+static void udpClientSendBytes(void *ctx, const uint8_t *buf, size_t len) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    udpClientSendTo(c, buf, (int)len);
+}
+
 /* Decode a localized payload (langid + arg list) at buf[startPos..len)
  * into outId and outArgs.  Mirrors packLocalizedPayload on the server.
  * Args land in MessageArgs slots in order: #1->playerName, #2->otherName,
@@ -1346,9 +1356,12 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          *   == 0xFF      : server localized, payload is langid + args
          *   == 0xFE      : server raw English (transitional), payload is plain message
          *
-         * Route through the codec so in-process subscribers see the
-         * CTRL_CHAT event, then keep the existing fromPlayer-discriminated
-         * display path below — chat rendering stays at the wire boundary. */
+         * Player-to-player chat is delivered to MessageState by the
+         * CTRL_CHAT subscriber in client_sim_control.c — do not deliver
+         * here too or the recipient sees every line twice. The 0xFE/0xFF
+         * server-message branches below stay because their display path
+         * (clientSimAppendLobbyChat / clientSimNetStatusMessage) is
+         * transport-aware and not replicated by the in-process handler. */
         {
             ControlDecodeFn dec = transportControlCodecDecoder(pktType);
             if (dec != NULL) {
@@ -1389,15 +1402,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 } else {
                     clientSimNetStatusMessage(c->clientSim, message);
                 }
-            } else {
-                /* Player-to-player chat: payload is plain message bytes. */
-                int msgLen = len - PACKET_HEADER_SIZE - 2;
-                char message[PACKET_MAX_CHAT_MESSAGE + 1];
-                if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
-                memcpy(message, buf + PACKET_HEADER_SIZE + 2, msgLen);
-                message[msgLen] = '\0';
-                clientSimIncomingMessage(c->clientSim, fromPlayer, message);
             }
+            /* Player-to-player case (fromPlayer < MAX_TANKS) intentionally
+             * falls through with no further action: the CTRL_CHAT subscriber
+             * in client_sim_control.c handles MessageState delivery for
+             * every subscriber (UDP clients, host, bots) uniformly. */
         }
         break;
     }
@@ -2133,6 +2142,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         c->joinState = UDP_CLIENT_ERROR;
         t.recordInput = udpClientRecordInput;
         t.sendInput = udpClientSendInput;
+        t.sendBytes = udpClientSendBytes;
         t.tick = udpClientTick;
         t.getSnapshot = udpClientGetSnapshotVtable;
         t.ctx = c;
@@ -2159,6 +2169,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
             c->joinState = UDP_CLIENT_ERROR;
             t.recordInput = udpClientRecordInput;
             t.sendInput = udpClientSendInput;
+            t.sendBytes = udpClientSendBytes;
             t.tick = udpClientTick;
             t.getSnapshot = udpClientGetSnapshotVtable;
             t.ctx = c;
@@ -2223,6 +2234,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
 
     t.recordInput = udpClientRecordInput;
     t.sendInput = udpClientSendInput;
+    t.sendBytes = udpClientSendBytes;
     t.tick = udpClientTick;
     t.getSnapshot = udpClientGetSnapshotVtable;
     t.ctx = c;
@@ -2386,28 +2398,6 @@ uint8_t transportUdpClientGetMapDownloadPercent(Transport *t) {
     return pct > 100 ? 100 : (uint8_t)pct;
 }
 
-/* Send a chat message to the server.
- * destPlayer: 0xFF = all players, else specific player number. */
-void transportUdpClientSendChat(Transport *t, uint8_t destPlayer,
-                                const char *message) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_CHAT_MESSAGE];
-    int msgLen;
-    int len;
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    if (message == NULL || message[0] == '\0') return;
-
-    msgLen = (int)strlen(message);
-    if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
-
-    packHeader(buf, PACKET_CHAT_MESSAGE, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = destPlayer;
-    memcpy(buf + PACKET_HEADER_SIZE + 1, message, msgLen);
-    len = PACKET_HEADER_SIZE + 1 + msgLen;
-    udpClientSendTo(c, buf, len);
-}
-
 /* Send a name change request to the server. */
 void transportUdpClientSendNameChange(Transport *t, const char *newName) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
@@ -2421,48 +2411,6 @@ void transportUdpClientSendNameChange(Transport *t, const char *newName) {
     memset(buf + PACKET_HEADER_SIZE + 1, 0, PACKET_MAX_PLAYER_NAME);
     strncpy((char *)(buf + PACKET_HEADER_SIZE + 1), newName,
             PACKET_MAX_PLAYER_NAME - 1);
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-/* Send an alliance request to another player via server.
- * Wire: [header 8] [fromPlayer 1] [toPlayer 1] */
-void transportUdpClientSendAllianceRequest(Transport *t, uint8_t toPlayer) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_ALLIANCE_REQUEST, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = c->playerNum;
-    buf[PACKET_HEADER_SIZE + 1] = toPlayer;
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-/* Send an alliance accept to server.
- * Wire: [header 8] [fromPlayer 1] [toPlayer 1]
- * fromPlayer = us (the accepter), toPlayer = who requested */
-void transportUdpClientSendAllianceAccept(Transport *t, uint8_t toPlayer) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_ALLIANCE_ACCEPT, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = c->playerNum;
-    buf[PACKET_HEADER_SIZE + 1] = toPlayer;
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-/* Send a leave alliance request to server.
- * Wire: [header 8] [playerNum 1] */
-void transportUdpClientSendAllianceLeave(Transport *t) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_ALLIANCE_LEAVE, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = c->playerNum;
     udpClientSendTo(c, buf, sizeof(buf));
 }
 
@@ -2482,14 +2430,15 @@ void transportUdpClientSendLockToggle(Transport *t, bool allow) {
 
 /* ---- Client lobby send functions ---- */
 
-void transportUdpClientSendTeamSet(Transport *t, uint8_t teamNumber) {
+void transportUdpClientSendTeamSet(Transport *t, uint8_t slot,
+                                   uint8_t teamNumber) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     uint8_t buf[PACKET_HEADER_SIZE + 2];
 
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
     packHeader(buf, PACKET_LOBBY_TEAM_SET, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = c->playerNum;
+    buf[PACKET_HEADER_SIZE] = slot;
     buf[PACKET_HEADER_SIZE + 1] = teamNumber;
     udpClientSendTo(c, buf, sizeof(buf));
 }
@@ -2619,20 +2568,6 @@ void transportUdpClientSendMapSkipVote(Transport *t) {
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
     packHeader(buf, PACKET_MAP_SKIP_VOTE, c->outSequence++);
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-void transportUdpClientSendGameVoteToggle(Transport *t,
-                                          uint8_t kind, uint8_t toggleMode) {
-    if (!t) return;
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_GAME_VOTE_TOGGLE, c->outSequence++);
-    buf[PACKET_HEADER_SIZE + 0] = kind;
-    buf[PACKET_HEADER_SIZE + 1] = toggleMode;
     udpClientSendTo(c, buf, sizeof(buf));
 }
 
