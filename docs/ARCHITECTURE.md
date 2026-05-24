@@ -742,13 +742,15 @@ translation:
 ImGui::SetTooltip("%s", langGetTextFmt(STR_FOO, &args));
 ```
 
-**MULTILINE** — adjacent C string literals collapse into one entry
-with literal `\n`:
+**MULTILINE** — keep the whole entry on one line with embedded `\n`
+escapes. `dump_lang_en.py`'s entry regex matches a single `"..."`
+literal per `{<id>, ...}` block, so adjacent C string literals (the
+compiler-collapses-them pattern) are **not** picked up — the entry
+ends up missing from `en.txt`:
 
 ```c
 /* lang.c */
-{1306, "Remove every bot from the lobby before flagging\n"
-       "the game as Ranked. Ranked matches are humans-only."},
+{1306, "Remove every bot from the lobby before flagging\nthe game as Ranked. Ranked matches are humans-only."},
 ```
 
 **PLURAL_PAIR** — plurals are two separate IDs branched at the call

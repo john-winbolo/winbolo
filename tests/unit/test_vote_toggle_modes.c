@@ -18,6 +18,7 @@
 
 #include "global.h"
 #include "server_sim.h"
+#include "server_sim_internal.h" /* serverSimGameVoteToggle — T2, exposed to tests/unit profile */
 #include "server_sim_lifecycle.h"
 #include "client_sim.h"     /* GAME_VOTE_KIND_*, GAME_VOTE_TOGGLE_* */
 #include "everard_map.h"

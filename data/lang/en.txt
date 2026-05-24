@@ -1150,6 +1150,7 @@ STR_DLGLOBBY_CANCEL_MAPCHOOSER=Cancel
 
 # Lobby — map chooser (continued)
 STR_DLGLOBBY_CHOOSE_MAP_BTN=Choose Map
+STR_REJECT_VERSION_MISMATCH=Server is version {string1}, you have {string2} — please update.
 
 # Lobby — upload + WBN errors
 STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT=Another upload is in flight.
@@ -1291,4 +1292,10 @@ STR_MAPVALIDATE_BASE_PILL_OVERLAP=Base #{number} and Pillbox #{number2} overlap 
 STR_MAPVALIDATE_START_OVERLAP=Start #{number} and Start #{number2} overlap at ({number3},{number4})
 STR_MAPVALIDATE_START_BASE_OVERLAP=Start #{number} and Base #{number2} overlap at ({number3},{number4})
 STR_MAPVALIDATE_START_PILL_OVERLAP=Start #{number} and Pillbox #{number2} overlap at ({number3},{number4})
+STR_VOTE_BACK_TO_LOBBY=Vote: Return to lobby
+STR_VOTE_SURRENDER=Vote: Surrender
+STR_VOTE_DRAW_TAG= (Draw)
+STR_VOTE_NEEDS_RUNNING_TIP=Available once the game is running.
+STR_VOTE_SURRENDER_PICK_TEAM_TIP=Pick a team before voting to surrender.
+STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Surrender is only available when exactly two teams\nwith human players remain.
 
