@@ -170,8 +170,11 @@ void transportUdpClientSendNameChange(Transport *t, const char *newName);
  * allow: TRUE = allow new players, FALSE = disallow. */
 void transportUdpClientSendLockToggle(Transport *t, bool allow);
 
-/* Send team selection to server. teamNumber: 0-16. */
-void transportUdpClientSendTeamSet(Transport *t, uint8_t teamNumber);
+/* Send team selection to server. slot is the target lobby slot
+ * (sender's own slot for self-moves, anyone for host/admin/openHost
+ * moves). teamNumber: 0-16. */
+void transportUdpClientSendTeamSet(Transport *t, uint8_t slot,
+                                   uint8_t teamNumber);
 
 /* Send ready/unready to server. */
 void transportUdpClientSendReady(Transport *t, bool ready);

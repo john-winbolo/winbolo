@@ -472,9 +472,10 @@ void clientSimNetSendLockToggle(ClientSim *cs, bool allow) {
 void clientSimNetSendTeamSet(ClientSim *cs, BYTE slot, BYTE teamNumber) {
   if (cs == NULL || !cs->hasTransport) return;
   if (cs->isUdpTransport) {
-    /* Wire side: server uses clientIdx for the apply regardless of
-     * the slot byte we send; non-self moves are SP-host-only. */
-    transportUdpClientSendTeamSet(&cs->transport, teamNumber);
+    /* Wire carries the target slot; the server allows self-moves
+     * unconditionally and other-target moves only when the sender is
+     * host / admin / openHost (see lobbyClientMayEdit). */
+    transportUdpClientSendTeamSet(&cs->transport, slot, teamNumber);
     return;
   }
   /* Local transport: mirror PACKET_LOBBY_TEAM_SET's server-side

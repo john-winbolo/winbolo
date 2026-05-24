@@ -2763,11 +2763,10 @@ static void lobbySendRemoveBot(ClientSim *cs, uint8_t slot) {
     clientSimNetSendRemoveBot(cs, slot);
 }
 
-/* Move `targetSlot` to `teamNumber`. On SP-host the wrapper's
- * local-transport branch applies the supplied slot directly; over
- * UDP the server uses the sender's clientIdx and a non-host client
- * can only change its own team (the slot byte rides along but is
- * advisory). */
+/* Move `targetSlot` to `teamNumber`. SP-host applies via the
+ * wrapper's local-transport branch; over UDP the server allows any
+ * client to change its own team and gates other-target moves on
+ * host / admin / openHost (matches the drag-and-drop UI gate). */
 static void lobbySendTeamSet(ClientSim *cs,
                              uint8_t targetSlot, uint8_t teamNumber) {
     clientSimNetSendTeamSet(cs, targetSlot, teamNumber);
