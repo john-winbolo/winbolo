@@ -4579,6 +4579,13 @@ void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember) {
     evt.u.allianceAccept.acceptedBy = accepter;
     evt.u.allianceAccept.newMember  = newMember;
     serverSimPublishControl(sim, &evt);
+    /* WBN tracker + replay-log side effects live here so every input
+     * source (UDP wire, local transport, headless cmd-stdin) fires
+     * them uniformly. winbolonetAddEvent is gated internally by
+     * winbolonetIsRunning(), so SP / non-WBN-aware builds pay nothing.
+     * logAddEvent is gated by whether a replay log is open. */
+    winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE, accepter, newMember);
+    logAddEvent(log_AllyAccept, accepter, newMember, 0, 0, 0, NULL);
 }
 
 void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
@@ -4593,6 +4600,10 @@ void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
     evt.type = CTRL_ALLIANCE_LEAVE;
     evt.u.allianceLeave.playerNum = playerNum;
     serverSimPublishControl(sim, &evt);
+    /* WBN + replay-log side effects — see serverSimAcceptAlliance. */
+    winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_LEAVE, TRUE,
+                       playerNum, WINBOLO_NET_NO_PLAYER);
+    logAddEvent(log_AllyLeave, playerNum, 0, 0, 0, 0, NULL);
 }
 
 void serverSimSetPlayerName(ServerSim *sim, BYTE playerNum, const char *name) {
