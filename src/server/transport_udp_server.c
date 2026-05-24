@@ -2447,6 +2447,30 @@ const char *transportUdpServerGetPlayerName(BYTE playerNum) {
     return udpServer.clients[playerNum].playerName;
 }
 
+const char *transportUdpServerGetClientCountryCode(BYTE playerNum) {
+    if (playerNum >= MAX_TANKS) {
+        return NULL;
+    }
+    ServerSim *active = serverSimGetActive();
+    if (!udpServer.clients[playerNum].connected &&
+        (active == NULL || !serverSimIsBot(active, playerNum))) {
+        return NULL;
+    }
+    return udpServer.clients[playerNum].countryCode;
+}
+
+uint8_t transportUdpServerGetClientType(BYTE playerNum) {
+    if (playerNum >= MAX_TANKS) {
+        return CLIENT_TYPE_UNKNOWN;
+    }
+    ServerSim *active = serverSimGetActive();
+    if (!udpServer.clients[playerNum].connected &&
+        (active == NULL || !serverSimIsBot(active, playerNum))) {
+        return CLIENT_TYPE_UNKNOWN;
+    }
+    return udpServer.clients[playerNum].clientType;
+}
+
 /* Send an INFO_RESPONSE packet to the tracker so the game is listed. */
 void transportUdpServerSendTrackerUpdate(ServerSim *sim,
                                          const char *trackerAddr,

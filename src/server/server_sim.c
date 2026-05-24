@@ -2770,10 +2770,19 @@ void serverSimReturnToLobby(ServerSim *sim) {
         }
     }
 
-    /* Save connection and lobby state before reset */
+    /* Save connection, lobby state, and the identity bits the lobby UI
+     * sources from `sim->sim.plyrs->item[i]` — serverSimResetGameWorld
+     * destroys the Players struct (step 11), so name / country /
+     * clientType / clientFlags would otherwise come back empty and
+     * every roster row would render with a blank name. Name, country,
+     * and clientType have a durable mirror in udpServer.clients[i]
+     * which survives the reset; clientFlags is sim-side only, so it
+     * has to be snapshotted here. */
+    uint8_t savedClientFlags[MAX_TANKS];
     for (i = 0; i < MAX_TANKS; i++) {
         savedConnected[i] = sim->playerConnected[i];
         savedLobby[i] = sim->lobbyPlayers[i];
+        savedClientFlags[i] = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
     }
 
     /* Full world reset — reloads map from cached data */
@@ -2794,22 +2803,33 @@ void serverSimReturnToLobby(ServerSim *sim) {
     sim->gameLength = sim->originalGameLength;
     sim->emptyResetTicks = -1;
 
-    /* Re-keying on lobby return: the WBN session is about to be torn
-     * down and re-registered with a fresh server_key (see
-     * winbolonetReturnToLobby in the caller). Drop every connected
-     * player's WBN-verified / Steam-linked bits so the subsequent
-     * lobby-state publish carries the cleared flags to the clients.
-     * Each client then notices its own slot has lost
-     * PLAYER_FLAG_WBN_VERIFIED and sends PACKET_WBN_REAUTH so the
-     * server can re-attach them to the new WBN session.
-     *
-     * Other clientFlags bits (CLIENT_TYPE_*, platform, STEAM_BUILD,
-     * SUPPORTER) are intentionally preserved — they're identity bits
-     * tied to the connection, not the WBN session, and clearing them
-     * would lose information the client doesn't re-send on REAUTH. */
+    /* Re-register identity into the freshly-recreated Players struct.
+     * Name / country / clientType come from the transport's per-slot
+     * array (durable across serverSimResetGameWorld). clientFlags
+     * comes from the pre-reset snapshot above with the WBN-session
+     * bits cleared — the WBN session is about to be torn down and
+     * re-registered with a fresh server_key (see
+     * winbolonetReturnToLobby in the caller), so each client must
+     * re-auth via PACKET_WBN_REAUTH against the new session. Other
+     * clientFlags bits (CLIENT_TYPE_*, platform, STEAM_BUILD,
+     * SUPPORTER, ADMIN) are identity bits tied to the connection,
+     * not the WBN session, and stay preserved across the reset. */
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
-        uint8_t f = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
+        const char *name = transportUdpServerGetPlayerName(i);
+        const char *country = transportUdpServerGetClientCountryCode(i);
+        uint8_t clientType = transportUdpServerGetClientType(i);
+        if (name == NULL) continue;
+        char countryBuf[3] = "XX";
+        if (country != NULL) {
+            countryBuf[0] = country[0];
+            countryBuf[1] = country[1];
+        }
+        playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, (BYTE)i,
+                         (char *)name, countryBuf,
+                         0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
+        playersSetClientType(&sim->sim.plyrs, (BYTE)i, clientType);
+        uint8_t f = savedClientFlags[i];
         f &= (uint8_t)~(PLAYER_FLAG_WBN_VERIFIED |
                         PLAYER_FLAG_WBN_STEAM_LINKED);
         playersSetClientFlags(&sim->sim.plyrs, (BYTE)i, f);
