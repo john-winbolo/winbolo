@@ -742,13 +742,15 @@ translation:
 ImGui::SetTooltip("%s", langGetTextFmt(STR_FOO, &args));
 ```
 
-**MULTILINE** — adjacent C string literals collapse into one entry
-with literal `\n`:
+**MULTILINE** — keep the whole entry on one line with embedded `\n`
+escapes. `dump_lang_en.py`'s entry regex matches a single `"..."`
+literal per `{<id>, ...}` block, so adjacent C string literals (the
+compiler-collapses-them pattern) are **not** picked up — the entry
+ends up missing from `en.txt`:
 
 ```c
 /* lang.c */
-{1306, "Remove every bot from the lobby before flagging\n"
-       "the game as Ranked. Ranked matches are humans-only."},
+{1306, "Remove every bot from the lobby before flagging\nthe game as Ranked. Ranked matches are humans-only."},
 ```
 
 **PLURAL_PAIR** — plurals are two separate IDs branched at the call
@@ -841,6 +843,107 @@ After adding new IDs and running `dump_lang_en.py`:
 consistency between `en.txt` and each translation (catches `{numer}`
 typos). `tools/test_lang_roundtrip.py` confirms `en.txt` round-trips
 through `dump_lang_en.py`.
+
+## macOS native menu bar
+
+The SDL3 desktop client renders **two** menu bars on macOS:
+
+- The cross-platform ImGui menu bar inside the game window — built
+  once per frame by `renderMenuBar()` in `src/gui/sdl3/sdl3imgui.cpp`.
+  This is what every other platform (Windows, Linux, wasm) sees.
+- The macOS-native `NSMenu` attached to `NSApp.mainMenu` — built once
+  at startup by `mac_menubar_install()` in
+  `src/gui/sdl3/platform/mac_menubar.mm` and refreshed per-frame by
+  `mac_menubar_refresh()`. macOS users expect a real menu bar at the
+  top of the screen; the ImGui in-window bar remains available too.
+
+The two bars are independent UI surfaces over the same underlying
+sim. Both call into the same T1 client API
+(`clientSimNetSend*`, `clientSimSet*`, `windowMenu*_toggle`,
+sim-side actions). Neither bar reaches into sim internals.
+
+### Contract — both bars in lockstep
+
+**A user-facing menu item must exist in both bars, or a deliberate
+exception must be documented in the code.** A macOS user with the
+native menu bar focused and a Linux user with the ImGui bar must be
+able to reach the same actions. The two surfaces today have a small
+set of intentional differences:
+
+- App > Preferences (⌘,) replaces the in-window WinBolo > Settings
+  entry on macOS — the platform convention.
+- Send Message uses ⇧⌘M on the native bar (⌘M is reserved for
+  Window > Minimize on macOS) and ⌘M in the in-window bar.
+- The dynamic per-player roster row in the in-window Players menu is
+  not replicated natively. The Players Panel window owns that
+  surface; the native menu has only the static action items.
+
+Add new exceptions sparingly and only with a justification — every
+diverged item is a future asymmetric-UI bug.
+
+### State flow
+
+The native menu's per-frame state is a **snapshot push** from the
+ImGui frontend, not a pull from the sim:
+
+```
+sdl3imgui.cpp (per frame, inside renderMenuBar context)
+  populateMacMenuState(&mms, cs)           // gather flags from cs + UI globals
+    ↓
+  mac_menubar_refresh(&mms)                // apply to cached NSMenuItem pointers
+```
+
+`MacMenuState` (in `src/gui/sdl3/platform/mac_menubar.h`) is a POD
+mirror of every checkmark, enable flag, dynamic title, and per-slot
+roster field the native bar needs. Producer (`populateMacMenuState`
+in `sdl3imgui.cpp`) and consumer (`mac_menubar_refresh` in
+`mac_menubar.mm`) communicate only through this struct — neither
+pulls anything live from `ClientSim` outside that producer call.
+
+Pre-computing the gating flags GUI-side keeps the native consumer
+free of sim state and ensures the two bars enable/disable items
+under identical predicates: any `if (...)` that decides whether an
+ImGui `MenuItem` is enabled has a corresponding field on
+`MacMenuState` that drives `[NSMenuItem setEnabled:]`.
+
+### Recipe — adding a new menu item
+
+1. **Localize the label and tooltip.** Add `STR_*` ids per the
+   Localization section above; the native bar reads the same
+   `langGetText(STR_*)` via the `LANG_STR(id)` macro in
+   `mac_menubar.mm`.
+2. **Add it to the ImGui bar** in `renderMenuBar()`
+   (`src/gui/sdl3/sdl3imgui.cpp`). Call a T1 send wrapper for the
+   action — never build wire packets or call sim internals.
+3. **Add it to the native bar** in `mac_menubar_install()`
+   (`src/gui/sdl3/platform/mac_menubar.mm`):
+   - Cache the `NSMenuItem *` in a `static` so the refresh can
+     reach it.
+   - Add a selector declaration and matching `- (void)onFoo:`
+     method on `WBMenuBridge`. The method forwards to the same T1
+     entry the ImGui handler called.
+   - If the parent menu uses `setAutoenablesItems:NO` (the WinBolo
+     and Players menus do), the refresh must explicitly drive
+     `setEnabled:` — otherwise the item stays whatever it was at
+     construction.
+4. **Mirror enable / checkmark gating.** Extend `MacMenuState` with
+   the predicate the ImGui code already computes. Set it in
+   `populateMacMenuState` and consume it in `mac_menubar_refresh`.
+   Don't recompute predicates inside the refresh — that's how the
+   two bars drift.
+5. **For items that need a `ClientSim`,** route through `g_clientSim`
+   (the cached pointer set by `mac_menubar_set_clientsim`). NULL is
+   acceptable during startup; handlers must early-return on NULL.
+
+### Other platform native shells
+
+`src/logviewer/platform/mac_menubar.{h,mm}` and
+`src/mapeditor/platform/mac_menubar.{h,mm}` are the same pattern for
+the LogViewer and MapEditor binaries — each has its own bridge,
+its own state struct, and its own refresh. They share the
+`LANG_STR()` convention with the SDL3 client. The mobile clients
+(`src/ios/`, `src/android/`) and the wasm build don't have a system
+menu bar; they ship only the ImGui in-window bar.
 
 ## WinBolo.net subsystem
 

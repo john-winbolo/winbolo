@@ -1309,3 +1309,11 @@ STR_DLGLOBBY_SERVERDISP_INTERNET=İnternet
 
 # Connectivity badge tooltip
 STR_DLGLOBBY_CONN_TEST_TIP=Test devam ediyor
+
+# In-game votes
+STR_VOTE_BACK_TO_LOBBY=Oylama: Lobiye dön
+STR_VOTE_SURRENDER=Oylama: Teslim ol
+STR_VOTE_DRAW_TAG= (Beraberlik)
+STR_VOTE_NEEDS_RUNNING_TIP=Oyun başladıktan sonra kullanılabilir.
+STR_VOTE_SURRENDER_PICK_TEAM_TIP=Teslim olmak için oy kullanmadan önce bir takım seçin.
+STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Teslim olma yalnızca insan oyunculu tam olarak iki takım\nkaldığında kullanılabilir.

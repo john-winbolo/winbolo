@@ -773,11 +773,23 @@ void clientSimNetSendMapSkipVote(ClientSim *cs) {
 
 void clientSimNetSendGameVoteToggle(ClientSim *cs,
                                     uint8_t kind, uint8_t toggleMode) {
-  /* Network path only. SP / host-in-process dispatch lives in the GUI
-   * shim (sdl3imgui.cpp) so the bolo library doesn't pick up a build
-   * dep on server_sim. */
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendGameVoteToggle(&cs->transport, kind, toggleMode);
+  uint8_t buf[PACKET_HEADER_SIZE + 2];
+
+  if (cs == NULL || !cs->hasTransport) return;
+  if (cs->transport.sendBytes == NULL) return;
+
+  /* Wire: [magic 2][type 1][reserved 1][sequence 4][kind 1][toggleMode 1].
+   * UDP transport delivers to transport_udp_server.c's PACKET_GAME_VOTE_TOGGLE
+   * case; local transport delivers to transport_local.c's matching case.
+   * Both end in serverSimGameVoteToggle. */
+  buf[0] = BOLO_NEW_MAGIC_0;
+  buf[1] = BOLO_NEW_MAGIC_1;
+  buf[2] = PACKET_GAME_VOTE_TOGGLE;
+  buf[3] = 0;
+  memset(buf + 4, 0, 4);
+  buf[PACKET_HEADER_SIZE]     = kind;
+  buf[PACKET_HEADER_SIZE + 1] = toggleMode;
+  cs->transport.sendBytes(cs->transport.ctx, buf, sizeof(buf));
 }
 
 void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize,

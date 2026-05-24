@@ -1240,6 +1240,14 @@ static const LangEntry langTable[] = {
     /* Pre-flight version-mismatch error (client-side, surfaced by the
      * direct-connect / rejoin entry). */
     {1389, "Server is version {string1}, you have {string2} \xE2\x80\x94 please update."},
+
+    /* In-game votes — back-to-lobby and surrender. */
+    {1390, "Vote: Return to lobby"},
+    {1391, "Vote: Surrender"},
+    {1392, " (Draw)"},
+    {1393, "Available once the game is running."},
+    {1394, "Pick a team before voting to surrender."},
+    {1395, "Surrender is only available when exactly two teams\nwith human players remain."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
