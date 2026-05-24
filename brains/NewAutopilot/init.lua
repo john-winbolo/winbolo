@@ -3528,12 +3528,23 @@ function Brain.think(info)
   local _no_shells = info.shells <= C.SHELL_RESERVE
   local _shoot_busy = (keys & KEY_SHOOT) ~= 0 or (taps & KEY_SHOOT) ~= 0
   local _already_fired = false
+  -- Crosshair driver state: track the closest viable LGM (in range, LOS
+  -- clear) so we can drive info.gunrange toward its target sightLen
+  -- when the bot's active goal is kill_lgm.  Other goals (attack_pill
+  -- etc.) keep their own crosshair logic — we don't disturb them just
+  -- to catch opportunistic LGMs, those shots only fire when crosshair
+  -- happens to already align.
+  local _primary_lgm = nil
+  local _primary_dist = math.huge
   if state.perc and state.perc.enemy_lgms then
     state._kill_lgm_los = state._kill_lgm_los or {}
     local los_cache = state._kill_lgm_los
     for _, elm in ipairs(state.perc.enemy_lgms) do
       local _ev = { mx = elm.mx, my = elm.my, dist = elm.dist,
-                    idnum = elm.idnum, vx = elm.vx or 0, vy = elm.vy or 0 }
+                    idnum = elm.idnum, vx = elm.vx or 0, vy = elm.vy or 0,
+                    v_ema_x = elm.v_ema_x, v_ema_y = elm.v_ema_y,
+                    target_sightLen = elm.target_sightLen,
+                    flight_ticks = elm.flight_ticks }
       state._kill_lgm_eval[#state._kill_lgm_eval + 1] = _ev
       if info.inboat then
         _ev.status = "in_boat"
@@ -3542,18 +3553,17 @@ function Brain.think(info)
       elseif elm.dist > C.KILL_LGM_SHOOT_RANGE then
         _ev.status = "out_of_range"
       else
-        -- Lead-predict.  dist_wu = |dx| + |dy|; shell takes
-        -- approximately dist_wu / SHELL_SPEED ticks to arrive.
-        local dx_now = elm.wx - info.tankx
-        local dy_now = elm.wy - info.tanky
-        local dist_wu = math.abs(dx_now) + math.abs(dy_now)
-        local ttl = dist_wu / C.SHELL_SPEED
-        local aim_wx = elm.wx + (elm.vx or 0) * ttl
-        local aim_wy = elm.wy + (elm.vy or 0) * ttl
+        -- Use perception's lead-predicted aim point (EMA velocity +
+        -- convergence loop, see kill_lgm.lua).  Falls back to current
+        -- LGM position if perception didn't populate the predicted
+        -- fields (shouldn't happen, but be defensive).
+        local aim_wx = elm.predicted_wx or elm.wx
+        local aim_wy = elm.predicted_wy or elm.wy
+        local target_sl = elm.target_sightLen
         local aim_dir = U.aim_at(info.tankx, info.tanky, aim_wx, aim_wy)
         local aim_corr = U.adiff(info.direction, aim_dir)
         _ev.aim_corr = aim_corr
-        _ev.ttl = ttl
+        _ev.ttl = elm.flight_ticks
         _ev.aim_mx = math.floor(aim_wx + 0.5) >> 8
         _ev.aim_my = math.floor(aim_wy + 0.5) >> 8
         if math.abs(aim_corr) > C.KILL_LGM_SHOOT_AIM then
@@ -3588,8 +3598,18 @@ function Brain.think(info)
             los_cache[cache_key] = { tick = now, blocked = los_blocked }
           end
           _ev.los_blocked = los_blocked
+          -- Range-alignment gate: don't fire unless the crosshair is
+          -- at (or within 1 of) the lead-predicted target sightLen.
+          -- The bot adjusts gunrange via KEY_MORERANGE/LESSRANGE one
+          -- step per tick, so a 1-step tolerance lets the fire trigger
+          -- within a tick of arriving on target rather than oscillating.
+          local sl_diff = target_sl and math.abs((info.gunrange or 14) - target_sl) or 99
+          _ev.gunrange     = info.gunrange
+          _ev.gunrange_off = sl_diff
           if los_blocked then
             _ev.status = "los_blocked"
+          elseif sl_diff > 1 then
+            _ev.status = "gunrange_off"
           elseif _shoot_busy or _already_fired then
             _ev.status = "ready_busy"
           else
@@ -3597,13 +3617,44 @@ function Brain.think(info)
             taps = taps | KEY_SHOOT
             _already_fired = true
             log.event("kill_lgm_shot",
-              string.format("lgm@(%d,%d) dist=%d aim=%.0f ttl=%.1f v=(%d,%d)",
+              string.format("lgm@(%d,%d) dist=%d aim=%.0f sl=%d/%d v=(%.1f,%.1f)",
                             elm.mx, elm.my, elm.dist, aim_corr,
-                            ttl, elm.vx or 0, elm.vy or 0))
+                            info.gunrange or 0, target_sl or 0,
+                            elm.v_ema_x or 0, elm.v_ema_y or 0))
+          end
+          -- Track closest non-LOS-blocked LGM in range as primary for
+          -- the crosshair driver below.  Picking by raw dist (not
+          -- predicted dist) keeps the choice stable as the LGM moves.
+          if not los_blocked and elm.dist < _primary_dist then
+            _primary_dist = elm.dist
+            _primary_lgm  = elm
           end
         end
       end
     end
+  end
+
+  -- Crosshair driver: when the active goal IS kill_lgm and we have a
+  -- viable primary LGM, nudge info.gunrange toward its target sightLen
+  -- every tick.  KEY_MORERANGE/LESSRANGE step by 1 per tick (tank.c).
+  -- Gated on goal.kind so attack_pill / attack_tank / etc. keep their
+  -- own crosshair management — they have their own KEY_MORERANGE logic
+  -- in steering.lua that would conflict with ours.
+  if state.goal and state.goal.kind == "kill_lgm"
+     and _primary_lgm and _primary_lgm.target_sightLen
+     and not info.inboat then
+    local cur_sl = info.gunrange or 14
+    local tgt_sl = _primary_lgm.target_sightLen
+    if cur_sl < tgt_sl then
+      keys = keys | KEY_MORERANGE
+    elseif cur_sl > tgt_sl then
+      keys = keys | KEY_LESSRANGE
+    end
+    state._kill_lgm_crosshair_drive = {
+      cur = cur_sl, tgt = tgt_sl, idnum = _primary_lgm.idnum,
+    }
+  else
+    state._kill_lgm_crosshair_drive = nil
   end
 
   -- Navigation debug -- verbose prints for command goals
@@ -4355,7 +4406,8 @@ function Brain.think(info)
              and pce.goal.mx   == state.goal.mx
              and pce.goal.my   == state.goal.my
              and pce.cost ~= nil then
-            bsi.cost = string.format("%.0f", pce.cost)
+            local raw = pce.cost - (pce.ally_claimed_pen or 0)
+            bsi.cost = string.format("%.0f", raw)
             break
           end
         end

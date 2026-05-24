@@ -4533,19 +4533,17 @@ int main(int argc, char *argv[]) {
     app.viewCenterX = ((app.mapMinX + app.mapMaxX) / 2) << 8;
     app.viewCenterY = ((app.mapMinY + app.mapMaxY) / 2) << 8;
 
-    /* Add bots.  Default the brain dispatch-thread count to the number
-     * of bot players so each bot gets the full per-bot budget instead
-     * of having brainBudget × threadsConfig / activeBots divide it
-     * down.  Capped by logical core count (botManagerInit returns false
-     * otherwise) and by MAX_TANKS. */
+    /* Add bots.  Default to 2 brain dispatch threads — enough parallelism
+     * for most maps without over-subscribing the CPU. */
     {
-        int desired_threads = optNumPlayers;
+        int desired_threads = 2;
         int cores = SDL_GetNumLogicalCPUCores();
         if (desired_threads > cores) desired_threads = cores;
         if (!botManagerInit(desired_threads)) {
             fprintf(stderr, "botManagerInit failed\n");
             return 1;
         }
+        serverSimRequestBotThreads(app.sim, desired_threads);
     }
     /* Pre-think hook needs the per-sim BotManager; install it now that
      * app.sim exists. Bots have not been added yet, so no tick can fire

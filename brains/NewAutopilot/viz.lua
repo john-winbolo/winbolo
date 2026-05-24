@@ -183,7 +183,7 @@ M.IDS = {
   swerve_dir_choice = { short = "Swerve dir choice",
                         long  = "Sample lines + L/R cover scores for swerve direction pick" },
   bpc_cover_samples = { short = "BPC cover samples",
-                        long  = "Blue tile outlines from line_walk during BPC cover sweep" },
+                        long  = "Blue tile outlines from line_walk during BPC (Basic Pill Capture) cover sweep" },
 
   -- Misc tile/state markers.
   blocked_tiles     = { short = "Blocked tiles",

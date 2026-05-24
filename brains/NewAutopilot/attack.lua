@@ -109,9 +109,6 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
     chosen = goal._best_swerve_dir,
     pcx = pcx, pcy = pcy,
   }
-  print(string.format(TAG .. " ATTACK: swerve calc L(%.2f,%.2f)=%d R(%.2f,%.2f)=%d -> %s",
-        lfx, lfy, left_cover, rfx, rfy, right_cover,
-        goal._best_swerve_dir == 1 and "LEFT" or "RIGHT"))
 end
 
 -- Clear the active goal, idle the pathfinder, and wipe ALL transient
@@ -2329,7 +2326,15 @@ function M.update_attack_substate(goal, state, world, info)
       -- Otherwise spots is nil — chunking still in progress; the goal
       -- re-enters plan_position next tick and continues the sweep.
       if spots then
-      goal.scan_spots = spots
+      -- (goal.scan_spots = spots is set AT THE END of this block — see
+      -- the matching assignment just before the `end` below.  If we set
+      -- it here, a tick_budget_exceeded abort mid-flow would leave the
+      -- substate stuck: scan_spots set → next tick skips this block →
+      -- greens/best never re-run, _shield_scan_pending never set.
+      -- Deferring the gate-bit until ALL the setup is done makes the
+      -- whole block idempotent across budget aborts — the cache in
+      -- state._pill_eval_cache survives, so re-entry just re-runs
+      -- greens/best from the same cached spots.)
       -- plan-trace: count spots + LOS subset
       if BRAIN_DEBUG_MODE and state._plan_trace then
         local _t = state._plan_trace
@@ -2524,6 +2529,16 @@ function M.update_attack_substate(goal, state, world, info)
         -- blow the per-tick budget at low capacity tiers (the budget
         -- hook then raises tick_budget_exceeded mid-influence-pass).
         -- Splitting it across two ticks lets each stage fit naturally.
+        --
+        -- These two assignments are paired: scan_spots is the gate that
+        -- prevents re-entry into the chunked block; pending is the gate
+        -- that triggers the deferred shield-scan block.  Setting them
+        -- together (and last) makes the whole block idempotent under
+        -- budget abort — if we don't reach this point, scan_spots
+        -- stays nil and next tick re-runs the cheap re-derivation
+        -- (cached chunk, fresh greens/best) without losing the shield
+        -- step.
+        goal.scan_spots = spots
         goal._shield_scan_pending = true
       else
         if BRAIN_DEBUG_MODE and not goal._plan_logged then
@@ -2533,6 +2548,11 @@ function M.update_attack_substate(goal, state, world, info)
         local smx, smy = M.pick_standoff(world, info, pill, state)
         goal.standoff_mx = smx
         goal.standoff_my = smy
+        -- Fallback path: no shield scan needed (no winner from greens).
+        -- Pair scan_spots assignment with the end of this branch so the
+        -- block is idempotent under budget abort, same as the if-best
+        -- branch above.
+        goal.scan_spots = spots
         if BRAIN_DEBUG_MODE and state._plan_trace then
           state._plan_trace.no_best_fallback = true
         end
@@ -2547,7 +2567,7 @@ function M.update_attack_substate(goal, state, world, info)
     -- tiers).  Reads goal.standoff_*/goal._chosen_deg already set by
     -- the spot-selection pass; recomputes scan_radius from goal._is_ppt
     -- (no need to persist it).
-    if goal._shield_scan_pending and not goal._shield_scan then
+    if goal._shield_scan_pending then
       goal._shield_scan_pending = nil
       local scan_radius = goal._is_ppt and C.PPT_STANDOFF
                           or C.ATTACK_PILL_STANDOFF
@@ -2565,12 +2585,31 @@ function M.update_attack_substate(goal, state, world, info)
           tostring(scan_radius), tostring(no_builder),
           tostring(info.armour), _sb_pos, _sb_step)
       end
-      local sscan = shield.scan(pill, world,
-                                goal.standoff_mx, goal.standoff_my,
-                                goal._chosen_deg or 0,
-                                goal.standoff_fx, goal.standoff_fy,
-                                scan_radius, no_builder, info.armour,
-                                _sb_pos, _sb_step)
+      local _ok, sscan_or_err = xpcall(function()
+        return shield.scan(pill, world,
+                           goal.standoff_mx, goal.standoff_my,
+                           goal._chosen_deg or 0,
+                           goal.standoff_fx, goal.standoff_fy,
+                           scan_radius, no_builder, info.armour,
+                           _sb_pos, _sb_step)
+      end, debug.traceback)
+      local sscan
+      if _ok then
+        sscan = sscan_or_err
+      else
+        local msg = tostring(sscan_or_err)
+        -- Re-raise budget abort so the brain runtime sees its own signal
+        -- and aborts the tick properly. Only catch genuine shield-scan
+        -- bugs (everything else).
+        if msg:find("tick_budget_exceeded", 1, true) then
+          error(sscan_or_err)
+        end
+        if BRAIN_DEBUG_MODE and state._plan_trace then
+          state._plan_trace.shield_err = msg
+        end
+        print(TAG .. " SHIELD SCAN CRASH:\n" .. msg)
+        sscan = nil
+      end
       if BRAIN_DEBUG_MODE and state._plan_trace then
         local _t = state._plan_trace
         _t.shield_ran = true
@@ -2792,6 +2831,8 @@ function M.update_attack_substate(goal, state, world, info)
     if not goal.standoff_mx then
       goal.substate = "plan_position"
       goal.scan_spots = nil
+      goal._shield_scan = nil
+      goal._shield_scan_pending = nil
       goal._plan_show_tick = nil
       goal._plan_logged = nil
       print(TAG .. " ATTACK: approach has no standoff, replanning")
@@ -3424,6 +3465,8 @@ function M.update_attack_substate(goal, state, world, info)
     if not goal.standoff_mx then
       goal.substate = "plan_position"
       goal.scan_spots = nil
+      goal._shield_scan = nil
+      goal._shield_scan_pending = nil
       goal._plan_show_tick = nil
       goal._plan_logged = nil
       print(TAG .. " ATTACK: in_range_position has no standoff, replanning")
@@ -4430,20 +4473,44 @@ function M.update_attack_substate(goal, state, world, info)
     -- (no trees, angry pill, LGM can't reach, path unsafe) right next
     -- to the build queue so the user sees why a wall isn't going up
     -- instead of staring at an idle tank.
+    --
+    -- Window is generous (200 ticks ≈ 4 s) so a one-off skip stays
+    -- legible long enough to read; once a skip is older than that
+    -- it's stale and likely no longer the active blocker.
     if goal.substate == "build_walls" and state._wall_shield_skip
-       and (now - state._wall_shield_skip.tick) < 30 then
+       and (now - state._wall_shield_skip.tick) < 200 then
       local s = state._wall_shield_skip
       local parts = {}
-      if s.angry_pill_close then parts[#parts + 1] = "ANGRY_PILL" end
       if not s.has_trees    then parts[#parts + 1] =
-        string.format("TREES(%d/%d)", s.trees_have, s.trees_need) end
-      if not s.can_reach    then parts[#parts + 1] = "NO_REACH" end
-      if not s.path_safe    then parts[#parts + 1] = "UNSAFE_PATH" end
+        string.format("OUT_OF_TREES(have=%d need=%d)",
+                      s.trees_have or 0, s.trees_need or 0) end
+      if not s.can_reach    then parts[#parts + 1] = "LGM_NO_REACH" end
+      if not s.path_safe    then parts[#parts + 1] = "LGM_PATH_UNSAFE" end
+      if s.angry_pill_close then parts[#parts + 1] = "ANGRY_PILL_NEAR" end
       if #parts > 0 then
+        local age = now - s.tick
         labels[#labels + 1] = {
-          "WALL_SKIP: " .. table.concat(parts, " ") ..
-            string.format("  @(%d,%d)", s.wx or 0, s.wy or 0),
+          string.format("WALL_SKIP (%dt ago): %s @(%d,%d)%s",
+                        age, table.concat(parts, " "),
+                        s.wx or 0, s.wy or 0,
+                        s.force_mode and "  [force_mode: safety bypassed]" or ""),
           230, 80, 80, "wall_skip_reason" }
+      end
+    end
+
+    -- LGM status during build_walls: if the LGM isn't on the ground
+    -- (in tank / dead / parachuting) it physically cannot go out to
+    -- build walls.  Surface that directly rather than letting the
+    -- user wonder why nothing's happening.
+    if goal.substate == "build_walls" and info.man_status ~= nil then
+      local lgm_msg
+      if info.man_status == C.LGM_INTANK then
+        lgm_msg = "LGM_IN_TANK — needs to be dispatched"
+      elseif info.man_status == C.LGM_DEAD then
+        lgm_msg = "LGM_DEAD — no walls possible until respawn"
+      end
+      if lgm_msg then
+        labels[#labels + 1] = { lgm_msg, 230, 80, 80, "wall_skip_reason" }
       end
     end
 

@@ -3070,6 +3070,10 @@ function M.step_eval_queue(state, world, info)
               local aid = tonumber(info_h.target)
               if (aid and id and aid == id)
                  or (tonumber(info_h.mx) == obj.mx and tonumber(info_h.my) == obj.my) then
+                local their_cost = tonumber(info_h.cost)
+                if their_cost and (their_cost - score) >= C.ALLY_CLAIMED_STEAL_THRESHOLD then
+                  break
+                end
                 _p1_ac_pen = C.ALLY_CLAIMED_REFUEL_PENALTY
                 _p1_ac_by  = ally_pn
                 score = score + _p1_ac_pen
@@ -3558,6 +3562,10 @@ function M.step_eval_queue(state, world, info)
                 end
               end
               if matched then
+                local their_cost = tonumber(info_h.cost)
+                if their_cost and (their_cost - c) >= C.ALLY_CLAIMED_STEAL_THRESHOLD then
+                  break
+                end
                 _ac_pen = (pool_idx == 1) and C.ALLY_CLAIMED_REFUEL_PENALTY
                           or C.ALLY_CLAIMED_PENALTY
                 _ac_by  = ally_pn

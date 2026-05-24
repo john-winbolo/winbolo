@@ -1407,7 +1407,9 @@ end
 
 function M.draw_overlay(scan, now_tick)
   if not BRAIN_DEBUG_MODE then return end
-  if not scan or not scan.candidates then return end
+  if not scan or (not scan.candidates and not scan.best and not scan.standoff) then
+    return
+  end
 
   -- After NONWINNER_FADE_TICKS, hide everything but the chosen viz
   -- target so the screen de-clutters once the user has had time to
@@ -1427,7 +1429,7 @@ function M.draw_overlay(scan, now_tick)
   -- (small circle at cx/cy), so a click on the marker still hit-tests
   -- to its entry — but even after fade, clicking the spot will land
   -- on the registered hit area.
-  if viz.detail_circle then
+  if viz.detail_circle and scan.candidates then
     for ci, c in ipairs(scan.candidates) do
       local did = string.format("shield_cand_%d", ci)
       local kind_str = c.kind == "standoff" and "STANDOFF" or "candidate"
@@ -1501,7 +1503,7 @@ function M.draw_overlay(scan, now_tick)
   -- Pass B: visible markers + score labels. Honors the hide_losers
   -- fade so the on-screen cluster stays clean a few seconds after
   -- the scan is generated.
-  for ci, c in ipairs(scan.candidates) do
+  for ci, c in ipairs(scan.candidates or {}) do
     if hide_losers and c ~= kept_target then goto next_cand_draw end
     local color_r, color_g, color_b
     if not c.valid_tile then

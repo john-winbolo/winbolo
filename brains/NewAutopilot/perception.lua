@@ -7,10 +7,11 @@
 -- and info.objects independently.
 -- =========================================================================
 
-local C      = require("constants")
-local U      = require("util")
-local danger = require("danger")
-local threat = require("threat")
+local C        = require("constants")
+local U        = require("util")
+local danger   = require("danger")
+local threat   = require("threat")
+local kill_lgm = require("kill_lgm")
 
 local M = {}
 
@@ -296,7 +297,7 @@ function M.update(state, world, info)
             if md < best_t_d then best_t_d = md; near_tank_idnum = et.id end
           end
         end
-        enemy_lgms[#enemy_lgms + 1] = {
+        local _ent = {
           mx = lmx, my = lmy,
           wx = ob.x, wy = ob.y,
           vx = vx, vy = vy,
@@ -305,12 +306,31 @@ function M.update(state, world, info)
           near_tank_idnum = near_tank_idnum,
           dist = U.mdist(tmx, tmy, lmx, lmy),
         }
+        -- Lead-predict for kill_lgm targeting.  EMA-smoothed velocity +
+        -- convergence loop (D ↔ flight_ticks) produces the aim point and
+        -- the gunrange we need to drive the crosshair to.  Used by both
+        -- steering (heading lead) and init.lua's fire block (gunrange
+        -- key + fire trigger).
+        local v_ex, v_ey = kill_lgm.update_velocity(state, _ent, now)
+        _ent.v_ema_x = v_ex
+        _ent.v_ema_y = v_ey
+        local aim_wx, aim_wy, sl, ft, d_wu = kill_lgm.predict_aim(
+          info.tankx, info.tanky, ob.x, ob.y, v_ex, v_ey)
+        _ent.predicted_wx     = aim_wx
+        _ent.predicted_wy     = aim_wy
+        _ent.predicted_mx     = math.floor(aim_wx) >> 8
+        _ent.predicted_my     = math.floor(aim_wy) >> 8
+        _ent.target_sightLen  = sl
+        _ent.flight_ticks     = ft
+        _ent.predicted_dist_wu = d_wu
+        enemy_lgms[#enemy_lgms + 1] = _ent
       end
     end
   end
   state._prev_enemy_lgms = enemy_lgms
   perc.allied_lgm_positions = allied_lgm_positions
   perc.enemy_lgms = enemy_lgms
+  kill_lgm.purge_stale(state, now)
 
   -- ----- Under fire: shell danger or angry pill in range -----
   local threat_at_tank = danger.danger_at(tmx, tmy, now, world)

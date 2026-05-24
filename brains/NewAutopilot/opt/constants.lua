@@ -432,6 +432,7 @@ M.GOAL_TARGET_SWITCH_PENALTY = 15  -- cost added when same group but different t
 -- different base when possible) since refuel is fungible.
 M.ALLY_CLAIMED_PENALTY        = 10000
 M.ALLY_CLAIMED_REFUEL_PENALTY = 100
+M.ALLY_CLAIMED_STEAL_THRESHOLD = 100
 M.GOAL_COMMITMENT_PER_TICK = 0.5   -- extra switch penalty per tick spent on current goal
 M.GOAL_COMMITMENT_CAP      = 75    -- max commitment penalty (reached after 150 ticks / 3s)
 M.REFUEL_FULL_COST_MULT    = 3.0   -- pool-1 cost multiplier when tank is between low and full thresholds; applied at goal-selection time so stale cache costs scale with current state. At max fullness the entry is skipped entirely.

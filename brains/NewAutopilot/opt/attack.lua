@@ -109,9 +109,6 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
     chosen = goal._best_swerve_dir,
     pcx = pcx, pcy = pcy,
   }
-  print(string.format(TAG .. " ATTACK: swerve calc L(%.2f,%.2f)=%d R(%.2f,%.2f)=%d -> %s",
-        lfx, lfy, left_cover, rfx, rfy, right_cover,
-        goal._best_swerve_dir == 1 and "LEFT" or "RIGHT"))
 end
 
 -- Clear the active goal, idle the pathfinder, and wipe ALL transient
@@ -2221,7 +2218,7 @@ function M.update_attack_substate(goal, state, world, info)
       -- Otherwise spots is nil — chunking still in progress; the goal
       -- re-enters plan_position next tick and continues the sweep.
       if spots then
-      goal.scan_spots = spots
+      -- (goal.scan_spots = spots moved to end of block; see source.)
       -- plan-trace: count spots + LOS subset
       if BRAIN_PROFILE_LOG then
         opt.append("optimize.log", string.format(
@@ -2378,11 +2375,13 @@ function M.update_attack_substate(goal, state, world, info)
         -- blow the per-tick budget at low capacity tiers (the budget
         -- hook then raises tick_budget_exceeded mid-influence-pass).
         -- Splitting it across two ticks lets each stage fit naturally.
+        goal.scan_spots = spots
         goal._shield_scan_pending = true
       else
         local smx, smy = M.pick_standoff(world, info, pill, state)
         goal.standoff_mx = smx
         goal.standoff_my = smy
+        goal.scan_spots = spots
       end
       end -- if spots (chunk done or cache hit)
     end -- if not goal.scan_spots (scan once)
@@ -2394,7 +2393,7 @@ function M.update_attack_substate(goal, state, world, info)
     -- tiers).  Reads goal.standoff_*/goal._chosen_deg already set by
     -- the spot-selection pass; recomputes scan_radius from goal._is_ppt
     -- (no need to persist it).
-    if goal._shield_scan_pending and not goal._shield_scan then
+    if goal._shield_scan_pending then
       goal._shield_scan_pending = nil
       local scan_radius = goal._is_ppt and C.PPT_STANDOFF
                           or C.ATTACK_PILL_STANDOFF
@@ -2402,12 +2401,25 @@ function M.update_attack_substate(goal, state, world, info)
       local _cap = state._capacity
       local _sb_pos  = (_cap and _cap.sb_positions) or 28
       local _sb_step = (_cap and _cap.sb_step)      or 0.5
-      local sscan = shield.scan(pill, world,
-                                goal.standoff_mx, goal.standoff_my,
-                                goal._chosen_deg or 0,
-                                goal.standoff_fx, goal.standoff_fy,
-                                scan_radius, no_builder, info.armour,
-                                _sb_pos, _sb_step)
+      local _ok, sscan_or_err = xpcall(function()
+        return shield.scan(pill, world,
+                           goal.standoff_mx, goal.standoff_my,
+                           goal._chosen_deg or 0,
+                           goal.standoff_fx, goal.standoff_fy,
+                           scan_radius, no_builder, info.armour,
+                           _sb_pos, _sb_step)
+      end, debug.traceback)
+      local sscan
+      if _ok then
+        sscan = sscan_or_err
+      else
+        local msg = tostring(sscan_or_err)
+        if msg:find("tick_budget_exceeded", 1, true) then
+          error(sscan_or_err)
+        end
+        print(TAG .. " SHIELD SCAN CRASH:\n" .. msg)
+        sscan = nil
+      end
       if sscan and (not sscan.best or (sscan.best.score or 0) <= 0) then
         goal._is_ppt = false
         sscan = nil
@@ -2581,6 +2593,8 @@ function M.update_attack_substate(goal, state, world, info)
     if not goal.standoff_mx then
       goal.substate = "plan_position"
       goal.scan_spots = nil
+      goal._shield_scan = nil
+      goal._shield_scan_pending = nil
       goal._plan_show_tick = nil
       goal._plan_logged = nil
       print(TAG .. " ATTACK: approach has no standoff, replanning")
@@ -3092,6 +3106,8 @@ function M.update_attack_substate(goal, state, world, info)
     if not goal.standoff_mx then
       goal.substate = "plan_position"
       goal.scan_spots = nil
+      goal._shield_scan = nil
+      goal._shield_scan_pending = nil
       goal._plan_show_tick = nil
       goal._plan_logged = nil
       print(TAG .. " ATTACK: in_range_position has no standoff, replanning")
@@ -3804,19 +3820,35 @@ function M.update_attack_substate(goal, state, world, info)
     -- to the build queue so the user sees why a wall isn't going up
     -- instead of staring at an idle tank.
     if goal.substate == "build_walls" and state._wall_shield_skip
-       and (now - state._wall_shield_skip.tick) < 30 then
+       and (now - state._wall_shield_skip.tick) < 200 then
       local s = state._wall_shield_skip
       local parts = {}
-      if s.angry_pill_close then parts[#parts + 1] = "ANGRY_PILL" end
       if not s.has_trees    then parts[#parts + 1] =
-        string.format("TREES(%d/%d)", s.trees_have, s.trees_need) end
-      if not s.can_reach    then parts[#parts + 1] = "NO_REACH" end
-      if not s.path_safe    then parts[#parts + 1] = "UNSAFE_PATH" end
+        string.format("OUT_OF_TREES(have=%d need=%d)",
+                      s.trees_have or 0, s.trees_need or 0) end
+      if not s.can_reach    then parts[#parts + 1] = "LGM_NO_REACH" end
+      if not s.path_safe    then parts[#parts + 1] = "LGM_PATH_UNSAFE" end
+      if s.angry_pill_close then parts[#parts + 1] = "ANGRY_PILL_NEAR" end
       if #parts > 0 then
+        local age = now - s.tick
         labels[#labels + 1] = {
-          "WALL_SKIP: " .. table.concat(parts, " ") ..
-            string.format("  @(%d,%d)", s.wx or 0, s.wy or 0),
+          string.format("WALL_SKIP (%dt ago): %s @(%d,%d)%s",
+                        age, table.concat(parts, " "),
+                        s.wx or 0, s.wy or 0,
+                        s.force_mode and "  [force_mode: safety bypassed]" or ""),
           230, 80, 80, "wall_skip_reason" }
+      end
+    end
+
+    if goal.substate == "build_walls" and info.man_status ~= nil then
+      local lgm_msg
+      if info.man_status == C.LGM_INTANK then
+        lgm_msg = "LGM_IN_TANK — needs to be dispatched"
+      elseif info.man_status == C.LGM_DEAD then
+        lgm_msg = "LGM_DEAD — no walls possible until respawn"
+      end
+      if lgm_msg then
+        labels[#labels + 1] = { lgm_msg, 230, 80, 80, "wall_skip_reason" }
       end
     end
 

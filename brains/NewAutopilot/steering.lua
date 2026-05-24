@@ -1840,19 +1840,49 @@ function M.steer(state, world, info, goal)
     return keys, taps
 
   elseif goal.kind == "kill_lgm" then
-    -- Drive straight toward the LGM tile.  Firing happens in parallel
-    -- from the opportunistic-fire block in init.lua as soon as the
-    -- LGM is within KILL_LGM_SHOOT_RANGE — so we don't need a
-    -- standoff.  Continuing to close means we either kill via shells
-    -- en route or, worst case, squish the LGM by driving onto it.
-    -- Walls / line-of-sight not yet considered.
-    local nx, ny = cpf_path_to(state, info, goal.mx, goal.my)
-    if nx then
-      local lx, ly = path_lookahead(state, info, nx, ny)
-      state._steer_lx = lx
-      state._steer_ly = ly
-      move_dir    = U.aim_at(info.tankx, info.tanky, U.m2w(lx), U.m2w(ly))
-      target_dist = U.wdist(info.tankx, info.tanky, U.m2w(lx), U.m2w(ly))
+    -- Match the goal's target LGM in perception's predicted list.
+    local target_mx, target_my = goal.mx, goal.my
+    local matched_elm = nil
+    if state.perc and state.perc.enemy_lgms then
+      for _, elm in ipairs(state.perc.enemy_lgms) do
+        if (goal.target_id and elm.idnum == goal.target_id)
+           or (elm.mx == goal.mx and elm.my == goal.my) then
+          matched_elm = elm
+          if elm.predicted_mx and elm.predicted_my then
+            target_mx, target_my = elm.predicted_mx, elm.predicted_my
+          end
+          break
+        end
+      end
+    end
+    -- When in shooting range, aim heading at the SUB-TILE predicted
+    -- world position (predicted_wx/wy), not the path's tile-center
+    -- lookahead.  At realistic LGM speeds the lead is < 1 tile, so
+    -- predicted_mx/my == current tile and tile-snapped pathing loses
+    -- the lateral lead entirely.  Bypassing the pathfinder here also
+    -- keeps the tank turret pointed precisely at the lead point for
+    -- the firing block in init.lua to gate on aim_corr.
+    local in_shooting_range = matched_elm and matched_elm.dist
+                              and matched_elm.dist <= C.KILL_LGM_SHOOT_RANGE
+    if in_shooting_range and matched_elm.predicted_wx then
+      move_dir    = U.aim_at(info.tankx, info.tanky,
+                              matched_elm.predicted_wx,
+                              matched_elm.predicted_wy)
+      target_dist = U.wdist(info.tankx, info.tanky,
+                             matched_elm.predicted_wx,
+                             matched_elm.predicted_wy)
+      state._steer_lx = matched_elm.predicted_mx
+      state._steer_ly = matched_elm.predicted_my
+    else
+      -- Far / behind obstacles — path-find toward the predicted tile.
+      local nx, ny = cpf_path_to(state, info, target_mx, target_my)
+      if nx then
+        local lx, ly = path_lookahead(state, info, nx, ny)
+        state._steer_lx = lx
+        state._steer_ly = ly
+        move_dir    = U.aim_at(info.tankx, info.tanky, U.m2w(lx), U.m2w(ly))
+        target_dist = U.wdist(info.tankx, info.tanky, U.m2w(lx), U.m2w(ly))
+      end
     end
     goal_dist = U.wdist(info.tankx, info.tanky, U.m2w(goal.mx), U.m2w(goal.my))
 
