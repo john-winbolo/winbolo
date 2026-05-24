@@ -1309,3 +1309,11 @@ STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
 # Lobby — badge di connettività
 STR_DLGLOBBY_CONN_TEST_TIP=Test in corso
 STR_DLGNEWS_COMMENTS_FMT=Commenti: {number}
+
+# In-game votes
+STR_VOTE_BACK_TO_LOBBY=Voto: Torna alla lobby
+STR_VOTE_SURRENDER=Voto: Resa
+STR_VOTE_DRAW_TAG= (Pareggio)
+STR_VOTE_NEEDS_RUNNING_TIP=Disponibile quando la partita è in corso.
+STR_VOTE_SURRENDER_PICK_TEAM_TIP=Scegli una squadra prima di votare la resa.
+STR_VOTE_SURRENDER_TWO_TEAMS_TIP=La resa è disponibile solo quando rimangono esattamente due squadre\ncon giocatori umani.
