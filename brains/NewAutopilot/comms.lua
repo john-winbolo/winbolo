@@ -1,132 +1,74 @@
 -- =========================================================================
 -- NewAutopilot/comms.lua — brain-to-brain coordination
 --
--- Based on aIndy 3.1's BBMPL messaging system. Coordinates with allied
--- brains to prevent multiple bots targeting the same pill/base.
+-- Single protocol: /info state — the full per-bot state slate.  Each
+-- bot broadcasts on goal change + a 30 s heartbeat; receivers store
+-- the latest state per sender in ally_state and surface it on the
+-- right-middle overlay table.  No legacy aIndy verbs (pill/base
+-- claims, mytype/goodbye); de-conflict logic reads goal/target/cost
+-- straight off the ally_state slate.
 --
 -- Protocol:
---   /nap pt <pill_id> <cost>   — I'm targeting pill <id> at cost <cost>
---   /nap gbt <base_id> <cost>  — I'm grabbing base <id> at cost <cost>
---   /nap mytype NewAutopilot   — identify as NewAutopilot brain
---   /nap goodbye               — shutting down
+--   /info state k1=v1 k2=v2 ...   — share per-bot state as k=v pairs.
+--                                   Receiver clears every key not
+--                                   present in this message so stale
+--                                   fields self-evict.
 --
--- Informational prefixed with /nap so other brains can filter.
--- Commands from human allies use ! prefix (handled in init.lua).
+-- Reserved keys (rendered as overlay columns):
+--   goal     - main goal name      (e.g. "attack_pill")
+--   sub      - sub-state            (e.g. "build_walls", "engage")
+--   target   - target id           (e.g. pill or base #)
+--   cost     - final goal-selection cost
+--   mx, my   - target tile coords (when applicable)
+--   help     - 0/1/2 coordination hint (TBD)
+--
+-- Other keys (ppt=1, pill_hp=12, ...) are free-form per-goal context.
+-- Commands from human allies use ! prefix (handled in init.lua via
+-- the cmds module).
 -- =========================================================================
 
-local C = require("constants")
-local U = require("util")
+local ally_state = require("ally_state")
 
 local M = {}
 
--- State: track what allied brains have claimed
-local ally_pill_claims = {}   -- [pill_id] = { player, cost, tick }
-local ally_base_claims = {}   -- [base_id] = { player, cost, tick }
-local CLAIM_EXPIRE_TICKS = 200  -- claims expire if not refreshed
-
--- -------------------------------------------------------------------------
--- M.reset()
--- -------------------------------------------------------------------------
-function M.reset()
-  ally_pill_claims = {}
-  ally_base_claims = {}
-end
-
 -- -------------------------------------------------------------------------
 -- M.process_message(sender, text, tick)
--- Parse incoming messages from allies.
+-- Parse one incoming message.  Only /info state is recognized;
+-- anything else (human chat, ! commands, unknown verbs) is silently
+-- ignored so adding new verbs later doesn't break older brains.
 -- -------------------------------------------------------------------------
 function M.process_message(sender, text, tick)
   if not text then return end
 
-  -- /nap pt <pill_id> <cost> — ally targeting pill
-  local pt_id, pt_cost = text:match("^/nap pt (%d+) ([%d%.]+)")
-  if pt_id then
-    ally_pill_claims[tonumber(pt_id)] = {
-      player = sender, cost = tonumber(pt_cost), tick = tick
-    }
-    return
-  end
-
-  -- /nap gbt <base_id> <cost> — ally targeting base
-  local gbt_id, gbt_cost = text:match("^/nap gbt (%d+) ([%d%.]+)")
-  if gbt_id then
-    ally_base_claims[tonumber(gbt_id)] = {
-      player = sender, cost = tonumber(gbt_cost), tick = tick
-    }
+  local state_payload = text:match("^/info state(.*)$")
+  if state_payload then
+    local hash = {}
+    for k, v in state_payload:gmatch("(%w+)=(%S+)") do
+      hash[k] = v
+    end
+    ally_state.set_info(sender, tick, hash)
     return
   end
 end
 
 -- -------------------------------------------------------------------------
--- M.expire_claims(tick)
--- Remove stale claims.
+-- M.format_state(info_hash)
+-- Build a "/info state k1=v1 k2=v2 ..." message from a hash of
+-- fields.  Values are stringified.  Keys with empty-string or nil
+-- values are omitted (receiver treats absence as "clear this key").
+-- Caller is responsible for keeping the total under
+-- PACKET_MAX_CHAT_MESSAGE (128 bytes on the wire).
 -- -------------------------------------------------------------------------
-function M.expire_claims(tick)
-  for k, v in pairs(ally_pill_claims) do
-    if tick - v.tick > CLAIM_EXPIRE_TICKS then
-      ally_pill_claims[k] = nil
+function M.format_state(info_hash)
+  local parts = { "/info state" }
+  if info_hash ~= nil then
+    for k, v in pairs(info_hash) do
+      if k ~= nil and k ~= "" and v ~= nil and v ~= "" then
+        parts[#parts + 1] = k .. "=" .. tostring(v)
+      end
     end
   end
-  for k, v in pairs(ally_base_claims) do
-    if tick - v.tick > CLAIM_EXPIRE_TICKS then
-      ally_base_claims[k] = nil
-    end
-  end
-end
-
--- -------------------------------------------------------------------------
--- M.pill_claimed_by_ally(pill_id, my_cost)
--- Returns true if another ally has claimed this pill at a lower cost.
--- -------------------------------------------------------------------------
-function M.pill_claimed_by_ally(pill_id, my_cost)
-  local claim = ally_pill_claims[pill_id]
-  if claim and claim.cost < my_cost then
-    return true, claim.player, claim.cost
-  end
-  return false
-end
-
--- -------------------------------------------------------------------------
--- M.base_claimed_by_ally(base_id, my_cost)
--- Returns true if another ally has claimed this base at a lower cost.
--- -------------------------------------------------------------------------
-function M.base_claimed_by_ally(base_id, my_cost)
-  local claim = ally_base_claims[base_id]
-  if claim and claim.cost < my_cost then
-    return true, claim.player, claim.cost
-  end
-  return false
-end
-
--- -------------------------------------------------------------------------
--- M.format_pill_claim(pill_id, cost)
--- Format a pill claim message to broadcast.
--- -------------------------------------------------------------------------
-function M.format_pill_claim(pill_id, cost)
-  return string.format("/nap pt %d %.0f", pill_id, cost)
-end
-
--- -------------------------------------------------------------------------
--- M.format_base_claim(base_id, cost)
--- Format a base claim message to broadcast.
--- -------------------------------------------------------------------------
-function M.format_base_claim(base_id, cost)
-  return string.format("/nap gbt %d %.0f", base_id, cost)
-end
-
--- -------------------------------------------------------------------------
--- M.format_identify()
--- -------------------------------------------------------------------------
-function M.format_identify()
-  return "/nap mytype NewAutopilot"
-end
-
--- -------------------------------------------------------------------------
--- M.format_goodbye()
--- -------------------------------------------------------------------------
-function M.format_goodbye()
-  return "/nap goodbye"
+  return table.concat(parts, " ")
 end
 
 return M

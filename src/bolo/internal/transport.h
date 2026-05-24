@@ -28,6 +28,12 @@
 #include "global.h"
 #include "input_packet.h"
 
+/* Forward decls — both ServerSim and ClientSim are referenced by the
+ * transport constructors. Full definitions live in server_sim.h /
+ * client_sim.h respectively; this header stays narrow on includes. */
+struct ServerSim;
+struct ClientSim;
+
 /* Forward declaration — ServerSim is defined in server_sim.h. */
 struct ServerSim;
 
@@ -41,6 +47,17 @@ struct ServerSim;
  *                For local transport this is the same as
  *                sendInput (immediate enqueue).
  * sendInput:     Record and send an InputPacket to the server.
+ * sendBytes:     Deliver a fully-built wire packet to the
+ *                server. UDP impl unicasts it; local impl
+ *                decodes the packet type and dispatches to
+ *                the matching T1 ServerSim entry. Lets
+ *                client_net.h send wrappers stay transport-
+ *                agnostic — a bot on a local transport, a
+ *                host human on a local transport, and a
+ *                UDP-connected remote client all use the
+ *                same client_net.h call path. Packet body
+ *                must include the standard 8-byte header
+ *                (caller builds it via packHeader).
  * tick:          Run one server tick (local transport calls
  *                serverSimTick; network transport is a no-op).
  * getSnapshot:   Retrieve the latest snapshot from the server.
@@ -54,6 +71,7 @@ struct ServerSim;
 typedef struct {
     void (*recordInput)(void *ctx, const InputPacket *input);
     void (*sendInput)(void *ctx, const InputPacket *input);
+    void (*sendBytes)(void *ctx, const uint8_t *buf, size_t len);
     bool (*tick)(void *ctx);
     bool (*getSnapshot)(void *ctx, BYTE clientIdx,
                         SnapshotHeader *hdr,
@@ -72,16 +90,22 @@ typedef struct {
 
 /* Creates a local transport backed by a ServerSim.
  * The ServerSim must already be initialized.
- * playerNum is the local player's slot. */
-Transport transportLocalCreate(struct ServerSim *sim, BYTE playerNum);
+ * cs is the owning ClientSim — used by the per-tick snapshot apply.
+ * playerNum is the local player's slot (or 0 as placeholder; refine
+ * later via transportLocalSetPlayerNum once the join assigns a slot). */
+Transport transportLocalCreate(struct ServerSim *sim, struct ClientSim *cs, BYTE playerNum);
 
 /* Creates a passive local transport that does NOT call serverSimTick().
  * Used for bot ClientSim instances that share a ServerSim with the
  * human player's transport (which owns the ticking). */
-Transport transportLocalCreatePassive(struct ServerSim *sim, BYTE playerNum);
+Transport transportLocalCreatePassive(struct ServerSim *sim, struct ClientSim *cs, BYTE playerNum);
 
 /* Destroys local transport resources (does NOT destroy the ServerSim). */
 void transportLocalDestroy(Transport *t);
+
+/* Refine the local-transport slot after the join assigns it. The
+ * snapshot apply inside localTick uses this as its clientIdx. */
+void transportLocalSetPlayerNum(Transport *t, BYTE playerNum);
 
 /* Sets the simulated network latency in milliseconds.
  * delay_ms is converted to ticks internally (1 tick = 20ms).

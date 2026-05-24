@@ -45,6 +45,7 @@
 #include "floodfill.h"
 #include "log.h"
 #include "screenbrainmap.h"
+#include "bolo_map_validate.h"
 
 /* Map change callback — set by ServerSim during tick */
 static THREAD_LOCAL MapChangeCallback mapChangeCb = NULL;
@@ -1632,5 +1633,54 @@ void mapCenter(map *value, pillboxes *pb, bases *bs, starts *ss) {
 
 uint16_t mapCalcChecksum(map *value) {
   return (uint16_t)CRCCalc((BYTE *)(*value)->mapItem, MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
+}
+
+bool boloMapValidate(const char *path, char *outMapName, size_t outMapNameSize) {
+  map        scratchMap;
+  pillboxes  scratchPills;
+  bases      scratchBases;
+  starts     scratchStarts;
+  bool       ok;
+
+  if (path == NULL) {
+    if (outMapName != NULL && outMapNameSize > 0) {
+      outMapName[0] = '\0';
+    }
+    return false;
+  }
+
+  mapCreate(&scratchMap);
+  pillsCreate(&scratchPills);
+  basesCreate(&scratchBases);
+  startsCreate(&scratchStarts);
+
+  ok = (mapRead((char *)path, &scratchMap, &scratchPills, &scratchBases,
+                &scratchStarts) == TRUE);
+
+  if (ok && outMapName != NULL && outMapNameSize > 0) {
+    const char *base = path;
+    const char *p;
+    size_t      len;
+    for (p = path; *p; p++) {
+      if (*p == '/' || *p == '\\') {
+        base = p + 1;
+      }
+    }
+    strncpy(outMapName, base, outMapNameSize - 1);
+    outMapName[outMapNameSize - 1] = '\0';
+    len = strlen(outMapName);
+    if (len >= 4 && strcmp(outMapName + len - 4, ".map") == 0) {
+      outMapName[len - 4] = '\0';
+    }
+  } else if (outMapName != NULL && outMapNameSize > 0) {
+    outMapName[0] = '\0';
+  }
+
+  startsDestroy(&scratchStarts);
+  basesDestroy(&scratchBases);
+  pillsDestroy(&scratchPills);
+  mapDestroy(&scratchMap);
+
+  return ok;
 }
 

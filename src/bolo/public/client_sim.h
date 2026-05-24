@@ -79,8 +79,16 @@ typedef struct {
     uint8_t clientType;    /* ClientType enum */
 } ClientLobbySlot;
 
-/* Callback typedefs for new transport message sending */
-typedef void (*NetChatSendFunc)(uint8_t destPlayer, const char *message);
+/* Callback typedefs for new transport message sending.
+ *
+ * NetChatSendFunc receives the owning ClientSim so the callback body
+ * can route the chat through the sim's own transport — making it safe
+ * to reuse a single callback function for every ClientSim (host human,
+ * bots) instead of one closure per sim. Pre-cs argument, the SDL3
+ * frontend's callback hard-coded `humanSim` as the routing target,
+ * which broke when wired onto a bot's ClientSim. */
+typedef void (*NetChatSendFunc)(struct ClientSim *cs, uint8_t fromPlayer,
+                                uint8_t destPlayer, const char *message);
 typedef void (*NetNameChangeSendFunc)(const char *newName);
 typedef void (*NetAllianceRequestFunc)(uint8_t toPlayer);
 typedef void (*NetAllianceAcceptFunc)(uint8_t toPlayer);
@@ -142,9 +150,9 @@ struct ViewPort;
  *NAME:          clientSimAlloc
  *PURPOSE:
  *  Allocates a ClientSim on the heap, zero-initialised.
- *  Caller must follow with clientSimCreate() or
- *  clientLoadCompressedMap() to populate before use.
- *  Pairs with clientSimDestroy, which frees the pointer.
+ *  Caller must follow with clientSimCreate() to populate
+ *  before use. Pairs with clientSimDestroy, which frees
+ *  the pointer.
  *
  *  After ClientSim opacity, external callers cannot
  *  declare a ClientSim by value (incomplete type) or
@@ -153,21 +161,15 @@ struct ViewPort;
  *********************************************************/
 ClientSim *clientSimAlloc(void);
 
-/* Lifecycle API — initializes/destroys the ClientSim struct */
-bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDelay, int32_t gmeLen);
+/* Lifecycle API — initializes/destroys the ClientSim struct.
+ * Game settings (game type, hidden mines, start delay, length)
+ * are not parameters: the UDP path installs them via JOIN_ACCEPT,
+ * the local path inherits them from the bound ServerSim, and
+ * direct callers use the clientSimSet{GameType,HiddenMines,
+ * GmeStartDelay,GmeLength} setters when needed. */
+bool clientSimCreate(ClientSim *cs);
 void clientSimDestroy(ClientSim *cs);
 void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum);
-
-/* Reset all map-dependent state in cs back to a freshly-created
- * empty configuration, WITHOUT freeing cs or tearing down its
- * transport binding (clientSimConnectUdp/Local state survives).
- *
- * Used by the UDP-join flow: after the join handshake completes,
- * the empty ClientSim is reset in-place before clientLoadCompressedMap
- * reads the server's map blob (which lives inside the transport).
- * Previously this was done by clientSimDestroy + clientSimAlloc,
- * which dropped the transport and broke the back-pointer chain. */
-void clientSimResetForMapLoad(ClientSim *cs);
 
 /*********************************************************
  *NAME:          clientSimSetupSelf
@@ -193,6 +195,33 @@ void clientSimResetForMapLoad(ClientSim *cs);
 void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
                         const char *playerName,
                         uint8_t clientType, uint8_t clientFlags);
+
+/*********************************************************
+ *NAME:          clientSimOnAssignedSlot
+ *PURPOSE:
+ *  Single entry point for "we just learned our slot from
+ *  the server."  Both the SP local-transport connect path
+ *  (clientSimConnectLocalBody) and the UDP JOIN_ACCEPT
+ *  handler MUST call this and only this — internally it
+ *  runs the setPlayerNum + setupSelf + applyLocalTankPrefs
+ *  sequence that both transports need.
+ *
+ *  Centralising removes the asymmetric-runtime bug class
+ *  where the UDP path forgot to call clientSimSetupSelf
+ *  and ran with MY_TANK(cs) == NULL for the lifetime of
+ *  the session, crashing every per-frame code path the
+ *  moment inLobby flipped to false.
+ *
+ *ARGUMENTS:
+ *  cs          - Freshly-allocated ClientSim
+ *  playerNum   - Slot the server assigned us
+ *  playerName  - Display name (must outlive the call)
+ *  clientType  - CLIENT_TYPE_* from JOIN context
+ *  clientFlags - PLAYER_FLAG_* bitmask
+ *********************************************************/
+void clientSimOnAssignedSlot(ClientSim *cs, BYTE playerNum,
+                             const char *playerName,
+                             uint8_t clientType, uint8_t clientFlags);
 
 void clientSimKeysTick(ClientSim *cs, const InputPacket *pkt);
 void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain);
@@ -241,10 +270,9 @@ void clientSimSetAllianceLeaveFunc(ClientSim *cs, NetAllianceLeaveFunc func);
 void clientSimSetLockToggleSendFunc(ClientSim *cs, NetLockToggleSendFunc func);
 
 /* Install (or clear, with cb=NULL) a read-only control-event observer.
- * Survives clientSimResetForMapLoad / in-place clientSimCreate rebuilds
- * for the same reason the transport binding does: the observer is owned
- * by an external party (the test harness) whose lifetime is independent
- * of the ClientSim's map-reload cycle. */
+ * Preserved across clientSimCreate's memset for the same reason the
+ * transport binding is: the observer is owned by an external party
+ * (the test harness) whose lifetime is independent of the ClientSim. */
 void clientSimSetControlObserver(ClientSim *cs, ControlObserverCb cb, void *ctx);
 
 /* Lobby chat helper — appends "name: message\n" to lobbyChatHistory */
@@ -351,6 +379,10 @@ bool         clientSimIsInPillView(const ClientSim *cs);
 bool         clientSimIsNeedScreenReCalc(const ClientSim *cs);
 bool         clientSimIsInLobby(const ClientSim *cs);
 bool         clientSimIsMapDownloadComplete(const ClientSim *cs);
+/* Map-download progress as 0..100. Returns 100 for the local transport
+ * (no download needed) and 0 when no transport is bound. UDP path reads
+ * mapDownloadReceived/Total from the transport. */
+uint8_t      clientSimGetMapDownloadPercent(const ClientSim *cs);
 bool         clientSimIsMapSkipAvailable(const ClientSim *cs);
 bool         clientSimIsMapSkipMyVote(const ClientSim *cs);
 bool         clientSimIsLobbyHiddenMines(const ClientSim *cs);
@@ -539,6 +571,8 @@ void clientSimSetMineView(ClientSim *cs, screenMines v);
 /* Game / round state */
 void clientSimSetGmeStartDelay(ClientSim *cs, int v);
 void clientSimSetGmeLength(ClientSim *cs, int32_t v);
+void clientSimSetGameType(ClientSim *cs, gameType v);
+void clientSimSetHiddenMines(ClientSim *cs, bool v);
 void clientSimSetTimeStart(ClientSim *cs, time_t v);
 void clientSimSetRunning(ClientSim *cs, bool v);
 void clientSimSetCurrentBuildSelect(ClientSim *cs, buildSelect v);
@@ -676,10 +710,9 @@ bool        clientSimGetLobbyMapSearchInFlight(const ClientSim *cs);
 uint8_t     clientSimGetLobbyMapUploadStatus(const ClientSim *cs);
 uint8_t     clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs);
 const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs);
-void        clientSimResetLobbyMapUpload(ClientSim *cs);
 /* True (and clears the flag) if the server NACK'd a USE_LOCAL request
- * since the last call — the caller should fall back to the regular
- * UPLOAD_BEGIN/CHUNK flow. */
+ * since the last call — drives the BEGIN/CHUNK fallback inside the
+ * UDP transport's upload pump. No frontend caller. */
 bool        clientSimConsumeUseLocalFallback(ClientSim *cs);
 
 /* Winbolo.net preview reflection. status: 0=idle, 1=in-flight,
@@ -760,6 +793,17 @@ bool         clientSimGetStart(ClientSim *cs, BYTE i,
 /* Local tank stat accessors. */
 void         clientSimGetTankStats(ClientSim *cs, BYTE *shellsAmount, BYTE *minesAmount, BYTE *armourAmount, BYTE *treesAmount);
 void         clientSimGetKillsDeaths(ClientSim *cs, int *kills, int *deaths);
+
+/*********************************************************
+ *NAME:          clientSaveMap
+ *PURPOSE:
+ * Saves the map. Returns whether the operation was
+ * successful or not.
+ *
+ *ARGUMENTS:
+ *  fileName - path and filename to save
+ *********************************************************/
+bool clientSaveMap(ClientSim *cs, char *fileName);
 
 /* Notifies the local LGM and player table that the server connection
  * has been lost; called by the frontend when a UDP shutdown is seen. */

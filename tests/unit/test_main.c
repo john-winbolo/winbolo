@@ -16,6 +16,7 @@
 
 #include "everard_map.h"
 #include "server_sim.h"
+#include "server_sim_lifecycle.h"
 
 typedef struct {
     const char *name;
@@ -79,8 +80,19 @@ static const UnitTestEntry s_tests[] = {
     { "wbn_rekey_codec",                         run_wbn_rekey_codec                         },
     { "wbn_news_parse",                          run_wbn_news_parse                          },
     { "wbn_country_cache",                       run_wbn_country_cache                       },
+    { "queue_init_is_valid",                     run_queue_init_is_valid                     },
+    { "queue_enqueue_advances_nextSeq",          run_queue_enqueue_advances_nextSeq          },
+    { "queue_ack_advance_within_range",          run_queue_ack_advance_within_range          },
+    { "queue_stale_ack_above_nextSeq",           run_queue_stale_ack_above_nextSeq           },
+    { "queue_wipe_resets_both_seqs",             run_queue_wipe_resets_both_seqs             },
+    { "queue_enqueue_into_empty_after_wipe",     run_queue_enqueue_into_empty_after_wipe     },
+    { "queue_hasspace_at_capacity",              run_queue_hasspace_at_capacity              },
     { "brain_crash_log_writes_file",             run_brain_crash_log_writes_file             },
     { "brain_crash_log_falls_back_to_luaptr",    run_brain_crash_log_falls_back_to_luaptr    },
+    { "brain_inbox_push_peek_fifo",              run_brain_inbox_push_peek_fifo              },
+    { "brain_inbox_overflow_drops_oldest",       run_brain_inbox_overflow_drops_oldest       },
+    { "brain_inbox_legacy_drain_fifo",           run_brain_inbox_legacy_drain_fifo           },
+    { "brain_inbox_clear_resets",                run_brain_inbox_clear_resets                },
     { "bolo_rand_golden_sequence",               run_bolo_rand_golden_sequence               },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))

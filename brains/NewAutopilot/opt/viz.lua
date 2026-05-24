@@ -144,6 +144,9 @@ M.IDS = {
   base_shield_viz   = { short = "Base shield viz",
                         long  = "ws_*/base_shield wall + line markers (legacy single-wall path)" },
 
+  repair_pill_viz   = { short = "Repair pill viz",
+                        long  = "Yellow target ring + status line for repair_pill dispatch (green=ready, red=blocked)" },
+
   -- Inspect overlay (right-click on pill etc).
   inspect_pill      = { short = "Inspect pill",
                         long  = "Full pill-attack inspector (range circles, scan spots, score legend)" },
@@ -191,6 +194,25 @@ M.IDS = {
   -- Tank combat detection.
   tank_combat_viz   = { short = "Tank combat detection",
                         long  = "Navy detection/engage range circles, gate HUD, per-enemy lines/labels" },
+
+  -- Ally-state overlay (right middle): per-player table populated from
+  -- the chat-based shared-state messages. One row per active slot
+  -- (bot #, goal, substate, target, k=v data).
+  ally_state_overlay = { short = "Ally state table",
+                         long  = "Right-middle HUD showing each ally's goal / sub / target / k=v data, fed by the chat-based ally_state slate" },
+
+  -- Chat log overlay (right side, below ally_state_overlay).
+  chat_log_overlay   = { short = "Chat log",
+                         long  = "Ring of recent incoming + outgoing chat messages (in particular /info traffic)" },
+
+  -- HUD line shown whenever refuel_at_base is the active goal: reports
+  -- the chebyshev distance to the base, whether an ally tank is on the
+  -- base tile, and (when in wait_for_ally) the chosen park tile.
+  hud_refuel_ally_check = { short = "HUD: refuel ally check",
+                            long  = "When refuel_at_base is the active goal, shows ally-on-base check distance, occupancy, and the wait_for_ally park tile." },
+
+  ally_claimed_marker = { short = "Ally claimed marker",
+                          long  = "Semi-transparent gray rectangle over each pill/base another bot is currently broadcasting as their goal (sourced from ally_state slate)." },
 
   -- Tank combat standoff scan (attack_tank substate).
   tank_combat_standoff_scan = { short = "Tank combat standoff scan",

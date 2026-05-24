@@ -140,9 +140,6 @@ static void windowRunGameTick(ClientSim *cs) {
       clientMutexRelease();
       clientSimNetRecordInput(cs, &pkt);
       clientSimNetTick(cs);
-      clientMutexWaitFor();
-      clientSimNetSyncSnapshot(cs);
-      clientMutexRelease();
       simTickCounter++;
       justKeys = FALSE;
     } else {
@@ -173,7 +170,6 @@ static void windowRunGameTick(ClientSim *cs) {
       }
       clientSimNetTick(cs);
       clientMutexWaitFor();
-      clientSimNetSyncSnapshot(cs);
       clientSimDisplayTick(cs, brainRunning);
       clientMutexRelease();
       simTickCounter++;
@@ -339,16 +335,10 @@ int main(int argc, char *argv[]) {
       SDL_Quit();
       return 0;
     }
-    /* lobbyResult == 1: game started — load the deferred map */
-    if (!gameFrontLoadDeferredMap(&cs)) {
-      WB_LOG_ERROR(WB_LOG_CAT_PLATFORM, "[Android] Failed to load deferred map");
-      gameFrontEnd(&keys, FALSE, TRUE);
-      clientMutexDestroy();
-      sdl3DrawCleanup();
-      soundCleanup();
-      SDL_Quit();
-      return 0;
-    }
+    /* lobbyResult == 1: game started. The UDP transport's
+     * CTRL_GAME_PHASE LOBBY→RUNNING watcher already installed the
+     * map onto the ClientSim, so we fall straight through to the
+     * per-frame game-tick loop below. */
     clientSimSetNetStatus(cs, netRunning);
     WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Lobby complete, game starting");
     /* Re-initialize ImGui for the main game loop */

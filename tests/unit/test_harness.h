@@ -100,7 +100,22 @@ int run_wbn_news_parse(void);
 int run_wbn_country_cache(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
+int run_brain_inbox_push_peek_fifo(void);
+int run_brain_inbox_overflow_drops_oldest(void);
+int run_brain_inbox_legacy_drain_fifo(void);
+int run_brain_inbox_clear_resets(void);
 int run_bolo_rand_golden_sequence(void);
+
+/* Reliable control-event queue regression tests (test_control_event_queue.c).
+ * Each captures a specific bug that shipped during the
+ * reliable-control-events rollout. */
+int run_queue_init_is_valid(void);
+int run_queue_enqueue_advances_nextSeq(void);
+int run_queue_ack_advance_within_range(void);
+int run_queue_stale_ack_above_nextSeq(void);
+int run_queue_wipe_resets_both_seqs(void);
+int run_queue_enqueue_into_empty_after_wipe(void);
+int run_queue_hasspace_at_capacity(void);
 
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map
  * with one player added at slot 0. Caller is responsible for

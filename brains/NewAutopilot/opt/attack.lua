@@ -1854,25 +1854,12 @@ function M.update_attack_substate(goal, state, world, info)
   update_shot_accounting(goal, world)
 
   -- HUD: kill attempt indicator (top-left)
-  if BRAIN_DEBUG_MODE and goal._kill_attempt ~= nil and viz.is_on("hud_kill_attempt") then
-    local label = goal._kill_attempt and "KILL ATTEMPT" or "DAMAGE ONLY"
-    local r, g, b = goal._kill_attempt and 100 or 255,
-                    goal._kill_attempt and 255 or 200,
-                    goal._kill_attempt and 100 or 50
-  end
 
   -- Floating count above the target pill:
   --   "<on-target shots still in flight> / <pill HP remaining>"
   -- A tree-blocked shot drops out of the in-flight side without changing
   -- the HP side, so the indicator visibly goes down by one rather than
   -- pretending we somehow need more bullets to kill the pill.
-  if BRAIN_DEBUG_MODE and goal._fired and goal._fired > 0 and viz.is_on("pill_shot_count") then
-    local pill_hp = 0
-    if goal.target_id then
-      local p = world.pills[goal.target_id]
-      pill_hp = p and p.health or 0
-    end
-  end
 
   local tmx = info.tankx >> 8
   local tmy = info.tanky >> 8
@@ -2335,8 +2322,14 @@ function M.update_attack_substate(goal, state, world, info)
         goal._approach_last_dist     = adist
       end
 
-      -- Stall give-up: abandon attack_pill if no approach progress
-      -- in ~10s. See attack.lua for notes.
+      -- Stall give-up: if we make no progress closing the gap for
+      -- ~10s (most often an ally is parked in our approach path),
+      -- abandon the attack_pill goal entirely. pick_goal picks a new
+      -- target next tick — could be the same pill from a different
+      -- angle, or something else. Cheaper than waiting on a contested
+      -- approach. Mirrors APPROACH_GIVE_UP_TICKS in spirit but skips
+      -- the angle-ban / plan_position transition; we want a fresh
+      -- goal selection at the top, not a same-pill retry.
       local APPROACH_STALL_GIVE_UP_TICKS = 500
       if (now - goal._approach_last_progress) > APPROACH_STALL_GIVE_UP_TICKS then
         print(string.format(TAG ..
@@ -2357,14 +2350,6 @@ function M.update_attack_substate(goal, state, world, info)
 
       -- HUD overlay near the tank: current distance + threshold so we
       -- can see live what's blocking the transition.
-      if BRAIN_DEBUG_MODE and viz.is_on("approach_dist") then
-        local twx = info.tankx / 256.0
-        local twy = info.tanky / 256.0
-        local dist_ok  = adist <= DIST_TOL
-        local speed_ok = info.speed <= SPEED_TOL
-        local dr, dg, db = dist_ok  and 100 or 255, dist_ok  and 255 or 100, 100
-        local sr, sg, sb = speed_ok and 100 or 255, speed_ok and 255 or 100, 100
-      end
 
       if adist <= DIST_TOL and
          effectively_stopped(state, info, now, SPEED_TOL, 5, "approach") then
@@ -2428,6 +2413,14 @@ function M.update_attack_substate(goal, state, world, info)
         local decision_msg
         if needs_build then
           goal.substate = "build_walls"
+          -- Reset the per-wall + global stall timers EVERY entry into
+          -- build_walls so a re-entry (build_walls → aim → ... →
+          -- build_walls again on the same goal) doesn't inherit stale
+          -- timer state. Without this the per-wall stall check at the
+          -- top of build_walls compares against a >5s-old _wall_idx_started
+          -- on tick 1 and instantly skips the slot before the LGM can
+          -- move. Lazy-init only runs when _wall_build_list is nil, so
+          -- it can't be the sole reset point.
           goal._wall_build_last_progress  = now
           goal._wall_build_start          = now
           goal._wall_idx_started          = nil
@@ -2534,19 +2527,9 @@ function M.update_attack_substate(goal, state, world, info)
       goal._wall_build_idx   = 1
       goal._wall_build_start = now
       goal._wall_build_last_progress = now
-      if BRAIN_DEBUG_MODE then
-        local initial_tt = {}
-        local preexisting = 0
-        for i, p in ipairs(sorted) do
-          local tt0 = U.ttype(p.mx, p.my)
-          initial_tt[i] = tt0
-          if tt0 == C.T_BUILDING or tt0 == C.T_HALFBUILD or tt0 == C.T_PILLBOX then
-            preexisting = preexisting + 1
-          end
-        end
-        goal._wall_build_initial_tt   = initial_tt
-        goal._wall_build_preexisting  = preexisting
-      end
+      -- Snapshot initial tile types per slot so we can tell pre-existing
+      -- cover from walls we actually placed at exit time (needed for the
+      -- "0 BUILT" diagnostic banner). Debug-only: nothing else reads it.
       -- Reset the LGM-progress trackers too, otherwise they retain
       -- state from a previous build attempt on the same goal table
       -- and the give-up timer compares against stale "last seen
@@ -2558,10 +2541,6 @@ function M.update_attack_substate(goal, state, world, info)
       goal._build_decision_until      = nil
       goal._build_decision_is_failure = nil
       goal._build_timeout_total       = nil
-      if BRAIN_DEBUG_MODE and BRAIN_LOG_BUILDER then
-        print(string.format(TAG .. " BUILD_WALLS: queued %d walls (closest-to-pill first)",
-                            #sorted))
-      end
     end
 
     local list = goal._wall_build_list
@@ -2573,10 +2552,14 @@ function M.update_attack_substate(goal, state, world, info)
     while idx <= #list do
       local target = list[idx]
       local tt = U.ttype(target.mx, target.my)
+      -- T_PILLBOX too: a slot that got a pillbox dropped on it (by us
+      -- using one of the carried pills as a blocker) is just as valid
+      -- a shield as a wall — even better since the pillbox actively
+      -- shoots back. Advance past it.
       if tt == C.T_BUILDING or tt == C.T_HALFBUILD or tt == C.T_PILLBOX then
         idx = idx + 1
         goal._wall_build_last_progress = now
-        goal._wall_idx_started = nil
+        goal._wall_idx_started = nil  -- reset per-wall sub-timer
       else
         break
       end
@@ -2603,11 +2586,6 @@ function M.update_attack_substate(goal, state, world, info)
         goal._wall_idx_started = now
         goal._wall_idx_prev_tt = cur_tt
       elseif (now - goal._wall_idx_started) > WALL_STALL_TICKS then
-        if BRAIN_DEBUG_MODE and BRAIN_LOG_BUILDER then
-          print(string.format(TAG ..
-            " BUILD_WALLS: wall %d/%d at (%d,%d) stalled (%d ticks, tt=%d), skipping",
-            idx, #list, target.mx, target.my, WALL_STALL_TICKS, cur_tt))
-        end
         idx = idx + 1
         goal._wall_build_idx = idx
         goal._wall_idx_started = nil
@@ -2658,72 +2636,8 @@ function M.update_attack_substate(goal, state, world, info)
     goal._build_timeout_total = BUILD_GIVE_UP_TICKS
 
     if idx > #list or stalled then
-      if BRAIN_DEBUG_MODE then
-        local list_n        = #list
-        local initial_tt    = goal._wall_build_initial_tt or {}
-        local preexisting_n = goal._wall_build_preexisting or 0
-        local built_n, unbuilt_n = 0, 0
-        for i, p in ipairs(list) do
-          local tt0 = initial_tt[i]
-          local tt1 = U.ttype(p.mx, p.my)
-          local final_is_wall = (tt1 == C.T_BUILDING or tt1 == C.T_HALFBUILD or tt1 == C.T_PILLBOX)
-          local initial_was_wall = (tt0 == C.T_BUILDING or tt0 == C.T_HALFBUILD or tt0 == C.T_PILLBOX)
-          if final_is_wall and not initial_was_wall then
-            built_n = built_n + 1
-          elseif not final_is_wall then
-            unbuilt_n = unbuilt_n + 1
-          end
-        end
-        if BRAIN_LOG_BUILDER then
-          if stalled then
-            print(string.format(TAG .. " BUILD_WALLS: stalled (no progress in %d ticks), proceeding to aim — built=%d preexist=%d unbuilt=%d/%d",
-                                BUILD_GIVE_UP_TICKS, built_n, preexisting_n, unbuilt_n, list_n))
-          else
-            print(string.format(TAG .. " BUILD_WALLS: complete after %d ticks — built=%d preexist=%d unbuilt=%d/%d, proceeding to aim",
-                                now - goal._wall_build_start, built_n, preexisting_n, unbuilt_n, list_n))
-          end
-        end
-        if built_n == 0 then
-          local why
-          if list_n == 0 then
-            why = "queue empty (no potential blockers from shield scan)"
-          elseif preexisting_n == list_n then
-            why = string.format("all %d slots already pre-existing — no build was needed", list_n)
-          else
-            local skip = state._wall_shield_skip
-            local parts = {}
-            if skip and (now - (skip.tick or 0)) < BUILD_GIVE_UP_TICKS + 50 then
-              if skip.angry_pill_close   then parts[#parts + 1] = "ANGRY_PILL" end
-              if not skip.has_trees      then parts[#parts + 1] =
-                string.format("TREES(%d/%d)", skip.trees_have or 0, skip.trees_need or 0) end
-              if not skip.can_reach      then parts[#parts + 1] = "NO_REACH" end
-              if not skip.path_safe      then parts[#parts + 1] = "UNSAFE_PATH" end
-            end
-            if stalled then
-              if #parts > 0 then
-                why = string.format("stalled %dt — last skip: %s — %d/%d unbuilt",
-                                    BUILD_GIVE_UP_TICKS, table.concat(parts, "+"),
-                                    unbuilt_n, list_n)
-              else
-                why = string.format("stalled %dt with no skip reason logged — %d/%d unbuilt (LGM dead? unreachable?)",
-                                    BUILD_GIVE_UP_TICKS, unbuilt_n, list_n)
-              end
-            else
-              if #parts > 0 then
-                why = string.format("per-wall stall (5s each) — last skip: %s — %d/%d unbuilt",
-                                    table.concat(parts, "+"), unbuilt_n, list_n)
-              else
-                why = string.format("per-wall stall (5s each, no _wall_shield_skip logged) — %d/%d unbuilt — LGM unreachable or builder rejected silently",
-                                    unbuilt_n, list_n)
-              end
-            end
-          end
-          goal._build_decision_msg = "BUILD_WALLS 0 BUILT: " .. why
-          goal._build_decision_until = now + 500
-          goal._build_decision_is_failure = true
-          print(TAG .. " " .. goal._build_decision_msg)
-        end
-      end
+      -- Debug-only: tally built / pre-existing / unbuilt for the on-screen
+      -- decision banner. The brain itself doesn't act on these counts.
       goal.wall_shield = false
       goal.wall_mx = nil
       goal.wall_my = nil
@@ -2804,7 +2718,9 @@ function M.update_attack_substate(goal, state, world, info)
       compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
 
       -- Anger cool-down gate: don't commit to the take while the pill
-      -- is still hot. Wait in aim until anger drops to <= 0.65.
+      -- is still hot. We wait in aim until anger drops to <= 0.65.
+      -- aim_tick is bumped each waiting tick so the 3-second aim
+      -- timeout doesn't fire while we're just waiting on the cool-down.
       local anger = (pill and pill.anger) or 0
       if anger > 0.65 then
         goal.aim_tick = now
@@ -2855,8 +2771,6 @@ function M.update_attack_substate(goal, state, world, info)
     -- Count actual shots fired by tracking shell count drops
     local fired = (goal._detree_shells_at_start or info.shells) - info.shells
     -- HUD: detree progress above the tank
-    if BRAIN_DEBUG_MODE and viz.is_on("detree_progress") then
-    end
     if fired >= needed or fired >= 6 then
       if goal._is_ppt then
         goal.substate = "in_range_position"
@@ -2888,11 +2802,22 @@ function M.update_attack_substate(goal, state, world, info)
     else
       local sfx = goal.standoff_fx or (goal.standoff_mx + 0.5)
       local sfy = goal.standoff_fy or (goal.standoff_my + 0.5)
+      -- Round-to-nearest (not truncate) so this matches steering's
+      -- in_range_position quantization (steering.lua:914-915). Truncating
+      -- here while steering rounds caused a 1-wu discrepancy on sub-wu
+      -- standoffs (attack viz showed dist=17/16 while steering showed
+      -- sdist=16 in the same tick).
       local swx = math.floor(sfx * 256 + 0.5)
       local swy = math.floor(sfy * 256 + 0.5)
       local sdist = U.wdist(info.tankx, info.tanky, swx, swy)
 
-      -- Stall give-up: abandon this attack_pill if no progress in ~10s.
+      -- Two-bot collision recovery: if we make no progress closing
+      -- the gap for ~10s (most often because an ally is parked in our
+      -- creep path), give up THIS attack_pill goal and let pick_goal
+      -- choose another target. clear_attack_goal sets goal.kind="none"
+      -- which the next tick's selector treats as a clean slate.
+      -- Mirrors APPROACH_GIVE_UP_TICKS so the in_range creep gets the
+      -- same patient timeout the approach substate just before it does.
       local IN_RANGE_GIVE_UP_TICKS = 500
       if goal._in_range_last_progress == nil then
         goal._in_range_last_progress = now
@@ -2925,14 +2850,6 @@ function M.update_attack_substate(goal, state, world, info)
       -- tol=8 will stall just outside the transition window.
       goal._in_range_dist_tol = DIST_TOL
 
-      if BRAIN_DEBUG_MODE and viz.is_on("approach_dist") then
-        local twx = info.tankx / 256.0
-        local twy = info.tanky / 256.0
-        local dist_ok  = sdist <= DIST_TOL
-        local speed_ok = info.speed <= SPEED_TOL
-        local dr, dg, db = dist_ok  and 100 or 255, dist_ok  and 255 or 100, 100
-        local sr, sg, sb = speed_ok and 100 or 255, speed_ok and 255 or 100, 100
-      end
 
       if sdist <= DIST_TOL and
          effectively_stopped(state, info, now, SPEED_TOL, 5, "in_range_position") then
@@ -3158,19 +3075,6 @@ function M.update_attack_substate(goal, state, world, info)
 
     -- HUD: live progress toward each of the three exit triggers.
     -- Bar fills as we approach the exit (kill / swerve-from-hits / abort).
-    if BRAIN_DEBUG_MODE and viz.is_on("hud_shoot_pill_progress") then
-      local function bar(frac)
-        if frac < 0 then frac = 0 elseif frac > 1 then frac = 1 end
-        local n = math.floor(frac * 10 + 0.5)
-        return string.rep("#", n) .. string.rep("-", 10 - n)
-      end
-      local init_hp     = goal._shoot_initial_hp or pill_hp
-      local hits_total  = goal._shoot_hits_total or 0
-      local curve_after = C.ATTACK_CURVE_AFTER_HITS or 1
-      local stale_ticks = now - (goal._shoot_progress_tick or now)
-      local kill_frac   = (init_hp > 0) and (1.0 - pill_hp / init_hp) or 1.0
-
-    end
 
     local should_swerve = false
     local pill_dead     = false
@@ -3347,9 +3251,6 @@ function M.update_attack_substate(goal, state, world, info)
       state._force_replan_reason = "loiter_timeout"
       goal.substate    = "plan_position"
       goal.scan_spots  = nil
-      if BRAIN_DEBUG_MODE then
-        print(TAG .. " ATTACK: loiter timeout — requesting replan")
-      end
     end
     -- Fall through to draw
   end
@@ -3360,9 +3261,8 @@ function M.update_attack_substate(goal, state, world, info)
   if goal.substate == "swerve" then
     -- Per-tick swerve trace: capture pill state every tick we're in
     -- swerve so we can pinpoint the exact tick a pill flipped to
-    -- dead/friendly/nil. BRAIN_DEBUG_MODE gate so lua_strip removes
-    -- the whole block from opt/ AND non-debug source runs skip the
-    -- string.format every swerve tick.
+    -- dead/friendly/nil. BRAIN_LOG_SWERVE-gated so it's opt-in even
+    -- with debug on (chatty — fires every swerve tick).
 
     -- If pill dies mid-swerve, shorten the turn portion to 25 ticks remaining
     if not goal._swerve_pill_dead then
@@ -3385,8 +3285,7 @@ function M.update_attack_substate(goal, state, world, info)
     if goal._swerve_ticks_left <= 0 then
       -- Swerve done — check if pill died.
       -- Detailed diagnostic logged BEFORE the dead-check so we can see
-      -- exactly which state drove the decision. BRAIN_DEBUG_MODE gate
-      -- so lua_strip removes the whole block from opt/.
+      -- exactly which state drove the decision. BRAIN_LOG_SWERVE gate.
       if not pill or pill.health <= 0 then
         -- Drop the attack_pill goal entirely. The dead pill will
         -- pop into pool 11 (capture_pill) on the next replan, win
@@ -3441,8 +3340,6 @@ function M.update_attack_substate(goal, state, world, info)
       end
     end
     -- HUD overlay: show raw swerve goal._* values (screen-relative)
-    if BRAIN_DEBUG_MODE and viz.is_on("hud_swerve_debug") then
-    end
     -- During swerve: do NOT check pill health or allow any interrupts.
     -- Swerve MUST complete to minimize damage taken.
     -- Fall through to draw
@@ -3486,10 +3383,6 @@ function M.update_attack_substate(goal, state, world, info)
       state._force_replan_reason = "post_engage_refuel"
       goal.substate    = "plan_position"
       goal.scan_spots  = nil  -- force fresh plan_position scan if we stay
-      if BRAIN_DEBUG_MODE then
-        print(string.format(TAG .. " ATTACK: refuel may beat loiter (wait=%d vs refuel=%d) — requesting replan",
-              math.floor(ticks_to_calm), refuel_cost < math.huge and math.floor(refuel_cost) or 99999))
-      end
     end
     -- Fall through to draw
   end
@@ -3508,23 +3401,6 @@ function M.update_attack_substate(goal, state, world, info)
   -- ══════════════════════════════════════════════════════════════════
   -- DRAW swerve direction choice (left/right cover sample lines)
   -- ══════════════════════════════════════════════════════════════════
-  if BRAIN_DEBUG_MODE and goal._swerve_viz and viz.is_on("swerve_dir_choice") then
-    local sv = goal._swerve_viz
-    -- Color: chosen side bright green, unchosen dim red
-    local lr, lg, lb = (sv.chosen == 1) and 50  or 200,
-                       (sv.chosen == 1) and 255 or 50,
-                       50
-    local rr, rg, rb = (sv.chosen == -1) and 50  or 200,
-                       (sv.chosen == -1) and 255 or 50,
-                       50
-    -- Mark the sample point with a small dot circle
-    -- Blue outlines around each tile considered for cover (re-walk for viz)
-    local function noop() end
-    U.line_walk(sv.lfx, sv.lfy, sv.pcx, sv.pcy, noop, {50, 100, 255, 200}, "bpc_cover_samples")
-    U.line_walk(sv.rfx, sv.rfy, sv.pcx, sv.pcy, noop, {50, 100, 255, 200}, "bpc_cover_samples")
-    -- Draw the LOS line from each sample to the pill
-    -- Cover scores at each sample
-  end
 
   -- Shield-scan overlay: 8 candidate spots + winner blocker tiles.
   -- Drawn while planning so a human can see where the alternate
@@ -3539,98 +3415,6 @@ function M.update_attack_substate(goal, state, world, info)
     -- Stays visible during all PPT substates (in_range_position /
     -- in_range_aim / shoot_pill) and the legacy aim/charge/engage
     -- substates too.
-    if BRAIN_DEBUG_MODE and goal.aim_mx and goal.aim_my and viz.is_on("pill_take_target") then
-      local ax, ay = goal.aim_mx, goal.aim_my
-      -- Three concentric magenta circles + crosshair lines. Sized so the
-      -- visible mass fits inside a single pillbox tile — at the previous
-      -- 0.45-tile radius, ~85% of the rings extended outside the tile
-      -- when the aim was a corner (pmx+0.06, pmy+0.06), making the
-      -- marker look like it was sitting OUTSIDE the pill.
-      -- Live aim accuracy: how many bradians the tank's current
-      -- direction is off from a perfect aim at (ax, ay), and the
-      -- finetune verdict (does cpf.simulate_shot say the trajectory
-      -- crosses the pill tile?). 1 brad = engine quantum, so values
-      -- below 1 are unactable but useful as ground truth.
-      local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
-                                 ax, ay)
-      local corr    = U.adiff(info.direction, aim_dir)
-      local on_pill = goal._finetune_on_pill
-      local on_str
-      if on_pill == nil then
-        on_str = ""
-      elseif on_pill then
-        on_str = "  [on pill]"
-      else
-        on_str = "  [OFF]"
-      end
-      local cr, cg, cb = 255, 100, 255
-      if on_pill then cr, cg, cb = 80, 255, 120 end
-      if on_pill == false then cr, cg, cb = 255, 200, 80 end
-
-      -- Substate progress indicator. Surfaces:
-      --   in_range_aim_pre       → PRE-AIM rotating to the right
-      --                            side of the pill (orange while
-      --                            still rotating, green once
-      --                            _pre_aim_locked); shows the aim
-      --                            timeout countdown so the user
-      --                            can see how close to abort.
-      --   in_range_aim           → AIM rotating to the chosen
-      --                            corner. Same color/timeout
-      --                            convention as PRE-AIM.
-      --   in_range_aim_finetune  → FINETUNE per-tick sim verify;
-      --                            green when sim hits, orange
-      --                            while tapping, with tap counter.
-      --   else                   → blank "(awaiting aim lock)".
-      local mode_str
-      local mr, mg, mb = 200, 200, 200
-      if goal.substate == "in_range_aim_pre" then
-        local elapsed   = (goal.aim_tick and (now - goal.aim_tick)) or 0
-        local timeout   = 150
-        if goal._pre_aim_locked then
-          mode_str = string.format("PRE-AIM: locked (%dt → AIM)", elapsed)
-          mr, mg, mb = 80, 255, 120
-        else
-          mode_str = string.format("PRE-AIM: rotating (%dt / %dt timeout)",
-                                   elapsed, timeout)
-          mr, mg, mb = 255, 200, 80
-        end
-      elseif goal.substate == "in_range_aim" then
-        local elapsed   = (goal.aim_tick and (now - goal.aim_tick)) or 0
-        local timeout   = 150
-        if goal._aim_locked then
-          mode_str = string.format("AIM: locked (%dt → FINETUNE)", elapsed)
-          mr, mg, mb = 80, 255, 120
-        else
-          mode_str = string.format("AIM: rotating to corner (%dt / %dt timeout)",
-                                   elapsed, timeout)
-          mr, mg, mb = 255, 200, 80
-        end
-      elseif goal.substate == "in_range_aim_finetune" then
-        if on_pill then
-          mode_str = string.format("FINETUNE: locked (%d taps)",
-                                   goal._finetune_taps or 0)
-          mr, mg, mb = 80, 255, 120
-        else
-          -- burst counter: 0..3 inside the tap branch; reaches 3 right
-          -- before the forced idle. "next: idle" when burst == 3,
-          -- "next: tap (Nt left)" otherwise. Hold ticks set burst=3 to
-          -- force an idle on the hold→tap boundary, so the same label
-          -- doubles as the post-hold cool-down indicator.
-          local burst = goal._finetune_burst or 0
-          local next_str
-          if burst >= 3 then
-            next_str = "next: idle"
-          else
-            next_str = string.format("next: tap (%dt to skip)", 3 - burst)
-          end
-          mode_str = string.format("FINETUNE: tap-to-center (%d taps, %s)",
-                                   goal._finetune_taps or 0, next_str)
-          mr, mg, mb = 255, 200, 80
-        end
-      else
-        mode_str = "(awaiting aim lock)"
-      end
-    end
   end
 
   -- Build-walls decision banner: re-emit each tick until expiry so the
@@ -3640,6 +3424,12 @@ function M.update_attack_substate(goal, state, world, info)
      now < goal._build_decision_until and BRAIN_DEBUG_MODE and viz.is_on("build_decision_banner") then
     local twx = info.tankx / 256.0
     local twy = info.tanky / 256.0
+    local r, g, b = 255, 240, 100        -- default yellow
+    local scale = 0.5
+    if goal._build_decision_is_failure then
+      r, g, b = 255, 60, 60               -- red for 0-BUILT failures
+      scale = 0.7                          -- bigger so it's unmissable
+    end
   end
 
   -- Build-walls status / timeout countdown. Drawn at TWO positions so

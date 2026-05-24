@@ -264,7 +264,7 @@ bool pillsDamagePos(struct GameSim *sim, BYTE xValue, BYTE yValue, bool wantDama
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-BYTE pillsGetScreenHealth(struct GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue);
+BYTE pillsGetScreenHealth(struct GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BYTE viewPlayer);
 
 /*********************************************************
 *NAME:          pillsTargetTank

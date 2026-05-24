@@ -66,7 +66,7 @@ int run_sp_subscriber_delivery(void) {
      * before connecting it: alloc + create + slot-0 + subscribe. */
     ClientSim *cs = clientSimAlloc();
     UT_ASSERT(cs != NULL);
-    clientSimCreate(cs, gameOpen, false, 0, -1);
+    clientSimCreate(cs);
     clientSimSetPlayerNum(cs, 0);
     /* Seed the client's player table so playersSetPlayerName routed
      * through CTRL_PLAYER_NAME has a slot to overwrite. */

@@ -3884,6 +3884,11 @@ void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping,
     s_playerFlags[playerNum] = clientFlags;
 }
 
+void sdl3ImguiUpdatePlayerPing(unsigned char playerNum, uint16_t ping) {
+    if (playerNum >= MAX_PLAYERS) return;
+    s_playerPing[playerNum] = ping;
+}
+
 SDL_Texture *sdl3ImguiGetGlobeIcon(void) {
     ensureWbnIconsLoaded();
     return s_iconGlobe;

@@ -602,34 +602,6 @@ void gameFrontEnableRejoin(void);
 bool gameFrontPreferencesExist(void);
 
 /*********************************************************
-*NAME:          gameFrontLoadInBuiltMap
-*AUTHOR:        John Morrison
-*CREATION DATE: 1/5/00
-*LAST MODIFIED: 1/5/00
-*PURPOSE:
-* Attempts to load the built in map by loading the
-* compress resource. Returns Success
-*
-*ARGUMENTS:
-*
-*********************************************************/
-bool gameFrontLoadInBuiltMap(void);
-
-/*********************************************************
-*NAME:          gameFrontLoadTutorial
-*AUTHOR:        John Morrison
-*CREATION DATE: 1/5/00
-*LAST MODIFIED: 1/5/00
-*PURPOSE:
-* Attempts to load the built in tutorial by loading the
-* compress resource. Returns Success
-*
-*ARGUMENTS:
-*
-*********************************************************/
-bool gameFrontLoadTutorial(void);
-
-/*********************************************************
 *NAME:          gameFrontSetWinbolonetToken
 *PURPOSE:
 * Stores a WinBolo.net auth token and its expiry.
@@ -758,33 +730,6 @@ ServerSim *gameFrontGetServerSim(void);
 *  0 for single-player, assigned by server for multiplayer.
 *********************************************************/
 BYTE gameFrontGetPlayerNum(void);
-
-/*********************************************************
-*NAME:          gameFrontLoadDeferredMap
-*PURPOSE:
-*  Loads the map from the transport after lobby exit.
-*  Called when the lobby dialog returns (game started)
-*  and the map was downloaded in the background.
-*RETURNS:
-*  TRUE on success, FALSE on failure.
-*********************************************************/
-bool gameFrontLoadDeferredMap(struct ClientSim **cs);
-
-/*********************************************************
-*NAME:          gameFrontStartSinglePlayerGame
-*PURPOSE:
-*  Single-player path: transitions the local spServerSim
-*  from serverStateLobby to serverStateRunning, applies
-*  team alliances, creates tanks for connected players,
-*  syncs an initial snapshot to the client, and flips
-*  cs->inLobby/netStat so lobbyShow exits with result=1.
-*  Called by the lobby UI's Start button when
-*  cs->isSinglePlayer is true.
-*RETURNS:
-*  TRUE on success, FALSE if the local server isn't in a
-*  state that can start (e.g. no players connected).
-*********************************************************/
-bool gameFrontStartSinglePlayerGame(struct ClientSim *cs);
 
 /*********************************************************
 *NAME:          gameFrontGetSinglePlayerServerSim

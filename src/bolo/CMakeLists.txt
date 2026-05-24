@@ -1,13 +1,11 @@
 # bolo_static — the bulk of the sim runtime in a single static library.
 #
-# 66 of the 69 src/bolo/*.c files compile here. Three stay per-target
-# in each binary's *_SOURCES because they have target-divergent compile
-# defs whose gated code paths can't be archive-dropped (the .o files
-# are always live, so a single shared compile can't satisfy every
-# consumer's view):
+# Two src/bolo/*.c files stay per-target in each binary's *_SOURCES
+# because they have target-divergent compile defs whose gated code
+# paths can't be archive-dropped (the .o files are always live, so
+# a single shared compile can't satisfy every consumer's view):
 #
-#   client_mapload.c        — HAVE_STEAM gates a PLAYER_FLAG_STEAM_BUILD bit
-#   transport_udp_client.c  — HAVE_STEAM (same flag, JOIN_REQUEST path)
+#   transport_udp_client.c  — HAVE_STEAM gates a PLAYER_FLAG_STEAM_BUILD bit (JOIN_REQUEST path)
 #   nat_portmap.c           — BOLO_PORTMAP swaps real libplum for no-op stubs
 #
 # Built with the sim_owner include-rule profile, so TUs see public/,
@@ -55,7 +53,6 @@ add_library(bolo_static STATIC
     log.c
     mapgen.c
     mapgen_maze.c
-    md5.c
     messages.c
     mines.c
     minesexp.c

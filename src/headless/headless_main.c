@@ -69,15 +69,17 @@
 
 #include "bolo_rand.h"
 #include "brain_data.h"
-#include "client_mapload.h"
 #include "client_sim.h"
 #include "control_event.h"
+#include "discovery.h"
 #include "frontend.h"
 #include "../gui/lang.h"
 #include "brain.h"
 #include "client_net.h"
 #include "gui_message.h"
 #include "server_sim.h"
+#include "../bolo/internal/server_sim_lifecycle.h"
+#include "../server/server_lifecycle.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../gui/gamefront.h"
@@ -281,7 +283,10 @@ static const char *logEventsTypeName(int type) {
     case CTRL_MAP_DOWNLOAD_COMPLETE: return "CTRL_MAP_DOWNLOAD_COMPLETE";
     case CTRL_BALANCE_PROPOSAL:      return "CTRL_BALANCE_PROPOSAL";
     case CTRL_MAP_SKIP_STATE:        return "CTRL_MAP_SKIP_STATE";
-    case CTRL_GAME_PHASE:            return "CTRL_GAME_PHASE";
+    case CTRL_GAME_PHASE_LOBBY:
+    case CTRL_GAME_PHASE_COUNTDOWN:
+    case CTRL_GAME_PHASE_RUNNING:
+    case CTRL_GAME_PHASE_GAME_OVER:  return "CTRL_GAME_PHASE";
     case CTRL_GAME_OVER:             return "CTRL_GAME_OVER";
     case CTRL_SERVER_SHUTDOWN:       return "CTRL_SERVER_SHUTDOWN";
     case CTRL_CHAT:                  return "CTRL_CHAT";
@@ -290,16 +295,6 @@ static const char *logEventsTypeName(int type) {
     case CTRL_LOBBY_BOT_BRAIN:       return "CTRL_LOBBY_BOT_BRAIN";
     case CTRL_LOBBY_BRAIN_LIST:      return "CTRL_LOBBY_BRAIN_LIST";
     default:                         return NULL;
-  }
-}
-
-static const char *logEventsPhaseName(int phase) {
-  switch (phase) {
-    case CTRL_PHASE_LOBBY:     return "LOBBY";
-    case CTRL_PHASE_COUNTDOWN: return "COUNTDOWN";
-    case CTRL_PHASE_RUNNING:   return "RUNNING";
-    case CTRL_PHASE_GAME_OVER: return "GAME_OVER";
-    default:                   return NULL;
   }
 }
 
@@ -443,18 +438,19 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       break;
     }
 
-    case CTRL_GAME_PHASE: {
-      const char *phase = logEventsPhaseName((int)evt->u.gamePhase.phase);
-      if (phase != NULL) {
-        fprintf(f, ",\"phase\":\"%s\"", phase);
-      } else {
-        fprintf(f, ",\"phase\":\"UNKNOWN\",\"phaseRaw\":%d",
-                (int)evt->u.gamePhase.phase);
-      }
-      fprintf(f, ",\"countdownSeconds\":%d",
+    case CTRL_GAME_PHASE_LOBBY:
+      fprintf(f, ",\"phase\":\"LOBBY\",\"countdownSeconds\":0");
+      break;
+    case CTRL_GAME_PHASE_COUNTDOWN:
+      fprintf(f, ",\"phase\":\"COUNTDOWN\",\"countdownSeconds\":%d",
               evt->u.gamePhase.countdownSeconds);
       break;
-    }
+    case CTRL_GAME_PHASE_RUNNING:
+      fprintf(f, ",\"phase\":\"RUNNING\",\"countdownSeconds\":0");
+      break;
+    case CTRL_GAME_PHASE_GAME_OVER:
+      fprintf(f, ",\"phase\":\"GAME_OVER\",\"countdownSeconds\":0");
+      break;
 
     case CTRL_CHAT:
       fprintf(f, ",\"fromPlayer\":%u,\"destPlayer\":%u,\"bodyLen\":%u",
@@ -647,7 +643,7 @@ static bool cmdDispatchServer(const CmdLine *cmd) {
                 cmd->lineNumber, (unsigned)selfSlot);
         exit(2);
       }
-      clientSimNetSendTeamSet(humanSim, cmd->team);
+      clientSimNetSendTeamSet(humanSim, cmd->slot, cmd->team);
       return true;
     case CMD_OP_SET_READY:
       if (cmd->slot != selfSlot) {
@@ -1519,13 +1515,6 @@ time_t serverMainGetTicks(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Helper: sync snapshot from transport                                */
-/* ------------------------------------------------------------------ */
-static void headlessSyncSnapshot(void) {
-  clientSimNetSyncSnapshot(humanSim);
-}
-
-/* ------------------------------------------------------------------ */
 /* Fast local mode: setup and game loop                                */
 /* ------------------------------------------------------------------ */
 
@@ -1539,45 +1528,45 @@ static bool verboseNeedMapInit = TRUE;
 /* Set up the server sim, transport, and client sim from cached map.
  * Called at initial startup and on each reset. */
 static bool fastModeSetupGame(void) {
-  if (cmdStream != NULL) {
-    /* Scripted scenarios drive the lifecycle explicitly — leave the
-     * sim in lobby state until the cmd stream issues start_game. */
-    serverSimSetLobbyEnabled(fastServerSim, true);
-  } else {
-    serverSimSetLobbyEnabled(fastServerSim, false);
-    serverSimStartGame(fastServerSim);
+  {
+    /* Scripted scenarios stay in lobby state until the cmd stream
+     * issues start_game (cfg.lobbyEnabled drives SetLobbyEnabled(true)
+     * + EnterLobby inside serverInstanceStartup). Non-scripted fast
+     * mode goes straight into running state (cfg.skipLobby drives
+     * SetLobbyEnabled(false) + StartGame). acceptRemoteClients=false
+     * short-circuits the UDP/WBN/tracker/NAT bring-up. */
+    ServerInstanceConfig cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.acceptRemoteClients = false;
+    if (cmdStream != NULL) {
+      cfg.lobbyEnabled = true;
+    } else {
+      cfg.skipLobby    = true;
+    }
+    serverInstanceStartup(fastServerSim, &cfg);
   }
-  serverSimAddPlayer(fastServerSim, 0, optName, false);
   serverSimSetViewPlayer(fastServerSim, 0);
 
   transportActive = TRUE;
   playerNum = 0;
 
-  /* Reload client sim from cached compressed map */
+  /* Build the ClientSim, install the observer, then run the connect
+   * body — it joins the sim, installs the map, sets up the local
+   * tank, registers the auto-subscriber, and applies the first
+   * snapshot in one call. */
   humanSim = clientSimAlloc();
-  /* Re-install the control-event observer on the fresh ClientSim so a
-   * --stdin reset still captures the post-reset event stream. No-op
-   * when --log-events was not requested (logEventsFile is NULL). */
+  clientSimCreate(humanSim);
   if (logEventsFile != NULL) {
     clientSimSetControlObserver(humanSim, logEventsDeliverCb, logEventsFile);
   }
-  clientSimConnectLocal(humanSim, fastServerSim, 0);
-  clientLoadCompressedMap(humanSim, cachedCompressedMap, cachedCompressedMapLen,
-                          "Fast Local", optGameType, false, 0,
-                          UNLIMITED_GAME_TIME, optName, 0, FALSE);
+  clientSimConnectLocal(humanSim, fastServerSim, optName, "", 0, 0);
   clientSimSetAiType(humanSim, optAi);
-
-  /* Sync initial snapshot and place tank */
-  headlessSyncSnapshot();
   clientSimNetSetupTankGo(humanSim);
 
-  /* Register the headless client as a control-event subscriber. Placed
-   * after clientLoadCompressedMap (which calls clientSimCreate) so
-   * humanSim->myPlayerNum is initialized to 0 before sync's self-skip
-   * runs. Unregister any prior handle first so a re-setup that skipped
-   * the teardown path does not leak a slot. */
-  serverSimUnregisterSubscriber(fastServerSim, headlessControlSub);
-  headlessControlSub = serverSimRegisterClientSubscriber(fastServerSim, humanSim);
+  /* Legacy subscriber handle — connect's auto-subscriber registration
+   * supersedes the explicit headlessControlSub bookkeeping. Keep the
+   * field cleared so the teardown path's unregister is a no-op. */
+  headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
 
   return true;
 }
@@ -1651,36 +1640,31 @@ static int runFastMode(void) {
   /* Initial game setup. Scripted scenarios (--cmd-stdin) stay in
    * lobby state so add_bot / set_team / start_game ops can drive
    * the lifecycle transitions deterministically. */
-  if (cmdStream != NULL) {
-    serverSimSetLobbyEnabled(fastServerSim, true);
-  } else {
-    serverSimSetLobbyEnabled(fastServerSim, false);
-    serverSimStartGame(fastServerSim);
+  {
+    ServerInstanceConfig cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.acceptRemoteClients = false;
+    if (cmdStream != NULL) {
+      cfg.lobbyEnabled = true;
+    } else {
+      cfg.skipLobby    = true;
+    }
+    serverInstanceStartup(fastServerSim, &cfg);
   }
-  serverSimAddPlayer(fastServerSim, 0, optName, false);
   serverSimSetViewPlayer(fastServerSim, 0);
   transportActive = TRUE;
   playerNum = 0;
   humanSim = clientSimAlloc();
-  /* Attach the control-event observer to humanSim before it joins the
-   * server's subscriber list so register-time sync events are observed.
-   * Survives clientLoadCompressedMap's in-place clientSimCreate via the
-   * save/restore block in client_sim.c. */
+  clientSimCreate(humanSim);
+  /* Observer must be set before connect so register-time sync events
+   * are observed. Preserved across clientSimCreate's memset. */
   if (logEventsFile != NULL) {
     clientSimSetControlObserver(humanSim, logEventsDeliverCb, logEventsFile);
   }
-  clientSimConnectLocal(humanSim, fastServerSim, 0);
-  clientLoadCompressedMap(humanSim, cachedCompressedMap, cachedCompressedMapLen,
-                          "Fast Local", optGameType, false, 0,
-                          UNLIMITED_GAME_TIME, optName, 0, FALSE);
+  clientSimConnectLocal(humanSim, fastServerSim, optName, "", 0, 0);
   clientSimSetAiType(humanSim, optAi);
-  headlessSyncSnapshot();
   clientSimNetSetupTankGo(humanSim);
-
-  /* Register the headless client as a control-event subscriber. Placed
-   * after clientLoadCompressedMap so humanSim->myPlayerNum is 0 before
-   * sync's self-skip runs. */
-  headlessControlSub = serverSimRegisterClientSubscriber(fastServerSim, humanSim);
+  headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
 
   if (!optQuiet) {
     fprintf(stderr, "Game ready. Entering fast loop.\n");
@@ -1725,8 +1709,7 @@ static int runFastMode(void) {
       }
       clientSimKeysTick(humanSim, &pkt);
       clientSimNetSendInput(humanSim, &pkt);
-      clientSimNetTick(humanSim);
-      headlessSyncSnapshot();
+      clientSimNetTick(humanSim);  /* localTick pulls + applies the snapshot */
       simTickCounter++;
       justKeys = FALSE;
     } else {
@@ -1767,8 +1750,7 @@ static int runFastMode(void) {
       }
       clientSimGameTick(humanSim, &pkt, brainRunning);
       clientSimNetSendInput(humanSim, &pkt);
-      clientSimNetTick(humanSim);
-      headlessSyncSnapshot();
+      clientSimNetTick(humanSim);  /* localTick pulls + applies the snapshot */
       clientSimDisplayTick(humanSim, brainRunning);
       simTickCounter++;
       tickCount++;
@@ -1864,7 +1846,7 @@ static int runNetworkMode(void) {
 
   /* Open events log before connect so PACKET_PLAYER_LIST / lobby /
    * map-download events that arrive during the join handshake are
-   * captured. Observer is preserved across clientSimResetForMapLoad
+   * captured. Observer is preserved across clientSimCreate's memset
    * (see the save/restore block in client_sim.c). */
   logEventsOpen(optLogEvents);
 
@@ -1875,9 +1857,10 @@ static int runNetworkMode(void) {
     if (cmdStream == NULL) return 1;
   }
 
-  /* Initialize the game engine with dummy params (will be re-created after map load) */
+  /* Initialize the game engine (JOIN_ACCEPT will install the
+   * authoritative game settings). */
   humanSim = clientSimAlloc();
-  clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+  clientSimCreate(humanSim);
   if (logEventsFile != NULL) {
     clientSimSetControlObserver(humanSim, logEventsDeliverCb, logEventsFile);
   }
@@ -1888,7 +1871,40 @@ static int runNetworkMode(void) {
     fprintf(stderr, "Connecting to %s:%u...\n", optServer, optPort);
   }
 
-  clientSimConnectUdp(humanSim, optServer, optPort, optName, optPassword, "", "",
+  /* Pre-flight version negotiation. The legacy info-request is the
+   * universal cross-version handshake — any server answers regardless
+   * of build, so we can read the server's version triple before
+   * committing to a JOIN_REQUEST whose new-protocol length gate would
+   * silently drop on mismatch. On mismatch surface a clear stderr
+   * message and exit non-zero; on timeout, mirror the SDL3 frontend
+   * by aborting with the standard "server unreachable" wording. */
+  {
+    DiscoveryPingResult dpr;
+    if (!discoveryPingServer(optServer, optPort, &dpr)) {
+      fprintf(stderr, "Error: failed to connect: server unreachable\n");
+      clientSimDestroy(humanSim);
+      return 1;
+    }
+    if (dpr.versionMajor    != BOLO_VERSION_MAJOR ||
+        dpr.versionMinor    != BOLO_VERSION_MINOR ||
+        dpr.versionRevision != BOLO_VERSION_REVISION) {
+      fprintf(stderr,
+              "Error: server is version %u.%u.%u, you have %u.%u.%u "
+              "— please update.\n",
+              (unsigned)dpr.versionMajor,
+              (unsigned)dpr.versionMinor,
+              (unsigned)dpr.versionRevision,
+              (unsigned)BOLO_VERSION_MAJOR,
+              (unsigned)BOLO_VERSION_MINOR,
+              (unsigned)BOLO_VERSION_REVISION);
+      clientSimDestroy(humanSim);
+      return 1;
+    }
+  }
+
+  clientSimConnectUdp(humanSim, optServer, optPort, optName,
+                      winbolonetGetCountryCode(),
+                      optPassword, "", "",
                       false, optTrackerAddr, optTrackerPort);
   if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
     const char *reason = clientSimGetConnectErrorReason(humanSim);
@@ -1919,44 +1935,11 @@ static int runNetworkMode(void) {
   playerNum = clientSimGetServerPlayerNum(humanSim);
   transportActive = TRUE;
 
-  /* Load map from server */
-  {
-    const BYTE *mapData;
-    int mapLen = 0;
-    gameType serverGame;
-    bool serverHiddenMines;
-    int32_t serverStartDelay, serverGameLen;
-
-    mapData = clientSimGetServerMapData(humanSim, &mapLen);
-    clientSimGetServerGameSettings(humanSim, &serverGame,
-                                   &serverHiddenMines,
-                                   &serverStartDelay, &serverGameLen);
-
-    if (mapData != NULL && mapLen > 0) {
-      char savedMapName[MAP_STR_SIZE];
-      strncpy(savedMapName, clientSimGetMapName(humanSim), MAP_STR_SIZE - 1);
-      savedMapName[MAP_STR_SIZE - 1] = '\0';
-      /* Reset map-dependent state in place; the transport (and the
-       * mapData pointer that lives inside it) survive the reset. */
-      clientSimResetForMapLoad(humanSim);
-      if (clientLoadCompressedMap(humanSim, (BYTE *)mapData, mapLen, savedMapName,
-                                  serverGame, serverHiddenMines,
-                                  serverStartDelay, serverGameLen,
-                                  optName, playerNum, FALSE) == FALSE) {
-        fprintf(stderr, "Error: failed to load map from server\n");
-        clientSimDestroy(humanSim);
-        return 1;
-      }
-      clientSimSetLocalTransport(humanSim, false);
-      clientSimSetAiType(humanSim, optAi);
-    } else {
-      fprintf(stderr, "Error: no map data from server\n");
-      clientSimDestroy(humanSim);
-      return 1;
-    }
-  }
-
-  /* Set up tank at start position */
+  /* Map install + snapshot apply happen inside the transport — the
+   * MAP_DOWNLOAD completion path drops the buffered bytes onto the
+   * ClientSim, and PACKET_STATE_SNAPSHOT applies inline. Headless
+   * only sets the bot AI type and finalises the local tank. */
+  clientSimSetAiType(humanSim, optAi);
   clientSimNetSetupTankGo(humanSim);
 
   /* Gate lobby vs running: if we received CTRL_LOBBY_SETTINGS during
@@ -2009,9 +1992,6 @@ static int runNetworkMode(void) {
           clientMutexRelease();
           clientSimNetRecordInput(humanSim, &pkt);
           clientSimNetTick(humanSim);
-          clientMutexWaitFor();
-          headlessSyncSnapshot();
-          clientMutexRelease();
           simTickCounter++;
           justKeys = FALSE;
         } else {
@@ -2024,7 +2004,6 @@ static int runNetworkMode(void) {
           clientSimNetSendInput(humanSim, &pkt);
           clientSimNetTick(humanSim);
           clientMutexWaitFor();
-          headlessSyncSnapshot();
           clientSimDisplayTick(humanSim, brainRunning);
           clientMutexRelease();
           simTickCounter++;
@@ -2142,6 +2121,11 @@ int main(int argc, char *argv[]) {
   wb_log_init("WinBolo", "WinBoloHeadless", "winbolo-headless.log");
   atexit(wb_log_shutdown);
 
+  if (!serverSimBotPoolInit(0)) {
+    fprintf(stderr, "serverSimBotPoolInit failed\n");
+    return 1;
+  }
+
   winbolonetCoreSetPreferencesPath("WinBolo.ini");
 
   if (!clientMutexCreate()) {
@@ -2165,6 +2149,7 @@ int main(int argc, char *argv[]) {
 
   clientMutexDestroy();
   langCleanup();
+  serverSimBotPoolDestroy();
   SDL_Quit();
 
   return result;

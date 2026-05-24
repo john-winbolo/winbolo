@@ -32,6 +32,7 @@
 
 #include "global.h"
 #include "server_sim.h"
+#include "server_sim_lifecycle.h"
 #include "everard_map.h"
 #include "test_harness.h"
 

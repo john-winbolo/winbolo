@@ -4,7 +4,7 @@
  * Renders the followed bot's current capacity tier (1..10),
  * the lever values that hash to it, and a ↑/↓ control that
  * pushes _G._BT_TIER_OVERRIDE back into the bot's Lua state
- * via botManagerExecLua so the user can lock the tier for
+ * via serverSimBotExecLua so the user can lock the tier for
  * testing. "Auto" clears the override and lets the dynamic
  * algorithm resume.
  *
@@ -35,7 +35,7 @@
 #include "../../../src/braintest/braintest_panel_registry.h"
 
 extern "C" {
-#include "bot_manager.h"
+#include "server_sim.h"
 }
 
 namespace {
@@ -46,9 +46,12 @@ double getNum(const cJSON *o, const char *k, double d) {
 }
 
 /* Push a tier override (or clear it) to one bot, or to every active bot
- * when apply_to_all is true. Uses botManagerExecLua — the same
+ * when apply_to_all is true. Uses serverSimBotExecLua — the same
  * mechanism BrainTest uses to mirror V-dialog state back into bot Lua. */
 void pushTierOverride(int registry_idx, int tier_or_zero, bool apply_to_all) {
+    ServerSim *sim = braintestGetCurrentSim();
+    if (sim == NULL) return;
+
     char src[64];
     if (tier_or_zero >= 1 && tier_or_zero <= 10) {
         SDL_snprintf(src, sizeof(src), "_G._BT_TIER_OVERRIDE=%d", tier_or_zero);
@@ -58,8 +61,8 @@ void pushTierOverride(int registry_idx, int tier_or_zero, bool apply_to_all) {
 
     if (apply_to_all) {
         for (int i = 0; i < MAX_TANKS; i++) {
-            if (botManagerIsBot((BYTE)i)) {
-                botManagerExecLua((BYTE)i, src);
+            if (serverSimIsBot(sim, (BYTE)i)) {
+                serverSimBotExecLua(sim, (BYTE)i, src);
             }
         }
         return;
@@ -69,8 +72,8 @@ void pushTierOverride(int registry_idx, int tier_or_zero, bool apply_to_all) {
     const PanelRegistryEntry *e = panelRegistryGet(registry_idx);
     if (!e) return;
     int bot = e->bot_owner;
-    if (bot < 0 || !botManagerIsBot((BYTE)bot)) return;
-    botManagerExecLua((BYTE)bot, src);
+    if (bot < 0 || !serverSimIsBot(sim, (BYTE)bot)) return;
+    serverSimBotExecLua(sim, (BYTE)bot, src);
 }
 
 /* Stable hue per section name → consistent color across renders. */
@@ -681,8 +684,10 @@ void renderTierControl(int registry_idx, const char *body) {
      *                                 the intent so the slider stops
      *                                 re-requesting on every render. */
     {
-        int live    = botManagerGetThreads();
-        int pending = botManagerGetPendingThreads();
+        ServerSim *sim = braintestGetCurrentSim();
+        if (sim == NULL) return;
+        int live    = serverSimGetBotThreads(sim);
+        int pending = serverSimGetPendingBotThreads(sim);
         static int s_panel_threads = -1;
         if (s_panel_threads < 0) s_panel_threads = live;
 
@@ -691,7 +696,7 @@ void renderTierControl(int registry_idx, const char *body) {
         if (ImGui::SliderInt("brain threads", &show, 1, 16,
                              show == 1 ? "%d (serial)" : "%d")) {
             s_panel_threads = show;
-            botManagerRequestThreads(show);
+            serverSimRequestBotThreads(sim, show);
         }
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Total brain-tick runners (workers + producer).\n"

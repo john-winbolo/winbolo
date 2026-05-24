@@ -472,7 +472,7 @@ function M.decide(state, world, info, now)
     parts[#parts + 1] = pill_threats_exist and string.format("threats:%d", #state.perc.pill_threats) or "threats:0"
     local all_ok = near_base and has_trees and took_dmg and pill_threats_exist
     local cr, cg = all_ok and 0 or 200, all_ok and 200 or 100
-    viz.hud_text("base_shield_viz", 10, 84, "BaseShield: " .. table.concat(parts, " | "), "topleft", cr, cg, 0)
+    viz.hud_text("base_shield_viz", 10, 72, "BaseShield: " .. table.concat(parts, " | "), "topleft", cr, cg, 0)
   end
 
   if near_base and has_trees and took_dmg then

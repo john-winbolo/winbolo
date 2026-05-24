@@ -48,6 +48,8 @@ local print2   = require("print2")
 local opt      = require("optimize")
 local shot_tracker = require("shot_tracker")
 local viz      = require("viz")
+local ally_state = require("ally_state")
+ally_state.init()
 
 local Brain = {}
 
@@ -430,6 +432,7 @@ function Brain.open(info)
 
   state.tick          = 0
   state.player_number = info.player_number
+  _G._BRAIN_SELF_PN   = info.player_number
   state.player_name   = (info.player_names and info.player_names[info.player_number + 1]) or ""
   state.debug_log     = (state.player_name == "Bot 1" or info.player_number == 0)
   state.send_open_msg = true
@@ -486,6 +489,20 @@ function Brain.open(info)
   state.goal_set_tick     = 0    -- tick when current goal was chosen (for commitment hysteresis)
   state.goal_cooldowns    = {}   -- abandoned goals: { [key] = expiry_tick }
   state.goal_history      = {}   -- circular buffer of last N picked goals (oscillation detection)
+
+  -- /info state broadcast scratch buffers.
+  --   broadcast_state_info      — scratch hash any code can write to during
+  --                                the tick (or reset to empty). End-of-tick
+  --                                comparator builds the wire message from
+  --                                this.
+  --   last_broadcasted_state_info — authoritative copy of what we last sent
+  --                                to allies. Compared against
+  --                                broadcast_state_info to detect change.
+  --   last_broadcast_state_tick — tick of the last broadcast; drives the
+  --                                30 s (1500 tick @ 50 Hz) heartbeat.
+  state.broadcast_state_info       = {}
+  state.last_broadcasted_state_info = {}
+  state.last_broadcast_state_tick   = 0
 
   -- Stuck detection
   state.last_mx   = -1
@@ -1923,26 +1940,40 @@ function Brain.think(info)
     state.send_open_msg = false
   end
 
-  -- Process incoming newswire message
-  if info.message and info.message.text then
-    -- Brain-to-brain coordination (ally claims)
-    comms.process_message(info.message.sender, info.message.text, now)
+  -- Process EVERY incoming chat message this tick. info.messages is
+  -- the new multi-message inbox added in the brain inbox C-side change;
+  -- the legacy info.message field still works but only surfaces the
+  -- first one. Iterating the array lets us see all ally /info traffic
+  -- when several bots broadcast on the same tick (previously the bus
+  -- silently dropped all but one).
+  if info.messages then
+    for _, m in ipairs(info.messages) do
+      if m.text and m.text ~= "" then
+        -- chat_log ring is debug-only (read only by the chat_log_overlay
+        -- HUD); skip the ring writes entirely in production. Slate update
+        -- via comms.process_message stays unconditional since coordination
+        -- logic reads it.
+        if BRAIN_DEBUG_MODE then
+          ally_state.chat_log_add("in", m.sender, m.text, now)
+        end
+        comms.process_message(m.sender, m.text, now)
 
-    local cmd = cmds.parse(info.message.text)
-    if cmd then
-      if BRAIN_DEBUG_MODE then
-        print(string.format(TAG .. " t=%d RECV from player %d: '%s'",
-              now, info.message.sender, info.message.text))
-      end
-      log.event("cmd_recv", info.message.text)
-      local reply = cmds.execute(cmd, state, world)
-      if reply and not send_msg then
-        send_msg = reply
-        msg_dest = 1 << state.player_number
+        local cmd = cmds.parse(m.text)
+        if cmd then
+          if BRAIN_DEBUG_MODE then
+            print(string.format(TAG .. " t=%d RECV from player %d: '%s'",
+                  now, m.sender, m.text))
+          end
+          log.event("cmd_recv", m.text)
+          local reply = cmds.execute(cmd, state, world)
+          if reply and not send_msg then
+            send_msg = reply
+            msg_dest = 1 << state.player_number
+          end
+        end
       end
     end
   end
-  comms.expire_claims(now)
 
   -- Paused: accept commands but do nothing else
   if state.paused then
@@ -2589,6 +2620,127 @@ function Brain.think(info)
       refuel_needed = need_armour or need_shells or need_mines
       refuel_complete = not refuel_needed
 
+      -- Wait-for-ally substate.  When closing in on the base, if an ally
+      -- tank is already standing on the goal tile we yield rather than
+      -- pile on (each base supplies one tank at a time; two of us on the
+      -- same tile is wasted time + a coordination headache).  Hold up to
+      -- REFUEL_ALLY_WAIT_TICKS; if the ally hasn't moved by then they
+      -- aren't leaving soon — blocklist the base and let goal selection
+      -- find us another one.
+      if state.goal.mx and state.goal.my then
+        local our_mx = info.tankx >> 8
+        local our_my = info.tanky >> 8
+        local dist_cheb = math.max(math.abs(our_mx - state.goal.mx),
+                                   math.abs(our_my - state.goal.my))
+        local on_base_ourselves = (dist_cheb == 0)
+        -- Always scan when refuel_at_base is active so the
+        -- hud_refuel_ally_check overlay can show the live answer.
+        -- Cheap (info.objects is short).
+        local ally_on_base = false
+        for _, ob in ipairs(info.objects) do
+          if ob.type == 0   -- OBJECT_TANK
+             and (ob.info & 1) == 0   -- not OBJECT_HOSTILE → ally (excludes self; self isn't in info.objects)
+             and (ob.x >> 8) == state.goal.mx
+             and (ob.y >> 8) == state.goal.my then
+            ally_on_base = true
+            break
+          end
+        end
+
+        -- HUD line — always when refuel_at_base is the goal.
+        if BRAIN_DEBUG_MODE then
+          local wait_str
+          if state.goal.wait_mx and state.goal.wait_my then
+            wait_str = string.format("(%d,%d)", state.goal.wait_mx, state.goal.wait_my)
+          else
+            wait_str = "(-)"
+          end
+          viz.hud_text("hud_refuel_ally_check", 10, 220,
+            string.format("Ally occupied check [%d/%d tiles] (%d,%d): %s, wait at %s",
+                          dist_cheb, C.REFUEL_ALLY_WAIT_DIST,
+                          state.goal.mx, state.goal.my,
+                          ally_on_base and "occupied" or "empty",
+                          wait_str),
+            "topleft",
+            ally_on_base and 255 or 180,
+            ally_on_base and 180 or 220,
+            ally_on_base and 80  or 180,
+            230)
+        end
+
+        if refuel_needed
+           and not on_base_ourselves
+           and dist_cheb <= C.REFUEL_ALLY_WAIT_DIST
+           and ally_on_base then
+          if state.goal.substate ~= "wait_for_ally" then
+            state.goal.substate = "wait_for_ally"
+            state.goal.wait_started_tick = now
+            -- Pick a low-danger park spot in an 11x11 square around the
+            -- base.  Hanging out next to the base is fine but we don't
+            -- want to idle next to a heating-up pillbox; rank candidates
+            -- by danger first, then by Dijkstra cost from our current
+            -- position.  Cap the path cost at ~500 so we don't wander
+            -- across the map to wait.
+            local WAIT_RADIUS    = 5      -- 11x11 square
+            local WAIT_COST_CAP  = 500
+            local best_mx, best_my = nil, nil
+            local best_d, best_c = math.huge, math.huge
+            local bmx, bmy = state.goal.mx, state.goal.my
+            for dy = -WAIT_RADIUS, WAIT_RADIUS do
+              for dx = -WAIT_RADIUS, WAIT_RADIUS do
+                local cx = U.mclamp(bmx + dx)
+                local cy = U.mclamp(bmy + dy)
+                if (cx ~= bmx or cy ~= bmy)
+                   and not U.is_water(U.ttype(cx, cy)) then
+                  local pcost = cpf.dijkstra_lookup_by_kind(0 --[[KIND_NORMAL]], cx, cy, 0)
+                  if pcost and pcost < WAIT_COST_CAP then
+                    local d = threat.at(cx, cy) or 0
+                    if d < best_d or (d == best_d and pcost < best_c) then
+                      best_d, best_c = d, pcost
+                      best_mx, best_my = cx, cy
+                    end
+                  end
+                end
+              end
+            end
+            state.goal.wait_mx = best_mx
+            state.goal.wait_my = best_my
+            if BRAIN_DEBUG_MODE then
+              print(string.format(TAG .. " t=%d REFUEL: ally on base (%d,%d), wait_for_ally → park (%s,%s) danger=%.1f cost=%.0f",
+                    now, state.goal.mx, state.goal.my,
+                    tostring(best_mx), tostring(best_my),
+                    best_d == math.huge and -1 or best_d,
+                    best_c == math.huge and -1 or best_c))
+            end
+          end
+          local waited = now - (state.goal.wait_started_tick or now)
+          if waited >= C.REFUEL_ALLY_WAIT_TICKS then
+            -- Timed out — ally is camping.  Block this base and replan.
+            local bk = U.mkey(state.goal.mx, state.goal.my)
+            state.blocked[bk] = now + 200
+            attack.clear_attack_goal(state)
+            if BRAIN_DEBUG_MODE then
+              print(string.format(TAG .. " t=%d REFUEL: wait_for_ally timed out at (%d,%d) after %d ticks, blocking base",
+                    now, state.goal.mx, state.goal.my, waited))
+            end
+          else
+            -- Hold position; suppress timer/position-based replan while waiting.
+            refuel_hold = true
+          end
+        elseif state.goal.substate == "wait_for_ally" then
+          -- Base cleared (or we got far enough away that nobody's on
+          -- it) — resume normal approach.
+          state.goal.substate = nil
+          state.goal.wait_started_tick = nil
+          state.goal.wait_mx = nil
+          state.goal.wait_my = nil
+          if BRAIN_DEBUG_MODE then
+            print(string.format(TAG .. " t=%d REFUEL: ally cleared base (%d,%d), resuming approach",
+                  now, state.goal.mx, state.goal.my))
+          end
+        end
+      end
+
       -- Depleted-base detection runs regardless of lock-in: if we arrive
       -- at a base that has nothing to give us, block it and replan.
       if refuel_needed and info.base then
@@ -2811,21 +2963,11 @@ function Brain.think(info)
       end
     end
 
-    -- Broadcast target claim to allies (brain-to-brain coordination)
-    if not send_msg then
-      local gk = state.goal.kind
-      local gid = state.goal.target_id
-      if gid and gid >= 0 then
-        if gk == "attack_pill" or gk == "capture_pill"
-           or gk == "defend_pill" or gk == "repair_pill" then
-          send_msg = comms.format_pill_claim(gid, state.goal_cost or 0)
-          msg_dest = 0xFFFF  -- broadcast to all
-        elseif gk == "capture_base" or gk == "attack_base" then
-          send_msg = comms.format_base_claim(gid, state.goal_cost or 0)
-          msg_dest = 0xFFFF
-        end
-      end
-    end
+    -- Legacy aIndy /info pt + /info gbt claim broadcasts removed:
+    -- the /info state path (in the end-of-tick block below) carries
+    -- goal/sub/target/cost in one canonical message, and the
+    -- ally_state slate is the single source of truth for de-conflict
+    -- comparisons.
 
     -- Auto-expire: A* says we arrived or path impossible
     if state.pf.status == "failed" then
@@ -3601,9 +3743,7 @@ function Brain.think(info)
   opt(string.format("  bait-pill viz done %.2f ms", (t_pbh_bait - t_pbh_repos) / 1000))
 
   -- Friendly pill barrier overlay: mark friendly pills used as shields
-  if BRAIN_DEBUG_MODE and state.goal and
-     (state.goal.kind == "attack_pill" or state.goal.kind == "attack_pill")
-     and viz.is_on("friendly_pill_shield") then
+  if BRAIN_DEBUG_MODE and state.goal and (state.goal.kind == "attack_pill" or state.goal.kind == "attack_pill") and viz.is_on("friendly_pill_shield") then
     local gmx, gmy = state.goal.mx, state.goal.my
     local smx = state.goal.standoff_mx or (info.tankx >> 8)
     local smy = state.goal.standoff_my or (info.tanky >> 8)
@@ -3634,6 +3774,51 @@ function Brain.think(info)
 
   local t_pbh_ally = clock_us()
   opt(string.format("  ally-LGM viz done %.2f ms", (t_pbh_ally - t_pbh_barrier) / 1000))
+
+  -- Ally-state overlay (right-middle table of every active player's
+  -- goal / sub / target / k=v data). The slate is populated from the
+  -- chat-based shared-state protocol; if no protocol traffic has
+  -- landed yet the table is empty.
+  if BRAIN_DEBUG_MODE then
+    -- Heartbeat is 30 s; stale at 35 s (1750 ticks @ 50 Hz). 5 s
+    -- grace window after the expected next heartbeat — any longer
+    -- gap and we don't trust their state.
+    ally_state.draw(viz, state.tick, info.player_number, 1750)
+    ally_state.draw_chat_log(viz, state.tick, info.player_number)
+    -- Semi-transparent gray rectangle over each pill/base currently
+    -- claimed by another bot (per ally_state slate).  Maps the ally's
+    -- broadcast goal+target to a world tile and draws a 1x1 rect.
+    if viz.is_on("ally_claimed_marker") then
+      local _PILL_KIND = {
+        attack_pill = true, capture_pill = true,
+        repair_pill = true, defend_pill = true,
+      }
+      local _BASE_KIND = {
+        capture_base = true, attack_base = true, refuel_at_base = true,
+      }
+      for pn, slot in ally_state.iter_active(state.tick, 1750) do
+        if pn ~= info.player_number then
+          local g = slot.info.goal
+          local tgt = tonumber(slot.info.target)
+          local mx, my
+          if tgt and _PILL_KIND[g] and world.pills and world.pills[tgt] then
+            mx, my = world.pills[tgt].mx, world.pills[tgt].my
+          elseif tgt and _BASE_KIND[g] and world.bases and world.bases[tgt] then
+            mx, my = world.bases[tgt].mx, world.bases[tgt].my
+          else
+            mx = tonumber(slot.info.mx)
+            my = tonumber(slot.info.my)
+          end
+          if mx and my then
+            viz.rect("ally_claimed_marker", mx, my, mx + 1, my + 1,
+                     40, 40, 40, 210, true)  -- filled, dark gray, mostly opaque
+          end
+        end
+      end
+    end
+  end
+  local t_pbh_ally_state = clock_us()
+  opt(string.format("  ally-state overlay done %.2f ms", (t_pbh_ally_state - t_pbh_ally) / 1000))
 
   -- Log this tick
   log.log_tick(state, info, state.goal, keys, taps, build_cmd)
@@ -3868,7 +4053,7 @@ function Brain.think(info)
           parts[#parts + 1] = string.format("%s%d:--", marker, t)
         end
       end
-      viz.hud_text("hud_tick_info", 8, 56,
+      viz.hud_text("hud_tick_info", 8, 81,
         "tier ms: " .. table.concat(parts, " "),
         "topleft", 180, 200, 180, 200, 0.85)
     end
@@ -3878,6 +4063,73 @@ function Brain.think(info)
   -- block above, just before get_capacity_state_json reads it. Doing
   -- it there instead of here means the JSON's think_total_ms value
   -- is fresh for the current tick.)
+
+  -- /info state broadcast — runs EVERY tick (not gated by goal selection)
+  -- so heartbeat actually fires on its 30 s cadence and any goal change
+  -- surfaces immediately. Phase 1 populator: clobber broadcast_state_info
+  -- with goal/sub/target read off the current goal.
+  do
+    -- Lazy init in case the brain was created before these state fields
+    -- were added (state. is set in open()) — keeps a hot-reload from
+    -- erroring out on nil.
+    if state.broadcast_state_info == nil       then state.broadcast_state_info       = {} end
+    if state.last_broadcasted_state_info == nil then state.last_broadcasted_state_info = {} end
+    if state.last_broadcast_state_tick == nil  then state.last_broadcast_state_tick  = 0  end
+    local bsi = state.broadcast_state_info
+    for k in pairs(bsi) do bsi[k] = nil end
+    if state.goal and state.goal.kind and state.goal.kind ~= "none" then
+      bsi.goal = state.goal.kind
+      if state.goal.substate and state.goal.substate ~= "" then
+        bsi.sub = state.goal.substate
+      end
+      if state.goal.target_id and state.goal.target_id >= 0 then
+        bsi.target = tostring(state.goal.target_id)
+      end
+      -- Cost: pool_cache holds per-pool winners with .cost. Find the
+      -- entry whose .goal matches our current goal (same kind + tile)
+      -- and pluck its cost. state.goal_cost was the legacy slot but
+      -- nothing ever assigned it; pool_cache is the actual source.
+      if state.pool_cache then
+        for pi = 0, 12 do
+          local pce = state.pool_cache[pi]
+          if pce and pce.goal
+             and pce.goal.kind == state.goal.kind
+             and pce.goal.mx   == state.goal.mx
+             and pce.goal.my   == state.goal.my
+             and pce.cost ~= nil then
+            bsi.cost = string.format("%.0f", pce.cost)
+            break
+          end
+        end
+      end
+    end
+
+    local last = state.last_broadcasted_state_info
+    local differs = false
+    for k, v in pairs(bsi) do if last[k] ~= v then differs = true break end end
+    if not differs then
+      for k, v in pairs(last) do if bsi[k] ~= v then differs = true break end end
+    end
+    local heartbeat_due = (now - state.last_broadcast_state_tick) >= 1500
+    if (differs or heartbeat_due) and not send_msg then
+      send_msg = comms.format_state(bsi)
+      -- Only allies see our state — broadcasting to enemies would
+      -- leak strategy (goal, target, cost). info.allies is the
+      -- engine's alliance bitmap including self; that's fine since
+      -- self-sends are filtered out at the in-process CTRL_CHAT
+      -- handler. If we have no allies the message is dropped by
+      -- playersSendAiMessage (no bits set).
+      msg_dest = info.allies and info.allies or 0
+      for k in pairs(last) do last[k] = nil end
+      for k, v in pairs(bsi) do last[k] = v end
+      state.last_broadcast_state_tick = now
+    end
+  end
+
+  -- Capture outbound for the chat_log overlay (debug-only).
+  if BRAIN_DEBUG_MODE and send_msg and send_msg ~= "" then
+    ally_state.chat_log_add("out", state.player_number, send_msg, now)
+  end
 
   -- Output
   return {

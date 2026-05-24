@@ -81,6 +81,7 @@ void frontEndGameOver(ClientSim *cs) {
 }
 void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) { (void)cs; (void)value; }
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) { (void)cs; (void)value; (void)str; (void)countryCode; (void)ping; (void)clientType; (void)clientFlags; }
+void frontEndUpdatePlayerPing(struct ClientSim *cs, playerNumbers value, uint16_t ping) { (void)cs; (void)value; (void)ping; }
 void frontEndDrawDownload(ClientSim *cs, bool justBlack) { (void)cs; (void)justBlack; }
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) { (void)cs; (void)value; (void)isChecked; }
 void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
@@ -118,6 +119,20 @@ bool messageIsNewMessage(MessageState *ms) { (void)ms; return FALSE; }
 BYTE messageGetNewMessage(MessageState *ms, char *dest, uint32_t **playerBitmap) {
   (void)ms; if (dest) dest[0] = '\0'; if (playerBitmap) *playerBitmap = NULL; return 0;
 }
+/* messageInbox* — brain-side per-tick chat inbox helpers reached from
+ * brain_data.c's BrainInfo.messages population. Bots in the server
+ * build don't render a chat HUD; brain_data.c sees zero messages and
+ * the BrainInfo array stays empty. Stubbing here is what prevents the
+ * archive's messages.c.o from being pulled in (which would conflict
+ * with the messageCreate/Destroy/etc. stubs above). */
+void messageInboxPush(MessageState *ms, BYTE from, const char *pascalText) {
+  (void)ms; (void)from; (void)pascalText;
+}
+int  messageInboxCount(const MessageState *ms) { (void)ms; return 0; }
+BYTE messageInboxPeek(const MessageState *ms, int i, char *dest) {
+  (void)ms; (void)i; if (dest) dest[0] = '\0'; return 0;
+}
+void messageInboxClear(MessageState *ms) { (void)ms; }
 void scrollCreate(ScrollState *ss) { (void)ss; }
 /* scrollSetScrollType — reached via clientSimSetAutoScroll. The server
  * build doesn't expose scroll preferences, so the toggle is a no-op. */

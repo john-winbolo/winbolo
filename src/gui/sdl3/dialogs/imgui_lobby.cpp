@@ -50,12 +50,13 @@ extern "C" {
 #include "bolo_rand.h"
 #include "client_sim.h"
 #include "client_net.h"
-#include "md5.h"
 #include "server_sim.h"          /* serverSim* T1 wrappers for SP-host paths */
 #include "lobby_bot_pools.h"     /* lobbyBotPool* — public utility */
 #include "playername_validate.h" /* playerNameValidate — client-side bot name gate */
 #include "../../../server/server_lifecycle.h"
+#include "../../../server/threads.h"  /* threadsWaitForMutex / Release — SP-host server calls */
 #include "platform_net.h"
+#include "../../../common/mp_diag_log.h"
 #include "../flags.h"
 #include "../sdl3imgui.h"
 #include "../minimap_render.h"
@@ -118,15 +119,14 @@ static bool s_botNameOverridden[MAX_TANKS] = {0};
  * Transport is null and we're not single-player, the call is a no-op.
  */
 static void lobbySendReadyToggle(ClientSim *cs, bool ready) {
-    if (cs && clientSimIsSinglePlayer(cs)) {
-        /* Single-player: skip the multiplayer ready→countdown
-         * choreography; clicking the Ready button starts the game
-         * straight away.  The Unready direction is meaningless here
-         * (there's nobody to wait on) so we ignore ready=false. */
-        if (ready) {
-            (void)gameFrontStartSinglePlayerGame(cs);
-        }
-        return;
+    /* Both single-player and multiplayer now go through the same
+     * ready toggle. The server's all-ready detector trips the
+     * lobby→running transition (synchronously via StartGameInPlace
+     * when worldPreLoaded, via countdown+StartGame otherwise). For
+     * SP the rich-presence update happens immediately on Ready;
+     * the next presence cycle picks up the running state. */
+    if (cs && clientSimIsSinglePlayer(cs) && ready) {
+        gameFrontUpdateSteamPresence(cs);
     }
     clientSimNetSendReady(cs, ready);
 }
@@ -225,11 +225,15 @@ static void lobbySendAddBot(ClientSim *cs,
                     "[DIAG]   about to serverSimCreateBot slot=%u name='%s' aiType=%d gameType=%d",
                     (unsigned)slot, botName, (int)serverSimGetBotAiType(sim),
                     (int)clientSimGetLobbyGameType(cs));
+        /* Serialise against the SDL timer thread's serverInstanceTick.
+         * The publish flag inside serverSim is single-thread; without the
+         * mutex the lobby heartbeat in serverInstanceTick can re-enter
+         * publishControl while this thread is mid-publish. */
+        threadsWaitForMutex();
         serverSimCreateBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
                            (aiType)serverSimGetBotAiType(sim),
                            (gameType)clientSimGetLobbyGameType(cs),
                            clientSimIsLobbyHiddenMines(cs));
-        WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   serverSimCreateBot returned slot=%u", (unsigned)slot);
         /* Mirror the per-bot brain selection so the AiConfig combo
          * reflects "this bot's brain" rather than a global default.
          * stickyBrainIdx == 0xFF picks up the server's CLI-configured
@@ -240,14 +244,17 @@ static void lobbySendAddBot(ClientSim *cs,
         } else {
             serverSimSetBotBrainIdxFor(sim, slot, 0xFF);
         }
-        if (teamNumber > 0 && teamNumber < MAX_TANKS) {
-            serverSimSetTeam(sim, slot, teamNumber);
-        }
+        /* Publish the slot's new state. serverSimSetBotBrainIdxFor
+         * (called via either branch above) publishes the bot-brain
+         * event itself. */
+        serverSimPublishLobbySlot(sim, slot);
+        threadsReleaseMutex();
+        WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   serverSimCreateBot returned slot=%u", (unsigned)slot);
         /* Bot's name came from the pool — not an override. */
         s_botNameOverridden[slot] = false;
-        /* Publish the slot's new state and the bot's brain path. */
-        serverSimPublishLobbySlot(sim, slot);
-        serverSimPublishLobbyBotBrain(sim, slot);
+        if (teamNumber > 0 && teamNumber < MAX_TANKS) {
+            clientSimNetSendTeamSet(cs, slot, teamNumber);
+        }
         return;
     }
     /* MP path */
@@ -419,195 +426,6 @@ static bool             s_chooseMapWantCloseConfirm = false;
  * ctx) can reach into the cs's lobbyMapList* state without each
  * call site rethreading the pointer. */
 static ClientSim       *s_chooseMapCs             = NULL;
-
-/* Upload pump state. The Upload tab reads a local .map into
- * s_uploadBuf and announces it via PACKET_LOBBY_MAP_UPLOAD_BEGIN.
- * Once the server's MAP_UPLOAD_ACK arrives (status flips to 2 on
- * the ClientSim), the lobby's frame loop calls lobbyUploadPump
- * which streams ~8 KB / frame of chunks until totalLen is sent.
- * On DONE the buffer is freed. */
-static uint8_t         *s_uploadBuf      = NULL;
-static uint32_t         s_uploadTotal    = 0;
-static uint32_t         s_uploadOffset   = 0;
-static bool             s_uploadActive   = false;
-/* Announce name (e.g. "Foo.map") cached for the USE_LOCAL → UPLOAD
- * fallback path so the pump knows what to re-announce without
- * having to re-derive it from a path it no longer holds. */
-static char             s_uploadName[128];
-/* Watchdog timestamps so a server that goes silent mid-handshake
- * (e.g. dropped BEGIN ACK) doesn't strand the upload slot at
- * lobbyMapUploadStatus=1 forever. Reset whenever we observe forward
- * progress: status advances, or bytes drain. */
-static uint64_t         s_uploadStartedMs = 0;
-static uint8_t          s_uploadPrevStatus = 0;
-static uint64_t         s_uploadPrevProgressMs = 0;
-static uint32_t         s_uploadPrevOffset = 0;
-#define UPLOAD_ACK_TIMEOUT_MS   5000   /* BEGIN → ACK */
-#define UPLOAD_STALL_TIMEOUT_MS 10000  /* no chunk progress */
-
-static void lobbyUploadFree(void) {
-    if (s_uploadBuf) { SDL_free(s_uploadBuf); s_uploadBuf = NULL; }
-    s_uploadTotal  = 0;
-    s_uploadOffset = 0;
-    s_uploadActive = false;
-    s_uploadName[0] = '\0';
-    s_uploadStartedMs       = 0;
-    s_uploadPrevStatus      = 0;
-    s_uploadPrevProgressMs  = 0;
-    s_uploadPrevOffset      = 0;
-}
-
-/* Read `srcPath` into s_uploadBuf and announce the upload to the
- * server. The server-side path will be data/maps/Uploads/<basename
- * of srcPath>. Returns silently on any read / size error — the UI
- * surface for that is the status line that flips to "rejected" once
- * the server's ACK / DONE lands.
- *
- * Optimisation: if `srcPath` lives under the local data/maps/ tree
- * we additionally MD5 the bytes and try PACKET_LOBBY_MAP_USE_LOCAL
- * first — the server may already have an identical file at the
- * same relative path and will install it without an upload. On NACK
- * the pump falls back to the regular UPLOAD_BEGIN flow. */
-static void lobbyUploadKick(ClientSim *cs, const char *srcPath) {
-    if (!cs || !srcPath || srcPath[0] == '\0') return;
-    if (s_uploadActive) return;
-
-    size_t fileLen = 0;
-    void *fileData = SDL_LoadFile(srcPath, &fileLen);
-    if (!fileData || fileLen == 0 || fileLen > LOBBY_MAP_UPLOAD_MAX_BYTES) {
-        if (fileData) SDL_free(fileData);
-        return;
-    }
-
-    /* Basename of the local path (drop directory components). */
-    const char *base = srcPath;
-    for (const char *p = srcPath; *p; p++) {
-        if (*p == '/' || *p == '\\') base = p + 1;
-    }
-    char nameBuf[128];
-    SDL_strlcpy(nameBuf, base, sizeof(nameBuf));
-
-    lobbyUploadFree();
-    s_uploadBuf    = (uint8_t *)SDL_malloc(fileLen);
-    if (!s_uploadBuf) { SDL_free(fileData); return; }
-    memcpy(s_uploadBuf, fileData, fileLen);
-    SDL_free(fileData);
-    s_uploadTotal  = (uint32_t)fileLen;
-    s_uploadOffset = 0;
-    s_uploadActive = true;
-    SDL_strlcpy(s_uploadName, nameBuf, sizeof(s_uploadName));
-
-    clientSimResetLobbyMapUpload(cs);
-
-    /* Derive a data/maps-relative path from srcPath. Local FS provider
-     * hands us paths like "data/maps/Foo/Bar.map"; on Windows the
-     * separators may be backslashes. Strip the prefix to get a path
-     * like "Foo/Bar.map" — same scheme PACKET_LOBBY_MAP_PREVIEW_REQ
-     * uses. If srcPath doesn't sit under data/maps/, skip the USE_LOCAL
-     * optimisation and announce the upload directly. */
-    char relPath[256];
-    relPath[0] = '\0';
-    {
-        char normalized[FILENAME_MAX];
-        SDL_strlcpy(normalized, srcPath, sizeof(normalized));
-        for (char *p = normalized; *p; p++) {
-            if (*p == '\\') *p = '/';
-        }
-        const char *kPrefix = "data/maps/";
-        const size_t kPrefixLen = 10;
-        if (strncmp(normalized, kPrefix, kPrefixLen) == 0) {
-            SDL_strlcpy(relPath, normalized + kPrefixLen, sizeof(relPath));
-        }
-    }
-
-    if (relPath[0] != '\0') {
-        uint8_t md5[16];
-        md5Compute(s_uploadBuf, s_uploadTotal, md5);
-        clientSimNetSendLobbyMapUseLocal(cs, s_uploadTotal, nameBuf,
-                                          relPath, md5);
-    } else {
-        clientSimNetSendLobbyMapUploadBegin(cs, s_uploadTotal, nameBuf);
-    }
-}
-
-/* Pump chunks once the server has ACKed. Called every frame from
- * the lobby loop; no-op when status != 2 (sending). Caps ~8 KB
- * per frame so a 1 MB upload completes in ~130 frames (~2.5 s at
- * 50 fps) without blowing the UDP send window. */
-static void lobbyUploadPump(ClientSim *cs) {
-    if (!cs || !s_uploadActive) return;
-    uint8_t st = clientSimGetLobbyMapUploadStatus(cs);
-    if (st == 3 || st == 4) {
-        /* Done or rejected — drop the buffer so the next upload
-         * starts fresh. */
-        lobbyUploadFree();
-        return;
-    }
-
-    /* Watchdog: if the server goes silent mid-handshake, the pump
-     * can otherwise sit at status=1 forever (BEGIN sent, awaiting
-     * ACK) and reject every future pick with "another upload in
-     * flight". Bail and free the slot once we cross either timeout. */
-    {
-        uint64_t now = SDL_GetTicks();
-        bool advanced = (s_uploadPrevStatus != st) ||
-                        (s_uploadPrevOffset != s_uploadOffset);
-        /* Treat the moment the last chunk goes out as one final
-         * forward-progress event. After this, offset stays pinned
-         * at s_uploadTotal while we wait for MAP_UPLOAD_DONE; without
-         * this reset the stall timer would count against a server
-         * that's merely slow to load + reply. */
-        if (st >= 2 && s_uploadOffset == s_uploadTotal &&
-            s_uploadPrevOffset < s_uploadTotal) {
-            advanced = true;
-        }
-        if (advanced) {
-            s_uploadPrevStatus      = st;
-            s_uploadPrevOffset      = s_uploadOffset;
-            s_uploadPrevProgressMs  = now;
-        }
-        if (s_uploadStartedMs == 0) s_uploadStartedMs = now;
-        uint64_t sinceProgress = now - s_uploadPrevProgressMs;
-        uint64_t sinceStart    = now - s_uploadStartedMs;
-        bool timedOut = false;
-        if (st < 2 && sinceStart > UPLOAD_ACK_TIMEOUT_MS) {
-            WB_LOG_WARN(WB_LOG_CAT_GUI,
-                "[MAPPICK] upload watchdog: no BEGIN ACK in %llums — freeing",
-                (unsigned long long)sinceStart);
-            timedOut = true;
-        } else if (st >= 2 && sinceProgress > UPLOAD_STALL_TIMEOUT_MS) {
-            WB_LOG_WARN(WB_LOG_CAT_GUI,
-                "[MAPPICK] upload watchdog: no chunk progress in %llums — freeing",
-                (unsigned long long)sinceProgress);
-            timedOut = true;
-        }
-        if (timedOut) {
-            lobbyUploadFree();
-            return;
-        }
-    }
-    /* USE_LOCAL was NACK'd: server doesn't have the file at the
-     * relative path with that MD5. Fall back to the regular byte
-     * upload using the bytes already in s_uploadBuf. */
-    if (clientSimConsumeUseLocalFallback(cs)) {
-        clientSimNetSendLobbyMapUploadBegin(cs, s_uploadTotal,
-                                            s_uploadName);
-        return;  /* wait one more frame for ACK */
-    }
-    if (st != 2) return; /* still waiting on ACK */
-
-    const uint16_t kChunkSize  = 1024;
-    const int      kPerFrame   = 8;
-    for (int i = 0; i < kPerFrame && s_uploadOffset < s_uploadTotal; i++) {
-        uint32_t remaining = s_uploadTotal - s_uploadOffset;
-        uint16_t cur = (remaining > kChunkSize)
-                       ? kChunkSize : (uint16_t)remaining;
-        clientSimNetSendLobbyMapUploadChunk(cs, s_uploadOffset,
-                                            s_uploadBuf + s_uploadOffset,
-                                            cur);
-        s_uploadOffset += cur;
-    }
-}
 
 /* enumerate for the Server Maps provider. Routes through the server's
  * directory enumeration so the chooser browses the SERVER's map
@@ -879,9 +697,11 @@ static void lobbyServerMapsOnSelect(MapChooserState *state, void *ctx) {
                 sel, (int)clientSimIsSinglePlayer(cs));
     if (clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-        if (sim && serverSimReloadMap(sim, sel)) {
-            serverSimPublishLobbySettings(sim);
-            s_chooseMapPreviewPending = true;
+        if (sim) {
+            threadsWaitForMutex();
+            bool ok = serverSimReloadMap(sim, sel);
+            threadsReleaseMutex();
+            if (ok) s_chooseMapPreviewPending = true;
         }
     } else {
         const char *relPath = sel;
@@ -1025,8 +845,13 @@ static void lobbyUploadOnSelect(MapChooserState *state, void *ctx) {
                 picked, (int)clientSimIsSinglePlayer(cs));
     if (clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-        if (sim && serverSimReloadMap(sim, picked)) {
-            serverSimPublishLobbySettings(sim);
+        bool ok = false;
+        if (sim) {
+            threadsWaitForMutex();
+            ok = serverSimReloadMap(sim, picked);
+            threadsReleaseMutex();
+        }
+        if (ok) {
             s_chooseMapPreviewPending = true;
             WB_LOG_INFO(WB_LOG_CAT_GUI,
                         "[MAPPICK] upload SP reload ok previewPending=1");
@@ -1041,10 +866,14 @@ static void lobbyUploadOnSelect(MapChooserState *state, void *ctx) {
                     "[MAPPICK] upload MP upStatus=%u inFlight=%d",
                     (unsigned)upStatus, (int)inFlight);
         if (!inFlight) {
-            lobbyUploadKick(cs, picked);
-            s_chooseMapPreviewPending = true;
-            WB_LOG_INFO(WB_LOG_CAT_GUI,
-                        "[MAPPICK] upload kicked previewPending=1");
+            if (clientSimNetSendLobbyMapUpload(cs, picked)) {
+                s_chooseMapPreviewPending = true;
+                WB_LOG_INFO(WB_LOG_CAT_GUI,
+                            "[MAPPICK] upload kicked previewPending=1");
+            } else {
+                WB_LOG_WARN(WB_LOG_CAT_GUI,
+                            "[MAPPICK] upload kick rejected for '%s'", picked);
+            }
         }
     }
 }
@@ -1618,50 +1447,21 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
         }
     }
 
-    /* MP host: pump the bytes through the normal upload protocol.
-     * The server-side UPLOAD_DONE handler then previews them and
-     * (on commit) writes to data/maps/Uploads/<name>.map with
-     * the existing " (N)" dedup — same path as a manual upload. */
+    /* MP host: chunked upload state machine on the transport.
+     * SP host: the wrapper's local-transport branch installs the
+     * bytes synchronously onto spServerSim (no chunked transfer). */
     if (!clientSimIsSinglePlayer(cs)) {
-        if (s_uploadActive) {
+        uint8_t upStatus = clientSimGetLobbyMapUploadStatus(cs);
+        if (upStatus == 1 || upStatus == 2) {
             SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "[WBN-MP] another upload is in flight; ignoring pick");
             return;
         }
-        if (res.bytes.size() > LOBBY_MAP_UPLOAD_MAX_BYTES) {
-            clientSimSetLobbyWbnPreviewStatus(cs, 3);
-            clientSimSetLobbyWbnPreviewErrMsg(cs,
-                langGetText(STR_DLGLOBBY_WBN_ERR_TOOBIG));
-            return;
-        }
-        lobbyUploadFree();
-        s_uploadBuf = (uint8_t *)SDL_malloc(res.bytes.size());
-        if (!s_uploadBuf) {
-            clientSimSetLobbyWbnPreviewStatus(cs, 3);
-            clientSimSetLobbyWbnPreviewErrMsg(cs,
-                langGetText(STR_DLGLOBBY_WBN_ERR_OOM));
-            return;
-        }
-        memcpy(s_uploadBuf, res.bytes.data(), res.bytes.size());
-        s_uploadTotal  = (uint32_t)res.bytes.size();
-        s_uploadOffset = 0;
-        s_uploadActive = true;
-        clientSimResetLobbyMapUpload(cs);
-        clientSimNetSendLobbyMapUploadBegin(cs, s_uploadTotal,
-                                             safeName.c_str());
-        clientSimSetLobbyWbnPreviewStatus(cs, 2);
-        s_chooseMapPreviewPending = true;
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-            "[WBN-MP] uploading '%s' (%u bytes)",
-            safeName.c_str(), (unsigned)s_uploadTotal);
-        return;
     }
-
-    /* SP host: apply directly to the in-process sim. */
-    ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-    if (!sim) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                    "[WBN-SP] no SP sim — dropping result");
+    if (res.bytes.size() > LOBBY_MAP_UPLOAD_MAX_BYTES) {
+        clientSimSetLobbyWbnPreviewStatus(cs, 3);
+        clientSimSetLobbyWbnPreviewErrMsg(cs,
+            langGetText(STR_DLGLOBBY_WBN_ERR_TOOBIG));
         return;
     }
 
@@ -1675,24 +1475,34 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
         }
     }
 
-    bool ok = serverSimReloadCompressedInMemory(
-        sim,
-        reinterpret_cast<const uint8_t *>(res.bytes.data()),
-        static_cast<int>(res.bytes.size()),
-        displayName);
-    if (!ok) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                    "[WBN-SP] serverSimReloadCompressedInMemory rejected bytes");
+    const char *wireName =
+        clientSimIsSinglePlayer(cs) ? displayName : safeName.c_str();
+    if (!clientSimNetSendLobbyMapUploadBytes(
+            cs,
+            reinterpret_cast<const uint8_t *>(res.bytes.data()),
+            res.bytes.size(), wireName)) {
+        if (clientSimIsSinglePlayer(cs)) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                        "[WBN-SP] map install rejected bytes");
+        }
         clientSimSetLobbyWbnPreviewStatus(cs, 3);
+        if (!clientSimIsSinglePlayer(cs)) {
+            clientSimSetLobbyWbnPreviewErrMsg(cs,
+                langGetText(STR_DLGLOBBY_WBN_ERR_OOM));
+        }
         return;
     }
-    serverSimPublishLobbySettings(sim);
-
     clientSimSetLobbyWbnPreviewStatus(cs, 2);
-    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                "[WBN-SP] applied '%s' (%zu bytes)",
-                displayName, res.bytes.size());
     s_chooseMapPreviewPending = true;
+    if (clientSimIsSinglePlayer(cs)) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "[WBN-SP] applied '%s' (%zu bytes)",
+                    displayName, res.bytes.size());
+    } else {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            "[WBN-MP] uploading '%s' (%u bytes)",
+            safeName.c_str(), (unsigned)res.bytes.size());
+    }
 }
 
 static void wbnMapsKickFolderFetch(int folderId) {
@@ -2717,9 +2527,14 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                 }
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-                    if (sim && serverSimReloadRandomMap(sim,
-                            &s_chooseMapRandomState.genConfig)) {
-                        serverSimPublishLobbySettings(sim);
+                    bool ok = false;
+                    if (sim) {
+                        threadsWaitForMutex();
+                        ok = serverSimReloadRandomMap(sim,
+                                &s_chooseMapRandomState.genConfig);
+                        threadsReleaseMutex();
+                    }
+                    if (ok) {
                         s_chooseMapPreviewPending = true;
                     }
                 } else {
@@ -2803,8 +2618,10 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-                    if (sim && serverSimRevertPreview(sim)) {
-                        serverSimPublishLobbySettings(sim);
+                    if (sim) {
+                        threadsWaitForMutex();
+                        serverSimRevertPreview(sim);
+                        threadsReleaseMutex();
                     }
                 } else {
                     clientSimNetSendLobbyPreviewCancel(cs);
@@ -2822,7 +2639,11 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-                    if (sim) serverSimCommitPreview(sim);
+                    if (sim) {
+                        threadsWaitForMutex();
+                        serverSimCommitPreview(sim);
+                        threadsReleaseMutex();
+                    }
                 } else {
                     clientSimNetSendLobbyPreviewCommit(cs);
                 }
@@ -2874,7 +2695,11 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-                    if (sim) serverSimCommitPreview(sim);
+                    if (sim) {
+                        threadsWaitForMutex();
+                        serverSimCommitPreview(sim);
+                        threadsReleaseMutex();
+                    }
                 } else {
                     clientSimNetSendLobbyPreviewCommit(cs);
                 }
@@ -2886,8 +2711,10 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             if (cs) {
                 if (clientSimIsSinglePlayer(cs)) {
                     ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-                    if (sim && serverSimRevertPreview(sim)) {
-                        serverSimPublishLobbySettings(sim);
+                    if (sim) {
+                        threadsWaitForMutex();
+                        serverSimRevertPreview(sim);
+                        threadsReleaseMutex();
                     }
                 } else {
                     clientSimNetSendLobbyPreviewCancel(cs);
@@ -2914,36 +2741,31 @@ static void lobbySendRemoveBot(ClientSim *cs, uint8_t slot) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim) return;
         if (serverSimGetState(sim) != serverStateLobby) return;
+        threadsWaitForMutex();
         serverSimRemoveBot(sim, slot);
-        if (slot < MAX_TANKS) s_botNameOverridden[slot] = false;
         serverSimPublishLobbySlot(sim, slot);
+        threadsReleaseMutex();
+        if (slot < MAX_TANKS) s_botNameOverridden[slot] = false;
         return;
     }
     clientSimNetSendRemoveBot(cs, slot);
 }
 
-/* Move `targetSlot` to `teamNumber`. The host (or any client with
- * lobbyClientMayEdit authority on the server) can move any player;
- * non-authorised clients can only move themselves. The server gates
- * this — we just send the request. */
+/* Move `targetSlot` to `teamNumber`. On SP-host the wrapper's
+ * local-transport branch applies the supplied slot directly; over
+ * UDP the server uses the sender's clientIdx and a non-host client
+ * can only change its own team (the slot byte rides along but is
+ * advisory). */
 static void lobbySendTeamSet(ClientSim *cs,
                              uint8_t targetSlot, uint8_t teamNumber) {
-    if (cs && clientSimIsSinglePlayer(cs)) {
-        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-        if (!sim || targetSlot >= MAX_TANKS) return;
-        serverSimSetTeam(sim, targetSlot, teamNumber);
-        serverSimPublishLobbySlot(sim, targetSlot);
-        return;
-    }
-    /* MP teamSet: targetSlot == self only for now (server gates anyway). */
-    clientSimNetSendTeamSet(cs, teamNumber);
+    clientSimNetSendTeamSet(cs, targetSlot, teamNumber);
 }
 
 /* Update a bot's per-slot config (difficulty / personality / name
- * override). Mirrors the server-side PACKET_LOBBY_BOT_CONFIG handler.
- * In single-player we write directly into spServerSim->botConfigs and
- * (if name supplied) update the players struct so the lobby slot's
- * playerName changes as well. */
+ * override). Pre-validates the name on the client (UX courtesy — the
+ * UI can drop bad input before sending) and hands off to the wire
+ * wrapper, whose local-transport branch re-runs the canonical
+ * validate-and-apply path for SP-host. */
 static void lobbySendBotConfig(ClientSim *cs,
                                uint8_t slot,
                                uint8_t difficulty, uint8_t personality,
@@ -2976,28 +2798,6 @@ static void lobbySendBotConfig(ClientSim *cs,
         effectiveName = validated;
     }
 
-    if (cs && clientSimIsSinglePlayer(cs)) {
-        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-        if (!sim || slot >= MAX_TANKS) return;
-        if (serverSimGetState(sim) != serverStateLobby) return;
-        if (difficulty > 2 || personality > 3) return;
-        if (!serverSimGetLobbyPlayer(sim, slot)->isBot) return;
-        {
-            LobbyBotConfig *bc = serverSimGetBotConfigMut(sim, slot);
-            if (bc) {
-                bc->difficulty  = difficulty;
-                bc->personality = personality;
-            }
-        }
-        if (effectiveName && effectiveName[0] != '\0') {
-            serverSimRenameBotSlot(sim, slot, effectiveName);
-        }
-        /* Publish bot config change AND the slot's new state (playerName
-         * may have changed). */
-        serverSimPublishLobbyBotConfig(sim, slot);
-        serverSimPublishLobbySlot(sim, slot);
-        return;
-    }
     clientSimNetSendLobbyBotConfig(cs, slot, difficulty, personality, effectiveName);
 }
 
@@ -3012,8 +2812,11 @@ static void lobbySendSetBotBrain(ClientSim *cs,
         if (!sim || slot >= MAX_TANKS) return;
         if (serverSimGetState(sim) != serverStateLobby) return;
         if (!serverSimGetLobbyPlayer(sim, slot)->isBot) return;
+        /* serverSimSwitchBotBrain calls serverSimSetBotBrainIdxFor,
+         * which publishes CTRL_LOBBY_BOT_BRAIN itself. */
+        threadsWaitForMutex();
         serverSimSwitchBotBrain(sim, slot, brainIdx);
-        serverSimPublishLobbyBotBrain(sim, slot);
+        threadsReleaseMutex();
         return;
     }
     clientSimNetSendLobbySetBotBrain(cs, slot, brainIdx);
@@ -3021,41 +2824,36 @@ static void lobbySendSetBotBrain(ClientSim *cs,
 
 /* Clear a team's metadata (color/name/pool back to defaults).
  * Mirrors PACKET_LOBBY_TEAM_CLEAR. Only called when the team is
- * empty — caller already gates on memberCount == 0. */
+ * empty — caller already gates on memberCount == 0. The wrapper's
+ * local-transport branch handles SP-host. */
 static void lobbySendTeamClear(ClientSim *cs, uint8_t teamId) {
-    if (cs && clientSimIsSinglePlayer(cs)) {
-        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-        if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
-        {
-            TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
-            if (t) memset(t, 0, sizeof(*t));
-        }
-        serverSimPublishLobbyTeamMeta(sim, teamId);
-        return;
-    }
     clientSimNetSendLobbyTeamClear(cs, teamId);
 }
 
-/* Update a team's naming pool. Mirrors the per-team naming dropdown
- * which previously sent transportUdpClientSendLobbyTeamMeta directly.
- * Single-player path mutates spServerSim->teams[teamId] in-place AND
- * re-rolls every bot on the team whose name wasn't manually
- * overridden so the new pool's vibe applies immediately. */
+/* Update a team's naming pool. The team-meta write goes through the
+ * wire wrapper (its local-transport branch handles SP-host). After
+ * the new pool is published we re-roll every bot on the team whose
+ * name wasn't manually overridden so the new pool's vibe applies
+ * immediately — the SP and MP branches diverge only in which set of
+ * accessors they iterate (server-sim vs client-sim mirror); both
+ * land on the same wire wrapper for the per-bot rename sends. */
 static void lobbySendTeamPool(ClientSim *cs,
                               uint8_t teamId, uint8_t namingPool,
                               const char *teamName) {
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
         if (!sim || teamId == 0 || teamId >= MAX_TANKS) return;
-        TeamMetadata *t = serverSimGetTeamMetaMut(sim, teamId);
-        if (!t) return;
-        t->in_use = 1;
-        t->namingPool = namingPool;
-        if (teamName && teamName[0]) {
-            strncpy(t->name, teamName, LOBBY_TEAM_NAME_LEN - 1);
-            t->name[LOBBY_TEAM_NAME_LEN - 1] = '\0';
+        /* Route the team-meta write through the wire wrapper. The
+         * local-transport branch in client_net.c applies the same
+         * fields (and pool-uniqueness rewrite) under the threads
+         * mutex. Read the current color so the wrapper's required
+         * color arg doesn't clobber it — fresh teams fall back to a
+         * per-teamId default, same as the MP branch below. */
+        uint8_t color = clientSimGetLobbyTeamColor(cs, (BYTE)(teamId));
+        if (!clientSimGetLobbyTeamInUse(cs, (BYTE)(teamId))) {
+            color = (uint8_t)((teamId - 1) & 7);
         }
-        serverSimPublishLobbyTeamMeta(sim, teamId);
+        clientSimNetSendLobbyTeamMeta(cs, teamId, color, namingPool, teamName);
 
         /* Rename bots on this team whose names weren't overridden by
          * the host. We pick names sequentially from the new pool,
@@ -3142,140 +2940,37 @@ static void lobbySendTeamPool(ClientSim *cs,
 }
 
 /* Game-settings dispatcher. settingType is one of LST_* (wire_limits.h);
- * payload is 1 or 2 bytes per server-side parser. Mirrors what
- * transport_udp_server.c::PACKET_LOBBY_SET_SETTING does to spServerSim
- * for the single-player path, then re-syncs so the lobby UI's read
- * of cs->lobby* sees the new value on the next frame. Without the
- * sync the checkbox/radio flashes for one frame and reverts. */
+ * payload is 1 or 2 bytes per server-side parser. Forwards to the
+ * client_net wrapper, whose local-transport branch shares
+ * serverSimApplyLobbySetting with the UDP-side packet handler so SP
+ * and wire follow one code path. */
 static void lobbySendSetting(ClientSim *cs,
                              uint8_t settingType,
                              const uint8_t *value, uint8_t valueLen) {
     /* Pre-send validation for setting types that have a wire-side range
      * cap on the server. Drop out-of-range values rather than letting
      * the server reject them — the server has the authoritative check
-     * (transport_udp_server.c) and emits LOBBY_REJECT_INVALID; this
-     * mirrors the cap so the SP-host local apply path doesn't bypass
-     * it either. */
+     * (transport_udp_server.c) and emits LOBBY_REJECT_INVALID. */
     if (settingType == LST_TIME_MINUTES && valueLen == 2) {
         uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
         if (mins < LOBBY_TIME_MINUTES_MIN ||
             mins > LOBBY_TIME_MINUTES_MAX) {
+            mpDiagLog("[ui] lobbySendSetting REJECTED type=%d (time-minutes out of range)",
+                      (int)settingType);
             return;
         }
     }
-    if (cs && clientSimIsSinglePlayer(cs)) {
-        ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-        if (!sim) return;
-        if (serverSimGetState(sim) != serverStateLobby) return;
-        switch (settingType) {
-            case LST_GAME_TYPE:
-                /* gameType enum is 1..3 (Open / Tournament / Strict).
-                 * The wire carries the raw enum value. */
-                if (valueLen == 1 && value[0] >= 1 && value[0] <= 3) {
-                    /* mirror of transport_udp_server.c:2881-2886 —
-                     * ranked games forbid the "Open" type. SP has no
-                     * wire to reject on; drop the change silently. */
-                    if (serverSimGetRanked(sim) &&
-                        (gameType)value[0] == gameOpen) {
-                        break;
-                    }
-                    serverSimSetGameType(sim, (gameType)value[0]);
-                }
-                break;
-            case LST_HIDDEN_MINES:
-                if (valueLen == 1) serverSimSetHiddenMines(sim, value[0] != 0);
-                break;
-            case LST_AI_POLICY:
-                if (valueLen == 1 && value[0] <= 3) {
-                    /* mirror of transport_udp_server.c:2898-2903 —
-                     * ranked games forbid any AI policy other than
-                     * "none". SP drops the change silently. */
-                    if (serverSimGetRanked(sim) &&
-                        (aiType)value[0] != aiNone) {
-                        break;
-                    }
-                    serverSimSetAiPolicy(sim, value[0]);
-                    serverSimSetBotAiType(sim, (aiType)value[0]);
-                    /* Switching to "No computer tanks" should clear every
-                     * existing bot — otherwise the lobby keeps showing
-                     * bots that the host explicitly disabled. Iterate all
-                     * slots (bots can occupy any) and remove unconditionally;
-                     * publish each slot so the UI updates. */
-                    if ((aiType)value[0] == aiNone) {
-                        for (BYTE i = 0; i < MAX_TANKS; i++) {
-                            if (serverSimIsBot(sim, i)) {
-                                serverSimRemoveBot(sim, i);
-                                serverSimPublishLobbySlot(sim, i);
-                            }
-                        }
-                    }
-                }
-                break;
-            case LST_TIME_LIMIT: {
-                if (valueLen == 1) {
-                    bool tl = value[0] != 0;
-                    serverSimSetTimeLimit(sim, tl);
-                    /* When the host turns the time limit off, gameLength
-                     * goes to TIME_UNLIMITED; on, derive from current
-                     * timeMinutes mirror. */
-                    if (!tl) {
-                        serverSimSetGameLength(sim, -1);
-                    } else if (serverSimGetTimeMinutes(sim) > 0) {
-                        serverSimSetGameLength(sim,
-                            (int32_t)serverSimGetTimeMinutes(sim) * 60 * 50);
-                    }
-                }
-                break;
-            }
-            case LST_TIME_MINUTES: {
-                if (valueLen == 2) {
-                    uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
-                    serverSimSetTimeMinutes(sim, mins);
-                    if (serverSimGetTimeLimit(sim)) {
-                        serverSimSetGameLength(sim,
-                            (int32_t)mins * 60 * 50);
-                    }
-                }
-                break;
-            }
-            case LST_AUTO_LOCK_ON_GAME:
-                if (valueLen == 1) {
-                    bool v = value[0] != 0;
-                    /* mirror of transport_udp_server.c:2956-2959 —
-                     * ranked games keep autoLock forced ON. */
-                    if (serverSimGetRanked(sim) && !v) {
-                        break;
-                    }
-                    serverSimSetAutoLockOnGameStart(sim, v);
-                }
-                break;
-            case LST_RANKED:
-                if (valueLen == 1) {
-                    bool r = value[0] != 0;
-                    serverSimSetRanked(sim, r);
-                    if (r) {
-                        serverSimSetAiPolicy(sim, 0 /* aiNone */);
-                        serverSimSetBotAiType(sim, aiNone);
-                        for (BYTE bi = 0; bi < MAX_TANKS; bi++) {
-                            if (serverSimIsBot(sim, bi)) {
-                                serverSimRemoveBot(sim, bi);
-                            }
-                        }
-                        if (clientSimGetLobbyGameType(cs) == gameOpen) {
-                            serverSimSetGameType(sim, gameTournament);
-                        }
-                        /* mirror of transport_udp_server.c:2990-2997 —
-                         * force autoLockOnGameStart=true so new players
-                         * can't slip into a ranked game mid-round. */
-                        if (!serverSimGetAutoLockOnGameStart(sim)) {
-                            serverSimSetAutoLockOnGameStart(sim, true);
-                        }
-                    }
-                }
-                break;
+    /* Surface the click at the UI boundary so we can distinguish
+     * "click never reached the wire" from "click reached the wire but
+     * the server rejected/no-op'd it" from "click reached the server,
+     * was applied, but the radio's checked-state isn't updating". */
+    {
+        uint32_t valDump = 0;
+        for (uint8_t k = 0; k < valueLen && k < 4; k++) {
+            valDump = (valDump << 8) | value[k];
         }
-        serverSimPublishLobbySettings(sim);
-        return;
+        mpDiagLog("[ui] lobbySendSetting type=%d valueLen=%d value=0x%08x",
+                  (int)settingType, (int)valueLen, valDump);
     }
     clientSimNetSendLobbySetting(cs, settingType, value, valueLen);
 }
@@ -4926,21 +4621,8 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                         SDL_snprintf(defaultName, sizeof(defaultName), "%s", langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args));
                     }
                     uint8_t color = (uint8_t)((t - 1) & 7);
-                    if (clientSimIsSinglePlayer(cs)) {
-                        ServerSim *spSim = gameFrontGetSinglePlayerServerSim();
-                        TeamMetadata *tm = serverSimGetTeamMetaMut(spSim, t);
-                        if (spSim && tm) {
-                            tm->in_use = 1;
-                            tm->color = color;
-                            tm->namingPool = 0;
-                            strncpy(tm->name, defaultName, LOBBY_TEAM_NAME_LEN - 1);
-                            tm->name[LOBBY_TEAM_NAME_LEN - 1] = '\0';
-                            serverSimPublishLobbyTeamMeta(spSim, (uint8_t)t);
-                        }
-                    } else {
-                        clientSimNetSendLobbyTeamMeta(cs, (uint8_t)t,
-                            color, 0 /*pool=classic*/, defaultName);
-                    }
+                    clientSimNetSendLobbyTeamMeta(cs, (uint8_t)t,
+                        color, 0 /*pool=classic*/, defaultName);
                     break;
                 }
             }
@@ -5923,13 +5605,6 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         bool hasTransport = clientSimHasTransport(cs);
         if (hasTransport) {
             clientSimNetTick(cs);
-        }
-
-        /* Pump any in-flight map upload — sends a small batch of
-         * chunks each frame once the server has ACKed BEGIN. No-op
-         * when no upload is active. */
-        if (hasTransport) {
-            lobbyUploadPump(cs);
         }
 
         /* Clear balance proposal when countdown starts */
