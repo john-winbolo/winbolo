@@ -79,8 +79,16 @@ typedef struct {
     uint8_t clientType;    /* ClientType enum */
 } ClientLobbySlot;
 
-/* Callback typedefs for new transport message sending */
-typedef void (*NetChatSendFunc)(uint8_t destPlayer, const char *message);
+/* Callback typedefs for new transport message sending.
+ *
+ * NetChatSendFunc receives the owning ClientSim so the callback body
+ * can route the chat through the sim's own transport — making it safe
+ * to reuse a single callback function for every ClientSim (host human,
+ * bots) instead of one closure per sim. Pre-cs argument, the SDL3
+ * frontend's callback hard-coded `humanSim` as the routing target,
+ * which broke when wired onto a bot's ClientSim. */
+typedef void (*NetChatSendFunc)(struct ClientSim *cs, uint8_t fromPlayer,
+                                uint8_t destPlayer, const char *message);
 typedef void (*NetNameChangeSendFunc)(const char *newName);
 typedef void (*NetAllianceRequestFunc)(uint8_t toPlayer);
 typedef void (*NetAllianceAcceptFunc)(uint8_t toPlayer);
