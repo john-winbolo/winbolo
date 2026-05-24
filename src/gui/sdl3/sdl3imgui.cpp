@@ -2387,70 +2387,6 @@ static void renderMenuBar(ClientSim *cs) {
             if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))                                             clientSimLeaveAllianceSelf(cs);
         }
 
-        /* In-game votes — only enabled while the game is running. */
-        ImGui::Separator();
-        {
-            bool running = clientSimGetNetStatus(cs) == netRunning;
-            /* Count active teams for the surrender precondition. */
-            int activeTeams = 0;
-            bool teamSeen[17] = {0};
-            if (running) {
-                for (int i = 0; i < MAX_PLAYERS; i++) {
-                    const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
-                    if (!ls || !ls->connected || ls->isBot) continue;
-                    uint8_t t = ls->teamNumber;
-                    if (t == 0 || t > 16) continue;
-                    if (!teamSeen[t]) { teamSeen[t] = true; activeTeams++; }
-                }
-            }
-
-            if (ImGui::MenuItem("Vote: Return to lobby", nullptr, false, running)) {
-                clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_BACK_TO_LOBBY,
-                                               GAME_VOTE_TOGGLE_OPEN_ONLY);
-                clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_BACK_TO_LOBBY, true);
-                ServerSim *spSim = gameFrontGetServerSim();
-                if (spSim && !clientSimIsUdpTransport(cs)) {
-                    threadsWaitForMutex();
-                    serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
-                                            GAME_VOTE_KIND_BACK_TO_LOBBY,
-                                            GAME_VOTE_TOGGLE_OPEN_ONLY);
-                    threadsReleaseMutex();
-                }
-            }
-            if (!running && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Available once the game is running.");
-            }
-
-            const ClientLobbySlot *meSlot =
-                clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
-            bool meUnassigned = (meSlot && meSlot->teamNumber == 0);
-            bool surrEnabled = running && (activeTeams == 2) && !meUnassigned;
-            if (ImGui::MenuItem("Vote: Surrender", nullptr, false, surrEnabled)) {
-                clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_SURRENDER,
-                                               GAME_VOTE_TOGGLE_OPEN_ONLY);
-                clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_SURRENDER, true);
-                ServerSim *spSim = gameFrontGetServerSim();
-                if (spSim && !clientSimIsUdpTransport(cs)) {
-                    threadsWaitForMutex();
-                    serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
-                                            GAME_VOTE_KIND_SURRENDER,
-                                            GAME_VOTE_TOGGLE_OPEN_ONLY);
-                    threadsReleaseMutex();
-                }
-            }
-            if (!surrEnabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                if (!running) {
-                    ImGui::SetTooltip("Available once the game is running.");
-                } else if (meUnassigned) {
-                    ImGui::SetTooltip("Pick a team before voting to surrender.");
-                } else {
-                    ImGui::SetTooltip(
-                        "Surrender is only available when exactly two teams\n"
-                        "with human players remain.");
-                }
-            }
-        }
-
         ImGui::Separator();
         if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS)))                                                  sdl3ImguiShowSettings();
         ImGui::EndMenu();
@@ -2601,6 +2537,67 @@ static void renderMenuBar(ClientSim *cs) {
                     s_allianceReqCooldownEnd = SDL_GetTicks() + ALLIANCE_REQ_WAIT_MS;
                 }
                 if (!canRequest || inCooldown) ImGui::EndDisabled();
+            }
+        }
+        ImGui::Separator();
+        {
+            bool running = clientSimGetNetStatus(cs) == netRunning;
+            int activeTeams = 0;
+            bool teamSeen[17] = {0};
+            if (running) {
+                for (int i = 0; i < MAX_PLAYERS; i++) {
+                    const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
+                    if (!ls || !ls->connected || ls->isBot) continue;
+                    uint8_t t = ls->teamNumber;
+                    if (t == 0 || t > 16) continue;
+                    if (!teamSeen[t]) { teamSeen[t] = true; activeTeams++; }
+                }
+            }
+
+            if (ImGui::MenuItem("Vote: Return to lobby", nullptr, false, running)) {
+                clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_BACK_TO_LOBBY,
+                                               GAME_VOTE_TOGGLE_OPEN_ONLY);
+                clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_BACK_TO_LOBBY, true);
+                ServerSim *spSim = gameFrontGetServerSim();
+                if (spSim && !clientSimIsUdpTransport(cs)) {
+                    threadsWaitForMutex();
+                    serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
+                                            GAME_VOTE_KIND_BACK_TO_LOBBY,
+                                            GAME_VOTE_TOGGLE_OPEN_ONLY);
+                    threadsReleaseMutex();
+                }
+            }
+            if (!running && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Available once the game is running.");
+            }
+
+            const ClientLobbySlot *meSlot =
+                clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+            bool meUnassigned = (meSlot && meSlot->teamNumber == 0);
+            bool surrEnabled = running && (activeTeams == 2) && !meUnassigned;
+            if (ImGui::MenuItem("Vote: Surrender", nullptr, false, surrEnabled)) {
+                clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_SURRENDER,
+                                               GAME_VOTE_TOGGLE_OPEN_ONLY);
+                clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_SURRENDER, true);
+                ServerSim *spSim = gameFrontGetServerSim();
+                if (spSim && !clientSimIsUdpTransport(cs)) {
+                    threadsWaitForMutex();
+                    serverSimGameVoteToggle(spSim, clientSimGetMyPlayerNum(cs),
+                                            GAME_VOTE_KIND_SURRENDER,
+                                            GAME_VOTE_TOGGLE_OPEN_ONLY);
+                    threadsReleaseMutex();
+                }
+            }
+            if (!surrEnabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                if (!running) {
+                    ImGui::SetTooltip("Available once the game is running.");
+                } else if (meUnassigned) {
+                    ImGui::SetTooltip("Pick a team before voting to surrender.");
+                } else {
+                    ImGui::SetTooltip(
+                        "Surrender is only available when exactly two teams\n"
+                        "with human players remain.");
+                }
             }
         }
         ImGui::EndMenu();
