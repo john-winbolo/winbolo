@@ -2326,6 +2326,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_control_event_queue.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
+    tests/unit/test_bolo_rand.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2452,6 +2453,7 @@ set(_unit_test_names
     brain_inbox_overflow_drops_oldest
     brain_inbox_legacy_drain_fifo
     brain_inbox_clear_resets
+    bolo_rand_golden_sequence
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}

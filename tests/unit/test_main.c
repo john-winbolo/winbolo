@@ -93,6 +93,7 @@ static const UnitTestEntry s_tests[] = {
     { "brain_inbox_overflow_drops_oldest",       run_brain_inbox_overflow_drops_oldest       },
     { "brain_inbox_legacy_drain_fifo",           run_brain_inbox_legacy_drain_fifo           },
     { "brain_inbox_clear_resets",                run_brain_inbox_clear_resets                },
+    { "bolo_rand_golden_sequence",               run_bolo_rand_golden_sequence               },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

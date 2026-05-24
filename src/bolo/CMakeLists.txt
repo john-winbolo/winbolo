@@ -18,6 +18,7 @@ add_library(bolo_static STATIC
     allience.c
     bases.c
     bolo_map.c
+    bolo_rand.c
     bot_manager.c
     bot_worker_pool.c
     brain_data.c

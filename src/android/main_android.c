@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 
 #include "../common/wb_log.h"
+#include "bolo_rand.h"
 #include "client_sim.h"
 #include "client_render.h"
 #include "frontend.h"
@@ -211,7 +212,7 @@ int main(int argc, char *argv[]) {
   const char *cmdLine = "";
   DWORD tick;
 
-  srand((unsigned int)(time(NULL) ^ getpid()));
+  bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
 
   /* Check for winbolo:// URL passed via intent (see WinBoloActivity.getArguments) */
   for (int i = 1; i < argc; i++) {
