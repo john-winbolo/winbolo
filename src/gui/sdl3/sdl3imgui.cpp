@@ -3327,6 +3327,31 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->canRequest = canRequest;
     s->inCooldown = sdl3ImguiAllianceReqInCooldown();
 
+    /* Vote gating — same pre-compute as the in-window Players menu vote
+     * block (count active human teams, check our own team assignment).
+     * NULL cs leaves both predicates false, matching the alliance block. */
+    bool voteRunning = false, voteCanSurrender = false;
+    if (cs) {
+        voteRunning = (clientSimGetNetStatus(cs) == netRunning);
+        if (voteRunning) {
+            int activeTeams = 0;
+            bool teamSeen[17] = {0};
+            for (int i = 0; i < MAX_PLAYERS; i++) {
+                const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
+                if (!ls || !ls->connected || ls->isBot) continue;
+                uint8_t t = ls->teamNumber;
+                if (t == 0 || t > 16) continue;
+                if (!teamSeen[t]) { teamSeen[t] = true; activeTeams++; }
+            }
+            const ClientLobbySlot *meSlot =
+                clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+            bool meUnassigned = (meSlot && meSlot->teamNumber == 0);
+            voteCanSurrender = (activeTeams == 2) && !meUnassigned;
+        }
+    }
+    s->voteRunning      = voteRunning;
+    s->voteCanSurrender = voteCanSurrender;
+
     /* Per-slot snapshot — uses the fresh ping accessor (the s_playerPing
      * cache is updated only when the server pushes; the accessor includes
      * unflushed local timing). Stale slot rows in the native menu are
