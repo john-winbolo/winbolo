@@ -366,14 +366,38 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   value->num_objects = *clientSimGetBrainsNumObjects(csPtr);
   *clientSimGetBrainsNumObjects(csPtr) = 0;
 
-  /* Message */
-  if (messageIsNewMessage(clientSimGetMessages(csPtr)) == TRUE) {
-    value->message = (MessageInfo*) malloc(sizeof(MessageInfo));
-    value->message->receivers = malloc(sizeof(value->message->receivers));
-    value->message->message = malloc(512);
-    value->message->sender = messageGetNewMessage(clientSimGetMessages(csPtr), (char *) value->message->message, &(value->message->receivers)); /* FIXME: Second parameter? */
-  } else {
+  /* Messages — drain the full per-tick inbox into a contiguous array
+   * of MessageInfo. Pre-change behavior was a single-slot pull that
+   * silently dropped extras when N ally bots all chatted on the same
+   * tick. value->message stays valid as an alias to messages[0] so
+   * legacy C consumers don't change. */
+  {
+    MessageState *ms = clientSimGetMessages(csPtr);
+    int n = messageInboxCount(ms);
+    value->messages = NULL;
+    value->num_messages = 0;
     value->message = NULL;
+    if (n > 0) {
+      value->messages = (MessageInfo *)malloc((size_t)n * sizeof(MessageInfo));
+      for (int i = 0; i < n; i++) {
+        char  pbuf[BRAIN_INBOX_MSG_LEN];
+        BYTE  from = messageInboxPeek(ms, i, pbuf);
+        size_t plen = (size_t)((unsigned char)pbuf[0]);
+        value->messages[i].sender    = from;
+        value->messages[i].receivers = (uint32_t *)malloc(sizeof(uint32_t));
+        if (value->messages[i].receivers != NULL) {
+          *(value->messages[i].receivers) = 0;
+        }
+        value->messages[i].message = (u_char *)malloc(BRAIN_INBOX_MSG_LEN);
+        if (value->messages[i].message != NULL) {
+          memcpy(value->messages[i].message, pbuf, plen + 1);
+          value->messages[i].message[plen + 1] = '\0';
+        }
+      }
+      value->num_messages = (u_short)n;
+      value->message      = &value->messages[0];
+      messageInboxClear(ms);
+    }
   }
 
   /* Controling the tank */
@@ -455,10 +479,17 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
     free(value->events);
     value->events = NULL;
   }
-  if (value->message != NULL) {
-    free(value->message->receivers);
-    free(value->message->message);
-    free(value->message);
+  /* Free the per-tick messages array. value->message is just an alias
+   * into messages[0]; freeing it separately would be a double-free. */
+  if (value->messages != NULL) {
+    for (u_short mi = 0; mi < value->num_messages; mi++) {
+      free(value->messages[mi].receivers);
+      free(value->messages[mi].message);
+    }
+    free(value->messages);
+    value->messages = NULL;
+    value->message  = NULL;
+    value->num_messages = 0;
   }
 
   /* Controling the tank */

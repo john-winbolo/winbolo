@@ -30,6 +30,7 @@
 
 #include <stdio.h>
 #include "global.h"
+#include "wire_limits.h"   /* PACKET_MAX_CHAT_MESSAGE — sizes brain inbox slot */
 
 #ifndef MESSAGESTATE_TYPEDEF
 #define MESSAGESTATE_TYPEDEF
@@ -69,6 +70,15 @@ typedef struct MessageState MessageState;
  * during base-capture floods and drops chars mid-message. When full, the
  * oldest pending cells are dropped so producers never block. */
 #define MESSAGE_QUEUE_CAP 10240
+
+/* Brain inbox dimensions. Capacity 32 covers the worst-case
+ * full-roster broadcast (16 bots all chatting on the same tick) with
+ * 2× headroom for concurrent human chat. Per-slot text fits a
+ * Pascal-stringified PACKET_MAX_CHAT_MESSAGE (length byte + body +
+ * NUL); the host enforces PACKET_MAX_CHAT_MESSAGE on the wire so any
+ * legit chat fits in this slot. */
+#define BRAIN_INBOX_CAP     32
+#define BRAIN_INBOX_MSG_LEN (PACKET_MAX_CHAT_MESSAGE + 2)
 
 /* Offset to a player message */
 #define PLAYER_MESSAGE_OFFSET 5
@@ -121,8 +131,36 @@ struct MessageState {
   int     queueHead;
   int     queueTail;
   int     queueCount;
+  /* Legacy single-slot newMessage / newMessageFrom: kept as a back-compat
+   * alias for the messageIsNewMessage / messageGetNewMessage API. These
+   * now drain the head of the brain inbox below — non-brain consumers
+   * that still call the legacy pair see exactly one (oldest) message per
+   * call, the same shape as before this change. Brain consumers should
+   * use messageInboxCount / messageInboxPeek instead so a tick with
+   * multiple incoming chats from N allies isn't silently truncated to
+   * the most recent.
+   * (Pre-change behavior: each playerNMessage arrival overwrote
+   *  newMessage in place, so 15 simultaneous allies → brain sees 1.
+   *  See bolo/internal/messages.h history for context.) */
   char    newMessage[FILENAME_MAX];
   BYTE    newMessageFrom;
+
+  /* Brain inbox: per-tick queue of incoming chat messages addressed to
+   * this ClientSim. Sized to comfortably absorb a full 16-bot game
+   * where every ally broadcasts on the same tick, plus chat from humans.
+   * Strings are stored as Pascal strings (byte 0 = length, bytes 1..N =
+   * text) to match the wire format used by utilCtoPString. When the
+   * ring fills, the OLDEST entry is dropped — chat history is more
+   * useful than the oldest sample when we're saturated.
+   *
+   * Drained by brainDataMakeInfo (which copies into BrainInfo.messages
+   * and resets the inbox). Other consumers can peek non-destructively
+   * via messageInboxPeek; that path is mainly for tests / future UI. */
+  char    inboxText[BRAIN_INBOX_CAP][BRAIN_INBOX_MSG_LEN];
+  BYTE    inboxFrom[BRAIN_INBOX_CAP];
+  int     inboxHead;     /* index of oldest entry */
+  int     inboxTail;     /* one past the newest */
+  int     inboxCount;    /* 0..BRAIN_INBOX_CAP */
   bool    showNewswire;
   bool    showAssistant;
   bool    showAI;
@@ -152,5 +190,46 @@ void messageSetNetwork(MessageState *ms, bool isShown);
 void messageSetNetStatus(MessageState *ms, bool isShown);
 bool messageIsNewMessage(MessageState *ms);
 BYTE messageGetNewMessage(MessageState *ms, char *dest, uint32_t **playerBitmap);
+
+/*********************************************************
+*NAME:          Brain inbox helpers
+*PURPOSE:
+*  Multi-message queue used by brains to read every chat
+*  arrival in the current tick, not just the most recent.
+*  Without this, two allies broadcasting on the same tick
+*  see one of their messages silently overwritten before
+*  the brain ever reads it — the root cause of why
+*  aIndy-style ally coordination is fragile under load.
+*
+*  Producers (clientMessageAdd's playerNMessage paths)
+*  call messageInboxPush; the brain drains the entire ring
+*  each tick via messageInboxCount + messageInboxPeek (or
+*  brainDataMakeInfo which does the drain centrally and
+*  populates BrainInfo.messages).
+*
+*  Strings are stored as Pascal strings (byte 0 = length,
+*  bytes 1..N = text), matching utilCtoPString output and
+*  the legacy newMessage buffer convention.
+*********************************************************/
+
+/* Append one (sender, Pascal-string) pair to the inbox. When the
+ * ring is full, drops the OLDEST entry. text must already be in
+ * Pascal-string form (byte 0 = length). */
+void messageInboxPush(MessageState *ms, BYTE from, const char *pascalText);
+
+/* Returns current population (0..BRAIN_INBOX_CAP). */
+int  messageInboxCount(const MessageState *ms);
+
+/* Read the inbox entry at logical index i (0 = oldest). Returns
+ * the sender byte and copies the Pascal-stringified text into
+ * dest (caller-provided, must be at least BRAIN_INBOX_MSG_LEN
+ * bytes). Returns 0 and writes an empty Pascal string when i is
+ * out of range. Non-destructive. */
+BYTE messageInboxPeek(const MessageState *ms, int i, char *dest);
+
+/* Drop every queued message. Used by brainDataMakeInfo after
+ * draining into the BrainInfo.messages array so the next tick's
+ * arrivals start with an empty queue. */
+void messageInboxClear(MessageState *ms);
 
 #endif /* MESSAGE_H */

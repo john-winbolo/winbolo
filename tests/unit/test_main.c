@@ -89,6 +89,10 @@ static const UnitTestEntry s_tests[] = {
     { "queue_hasspace_at_capacity",              run_queue_hasspace_at_capacity              },
     { "brain_crash_log_writes_file",             run_brain_crash_log_writes_file             },
     { "brain_crash_log_falls_back_to_luaptr",    run_brain_crash_log_falls_back_to_luaptr    },
+    { "brain_inbox_push_peek_fifo",              run_brain_inbox_push_peek_fifo              },
+    { "brain_inbox_overflow_drops_oldest",       run_brain_inbox_overflow_drops_oldest       },
+    { "brain_inbox_legacy_drain_fifo",           run_brain_inbox_legacy_drain_fifo           },
+    { "brain_inbox_clear_resets",                run_brain_inbox_clear_resets                },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

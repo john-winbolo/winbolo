@@ -26,11 +26,14 @@ local buffer = {}   -- array of {source, line, msg}
 local tick = 0
 local tick_start = 0  -- os.clock() at set_tick
 
--- Per-bot identity for per-file routing.
+-- Per-bot identity for per-file routing. Each Lua state runs one bot,
+-- so this module-level local is naturally per-bot. Set via M.set_bot()
+-- at brain startup; filename becomes print2_bot<bot_idx>.log so
+-- concurrent bots don't share one file.
 local bot_idx = nil
 
--- Persistent file handle. Opened once on first flush, kept open for
--- the process lifetime.
+-- Persistent file handle for the rolling log. Opened once on first
+-- flush, kept open for the process lifetime — never closed/reopened.
 local file = nil
 
 -- Stats / heartbeat used to detect silent failures.
@@ -44,9 +47,13 @@ function M.set_tick(t)
   if not _G._PRINT2_ENABLED then return end
   tick = t
   tick_start = clock()
+  -- Clear buffer for new tick
   for i = #buffer, 1, -1 do buffer[i] = nil end
 end
 
+-- Stamp this Lua state with its owning bot index. Call once at brain
+-- startup (Brain.think tick 1) — the file path uses this to route
+-- each bot's lines to its own print2_bot<N>.log.
 function M.set_bot(n)
   bot_idx = n
 end
@@ -92,6 +99,9 @@ local function fail_hard(reason, detail)
   error(msg, 0)
 end
 
+-- Try to open the per-bot rolling log file. Hard-fails if io.open
+-- returns nil — the user wants visible crashes when print2 is broken.
+-- Filename is print2_bot<N>.log so each bot writes to its own file.
 local function try_open(dir)
   local tag = bot_idx and tostring(bot_idx) or "unknown"
   local path = string.format("%s/print2_bot%s.log", dir, tag)
@@ -132,6 +142,7 @@ function M.flush()
   consecutive_failures = 0
 end
 
+-- Optional explicit close (called from Brain.close if defined)
 function M.close()
   if file then
     file:close()

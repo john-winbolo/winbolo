@@ -1840,11 +1840,24 @@ function M.steer(state, world, info, goal)
     return keys, taps
 
   elseif goal.kind == "refuel_at_base" then
-    -- Navigate to the base if not on it yet; brake if already there
-    local on_base = (tmx == goal.mx and tmy == goal.my)
+    -- wait_for_ally: an ally is camping our target base, so we park at
+    -- a low-danger tile in the surrounding 11x11 square (picked at
+    -- substate entry in init.lua) instead of crowding the base.  Fall
+    -- back to braking if no park spot was found.
+    local nav_mx, nav_my = goal.mx, goal.my
+    if goal.substate == "wait_for_ally" then
+      if goal.wait_mx and goal.wait_my then
+        nav_mx, nav_my = goal.wait_mx, goal.wait_my
+      else
+        return keys, taps  -- no park spot — brake in place
+      end
+    end
+    -- Navigate to the (possibly-overridden) destination if not on it
+    -- yet; brake if already there.
+    local on_base = (tmx == nav_mx and tmy == nav_my)
     if not on_base then
       local _t_p0 = BRAIN_PROFILE and clock_us() or 0
-      local nx, ny = cpf_path_to(state, info, goal.mx, goal.my)
+      local nx, ny = cpf_path_to(state, info, nav_mx, nav_my)
       if nx then
         local _t_la0 = BRAIN_PROFILE and clock_us() or 0
         local lx, ly = path_lookahead(state, info, nx, ny)
@@ -1857,7 +1870,7 @@ function M.steer(state, world, info, goal)
         target_dist = U.wdist(info.tankx, info.tanky, U.m2w(lx), U.m2w(ly))
       end
       if BRAIN_PROFILE then _t_path_us = _t_path_us + (clock_us() - _t_p0) end
-      goal_dist = U.wdist(info.tankx, info.tanky, goal.wx, goal.wy)
+      goal_dist = U.wdist(info.tankx, info.tanky, U.m2w(nav_mx), U.m2w(nav_my))
 
       -- Nav debug overlay (same as the generic navigate branch below)
       if BRAIN_DEBUG_MODE then
@@ -1866,6 +1879,12 @@ function M.steer(state, world, info, goal)
         if pf.next_mx and pf.next_mx >= 0 then
           viz.rect("steering_text", pf.next_mx, pf.next_my, pf.next_mx + 1, pf.next_my + 1,
                        255, 255, 0, 200)
+          -- Show which pathfinder produced this step. path_to picks
+          -- Dijkstra slate KIND_NORMAL first; falls back to A* on miss.
+          local method = cpf._last_method or "?"
+          local label  = (method == "dij") and "dij/NORMAL" or method
+          viz.text("steering_text", pf.next_mx + 0.05, pf.next_my + 0.05, label,
+                   "topleft", 255, 255, 0, 220)
         end
         if state._steer_lx then
           viz.circle("nav_lookahead_marker", state._steer_lx + 0.5, state._steer_ly + 0.5, 0.4,
@@ -1875,12 +1894,12 @@ function M.steer(state, world, info, goal)
           viz.line("nav_lookahead_marker", twx, twy, state._steer_lx + 0.5, state._steer_ly + 0.5,
                        255, 0, 255, 160)
         end
-        -- Nav destination (white circle at the base tile)
-        viz.circle("pf_destination", goal.mx + 0.5, goal.my + 0.5, 0.3, 255, 255, 255, 180)
+        -- Nav destination (white circle at the destination tile)
+        viz.circle("pf_destination", nav_mx + 0.5, nav_my + 0.5, 0.3, 255, 255, 255, 180)
         if state.next_goal and state.next_goal.wx and state.next_goal.wy then
           local ngx = state.next_goal.wx / 256.0
           local ngy = state.next_goal.wy / 256.0
-          viz.line("pf_destination", goal.mx + 0.5, goal.my + 0.5, ngx, ngy, 100, 0, 140, 220)
+          viz.line("pf_destination", nav_mx + 0.5, nav_my + 0.5, ngx, ngy, 100, 0, 140, 220)
           viz.circle("pf_destination", ngx, ngy, 0.25, 100, 0, 140, 220)
         end
       end
@@ -2025,10 +2044,12 @@ function M.steer(state, world, info, goal)
         local cheb = math.max(dmx, dmy)
         local pf_status = pf.status or "?"
         -- Detailed info at top: coords + chebyshev + status.
+        local method = cpf._last_method or "?"
+        local m_label = (method == "dij") and "dij/NORMAL" or method
         viz.text("steering_text",
                  pf.next_mx + 0.5, pf.next_my - 0.3,
-                 string.format("pf.next=(%d,%d) cheb=%d [%s]",
-                               pf.next_mx, pf.next_my, cheb, pf_status),
+                 string.format("pf.next=(%d,%d) cheb=%d [%s] %s",
+                               pf.next_mx, pf.next_my, cheb, pf_status, m_label),
                  "center", 255, 255, 120, 230, 0.5)
         -- Tiny "pf.next" tag at bottom, paired with the cliff-safety
         -- tag on the scan squares so the two yellows are distinguishable.

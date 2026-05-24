@@ -63,6 +63,7 @@ static const TermDoc kTermDocs[] = {
     {"pickup",  "A-star cost of spot to pill, minus this pill's danger contribution."},
     { "wsim",    "Forward-sim damage cost — additive armour/ammo cost from simulating travel through danger fields; set in the wsim block." },
     { "hist",    "Oscillation history penalty — increases when the bot repeatedly picks/abandons the same goal to break loops." },
+    { "ally_claimed", "Cross-pool penalty added when an ally bot is broadcasting the same goal (matched by kind + target_id, or kind + tile). attack_tank exempt; refuel_at_base gets 100; everything else +10000." },
     { NULL, NULL }
     };
 

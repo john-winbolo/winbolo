@@ -269,7 +269,17 @@ typedef struct
 	u_short num_objects;	// number of moving objects visible
 	ObjectInfo *objects;	// array information about those objects
 
-	MessageInfo *message;	// Set if you recevied a message
+	/* Legacy single-message field. Set to &messages[0] when num_messages > 0
+	 * (NULL otherwise). New brain code should iterate the messages array
+	 * below to avoid losing extra arrivals in the same tick — historically
+	 * this was a single-slot buffer that overwrote on every arrival. */
+	MessageInfo *message;
+	/* Full per-tick inbox: every chat message addressed to this brain
+	 * during the current tick, in FIFO order. Owned by the BrainInfo
+	 * (freed in brainDataExtractInfo); pointers inside each MessageInfo
+	 * (receivers, message) are also owned and freed there. */
+	MessageInfo *messages;
+	u_short num_messages;
 
 	// Interface to control the tank
 	uint32_t *holdkeys; /* was u_long: key bitmask, must be 32-bit */

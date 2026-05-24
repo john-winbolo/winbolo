@@ -346,7 +346,31 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   }
   lua_setfield(L, -2, "objects");
 
-  /* Received message */
+  /* Received messages — full per-tick inbox, pushed as an array of
+   * {sender=N, receivers=N, text="..."} tables. info.message (singular)
+   * stays as a nil-or-table alias to messages[1] for legacy brains
+   * that haven't been ported to iterate info.messages yet. */
+  {
+    char msgBuf[256];
+    lua_newtable(L);  /* info.messages = {} */
+    for (u_short mi = 0; mi < info->num_messages; mi++) {
+      const MessageInfo *m = &info->messages[mi];
+      lua_newtable(L);
+      lua_pushinteger(L, m->sender);
+      lua_setfield(L, -2, "sender");
+      lua_pushinteger(L, m->receivers ? *(m->receivers) : 0);
+      lua_setfield(L, -2, "receivers");
+      if (m->message != NULL && m->message[0] != 0) {
+        utilPtoCString((char *)m->message, msgBuf);
+        lua_pushstring(L, msgBuf);
+      } else {
+        lua_pushstring(L, "");
+      }
+      lua_setfield(L, -2, "text");
+      lua_rawseti(L, -2, mi + 1);
+    }
+    lua_setfield(L, -2, "messages");
+  }
   if (info->message != NULL) {
     char msgBuf[256];
     lua_newtable(L);

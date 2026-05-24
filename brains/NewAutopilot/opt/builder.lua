@@ -381,27 +381,44 @@ function M.decide(state, world, info, now)
   local tmx = info.tankx >> 8
   local tmy = info.tanky >> 8
 
-  -- Priority 0.4: repair_pill dispatch (forced — no danger gate).
-  -- See builder.lua for full notes. Within 5 tiles + LGM-reach passes
-  -- → dispatch BUILDMODE_PBOX; engine auto-repairs on arrival.
+  -- Priority 0.4: repair_pill dispatch (FORCED mode — no danger gate).
+  -- As soon as we're within 5 tiles of the target friendly damaged pill
+  -- AND the LGM's tile-walk reachability sim says it can actually arrive,
+  -- dispatch BUILDMODE_PBOX onto the pill tile. Engine-side (lgm.c:1060+)
+  -- treats an empty-handed LGM walking onto a pill while carrying trees
+  -- as a repair: pillsRepairPos consumes the trees, restores health.
+  --
+  -- After dispatch the brain is free to pick a new goal — the LGM
+  -- runs the repair autonomously. state._repair_dispatched signals
+  -- init.lua to clear state.goal back to "none".
   if state.goal and state.goal.kind == "repair_pill"
-     and state.goal.mx and state.goal.my
-     and info.trees > 0
-  then
-    -- Danger-blended distance cap: 5 tiles when safe, up to 12 when
-    -- under fire (danger 50..150 lerps the cap from BASE to DANGEROUS).
+     and state.goal.mx and state.goal.my then
+    local px, py = state.goal.mx, state.goal.my
+    local dist  = U.mdist(tmx, tmy, px, py)
+    -- Danger-blended distance cap. Insist on dist<=5 when we're not
+    -- under fire; widen toward DIST_DANGEROUS as the tank's local
+    -- danger climbs from DANGER_LOW to DANGER_HIGH. The tank still
+    -- navigates toward the pill (goal.mx/my unchanged), so it keeps
+    -- closing — we just stop EARLIER when staying close would cost
+    -- armour. "Get as close as we can while it's safe" naturally
+    -- emerges from re-evaluating the cap each tick.
+    local DANGER_LOW, DANGER_HIGH = 50, 150
+    local DIST_BASE, DIST_DANGEROUS = 5, 12
     local danger_at_tank = (state.perc and state.perc.threat_at_tank) or 0
-    local t = (danger_at_tank - 50) / 100
+    local t = (danger_at_tank - DANGER_LOW) / (DANGER_HIGH - DANGER_LOW)
     if t < 0 then t = 0 elseif t > 1 then t = 1 end
-    local effective_max = 5 + 7 * t
-    if U.mdist(tmx, tmy, state.goal.mx, state.goal.my) <= effective_max then
-      local ticks = cpf_lgm_travel_ticks_map(
-        tmx, tmy, state.goal.mx, state.goal.my,
-        0, 0, 2000, 150)
-      if ticks > 0 then
-        state._repair_dispatched = true
-        return { x = state.goal.mx, y = state.goal.my, action = BUILDMODE_PBOX }
-      end
+    local effective_max = DIST_BASE + (DIST_DANGEROUS - DIST_BASE) * t
+    local in_range = dist <= effective_max
+    local has_trees = info.trees > 0
+    local ticks = (in_range and has_trees)
+      and cpf_lgm_travel_ticks_map(tmx, tmy, px, py, 0, 0, 2000, 150)
+      or -1
+    local can_dispatch = in_range and has_trees and ticks > 0
+
+
+    if can_dispatch then
+      state._repair_dispatched = true
+      return { x = px, y = py, action = BUILDMODE_PBOX }
     end
   end
 
@@ -417,15 +434,6 @@ function M.decide(state, world, info, now)
   local pill_threats_exist = state.perc and state.perc.pill_threats and #state.perc.pill_threats > 0
 
   -- Always show precondition status on the HUD when near a base
-  if BRAIN_DEBUG_MODE and has_base then
-    local parts = {}
-    parts[#parts + 1] = near_base and "near_base:YES" or string.format("near_base:NO(dist=%d)", has_base and U.mdist(tmx, tmy, info.base.x, info.base.y) or -1)
-    parts[#parts + 1] = has_trees and string.format("trees:YES(%d)", info.trees) or string.format("trees:NO(%d<%d)", info.trees, C.BASE_SHIELD_BUILD_COST)
-    parts[#parts + 1] = took_dmg and "took_dmg:YES" or "took_dmg:NO"
-    parts[#parts + 1] = pill_threats_exist and string.format("threats:%d", #state.perc.pill_threats) or "threats:0"
-    local all_ok = near_base and has_trees and took_dmg and pill_threats_exist
-    local cr, cg = all_ok and 0 or 200, all_ok and 200 or 100
-  end
 
   if near_base and has_trees and took_dmg then
     local bmx, bmy = info.base.x, info.base.y
@@ -629,17 +637,32 @@ function M.decide(state, world, info, now)
       local safety_ok  = force_mode
         or (not angry_pill_close and path_safe)
 
-      -- Pillbox-as-blocker: spend up to 2 carried pills on closest
-      -- shield slots instead of building walls (wall_shield only).
+      -- Pillbox-as-blocker: if the bot has carried pills on hand,
+      -- spend up to PILLBOX_BLOCKERS_MAX of them on the closest shield
+      -- slots instead of building walls. A pillbox is a much better
+      -- blocker than a wall — it actively shoots back at enemies. Only
+      -- applies to wall_shield (attack_pill); base_shield keeps its
+      -- defensive-wall economy. PBOX placement doesn't need trees, but
+      -- the engine refuses on FOREST tiles so we still farm those first.
       local PILLBOX_BLOCKERS_MAX = 2
       local pbox_used = (state.goal and state.goal._pillbox_blockers_used) or 0
-      if b.mode == "wall_shield"
-         and (info.carried_pills or 0) > 0
-         and pbox_used < PILLBOX_BLOCKERS_MAX
-         and wtt ~= C.T_FOREST
-         and can_reach
-         and safety_ok then
-        -- "attempts dispatched", not "blockers placed" — see builder.lua.
+      local can_pbox = b.mode == "wall_shield"
+                       and (info.carried_pills or 0) > 0
+                       and pbox_used < PILLBOX_BLOCKERS_MAX
+                       and wtt ~= C.T_FOREST
+                       and can_reach
+                       and safety_ok
+      if can_pbox then
+        -- NOTE: this is "attempts dispatched", not "blockers actually
+        -- placed". If the engine refuses the action or the LGM dies
+        -- in transit, this slot won't be retried — attack.lua's
+        -- wall_build iterator advances on T_PILLBOX/T_BUILDING/
+        -- T_HALFBUILD so a failed PBOX dispatch leaves the slot in
+        -- its original terrain and the iterator stays put, calling
+        -- back with a fresh PBOX attempt next tick UNLESS we've
+        -- already burned both attempts here. Acceptable trade
+        -- because losing 2 carried pills to LGM deaths is itself a
+        -- signal the position is too dangerous.
         state.goal._pillbox_blockers_used = pbox_used + 1
         log.reason("build", { mode = b.mode,
                               why = "drop pillbox as wall blocker",
@@ -649,6 +672,13 @@ function M.decide(state, world, info, now)
       end
 
       if has_trees and can_reach and safety_ok then
+        -- Forest in the way? The engine can't drop a wall on T_FOREST;
+        -- BUILDMODE_BUILD there just clears the trees, no wall goes up.
+        -- Dispatch FARM first to harvest, then the next builder tick
+        -- will see grass/road and dispatch the actual BUILD. Two
+        -- separate LGM round-trips, but the wall_shield idx in attack.lua
+        -- only advances on T_BUILDING/T_HALFBUILD so it'll keep
+        -- targeting the same tile until the wall is genuinely up.
         if wtt == C.T_FOREST then
           log.reason("build", { mode = b.mode, why = "harvest forest before wall",
                                 wall_mx = wx, wall_my = wy })
