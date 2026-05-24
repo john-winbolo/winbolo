@@ -1309,3 +1309,11 @@ STR_DLGLOBBY_SERVERDISP_INTERNET=インターネット
 
 # Connectivity badge tooltip
 STR_DLGLOBBY_CONN_TEST_TIP=テスト進行中
+
+# In-game votes
+STR_VOTE_BACK_TO_LOBBY=投票：ロビーに戻る
+STR_VOTE_SURRENDER=投票：降伏
+STR_VOTE_DRAW_TAG= （引き分け）
+STR_VOTE_NEEDS_RUNNING_TIP=ゲームが開始してから使用できます。
+STR_VOTE_SURRENDER_PICK_TEAM_TIP=降伏に投票する前にチームを選択してください。
+STR_VOTE_SURRENDER_TWO_TEAMS_TIP=降伏は人間のプレイヤーがいるチームが\nちょうど2チーム残っている場合にのみ使用できます。

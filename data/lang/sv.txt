@@ -1309,3 +1309,11 @@ STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
 
 # Connectivity badge tooltip
 STR_DLGLOBBY_CONN_TEST_TIP=Test pågår
+
+# In-game votes
+STR_VOTE_BACK_TO_LOBBY=Rösta: Återvänd till lobbyn
+STR_VOTE_SURRENDER=Rösta: Ge upp
+STR_VOTE_DRAW_TAG= (Oavgjort)
+STR_VOTE_NEEDS_RUNNING_TIP=Tillgängligt när spelet har startat.
+STR_VOTE_SURRENDER_PICK_TEAM_TIP=Välj ett lag innan du röstar för att ge upp.
+STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Ge upp är bara tillgängligt när exakt två lag\nmed mänskliga spelare återstår.
