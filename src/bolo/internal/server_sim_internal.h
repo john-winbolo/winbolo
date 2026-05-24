@@ -227,6 +227,11 @@ struct ServerSim {
     /* Map directory rotation — validated map file paths for random selection */
     char       **mapDirFiles;             /* Array of validated map file paths (malloc'd) */
     int          mapDirCount;             /* Number of valid maps in the array */
+    /* Operator-configured root for all server-side map I/O: lobby map
+     * list, SET_MAP path resolution, search. NULL → fall back to the
+     * built-in "data/maps". Captured in serverSimMapDirBuild from the
+     * -mapdir CLI arg with any trailing slash stripped. */
+    char        *mapDirPath;
 
     /* Random map generation (for -randommap mode) */
     bool         randomMapEnabled;       /* true when using -randommap */

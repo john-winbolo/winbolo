@@ -3422,8 +3422,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             }
 
             char fullPath[FILENAME_MAX];
-            SDL_snprintf(fullPath, sizeof(fullPath), "data/maps/%s",
-                         relPath);
+            SDL_snprintf(fullPath, sizeof(fullPath), "%s/%s",
+                         serverSimGetMapDirRoot(sim), relPath);
 
             if (!serverSimReloadMap(sim, fullPath)) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
@@ -3635,7 +3635,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             free(bytes);  /* serverSimReloadMap re-reads it via its own path */
 
             char localPath[FILENAME_MAX];
-            SDL_snprintf(localPath, sizeof(localPath), "data/maps/%s", relBuf);
+            SDL_snprintf(localPath, sizeof(localPath), "%s/%s",
+                         serverSimGetMapDirRoot(sim), relBuf);
             bool previewed = false;
             if (serverSimReloadMap(sim, localPath)) {
                 /* Display name: the announce name without ".map". */
