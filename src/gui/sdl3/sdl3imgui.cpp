@@ -332,6 +332,8 @@ static int    s_sendMsgRecipient  = kSendAll;
 static char   s_sendMsgBuf[PACKET_MAX_CHAT_MESSAGE + 1] = "";
 static Uint64 s_sendMsgCooldownEnd = 0;   /* SDL_GetTicks() value; 0 = not in cooldown */
 static bool   s_sendMsgFocusInput = false; /* Set true to focus the text input next frame */
+static int    s_sendMsgFocusFrames = 0;
+static bool   s_sendMsgHideNav = false;
 #define SEND_MSG_WAIT_MS 2000
 
 /* Alliance request cooldown */
@@ -1001,15 +1003,25 @@ static void renderSendMsgContent(ClientSim *cs) {
      * (3 bytes each); for ASCII it's 128. */
     /* Auto-focus on window appear or when Ctrl+M re-pressed */
     bool wantSelectAll = false;
-    if (ImGui::IsWindowAppearing() || s_sendMsgFocusInput) {
+    if (s_sendMsgFocusInput) {
+        s_sendMsgFocusFrames = 2;
+        s_sendMsgFocusInput = false;
+    }
+    if (ImGui::IsWindowAppearing() || s_sendMsgFocusFrames > 0) {
         ImGui::SetWindowFocus();
         ImGui::SetKeyboardFocusHere(0);
         wantSelectAll = true;
-        s_sendMsgFocusInput = false;
+        if (s_sendMsgFocusFrames > 0) s_sendMsgFocusFrames--;
     }
     ImGui::SetNextItemWidth(-1.0f);
+    if (s_sendMsgHideNav)
+        ImGui::GetCurrentWindow()->DC.NavHideHighlightOneFrame = true;
     bool pressedEnter = ImGui::InputText("##msg", s_sendMsgBuf, sizeof(s_sendMsgBuf),
                                          ImGuiInputTextFlags_EnterReturnsTrue);
+    if (s_sendMsgHideNav) {
+        ImGui::GetCurrentContext()->NavCursorVisible = false;
+        if (ImGui::IsItemActive()) s_sendMsgHideNav = false;
+    }
     if (wantSelectAll) {
         if (ImGuiInputTextState *state = ImGui::GetInputTextState(ImGui::GetItemID()))
             state->SelectAll();
@@ -1038,9 +1050,8 @@ static void renderSendMsgContent(ClientSim *cs) {
             dialogDismissKeyboard(s_window);
         }
 #else
-        /* Re-focus the input and select all so the user can type to
-         * overwrite the previous message immediately after cooldown. */
         s_sendMsgFocusInput = true;
+        s_sendMsgHideNav = true;
 #endif
     }
 }
