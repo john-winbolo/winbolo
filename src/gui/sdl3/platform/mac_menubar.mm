@@ -49,6 +49,11 @@ extern "C" void windowMenuNetworkDebug_toggle(struct ClientSim *cs);
 extern "C" void clientSimRequestAllianceSelected(struct ClientSim *cs);
 extern "C" void clientSimLeaveAllianceSelf(struct ClientSim *cs);
 extern "C" void sdl3ImguiNoteAllianceRequested(void);
+extern "C" void clientSimNetSendGameVoteToggle(struct ClientSim *cs,
+                                               unsigned char kind,
+                                               unsigned char toggleMode);
+extern "C" void clientSimSetGameVoteWidgetVisible(struct ClientSim *cs,
+                                                  unsigned char kind, bool visible);
 
 extern "C" void sdl3ImguiShowKeySetup(void);
 extern "C" void sdl3ImguiShowChangeName(void);
@@ -106,6 +111,8 @@ static NSMenuItem *s_winboloRequestAllianceItem = nil;
 static NSMenuItem *s_winboloLeaveAllianceItem   = nil;
 static NSMenuItem *s_playersRequestAllianceItem = nil;
 static NSMenuItem *s_playersLeaveAllianceItem   = nil;
+static NSMenuItem *s_playersVoteBackToLobbyItem = nil;
+static NSMenuItem *s_playersVoteSurrenderItem   = nil;
 
 /* Brains menu — the parent item drives enable-gating on aiActive, and the
  * submenu is rebuilt whenever brainCount or brainSettingsShown changes.
@@ -236,6 +243,8 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onNetworkDebugMessages:(id)sender;
 - (void)onRequestAlliance:(id)sender;
 - (void)onLeaveAlliance:(id)sender;
+- (void)onVoteReturnToLobby:(id)sender;
+- (void)onVoteSurrender:(id)sender;
 - (void)onShowSendMsg:(id)sender;
 - (void)onSelectAllPlayers:(id)sender;
 - (void)onSelectNonePlayers:(id)sender;
@@ -388,6 +397,26 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onLeaveAlliance:(id)sender {
     (void)sender;
     if (g_clientSim) clientSimLeaveAllianceSelf((struct ClientSim *)g_clientSim);
+}
+/* Vote handlers — mirror the in-window Players menu vote items in
+ * sdl3imgui.cpp. The send wrapper routes through cs->transport.sendBytes
+ * (chat/alliance pattern), so the same call covers UDP and SP-host.
+ * The widget-visible setter opens the local-side vote panel; once the
+ * server publishes CTRL_GAME_VOTE_STATE the widget populates. The
+ * numeric literals match the GAME_VOTE_KIND_* / GAME_VOTE_TOGGLE_*
+ * constants in client_sim.h — kept inline to avoid pulling a T1 header
+ * into a platform .mm. */
+- (void)onVoteReturnToLobby:(id)sender {
+    (void)sender;
+    if (!g_clientSim) return;
+    clientSimNetSendGameVoteToggle((struct ClientSim *)g_clientSim, 1, 2);
+    clientSimSetGameVoteWidgetVisible((struct ClientSim *)g_clientSim, 1, true);
+}
+- (void)onVoteSurrender:(id)sender {
+    (void)sender;
+    if (!g_clientSim) return;
+    clientSimNetSendGameVoteToggle((struct ClientSim *)g_clientSim, 2, 2);
+    clientSimSetGameVoteWidgetVisible((struct ClientSim *)g_clientSim, 2, true);
 }
 - (void)onShowSendMsg:(id)sender {
     (void)sender;
@@ -1209,6 +1238,30 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [playersMenu addItem:playersLeaveAllianceItem];
     s_playersLeaveAllianceItem = playersLeaveAllianceItem;
 
+    /* In-game votes — back-to-lobby and surrender. Placement mirrors the
+     * in-window Players menu in renderMenuBar(): after the alliance
+     * actions, separated by a divider, enabled only while the game is
+     * running. The Surrender item additionally requires exactly two
+     * active human teams and that we are not on team 0 — gated in
+     * mac_menubar_refresh() from MacMenuState. */
+    [playersMenu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *playersVoteBackToLobbyItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_VOTE_BACK_TO_LOBBY)
+        action:@selector(onVoteReturnToLobby:)
+        keyEquivalent:@""];
+    [playersVoteBackToLobbyItem setTarget:g_bridge];
+    [playersMenu addItem:playersVoteBackToLobbyItem];
+    s_playersVoteBackToLobbyItem = playersVoteBackToLobbyItem;
+
+    NSMenuItem *playersVoteSurrenderItem = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_VOTE_SURRENDER)
+        action:@selector(onVoteSurrender:)
+        keyEquivalent:@""];
+    [playersVoteSurrenderItem setTarget:g_bridge];
+    [playersMenu addItem:playersVoteSurrenderItem];
+    s_playersVoteSurrenderItem = playersVoteSurrenderItem;
+
     /* Brains menu — top-level, between Players and Window. Mirrors the
      * in-window Brains menu in renderMenuBar(). The submenu is built with
      * just the permanent Manual item; mac_menubar_refresh() rebuilds the
@@ -1370,6 +1423,13 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
     if (s_winboloLeaveAllianceItem)   [s_winboloLeaveAllianceItem   setEnabled:canLeave];
     if (s_playersRequestAllianceItem) [s_playersRequestAllianceItem setEnabled:canRequest];
     if (s_playersLeaveAllianceItem)   [s_playersLeaveAllianceItem   setEnabled:canLeave];
+
+    /* Vote gating — Return-to-lobby tracks `voteRunning`; Surrender
+     * additionally needs exactly two active human teams and that we
+     * are on a real team. Both predicates come pre-computed from the
+     * MacMenuState producer (populateMacMenuState in sdl3imgui.cpp). */
+    if (s_playersVoteBackToLobbyItem) [s_playersVoteBackToLobbyItem setEnabled:(s->voteRunning ? YES : NO)];
+    if (s_playersVoteSurrenderItem)   [s_playersVoteSurrenderItem   setEnabled:(s->voteCanSurrender ? YES : NO)];
 
     /* Per-slot view swap. Occupied slots get a WBPlayerSlotView assigned
      * (lazily allocated on first use); empty slots have their view torn

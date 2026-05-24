@@ -88,6 +88,11 @@ struct MacMenuState {
     bool canRequest;       /* any unallied, checked peer eligible to request */
     bool hasAllies;        /* self has at least one current ally */
     bool inCooldown;       /* request cooldown window currently active */
+    /* In-game vote gating — mirrors the same pre-compute (running flag,
+     * two-team check, unassigned-team check) used by the in-window
+     * Players menu so the native Vote: items enable/disable in lockstep. */
+    bool voteRunning;          /* clientSimGetNetStatus(cs) == netRunning */
+    bool voteCanSurrender;     /* running && exactly 2 active human teams && self on a team */
     /* Per-player slots — 16 fixed entries, indexed by player number.
      * mac_menubar_refresh() reads `enabled` to swap the slot's NSMenuItem
      * between a numeric "1".."16" placeholder and a rich WBPlayerSlotView. */
