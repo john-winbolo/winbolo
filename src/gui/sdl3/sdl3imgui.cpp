@@ -1671,7 +1671,10 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
     if (!ImGui::Begin(title, &open,
                       ImGuiWindowFlags_AlwaysAutoResize |
                       ImGuiWindowFlags_NoCollapse |
-                      ImGuiWindowFlags_NoSavedSettings)) {
+                      ImGuiWindowFlags_NoSavedSettings |
+                      ImGuiWindowFlags_NoFocusOnAppearing |
+                      ImGuiWindowFlags_NoBringToFrontOnFocus |
+                      ImGuiWindowFlags_NoNavInputs)) {
         ImGui::End();
         if (!open) { clientSimSetGameVoteWidgetVisible(cs, kind, false); autoPanelReset(lay); }
         return;
