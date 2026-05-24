@@ -260,7 +260,14 @@ struct ClientSim {
      * folder; the latest response lives here. lobbyMapListPath echoes
      * the requested path so the client can ignore stale responses
      * if it has navigated away. */
-#define LOBBY_MAP_LIST_MAX 64
+/* Per-directory ceiling on the Server Maps + Map Search caches.
+ * Matches MAP_CHOOSER_MAX_MAPS (imgui_mapchooser.h:38) so a
+ * directory's content is visible end-to-end. The wire side already
+ * supports arbitrary counts via PACKET_LOBBY_MAP_LIST_RSP chunking;
+ * this cap is the in-memory ClientSim ceiling. Per-ClientSim cost
+ * at 512: ~67 KB for the listing arrays, same again for the search
+ * arrays — ~130 KB total per ClientSim. */
+#define LOBBY_MAP_LIST_MAX 512
 #define LOBBY_MAP_LIST_NAME_LEN 128
     char     lobbyMapListPath[256];
     int      lobbyMapListCount;

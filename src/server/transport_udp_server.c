@@ -39,6 +39,7 @@
 #include "server_lifecycle.h"
 #include "control_event.h"
 #include "lobby_bot_pools.h"
+#include "client_sim_internal.h"  /* LOBBY_MAP_LIST_MAX cap shared with the wire */
 #include "../common/md5.h"
 #include "mapgen.h"
 #include "brain_list_internal.h"   /* BRAIN_LIST_PATH_LEN — ADD_BOT pathLen bound */
@@ -3472,12 +3473,16 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 }
             }
 
-            ServerMapEntry entries[64];
+            /* Cap matches LOBBY_MAP_LIST_MAX on the client so a
+             * directory's full content survives end-to-end. Stack-
+             * resident; each ServerMapEntry is ~152 bytes → ~76 KB,
+             * fine for any normal thread stack. */
+            ServerMapEntry entries[LOBBY_MAP_LIST_MAX];
             int got = -1;
             if (safe) {
                 got = serverSimEnumerateMapDir(sim,
                     relPath[0] == '\0' ? NULL : relPath,
-                    entries, 64);
+                    entries, LOBBY_MAP_LIST_MAX);
             }
             if (got < 0) got = 0;
 
@@ -3887,10 +3892,10 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 memcpy(query, buf + rpos, qLen);
             }
 
-            ServerMapEntry entries[64];
+            ServerMapEntry entries[LOBBY_MAP_LIST_MAX];
             int got = serverSimSearchMapDir(sim,
                 relPath[0] == '\0' ? NULL : relPath,
-                query, entries, 64);
+                query, entries, LOBBY_MAP_LIST_MAX);
             if (got < 0) got = 0;
 
             /* Chunked send — every chunk repeats the full path+query
