@@ -47,6 +47,7 @@
 #include <time.h>
 
 #include "../../common/wb_log.h"
+#include "bolo_rand.h"
 #include "client_sim.h"
 #include "control_event.h"
 #include "discovery.h"
@@ -712,7 +713,7 @@ static bool pickRandomMap(char *out, size_t outLen) {
             WB_LOG_WARN(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: no .map files in '%s'", dir);
             return false;
         }
-        int idx = rand() % count;
+        int idx = (int)bolo_rand_below((uint32_t)count);
         SDL_snprintf(out, outLen, "%s/%s", dir, mapFiles[idx]);
         WB_LOG_DEBUG(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: picked '%s' from %d maps", out, count);
         for (int i = 0; i < count; i++) SDL_free(mapFiles[i]);
@@ -738,7 +739,7 @@ static bool pickRandomMap(char *out, size_t outLen) {
         SDL_free(list);
         return false;
     }
-    int idx = rand() % filtered;
+    int idx = (int)bolo_rand_below((uint32_t)filtered);
     SDL_snprintf(out, outLen, "%s/%s", dir, list[idx]);
     WB_LOG_DEBUG(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: picked '%s' from %d maps", out, filtered);
     SDL_free(list);

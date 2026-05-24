@@ -31,6 +31,7 @@
 /* dirent.h removed — using SDL3 SDL_GlobDirectory for cross-platform directory listing */
 #include <SDL3/SDL.h>
 
+#include "bolo_rand.h"
 #include "global.h"
 #include "bolo_map.h"
 #include "netpacks.h"
@@ -3442,7 +3443,7 @@ bool serverSimMapDirPickRandom(ServerSim *sim) {
         return FALSE;
     }
 
-    idx = rand() % sim->mapDirCount;
+    idx = (int)bolo_rand_below((uint32_t)sim->mapDirCount);
 
     /* Try to avoid picking the same map we're already on */
     if (sim->mapDirCount > 1) {
@@ -3454,7 +3455,7 @@ bool serverSimMapDirPickRandom(ServerSim *sim) {
                 if (*p == '/' || *p == '\\') base = p + 1;
             }
             if (strcmp(base, sim->mapName) != 0) break;
-            idx = rand() % sim->mapDirCount;
+            idx = (int)bolo_rand_below((uint32_t)sim->mapDirCount);
         }
     }
 
