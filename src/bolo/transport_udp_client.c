@@ -2455,6 +2455,61 @@ void transportUdpClientSendReady(Transport *t, bool ready) {
     udpClientSendTo(c, buf, sizeof(buf));
 }
 
+void transportUdpClientSendChat(Transport *t, BYTE destPlayer,
+                                const char *message) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_CHAT_MESSAGE];
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (message == NULL || message[0] == '\0') return;
+    size_t msgLen = strlen(message);
+    if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
+    packHeader(buf, PACKET_CHAT_MESSAGE, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = destPlayer;
+    memcpy(buf + PACKET_HEADER_SIZE + 1, message, msgLen);
+    udpClientSendTo(c, buf, PACKET_HEADER_SIZE + 1 + msgLen);
+}
+
+void transportUdpClientSendAllianceRequest(Transport *t, BYTE toPlayer) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 2];
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    packHeader(buf, PACKET_ALLIANCE_REQUEST, c->outSequence++);
+    buf[PACKET_HEADER_SIZE]     = c->playerNum;
+    buf[PACKET_HEADER_SIZE + 1] = toPlayer;
+    udpClientSendTo(c, buf, sizeof(buf));
+}
+
+void transportUdpClientSendAllianceAccept(Transport *t, BYTE toPlayer) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 2];
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    packHeader(buf, PACKET_ALLIANCE_ACCEPT, c->outSequence++);
+    buf[PACKET_HEADER_SIZE]     = c->playerNum;
+    buf[PACKET_HEADER_SIZE + 1] = toPlayer;
+    udpClientSendTo(c, buf, sizeof(buf));
+}
+
+void transportUdpClientSendAllianceLeave(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 1];
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    packHeader(buf, PACKET_ALLIANCE_LEAVE, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = c->playerNum;
+    udpClientSendTo(c, buf, sizeof(buf));
+}
+
+void transportUdpClientSendGameVoteToggle(Transport *t,
+                                          uint8_t kind,
+                                          uint8_t toggleMode) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 2];
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    packHeader(buf, PACKET_GAME_VOTE_TOGGLE, c->outSequence++);
+    buf[PACKET_HEADER_SIZE]     = kind;
+    buf[PACKET_HEADER_SIZE + 1] = toggleMode;
+    udpClientSendTo(c, buf, sizeof(buf));
+}
+
 void transportUdpClientSendAddBot(Transport *t, uint8_t teamNumber,
                                   const char *botName) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;

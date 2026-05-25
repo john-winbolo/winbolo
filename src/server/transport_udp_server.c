@@ -2740,41 +2740,19 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             serverHandleControlAck(buf, len, fromAddr);
             break;
         case PACKET_CHAT_MESSAGE: {
-            /* Chat message format:
-             *   [header 8] [destPlayer 1] [message up to PACKET_MAX_CHAT_MESSAGE] */
+            /* Wire: [header 8] [destPlayer 1] [message up to
+             *       PACKET_MAX_CHAT_MESSAGE]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && len > PACKET_HEADER_SIZE + 1) {
-                uint8_t destPlayer = buf[PACKET_HEADER_SIZE];
-                int msgLen = len - PACKET_HEADER_SIZE - 1;
-                if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
-
-                {
-                    ControlEvent evt;
-                    memset(&evt, 0, sizeof(evt));
-                    evt.type = CTRL_CHAT;
-                    evt.u.chat.fromPlayer = (BYTE)clientIdx;
-                    evt.u.chat.destPlayer = destPlayer;
-                    evt.u.chat.bodyLen = (uint16_t)msgLen;
-                    if (msgLen > 0) {
-                        memcpy(evt.u.chat.body,
-                               buf + PACKET_HEADER_SIZE + 1, msgLen);
-                    }
-                    serverSimPublishControl(sim, &evt);
-
-                    {
-                        char pstr[256];
-                        int pLen = msgLen;
-                        if (pLen > 255) pLen = 255;
-                        pstr[0] = (char)pLen;
-                        memcpy(pstr + 1, buf + PACKET_HEADER_SIZE + 1, pLen);
-                        if (destPlayer == 0xFF) {
-                            logAddEvent(log_MessageAll, (BYTE)clientIdx, 0, 0, 0, 0, pstr);
-                        } else {
-                            logAddEvent(log_MessagePlayers, (BYTE)clientIdx, destPlayer, 0, 0, 0, pstr);
-                        }
-                    }
-                }
+            if (clientIdx < 0 || len <= PACKET_HEADER_SIZE + 1) break;
+            int msgLen = len - PACKET_HEADER_SIZE - 1;
+            if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
+            ClientCommand cmd = { .type = CMD_CHAT };
+            cmd.u.chat.destPlayer = buf[PACKET_HEADER_SIZE];
+            cmd.u.chat.bodyLen    = (uint16_t)msgLen;
+            if (msgLen > 0) {
+                memcpy(cmd.u.chat.body, buf + PACKET_HEADER_SIZE + 1, msgLen);
             }
+            (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
         case PACKET_NAME_CHANGE: {
@@ -2924,51 +2902,31 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_ALLIANCE_REQUEST: {
-            /* Wire: [header 8] [fromPlayer 1] [toPlayer 1] */
-            /* Ranked games disallow alliances entirely. */
-            if (serverSimGetRanked(sim)) break;
+            /* Wire: [header 8] [fromPlayer 1] [toPlayer 1]. fromPlayer
+             * byte is vestigial; senderSlot drives attribution. */
             int clientIdx = serverFindClient(fromAddr);
-            fprintf(stderr, "[UDP SERVER] Alliance request: clientIdx=%d len=%d\n",
-                    clientIdx, len);
-            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 2) {
-                uint8_t toPlayer = buf[PACKET_HEADER_SIZE + 1];
-                fprintf(stderr, "[UDP SERVER] Alliance request from=%d to=%d connected=%d\n",
-                        clientIdx, toPlayer,
-                        (toPlayer < MAX_TANKS) ? udpServer.clients[toPlayer].connected : -1);
-                if (toPlayer < MAX_TANKS &&
-                    udpServer.clients[toPlayer].connected) {
-                    ControlEvent reqEvt;
-                    logAddEvent(log_AllyRequest, (BYTE)clientIdx, toPlayer, 0, 0, 0, NULL);
-                    memset(&reqEvt, 0, sizeof(reqEvt));
-                    reqEvt.type = CTRL_ALLIANCE_REQUEST;
-                    reqEvt.u.allianceRequest.fromPlayer = (BYTE)clientIdx;
-                    reqEvt.u.allianceRequest.toPlayer   = toPlayer;
-                    serverSimPublishControl(serverSimGetActive(), &reqEvt);
-                }
-            }
+            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 2) break;
+            ClientCommand cmd = { .type = CMD_ALLIANCE_REQUEST };
+            cmd.u.allianceRequest.toPlayer = buf[PACKET_HEADER_SIZE + 1];
+            (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
         case PACKET_ALLIANCE_ACCEPT: {
-            /* Wire: [header 8] [fromPlayer 1] [toPlayer 1]
-             * fromPlayer = the accepter, toPlayer = who requested.
-             * WBN tracker + replay-log side effects fire inside
-             * serverSimAcceptAlliance so every input source (wire,
-             * local transport, headless cmd-stdin) gets them. */
+            /* Wire: [header 8] [fromPlayer 1] [toPlayer 1].
+             * fromPlayer byte is vestigial. toPlayer = newMember. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 2) {
-                uint8_t newMember = buf[PACKET_HEADER_SIZE + 1];
-                serverSimAcceptAlliance(serverSimGetActive(),
-                                        (BYTE)clientIdx, newMember);
-            }
+            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 2) break;
+            ClientCommand cmd = { .type = CMD_ALLIANCE_ACCEPT };
+            cmd.u.allianceAccept.newMember = buf[PACKET_HEADER_SIZE + 1];
+            (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
         case PACKET_ALLIANCE_LEAVE: {
-            /* Wire: [header 8] [playerNum 1] — WBN + log side effects
-             * inside serverSimLeaveAlliance, same reasoning. */
+            /* Wire: [header 8] [playerNum 1]. playerNum byte is vestigial. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 1) {
-                serverSimLeaveAlliance(serverSimGetActive(), (BYTE)clientIdx);
-            }
+            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 1) break;
+            ClientCommand cmd = { .type = CMD_ALLIANCE_LEAVE };
+            (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
         case PACKET_MAP_ACK: {
@@ -4325,15 +4283,16 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_GAME_VOTE_TOGGLE: {
-            /* Wire: [header 8] [kind 1] [on 1]. */
+            /* Wire: [header 8] [kind 1] [toggleMode 1]. */
             if (len < PACKET_HEADER_SIZE + 2) break;
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0) break;
             if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
             udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
-            uint8_t kind   = buf[PACKET_HEADER_SIZE + 0];
-            uint8_t toggle = buf[PACKET_HEADER_SIZE + 1];
-            serverSimGameVoteToggle(sim, (uint8_t)clientIdx, kind, toggle);
+            ClientCommand cmd = { .type = CMD_GAME_VOTE_TOGGLE };
+            cmd.u.gameVoteToggle.kind       = buf[PACKET_HEADER_SIZE + 0];
+            cmd.u.gameVoteToggle.toggleMode = buf[PACKET_HEADER_SIZE + 1];
+            (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
         case PACKET_PUNCH_NOTIFY: {

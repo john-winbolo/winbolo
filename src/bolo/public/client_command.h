@@ -46,7 +46,12 @@ typedef enum {
     CMD_LOBBY_BOT_CONFIG,
     CMD_LOBBY_TEAM_META,
     CMD_LOBBY_TEAM_CLEAR,
-    CMD_LOBBY_SETTING
+    CMD_LOBBY_SETTING,
+    CMD_CHAT,
+    CMD_ALLIANCE_REQUEST,
+    CMD_ALLIANCE_ACCEPT,
+    CMD_ALLIANCE_LEAVE,
+    CMD_GAME_VOTE_TOGGLE
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. Codes 1-7 are
@@ -117,15 +122,56 @@ typedef struct {
     uint8_t value[32];
 } CmdLobbySetting;
 
+/* CMD_CHAT — broadcast or directed chat. destPlayer == 0xFF means
+ * "all players"; any other value targets a specific slot. body is
+ * not NUL-terminated; bodyLen counts the used prefix. */
+typedef struct {
+    uint8_t  destPlayer;
+    uint16_t bodyLen;
+    char     body[PACKET_MAX_CHAT_MESSAGE];
+} CmdChat;
+
+/* CMD_ALLIANCE_REQUEST — sender wants to ally with toPlayer.
+ * Sender is senderSlot (the wire's fromPlayer byte is vestigial). */
+typedef struct {
+    uint8_t toPlayer;
+} CmdAllianceRequest;
+
+/* CMD_ALLIANCE_ACCEPT — sender (the accepter) admits newMember
+ * to their alliance. Wire's fromPlayer = accepter is vestigial;
+ * sender comes from senderSlot. */
+typedef struct {
+    uint8_t newMember;
+} CmdAllianceAccept;
+
+/* CMD_ALLIANCE_LEAVE — sender leaves their alliance. No payload —
+ * the leaver is always senderSlot. */
+typedef struct {
+    uint8_t _unused;
+} CmdAllianceLeave;
+
+/* CMD_GAME_VOTE_TOGGLE — toggle / set a game-time vote (e.g.
+ * surrender). kind selects the vote; toggleMode is the per-vote
+ * payload semantic (0/1/2 in current usage). */
+typedef struct {
+    uint8_t kind;
+    uint8_t toggleMode;
+} CmdGameVoteToggle;
+
 typedef struct ClientCommand {
     ClientCommandType type;
     union {
-        CmdTeamSet         teamSet;
-        CmdReady           ready;
-        CmdLobbyBotConfig  lobbyBotConfig;
-        CmdLobbyTeamMeta   lobbyTeamMeta;
-        CmdLobbyTeamClear  lobbyTeamClear;
-        CmdLobbySetting    lobbySetting;
+        CmdTeamSet           teamSet;
+        CmdReady             ready;
+        CmdLobbyBotConfig    lobbyBotConfig;
+        CmdLobbyTeamMeta     lobbyTeamMeta;
+        CmdLobbyTeamClear    lobbyTeamClear;
+        CmdLobbySetting      lobbySetting;
+        CmdChat              chat;
+        CmdAllianceRequest   allianceRequest;
+        CmdAllianceAccept    allianceAccept;
+        CmdAllianceLeave     allianceLeave;
+        CmdGameVoteToggle    gameVoteToggle;
     } u;
 } ClientCommand;
 

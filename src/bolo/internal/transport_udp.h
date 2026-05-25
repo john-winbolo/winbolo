@@ -179,6 +179,16 @@ void transportUdpClientSendTeamSet(Transport *t, uint8_t slot,
 /* Send ready/unready to server. */
 void transportUdpClientSendReady(Transport *t, bool ready);
 
+/* Send a chat message. destPlayer = 0xFF broadcasts. */
+void transportUdpClientSendChat(Transport *t, BYTE destPlayer,
+                                const char *message);
+void transportUdpClientSendAllianceRequest(Transport *t, BYTE toPlayer);
+void transportUdpClientSendAllianceAccept(Transport *t, BYTE toPlayer);
+void transportUdpClientSendAllianceLeave(Transport *t);
+void transportUdpClientSendGameVoteToggle(Transport *t,
+                                          uint8_t kind,
+                                          uint8_t toggleMode);
+
 /* Request server add a bot. teamNumber=0 and botName=NULL let the
  * server pick defaults. The on-wire payload keeps the [pathLen 1]
  * byte for byte-compat with the original ADD_BOT format, but always

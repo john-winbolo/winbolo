@@ -364,41 +364,28 @@ const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen) {
 
 /* === Send wrappers ===
  * Most sends are still UDP-only (local transport ignores them) — those
- * wrappers continue to early-return on a non-UDP transport. The chat
- * wrapper below is the first to drop that gate: it builds the wire
- * packet itself and pushes it through the transport's sendBytes hook,
- * so bots (on a passive local transport) reach the server through the
- * same call path as a UDP-connected human. As features that need bot
- * participation come online — alliance, vote, team set, etc. — apply
- * the same pattern to those wrappers and mirror the matching handler
- * in transport_local.c's localSendBytes. */
+ * wrappers continue to early-return on a non-UDP transport. Wrappers
+ * for commands that have a CMD_* dispatcher arm route the local-
+ * transport path through serverSimApplyCommand under the mutex. */
 
 void clientSimNetSendChat(ClientSim *cs, BYTE destPlayer, const char *message) {
-  uint8_t buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_CHAT_MESSAGE];
-  size_t msgLen;
-  size_t len;
-
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->transport.sendBytes == NULL) return;
   if (message == NULL || message[0] == '\0') return;
-
-  msgLen = strlen(message);
+  if (cs->isUdpTransport) {
+    transportUdpClientSendChat(&cs->transport, destPlayer, message);
+    return;
+  }
+  if (cs->boundServerSim == NULL) return;
+  size_t msgLen = strlen(message);
   if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
-
-  /* PACKET_CHAT_MESSAGE wire format:
-   *   [magic 2][type 1][reserved 1][sequence 4][destPlayer 1][message...]
-   * Sequence stays zero — the server's chat handler doesn't consume it
-   * (UDP retransmit/redundancy applies to PACKET_INPUT only). */
-  buf[0] = BOLO_NEW_MAGIC_0;
-  buf[1] = BOLO_NEW_MAGIC_1;
-  buf[2] = PACKET_CHAT_MESSAGE;
-  buf[3] = 0;
-  memset(buf + 4, 0, 4);
-  buf[PACKET_HEADER_SIZE] = destPlayer;
-  memcpy(buf + PACKET_HEADER_SIZE + 1, message, msgLen);
-  len = PACKET_HEADER_SIZE + 1 + msgLen;
-
-  cs->transport.sendBytes(cs->transport.ctx, buf, len);
+  ClientCommand cmd = { .type = CMD_CHAT };
+  cmd.u.chat.destPlayer = destPlayer;
+  cmd.u.chat.bodyLen    = (uint16_t)msgLen;
+  memcpy(cmd.u.chat.body, message, msgLen);
+  threadsWaitForMutex();
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
+  threadsReleaseMutex();
 }
 
 void clientSimNetSendNameChange(ClientSim *cs, const char *newName) {
@@ -406,62 +393,48 @@ void clientSimNetSendNameChange(ClientSim *cs, const char *newName) {
   transportUdpClientSendNameChange(&cs->transport, newName);
 }
 
-/* Alliance send wrappers — same shape as clientSimNetSendChat above.
- * Build the wire packet inline and push through cs->transport.sendBytes.
- * Works on every transport: UDP unicasts to the server, local transport
- * dispatches in localSendBytes → serverSimAcceptAlliance / Leave (which
- * fire the WBN + replay-log side effects internally so all sources are
- * symmetric) or an inline CTRL_ALLIANCE_REQUEST publish for request. */
-
 void clientSimNetSendAllianceRequest(ClientSim *cs, BYTE toPlayer) {
-  uint8_t buf[PACKET_HEADER_SIZE + 2];
-
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->transport.sendBytes == NULL) return;
-
-  /* Wire: [magic 2][type 1][reserved 1][sequence 4][fromPlayer 1][toPlayer 1] */
-  buf[0] = BOLO_NEW_MAGIC_0;
-  buf[1] = BOLO_NEW_MAGIC_1;
-  buf[2] = PACKET_ALLIANCE_REQUEST;
-  buf[3] = 0;
-  memset(buf + 4, 0, 4);
-  buf[PACKET_HEADER_SIZE]     = clientSimGetMyPlayerNum(cs);
-  buf[PACKET_HEADER_SIZE + 1] = toPlayer;
-  cs->transport.sendBytes(cs->transport.ctx, buf, sizeof(buf));
+  if (cs->isUdpTransport) {
+    transportUdpClientSendAllianceRequest(&cs->transport, toPlayer);
+    return;
+  }
+  if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_ALLIANCE_REQUEST };
+  cmd.u.allianceRequest.toPlayer = toPlayer;
+  threadsWaitForMutex();
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
+  threadsReleaseMutex();
 }
 
 void clientSimNetSendAllianceAccept(ClientSim *cs, BYTE toPlayer) {
-  uint8_t buf[PACKET_HEADER_SIZE + 2];
-
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->transport.sendBytes == NULL) return;
-
-  /* Wire: [header 8][fromPlayer 1][toPlayer 1]  fromPlayer = the
-   * accepter (us); toPlayer = who originally requested (newMember). */
-  buf[0] = BOLO_NEW_MAGIC_0;
-  buf[1] = BOLO_NEW_MAGIC_1;
-  buf[2] = PACKET_ALLIANCE_ACCEPT;
-  buf[3] = 0;
-  memset(buf + 4, 0, 4);
-  buf[PACKET_HEADER_SIZE]     = clientSimGetMyPlayerNum(cs);
-  buf[PACKET_HEADER_SIZE + 1] = toPlayer;
-  cs->transport.sendBytes(cs->transport.ctx, buf, sizeof(buf));
+  if (cs->isUdpTransport) {
+    transportUdpClientSendAllianceAccept(&cs->transport, toPlayer);
+    return;
+  }
+  if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_ALLIANCE_ACCEPT };
+  cmd.u.allianceAccept.newMember = toPlayer;
+  threadsWaitForMutex();
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
+  threadsReleaseMutex();
 }
 
 void clientSimNetSendAllianceLeave(ClientSim *cs) {
-  uint8_t buf[PACKET_HEADER_SIZE + 1];
-
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->transport.sendBytes == NULL) return;
-
-  /* Wire: [header 8][playerNum 1] — the leaver is always us. */
-  buf[0] = BOLO_NEW_MAGIC_0;
-  buf[1] = BOLO_NEW_MAGIC_1;
-  buf[2] = PACKET_ALLIANCE_LEAVE;
-  buf[3] = 0;
-  memset(buf + 4, 0, 4);
-  buf[PACKET_HEADER_SIZE] = clientSimGetMyPlayerNum(cs);
-  cs->transport.sendBytes(cs->transport.ctx, buf, sizeof(buf));
+  if (cs->isUdpTransport) {
+    transportUdpClientSendAllianceLeave(&cs->transport);
+    return;
+  }
+  if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_ALLIANCE_LEAVE };
+  threadsWaitForMutex();
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
+  threadsReleaseMutex();
 }
 
 void clientSimNetSendLockToggle(ClientSim *cs, bool allow) {
@@ -723,23 +696,19 @@ void clientSimNetSendMapSkipVote(ClientSim *cs) {
 
 void clientSimNetSendGameVoteToggle(ClientSim *cs,
                                     uint8_t kind, uint8_t toggleMode) {
-  uint8_t buf[PACKET_HEADER_SIZE + 2];
-
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->transport.sendBytes == NULL) return;
-
-  /* Wire: [magic 2][type 1][reserved 1][sequence 4][kind 1][toggleMode 1].
-   * UDP transport delivers to transport_udp_server.c's PACKET_GAME_VOTE_TOGGLE
-   * case; local transport delivers to transport_local.c's matching case.
-   * Both end in serverSimGameVoteToggle. */
-  buf[0] = BOLO_NEW_MAGIC_0;
-  buf[1] = BOLO_NEW_MAGIC_1;
-  buf[2] = PACKET_GAME_VOTE_TOGGLE;
-  buf[3] = 0;
-  memset(buf + 4, 0, 4);
-  buf[PACKET_HEADER_SIZE]     = kind;
-  buf[PACKET_HEADER_SIZE + 1] = toggleMode;
-  cs->transport.sendBytes(cs->transport.ctx, buf, sizeof(buf));
+  if (cs->isUdpTransport) {
+    transportUdpClientSendGameVoteToggle(&cs->transport, kind, toggleMode);
+    return;
+  }
+  if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_GAME_VOTE_TOGGLE };
+  cmd.u.gameVoteToggle.kind       = kind;
+  cmd.u.gameVoteToggle.toggleMode = toggleMode;
+  threadsWaitForMutex();
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
+  threadsReleaseMutex();
 }
 
 void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize,

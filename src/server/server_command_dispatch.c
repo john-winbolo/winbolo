@@ -16,9 +16,11 @@
 #include <string.h>
 
 #include "client_command.h"
+#include "control_event.h"            /* ControlEvent, CTRL_CHAT, CTRL_ALLIANCE_REQUEST */
 #include "log.h"
 #include "netpacks.h"                 /* lobbyBotNameAcceptable */
 #include "server_sim.h"
+#include "server_sim_internal.h"      /* serverSimGameVoteToggle */
 #include "server_sim_lifecycle.h"     /* serverSimSetTeam, lobbyAutoUnreadyOnChange */
 #include "threads.h"
 #include "transport_udp.h"            /* transportUdpServerGetPlayerName,
@@ -162,6 +164,65 @@ CmdResult serverSimApplyCommand(ServerSim *sim, int senderSlot,
                                         p->valueLen)) {
             return CMD_REJECT_INVALID;
         }
+        return CMD_OK;
+    }
+    case CMD_CHAT: {
+        const CmdChat *p = &cmd->u.chat;
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_CHAT;
+        evt.u.chat.fromPlayer = (BYTE)senderSlot;
+        evt.u.chat.destPlayer = p->destPlayer;
+        evt.u.chat.bodyLen    = p->bodyLen;
+        if (p->bodyLen > 0) {
+            memcpy(evt.u.chat.body, p->body, p->bodyLen);
+        }
+        serverSimPublishControl(sim, &evt);
+        {
+            char pstr[256];
+            int pLen = p->bodyLen;
+            if (pLen > 255) pLen = 255;
+            pstr[0] = (char)pLen;
+            memcpy(pstr + 1, p->body, pLen);
+            if (p->destPlayer == 0xFF) {
+                logAddEvent(log_MessageAll, (BYTE)senderSlot, 0, 0, 0, 0, pstr);
+            } else {
+                logAddEvent(log_MessagePlayers, (BYTE)senderSlot,
+                            p->destPlayer, 0, 0, 0, pstr);
+            }
+        }
+        return CMD_OK;
+    }
+    case CMD_ALLIANCE_REQUEST: {
+        if (serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
+        const CmdAllianceRequest *p = &cmd->u.allianceRequest;
+        if (p->toPlayer >= MAX_TANKS) return CMD_REJECT_INVALID;
+        if (!serverSimIsPlayerConnected(sim, p->toPlayer)) {
+            return CMD_REJECT_INVALID;  /* silent on wire today; preserved */
+        }
+        logAddEvent(log_AllyRequest, (BYTE)senderSlot, p->toPlayer,
+                    0, 0, 0, NULL);
+        ControlEvent reqEvt;
+        memset(&reqEvt, 0, sizeof(reqEvt));
+        reqEvt.type = CTRL_ALLIANCE_REQUEST;
+        reqEvt.u.allianceRequest.fromPlayer = (BYTE)senderSlot;
+        reqEvt.u.allianceRequest.toPlayer   = p->toPlayer;
+        serverSimPublishControl(sim, &reqEvt);
+        return CMD_OK;
+    }
+    case CMD_ALLIANCE_ACCEPT: {
+        serverSimAcceptAlliance(sim, (BYTE)senderSlot,
+                                cmd->u.allianceAccept.newMember);
+        return CMD_OK;
+    }
+    case CMD_ALLIANCE_LEAVE: {
+        serverSimLeaveAlliance(sim, (BYTE)senderSlot);
+        return CMD_OK;
+    }
+    case CMD_GAME_VOTE_TOGGLE: {
+        serverSimGameVoteToggle(sim, (uint8_t)senderSlot,
+                                cmd->u.gameVoteToggle.kind,
+                                cmd->u.gameVoteToggle.toggleMode);
         return CMD_OK;
     }
     case CMD_NONE:
