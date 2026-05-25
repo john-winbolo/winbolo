@@ -4179,7 +4179,15 @@ function M.refresh_kill_lgm(state, info)
     -- wall_penalty is omitted here because the standoff scan already
     -- filters wall-blocked tiles (no walled engage spots survive), and
     -- the LOS branch is gated on wall_hp==0 by definition.
-    local R     = C.KILL_LGM_SHOOT_RANGE or 8
+    -- Nav target sits INSIDE the engage trigger by KILL_LGM_NAV_INSET
+    -- tiles.  Tank drives toward a spot at (shoot_range - inset) from
+    -- the LGM but the engage-mode trigger in steering still fires at
+    -- the full shoot_range.  Net effect: tank crosses into engage range
+    -- still under throttle (momentum carries it through), instead of
+    -- decelerating to a stop exactly at the boundary and letting the
+    -- LGM escape further while we slow down.
+    local NAV_INSET = C.KILL_LGM_NAV_INSET or 3
+    local R     = math.max(1, (C.KILL_LGM_SHOOT_RANGE or 8) - NAV_INSET)
     local boat  = (info.inboat and 1) or 0
     local tmx   = info.tankx >> 8
     local tmy   = info.tanky >> 8
@@ -4268,18 +4276,24 @@ function M.refresh_kill_lgm(state, info)
           lgm.dist or 0, aim_diff, info.shells or 0,
           tostring(lgm.near_tank_idnum))
       else
-        -- Standoff: walk Manhattan boundary at R, filter for LOS to LGM,
-        -- pick lowest Dijkstra cost.  Falls back to geometric point on
-        -- LGM→tank line at distance R when slate hasn't reached any
-        -- boundary tile yet.
+        -- Standoff: walk Manhattan boundary at R around the LGM's
+        -- PREDICTED future tile (where it'll be when we arrive),
+        -- filter for LOS to that point, pick lowest Dijkstra cost.
+        -- Driving toward the predicted spot keeps the engage point
+        -- valid as the LGM moves; otherwise by the time the tank
+        -- arrives, the LGM has slid forward and the spot is stale.
+        -- Falls back to geometric point on predicted→tank line at
+        -- distance R when slate hasn't reached any boundary tile yet.
+        local center_mx = lgm.predicted_mx or lgm.mx
+        local center_my = lgm.predicted_my or lgm.my
         for dx = -R, R do
           local dy_abs = R - math.abs(dx)
           local _ys = (dy_abs == 0) and { 0 } or { dy_abs, -dy_abs }
           for _, dy in ipairs(_ys) do
-            local mx = lgm.mx + dx
-            local my = lgm.my + dy
+            local mx = center_mx + dx
+            local my = center_my + dy
             if U.in_map(mx, my)
-               and PF.wall_hp_between(mx, my, lgm.mx, lgm.my) == 0 then
+               and PF.wall_hp_between(mx, my, center_mx, center_my) == 0 then
               local c = cpf.smart_cost_dij_only(KIND_NORMAL, mx, my, boat)
               if c and c < best_shoot_cost then
                 best_shoot_cost = c
@@ -4290,12 +4304,12 @@ function M.refresh_kill_lgm(state, info)
         end
         local path_cost
         if not shoot_mx then
-          local vdx = tmx - lgm.mx
-          local vdy = tmy - lgm.my
+          local vdx = tmx - center_mx
+          local vdy = tmy - center_my
           local vlen = math.sqrt(vdx * vdx + vdy * vdy)
           if vlen > 0.5 then
-            shoot_mx = math.floor(lgm.mx + (vdx / vlen) * R + 0.5)
-            shoot_my = math.floor(lgm.my + (vdy / vlen) * R + 0.5)
+            shoot_mx = math.floor(center_mx + (vdx / vlen) * R + 0.5)
+            shoot_my = math.floor(center_my + (vdy / vlen) * R + 0.5)
           else
             shoot_mx, shoot_my = tmx, tmy
           end

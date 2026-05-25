@@ -730,6 +730,10 @@ M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11°) aim toleranc
 -- farther than tank-combat opportunistic but require tighter aim.
 M.KILL_LGM_SHOOT_RANGE = 8   -- tiles: open fire when within this distance
 M.KILL_LGM_SHOOT_AIM   = 5   -- bolo angle units (~7°): tight tolerance for tiny target
+M.KILL_LGM_NAV_INSET   = 3   -- tiles: nav target sits this far INSIDE the engage boundary
+                             -- so tank crosses into engage range with forward momentum
+                             -- (engage trigger still fires at SHOOT_RANGE; only the
+                             -- "where to drive to" target gets pulled in)
 
 M.TANK_COMBAT_LOS_EXTRA_RANGE       = 3    -- tiles beyond ENGAGE_RANGE that qualify for LOS fast-engage
 M.TANK_COMBAT_LOS_BASE_COST         = 5    -- very cheap base cost when enemy is in-range with clear LOS

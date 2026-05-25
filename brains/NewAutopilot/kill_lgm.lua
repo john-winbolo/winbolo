@@ -24,11 +24,13 @@ local M = {}
 
 local C = require("constants")
 
--- EMA mix: 0.4 = ~3-tick effective window.  Raw 1-tick velocities are
--- jittery; smoothing them lets the predictor see real direction even
--- when the LGM is dodging building corners.  Lower alpha = smoother but
--- laggier on direction changes; 0.4 was the sweet spot in pencil tests.
-local V_EMA_ALPHA = 0.4
+-- Velocity sampling window: 3 brain ticks.  Velocity = (cur_pos -
+-- pos_3_ticks_ago) / 3.  Replaces the prior EMA-smoothed approach; the
+-- finite-difference window is short enough to track wall-sliding
+-- transitions but long enough to wash out 1-tick position quantization
+-- jitter from the engine's integer wu math.  When the LGM has fewer
+-- than 3 ticks of history, we use the oldest available sample.
+local V_WINDOW_TICKS = 10
 
 -- Drop history entries we haven't seen for this many ticks.  Covers LGMs
 -- that went into a tank, were killed, or drifted out of perception.
@@ -42,11 +44,18 @@ local SPLASH_WU = 128
 local MAX_ITERS = 3
 
 -- --------------------------------------------------------------------------
--- M.update_velocity(state, lgm, now) → v_ema_x, v_ema_y (wu/tick)
+-- M.update_velocity(state, lgm, now) → vx, vy (wu/tick)
 --
--- Per-LGM EMA velocity keyed by lgm.idnum.  Call once per LGM per tick
--- from perception, BEFORE consumers read v_ema.  Falls back to the
--- caller-provided lgm.vx/vy when no history exists yet (first sighting).
+-- Per-LGM finite-difference velocity keyed by lgm.idnum.  Maintains a
+-- short ring of recent (wx, wy, tick) samples; returns (cur −
+-- sample_3_ticks_ago) / Δticks.  Falls back to the oldest sample
+-- available when fewer than V_WINDOW_TICKS of history have accumulated.
+-- Call once per LGM per tick from perception, BEFORE consumers read
+-- v_ema_x/y on the LGM entry.
+--
+-- Field names on the history record (h.v_ema_x / h.v_ema_y) are kept
+-- for downstream compat — consumers don't care that it's no longer an
+-- EMA.
 -- --------------------------------------------------------------------------
 function M.update_velocity(state, lgm, now)
   if not lgm.idnum then
@@ -57,20 +66,34 @@ function M.update_velocity(state, lgm, now)
   local h = hist[lgm.idnum]
   if not h then
     h = {
-      last_wx = lgm.wx, last_wy = lgm.wy, last_tick = now,
+      samples = { { wx = lgm.wx, wy = lgm.wy, tick = now } },
+      last_tick = now,
       v_ema_x = lgm.vx or 0, v_ema_y = lgm.vy or 0,
     }
     hist[lgm.idnum] = h
     return h.v_ema_x, h.v_ema_y
   end
-  local dt = now - h.last_tick
-  if dt > 0 and dt < 20 then
-    local raw_vx = (lgm.wx - h.last_wx) / dt
-    local raw_vy = (lgm.wy - h.last_wy) / dt
-    h.v_ema_x = V_EMA_ALPHA * raw_vx + (1 - V_EMA_ALPHA) * h.v_ema_x
-    h.v_ema_y = V_EMA_ALPHA * raw_vy + (1 - V_EMA_ALPHA) * h.v_ema_y
+  -- Append current sample, drop entries older than V_WINDOW_TICKS+1.
+  local samples = h.samples
+  samples[#samples + 1] = { wx = lgm.wx, wy = lgm.wy, tick = now }
+  while samples[1] and (now - samples[1].tick) > V_WINDOW_TICKS do
+    -- Keep at least one sample older-than-or-equal to V_WINDOW_TICKS
+    -- so we always have a reference point; drop only if the *second*
+    -- sample is still at-or-past the window.
+    if samples[2] and (now - samples[2].tick) >= V_WINDOW_TICKS then
+      table.remove(samples, 1)
+    else
+      break
+    end
   end
-  h.last_wx, h.last_wy, h.last_tick = lgm.wx, lgm.wy, now
+  -- Velocity = (cur - oldest-in-window) / Δticks.
+  local oldest = samples[1]
+  local dt = now - oldest.tick
+  if dt > 0 then
+    h.v_ema_x = (lgm.wx - oldest.wx) / dt
+    h.v_ema_y = (lgm.wy - oldest.wy) / dt
+  end
+  h.last_tick = now
   return h.v_ema_x, h.v_ema_y
 end
 
@@ -119,30 +142,51 @@ end
 -- M.predict_aim(tank_wx, tank_wy, lgm_wx, lgm_wy, vx, vy)
 --   → aim_wx, aim_wy, sightLen, flight_ticks, distance_wu
 --
--- Single-pass lead predictor (no convergence loop).  Computes the
--- shell's flight time from current distance, projects the LGM along
--- v_ema by that many ticks, returns the projected aim point + the
--- sightLen needed to reach it.  Replaces the older 3-iter fixed-point
--- version (archived in kill_lgm_convergence_DELETEME.lua).
+-- Two-pass lead predictor with simple linear extrapolation:
+--   1. T1 = flight ticks for current tank↔LGM distance.
+--      pos1 = lgm + v * T1
+--   2. T2 = flight ticks for tank↔pos1 distance.
+--      If T2 > T1 (LGM moved away → shell takes longer), advance
+--      another (T2 − T1) ticks from pos1.
+-- Half-tile splash (128 wu) makes a single re-pass good enough.
+--
+-- v is the lookback-window velocity from M.update_velocity
+-- ((cur_pos - pos_N_ticks_ago) / N).  The N-tick window is long enough
+-- that wall-sliding shows up as the actual sliding velocity, so naive
+-- linear extrapolation tracks the LGM along the wall.
+--
+-- See WIP_kill_lgm_wall_aware_predict.md for a removed alternative
+-- that recovered the LGM's TRUE destination angle from wall-cancelled
+-- v_ema components — saved for revival if the linear predictor proves
+-- insufficient on wall-heavy maps.
 -- --------------------------------------------------------------------------
 function M.predict_aim(tank_wx, tank_wy, lgm_wx, lgm_wy, vx, vy)
   vx = vx or 0
   vy = vy or 0
+
   local dx = tank_wx - lgm_wx
   local dy = tank_wy - lgm_wy
-  local D = math.sqrt(dx * dx + dy * dy)
-  local sightLen = M.sightlen_for(D)
-  local T = M.flight_ticks(sightLen)
-  local aim_wx = lgm_wx + vx * T
-  local aim_wy = lgm_wy + vy * T
-  -- Re-fit sightLen to the projected distance so the caller sees a
-  -- gun-range that actually lands on the lead point, not on the
-  -- current LGM tile.
-  local pdx = tank_wx - aim_wx
-  local pdy = tank_wy - aim_wy
+  local D  = math.sqrt(dx * dx + dy * dy)
+  local T1 = M.flight_ticks(M.sightlen_for(D))
+  local pos1_wx = lgm_wx + vx * T1
+  local pos1_wy = lgm_wy + vy * T1
+
+  local pdx = tank_wx - pos1_wx
+  local pdy = tank_wy - pos1_wy
   local pD  = math.sqrt(pdx * pdx + pdy * pdy)
-  sightLen = M.sightlen_for(pD)
-  return aim_wx, aim_wy, sightLen, M.flight_ticks(sightLen), pD
+  local T2  = M.flight_ticks(M.sightlen_for(pD))
+  local aim_wx, aim_wy = pos1_wx, pos1_wy
+  if T2 > T1 then
+    local extra = T2 - T1
+    aim_wx = pos1_wx + vx * extra
+    aim_wy = pos1_wy + vy * extra
+  end
+
+  local fdx = tank_wx - aim_wx
+  local fdy = tank_wy - aim_wy
+  local fD  = math.sqrt(fdx * fdx + fdy * fdy)
+  local sightLen = M.sightlen_for(fD)
+  return aim_wx, aim_wy, sightLen, M.flight_ticks(sightLen), fD
 end
 
 -- --------------------------------------------------------------------------

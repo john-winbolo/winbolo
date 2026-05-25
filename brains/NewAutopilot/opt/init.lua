@@ -2944,11 +2944,13 @@ function Brain.think(info)
     local cur_gun    = info.gunrange or 14
     local tank_wx    = info.tankx
     local tank_wy    = info.tanky
-    -- Where the LGM will be NEXT tick (this tick's action takes
-    -- effect on the tank's NEXT-tick state, so target one tick
-    -- ahead).
-    local lgm_wx = _primary_lgm.wx + (_primary_lgm.v_ema_x or 0)
-    local lgm_wy = _primary_lgm.wy + (_primary_lgm.v_ema_y or 0)
+    -- Where the LGM will be at SHELL IMPACT — kill_lgm.predict_aim's
+    -- two-pass wall-aware simulation.  Fallback to next-tick linear
+    -- extrapolation if perception didn't stamp a prediction (cold start).
+    local lgm_wx = _primary_lgm.predicted_wx
+                or (_primary_lgm.wx + (_primary_lgm.v_ema_x or 0))
+    local lgm_wy = _primary_lgm.predicted_wy
+                or (_primary_lgm.wy + (_primary_lgm.v_ema_y or 0))
     local TURNS  = { { k = 0,             d =  0,          n = "T:none" },
                      { k = KEY_TURNLEFT,  d = -TURN_DELTA, n = "T:L"    },
                      { k = KEY_TURNRIGHT, d =  TURN_DELTA, n = "T:R"    } }
@@ -3177,14 +3179,31 @@ function Brain.think(info)
       if ev.status == "shooting" then _shooting_target = ev end
     end
 
+    -- Lead-prediction overlay: yellow line + ring at the predicted
+    -- impact tile for each LGM (perception stamps predicted_wx/wy via
+    -- kill_lgm.predict_aim's two-pass wall-aware sim).
+
     -- Clickable detail overlay: click the primary LGM tile to see the
     -- 27-candidate greedy search dump (every turn × speed × gun combo
     -- with its predicted crosshair-to-LGM euclidean distance).  Same
     -- pattern as attack_shield's per-candidate detail panel.
     if viz.hud_text then
       local hud_msg, r, g, b
+      -- Mode tag: ENGAGE = halted+aiming this tick, ENGAGE* = sticky
+      -- but LGM out of range, APPROACH = driving to engage spot,
+      -- empty = goal isn't kill_lgm.
+      local mode_tag = ""
+      if state.goal and state.goal.kind == "kill_lgm" then
+        local in_engage = state._kill_lgm_halt == true
+        local sticky    = state._kill_lgm_engaged_id ~= nil
+                          and state._kill_lgm_engaged_id == state.goal.target_id
+        if in_engage then mode_tag = "[ENGAGE] "
+        elseif sticky then mode_tag = "[ENGAGE*] "
+        else mode_tag = "[APPROACH] " end
+      end
       if _shooting_target then
-        hud_msg = string.format("KILL_LGM: SHOOTING lgm@(%d,%d) d=%.1f",
+        hud_msg = string.format("KILL_LGM: %sSHOOTING lgm@(%d,%d) d=%.1f",
+                                mode_tag,
                                 _shooting_target.mx, _shooting_target.my,
                                 _shooting_target.dist or -1)
         r, g, b = 255, 100, 100
@@ -3194,7 +3213,8 @@ function Brain.think(info)
         for _, ev in ipairs(state._kill_lgm_eval) do
           if best.status ~= "ready_busy" and ev.status == "ready_busy" then best = ev end
         end
-        hud_msg = string.format("KILL_LGM: %s lgm@(%d,%d) d=%.1f",
+        hud_msg = string.format("KILL_LGM: %s%s lgm@(%d,%d) d=%.1f",
+                                mode_tag,
                                 best.status, best.mx, best.my, best.dist or -1)
         r, g, b = 220, 220, 100
       end

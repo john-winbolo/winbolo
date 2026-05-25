@@ -1840,6 +1840,12 @@ function M.steer(state, world, info, goal)
     return keys, taps
 
   elseif goal.kind == "kill_lgm" then
+    -- Reset the sticky-engage flag when the target_id changes (new LGM
+    -- target this goal cycle).
+    if state._kill_lgm_engaged_id
+       and state._kill_lgm_engaged_id ~= goal.target_id then
+      state._kill_lgm_engaged_id = nil
+    end
     -- Match the goal's target LGM in perception's predicted list.
     local target_mx, target_my = goal.mx, goal.my
     local matched_elm = nil
@@ -1864,8 +1870,23 @@ function M.steer(state, world, info, goal)
     -- the firing block in init.lua to gate on aim_corr.
     local in_shooting_range = matched_elm and matched_elm.dist
                               and matched_elm.dist <= C.KILL_LGM_SHOOT_RANGE
+    -- Sticky engage: once we've crossed into shooting range for THIS
+    -- LGM (same target_id), stay in engage mode even if the LGM later
+    -- drifts back out of range.  Reverting to approach would brake the
+    -- tank and start a chase the LGM can win; staying in engage keeps
+    -- the turret on it and lets us keep firing (or wait for it to
+    -- reenter range).  Cleared when the goal changes or target_id
+    -- changes (see clear at top of dispatcher when goal.kind ~=
+    -- "kill_lgm").
+    if in_shooting_range then
+      state._kill_lgm_engaged_id = goal.target_id
+    end
+    local sticky_engaged = state._kill_lgm_engaged_id
+                       and state._kill_lgm_engaged_id == goal.target_id
+                       and matched_elm
+    local treat_as_engaged = in_shooting_range or sticky_engaged
     state._kill_lgm_halt = false
-    if in_shooting_range and matched_elm.predicted_wx then
+    if treat_as_engaged and matched_elm and matched_elm.predicted_wx then
       move_dir    = U.aim_at(info.tankx, info.tanky,
                               matched_elm.predicted_wx,
                               matched_elm.predicted_wy)

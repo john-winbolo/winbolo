@@ -252,6 +252,9 @@ M.IDS = {
   kill_lgm_engage  = { short = "Kill-LGM engage spot",
                        long  = "Magenta ring on the chosen engage tile (the closest-reachable in-range boundary tile around the LGM, picked by refresh_kill_lgm) + a line from the tank to that tile. Shows where the bot is driving while out of range." },
 
+  kill_lgm_predict = { short = "Kill-LGM lead prediction",
+                       long  = "Yellow ring + line from each visible LGM to the predicted shell-impact tile, accounting for wall-sliding. Drawn from kill_lgm.predict_aim's two-pass simulation; shows where the bot is actually aiming." },
+
   test_lgm_target    = { short = "Test: LGM victim target",
                          long  = "Cyan rect on the tile the victim bot's LGM is currently being dispatched to build. Test-harness only; only renders when the bot was flagged via BrainTest's -victim_ids <ids> CLI option (sets _BT_VICTIM=true)." },
 
