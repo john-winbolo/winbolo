@@ -39,6 +39,11 @@ extern bool isLogging;
 extern bool dontSendLog;
 extern char fileName[];
 
+/* Single dedicated-server log subscriber per process. The bus forbids
+ * subscribers whose ctx == sim, so the deliver callback reaches the sim
+ * through this file-static pointer instead. */
+static ServerSim *s_logSim = NULL;
+
 void makeLogFileName(char *outFileName, const char *mapName);
 
 static void handleGameOver(ServerSim *sim) {
@@ -130,7 +135,11 @@ static void handleGameStart(ServerSim *sim) {
 }
 
 static void serverDedicatedLogDeliver(void *ctx, const ControlEvent *evt) {
-    ServerSim *sim = (ServerSim *)ctx;
+    ServerSim *sim = s_logSim;
+    (void)ctx;
+    if (sim == NULL) {
+        return;
+    }
     switch (evt->type) {
         case CTRL_GAME_PHASE_LOBBY:
             handleLobbyEnter(sim);
@@ -150,5 +159,6 @@ void serverDedicatedLogInstall(ServerSim *sim) {
     if (sim == NULL) {
         return;
     }
-    serverSimRegisterSubscriber(sim, serverDedicatedLogDeliver, sim);
+    s_logSim = sim;
+    serverSimRegisterSubscriber(sim, serverDedicatedLogDeliver, NULL);
 }
