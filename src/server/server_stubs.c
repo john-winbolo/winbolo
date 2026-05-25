@@ -70,6 +70,12 @@ const char *transportUdpServerGetPlayerName(BYTE playerNum) { (void)playerNum; r
 void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
   (void)playerNum; (void)name;
 }
+/* server_command_dispatch.c's CMD_LOBBY_KICK arm asks the UDP
+ * server to close the kicked player's connection. The non-server
+ * binaries don't run that table; the stub is a no-op. */
+void transportUdpServerKickPlayer(struct ServerSim *sim, const char *name) {
+  (void)sim; (void)name;
+}
 const char *transportUdpServerGetClientCountryCode(BYTE playerNum) { (void)playerNum; return ""; }
 uint8_t transportUdpServerGetClientType(BYTE playerNum) { (void)playerNum; return 0; /* CLIENT_TYPE_UNKNOWN */ }
 bool transportUdpServerHasAnyClient(void) { return false; }

@@ -2032,6 +2032,21 @@ void serverSimSetHasPassword(ServerSim *sim, bool hasPassword) {
     serverSimPublishLobbySettings(sim);
 }
 
+void serverSimSetPassword(ServerSim *sim, const char *pw, size_t len) {
+    if (sim == NULL) return;
+    memset(sim->password, 0, sizeof(sim->password));
+    if (pw != NULL && len > 0) {
+        if (len > sizeof(sim->password) - 1) len = sizeof(sim->password) - 1;
+        memcpy(sim->password, pw, len);
+        sim->password[len] = '\0';
+    }
+}
+
+const char *serverSimGetPassword(const ServerSim *sim) {
+    if (sim == NULL) return "";
+    return sim->password;
+}
+
 void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled) {
     sim->lobbyEnabled = enabled;
 }

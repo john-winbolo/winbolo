@@ -13,19 +13,26 @@
  */
 
 #include <assert.h>
+#include <stdio.h>
 #include <string.h>
 
-#include "bot_manager.h"              /* botManagerSetBrainIdx */
+#include "bot_manager.h"              /* botManagerSetBrainIdx, botManagerAddBot */
 #include "client_command.h"
 #include "control_event.h"            /* ControlEvent, CTRL_CHAT, CTRL_ALLIANCE_REQUEST */
 #include "log.h"
+#include "mapgen.h"                   /* MapGenConfig, mapGenSeedToConfig */
 #include "netpacks.h"                 /* lobbyBotNameAcceptable */
+#include "player_flags.h"             /* PLAYER_FLAG_ADMIN */
+#include "players.h"                  /* playersGetClientFlags */
+#include "playername_validate.h"      /* playerNameValidate, playerNameCompare */
 #include "server_sim.h"
 #include "server_sim_internal.h"      /* serverSimGameVoteToggle */
 #include "server_sim_lifecycle.h"     /* serverSimSetTeam, lobbyAutoUnreadyOnChange */
 #include "threads.h"
 #include "transport_udp.h"            /* transportUdpServerGetPlayerName,
-                                         transportUdpServerSetBotName */
+                                         transportUdpServerSetBotName,
+                                         transportUdpServerKickPlayer */
+#include "../winbolonet/winbolonet_server.h" /* winboloNetIsPlayerParticipant */
 
 /* Authority gate shared by the command dispatcher (this TU) and the
  * lobby command handlers in transport_udp_server.c, where the function
@@ -273,6 +280,213 @@ CmdResult serverSimApplyCommand(ServerSim *sim, int senderSlot,
             return CMD_REJECT_LOCKED;
         }
         serverSimMapSkipVoteToggle(sim, (uint8_t)senderSlot);
+        return CMD_OK;
+    }
+    case CMD_NAME_CHANGE: {
+        const CmdNameChange *p = &cmd->u.nameChange;
+        if (winboloNetIsPlayerParticipant((BYTE)senderSlot)) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        char validated[PACKET_MAX_PLAYER_NAME];
+        PlayerNameValidationError vErr = PLAYER_NAME_OK;
+        if (!playerNameValidate(p->newName, validated, sizeof(validated), &vErr)) {
+            switch (vErr) {
+                case PLAYER_NAME_ERR_EMPTY:
+                    return CMD_REJECT_NAME_EMPTY;
+                case PLAYER_NAME_ERR_RESERVED_PREFIX:
+                    return CMD_REJECT_NAME_RESERVED_PREFIX;
+                case PLAYER_NAME_ERR_RESERVED_SUFFIX:
+                    return CMD_REJECT_NAME_RESERVED_SUFFIX;
+                case PLAYER_NAME_ERR_MIXED_SCRIPTS:
+                    return CMD_REJECT_NAME_MIXED_SCRIPTS;
+                case PLAYER_NAME_ERR_INVALID_UTF8:
+                case PLAYER_NAME_ERR_DISALLOWED_CHAR:
+                case PLAYER_NAME_ERR_TOO_LONG:
+                default:
+                    return CMD_REJECT_NAME_INVALID;
+            }
+        }
+        /* Uniqueness check via the connected-player table. On UDP that's
+         * udpServer.clients[]; the stub on SP returns NULL for every
+         * slot (so SP-host effectively skips the check). */
+        for (int j = 0; j < MAX_TANKS; j++) {
+            if (j == senderSlot) continue;
+            const char *other = transportUdpServerGetPlayerName((BYTE)j);
+            if (other != NULL && playerNameCompare(other, validated) == 0) {
+                return CMD_REJECT_NAME_TAKEN;
+            }
+        }
+        if (validated[0] != '\0') {
+            const char *oldName = transportUdpServerGetPlayerName((BYTE)senderSlot);
+            char msg[30 + 2 * PACKET_MAX_PLAYER_NAME];
+            snprintf(msg, sizeof(msg), "Player '%s' changed name to '%s'.",
+                     oldName != NULL ? oldName : "?", validated);
+            serverSimConsoleMessage(msg);
+            transportUdpServerSetBotName((BYTE)senderSlot, validated);
+            serverSimSetPlayerName(sim, (BYTE)senderSlot, validated);
+        }
+        return CMD_OK;
+    }
+    case CMD_LOCK_TOGGLE: {
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        bool allow = cmd->u.lockToggle.allow;
+        if (serverSimIsAcceptingJoins(sim) == allow) return CMD_OK;  /* no-op */
+        serverSimSetAllowNewPlayers(sim, allow);
+        return CMD_OK;
+    }
+    case CMD_LOBBY_ADD_BOT: {
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby ||
+            serverSimGetBotAiType(sim) == aiNone ||
+            serverSimGetBotBrainPath(sim)[0] == '\0') {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        const CmdLobbyAddBot *p = &cmd->u.lobbyAddBot;
+        char validatedName[PACKET_MAX_PLAYER_NAME];
+        bool haveName = (p->nameLen > 0);
+        if (haveName) {
+            char rawName[PACKET_MAX_PLAYER_NAME];
+            memset(rawName, 0, sizeof(rawName));
+            memcpy(rawName, p->name, p->nameLen);
+            if (!lobbyBotNameAcceptable(rawName, validatedName,
+                                        sizeof(validatedName), -1,
+                                        transportUdpServerGetPlayerName,
+                                        NULL, NULL)) {
+                return CMD_REJECT_INVALID;
+            }
+        }
+        BYTE slot;
+        bool found = false;
+        for (slot = 0; slot < MAX_TANKS; slot++) {
+            if (!serverSimIsPlayerConnected(sim, slot)) { found = true; break; }
+        }
+        if (!found) return CMD_REJECT_INVALID;
+        char botName[64];
+        if (haveName) {
+            SDL_strlcpy(botName, validatedName, sizeof(botName));
+        } else {
+            snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
+        }
+        if (!botManagerAddBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
+                              serverSimGetBotAiType(sim),
+                              gameTypeGet(&serverSimGetGameSim(sim)->game),
+                              serverSimGetGameSim(sim)->hiddenMines)) {
+            return CMD_REJECT_INVALID;
+        }
+        transportUdpServerSetBotName(slot, botName);
+        if (p->teamNumber > 0 && p->teamNumber < MAX_TANKS) {
+            serverSimSetTeam(sim, slot, p->teamNumber);
+        }
+        serverSimPublishLobbySlot(sim, slot);
+        serverSimPublishLobbyBotBrain(sim, slot);
+        lobbyAutoUnreadyOnChange(sim);
+        return CMD_OK;
+    }
+    case CMD_LOBBY_SET_MAP: {
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        const CmdLobbySetMap *p = &cmd->u.lobbySetMap;
+        if (p->relPathLen == 0) return CMD_REJECT_INVALID;
+        char relPath[256];
+        memcpy(relPath, p->relPath, p->relPathLen);
+        relPath[p->relPathLen] = '\0';
+        bool safe = true;
+        if (relPath[0] == '/' || relPath[0] == '\\') safe = false;
+        else if (relPath[0] != '\0' && relPath[1] == ':') safe = false;
+        else {
+            for (const char *s = relPath; *s;) {
+                if (s[0] == '.' && s[1] == '.' &&
+                    (s[2] == '\0' || s[2] == '/' || s[2] == '\\')) {
+                    safe = false; break;
+                }
+                while (*s && *s != '/' && *s != '\\') s++;
+                while (*s == '/' || *s == '\\') s++;
+            }
+        }
+        if (!safe) return CMD_REJECT_INVALID;
+        char fullPath[FILENAME_MAX];
+        SDL_snprintf(fullPath, sizeof(fullPath), "%s/%s",
+                     serverSimGetMapDirRoot(sim), relPath);
+        if (!serverSimReloadMap(sim, fullPath)) return CMD_REJECT_INVALID;
+        return CMD_OK;
+    }
+    case CMD_LOBBY_PREVIEW_CANCEL: {
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        (void)serverSimRevertPreview(sim);
+        return CMD_OK;
+    }
+    case CMD_LOBBY_PREVIEW_COMMIT: {
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        if (serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP) {
+            return CMD_REJECT_LOCKED;
+        }
+        serverSimCommitPreview(sim);
+        return CMD_OK;
+    }
+    case CMD_LOBBY_PREVIEW_RANDOM: {
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        if (serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP) {
+            return CMD_REJECT_LOCKED;
+        }
+        const CmdLobbyPreviewRandom *p = &cmd->u.lobbyPreviewRandom;
+        if (p->seedLen == 0 || p->seedLen > 63) return CMD_REJECT_INVALID;
+        char seedStr[64];
+        memset(seedStr, 0, sizeof(seedStr));
+        memcpy(seedStr, p->seed, p->seedLen);
+        MapGenConfig cfg;
+        if (!mapGenSeedToConfig(seedStr, &cfg)) return CMD_REJECT_INVALID;
+        cfg.x1 = MAP_MINE_EDGE_LEFT + 1;
+        cfg.y1 = MAP_MINE_EDGE_TOP + 1;
+        cfg.x2 = MAP_MINE_EDGE_RIGHT - 1;
+        cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
+        if (!serverSimReloadRandomMap(sim, &cfg)) return CMD_REJECT_INVALID;
+        return CMD_OK;
+    }
+    case CMD_LOBBY_KICK: {
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_NOT_HOST;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        uint8_t slot = cmd->u.lobbyKick.slot;
+        if (slot >= MAX_TANKS || slot == 0 || (int)slot == senderSlot) {
+            return CMD_REJECT_INVALID;
+        }
+        const char *name = transportUdpServerGetPlayerName(slot);
+        if (name != NULL) transportUdpServerKickPlayer(sim, name);
+        lobbyAutoUnreadyOnChange(sim);
+        return CMD_OK;
+    }
+    case CMD_LOBBY_SET_PASSWORD: {
+        /* Host (slot 0) or admin only — openHost does NOT grant this. */
+        bool isHost  = (senderSlot == 0);
+        bool isAdmin = serverSimIsPlayerConnected(sim, (BYTE)senderSlot) &&
+            (playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs,
+                                   (BYTE)senderSlot) & PLAYER_FLAG_ADMIN);
+        if (!isHost && !isAdmin) return CMD_REJECT_NOT_HOST;
+        if (serverSimGetServerLocks(sim) & LOBBY_LOCK_PASSWORD) {
+            return CMD_REJECT_LOCKED;
+        }
+        const CmdLobbySetPassword *p = &cmd->u.lobbySetPassword;
+        if (p->pwLen >= MAP_STR_SIZE) return CMD_REJECT_INVALID;
+        serverSimSetPassword(sim, p->pwLen > 0 ? p->password : "", p->pwLen);
+        serverSimSetHasPassword(sim, p->pwLen > 0);
         return CMD_OK;
     }
     case CMD_NONE:

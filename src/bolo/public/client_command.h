@@ -55,7 +55,16 @@ typedef enum {
     CMD_LOBBY_REMOVE_BOT,
     CMD_LOBBY_SET_BOT_BRAIN,
     CMD_LOBBY_OPEN_HOST,
-    CMD_MAP_SKIP_VOTE
+    CMD_MAP_SKIP_VOTE,
+    CMD_NAME_CHANGE,
+    CMD_LOCK_TOGGLE,
+    CMD_LOBBY_ADD_BOT,
+    CMD_LOBBY_SET_MAP,
+    CMD_LOBBY_PREVIEW_CANCEL,
+    CMD_LOBBY_PREVIEW_COMMIT,
+    CMD_LOBBY_PREVIEW_RANDOM,
+    CMD_LOBBY_KICK,
+    CMD_LOBBY_SET_PASSWORD
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. Codes 1-7 are
@@ -71,7 +80,15 @@ typedef enum {
     CMD_REJECT_UPLOAD_DISABLED,
     CMD_REJECT_UPLOAD_LIMIT_HIT,
     CMD_REJECT_COOLDOWN,
-    CMD_REJECT_BAD_STATE
+    CMD_REJECT_BAD_STATE,
+    /* NameChange-specific reject codes. Wire side maps to
+     * PACKET_NAME_CHANGE_REJECT's NAME_REJECT_* codes. */
+    CMD_REJECT_NAME_EMPTY,
+    CMD_REJECT_NAME_RESERVED_PREFIX,
+    CMD_REJECT_NAME_RESERVED_SUFFIX,
+    CMD_REJECT_NAME_MIXED_SCRIPTS,
+    CMD_REJECT_NAME_INVALID,
+    CMD_REJECT_NAME_TAKEN
 } CmdResult;
 
 /* CMD_TEAM_SET — set the team number for a lobby slot. Sender must
@@ -188,6 +205,57 @@ typedef struct {
     uint8_t _unused;
 } CmdMapSkipVote;
 
+typedef struct {
+    char newName[PACKET_MAX_PLAYER_NAME];
+} CmdNameChange;
+
+typedef struct {
+    bool allow;
+} CmdLockToggle;
+
+/* CMD_LOBBY_ADD_BOT — host-gated add. teamNumber == 0 → server picks;
+ * name empty → "Bot N" fallback. Path byte from the wire is dropped
+ * (server uses its own configured brain path). */
+typedef struct {
+    uint8_t teamNumber;
+    uint8_t nameLen;
+    char    name[PACKET_MAX_PLAYER_NAME];
+} CmdLobbyAddBot;
+
+/* CMD_LOBBY_SET_MAP — host-gated map reload. relPath is relative to
+ * data/maps/; the arm rejects absolute paths, Windows drive letters,
+ * and ".." segments before calling serverSimReloadMap. */
+typedef struct {
+    uint8_t relPathLen;
+    char    relPath[256];
+} CmdLobbySetMap;
+
+typedef struct {
+    uint8_t _unused;
+} CmdLobbyPreviewCancel;
+
+typedef struct {
+    uint8_t _unused;
+} CmdLobbyPreviewCommit;
+
+typedef struct {
+    uint8_t seedLen;
+    char    seed[64];
+} CmdLobbyPreviewRandom;
+
+/* CMD_LOBBY_KICK — host-gated. Cannot kick host (slot 0) or self. */
+typedef struct {
+    uint8_t slot;
+} CmdLobbyKick;
+
+/* CMD_LOBBY_SET_PASSWORD — host or admin only (openHost does NOT
+ * grant this — would let a connected player lock the host out).
+ * pwLen == 0 clears the password. */
+typedef struct {
+    uint8_t pwLen;
+    char    password[64];
+} CmdLobbySetPassword;
+
 typedef struct ClientCommand {
     ClientCommandType type;
     union {
@@ -206,6 +274,15 @@ typedef struct ClientCommand {
         CmdLobbySetBotBrain  lobbySetBotBrain;
         CmdLobbyOpenHost     lobbyOpenHost;
         CmdMapSkipVote       mapSkipVote;
+        CmdNameChange          nameChange;
+        CmdLockToggle          lockToggle;
+        CmdLobbyAddBot         lobbyAddBot;
+        CmdLobbySetMap         lobbySetMap;
+        CmdLobbyPreviewCancel  lobbyPreviewCancel;
+        CmdLobbyPreviewCommit  lobbyPreviewCommit;
+        CmdLobbyPreviewRandom  lobbyPreviewRandom;
+        CmdLobbyKick           lobbyKick;
+        CmdLobbySetPassword    lobbySetPassword;
     } u;
 } ClientCommand;
 

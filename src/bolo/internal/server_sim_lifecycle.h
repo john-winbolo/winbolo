@@ -56,6 +56,8 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
  * BotAiType variants are also mutated by serverSimApplyLobbySetting
  * (LST_RANKED / LST_AUTO_LOCK_ON_GAME / LST_AI_POLICY). */
 void serverSimSetHasPassword(ServerSim *sim, bool hasPassword);
+void serverSimSetPassword(ServerSim *sim, const char *pw, size_t len);
+const char *serverSimGetPassword(const ServerSim *sim);
 void serverSimSetBotBrainPath(ServerSim *sim, const char *path);
 void serverSimSetOpenHost(ServerSim *sim, bool v);
 void serverSimSetServerLocks(ServerSim *sim, uint16_t locks);
