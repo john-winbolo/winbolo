@@ -2060,6 +2060,20 @@ function Brain.think(info)
     if info.newtank then
       log.event("respawn", string.format("%d,%d", info.tankx >> 8, info.tanky >> 8))
     end
+    -- Force-seed an explore goal on respawn so the first post-respawn
+    -- tick has a sane state.goal before goal_selection runs.  Coords
+    -- left at the tank's current tile (well-defined on respawn);
+    -- the explore planner will replace them with a real frontier
+    -- target on the next replan.  clear_attack_goal above set
+    -- kind="none" — overwriting to "explore" + cleared substate is
+    -- the canonical "alive, no plan yet" stance, the same state a
+    -- fresh brain starts in.
+    state.goal.kind     = "explore"
+    state.goal.substate = nil
+    state.goal.mx       = info.tankx >> 8
+    state.goal.my       = info.tanky >> 8
+    state.goal.wx       = U.m2w(state.goal.mx)
+    state.goal.wy       = U.m2w(state.goal.my)
   end
 
   -- Early return while dead. info.tankx/y hold the LAST-living tile

@@ -2020,7 +2020,11 @@ local KIND_TO_POOL = {
 local WS_SUBS = {
   ws_prebuild=true, ws_prewait=true, ws_advance=true,
   ws_engage=true,   ws_retreat=true, ws_rebuild=true,
-  gather_trees=true, build_walls=true,
+  gather_trees=true,
+  -- build_walls intentionally NOT here: no shells committed yet, the
+  -- LGM-time + trees investment is small and recoverable, so a
+  -- high-priority preempt (kill_lgm, attack_tank, capture_pill) should
+  -- win mid-build without paying the WALL_SHIELD_COMMITMENT surcharge.
   in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
   in_range_aim_finetune=true, shoot_pill=true,
 }
@@ -2254,19 +2258,32 @@ local POOL_FILTERS = {
 -- can stash the components for the breakdown formula.
 local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   -- Distance to cheapest reachable adjacent tile (pill tile itself
-  -- carries an impassable overlay so we route to a neighbor). Uses
-  -- the dijkstra-only variant — no A* fallback because we want the
-  -- per-tick cost lookup to be cheap; A* cost is computed by the
-  -- step_eval_queue path if the slate misses.
-  local best_adj = cpf.cheapest_adjacent_dij(cpf.KIND_NORMAL, obj.mx, obj.my, 0)
-  -- Unreachable: bail with COST_INF instead of collapsing to 0.
-  -- The previous `or 0` made an unreachable pill score as a 0-distance
-  -- target, which is exactly the wrong direction (it'd dominate the
-  -- pool). 1e30 is the COST_INF convention used elsewhere here.
+  -- carries an impassable overlay so we route to a neighbor).  Uses
+  -- the dijkstra-only variant — no A* fallback.
+  --
+  -- Subtract the dead pill's stale danger contribution from the path
+  -- cost.  Capture targets are pills that just died (neutral / freshly
+  -- killed), but the danger slate may still carry their fire-field
+  -- contribution for a few ticks until the next pill_dirty rebuild.
+  -- Without this subtraction the dijkstra cost to the adjacent tile
+  -- includes phantom fire from the now-dead pill, which inflates the
+  -- score and can make a perfectly safe capture look risky.  Same
+  -- pattern attack_pill (pool 6) uses for its still-alive target.
+  local best_adj, best_ax, best_ay =
+      cpf.cheapest_adjacent_dij(cpf.KIND_NORMAL, obj.mx, obj.my, 0)
   if best_adj >= math.huge then
     return 1e30, 1e30, 1e30, 0
   end
-  local dist_raw   = best_adj
+  local pcontrib = threat.pill_contrib
+                   and threat.pill_contrib[obj.my * 256 + obj.mx]
+  local dist_raw
+  if best_ax and pcontrib then
+    dist_raw = cpf.smart_cost_minus_pill_danger_dij_only(
+                  cpf.KIND_NORMAL, best_ax, best_ay,
+                  pcontrib, obj.mx, obj.my, 0)
+  else
+    dist_raw = best_adj
+  end
   local dist_score = (dist_raw ^ 1.5) * C.CAPTURE_PILL_DIST_SCALE
   local danger_val = threat.at(obj.mx, obj.my)
   -- Intercept: an enemy tank close enough to beat us to the pill
@@ -3063,15 +3080,14 @@ function M.step_eval_queue(state, world, info)
 
       -- Ally-claimed penalty (refuel-specific small value).  Live look
       -- up so the per-target cost reflects ally claims regardless of
-      -- whether goal_selection has run yet.  "We were here first"
-      -- exemption: if we're already committed to refueling at this
-      -- base, don't yield to a later-arriving ally claim.
-      local _p1_we_are_here = state.goal
-                              and state.goal.kind == "refuel_at_base"
-                              and state.goal.mx   == obj.mx
-                              and state.goal.my   == obj.my
+      -- whether goal_selection has run yet.  Cost-comparison yield
+      -- rule (same as pool 6+ below): cheaper bot keeps it, tiebreak
+      -- on player_number.  Old "we were here first" exemption is gone
+      -- because it broke the simultaneous-commit case (both bots had
+      -- the same state.goal so both skipped the check and ran to the
+      -- same base).
       local _p1_ac_pen, _p1_ac_by = 0, nil
-      if not _p1_we_are_here then
+      do
         for ally_pn, slot in ally_state.iter_active(now, 1750) do
           if ally_pn ~= info.player_number then
             local info_h = slot.info
@@ -3080,9 +3096,17 @@ function M.step_eval_queue(state, world, info)
               if (aid and id and aid == id)
                  or (tonumber(info_h.mx) == obj.mx and tonumber(info_h.my) == obj.my) then
                 local their_cost = tonumber(info_h.cost)
-                if their_cost and (their_cost - score) >= C.ALLY_CLAIMED_STEAL_THRESHOLD then
-                  break
+                local we_keep
+                if their_cost == nil then
+                  we_keep = (info.player_number < ally_pn)
+                elseif score < their_cost then
+                  we_keep = true
+                elseif score > their_cost then
+                  we_keep = false
+                else
+                  we_keep = (info.player_number < ally_pn)
                 end
+                if we_keep then break end
                 _p1_ac_pen = C.ALLY_CLAIMED_REFUEL_PENALTY
                 _p1_ac_by  = ally_pn
                 score = score + _p1_ac_pen
@@ -3542,19 +3566,19 @@ function M.step_eval_queue(state, world, info)
       local _ac_expected_kind = (pool_idx == 1) and "refuel_at_base"
                                 or (pool_idx == 8) and "place_pill_strategic"
                                 or POOL_NAMES[pool_idx]
-      -- "We were here first" exemption: if our currently-committed
-      -- goal matches this candidate, we don't yield to a later-arriving
-      -- ally claim.  Compared on (kind, mx, my) since target_id isn't
-      -- always set the same way across goal types.
-      local _ac_we_are_here = state.goal
-                              and state.goal.kind == _ac_expected_kind
-                              and state.goal.mx   == obj.mx
-                              and state.goal.my   == obj.my
       local _ac_pen, _ac_by = 0, nil
       -- Pools exempt from ally_claimed: 9 (attack_tank) and 13
       -- (kill_lgm).  Both are time-critical, locally-observed kills
       -- — a stale ally broadcast shouldn't pull us off the shot.
-      if pool_idx ~= 9 and pool_idx ~= 13 and not _ac_we_are_here then
+      --
+      -- Note: we no longer exempt the "we got here first" case
+      -- (state.goal already on this candidate).  When two bots commit
+      -- to the same target on the same replan tick, both used to set
+      -- _ac_we_are_here=true and skip the cost comparison entirely,
+      -- so neither yielded → both ran to the same pill.  The cost
+      -- comparison below handles the simultaneity case correctly:
+      -- whoever's cheaper keeps it, the other yields.
+      if pool_idx ~= 9 and pool_idx ~= 13 then
         for ally_pn, slot in ally_state.iter_active(now, 1750) do
           if ally_pn ~= info.player_number then
             local info_h = slot.info
@@ -3572,9 +3596,30 @@ function M.step_eval_queue(state, world, info)
               end
               if matched then
                 local their_cost = tonumber(info_h.cost)
-                if their_cost and (their_cost - c) >= C.ALLY_CLAIMED_STEAL_THRESHOLD then
-                  -- We're cheaper by at least the threshold — steal it
-                  break
+                -- Cost-comparison yield rule.  We KEEP this candidate
+                -- (no penalty) when WE'RE strictly cheaper, or we tie
+                -- on cost AND our player_number is lower (deterministic
+                -- tiebreaker so exactly one bot of any equal-cost pair
+                -- yields).  Otherwise we yield.  No deadband — even a
+                -- 1-cost-unit difference picks a winner, so two bots
+                -- never both yield on near-identical costs.
+                local we_keep
+                if their_cost == nil then
+                  -- Ally hasn't broadcast cost yet (first frame after
+                  -- goal pick); fall back to: we keep if we're newer
+                  -- in the registry, otherwise yield.  Conservative
+                  -- behavior — yield by default until both sides have
+                  -- a cost to compare.
+                  we_keep = (info.player_number < ally_pn)
+                elseif c < their_cost then
+                  we_keep = true
+                elseif c > their_cost then
+                  we_keep = false
+                else
+                  we_keep = (info.player_number < ally_pn)
+                end
+                if we_keep then
+                  break  -- keep our cost as-is
                 end
                 _ac_pen = (pool_idx == 1) and C.ALLY_CLAIMED_REFUEL_PENALTY
                           or C.ALLY_CLAIMED_PENALTY

@@ -452,13 +452,17 @@ function M.decide(state, world, info, now)
     end
   end
 
-  -- Priority 0.5: base shield — build wall to block pill fire while on any base.
-  -- Triggers ONLY on the tick we take damage (pill just fired → max window
-  -- before next shot). Checks all 8 directions for the best blocking tile.
-  -- Allow base shield when ON the base or within 1 tile of it.
-  -- Wall must be placed on one of the 8 tiles adjacent to the base.
+  -- Priority 0.5: base shield — build wall to block pill fire while on
+  -- a base.  Scoped to refuel_at_base + actually sitting on the base
+  -- tile: the shield only earns its keep when we're holding still on
+  -- the base to recharge.  Outside refuel (e.g. tank parked on a base
+  -- mid-attack pursuit) we don't want to spend trees on it.
+  -- Triggers ONLY on the tick we take damage (pill just fired → max
+  -- window before next shot).  Wall placed on one of the 8 tiles
+  -- adjacent to the base.
   local has_base = info.base and info.base.x
-  local near_base = has_base and U.mdist(tmx, tmy, info.base.x, info.base.y) <= 1
+  local on_base = has_base and tmx == info.base.x and tmy == info.base.y
+  local is_refueling = state.goal and state.goal.kind == "refuel_at_base"
   local has_trees = info.trees >= C.BASE_SHIELD_BUILD_COST
   local took_dmg = state.took_damage_this_tick
   local pill_threats_exist = state.perc and state.perc.pill_threats and #state.perc.pill_threats > 0
@@ -466,16 +470,17 @@ function M.decide(state, world, info, now)
   -- Always show precondition status on the HUD when near a base
   if BRAIN_DEBUG_MODE and has_base then
     local parts = {}
-    parts[#parts + 1] = near_base and "near_base:YES" or string.format("near_base:NO(dist=%d)", has_base and U.mdist(tmx, tmy, info.base.x, info.base.y) or -1)
+    parts[#parts + 1] = on_base and "on_base:YES" or string.format("on_base:NO(dist=%d)", has_base and U.mdist(tmx, tmy, info.base.x, info.base.y) or -1)
+    parts[#parts + 1] = is_refueling and "refueling:YES" or string.format("refueling:NO(%s)", state.goal and state.goal.kind or "?")
     parts[#parts + 1] = has_trees and string.format("trees:YES(%d)", info.trees) or string.format("trees:NO(%d<%d)", info.trees, C.BASE_SHIELD_BUILD_COST)
     parts[#parts + 1] = took_dmg and "took_dmg:YES" or "took_dmg:NO"
     parts[#parts + 1] = pill_threats_exist and string.format("threats:%d", #state.perc.pill_threats) or "threats:0"
-    local all_ok = near_base and has_trees and took_dmg and pill_threats_exist
+    local all_ok = on_base and is_refueling and has_trees and took_dmg and pill_threats_exist
     local cr, cg = all_ok and 0 or 200, all_ok and 200 or 100
     viz.hud_text("base_shield_viz", 10, 72, "BaseShield: " .. table.concat(parts, " | "), "topleft", cr, cg, 0)
   end
 
-  if near_base and has_trees and took_dmg then
+  if on_base and is_refueling and has_trees and took_dmg then
     local bmx, bmy = info.base.x, info.base.y
     local perc = state.perc
     local pill_threats = perc and perc.pill_threats or {}
