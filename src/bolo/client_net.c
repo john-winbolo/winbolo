@@ -472,26 +472,18 @@ void clientSimNetSendLockToggle(ClientSim *cs, bool allow) {
 void clientSimNetSendTeamSet(ClientSim *cs, BYTE slot, BYTE teamNumber) {
   if (cs == NULL || !cs->hasTransport) return;
   if (cs->isUdpTransport) {
-    /* Wire carries the target slot; the server allows self-moves
-     * unconditionally and other-target moves only when the sender is
-     * host / admin / openHost (see lobbyClientMayEdit). */
+    /* UDP wire encoding unchanged; server decodes into ClientCommand
+     * and dispatches through serverSimApplyCommand. */
     transportUdpClientSendTeamSet(&cs->transport, slot, teamNumber);
     return;
   }
-  /* Local transport: mirror PACKET_LOBBY_TEAM_SET's server-side
-   * handler. Slot comes from the caller (SP-host can move any
-   * lobby slot, including bot slots); team must fit MAX_TANKS. */
   if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_TEAM_SET };
+  cmd.u.teamSet.slot = slot;
+  cmd.u.teamSet.team = teamNumber;
   threadsWaitForMutex();
-  do {
-    ServerSim *sim = cs->boundServerSim;
-    if (!serverSimIsLobbyEnabled(sim) ||
-        serverSimGetState(sim) != serverStateLobby) break;
-    if (slot >= MAX_TANKS || teamNumber >= MAX_TANKS) break;
-    serverSimSetTeam(sim, slot, teamNumber);
-    serverSimPublishLobbySlot(sim, slot);
-    lobbyAutoUnreadyOnChange(sim);
-  } while (0);
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
   threadsReleaseMutex();
 }
 

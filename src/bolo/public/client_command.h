@@ -33,7 +33,8 @@ extern "C" {
 #endif
 
 typedef enum {
-    CMD_NONE = 0
+    CMD_NONE = 0,
+    CMD_TEAM_SET
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. Codes 1-7 are
@@ -52,9 +53,19 @@ typedef enum {
     CMD_REJECT_BAD_STATE
 } CmdResult;
 
+/* CMD_TEAM_SET — set the team number for a lobby slot. Sender must
+ * be moving its own slot, or be host/admin/openHost to move another
+ * slot. Both fields validated against MAX_TANKS. */
+typedef struct {
+    uint8_t slot;
+    uint8_t team;
+} CmdTeamSet;
+
 typedef struct ClientCommand {
     ClientCommandType type;
-    /* Per-variant payloads added per command in later phases. */
+    union {
+        CmdTeamSet teamSet;
+    } u;
 } ClientCommand;
 
 #ifdef __cplusplus

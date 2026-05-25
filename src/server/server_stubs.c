@@ -42,6 +42,19 @@ void serverLifecycleGetSimStats(double *outLastMs, double *outEwmaMs) {
  * android main, wasm winbolo) don't link — they don't run a UDP
  * server, so the calls are dead paths that just need to link. */
 struct ServerSim;
+
+/* server_command_dispatch.c (in server_sim_static) calls
+ * lobbyClientMayEdit to gate other-slot lobby commands. The real
+ * implementation lives in transport_udp_server.c (server_static),
+ * which non-server-static binaries don't link. They always run as
+ * an in-process host with full authority over their own sim, so the
+ * stub permits unconditionally — matches slot 0's path in the real
+ * helper. */
+bool lobbyClientMayEdit(struct ServerSim *sim, int clientIdx) {
+  (void)sim; (void)clientIdx;
+  return true;
+}
+
 void transportUdpServerEnforcePing(struct ServerSim *sim) { (void)sim; }
 void transportUdpServerOnLobbyMapChange(struct ServerSim *sim) { (void)sim; }
 void transportUdpServerOnGameStart(struct ServerSim *sim) { (void)sim; }

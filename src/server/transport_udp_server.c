@@ -769,7 +769,7 @@ static void udpServerClearClientUploadState(int idx) {
  * Returns TRUE if the sender at clientIdx is allowed to issue the
  * command (host, OR open-host is on and they're an active player,
  * OR they're an admin). */
-static bool lobbyClientMayEdit(ServerSim *sim, int clientIdx) {
+bool lobbyClientMayEdit(ServerSim *sim, int clientIdx) {
     if (clientIdx < 0 || clientIdx >= MAX_TANKS) return FALSE;
     if (clientIdx == 0) return TRUE;  /* slot 0 = host */
     if (serverSimIsPlayerConnected(sim, clientIdx) &&
@@ -3000,33 +3000,23 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_LOBBY_TEAM_SET: {
-            /* Wire: [header 8] [targetSlot 1] [teamNumber 1].
-             *
-             * Authority: anyone may change their own team. Moving
-             * another player's slot (including bot slots) requires
-             * host / admin / openHost — same gate the drag-and-drop
-             * UI uses. */
+            /* Wire: [header 8] [targetSlot 1] [teamNumber 1]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 2) break;
-            uint8_t targetSlot = buf[PACKET_HEADER_SIZE];
-            uint8_t teamNum    = buf[PACKET_HEADER_SIZE + 1];
-            if (targetSlot >= MAX_TANKS || teamNum >= MAX_TANKS) {
+            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 2) break;
+            ClientCommand cmd = { .type = CMD_TEAM_SET };
+            cmd.u.teamSet.slot = buf[PACKET_HEADER_SIZE];
+            cmd.u.teamSet.team = buf[PACKET_HEADER_SIZE + 1];
+            CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
+            if (r == CMD_REJECT_INVALID) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_SET,
                               LOBBY_REJECT_INVALID);
-                break;
-            }
-            if ((int)targetSlot != clientIdx &&
-                !lobbyClientMayEdit(sim, clientIdx)) {
+            } else if (r == CMD_REJECT_NOT_HOST) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_SET,
                               LOBBY_REJECT_NOT_HOST);
-                break;
             }
-            serverSimSetTeam(sim, (BYTE)targetSlot, teamNum);
-            logAddEvent(log_TeamSet, (BYTE)targetSlot, teamNum, 0, 0, 0, NULL);
-            serverSimPublishLobbySlot(sim, (BYTE)targetSlot);
-            lobbyAutoUnreadyOnChange(sim);
+            /* No wire reply for CMD_OK (no positive ACK in the LOBBY_*
+             * protocol) or CMD_REJECT_BAD_STATE (no LOBBY_REJECT_* code
+             * for wrong server state). */
             break;
         }
         case PACKET_LOBBY_READY: {
