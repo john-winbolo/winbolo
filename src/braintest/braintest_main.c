@@ -1602,6 +1602,13 @@ static char optMap[512]   = "";
 static int  optNumPlayers = 1;
 static int  optNumTeams   = 0;   /* 0 = FFA (no alliances); otherwise round-robin team assignment */
 static int  optFollow     = 0;
+/* -victim_ids <comma-sep player ids>: mark each listed bot as a
+ * test "victim". The brain reads _BT_VICTIM = true on that bot's
+ * Lua state, which can be wired up to perform actions that
+ * facilitate testing the real bots — e.g. sending the LGM out to
+ * be targeted by kill_lgm, dropping a pill at a fixed spot, parking
+ * the tank as bait, etc. Default: no victims; bots behave normally. */
+static bool optVictim[MAX_TANKS] = { false };
 static aiType  optAI      = aiFull;
 static gameType optGame   = gameOpen;
 /* --opt: load the brain from its stripped opt/ subdirectory and start
@@ -1650,6 +1657,11 @@ static void printUsage(const char *prog) {
         "                     traces. On by default in dev mode.\n"
         "  --auto-start       Skip the auto-pause at tick 4 and run immediately.\n"
         "  --max-ticks N      Exit automatically after N ticks (flushes perf log).\n"
+        "  -victim_ids IDS  Comma-sep list of bot ids to flag as test victims\n"
+        "                   (e.g. -victim_ids 0,2). The brain reads _BT_VICTIM=true\n"
+        "                   on each marked bot, which can be wired up to perform\n"
+        "                   actions that facilitate testing the real bots — e.g.\n"
+        "                   sending the LGM out to be targeted by kill_lgm.\n"
         "\n"
         "Controls:\n"
         "  Arrows           Scroll map (switches to free camera)\n"
@@ -1731,6 +1743,25 @@ static bool parseArgs(int argc, char **argv) {
             optMaxTicks = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--run-script") == 0 && i + 1 < argc) {
             strncpy(optRunScript, argv[++i], sizeof(optRunScript) - 1);
+        } else if ((strcmp(argv[i], "-victim_ids") == 0
+                    || strcmp(argv[i], "--victim_ids") == 0) && i + 1 < argc) {
+            /* Comma-separated bot player ids. Each marked bot gets
+             * _BT_VICTIM = true injected after Brain.open. The brain
+             * can hook this to perform whatever test-facilitation
+             * behavior is needed (LGM dispatch, pill drop, tank park,
+             * etc.). */
+            const char *list = argv[++i];
+            const char *p = list;
+            while (*p) {
+                char *endp;
+                long n = strtol(p, &endp, 10);
+                if (endp == p) break;
+                if (n >= 0 && n < MAX_TANKS) {
+                    optVictim[n] = true;
+                }
+                p = endp;
+                while (*p == ',' || *p == ' ') p++;
+            }
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printUsage(argv[0]);
             exit(0);
@@ -3166,6 +3197,23 @@ static void appTickBrain(BrainTestApp *app) {
      * Brain.think then appends to its own slot range — no race. */
     pillContribClearAll();
 
+    /* Push the "do we need pillcontrib export this tick" flag to every
+     * bot.  Brain skips the per-pill add_all loop when false, saving a
+     * non-trivial chunk of think_ms on debug runs that aren't actually
+     * looking at the shift-2 overlay or recording pcontrib snapshots. */
+    {
+        bool need_pc = (app->pillContribSel > 0) || g_recordPcontribEnabled;
+        char line[64];
+        SDL_snprintf(line, sizeof(line),
+                     "_G._BT_PCONTRIB_NEEDED=%s",
+                     need_pc ? "true" : "false");
+        for (BYTE i = 0; i < MAX_TANKS; i++) {
+            if (serverSimIsBot(app->sim, i)) {
+                serverSimBotExecLua(app->sim, i, line);
+            }
+        }
+    }
+
     serverSimBotTick(app->sim, optAI);
     {
         double ms = serverSimGetBotLastThinkMs(app->sim, app->followBot);
@@ -4517,10 +4565,17 @@ int main(int argc, char *argv[]) {
     app.viewCenterX = ((app.mapMinX + app.mapMaxX) / 2) << 8;
     app.viewCenterY = ((app.mapMinY + app.mapMaxY) / 2) << 8;
 
-    /* Add bots */
-    if (!botManagerInit(0)) {
-        fprintf(stderr, "botManagerInit failed\n");
-        return 1;
+    /* Add bots.  Default to 2 brain dispatch threads — enough parallelism
+     * for most maps without over-subscribing the CPU. */
+    {
+        int desired_threads = 2;
+        int cores = SDL_GetNumLogicalCPUCores();
+        if (desired_threads > cores) desired_threads = cores;
+        if (!botManagerInit(desired_threads)) {
+            fprintf(stderr, "botManagerInit failed\n");
+            return 1;
+        }
+        serverSimRequestBotThreads(app.sim, desired_threads);
     }
     /* Pre-think hook needs the per-sim BotManager; install it now that
      * app.sim exists. Bots have not been added yet, so no tick can fire
@@ -4654,6 +4709,16 @@ int main(int argc, char *argv[]) {
                 if (serverSimIsBot(app.sim, (BYTE)i)) {
                     serverSimBotExecLua(app.sim, (BYTE)i, setSession);
                 }
+            }
+        }
+        /* -victim_ids: stamp _BT_VICTIM=true on each listed bot. The
+         * brain's victim hook decides what to do with it (LGM dispatch,
+         * pill drop, tank parking, etc.) to facilitate testing of the
+         * non-victim bots. */
+        for (int i = 0; i < optNumPlayers; i++) {
+            if (optVictim[i] && serverSimIsBot(app.sim, (BYTE)i)) {
+                serverSimBotExecLua(app.sim, (BYTE)i, "_G._BT_VICTIM=true");
+                fprintf(stderr, "  Bot %d: victim mode\n", i);
             }
         }
     } else {

@@ -2017,6 +2017,20 @@ local POOL_NAMES = {
   "refuel", "defend_pill", "capture_base", "capture_pill", "repair_pill",
   "attack_pill", "attack_base", "place_strategic", "attack_tank",
   [12] = "wait_for_lgm",
+  [13] = "kill_lgm",
+}
+
+-- Reverse map: actual goal.kind → pool index, for looking up cost_cache
+-- entries by candidate.  Note pool 1 (refuel) and pool 8 (place_strategic)
+-- have different UI labels than their goal.kind values.
+-- Pool 10 in the JSON is the WINNERS section, 11 is def_build, 12 is
+-- wait_for_lgm, 13 is kill_lgm — those four render as strips below the
+-- main 2x5 grid.
+local KIND_TO_POOL = {
+  refuel_at_base = 1, defend_pill = 2, capture_base = 3, capture_pill = 4,
+  repair_pill = 5, attack_pill = 6, attack_base = 7,
+  place_pill_strategic = 8, attack_tank = 9, wait_for_lgm = 12,
+  kill_lgm = 13,
 }
 
 -- Reverse map: actual goal.kind → pool index, for looking up cost_cache
@@ -2891,6 +2905,51 @@ function M.step_eval_queue(state, world, info)
   local partial = state.pool_partial
   if not partial then partial = {}; state.pool_partial = partial end
 
+  -- Chunked pill-eval pre-probe (BRAIN_DEBUG_MODE only — the C fast path
+  -- is plenty fast outside debug). Peek the next GOAL_CANDS_PER_TICK
+  -- pool-6 candidates and advance one chunk on each whose diff_cache
+  -- entry is stale.  If any is still in_progress, bail without draining
+  -- the queue this tick so the bar can fill across ticks and the work
+  -- is actually spread over time at lower capacity tiers.
+  if BRAIN_DEBUG_MODE then
+    local _probe_pos = pos
+    local _probe_count = 0
+    local _any_in_progress = false
+    while _probe_pos <= #queue and _probe_count < C.GOAL_CANDS_PER_TICK do
+      local _it = queue[_probe_pos]
+      _probe_pos = _probe_pos + 1
+      _probe_count = _probe_count + 1
+      if _it.pool == 6 and not _it.reject then
+        local _pid = _it.id
+        local _pill = _it.obj
+        if _pill and _pid and _pid >= 0 then
+          local _dck = _pill.mx .. ":" .. _pill.my .. ":" .. (state.phase or "")
+          local _dc = (state._pill_diff_cache or {})[_dck]
+          local _dx_t = _pill.mx - tmx
+          local _dy_t = _pill.my - tmy
+          local _sqdist = _dx_t * _dx_t + _dy_t * _dy_t
+          local _ttl
+          if     _sqdist < 100 then _ttl = 50
+          elseif _sqdist < 900 then _ttl = 150
+          else                       _ttl = 500
+          end
+          local _ttl_mult = (state._capacity and state._capacity.ttl_mult) or 1.0
+          if _ttl_mult ~= 1.0 then _ttl = math.floor(_ttl * _ttl_mult) end
+          local _needs = (not _dc)
+              or (_dc.hp ~= (_pill.health or 0))
+              or (not _dc.spots)
+              or ((now - _dc.tick) >= _ttl)
+          if _needs then
+            local _status = attack.advance_pill_eval_chunk(
+              state, world, info, tmx, tmy, _pid, _pill)
+            if _status == "in_progress" then _any_in_progress = true end
+          end
+        end
+      end
+    end
+    if _any_in_progress then return end
+  end
+
   local count = 0
   while pos <= #queue and count < C.GOAL_CANDS_PER_TICK do
     local item = queue[pos]
@@ -3102,6 +3161,10 @@ function M.step_eval_queue(state, world, info)
               local aid = tonumber(info_h.target)
               if (aid and id and aid == id)
                  or (tonumber(info_h.mx) == obj.mx and tonumber(info_h.my) == obj.my) then
+                local their_cost = tonumber(info_h.cost)
+                if their_cost and (their_cost - score) >= C.ALLY_CLAIMED_STEAL_THRESHOLD then
+                  break
+                end
                 _p1_ac_pen = C.ALLY_CLAIMED_REFUEL_PENALTY
                 _p1_ac_by  = ally_pn
                 score = score + _p1_ac_pen
@@ -3265,9 +3328,21 @@ function M.step_eval_queue(state, world, info)
           end
         else
           local _scan_step = (state._capacity and state._capacity.scan_step) or 5
-          diff_score, _spots, best_spot =
-            attack.evaluate_pill_difficulty(obj, world, force_detailed,
-                                            _scan_step, state.phase, state, tmx, tmy)
+          -- In debug mode the chunked pre-probe at the top of this fn
+          -- has already produced a fresh result in state._pill_eval_cache
+          -- before we ever get here (the probe bails the whole tick when
+          -- any in-flight sweep is still running). Read from the cache
+          -- instead of re-doing the 72-angle sweep inline.
+          local _pe = state._pill_eval_cache and state._pill_eval_cache[id]
+          if BRAIN_DEBUG_MODE and _pe and (now - _pe.tick) <= 250 then
+            diff_score = _pe.best_score
+            _spots     = _pe.spots
+            best_spot  = _pe.best_spot
+          else
+            diff_score, _spots, best_spot =
+              attack.evaluate_pill_difficulty(obj, world, force_detailed,
+                                              _scan_step, state.phase, state, tmx, tmy)
+          end
           diff_cache[dck] = { score = diff_score, spot = best_spot,
                               spots = _spots,  -- nil unless force_detailed
                               mx = obj.mx, my = obj.my,
@@ -3569,7 +3644,10 @@ function M.step_eval_queue(state, world, info)
                               and state.goal.mx   == obj.mx
                               and state.goal.my   == obj.my
       local _ac_pen, _ac_by = 0, nil
-      if pool_idx ~= 9 and not _ac_we_are_here then
+      -- Pools exempt from ally_claimed: 9 (attack_tank) and 13
+      -- (kill_lgm).  Both are time-critical, locally-observed kills
+      -- — a stale ally broadcast shouldn't pull us off the shot.
+      if pool_idx ~= 9 and pool_idx ~= 13 and not _ac_we_are_here then
         for ally_pn, slot in ally_state.iter_active(now, 1750) do
           if ally_pn ~= info.player_number then
             local info_h = slot.info
@@ -3586,6 +3664,11 @@ function M.step_eval_queue(state, world, info)
                 end
               end
               if matched then
+                local their_cost = tonumber(info_h.cost)
+                if their_cost and (their_cost - c) >= C.ALLY_CLAIMED_STEAL_THRESHOLD then
+                  -- We're cheaper by at least the threshold — steal it
+                  break
+                end
                 _ac_pen = (pool_idx == 1) and C.ALLY_CLAIMED_REFUEL_PENALTY
                           or C.ALLY_CLAIMED_PENALTY
                 _ac_by  = ally_pn
@@ -4018,6 +4101,10 @@ function M.finalize_pools(state, world, info)
   -- eval_wait_for_lgm for suppression conditions (won't fire while a
   -- goal that needs the LGM is already running).
   state.pool_cache[12] = eval_wait_for_lgm(state, info)
+  -- kill_lgm: pool 13 was just wiped by `state.pool_cache = {}` above.
+  -- Re-inject so an LGM-sighting urgent_replan doesn't miss it and
+  -- pick_goal can see kill_lgm as a candidate this tick.
+  M.refresh_kill_lgm(state, info)
 end
 
 -- =========================================================================
@@ -4061,6 +4148,249 @@ function M.update_pool_cache(state, world, info)
         attack.draw_pill_eval_spots(dc.spots, dc.mx, dc.my,
                                     "attack_scan_spots_all_pills",
                                     mode, cdeg)
+      end
+    end
+  end
+
+  M.refresh_kill_lgm(state, info)
+end
+
+-- =========================================================================
+-- refresh_kill_lgm — populate pool_cache[13] from perception.
+--
+-- Called from BOTH update_pool_cache (rolling per-tick refresh) AND
+-- finalize_pools (which wipes pool_cache on every replan, so without a
+-- second call here pool 13 would be missing at the moment pick_goal
+-- runs and the bot would never pick kill_lgm).
+--
+-- Cheap (one walk over perc.enemy_lgms + a couple of table allocs), so
+-- safe to call twice per tick.  Requires shells > 0.  When no LGM is
+-- visible, clears pool_cache[13] + any stale 13:* cost_cache entries so
+-- a ghost target doesn't linger after the LGM goes back into its tank.
+-- =========================================================================
+function M.refresh_kill_lgm(state, info)
+  if not state.pool_cache then return end
+  local elgms = state.perc and state.perc.enemy_lgms
+  if elgms and #elgms > 0 and (info.shells or 0) > 0 then
+    -- Cost model mirrors eval_attack_tank: per-target evaluation with
+    -- LOS-fast-engage vs Manhattan-boundary-standoff branches, plus
+    -- the same modifiers (low_shells, aim_bonus, crossfire, boat_mult,
+    -- tank_tile_threat).  See goals.lua:1059+ for the tank version —
+    -- wall_penalty is omitted here because the standoff scan already
+    -- filters wall-blocked tiles (no walled engage spots survive), and
+    -- the LOS branch is gated on wall_hp==0 by definition.
+    -- Nav target sits INSIDE the engage trigger by KILL_LGM_NAV_INSET
+    -- tiles.  Tank drives toward a spot at (shoot_range - inset) from
+    -- the LGM but the engage-mode trigger in steering still fires at
+    -- the full shoot_range.  Net effect: tank crosses into engage range
+    -- still under throttle (momentum carries it through), instead of
+    -- decelerating to a stop exactly at the boundary and letting the
+    -- LGM escape further while we slow down.
+    local NAV_INSET = C.KILL_LGM_NAV_INSET or 3
+    local R     = math.max(1, (C.KILL_LGM_SHOOT_RANGE or 8) - NAV_INSET)
+    local boat  = (info.inboat and 1) or 0
+    local tmx   = info.tankx >> 8
+    local tmy   = info.tanky >> 8
+    local perc  = state.perc or {}
+    local now_t = state.tick or 0
+    local KILL_LGM_BASE_COST = 20  -- kill_lgm priority floor (parallels TANK_COMBAT_BASE_COST=30)
+
+    -- Low-shells penalty (mirrors attack_tank low_shells_penalty).
+    local low_shells_penalty = 0
+    if info.shells < C.TANK_COMBAT_LOW_SHELLS_THRESHOLD then
+      low_shells_penalty = (C.TANK_COMBAT_LOW_SHELLS_THRESHOLD - info.shells)
+                         * C.TANK_COMBAT_LOW_SHELLS_COST_PER
+    end
+    local tank_tile_threat = threat.at(tmx, tmy) or 0
+
+    local best_cost = math.huge
+    local best_winner = nil       -- { lgm, shoot_mx, shoot_my, los_engage, formula, ... }
+    local cand_rows = {}          -- pool viz cands array
+    if not state.cost_cache then state.cost_cache = {} end
+
+    for _, lgm in ipairs(elgms) do
+      -- Boat vulnerability — applies if EITHER the LGM is on water OR
+      -- its owning tank is on water.  Killing an LGM whose parent tank
+      -- is exposed in water denies a rebuild/repair shuttle to an
+      -- already-vulnerable target, so the engage is as valuable as
+      -- killing a water-exposed tank.  Pick the BIGGEST discount
+      -- (lowest mult) across both checks.
+      local function water_mult_for(mx, my)
+        local tt = U.ttype(mx, my)
+        if tt == C.T_DEEPSEA then return C.TANK_COMBAT_DEEPSEA_MULT end
+        if tt == C.T_RIVER or tt == C.T_BOAT then return C.TANK_COMBAT_BOAT_MULT end
+        return 1.0
+      end
+      local boat_mult = water_mult_for(lgm.mx, lgm.my)
+      if lgm.near_tank_idnum then
+        for _, et in ipairs(perc.enemy_tanks or {}) do
+          if et.id == lgm.near_tank_idnum then
+            local owner_mult = water_mult_for(et.mx, et.my)
+            if owner_mult < boat_mult then boat_mult = owner_mult end
+            break
+          end
+        end
+      end
+
+      -- Aim bonus: already pointed near the LGM = cheaper to engage.
+      local aim_dir = U.aim_at(info.tankx, info.tanky, U.m2w(lgm.mx), U.m2w(lgm.my))
+      local aim_diff = math.abs(U.adiff(info.direction, aim_dir))
+      local aim_bonus = 0
+      if aim_diff < C.TANK_COMBAT_AIM_THRESHOLD then
+        local aim_cap = (lgm.dist or 99) <= R and 25 or 10
+        aim_bonus = math.min(C.TANK_COMBAT_AIM_BONUS, aim_cap)
+      end
+
+      -- Crossfire penalty: LGM near a hostile pill (we'll take pill fire).
+      local crossfire = 0
+      for _, pt in ipairs(perc.pill_threats or {}) do
+        if U.mdist(lgm.mx, lgm.my, pt.pill.mx, pt.pill.my) <= C.TANK_COMBAT_NEAR_PILL_RANGE then
+          crossfire = C.TANK_COMBAT_NEAR_PILL_PENALTY
+          break
+        end
+      end
+
+      -- LOS fast-engage: LGM in range + clear LOS = cheap LOS branch.
+      local los_range = R + C.TANK_COMBAT_LOS_EXTRA_RANGE
+      local los_engage = (lgm.dist or 1e9) <= los_range
+                     and PF.wall_hp_between(tmx, tmy, lgm.mx, lgm.my) == 0
+
+      local cost, formula_str, shoot_mx, shoot_my
+      local best_shoot_cost = math.huge
+
+      if los_engage then
+        -- (LOS_BASE + dist*LOS_PER_TILE + low_sh) * boat + threat
+        local raw = C.TANK_COMBAT_LOS_BASE_COST
+                  + (lgm.dist or 0) * C.TANK_COMBAT_LOS_COST_PER_TILE
+                  + low_shells_penalty
+        cost = raw * boat_mult + tank_tile_threat
+        -- LOS engage shoots from where we stand.
+        shoot_mx, shoot_my = tmx, tmy
+        formula_str = string.format(
+          "kill_lgm@(%d,%d) LOS (los_base{%.0f} + dist{%.1f}*per_tile{%.0f} + low_sh{%.0f}) * boat{%.2f} + threat{%.0f} = %.0f"..
+          "||dist=%.1f; aim_diff=%.1f; shells=%d; near_tank=%s",
+          lgm.mx, lgm.my,
+          C.TANK_COMBAT_LOS_BASE_COST, lgm.dist or 0,
+          C.TANK_COMBAT_LOS_COST_PER_TILE,
+          low_shells_penalty, boat_mult, tank_tile_threat, cost,
+          lgm.dist or 0, aim_diff, info.shells or 0,
+          tostring(lgm.near_tank_idnum))
+      else
+        -- Standoff: walk Manhattan boundary at R around the LGM's
+        -- PREDICTED future tile (where it'll be when we arrive),
+        -- filter for LOS to that point, pick lowest Dijkstra cost.
+        -- Driving toward the predicted spot keeps the engage point
+        -- valid as the LGM moves; otherwise by the time the tank
+        -- arrives, the LGM has slid forward and the spot is stale.
+        -- Falls back to geometric point on predicted→tank line at
+        -- distance R when slate hasn't reached any boundary tile yet.
+        local center_mx = lgm.predicted_mx or lgm.mx
+        local center_my = lgm.predicted_my or lgm.my
+        for dx = -R, R do
+          local dy_abs = R - math.abs(dx)
+          local _ys = (dy_abs == 0) and { 0 } or { dy_abs, -dy_abs }
+          for _, dy in ipairs(_ys) do
+            local mx = center_mx + dx
+            local my = center_my + dy
+            if U.in_map(mx, my)
+               and PF.wall_hp_between(mx, my, center_mx, center_my) == 0 then
+              local c = cpf.smart_cost_dij_only(KIND_NORMAL, mx, my, boat)
+              if c and c < best_shoot_cost then
+                best_shoot_cost = c
+                shoot_mx, shoot_my = mx, my
+              end
+            end
+          end
+        end
+        local path_cost
+        if not shoot_mx then
+          local vdx = tmx - center_mx
+          local vdy = tmy - center_my
+          local vlen = math.sqrt(vdx * vdx + vdy * vdy)
+          if vlen > 0.5 then
+            shoot_mx = math.floor(center_mx + (vdx / vlen) * R + 0.5)
+            shoot_my = math.floor(center_my + (vdy / vlen) * R + 0.5)
+          else
+            shoot_mx, shoot_my = tmx, tmy
+          end
+          if shoot_mx < 0   then shoot_mx = 0   end
+          if shoot_mx > 255 then shoot_mx = 255 end
+          if shoot_my < 0   then shoot_my = 0   end
+          if shoot_my > 255 then shoot_my = 255 end
+          -- Cold-start fallback: scale manhattan dist (Dijkstra not warm).
+          path_cost = (lgm.dist or 0) * 1.5
+        else
+          path_cost = best_shoot_cost
+        end
+
+        -- (A* + base + low_sh - aim + xfire) * boat (if <1) + threat
+        local raw = path_cost + KILL_LGM_BASE_COST + low_shells_penalty
+                  - aim_bonus + crossfire
+        if boat_mult < 1.0 then raw = raw * boat_mult end
+        cost = raw + tank_tile_threat
+        local cold = best_shoot_cost >= 1e29
+        formula_str = string.format(
+          "kill_lgm@(%d,%d) standoff (A*{%.0f}%s + base{%.0f} + low_sh{%.0f} - aim{%.0f} + xfire{%.0f}) * boat{%.2f} + threat{%.0f} = %.0f"..
+          "||shoot_from=(%d,%d); dist=%.1f; aim_diff=%.1f; shells=%d; near_tank=%s",
+          lgm.mx, lgm.my,
+          path_cost, cold and " (cold)" or "",
+          KILL_LGM_BASE_COST, low_shells_penalty,
+          aim_bonus, crossfire, boat_mult, tank_tile_threat, cost,
+          shoot_mx, shoot_my, lgm.dist or 0, aim_diff, info.shells or 0,
+          tostring(lgm.near_tank_idnum))
+      end
+
+      cand_rows[#cand_rows + 1] = {
+        id = lgm.idnum or 0, mx = lgm.mx, my = lgm.my,
+        cost = cost, own = "hostile", hp = 0, stale = 0,
+      }
+      state.cost_cache["13:" .. (lgm.idnum or 0)] = {
+        cost = cost,
+        raw = (best_shoot_cost < 1e29) and best_shoot_cost or (lgm.dist or 0),
+        tick = now_t, _p = 13,
+        _mx = lgm.mx, _my = lgm.my,
+        formula = formula_str,
+      }
+
+      if cost < best_cost then
+        best_cost = cost
+        best_winner = {
+          lgm = lgm, shoot_mx = shoot_mx, shoot_my = shoot_my,
+          los_engage = los_engage, best_shoot_cost = best_shoot_cost,
+        }
+      end
+    end
+
+    if best_winner then
+      local w = best_winner
+      state.pool_cache[13] = {
+        goal = {
+          kind = "kill_lgm", mx = w.lgm.mx, my = w.lgm.my,
+          wx = U.m2w(w.lgm.mx), wy = U.m2w(w.lgm.my),
+          target_id = w.lgm.idnum or -1,
+          shoot_mx = w.shoot_mx, shoot_my = w.shoot_my,
+          _lgm_track = w.lgm,
+        },
+        cost = best_cost,
+        desc = string.format("kill_lgm@(%d,%d) %s shoot_from=(%d,%d) dij=%s",
+                             w.lgm.mx, w.lgm.my,
+                             w.los_engage and "LOS" or "standoff",
+                             w.shoot_mx, w.shoot_my,
+                             w.best_shoot_cost < 1e29
+                               and string.format("%.0f", w.best_shoot_cost)
+                               or "INF"),
+        cands = cand_rows,
+      }
+    end
+  else
+    -- No LGM in view → drop the override so we don't chase a stale
+    -- ghost target.
+    state.pool_cache[13] = nil
+    if state.cost_cache then
+      for k in pairs(state.cost_cache) do
+        if type(k) == "string" and k:sub(1, 3) == "13:" then
+          state.cost_cache[k] = nil
+        end
       end
     end
   end
@@ -4710,7 +5040,12 @@ local function goal_selection(state, world, info, quiet)
     -- lock (cost < 9) handles real tank threats; everything else
     -- shouldn't yank us off the attack.
     local cur_is_attack_pill = (state.goal.kind == "attack_pill")
-    local HYST_EXEMPT = { capture_pill = true }
+    -- kill_lgm: ALWAYS exempt.  Enemy LGMs are extremely time-critical
+    -- (1-shot kill, ~10s of vulnerability before they return to tank)
+    -- and the cost formula (20 + dist*1.5) is already very low — adding
+    -- switch+commitment penalty on top reliably pushes it above any
+    -- attack_pill incumbent, so the bot never actually picks the kill.
+    local HYST_EXEMPT = { capture_pill = true, kill_lgm = true }
     if not cur_is_attack_pill then
       HYST_EXEMPT.attack_tank = true
     end
@@ -5711,13 +6046,21 @@ function M.get_pool_breakdown_json(state)
         b.tank_shells or 0, state._last_info and state._last_info.armour or 0,
         tostring(state._last_info and state._last_info.inboat or false), who)
     end
-    local los = b.los_engage and "LOS" or "standoff"
+    if b.los_engage then
+      return string.format(
+        "LOS (los_base{%.0f} + dist{%.1f}*per_tile{%.0f} + low_sh{%.0f}) * boat{%.2f} + threat{%.0f} = %.0f" ..
+        "||dist=%.1f; shells_now=%d; aim_diff=%.1f",
+        C.TANK_COMBAT_LOS_BASE_COST, b.dist or 0, C.TANK_COMBAT_LOS_COST_PER_TILE,
+        b.low_shells_penalty or 0, b.boat_mult or 1.0,
+        b.tank_tile_threat or 0, b.cost or 0,
+        b.dist or 0, b.tank_shells or 0, b.aim_diff or 0)
+    end
     return string.format(
-      "%s A*{%.0f} + base{%.0f} + wall{%.0f} + low_sh{%.0f} - aim{%.0f} + xfire{%.0f} + threat{%.0f} * boat{%.2f} = %.0f" ..
+      "standoff (A*{%.0f} + base{%.0f} + wall{%.0f} + low_sh{%.0f} - aim{%.0f} + xfire{%.0f}) * boat{%.2f} + threat{%.0f} = %.0f" ..
       "||dist=%d; shells_now=%d; shells_arrival=%s; aim_diff=%.1f; wall_hp=%s; standoff=(%s,%s) deg=%s",
-      los, b.path_cost or 0, b.base or 0, b.wall_penalty or 0,
+      b.path_cost or 0, b.base or 0, b.wall_penalty or 0,
       b.low_shells_penalty or 0, b.aim_bonus or 0, b.crossfire or 0,
-      b.tank_tile_threat or 0, b.boat_mult or 1.0, b.cost or 0,
+      b.boat_mult or 1.0, b.tank_tile_threat or 0, b.cost or 0,
       b.dist or 0, b.tank_shells or 0, tostring(b.shells_on_arrival),
       b.aim_diff or 0, tostring(b.wall_hp),
       tostring(b.standoff_mx), tostring(b.standoff_my), tostring(b.standoff_deg))
@@ -5879,6 +6222,9 @@ function M.get_pool_breakdown_json(state)
 
   local sections = {}
   local winners = {}
+  -- Iterate 1..9 (main grid pools) plus 13 (kill_lgm strip), so the
+  -- WINNERS cross-pool table includes a kill_lgm row whenever an LGM
+  -- is in view and pool 13 holds a candidate.
   for idx = 1, 9 do
     local sec, w = build_section(idx)
     sections[#sections + 1] = sec
@@ -5996,7 +6342,12 @@ function M.get_pool_breakdown_json(state)
         opening = "OP", early = "EA", middle = "MD", late = "LT",
         endgame = "EG", unknown = "??"
       })[(state.phase or "unknown")] or (state.phase or "??"):sub(1,2):upper()
-      local row_summary = string.format("%.0f %s@%.2f", base_cost, phase_abbrev, pw)
+      -- Prefix with pool kind so the WINNERS row tells you WHAT goal
+      -- the cost belongs to at a glance (was: "34 MD@1.00" → now:
+      -- "attack_tank 34 MD@1.00"). Most-recently asked for on
+      -- attack_tank winners but applies uniformly to all main pools.
+      local row_summary = string.format("%s %.0f %s@%.2f",
+        pname, base_cost, phase_abbrev, pw)
 
       if penalty > 0 or wsim_add > 0 or w.imminent then
         local parts = {}
@@ -6047,6 +6398,49 @@ function M.get_pool_breakdown_json(state)
     end
   end
 
+  -- Strip pools (11/12/13) — injected directly into pool_cache by
+  -- their respective evaluators, not routed through eval_queue or
+  -- goal_competition.  We synthesize a WINNERS row from pool_cache so
+  -- they compete on the same cost axis as the regular pools.  Note:
+  -- 11 (def_build) is reserved but currently unused — the entry will
+  -- show up here as soon as something writes pool_cache[11].
+  --
+  -- Strip rows get the same "<pool_name> <cost> <phase>@<pw>" row
+  -- summary as main pools so the WINNERS column is uniformly readable.
+  -- Their detail formula comes from cost_cache (richer breakdown) when
+  -- available, falling back to sw.desc (the short tagline).
+  for _, idx in ipairs({11, 12, 13}) do
+    local sw = pc[idx]
+    if sw and sw.goal and sw.cost and sw.cost >= 0 and sw.cost < 1e29 then
+      local synthetic_id = (idx << 16) | (sw.goal.target_id or 0)
+      local pname = POOL_NAMES[idx] or ("p"..idx)
+      local pw   = (phase_weights and phase_weights[idx]) or 1.0
+      local phase_abbrev = ({
+        opening = "OP", early = "EA", middle = "MD", late = "LT",
+        endgame = "EG", unknown = "??"
+      })[(state.phase or "unknown")] or (state.phase or "??"):sub(1,2):upper()
+      local row_summary = string.format("%s %.0f %s@%.2f",
+        pname, sw.cost, phase_abbrev, pw)
+      -- Prefer the cost_cache formula (full base + breakdown + detail
+      -- map) over sw.desc (one-line tagline).  Both kill_lgm and
+      -- wait_for_lgm stamp cost_cache under "<idx>:<target_id>" so we
+      -- look that up first.
+      local cc_key = string.format("%d:%s", idx, sw.goal.target_id or 0)
+      local cc = state.cost_cache and state.cost_cache[cc_key]
+      local detail = (cc and get_formula(cc)) or sw.desc or ""
+      local final_formula = string.format("%s !! %s", row_summary, detail)
+      winners[#winners + 1] = {
+        id = synthetic_id, src_pool = idx,
+        mx = sw.goal.mx, my = sw.goal.my,
+        cost = sw.cost, weighted = sw.cost,
+        is_winner = false,
+        active_goal = (active_pool == idx and active_id == (sw.goal.target_id or 0)),
+        stale = 0,
+        formula = final_formula,
+      }
+    end
+  end
+
   -- Cell 10 = cross-pool WINNERS table (ranked ascending).
   table.sort(winners, function(a, b) return a.cost < b.cost end)
   if winners[1] then winners[1].is_winner = true end
@@ -6056,11 +6450,15 @@ function M.get_pool_breakdown_json(state)
     layout_cell = LAYOUT_CELL[10], rows = winners,
   }
 
-  -- Strips below the grid: def_build (11) and wait_for_lgm (12).
-  -- Only emit the section if the brain actually produced candidates
-  -- for that pool this tick — keeps the renderer from drawing empty
-  -- placeholders when the brain doesn't use the slot.
-  for _, idx in ipairs({11, 12}) do
+  -- Strips below the grid: def_build (11), wait_for_lgm (12),
+  -- kill_lgm (13).  Only emit the section if the brain actually
+  -- produced candidates for that pool this tick — keeps the renderer
+  -- from drawing empty placeholders when the brain doesn't use the slot.
+  -- kill_lgm doesn't go through eval_queue (it's injected directly into
+  -- pool_cache from perception); seed by_pool[13] from pool_cache[13]
+  -- here so build_section finds rows.
+  if pc[13] and pc[13].cands then by_pool[13] = pc[13].cands end
+  for _, idx in ipairs({11, 12, 13}) do
     if by_pool[idx] and #by_pool[idx] > 0 then
       sections[#sections + 1] = (build_section(idx))
     end

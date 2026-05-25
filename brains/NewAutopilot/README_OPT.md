@@ -1,5 +1,12 @@
 # Building the stripped `opt/` brain
 
+> **⚠ DO NOT HAND-EDIT FILES IN `opt/`.** Every file in `opt/` is
+> generated from the matching source `.lua` by `lua_strip.exe` via
+> `strip.bat`. Hand edits are silently overwritten the next time the
+> stripper runs and double the maintenance + merge-conflict surface
+> for every brain change. Edit the source files in
+> `brains/NewAutopilot/*.lua` only, then run `strip.bat` to regenerate.
+
 `opt/` holds the production version of the brain — the same Lua sources
 with debug-only calls (`viz.*`, `overlay_*`, `print2`, and
 `if BRAIN_DEBUG_MODE then ... end` blocks) removed. WinBolo loads `opt/`
@@ -69,7 +76,13 @@ Authoring checklist:
 
 1. The block opens with exactly `if BRAIN_DEBUG_MODE then` (the
    stripper matches that prefix). Don't fold an existing condition in
-   front of it.
+   front of it, and the entire `if ... then` MUST be on a single line.
+   Multi-line compound conditions like
+   `if BRAIN_DEBUG_MODE and foo and bar then` (with `and bar then` on
+   line 2) break the stripper — it removes through the `then` on the
+   first line and leaves the `and bar then` dangling. If you need a
+   compound gate, nest as outer `if BRAIN_DEBUG_MODE then` with the
+   compound condition on an inner if.
 2. Initialize any field the non-debug path reads OUTSIDE the wrap. For
    example, `local cands = {}` then `if BRAIN_DEBUG_MODE then ...
    populate cands ... end` — readers see an empty table in `opt/`, not
