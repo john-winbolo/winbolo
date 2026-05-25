@@ -33,6 +33,7 @@ local goals   = require("goals")
 local attack  = require("attack")
 local shield  = require("attack_shield")
 local steer   = require("steering")
+local kill_lgm = require("kill_lgm")
 -- local bpc  = require("bpc")  -- removed: unified into attack_pill
 local log     = require("logger")
 local danger  = require("danger")
@@ -3179,9 +3180,15 @@ function Brain.think(info)
       if ev.status == "shooting" then _shooting_target = ev end
     end
 
-    -- Lead-prediction overlay: yellow line + ring at the predicted
-    -- impact tile for each LGM (perception stamps predicted_wx/wy via
-    -- kill_lgm.predict_aim's two-pass wall-aware sim).
+    -- Lead-prediction overlay: ring + line at the predicted impact tile
+    -- per LGM.  Tier color: yellow=linear (no dest), cyan=dest-lock
+    -- (3-match map-edge sim), magenta=return-to-tank sim.
+
+    -- Forward-sim path overlay: dotted trail of the LGM's predicted
+    -- positions over the next flight_ticks, using the engine sim
+    -- (kill_lgm.sim_forward_to_dest).  Only drawn when predict_aim
+    -- picked a destination-driven tier — the linear tier just goes in
+    -- a straight line, no point dotting it.
 
     -- Clickable detail overlay: click the primary LGM tile to see the
     -- 27-candidate greedy search dump (every turn × speed × gun combo

@@ -311,11 +311,21 @@ function M.update(state, world, info)
         -- the gunrange we need to drive the crosshair to.  Used by both
         -- steering (heading lead) and init.lua's fire block (gunrange
         -- key + fire trigger).
-        local v_ex, v_ey = kill_lgm.update_velocity(state, _ent, now)
+        local v_ex, v_ey = kill_lgm.update_velocity(state, _ent, now, enemy_tanks)
         _ent.v_ema_x = v_ex
         _ent.v_ema_y = v_ey
-        local aim_wx, aim_wy, sl, ft, d_wu = kill_lgm.predict_aim(
-          info.tankx, info.tanky, ob.x, ob.y, v_ex, v_ey)
+        -- Pull phase + dest off the history record so steering/viz/etc.
+        -- can read them straight from the lgm entry.
+        local h = state._enemy_lgm_history and state._enemy_lgm_history[_ent.idnum]
+        if h then
+          _ent.phase              = h.phase
+          _ent.owning_tank_idnum  = h.owning_tank_idnum
+          _ent.dest_wx            = h.dest_wx
+          _ent.dest_wy            = h.dest_wy
+          _ent.dest_locked        = h.dest_locked
+        end
+        local aim_wx, aim_wy, sl, ft, d_wu, tier = kill_lgm.predict_aim(
+          info.tankx, info.tanky, _ent, enemy_tanks, h)
         _ent.predicted_wx     = aim_wx
         _ent.predicted_wy     = aim_wy
         _ent.predicted_mx     = math.floor(aim_wx) >> 8
@@ -323,6 +333,7 @@ function M.update(state, world, info)
         _ent.target_sightLen  = sl
         _ent.flight_ticks     = ft
         _ent.predicted_dist_wu = d_wu
+        _ent.predict_tier     = tier
         enemy_lgms[#enemy_lgms + 1] = _ent
       end
     end
