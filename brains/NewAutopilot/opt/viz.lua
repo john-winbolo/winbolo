@@ -253,10 +253,10 @@ M.IDS = {
                        long  = "Magenta ring on the chosen engage tile (the closest-reachable in-range boundary tile around the LGM, picked by refresh_kill_lgm) + a line from the tank to that tile. Shows where the bot is driving while out of range." },
 
   kill_lgm_predict = { short = "Kill-LGM lead prediction",
-                       long  = "Ring + line from each visible LGM to the predicted shell-impact tile. Colored by predictor tier: yellow=linear, cyan=destination-locked sim, magenta=return-to-tank sim. PRED label shows flight_ticks." },
+                       long  = "Ring + line from each visible LGM to the predicted shell-impact tile. Colored by predictor tier: yellow=linear (no straight-line lock yet), cyan=destination-locked engine sim (3-window match active). PRED label shows flight_ticks + tier." },
 
   kill_lgm_sim_path  = { short = "Kill-LGM forward sim path",
-                         long  = "Dotted trail of the LGM's projected positions out to shell-impact-ticks (tier 1 = sim toward owning tank, tier 2 = sim toward 3-match map-edge destination). Only drawn when predict_aim picked a destination-driven tier; nothing shown for the linear fallback." },
+                         long  = "Dotted trail of the LGM's projected positions out to shell-impact-ticks, using the engine-faithful sim (terrain v_max, wall sliding, corner blocks). Only drawn when predict_aim picked the dest_lock tier (3 matching 10-tick velocity windows → straight-line walk detected); nothing shown for the linear fallback." },
 
   test_lgm_target    = { short = "Test: LGM victim target",
                          long  = "Cyan rect on the tile the victim bot's LGM is currently being dispatched to build. Test-harness only; only renders when the bot was flagged via BrainTest's -victim_ids <ids> CLI option (sets _BT_VICTIM=true)." },

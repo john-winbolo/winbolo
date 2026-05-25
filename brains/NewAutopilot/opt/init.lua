@@ -2819,7 +2819,12 @@ function Brain.think(info)
         _ev.ttl = elm.flight_ticks
         _ev.aim_mx = math.floor(aim_wx + 0.5) >> 8
         _ev.aim_my = math.floor(aim_wy + 0.5) >> 8
-        if math.abs(aim_corr) > C.KILL_LGM_SHOOT_AIM then
+        -- Cheap pre-gate: if we're more than ~22° off the lead point
+        -- the Euclidean check below would reject anyway, but the LOS
+        -- raycast isn't worth running for that case.  KILL_LGM_SHOOT_AIM
+        -- (5 angle units ≈ 7°) was historically a too-tight LATERAL
+        -- check on its own; we now use it just as a coarse-reject.
+        if math.abs(aim_corr) > 16 then  -- ~22° quick-reject
           _ev.status = "off_aim"
         else
           -- LOS check (cached).  Key by idnum if stable, else tile.
@@ -2851,27 +2856,28 @@ function Brain.think(info)
             los_cache[cache_key] = { tick = now, blocked = los_blocked }
           end
           _ev.los_blocked = los_blocked
-          -- Range-alignment gate: fire only when the shell will
-          -- physically land within splash (128 wu = ½ tile) of the
-          -- predicted LGM position.
-          --
-          -- Shell travel in wu = 128 * sightLen — sightLen is in
-          -- HALF-TILES per the brain's convention (see GUNSIGHT_MAX
-          -- comment in constants.lua: max sightLen=14 → 7 map tiles
-          -- of shell travel, so per-unit = 128 wu).
+          -- Fire-gate: shell explosion point must land inside a
+          -- ½-tile-diameter circle (radius 64 wu) around the predicted
+          -- LGM center.  Engine's kill radius is the full 128 wu
+          -- (lgm.c:1321) but we tighten by half so we don't lean on
+          -- splash — small prediction error still kills.  Shell
+          -- explodes at tank + 128*sl wu in the firing direction
+          -- (sl in half-tiles, so 128 wu/unit).
           local cur_sl = info.gunrange or 14
           local shell_travel_wu = 128 * cur_sl
-          local pred_dx = aim_wx - info.tankx
-          local pred_dy = aim_wy - info.tanky
-          local pred_dist_wu = math.sqrt(pred_dx * pred_dx + pred_dy * pred_dy)
-          local landing_offset = math.abs(shell_travel_wu - pred_dist_wu)
+          local rad = (info.direction or 0) * C.TWO_PI / 256
+          local explode_wx = info.tankx + math.sin(rad) * shell_travel_wu
+          local explode_wy = info.tanky - math.cos(rad) * shell_travel_wu
+          local ex_dx = explode_wx - aim_wx
+          local ex_dy = explode_wy - aim_wy
+          local impact_off = math.sqrt(ex_dx * ex_dx + ex_dy * ex_dy)
           _ev.gunrange     = cur_sl
           _ev.gunrange_off = target_sl and math.abs(cur_sl - target_sl) or 99
-          _ev.land_off_wu  = landing_offset
-          local SPLASH_WU = 128  -- kill_lgm.SPLASH_WU (half-tile)
+          _ev.land_off_wu  = impact_off
+          local KILL_WU = 64  -- ½-tile-diameter circle around predicted LGM center
           if los_blocked then
             _ev.status = "los_blocked"
-          elseif landing_offset > SPLASH_WU then
+          elseif impact_off > KILL_WU then
             _ev.status = "gunrange_off"
           elseif _shoot_busy or _already_fired then
             _ev.status = "ready_busy"
@@ -2929,7 +2935,21 @@ function Brain.think(info)
   -- (greedy descent on the crosshair-to-LGM distance metric).
   --
   -- Gated on goal == kill_lgm so attack_pill / attack_tank etc.
-  -- keep their own steering + crosshair management.
+  -- keep their own steering + crosshair management.  Falls back to
+  -- the goal's target LGM (looked up by target_id in perception) when
+  -- _primary_lgm wasn't set this tick — _primary_lgm requires LOS
+  -- clear, but the search itself is meaningful even when blocked
+  -- (steering's [ENGAGE] flag only cares about range, and the user
+  -- still wants to inspect aim candidates while waiting for LOS).
+  if not _primary_lgm and state.goal and state.goal.kind == "kill_lgm"
+     and state.goal.target_id and state.perc and state.perc.enemy_lgms then
+    for _, elm in ipairs(state.perc.enemy_lgms) do
+      if elm.idnum == state.goal.target_id then
+        _primary_lgm = elm
+        break
+      end
+    end
+  end
   if state.goal and state.goal.kind == "kill_lgm"
      and _primary_lgm
      and not info.inboat then
@@ -3146,6 +3166,11 @@ function Brain.think(info)
   -- center on (mx+0.5, my+0.5).  Velocity is in wu/tick (~1/256 tiles)
   -- so we scale by 1/64 to get a visible-but-small arrow tip.
 
+  -- Clickable per-LGM detail panel: prediction internals (tier, lock
+  -- progress, velocity, linear-extrapolation math).  Click any LGM
+  -- tile with the D inspector open to see the panel.  Standalone in
+  -- BRAIN_DEBUG_MODE — not gated on any specific viz toggle.
+
   -- Kill-LGM status: per-LGM label under the marker showing the
   -- shoot-evaluation state (out_of_range / off_aim / los_blocked /
   -- ready_busy / shooting / no_shells / in_boat), plus a top-left
@@ -3154,6 +3179,12 @@ function Brain.think(info)
   -- Engage-spot viz: line + ring on the tile the bot is driving to
   -- when out of range.  Lives next to the eval HUD on its own toggle
   -- so it can be enabled/disabled independently.
+  -- Clickable detail overlay for the 27-candidate kill_lgm search.
+  -- Always registers in debug mode (independent of any specific viz
+  -- toggle) so pressing D in BrainTest always reveals it.  Click the
+  -- LGM tile to expand the panel; body lists every (turn × speed ×
+  -- gun) combo with its predicted crosshair-to-LGM euclidean distance.
+
   if state._kill_lgm_eval and #state._kill_lgm_eval > 0 and viz.is_on("kill_lgm_status") then
     local _STATUS_COLOR = {
       shooting      = { 255,  80,  80, 240 },   -- red: firing this tick
@@ -3170,9 +3201,17 @@ function Brain.think(info)
       local col = _STATUS_COLOR[ev.status] or _STATUS_COLOR.out_of_range
       local label
       if ev.aim_corr ~= nil then
-        label = string.format("%s d=%.1f aim=%+d%s",
+        -- off=N/M : N is the shell-explosion → predicted-LGM Euclidean
+        -- distance in wu, M is the kill-circle radius (fires when N≤M).
+        -- "—" when we never got far enough to compute (e.g. off_aim
+        -- quick-reject).
+        local off_str = ev.land_off_wu
+                        and string.format(" off=%.0f/%d", ev.land_off_wu, 64)
+                        or ""
+        label = string.format("%s d=%.1f aim=%+d%s%s",
                               ev.status, ev.dist or -1,
                               math.floor(ev.aim_corr + 0.5),
+                              off_str,
                               ev.los_blocked and " LOS✗" or "")
       else
         label = string.format("%s d=%.1f", ev.status, ev.dist or -1)
@@ -3182,18 +3221,17 @@ function Brain.think(info)
 
     -- Lead-prediction overlay: ring + line at the predicted impact tile
     -- per LGM.  Tier color: yellow=linear (no dest), cyan=dest-lock
-    -- (3-match map-edge sim), magenta=return-to-tank sim.
+    -- (3-match map-edge sim).
 
     -- Forward-sim path overlay: dotted trail of the LGM's predicted
     -- positions over the next flight_ticks, using the engine sim
     -- (kill_lgm.sim_forward_to_dest).  Only drawn when predict_aim
-    -- picked a destination-driven tier — the linear tier just goes in
-    -- a straight line, no point dotting it.
+    -- picked the dest_lock tier — linear tier is a straight line, no
+    -- point dotting.
 
-    -- Clickable detail overlay: click the primary LGM tile to see the
-    -- 27-candidate greedy search dump (every turn × speed × gun combo
-    -- with its predicted crosshair-to-LGM euclidean distance).  Same
-    -- pattern as attack_shield's per-candidate detail panel.
+    -- Detail panel was relocated out of this status block (it had been
+    -- accidentally gated on the kill_lgm_status viz toggle); now lives
+    -- standalone in its own BRAIN_DEBUG_MODE-gated block below.
     if viz.hud_text then
       local hud_msg, r, g, b
       -- Mode tag: ENGAGE = halted+aiming this tick, ENGAGE* = sticky

@@ -208,6 +208,9 @@ function M.update(state, world, info)
       enemy_lgm_sightings[U.mkey(omx, omy)] = {
         tick = now, mx = omx, my = omy,
       }
+      -- Clear kill_lgm history near this death point so a fast
+      -- respawn doesn't inherit the previous life's samples/dest.
+      kill_lgm.purge_killed(state, ob.x, ob.y)
     end
   end
   -- enemy_lgm_dead: TRUE while any parachute sighting is within the
@@ -311,21 +314,20 @@ function M.update(state, world, info)
         -- the gunrange we need to drive the crosshair to.  Used by both
         -- steering (heading lead) and init.lua's fire block (gunrange
         -- key + fire trigger).
-        local v_ex, v_ey = kill_lgm.update_velocity(state, _ent, now, enemy_tanks)
+        local v_ex, v_ey = kill_lgm.update_velocity(state, _ent, now)
         _ent.v_ema_x = v_ex
         _ent.v_ema_y = v_ey
-        -- Pull phase + dest off the history record so steering/viz/etc.
-        -- can read them straight from the lgm entry.
+        -- Pull dest off the history record so steering/viz/etc. can
+        -- read it straight from the lgm entry.
         local h = state._enemy_lgm_history and state._enemy_lgm_history[_ent.idnum]
         if h then
-          _ent.phase              = h.phase
-          _ent.owning_tank_idnum  = h.owning_tank_idnum
-          _ent.dest_wx            = h.dest_wx
-          _ent.dest_wy            = h.dest_wy
-          _ent.dest_locked        = h.dest_locked
+          _ent.dest_wx     = h.dest_wx
+          _ent.dest_wy     = h.dest_wy
+          _ent.dest_locked = h.dest_locked
+          _ent.lock_status = h.lock_status
         end
         local aim_wx, aim_wy, sl, ft, d_wu, tier = kill_lgm.predict_aim(
-          info.tankx, info.tanky, _ent, enemy_tanks, h)
+          info.tankx, info.tanky, _ent, h)
         _ent.predicted_wx     = aim_wx
         _ent.predicted_wy     = aim_wy
         _ent.predicted_mx     = math.floor(aim_wx) >> 8
@@ -341,7 +343,7 @@ function M.update(state, world, info)
   state._prev_enemy_lgms = enemy_lgms
   perc.allied_lgm_positions = allied_lgm_positions
   perc.enemy_lgms = enemy_lgms
-  kill_lgm.purge_stale(state, now)
+  kill_lgm.purge_stale(state, now, enemy_lgms)
 
   -- ----- Under fire: shell danger or angry pill in range -----
   local threat_at_tank = danger.danger_at(tmx, tmy, now, world)

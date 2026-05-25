@@ -3597,7 +3597,12 @@ function Brain.think(info)
         _ev.ttl = elm.flight_ticks
         _ev.aim_mx = math.floor(aim_wx + 0.5) >> 8
         _ev.aim_my = math.floor(aim_wy + 0.5) >> 8
-        if math.abs(aim_corr) > C.KILL_LGM_SHOOT_AIM then
+        -- Cheap pre-gate: if we're more than ~22° off the lead point
+        -- the Euclidean check below would reject anyway, but the LOS
+        -- raycast isn't worth running for that case.  KILL_LGM_SHOOT_AIM
+        -- (5 angle units ≈ 7°) was historically a too-tight LATERAL
+        -- check on its own; we now use it just as a coarse-reject.
+        if math.abs(aim_corr) > 16 then  -- ~22° quick-reject
           _ev.status = "off_aim"
         else
           -- LOS check (cached).  Key by idnum if stable, else tile.
@@ -3629,27 +3634,28 @@ function Brain.think(info)
             los_cache[cache_key] = { tick = now, blocked = los_blocked }
           end
           _ev.los_blocked = los_blocked
-          -- Range-alignment gate: fire only when the shell will
-          -- physically land within splash (128 wu = ½ tile) of the
-          -- predicted LGM position.
-          --
-          -- Shell travel in wu = 128 * sightLen — sightLen is in
-          -- HALF-TILES per the brain's convention (see GUNSIGHT_MAX
-          -- comment in constants.lua: max sightLen=14 → 7 map tiles
-          -- of shell travel, so per-unit = 128 wu).
+          -- Fire-gate: shell explosion point must land inside a
+          -- ½-tile-diameter circle (radius 64 wu) around the predicted
+          -- LGM center.  Engine's kill radius is the full 128 wu
+          -- (lgm.c:1321) but we tighten by half so we don't lean on
+          -- splash — small prediction error still kills.  Shell
+          -- explodes at tank + 128*sl wu in the firing direction
+          -- (sl in half-tiles, so 128 wu/unit).
           local cur_sl = info.gunrange or 14
           local shell_travel_wu = 128 * cur_sl
-          local pred_dx = aim_wx - info.tankx
-          local pred_dy = aim_wy - info.tanky
-          local pred_dist_wu = math.sqrt(pred_dx * pred_dx + pred_dy * pred_dy)
-          local landing_offset = math.abs(shell_travel_wu - pred_dist_wu)
+          local rad = (info.direction or 0) * C.TWO_PI / 256
+          local explode_wx = info.tankx + math.sin(rad) * shell_travel_wu
+          local explode_wy = info.tanky - math.cos(rad) * shell_travel_wu
+          local ex_dx = explode_wx - aim_wx
+          local ex_dy = explode_wy - aim_wy
+          local impact_off = math.sqrt(ex_dx * ex_dx + ex_dy * ex_dy)
           _ev.gunrange     = cur_sl
           _ev.gunrange_off = target_sl and math.abs(cur_sl - target_sl) or 99
-          _ev.land_off_wu  = landing_offset
-          local SPLASH_WU = 128  -- kill_lgm.SPLASH_WU (half-tile)
+          _ev.land_off_wu  = impact_off
+          local KILL_WU = 64  -- ½-tile-diameter circle around predicted LGM center
           if los_blocked then
             _ev.status = "los_blocked"
-          elseif landing_offset > SPLASH_WU then
+          elseif impact_off > KILL_WU then
             _ev.status = "gunrange_off"
           elseif _shoot_busy or _already_fired then
             _ev.status = "ready_busy"
@@ -3707,7 +3713,21 @@ function Brain.think(info)
   -- (greedy descent on the crosshair-to-LGM distance metric).
   --
   -- Gated on goal == kill_lgm so attack_pill / attack_tank etc.
-  -- keep their own steering + crosshair management.
+  -- keep their own steering + crosshair management.  Falls back to
+  -- the goal's target LGM (looked up by target_id in perception) when
+  -- _primary_lgm wasn't set this tick — _primary_lgm requires LOS
+  -- clear, but the search itself is meaningful even when blocked
+  -- (steering's [ENGAGE] flag only cares about range, and the user
+  -- still wants to inspect aim candidates while waiting for LOS).
+  if not _primary_lgm and state.goal and state.goal.kind == "kill_lgm"
+     and state.goal.target_id and state.perc and state.perc.enemy_lgms then
+    for _, elm in ipairs(state.perc.enemy_lgms) do
+      if elm.idnum == state.goal.target_id then
+        _primary_lgm = elm
+        break
+      end
+    end
+  end
   if state.goal and state.goal.kind == "kill_lgm"
      and _primary_lgm
      and not info.inboat then
@@ -4120,19 +4140,16 @@ function Brain.think(info)
   -- center on (mx+0.5, my+0.5).  Velocity is in wu/tick (~1/256 tiles)
   -- so we scale by 1/64 to get a visible-but-small arrow tip.
   if BRAIN_DEBUG_MODE and state.perc and state.perc.enemy_lgms and viz.is_on("enemy_lgm_marker") then
-    -- Per-phase colors so we can read at a glance which LGMs we know
-    -- something about: cyan=outgoing (saw exit, may have dest soon),
-    -- magenta=return (built/blocked, heading back to owning tank),
-    -- yellow=unknown (mid-walk acquisition, no phase info).
-    local PHASE_COLOR = {
-      outgoing = {  80, 220, 255 },   -- cyan
-      ["return"] = { 255,  80, 220 }, -- magenta
-      unknown  = { 255, 230,   0 },   -- yellow (original)
-    }
+    -- Cyan when we have a 3-window straight-line lock (dest_locked),
+    -- yellow otherwise.  The PRED ring overlay carries the same tier
+    -- info more explicitly; this is just an at-a-glance signal on the
+    -- LGM tile itself.
     for _, elm in ipairs(state.perc.enemy_lgms) do
       local cx, cy = elm.mx + 0.5, elm.my + 0.5
-      local col = PHASE_COLOR[elm.phase or "unknown"] or PHASE_COLOR.unknown
-      local cr, cg, cb = col[1], col[2], col[3]
+      local cr, cg, cb
+      if elm.dest_locked then cr, cg, cb = 80, 220, 255  -- cyan
+      else                    cr, cg, cb = 255, 230, 0   -- yellow
+      end
       viz.line("enemy_lgm_marker", cx - 0.35, cy - 0.35, cx + 0.35, cy + 0.35, cr, cg, cb, 240)
       viz.line("enemy_lgm_marker", cx - 0.35, cy + 0.35, cx + 0.35, cy - 0.35, cr, cg, cb, 240)
       if elm.vx ~= 0 or elm.vy ~= 0 then
@@ -4140,14 +4157,136 @@ function Brain.think(info)
         local tipy = cy + (elm.vy or 0) / 64.0
         viz.line("enemy_lgm_marker", cx, cy, tipx, tipy, cr, cg - 50, 0, 220)
       end
-      local phase_tag = (elm.phase == "outgoing") and "→"
-                     or (elm.phase == "return")   and "←"
-                     or ""
       local label = elm.near_tank_idnum
-                    and string.format("LGM%s(t%d)", phase_tag, elm.near_tank_idnum)
-                    or  string.format("LGM%s", phase_tag)
+                    and string.format("LGM(t%d)", elm.near_tank_idnum)
+                    or "LGM"
       viz.text("enemy_lgm_marker", cx, cy - 0.45, label,
                "center", cr, cg, cb, 220)
+    end
+  end
+
+  -- Clickable per-LGM detail panel: prediction internals (tier, lock
+  -- progress, velocity, linear-extrapolation math).  Click any LGM
+  -- tile with the D inspector open to see the panel.  Standalone in
+  -- BRAIN_DEBUG_MODE — not gated on any specific viz toggle.
+  if BRAIN_DEBUG_MODE and viz.detail_circle and state.perc and state.perc.enemy_lgms then
+    for _, elm in ipairs(state.perc.enemy_lgms) do
+      local idtxt = tostring(elm.idnum or "?")
+      local did = "kill_lgm_track_" .. idtxt
+      local tier = elm.predict_tier or "linear"
+      local hdr  = string.format("LGM %s  tier=%s  ft=%d  off=%.0fwu",
+                                 idtxt, tier, elm.flight_ticks or 0,
+                                 elm.predicted_dist_wu or 0)
+      viz.detail_circle(did, elm.mx + 0.5, elm.my + 0.5, 0.5, hdr)
+      viz.detail_text(did, string.format(
+        "lock: %s", elm.lock_status or "?"))
+      viz.detail_text(did, string.format(
+        "vel: vx=%.2f vy=%.2f wu/tick  (10-tick finite-difference window)",
+        elm.v_ema_x or 0, elm.v_ema_y or 0))
+      viz.detail_text(did, string.format(
+        "lgm pos: wu=(%.0f,%.0f) tile=(%d,%d)",
+        elm.wx or 0, elm.wy or 0, elm.mx or 0, elm.my or 0))
+      viz.detail_text(did, string.format(
+        "predicted: wu=(%.0f,%.0f) tile=(%d,%d)",
+        elm.predicted_wx or 0, elm.predicted_wy or 0,
+        elm.predicted_mx or 0, elm.predicted_my or 0))
+      -- Full sample history (up to V_HISTORY_TICKS=32 ticks) so the
+      -- user can sanity-check the velocity calc by hand.
+      local h = state._enemy_lgm_history and state._enemy_lgm_history[elm.idnum]
+      if h and h.samples then
+        viz.detail_text(did, "")
+        viz.detail_text(did, string.format(
+          "samples (%d retained, ages in ticks; latest first):", #h.samples))
+        local now = state.tick or 0
+        for i = #h.samples, 1, -1 do
+          local s = h.samples[i]
+          local prev = h.samples[i - 1]
+          local delta_str = ""
+          if prev then
+            local dt  = s.tick - prev.tick
+            local dwx = s.wx - prev.wx
+            local dwy = s.wy - prev.wy
+            delta_str = string.format("  Δ=(%+d,%+d) over %d", dwx, dwy, dt)
+          end
+          viz.detail_text(did, string.format(
+            "  age=%-3d wu=(%5d,%5d) tile=(%3d,%3d)%s",
+            now - s.tick, s.wx, s.wy, s.wx >> 8, s.wy >> 8, delta_str))
+        end
+      end
+      viz.detail_text(did, "")
+      if tier == "linear" then
+        local D  = elm.predicted_dist_wu or 0
+        local T  = elm.flight_ticks or 0
+        local vx = elm.v_ema_x or 0
+        local vy = elm.v_ema_y or 0
+        local LS = kill_lgm.LINEAR_LEAD_SCALE
+        local sx = vx * T * LS
+        local sy = vy * T * LS
+        local lwx = elm.wx or 0
+        local lwy = elm.wy or 0
+        -- D_now: distance from tank to LGM right now (input to sightLen)
+        local twx, twy = info.tankx, info.tanky
+        local d_now = math.sqrt((twx - lwx)^2 + (twy - lwy)^2)
+        local sl_now = math.floor(d_now / 128 + 0.5)
+        if sl_now < 2  then sl_now = 2  end
+        if sl_now > 14 then sl_now = 14 end
+        viz.detail_text(did, "linear lead — how each value was derived:")
+        viz.detail_text(did, "")
+        viz.detail_text(did, "1) velocity (10-tick finite difference over samples):")
+        viz.detail_text(did, "     v = (cur_pos - oldest_in_window_pos) / Δticks")
+        viz.detail_text(did, string.format(
+          "     vx = %.4f wu/tick      vy = %.4f wu/tick", vx, vy))
+        viz.detail_text(did, string.format(
+          "     |v|= %.4f wu/tick      bearing = atan2(vx,-vy) ≈ %.0f°",
+          math.sqrt(vx*vx + vy*vy),
+          math.deg(math.atan(vx, -vy))))
+        viz.detail_text(did, "")
+        viz.detail_text(did, "2) shell flight time from current tank→LGM distance:")
+        viz.detail_text(did, string.format(
+          "     D_now = |tank - lgm| = sqrt((%.0f-%.0f)² + (%.0f-%.0f)²) = %.0fwu",
+          twx, lwx, twy, lwy, d_now))
+        viz.detail_text(did, string.format(
+          "     sightLen = round(D_now / 128) clamped[2..14] = %d", sl_now))
+        viz.detail_text(did, string.format(
+          "     T = flight_ticks(sl) = 4*sl - 6 (shells.c:133) = %d sim-ticks", T))
+        viz.detail_text(did, "")
+        viz.detail_text(did, "3) lead offset (scaled to land empirically on-target):")
+        viz.detail_text(did, string.format(
+          "     Δ = v * T * LINEAR_LEAD_SCALE(%.2f)", LS))
+        viz.detail_text(did, string.format(
+          "       = (%.4f, %.4f) * %d * %.2f", vx, vy, T, LS))
+        viz.detail_text(did, string.format(
+          "       = (%.1f, %.1f) wu", sx, sy))
+        viz.detail_text(did, "")
+        viz.detail_text(did, "4) projected position (pass 1):")
+        viz.detail_text(did, string.format(
+          "     pos1 = lgm + Δ = (%.0f,%.0f) + (%.1f,%.1f) = (%.0f,%.0f)",
+          lwx, lwy, sx, sy, lwx + sx, lwy + sy))
+        viz.detail_text(did, "")
+        viz.detail_text(did, "5) two-pass refit:")
+        viz.detail_text(did, "     T2 = flight_ticks(sightlen_for(|tank - pos1|))")
+        viz.detail_text(did, string.format(
+          "     if T2 > T1: aim = pos1 + v * (T2-T1) * %.2f", LS))
+        viz.detail_text(did, "     else:       aim = pos1")
+        viz.detail_text(did, string.format(
+          "     final aim shown on PRED ring: predicted=(%.0f,%.0f)",
+          elm.predicted_wx or 0, elm.predicted_wy or 0))
+      elseif tier == "dest_lock" then
+        local D  = elm.predicted_dist_wu or 0
+        local T  = elm.flight_ticks or 0
+        local DS = kill_lgm.DEST_LEAD_SCALE
+        local sT = math.floor(T * DS + 0.5)
+        viz.detail_text(did, "destination-locked engine sim:")
+        viz.detail_text(did, string.format(
+          "  dest: wu=(%.0f,%.0f) (3-match ray to map edge)",
+          elm.dest_wx or 0, elm.dest_wy or 0))
+        viz.detail_text(did, string.format(
+          "  T = flight_ticks(sightlen_for(D=%.0fwu)) = %d sim-ticks", D, T))
+        viz.detail_text(did, string.format(
+          "  sim_T = round(T * DEST_LEAD_SCALE(%.2f)) = %d", DS, sT))
+        viz.detail_text(did, "  sim_forward_to_dest steps from lgm toward dest,")
+        viz.detail_text(did, "  each step: angle-to-dest * MAN_SPEED[tile], wall-slide on block")
+      end
     end
   end
 
@@ -4194,108 +4333,12 @@ function Brain.think(info)
       end
     end
   end
-  if state._kill_lgm_eval and #state._kill_lgm_eval > 0 and viz.is_on("kill_lgm_status") then
-    local _STATUS_COLOR = {
-      shooting      = { 255,  80,  80, 240 },   -- red: firing this tick
-      ready_busy    = { 255, 200,  80, 220 },   -- amber: would fire but shoot key already used
-      off_aim       = { 200, 200, 200, 220 },   -- light gray
-      los_blocked   = { 160, 100, 220, 220 },   -- purple: wall in the way
-      out_of_range  = { 130, 130, 130, 200 },
-      no_shells     = { 100, 100, 100, 200 },
-      in_boat       = { 100, 100, 100, 200 },
-    }
-    local _shooting_target
-    for _, ev in ipairs(state._kill_lgm_eval) do
-      local cx, cy = ev.mx + 0.5, ev.my + 0.5
-      local col = _STATUS_COLOR[ev.status] or _STATUS_COLOR.out_of_range
-      local label
-      if ev.aim_corr ~= nil then
-        label = string.format("%s d=%.1f aim=%+d%s",
-                              ev.status, ev.dist or -1,
-                              math.floor(ev.aim_corr + 0.5),
-                              ev.los_blocked and " LOS✗" or "")
-      else
-        label = string.format("%s d=%.1f", ev.status, ev.dist or -1)
-      end
-      viz.text("kill_lgm_status", cx, cy + 0.5, label, "center",
-               col[1], col[2], col[3], col[4])
-      if ev.status == "shooting" then _shooting_target = ev end
-    end
-
-    -- Lead-prediction overlay: ring + line at the predicted impact tile
-    -- per LGM.  Tier color: yellow=linear (no dest), cyan=dest-lock
-    -- (3-match map-edge sim), magenta=return-to-tank sim.
-    if BRAIN_DEBUG_MODE and viz.is_on("kill_lgm_predict") then
-      local TIER_COL = {
-        linear      = { 255, 220,  60 },
-        dest_lock   = {  80, 220, 255 },
-        return_tank = { 255,  80, 220 },
-      }
-      for _, elm in ipairs(state.perc.enemy_lgms or {}) do
-        if elm.predicted_wx and elm.predicted_wy then
-          local lx = (elm.wx or 0) / 256
-          local ly = (elm.wy or 0) / 256
-          local px = elm.predicted_wx / 256
-          local py = elm.predicted_wy / 256
-          local col = TIER_COL[elm.predict_tier or "linear"] or TIER_COL.linear
-          local cr, cg, cb = col[1], col[2], col[3]
-          viz.line("kill_lgm_predict", lx, ly, px, py, cr, cg, cb, 200)
-          viz.circle("kill_lgm_predict", px, py, 0.45, cr, cg, cb, 220)
-          viz.circle("kill_lgm_predict", px, py, 0.10, cr, cg, cb, 255)
-          viz.text("kill_lgm_predict", px, py - 0.55,
-                   string.format("PRED ft=%d %s", elm.flight_ticks or 0,
-                                 elm.predict_tier or "linear"),
-                   "center", cr, cg, cb, 230)
-        end
-      end
-    end
-
-    -- Forward-sim path overlay: dotted trail of the LGM's predicted
-    -- positions over the next flight_ticks, using the engine sim
-    -- (kill_lgm.sim_forward_to_dest).  Only drawn when predict_aim
-    -- picked a destination-driven tier — the linear tier just goes in
-    -- a straight line, no point dotting it.
-    if BRAIN_DEBUG_MODE and viz.is_on("kill_lgm_sim_path") then
-      for _, elm in ipairs(state.perc.enemy_lgms or {}) do
-        local tier = elm.predict_tier
-        local dest_wx, dest_wy
-        if tier == "return_tank" and elm.owning_tank_idnum
-           and state.perc.enemy_tanks then
-          for _, et in ipairs(state.perc.enemy_tanks) do
-            if et.id == elm.owning_tank_idnum then
-              dest_wx, dest_wy = et.wx, et.wy; break
-            end
-          end
-        elseif tier == "dest_lock" and elm.dest_wx and elm.dest_wy then
-          dest_wx, dest_wy = elm.dest_wx, elm.dest_wy
-        end
-        if dest_wx then
-          local col_r, col_g, col_b
-          if tier == "return_tank" then col_r, col_g, col_b = 255,  80, 220
-          else                          col_r, col_g, col_b =  80, 220, 255 end
-          -- Draw a faint line to the destination point itself.
-          viz.line("kill_lgm_sim_path",
-                   elm.wx / 256, elm.wy / 256,
-                   dest_wx / 256, dest_wy / 256,
-                   col_r, col_g, col_b, 70)
-          -- Then dot the simulated trajectory at 1-tick intervals
-          -- (kill_lgm.sim_forward_to_dest one step at a time).
-          local steps = math.min(elm.flight_ticks or 8, 24)
-          local cwx, cwy = elm.wx, elm.wy
-          for _ = 1, steps do
-            cwx, cwy = kill_lgm.sim_forward_to_dest(cwx, cwy, dest_wx, dest_wy, 1)
-            viz.circle("kill_lgm_sim_path", cwx / 256, cwy / 256,
-                       0.06, col_r, col_g, col_b, 200)
-          end
-        end
-      end
-    end
-
-    -- Clickable detail overlay: click the primary LGM tile to see the
-    -- 27-candidate greedy search dump (every turn × speed × gun combo
-    -- with its predicted crosshair-to-LGM euclidean distance).  Same
-    -- pattern as attack_shield's per-candidate detail panel.
-    if BRAIN_DEBUG_MODE then
+  -- Clickable detail overlay for the 27-candidate kill_lgm search.
+  -- Always registers in debug mode (independent of any specific viz
+  -- toggle) so pressing D in BrainTest always reveals it.  Click the
+  -- LGM tile to expand the panel; body lists every (turn × speed ×
+  -- gun) combo with its predicted crosshair-to-LGM euclidean distance.
+  if BRAIN_DEBUG_MODE then
     local _ksrch = state._kill_lgm_search
     if viz.detail_circle and _ksrch and _ksrch.cands then
       local sorted = {}
@@ -4327,7 +4370,105 @@ function Brain.think(info)
           c.new_dir, c.new_speed, c.new_gun, marker))
       end
     end
+  end
+
+  if state._kill_lgm_eval and #state._kill_lgm_eval > 0 and viz.is_on("kill_lgm_status") then
+    local _STATUS_COLOR = {
+      shooting      = { 255,  80,  80, 240 },   -- red: firing this tick
+      ready_busy    = { 255, 200,  80, 220 },   -- amber: would fire but shoot key already used
+      off_aim       = { 200, 200, 200, 220 },   -- light gray
+      los_blocked   = { 160, 100, 220, 220 },   -- purple: wall in the way
+      out_of_range  = { 130, 130, 130, 200 },
+      no_shells     = { 100, 100, 100, 200 },
+      in_boat       = { 100, 100, 100, 200 },
+    }
+    local _shooting_target
+    for _, ev in ipairs(state._kill_lgm_eval) do
+      local cx, cy = ev.mx + 0.5, ev.my + 0.5
+      local col = _STATUS_COLOR[ev.status] or _STATUS_COLOR.out_of_range
+      local label
+      if ev.aim_corr ~= nil then
+        -- off=N/M : N is the shell-explosion → predicted-LGM Euclidean
+        -- distance in wu, M is the kill-circle radius (fires when N≤M).
+        -- "—" when we never got far enough to compute (e.g. off_aim
+        -- quick-reject).
+        local off_str = ev.land_off_wu
+                        and string.format(" off=%.0f/%d", ev.land_off_wu, 64)
+                        or ""
+        label = string.format("%s d=%.1f aim=%+d%s%s",
+                              ev.status, ev.dist or -1,
+                              math.floor(ev.aim_corr + 0.5),
+                              off_str,
+                              ev.los_blocked and " LOS✗" or "")
+      else
+        label = string.format("%s d=%.1f", ev.status, ev.dist or -1)
+      end
+      viz.text("kill_lgm_status", cx, cy + 0.5, label, "center",
+               col[1], col[2], col[3], col[4])
+      if ev.status == "shooting" then _shooting_target = ev end
     end
+
+    -- Lead-prediction overlay: ring + line at the predicted impact tile
+    -- per LGM.  Tier color: yellow=linear (no dest), cyan=dest-lock
+    -- (3-match map-edge sim).
+    if BRAIN_DEBUG_MODE and viz.is_on("kill_lgm_predict") then
+      local TIER_COL = {
+        linear    = { 255, 220,  60 },
+        dest_lock = {  80, 220, 255 },
+      }
+      for _, elm in ipairs(state.perc.enemy_lgms or {}) do
+        if elm.predicted_wx and elm.predicted_wy then
+          local lx = (elm.wx or 0) / 256
+          local ly = (elm.wy or 0) / 256
+          local px = elm.predicted_wx / 256
+          local py = elm.predicted_wy / 256
+          local col = TIER_COL[elm.predict_tier or "linear"] or TIER_COL.linear
+          local cr, cg, cb = col[1], col[2], col[3]
+          viz.line("kill_lgm_predict", lx, ly, px, py, cr, cg, cb, 200)
+          viz.circle("kill_lgm_predict", px, py, 0.45, cr, cg, cb, 220)
+          viz.circle("kill_lgm_predict", px, py, 0.10, cr, cg, cb, 255)
+          viz.text("kill_lgm_predict", px, py - 0.55,
+                   string.format("PRED ft=%d %s", elm.flight_ticks or 0,
+                                 elm.predict_tier or "linear"),
+                   "center", cr, cg, cb, 230)
+        end
+      end
+    end
+
+    -- Forward-sim path overlay: dotted trail of the LGM's predicted
+    -- positions over the next flight_ticks, using the engine sim
+    -- (kill_lgm.sim_forward_to_dest).  Only drawn when predict_aim
+    -- picked the dest_lock tier — linear tier is a straight line, no
+    -- point dotting.
+    if BRAIN_DEBUG_MODE and viz.is_on("kill_lgm_sim_path") then
+      for _, elm in ipairs(state.perc.enemy_lgms or {}) do
+        local dest_wx, dest_wy
+        if elm.predict_tier == "dest_lock" and elm.dest_wx and elm.dest_wy then
+          dest_wx, dest_wy = elm.dest_wx, elm.dest_wy
+        end
+        if dest_wx then
+          local col_r, col_g, col_b = 80, 220, 255
+          -- Draw a faint line to the destination point itself.
+          viz.line("kill_lgm_sim_path",
+                   elm.wx / 256, elm.wy / 256,
+                   dest_wx / 256, dest_wy / 256,
+                   col_r, col_g, col_b, 70)
+          -- Then dot the simulated trajectory at 1-tick intervals
+          -- (kill_lgm.sim_forward_to_dest one step at a time).
+          local steps = math.min(elm.flight_ticks or 8, 24)
+          local cwx, cwy = elm.wx, elm.wy
+          for _ = 1, steps do
+            cwx, cwy = kill_lgm.sim_forward_to_dest(cwx, cwy, dest_wx, dest_wy, 1)
+            viz.circle("kill_lgm_sim_path", cwx / 256, cwy / 256,
+                       0.06, col_r, col_g, col_b, 200)
+          end
+        end
+      end
+    end
+
+    -- Detail panel was relocated out of this status block (it had been
+    -- accidentally gated on the kill_lgm_status viz toggle); now lives
+    -- standalone in its own BRAIN_DEBUG_MODE-gated block below.
     if viz.hud_text then
       local hud_msg, r, g, b
       -- Mode tag: ENGAGE = halted+aiming this tick, ENGAGE* = sticky
