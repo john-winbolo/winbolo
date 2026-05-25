@@ -513,6 +513,23 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
      * NULL for cs to skip the localTick snapshot-apply hook. */
     bot->transport = transportLocalCreatePassive(sim, NULL, playerNum);
 
+    /* Bind the transport into the bot's ClientSim so client_net.h
+     * send wrappers (clientSimNetSendChat in particular) actually
+     * fire instead of bailing on `!cs->hasTransport`.  Mirrors the
+     * field setup at the bottom of clientSimNetConnectLocalSim
+     * (client_net.c:199-204) — keep this sequence in lockstep with
+     * that one so the host's local ClientSim and a bot's local
+     * ClientSim look identical from the sim's POV.  Without these
+     * bindings, brain.sendmessage was silently dropped at the
+     * clientSimNetSendChat hasTransport gate — the symptom was
+     * info.messages always empty on every bot. */
+    bot->cs->transport      = bot->transport;
+    bot->cs->hasTransport   = true;
+    bot->cs->isUdpTransport = false;
+    clientSimSetBoundServerSim(bot->cs, sim);
+    clientSimSetLocalTransport(bot->cs, true);
+    clientSimSetNetType(bot->cs, netSingle);
+
     /* Register this bot's ClientSim as a control-event subscriber so
      * out-of-band roster/lobby/phase state from the server reaches it
      * the same way snapshots do. Sync runs inside register and uses the
@@ -534,7 +551,8 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
         fprintf(stderr, "botManager: failed to create brain for bot %d\n", playerNum);
         serverSimUnregisterSubscriber(sim, bot->controlSub);
         bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
-        transportLocalDestroy(&bot->transport);
+        /* Transport ownership moved to bot->cs (see binding above);
+         * clientSimDestroy will tear it down via cs->transport. */
         clientSimDestroy(bot->cs);
         bot->cs = NULL;
         serverSimRemovePlayer(sim, playerNum);
@@ -952,7 +970,11 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
     luaBrainInstanceDestroy(&bot->brain);
     serverSimUnregisterSubscriber(sim, bot->controlSub);
     bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
-    transportLocalDestroy(&bot->transport);
+    /* Transport ownership moved to bot->cs (botManagerAddBot binds
+     * bot->cs->transport = bot->transport); clientSimDestroy tears it
+     * down via cs->transport.  Don't call transportLocalDestroy on
+     * bot->transport here — it's the same underlying TransportLocalCtx
+     * and would double-free. */
     clientSimDestroy(bot->cs);
     bot->cs = NULL;
     serverSimRemovePlayer(sim, playerNum);

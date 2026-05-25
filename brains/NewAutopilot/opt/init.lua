@@ -3484,6 +3484,14 @@ function Brain.think(info)
       if state.goal.target_id and state.goal.target_id >= 0 then
         bsi.target = tostring(state.goal.target_id)
       end
+      -- Goal tile mx/my as a fallback for the ally_claimed match path
+      -- (goals.lua:3660-3664) when target_id isn't carried through.
+      -- Cheap (~12 bytes on the wire) and lets the receiver match by
+      -- coordinates if id sync drifts between brains.
+      if state.goal.mx and state.goal.my then
+        bsi.mx = tostring(state.goal.mx)
+        bsi.my = tostring(state.goal.my)
+      end
       -- Cost: pool_cache holds per-pool winners with .cost. Find the
       -- entry whose .goal matches our current goal (same kind + tile)
       -- and pluck its cost. state.goal_cost was the legacy slot but
