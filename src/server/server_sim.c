@@ -1737,6 +1737,23 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         }
     }
 
+    /* Drop the leaving slot from every alliance bitmap — its own, and
+     * every other slot's reference to it. Without this, a new player
+     * taking the vacated slot is silently inherited as an ally by the
+     * old team (because other slots still have the bit set), and the
+     * round-end team-carry-forward at serverSimResetGameAndReturnToLobby
+     * walks playersIsAllie and propagates the stale grouping into next-
+     * round teamNumber. Done after pill/base migration above, which
+     * needs the still-intact alliance info to pick an heir. */
+    playersLeaveAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, playerNum, TRUE);
+    {
+        ControlEvent allyLeaveEvt;
+        memset(&allyLeaveEvt, 0, sizeof(allyLeaveEvt));
+        allyLeaveEvt.type = CTRL_ALLIANCE_LEAVE;
+        allyLeaveEvt.u.allianceLeave.playerNum = playerNum;
+        serverSimPublishControl(sim, &allyLeaveEvt);
+    }
+
     /* Force immediate full sync so clients see ownership changes right away */
     sim->lastFullSyncTick = 0;
 
