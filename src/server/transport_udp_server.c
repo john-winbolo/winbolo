@@ -3020,44 +3020,14 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_LOBBY_READY: {
-            /* Wire: [header 8] [playerNum 1] [ready 1] */
+            /* Wire: [header 8] [playerNum 1] [ready 1]. The playerNum byte
+             * is legacy; senderSlot is the authoritative attribution. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && serverSimIsLobbyEnabled(sim) &&
-                len >= PACKET_HEADER_SIZE + 2) {
-                bool ready = buf[PACKET_HEADER_SIZE + 1] != 0;
-
-                /* If the lobby is flagged Ranked, the lobby shape must
-                 * be 1v1 / 2v2 / 3v3 with equal-size human teams before
-                 * anyone is allowed to Ready up. The client mirrors this
-                 * check by disabling the Ready button + tooltip, so we
-                 * just silently drop ready=true requests that don't
-                 * qualify (no LOBBY_REJECT protocol for READY). Ready
-                 * OFF (unready) is always honored. */
-                if (ready && serverSimGetRanked(sim) &&
-                    serverSimGetState(sim) == serverStateLobby &&
-                    !serverSimRankedShapeReady(sim)) {
-                    /* Silently drop — client tooltip explains why. */
-                    break;
-                }
-
-                if (serverSimGetState(sim) == serverStateLobby) {
-                    serverSimSetReady(sim, (BYTE)clientIdx, ready);
-                    logAddEvent(ready ? log_PlayerReady : log_PlayerUnready, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
-                    serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
-                    serverSimLobbyCheckAllReady(sim);
-                    if (serverSimGetState(sim) == serverStateCountdown) {
-                        logAddEvent(log_CountdownStart, 0, 0, 0, 0, 0, NULL);
-                    }
-                } else if (serverSimGetState(sim) == serverStateCountdown && !ready) {
-                    /* Someone unreadied during countdown — revert to lobby */
-                    serverSimSetReady(sim, (BYTE)clientIdx, false);
-                    serverSimAbortCountdown(sim);
-                    logAddEvent(log_PlayerUnready, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
-                    logAddEvent(log_CountdownCancel, 0, 0, 0, 0, 0, NULL);
-                    serverSimConsoleMessage("Countdown cancelled — player unreadied.");
-                    serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
-                }
-            }
+            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 2) break;
+            ClientCommand cmd = { .type = CMD_READY };
+            cmd.u.ready.ready = buf[PACKET_HEADER_SIZE + 1] != 0;
+            (void)serverSimApplyCommand(sim, clientIdx, &cmd);
+            /* No wire reply: READY has no LOBBY_REJECT_* code today. */
             break;
         }
         case PACKET_LOBBY_ADD_BOT: {
@@ -3173,44 +3143,31 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_LOBBY_SET_SETTING: {
-            /* Wire: [header 8] [settingType 1] [valueLen 1] [value N] */
+            /* Wire: [header 8] [settingType 1] [valueLen 1] [value N]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 2) break;
-            if (!lobbyClientMayEdit(sim, clientIdx)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
-                              LOBBY_REJECT_NOT_HOST);
-                break;
-            }
+            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 2) break;
             if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
             udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
-            uint8_t settingType = buf[PACKET_HEADER_SIZE];
-            uint8_t valueLen    = buf[PACKET_HEADER_SIZE + 1];
-            if (len < PACKET_HEADER_SIZE + 2 + valueLen ||
-                valueLen > 32) {
+            uint8_t valueLen = buf[PACKET_HEADER_SIZE + 1];
+            if (len < PACKET_HEADER_SIZE + 2 + valueLen || valueLen > 32) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
                               LOBBY_REJECT_INVALID);
                 break;
             }
-            const uint8_t *value = buf + PACKET_HEADER_SIZE + 2;
-
-            uint16_t lockBit = serverSimGetSettingLockBit(settingType);
-            if (lockBit == 0xFFFFu) {
-                /* Unknown setting — silently drop (forward-compat). */
-                break;
-            }
-            if (lockBit != 0u &&
-                (serverSimGetServerLocks(sim) & lockBit) != 0u) {
+            ClientCommand cmd = { .type = CMD_LOBBY_SETTING };
+            cmd.u.lobbySetting.settingType = buf[PACKET_HEADER_SIZE];
+            cmd.u.lobbySetting.valueLen    = valueLen;
+            memcpy(cmd.u.lobbySetting.value, buf + PACKET_HEADER_SIZE + 2, valueLen);
+            CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
+            if (r == CMD_REJECT_NOT_HOST) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
+                              LOBBY_REJECT_NOT_HOST);
+            } else if (r == CMD_REJECT_LOCKED) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
                               LOBBY_REJECT_LOCKED);
-                break;
-            }
-
-            if (!serverSimApplyLobbySetting(sim, settingType, value, valueLen)) {
+            } else if (r == CMD_REJECT_INVALID) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
                               LOBBY_REJECT_INVALID);
-                break;
             }
             break;
         }
@@ -3234,99 +3191,77 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         }
         case PACKET_LOBBY_TEAM_META: {
             /* Wire: [header 8] [teamId 1] [color 1] [namingPool 1]
-             *       [nameLen 1] [name N] */
+             *       [nameLen 1] [name N]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 4) break;
-            if (!lobbyClientMayEdit(sim, clientIdx)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_META,
-                              LOBBY_REJECT_NOT_HOST); break;
-            }
-            uint8_t teamId     = buf[PACKET_HEADER_SIZE + 0];
-            uint8_t color      = buf[PACKET_HEADER_SIZE + 1];
-            uint8_t namingPool = buf[PACKET_HEADER_SIZE + 2];
-            uint8_t nameLen    = buf[PACKET_HEADER_SIZE + 3];
-            if (teamId == 0 || teamId >= MAX_TANKS ||
-                nameLen > LOBBY_TEAM_NAME_LEN - 1 ||
+            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 4) break;
+            uint8_t nameLen = buf[PACKET_HEADER_SIZE + 3];
+            if (nameLen > LOBBY_TEAM_NAME_LEN - 1 ||
                 len < PACKET_HEADER_SIZE + 4 + nameLen) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_META,
-                              LOBBY_REJECT_INVALID); break;
+                              LOBBY_REJECT_INVALID);
+                break;
             }
-            serverSimSetTeamMeta(sim, teamId, color, namingPool,
-                                 buf + PACKET_HEADER_SIZE + 4, nameLen);
+            ClientCommand cmd = { .type = CMD_LOBBY_TEAM_META };
+            cmd.u.lobbyTeamMeta.teamId     = buf[PACKET_HEADER_SIZE + 0];
+            cmd.u.lobbyTeamMeta.color      = buf[PACKET_HEADER_SIZE + 1];
+            cmd.u.lobbyTeamMeta.namingPool = buf[PACKET_HEADER_SIZE + 2];
+            cmd.u.lobbyTeamMeta.nameLen    = nameLen;
+            memcpy(cmd.u.lobbyTeamMeta.name, buf + PACKET_HEADER_SIZE + 4, nameLen);
+            CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
+            if (r == CMD_REJECT_NOT_HOST) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_META,
+                              LOBBY_REJECT_NOT_HOST);
+            } else if (r == CMD_REJECT_INVALID) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_META,
+                              LOBBY_REJECT_INVALID);
+            }
             break;
         }
         case PACKET_LOBBY_TEAM_CLEAR: {
-            /* Wire: [header 8] [teamId 1] */
+            /* Wire: [header 8] [teamId 1]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 1) break;
-            if (!lobbyClientMayEdit(sim, clientIdx)) {
+            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 1) break;
+            ClientCommand cmd = { .type = CMD_LOBBY_TEAM_CLEAR };
+            cmd.u.lobbyTeamClear.teamId = buf[PACKET_HEADER_SIZE];
+            CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
+            if (r == CMD_REJECT_NOT_HOST) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_CLEAR,
-                              LOBBY_REJECT_NOT_HOST); break;
-            }
-            uint8_t teamId = buf[PACKET_HEADER_SIZE];
-            if (teamId == 0 || teamId >= MAX_TANKS) {
+                              LOBBY_REJECT_NOT_HOST);
+            } else if (r == CMD_REJECT_INVALID) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_CLEAR,
-                              LOBBY_REJECT_INVALID); break;
+                              LOBBY_REJECT_INVALID);
             }
-            serverSimClearTeamMeta(sim, teamId);
             break;
         }
         case PACKET_LOBBY_BOT_CONFIG: {
             /* Wire: [header 8] [slot 1] [difficulty 1] [personality 1]
-             *       [nameLen 1] [name N] */
+             *       [nameLen 1] [name N]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 4) break;
-            if (!lobbyClientMayEdit(sim, clientIdx)) {
+            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 4) break;
+            uint8_t nameLen = buf[PACKET_HEADER_SIZE + 3];
+            if (nameLen >= PACKET_MAX_PLAYER_NAME ||
+                len < PACKET_HEADER_SIZE + 4 + nameLen) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
-                              LOBBY_REJECT_NOT_HOST); break;
+                              LOBBY_REJECT_INVALID);
+                break;
             }
-            uint8_t slot        = buf[PACKET_HEADER_SIZE + 0];
-            uint8_t difficulty  = buf[PACKET_HEADER_SIZE + 1];
-            uint8_t personality = buf[PACKET_HEADER_SIZE + 2];
-            uint8_t nameLen     = buf[PACKET_HEADER_SIZE + 3];
-            if (slot >= MAX_TANKS || difficulty > 2 || personality > 3 ||
-                nameLen > 31 ||
-                len < PACKET_HEADER_SIZE + 4 + nameLen ||
-                !serverSimIsBot(sim, slot)) {
+            ClientCommand cmd = { .type = CMD_LOBBY_BOT_CONFIG };
+            cmd.u.lobbyBotConfig.slot        = buf[PACKET_HEADER_SIZE + 0];
+            cmd.u.lobbyBotConfig.difficulty  = buf[PACKET_HEADER_SIZE + 1];
+            cmd.u.lobbyBotConfig.personality = buf[PACKET_HEADER_SIZE + 2];
+            cmd.u.lobbyBotConfig.nameLen     = nameLen;
+            if (nameLen > 0) {
+                memcpy(cmd.u.lobbyBotConfig.name,
+                       buf + PACKET_HEADER_SIZE + 4, nameLen);
+            }
+            CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
+            if (r == CMD_REJECT_NOT_HOST) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
-                              LOBBY_REJECT_INVALID); break;
+                              LOBBY_REJECT_NOT_HOST);
+            } else if (r == CMD_REJECT_INVALID) {
+                lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
+                              LOBBY_REJECT_INVALID);
             }
-            /* Validate the client-supplied bot name before any state
-             * mutation.  Empty nameLen is a legitimate "keep current
-             * name" signal — difficulty / personality still apply.  A
-             * non-empty name has to clear the same validator humans go
-             * through (controls, reserved leading '*', mixed scripts,
-             * length) so chat and scoreboard rendering can trust the
-             * form they receive.  Uniqueness then runs against the
-             * connected-player table excluding the slot being updated,
-             * so a no-op rename or a normalization-preserving rename
-             * doesn't self-collide on the bot already sitting there. */
-            char validatedName[PACKET_MAX_PLAYER_NAME];
-            if (nameLen > 0) {
-                char rawName[PACKET_MAX_PLAYER_NAME];
-                memset(rawName, 0, sizeof(rawName));
-                memcpy(rawName, buf + PACKET_HEADER_SIZE + 4, nameLen);
-
-                if (!lobbyBotNameAcceptable(rawName, validatedName,
-                                            sizeof(validatedName), (int)slot,
-                                            transportUdpServerGetPlayerName,
-                                            NULL, NULL)) {
-                    lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
-                                  LOBBY_REJECT_INVALID);
-                    break;
-                }
-            }
-            if (nameLen > 0) {
-                transportUdpServerSetBotName(slot, validatedName);
-            }
-            serverSimSetBotConfig(sim, slot, difficulty, personality,
-                                  nameLen > 0 ? validatedName : NULL);
             break;
         }
         case PACKET_LOBBY_KICK: {

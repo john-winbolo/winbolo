@@ -13,12 +13,16 @@
  */
 
 #include <assert.h>
+#include <string.h>
 
 #include "client_command.h"
 #include "log.h"
+#include "netpacks.h"                 /* lobbyBotNameAcceptable */
 #include "server_sim.h"
 #include "server_sim_lifecycle.h"     /* serverSimSetTeam, lobbyAutoUnreadyOnChange */
 #include "threads.h"
+#include "transport_udp.h"            /* transportUdpServerGetPlayerName,
+                                         transportUdpServerSetBotName */
 
 /* Authority gate shared by the command dispatcher (this TU) and the
  * lobby command handlers in transport_udp_server.c, where the function
@@ -48,6 +52,116 @@ CmdResult serverSimApplyCommand(ServerSim *sim, int senderSlot,
                     0, 0, 0, NULL);
         serverSimPublishLobbySlot(sim, cmd->u.teamSet.slot);
         lobbyAutoUnreadyOnChange(sim);
+        return CMD_OK;
+    }
+    case CMD_READY: {
+        if (!serverSimIsLobbyEnabled(sim)) return CMD_REJECT_BAD_STATE;
+        /* Ranked-shape gate: silently drop ready=true that doesn't
+         * qualify. No reject code — the client tooltip explains why. */
+        if (cmd->u.ready.ready && serverSimGetRanked(sim) &&
+            serverSimGetState(sim) == serverStateLobby &&
+            !serverSimRankedShapeReady(sim)) {
+            return CMD_OK;
+        }
+        if (serverSimGetState(sim) == serverStateLobby) {
+            serverSimSetReady(sim, (BYTE)senderSlot, cmd->u.ready.ready);
+            logAddEvent(cmd->u.ready.ready ? log_PlayerReady : log_PlayerUnready,
+                        (BYTE)senderSlot, 0, 0, 0, 0, NULL);
+            serverSimPublishLobbySlot(sim, (BYTE)senderSlot);
+            serverSimLobbyCheckAllReady(sim);
+            if (serverSimGetState(sim) == serverStateCountdown) {
+                logAddEvent(log_CountdownStart, 0, 0, 0, 0, 0, NULL);
+            }
+        } else if (serverSimGetState(sim) == serverStateCountdown &&
+                   !cmd->u.ready.ready) {
+            serverSimSetReady(sim, (BYTE)senderSlot, false);
+            serverSimAbortCountdown(sim);
+            logAddEvent(log_PlayerUnready, (BYTE)senderSlot, 0, 0, 0, 0, NULL);
+            logAddEvent(log_CountdownCancel, 0, 0, 0, 0, 0, NULL);
+            serverSimConsoleMessage("Countdown cancelled — player unreadied.");
+            serverSimPublishLobbySlot(sim, (BYTE)senderSlot);
+        }
+        /* Other states (Running, GameOver): silent drop, no state
+         * change. */
+        return CMD_OK;
+    }
+    case CMD_LOBBY_BOT_CONFIG: {
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        const CmdLobbyBotConfig *p = &cmd->u.lobbyBotConfig;
+        if (p->slot >= MAX_TANKS || p->difficulty > 2 || p->personality > 3 ||
+            p->nameLen > 31 || !serverSimIsBot(sim, p->slot)) {
+            return CMD_REJECT_INVALID;
+        }
+        char validatedName[PACKET_MAX_PLAYER_NAME];
+        if (p->nameLen > 0) {
+            char rawName[PACKET_MAX_PLAYER_NAME];
+            memset(rawName, 0, sizeof(rawName));
+            memcpy(rawName, p->name, p->nameLen);
+            if (!lobbyBotNameAcceptable(rawName, validatedName,
+                                        sizeof(validatedName), (int)p->slot,
+                                        transportUdpServerGetPlayerName,
+                                        NULL, NULL)) {
+                return CMD_REJECT_INVALID;
+            }
+            transportUdpServerSetBotName(p->slot, validatedName);
+        }
+        serverSimSetBotConfig(sim, p->slot, p->difficulty, p->personality,
+                              p->nameLen > 0 ? validatedName : NULL);
+        return CMD_OK;
+    }
+    case CMD_LOBBY_TEAM_META: {
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        const CmdLobbyTeamMeta *p = &cmd->u.lobbyTeamMeta;
+        if (p->teamId == 0 || p->teamId >= MAX_TANKS ||
+            p->nameLen > LOBBY_TEAM_NAME_LEN - 1) {
+            return CMD_REJECT_INVALID;
+        }
+        serverSimSetTeamMeta(sim, p->teamId, p->color, p->namingPool,
+                             (const uint8_t *)p->name, p->nameLen);
+        return CMD_OK;
+    }
+    case CMD_LOBBY_TEAM_CLEAR: {
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        if (cmd->u.lobbyTeamClear.teamId == 0 ||
+            cmd->u.lobbyTeamClear.teamId >= MAX_TANKS) {
+            return CMD_REJECT_INVALID;
+        }
+        serverSimClearTeamMeta(sim, cmd->u.lobbyTeamClear.teamId);
+        return CMD_OK;
+    }
+    case CMD_LOBBY_SETTING: {
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        const CmdLobbySetting *p = &cmd->u.lobbySetting;
+        if (p->valueLen > 32) return CMD_REJECT_INVALID;
+        uint16_t lockBit = serverSimGetSettingLockBit(p->settingType);
+        if (lockBit == 0xFFFFu) {
+            /* Unknown setting — silent forward-compat drop. */
+            return CMD_OK;
+        }
+        if (lockBit != 0u &&
+            (serverSimGetServerLocks(sim) & lockBit) != 0u) {
+            return CMD_REJECT_LOCKED;
+        }
+        if (!serverSimApplyLobbySetting(sim, p->settingType, p->value,
+                                        p->valueLen)) {
+            return CMD_REJECT_INVALID;
+        }
         return CMD_OK;
     }
     case CMD_NONE:

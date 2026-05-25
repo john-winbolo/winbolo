@@ -26,7 +26,14 @@
 #ifndef CLIENT_COMMAND_H
 #define CLIENT_COMMAND_H
 
+#include <stdbool.h>
 #include <stdint.h>
+
+#include "wire_limits.h"  /* PACKET_MAX_PLAYER_NAME */
+
+#ifndef LOBBY_TEAM_NAME_LEN
+#define LOBBY_TEAM_NAME_LEN 32
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,7 +41,12 @@ extern "C" {
 
 typedef enum {
     CMD_NONE = 0,
-    CMD_TEAM_SET
+    CMD_TEAM_SET,
+    CMD_READY,
+    CMD_LOBBY_BOT_CONFIG,
+    CMD_LOBBY_TEAM_META,
+    CMD_LOBBY_TEAM_CLEAR,
+    CMD_LOBBY_SETTING
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. Codes 1-7 are
@@ -61,10 +73,59 @@ typedef struct {
     uint8_t team;
 } CmdTeamSet;
 
+/* CMD_READY — toggle ready state for the sender's slot. The wire
+ * carries a playerNum byte for backward compatibility but the
+ * server uses senderSlot per the attribution contract. */
+typedef struct {
+    bool ready;
+} CmdReady;
+
+/* CMD_LOBBY_BOT_CONFIG — update difficulty/personality (+ optional
+ * rename) for a bot slot. nameLen == 0 means "keep current name".
+ * Bot-config validation runs against the connected-player table
+ * via transportUdpServerGetPlayerName; the stub for non-server
+ * binaries returns NULL (no collision) on every slot. */
+typedef struct {
+    uint8_t slot;
+    uint8_t difficulty;
+    uint8_t personality;
+    uint8_t nameLen;
+    char    name[PACKET_MAX_PLAYER_NAME];
+} CmdLobbyBotConfig;
+
+/* CMD_LOBBY_TEAM_META — set color, naming pool, and optional name
+ * for a team. nameLen == 0 means "no name set". teamId is 1..MAX_TANKS-1
+ * (team 0 is unassigned). */
+typedef struct {
+    uint8_t teamId;
+    uint8_t color;
+    uint8_t namingPool;
+    uint8_t nameLen;
+    char    name[LOBBY_TEAM_NAME_LEN];
+} CmdLobbyTeamMeta;
+
+/* CMD_LOBBY_TEAM_CLEAR — drop a team's metadata back to defaults. */
+typedef struct {
+    uint8_t teamId;
+} CmdLobbyTeamClear;
+
+/* CMD_LOBBY_SETTING — set one of the LST_* settings. valueLen is
+ * the actual payload length (max 32). */
+typedef struct {
+    uint8_t settingType;
+    uint8_t valueLen;
+    uint8_t value[32];
+} CmdLobbySetting;
+
 typedef struct ClientCommand {
     ClientCommandType type;
     union {
-        CmdTeamSet teamSet;
+        CmdTeamSet         teamSet;
+        CmdReady           ready;
+        CmdLobbyBotConfig  lobbyBotConfig;
+        CmdLobbyTeamMeta   lobbyTeamMeta;
+        CmdLobbyTeamClear  lobbyTeamClear;
+        CmdLobbySetting    lobbySetting;
     } u;
 } ClientCommand;
 

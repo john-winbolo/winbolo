@@ -493,25 +493,12 @@ void clientSimNetSendReady(ClientSim *cs, bool ready) {
     transportUdpClientSendReady(&cs->transport, ready);
     return;
   }
-  /* Local transport: drive the server-side ready toggle directly.
-   * Mirrors the PACKET_LOBBY_READY handler at transport_udp_server.c:
-   *   setReady → serverSimPublishLobbySlot → LobbyCheckAllReady. The all-ready
-   * detector picks the worldPreLoaded branch (StartGameInPlace) on a
-   * fresh SP sim, or the countdown branch on subsequent rounds. */
   if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_READY };
+  cmd.u.ready.ready = ready;
   threadsWaitForMutex();
-  if (serverSimIsLobbyEnabled(cs->boundServerSim) &&
-      serverSimGetState(cs->boundServerSim) == serverStateLobby) {
-    BYTE slot = clientSimGetMyPlayerNum(cs);
-    serverSimSetReady(cs->boundServerSim, slot, ready);
-    {
-      ControlEvent slotEvt;
-      memset(&slotEvt, 0, sizeof(slotEvt));
-      serverSimFillLobbySlotEvent(cs->boundServerSim, slot, &slotEvt);
-      serverSimPublishControl(cs->boundServerSim, &slotEvt);
-    }
-    serverSimLobbyCheckAllReady(cs->boundServerSim);
-  }
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
   threadsReleaseMutex();
 }
 
@@ -545,44 +532,20 @@ void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
                                          difficulty, personality, name);
     return;
   }
-  /* Local transport: mirror the PACKET_LOBBY_BOT_CONFIG handler in
-   * transport_udp_server.c so SP-host produces the same sim state as
-   * a UDP host. Held under the threads mutex so the timer thread
-   * can't race the apply. Empty name == "keep current name", same
-   * as the wire path's nameLen == 0 branch. */
   if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_BOT_CONFIG };
+  cmd.u.lobbyBotConfig.slot        = slot;
+  cmd.u.lobbyBotConfig.difficulty  = difficulty;
+  cmd.u.lobbyBotConfig.personality = personality;
+  if (name != NULL && name[0] != '\0') {
+    size_t nl = strlen(name);
+    if (nl > 31) return;  /* matches wire-side nameLen<=31 guard */
+    cmd.u.lobbyBotConfig.nameLen = (uint8_t)nl;
+    memcpy(cmd.u.lobbyBotConfig.name, name, nl);
+  }
   threadsWaitForMutex();
-  do {
-    ServerSim *sim = cs->boundServerSim;
-    if (!serverSimIsLobbyEnabled(sim) ||
-        serverSimGetState(sim) != serverStateLobby) break;
-    if (slot >= MAX_TANKS || difficulty > 2 || personality > 3) break;
-    if (!serverSimIsBot(sim, slot)) break;
-
-    char validatedName[PACKET_MAX_PLAYER_NAME];
-    const bool haveName = (name != NULL && name[0] != '\0');
-    if (haveName) {
-      if (strlen(name) > 31) break;
-      /* Format validation only. Uniqueness was already enforced by
-       * the SP-host caller against the ClientSim's lobby mirror,
-       * which on SP-host is what serverSimRenameBotSlot writes
-       * through — that mirror is the canonical name table here.
-       * The wire-side handler uses udpServer.clients[] for the same
-       * check, but that table is unused on SP-host. */
-      if (!lobbyBotNameAcceptable(name, validatedName, sizeof(validatedName),
-                                  (int)slot, NULL, NULL, NULL)) {
-        break;
-      }
-    }
-
-    /* SP-host has no UDP server, so the wire handler's
-     * transportUdpServerSetBotName step is a no-op here.
-     * serverSimSetBotConfig handles the write, the optional rename
-     * (sim.plyrs + CTRL_PLAYER_NAME via serverSimRenameBotSlot), the
-     * config + slot publishes, and the auto-unready tail. */
-    serverSimSetBotConfig(sim, slot, difficulty, personality,
-                          haveName ? validatedName : NULL);
-  } while (0);
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
   threadsReleaseMutex();
 }
 
@@ -685,21 +648,20 @@ void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
                                         namingPool, name);
     return;
   }
-  /* Local transport: delegate to the shared setter so SP-host and
-   * wire follow one code path (including the pool-uniqueness rewrite
-   * and the publish + auto-unready tail). */
   if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_TEAM_META };
+  cmd.u.lobbyTeamMeta.teamId     = teamId;
+  cmd.u.lobbyTeamMeta.color      = color;
+  cmd.u.lobbyTeamMeta.namingPool = namingPool;
+  if (name != NULL) {
+    size_t nl = strlen(name);
+    if (nl > LOBBY_TEAM_NAME_LEN - 1) return;
+    cmd.u.lobbyTeamMeta.nameLen = (uint8_t)nl;
+    memcpy(cmd.u.lobbyTeamMeta.name, name, nl);
+  }
   threadsWaitForMutex();
-  do {
-    ServerSim *sim = cs->boundServerSim;
-    if (!serverSimIsLobbyEnabled(sim) ||
-        serverSimGetState(sim) != serverStateLobby) break;
-    if (teamId == 0 || teamId >= MAX_TANKS) break;
-    size_t nameLen = (name != NULL) ? strlen(name) : 0;
-    if (nameLen > LOBBY_TEAM_NAME_LEN - 1) break;
-    serverSimSetTeamMeta(sim, teamId, color, namingPool,
-                         (const uint8_t *)name, (uint8_t)nameLen);
-  } while (0);
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
   threadsReleaseMutex();
 }
 
@@ -709,16 +671,12 @@ void clientSimNetSendLobbyTeamClear(ClientSim *cs, BYTE teamId) {
     transportUdpClientSendLobbyTeamClear(&cs->transport, teamId);
     return;
   }
-  /* Local transport: delegate to the shared setter. */
   if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_TEAM_CLEAR };
+  cmd.u.lobbyTeamClear.teamId = teamId;
   threadsWaitForMutex();
-  do {
-    ServerSim *sim = cs->boundServerSim;
-    if (!serverSimIsLobbyEnabled(sim) ||
-        serverSimGetState(sim) != serverStateLobby) break;
-    if (teamId == 0 || teamId >= MAX_TANKS) break;
-    serverSimClearTeamMeta(sim, teamId);
-  } while (0);
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
   threadsReleaseMutex();
 }
 
@@ -729,18 +687,17 @@ void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
     transportUdpClientSendLobbySetting(&cs->transport, settingType, value, valueLen);
     return;
   }
-  /* Local transport: SP-host is its own operator, so the lock-bit /
-   * authority gates the UDP handler runs aren't applicable. The
-   * shared helper publishes settings + clears humans' ready state
-   * on success. */
   if (cs->boundServerSim == NULL) return;
+  if (valueLen > 32) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_SETTING };
+  cmd.u.lobbySetting.settingType = settingType;
+  cmd.u.lobbySetting.valueLen    = valueLen;
+  if (valueLen > 0 && value != NULL) {
+    memcpy(cmd.u.lobbySetting.value, value, valueLen);
+  }
   threadsWaitForMutex();
-  do {
-    ServerSim *sim = cs->boundServerSim;
-    if (!serverSimIsLobbyEnabled(sim) ||
-        serverSimGetState(sim) != serverStateLobby) break;
-    serverSimApplyLobbySetting(sim, settingType, value, valueLen);
-  } while (0);
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
   threadsReleaseMutex();
 }
 
