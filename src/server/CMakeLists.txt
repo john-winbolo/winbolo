@@ -95,6 +95,7 @@ endif()
 
 add_library(server_static STATIC EXCLUDE_FROM_ALL
     geolookup.c
+    server_command_dispatch.c
     server_lifecycle.c
     transport_udp_server.c
 )
