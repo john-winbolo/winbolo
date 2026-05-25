@@ -51,7 +51,11 @@ typedef enum {
     CMD_ALLIANCE_REQUEST,
     CMD_ALLIANCE_ACCEPT,
     CMD_ALLIANCE_LEAVE,
-    CMD_GAME_VOTE_TOGGLE
+    CMD_GAME_VOTE_TOGGLE,
+    CMD_LOBBY_REMOVE_BOT,
+    CMD_LOBBY_SET_BOT_BRAIN,
+    CMD_LOBBY_OPEN_HOST,
+    CMD_MAP_SKIP_VOTE
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. Codes 1-7 are
@@ -158,6 +162,32 @@ typedef struct {
     uint8_t toggleMode;
 } CmdGameVoteToggle;
 
+/* CMD_LOBBY_REMOVE_BOT — host-gated removal of a bot from the
+ * lobby. slot must reference an active bot. */
+typedef struct {
+    uint8_t slot;
+} CmdLobbyRemoveBot;
+
+/* CMD_LOBBY_SET_BOT_BRAIN — host-gated reassignment of a bot's
+ * brain. brainIdx == 0xFF resolves to the CLI-configured default;
+ * other values must index into the server's brain catalogue. */
+typedef struct {
+    uint8_t slot;
+    uint8_t brainIdx;
+} CmdLobbySetBotBrain;
+
+/* CMD_LOBBY_OPEN_HOST — slot-0 only: toggle the "any connected
+ * player may edit lobby state" mode. Gated by LOBBY_LOCK_OPEN_HOST. */
+typedef struct {
+    bool openHost;
+} CmdLobbyOpenHost;
+
+/* CMD_MAP_SKIP_VOTE — no payload; the sender is voting to skip
+ * the current map. Gated by LOBBY_LOCK_MAP. */
+typedef struct {
+    uint8_t _unused;
+} CmdMapSkipVote;
+
 typedef struct ClientCommand {
     ClientCommandType type;
     union {
@@ -172,6 +202,10 @@ typedef struct ClientCommand {
         CmdAllianceAccept    allianceAccept;
         CmdAllianceLeave     allianceLeave;
         CmdGameVoteToggle    gameVoteToggle;
+        CmdLobbyRemoveBot    lobbyRemoveBot;
+        CmdLobbySetBotBrain  lobbySetBotBrain;
+        CmdLobbyOpenHost     lobbyOpenHost;
+        CmdMapSkipVote       mapSkipVote;
     } u;
 } ClientCommand;
 

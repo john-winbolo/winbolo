@@ -491,8 +491,18 @@ void clientSimNetSendAddBotConfigured(ClientSim *cs, BYTE teamNumber,
 }
 
 void clientSimNetSendRemoveBot(ClientSim *cs, BYTE playerNum) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendRemoveBot(&cs->transport, playerNum);
+  if (cs == NULL || !cs->hasTransport) return;
+  if (cs->isUdpTransport) {
+    transportUdpClientSendRemoveBot(&cs->transport, playerNum);
+    return;
+  }
+  if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_REMOVE_BOT };
+  cmd.u.lobbyRemoveBot.slot = playerNum;
+  threadsWaitForMutex();
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
+  threadsReleaseMutex();
 }
 
 void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
@@ -524,8 +534,19 @@ void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
 
 void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
                                       uint8_t brainIdx) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbySetBotBrain(&cs->transport, slot, brainIdx);
+  if (cs == NULL || !cs->hasTransport) return;
+  if (cs->isUdpTransport) {
+    transportUdpClientSendLobbySetBotBrain(&cs->transport, slot, brainIdx);
+    return;
+  }
+  if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_SET_BOT_BRAIN };
+  cmd.u.lobbySetBotBrain.slot     = slot;
+  cmd.u.lobbySetBotBrain.brainIdx = brainIdx;
+  threadsWaitForMutex();
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
+  threadsReleaseMutex();
 }
 
 void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath) {
@@ -680,8 +701,18 @@ void clientSimNetSendLobbySetPassword(ClientSim *cs, const char *pw) {
 }
 
 void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyOpenHost(&cs->transport, openHost);
+  if (cs == NULL || !cs->hasTransport) return;
+  if (cs->isUdpTransport) {
+    transportUdpClientSendLobbyOpenHost(&cs->transport, openHost);
+    return;
+  }
+  if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_OPEN_HOST };
+  cmd.u.lobbyOpenHost.openHost = openHost;
+  threadsWaitForMutex();
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
+  threadsReleaseMutex();
 }
 
 void clientSimNetSendLobbyKick(ClientSim *cs, uint8_t slot) {
@@ -690,8 +721,17 @@ void clientSimNetSendLobbyKick(ClientSim *cs, uint8_t slot) {
 }
 
 void clientSimNetSendMapSkipVote(ClientSim *cs) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendMapSkipVote(&cs->transport);
+  if (cs == NULL || !cs->hasTransport) return;
+  if (cs->isUdpTransport) {
+    transportUdpClientSendMapSkipVote(&cs->transport);
+    return;
+  }
+  if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_MAP_SKIP_VOTE };
+  threadsWaitForMutex();
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
+  threadsReleaseMutex();
 }
 
 void clientSimNetSendGameVoteToggle(ClientSim *cs,

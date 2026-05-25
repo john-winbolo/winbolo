@@ -15,6 +15,7 @@
 #include <assert.h>
 #include <string.h>
 
+#include "bot_manager.h"              /* botManagerSetBrainIdx */
 #include "client_command.h"
 #include "control_event.h"            /* ControlEvent, CTRL_CHAT, CTRL_ALLIANCE_REQUEST */
 #include "log.h"
@@ -223,6 +224,55 @@ CmdResult serverSimApplyCommand(ServerSim *sim, int senderSlot,
         serverSimGameVoteToggle(sim, (uint8_t)senderSlot,
                                 cmd->u.gameVoteToggle.kind,
                                 cmd->u.gameVoteToggle.toggleMode);
+        return CMD_OK;
+    }
+    case CMD_LOBBY_REMOVE_BOT: {
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        if (cmd->u.lobbyRemoveBot.slot >= MAX_TANKS ||
+            !serverSimIsBot(sim, cmd->u.lobbyRemoveBot.slot)) {
+            return CMD_REJECT_INVALID;
+        }
+        serverSimRemoveBot(sim, cmd->u.lobbyRemoveBot.slot);
+        return CMD_OK;
+    }
+    case CMD_LOBBY_SET_BOT_BRAIN: {
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        const CmdLobbySetBotBrain *p = &cmd->u.lobbySetBotBrain;
+        if (p->slot >= MAX_TANKS || !serverSimIsBot(sim, p->slot) ||
+            serverSimGetBrainPathForIdx(sim, p->brainIdx) == NULL) {
+            return CMD_REJECT_INVALID;
+        }
+        serverSimSetBotBrainIdxFor(sim, p->slot, p->brainIdx);
+        botManagerSetBrainIdx(sim, p->slot, p->brainIdx);
+        return CMD_OK;
+    }
+    case CMD_LOBBY_OPEN_HOST: {
+        /* Slot-0-only: the toggle that enables openHost cannot be
+         * gated through openHost itself. */
+        if (senderSlot != 0) return CMD_REJECT_NOT_HOST;
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (serverSimGetServerLocks(sim) & LOBBY_LOCK_OPEN_HOST) {
+            return CMD_REJECT_LOCKED;
+        }
+        serverSimSetOpenHost(sim, cmd->u.lobbyOpenHost.openHost);
+        return CMD_OK;
+    }
+    case CMD_MAP_SKIP_VOTE: {
+        if (serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP) {
+            return CMD_REJECT_LOCKED;
+        }
+        serverSimMapSkipVoteToggle(sim, (uint8_t)senderSlot);
         return CMD_OK;
     }
     case CMD_NONE:

@@ -3088,16 +3088,13 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_LOBBY_REMOVE_BOT: {
-            /* Wire: [header 8] [playerNum 1] */
+            /* Wire: [header 8] [playerNum 1]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && serverSimIsLobbyEnabled(sim) &&
-                serverSimGetState(sim) == serverStateLobby &&
-                len >= PACKET_HEADER_SIZE + 1) {
-                uint8_t targetSlot = buf[PACKET_HEADER_SIZE];
-                if (targetSlot < MAX_TANKS && serverSimIsBot(sim, targetSlot)) {
-                    serverSimRemoveBot(sim, targetSlot);
-                }
-            }
+            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 1) break;
+            ClientCommand cmd = { .type = CMD_LOBBY_REMOVE_BOT };
+            cmd.u.lobbyRemoveBot.slot = buf[PACKET_HEADER_SIZE];
+            (void)serverSimApplyCommand(sim, clientIdx, &cmd);
+            /* RemoveBot has no LOBBY_REJECT_* surface — silent on wire. */
             break;
         }
         case PACKET_LOBBY_SET_SETTING: {
@@ -3130,21 +3127,19 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_LOBBY_OPEN_HOST: {
-            /* Wire: [header 8] [bool 1]. Host-only. */
+            /* Wire: [header 8] [bool 1]. Slot-0-only. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx != 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 1) {
+            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 1) break;
+            ClientCommand cmd = { .type = CMD_LOBBY_OPEN_HOST };
+            cmd.u.lobbyOpenHost.openHost = buf[PACKET_HEADER_SIZE] != 0;
+            CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
+            if (r == CMD_REJECT_NOT_HOST) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_OPEN_HOST,
                               LOBBY_REJECT_NOT_HOST);
-                break;
-            }
-            if (serverSimGetServerLocks(sim) & LOBBY_LOCK_OPEN_HOST) {
+            } else if (r == CMD_REJECT_LOCKED) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_OPEN_HOST,
                               LOBBY_REJECT_LOCKED);
-                break;
             }
-            serverSimSetOpenHost(sim, buf[PACKET_HEADER_SIZE] != 0);
             break;
         }
         case PACKET_LOBBY_TEAM_META: {
@@ -3249,26 +3244,20 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_LOBBY_SET_BOT_BRAIN: {
-            /* Wire: [header 8] [slot 1] [brainIdx 1]. brainIdx == 0xFF
-             * resolves to the CLI-configured default brain; any other
-             * value must index into the server's brain catalogue. */
+            /* Wire: [header 8] [slot 1] [brainIdx 1]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 2) break;
-            if (!lobbyClientMayEdit(sim, clientIdx)) {
+            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 2) break;
+            ClientCommand cmd = { .type = CMD_LOBBY_SET_BOT_BRAIN };
+            cmd.u.lobbySetBotBrain.slot     = buf[PACKET_HEADER_SIZE + 0];
+            cmd.u.lobbySetBotBrain.brainIdx = buf[PACKET_HEADER_SIZE + 1];
+            CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
+            if (r == CMD_REJECT_NOT_HOST) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_BOT_BRAIN,
-                              LOBBY_REJECT_NOT_HOST); break;
-            }
-            uint8_t slot     = buf[PACKET_HEADER_SIZE + 0];
-            uint8_t brainIdx = buf[PACKET_HEADER_SIZE + 1];
-            if (slot >= MAX_TANKS || !serverSimIsBot(sim, slot) ||
-                serverSimGetBrainPathForIdx(sim, brainIdx) == NULL) {
+                              LOBBY_REJECT_NOT_HOST);
+            } else if (r == CMD_REJECT_INVALID) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_BOT_BRAIN,
-                              LOBBY_REJECT_INVALID); break;
+                              LOBBY_REJECT_INVALID);
             }
-            serverSimSetBotBrainIdxFor(sim, slot, brainIdx);
-            botManagerSetBrainIdx(sim, slot, brainIdx);
             break;
         }
         case PACKET_LOBBY_SET_MAP: {
@@ -4274,12 +4263,13 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_MAP_SKIP_VOTE: {
-            /* Wire: [header 8] (no payload — server identifies player by source) */
+            /* Wire: [header 8] (no payload — sender drives attribution). */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 &&
-                !(serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP)) {
-                serverSimMapSkipVoteToggle(sim, (uint8_t)clientIdx);
-            }
+            if (clientIdx < 0) break;
+            ClientCommand cmd = { .type = CMD_MAP_SKIP_VOTE };
+            (void)serverSimApplyCommand(sim, clientIdx, &cmd);
+            /* No wire reply: MapSkipVote silent on wire (no LOBBY_REJECT_*
+             * surface for vote rejection today). */
             break;
         }
         case PACKET_GAME_VOTE_TOGGLE: {
