@@ -2287,6 +2287,28 @@ function M.update_attack_substate(goal, state, world, info)
   -- plan_position: full terrain analysis to find best attack spot
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "plan_position" then
+    -- Fresh-entry cleanup: an earlier attack on this same pill (or any
+    -- prior goal-of-the-same-target round-trip) can leave stale shield
+    -- planning hanging on the goal struct.  goal.substate=plan_position
+    -- is the canonical fresh-start state for attack_pill, so wipe the
+    -- shield + scan + wall-build artifacts here before we recompute.
+    -- Re-entries within the same goal (we stayed in plan_position across
+    -- ticks) are idempotent — goal.scan_spots is what gates the
+    -- expensive re-scan below, and this runs even on the first tick of
+    -- the substate, which is the worst case (one extra nil assignment
+    -- batch per tick of plan_position).
+    if not goal._plan_position_cleared then
+      goal._shield_scan         = nil
+      goal._shield_scan_pending = nil
+      goal._wall_build_list     = nil
+      goal._wall_build_idx      = nil
+      goal._wall_build_done     = nil
+      goal._aim_locked          = nil
+      goal._is_ppt              = nil
+      goal._trees_for_walls     = nil
+      goal.scan_spots           = nil
+      goal._plan_position_cleared = true
+    end
     -- Only scan once, reuse stored results for drawing
     if not goal.scan_spots then
       goal._scan_tank_mx = tmx
