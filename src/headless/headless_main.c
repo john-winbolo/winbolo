@@ -294,6 +294,8 @@ static const char *logEventsTypeName(int type) {
     case CTRL_LOBBY_BOT_CONFIG:      return "CTRL_LOBBY_BOT_CONFIG";
     case CTRL_LOBBY_BOT_BRAIN:       return "CTRL_LOBBY_BOT_BRAIN";
     case CTRL_LOBBY_BRAIN_LIST:      return "CTRL_LOBBY_BRAIN_LIST";
+    case CTRL_GAME_VOTE_STATE:       return "CTRL_GAME_VOTE_STATE";
+    case CTRL_SERVER_TEXT:           return "CTRL_SERVER_TEXT";
     default:                         return NULL;
   }
 }
@@ -485,9 +487,33 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       break;
 
     case CTRL_LOBBY_BRAIN_LIST:
-      /* count-only — per-entry version is mtime-derived and would
-       * drift baselines across fresh checkouts. */
-      fprintf(f, ",\"count\":%d", evt->u.lobbyBrainList.list.count);
+      /* Type-only: both the count and the per-entry payload (path +
+       * mtime-derived version) depend on which brain dirs exist where
+       * the binary runs from, so they drift across machines and CWDs
+       * (project-root vs ~/build-dir). The regression target is that
+       * the event fires, not what's in it. */
+      break;
+
+    case CTRL_GAME_VOTE_STATE:
+      fprintf(f, ",\"kind\":%u,\"active\":%u,\"triggerSrc\":%u,\"teamId\":%u"
+                 ",\"threshold\":%u,\"yesCount\":%u,\"noCount\":%u"
+                 ",\"eligibleCount\":%u,\"secondsRemaining\":%u,\"votes\":%u",
+              (unsigned)evt->u.gameVoteState.kind,
+              (unsigned)evt->u.gameVoteState.active,
+              (unsigned)evt->u.gameVoteState.triggerSrc,
+              (unsigned)evt->u.gameVoteState.teamId,
+              (unsigned)evt->u.gameVoteState.threshold,
+              (unsigned)evt->u.gameVoteState.yesCount,
+              (unsigned)evt->u.gameVoteState.noCount,
+              (unsigned)evt->u.gameVoteState.eligibleCount,
+              (unsigned)evt->u.gameVoteState.secondsRemaining,
+              (unsigned)evt->u.gameVoteState.votes);
+      break;
+
+    case CTRL_SERVER_TEXT:
+      fputs(",\"text\":", f);
+      logEventsJsonStr(f, evt->u.serverText.text,
+                       sizeof(evt->u.serverText.text));
       break;
 
     case CTRL_EVENT_TYPE_COUNT:
@@ -1561,7 +1587,6 @@ static bool fastModeSetupGame(void) {
   }
   clientSimConnectLocal(humanSim, fastServerSim, optName, "", 0, 0);
   clientSimSetAiType(humanSim, optAi);
-  clientSimNetSetupTankGo(humanSim);
 
   /* Legacy subscriber handle — connect's auto-subscriber registration
    * supersedes the explicit headlessControlSub bookkeeping. Keep the
@@ -1663,7 +1688,6 @@ static int runFastMode(void) {
   }
   clientSimConnectLocal(humanSim, fastServerSim, optName, "", 0, 0);
   clientSimSetAiType(humanSim, optAi);
-  clientSimNetSetupTankGo(humanSim);
   headlessControlSub = SUBSCRIBER_HANDLE_INVALID;
 
   if (!optQuiet) {
@@ -1938,9 +1962,8 @@ static int runNetworkMode(void) {
   /* Map install + snapshot apply happen inside the transport — the
    * MAP_DOWNLOAD completion path drops the buffered bytes onto the
    * ClientSim, and PACKET_STATE_SNAPSHOT applies inline. Headless
-   * only sets the bot AI type and finalises the local tank. */
+   * only sets the bot AI type. */
   clientSimSetAiType(humanSim, optAi);
-  clientSimNetSetupTankGo(humanSim);
 
   /* Gate lobby vs running: if we received CTRL_LOBBY_SETTINGS during
    * join, stay in lobby state; otherwise proceed to running */

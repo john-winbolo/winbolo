@@ -369,8 +369,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
     /* Map install + snapshot apply happen inside the UDP transport
      * (MAP_DOWNLOAD inline install + CTRL_GAME_PHASE LOBBY→RUNNING
-     * watcher). The wasm frontend just finalises the local tank. */
-    clientSimNetSetupTankGo(humanSim);
+     * watcher), and the first snapshot apply fires the viewport
+     * finalisation. */
     /* Gate lobby vs running: if we received CTRL_LOBBY_SETTINGS during
      * join, stay in lobby state; otherwise proceed to running */
     if (clientSimIsInLobby(humanSim)) {
@@ -429,7 +429,6 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     }
     wasmTransportActive = TRUE;
     wasmPlayerNum = 0;
-    clientSimNetSetupTankGo(humanSim);
     /* Phase 2: connect registers the auto-subscriber. Clear the
      * legacy handle so the teardown path's unregister is a no-op. */
     wasmControlSub = SUBSCRIBER_HANDLE_INVALID;

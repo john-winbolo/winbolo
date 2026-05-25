@@ -138,7 +138,6 @@ static void gymSetupGame(WinBoloGym *g) {
     clientSimCreate(g->clientSim);
     clientSimConnectLocal(g->clientSim, g->serverSim, "GymAgent", "", 0, 0);
     clientSimSetAiType(g->clientSim, aiYes);
-    clientSimNetSetupTankGo(g->clientSim);
 
     /* Register a second (observe-only) subscriber for gym telemetry. The
      * auto-subscriber that clientSimConnectLocal registered is the one
