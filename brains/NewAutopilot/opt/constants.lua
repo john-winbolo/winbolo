@@ -241,7 +241,7 @@ M.MAN_SPEED_BLESSED = 16  -- LGM speed on blessed square
 -- Two calm neutral pills at 3 tiles produce danger ≈ 20.
 --   REFUEL: 20 × 20 = 400  → prefer safe base up to 400 path-cost units further
 --   FLEE:   20 × 80 = 1600 → at critical armour, cross most maps to reach safety
-M.REFUEL_DANGER_WEIGHT  = 40
+M.REFUEL_DANGER_WEIGHT  = 20
 M.FLEE_DANGER_WEIGHT    = 80
 -- Minimum score improvement required to switch from the current refuel/flee
 -- base to a different one.  Prevents flip-flopping between two bases that
@@ -814,23 +814,26 @@ M.PHASE_WEIGHTS = {
     place_strategic  = 0.7,
     defend_pill      = 0.5,
   },
+  -- endgame_winning + endgame_losing: ALL pools held at 1.0 for now
+  -- while we tune the rest of the pipeline.  Real endgame weights to
+  -- be reintroduced once mid-game cost balance is settled.
   endgame_winning = {
-    capture_base     = 0.5,
-    capture_pill     = 0.5,
-    repair_pill      = 1.5,
+    capture_base     = 1.0,
+    capture_pill     = 1.0,
+    repair_pill      = 1.0,
     attack_pill      = 1.0,
-    attack_base      = 0.5,
+    attack_base      = 1.0,
     place_strategic  = 1.0,
-    defend_pill      = 1.5,
+    defend_pill      = 1.0,
   },
   endgame_losing = {
-    capture_base     = 1.5,
-    capture_pill     = 0.8,
-    repair_pill      = 0.4,
+    capture_base     = 1.0,
+    capture_pill     = 1.0,
+    repair_pill      = 1.0,
     attack_pill      = 1.0,
-    attack_base      = 3.0,
-    place_strategic  = 0.5,
-    defend_pill      = 0.3,
+    attack_base      = 1.0,
+    place_strategic  = 1.0,
+    defend_pill      = 1.0,
   },
 }
 

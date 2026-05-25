@@ -2784,11 +2784,16 @@ local function get_formula_inner(e)
     else
       local _cpill_danger_score = e._dv * C.CAPTURE_PILL_DANGER_SCALE
       local _intcpt = e._intcpt or 0
-      local intcpt_tok = _intcpt > 0 and string.format(" + intcpt{%.0f}", _intcpt) or ""
-      local intcpt_det = _intcpt > 0 and string.format("|intcpt:%.0f (enemy can beat us to pill)", _intcpt) or ""
+      -- Always-on intcpt term (matches attack_pill's formula display
+      -- pattern at line 2795).  Empty when 0 was confusing — looked
+      -- like the cost didn't include it at all, when really it just
+      -- evaluated to zero.
+      local intcpt_det = _intcpt > 0
+        and string.format("|intcpt:%.0f (enemy can beat us to pill)", _intcpt)
+        or  "|intcpt:0 (no enemy tank within INTERCEPT_MAX_RANGE that can beat us)"
       f = string.format(
-        "base{%d} + dist{%.1f}@(%d,%d) + danger{%.1f}%s||dist:%.0f^1.5 × %.3f[DIST_SCALE] = %.1f|danger:%.1f × %.3f[DANGER_SCALE] = %.1f%s",
-        C.CAPTURE_PILL_BASE_COST, e._ds, e._mx or 0, e._my or 0, _cpill_danger_score, intcpt_tok,
+        "base{%d} + dist{%.1f}@(%d,%d) + danger{%.1f} + intcpt{%.0f}||dist:%.0f^1.5 × %.3f[DIST_SCALE] = %.1f|danger:%.1f × %.3f[DANGER_SCALE] = %.1f%s",
+        C.CAPTURE_PILL_BASE_COST, e._ds, e._mx or 0, e._my or 0, _cpill_danger_score, _intcpt,
         raw, C.CAPTURE_PILL_DIST_SCALE, e._ds,
         e._dv, C.CAPTURE_PILL_DANGER_SCALE, _cpill_danger_score, intcpt_det)
     end
@@ -3955,22 +3960,30 @@ function M.finalize_pools(state, world, info)
       if cur_pill then
         pill  = cur_pill
         pid   = cur_pid
-        -- Mid-take cost override, scoped tight: only when ACTIVELY
-        -- firing at the pill (engage / shoot_pill) AND we've already
-        -- committed >= 3 shells. At that point pulling off the take
-        -- wastes the shells, so drop pcost to 10 — low enough that
-        -- nothing short of attack_tank engage-break (<9) or
-        -- IMMINENT_CAPTURE_FLOOR (5) can interrupt.
+        -- Mid-take cost override — tiered by commit level:
+        --   shoot_pill + fired ≥ 3 → 10  (deep commit: shells sunk,
+        --                                 only IMMINENT capture (5) or
+        --                                 attack_tank engage-break (<9)
+        --                                 should still preempt).
+        --   shoot_pill + fired < 3 → 50  (settled at standoff and
+        --                                 aiming but no shells yet —
+        --                                 moderate lock so normal
+        --                                 alternatives lose but a
+        --                                 genuinely cheap special case
+        --                                 can still win).
+        --   engage    + fired ≥ 3 → 10  (legacy non-PPT path).
+        --   everything else        → natural pool-6 cost.
         --
-        -- All other locked substates (plan_position, approach, aim,
+        -- Other locked substates (plan_position, approach, aim,
         -- charge, build_walls, in_range_*, ws_*) keep the natural
-        -- pool-6 cost. The pill SWAP above still happens so we don't
-        -- flip targets mid-substate-transition, but the cost rides
-        -- on real merit — a genuinely-cheaper alternative wins
-        -- before we've sunk shells.
+        -- cost.  pill SWAP above prevents flipping targets
+        -- mid-substate-transition; a genuinely-cheaper alternative
+        -- wins before we've sunk meaningful investment.
         local sub = state.goal.substate or ""
         local fired = state.goal._fired or 0
-        if (sub == "engage" or sub == "shoot_pill") and fired >= 3 then
+        if sub == "shoot_pill" then
+          pcost = (fired >= 3) and 10 or 50
+        elseif sub == "engage" and fired >= 3 then
           pcost = 10
         end
       end
@@ -6072,7 +6085,14 @@ function M.get_pool_breakdown_json(state)
       winners[#winners + 1] = {
         id = synthetic_id, src_pool = idx,
         mx = w.mx, my = w.my,
-        cost = final_cost, weighted = final_cost,
+        -- cost   = RAW per-pool cost (pre-phase, pre-loc_adj) so the
+        --          detail popup's "Cost" matches the per-pool row.
+        -- weighted = FINAL cost goal_selection used (post-phase weight,
+        --            post-loc_adj, post-penalties).  Same value that
+        --            ranks the WINNERS row.  Was set to final_cost for
+        --            both fields, making "Cost: N    Weighted: N"
+        --            uninformative when the two genuinely differ.
+        cost = w.cost, weighted = final_cost,
         is_winner = false,
         active_goal = w.active_goal,
         stale = w.stale,

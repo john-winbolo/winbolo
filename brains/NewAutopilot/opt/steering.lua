@@ -2293,6 +2293,26 @@ function M.steer(state, world, info, goal)
     -- no cap (wide arc is fine, carry momentum). Linear blend 4-10 tiles.
     local abs_corr = math.abs(correction)
     local turn_max_speed = 256
+
+    -- Attack-pill approach brake-zone gate.  Pre-computed here so the
+    -- throttle chain below can decide whether to take the specialised
+    -- attack_pill branch (inside the brake zone) or fall through to
+    -- the generic cruise / facing_away handlers (outside it).  See the
+    -- branch body around the matching `_approach_brake_active` check.
+    local _approach_brake_active = false
+    local _approach_sdist_wu     = 0
+    if goal.kind == "attack_pill" and goal.substate == "approach" then
+      local _smx = goal.standoff_mx or goal.mx
+      local _smy = goal.standoff_my or goal.my
+      _approach_sdist_wu = U.wdist(info.tankx, info.tanky,
+                                   U.m2w(_smx), U.m2w(_smy))
+      _approach_brake_active = _approach_sdist_wu
+                               < math.max(256, info.speed * 24)
+    end
+    -- Throttle-branch diagnostic.  Set by each branch below so the
+    -- hud_throttle overlay can show which decision tier fired this
+    -- tick + the key inputs that drove it.
+    local _throttle_branch = "(none)"
     -- Hoisted so the viz reads the same locals the logic uses.
     local turn_base_cap = 0
     local turn_factor   = 1.0
@@ -2381,57 +2401,49 @@ function M.steer(state, world, info, goal)
     local tank_pace = lgm_speed_cap and math.max(1, math.floor(lgm_speed_cap * 0.7))
 
     if boat_exit and abs_corr < 24 then
-      -- Boat-to-land transition needs high speed to disembark.
-      -- Must take priority over LGM pacing or the tank gets stranded.
-      -- Only boost when roughly facing the exit (< 24°); otherwise the
-      -- tank overshoots the exit tile at speed and enters the wrong tile.
+      _throttle_branch = "boat_exit_aligned"
       keys = (keys & ~KEY_SLOWER) | KEY_FASTER
     elseif boat_exit then
-      -- Facing away from exit — slow to turn, but keep above exit speed
+      _throttle_branch = "boat_exit_turning"
       if info.speed > turn_max_speed + 4 then
         keys = keys | KEY_SLOWER
       elseif info.speed < 8 then
         keys = keys | KEY_FASTER
       end
     elseif tank_pace and info.speed > tank_pace then
+      _throttle_branch = "lgm_pace_brake"
       keys = keys | KEY_SLOWER
     elseif tank_pace and tank_pace > 0 and info.speed < tank_pace then
+      _throttle_branch = "lgm_pace_accel"
       keys = keys | KEY_FASTER
     elseif lgm_speed_cap and lgm_speed_cap == 0 then
+      _throttle_branch = "lgm_halt"
       if info.speed > 0 then keys = keys | KEY_SLOWER end
     elseif cliff and goal.kind ~= "escape_water" then
+      _throttle_branch = "cliff_brake"
       keys = (keys & ~KEY_FASTER) | KEY_SLOWER
     elseif goal.kind == "escape_water" then
+      _throttle_branch = "escape_water"
       keys = keys | KEY_FASTER
     elseif state._kill_lgm_halt then
+      _throttle_branch = "kill_lgm_halt"
       -- kill_lgm in shooting range: full stop, only the turn keys
       -- above (set from move_dir aimed at the predicted LGM tile)
       -- fire so the tank pivots in place to align the crosshair.
       -- Init.lua's kill_lgm fire block handles the gunrange driver
       -- + fire trigger.
       if info.speed > 0 then keys = keys | KEY_SLOWER end
-    elseif goal.kind == "attack_pill" and goal.substate == "approach" then
-      -- BPC approach: navigate to standoff position, braking to stop exactly
-      -- on it.  Uses distance to standoff (not pill) for braking calc.
-      local smx = goal.standoff_mx or goal.mx
-      local smy = goal.standoff_my or goal.my
-      local sdist_wu = U.wdist(info.tankx, info.tanky, U.m2w(smx), U.m2w(smy))
-      local approach_brake = math.max(256, info.speed * 24)
-      if sdist_wu < approach_brake then
-        -- Braking zone: slow proportionally
-        local desired = math.max(4, math.floor(sdist_wu * 0.03))
-        if info.speed > desired + 4 then
-          keys = keys | KEY_SLOWER
-        elseif info.speed < desired and sdist_wu > 128 then
-          keys = keys | KEY_FASTER
-        end
-      elseif abs_corr > 80 then
-        if info.speed > 8 then keys = keys | KEY_SLOWER end
-      else
-        -- Outside braking zone: go fast through the danger zone
+    elseif _approach_brake_active then
+      _throttle_branch = "ap_brake_zone"
+      local sdist_wu = _approach_sdist_wu
+      local desired = math.max(4, math.floor(sdist_wu * 0.03))
+      if info.speed > desired + 4 then
+        keys = keys | KEY_SLOWER
+      elseif info.speed < desired and sdist_wu > 128 then
         keys = keys | KEY_FASTER
       end
     elseif facing_away and C.FACING_AWAY_BRAKE_ENABLED then
+      _throttle_branch = "facing_away"
       -- Viz: yellow ring around tank when facing-away brake is active, plus
       -- the correction angle (in degrees) under the rings so we can tell
       -- what triggered it — lookahead override, next_goal behind us, etc.
@@ -2441,11 +2453,10 @@ function M.steer(state, world, info, goal)
       local facing_brake = (under_fire or race_mode) and 16 or 8
       if info.speed > facing_brake then keys = keys | KEY_SLOWER end
     elseif orbit_brake then
-      -- Stuck circling the destination — brake to tighten the turn.
-      -- Cap at 8 wu/tick so the radius shrinks but momentum returns
-      -- quickly once we land on the goal.
+      _throttle_branch = "orbit_brake"
       if info.speed > 8 then keys = keys | KEY_SLOWER end
     elseif eff_dist < brake_dist and not plow_through then
+      _throttle_branch = "approach_brake"
       -- Approach braking: slow proportionally to remaining distance.
       -- Plow-through goals (capture_base/capture_pill/nav_mode="plow")
       -- skip this — keep cruising through the destination.
@@ -2473,20 +2484,27 @@ function M.steer(state, world, info, goal)
         keys = keys | KEY_FASTER
       end
     elseif plow_through then
-      -- Plow-through: full speed, don't brake for destination
+      _throttle_branch = "plow_through"
       if info.speed < turn_max_speed then
         keys = keys | KEY_FASTER
       elseif info.speed > turn_max_speed + 4 then
         keys = keys | KEY_SLOWER
       end
     else
-      -- Cruise: target turn_max_speed with proportional control
+      _throttle_branch = "cruise"
+      -- (intentionally fall-through — body sets keys below)
       if info.speed > turn_max_speed + 4 then
         keys = keys | KEY_SLOWER
       elseif info.speed < turn_max_speed then
         keys = keys | KEY_FASTER
       end
     end
+
+    -- Throttle decision HUD: shows which `elseif` branch the throttle
+    -- chain landed in this tick, plus the key inputs each branch
+    -- considered, plus what keys ended up pressed.  Use the
+    -- `hud_throttle` viz toggle to enable.  Great for diagnosing the
+    -- "tank stuck at speed 0 despite being far from goal" class of bug.
 
     -- Shoot walls on our planned path while driving by (opportunistic).
     -- Suppress on a boat: drive-by shots may destroy bridges we're sailing

@@ -280,6 +280,9 @@ M.IDS = {
   facing_away_brake  = { short = "Facing-away brake",
                          long  = "Yellow ring around tank + correction angle label when facing-away brake fires" },
 
+  hud_throttle       = { short = "Throttle decision HUD",
+                         long  = "Top-left text showing which throttle elseif-branch fired this tick (cruise / ap_brake_zone / facing_away / kill_lgm_halt / boat_exit / etc.) plus key inputs (speed, abs_corr, eff_dist, brake_dist) and flags (boat_exit, inboat, cliff, facing_away, orbit, ap_brake) plus the keys actually pressed. Great for the 'tank stuck at speed 0' class of bug." },
+
   -- Misc init.lua extras.
   adjacent_tiles        = { short = "Adjacent tile boxes",
                             long  = "Cyan filled boxes on the four tiles adjacent to the tank" },

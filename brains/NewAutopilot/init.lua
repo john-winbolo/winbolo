@@ -4262,7 +4262,7 @@ function Brain.think(info)
         viz.detail_text(did, string.format(
           "     sightLen = round(D_now / 128) clamped[2..14] = %d", sl_now))
         viz.detail_text(did, string.format(
-          "     T = flight_ticks(sl) = 4*sl - 6 (shells.c:133) = %d sim-ticks", T))
+          "     T = flight_ticks(sl) = 4*sl - 5 (shells.c:133, post-PR-77) = %d sim-ticks", T))
         viz.detail_text(did, "")
         viz.detail_text(did, "3) lead offset (scaled to land empirically on-target):")
         viz.detail_text(did, string.format(

@@ -388,13 +388,16 @@ function M.sightlen_for(distance_wu)
 end
 
 function M.flight_ticks(sightLen)
-  -- shells.c:133: shellLifeTicks(len) = SHELL_LIFE(8)*len - SHELL_START_ADD(6),
-  -- where tank passes `sightLen / 2` as len (engine's integer divide,
-  -- see brain_pathfinder.c:3221).  So actual ticks-to-impact at
-  -- sightLen-distance = 8*(sightLen/2) - 6 = 4*sightLen - 6.  The
-  -- −6 is the spawn offset (shell appears in front of the tank, not
-  -- at its center); without it we over-lead by ~6 ticks of LGM motion.
-  local t = 4 * sightLen - 6
+  -- shells.c:133 (post-PR-77 formula):
+  --   shellLifeTicks(len) = 1 + SHELL_LIFE(8)*len - SHELL_START_ADD(6)
+  -- Tank passes len = sightLen/2 (brain_pathfinder.c:3221), so:
+  --   ticks-to-impact = 1 + 8*(sightLen/2) - 6 = 4*sightLen - 5
+  -- The +1 was restored in PR #77 to match the WinBolo v1 formula
+  -- (commit 63888991 had dropped it as a trajectory-dot display fix
+  -- but that shortened all shell lifetimes by one tick).  Without
+  -- PR #77 the formula is `4*sightLen - 6` — undo this `-5` back to
+  -- `-6` if reverting.
+  local t = 4 * sightLen - 5
   if t < 1 then return 1 end
   return t
 end

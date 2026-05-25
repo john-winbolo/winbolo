@@ -2354,6 +2354,18 @@ function M.update_attack_substate(goal, state, world, info)
       -- Otherwise spots is nil — chunking still in progress; the goal
       -- re-enters plan_position next tick and continues the sweep.
       if spots then
+      -- DIAG_PP_GATE: pin down which path lit `spots` so we can tell
+      -- a fresh completed sweep apart from a stale-cache hit.
+      -- status is "done" (just-completed this tick) or "cached"
+      -- (prior sweep within 250-tick TTL).  deg_cursor (if any) shows
+      -- where the in-flight sweep was — useful for spotting "cache hit
+      -- while a separate in-progress sweep was visible".
+      do
+        local _deg = "-"
+        if state._pill_eval_progress and state._pill_eval_progress[pid] then
+          _deg = tostring(state._pill_eval_progress[pid].deg_cursor)
+        end
+      end
       -- (goal.scan_spots = spots is set AT THE END of this block — see
       -- the matching assignment just before the `end` below.  If we set
       -- it here, a tick_budget_exceeded abort mid-flow would leave the
