@@ -137,18 +137,20 @@ local function stuck_recovery(state, info, goal)
   if (now - sp.since) < STUCK_TICKS then return end
 
   -- No progress for STUCK_TICKS toward the same next-step tile: penalize it.
+  local tmx = info.tankx >> 8
+  local tmy = info.tanky >> 8
   local k = U.mkey(pf.next_mx, pf.next_my)
   if bl[k] == nil then
     cpf.set_overlay(pf.next_mx, pf.next_my, STUCK_PENALTY)
     if BRAIN_DEBUG_MODE then
       print(string.format(
         "[STUCK_RECOVERY] t=%d pos=(%d,%d) spd=%d goal=%s next=(%d,%d) penalize %dt",
-        now, info.tankx >> 8, info.tanky >> 8, info.speed or 0,
+        now, tmx, tmy, info.speed or 0,
         goal.kind, pf.next_mx, pf.next_my, STUCK_DURATION))
       local _p2 = require("print2")
       _p2(string.format(
         "STUCK_RECOVERY t=%d pos=(%d,%d) spd=%d goal=%s next=(%d,%d)",
-        now, info.tankx >> 8, info.tanky >> 8, info.speed or 0,
+        now, tmx, tmy, info.speed or 0,
         goal.kind, pf.next_mx, pf.next_my))
     end
     log.event("stuck_recovery", string.format(
@@ -157,6 +159,38 @@ local function stuck_recovery(state, info, goal)
   bl[k] = now + STUCK_DURATION
   state.pf.status = "idle"  -- force A* recompute against the new overlay
   state.stuck_progress = nil
+
+  -- Hard escape: if stuck_recovery has fired many times at the same
+  -- tank tile, every neighbor is penalized and the bot is trapped.
+  -- Count active blacklist entries adjacent to the tank and force a
+  -- goal clear when too many are blocked.
+  local STUCK_HARD_ESCAPE = 5
+  local adj_blocked = 0
+  for dy = -1, 1 do
+    for dx = -1, 1 do
+      if dx ~= 0 or dy ~= 0 then
+        local ak = U.mkey(tmx + dx, tmy + dy)
+        if bl[ak] then adj_blocked = adj_blocked + 1 end
+      end
+    end
+  end
+  if adj_blocked >= STUCK_HARD_ESCAPE then
+    if BRAIN_DEBUG_MODE then
+      print(string.format(
+        "[STUCK_ESCAPE] t=%d pos=(%d,%d) goal=%s adj_blocked=%d — clearing goal",
+        now, tmx, tmy, goal.kind, adj_blocked))
+      local _p2 = require("print2")
+      _p2(string.format(
+        "STUCK_ESCAPE t=%d pos=(%d,%d) goal=%s adj_blocked=%d",
+        now, tmx, tmy, goal.kind, adj_blocked))
+    end
+    -- Block the goal destination so pick_goal doesn't re-select it
+    local gk = U.mkey(goal.mx or 0, goal.my or 0)
+    state.blocked[gk] = now + 600
+    goal.kind = "none"
+    goal.substate = nil
+    state.pf.status = "idle"
+  end
 end
 
 -- Wrapper: call C pathfinder and update state.pf for compatibility with

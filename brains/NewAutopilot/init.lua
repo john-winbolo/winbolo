@@ -67,7 +67,7 @@ local ENABLE_LOGGING = false
 -- Used by stuck detection / urgent-replan gating downstream — file-scope
 -- so the loop bodies just do membership checks.
 local ATTACK_STATIONARY_SUBS = {
-  plan_position=true, position=true, aim=true, approach=true, build_walls=true,
+  plan_position=true, position=true, aim=true, build_walls=true,
   in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
   in_range_aim_finetune=true, shoot_pill=true, engage=true, curve_away=true,
   rush=true, disengage=true, gather_trees=true,
@@ -2195,6 +2195,9 @@ function Brain.think(info)
           print(string.format(
             TAG .. " t=%d STUCK %s pill at (%d,%d) -- fleeing to (%d,%d)",
             now, state.goal.kind, state.goal.mx, state.goal.my, fmx, fmy))
+          print2(string.format(
+            "STUCK_FLEE t=%d goal=%s pill=(%d,%d) flee=(%d,%d)",
+            now, state.goal.kind, state.goal.mx, state.goal.my, fmx, fmy))
         end
         log.event("stuck", string.format("%s@%d,%d->flee(%d,%d)",
           state.goal.kind, state.goal.mx, state.goal.my, fmx, fmy))
@@ -2214,6 +2217,9 @@ function Brain.think(info)
         if BRAIN_DEBUG_MODE then
           print(string.format(
             TAG .. " t=%d STUCK at (%d,%d) goal=%s dest=(%d,%d) -- blocking for 600t",
+            now, cur_mx, cur_my, state.goal.kind, state.goal.mx, state.goal.my))
+          print2(string.format(
+            "STUCK_BLOCK t=%d pos=(%d,%d) goal=%s dest=(%d,%d)",
             now, cur_mx, cur_my, state.goal.kind, state.goal.mx, state.goal.my))
         end
         log.event("stuck", string.format("%s@%d,%d", state.goal.kind, state.goal.mx, state.goal.my))
