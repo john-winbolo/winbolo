@@ -667,7 +667,7 @@ static int l_naThreatApplyOcclusionAll(lua_State *L) {
                 int tt = raw_tt(ctx, nx, ny);
                 if (tt == ctx->t_building || tt == ctx->t_halfbuild) eff_walls = 0;
             }
-            double reduction = eff_walls * 0.20 + t_total * 0.03 + f_total * 0.40;
+            double reduction = eff_walls * 0.20 + t_total * 0.10 + f_total * 0.40;
             if (reduction > 0.80) reduction = 0.80;
             if (reduction <= 0.0) continue;
 

@@ -194,7 +194,7 @@ end
 -- Internal: stamp pill threat into pill_grid for one pill
 -- -------------------------------------------------------------------------
 local HAZARD_TERRAIN = {
-  [C.T_RIVER] = true, [C.T_DEEPSEA] = true,
+  [C.T_RIVER] = true,
   [C.T_RUBBLE] = true, [C.T_SWAMP] = true,
 }
 
@@ -431,9 +431,9 @@ local _fp_my = {}
 -- counts. Total work per pill is O(disk_size) instead of
 -- O(disk_size × line_length).
 --
--- Reduction per occluder in line of sight (unchanged):
+-- Reduction per occluder in line of sight:
 --   wall:           20% per tile
---   tree:            3% per tile
+--   tree:           10% per tile
 --   friendly pill:  40% per tile
 -- Capped at a maximum of 80% reduction.
 -- -------------------------------------------------------------------------
@@ -523,7 +523,7 @@ local function apply_occlusion_to_pill(pm, friendly_pill_set)
           if (tt == C.T_BUILDING or tt == C.T_HALFBUILD) and w_total == 0 then
             effective_walls = 0  -- front-most wall: no self-occlusion
           end
-          local reduction = effective_walls * 0.20 + t_total * 0.03 + f_total * 0.40
+          local reduction = effective_walls * 0.20 + t_total * 0.10 + f_total * 0.40
           if reduction > 0.80 then reduction = 0.80 end
           if reduction > 0 then
             local factor = 1.0 - reduction

@@ -671,6 +671,7 @@ void renderPoolGrid(int registry_idx, const char *body) {
     const char *phase = getStr(root, "phase", "?");
     int  tickIn      = (int)getNum(root, "tick", -1);
     int  replanIn    = (int)getNum(root, "replan_left", -1);
+    const char *debugSession = getStr(root, "debug_session", "");
     bool isReplanTick = (replanIn == 0);
     int  followBot    = (int)getNum(root, "bot", -1);
 
@@ -740,6 +741,18 @@ void renderPoolGrid(int registry_idx, const char *body) {
         ImGui::Text("  Tick %d  Phase: %s", tickIn, phase);
     else
         ImGui::Text("  Phase: %s", phase);
+    if (debugSession[0] != '\0') {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                           "  [%s]", debugSession);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Copy")) {
+            char clip[256];
+            SDL_snprintf(clip, sizeof(clip), "%s bot%d tick %d",
+                         debugSession, followBot, tickIn);
+            SDL_SetClipboardText(clip);
+        }
+    }
     ImGui::SameLine();
     if (replanIn == 0) {
         ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1),

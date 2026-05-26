@@ -108,6 +108,37 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
 
   local left_cover  = count_cover(lfx, lfy)
   local right_cover = count_cover(rfx, rfy)
+
+  -- Deep-water penalty on the swerve retreat path. The tank swerves
+  -- perpendicular then retreats outward from standoff to the setup
+  -- circle. Check each side's retreat line (from standoff radius to
+  -- approach radius along the swerve direction) for deep water.
+  local standoff_r = goal._is_ppt and C.PPT_STANDOFF or C.ATTACK_PILL_STANDOFF
+  local setup_r    = standoff_r + C.ATTACK_APPROACH_OFFSET
+  local DEEP_WATER_PENALTY = -50
+  local function check_retreat_deepsea(perp_x, perp_y)
+    local penalty = 0
+    -- Walk from standoff radius to setup radius along the swerve
+    -- direction (perpendicular + outward from pill).
+    -- Sample every 0.5 tiles along the retreat line.
+    local steps = math.ceil((setup_r - standoff_r) / 0.5)
+    for i = 0, steps do
+      local t = standoff_r + (setup_r - standoff_r) * i / steps
+      -- retreat point: pill center + swerve-perpendicular offset + outward
+      local rx = pcx + perp_x * 2 + ux * t
+      local ry = pcy + perp_y * 2 + uy * t
+      local rmx = math.floor(rx)
+      local rmy = math.floor(ry)
+      if U.in_map(rmx, rmy) and U.ttype(rmx, rmy) == C.T_DEEPSEA then
+        penalty = penalty + DEEP_WATER_PENALTY
+      end
+    end
+    return penalty
+  end
+
+  left_cover  = left_cover  + check_retreat_deepsea(-uy, ux)
+  right_cover = right_cover + check_retreat_deepsea(uy, -ux)
+
   goal._best_swerve_dir = left_cover >= right_cover and 1 or -1
   goal._swerve_viz = {
     lfx = lfx, lfy = lfy, left_cover = left_cover,
@@ -363,6 +394,54 @@ local function standoff_shot_obstacle(goal, pill, world)
     end
   end
   return nil
+end
+
+-- Shot-path obstacle check: simulate a shell from the tank's current
+-- position toward the aim point. Count how many shots it would take to
+-- clear all obstacles (forest, walls) before the shell reaches the
+-- target pill tile. Returns (shots_needed, reason_str) where
+-- shots_needed is the extra shots to clear the path (0 = clear path),
+-- or (math.huge, reason) if an impassable obstacle (other pillbox) blocks.
+local function shot_path_obstacle_count(info, goal, world)
+  local pmx, pmy = goal.mx, goal.my
+  local aim_mx = goal.aim_mx or (pmx + 0.5)
+  local aim_my = goal.aim_my or (pmy + 0.5)
+  local target_wx = math.floor(aim_mx * 256 + 0.5)
+  local target_wy = math.floor(aim_my * 256 + 0.5)
+  local tiles = cpf.simulate_shot(info.tankx, info.tanky,
+                                  target_wx, target_wy,
+                                  cpf.SHOT_TANK, 0)
+  if not tiles then return 0, "no sim" end
+  local origin_mx = info.tankx >> 8
+  local origin_my = info.tanky >> 8
+  local shots = 0
+  local reached_pill = false
+  for _, t in ipairs(tiles) do
+    if t.mx == pmx and t.my == pmy then
+      reached_pill = true
+      break
+    end
+    if t.mx ~= origin_mx or t.my ~= origin_my then
+      local tt = U.ttype(t.mx, t.my)
+      if tt == C.T_BUILDING then
+        shots = shots + 5                    -- 1 hit → halfbuild + 4 life
+      elseif tt == C.T_HALFBUILD then
+        shots = shots + 4                    -- worst case: life=4
+      elseif tt == C.T_FOREST then
+        shots = shots + 1
+      else
+        local plist = world.pill_at and world.pill_at[t.my * 256 + t.mx]
+        if plist then
+          for _, e in ipairs(plist) do
+            if e.pill and e.pill.health and e.pill.health > 0 then
+              return math.huge, string.format("pill at (%d,%d) hp=%d", t.mx, t.my, e.pill.health)
+            end
+          end
+        end
+      end
+    end
+  end
+  return shots, nil, reached_pill
 end
 
 -- Count forest tiles on the Bresenham line from (x0,y0) to (x1,y1), excluding
@@ -2331,12 +2410,15 @@ function M.update_attack_substate(goal, state, world, info)
                     goal._kill_attempt and 255 or 200,
                     goal._kill_attempt and 100 or 50
     viz.hud_text("hud_kill_attempt", 10, 160, label, "topleft", r, g, b, 255)
+    local _viz_pill_hp = goal.target_id and (function()
+      local p = world.pills[goal.target_id]
+      return p and p.health or 0
+    end)() or 0
+    local _viz_obstacle = (goal._bullets_needed or 0) - _viz_pill_hp
+    if _viz_obstacle < 0 then _viz_obstacle = 0 end
     viz.hud_text("hud_kill_attempt", 10, 175,
-      string.format("bullets_needed=%d pill_hp=%d", goal._bullets_needed or 0,
-                    goal.target_id and (function()
-                      local p = world.pills[goal.target_id]
-                      return p and p.health or 0
-                    end)() or 0),
+      string.format("needed=%d (hp=%d + obstacles=%d)",
+                    goal._bullets_needed or 0, _viz_pill_hp, _viz_obstacle),
       "topleft", 200, 200, 200, 255)
     viz.hud_text("hud_kill_attempt", 10, 190,
       string.format("fired=%d on_pill=%d misses=%d",
@@ -2433,6 +2515,17 @@ function M.update_attack_substate(goal, state, world, info)
       goal._is_ppt              = nil
       goal._trees_for_walls     = nil
       goal.scan_spots           = nil
+      goal.standoff_mx          = nil
+      goal.standoff_my          = nil
+      goal.standoff_fx          = nil
+      goal.standoff_fy          = nil
+      goal.approach_fx          = nil
+      goal.approach_fy          = nil
+      goal.approach_mx          = nil
+      goal.approach_my          = nil
+      goal._chosen_deg          = nil
+      goal._plan_show_tick      = nil
+      goal._plan_logged         = nil
       goal._plan_position_cleared = true
     end
     -- Only scan once, reuse stored results for drawing
@@ -3572,6 +3665,36 @@ function M.update_attack_substate(goal, state, world, info)
       goal._charge_start_hp = pill_hp_now
     end
 
+    -- Shot-path obstacle check: every tick, simulate the shell path
+    -- and count obstacles. Updates _bullets_needed so the swerve
+    -- trigger accounts for walls/trees that need clearing before the
+    -- shell reaches the pill. During charge the tank is still closing,
+    -- so "not reached" is normal — only abort on impassable obstacles
+    -- or insufficient ammo when the shot DOES reach.
+    do
+      local pill_hp_live = pill and pill.health or 0
+      local obstacle_shots, obstacle_reason, reached = shot_path_obstacle_count(info, goal, world)
+      if obstacle_shots == math.huge then
+        -- Impassable (pill in path) — abort regardless
+        print(string.format(TAG .. " CHARGE: impassable obstacle — %s, aborting", obstacle_reason))
+        print2(string.format("CHARGE_ABORT_OBSTACLE reason=%s pill=(%d,%d)", obstacle_reason, pmx, pmy))
+        clear_attack_goal(state, "shot path blocked: " .. obstacle_reason)
+        return
+      end
+      if reached then
+        local total_needed = obstacle_shots + pill_hp_live
+        if info.shells < total_needed then
+          print(string.format(TAG .. " CHARGE: not enough shells (%d obstacles + %d hp = %d needed, have %d) — aborting",
+            obstacle_shots, pill_hp_live, total_needed, info.shells))
+          print2(string.format("CHARGE_ABORT_SHELLS obstacles=%d hp=%d needed=%d have=%d pill=(%d,%d)",
+            obstacle_shots, pill_hp_live, total_needed, info.shells, pmx, pmy))
+          clear_attack_goal(state, "not enough shells for obstacles")
+          return
+        end
+        goal._bullets_needed = total_needed
+      end
+    end
+
     -- Immediate swerve: pill dead OR fired enough shots
     local bullets_fired = (goal._charge_shells or info.shells) - info.shells
     local pill_hp = pill and pill.health or 0
@@ -3975,6 +4098,34 @@ function M.update_attack_substate(goal, state, world, info)
     goal._shoot_hits_total = (goal._shoot_hits_total or 0) + hits_taken
 
     local pill_hp = pill and pill.health or 0
+
+    -- Shot-path obstacle check: live-update _bullets_needed and abort
+    -- if path is blocked or ammo short. shoot_pill is stationary and
+    -- in range, so "not reached" is a real problem (aim is wrong or
+    -- something moved into the way).
+    do
+      local obstacle_shots, obstacle_reason, reached = shot_path_obstacle_count(info, goal, world)
+      local total_needed = obstacle_shots + pill_hp
+      if obstacle_shots == math.huge then
+        print(string.format(TAG .. " SHOOT_PILL: impassable obstacle — %s, aborting", obstacle_reason))
+        print2(string.format("SHOOT_PILL_ABORT_OBSTACLE reason=%s pill=(%d,%d)", obstacle_reason, pmx, pmy))
+        clear_attack_goal(state, "shot path blocked: " .. obstacle_reason)
+        return
+      elseif not reached then
+        print(string.format(TAG .. " SHOOT_PILL: shot does not reach pill tile, aborting"))
+        print2(string.format("SHOOT_PILL_ABORT_NOREACH pill=(%d,%d)", pmx, pmy))
+        clear_attack_goal(state, "shot does not reach pill")
+        return
+      elseif info.shells < total_needed then
+        print(string.format(TAG .. " SHOOT_PILL: not enough shells (%d obstacles + %d hp = %d needed, have %d) — aborting",
+          obstacle_shots, pill_hp, total_needed, info.shells))
+        print2(string.format("SHOOT_PILL_ABORT_SHELLS obstacles=%d hp=%d needed=%d have=%d pill=(%d,%d)",
+          obstacle_shots, pill_hp, total_needed, info.shells, pmx, pmy))
+        clear_attack_goal(state, "not enough shells for obstacles")
+        return
+      end
+      goal._bullets_needed = total_needed
+    end
 
     -- No-progress timeout. shoot_pill has no built-in escape if the
     -- shells are silently missing (trajectory off, friendly LGM in

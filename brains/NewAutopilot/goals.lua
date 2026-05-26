@@ -5185,7 +5185,21 @@ local function goal_selection(state, world, info, quiet)
       -- from both additive SW+CM penalty AND the multiplicative ratio
       -- gate (the gate only fires for entries with c.hysteresis set,
       -- which we leave nil here).
-      if HYST_EXEMPT[c.goal.kind] or c._engage_break_lock then goto continue_hyst end
+      if HYST_EXEMPT[c.goal.kind] or c._engage_break_lock then
+        -- Exempt goals skip the type-switch penalty (switching from
+        -- another group is free). But within the same group, the
+        -- target-switch penalty still applies to prevent spinning
+        -- between targets (e.g. two capture_base candidates).
+        local cg = goal_group(c.goal.kind)
+        if cg == cur_group
+           and (c.goal.mx ~= state.goal.mx or c.goal.my ~= state.goal.my) then
+          c.cost = c.cost + C.GOAL_TARGET_SWITCH_PENALTY
+          c.hysteresis = "target"
+          c.switch_flat = C.GOAL_TARGET_SWITCH_PENALTY
+          c.commit_val  = 0
+        end
+        goto continue_hyst
+      end
       local cg = goal_group(c.goal.kind)
       local effective_commit = commitment
       if cur_is_attack_tank then
@@ -6572,6 +6586,7 @@ function M.get_pool_breakdown_json(state)
     tick = now,
     replan_left = replan_left,
     bot = state.player_number or 0,
+    debug_session = _G.DEBUG_SESSION_DIR or "",
     sections = sections,
   })
 end
