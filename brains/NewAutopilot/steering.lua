@@ -175,16 +175,18 @@ local function stuck_recovery(state, info, goal)
   end
   if state._stuck_escape_count >= STUCK_HARD_ESCAPE then
     state._stuck_escape_count = 0
-    if BRAIN_DEBUG_MODE then
-      print(string.format(
-        "[STUCK_ESCAPE] t=%d pos=(%d,%d) goal=%s adj_blocked=%d — clearing goal",
-        now, tmx, tmy, goal.kind, adj_blocked))
+    do
       local _p2 = require("print2")
       _p2(string.format(
-        "STUCK_ESCAPE t=%d pos=(%d,%d) goal=%s adj_blocked=%d",
-        now, tmx, tmy, goal.kind, adj_blocked))
+        "STUCK_ESCAPE t=%d pos=(%d,%d) goal=%s count=%d",
+        now, tmx, tmy, goal.kind, state._stuck_escape_count))
+      if BRAIN_DEBUG_MODE then
+        print(string.format(
+          "[STUCK_ESCAPE] t=%d pos=(%d,%d) goal=%s count=%d — clearing goal",
+          now, tmx, tmy, goal.kind, state._stuck_escape_count))
+      end
     end
-    -- Block the goal destination so pick_goal doesn't re-select it
+    -- Block the goal destination so pick_goal doesn't re-select it.
     local gk = U.mkey(goal.mx or 0, goal.my or 0)
     state.blocked[gk] = now + 600
     goal.kind = "none"
@@ -1676,6 +1678,9 @@ function M.steer(state, world, info, goal)
   local tmy  = info.tanky >> 8
   state._steer_lx = nil
   state._steer_ly = nil
+  if goal.kind ~= "kill_lgm" then
+    state._kill_lgm_halt = false
+  end
 
   -- Per-tile stuck-recovery: re-stamp the dynamic blacklist into the overlay
   -- (init.lua wipes it each tick) and watch progress toward pf.next_mx/my.

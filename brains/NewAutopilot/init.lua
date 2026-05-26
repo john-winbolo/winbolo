@@ -2086,6 +2086,14 @@ function Brain.think(info)
     state._respawn_wipe_dist  = jump_dist
     state._respawn_prev_mx    = state._prev_mx
     state._respawn_prev_my    = state._prev_my
+    state._stuck_escape_count = nil
+    state._stuck_escape_mx    = nil
+    state._stuck_escape_my    = nil
+    state._desp_ticks         = 0
+    state._desp_mx            = nil
+    state._desp_my            = nil
+    state._stuck_desperate    = false
+    state.stuck_for           = 0
     print2(string.format("RESPAWN_INVALIDATE t=%d dist=%d — setting all cached costs to infinity",
       now, jump_dist))
     -- Set all cached costs to infinity so the eval queue re-evaluates
@@ -2210,7 +2218,26 @@ function Brain.think(info)
           ::next_flee_d::
         end
         if not fmx then
-          -- All of the flee ray is blocked; stay put.
+          -- Radial projection failed (pill too far, all tiles blocked).
+          -- Try any passable adjacent tile as a last resort.
+          for dy = -1, 1 do
+            for dx = -1, 1 do
+              if dx ~= 0 or dy ~= 0 then
+                local tx = U.mclamp(cur_mx + dx)
+                local ty = U.mclamp(cur_my + dy)
+                local tt = U.ttype(tx, ty)
+                if not U.is_water(tt)
+                   and tt ~= C.T_BUILDING and tt ~= C.T_HALFBUILD
+                   and tt ~= C.T_PILLBOX then
+                  fmx, fmy = tx, ty
+                  break
+                end
+              end
+            end
+            if fmx then break end
+          end
+        end
+        if not fmx then
           fmx, fmy = cur_mx, cur_my
         end
         if BRAIN_DEBUG_MODE then
