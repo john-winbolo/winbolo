@@ -2288,31 +2288,49 @@ local POOL_FILTERS = {
 -- can stash the components for the breakdown formula.
 local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   -- Distance to cheapest reachable adjacent tile (pill tile itself
-  -- carries an impassable overlay so we route to a neighbor).  Uses
-  -- the dijkstra-only variant — no A* fallback.
+  -- carries an impassable overlay so we route to a neighbor).
   --
-  -- Subtract the dead pill's stale danger contribution from the path
-  -- cost.  Capture targets are pills that just died (neutral / freshly
-  -- killed), but the danger slate may still carry their fire-field
-  -- contribution for a few ticks until the next pill_dirty rebuild.
-  -- Without this subtraction the dijkstra cost to the adjacent tile
-  -- includes phantom fire from the now-dead pill, which inflates the
-  -- score and can make a perfectly safe capture look risky.  Same
-  -- pattern attack_pill (pool 6) uses for its still-alive target.
-  local best_adj, best_ax, best_ay =
-      cpf.cheapest_adjacent_dij(cpf.KIND_NORMAL, obj.mx, obj.my, 0)
-  if best_adj >= math.huge then
-    return 1e30, 1e30, 1e30, 0
+  -- After a threat rebuild (pill died), the danger grid is updated
+  -- immediately but the Dijkstra slates still carry stale costs from
+  -- the old danger values until they complete their next run (~2 ticks).
+  -- During that window, fall back to A* (smart_cost) which reads the
+  -- live danger grid directly — avoids inflated costs from phantom
+  -- fire of dead pills baked into the old Dijkstra.
+  local dij_stale = false
+  if state.dij and threat.last_rebuild_tick > 0 then
+    local slates = state.dij.slates
+    local short_ok = slates[0] and slates[0].completed_tick >= threat.last_rebuild_tick
+    local long_ok  = slates[2] and slates[2].completed_tick >= threat.last_rebuild_tick
+    if not (short_ok or long_ok) then
+      dij_stale = true
+    end
   end
-  local pcontrib = threat.pill_contrib
-                   and threat.pill_contrib[obj.my * 256 + obj.mx]
   local dist_raw
-  if best_ax and pcontrib then
-    dist_raw = cpf.smart_cost_minus_pill_danger_dij_only(
-                  cpf.KIND_NORMAL, best_ax, best_ay,
-                  pcontrib, obj.mx, obj.my, 0)
+  local dist_method = "dij"
+  if dij_stale then
+    dist_method = "astar"
+    local boat = info.inboat and 1 or 0
+    dist_raw = smart_cost(KIND_NORMAL, tmx, tmy, obj.mx, obj.my, boat,
+                          info.shells or 32, info.trees or 0,
+                          info.mines or 0, info.armour or 40)
+    if dist_raw >= 1e29 then
+      return 1e30, 1e30, 1e30, 0
+    end
   else
-    dist_raw = best_adj
+    local best_adj, best_ax, best_ay =
+        cpf.cheapest_adjacent_dij(cpf.KIND_NORMAL, obj.mx, obj.my, 0)
+    if best_adj >= math.huge then
+      return 1e30, 1e30, 1e30, 0
+    end
+    local pcontrib = threat.pill_contrib
+                     and threat.pill_contrib[obj.my * 256 + obj.mx]
+    if best_ax and pcontrib then
+      dist_raw = cpf.smart_cost_minus_pill_danger_dij_only(
+                    cpf.KIND_NORMAL, best_ax, best_ay,
+                    pcontrib, obj.mx, obj.my, 0)
+    else
+      dist_raw = best_adj
+    end
   end
   local dist_score = (dist_raw ^ 1.5) * C.CAPTURE_PILL_DIST_SCALE
   local danger_val = threat.at(obj.mx, obj.my)
@@ -2338,7 +2356,7 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   local c = C.CAPTURE_PILL_BASE_COST + dist_score
           + danger_val * C.CAPTURE_PILL_DANGER_SCALE * _lgm_mult
           + intercept
-  return c, dist_raw, dist_score, danger_val, intercept, _lgm_mult
+  return c, dist_raw, dist_score, danger_val, intercept, _lgm_mult, dist_method
 end
 
 -- build_eval_queue — called at the start of each replan cycle.
@@ -2476,12 +2494,13 @@ function M.build_eval_queue(state, world, info)
             _reject_remaining = reject.remaining or 0,
           }
         else
-          local c, _draw, dscore, dval, intcpt =
+          local c, _draw, dscore, dval, intcpt, _lm4, _dm4 =
             compute_pool4_cost(state, world, info, obj, tmx, tmy)
           state.cost_cache[ck] = {
             cost = c, raw = _draw, tick = now, _p = 4,
             _mx = obj.mx, _my = obj.my,
             _ds = dscore, _dv = dval, _intcpt = intcpt,
+            _dist_method = _dm4,
           }
         end
       end
@@ -2864,10 +2883,11 @@ local function get_formula_inner(e)
       local _lgm_mult_str = (_lgm_mult_c ~= 1)
         and string.format(" × %d (cautious mode)", _lgm_mult_c) or ""
       local _lgm_mult_det = ""
+      local _dm_str = e._dist_method or "dij"
       f = string.format(
-        "base{%d} + dist{%.1f}@(%d,%d) + danger{%.1f} + intcpt{%.0f}||dist:%.0f^1.5 × %.3f[DIST_SCALE] = %.1f|danger:%.1f × %.3f[DANGER_SCALE]%s = %.1f%s%s",
-        C.CAPTURE_PILL_BASE_COST, e._ds, e._mx or 0, e._my or 0, _cpill_danger_score, _intcpt,
-        raw, C.CAPTURE_PILL_DIST_SCALE, e._ds,
+        "base{%d} + dist{%.1f}[%s]@(%d,%d) + danger{%.1f} + intcpt{%.0f}||dist:%.0f^1.5 × %.3f[DIST_SCALE] = %.1f [%s]|danger:%.1f × %.3f[DANGER_SCALE]%s = %.1f%s%s",
+        C.CAPTURE_PILL_BASE_COST, e._ds, _dm_str, e._mx or 0, e._my or 0, _cpill_danger_score, _intcpt,
+        raw, C.CAPTURE_PILL_DIST_SCALE, e._ds, _dm_str,
         e._dv, C.CAPTURE_PILL_DANGER_SCALE, _lgm_mult_str, _cpill_danger_score, _lgm_mult_det, intcpt_det)
     end
   else
@@ -3692,8 +3712,9 @@ function M.step_eval_queue(state, world, info)
       local _cpill_dist_score, _cpill_danger_val, _cpill_intcpt = 0, 0, 0
       local _cpill_dist_raw = raw_cost
       local _cpill_lgm_mult = 1
+      local _cpill_dist_method = "dij"
       if pool_idx == 4 then
-        c, _cpill_dist_raw, _cpill_dist_score, _cpill_danger_val, _cpill_intcpt, _cpill_lgm_mult =
+        c, _cpill_dist_raw, _cpill_dist_score, _cpill_danger_val, _cpill_intcpt, _cpill_lgm_mult, _cpill_dist_method =
           compute_pool4_cost(state, world, info, obj, tmx, tmy)
         -- Pool 4 skipped the smart_cost block (see above), so backfill
         -- raw_cost from compute_pool4_cost's distance — keeps the panel
@@ -3818,6 +3839,7 @@ function M.step_eval_queue(state, world, info)
         entry._ds=_cpill_dist_score; entry._dv=_cpill_danger_val
         entry._intcpt=_cpill_intcpt
         entry._lgm_mult=_cpill_lgm_mult
+        entry._dist_method=_cpill_dist_method
       else
         entry._stale=stale_cost; entry._age=_gen_age
       end

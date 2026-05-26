@@ -1652,6 +1652,21 @@ function Brain.think(info)
   opt(string.format("  cpf.load_danger done %.2f ms (rebuilt=%s)",
     (t_load_danger - t_threat_upd) / 1000, tostring(threat.rebuilt_this_tick)))
 
+  -- Overlay rebuild: pills/bases stamped as impassable/expensive in the
+  -- pathfinder. Moved here (right after danger load) so all downstream
+  -- goal evaluation sees fresh overlays — previously ran much later and
+  -- A* queries during eval would hit stale impassable stamps from dead pills.
+  threat.check_overlay_dirty(world)
+  if threat.overlay_dirty then
+    threat.rebuild_overlay(world)
+    metrics.inc("overlay_reloads")
+  else
+    metrics.inc("overlay_skips")
+  end
+  local t_overlay_early = clock_us()
+  opt(string.format("  overlay rebuild done %.2f ms (dirty=%s)",
+    (t_overlay_early - t_load_danger) / 1000, tostring(not threat.overlay_dirty)))
+
   -- Push per-pill contribution maps to the host (BrainTest reads
   -- this for the shift-2 cycle-pill-overlay). Bindings no-op
   -- under non-host runtimes (game client, headless server).
@@ -1731,36 +1746,8 @@ function Brain.think(info)
   -- steering.lua re-stamps stuck-blacklist entries every tick (and now
   -- explicitly zeros them on expiry — see stuck_recovery) so those
   -- entries don't need an every-tick clear to stay consistent.
-  threat.check_overlay_dirty(world)
-  if threat.overlay_dirty then
-    cpf.clear_overlay()
-    for _, pm in pairs(world.pills) do
-      if pm.health > 0 then
-        if pm.owner == "friendly" then
-          -- Don't drive through our own pills
-          cpf.set_overlay(pm.mx, pm.my, 32767)
-        elseif pm.owner == "hostile" or pm.owner == "neutral" then
-          -- Hostile/neutral pills are impassable obstacles (can't drive on them)
-          cpf.set_overlay(pm.mx, pm.my, 32767)
-        end
-      end
-    end
-    for _, b in pairs(world.bases) do
-      if b.owner == "hostile" then
-        -- Hostile bases: 3x the cost of a wall (15 shots equivalent)
-        cpf.set_overlay(b.mx, b.my, 15 * C.WALL_SHOOT_COST)
-      end
-      -- Friendly/neutral bases are fine (road-like terrain, no overlay)
-    end
-    threat.snapshot_overlay(world)
-    threat.overlay_dirty = false
-    metrics.inc("overlay_reloads")
-  else
-    metrics.inc("overlay_skips")
-  end
-  local t_overlay = clock_us()
-  opt(string.format("  overlay rebuild done %.2f ms (dirty=%s)",
-    (t_overlay - t_influence) / 1000, tostring(threat.overlay_dirty == false)))
+  -- Overlay rebuild moved earlier (right after danger load) so goal
+  -- evaluation sees fresh data. See the block above t_overlay_early.
 
   local t3 = clock_us()
   metrics.set("us_threat", t3 - t2)

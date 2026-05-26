@@ -148,6 +148,45 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
   }
 end
 
+-- Enter swerve substate. Centralises the duplicated swerve-entry
+-- setup (timing, direction, pill-dead flag) so all 4 entry points
+-- (charge, engage-kill, engage-dodge, shoot_pill) share one path.
+--
+-- mode:
+--   "kill"      — pill dead or enough shots fired (offensive swerve)
+--   "defensive" — pill still alive, dodging return fire
+local LOW_HP_SWERVE = { [1] = 30, [2] = 36, [3] = 40 }
+local function enter_swerve(goal, world, state, info, pmx, pmy, mode)
+  local now = state.tick or 0
+  local tmx = info.tankx >> 8
+  local tmy = info.tanky >> 8
+  goal.substate    = "swerve"
+  goal._swerve_start = now
+  if mode == "kill" then
+    local low_hp_ticks = LOW_HP_SWERVE[goal._charge_start_hp]
+    if low_hp_ticks then
+      goal._swerve_ticks_left      = low_hp_ticks
+      goal._swerve_turn_ticks_left = math.min(low_hp_ticks, C.SWERVE_TURN_TICKS)
+    elseif goal._kill_attempt then
+      goal._swerve_ticks_left      = C.SWERVE_TOTAL_TICKS
+      goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
+    else
+      goal._swerve_ticks_left      = C.SWERVE_DEFENSIVE_TOTAL_TICKS
+      goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
+    end
+    goal._swerve_pill_dead = true
+  else
+    goal._swerve_ticks_left      = C.SWERVE_DEFENSIVE_TOTAL_TICKS
+    goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
+    goal._swerve_pill_dead       = false
+  end
+  if not goal._best_swerve_dir then
+    compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
+  end
+  goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
+  goal._engage_hits = nil
+end
+
 -- Clear the active goal, idle the pathfinder, and wipe ALL transient
 -- attack-side state that downstream code shouldn't see after we
 -- abandon. Centralises the bug class where one site clears 25
@@ -3710,27 +3749,8 @@ function M.update_attack_substate(goal, state, world, info)
           bullets_fired, tostring(goal._bullets_needed),
           tostring(goal._charge_start_hp)))
       end
-      goal.substate = "swerve"
-      goal._swerve_start = now
-      -- Low-HP pills get a much shorter swerve — the kill happens fast,
-      -- the pill won't get many (if any) shots off, so a long evasion
-      -- just delays the next goal. Lookup by HP at start of charge.
-      local LOW_HP_SWERVE = { [1] = 30, [2] = 36, [3] = 40 }
-      local low_hp_ticks = LOW_HP_SWERVE[goal._charge_start_hp]
-      if low_hp_ticks then
-        goal._swerve_ticks_left = low_hp_ticks
-        goal._swerve_turn_ticks_left = math.min(low_hp_ticks, C.SWERVE_TURN_TICKS)
-      elseif goal._kill_attempt then
-        goal._swerve_ticks_left = C.SWERVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
-      else
-        goal._swerve_ticks_left = C.SWERVE_DEFENSIVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
-      end
+      enter_swerve(goal, world, state, info, pmx, pmy, "kill")
       goal._swerve_pill_dead = (pill_hp <= 0)
-      compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
-      goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
-      goal._engage_hits = nil
       print(string.format(TAG .. " ATTACK: immediate swerve from charge (fired=%d needed=%d hp=%d kill_attempt=%s start_hp=%s)",
             bullets_fired, goal._bullets_needed or 0, pill_hp,
             tostring(goal._kill_attempt), tostring(goal._charge_start_hp)))
@@ -4212,23 +4232,8 @@ function M.update_attack_substate(goal, state, world, info)
           tostring(pill and pill.in_tank),
           tostring(pill_dead), tostring(goal._shoot_hits_total)))
       end
-      goal.substate    = "swerve"
-      goal._swerve_start = now
-      if pill_dead then
-        goal._swerve_ticks_left      = C.SWERVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
-      else
-        goal._swerve_ticks_left      = C.SWERVE_DEFENSIVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
-      end
-      goal._swerve_pill_dead = pill_dead
-      -- PPT skips the legacy aim substate where _best_swerve_dir is
-      -- normally computed, so compute it fresh here. Without this,
-      -- the `or random` fallback below would coin-flip the swerve
-      -- direction and could send the tank into a hazard.
-      compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
-      goal._swerve_dir       = goal._best_swerve_dir
-                               or ((now % 2 == 0) and 1 or -1)
+      enter_swerve(goal, world, state, info, pmx, pmy,
+                   pill_dead and "kill" or "defensive")
       print(string.format(TAG .. " ATTACK: PPT shoot_pill -> swerve (hits=%d hp=%d dead=%s)",
             goal._shoot_hits_total or 0, pill_hp, tostring(pill_dead)))
     end
@@ -4261,25 +4266,8 @@ function M.update_attack_substate(goal, state, world, info)
           bullets_fired, tostring(goal._bullets_needed),
           tostring(goal._charge_start_hp), tostring(goal._kill_attempt)))
       end
-      goal.substate = "swerve"
-      goal._swerve_start = now
-      -- Low-HP shortcut from charge_start_hp (see charge handler).
-      local LOW_HP_SWERVE = { [1] = 30, [2] = 36, [3] = 40 }
-      local low_hp_ticks = LOW_HP_SWERVE[goal._charge_start_hp]
-      if low_hp_ticks then
-        goal._swerve_ticks_left = low_hp_ticks
-        goal._swerve_turn_ticks_left = math.min(low_hp_ticks, C.SWERVE_TURN_TICKS)
-      elseif goal._kill_attempt then
-        goal._swerve_ticks_left = C.SWERVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
-      else
-        goal._swerve_ticks_left = C.SWERVE_DEFENSIVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
-      end
+      enter_swerve(goal, world, state, info, pmx, pmy, "kill")
       goal._swerve_pill_dead = (pill_hp <= 0)
-      compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
-      goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
-      goal._engage_hits = nil
       print(string.format(TAG .. " ATTACK: immediate swerve (fired=%d needed=%d hp=%d kill_attempt=%s start_hp=%s)",
             bullets_fired, goal._bullets_needed or 0, pill_hp,
             tostring(goal._kill_attempt), tostring(goal._charge_start_hp)))
@@ -4314,14 +4302,7 @@ function M.update_attack_substate(goal, state, world, info)
               tostring(pill and pill.in_tank),
               tostring(goal._engage_hits), pill_anger, tostring(crosshairs_off)))
           end
-          goal.substate = "swerve"
-          goal._swerve_start = now
-          -- Defensive swerve (pill still alive): longer turn
-          goal._swerve_ticks_left = C.SWERVE_DEFENSIVE_TOTAL_TICKS
-          goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
-          goal._swerve_pill_dead = false
-          compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
-      goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
+          enter_swerve(goal, world, state, info, pmx, pmy, "defensive")
           print(string.format(TAG .. " ATTACK: swerving (hits=%d anger=%.2f xhair_off=%s)",
                 goal._engage_hits or 0, pill_anger, tostring(crosshairs_off)))
         else

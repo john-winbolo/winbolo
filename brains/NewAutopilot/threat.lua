@@ -22,6 +22,7 @@
 
 local C       = require("constants")
 local U       = require("util")
+local cpf     = require("cpathfinder")
 local changes = require("changes")
 local metrics = require("metrics")
 local print2  = require("print2")
@@ -96,6 +97,7 @@ end
 -- M.prev_pills[id] = {owner, health, anger_q, mx, my}
 M.prev_pills = {}
 M.pill_dirty = true  -- force first build
+M.last_rebuild_tick = 0
 
 -- Dirty-flag state for the C overlay grid (driven from init.lua):
 -- All live pills + hostile bases are stamped as impassable / expensive.
@@ -695,6 +697,22 @@ end
 -- check_overlay_dirty can detect changes. Called by init.lua after it
 -- rebuilds the C overlay.
 -- -------------------------------------------------------------------------
+function M.rebuild_overlay(world)
+  cpf.clear_overlay()
+  for _, pm in pairs(world.pills) do
+    if pm.health > 0 then
+      cpf.set_overlay(pm.mx, pm.my, 32767)
+    end
+  end
+  for _, b in pairs(world.bases) do
+    if b.owner == "hostile" then
+      cpf.set_overlay(b.mx, b.my, 15 * C.WALL_SHOOT_COST)
+    end
+  end
+  M.snapshot_overlay(world)
+  M.overlay_dirty = false
+end
+
 function M.snapshot_overlay(world)
   for id in pairs(M.prev_friendly_pills) do M.prev_friendly_pills[id] = nil end
   for id in pairs(M.prev_hostile_pills)  do M.prev_hostile_pills[id]  = nil end
@@ -827,6 +845,7 @@ function M.update(state, world, info)
     snapshot_pills(world)
     M.pill_dirty = false
     M.rebuilt_this_tick = true
+    M.last_rebuild_tick = state.tick or 0
     -- Sync C-side pill_grid/cov_grid into na_attack's arrays (memcpy).
     if na_attack then na_attack.sync_grids() end
 

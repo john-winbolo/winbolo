@@ -85,7 +85,6 @@ local function intentionally_stationary(goal)
   if goal.kind == "pill_place"  and _pp_stationary[s] then return true end
   if goal.kind == "attack_tank" and _at_stationary[s] then return true end
   if goal.kind == "rescue_lgm" or goal.kind == "none" then return true end
-  if goal.kind == "refuel_at_base" or goal.kind == "flee_to_base" then return true end
   return false
 end
 
@@ -146,6 +145,11 @@ local function stuck_recovery(state, info, goal)
         "[STUCK_RECOVERY] t=%d pos=(%d,%d) spd=%d goal=%s next=(%d,%d) penalize %dt",
         now, info.tankx >> 8, info.tanky >> 8, info.speed or 0,
         goal.kind, pf.next_mx, pf.next_my, STUCK_DURATION))
+      local _p2 = require("print2")
+      _p2(string.format(
+        "STUCK_RECOVERY t=%d pos=(%d,%d) spd=%d goal=%s next=(%d,%d)",
+        now, info.tankx >> 8, info.tanky >> 8, info.speed or 0,
+        goal.kind, pf.next_mx, pf.next_my))
     end
     log.event("stuck_recovery", string.format(
       "%s next=%d,%d", goal.kind, pf.next_mx, pf.next_my))
