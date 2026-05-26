@@ -392,6 +392,16 @@ void transportUdpServerEnforcePing(struct ServerSim *sim);
 /* Kick a player by name (case-insensitive match). */
 void transportUdpServerKickPlayer(struct ServerSim *sim, const char *playerName);
 
+/* Dispatcher-side hooks for the ranked-only commands. The full
+ * bodies live in transport_udp_server.c because they touch
+ * udpServer.clients[] state, winbolonet, and SDL threading. */
+bool transportUdpServerStartBalanceRequest(struct ServerSim *sim,
+                                           uint8_t teamSize,
+                                           bool includeBots);
+void transportUdpServerHandleWbnReauth(struct ServerSim *sim,
+                                       BYTE slot,
+                                       const char *token);
+
 /* Lock/unlock the game to prevent new players from joining.
  * Broadcasts a server message event to all clients. */
 void transportUdpServerSetLock(struct ServerSim *sim, bool locked);

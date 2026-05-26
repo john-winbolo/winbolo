@@ -876,28 +876,63 @@ void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize,
                   (void *)cs,
                   cs ? cs->hasTransport : 0,
                   cs ? cs->isUdpTransport : 0);
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) {
-    balanceDebugLog("[BAL CLIENT] dropping: no UDP transport bound");
+  if (cs == NULL || !cs->hasTransport) return;
+  if (cs->isUdpTransport) {
+    balanceDebugLog("[BAL CLIENT] calling transportUdpClientSendBalanceRequest");
+    transportUdpClientSendBalanceRequest(&cs->transport, teamSize, includeBots);
+    balanceDebugLog("[BAL CLIENT] transportUdpClientSendBalanceRequest returned");
     return;
   }
-  balanceDebugLog("[BAL CLIENT] calling transportUdpClientSendBalanceRequest");
-  transportUdpClientSendBalanceRequest(&cs->transport, teamSize, includeBots);
-  balanceDebugLog("[BAL CLIENT] transportUdpClientSendBalanceRequest returned");
+  if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_BALANCE_REQUEST };
+  cmd.u.balanceRequest.teamSize    = teamSize;
+  cmd.u.balanceRequest.includeBots = includeBots;
+  threadsWaitForMutex();
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
+  threadsReleaseMutex();
 }
 
 void clientSimNetSendBalanceApply(ClientSim *cs) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendBalanceApply(&cs->transport);
+  if (cs == NULL || !cs->hasTransport) return;
+  if (cs->isUdpTransport) {
+    transportUdpClientSendBalanceApply(&cs->transport);
+    return;
+  }
+  if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_BALANCE_APPLY };
+  threadsWaitForMutex();
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
+  threadsReleaseMutex();
 }
 
 void clientSimNetSendBalanceDismiss(ClientSim *cs) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendBalanceDismiss(&cs->transport);
+  if (cs == NULL || !cs->hasTransport) return;
+  if (cs->isUdpTransport) {
+    transportUdpClientSendBalanceDismiss(&cs->transport);
+    return;
+  }
+  if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_BALANCE_DISMISS };
+  threadsWaitForMutex();
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
+  threadsReleaseMutex();
 }
 
 void clientSimNetSendWbnReauth(ClientSim *cs) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendWbnReauth(&cs->transport);
+  if (cs == NULL || !cs->hasTransport) return;
+  if (cs->isUdpTransport) {
+    transportUdpClientSendWbnReauth(&cs->transport);
+    return;
+  }
+  if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_WBN_REAUTH };  /* token left zeroed */
+  threadsWaitForMutex();
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
+  threadsReleaseMutex();
 }
 
 /* === Net stats === */

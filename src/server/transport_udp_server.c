@@ -2468,6 +2468,93 @@ void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
     udpServer.clients[playerNum].playerName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
 }
 
+bool transportUdpServerStartBalanceRequest(ServerSim *sim,
+                                           uint8_t teamSize,
+                                           bool includeBots) {
+    BalanceThreadData *btd = malloc(sizeof(BalanceThreadData));
+    if (!btd) {
+        balanceDebugLog("[BAL SERVER] dropped balance request: "
+                        "malloc(BalanceThreadData) failed");
+        return false;
+    }
+    SDL_Thread *t;
+    int i;
+    memset(btd, 0, sizeof(*btd));
+    btd->sim = sim;
+    btd->teamSize = teamSize;
+    btd->includeBots = includeBots;
+    btd->totalPlayers = 0;
+    btd->numBotSlots = 0;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!serverSimIsPlayerConnected(sim, i)) continue;
+        btd->totalPlayers++;
+        /* Include bot slots in the WBN request only when the caller
+         * asked for "Bots included". When !includeBots the bots are
+         * kicked at APPLY time and don't need to be skill-placed. */
+        if (btd->includeBots && serverSimIsBot(sim, (BYTE)i)) {
+            btd->botSlots[btd->numBotSlots++] = (uint8_t)i;
+        }
+    }
+    balanceDebugLog("[BAL SERVER] dispatching balance thread: "
+                    "totalPlayers=%u teamSize=%u includeBots=%d numBotSlots=%u",
+                    (unsigned)btd->totalPlayers,
+                    (unsigned)btd->teamSize,
+                    (int)btd->includeBots,
+                    (unsigned)btd->numBotSlots);
+    serverSimSetBalanceRequestInFlight(sim, true);
+    t = SDL_CreateThread(balanceThreadFunc, "WbnBalance", btd);
+    if (!t) {
+        serverSimSetBalanceRequestInFlight(sim, false);
+        free(btd);
+        balanceDebugLog("[BAL SERVER] FAILED to create balance thread");
+        serverSimConsoleMessage("Failed to start balance thread");
+        return false;
+    }
+    SDL_DetachThread(t);
+    balanceDebugLog("[BAL SERVER] balance thread created and detached");
+    return true;
+}
+
+void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
+                                       const char *token) {
+    if (!winbolonetIsRunning() || token == NULL || token[0] == '\0') {
+        return;
+    }
+    char errorMsg[512];
+    bool hasSteam = FALSE;
+    bool wbnIsSupporter = FALSE;
+    errorMsg[0] = '\0';
+    if (winboloNetVerifyClientKey(token,
+                                  udpServer.clients[slot].playerName,
+                                  slot, errorMsg,
+                                  &hasSteam, &wbnIsSupporter)) {
+        /* Re-merge using the clientHints captured at JOIN_REQUEST (the
+         * client doesn't re-send them on REAUTH; we re-verify against
+         * WBN, not the network). */
+        uint8_t storedHints = udpServer.clients[slot].clientHints;
+        uint8_t flags = storedHints & PLAYER_CLIENT_HINT_MASK;
+        flags |= PLAYER_FLAG_WBN_VERIFIED;
+        if (hasSteam) flags |= PLAYER_FLAG_WBN_STEAM_LINKED;
+        if (wbnIsSupporter) flags |= PLAYER_FLAG_SUPPORTER;
+        playersSetClientFlags(&serverSimGetGameSim(sim)->plyrs, slot, flags);
+        playersSetClientType (&serverSimGetGameSim(sim)->plyrs, slot,
+                              udpServer.clients[slot].clientType);
+        fprintf(stderr, "[UDP SERVER] Player %d WBN re-authenticated (steam=%d)\n",
+                slot, hasSteam ? 1 : 0);
+        if (serverSimGetState(sim) == serverStateRunning) {
+            winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
+                               slot, WINBOLO_NET_NO_PLAYER);
+        }
+        if (serverSimGetState(sim) == serverStateLobby ||
+            serverSimGetState(sim) == serverStateCountdown) {
+            serverSimPublishLobbySlot(sim, slot);
+        }
+    } else {
+        fprintf(stderr, "[UDP SERVER] Player %d WBN re-auth failed: %s\n",
+                slot, errorMsg);
+    }
+}
+
 const char *transportUdpServerGetPlayerName(BYTE playerNum) {
     if (playerNum >= MAX_TANKS) {
         return NULL;
@@ -3897,179 +3984,40 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_WBN_REAUTH: {
-            /* Wire: [header 8] [wbnJoinKey 65] */
+            /* Wire: [header 8] [wbnJoinKey 65]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN) {
-                char token[WBN_JOIN_KEY_WIRE_LEN];
-                memcpy(token, buf + PACKET_HEADER_SIZE, WBN_JOIN_KEY_WIRE_LEN);
-                token[WBN_JOIN_KEY_WIRE_LEN - 1] = '\0';
-
-                if (winbolonetIsRunning() && token[0] != '\0') {
-                    char errorMsg[512];
-                    bool hasSteam = FALSE;
-                    bool wbnIsSupporter = FALSE;
-                    errorMsg[0] = '\0';
-                    if (winboloNetVerifyClientKey(token,
-                                                  udpServer.clients[clientIdx].playerName,
-                                                  (BYTE)clientIdx, errorMsg,
-                                                  &hasSteam, &wbnIsSupporter)) {
-                        /* Re-merge using the clientHints captured at JOIN_REQUEST
-                         * (the client doesn't re-send them on REAUTH; we re-verify
-                         * against WBN, not the network). */
-                        uint8_t storedHints = udpServer.clients[clientIdx].clientHints;
-                        uint8_t flags = storedHints & PLAYER_CLIENT_HINT_MASK;
-                        flags |= PLAYER_FLAG_WBN_VERIFIED;
-                        if (hasSteam) flags |= PLAYER_FLAG_WBN_STEAM_LINKED;
-                        if (wbnIsSupporter) flags |= PLAYER_FLAG_SUPPORTER;
-                        playersSetClientFlags(&serverSimGetGameSim(sim)->plyrs, (BYTE)clientIdx, flags);
-                        playersSetClientType (&serverSimGetGameSim(sim)->plyrs, (BYTE)clientIdx,
-                                              udpServer.clients[clientIdx].clientType);
-                        fprintf(stderr, "[UDP SERVER] Player %d WBN re-authenticated (steam=%d)\n",
-                                clientIdx, hasSteam ? 1 : 0);
-                        /* If game is already running, send the join event now */
-                        if (serverSimGetState(sim) == serverStateRunning) {
-                            winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
-                                               (BYTE)clientIdx, WINBOLO_NET_NO_PLAYER);
-                        }
-                        /* Broadcast updated flags so other clients see WBN badge */
-                        if (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown) {
-                            serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
-                        }
-                    } else {
-                        fprintf(stderr, "[UDP SERVER] Player %d WBN re-auth failed: %s\n",
-                                clientIdx, errorMsg);
-                    }
-                }
-            }
+            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN) break;
+            ClientCommand cmd = { .type = CMD_WBN_REAUTH };
+            memcpy(cmd.u.wbnReauth.token, buf + PACKET_HEADER_SIZE,
+                   WBN_JOIN_KEY_WIRE_LEN);
+            cmd.u.wbnReauth.token[WBN_JOIN_KEY_WIRE_LEN - 1] = '\0';
+            (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
         case PACKET_BALANCE_REQUEST: {
-            /* Wire: [header 8] [teamSize 1] [includeBots 1] */
+            /* Wire: [header 8] [teamSize 1] [includeBots 1]. */
             int clientIdx = serverFindClient(fromAddr);
-            const BalanceProposal *bp = serverSimGetBalanceProposal(sim);
-            balanceDebugLog("[BAL SERVER] received PACKET_BALANCE_REQUEST: "
-                            "clientIdx=%d lobbyEnabled=%d state=%d len=%d "
-                            "requestInFlight=%d pending=%d winbolonetIsRunning=%d",
-                            clientIdx,
-                            (int)serverSimIsLobbyEnabled(sim),
-                            (int)serverSimGetState(sim),
-                            (int)len,
-                            (int)bp->requestInFlight,
-                            (int)bp->pending,
-                            (int)winbolonetIsRunning());
-            if (clientIdx == 0 && serverSimIsLobbyEnabled(sim) &&
-                serverSimGetState(sim) == serverStateLobby &&
-                len >= PACKET_HEADER_SIZE + 2 &&
-                !serverSimGetBalanceProposal(sim)->requestInFlight &&
-                !serverSimGetBalanceProposal(sim)->pending &&
-                winbolonetIsRunning()) {
-                BalanceThreadData *btd = malloc(sizeof(BalanceThreadData));
-                if (btd) {
-                    SDL_Thread *t;
-                    int i;
-                    memset(btd, 0, sizeof(*btd));
-                    btd->sim = sim;
-                    btd->teamSize = buf[PACKET_HEADER_SIZE];
-                    btd->includeBots = (buf[PACKET_HEADER_SIZE + 1] != 0);
-                    btd->totalPlayers = 0;
-                    btd->numBotSlots = 0;
-                    for (i = 0; i < MAX_TANKS; i++) {
-                        if (!serverSimIsPlayerConnected(sim, i)) continue;
-                        btd->totalPlayers++;
-                        /* Include bot slots in the WBN request only when
-                         * the caller asked for "Bots included". When
-                         * !includeBots the bots are kicked at APPLY time
-                         * and don't need to be skill-placed. */
-                        if (btd->includeBots && serverSimIsBot(sim, (BYTE)i)) {
-                            btd->botSlots[btd->numBotSlots++] = (uint8_t)i;
-                        }
-                    }
-                    balanceDebugLog("[BAL SERVER] dispatching balance thread: "
-                                    "totalPlayers=%u teamSize=%u includeBots=%d numBotSlots=%u",
-                                    (unsigned)btd->totalPlayers,
-                                    (unsigned)btd->teamSize,
-                                    (int)btd->includeBots,
-                                    (unsigned)btd->numBotSlots);
-                    serverSimSetBalanceRequestInFlight(sim, true);
-                    t = SDL_CreateThread(balanceThreadFunc, "WbnBalance", btd);
-                    if (t) {
-                        SDL_DetachThread(t);
-                        balanceDebugLog("[BAL SERVER] balance thread created and detached");
-                    } else {
-                        serverSimSetBalanceRequestInFlight(sim, false);
-                        free(btd);
-                        balanceDebugLog("[BAL SERVER] FAILED to create balance thread");
-                        serverSimConsoleMessage("Failed to start balance thread");
-                    }
-                } else {
-                    balanceDebugLog("[BAL SERVER] dropped balance request: malloc(BalanceThreadData) failed");
-                }
-            } else {
-                balanceDebugLog("[BAL SERVER] dropped balance request: guards failed "
-                                "(clientIdx==0?%d lobbyEnabled?%d state==lobby?%d len>=10?%d "
-                                "!requestInFlight?%d !pending?%d wbnRunning?%d)",
-                                (int)(clientIdx == 0),
-                                (int)serverSimIsLobbyEnabled(sim),
-                                (int)(serverSimGetState(sim) == serverStateLobby),
-                                (int)(len >= PACKET_HEADER_SIZE + 2),
-                                (int)!serverSimGetBalanceProposal(sim)->requestInFlight,
-                                (int)!serverSimGetBalanceProposal(sim)->pending,
-                                (int)winbolonetIsRunning());
-            }
+            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 2) break;
+            ClientCommand cmd = { .type = CMD_BALANCE_REQUEST };
+            cmd.u.balanceRequest.teamSize    = buf[PACKET_HEADER_SIZE];
+            cmd.u.balanceRequest.includeBots = (buf[PACKET_HEADER_SIZE + 1] != 0);
+            (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
         case PACKET_BALANCE_APPLY: {
-            /* Wire: [header 8] (no payload) */
+            /* Wire: [header 8] (no payload). */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx == 0 && serverSimIsLobbyEnabled(sim) &&
-                serverSimGetState(sim) == serverStateLobby &&
-                serverSimGetBalanceProposal(sim)->pending) {
-                int i;
-                /* If the request was "humans only" (includeBots=false),
-                 * kick every bot before writing team assignments — the
-                 * caller has signed up for a clean human-only matchup
-                 * and the proposal contains no team for those slots. */
-                if (!serverSimGetBalanceProposal(sim)->includeBots) {
-                    for (i = 0; i < MAX_TANKS; i++) {
-                        if (serverSimIsBot(sim, (BYTE)i)) {
-                            serverSimRemoveBot(sim, (BYTE)i);
-                        }
-                    }
-                }
-                for (i = 0; i < MAX_TANKS; i++) {
-                    if (serverSimGetBalanceProposal(sim)->teamForSlot[i] != 0) {
-                        serverSimSetTeamBatch(sim, (BYTE)i, serverSimGetBalanceProposal(sim)->teamForSlot[i]);
-                        serverSimPublishLobbySlot(sim, (BYTE)i);
-                    }
-                }
-                serverSimReapplyTeamAlliances(sim);
-                serverSimClearBalanceProposal(sim);
-                /* Publish the cleared proposal so balanceProposalActive flips
-                 * back to false on every client — keeps canBalance gating
-                 * from staying disabled on the Balance-from-WBN button. */
-                {
-                    ControlEvent clrEvt;
-                    memset(&clrEvt, 0, sizeof(clrEvt));
-                    clrEvt.type = CTRL_BALANCE_PROPOSAL;
-                    serverSimPublishControl(sim, &clrEvt);
-                }
-                logAddEvent(log_BalanceApplied, 0, 0, 0, 0, 0, NULL);
-                serverSimConsoleMessage("Team balance applied");
-            }
+            if (clientIdx < 0) break;
+            ClientCommand cmd = { .type = CMD_BALANCE_APPLY };
+            (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
         case PACKET_BALANCE_DISMISS: {
-            /* Wire: [header 8] (no payload) */
+            /* Wire: [header 8] (no payload). */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx == 0 && serverSimIsLobbyEnabled(sim) &&
-                serverSimGetState(sim) == serverStateLobby &&
-                serverSimGetBalanceProposal(sim)->pending) {
-                ControlEvent evt;
-                serverSimClearBalanceProposal(sim);
-                memset(&evt, 0, sizeof(evt));
-                evt.type = CTRL_BALANCE_PROPOSAL;
-                serverSimPublishControl(sim, &evt);
-            }
+            if (clientIdx < 0) break;
+            ClientCommand cmd = { .type = CMD_BALANCE_DISMISS };
+            (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
         case PACKET_MAP_SKIP_VOTE: {

@@ -489,6 +489,85 @@ CmdResult serverSimApplyCommand(ServerSim *sim, int senderSlot,
         serverSimSetHasPassword(sim, p->pwLen > 0);
         return CMD_OK;
     }
+    case CMD_BALANCE_REQUEST: {
+        if (!serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
+        if (senderSlot != 0) return CMD_REJECT_NOT_HOST;
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        const BalanceProposal *bp = serverSimGetBalanceProposal(sim);
+        if (bp->requestInFlight || bp->pending) return CMD_REJECT_BAD_STATE;
+        if (!transportUdpServerStartBalanceRequest(
+                sim, cmd->u.balanceRequest.teamSize,
+                cmd->u.balanceRequest.includeBots)) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        return CMD_OK;
+    }
+    case CMD_BALANCE_APPLY: {
+        if (!serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
+        if (senderSlot != 0) return CMD_REJECT_NOT_HOST;
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        const BalanceProposal *bp = serverSimGetBalanceProposal(sim);
+        if (!bp->pending) return CMD_REJECT_BAD_STATE;
+        /* "Humans only" kicks every bot before applying the human-only
+         * team assignments — the proposal contains no team for those
+         * slots. */
+        if (!bp->includeBots) {
+            for (int i = 0; i < MAX_TANKS; i++) {
+                if (serverSimIsBot(sim, (BYTE)i)) {
+                    serverSimRemoveBot(sim, (BYTE)i);
+                }
+            }
+        }
+        for (int i = 0; i < MAX_TANKS; i++) {
+            if (bp->teamForSlot[i] != 0) {
+                serverSimSetTeamBatch(sim, (BYTE)i, bp->teamForSlot[i]);
+                serverSimPublishLobbySlot(sim, (BYTE)i);
+            }
+        }
+        serverSimReapplyTeamAlliances(sim);
+        serverSimClearBalanceProposal(sim);
+        /* Publish the cleared proposal so balanceProposalActive flips
+         * back to false on every client — keeps canBalance gating from
+         * staying disabled on the Balance-from-WBN button. */
+        {
+            ControlEvent clrEvt;
+            memset(&clrEvt, 0, sizeof(clrEvt));
+            clrEvt.type = CTRL_BALANCE_PROPOSAL;
+            serverSimPublishControl(sim, &clrEvt);
+        }
+        logAddEvent(log_BalanceApplied, 0, 0, 0, 0, 0, NULL);
+        serverSimConsoleMessage("Team balance applied");
+        return CMD_OK;
+    }
+    case CMD_BALANCE_DISMISS: {
+        if (!serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
+        if (senderSlot != 0) return CMD_REJECT_NOT_HOST;
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!serverSimGetBalanceProposal(sim)->pending) return CMD_REJECT_BAD_STATE;
+        serverSimClearBalanceProposal(sim);
+        {
+            ControlEvent evt;
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_BALANCE_PROPOSAL;
+            serverSimPublishControl(sim, &evt);
+        }
+        return CMD_OK;
+    }
+    case CMD_WBN_REAUTH: {
+        if (!serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
+        transportUdpServerHandleWbnReauth(sim, (BYTE)senderSlot,
+                                          cmd->u.wbnReauth.token);
+        return CMD_OK;
+    }
     case CMD_NONE:
     default:
         return CMD_REJECT_BAD_STATE;

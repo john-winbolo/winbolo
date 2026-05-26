@@ -64,7 +64,11 @@ typedef enum {
     CMD_LOBBY_PREVIEW_COMMIT,
     CMD_LOBBY_PREVIEW_RANDOM,
     CMD_LOBBY_KICK,
-    CMD_LOBBY_SET_PASSWORD
+    CMD_LOBBY_SET_PASSWORD,
+    CMD_BALANCE_REQUEST,
+    CMD_BALANCE_APPLY,
+    CMD_BALANCE_DISMISS,
+    CMD_WBN_REAUTH
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. Codes 1-7 are
@@ -256,6 +260,35 @@ typedef struct {
     char    password[64];
 } CmdLobbySetPassword;
 
+/* CMD_BALANCE_REQUEST — host-only ranked-server WBN matchmaking
+ * request. Spawns a worker thread that calls WBN and writes the
+ * proposed teams back into the sim's BalanceProposal. */
+typedef struct {
+    uint8_t teamSize;
+    bool    includeBots;
+} CmdBalanceRequest;
+
+/* CMD_BALANCE_APPLY — host-only: accept the pending BalanceProposal
+ * and apply the team assignments. */
+typedef struct {
+    uint8_t _unused;
+} CmdBalanceApply;
+
+/* CMD_BALANCE_DISMISS — host-only: discard the pending BalanceProposal. */
+typedef struct {
+    uint8_t _unused;
+} CmdBalanceDismiss;
+
+/* CMD_WBN_REAUTH — sender re-presents their WBN join token to
+ * upgrade their connected-player flags after a Steam linkage or
+ * supporter-tier change. Token is the same fixed-size wire envelope
+ * the join handshake uses (see WBN_JOIN_KEY_WIRE_LEN in
+ * internal/transport_udp.h — pinned to 65 here to keep this header
+ * dependency-free). */
+typedef struct {
+    char token[65];
+} CmdWbnReauth;
+
 typedef struct ClientCommand {
     ClientCommandType type;
     union {
@@ -283,6 +316,10 @@ typedef struct ClientCommand {
         CmdLobbyPreviewRandom  lobbyPreviewRandom;
         CmdLobbyKick           lobbyKick;
         CmdLobbySetPassword    lobbySetPassword;
+        CmdBalanceRequest      balanceRequest;
+        CmdBalanceApply        balanceApply;
+        CmdBalanceDismiss      balanceDismiss;
+        CmdWbnReauth           wbnReauth;
     } u;
 } ClientCommand;
 

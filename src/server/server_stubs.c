@@ -76,6 +76,21 @@ void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
 void transportUdpServerKickPlayer(struct ServerSim *sim, const char *name) {
   (void)sim; (void)name;
 }
+/* server_command_dispatch.c's ranked-only arms call these for WBN
+ * matchmaking and re-authentication. The non-server binaries never
+ * reach them at runtime (the dispatcher rejects on !serverSimGetRanked
+ * first) but the symbols still need definitions for the link. */
+bool transportUdpServerStartBalanceRequest(struct ServerSim *sim,
+                                           uint8_t teamSize,
+                                           bool includeBots) {
+  (void)sim; (void)teamSize; (void)includeBots;
+  return false;
+}
+void transportUdpServerHandleWbnReauth(struct ServerSim *sim,
+                                       BYTE slot,
+                                       const char *token) {
+  (void)sim; (void)slot; (void)token;
+}
 const char *transportUdpServerGetClientCountryCode(BYTE playerNum) { (void)playerNum; return ""; }
 uint8_t transportUdpServerGetClientType(BYTE playerNum) { (void)playerNum; return 0; /* CLIENT_TYPE_UNKNOWN */ }
 bool transportUdpServerHasAnyClient(void) { return false; }
