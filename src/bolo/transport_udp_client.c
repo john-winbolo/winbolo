@@ -36,6 +36,7 @@
 #include "control_event.h"
 #include "client_sim_control.h"
 #include "transport_control_codec.h"
+#include "transport_command_codec.h"
 #include "wbn_key_codec.h"
 #include "bolo_map_validate.h"
 #include "wire_limits.h"
@@ -2401,30 +2402,33 @@ uint8_t transportUdpClientGetMapDownloadPercent(Transport *t) {
 /* Send a name change request to the server. */
 void transportUdpClientSendNameChange(Transport *t, const char *newName) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME];
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
     if (newName == NULL || newName[0] == '\0') return;
 
-    packHeader(buf, PACKET_NAME_CHANGE, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = c->playerNum;
-    memset(buf + PACKET_HEADER_SIZE + 1, 0, PACKET_MAX_PLAYER_NAME);
-    strncpy((char *)(buf + PACKET_HEADER_SIZE + 1), newName,
-            PACKET_MAX_PLAYER_NAME - 1);
-    udpClientSendTo(c, buf, sizeof(buf));
+    ClientCommand cmd = { .type = CMD_NAME_CHANGE };
+    strncpy(cmd.u.nameChange.newName, newName, PACKET_MAX_PLAYER_NAME - 1);
+    cmd.u.nameChange.newName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
-/* Send a lock toggle to the server.
- * Wire: [header 8] [allow 1] */
+/* Send a lock toggle to the server. */
 void transportUdpClientSendLockToggle(Transport *t, bool allow) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
-    packHeader(buf, PACKET_LOCK_TOGGLE, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = allow ? 1 : 0;
-    udpClientSendTo(c, buf, sizeof(buf));
+    ClientCommand cmd = { .type = CMD_LOCK_TOGGLE };
+    cmd.u.lockToggle.allow = allow;
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 
@@ -2433,88 +2437,114 @@ void transportUdpClientSendLockToggle(Transport *t, bool allow) {
 void transportUdpClientSendTeamSet(Transport *t, uint8_t slot,
                                    uint8_t teamNumber) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
-    packHeader(buf, PACKET_LOBBY_TEAM_SET, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = slot;
-    buf[PACKET_HEADER_SIZE + 1] = teamNumber;
-    udpClientSendTo(c, buf, sizeof(buf));
+    ClientCommand cmd = { .type = CMD_TEAM_SET };
+    cmd.u.teamSet.slot = slot;
+    cmd.u.teamSet.team = teamNumber;
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendReady(Transport *t, bool ready) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
-    packHeader(buf, PACKET_LOBBY_READY, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = c->playerNum;
-    buf[PACKET_HEADER_SIZE + 1] = ready ? 1 : 0;
-    udpClientSendTo(c, buf, sizeof(buf));
+    ClientCommand cmd = { .type = CMD_READY };
+    cmd.u.ready.ready = ready;
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendChat(Transport *t, BYTE destPlayer,
                                 const char *message) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_CHAT_MESSAGE];
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
     if (message == NULL || message[0] == '\0') return;
     size_t msgLen = strlen(message);
     if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
-    packHeader(buf, PACKET_CHAT_MESSAGE, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = destPlayer;
-    memcpy(buf + PACKET_HEADER_SIZE + 1, message, msgLen);
-    udpClientSendTo(c, buf, PACKET_HEADER_SIZE + 1 + msgLen);
+
+    ClientCommand cmd = { .type = CMD_CHAT };
+    cmd.u.chat.destPlayer = destPlayer;
+    cmd.u.chat.bodyLen    = (uint16_t)msgLen;
+    if (msgLen > 0) memcpy(cmd.u.chat.body, message, msgLen);
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendAllianceRequest(Transport *t, BYTE toPlayer) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    packHeader(buf, PACKET_ALLIANCE_REQUEST, c->outSequence++);
-    buf[PACKET_HEADER_SIZE]     = c->playerNum;
-    buf[PACKET_HEADER_SIZE + 1] = toPlayer;
-    udpClientSendTo(c, buf, sizeof(buf));
+
+    ClientCommand cmd = { .type = CMD_ALLIANCE_REQUEST };
+    cmd.u.allianceRequest.toPlayer = toPlayer;
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendAllianceAccept(Transport *t, BYTE toPlayer) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    packHeader(buf, PACKET_ALLIANCE_ACCEPT, c->outSequence++);
-    buf[PACKET_HEADER_SIZE]     = c->playerNum;
-    buf[PACKET_HEADER_SIZE + 1] = toPlayer;
-    udpClientSendTo(c, buf, sizeof(buf));
+
+    ClientCommand cmd = { .type = CMD_ALLIANCE_ACCEPT };
+    cmd.u.allianceAccept.newMember = toPlayer;
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendAllianceLeave(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    packHeader(buf, PACKET_ALLIANCE_LEAVE, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = c->playerNum;
-    udpClientSendTo(c, buf, sizeof(buf));
+
+    ClientCommand cmd = { .type = CMD_ALLIANCE_LEAVE };
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendGameVoteToggle(Transport *t,
                                           uint8_t kind,
                                           uint8_t toggleMode) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    packHeader(buf, PACKET_GAME_VOTE_TOGGLE, c->outSequence++);
-    buf[PACKET_HEADER_SIZE]     = kind;
-    buf[PACKET_HEADER_SIZE + 1] = toggleMode;
-    udpClientSendTo(c, buf, sizeof(buf));
+
+    ClientCommand cmd = { .type = CMD_GAME_VOTE_TOGGLE };
+    cmd.u.gameVoteToggle.kind       = kind;
+    cmd.u.gameVoteToggle.toggleMode = toggleMode;
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendAddBot(Transport *t, uint8_t teamNumber,
                                   const char *botName) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 3 + PACKET_MAX_PLAYER_NAME];
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
     if (botName == NULL) botName = "";
@@ -2522,33 +2552,34 @@ void transportUdpClientSendAddBot(Transport *t, uint8_t teamNumber,
     if (nameLen >= PACKET_MAX_PLAYER_NAME) nameLen = PACKET_MAX_PLAYER_NAME - 1;
     if (nameLen > 31)                      nameLen = 31;
 
-    /* The wire format still carries a [pathLen 1][path] pair after the
-     * team byte for byte-compatibility with older servers; the server
-     * already ignores the brain payload here, so we always emit
-     * pathLen=0 (and zero path bytes). */
-    int pos = PACKET_HEADER_SIZE;
-    packHeader(buf, PACKET_LOBBY_ADD_BOT, c->outSequence++);
-    buf[pos++] = teamNumber;
-    buf[pos++] = 0; /* pathLen */
-    buf[pos++] = (uint8_t)nameLen;
-    if (nameLen > 0) { memcpy(buf + pos, botName, nameLen); pos += nameLen; }
-    udpClientSendTo(c, buf, pos);
+    ClientCommand cmd = { .type = CMD_LOBBY_ADD_BOT };
+    cmd.u.lobbyAddBot.teamNumber = teamNumber;
+    cmd.u.lobbyAddBot.nameLen    = (uint8_t)nameLen;
+    if (nameLen > 0) memcpy(cmd.u.lobbyAddBot.name, botName, (size_t)nameLen);
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
-    packHeader(buf, PACKET_LOBBY_REMOVE_BOT, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = playerNum;
-    udpClientSendTo(c, buf, sizeof(buf));
+    ClientCommand cmd = { .type = CMD_LOBBY_REMOVE_BOT };
+    cmd.u.lobbyRemoveBot.slot = playerNum;
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendWbnReauth(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN];
     char playerKey[WBN_JOIN_KEY_WIRE_LEN];
     char errMsg[256];
 
@@ -2564,9 +2595,14 @@ void transportUdpClientSendWbnReauth(Transport *t) {
         return;
     }
 
-    packHeader(buf, PACKET_WBN_REAUTH, c->outSequence++);
-    memcpy(buf + PACKET_HEADER_SIZE, playerKey, WBN_JOIN_KEY_WIRE_LEN);
-    udpClientSendTo(c, buf, sizeof(buf));
+    ClientCommand cmd = { .type = CMD_WBN_REAUTH };
+    memcpy(cmd.u.wbnReauth.token, playerKey, WBN_JOIN_KEY_WIRE_LEN);
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 /* ---- Client balance send functions ---- */
@@ -2574,7 +2610,6 @@ void transportUdpClientSendWbnReauth(Transport *t) {
 void transportUdpClientSendBalanceRequest(Transport *t, uint8_t teamSize,
                                            bool includeBots) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
 
     balanceDebugLog("[BAL XPORT-CLIENT] SendBalanceRequest entry: "
                     "joinState=%d teamSize=%u includeBots=%d outSeq=%u",
@@ -2587,43 +2622,56 @@ void transportUdpClientSendBalanceRequest(Transport *t, uint8_t teamSize,
         return;
     }
 
-    packHeader(buf, PACKET_BALANCE_REQUEST, c->outSequence++);
-    buf[PACKET_HEADER_SIZE]     = teamSize;
-    buf[PACKET_HEADER_SIZE + 1] = includeBots ? 1 : 0;
+    ClientCommand cmd = { .type = CMD_BALANCE_REQUEST };
+    cmd.u.balanceRequest.teamSize    = teamSize;
+    cmd.u.balanceRequest.includeBots = includeBots;
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (!commandCodecEncode(&cmd, buf, sizeof(buf), &len)) return;
     balanceDebugLog("[BAL XPORT-CLIENT] calling udpClientSendTo: %u bytes",
-                    (unsigned)sizeof(buf));
-    udpClientSendTo(c, buf, sizeof(buf));
+                    (unsigned)len);
+    udpClientSendTo(c, buf, len);
     balanceDebugLog("[BAL XPORT-CLIENT] udpClientSendTo returned");
 }
 
 void transportUdpClientSendBalanceApply(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE];
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
-    packHeader(buf, PACKET_BALANCE_APPLY, c->outSequence++);
-    udpClientSendTo(c, buf, sizeof(buf));
+    ClientCommand cmd = { .type = CMD_BALANCE_APPLY };
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendBalanceDismiss(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE];
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
-    packHeader(buf, PACKET_BALANCE_DISMISS, c->outSequence++);
-    udpClientSendTo(c, buf, sizeof(buf));
+    ClientCommand cmd = { .type = CMD_BALANCE_DISMISS };
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendMapSkipVote(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE];
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
-    packHeader(buf, PACKET_MAP_SKIP_VOTE, c->outSequence++);
-    udpClientSendTo(c, buf, sizeof(buf));
+    ClientCommand cmd = { .type = CMD_MAP_SKIP_VOTE };
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 /* ── Layout A lobby commands — Client → Server ───────────────────── */
@@ -2632,41 +2680,48 @@ void transportUdpClientSendLobbySetting(Transport *t,
                                         uint8_t settingType,
                                         const uint8_t *value, uint8_t valueLen) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2 + 32];
-    int len;
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
     if (valueLen > 32) valueLen = 32;
     if (valueLen > 0 && value == NULL) return;
 
-    packHeader(buf, PACKET_LOBBY_SET_SETTING, c->outSequence++);
-    buf[PACKET_HEADER_SIZE]     = settingType;
-    buf[PACKET_HEADER_SIZE + 1] = valueLen;
-    if (valueLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 2, value, valueLen);
-    len = PACKET_HEADER_SIZE + 2 + valueLen;
-    udpClientSendTo(c, buf, len);
+    ClientCommand cmd = { .type = CMD_LOBBY_SETTING };
+    cmd.u.lobbySetting.settingType = settingType;
+    cmd.u.lobbySetting.valueLen    = valueLen;
+    if (valueLen > 0) memcpy(cmd.u.lobbySetting.value, value, valueLen);
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendLobbyOpenHost(Transport *t, bool openHost) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
-    packHeader(buf, PACKET_LOBBY_OPEN_HOST, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = openHost ? 1 : 0;
-    udpClientSendTo(c, buf, sizeof(buf));
+    ClientCommand cmd = { .type = CMD_LOBBY_OPEN_HOST };
+    cmd.u.lobbyOpenHost.openHost = openHost;
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendLobbyKick(Transport *t, uint8_t slot) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
-    packHeader(buf, PACKET_LOBBY_KICK, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = slot;
-    udpClientSendTo(c, buf, sizeof(buf));
+    ClientCommand cmd = { .type = CMD_LOBBY_KICK };
+    cmd.u.lobbyKick.slot = slot;
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendLobbySetPassword(Transport *t, const char *pw) {
@@ -2674,124 +2729,143 @@ void transportUdpClientSendLobbySetPassword(Transport *t, const char *pw) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
-    int pwLen = pw ? (int)strlen(pw) : 0;
-    /* Match the server-side buffer ceiling (MAP_STR_SIZE - 1) so the
-     * receiver doesn't have to truncate. 255 covers the 1-byte pwLen
-     * field anyway. */
-    if (pwLen > 200) pwLen = 200;
-
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + 200];
-    packHeader(buf, PACKET_LOBBY_SET_PASSWORD, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = (uint8_t)pwLen;
-    if (pwLen > 0) {
-        memcpy(buf + PACKET_HEADER_SIZE + 1, pw, (size_t)pwLen);
+    ClientCommand cmd = { .type = CMD_LOBBY_SET_PASSWORD };
+    size_t pwLen = pw ? strlen(pw) : 0;
+    if (pwLen > sizeof(cmd.u.lobbySetPassword.password)) {
+        pwLen = sizeof(cmd.u.lobbySetPassword.password);
     }
-    udpClientSendTo(c, buf, PACKET_HEADER_SIZE + 1 + pwLen);
+    cmd.u.lobbySetPassword.pwLen = (uint8_t)pwLen;
+    if (pwLen > 0) memcpy(cmd.u.lobbySetPassword.password, pw, pwLen);
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendLobbyTeamMeta(Transport *t, uint8_t teamId,
                                          uint8_t color, uint8_t namingPool,
                                          const char *name) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 4 + 31];
-    int nameLen, len;
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
     if (name == NULL) name = "";
 
-    nameLen = (int)strlen(name);
+    int nameLen = (int)strlen(name);
     if (nameLen > 31) nameLen = 31;
 
-    packHeader(buf, PACKET_LOBBY_TEAM_META, c->outSequence++);
-    buf[PACKET_HEADER_SIZE + 0] = teamId;
-    buf[PACKET_HEADER_SIZE + 1] = color;
-    buf[PACKET_HEADER_SIZE + 2] = namingPool;
-    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)nameLen;
-    if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 4, name, nameLen);
-    len = PACKET_HEADER_SIZE + 4 + nameLen;
-    udpClientSendTo(c, buf, len);
+    ClientCommand cmd = { .type = CMD_LOBBY_TEAM_META };
+    cmd.u.lobbyTeamMeta.teamId     = teamId;
+    cmd.u.lobbyTeamMeta.color      = color;
+    cmd.u.lobbyTeamMeta.namingPool = namingPool;
+    cmd.u.lobbyTeamMeta.nameLen    = (uint8_t)nameLen;
+    if (nameLen > 0) memcpy(cmd.u.lobbyTeamMeta.name, name, (size_t)nameLen);
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendLobbyTeamClear(Transport *t, uint8_t teamId) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
-    packHeader(buf, PACKET_LOBBY_TEAM_CLEAR, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = teamId;
-    udpClientSendTo(c, buf, sizeof(buf));
+    ClientCommand cmd = { .type = CMD_LOBBY_TEAM_CLEAR };
+    cmd.u.lobbyTeamClear.teamId = teamId;
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
                                           uint8_t difficulty, uint8_t personality,
                                           const char *name) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 4 + 31];
-    int nameLen, len;
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
     if (name == NULL) name = "";
 
-    nameLen = (int)strlen(name);
+    int nameLen = (int)strlen(name);
     if (nameLen > 31) nameLen = 31;
 
-    packHeader(buf, PACKET_LOBBY_BOT_CONFIG, c->outSequence++);
-    buf[PACKET_HEADER_SIZE + 0] = slot;
-    buf[PACKET_HEADER_SIZE + 1] = difficulty;
-    buf[PACKET_HEADER_SIZE + 2] = personality;
-    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)nameLen;
-    if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 4, name, nameLen);
-    len = PACKET_HEADER_SIZE + 4 + nameLen;
-    udpClientSendTo(c, buf, len);
+    ClientCommand cmd = { .type = CMD_LOBBY_BOT_CONFIG };
+    cmd.u.lobbyBotConfig.slot        = slot;
+    cmd.u.lobbyBotConfig.difficulty  = difficulty;
+    cmd.u.lobbyBotConfig.personality = personality;
+    cmd.u.lobbyBotConfig.nameLen     = (uint8_t)nameLen;
+    if (nameLen > 0) memcpy(cmd.u.lobbyBotConfig.name, name, (size_t)nameLen);
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendLobbySetBotBrain(Transport *t, uint8_t slot,
                                             uint8_t brainIdx) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
-    packHeader(buf, PACKET_LOBBY_SET_BOT_BRAIN, c->outSequence++);
-    buf[PACKET_HEADER_SIZE + 0] = slot;
-    buf[PACKET_HEADER_SIZE + 1] = brainIdx;
-    udpClientSendTo(c, buf, sizeof(buf));
+    ClientCommand cmd = { .type = CMD_LOBBY_SET_BOT_BRAIN };
+    cmd.u.lobbySetBotBrain.slot     = slot;
+    cmd.u.lobbySetBotBrain.brainIdx = brainIdx;
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendLobbySetMap(Transport *t,
                                        const char *mapRelPath) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + 256];
-    int pathLen, len;
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
     if (mapRelPath == NULL) mapRelPath = "";
 
-    pathLen = (int)strlen(mapRelPath);
+    int pathLen = (int)strlen(mapRelPath);
     if (pathLen > 255) pathLen = 255;
 
-    packHeader(buf, PACKET_LOBBY_SET_MAP, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = (uint8_t)pathLen;
-    if (pathLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 1, mapRelPath, pathLen);
-    len = PACKET_HEADER_SIZE + 1 + pathLen;
-    udpClientSendTo(c, buf, len);
+    ClientCommand cmd = { .type = CMD_LOBBY_SET_MAP };
+    cmd.u.lobbySetMap.relPathLen = (uint8_t)pathLen;
+    if (pathLen > 0) memcpy(cmd.u.lobbySetMap.relPath, mapRelPath, (size_t)pathLen);
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendLobbyPreviewCancel(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    uint8_t buf[PACKET_HEADER_SIZE];
-    packHeader(buf, PACKET_LOBBY_PREVIEW_CANCEL, c->outSequence++);
-    udpClientSendTo(c, buf, sizeof(buf));
+
+    ClientCommand cmd = { .type = CMD_LOBBY_PREVIEW_CANCEL };
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendLobbyPreviewCommit(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    uint8_t buf[PACKET_HEADER_SIZE];
-    packHeader(buf, PACKET_LOBBY_PREVIEW_COMMIT, c->outSequence++);
-    udpClientSendTo(c, buf, sizeof(buf));
+
+    ClientCommand cmd = { .type = CMD_LOBBY_PREVIEW_COMMIT };
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendLobbyPreviewRandom(Transport *t,
@@ -2802,11 +2876,15 @@ void transportUdpClientSendLobbyPreviewRandom(Transport *t,
     int seedLen = (int)strlen(seedStr);
     if (seedLen > 63) seedLen = 63;
 
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + 64];
-    packHeader(buf, PACKET_LOBBY_PREVIEW_RANDOM, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = (uint8_t)seedLen;
-    if (seedLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 1, seedStr, seedLen);
-    udpClientSendTo(c, buf, PACKET_HEADER_SIZE + 1 + seedLen);
+    ClientCommand cmd = { .type = CMD_LOBBY_PREVIEW_RANDOM };
+    cmd.u.lobbyPreviewRandom.seedLen = (uint8_t)seedLen;
+    if (seedLen > 0) memcpy(cmd.u.lobbyPreviewRandom.seed, seedStr, (size_t)seedLen);
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, len);
+    }
 }
 
 void transportUdpClientSendLobbyMapListRequest(Transport *t,

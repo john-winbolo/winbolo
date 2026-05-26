@@ -45,6 +45,7 @@
 #include "mapgen.h"
 #include "brain_list_internal.h"   /* BRAIN_LIST_PATH_LEN — ADD_BOT pathLen bound */
 #include "transport_control_codec.h"
+#include "transport_command_codec.h"
 #include "wbn_key_codec.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../winbolonet/winbolonet_server.h"
@@ -2828,15 +2829,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             /* Wire: [header 8] [destPlayer 1] [message up to
              *       PACKET_MAX_CHAT_MESSAGE]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len <= PACKET_HEADER_SIZE + 1) break;
-            int msgLen = len - PACKET_HEADER_SIZE - 1;
-            if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
-            ClientCommand cmd = { .type = CMD_CHAT };
-            cmd.u.chat.destPlayer = buf[PACKET_HEADER_SIZE];
-            cmd.u.chat.bodyLen    = (uint16_t)msgLen;
-            if (msgLen > 0) {
-                memcpy(cmd.u.chat.body, buf + PACKET_HEADER_SIZE + 1, msgLen);
-            }
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
@@ -2846,12 +2841,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
              * Dispatcher updates udpServer.clients[].playerName via
              * transportUdpServerSetBotName on success. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 ||
-                len < PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME) break;
-            ClientCommand cmd = { .type = CMD_NAME_CHANGE };
-            memcpy(cmd.u.nameChange.newName,
-                   buf + PACKET_HEADER_SIZE + 1, PACKET_MAX_PLAYER_NAME);
-            cmd.u.nameChange.newName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
             if (r == CMD_OK || r == CMD_REJECT_BAD_STATE) break;
             uint8_t reasonCode;
@@ -2899,11 +2891,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
              * toggle — host / admin / openHost-empowered clients
              * unilaterally set the flag for the whole lobby. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 1) break;
-            bool allow = buf[PACKET_HEADER_SIZE] != 0;
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
+            bool allow = cmd.u.lockToggle.allow;
             bool prev  = serverSimIsAcceptingJoins(sim);
-            ClientCommand cmd = { .type = CMD_LOCK_TOGGLE };
-            cmd.u.lockToggle.allow = allow;
             CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
             if (r == CMD_REJECT_NOT_HOST) {
                 lobbyRejectTo(fromAddr, PACKET_LOCK_TOGGLE,
@@ -2938,9 +2930,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             /* Wire: [header 8] [fromPlayer 1] [toPlayer 1]. fromPlayer
              * byte is vestigial; senderSlot drives attribution. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 2) break;
-            ClientCommand cmd = { .type = CMD_ALLIANCE_REQUEST };
-            cmd.u.allianceRequest.toPlayer = buf[PACKET_HEADER_SIZE + 1];
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
@@ -2948,17 +2940,18 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             /* Wire: [header 8] [fromPlayer 1] [toPlayer 1].
              * fromPlayer byte is vestigial. toPlayer = newMember. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 2) break;
-            ClientCommand cmd = { .type = CMD_ALLIANCE_ACCEPT };
-            cmd.u.allianceAccept.newMember = buf[PACKET_HEADER_SIZE + 1];
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
         case PACKET_ALLIANCE_LEAVE: {
             /* Wire: [header 8] [playerNum 1]. playerNum byte is vestigial. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 1) break;
-            ClientCommand cmd = { .type = CMD_ALLIANCE_LEAVE };
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
@@ -2993,10 +2986,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_TEAM_SET: {
             /* Wire: [header 8] [targetSlot 1] [teamNumber 1]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 2) break;
-            ClientCommand cmd = { .type = CMD_TEAM_SET };
-            cmd.u.teamSet.slot = buf[PACKET_HEADER_SIZE];
-            cmd.u.teamSet.team = buf[PACKET_HEADER_SIZE + 1];
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
             if (r == CMD_REJECT_INVALID) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_SET,
@@ -3014,9 +3006,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             /* Wire: [header 8] [playerNum 1] [ready 1]. The playerNum byte
              * is legacy; senderSlot is the authoritative attribution. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 2) break;
-            ClientCommand cmd = { .type = CMD_READY };
-            cmd.u.ready.ready = buf[PACKET_HEADER_SIZE + 1] != 0;
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             /* No wire reply: READY has no LOBBY_REJECT_* code today. */
             break;
@@ -3030,35 +3022,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
              *       drops them. */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0) break;
-            uint8_t teamNumber = 0;
-            char clientBotName[PACKET_MAX_PLAYER_NAME] = "";
-            uint8_t nameLen = 0;
-            int pos = PACKET_HEADER_SIZE;
-            if (len >= pos + 1) {
-                teamNumber = buf[pos++];
-                if (len >= pos + 1) {
-                    uint8_t pathLen = buf[pos++];
-                    if (pathLen < BRAIN_LIST_PATH_LEN &&
-                        len >= pos + pathLen) {
-                        pos += pathLen;
-                        if (len >= pos + 1) {
-                            uint8_t nl = buf[pos++];
-                            if (nl < sizeof(clientBotName) &&
-                                len >= pos + nl) {
-                                memcpy(clientBotName, buf + pos, nl);
-                                clientBotName[nl] = '\0';
-                                nameLen = nl;
-                            }
-                        }
-                    }
-                }
-            }
-            ClientCommand cmd = { .type = CMD_LOBBY_ADD_BOT };
-            cmd.u.lobbyAddBot.teamNumber = teamNumber;
-            cmd.u.lobbyAddBot.nameLen    = nameLen;
-            if (nameLen > 0) {
-                memcpy(cmd.u.lobbyAddBot.name, clientBotName, nameLen);
-            }
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
             if (r == CMD_REJECT_INVALID) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_ADD_BOT,
@@ -3069,9 +3034,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_REMOVE_BOT: {
             /* Wire: [header 8] [playerNum 1]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 1) break;
-            ClientCommand cmd = { .type = CMD_LOBBY_REMOVE_BOT };
-            cmd.u.lobbyRemoveBot.slot = buf[PACKET_HEADER_SIZE];
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             /* RemoveBot has no LOBBY_REJECT_* surface — silent on wire. */
             break;
@@ -3079,19 +3044,15 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_SET_SETTING: {
             /* Wire: [header 8] [settingType 1] [valueLen 1] [value N]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 2) break;
+            if (clientIdx < 0) break;
             if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
             udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
-            uint8_t valueLen = buf[PACKET_HEADER_SIZE + 1];
-            if (len < PACKET_HEADER_SIZE + 2 + valueLen || valueLen > 32) {
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
                               LOBBY_REJECT_INVALID);
                 break;
             }
-            ClientCommand cmd = { .type = CMD_LOBBY_SETTING };
-            cmd.u.lobbySetting.settingType = buf[PACKET_HEADER_SIZE];
-            cmd.u.lobbySetting.valueLen    = valueLen;
-            memcpy(cmd.u.lobbySetting.value, buf + PACKET_HEADER_SIZE + 2, valueLen);
             CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
             if (r == CMD_REJECT_NOT_HOST) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
@@ -3108,9 +3069,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_OPEN_HOST: {
             /* Wire: [header 8] [bool 1]. Slot-0-only. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 1) break;
-            ClientCommand cmd = { .type = CMD_LOBBY_OPEN_HOST };
-            cmd.u.lobbyOpenHost.openHost = buf[PACKET_HEADER_SIZE] != 0;
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
             if (r == CMD_REJECT_NOT_HOST) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_OPEN_HOST,
@@ -3125,20 +3086,13 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             /* Wire: [header 8] [teamId 1] [color 1] [namingPool 1]
              *       [nameLen 1] [name N]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 4) break;
-            uint8_t nameLen = buf[PACKET_HEADER_SIZE + 3];
-            if (nameLen > LOBBY_TEAM_NAME_LEN - 1 ||
-                len < PACKET_HEADER_SIZE + 4 + nameLen) {
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_META,
                               LOBBY_REJECT_INVALID);
                 break;
             }
-            ClientCommand cmd = { .type = CMD_LOBBY_TEAM_META };
-            cmd.u.lobbyTeamMeta.teamId     = buf[PACKET_HEADER_SIZE + 0];
-            cmd.u.lobbyTeamMeta.color      = buf[PACKET_HEADER_SIZE + 1];
-            cmd.u.lobbyTeamMeta.namingPool = buf[PACKET_HEADER_SIZE + 2];
-            cmd.u.lobbyTeamMeta.nameLen    = nameLen;
-            memcpy(cmd.u.lobbyTeamMeta.name, buf + PACKET_HEADER_SIZE + 4, nameLen);
             CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
             if (r == CMD_REJECT_NOT_HOST) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_META,
@@ -3152,9 +3106,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_TEAM_CLEAR: {
             /* Wire: [header 8] [teamId 1]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 1) break;
-            ClientCommand cmd = { .type = CMD_LOBBY_TEAM_CLEAR };
-            cmd.u.lobbyTeamClear.teamId = buf[PACKET_HEADER_SIZE];
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
             if (r == CMD_REJECT_NOT_HOST) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_CLEAR,
@@ -3169,22 +3123,12 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             /* Wire: [header 8] [slot 1] [difficulty 1] [personality 1]
              *       [nameLen 1] [name N]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 4) break;
-            uint8_t nameLen = buf[PACKET_HEADER_SIZE + 3];
-            if (nameLen >= PACKET_MAX_PLAYER_NAME ||
-                len < PACKET_HEADER_SIZE + 4 + nameLen) {
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
                               LOBBY_REJECT_INVALID);
                 break;
-            }
-            ClientCommand cmd = { .type = CMD_LOBBY_BOT_CONFIG };
-            cmd.u.lobbyBotConfig.slot        = buf[PACKET_HEADER_SIZE + 0];
-            cmd.u.lobbyBotConfig.difficulty  = buf[PACKET_HEADER_SIZE + 1];
-            cmd.u.lobbyBotConfig.personality = buf[PACKET_HEADER_SIZE + 2];
-            cmd.u.lobbyBotConfig.nameLen     = nameLen;
-            if (nameLen > 0) {
-                memcpy(cmd.u.lobbyBotConfig.name,
-                       buf + PACKET_HEADER_SIZE + 4, nameLen);
             }
             CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
             if (r == CMD_REJECT_NOT_HOST) {
@@ -3199,9 +3143,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_KICK: {
             /* Wire: [header 8] [slot 1]. Host / admin / openHost. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 1) break;
-            ClientCommand cmd = { .type = CMD_LOBBY_KICK };
-            cmd.u.lobbyKick.slot = buf[PACKET_HEADER_SIZE];
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
             if (r == CMD_REJECT_NOT_HOST) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_KICK,
@@ -3215,10 +3159,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_SET_BOT_BRAIN: {
             /* Wire: [header 8] [slot 1] [brainIdx 1]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 2) break;
-            ClientCommand cmd = { .type = CMD_LOBBY_SET_BOT_BRAIN };
-            cmd.u.lobbySetBotBrain.slot     = buf[PACKET_HEADER_SIZE + 0];
-            cmd.u.lobbySetBotBrain.brainIdx = buf[PACKET_HEADER_SIZE + 1];
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
             if (r == CMD_REJECT_NOT_HOST) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_BOT_BRAIN,
@@ -3234,20 +3177,15 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
              * stays on the wire side; validation and reload run in
              * the dispatcher. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 1) break;
+            if (clientIdx < 0) break;
             if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
             udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
-            uint8_t pathLen = buf[PACKET_HEADER_SIZE];
-            if (pathLen == 0 || pathLen > 255 ||
-                len < PACKET_HEADER_SIZE + 1 + pathLen) {
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
                               LOBBY_REJECT_INVALID);
                 break;
             }
-            ClientCommand cmd = { .type = CMD_LOBBY_SET_MAP };
-            cmd.u.lobbySetMap.relPathLen = pathLen;
-            memcpy(cmd.u.lobbySetMap.relPath,
-                   buf + PACKET_HEADER_SIZE + 1, pathLen);
             CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
             if (r == CMD_REJECT_NOT_HOST) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
@@ -3766,7 +3704,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_PREVIEW_CANCEL: {
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0) break;
-            ClientCommand cmd = { .type = CMD_LOBBY_PREVIEW_CANCEL };
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
             if (r == CMD_REJECT_NOT_HOST) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_CANCEL,
@@ -3779,7 +3718,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_PREVIEW_COMMIT: {
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0) break;
-            ClientCommand cmd = { .type = CMD_LOBBY_PREVIEW_COMMIT };
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
             if (r == CMD_OK) {
                 /* Persist-to-disk runs only after the dispatcher
@@ -3840,21 +3780,14 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         }
         case PACKET_LOBBY_PREVIEW_RANDOM: {
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 1) break;
+            if (clientIdx < 0) break;
             if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
             udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
-            uint8_t seedLen = buf[PACKET_HEADER_SIZE];
-            if (seedLen > 63 ||
-                len < PACKET_HEADER_SIZE + 1 + seedLen) {
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
                               LOBBY_REJECT_INVALID);
                 break;
-            }
-            ClientCommand cmd = { .type = CMD_LOBBY_PREVIEW_RANDOM };
-            cmd.u.lobbyPreviewRandom.seedLen = seedLen;
-            if (seedLen > 0) {
-                memcpy(cmd.u.lobbyPreviewRandom.seed,
-                       buf + PACKET_HEADER_SIZE + 1, seedLen);
             }
             CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
             if (r == CMD_REJECT_NOT_HOST) {
@@ -3879,15 +3812,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
              * password text never echoes — only the hasPassword bool
              * propagates via the next lobby-state broadcast. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 1) break;
-            int rpos = PACKET_HEADER_SIZE;
-            uint8_t pwLen = buf[rpos++];
-            if (rpos + pwLen > len) break;
-            ClientCommand cmd = { .type = CMD_LOBBY_SET_PASSWORD };
-            cmd.u.lobbySetPassword.pwLen = pwLen;
-            if (pwLen > 0 && pwLen <= sizeof(cmd.u.lobbySetPassword.password)) {
-                memcpy(cmd.u.lobbySetPassword.password, buf + rpos, pwLen);
-            }
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             CmdResult r = serverSimApplyCommand(sim, clientIdx, &cmd);
             if (r == CMD_REJECT_LOCKED) {
                 lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_PASSWORD,
@@ -3895,7 +3822,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             } else if (r == CMD_OK) {
                 WB_LOG_INFO(WB_LOG_CAT_NET,
                     "lobby: password %s by slot %d",
-                    pwLen > 0 ? "set" : "cleared", clientIdx);
+                    cmd.u.lobbySetPassword.pwLen > 0 ? "set" : "cleared", clientIdx);
             }
             break;
         }
@@ -3986,21 +3913,18 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_WBN_REAUTH: {
             /* Wire: [header 8] [wbnJoinKey 65]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN) break;
-            ClientCommand cmd = { .type = CMD_WBN_REAUTH };
-            memcpy(cmd.u.wbnReauth.token, buf + PACKET_HEADER_SIZE,
-                   WBN_JOIN_KEY_WIRE_LEN);
-            cmd.u.wbnReauth.token[WBN_JOIN_KEY_WIRE_LEN - 1] = '\0';
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
         case PACKET_BALANCE_REQUEST: {
             /* Wire: [header 8] [teamSize 1] [includeBots 1]. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 2) break;
-            ClientCommand cmd = { .type = CMD_BALANCE_REQUEST };
-            cmd.u.balanceRequest.teamSize    = buf[PACKET_HEADER_SIZE];
-            cmd.u.balanceRequest.includeBots = (buf[PACKET_HEADER_SIZE + 1] != 0);
+            if (clientIdx < 0) break;
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
@@ -4008,7 +3932,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             /* Wire: [header 8] (no payload). */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0) break;
-            ClientCommand cmd = { .type = CMD_BALANCE_APPLY };
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
@@ -4016,7 +3941,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             /* Wire: [header 8] (no payload). */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0) break;
-            ClientCommand cmd = { .type = CMD_BALANCE_DISMISS };
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
@@ -4024,7 +3950,8 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             /* Wire: [header 8] (no payload — sender drives attribution). */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0) break;
-            ClientCommand cmd = { .type = CMD_MAP_SKIP_VOTE };
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             /* No wire reply: MapSkipVote silent on wire (no LOBBY_REJECT_*
              * surface for vote rejection today). */
@@ -4032,14 +3959,12 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         }
         case PACKET_GAME_VOTE_TOGGLE: {
             /* Wire: [header 8] [kind 1] [toggleMode 1]. */
-            if (len < PACKET_HEADER_SIZE + 2) break;
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0) break;
             if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
             udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
-            ClientCommand cmd = { .type = CMD_GAME_VOTE_TOGGLE };
-            cmd.u.gameVoteToggle.kind       = buf[PACKET_HEADER_SIZE + 0];
-            cmd.u.gameVoteToggle.toggleMode = buf[PACKET_HEADER_SIZE + 1];
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
             (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
