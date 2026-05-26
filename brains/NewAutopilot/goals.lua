@@ -5517,8 +5517,10 @@ local function goal_selection(state, world, info, quiet)
           -- pills), so by default we suppress the reject there. Flip
           -- C.WSIM_KILL_REJECT_OPENING true to enforce it everywhere.
           local in_opening = (state.phase == "opening")
+          local desperate = state._stuck_desperate or false
           local enforce = C.WSIM_KILL_REJECT
                           and (C.WSIM_KILL_REJECT_OPENING or not in_opening)
+                          and not desperate
           if killed and enforce then
             c.cost = c.cost + 99999  -- effectively reject
             c.wsim_killed = true

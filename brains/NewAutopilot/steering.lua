@@ -160,21 +160,21 @@ local function stuck_recovery(state, info, goal)
   state.pf.status = "idle"  -- force A* recompute against the new overlay
   state.stuck_progress = nil
 
-  -- Hard escape: if stuck_recovery has fired many times at the same
-  -- tank tile, every neighbor is penalized and the bot is trapped.
-  -- Count active blacklist entries adjacent to the tank and force a
-  -- goal clear when too many are blocked.
-  local STUCK_HARD_ESCAPE = 5
-  local adj_blocked = 0
-  for dy = -1, 1 do
-    for dx = -1, 1 do
-      if dx ~= 0 or dy ~= 0 then
-        local ak = U.mkey(tmx + dx, tmy + dy)
-        if bl[ak] then adj_blocked = adj_blocked + 1 end
-      end
-    end
+  -- Hard escape: if stuck_recovery keeps firing at the same tank tile,
+  -- the bot is trapped regardless of how many neighbors are simultaneously
+  -- blacklisted (entries may expire between firings). Track consecutive
+  -- recoveries at the same position and escape after STUCK_HARD_ESCAPE.
+  local STUCK_HARD_ESCAPE = 3
+  if not state._stuck_escape_mx or state._stuck_escape_mx ~= tmx
+     or state._stuck_escape_my ~= tmy then
+    state._stuck_escape_mx = tmx
+    state._stuck_escape_my = tmy
+    state._stuck_escape_count = 1
+  else
+    state._stuck_escape_count = (state._stuck_escape_count or 0) + 1
   end
-  if adj_blocked >= STUCK_HARD_ESCAPE then
+  if state._stuck_escape_count >= STUCK_HARD_ESCAPE then
+    state._stuck_escape_count = 0
     if BRAIN_DEBUG_MODE then
       print(string.format(
         "[STUCK_ESCAPE] t=%d pos=(%d,%d) goal=%s adj_blocked=%d — clearing goal",

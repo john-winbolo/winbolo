@@ -2161,6 +2161,25 @@ function Brain.think(info)
     or state.goal.kind == "wait_for_lgm"
   local attack_at_standoff = intentionally_stationary
 
+  -- Long-term desperation: track total ticks at the same tile.
+  -- After ~30s (1500 ticks) without moving, disable wsim kill-reject
+  -- so the bot commits to a goal even if the sim predicts death.
+  local DESPERATE_TICKS = 1500
+  if cur_mx == (state._desp_mx or -1) and cur_my == (state._desp_my or -1) then
+    state._desp_ticks = (state._desp_ticks or 0) + 1
+  else
+    state._desp_mx = cur_mx
+    state._desp_my = cur_my
+    state._desp_ticks = 0
+  end
+  state._stuck_desperate = state._desp_ticks >= DESPERATE_TICKS
+  if state._stuck_desperate and state._desp_ticks == DESPERATE_TICKS then
+    if BRAIN_DEBUG_MODE then
+      print2(string.format("DESPERATE t=%d pos=(%d,%d) — disabling wsim kill reject",
+        now, cur_mx, cur_my))
+    end
+  end
+
   if cur_mx == state.last_mx and cur_my == state.last_my
      and state.goal.kind ~= "none"
      and not attack_at_standoff
@@ -2177,15 +2196,18 @@ function Brain.think(info)
         local ux, uy = dx / len, dy / len
         local fmx, fmy
         -- Try decreasing distances from FLEE_PILL_DIST down to 1 tile.
+        -- Ensure flee destination is at least 1 tile away from current pos.
         for d = C.FLEE_PILL_DIST, 1, -1 do
           local tx = U.mclamp(math.floor(cur_mx + ux * d + 0.5))
           local ty = U.mclamp(math.floor(cur_my + uy * d + 0.5))
+          if tx == cur_mx and ty == cur_my then goto next_flee_d end
           local tt = U.ttype(tx, ty)
           if not U.is_water(tt)
              and tt ~= C.T_BUILDING and tt ~= C.T_HALFBUILD then
             fmx, fmy = tx, ty
             break
           end
+          ::next_flee_d::
         end
         if not fmx then
           -- All of the flee ray is blocked; stay put.
@@ -2592,6 +2614,9 @@ function Brain.think(info)
       if info.armour <= C.TANK_COMBAT_FLEE_ARMOUR
          or info.shells <= C.TANK_COMBAT_FLEE_SHELLS then
         goal_valid = false
+        -- Clear the pool cache so pick_goal doesn't re-select attack_tank
+        -- immediately — the low-resource condition persists until we refuel.
+        if state.pool_cache then state.pool_cache[9] = nil end
       end
     elseif gk == "refuel_at_base" or gk == "flee_to_base" then
       local b = W.base_at(world, gmx, gmy)
