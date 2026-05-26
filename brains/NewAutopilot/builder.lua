@@ -35,6 +35,8 @@ local viz    = require("viz")
 
 local M = {}
 
+print("[builder] loaded from: " .. tostring(debug.getinfo(1, "S").source))
+
 -- Hoisted: was reallocated inside the wall-build threat-blocker
 -- inner loop (per pill_threat × per direction = up to ~30 allocs/tick
 -- when in build mode). Module-scope constant.
@@ -90,10 +92,8 @@ function M.set_mode(state, world, info, goal)
 
   -- Wall-shield attack: dispatch LGM to build/rebuild wall in specific substates
   if kind == "attack_pill" and goal.substate == "build_walls" then
-    if not goal.wall_shield then
-      print2(string.format("BUILDER_BUG build_walls but wall_shield=%s wall_mx=%s",
-        tostring(goal.wall_shield), tostring(goal.wall_mx)))
-    end
+    print2(string.format("BUILDER_SETMODE sub=build_walls wall_shield=%s wall_mx=%s wall_my=%s",
+      tostring(goal.wall_shield), tostring(goal.wall_mx), tostring(goal.wall_my)))
   end
   if kind == "attack_pill" and goal.wall_shield and goal.wall_mx then
     local sub = goal.substate or ""

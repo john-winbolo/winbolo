@@ -3049,8 +3049,34 @@ function M.update_attack_substate(goal, state, world, info)
       -- Reach the approach point (precise float, 1.5 tiles behind standoff).
       -- Tolerance: 64 wu (1/4 tile) AND speed <= 4.
       if not goal.approach_fx and not goal.approach_mx then
-        error(string.format("approach entered with no setup point! standoff=(%s,%s) pill=(%d,%d) deg=%s",
+        -- Recover: compute approach point from standoff on the fly.
+        print2(string.format("APPROACH_RECOVER no setup point, computing from standoff=(%s,%s) pill=(%d,%d) deg=%s",
           tostring(goal.standoff_mx), tostring(goal.standoff_my), pmx, pmy, tostring(goal._chosen_deg)))
+        if goal.standoff_mx then
+          local sfx = goal.standoff_fx or (goal.standoff_mx + 0.5)
+          local sfy = goal.standoff_fy or (goal.standoff_my + 0.5)
+          local dx = sfx - (pmx + 0.5)
+          local dy = sfy - (pmy + 0.5)
+          local d = math.sqrt(dx * dx + dy * dy)
+          if d > 0.01 then
+            local ux, uy = dx / d, dy / d
+            goal.approach_fx = sfx + ux * C.ATTACK_APPROACH_OFFSET
+            goal.approach_fy = sfy + uy * C.ATTACK_APPROACH_OFFSET
+            goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
+            goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
+          else
+            goal.approach_fx = sfx
+            goal.approach_fy = sfy
+            goal.approach_mx = goal.standoff_mx
+            goal.approach_my = goal.standoff_my
+          end
+        else
+          goal.substate = "plan_position"
+          goal.scan_spots = nil
+          goal._plan_show_tick = nil
+          goal._plan_logged = nil
+          return
+        end
       end
       local afx = goal.approach_fx or (goal.approach_mx + 0.5)
       local afy = goal.approach_fy or (goal.approach_my + 0.5)

@@ -2677,8 +2677,8 @@ local function get_formula_inner(e)
       local _fm = e._fill_mult or 1
       local _lgm = e._lgm_wait_floor
       _shape_head = string.format(
-        " × ur{%.2f} + base{%.0f} - def{%.0f} × fill{%.2f}%s",
-        _u, _bf, _db, _fm,
+        " × ur{%.2f} - def{%.0f} × fill{%.2f}%s",
+        _u, _db, _fm,
         _lgm and string.format(" → lgm_wait_floor{%.0f}", _lgm) or "")
       local _arm     = e._arm or 0
       local _sh      = e._sh or 0
@@ -2718,10 +2718,10 @@ local function get_formula_inner(e)
         C.REFUEL_NO_DANGER_DISCOUNT)
       or ""
     f = string.format(
-      "A*{%.0f}@(%d,%d) + danger{%.0f} + stale{%.0f} + contest{%.0f} + hyst{%.0f} + deplete{%.0f}%s%s"..
-      "||danger:%s|stale:%s|contest:%s|hyst:%s|deplete:%s%s%s",
-      raw, e._mx or 0, e._my or 0, e._dang, e._stale, e._contest, e._hyst, e._dep, _shape_head, _safe_token,
-      _d_danger, _d_stale, _d_contest, _d_hyst, _d_deplete, _shape_detail, _safe_detail)
+      "A*{%.0f}@(%d,%d) + base{%.0f} + danger{%.0f} + stale{%.0f} + contest{%.0f} + hyst{%.0f} + deplete{%.0f}%s%s"..
+      "||base:%.0f[REFUEL_BASE_COST]|danger:%s|stale:%s|contest:%s|hyst:%s|deplete:%s%s%s",
+      raw, e._mx or 0, e._my or 0, C.REFUEL_BASE_COST, e._dang, e._stale, e._contest, e._hyst, e._dep, _shape_head, _safe_token,
+      C.REFUEL_BASE_COST, _d_danger, _d_stale, _d_contest, _d_hyst, _d_deplete, _shape_detail, _safe_detail)
   elseif p == 6 then
     local _d_hp = string.format(
       "ATTACK_PILL_HP_MULT[%d] = %.2f (hand-tuned table: 5/10/18/28%% for hp 1-4, then linear 40%%→100%% over hp 5-15)",
@@ -3200,7 +3200,7 @@ function M.step_eval_queue(state, world, info)
         if BRAIN_DEBUG_MODE then print2("pool1 refuel hysteresis: base#", id, "@(", obj.mx, ",", obj.my,
                ") -", C.REFUEL_SWITCH_THRESHOLD) end
       end
-      local score = raw_cost + danger_cost + stale_cost + contested_cost + hysteresis_cost + depletion_cost
+      local score = raw_cost + C.REFUEL_BASE_COST + danger_cost + stale_cost + contested_cost + hysteresis_cost + depletion_cost
       -- Safe-refuel discount: when this base sits in zero-danger territory
       -- (no pill / no tank threat), trim the cost so it wins ties against
       -- bases with even mild exposure.  Compounds with everything above.
@@ -5077,7 +5077,7 @@ local function goal_selection(state, world, info, quiet)
           -- for the breakdown panel).
           local bonus = _ref_bonus
           local mult  = _ref_mult
-          local base_cost = (entry.cost or 0) + C.REFUEL_BASE_COST - bonus
+          local base_cost = (entry.cost or 0) - bonus
           local final_cost = base_cost * mult
           -- LGM-wait floor: clamp cost down when waiting for LGM.
           -- Floor scales with threat at the base: safe spots clamp lower so

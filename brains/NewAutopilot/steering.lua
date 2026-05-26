@@ -1239,8 +1239,7 @@ local function attack_pill_steer(state, world, info, goal)
     -- Prefer precise float position; fall back to tile-snapped if the
     -- planner only produced an integer target.
     if not goal.approach_fx and not goal.approach_mx then
-      error(string.format("approach steer: no setup point! standoff=(%s,%s) pill=(%d,%d)",
-        tostring(goal.standoff_mx), tostring(goal.standoff_my), goal.mx or 0, goal.my or 0))
+      return nil  -- no setup point yet; fall through to A* nav
     end
     local afx = goal.approach_fx or (goal.approach_mx + 0.5)
     local afy = goal.approach_fy or (goal.approach_my + 0.5)

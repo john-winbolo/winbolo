@@ -2097,6 +2097,8 @@ function Brain.think(info)
                               state._prev_my or cur_my)
     state._respawn_wipe_until = now + 150
     state._respawn_wipe_dist  = jump_dist
+    state._respawn_prev_mx    = state._prev_mx
+    state._respawn_prev_my    = state._prev_my
     print2(string.format("RESPAWN_INVALIDATE t=%d dist=%d — setting all cached costs to infinity",
       now, jump_dist))
     -- Set all cached costs to infinity so the eval queue re-evaluates
@@ -2138,6 +2140,14 @@ function Brain.think(info)
       string.format("RESPAWN WIPE dist=%d (>%d)",
         state._respawn_wipe_dist or 0, C.RESPAWN_CACHE_WIPE_DIST),
       "topleft", 255, 140, 0, 255)
+    if state._respawn_prev_mx then
+      local pmx = state._respawn_prev_mx + 0.5
+      local pmy = state._respawn_prev_my + 0.5
+      local R = C.RESPAWN_CACHE_WIPE_DIST
+      viz.circle("hud_goal", pmx, pmy, R, 255, 140, 0, 120)
+      viz.text("hud_goal", pmx, pmy - R - 0.5,
+        string.format("WIPE R=%d", R), "center", 255, 140, 0, 200)
+    end
   end
 
   -- Update prev position for next tick's respawn detection.
@@ -2778,7 +2788,7 @@ function Brain.think(info)
           else
             wait_str = "(-)"
           end
-          viz.hud_text("hud_refuel_ally_check", 10, 220,
+          viz.hud_text("hud_refuel_ally_check", 10, 240,
             string.format("Ally occupied check [%d/%d tiles] (%d,%d): %s, wait at %s",
                           dist_cheb, C.REFUEL_ALLY_WAIT_DIST,
                           state.goal.mx, state.goal.my,
@@ -3260,7 +3270,7 @@ function Brain.think(info)
   -- explore: tile marked visited on entry (expl.update), drive through.
   -- flee_pill: escaping, keep momentum toward next objective.
   local lookahead_kinds = {
-    capture_base = true, capture_pill = true,
+    capture_pill = true,
     explore = true, flee_pill = true,
   }
   if lookahead_kinds[state.goal.kind] and not state.command_goal then
