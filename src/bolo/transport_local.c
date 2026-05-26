@@ -161,11 +161,6 @@ Transport transportLocalCreate(ServerSim *sim, ClientSim *cs, BYTE playerNum) {
     lctx->ticksServer = true;
     t.recordInput = localSendInput;
     t.sendInput = localSendInput;
-    /* Local transport does not forward wire bytes. Client→server
-     * commands are submitted directly to serverSimApplyCommand via
-     * clientSimNetSend*; sendBytes stays NULL until the Transport
-     * interface is reshaped. */
-    t.sendBytes = NULL;
     t.tick = localTick;
     t.getSnapshot = localGetSnapshot;
     t.ctx = lctx;

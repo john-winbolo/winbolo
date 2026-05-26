@@ -289,16 +289,6 @@ static void udpClientSendInput(void *ctx, const InputPacket *input) {
     udpClientSendTo(c, buf, len);
 }
 
-/* Client sendBytes: thin wrapper around udpClientSendTo. Lets
- * client_net.h send wrappers build the wire packet themselves and
- * push it through a transport-agnostic interface (see the local
- * transport's localSendBytes for the in-process counterpart). */
-static void udpClientSendBytes(void *ctx, const uint8_t *buf, size_t len) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    udpClientSendTo(c, buf, (int)len);
-}
-
 /* Decode a localized payload (langid + arg list) at buf[startPos..len)
  * into outId and outArgs.  Mirrors packLocalizedPayload on the server.
  * Args land in MessageArgs slots in order: #1->playerName, #2->otherName,
@@ -2143,7 +2133,6 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         c->joinState = UDP_CLIENT_ERROR;
         t.recordInput = udpClientRecordInput;
         t.sendInput = udpClientSendInput;
-        t.sendBytes = udpClientSendBytes;
         t.tick = udpClientTick;
         t.getSnapshot = udpClientGetSnapshotVtable;
         t.ctx = c;
@@ -2170,7 +2159,6 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
             c->joinState = UDP_CLIENT_ERROR;
             t.recordInput = udpClientRecordInput;
             t.sendInput = udpClientSendInput;
-            t.sendBytes = udpClientSendBytes;
             t.tick = udpClientTick;
             t.getSnapshot = udpClientGetSnapshotVtable;
             t.ctx = c;
@@ -2235,7 +2223,6 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
 
     t.recordInput = udpClientRecordInput;
     t.sendInput = udpClientSendInput;
-    t.sendBytes = udpClientSendBytes;
     t.tick = udpClientTick;
     t.getSnapshot = udpClientGetSnapshotVtable;
     t.ctx = c;
