@@ -2565,7 +2565,9 @@ function Brain.think(info)
         end
         log.event("base_capturable", string.format("(%d,%d) owner=%s", gmx, gmy, b.owner))
         state.goal.kind = "capture_base"
+        state.goal.race_mode = true
         state.pf.status = "idle"
+        state.urgent_capture_base = { mx = gmx, my = gmy, tick = now }
       elseif b.owner ~= "hostile" then
         -- Base became friendly (someone else captured it)
         goal_valid = false
@@ -2757,9 +2759,26 @@ function Brain.think(info)
                        and enemy_lgm_count > (state.prev_enemy_lgm_count or 0)
                        and state.goal.kind ~= "kill_lgm"
     state.prev_enemy_lgm_count = enemy_lgm_count
+    -- Trigger urgent replan when we take damage from an enemy tank.
+    -- Detect by: took damage this tick + enemy tank visible + not
+    -- currently under pill fire (no angry pill in range).
+    local shot_by_tank = false
+    if state.took_damage_this_tick
+       and state.goal.kind ~= "attack_tank"
+       and state.perc and state.perc.enemy_tanks
+       and #state.perc.enemy_tanks > 0
+       and not (state.perc.under_fire) then
+      shot_by_tank = true
+      state._shot_by_tank = true
+      -- Clear pool cache so attack_tank gets re-evaluated fresh
+      if state.pool_cache then state.pool_cache[9] = nil end
+    else
+      state._shot_by_tank = false
+    end
     local urgent_replan = state.goal.kind == "none" or attack_tank_done
                        or tank_appeared or dead_pill_appeared
                        or new_base_appeared or lgm_appeared
+                       or shot_by_tank
     if urgent_replan then
       -- Record which factor(s) tripped the urgent replan so the HUD
       -- below can flash a banner that's visible for a few seconds.

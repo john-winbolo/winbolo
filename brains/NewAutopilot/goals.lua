@@ -664,6 +664,15 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
     raw_cost = math.min(raw_cost, C.IMMINENT_CAPTURE_FLOOR)
     imminent = true
   end
+  -- Urgent capture: we just killed this base via attack_base. Heavily
+  -- discount the cost so the bot commits to capturing before the base
+  -- recharges for the enemy. Decays after 500 ticks (~10s).
+  local urgent = state.urgent_capture_base
+  if urgent and urgent.mx == base.mx and urgent.my == base.my
+     and (state.tick or 0) - urgent.tick < 500 then
+    raw_cost = math.min(raw_cost, C.IMMINENT_CAPTURE_FLOOR)
+    imminent = true
+  end
 
   local desc = ""  -- pool viz string; populated only when BRAIN_POOL_VIZ
   if BRAIN_POOL_VIZ then
@@ -5177,11 +5186,17 @@ local function goal_selection(state, world, info, quiet)
     -- switch+commitment penalty on top reliably pushes it above any
     -- attack_pill incumbent, so the bot never actually picks the kill.
     local HYST_EXEMPT = { capture_pill = true, kill_lgm = true }
-    if not cur_is_attack_pill then
+    if not cur_is_attack_pill or state._shot_by_tank then
       HYST_EXEMPT.attack_tank = true
     end
     if C.EARLY_CAPTURE_BASE_HYST_EXEMPT and state.phase == "opening" then
       HYST_EXEMPT.capture_base = true
+    end
+    if state.urgent_capture_base then
+      local uc = state.urgent_capture_base
+      if (state.tick or 0) - uc.tick < 500 then
+        HYST_EXEMPT.capture_base = true
+      end
     end
     local cur_group = goal_group(state.goal.kind)
     local ticks_on_goal = (state.tick or 0) - (state.goal_set_tick or 0)
@@ -5227,7 +5242,7 @@ local function goal_selection(state, world, info, quiet)
       if cur_is_attack_tank then
         effective_commit = effective_commit + C.ATTACK_TANK_COMMITMENT_BONUS
       end
-      if cur_is_attack_pill then
+      if cur_is_attack_pill and c.goal.kind ~= "attack_tank" then
         effective_commit = effective_commit + C.ATTACK_PILL_COMMITMENT_BONUS
       end
       if cg ~= cur_group then
