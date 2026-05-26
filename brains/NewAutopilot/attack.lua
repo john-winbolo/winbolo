@@ -26,6 +26,12 @@ print("[attack] loaded from: " .. tostring(debug.getinfo(1, "S").source))
 
 local M = {}
 
+local PRE_ENGAGE_SUBS = {
+  plan_position=true, approach=true, gather_trees=true, build_walls=true,
+  aim=true, in_range_position=true, in_range_aim_pre=true,
+  in_range_aim=true, in_range_aim_finetune=true, detree=true,
+}
+
 -- "Effectively stopped" gate for the substate transitions in approach
 -- and in_range_position. Returns true if EITHER the reported speed is
 -- at/below speed_tol OR the tank's wu position hasn't changed for the
@@ -2371,6 +2377,24 @@ function M.update_attack_substate(goal, state, world, info)
     end
   end
 
+  -- Track whether the LGM was dead when this pill take started.
+  -- If it was dead and then respawns (transitions to ground/intank),
+  -- abort pre-engage substates so the bot can go pick up the builder
+  -- instead of continuing a take it started without one.
+  if not goal._lgm_was_dead_at_start then
+    goal._lgm_was_dead_at_start = (info.man_status == C.LGM_DEAD)
+  end
+  if goal._lgm_was_dead_at_start
+     and info.man_status ~= C.LGM_DEAD
+     and PRE_ENGAGE_SUBS[goal.substate] then
+    print(string.format(TAG .. " ATTACK: aborting pre-engage (%s) — LGM respawned mid-take (status=%d)",
+      goal.substate, info.man_status))
+    print2(string.format("ATTACK_ABORT_LGM_RESPAWN sub=%s man_status=%d pill=(%d,%d)",
+      goal.substate, info.man_status, pmx, pmy))
+    clear_attack_goal(state, "LGM respawned mid-take")
+    return
+  end
+
   -- Look up pill
   local pill = M.find_pill_at(world, pmx, pmy)
 
@@ -3323,6 +3347,20 @@ function M.update_attack_substate(goal, state, world, info)
       end
     end
     goal._wall_build_idx = idx
+    -- Sync wall_mx/my + wall_shield so builder.lua's wall_shield
+    -- dispatch can find the current target. The PPT build_walls path
+    -- uses _wall_build_list (not the legacy goal.wall_mx), so without
+    -- this the builder never enters wall_shield mode and the LGM sits
+    -- idle for the entire build_walls phase.
+    if idx <= #list then
+      goal.wall_mx     = list[idx].mx
+      goal.wall_my     = list[idx].my
+      goal.wall_shield = true
+    else
+      goal.wall_mx     = nil
+      goal.wall_my     = nil
+      goal.wall_shield = nil
+    end
 
     -- Per-wall sub-timeout: if a single queue entry has been the
     -- current target for WALL_STALL_TICKS without finishing, skip to

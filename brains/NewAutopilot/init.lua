@@ -749,6 +749,26 @@ function Brain.think(info)
   state._last_info = info
   local now  = state.tick
 
+  -- Cautious mode: per-tick boolean.  When true, danger / threat
+  -- terms across cost formulas get multiplied by
+  -- C.CAUTIOUS_MODE_MULT (5×) so the bot biases hard toward
+  -- safer routes / targets.  Recomputed every tick — flips off
+  -- automatically when its triggers stop firing (no manual reset).
+  --
+  -- Current triggers (logical OR):
+  --   * LGM dead AND we're carrying pills in the tank — pills are
+  --     valuable cargo we shouldn't lose to a stray pill shot, and
+  --     without an LGM we can't rebuild walls / repair to recover
+  --     from a hit.  Both conditions must hold; either alone is fine.
+  --
+  -- Add more triggers here as use cases arise.  Stays per-tick (no
+  -- sticky latch) so the mode lifts the instant conditions clear.
+  do
+    local _carrying = (info.carried_pills or 0) > 0
+    local _lgm_dead = info.man_status == C.LGM_DEAD
+    state.cautious_mode = (_lgm_dead and _carrying) or false
+  end
+
   -- LGM registry: self slot updated every tick from info.man_*.
   -- A status transition (in_tank ↔ ground ↔ dead) sets the
   -- pending_lgm_broadcast flag so the periodic /info state broadcast
@@ -2047,56 +2067,85 @@ function Brain.think(info)
   -- waiting-to-respawn state: the engine holds armour at
   -- TANK_FULL_ARMOUR+1 (= 41) through the whole deathWait
   -- countdown (~200 ticks), giving us a wide window we can't miss.
-  -- Idempotent re-clearing during deathWait is harmless — the
-  -- brain has no control anyway while the tank is dead.
-  local _is_dead = (info.armour or 0) > C.TANK_FULL_ARMOUR
-  if info.newtank or _is_dead then
+  -- Respawn detection. bot_manager skips the brain while the tank is
+  -- dead (deathWait > 0), so we never see armour > 40. Instead detect
+  -- respawn by a large position jump between consecutive brain ticks:
+  -- the last tick was at the pre-death position, the next tick is at
+  -- the spawn point — if those are far apart, we just respawned.
+  -- Also catches the very first tick (state._prev_mx is nil).
+  local cur_mx = info.tankx >> 8
+  local cur_my = info.tanky >> 8
+  local _just_respawned = false
+  if state._prev_mx then
+    local jump = U.mdist(cur_mx, cur_my, state._prev_mx, state._prev_my)
+    if jump > C.RESPAWN_CACHE_WIPE_DIST then
+      _just_respawned = true
+      print2(string.format("RESPAWN_DETECTED t=%d jump=%d prev=(%d,%d) now=(%d,%d)",
+        now, jump, state._prev_mx, state._prev_my, cur_mx, cur_my))
+    end
+  end
+  if _just_respawned then
     state.stuck_for = 0
     attack.clear_attack_goal(state)
-    if BRAIN_DEBUG_MODE and info.newtank then
-      print(string.format(TAG .. " t=%d RESPAWN at (%d,%d)",
-            now, info.tankx >> 8, info.tanky >> 8))
+    log.event("respawn", string.format("%d,%d", cur_mx, cur_my))
+    if BRAIN_DEBUG_MODE then
+      print(string.format(TAG .. " t=%d RESPAWN at (%d,%d) prev=(%d,%d)",
+            now, cur_mx, cur_my, state._prev_mx or -1, state._prev_my or -1))
     end
-    if info.newtank then
-      log.event("respawn", string.format("%d,%d", info.tankx >> 8, info.tanky >> 8))
+    local jump_dist = U.mdist(cur_mx, cur_my,
+                              state._prev_mx or cur_mx,
+                              state._prev_my or cur_my)
+    state._respawn_wipe_until = now + 150
+    state._respawn_wipe_dist  = jump_dist
+    print2(string.format("RESPAWN_INVALIDATE t=%d dist=%d — setting all cached costs to infinity",
+      now, jump_dist))
+    -- Set all cached costs to infinity so the eval queue re-evaluates
+    -- from the new position. Keeps the cache entries (and their viz
+    -- panel data) alive so the P overlay doesn't go blank — they just
+    -- lose every cost comparison until fresh values arrive.
+    if state.cost_cache then
+      for _, entry in pairs(state.cost_cache) do
+        entry.cost = math.huge
+      end
     end
-    -- Force-seed an explore goal on respawn so the first post-respawn
-    -- tick has a sane state.goal before goal_selection runs.  Coords
-    -- left at the tank's current tile (well-defined on respawn);
-    -- the explore planner will replace them with a real frontier
-    -- target on the next replan.  clear_attack_goal above set
-    -- kind="none" — overwriting to "explore" + cleared substate is
-    -- the canonical "alive, no plan yet" stance, the same state a
-    -- fresh brain starts in.
+    -- Wipe pool_cache so goal_selection sees an empty pool and falls
+    -- through to explore. The eval queue rebuild (~14 ticks) will
+    -- populate fresh winners from the new position.
+    state.pool_cache          = nil
+    state.eval_queue          = nil
+    state.eval_queue_pos      = nil
+    state._pill_eval_cache    = nil
+    state._pill_eval_progress = nil
+    state.goal_cooldowns      = {}
+    state.goal_history        = {}
+    state.blocked             = {}
+    state.banned_pill_angles  = {}
+    state.wounded_pill        = nil
+    -- Force-seed an explore goal so the first post-respawn tick has a
+    -- sane state.goal before goal_selection runs.
     state.goal.kind     = "explore"
     state.goal.substate = nil
-    state.goal.mx       = info.tankx >> 8
-    state.goal.my       = info.tanky >> 8
-    state.goal.wx       = U.m2w(state.goal.mx)
-    state.goal.wy       = U.m2w(state.goal.my)
+    state.goal.mx       = cur_mx
+    state.goal.my       = cur_my
+    state.goal.wx       = U.m2w(cur_mx)
+    state.goal.wy       = U.m2w(cur_my)
   end
 
-  -- Early return while dead. info.tankx/y hold the LAST-living tile
-  -- through the whole deathWait window (~200 ticks) — running threat,
-  -- perception, pcontrib, planning, etc. against those stale coords
-  -- pushes garbage into the danger map and the pillcontrib registry
-  -- for the duration. Just emit a no-op brain output (engine ignores
-  -- input from a dead tank anyway). Goal already cleared above.
-  if _is_dead then
-    return {
-      holdkeys    = 0,
-      tapkeys     = 0,
-      build       = nil,
-      wantallies  = info.allies,
-      messagedest = 0,
-      sendmessage = "",
-    }
+  if BRAIN_DEBUG_MODE and state._respawn_wipe_until
+     and now <= state._respawn_wipe_until
+     and viz.is_on("hud_goal") then
+    viz.hud_text("hud_goal", 10, 200,
+      string.format("RESPAWN WIPE dist=%d (>%d)",
+        state._respawn_wipe_dist or 0, C.RESPAWN_CACHE_WIPE_DIST),
+      "topleft", 255, 140, 0, 255)
   end
+
+  -- Update prev position for next tick's respawn detection.
+  state._prev_mx = cur_mx
+  state._prev_my = cur_my
 
   -- Stuck detection
   local t_stuck0 = clock_us()
-  local cur_mx = info.tankx >> 8
-  local cur_my = info.tanky >> 8
 
   -- When attacking a pill in engage/ws_ substates we are intentionally
   -- stationary; don't count that as being stuck.

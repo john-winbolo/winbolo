@@ -5158,6 +5158,9 @@ local function goal_selection(state, world, info, quiet)
     if not cur_is_attack_pill then
       HYST_EXEMPT.attack_tank = true
     end
+    if C.EARLY_CAPTURE_BASE_HYST_EXEMPT and state.phase == "opening" then
+      HYST_EXEMPT.capture_base = true
+    end
     local cur_group = goal_group(state.goal.kind)
     local ticks_on_goal = (state.tick or 0) - (state.goal_set_tick or 0)
     local commitment = math.min(ticks_on_goal * C.GOAL_COMMITMENT_PER_TICK, C.GOAL_COMMITMENT_CAP)

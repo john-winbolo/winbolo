@@ -89,6 +89,12 @@ function M.set_mode(state, world, info, goal)
   end
 
   -- Wall-shield attack: dispatch LGM to build/rebuild wall in specific substates
+  if kind == "attack_pill" and goal.substate == "build_walls" then
+    if not goal.wall_shield then
+      print2(string.format("BUILDER_BUG build_walls but wall_shield=%s wall_mx=%s",
+        tostring(goal.wall_shield), tostring(goal.wall_mx)))
+    end
+  end
   if kind == "attack_pill" and goal.wall_shield and goal.wall_mx then
     local sub = goal.substate or ""
     if sub == "ws_prebuild" or sub == "ws_rebuild" or sub == "build_walls" then
@@ -663,6 +669,11 @@ function M.decide(state, world, info, now)
       end
       local has_trees   = info.trees >= cost
       local can_reach   = lgm_can_reach(info, wx, wy)
+      if state.tick and state.tick % 50 == 0 then
+        print2(string.format("BUILDER_WALL_CHECK t=%d wall=(%d,%d) tt=%d trees=%d/%d reach=%s mode=%s force=%s",
+          state.tick, wx, wy, wtt, info.trees, cost,
+          tostring(can_reach), b.mode, tostring(b.mode == "wall_shield")))
+      end
       -- Exclude the target pill's own per-tile contribution from the
       -- safety check — we're committed to killing it, so its danger
       -- footprint shouldn't bully our LGM dispatch within its own

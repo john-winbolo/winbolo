@@ -1809,8 +1809,7 @@ function M.steer(state, world, info, goal)
   local nav_mode = goal.nav_mode
   local needs_exact_center = nav_mode == "precision"
        or (goal.kind == "attack_pill"
-           and (goal.substate == "approach"
-                or goal.substate == "aim"
+           and (goal.substate == "aim"
                 or goal.substate == "detree"))
   local plow_through = nav_mode == "plow"
        or goal.kind == "capture_base"

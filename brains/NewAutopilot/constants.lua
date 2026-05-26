@@ -242,6 +242,18 @@ M.MAN_SPEED_BLESSED = 16  -- LGM speed on blessed square
 --   REFUEL: 20 × 20 = 400  → prefer safe base up to 400 path-cost units further
 --   FLEE:   20 × 80 = 1600 → at critical armour, cross most maps to reach safety
 M.REFUEL_DANGER_WEIGHT  = 20
+-- Danger/threat-term multiplier applied across goal cost formulas
+-- when state.cautious_mode is true (see init.lua).  Cautious mode
+-- triggers on conditions like "LGM dead AND carrying pills" — we
+-- can't afford to lose what we're carrying, so the danger terms
+-- in cost formulas get pumped to bias hard toward safer routes /
+-- targets.
+M.CAUTIOUS_MODE_MULT = 5
+-- Discount applied to refuel_at_base cost when the base's tile
+-- danger value is 0 (truly safe refuel spot).  Encourages choosing
+-- the safest available base when several refuels would otherwise
+-- tie on cost.
+M.REFUEL_NO_DANGER_DISCOUNT = 0.75
 M.FLEE_DANGER_WEIGHT    = 80
 -- Minimum score improvement required to switch from the current refuel/flee
 -- base to a different one.  Prevents flip-flopping between two bases that
@@ -484,6 +496,7 @@ M.GOAL_ABANDON_COOLDOWN    = 0     -- ticks before an abandoned goal can be pick
 M.WALL_SHIELD_COMMITMENT        = 200  -- extra switch penalty when wall-shield attack is in progress
 M.ATTACK_TANK_COMMITMENT_BONUS  = 50   -- extra commitment when currently fighting a tank (see it through)
 M.ATTACK_PILL_COMMITMENT_BONUS  = 80   -- extra commitment when mid-attack on a pill; also revokes hysteresis exemption for attack_tank/capture_pill so they can't interrupt for free
+M.EARLY_CAPTURE_BASE_HYST_EXEMPT = true -- opening phase: capture_base skips ALL hysteresis (switch + commit + history), same as capture_pill
 M.REFUEL_URGENCY_MIN       = 0.37  -- minimum urgency multiplier for refuel cost
                                    -- (with squared urgency: floor cost at
                                    -- bscore × 0.37; e.g. bscore=60 → ~22)
@@ -526,6 +539,7 @@ M.LGM_NEARBY_NOPACE_TICKS  = 30  -- ticks: if LGM arrives within this, don't slo
 M.WAIT_FOR_LGM_ENABLED     = false  -- master toggle; off = candidate never injected
 M.WAIT_FOR_LGM_COST        = 50     -- (only meaningful while ENABLED is true)
 M.ENEMY_LGM_RETURN_TICKS   = 3000     -- estimated ticks for enemy LGM to respawn (~60 sec)
+M.RESPAWN_CACHE_WIPE_DIST  = 12       -- tiles; if respawn point is farther than this from death point, wipe all distance-dependent caches
 M.ENEMY_LGM_DEAD_ATTACK_DISCOUNT = 0.5  -- multiply attack pill cost when enemy LGM is dead
 
 -- -------------------------------------------------------------------------
