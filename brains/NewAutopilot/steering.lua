@@ -2816,7 +2816,11 @@ function M.steer(state, world, info, goal)
       -- momentum helps escape the threat zone or win the capture race faster
       -- than braking and re-accelerating.
       local facing_brake = (under_fire or race_mode) and 16 or 8
-      if info.speed > facing_brake then keys = keys | KEY_SLOWER end
+      if info.speed > facing_brake then
+        keys = keys | KEY_SLOWER
+      elseif info.speed == 0 then
+        keys = keys | KEY_FASTER
+      end
     elseif orbit_brake then
       _throttle_branch = "orbit_brake"
       if info.speed > 8 then keys = keys | KEY_SLOWER end
