@@ -1258,6 +1258,10 @@ bool gameFrontSetDlgState(openingStates newState) {
           spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen);
         }
         if (spServerSim != NULL) {
+          /* [BUILD-TEMP] hardcoded bot debug logging */
+          serverSimSetBotDefaultDebugMode(spServerSim, true);
+          luaBrainsSetLogJson(1);
+
           bgGameSetHiddenByForeground(bgGameGetShared(), true);
           /* Single-player runs through the same serverInstanceStartup +
            * timer-thread ticking path as the host, so SP and listen-server

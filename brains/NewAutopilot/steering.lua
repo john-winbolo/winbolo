@@ -1238,10 +1238,12 @@ local function attack_pill_steer(state, world, info, goal)
   if goal.substate == "approach" then
     -- Prefer precise float position; fall back to tile-snapped if the
     -- planner only produced an integer target.
-    local afx = goal.approach_fx or (goal.approach_mx and (goal.approach_mx + 0.5))
-                                  or (goal.standoff_mx and (goal.standoff_mx + 0.5))
-    local afy = goal.approach_fy or (goal.approach_my and (goal.approach_my + 0.5))
-                                  or (goal.standoff_my and (goal.standoff_my + 0.5))
+    if not goal.approach_fx and not goal.approach_mx then
+      error(string.format("approach steer: no setup point! standoff=(%s,%s) pill=(%d,%d)",
+        tostring(goal.standoff_mx), tostring(goal.standoff_my), goal.mx or 0, goal.my or 0))
+    end
+    local afx = goal.approach_fx or (goal.approach_mx + 0.5)
+    local afy = goal.approach_fy or (goal.approach_my + 0.5)
     if afx then
       local awx = math.floor(afx * 256 + 0.5)
       local awy = math.floor(afy * 256 + 0.5)
@@ -1255,9 +1257,27 @@ local function attack_pill_steer(state, world, info, goal)
         if adist > 16 then
           local move_dir = U.aim_at(info.tankx, info.tanky, awx, awy)
           local corr = U.adiff(info.direction, move_dir)
-          local k, t = nav_turn_speed(corr, info.speed, 4, 1)
-          keys = keys | k
-          taps = taps | t
+          -- Friction-stuck detection (mirrors in_range_position):
+          -- if the tank hasn't closed any distance for 8+ ticks,
+          -- force re-aim + accelerate instead of relying on
+          -- nav_turn_speed which may just spin at speed 0.
+          local now_t = state.tick or 0
+          if goal._approach_prev_sdist == nil
+             or math.abs(adist - goal._approach_prev_sdist) >= 2 then
+            goal._approach_prev_sdist  = adist
+            goal._approach_stuck_since = now_t
+          end
+          local stuck_ticks = now_t - (goal._approach_stuck_since or now_t)
+          if stuck_ticks >= 8 then
+            local k, t = nav_turn_speed(corr, 0, 4, 1)
+            keys = keys | k
+            taps = taps | t
+            if info.speed == 0 then keys = keys | KEY_FASTER end
+          else
+            local k, t = nav_turn_speed(corr, info.speed, 4, 1)
+            keys = keys | k
+            taps = taps | t
+          end
         elseif info.speed > 0 then
           keys = keys | KEY_SLOWER
         end

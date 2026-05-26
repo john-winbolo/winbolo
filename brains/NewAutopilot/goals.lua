@@ -2316,6 +2316,11 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   end
   local dist_score = (dist_raw ^ 1.5) * C.CAPTURE_PILL_DIST_SCALE
   local danger_val = threat.at(obj.mx, obj.my)
+  -- Cautious-mode danger multiplier (see init.lua state.cautious_mode
+  -- and constants.lua CAUTIOUS_MODE_MULT).  Capture path that
+  -- runs through hostile territory costs more when we're in cautious
+  -- mode (e.g. LGM dead + carrying pills).
+  local _lgm_mult = state.cautious_mode and C.CAUTIOUS_MODE_MULT or 1
   -- Intercept: an enemy tank close enough to beat us to the pill
   -- (Manhattan dist ratio scaled by safety margin) bumps the cost.
   local our_dist = U.mdist(tmx, tmy, obj.mx, obj.my)
@@ -2331,9 +2336,9 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
     end
   end
   local c = C.CAPTURE_PILL_BASE_COST + dist_score
-          + danger_val * C.CAPTURE_PILL_DANGER_SCALE
+          + danger_val * C.CAPTURE_PILL_DANGER_SCALE * _lgm_mult
           + intercept
-  return c, dist_raw, dist_score, danger_val, intercept
+  return c, dist_raw, dist_score, danger_val, intercept, _lgm_mult
 end
 
 -- build_eval_queue — called at the start of each replan cycle.
@@ -2634,8 +2639,16 @@ local function get_formula_inner(e)
         e._reject, rem_tok, desc)
       return e.formula
     end
-    local _d_danger  = string.format("%.1f[danger_val] x %.1f[REFUEL_DANGER_WEIGHT] = %.0f",
-      e._dv, C.REFUEL_DANGER_WEIGHT, e._dang)
+    local _lgm_mult_d = e._lgm_mult or 1
+    local _d_danger
+    if _lgm_mult_d ~= 1 then
+      _d_danger = string.format(
+        "%.1f[danger_val] x %.1f[REFUEL_DANGER_WEIGHT] x %d (cautious mode) = %.0f",
+        e._dv, C.REFUEL_DANGER_WEIGHT, _lgm_mult_d, e._dang)
+    else
+      _d_danger = string.format("%.1f[danger_val] x %.1f[REFUEL_DANGER_WEIGHT] = %.0f",
+        e._dv, C.REFUEL_DANGER_WEIGHT, e._dang)
+    end
     local _d_stale   = fmt_stale_detail(e._age, e._stale)
     local _d_contest = e._contest > 0
       and string.format("enemy tank within %.0f[CONTESTED_BASE_RANGE] tiles → %.0f[CONTESTED_BASE_PENALTY]",
@@ -2697,11 +2710,18 @@ local function get_formula_inner(e)
         _d_urgency, _d_def, _d_fill, _d_lgm)
     end
 
+    local _safe_token = e._safe_refuel
+      and string.format(" × safe{%.2f}", C.REFUEL_NO_DANGER_DISCOUNT) or ""
+    local _safe_detail = e._safe_refuel
+      and string.format(
+        "|safe:danger_val=0 → multiply final cost by %.2f[REFUEL_NO_DANGER_DISCOUNT]",
+        C.REFUEL_NO_DANGER_DISCOUNT)
+      or ""
     f = string.format(
-      "A*{%.0f}@(%d,%d) + danger{%.0f} + stale{%.0f} + contest{%.0f} + hyst{%.0f} + deplete{%.0f}%s"..
-      "||danger:%s|stale:%s|contest:%s|hyst:%s|deplete:%s%s",
-      raw, e._mx or 0, e._my or 0, e._dang, e._stale, e._contest, e._hyst, e._dep, _shape_head,
-      _d_danger, _d_stale, _d_contest, _d_hyst, _d_deplete, _shape_detail)
+      "A*{%.0f}@(%d,%d) + danger{%.0f} + stale{%.0f} + contest{%.0f} + hyst{%.0f} + deplete{%.0f}%s%s"..
+      "||danger:%s|stale:%s|contest:%s|hyst:%s|deplete:%s%s%s",
+      raw, e._mx or 0, e._my or 0, e._dang, e._stale, e._contest, e._hyst, e._dep, _shape_head, _safe_token,
+      _d_danger, _d_stale, _d_contest, _d_hyst, _d_deplete, _shape_detail, _safe_detail)
   elseif p == 6 then
     local _d_hp = string.format(
       "ATTACK_PILL_HP_MULT[%d] = %.2f (hand-tuned table: 5/10/18/28%% for hp 1-4, then linear 40%%→100%% over hp 5-15)",
@@ -2803,9 +2823,17 @@ local function get_formula_inner(e)
       e._hp, _wound_detail, _ammo_str,
       _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot)
   elseif p == 7 then
-    local _d_threat = string.format(
-      "%.2f[threat_val] x %.1f[ATTACK_BASE_THREAT_WEIGHT] = %.0f",
-      e._tv, C.ATTACK_BASE_THREAT_WEIGHT, e._thr)
+    local _lgm_mult_b = e._lgm_mult or 1
+    local _d_threat
+    if _lgm_mult_b ~= 1 then
+      _d_threat = string.format(
+        "%.2f[threat_val] x %.1f[ATTACK_BASE_THREAT_WEIGHT] x %d (cautious mode) = %.0f",
+        e._tv, C.ATTACK_BASE_THREAT_WEIGHT, _lgm_mult_b, e._thr)
+    else
+      _d_threat = string.format(
+        "%.2f[threat_val] x %.1f[ATTACK_BASE_THREAT_WEIGHT] = %.0f",
+        e._tv, C.ATTACK_BASE_THREAT_WEIGHT, e._thr)
+    end
     local _d_stale = fmt_stale_detail(e._age, e._stale)
     f = string.format(
       "A*{%.0f}@(%d,%d) + base{%.0f} + threat{%.0f} + stale{%.0f}||base:%.0f[ATTACK_BASE_EXTRA_COST]|threat:%s|stale:%s",
@@ -2823,7 +2851,8 @@ local function get_formula_inner(e)
         e._reject, rem_tok, e._mx or 0, e._my or 0,
         e._reject, rem_tok)
     else
-      local _cpill_danger_score = e._dv * C.CAPTURE_PILL_DANGER_SCALE
+      local _lgm_mult_c = e._lgm_mult or 1
+      local _cpill_danger_score = e._dv * C.CAPTURE_PILL_DANGER_SCALE * _lgm_mult_c
       local _intcpt = e._intcpt or 0
       -- Always-on intcpt term (matches attack_pill's formula display
       -- pattern at line 2795).  Empty when 0 was confusing — looked
@@ -2832,11 +2861,14 @@ local function get_formula_inner(e)
       local intcpt_det = _intcpt > 0
         and string.format("|intcpt:%.0f (enemy can beat us to pill)", _intcpt)
         or  "|intcpt:0 (no enemy tank within INTERCEPT_MAX_RANGE that can beat us)"
+      local _lgm_mult_str = (_lgm_mult_c ~= 1)
+        and string.format(" × %d (cautious mode)", _lgm_mult_c) or ""
+      local _lgm_mult_det = ""
       f = string.format(
-        "base{%d} + dist{%.1f}@(%d,%d) + danger{%.1f} + intcpt{%.0f}||dist:%.0f^1.5 × %.3f[DIST_SCALE] = %.1f|danger:%.1f × %.3f[DANGER_SCALE] = %.1f%s",
+        "base{%d} + dist{%.1f}@(%d,%d) + danger{%.1f} + intcpt{%.0f}||dist:%.0f^1.5 × %.3f[DIST_SCALE] = %.1f|danger:%.1f × %.3f[DANGER_SCALE]%s = %.1f%s%s",
         C.CAPTURE_PILL_BASE_COST, e._ds, e._mx or 0, e._my or 0, _cpill_danger_score, _intcpt,
         raw, C.CAPTURE_PILL_DIST_SCALE, e._ds,
-        e._dv, C.CAPTURE_PILL_DANGER_SCALE, _cpill_danger_score, intcpt_det)
+        e._dv, C.CAPTURE_PILL_DANGER_SCALE, _lgm_mult_str, _cpill_danger_score, _lgm_mult_det, intcpt_det)
     end
   else
     f = string.format("A*{%.0f}@(%d,%d) + stale{%.0f}||stale:%s",
@@ -3110,7 +3142,12 @@ function M.step_eval_queue(state, world, info)
     if pool_idx == 1 then
       -- Refuel: uses its own scoring (danger + staleness + contested + hysteresis + depletion)
       local danger_val = threat.at(obj.mx, obj.my)
-      local danger_cost = danger_val * C.REFUEL_DANGER_WEIGHT
+      -- Cautious-mode danger multiplier (see init.lua state.cautious_mode
+      -- and constants.lua CAUTIOUS_MODE_MULT).  When the bot is
+      -- in cautious mode, danger terms get pumped so exposure costs
+      -- much more — biases hard toward safer refuel candidates.
+      local _lgm_mult = state.cautious_mode and C.CAUTIOUS_MODE_MULT or 1
+      local danger_cost = danger_val * C.REFUEL_DANGER_WEIGHT * _lgm_mult
 
       -- Depletion penalty: penalize bases that can't get us above LOW thresholds.
       -- need_* anchored at LOW (not TANK_FULL) so supply_ratio=1 once the base
@@ -3164,6 +3201,13 @@ function M.step_eval_queue(state, world, info)
                ") -", C.REFUEL_SWITCH_THRESHOLD) end
       end
       local score = raw_cost + danger_cost + stale_cost + contested_cost + hysteresis_cost + depletion_cost
+      -- Safe-refuel discount: when this base sits in zero-danger territory
+      -- (no pill / no tank threat), trim the cost so it wins ties against
+      -- bases with even mild exposure.  Compounds with everything above.
+      local _safe_refuel = (danger_val == 0)
+      if _safe_refuel then
+        score = score * C.REFUEL_NO_DANGER_DISCOUNT
+      end
 
       -- Ally-claimed penalty (refuel-specific small value).  Live look
       -- up so the per-target cost reflects ally claims regardless of
@@ -3209,6 +3253,8 @@ function M.step_eval_queue(state, world, info)
         _dv=danger_val, _dang=danger_cost, _age=_p1_age,
         _stale=stale_cost, _contest=contested_cost,
         _hyst=hysteresis_cost, _ratio=supply_ratio, _dep=depletion_cost,
+        _lgm_mult = _lgm_mult,
+        _safe_refuel = _safe_refuel or nil,
         ally_claimed_pen = _p1_ac_pen > 0 and _p1_ac_pen or nil,
         ally_claimed_by  = _p1_ac_by,
       }
@@ -3229,10 +3275,12 @@ function M.step_eval_queue(state, world, info)
       end
       -- Attack_base extra costs (same as finalization path)
       local base_extra, threat_cost, _threat_val = 0, 0, 0
+      local _p7_lgm_mult = 1
       if pool_idx == 7 then
         base_extra  = C.ATTACK_BASE_EXTRA_COST
         _threat_val = threat.at(obj.mx, obj.my)
-        threat_cost = _threat_val * C.ATTACK_BASE_THREAT_WEIGHT
+        _p7_lgm_mult = state.cautious_mode and C.CAUTIOUS_MODE_MULT or 1
+        threat_cost = _threat_val * C.ATTACK_BASE_THREAT_WEIGHT * _p7_lgm_mult
       end
       -- HP multiplier for attack_pill: weaker pills scale the entire cost
       -- down.  Lookup table (see ATTACK_PILL_HP_MULT at module top) — knee
@@ -3643,8 +3691,9 @@ function M.step_eval_queue(state, world, info)
       -- blows the cost up to ~297000 and falsifies the whole formula.
       local _cpill_dist_score, _cpill_danger_val, _cpill_intcpt = 0, 0, 0
       local _cpill_dist_raw = raw_cost
+      local _cpill_lgm_mult = 1
       if pool_idx == 4 then
-        c, _cpill_dist_raw, _cpill_dist_score, _cpill_danger_val, _cpill_intcpt =
+        c, _cpill_dist_raw, _cpill_dist_score, _cpill_danger_val, _cpill_intcpt, _cpill_lgm_mult =
           compute_pool4_cost(state, world, info, obj, tmx, tmy)
         -- Pool 4 skipped the smart_cost block (see above), so backfill
         -- raw_cost from compute_pool4_cost's distance — keeps the panel
@@ -3763,10 +3812,12 @@ function M.step_eval_queue(state, world, info)
         entry._commit_mult=_commit_mult
       elseif pool_idx == 7 then
         entry._base=base_extra; entry._tv=_threat_val; entry._thr=threat_cost
+        entry._lgm_mult=_p7_lgm_mult
         entry._stale=stale_cost; entry._age=_gen_age
       elseif pool_idx == 4 then
         entry._ds=_cpill_dist_score; entry._dv=_cpill_danger_val
         entry._intcpt=_cpill_intcpt
+        entry._lgm_mult=_cpill_lgm_mult
       else
         entry._stale=stale_cost; entry._age=_gen_age
       end
@@ -5782,36 +5833,15 @@ function M.pick_goal(state, world, info, quiet)
       -- Fall through to exploration (if enabled)
     else
       local g = { kind = cg.kind, mx = cg.mx, my = cg.my, wx = cg.wx, wy = cg.wy }
-      -- For pill attacks via command, plan the best approach angle
+      -- For pill attacks via command, run through plan_position to
+      -- compute standoff + approach point properly.
       if cg.kind == "attack_pill" then
-        local pk   = U.mkey(cg.mx, cg.my)
-        local pill = nil
-        pill = attack.find_pill_at(world, cg.mx, cg.my)
-        if pill then
-          local smx, smy = attack.get_standoff(world, info, pk, pill, state)
-          local plan = state.pill_attack_plan
-          g.standoff_mx = smx; g.standoff_my = smy
-          g.substate = smx and "approach" or "plan"
-          g.wall_shield = plan and plan.wall_shield or false
-          g.wall_mx = plan and plan.wall_mx or nil
-          g.wall_my = plan and plan.wall_my or nil
-          g.prebuild_mx = plan and plan.prebuild_mx or nil
-          g.prebuild_my = plan and plan.prebuild_my or nil
-        end
+        g.substate = "plan_position"
+        g.target_id = cg.id
       elseif cg.kind == "pill_place" then
         -- Pill placement command: set substate if not already set
         if not g.substate then
           g.substate = "select_pill"
-        end
-      elseif cg.kind == "attack_pill" then
-        local pill = nil
-        pill = attack.find_pill_at(world, cg.mx, cg.my)
-        if pill then
-          -- Use normal standoff planner (no wall-shield) at BPC_STANDOFF distance
-          -- Pass orbit_radius so the planner scores terrain on the orbit arc
-          local smx, smy = attack.pick_standoff(world, info, pill, state, C.BPC_STANDOFF, C.BPC_STANDOFF)
-          g.standoff_mx = smx; g.standoff_my = smy
-          g.substate = smx and "approach" or "approach"
         end
       end
       return g

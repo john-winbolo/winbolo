@@ -2703,6 +2703,20 @@ function M.update_attack_substate(goal, state, world, info)
         local smx, smy = M.pick_standoff(world, info, pill, state)
         goal.standoff_mx = smx
         goal.standoff_my = smy
+        if smx then
+          goal.standoff_fx = smx + 0.5
+          goal.standoff_fy = smy + 0.5
+          local dx = goal.standoff_fx - (pmx + 0.5)
+          local dy = goal.standoff_fy - (pmy + 0.5)
+          local d = math.sqrt(dx * dx + dy * dy)
+          if d > 0.01 then
+            local ux, uy = dx / d, dy / d
+            goal.approach_fx = goal.standoff_fx + ux * C.ATTACK_APPROACH_OFFSET
+            goal.approach_fy = goal.standoff_fy + uy * C.ATTACK_APPROACH_OFFSET
+            goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
+            goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
+          end
+        end
         -- Fallback path: no shield scan needed (no winner from greens).
         -- Pair scan_spots assignment with the end of this branch so the
         -- block is idempotent under budget abort, same as the if-best
@@ -2887,6 +2901,12 @@ function M.update_attack_substate(goal, state, world, info)
                 goal.standoff_mx, goal.standoff_my,
                 goal.standoff_fx or goal.standoff_mx + 0.5,
                 goal.standoff_fy or goal.standoff_my + 0.5))
+          print2(string.format("PP_TO_APPROACH standoff=(%d,%d) precise=(%.1f,%.1f) approach=(%.1f,%.1f) deg=%s pill=(%d,%d)",
+                goal.standoff_mx, goal.standoff_my,
+                goal.standoff_fx or goal.standoff_mx + 0.5,
+                goal.standoff_fy or goal.standoff_my + 0.5,
+                goal.approach_fx or -1, goal.approach_fy or -1,
+                tostring(goal._chosen_deg), goal.mx, goal.my))
         end
       end
     end
@@ -2964,6 +2984,8 @@ function M.update_attack_substate(goal, state, world, info)
       if reason then
         print(string.format(TAG ..
           " SANITY: shot path blocked (%s) in %s — replanning", reason, sub))
+        print2(string.format("SANITY_REPLAN sub=%s reason=%s standoff=(%.1f,%.1f) pill=(%d,%d)",
+          sub, reason, goal.standoff_fx or -1, goal.standoff_fy or -1, goal.mx, goal.my))
         goal.substate                 = "plan_position"
         goal.scan_spots               = nil
         goal._shield_scan             = nil
@@ -3002,13 +3024,21 @@ function M.update_attack_substate(goal, state, world, info)
 
       -- Reach the approach point (precise float, 1.5 tiles behind standoff).
       -- Tolerance: 64 wu (1/4 tile) AND speed <= 4.
-      local afx = goal.approach_fx or (goal.approach_mx and (goal.approach_mx + 0.5))
-                                    or (goal.standoff_mx and (goal.standoff_mx + 0.5))
-      local afy = goal.approach_fy or (goal.approach_my and (goal.approach_my + 0.5))
-                                    or (goal.standoff_my and (goal.standoff_my + 0.5))
+      if not goal.approach_fx and not goal.approach_mx then
+        error(string.format("approach entered with no setup point! standoff=(%s,%s) pill=(%d,%d) deg=%s",
+          tostring(goal.standoff_mx), tostring(goal.standoff_my), pmx, pmy, tostring(goal._chosen_deg)))
+      end
+      local afx = goal.approach_fx or (goal.approach_mx + 0.5)
+      local afy = goal.approach_fy or (goal.approach_my + 0.5)
       local awx = math.floor(afx * 256 + 0.5)
       local awy = math.floor(afy * 256 + 0.5)
       local adist = U.wdist(info.tankx, info.tanky, awx, awy)
+      if now % 25 == 0 then
+        print2(string.format("APPROACH_TICK t=%d adist=%d tank=(%d,%d) approach_wu=(%d,%d) standoff=(%.1f,%.1f) last_prog=%d last_dist=%s",
+          now, adist, info.tankx, info.tanky, awx, awy,
+          goal.standoff_fx or -1, goal.standoff_fy or -1,
+          goal._approach_last_progress or -1, tostring(goal._approach_last_dist)))
+      end
       -- Closing the distance counts as progress and resets the timer.
       if goal._approach_last_dist == nil or adist < goal._approach_last_dist - 4 then
         goal._approach_last_progress = now
@@ -3028,6 +3058,8 @@ function M.update_attack_substate(goal, state, world, info)
         print(string.format(TAG ..
           " ATTACK: approach stalled (no progress in %d ticks, dist=%d) — abandoning attack_pill",
           APPROACH_STALL_GIVE_UP_TICKS, adist))
+        print2(string.format("APPROACH_ABANDON dist=%d stall=%d pill=(%d,%d)",
+          adist, APPROACH_STALL_GIVE_UP_TICKS, pmx, pmy))
         clear_attack_goal(state, "approach stalled")
         return
       end
@@ -3183,6 +3215,8 @@ function M.update_attack_substate(goal, state, world, info)
           end
           print(string.format(TAG .. " ATTACK: approach stalled (no progress in %d ticks, dist=%d), replanning",
                 APPROACH_GIVE_UP_TICKS, adist))
+          print2(string.format("APPROACH_TIMEOUT dist=%d timeout=%d pill=(%d,%d) deg=%s",
+            adist, APPROACH_GIVE_UP_TICKS, pmx, pmy, tostring(goal._chosen_deg)))
           goal.substate = "plan_position"
           goal.scan_spots = nil
           goal._shield_scan = nil
