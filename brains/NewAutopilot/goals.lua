@@ -4262,7 +4262,7 @@ function M.finalize_pools(state, world, info)
   -- kill_lgm: pool 13 was just wiped by `state.pool_cache = {}` above.
   -- Re-inject so an LGM-sighting urgent_replan doesn't miss it and
   -- pick_goal can see kill_lgm as a candidate this tick.
-  M.refresh_kill_lgm(state, info)
+  M.refresh_kill_lgm(state, info, world)
 end
 
 -- =========================================================================
@@ -4310,7 +4310,7 @@ function M.update_pool_cache(state, world, info)
     end
   end
 
-  M.refresh_kill_lgm(state, info)
+  M.refresh_kill_lgm(state, info, world)
 end
 
 -- =========================================================================
@@ -4326,7 +4326,7 @@ end
 -- visible, clears pool_cache[13] + any stale 13:* cost_cache entries so
 -- a ghost target doesn't linger after the LGM goes back into its tank.
 -- =========================================================================
-function M.refresh_kill_lgm(state, info)
+function M.refresh_kill_lgm(state, info, world)
   if not state.pool_cache then return end
   local elgms = state.perc and state.perc.enemy_lgms
   if elgms and #elgms > 0 and (info.shells or 0) > 0 then
