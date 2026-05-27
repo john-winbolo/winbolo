@@ -1563,8 +1563,6 @@ local function tank_combat_steer(state, world, info, goal)
       if info.speed > 0 then keys = keys | KEY_SLOWER end
     end
 
-    -- No shooting while closing — wait until in range (engage substate)
-
     log.reason("steer", { mode = "tank_combat_close",
       dist = dist_tiles, nav_mx = nav_mx, nav_my = nav_my, sub = "close" })
     return keys, taps
