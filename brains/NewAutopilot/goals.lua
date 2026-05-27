@@ -2541,12 +2541,20 @@ function M.build_eval_queue(state, world, info)
     end
   end
 
-  -- Pool 7: attack_base (only if enough shells)
+  -- Pool 7: attack_base (only if enough shells, but always keep
+  -- the current target so a mid-attack base doesn't vanish from the
+  -- eval queue just because shells dipped to SHELLS_LOW)
   local has_hbases = not perc or (perc.hostile_base_count > 0)
-  if has_hbases and has_shells then
+  if has_hbases then
+    local cur_is_attack_base = state.goal and state.goal.kind == "attack_base"
+    local cur_mx = cur_is_attack_base and state.goal.mx or nil
+    local cur_my = cur_is_attack_base and state.goal.my or nil
     for id, obj in pairs(world.bases) do
       if filter_attack_base(obj, state) then
-        queue[#queue + 1] = { pool = 7, id = id, obj = obj }
+        local is_current = (cur_mx and obj.mx == cur_mx and obj.my == cur_my)
+        if has_shells or is_current then
+          queue[#queue + 1] = { pool = 7, id = id, obj = obj }
+        end
       end
     end
   end
@@ -4478,6 +4486,68 @@ function M.refresh_kill_lgm(state, info)
           aim_bonus, crossfire, boat_mult, tank_tile_threat, cost,
           shoot_mx, shoot_my, lgm.dist or 0, aim_diff, info.shells or 0,
           tostring(lgm.near_tank_idnum))
+      end
+
+      -- Repair-mission detection: if the LGM is walking a locked
+      -- straight line toward a damaged hostile pill, and we can't get
+      -- in shooting range of that pill before the LGM arrives, the
+      -- kill is futile — inflate the cost heavily.
+      if lgm.dest_locked and lgm.v_ema_x and lgm.v_ema_y then
+        local speed_wu = math.sqrt(lgm.v_ema_x * lgm.v_ema_x + lgm.v_ema_y * lgm.v_ema_y)
+        if speed_wu > 0.5 then
+          -- Project trajectory and check each tile for a damaged pill.
+          local repair_pill = nil
+          local lgm_arrive_ticks = nil
+          local steps = math.min(40, math.ceil(30 * 256 / (speed_wu + 0.01)))
+          for s = 1, steps do
+            local px = lgm.wx + lgm.v_ema_x * s * 10
+            local py = lgm.wy + lgm.v_ema_y * s * 10
+            local pmx = math.floor(px) >> 8
+            local pmy = math.floor(py) >> 8
+            if not U.in_map(pmx, pmy) then break end
+            local plist = world.pill_at and world.pill_at[pmy * 256 + pmx]
+            if plist then
+              for _, e in ipairs(plist) do
+                if e.pill and e.pill.health and e.pill.health > 0
+                   and e.pill.health < C.PILLS_MAX_HEALTH
+                   and (e.pill.owner == "hostile" or e.pill.owner == "neutral") then
+                  -- Check if the trajectory aims near the pill center
+                  local pcx = (pmx << 8) | 128
+                  local pcy = (pmy << 8) | 128
+                  local err = math.abs(px - pcx) + math.abs(py - pcy)
+                  if err < 192 then  -- ~0.75 tile tolerance
+                    repair_pill = e.pill
+                    local dist_to_pill = math.sqrt(
+                      (lgm.wx - pcx) * (lgm.wx - pcx) +
+                      (lgm.wy - pcy) * (lgm.wy - pcy))
+                    lgm_arrive_ticks = math.ceil(dist_to_pill / speed_wu)
+                    break
+                  end
+                end
+              end
+              if repair_pill then break end
+            end
+          end
+          if repair_pill and lgm_arrive_ticks then
+            -- Can we get in range of that pill before the LGM arrives?
+            local pill_mx = repair_pill.mx
+            local pill_my = repair_pill.my
+            local shoot_range = C.KILL_LGM_SHOOT_RANGE or 8
+            local our_cost = cpf.smart_cost_dij_only(KIND_NORMAL, pill_mx, pill_my, boat)
+            -- Rough travel time: dijkstra cost ≈ ticks at speed ~16 wu/tick
+            local our_ticks = our_cost and (our_cost * 256 / 16) or math.huge
+            if our_ticks > lgm_arrive_ticks then
+              -- We can't intercept — inflate cost
+              local repair_penalty = 500
+              cost = cost + repair_penalty
+              formula_str = formula_str ..
+                string.format(" +REPAIR_FUTILE{%d}(pill@(%d,%d) hp=%d lgm_arr=%dt our=%dt)",
+                  repair_penalty, pill_mx, pill_my,
+                  repair_pill.health, lgm_arrive_ticks,
+                  math.floor(our_ticks))
+            end
+          end
+        end
       end
 
       cand_rows[#cand_rows + 1] = {

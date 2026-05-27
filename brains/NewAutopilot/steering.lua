@@ -2371,7 +2371,11 @@ function M.steer(state, world, info, goal)
   -- No goal or idle: brake to a stop.
   -- When attack_in_range, skip the navigation block and fall through to
   -- the engage aim/shoot block below.
-  if move_dir == nil and not attack_in_range then
+  -- Attack base: when we've arrived adjacent to the base (move_dir nil),
+  -- don't return early — fall through to the attack_base shooting block.
+  local attack_base_adjacent = (goal.kind == "attack_base" and move_dir == nil
+    and U.mdist(tmx, tmy, goal.mx, goal.my) <= 2)
+  if move_dir == nil and not attack_in_range and not attack_base_adjacent then
     if info.speed > 0 then
       keys = keys | KEY_SLOWER
     end
