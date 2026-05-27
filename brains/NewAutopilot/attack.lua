@@ -716,25 +716,30 @@ local function score_standoff(world, cx, cy, pill, info, orbit_radius)
   local influence_pen = -(cpf.influence_at(cx, cy) or 0)
                         * C.ATTACK_STANDOFF_INFLUENCE_WEIGHT
 
-  -- Friendly pill as barrier bonus (aIndy): if a friendly pill is between us
-  -- and the target, it absorbs enemy fire — discount the position.
+  -- Friendly pill interaction: a friendly pill BETWEEN us and the target
+  -- (closer to the target) absorbs enemy fire — bonus. A friendly pill
+  -- BEHIND us (further from the target, on the shot path outward) blocks
+  -- our shells — penalty like a wall.
   local fpill_barrier_bonus = 0
+  local fpill_behind_pen = 0
   for _, fp in pairs(world.pills) do
     if fp.owner == "friendly" and fp.health > 0 then
-      -- Check if friendly pill is roughly on the line target→standoff
       local d_fp_target = U.mdist(fp.mx, fp.my, pill.mx, pill.my)
       local d_fp_us = U.mdist(fp.mx, fp.my, cx, cy)
       local d_total = U.mdist(cx, cy, pill.mx, pill.my)
-      -- Friendly pill is "between" if both distances are less than total
       if d_fp_target < d_total and d_fp_us < d_total and d_fp_target >= 1 then
+        -- Between us and the target: shield bonus
         fpill_barrier_bonus = fpill_barrier_bonus + C.FPILL_BARRIER_BONUS
+      elseif d_fp_target > d_total and d_fp_us <= 3 then
+        -- Behind us (further from target), close enough to block shots
+        fpill_behind_pen = fpill_behind_pen + 200
       end
     end
   end
 
   return approach + water_pen + pushback_pen + crossfire + escape_cost + tree_pen
        + approach_exposure + orbit_pen + threat_pen + influence_pen
-       - fpill_barrier_bonus
+       + fpill_behind_pen - fpill_barrier_bonus
 end
 
 -- Enumerate candidate standoff positions around `pill` and pick the best scored one.

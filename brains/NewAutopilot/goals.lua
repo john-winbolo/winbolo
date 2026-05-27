@@ -1222,14 +1222,17 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
           cost = cost - aim_bonus
         end
 
-        -- Crossfire penalty: if enemy tank is near a hostile pill, we'll take pill fire too
+        -- Crossfire penalty: hostile pills near the enemy tank. Accumulates
+        -- across all pills in range and scales by anger — heated pills
+        -- fire instantly and are far deadlier than calm ones.
         for _, pt in ipairs(perc.pill_threats or {}) do
-          if U.mdist(et.mx, et.my, pt.pill.mx, pt.pill.my) <= C.TANK_COMBAT_NEAR_PILL_RANGE then
-            crossfire = C.TANK_COMBAT_NEAR_PILL_PENALTY
-            cost = cost + crossfire
-            break
+          local pd = U.mdist(et.mx, et.my, pt.pill.mx, pt.pill.my)
+          if pd <= C.TANK_COMBAT_NEAR_PILL_RANGE then
+            local anger_scale = math.max(0.5, (pt.anger or 0) + 0.5)
+            crossfire = crossfire + C.TANK_COMBAT_NEAR_PILL_PENALTY * anger_scale
           end
         end
+        cost = cost + crossfire
 
         -- Apply boat vulnerability multiplier (computed above both branches)
         if boat_mult < 1.0 then
@@ -4389,12 +4392,15 @@ function M.refresh_kill_lgm(state, info)
         aim_bonus = math.min(C.TANK_COMBAT_AIM_BONUS, aim_cap)
       end
 
-      -- Crossfire penalty: LGM near a hostile pill (we'll take pill fire).
+      -- Crossfire penalty: hostile pills near the LGM. Accumulates
+      -- across all pills in range and scales by anger — a heated pill
+      -- (anger ~1.0) is much deadlier than a calm one.
       local crossfire = 0
       for _, pt in ipairs(perc.pill_threats or {}) do
-        if U.mdist(lgm.mx, lgm.my, pt.pill.mx, pt.pill.my) <= C.TANK_COMBAT_NEAR_PILL_RANGE then
-          crossfire = C.TANK_COMBAT_NEAR_PILL_PENALTY
-          break
+        local pd = U.mdist(lgm.mx, lgm.my, pt.pill.mx, pt.pill.my)
+        if pd <= C.TANK_COMBAT_NEAR_PILL_RANGE then
+          local anger_scale = math.max(0.5, (pt.anger or 0) + 0.5)
+          crossfire = crossfire + C.TANK_COMBAT_NEAR_PILL_PENALTY * anger_scale
         end
       end
 
@@ -5237,6 +5243,25 @@ local function goal_selection(state, world, info, quiet)
           _engage_break_lock = entry._engage_break_lock,
         }
         ::continue_pool::
+      end
+    end
+
+    -- ── Influence-based cost scaling ──
+    -- Goals in hostile territory (influence < -50) cost 2×; goals in
+    -- friendly territory (influence > 50) cost 0.5×. Skipped during
+    -- opening phase (territory not established yet).
+    if state.phase ~= "opening" then
+      for _, c in ipairs(pool) do
+        if c.goal and c.goal.mx and c.goal.my then
+          local inf = cpf.influence_at(c.goal.mx, c.goal.my) or 0
+          if inf < -50 then
+            c.cost = c.cost * 2.0
+            c._inf_mult = 2.0
+          elseif inf > 50 then
+            c.cost = c.cost * 0.5
+            c._inf_mult = 0.5
+          end
+        end
       end
     end
 

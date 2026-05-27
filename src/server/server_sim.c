@@ -2813,10 +2813,15 @@ void serverSimReturnToLobby(ServerSim *sim) {
      * which survives the reset; clientFlags is sim-side only, so it
      * has to be snapshotted here. */
     uint8_t savedClientFlags[MAX_TANKS];
+    char savedBotNames[MAX_TANKS][PLAYER_NAME_LEN];
     for (i = 0; i < MAX_TANKS; i++) {
         savedConnected[i] = sim->playerConnected[i];
         savedLobby[i] = sim->lobbyPlayers[i];
         savedClientFlags[i] = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
+        savedBotNames[i][0] = '\0';
+        if (sim->lobbyPlayers[i].isBot && sim->playerConnected[i]) {
+            playersGetPlayerName(&sim->sim.plyrs, (BYTE)i, savedBotNames[i], TRUE);
+        }
     }
 
     /* Full world reset — reloads map from cached data */
@@ -2850,9 +2855,17 @@ void serverSimReturnToLobby(ServerSim *sim) {
      * not the WBN session, and stay preserved across the reset. */
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
-        const char *name = transportUdpServerGetPlayerName(i);
-        const char *country = transportUdpServerGetClientCountryCode(i);
-        uint8_t clientType = transportUdpServerGetClientType(i);
+        const char *name = NULL;
+        const char *country = NULL;
+        uint8_t clientType = 0;
+        if (sim->lobbyPlayers[i].isBot) {
+            name = savedBotNames[i];
+            if (name[0] == '\0') name = "Bot";
+        } else {
+            name = transportUdpServerGetPlayerName(i);
+            country = transportUdpServerGetClientCountryCode(i);
+            clientType = transportUdpServerGetClientType(i);
+        }
         if (name == NULL) continue;
         char countryBuf[3] = "XX";
         if (country != NULL) {

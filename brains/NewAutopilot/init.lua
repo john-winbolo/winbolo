@@ -67,7 +67,7 @@ local ENABLE_LOGGING = false
 -- Used by stuck detection / urgent-replan gating downstream — file-scope
 -- so the loop bodies just do membership checks.
 local ATTACK_STATIONARY_SUBS = {
-  plan_position=true, position=true, aim=true, build_walls=true,
+  plan_position=true, position=true, aim=true, approach=true, build_walls=true,
   in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
   in_range_aim_finetune=true, shoot_pill=true, engage=true, curve_away=true,
   rush=true, disengage=true, gather_trees=true,
