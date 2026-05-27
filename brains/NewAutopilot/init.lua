@@ -63,6 +63,40 @@ local manual_keys = 0
 local AUTOSTART = true
 local ENABLE_LOGGING = false
 
+-- Shot-path safety check (init.lua version). Same logic as
+-- steering.lua's shot_path_clear. Blocks on walls, pillboxes,
+-- hostile bases. Forests and enemy tanks are OK.
+local function _shot_path_clear_init(info, world, target_wx, target_wy, target_mx, target_my)
+  local tiles = cpf.simulate_shot(info.tankx, info.tanky,
+                                  target_wx, target_wy,
+                                  cpf.SHOT_TANK, 0)
+  if not tiles then return true end
+  local origin_mx = info.tankx >> 8
+  local origin_my = info.tanky >> 8
+  for _, st in ipairs(tiles) do
+    if st.mx == target_mx and st.my == target_my then break end
+    if st.mx ~= origin_mx or st.my ~= origin_my then
+      local stt = U.ttype(st.mx, st.my)
+      if stt == C.T_BUILDING or stt == C.T_HALFBUILD then
+        return false
+      end
+      local plist = world.pill_at and world.pill_at[st.my * 256 + st.mx]
+      if plist then
+        for _, e in ipairs(plist) do
+          if e.pill and e.pill.health and e.pill.health > 0 then
+            return false
+          end
+        end
+      end
+      local bentry = world.base_at and world.base_at[st.my * 256 + st.mx]
+      if bentry and bentry.base and bentry.base.owner == "hostile" then
+        return false
+      end
+    end
+  end
+  return true
+end
+
 -- Hoisted lookup tables (don't realloc every tick of every Brain.think).
 -- Used by stuck detection / urgent-replan gating downstream — file-scope
 -- so the loop bodies just do membership checks.
@@ -3652,10 +3686,12 @@ function Brain.think(info)
     if perc and perc.enemy_tanks then
       for _, et in ipairs(perc.enemy_tanks) do
         if et.dist <= C.TANK_COMBAT_OPPORTUNISTIC_RANGE then
-          local aim_dir = U.aim_at(info.tankx, info.tanky,
-                                   U.m2w(et.mx), U.m2w(et.my))
+          local et_wx = U.m2w(et.mx)
+          local et_wy = U.m2w(et.my)
+          local aim_dir = U.aim_at(info.tankx, info.tanky, et_wx, et_wy)
           local aim_corr = U.adiff(info.direction, aim_dir)
-          if math.abs(aim_corr) <= C.TANK_COMBAT_OPPORTUNISTIC_AIM then
+          if math.abs(aim_corr) <= C.TANK_COMBAT_OPPORTUNISTIC_AIM
+             and _shot_path_clear_init(info, world, et_wx, et_wy, et.mx, et.my) then
             taps = taps | KEY_SHOOT
             log.event("opportunistic_tank_shot",
               string.format("at(%d,%d) dist=%d aim=%.0f",
@@ -3763,6 +3799,19 @@ function Brain.think(info)
                 if not (t.mx == origin_mx and t.my == origin_my) then
                   local tt = U.ttype(t.mx, t.my)
                   if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
+                    los_blocked = true; break
+                  end
+                  local plist = world.pill_at and world.pill_at[t.my * 256 + t.mx]
+                  if plist then
+                    for _, pe in ipairs(plist) do
+                      if pe.pill and pe.pill.health and pe.pill.health > 0 then
+                        los_blocked = true; break
+                      end
+                    end
+                    if los_blocked then break end
+                  end
+                  local bentry = world.base_at and world.base_at[t.my * 256 + t.mx]
+                  if bentry and bentry.base and bentry.base.owner == "hostile" then
                     los_blocked = true; break
                   end
                 end

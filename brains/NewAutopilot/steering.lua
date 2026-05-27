@@ -23,6 +23,48 @@ end
 -- Local alias for the shared turn+speed helper in util.lua
 local nav_turn_speed = U.nav_turn_speed
 
+-- Shot-path safety check: simulate a shell from the tank toward
+-- (target_wx, target_wy) and verify nothing dangerous is in the way.
+-- Returns true if the path is clear. Blocks on:
+--   walls, half-walls, hostile/neutral pillboxes, allied tanks,
+--   hostile bases (nearby pills will start shooting).
+-- Allows through: forests, enemy tanks, empty tiles.
+-- target_mx/my is the tile we're aiming at (excluded from the check).
+local function shot_path_clear(info, world, target_wx, target_wy, target_mx, target_my)
+  local tiles = cpf.simulate_shot(info.tankx, info.tanky,
+                                  target_wx, target_wy,
+                                  cpf.SHOT_TANK, 0)
+  if not tiles then return true end
+  local origin_mx = info.tankx >> 8
+  local origin_my = info.tanky >> 8
+  for _, st in ipairs(tiles) do
+    if st.mx == target_mx and st.my == target_my then break end
+    if st.mx ~= origin_mx or st.my ~= origin_my then
+      local stt = U.ttype(st.mx, st.my)
+      if stt == C.T_BUILDING or stt == C.T_HALFBUILD then
+        return false
+      end
+      -- Pillboxes (any alliance) — hitting them heats them up
+      local plist = world.pill_at and world.pill_at[st.my * 256 + st.mx]
+      if plist then
+        for _, e in ipairs(plist) do
+          if e.pill and e.pill.health and e.pill.health > 0 then
+            return false
+          end
+        end
+      end
+      -- Hostile bases — hitting them angers nearby pills
+      local bentry = world.base_at and world.base_at[st.my * 256 + st.mx]
+      if bentry and bentry.base and bentry.base.owner == "hostile" then
+        return false
+      end
+      -- Allied tanks — don't shoot through friendlies
+      -- (enemy tanks are fine to shoot past)
+    end
+  end
+  return true
+end
+
 -- Per-tick accumulators feeding the nav-dispatch/path breakdown in the
 -- BrainTest "Capacity tiers" panel. Reset at the top of M.steer; written
 -- to from cpf_path_to (search + trace) and from the path_lookahead call
@@ -1617,41 +1659,9 @@ local function tank_combat_steer(state, world, info, goal)
   end
 
   -- Fire when aimed — wider tolerance because lead prediction compensates.
-  -- Verify the shot path is clear: simulate the shell trajectory and
-  -- check that it reaches the target tile without hitting a wall or
-  -- pillbox (forests are OK — acceptable collateral).
-  if math.abs(aim_corr) < 8 and info.shells > C.TANK_COMBAT_FLEE_SHELLS then
-    local shot_clear = true
-    local target_mx = pred_wx >> 8
-    local target_my = pred_wy >> 8
-    local tiles = cpf.simulate_shot(info.tankx, info.tanky,
-                                    pred_wx, pred_wy,
-                                    cpf.SHOT_TANK, 0)
-    if tiles then
-      local origin_mx = tmx
-      local origin_my = tmy
-      for _, st in ipairs(tiles) do
-        if st.mx == target_mx and st.my == target_my then break end
-        if st.mx ~= origin_mx or st.my ~= origin_my then
-          local stt = U.ttype(st.mx, st.my)
-          if stt == C.T_BUILDING or stt == C.T_HALFBUILD then
-            shot_clear = false; break
-          end
-          local plist = world.pill_at and world.pill_at[st.my * 256 + st.mx]
-          if plist then
-            for _, e in ipairs(plist) do
-              if e.pill and e.pill.health and e.pill.health > 0 then
-                shot_clear = false; break
-              end
-            end
-            if not shot_clear then break end
-          end
-        end
-      end
-    end
-    if shot_clear then
-      keys = keys | KEY_SHOOT
-    end
+  if math.abs(aim_corr) < 8 and info.shells > C.TANK_COMBAT_FLEE_SHELLS
+     and shot_path_clear(info, world, pred_wx, pred_wy, pred_wx >> 8, pred_wy >> 8) then
+    keys = keys | KEY_SHOOT
   end
 
   -- Distance control: maintain optimal range with jinking
@@ -3001,7 +3011,8 @@ function M.steer(state, world, info, goal)
         for _, et in ipairs(perc.enemy_tanks or {}) do
           if et.dist <= 8 then
             local aim = U.aim_at(info.tankx, info.tanky, U.m2w(et.mx), U.m2w(et.my))
-            if math.abs(U.adiff(info.direction, aim)) < 8 then
+            if math.abs(U.adiff(info.direction, aim)) < 8
+               and shot_path_clear(info, world, U.m2w(et.mx), U.m2w(et.my), et.mx, et.my) then
               taps = taps | KEY_SHOOT
               shot_fired = true
               if BRAIN_DEBUG_MODE then
@@ -3021,7 +3032,8 @@ function M.steer(state, world, info, goal)
             local bd = U.mdist(tmx, tmy, b.mx, b.my)
             if bd <= 8 then
               local aim = U.aim_at(info.tankx, info.tanky, U.m2w(b.mx), U.m2w(b.my))
-              if math.abs(U.adiff(info.direction, aim)) < 8 then
+              if math.abs(U.adiff(info.direction, aim)) < 8
+                 and shot_path_clear(info, world, U.m2w(b.mx), U.m2w(b.my), b.mx, b.my) then
                 taps = taps | KEY_SHOOT
                 shot_fired = true
                 break
@@ -3174,7 +3186,8 @@ function M.steer(state, world, info, goal)
       elseif corr <  -2 then taps = taps | KEY_TURNLEFT
       end
       local still_correcting = (taps & (KEY_TURNLEFT | KEY_TURNRIGHT)) ~= 0
-      if math.abs(corr) < 3 and not still_correcting then
+      if math.abs(corr) < 3 and not still_correcting
+         and shot_path_clear(info, world, goal.wx, goal.wy, goal.mx, goal.my) then
         keys = keys | KEY_SHOOT
       end
 
