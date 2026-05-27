@@ -1701,6 +1701,71 @@ function Brain.think(info)
   opt(string.format("  overlay rebuild done %.2f ms (dirty=%s)",
     (t_overlay_early - t_load_danger) / 1000, tostring(not threat.overlay_dirty)))
 
+  -- Ally avoidance: stamp a cost penalty around the pill target of
+  -- allied bots that are mid-pill-take so we don't drive through
+  -- their combat zone. Uses ally_state goal/substate + target mx/my.
+  -- Also stamps a 2-tile-wide firing lane from the ally tank to the
+  -- pill (excluding approach phase where the tank could be far away).
+  local ALLY_COMBAT_SUBS = {
+    aim=true, charge=true, engage=true, shoot_pill=true, swerve=true,
+    in_range_position=true, in_range_aim=true, in_range_aim_pre=true,
+    in_range_aim_finetune=true, build_walls=true, detree=true,
+  }
+  local ALLY_AVOID_RADIUS = 3
+  local ALLY_AVOID_COST   = 200
+  do
+    local now_aa = state.tick or 0
+    for ally_pn, slot in ally_state.iter_active(now_aa, 1750) do
+      if ally_pn ~= info.player_number then
+        local ai = slot.info
+        if ai.goal == "attack_pill" and ALLY_COMBAT_SUBS[ai.sub] then
+          local pmx = tonumber(ai.mx)
+          local pmy = tonumber(ai.my)
+          if pmx and pmy then
+            -- Stamp pill target radius
+            for dy = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
+              for dx = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
+                local ax = pmx + dx
+                local ay = pmy + dy
+                if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
+                  cpf.set_overlay(ax, ay, ALLY_AVOID_COST)
+                  if BRAIN_DEBUG_MODE and viz.is_on("ally_state_overlay") then
+                    viz.rect("ally_state_overlay",
+                      ax, ay, ax + 1, ay + 1, 255, 165, 0, 60)
+                  end
+                end
+              end
+            end
+            -- Stamp firing lane: 2-tile-wide line from ally tank to
+            -- pill target. Uses broadcast tx/ty for ally position.
+            local atmx = tonumber(ai.tx)
+            local atmy = tonumber(ai.ty)
+            if atmx and atmy and U.mdist(atmx, atmy, pmx, pmy) <= 12 then
+              local ldx = pmy - atmy
+              local ldy = -(pmx - atmx)
+              local llen = math.max(1, math.sqrt(ldx * ldx + ldy * ldy))
+              local pnx, pny = ldx / llen, ldy / llen
+              U.line_walk(atmx + 0.5, atmy + 0.5, pmx + 0.5, pmy + 0.5,
+                function(lx, ly)
+                  for w = -1, 1 do
+                    local wx = U.mclamp(math.floor(lx + pnx * w + 0.5))
+                    local wy = U.mclamp(math.floor(ly + pny * w + 0.5))
+                    if wx >= 0 and wx <= 255 and wy >= 0 and wy <= 255 then
+                      cpf.set_overlay(wx, wy, ALLY_AVOID_COST)
+                      if BRAIN_DEBUG_MODE and viz.is_on("ally_state_overlay") then
+                        viz.rect("ally_state_overlay",
+                          wx, wy, wx + 1, wy + 1, 255, 165, 0, 60)
+                      end
+                    end
+                  end
+                end)
+            end
+          end
+        end
+      end
+    end
+  end
+
   -- Push per-pill contribution maps to the host (BrainTest reads
   -- this for the shift-2 cycle-pill-overlay). Bindings no-op
   -- under non-host runtimes (game client, headless server).
@@ -5073,6 +5138,8 @@ function Brain.think(info)
         bsi.lgm_back = "1"
       end
     end
+    bsi.tx = tostring(info.tankx >> 8)
+    bsi.ty = tostring(info.tanky >> 8)
     if state.goal and state.goal.kind and state.goal.kind ~= "none" then
       bsi.goal = state.goal.kind
       if state.goal.substate and state.goal.substate ~= "" then
