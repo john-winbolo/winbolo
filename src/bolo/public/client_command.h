@@ -289,8 +289,14 @@ typedef struct {
     char token[65];
 } CmdWbnReauth;
 
+/* ClientCommand — variant tag + payload that travels client→server.
+ *
+ * cmdSeq: per-command sequence number assigned by the client; used
+ * for reject correlation and inbound dedupe on the reliable bus.
+ * Zero from callers that do not yet maintain a counter. */
 typedef struct ClientCommand {
     ClientCommandType type;
+    uint32_t cmdSeq;
     union {
         CmdTeamSet           teamSet;
         CmdReady             ready;

@@ -49,8 +49,8 @@
  *   - cmd->type out of range or unsupported (e.g. CMD_NONE)
  *   - bufCap < required size
  * The header is packed with the matching PACKET_* type and
- * sequence 0. Callers that need a real outbound sequence will
- * replace this entry point. */
+ * sequence 0; the per-command sequence rides in a 4-byte cmdSeq
+ * slot immediately after the header (filled from cmd->cmdSeq). */
 bool commandCodecEncode(const ClientCommand *cmd,
                         uint8_t *buf, size_t bufCap, size_t *outLen);
 
@@ -58,12 +58,12 @@ bool commandCodecEncode(const ClientCommand *cmd,
  * byte at buf[2], looks up the matching decoder, fills *cmd.
  * Returns false on:
  *   - buf == NULL or cmd == NULL
- *   - len < PACKET_HEADER_SIZE
+ *   - len shorter than header + cmdSeq slot
  *   - buf[0..1] != BOLO_NEW_MAGIC_0/_1
  *   - packet type isn't backed by a ClientCommand variant
  *   - decoder's bounds check fails
- * The header is not surfaced; the cmd struct contains only the
- * variant tag + payload. */
+ * The cmdSeq slot at offset PACKET_HEADER_SIZE is read into
+ * cmd->cmdSeq; the header itself is not surfaced. */
 bool commandCodecDecode(const uint8_t *buf, size_t len,
                         ClientCommand *cmd);
 

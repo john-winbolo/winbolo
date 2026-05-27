@@ -39,7 +39,12 @@
 
 #include "client_command.h"
 #include "netpacks.h"
-#include "transport_udp_internal.h"  /* packHeader, WBN_JOIN_KEY_WIRE_LEN */
+#include "transport_udp_internal.h"  /* packHeader, packU32, unpackU32, WBN_JOIN_KEY_WIRE_LEN */
+
+/* Command packets reserve a 4-byte cmdSeq immediately after the
+ * standard 8-byte header. Per-variant encoders/decoders read and
+ * write the variant body starting at this offset. */
+#define CMD_PACKET_BODY_OFFSET (PACKET_HEADER_SIZE + 4)
 
 /* ================================================================
  * Per-variant encoder + decoder pairs, in ClientCommandType order.
@@ -54,21 +59,21 @@
 static bool commandEncodeTeamSet(const ClientCommand *cmd,
                                  uint8_t *buf, size_t bufCap,
                                  size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + 2;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 2;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_TEAM_SET, 0);
-    buf[PACKET_HEADER_SIZE]     = cmd->u.teamSet.slot;
-    buf[PACKET_HEADER_SIZE + 1] = cmd->u.teamSet.team;
+    buf[CMD_PACKET_BODY_OFFSET]     = cmd->u.teamSet.slot;
+    buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.teamSet.team;
     *outLen = needed;
     return true;
 }
 
 static bool commandDecodeTeamSet(const uint8_t *buf, size_t len,
                                  ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 2) return false;
+    if (len < CMD_PACKET_BODY_OFFSET + 2) return false;
     cmd->type = CMD_TEAM_SET;
-    cmd->u.teamSet.slot = buf[PACKET_HEADER_SIZE];
-    cmd->u.teamSet.team = buf[PACKET_HEADER_SIZE + 1];
+    cmd->u.teamSet.slot = buf[CMD_PACKET_BODY_OFFSET];
+    cmd->u.teamSet.team = buf[CMD_PACKET_BODY_OFFSET + 1];
     return true;
 }
 
@@ -77,20 +82,20 @@ static bool commandDecodeTeamSet(const uint8_t *buf, size_t len,
 static bool commandEncodeReady(const ClientCommand *cmd,
                                uint8_t *buf, size_t bufCap,
                                size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + 2;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 2;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_READY, 0);
-    buf[PACKET_HEADER_SIZE]     = 0;  /* legacy playerNum; dispatcher uses senderSlot */
-    buf[PACKET_HEADER_SIZE + 1] = cmd->u.ready.ready ? 1 : 0;
+    buf[CMD_PACKET_BODY_OFFSET]     = 0;  /* legacy playerNum; dispatcher uses senderSlot */
+    buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.ready.ready ? 1 : 0;
     *outLen = needed;
     return true;
 }
 
 static bool commandDecodeReady(const uint8_t *buf, size_t len,
                                ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 2) return false;
+    if (len < CMD_PACKET_BODY_OFFSET + 2) return false;
     cmd->type = CMD_READY;
-    cmd->u.ready.ready = buf[PACKET_HEADER_SIZE + 1] != 0;
+    cmd->u.ready.ready = buf[CMD_PACKET_BODY_OFFSET + 1] != 0;
     return true;
 }
 
@@ -102,15 +107,15 @@ static bool commandEncodeLobbyBotConfig(const ClientCommand *cmd,
                                         size_t *outLen) {
     uint8_t nameLen = cmd->u.lobbyBotConfig.nameLen;
     if (nameLen >= PACKET_MAX_PLAYER_NAME) nameLen = PACKET_MAX_PLAYER_NAME - 1;
-    const size_t needed = PACKET_HEADER_SIZE + 4 + nameLen;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 4 + nameLen;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_BOT_CONFIG, 0);
-    buf[PACKET_HEADER_SIZE + 0] = cmd->u.lobbyBotConfig.slot;
-    buf[PACKET_HEADER_SIZE + 1] = cmd->u.lobbyBotConfig.difficulty;
-    buf[PACKET_HEADER_SIZE + 2] = cmd->u.lobbyBotConfig.personality;
-    buf[PACKET_HEADER_SIZE + 3] = nameLen;
+    buf[CMD_PACKET_BODY_OFFSET + 0] = cmd->u.lobbyBotConfig.slot;
+    buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.lobbyBotConfig.difficulty;
+    buf[CMD_PACKET_BODY_OFFSET + 2] = cmd->u.lobbyBotConfig.personality;
+    buf[CMD_PACKET_BODY_OFFSET + 3] = nameLen;
     if (nameLen > 0) {
-        memcpy(buf + PACKET_HEADER_SIZE + 4, cmd->u.lobbyBotConfig.name, nameLen);
+        memcpy(buf + CMD_PACKET_BODY_OFFSET + 4, cmd->u.lobbyBotConfig.name, nameLen);
     }
     *outLen = needed;
     return true;
@@ -118,20 +123,20 @@ static bool commandEncodeLobbyBotConfig(const ClientCommand *cmd,
 
 static bool commandDecodeLobbyBotConfig(const uint8_t *buf, size_t len,
                                         ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 4) return false;
-    uint8_t nameLen = buf[PACKET_HEADER_SIZE + 3];
+    if (len < CMD_PACKET_BODY_OFFSET + 4) return false;
+    uint8_t nameLen = buf[CMD_PACKET_BODY_OFFSET + 3];
     if (nameLen >= PACKET_MAX_PLAYER_NAME ||
-        len < (size_t)PACKET_HEADER_SIZE + 4 + nameLen) {
+        len < (size_t)CMD_PACKET_BODY_OFFSET + 4 + nameLen) {
         return false;
     }
     cmd->type = CMD_LOBBY_BOT_CONFIG;
-    cmd->u.lobbyBotConfig.slot        = buf[PACKET_HEADER_SIZE + 0];
-    cmd->u.lobbyBotConfig.difficulty  = buf[PACKET_HEADER_SIZE + 1];
-    cmd->u.lobbyBotConfig.personality = buf[PACKET_HEADER_SIZE + 2];
+    cmd->u.lobbyBotConfig.slot        = buf[CMD_PACKET_BODY_OFFSET + 0];
+    cmd->u.lobbyBotConfig.difficulty  = buf[CMD_PACKET_BODY_OFFSET + 1];
+    cmd->u.lobbyBotConfig.personality = buf[CMD_PACKET_BODY_OFFSET + 2];
     cmd->u.lobbyBotConfig.nameLen     = nameLen;
     if (nameLen > 0) {
         memcpy(cmd->u.lobbyBotConfig.name,
-               buf + PACKET_HEADER_SIZE + 4, nameLen);
+               buf + CMD_PACKET_BODY_OFFSET + 4, nameLen);
     }
     return true;
 }
@@ -144,15 +149,15 @@ static bool commandEncodeLobbyTeamMeta(const ClientCommand *cmd,
                                        size_t *outLen) {
     uint8_t nameLen = cmd->u.lobbyTeamMeta.nameLen;
     if (nameLen >= LOBBY_TEAM_NAME_LEN) nameLen = LOBBY_TEAM_NAME_LEN - 1;
-    const size_t needed = PACKET_HEADER_SIZE + 4 + nameLen;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 4 + nameLen;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_TEAM_META, 0);
-    buf[PACKET_HEADER_SIZE + 0] = cmd->u.lobbyTeamMeta.teamId;
-    buf[PACKET_HEADER_SIZE + 1] = cmd->u.lobbyTeamMeta.color;
-    buf[PACKET_HEADER_SIZE + 2] = cmd->u.lobbyTeamMeta.namingPool;
-    buf[PACKET_HEADER_SIZE + 3] = nameLen;
+    buf[CMD_PACKET_BODY_OFFSET + 0] = cmd->u.lobbyTeamMeta.teamId;
+    buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.lobbyTeamMeta.color;
+    buf[CMD_PACKET_BODY_OFFSET + 2] = cmd->u.lobbyTeamMeta.namingPool;
+    buf[CMD_PACKET_BODY_OFFSET + 3] = nameLen;
     if (nameLen > 0) {
-        memcpy(buf + PACKET_HEADER_SIZE + 4, cmd->u.lobbyTeamMeta.name, nameLen);
+        memcpy(buf + CMD_PACKET_BODY_OFFSET + 4, cmd->u.lobbyTeamMeta.name, nameLen);
     }
     *outLen = needed;
     return true;
@@ -160,20 +165,20 @@ static bool commandEncodeLobbyTeamMeta(const ClientCommand *cmd,
 
 static bool commandDecodeLobbyTeamMeta(const uint8_t *buf, size_t len,
                                        ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 4) return false;
-    uint8_t nameLen = buf[PACKET_HEADER_SIZE + 3];
+    if (len < CMD_PACKET_BODY_OFFSET + 4) return false;
+    uint8_t nameLen = buf[CMD_PACKET_BODY_OFFSET + 3];
     if (nameLen > LOBBY_TEAM_NAME_LEN - 1 ||
-        len < (size_t)PACKET_HEADER_SIZE + 4 + nameLen) {
+        len < (size_t)CMD_PACKET_BODY_OFFSET + 4 + nameLen) {
         return false;
     }
     cmd->type = CMD_LOBBY_TEAM_META;
-    cmd->u.lobbyTeamMeta.teamId     = buf[PACKET_HEADER_SIZE + 0];
-    cmd->u.lobbyTeamMeta.color      = buf[PACKET_HEADER_SIZE + 1];
-    cmd->u.lobbyTeamMeta.namingPool = buf[PACKET_HEADER_SIZE + 2];
+    cmd->u.lobbyTeamMeta.teamId     = buf[CMD_PACKET_BODY_OFFSET + 0];
+    cmd->u.lobbyTeamMeta.color      = buf[CMD_PACKET_BODY_OFFSET + 1];
+    cmd->u.lobbyTeamMeta.namingPool = buf[CMD_PACKET_BODY_OFFSET + 2];
     cmd->u.lobbyTeamMeta.nameLen    = nameLen;
     if (nameLen > 0) {
         memcpy(cmd->u.lobbyTeamMeta.name,
-               buf + PACKET_HEADER_SIZE + 4, nameLen);
+               buf + CMD_PACKET_BODY_OFFSET + 4, nameLen);
     }
     return true;
 }
@@ -183,19 +188,19 @@ static bool commandDecodeLobbyTeamMeta(const uint8_t *buf, size_t len,
 static bool commandEncodeLobbyTeamClear(const ClientCommand *cmd,
                                         uint8_t *buf, size_t bufCap,
                                         size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + 1;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 1;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_TEAM_CLEAR, 0);
-    buf[PACKET_HEADER_SIZE] = cmd->u.lobbyTeamClear.teamId;
+    buf[CMD_PACKET_BODY_OFFSET] = cmd->u.lobbyTeamClear.teamId;
     *outLen = needed;
     return true;
 }
 
 static bool commandDecodeLobbyTeamClear(const uint8_t *buf, size_t len,
                                         ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 1) return false;
+    if (len < CMD_PACKET_BODY_OFFSET + 1) return false;
     cmd->type = CMD_LOBBY_TEAM_CLEAR;
-    cmd->u.lobbyTeamClear.teamId = buf[PACKET_HEADER_SIZE];
+    cmd->u.lobbyTeamClear.teamId = buf[CMD_PACKET_BODY_OFFSET];
     return true;
 }
 
@@ -206,13 +211,13 @@ static bool commandEncodeLobbySetting(const ClientCommand *cmd,
                                       size_t *outLen) {
     uint8_t valueLen = cmd->u.lobbySetting.valueLen;
     if (valueLen > 32) valueLen = 32;
-    const size_t needed = PACKET_HEADER_SIZE + 2 + valueLen;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 2 + valueLen;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_SET_SETTING, 0);
-    buf[PACKET_HEADER_SIZE]     = cmd->u.lobbySetting.settingType;
-    buf[PACKET_HEADER_SIZE + 1] = valueLen;
+    buf[CMD_PACKET_BODY_OFFSET]     = cmd->u.lobbySetting.settingType;
+    buf[CMD_PACKET_BODY_OFFSET + 1] = valueLen;
     if (valueLen > 0) {
-        memcpy(buf + PACKET_HEADER_SIZE + 2, cmd->u.lobbySetting.value, valueLen);
+        memcpy(buf + CMD_PACKET_BODY_OFFSET + 2, cmd->u.lobbySetting.value, valueLen);
     }
     *outLen = needed;
     return true;
@@ -220,18 +225,18 @@ static bool commandEncodeLobbySetting(const ClientCommand *cmd,
 
 static bool commandDecodeLobbySetting(const uint8_t *buf, size_t len,
                                       ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 2) return false;
-    uint8_t valueLen = buf[PACKET_HEADER_SIZE + 1];
+    if (len < CMD_PACKET_BODY_OFFSET + 2) return false;
+    uint8_t valueLen = buf[CMD_PACKET_BODY_OFFSET + 1];
     if (valueLen > 32 ||
-        len < (size_t)PACKET_HEADER_SIZE + 2 + valueLen) {
+        len < (size_t)CMD_PACKET_BODY_OFFSET + 2 + valueLen) {
         return false;
     }
     cmd->type = CMD_LOBBY_SETTING;
-    cmd->u.lobbySetting.settingType = buf[PACKET_HEADER_SIZE];
+    cmd->u.lobbySetting.settingType = buf[CMD_PACKET_BODY_OFFSET];
     cmd->u.lobbySetting.valueLen    = valueLen;
     if (valueLen > 0) {
         memcpy(cmd->u.lobbySetting.value,
-               buf + PACKET_HEADER_SIZE + 2, valueLen);
+               buf + CMD_PACKET_BODY_OFFSET + 2, valueLen);
     }
     return true;
 }
@@ -244,12 +249,12 @@ static bool commandEncodeChat(const ClientCommand *cmd,
                               size_t *outLen) {
     uint16_t bodyLen = cmd->u.chat.bodyLen;
     if (bodyLen > PACKET_MAX_CHAT_MESSAGE) bodyLen = PACKET_MAX_CHAT_MESSAGE;
-    const size_t needed = PACKET_HEADER_SIZE + 1 + bodyLen;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 1 + bodyLen;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_CHAT_MESSAGE, 0);
-    buf[PACKET_HEADER_SIZE] = cmd->u.chat.destPlayer;
+    buf[CMD_PACKET_BODY_OFFSET] = cmd->u.chat.destPlayer;
     if (bodyLen > 0) {
-        memcpy(buf + PACKET_HEADER_SIZE + 1, cmd->u.chat.body, bodyLen);
+        memcpy(buf + CMD_PACKET_BODY_OFFSET + 1, cmd->u.chat.body, bodyLen);
     }
     *outLen = needed;
     return true;
@@ -257,14 +262,14 @@ static bool commandEncodeChat(const ClientCommand *cmd,
 
 static bool commandDecodeChat(const uint8_t *buf, size_t len,
                               ClientCommand *cmd) {
-    if (len <= PACKET_HEADER_SIZE + 1) return false;
-    size_t bodyLen = len - PACKET_HEADER_SIZE - 1;
+    if (len <= CMD_PACKET_BODY_OFFSET + 1) return false;
+    size_t bodyLen = len - CMD_PACKET_BODY_OFFSET - 1;
     if (bodyLen > PACKET_MAX_CHAT_MESSAGE) bodyLen = PACKET_MAX_CHAT_MESSAGE;
     cmd->type = CMD_CHAT;
-    cmd->u.chat.destPlayer = buf[PACKET_HEADER_SIZE];
+    cmd->u.chat.destPlayer = buf[CMD_PACKET_BODY_OFFSET];
     cmd->u.chat.bodyLen    = (uint16_t)bodyLen;
     if (bodyLen > 0) {
-        memcpy(cmd->u.chat.body, buf + PACKET_HEADER_SIZE + 1, bodyLen);
+        memcpy(cmd->u.chat.body, buf + CMD_PACKET_BODY_OFFSET + 1, bodyLen);
     }
     return true;
 }
@@ -274,20 +279,20 @@ static bool commandDecodeChat(const uint8_t *buf, size_t len,
 static bool commandEncodeAllianceRequest(const ClientCommand *cmd,
                                          uint8_t *buf, size_t bufCap,
                                          size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + 2;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 2;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_ALLIANCE_REQUEST, 0);
-    buf[PACKET_HEADER_SIZE]     = 0;  /* legacy fromPlayer; dispatcher uses senderSlot */
-    buf[PACKET_HEADER_SIZE + 1] = cmd->u.allianceRequest.toPlayer;
+    buf[CMD_PACKET_BODY_OFFSET]     = 0;  /* legacy fromPlayer; dispatcher uses senderSlot */
+    buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.allianceRequest.toPlayer;
     *outLen = needed;
     return true;
 }
 
 static bool commandDecodeAllianceRequest(const uint8_t *buf, size_t len,
                                          ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 2) return false;
+    if (len < CMD_PACKET_BODY_OFFSET + 2) return false;
     cmd->type = CMD_ALLIANCE_REQUEST;
-    cmd->u.allianceRequest.toPlayer = buf[PACKET_HEADER_SIZE + 1];
+    cmd->u.allianceRequest.toPlayer = buf[CMD_PACKET_BODY_OFFSET + 1];
     return true;
 }
 
@@ -296,20 +301,20 @@ static bool commandDecodeAllianceRequest(const uint8_t *buf, size_t len,
 static bool commandEncodeAllianceAccept(const ClientCommand *cmd,
                                         uint8_t *buf, size_t bufCap,
                                         size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + 2;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 2;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_ALLIANCE_ACCEPT, 0);
-    buf[PACKET_HEADER_SIZE]     = 0;  /* legacy fromPlayer; dispatcher uses senderSlot */
-    buf[PACKET_HEADER_SIZE + 1] = cmd->u.allianceAccept.newMember;
+    buf[CMD_PACKET_BODY_OFFSET]     = 0;  /* legacy fromPlayer; dispatcher uses senderSlot */
+    buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.allianceAccept.newMember;
     *outLen = needed;
     return true;
 }
 
 static bool commandDecodeAllianceAccept(const uint8_t *buf, size_t len,
                                         ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 2) return false;
+    if (len < CMD_PACKET_BODY_OFFSET + 2) return false;
     cmd->type = CMD_ALLIANCE_ACCEPT;
-    cmd->u.allianceAccept.newMember = buf[PACKET_HEADER_SIZE + 1];
+    cmd->u.allianceAccept.newMember = buf[CMD_PACKET_BODY_OFFSET + 1];
     return true;
 }
 
@@ -319,10 +324,10 @@ static bool commandEncodeAllianceLeave(const ClientCommand *cmd,
                                        uint8_t *buf, size_t bufCap,
                                        size_t *outLen) {
     (void)cmd;
-    const size_t needed = PACKET_HEADER_SIZE + 1;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 1;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_ALLIANCE_LEAVE, 0);
-    buf[PACKET_HEADER_SIZE] = 0;  /* legacy playerNum; dispatcher uses senderSlot */
+    buf[CMD_PACKET_BODY_OFFSET] = 0;  /* legacy playerNum; dispatcher uses senderSlot */
     *outLen = needed;
     return true;
 }
@@ -330,7 +335,7 @@ static bool commandEncodeAllianceLeave(const ClientCommand *cmd,
 static bool commandDecodeAllianceLeave(const uint8_t *buf, size_t len,
                                        ClientCommand *cmd) {
     (void)buf;
-    if (len < PACKET_HEADER_SIZE + 1) return false;
+    if (len < CMD_PACKET_BODY_OFFSET + 1) return false;
     cmd->type = CMD_ALLIANCE_LEAVE;
     cmd->u.allianceLeave._unused = 0;
     return true;
@@ -341,21 +346,21 @@ static bool commandDecodeAllianceLeave(const uint8_t *buf, size_t len,
 static bool commandEncodeGameVoteToggle(const ClientCommand *cmd,
                                         uint8_t *buf, size_t bufCap,
                                         size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + 2;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 2;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_GAME_VOTE_TOGGLE, 0);
-    buf[PACKET_HEADER_SIZE]     = cmd->u.gameVoteToggle.kind;
-    buf[PACKET_HEADER_SIZE + 1] = cmd->u.gameVoteToggle.toggleMode;
+    buf[CMD_PACKET_BODY_OFFSET]     = cmd->u.gameVoteToggle.kind;
+    buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.gameVoteToggle.toggleMode;
     *outLen = needed;
     return true;
 }
 
 static bool commandDecodeGameVoteToggle(const uint8_t *buf, size_t len,
                                         ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 2) return false;
+    if (len < CMD_PACKET_BODY_OFFSET + 2) return false;
     cmd->type = CMD_GAME_VOTE_TOGGLE;
-    cmd->u.gameVoteToggle.kind       = buf[PACKET_HEADER_SIZE + 0];
-    cmd->u.gameVoteToggle.toggleMode = buf[PACKET_HEADER_SIZE + 1];
+    cmd->u.gameVoteToggle.kind       = buf[CMD_PACKET_BODY_OFFSET + 0];
+    cmd->u.gameVoteToggle.toggleMode = buf[CMD_PACKET_BODY_OFFSET + 1];
     return true;
 }
 
@@ -364,19 +369,19 @@ static bool commandDecodeGameVoteToggle(const uint8_t *buf, size_t len,
 static bool commandEncodeLobbyRemoveBot(const ClientCommand *cmd,
                                         uint8_t *buf, size_t bufCap,
                                         size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + 1;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 1;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_REMOVE_BOT, 0);
-    buf[PACKET_HEADER_SIZE] = cmd->u.lobbyRemoveBot.slot;
+    buf[CMD_PACKET_BODY_OFFSET] = cmd->u.lobbyRemoveBot.slot;
     *outLen = needed;
     return true;
 }
 
 static bool commandDecodeLobbyRemoveBot(const uint8_t *buf, size_t len,
                                         ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 1) return false;
+    if (len < CMD_PACKET_BODY_OFFSET + 1) return false;
     cmd->type = CMD_LOBBY_REMOVE_BOT;
-    cmd->u.lobbyRemoveBot.slot = buf[PACKET_HEADER_SIZE];
+    cmd->u.lobbyRemoveBot.slot = buf[CMD_PACKET_BODY_OFFSET];
     return true;
 }
 
@@ -385,21 +390,21 @@ static bool commandDecodeLobbyRemoveBot(const uint8_t *buf, size_t len,
 static bool commandEncodeLobbySetBotBrain(const ClientCommand *cmd,
                                           uint8_t *buf, size_t bufCap,
                                           size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + 2;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 2;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_SET_BOT_BRAIN, 0);
-    buf[PACKET_HEADER_SIZE + 0] = cmd->u.lobbySetBotBrain.slot;
-    buf[PACKET_HEADER_SIZE + 1] = cmd->u.lobbySetBotBrain.brainIdx;
+    buf[CMD_PACKET_BODY_OFFSET + 0] = cmd->u.lobbySetBotBrain.slot;
+    buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.lobbySetBotBrain.brainIdx;
     *outLen = needed;
     return true;
 }
 
 static bool commandDecodeLobbySetBotBrain(const uint8_t *buf, size_t len,
                                           ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 2) return false;
+    if (len < CMD_PACKET_BODY_OFFSET + 2) return false;
     cmd->type = CMD_LOBBY_SET_BOT_BRAIN;
-    cmd->u.lobbySetBotBrain.slot     = buf[PACKET_HEADER_SIZE + 0];
-    cmd->u.lobbySetBotBrain.brainIdx = buf[PACKET_HEADER_SIZE + 1];
+    cmd->u.lobbySetBotBrain.slot     = buf[CMD_PACKET_BODY_OFFSET + 0];
+    cmd->u.lobbySetBotBrain.brainIdx = buf[CMD_PACKET_BODY_OFFSET + 1];
     return true;
 }
 
@@ -408,19 +413,19 @@ static bool commandDecodeLobbySetBotBrain(const uint8_t *buf, size_t len,
 static bool commandEncodeLobbyOpenHost(const ClientCommand *cmd,
                                        uint8_t *buf, size_t bufCap,
                                        size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + 1;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 1;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_OPEN_HOST, 0);
-    buf[PACKET_HEADER_SIZE] = cmd->u.lobbyOpenHost.openHost ? 1 : 0;
+    buf[CMD_PACKET_BODY_OFFSET] = cmd->u.lobbyOpenHost.openHost ? 1 : 0;
     *outLen = needed;
     return true;
 }
 
 static bool commandDecodeLobbyOpenHost(const uint8_t *buf, size_t len,
                                        ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 1) return false;
+    if (len < CMD_PACKET_BODY_OFFSET + 1) return false;
     cmd->type = CMD_LOBBY_OPEN_HOST;
-    cmd->u.lobbyOpenHost.openHost = buf[PACKET_HEADER_SIZE] != 0;
+    cmd->u.lobbyOpenHost.openHost = buf[CMD_PACKET_BODY_OFFSET] != 0;
     return true;
 }
 
@@ -430,16 +435,16 @@ static bool commandEncodeMapSkipVote(const ClientCommand *cmd,
                                      uint8_t *buf, size_t bufCap,
                                      size_t *outLen) {
     (void)cmd;
-    if (bufCap < PACKET_HEADER_SIZE) return false;
+    if (bufCap < CMD_PACKET_BODY_OFFSET) return false;
     packHeader(buf, PACKET_MAP_SKIP_VOTE, 0);
-    *outLen = PACKET_HEADER_SIZE;
+    *outLen = CMD_PACKET_BODY_OFFSET;
     return true;
 }
 
 static bool commandDecodeMapSkipVote(const uint8_t *buf, size_t len,
                                      ClientCommand *cmd) {
     (void)buf;
-    if (len < PACKET_HEADER_SIZE) return false;
+    if (len < CMD_PACKET_BODY_OFFSET) return false;
     cmd->type = CMD_MAP_SKIP_VOTE;
     cmd->u.mapSkipVote._unused = 0;
     return true;
@@ -450,16 +455,16 @@ static bool commandDecodeMapSkipVote(const uint8_t *buf, size_t len,
 static bool commandEncodeNameChange(const ClientCommand *cmd,
                                     uint8_t *buf, size_t bufCap,
                                     size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 1 + PACKET_MAX_PLAYER_NAME;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_NAME_CHANGE, 0);
-    buf[PACKET_HEADER_SIZE] = 0;  /* legacy playerNum; dispatcher uses senderSlot */
-    memset(buf + PACKET_HEADER_SIZE + 1, 0, PACKET_MAX_PLAYER_NAME);
+    buf[CMD_PACKET_BODY_OFFSET] = 0;  /* legacy playerNum; dispatcher uses senderSlot */
+    memset(buf + CMD_PACKET_BODY_OFFSET + 1, 0, PACKET_MAX_PLAYER_NAME);
     {
         size_t nameLen = strnlen(cmd->u.nameChange.newName,
                                  PACKET_MAX_PLAYER_NAME - 1);
         if (nameLen > 0) {
-            memcpy(buf + PACKET_HEADER_SIZE + 1,
+            memcpy(buf + CMD_PACKET_BODY_OFFSET + 1,
                    cmd->u.nameChange.newName, nameLen);
         }
     }
@@ -469,10 +474,10 @@ static bool commandEncodeNameChange(const ClientCommand *cmd,
 
 static bool commandDecodeNameChange(const uint8_t *buf, size_t len,
                                     ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME) return false;
+    if (len < CMD_PACKET_BODY_OFFSET + 1 + PACKET_MAX_PLAYER_NAME) return false;
     cmd->type = CMD_NAME_CHANGE;
     memcpy(cmd->u.nameChange.newName,
-           buf + PACKET_HEADER_SIZE + 1, PACKET_MAX_PLAYER_NAME);
+           buf + CMD_PACKET_BODY_OFFSET + 1, PACKET_MAX_PLAYER_NAME);
     cmd->u.nameChange.newName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
     return true;
 }
@@ -482,19 +487,19 @@ static bool commandDecodeNameChange(const uint8_t *buf, size_t len,
 static bool commandEncodeLockToggle(const ClientCommand *cmd,
                                     uint8_t *buf, size_t bufCap,
                                     size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + 1;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 1;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOCK_TOGGLE, 0);
-    buf[PACKET_HEADER_SIZE] = cmd->u.lockToggle.allow ? 1 : 0;
+    buf[CMD_PACKET_BODY_OFFSET] = cmd->u.lockToggle.allow ? 1 : 0;
     *outLen = needed;
     return true;
 }
 
 static bool commandDecodeLockToggle(const uint8_t *buf, size_t len,
                                     ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 1) return false;
+    if (len < CMD_PACKET_BODY_OFFSET + 1) return false;
     cmd->type = CMD_LOCK_TOGGLE;
-    cmd->u.lockToggle.allow = buf[PACKET_HEADER_SIZE] != 0;
+    cmd->u.lockToggle.allow = buf[CMD_PACKET_BODY_OFFSET] != 0;
     return true;
 }
 
@@ -507,14 +512,14 @@ static bool commandEncodeLobbyAddBot(const ClientCommand *cmd,
                                      size_t *outLen) {
     uint8_t nameLen = cmd->u.lobbyAddBot.nameLen;
     if (nameLen >= PACKET_MAX_PLAYER_NAME) nameLen = PACKET_MAX_PLAYER_NAME - 1;
-    const size_t needed = PACKET_HEADER_SIZE + 3 + nameLen;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 3 + nameLen;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_ADD_BOT, 0);
-    buf[PACKET_HEADER_SIZE + 0] = cmd->u.lobbyAddBot.teamNumber;
-    buf[PACKET_HEADER_SIZE + 1] = 0;  /* pathLen — server ignores brain payload */
-    buf[PACKET_HEADER_SIZE + 2] = nameLen;
+    buf[CMD_PACKET_BODY_OFFSET + 0] = cmd->u.lobbyAddBot.teamNumber;
+    buf[CMD_PACKET_BODY_OFFSET + 1] = 0;  /* pathLen — server ignores brain payload */
+    buf[CMD_PACKET_BODY_OFFSET + 2] = nameLen;
     if (nameLen > 0) {
-        memcpy(buf + PACKET_HEADER_SIZE + 3, cmd->u.lobbyAddBot.name, nameLen);
+        memcpy(buf + CMD_PACKET_BODY_OFFSET + 3, cmd->u.lobbyAddBot.name, nameLen);
     }
     *outLen = needed;
     return true;
@@ -525,7 +530,7 @@ static bool commandDecodeLobbyAddBot(const uint8_t *buf, size_t len,
     /* Lenient mirror of the server arm: accept any (pathLen, nameLen)
      * combination that fits within the packet. Empty/missing fields
      * decode to teamNumber=0, nameLen=0. */
-    size_t pos = PACKET_HEADER_SIZE;
+    size_t pos = CMD_PACKET_BODY_OFFSET;
     uint8_t teamNumber = 0;
     uint8_t nameLen = 0;
     char clientBotName[PACKET_MAX_PLAYER_NAME];
@@ -564,12 +569,12 @@ static bool commandEncodeLobbySetMap(const ClientCommand *cmd,
                                      size_t *outLen) {
     uint8_t pathLen = cmd->u.lobbySetMap.relPathLen;
     if (pathLen > 255) pathLen = 255;
-    const size_t needed = PACKET_HEADER_SIZE + 1 + pathLen;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 1 + pathLen;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_SET_MAP, 0);
-    buf[PACKET_HEADER_SIZE] = pathLen;
+    buf[CMD_PACKET_BODY_OFFSET] = pathLen;
     if (pathLen > 0) {
-        memcpy(buf + PACKET_HEADER_SIZE + 1,
+        memcpy(buf + CMD_PACKET_BODY_OFFSET + 1,
                cmd->u.lobbySetMap.relPath, pathLen);
     }
     *outLen = needed;
@@ -578,16 +583,16 @@ static bool commandEncodeLobbySetMap(const ClientCommand *cmd,
 
 static bool commandDecodeLobbySetMap(const uint8_t *buf, size_t len,
                                      ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 1) return false;
-    uint8_t pathLen = buf[PACKET_HEADER_SIZE];
+    if (len < CMD_PACKET_BODY_OFFSET + 1) return false;
+    uint8_t pathLen = buf[CMD_PACKET_BODY_OFFSET];
     if (pathLen == 0 ||
-        len < (size_t)PACKET_HEADER_SIZE + 1 + pathLen) {
+        len < (size_t)CMD_PACKET_BODY_OFFSET + 1 + pathLen) {
         return false;
     }
     cmd->type = CMD_LOBBY_SET_MAP;
     cmd->u.lobbySetMap.relPathLen = pathLen;
     memcpy(cmd->u.lobbySetMap.relPath,
-           buf + PACKET_HEADER_SIZE + 1, pathLen);
+           buf + CMD_PACKET_BODY_OFFSET + 1, pathLen);
     return true;
 }
 
@@ -597,16 +602,16 @@ static bool commandEncodeLobbyPreviewCancel(const ClientCommand *cmd,
                                             uint8_t *buf, size_t bufCap,
                                             size_t *outLen) {
     (void)cmd;
-    if (bufCap < PACKET_HEADER_SIZE) return false;
+    if (bufCap < CMD_PACKET_BODY_OFFSET) return false;
     packHeader(buf, PACKET_LOBBY_PREVIEW_CANCEL, 0);
-    *outLen = PACKET_HEADER_SIZE;
+    *outLen = CMD_PACKET_BODY_OFFSET;
     return true;
 }
 
 static bool commandDecodeLobbyPreviewCancel(const uint8_t *buf, size_t len,
                                             ClientCommand *cmd) {
     (void)buf;
-    if (len < PACKET_HEADER_SIZE) return false;
+    if (len < CMD_PACKET_BODY_OFFSET) return false;
     cmd->type = CMD_LOBBY_PREVIEW_CANCEL;
     cmd->u.lobbyPreviewCancel._unused = 0;
     return true;
@@ -618,16 +623,16 @@ static bool commandEncodeLobbyPreviewCommit(const ClientCommand *cmd,
                                             uint8_t *buf, size_t bufCap,
                                             size_t *outLen) {
     (void)cmd;
-    if (bufCap < PACKET_HEADER_SIZE) return false;
+    if (bufCap < CMD_PACKET_BODY_OFFSET) return false;
     packHeader(buf, PACKET_LOBBY_PREVIEW_COMMIT, 0);
-    *outLen = PACKET_HEADER_SIZE;
+    *outLen = CMD_PACKET_BODY_OFFSET;
     return true;
 }
 
 static bool commandDecodeLobbyPreviewCommit(const uint8_t *buf, size_t len,
                                             ClientCommand *cmd) {
     (void)buf;
-    if (len < PACKET_HEADER_SIZE) return false;
+    if (len < CMD_PACKET_BODY_OFFSET) return false;
     cmd->type = CMD_LOBBY_PREVIEW_COMMIT;
     cmd->u.lobbyPreviewCommit._unused = 0;
     return true;
@@ -640,12 +645,12 @@ static bool commandEncodeLobbyPreviewRandom(const ClientCommand *cmd,
                                             size_t *outLen) {
     uint8_t seedLen = cmd->u.lobbyPreviewRandom.seedLen;
     if (seedLen > 63) seedLen = 63;
-    const size_t needed = PACKET_HEADER_SIZE + 1 + seedLen;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 1 + seedLen;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_PREVIEW_RANDOM, 0);
-    buf[PACKET_HEADER_SIZE] = seedLen;
+    buf[CMD_PACKET_BODY_OFFSET] = seedLen;
     if (seedLen > 0) {
-        memcpy(buf + PACKET_HEADER_SIZE + 1,
+        memcpy(buf + CMD_PACKET_BODY_OFFSET + 1,
                cmd->u.lobbyPreviewRandom.seed, seedLen);
     }
     *outLen = needed;
@@ -654,17 +659,17 @@ static bool commandEncodeLobbyPreviewRandom(const ClientCommand *cmd,
 
 static bool commandDecodeLobbyPreviewRandom(const uint8_t *buf, size_t len,
                                             ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 1) return false;
-    uint8_t seedLen = buf[PACKET_HEADER_SIZE];
+    if (len < CMD_PACKET_BODY_OFFSET + 1) return false;
+    uint8_t seedLen = buf[CMD_PACKET_BODY_OFFSET];
     if (seedLen > 63 ||
-        len < (size_t)PACKET_HEADER_SIZE + 1 + seedLen) {
+        len < (size_t)CMD_PACKET_BODY_OFFSET + 1 + seedLen) {
         return false;
     }
     cmd->type = CMD_LOBBY_PREVIEW_RANDOM;
     cmd->u.lobbyPreviewRandom.seedLen = seedLen;
     if (seedLen > 0) {
         memcpy(cmd->u.lobbyPreviewRandom.seed,
-               buf + PACKET_HEADER_SIZE + 1, seedLen);
+               buf + CMD_PACKET_BODY_OFFSET + 1, seedLen);
     }
     return true;
 }
@@ -674,19 +679,19 @@ static bool commandDecodeLobbyPreviewRandom(const uint8_t *buf, size_t len,
 static bool commandEncodeLobbyKick(const ClientCommand *cmd,
                                    uint8_t *buf, size_t bufCap,
                                    size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + 1;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 1;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_KICK, 0);
-    buf[PACKET_HEADER_SIZE] = cmd->u.lobbyKick.slot;
+    buf[CMD_PACKET_BODY_OFFSET] = cmd->u.lobbyKick.slot;
     *outLen = needed;
     return true;
 }
 
 static bool commandDecodeLobbyKick(const uint8_t *buf, size_t len,
                                    ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 1) return false;
+    if (len < CMD_PACKET_BODY_OFFSET + 1) return false;
     cmd->type = CMD_LOBBY_KICK;
-    cmd->u.lobbyKick.slot = buf[PACKET_HEADER_SIZE];
+    cmd->u.lobbyKick.slot = buf[CMD_PACKET_BODY_OFFSET];
     return true;
 }
 
@@ -699,12 +704,12 @@ static bool commandEncodeLobbySetPassword(const ClientCommand *cmd,
     if (pwLen > sizeof(cmd->u.lobbySetPassword.password)) {
         pwLen = (uint8_t)sizeof(cmd->u.lobbySetPassword.password);
     }
-    const size_t needed = PACKET_HEADER_SIZE + 1 + pwLen;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 1 + pwLen;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_SET_PASSWORD, 0);
-    buf[PACKET_HEADER_SIZE] = pwLen;
+    buf[CMD_PACKET_BODY_OFFSET] = pwLen;
     if (pwLen > 0) {
-        memcpy(buf + PACKET_HEADER_SIZE + 1,
+        memcpy(buf + CMD_PACKET_BODY_OFFSET + 1,
                cmd->u.lobbySetPassword.password, pwLen);
     }
     *outLen = needed;
@@ -713,15 +718,15 @@ static bool commandEncodeLobbySetPassword(const ClientCommand *cmd,
 
 static bool commandDecodeLobbySetPassword(const uint8_t *buf, size_t len,
                                           ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 1) return false;
-    uint8_t pwLen = buf[PACKET_HEADER_SIZE];
-    if (len < (size_t)PACKET_HEADER_SIZE + 1 + pwLen) return false;
+    if (len < CMD_PACKET_BODY_OFFSET + 1) return false;
+    uint8_t pwLen = buf[CMD_PACKET_BODY_OFFSET];
+    if (len < (size_t)CMD_PACKET_BODY_OFFSET + 1 + pwLen) return false;
     cmd->type = CMD_LOBBY_SET_PASSWORD;
     cmd->u.lobbySetPassword.pwLen = pwLen;
     if (pwLen > 0 &&
         pwLen <= sizeof(cmd->u.lobbySetPassword.password)) {
         memcpy(cmd->u.lobbySetPassword.password,
-               buf + PACKET_HEADER_SIZE + 1, pwLen);
+               buf + CMD_PACKET_BODY_OFFSET + 1, pwLen);
     }
     return true;
 }
@@ -731,21 +736,21 @@ static bool commandDecodeLobbySetPassword(const uint8_t *buf, size_t len,
 static bool commandEncodeBalanceRequest(const ClientCommand *cmd,
                                         uint8_t *buf, size_t bufCap,
                                         size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + 2;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 2;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_BALANCE_REQUEST, 0);
-    buf[PACKET_HEADER_SIZE]     = cmd->u.balanceRequest.teamSize;
-    buf[PACKET_HEADER_SIZE + 1] = cmd->u.balanceRequest.includeBots ? 1 : 0;
+    buf[CMD_PACKET_BODY_OFFSET]     = cmd->u.balanceRequest.teamSize;
+    buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.balanceRequest.includeBots ? 1 : 0;
     *outLen = needed;
     return true;
 }
 
 static bool commandDecodeBalanceRequest(const uint8_t *buf, size_t len,
                                         ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + 2) return false;
+    if (len < CMD_PACKET_BODY_OFFSET + 2) return false;
     cmd->type = CMD_BALANCE_REQUEST;
-    cmd->u.balanceRequest.teamSize    = buf[PACKET_HEADER_SIZE];
-    cmd->u.balanceRequest.includeBots = buf[PACKET_HEADER_SIZE + 1] != 0;
+    cmd->u.balanceRequest.teamSize    = buf[CMD_PACKET_BODY_OFFSET];
+    cmd->u.balanceRequest.includeBots = buf[CMD_PACKET_BODY_OFFSET + 1] != 0;
     return true;
 }
 
@@ -755,16 +760,16 @@ static bool commandEncodeBalanceApply(const ClientCommand *cmd,
                                       uint8_t *buf, size_t bufCap,
                                       size_t *outLen) {
     (void)cmd;
-    if (bufCap < PACKET_HEADER_SIZE) return false;
+    if (bufCap < CMD_PACKET_BODY_OFFSET) return false;
     packHeader(buf, PACKET_BALANCE_APPLY, 0);
-    *outLen = PACKET_HEADER_SIZE;
+    *outLen = CMD_PACKET_BODY_OFFSET;
     return true;
 }
 
 static bool commandDecodeBalanceApply(const uint8_t *buf, size_t len,
                                       ClientCommand *cmd) {
     (void)buf;
-    if (len < PACKET_HEADER_SIZE) return false;
+    if (len < CMD_PACKET_BODY_OFFSET) return false;
     cmd->type = CMD_BALANCE_APPLY;
     cmd->u.balanceApply._unused = 0;
     return true;
@@ -776,16 +781,16 @@ static bool commandEncodeBalanceDismiss(const ClientCommand *cmd,
                                         uint8_t *buf, size_t bufCap,
                                         size_t *outLen) {
     (void)cmd;
-    if (bufCap < PACKET_HEADER_SIZE) return false;
+    if (bufCap < CMD_PACKET_BODY_OFFSET) return false;
     packHeader(buf, PACKET_BALANCE_DISMISS, 0);
-    *outLen = PACKET_HEADER_SIZE;
+    *outLen = CMD_PACKET_BODY_OFFSET;
     return true;
 }
 
 static bool commandDecodeBalanceDismiss(const uint8_t *buf, size_t len,
                                         ClientCommand *cmd) {
     (void)buf;
-    if (len < PACKET_HEADER_SIZE) return false;
+    if (len < CMD_PACKET_BODY_OFFSET) return false;
     cmd->type = CMD_BALANCE_DISMISS;
     cmd->u.balanceDismiss._unused = 0;
     return true;
@@ -796,10 +801,10 @@ static bool commandDecodeBalanceDismiss(const uint8_t *buf, size_t len,
 static bool commandEncodeWbnReauth(const ClientCommand *cmd,
                                    uint8_t *buf, size_t bufCap,
                                    size_t *outLen) {
-    const size_t needed = PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + WBN_JOIN_KEY_WIRE_LEN;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_WBN_REAUTH, 0);
-    memcpy(buf + PACKET_HEADER_SIZE,
+    memcpy(buf + CMD_PACKET_BODY_OFFSET,
            cmd->u.wbnReauth.token, WBN_JOIN_KEY_WIRE_LEN);
     *outLen = needed;
     return true;
@@ -807,10 +812,10 @@ static bool commandEncodeWbnReauth(const ClientCommand *cmd,
 
 static bool commandDecodeWbnReauth(const uint8_t *buf, size_t len,
                                    ClientCommand *cmd) {
-    if (len < PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN) return false;
+    if (len < CMD_PACKET_BODY_OFFSET + WBN_JOIN_KEY_WIRE_LEN) return false;
     cmd->type = CMD_WBN_REAUTH;
     memcpy(cmd->u.wbnReauth.token,
-           buf + PACKET_HEADER_SIZE, WBN_JOIN_KEY_WIRE_LEN);
+           buf + CMD_PACKET_BODY_OFFSET, WBN_JOIN_KEY_WIRE_LEN);
     cmd->u.wbnReauth.token[WBN_JOIN_KEY_WIRE_LEN - 1] = '\0';
     return true;
 }
@@ -825,44 +830,49 @@ static bool commandDecodeWbnReauth(const uint8_t *buf, size_t len,
 bool commandCodecEncode(const ClientCommand *cmd,
                         uint8_t *buf, size_t bufCap, size_t *outLen) {
     if (!cmd || !buf || !outLen) return false;
+    bool ok = false;
     switch (cmd->type) {
-        case CMD_TEAM_SET:              return commandEncodeTeamSet(cmd, buf, bufCap, outLen);
-        case CMD_READY:                 return commandEncodeReady(cmd, buf, bufCap, outLen);
-        case CMD_LOBBY_BOT_CONFIG:      return commandEncodeLobbyBotConfig(cmd, buf, bufCap, outLen);
-        case CMD_LOBBY_TEAM_META:       return commandEncodeLobbyTeamMeta(cmd, buf, bufCap, outLen);
-        case CMD_LOBBY_TEAM_CLEAR:      return commandEncodeLobbyTeamClear(cmd, buf, bufCap, outLen);
-        case CMD_LOBBY_SETTING:         return commandEncodeLobbySetting(cmd, buf, bufCap, outLen);
-        case CMD_CHAT:                  return commandEncodeChat(cmd, buf, bufCap, outLen);
-        case CMD_ALLIANCE_REQUEST:      return commandEncodeAllianceRequest(cmd, buf, bufCap, outLen);
-        case CMD_ALLIANCE_ACCEPT:       return commandEncodeAllianceAccept(cmd, buf, bufCap, outLen);
-        case CMD_ALLIANCE_LEAVE:        return commandEncodeAllianceLeave(cmd, buf, bufCap, outLen);
-        case CMD_GAME_VOTE_TOGGLE:      return commandEncodeGameVoteToggle(cmd, buf, bufCap, outLen);
-        case CMD_LOBBY_REMOVE_BOT:      return commandEncodeLobbyRemoveBot(cmd, buf, bufCap, outLen);
-        case CMD_LOBBY_SET_BOT_BRAIN:   return commandEncodeLobbySetBotBrain(cmd, buf, bufCap, outLen);
-        case CMD_LOBBY_OPEN_HOST:       return commandEncodeLobbyOpenHost(cmd, buf, bufCap, outLen);
-        case CMD_MAP_SKIP_VOTE:         return commandEncodeMapSkipVote(cmd, buf, bufCap, outLen);
-        case CMD_NAME_CHANGE:           return commandEncodeNameChange(cmd, buf, bufCap, outLen);
-        case CMD_LOCK_TOGGLE:           return commandEncodeLockToggle(cmd, buf, bufCap, outLen);
-        case CMD_LOBBY_ADD_BOT:         return commandEncodeLobbyAddBot(cmd, buf, bufCap, outLen);
-        case CMD_LOBBY_SET_MAP:         return commandEncodeLobbySetMap(cmd, buf, bufCap, outLen);
-        case CMD_LOBBY_PREVIEW_CANCEL:  return commandEncodeLobbyPreviewCancel(cmd, buf, bufCap, outLen);
-        case CMD_LOBBY_PREVIEW_COMMIT:  return commandEncodeLobbyPreviewCommit(cmd, buf, bufCap, outLen);
-        case CMD_LOBBY_PREVIEW_RANDOM:  return commandEncodeLobbyPreviewRandom(cmd, buf, bufCap, outLen);
-        case CMD_LOBBY_KICK:            return commandEncodeLobbyKick(cmd, buf, bufCap, outLen);
-        case CMD_LOBBY_SET_PASSWORD:    return commandEncodeLobbySetPassword(cmd, buf, bufCap, outLen);
-        case CMD_BALANCE_REQUEST:       return commandEncodeBalanceRequest(cmd, buf, bufCap, outLen);
-        case CMD_BALANCE_APPLY:         return commandEncodeBalanceApply(cmd, buf, bufCap, outLen);
-        case CMD_BALANCE_DISMISS:       return commandEncodeBalanceDismiss(cmd, buf, bufCap, outLen);
-        case CMD_WBN_REAUTH:            return commandEncodeWbnReauth(cmd, buf, bufCap, outLen);
+        case CMD_TEAM_SET:              ok = commandEncodeTeamSet(cmd, buf, bufCap, outLen); break;
+        case CMD_READY:                 ok = commandEncodeReady(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_BOT_CONFIG:      ok = commandEncodeLobbyBotConfig(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_TEAM_META:       ok = commandEncodeLobbyTeamMeta(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_TEAM_CLEAR:      ok = commandEncodeLobbyTeamClear(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_SETTING:         ok = commandEncodeLobbySetting(cmd, buf, bufCap, outLen); break;
+        case CMD_CHAT:                  ok = commandEncodeChat(cmd, buf, bufCap, outLen); break;
+        case CMD_ALLIANCE_REQUEST:      ok = commandEncodeAllianceRequest(cmd, buf, bufCap, outLen); break;
+        case CMD_ALLIANCE_ACCEPT:       ok = commandEncodeAllianceAccept(cmd, buf, bufCap, outLen); break;
+        case CMD_ALLIANCE_LEAVE:        ok = commandEncodeAllianceLeave(cmd, buf, bufCap, outLen); break;
+        case CMD_GAME_VOTE_TOGGLE:      ok = commandEncodeGameVoteToggle(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_REMOVE_BOT:      ok = commandEncodeLobbyRemoveBot(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_SET_BOT_BRAIN:   ok = commandEncodeLobbySetBotBrain(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_OPEN_HOST:       ok = commandEncodeLobbyOpenHost(cmd, buf, bufCap, outLen); break;
+        case CMD_MAP_SKIP_VOTE:         ok = commandEncodeMapSkipVote(cmd, buf, bufCap, outLen); break;
+        case CMD_NAME_CHANGE:           ok = commandEncodeNameChange(cmd, buf, bufCap, outLen); break;
+        case CMD_LOCK_TOGGLE:           ok = commandEncodeLockToggle(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_ADD_BOT:         ok = commandEncodeLobbyAddBot(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_SET_MAP:         ok = commandEncodeLobbySetMap(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_PREVIEW_CANCEL:  ok = commandEncodeLobbyPreviewCancel(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_PREVIEW_COMMIT:  ok = commandEncodeLobbyPreviewCommit(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_PREVIEW_RANDOM:  ok = commandEncodeLobbyPreviewRandom(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_KICK:            ok = commandEncodeLobbyKick(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_SET_PASSWORD:    ok = commandEncodeLobbySetPassword(cmd, buf, bufCap, outLen); break;
+        case CMD_BALANCE_REQUEST:       ok = commandEncodeBalanceRequest(cmd, buf, bufCap, outLen); break;
+        case CMD_BALANCE_APPLY:         ok = commandEncodeBalanceApply(cmd, buf, bufCap, outLen); break;
+        case CMD_BALANCE_DISMISS:       ok = commandEncodeBalanceDismiss(cmd, buf, bufCap, outLen); break;
+        case CMD_WBN_REAUTH:            ok = commandEncodeWbnReauth(cmd, buf, bufCap, outLen); break;
         case CMD_NONE:
         default:                        return false;
     }
+    if (!ok) return false;
+    packU32(buf + PACKET_HEADER_SIZE, cmd->cmdSeq);
+    return true;
 }
 
 bool commandCodecDecode(const uint8_t *buf, size_t len,
                         ClientCommand *cmd) {
-    if (!buf || !cmd || len < PACKET_HEADER_SIZE) return false;
+    if (!buf || !cmd || len < CMD_PACKET_BODY_OFFSET) return false;
     if (buf[0] != BOLO_NEW_MAGIC_0 || buf[1] != BOLO_NEW_MAGIC_1) return false;
+    cmd->cmdSeq = unpackU32(buf + PACKET_HEADER_SIZE);
     uint8_t pktType = buf[2];
     switch (pktType) {
         case PACKET_LOBBY_TEAM_SET:        return commandDecodeTeamSet(buf, len, cmd);
