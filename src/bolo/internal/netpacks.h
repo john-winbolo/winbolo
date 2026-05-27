@@ -425,6 +425,9 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                               the server infers the
                                               voter's team from their
                                               own slot. */
+#define PACKET_COMMAND_REJECTED        200  /* server → client
+                                              { origCmdSeq u32, origCmdType u8, reasonCode u8 } */
+
 #define PACKET_GAME_VOTE_STATE         195  /* server → all clients
                                               { kind 1, active 1,
                                                 triggerSrc 1, teamId 1,

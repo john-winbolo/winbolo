@@ -66,6 +66,7 @@ typedef enum {
     CTRL_LOBBY_BRAIN_LIST,
     CTRL_GAME_VOTE_STATE,
     CTRL_SERVER_TEXT,
+    CTRL_COMMAND_REJECTED,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -258,6 +259,19 @@ typedef struct ControlEvent {
             uint8_t  secondsRemaining; /* 0..60 */
             uint16_t votes;            /* bitmask of slots that voted yes */
         } gameVoteState;
+
+        /* CTRL_COMMAND_REJECTED — serverSimApplyCommand rejected a
+         * ClientCommand. origCmdSeq is the client-assigned cmdSeq from
+         * the offending ClientCommand (zero from callers that don't yet
+         * maintain a counter). origCmdType is (uint8_t)cmd->type;
+         * reasonCode is (uint8_t)CmdResult. Subscribers correlate by
+         * origCmdSeq and dismiss when stale — the event is
+         * informational, not authoritative. */
+        struct {
+            uint32_t origCmdSeq;
+            uint8_t  origCmdType;
+            uint8_t  reasonCode;
+        } commandRejected;
     } u;
 } ControlEvent;
 

@@ -296,6 +296,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_LOBBY_BRAIN_LIST:      return "CTRL_LOBBY_BRAIN_LIST";
     case CTRL_GAME_VOTE_STATE:       return "CTRL_GAME_VOTE_STATE";
     case CTRL_SERVER_TEXT:           return "CTRL_SERVER_TEXT";
+    case CTRL_COMMAND_REJECTED:      return "CTRL_COMMAND_REJECTED";
     default:                         return NULL;
   }
 }
@@ -514,6 +515,13 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       fputs(",\"text\":", f);
       logEventsJsonStr(f, evt->u.serverText.text,
                        sizeof(evt->u.serverText.text));
+      break;
+
+    case CTRL_COMMAND_REJECTED:
+      fprintf(f, ",\"origCmdSeq\":%u,\"origCmdType\":%u,\"reasonCode\":%u",
+              (unsigned)evt->u.commandRejected.origCmdSeq,
+              (unsigned)evt->u.commandRejected.origCmdType,
+              (unsigned)evt->u.commandRejected.reasonCode);
       break;
 
     case CTRL_EVENT_TYPE_COUNT:

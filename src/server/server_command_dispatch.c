@@ -39,9 +39,8 @@
  * is defined. */
 extern bool lobbyClientMayEdit(ServerSim *sim, int clientIdx);
 
-CmdResult serverSimApplyCommand(ServerSim *sim, int senderSlot,
-                                const ClientCommand *cmd) {
-    assert(threadsCurrentlyHoldsMutex());
+static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
+                                   const ClientCommand *cmd) {
     switch (cmd->type) {
     case CMD_TEAM_SET: {
         if (!serverSimIsLobbyEnabled(sim) ||
@@ -572,4 +571,20 @@ CmdResult serverSimApplyCommand(ServerSim *sim, int senderSlot,
     default:
         return CMD_REJECT_BAD_STATE;
     }
+}
+
+CmdResult serverSimApplyCommand(ServerSim *sim, int senderSlot,
+                                const ClientCommand *cmd) {
+    assert(threadsCurrentlyHoldsMutex());
+    CmdResult r = applyCommandInner(sim, senderSlot, cmd);
+    if (r != CMD_OK) {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_COMMAND_REJECTED;
+        evt.u.commandRejected.origCmdSeq  = cmd->cmdSeq;
+        evt.u.commandRejected.origCmdType = (uint8_t)cmd->type;
+        evt.u.commandRejected.reasonCode  = (uint8_t)r;
+        serverSimPublishControl(sim, &evt);
+    }
+    return r;
 }

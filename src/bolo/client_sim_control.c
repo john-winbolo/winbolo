@@ -501,5 +501,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * mutation is needed here — the event exists so replay logs and
          * other subscribers see leaves alongside joins. */
         break;
+
+    case CTRL_COMMAND_REJECTED:
+        /* Reject is informational; correlation by origCmdSeq happens in
+         * the UI subscriber, which lands separately. */
+        break;
     }
 }

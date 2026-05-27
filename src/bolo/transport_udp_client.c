@@ -526,6 +526,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_LOBBY_BRAIN_LIST: return "LOBBY_BRAIN_LIST";
     case CTRL_GAME_VOTE_STATE:  return "GAME_VOTE_STATE";
     case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
+    case CTRL_COMMAND_REJECTED: return "COMMAND_REJECTED";
     default:                    return "<unknown>";
     }
 }
