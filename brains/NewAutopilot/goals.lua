@@ -98,20 +98,27 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
   local gmx, gmy = goal.mx, goal.my
   if tmx == gmx and tmy == gmy then return 0, false, "" end
 
-  -- For attack_pill: route to the firing position (spot), not the pill.
-  -- The tank shoots from standoff, never drives onto the pill tile.
+  -- Route to the ENGAGE point, not the target itself. The tank shoots
+  -- from standoff/range, never drives onto the target tile.
   -- Always use KIND_NORMAL (full danger) for wsim — we want the safest
   -- route to evaluate survivability, not the aggressive low-danger path.
   local wsim_kind = cpf.KIND_NORMAL
   local wsim_dx, wsim_dy = gmx, gmy
   if attack_pill_idx then
     if spot_mx and spot_my then
-      -- Use the pre-computed best firing position
       wsim_dx, wsim_dy = spot_mx, spot_my
     else
-      -- Fallback: cheapest adjacent tile to the pill
       local _, ax, ay = cpf.cheapest_adjacent_dij(cpf.KIND_NORMAL, gmx, gmy, 0)
       if ax then wsim_dx, wsim_dy = ax, ay end
+    end
+  elseif goal.kind == "attack_tank" or goal.kind == "attack_base" then
+    -- Route to the standoff/adjacent tile, not the target itself
+    local _, ax, ay = cpf.cheapest_adjacent_dij(cpf.KIND_NORMAL, gmx, gmy, 0)
+    if ax then wsim_dx, wsim_dy = ax, ay end
+  elseif goal.kind == "kill_lgm" then
+    -- Route to the shoot_from position if available
+    if goal.shoot_mx and goal.shoot_my then
+      wsim_dx, wsim_dy = goal.shoot_mx, goal.shoot_my
     end
   end
 
@@ -5568,6 +5575,7 @@ local function goal_selection(state, world, info, quiet)
         -- Only sim goals that travel through danger (skip refuel/explore)
         local sim_kinds = { capture_base=true, capture_pill=true,
                             attack_pill=true, attack_base=true,
+                            attack_tank=true, kill_lgm=true,
                             place_pill_strategic=true }
         -- Don't sim our current attack target if we're mid-attack
         local skip = cur_attack_active
