@@ -952,6 +952,22 @@ static int l_cpf_clear_overlay(lua_State *L) {
   return 0;
 }
 
+static int l_cpf_get_overlay(lua_State *L) {
+  CPF_GET(L);
+  int x = (int)luaL_checkinteger(L, 1);
+  int y = (int)luaL_checkinteger(L, 2);
+  lua_pushnumber(L, (double)brainPathfinderGetOverlay(pf, x, y));
+  return 1;
+}
+
+static int l_cpf_get_danger(lua_State *L) {
+  CPF_GET(L);
+  int x = (int)luaL_checkinteger(L, 1);
+  int y = (int)luaL_checkinteger(L, 2);
+  lua_pushnumber(L, (double)brainPathfinderGetDanger(pf, x, y));
+  return 1;
+}
+
 /* cpf_set_danger_offset(x, y, value) — set per-tile danger offset (negative = subtract) */
 static int l_cpf_set_danger_offset(lua_State *L) {
   CPF_GET(L);
@@ -1697,6 +1713,8 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_load_danger",                    l_cpf_load_danger },
     { "cpf_load_pill_danger_from_threat",   l_cpf_load_pill_danger_from_threat },
     { "cpf_set_overlay",          l_cpf_set_overlay },
+    { "cpf_get_overlay",          l_cpf_get_overlay },
+    { "cpf_get_danger",           l_cpf_get_danger },
     { "cpf_clear_overlay",        l_cpf_clear_overlay },
     { "cpf_set_danger_offset",    l_cpf_set_danger_offset },
     { "cpf_clear_danger_offset",  l_cpf_clear_danger_offset },

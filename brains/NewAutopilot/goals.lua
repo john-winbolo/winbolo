@@ -2344,6 +2344,70 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
         state.tick or 0, tmx, tmy, obj.mx, obj.my, boat,
         info.shells or 0, info.trees or 0, info.mines or 0, info.armour or 0,
         dist_raw, obj.health or -1, obj.owner or "?"))
+      -- Dump the path A* found with per-tile danger, overlay, terrain,
+      -- and what's there (live pill, hostile base, etc.)
+      if cpf.trace_last_search and dist_raw < 1e29 and dist_raw > 100 then
+        local path = cpf.trace_last_search(obj.mx, obj.my)
+        if path and #path >= 2 then
+          local nwp = #path // 2
+          local total_ov, total_d, n_imp = 0, 0, 0
+          local TT = {
+            [C.T_BUILDING]="wall",   [C.T_HALFBUILD]="halfw",
+            [C.T_FOREST]="forest",   [C.T_ROAD]="road",
+            [C.T_GRASS]="grass",     [C.T_RIVER]="river",
+            [C.T_DEEPSEA]="deepsea", [C.T_SWAMP]="swamp",
+            [C.T_RUBBLE]="rubble",   [C.T_CRATER]="crater",
+            [C.T_BOAT]="boat",       [C.T_REFBASE]="base",
+            [C.T_PILLBOX]="pill",
+          }
+          local pill_lookup = {}
+          for _, pm in pairs(world.pills or {}) do
+            pill_lookup[pm.my * 256 + pm.mx] = pm
+          end
+          local base_lookup = {}
+          for _, b in pairs(world.bases or {}) do
+            base_lookup[b.my * 256 + b.mx] = b
+          end
+          for i = 1, nwp do
+            local px, py = path[2*i-1], path[2*i]
+            local ov = cpf.get_overlay and cpf.get_overlay(px, py) or 0
+            local d  = cpf.get_danger  and cpf.get_danger(px, py)  or 0
+            local tt = U.ttype(px, py)
+            local tt_name = TT[tt] or ("?"..tt)
+            total_ov = total_ov + ov
+            total_d  = total_d  + d
+            if ov >= 32767 then n_imp = n_imp + 1 end
+            local extras = ""
+            local pk = py * 256 + px
+            local pm = pill_lookup[pk]
+            if pm then
+              extras = extras .. string.format(" PILL[own=%s hp=%d]",
+                pm.owner or "?", pm.health or -1)
+            end
+            local b = base_lookup[pk]
+            if b then
+              extras = extras .. string.format(" BASE[own=%s arm=%d sh=%d]",
+                b.owner or "?", b.armour or -1, b.shells or -1)
+            end
+            -- Distance from straight line (to spot major detours)
+            local sdx, sdy = obj.mx - tmx, obj.my - tmy
+            local slen = math.max(1, math.sqrt(sdx*sdx + sdy*sdy))
+            local t_along = ((px-tmx)*sdx + (py-tmy)*sdy) / (slen*slen)
+            local lx, ly = tmx + sdx*t_along, tmy + sdy*t_along
+            local perp = math.sqrt((px-lx)*(px-lx) + (py-ly)*(py-ly))
+            _p2(string.format("  CPILL_PATH #%d (%d,%d) %s ov=%.0f d=%.0f perp=%.1f%s",
+              i, px, py, tt_name, ov, d, perp, extras))
+          end
+          _p2(string.format("  CPILL_PATH_SUM nwp=%d total_ov=%.0f total_d=%.0f n_imp=%d straight=%d ratio=%.2f",
+            nwp, total_ov, total_d, n_imp,
+            U.mdist(tmx, tmy, obj.mx, obj.my),
+            nwp / math.max(1, U.mdist(tmx, tmy, obj.mx, obj.my))))
+        else
+          local nwp = path and (#path // 2) or -1
+          _p2(string.format("  CPILL_PATH NO_TRACE — A* ran out of budget or no path exists (path_type=%s nwp=%d)",
+            type(path), nwp))
+        end
+      end
     end
     if dist_raw >= 1e29 then
       return 1e30, 1e30, 1e30, 0
@@ -2372,15 +2436,17 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
     local _p2 = require("print2")
     local _danger_val = threat.at(obj.mx, obj.my) or -1
     local _overlay_dirty = threat.overlay_dirty and "Y" or "N"
+    local _pf_overlay = cpf.get_overlay and cpf.get_overlay(obj.mx, obj.my) or -1
+    local _pf_danger  = cpf.get_danger  and cpf.get_danger(obj.mx, obj.my)  or -1
     _p2(string.format(
-      "CPILL_DIST pill=(%d,%d) hp=%d own=%s method=%s best_adj=%.1f dist_raw=%.1f dist_score=%.1f dij_stale=%s rebuild_t=%d s0_start=%d s2_start=%d pcontrib=%s danger=%.1f ov_dirty=%s tank=(%d,%d) t=%d",
+      "CPILL_DIST pill=(%d,%d) hp=%d own=%s method=%s best_adj=%.1f dist_raw=%.1f dist_score=%.1f dij_stale=%s rebuild_t=%d s0_start=%d s2_start=%d pcontrib=%s threat_d=%.1f pf_d=%.1f pf_ov=%.1f ov_dirty=%s tank=(%d,%d) t=%d",
       obj.mx, obj.my, obj.health or -1, obj.owner or "?",
       dist_method,
       _dij_best_adj or -1, dist_raw, dist_score,
       tostring(dij_stale), threat.last_rebuild_tick or 0,
       _s0_start, _s2_start,
       tostring(threat.pill_contrib and threat.pill_contrib[obj.my * 256 + obj.mx] ~= nil),
-      _danger_val, _overlay_dirty, tmx, tmy, state.tick or 0))
+      _danger_val, _pf_danger, _pf_overlay, _overlay_dirty, tmx, tmy, state.tick or 0))
   end
   local danger_val = threat.at(obj.mx, obj.my)
   -- Cautious-mode danger multiplier (see init.lua state.cautious_mode

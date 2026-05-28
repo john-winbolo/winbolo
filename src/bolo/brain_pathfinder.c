@@ -784,6 +784,16 @@ void brainPathfinderClearOverlay(BrainPathfinder *pf) {
   }
 }
 
+float brainPathfinderGetOverlay(const BrainPathfinder *pf, int x, int y) {
+  if (!pf || x < 0 || x >= MAP_SIZE || y < 0 || y >= MAP_SIZE) return 0.0f;
+  return (float)pf->overlay_grid[y * MAP_SIZE + x];
+}
+
+float brainPathfinderGetDanger(const BrainPathfinder *pf, int x, int y) {
+  if (!pf || x < 0 || x >= MAP_SIZE || y < 0 || y >= MAP_SIZE) return 0.0f;
+  return (float)pf->danger_grid[y * MAP_SIZE + x];
+}
+
 /* ------------------------------------------------------------------ */
 /* Cost computation (inner loop)                                       */
 /* ------------------------------------------------------------------ */

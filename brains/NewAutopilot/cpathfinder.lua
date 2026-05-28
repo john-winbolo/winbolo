@@ -547,6 +547,16 @@ function M.simulate_shot_with_tanks(ox, oy, tx, ty, shooter_type, sight_len, tan
     owner_player)
 end
 
+function M.get_overlay(mx, my)
+  if not cpf_get_overlay then return 0 end
+  return cpf_get_overlay(mx, my)
+end
+
+function M.get_danger(mx, my)
+  if not cpf_get_danger then return 0 end
+  return cpf_get_danger(mx, my)
+end
+
 M.SHOT_TANK = 0
 M.SHOT_PILL = 1
 M.SHOT_HIT_TILE = 0

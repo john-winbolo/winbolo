@@ -1795,9 +1795,15 @@ function Brain.think(info)
   -- Populate C pathfinder danger grid from Lua threat grid (single source of
   -- truth). Batch-load the whole grid in one C call instead of ~13K per-tile
   -- cpf.set_danger calls, and only when threat.update actually rebuilt it.
+  if BRAIN_DEBUG_MODE and threat.rebuilt_this_tick then
+    print2(string.format("THREAT_REBUILT t=%d", now))
+  end
   if threat.rebuilt_this_tick then
     cpf.load_pill_danger_from_threat()
     metrics.inc("danger_reloads")
+    if BRAIN_DEBUG_MODE then
+      print2(string.format("DANGER_LOADED t=%d (pf.danger_grid updated)", now))
+    end
   else
     metrics.inc("danger_skips")
   end

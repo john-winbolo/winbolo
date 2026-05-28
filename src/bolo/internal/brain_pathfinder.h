@@ -379,6 +379,8 @@ int16_t brainPathfinderInfluenceAt(BrainPathfinder *pf, int x, int y);
 /* Custom overlay (modder extension point) */
 void brainPathfinderSetOverlay(BrainPathfinder *pf, int x, int y, float value);
 void brainPathfinderClearOverlay(BrainPathfinder *pf);
+float brainPathfinderGetOverlay(const BrainPathfinder *pf, int x, int y);
+float brainPathfinderGetDanger(const BrainPathfinder *pf, int x, int y);
 
 /* Per-search danger offset — subtracted from danger on the fly during A*.
  * Use to model a specific pill as dead without touching the danger grid.
