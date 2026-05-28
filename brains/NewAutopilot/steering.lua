@@ -1643,6 +1643,9 @@ local function tank_combat_steer(state, world, info, goal)
   if dist_tiles > C.TANK_COMBAT_ENGAGE_RANGE then
     -- ── CLOSE: navigate toward standoff position around enemy tank ──
     goal.substate = "close"
+    goal._engage_blocked_ticks = 0
+    goal._engage_stuck_mx = nil
+    goal._engage_stuck_my = nil
 
     -- Recompute standoff position every 5 ticks as the target moves.
     -- Pick the closest of 8 positions at STANDOFF range around the target
@@ -1788,10 +1791,43 @@ local function tank_combat_steer(state, world, info, goal)
   end
 
   -- Fire when aimed — wider tolerance because lead prediction compensates.
-  if math.abs(aim_corr) < 8 and info.shells > C.TANK_COMBAT_FLEE_SHELLS
-     and shot_path_clear(info, world, pred_wx, pred_wy,
-                         math.floor(pred_wx) >> 8, math.floor(pred_wy) >> 8) then
-    keys = keys | KEY_SHOOT
+  --
+  -- Stuck-fire: when aim is on the enemy but a wall keeps blocking the
+  -- shell path tick after tick (two tanks dug in across a wall), bypass
+  -- the LOS gate after TANK_COMBAT_STUCK_FIRE_TICKS so the shells chip
+  -- the wall down and eventually open LOS. Without this the bot just
+  -- stares at the wall forever, "engaging" but never firing.
+  local _aim_ok    = math.abs(aim_corr) < 8
+  local _shells_ok = info.shells > C.TANK_COMBAT_FLEE_SHELLS
+  -- Stuck only counts when WE are also pinned in place — if the bot is
+  -- still moving around looking for a clean angle it isn't stuck yet,
+  -- it's just mid-reposition. Reset whenever our tile changes.
+  local _stuck_in_place = (goal._engage_stuck_mx == tmx
+                           and goal._engage_stuck_my == tmy)
+  goal._engage_stuck_mx = tmx
+  goal._engage_stuck_my = tmy
+  if _aim_ok and _shells_ok then
+    local _clear = shot_path_clear(info, world, pred_wx, pred_wy,
+                                   math.floor(pred_wx) >> 8,
+                                   math.floor(pred_wy) >> 8)
+    if _clear then
+      keys = keys | KEY_SHOOT
+      goal._engage_blocked_ticks = 0
+    elseif _stuck_in_place then
+      goal._engage_blocked_ticks = (goal._engage_blocked_ticks or 0) + 1
+      if goal._engage_blocked_ticks >= C.TANK_COMBAT_STUCK_FIRE_TICKS then
+        keys = keys | KEY_SHOOT
+        log.event("tank_combat_stuck_fire",
+          string.format("blocked_ticks=%d aim_corr=%.0f dist=%.1f",
+                        goal._engage_blocked_ticks, aim_corr, dist_tiles))
+      end
+    else
+      -- Blocked but we moved this tick — not stuck, reset.
+      goal._engage_blocked_ticks = 0
+    end
+  else
+    -- Not aimed yet (still turning) or out of shells: don't accrue stuck count.
+    goal._engage_blocked_ticks = 0
   end
 
   -- Distance control: maintain optimal range with jinking

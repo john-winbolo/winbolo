@@ -444,6 +444,12 @@ M.GOAL_TARGET_SWITCH_PENALTY = 15  -- cost added when same group but different t
 -- different base when possible) since refuel is fungible.
 M.ALLY_CLAIMED_PENALTY        = 10000
 M.ALLY_CLAIMED_REFUEL_PENALTY = 100
+-- "Steal margin" used by the ally-claimed REJECT path on hard-pools
+-- (2,3,4,5,6,7). We only REJECT our candidate when the ally's
+-- broadcast cost is at least this many units below ours; within the
+-- band both bots keep the candidate so a 1-unit cost flicker (caused
+-- by broadcast tick lag / cache freshness mismatch) can't flip the
+-- yield direction every tick.
 M.ALLY_CLAIMED_STEAL_THRESHOLD = 100
 M.GOAL_COMMITMENT_PER_TICK = 0.5   -- extra switch penalty per tick spent on current goal
 M.GOAL_COMMITMENT_CAP      = 75    -- max commitment penalty (reached after 150 ticks / 3s)
@@ -738,6 +744,12 @@ M.TANK_COMBAT_JINK_PERIOD       = 10    -- ticks between jink direction changes
 M.TANK_COMBAT_JINK_ANGLE        = 32    -- bolo angle offset for lateral jink (~45°)
 M.TANK_COMBAT_OPPORTUNISTIC_RANGE = 4   -- tiles: fire at enemy if already aimed near them
 M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11°) aim tolerance for opportunistic shot
+-- Stuck-fire: when aimed at enemy but shot_path_clear keeps rejecting
+-- (wall in the way), fire anyway after this many ticks. Shells will
+-- chip the wall until LOS opens up, so two tanks dug in on opposite
+-- sides of a wall don't sit there forever. Reset whenever a normal
+-- clear shot fires or we leave engage. ~30 ticks ≈ 1s.
+M.TANK_COMBAT_STUCK_FIRE_TICKS  = 30
 
 -- Kill-LGM shoot gates.  LGMs are small (1 tile, hitbox even smaller),
 -- move slowly (~3 wu/tick), and die in one hit — so we fire from
