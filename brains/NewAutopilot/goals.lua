@@ -1722,7 +1722,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local path_cost = smart_cost(KIND_NORMAL, tmx, tmy, best_mx, best_my, boat and 1 or 0,
                                 info.shells or 32, info.trees or 0, info.mines or 0, info.armour or 40)
   local raw_cost = path_cost + C.STRATEGIC_PLACE_BASE_COST + carry_value_penalty - carry_discount
-  local cost = math.max(1, raw_cost * C.STRATEGIC_PLACE_COST_MULT)
+  -- Last pill: 1.5× cost so the bot holds on to its only pill unless
+  -- placement is clearly worthwhile.
+  local last_pill_mult = 1.0
+  if (info.carried_pills or 0) == 1 then last_pill_mult = 1.5 end
+  local cost = math.max(1, raw_cost * C.STRATEGIC_PLACE_COST_MULT * last_pill_mult)
 
   -- Build pool-grid candidate list: winner gets actual cost, others get cost + score delta.
   -- Pool-grid panel data only — wrapped so lua_strip removes it from opt/.
@@ -2318,20 +2322,29 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   local dij_stale = false
   if state.dij and threat.last_rebuild_tick > 0 then
     local slates = state.dij.slates
-    local short_ok = slates[0] and slates[0].completed_tick >= threat.last_rebuild_tick
-    local long_ok  = slates[2] and slates[2].completed_tick >= threat.last_rebuild_tick
+    local short_ok = slates[0] and slates[0].started_tick >= threat.last_rebuild_tick
+    local long_ok  = slates[2] and slates[2].started_tick >= threat.last_rebuild_tick
     if not (short_ok or long_ok) then
       dij_stale = true
     end
   end
   local dist_raw
   local dist_method = "dij"
+  local _dij_best_adj = nil  -- pre-subtraction Dijkstra cost (debug)
   if dij_stale then
     dist_method = "astar"
     local boat = info.inboat and 1 or 0
     dist_raw = smart_cost(KIND_NORMAL, tmx, tmy, obj.mx, obj.my, boat,
                           info.shells or 32, info.trees or 0,
                           info.mines or 0, info.armour or 40)
+    if BRAIN_DEBUG_MODE then
+      local _p2 = require("print2")
+      _p2(string.format(
+        "CPILL_ASTAR t=%d from=(%d,%d) to=(%d,%d) boat=%d sh=%d tr=%d mn=%d arm=%d result=%.1f pill_hp=%d pill_own=%s",
+        state.tick or 0, tmx, tmy, obj.mx, obj.my, boat,
+        info.shells or 0, info.trees or 0, info.mines or 0, info.armour or 0,
+        dist_raw, obj.health or -1, obj.owner or "?"))
+    end
     if dist_raw >= 1e29 then
       return 1e30, 1e30, 1e30, 0
     end
@@ -2350,8 +2363,25 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
     else
       dist_raw = best_adj
     end
+    _dij_best_adj = best_adj  -- stash for debug
   end
   local dist_score = (dist_raw ^ 1.5) * C.CAPTURE_PILL_DIST_SCALE
+  if BRAIN_DEBUG_MODE then
+    local _s0_start = state.dij and state.dij.slates[0] and state.dij.slates[0].started_tick or -1
+    local _s2_start = state.dij and state.dij.slates[2] and state.dij.slates[2].started_tick or -1
+    local _p2 = require("print2")
+    local _danger_val = threat.at(obj.mx, obj.my) or -1
+    local _overlay_dirty = threat.overlay_dirty and "Y" or "N"
+    _p2(string.format(
+      "CPILL_DIST pill=(%d,%d) hp=%d own=%s method=%s best_adj=%.1f dist_raw=%.1f dist_score=%.1f dij_stale=%s rebuild_t=%d s0_start=%d s2_start=%d pcontrib=%s danger=%.1f ov_dirty=%s tank=(%d,%d) t=%d",
+      obj.mx, obj.my, obj.health or -1, obj.owner or "?",
+      dist_method,
+      _dij_best_adj or -1, dist_raw, dist_score,
+      tostring(dij_stale), threat.last_rebuild_tick or 0,
+      _s0_start, _s2_start,
+      tostring(threat.pill_contrib and threat.pill_contrib[obj.my * 256 + obj.mx] ~= nil),
+      _danger_val, _overlay_dirty, tmx, tmy, state.tick or 0))
+  end
   local danger_val = threat.at(obj.mx, obj.my)
   -- Cautious-mode danger multiplier (see init.lua state.cautious_mode
   -- and constants.lua CAUTIOUS_MODE_MULT).  Capture path that
@@ -5258,8 +5288,12 @@ local function goal_selection(state, world, info, quiet)
     -- friendly territory (influence > 50) cost 0.5×. Skipped during
     -- opening phase (territory not established yet).
     if state.phase ~= "opening" then
+      local INF_EXEMPT = {
+        refuel_at_base=true,
+      }
       for _, c in ipairs(pool) do
-        if c.goal and c.goal.mx and c.goal.my then
+        if c.goal and c.goal.mx and c.goal.my
+           and not INF_EXEMPT[c.goal.kind] then
           local inf = cpf.influence_at(c.goal.mx, c.goal.my) or 0
           if inf < -50 then
             c.cost = c.cost * 2.0

@@ -2495,6 +2495,21 @@ function M.update_attack_substate(goal, state, world, info)
 
   if not goal.substate then goal.substate = "plan_position" end
 
+  -- Before committing to plan_position, wait for the LGM to return.
+  -- Without the builder we can't capture after killing or build shields.
+  -- If the LGM is out (not in tank, not dead) and the builder isn't
+  -- actively dispatching it for THIS goal's purposes (gather_trees etc.),
+  -- hold in plan_position without doing work — the LGM will return and
+  -- we resume. This avoids aborting the goal (which causes oscillation)
+  -- while still not starting the expensive angle sweep until the LGM
+  -- is available.
+  if goal.substate == "plan_position"
+     and not goal.scan_spots
+     and info.man_status ~= C.LGM_INTANK
+     and info.man_status ~= C.LGM_DEAD then
+    return  -- hold, don't advance plan_position until LGM is back
+  end
+
   -- Only log on substate transitions (avoid spamming every tick)
   if goal.substate ~= goal._last_logged_sub then
     goal._last_logged_sub = goal.substate

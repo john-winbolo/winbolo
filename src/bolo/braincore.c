@@ -1433,6 +1433,53 @@ static int l_cpf_simulate_shot_angle(lua_State *L) {
   return 1;
 }
 
+/* cpf_simulate_shot_with_tanks(origin_wx, origin_wy, target_wx, target_wy,
+ *                              shooter_type, sight_len, tanks_table, owner_player)
+ *   -> { {mx=, my=, hit_type=, hit_id=}, ... }
+ * tanks_table is an array of {wx=, wy=, player_num=} entries.
+ * hit_type: 0=tile, 1=tank hit. hit_id: player number (when hit_type==1). */
+static int l_cpf_simulate_shot_with_tanks(lua_State *L) {
+  WORLD ox = (WORLD)luaL_checkinteger(L, 1);
+  WORLD oy = (WORLD)luaL_checkinteger(L, 2);
+  WORLD tx = (WORLD)luaL_checkinteger(L, 3);
+  WORLD ty = (WORLD)luaL_checkinteger(L, 4);
+  int shooter    = (int)luaL_optinteger(L, 5, BRAIN_SHOT_SHOOTER_TANK);
+  int sight_len  = (int)luaL_optinteger(L, 6, 0);
+  luaL_checktype(L, 7, LUA_TTABLE);
+  uint8_t owner  = (uint8_t)luaL_checkinteger(L, 8);
+
+  /* Read tanks table */
+  BrainShotTankPos tanks[MAX_TANKS];
+  int num_tanks = 0;
+  int tlen = (int)lua_rawlen(L, 7);
+  for (int i = 1; i <= tlen && num_tanks < MAX_TANKS; i++) {
+    lua_rawgeti(L, 7, i);
+    lua_getfield(L, -1, "wx");
+    lua_getfield(L, -2, "wy");
+    lua_getfield(L, -3, "player_num");
+    tanks[num_tanks].wx         = (WORLD)lua_tointeger(L, -3);
+    tanks[num_tanks].wy         = (WORLD)lua_tointeger(L, -2);
+    tanks[num_tanks].player_num = (uint8_t)lua_tointeger(L, -1);
+    lua_pop(L, 4);  /* pop 3 fields + table entry */
+    num_tanks++;
+  }
+
+  BrainShotTile tiles[64];
+  int n = brainPathfinderSimulateShotWithTanks(ox, oy, tx, ty,
+            shooter, sight_len, tanks, num_tanks, owner,
+            tiles, (int)(sizeof(tiles)/sizeof(tiles[0])));
+  lua_createtable(L, n, 0);
+  for (int i = 0; i < n; i++) {
+    lua_createtable(L, 0, 4);
+    lua_pushinteger(L, tiles[i].mx);       lua_setfield(L, -2, "mx");
+    lua_pushinteger(L, tiles[i].my);       lua_setfield(L, -2, "my");
+    lua_pushinteger(L, tiles[i].hit_type); lua_setfield(L, -2, "hit_type");
+    lua_pushinteger(L, tiles[i].hit_id);   lua_setfield(L, -2, "hit_id");
+    lua_rawseti(L, -2, i + 1);
+  }
+  return 1;
+}
+
 static int l_cpf_estimate_cost(lua_State *L) {
   CPF_GET(L);
   int sx = (int)luaL_checkinteger(L, 1);
@@ -1678,6 +1725,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_estimate_cost",     l_cpf_estimate_cost },
     { "cpf_simulate_shot",        l_cpf_simulate_shot },
     { "cpf_simulate_shot_angle",  l_cpf_simulate_shot_angle },
+    { "cpf_simulate_shot_with_tanks", l_cpf_simulate_shot_with_tanks },
     { "cpf_danger_at",             l_cpf_danger_at },
     { "cpf_lgm_travel_ticks",      l_cpf_lgm_travel_ticks },
     { "cpf_lgm_travel_ticks_map",  l_cpf_lgm_travel_ticks_map },

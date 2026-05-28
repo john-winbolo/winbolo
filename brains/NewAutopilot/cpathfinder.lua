@@ -528,8 +528,29 @@ function M.simulate_shot_angle(ox, oy, angle, shooter_type, sight_len)
     sight_len or 0)
 end
 
+--- Tank-aware shot simulation: same as simulate_shot but also checks
+--- for tank hitbox intersections (128 wu box). Returns entries with
+--- hit_type=0 (tile) or hit_type=1 (tank hit, hit_id=player_num).
+--- Shell stops on the first tank hit (consumed).
+--- tanks: array of {wx=, wy=, player_num=} entries.
+--- owner_player: the firing player (excluded from hit checks).
+function M.simulate_shot_with_tanks(ox, oy, tx, ty, shooter_type, sight_len, tanks, owner_player)
+  if not cpf_simulate_shot_with_tanks then
+    return M.simulate_shot(ox, oy, tx, ty, shooter_type, sight_len)
+  end
+  return cpf_simulate_shot_with_tanks(
+    math.floor(ox + 0.5), math.floor(oy + 0.5),
+    math.floor(tx + 0.5), math.floor(ty + 0.5),
+    shooter_type or M.SHOT_TANK,
+    sight_len or 0,
+    tanks,
+    owner_player)
+end
+
 M.SHOT_TANK = 0
 M.SHOT_PILL = 1
+M.SHOT_HIT_TILE = 0
+M.SHOT_HIT_TANK = 1
 
 --- Estimate LGM travel time in game ticks (world coordinates).
 --- Returns ticks to arrive, or -1 if stuck/blocked.

@@ -67,34 +67,153 @@ local ENABLE_LOGGING = false
 -- steering.lua's shot_path_clear. Blocks on walls, pillboxes,
 -- hostile bases. Forests and enemy tanks are OK.
 local function _shot_path_clear_init(info, world, target_wx, target_wy, target_mx, target_my)
-  local tiles = cpf.simulate_shot(info.tankx, info.tanky,
-                                  target_wx, target_wy,
-                                  cpf.SHOT_TANK, 0)
+  local tank_positions = {}
+  if info.objects then
+    for _, ob in ipairs(info.objects) do
+      if ob.type == 2 then  -- OBJECT_TANK
+        tank_positions[#tank_positions + 1] = {
+          wx = ob.x, wy = ob.y,
+          player_num = ob.idnum or 255,
+        }
+      end
+    end
+  end
+  local tiles
+  if #tank_positions > 0 then
+    tiles = cpf.simulate_shot_with_tanks(info.tankx, info.tanky,
+                                         target_wx, target_wy,
+                                         cpf.SHOT_TANK, 0,
+                                         tank_positions,
+                                         info.player_number or 255)
+  else
+    tiles = cpf.simulate_shot(info.tankx, info.tanky,
+                              target_wx, target_wy,
+                              cpf.SHOT_TANK, 0)
+  end
   if not tiles then return true end
   local origin_mx = info.tankx >> 8
   local origin_my = info.tanky >> 8
-  for _, st in ipairs(tiles) do
-    if st.mx == target_mx and st.my == target_my then break end
+  local do_viz = BRAIN_DEBUG_MODE and viz.is_on("shell_hit_dot")
+  local blocked = false
+  local block_reason = nil
+  local block_mx, block_my = nil, nil
+  for ti, st in ipairs(tiles) do
+    if st.hit_type and st.hit_type == 1 then
+      local tank_is_target = (st.mx == target_mx and st.my == target_my)
+      if do_viz then
+        local hit_tank = nil
+        for _, tp in ipairs(tank_positions) do
+          if tp.player_num == st.hit_id then hit_tank = tp; break end
+        end
+        if hit_tank then
+          local tcx = hit_tank.wx / 256.0
+          local tcy = hit_tank.wy / 256.0
+          local hr = tank_is_target and 0 or 255
+          local hg = tank_is_target and 255 or 0
+          viz.rect("shell_hit_dot", tcx - 0.5, tcy - 0.5,
+                   tcx + 0.5, tcy + 0.5, hr, hg, 0, 150)
+          viz.text("shell_hit_dot", tcx, tcy - 0.6,
+                   string.format("#%d tank#%d %s", ti, st.hit_id or 0,
+                     tank_is_target and "HIT" or "BLOCKED"),
+                   "center", hr, hg, 0, 255, 0.6)
+        end
+      end
+      if not tank_is_target then
+        blocked = true
+        block_reason = string.format("allied_tank#%d", st.hit_id or 0)
+        block_mx, block_my = st.mx, st.my
+      end
+      break
+    end
+    if st.mx == target_mx and st.my == target_my then
+      if do_viz then
+        viz.rect("shell_hit_dot", st.mx + 0.1, st.my + 0.1,
+                 st.mx + 0.9, st.my + 0.9, 0, 255, 0, 80)
+        viz.text("shell_hit_dot", st.mx + 0.5, st.my + 0.5,
+                 tostring(ti), "center", 0, 255, 0, 200, 0.5)
+      end
+      break
+    end
     if st.mx ~= origin_mx or st.my ~= origin_my then
       local stt = U.ttype(st.mx, st.my)
       if stt == C.T_BUILDING or stt == C.T_HALFBUILD then
-        return false
+        blocked = true
+        block_reason = "wall"
+        block_mx, block_my = st.mx, st.my
+        if do_viz then
+          viz.text("shell_hit_dot", st.mx + 0.5, st.my + 0.5,
+                   tostring(ti), "center", 255, 0, 0, 200, 0.5)
+        end
+        break
       end
       local plist = world.pill_at and world.pill_at[st.my * 256 + st.mx]
       if plist then
         for _, e in ipairs(plist) do
           if e.pill and e.pill.health and e.pill.health > 0 then
-            return false
+            blocked = true
+            block_reason = string.format("pill(hp=%d)", e.pill.health)
+            block_mx, block_my = st.mx, st.my
+            break
           end
         end
+        if blocked then break end
       end
       local bentry = world.base_at and world.base_at[st.my * 256 + st.mx]
       if bentry and bentry.base and bentry.base.owner == "hostile" then
-        return false
+        blocked = true
+        block_reason = "hostile_base"
+        block_mx, block_my = st.mx, st.my
+        break
+      end
+    end
+    if do_viz and not blocked then
+      viz.rect("shell_hit_dot", st.mx + 0.2, st.my + 0.2,
+               st.mx + 0.8, st.my + 0.8, 200, 200, 200, 40)
+      viz.text("shell_hit_dot", st.mx + 0.5, st.my + 0.5,
+               tostring(ti), "center", 200, 200, 200, 150, 0.4)
+    end
+  end
+  if do_viz then
+    if blocked then
+      viz.rect("shell_hit_dot", block_mx + 0.05, block_my + 0.05,
+               block_mx + 0.95, block_my + 0.95, 255, 0, 0, 150)
+      viz.text("shell_hit_dot", block_mx + 0.5, block_my - 0.3,
+               block_reason, "center", 255, 80, 80, 255, 0.6)
+    end
+    viz.line("shell_hit_dot",
+             info.tankx / 256.0, info.tanky / 256.0,
+             target_wx / 256.0, target_wy / 256.0,
+             blocked and 255 or 100, blocked and 50 or 255, 50,
+             blocked and 180 or 80)
+    if viz.detail_circle then
+      local did = "shot_path_init"
+      local hdr = string.format("Shot path: from=(%d,%d) to=(%d,%d) result=%s",
+        origin_mx, origin_my, target_mx, target_my, blocked and "BLOCKED" or "CLEAR")
+      local mid_wx = (info.tankx + target_wx) / 2 / 256.0
+      local mid_wy = (info.tanky + target_wy) / 2 / 256.0
+      viz.detail_circle(did, mid_wx, mid_wy, 0.3, hdr)
+      if tiles then
+        for i, st in ipairs(tiles) do
+          if st.hit_type and st.hit_type == 1 then
+            viz.detail_text(did, string.format(
+              "#%d TANK#%d @tile(%d,%d)", i, st.hit_id or 0, st.mx, st.my))
+          else
+            local tt = U.ttype(st.mx, st.my)
+            local tt_name = ({
+              [C.T_BUILDING] = "wall", [C.T_HALFBUILD] = "halfwall",
+              [C.T_FOREST] = "forest", [C.T_ROAD] = "road",
+              [C.T_GRASS] = "grass", [C.T_RIVER] = "river",
+              [C.T_DEEPSEA] = "deepsea", [C.T_SWAMP] = "swamp",
+              [C.T_RUBBLE] = "rubble",
+            })[tt] or tostring(tt)
+            viz.detail_text(did, string.format(
+              "#%d tile(%d,%d) %s", i, st.mx, st.my, tt_name))
+          end
+        end
       end
     end
   end
-  return true
+  return not blocked
 end
 
 -- Hoisted lookup tables (don't realloc every tick of every Brain.think).
@@ -1712,7 +1831,7 @@ function Brain.think(info)
     in_range_aim_finetune=true, build_walls=true, detree=true,
   }
   local ALLY_AVOID_RADIUS = 3
-  local ALLY_AVOID_COST   = 200
+  local ALLY_AVOID_COST   = 10
   do
     local now_aa = state.tick or 0
     for ally_pn, slot in ally_state.iter_active(now_aa, 1750) do

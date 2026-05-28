@@ -462,10 +462,24 @@ int brainPathfinderFindFrontLine(BrainPathfinder *pf,
 #define BRAIN_SHOT_SHOOTER_TANK 0
 #define BRAIN_SHOT_SHOOTER_PILL 1
 
+/* hit_type: 0 = map tile traversal, 1 = tank hit at this position.
+ * When hit_type==1, hit_id is the player number of the tank hit
+ * and mx/my is the tile the shell was on when the hit occurred. */
 typedef struct {
   uint8_t mx;
   uint8_t my;
+  uint8_t hit_type;
+  uint8_t hit_id;
 } BrainShotTile;
+
+#define BRAIN_SHOT_HIT_TILE 0
+#define BRAIN_SHOT_HIT_TANK 1
+
+/* Tank position for simulate_shot_with_tanks. */
+typedef struct {
+  WORLD wx, wy;
+  uint8_t player_num;
+} BrainShotTankPos;
 
 /* Returns the number of unique tiles written to out_tiles
  * (de-duplicated against the previous tile, never against earlier
@@ -494,6 +508,19 @@ int brainPathfinderSimulateShotAngle(WORLD origin_wx, WORLD origin_wy,
                                      float angle,
                                      int shooter_type, int sight_len,
                                      BrainShotTile *out_tiles, int max_tiles);
+
+/* Same as brainPathfinderSimulateShot but also checks for tank hits.
+ * Tank positions are passed via tanks/num_tanks. When the shell enters
+ * the 128 wu hitbox of a tank, a hit_type=1 entry is emitted at that
+ * point in the sequence (interspersed with tile entries). The shell
+ * stops on the first tank hit (same as the engine). owner_player is
+ * the firing player — own tank is excluded from hit checks. */
+int brainPathfinderSimulateShotWithTanks(WORLD origin_wx, WORLD origin_wy,
+                                          WORLD target_wx, WORLD target_wy,
+                                          int shooter_type, int sight_len,
+                                          const BrainShotTankPos *tanks, int num_tanks,
+                                          uint8_t owner_player,
+                                          BrainShotTile *out_tiles, int max_tiles);
 
 /* ── Serialization (for exact trace replay) ────────────────── */
 

@@ -3242,6 +3242,8 @@ static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
     int my = (int)((unsigned)origin_wy >> TANK_SHIFT_MAPSIZE);
     out_tiles[count].mx = (uint8_t)mx;
     out_tiles[count].my = (uint8_t)my;
+    out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+    out_tiles[count].hit_id = 0;
     last_mx = mx;
     last_my = my;
     count++;
@@ -3254,6 +3256,8 @@ static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
     if ((mx != last_mx || my != last_my) && count < max_tiles) {
       out_tiles[count].mx = (uint8_t)mx;
       out_tiles[count].my = (uint8_t)my;
+      out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+      out_tiles[count].hit_id = 0;
       last_mx = mx;
       last_my = my;
       count++;
@@ -3275,8 +3279,109 @@ static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
     if (mx != last_mx || my != last_my) {
       out_tiles[count].mx = (uint8_t)mx;
       out_tiles[count].my = (uint8_t)my;
+      out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+      out_tiles[count].hit_id = 0;
       last_mx = mx;
       last_my = my;
+      count++;
+    }
+  }
+
+  return count;
+}
+
+/* Tank-aware shot simulation. Same tile walk as simulate_shot_walk but
+ * also checks for tank hitbox intersections (128 wu box, same as
+ * tankIsTankHit in tank.c) at every sub-tick position. When a tank is
+ * hit, a hit_type=BRAIN_SHOT_HIT_TANK entry is emitted and the walk
+ * stops (shell consumed). Owner tank is excluded from hit checks. */
+static int simulate_shot_walk_tanks(WORLD origin_wx, WORLD origin_wy,
+                                     TURNTYPE angle,
+                                     int shooter_type, int sight_len,
+                                     const BrainShotTankPos *tanks, int num_tanks,
+                                     uint8_t owner_player,
+                                     BrainShotTile *out_tiles, int max_tiles) {
+  if (out_tiles == NULL || max_tiles <= 0) return 0;
+
+  int len_units;
+  if (shooter_type == BRAIN_SHOT_SHOOTER_PILL) {
+    len_units = (int)PILLBOX_FIRE_DISTANCE;
+  } else {
+    int sl = (sight_len > 0) ? sight_len : GUNSIGHT_MAX;
+    len_units = sl / 2;
+  }
+
+  WORLD x, y;
+  shellSpawnPos(origin_wx, origin_wy, angle, &x, &y);
+  int ticks = shellLifeTicks(len_units);
+
+  int32_t xStep = 0, yStep = 0;
+  utilCalcDistanceHP(&xStep, &yStep, angle, SHELL_SPEED);
+  int32_t xAcc = 0, yAcc = 0;
+
+  int count = 0;
+  int last_mx = -1, last_my = -1;
+
+  /* Origin tile */
+  {
+    int mx = (int)((unsigned)origin_wx >> TANK_SHIFT_MAPSIZE);
+    int my = (int)((unsigned)origin_wy >> TANK_SHIFT_MAPSIZE);
+    out_tiles[count].mx = (uint8_t)mx;
+    out_tiles[count].my = (uint8_t)my;
+    out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+    out_tiles[count].hit_id = 0;
+    last_mx = mx; last_my = my;
+    count++;
+  }
+
+  /* Post-offset tile */
+  {
+    int mx = (int)((unsigned)x >> TANK_SHIFT_MAPSIZE);
+    int my = (int)((unsigned)y >> TANK_SHIFT_MAPSIZE);
+    if ((mx != last_mx || my != last_my) && count < max_tiles) {
+      out_tiles[count].mx = (uint8_t)mx;
+      out_tiles[count].my = (uint8_t)my;
+      out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+      out_tiles[count].hit_id = 0;
+      last_mx = mx; last_my = my;
+      count++;
+    }
+  }
+
+  for (int t = 0; t < ticks && count < max_tiles; t++) {
+    xAcc += xStep;
+    yAcc += yStep;
+    int xMove = xAcc >> 8;
+    int yMove = yAcc >> 8;
+    xAcc -= xMove << 8;
+    yAcc -= yMove << 8;
+    x = (WORLD)((int)x + xMove);
+    y = (WORLD)((int)y + yMove);
+
+    /* Tank hitbox check — 128 wu box, same as tankIsTankHit */
+    for (int i = 0; i < num_tanks; i++) {
+      if (tanks[i].player_num == owner_player) continue;
+      if (abs((int)tanks[i].wx - (int)x) < 128 &&
+          abs((int)tanks[i].wy - (int)y) < 128) {
+        int mx = (int)((unsigned)x >> TANK_SHIFT_MAPSIZE);
+        int my = (int)((unsigned)y >> TANK_SHIFT_MAPSIZE);
+        out_tiles[count].mx = (uint8_t)mx;
+        out_tiles[count].my = (uint8_t)my;
+        out_tiles[count].hit_type = BRAIN_SHOT_HIT_TANK;
+        out_tiles[count].hit_id = tanks[i].player_num;
+        count++;
+        return count;  /* shell consumed by tank hit */
+      }
+    }
+
+    int mx = (int)((unsigned)x >> TANK_SHIFT_MAPSIZE);
+    int my = (int)((unsigned)y >> TANK_SHIFT_MAPSIZE);
+    if (mx != last_mx || my != last_my) {
+      out_tiles[count].mx = (uint8_t)mx;
+      out_tiles[count].my = (uint8_t)my;
+      out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+      out_tiles[count].hit_id = 0;
+      last_mx = mx; last_my = my;
       count++;
     }
   }
@@ -3317,4 +3422,21 @@ int brainPathfinderSimulateShotAngle(WORLD origin_wx, WORLD origin_wy,
   return simulate_shot_walk(origin_wx, origin_wy, (TURNTYPE)a,
                             shooter_type, sight_len,
                             out_tiles, max_tiles);
+}
+
+/* Public entry: shot simulation with tank hitbox checking. */
+int brainPathfinderSimulateShotWithTanks(WORLD origin_wx, WORLD origin_wy,
+                                          WORLD target_wx, WORLD target_wy,
+                                          int shooter_type, int sight_len,
+                                          const BrainShotTankPos *tanks, int num_tanks,
+                                          uint8_t owner_player,
+                                          BrainShotTile *out_tiles, int max_tiles) {
+  if (out_tiles == NULL || max_tiles <= 0) return 0;
+  if (origin_wx == target_wx && origin_wy == target_wy) return 0;
+  TURNTYPE angle = shellAngleFromTarget(origin_wx, origin_wy,
+                                        target_wx, target_wy);
+  return simulate_shot_walk_tanks(origin_wx, origin_wy, angle,
+                                  shooter_type, sight_len,
+                                  tanks, num_tanks, owner_player,
+                                  out_tiles, max_tiles);
 }
