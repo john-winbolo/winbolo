@@ -2960,8 +2960,9 @@ static void lobbySendSetting(ClientSim *cs,
                              const uint8_t *value, uint8_t valueLen) {
     /* Pre-send validation for setting types that have a wire-side range
      * cap on the server. Drop out-of-range values rather than letting
-     * the server reject them — the server has the authoritative check
-     * (transport_udp_server.c) and emits LOBBY_REJECT_INVALID. */
+     * the server reject them — the dispatcher has the authoritative
+     * check (server_command_dispatch.c CMD_LOBBY_SET arm) and returns
+     * CMD_REJECT_INVALID. */
     if (settingType == LST_TIME_MINUTES && valueLen == 2) {
         uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
         if (mins < LOBBY_TIME_MINUTES_MIN ||
@@ -5110,9 +5111,10 @@ static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
 }
 
 /* ── Layout A — server reject toast ───────────────────────────────
- * Surfaces the last PACKET_LOBBY_REJECT as a one-line orange status
- * pill. Auto-clears after the user dismisses it (clicks the X) so
- * subsequent rejects re-trigger naturally. */
+ * Surfaces the last CTRL_COMMAND_REJECTED (delivered via
+ * clientSimApplyControl) as a one-line orange status pill. Auto-clears
+ * after the user dismisses it (clicks the X) so subsequent rejects
+ * re-trigger naturally. */
 static void renderLobbyRejectToast(ClientSim *cs, float s) {
     if (clientSimGetLobbyLastRejectPacket(cs) == 0) return;
     const char *reason = langGetText(STR_DLGLOBBY_REJECT_DEFAULT);

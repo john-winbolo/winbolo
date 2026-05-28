@@ -158,6 +158,7 @@ const char *packetTypeName(uint8_t type) {
     case PACKET_CONTROL_ACK:       return "CONTROL_ACK";
     case PACKET_COMMAND_TICK:      return "COMMAND_TICK";
     case PACKET_COMMAND_ACK:       return "COMMAND_ACK";
+    case PACKET_COMMAND_REJECTED:  return "COMMAND_REJECTED";
     default:                        return "UNKNOWN";
     }
 }

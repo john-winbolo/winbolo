@@ -313,7 +313,7 @@ static BYTE udpPlayerNum = 0;
  * Chat callback uses the passed cs (not the module-static humanSim) so
  * the same function can be wired onto a bot's ClientSim too — bot chat
  * then flows down the same path human chat does: clientSimNetSendChat
- * → cs->transport.sendBytes → local transport publishes CTRL_CHAT. */
+ * → clientSimSubmitCommand → CMD_CHAT arm publishes CTRL_CHAT. */
 static void gameFrontChatSendCallback(struct ClientSim *cs, uint8_t fromPlayer,
                                       uint8_t destPlayer, const char *message) {
     (void)fromPlayer;

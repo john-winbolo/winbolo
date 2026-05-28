@@ -71,10 +71,11 @@ typedef enum {
     CMD_WBN_REAUTH
 } ClientCommandType;
 
-/* Reject codes returned by serverSimApplyCommand. Codes 1-7 are
- * intentionally aligned 1:1 with the existing LOBBY_REJECT_*
- * constants in src/bolo/internal/netpacks.h so the UDP server
- * can forward them through PACKET_LOBBY_REJECT unchanged. */
+/* Reject codes returned by serverSimApplyCommand. The dispatcher
+ * surfaces these to the originating client via CTRL_COMMAND_REJECTED.
+ * Codes 1-7 are intentionally aligned 1:1 with the existing
+ * LOBBY_REJECT_* constants in src/bolo/internal/netpacks.h so the
+ * UDP server's map-upload arms can reuse the same numeric values. */
 typedef enum {
     CMD_OK = 0,
     CMD_REJECT_NOT_HOST,

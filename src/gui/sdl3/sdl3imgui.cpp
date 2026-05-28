@@ -325,10 +325,11 @@ static int  s_joinConfirmPort       = 0;
 enum SendMsgRecipient { kSendAll = 0, kSendAllies, kSendNearby, kSendSelected };
 static int    s_sendMsgRecipient  = kSendAll;
 /* Sized to match the wire payload cap (PACKET_MAX_CHAT_MESSAGE bytes) used by
- * transportUdpClientSendChat / transport_udp_server PACKET_CHAT_MESSAGE,
- * + 1 for NUL. ImGui's InputText caps insertions at sizeof(buf) and
- * rejects a whole UTF-8 codepoint that would overflow rather than
- * splitting it, so this is the limit users see in the dialog too. */
+ * the CMD_CHAT body inside a PACKET_COMMAND_TICK frame (submitted via
+ * clientSimSubmitCommand, applied by the CMD_CHAT dispatcher arm), + 1
+ * for NUL. ImGui's InputText caps insertions at sizeof(buf) and rejects
+ * a whole UTF-8 codepoint that would overflow rather than splitting it,
+ * so this is the limit users see in the dialog too. */
 static char   s_sendMsgBuf[PACKET_MAX_CHAT_MESSAGE + 1] = "";
 static Uint64 s_sendMsgCooldownEnd = 0;   /* SDL_GetTicks() value; 0 = not in cooldown */
 static bool   s_sendMsgFocusInput = false; /* Set true to focus the text input next frame */

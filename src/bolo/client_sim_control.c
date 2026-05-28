@@ -469,10 +469,11 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         /* In-process delivery for chat. Mirrors the UDP path in
          * transport_udp_client.c (PACKET_CHAT_BROADCAST), but for
          * subscribers that aren't UDP clients (host humanSim, bot
-         * ClientSims). Without this, a bot publishing CTRL_CHAT via
-         * the local transport's sendBytes dispatch would never
-         * materialize in any recipient's MessageState — so /info
-         * traffic between bots would be invisible. */
+         * ClientSims). Without this, a bot's chat — submitted via
+         * clientSimSubmitCommand and republished by the CMD_CHAT
+         * arm as CTRL_CHAT — would never materialize in any
+         * recipient's MessageState, so /info traffic between bots
+         * would be invisible. */
         BYTE fromPlayer = evt->u.chat.fromPlayer;
         BYTE destPlayer = evt->u.chat.destPlayer;
         uint16_t bodyLen = evt->u.chat.bodyLen;
