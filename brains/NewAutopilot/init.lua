@@ -1848,37 +1848,121 @@ function Brain.think(info)
     in_range_aim_finetune=true, build_walls=true, detree=true,
   }
   local ALLY_AVOID_RADIUS = 2  -- 5x5 block around the ally tank itself
-  local ALLY_AVOID_COST   = 10
+  local ALLY_AVOID_COST   = C.ALLY_AVOID_COST or 800
+  -- Tank-5x5 only stamps when the ally tank is within
+  -- TANK_STAMP_NEAR_TILES *euclidean* of either their setup
+  -- (approach) point or their standoff point.  Both points are
+  -- broadcast in bsi.smx/smy and bsi.ssx/ssy on attack_pill goals.
+  -- Tighter than the prior "within 2 of pill" rule and avoids leaving
+  -- a breadcrumb trail while the ally is still driving in.
+  local TANK_STAMP_NEAR_TILES = 3
   do
     local now_aa = state.tick or 0
+    -- Clear previous tick's stamps so a moving ally doesn't leave a
+    -- breadcrumb trail of +800 cost behind them.  We stamp each tile
+    -- ourselves, so we know exactly which to zero.  Pill/base tiles
+    -- are never stamped (skipped at stamp time) so this clear can
+    -- safely write 0 without wiping rebuild_overlay's impassable
+    -- markers.
+    -- All persistent overlay sources we must NOT clobber:
+    --   - pill tiles (32767, rebuilt on dirty only)
+    --   - hostile-base tiles (~1500, rebuilt on dirty only)
+    --   - stuck_blacklist tiles (1500, re-stamped by steering AFTER us)
+    -- Skip those on both stamp AND clear so we never zero them and so
+    -- our +800 doesn't weaken a stronger pre-existing penalty.
+    local stuck_bl = state.stuck_blacklist
+    local stamped = state._ally_avoid_stamped
+    if stamped then
+      for k in pairs(stamped) do
+        if not (stuck_bl and stuck_bl[k]) then
+          cpf.set_overlay(U.mkey_x(k), U.mkey_y(k), 0)
+        end
+        stamped[k] = nil
+      end
+    else
+      stamped = {}
+      state._ally_avoid_stamped = stamped
+    end
+
+    local function stamp(x, y)
+      if x < 0 or x > 255 or y < 0 or y > 255 then return end
+      local pkey = y * 256 + x
+      if world.pill_at and world.pill_at[pkey] then return end
+      if world.base_at and world.base_at[pkey] then return end
+      local mk = U.mkey(x, y)
+      if stuck_bl and stuck_bl[mk] then return end  -- defer to stuck_blacklist
+      cpf.set_overlay(x, y, ALLY_AVOID_COST)
+      stamped[mk] = true
+      if BRAIN_DEBUG_MODE and viz.is_on("ally_avoid_overlay") then
+        viz.rect("ally_avoid_overlay", x, y, x + 1, y + 1, 255, 165, 0, 60)
+      end
+    end
+
     for ally_pn, slot in ally_state.iter_active(now_aa, 1750) do
       if ally_pn ~= info.player_number then
         local ai = slot.info
+        -- Compute the "ally tank within 3 euclidean of either setup
+        -- or standoff" gate up front so both the diagnostic overlay
+        -- and the stamping block use the same source of truth.
+        local pmx = tonumber(ai.mx)
+        local pmy = tonumber(ai.my)
+        local atmx = tonumber(ai.tx)
+        local atmy = tonumber(ai.ty)
+        local smx  = tonumber(ai.smx)
+        local smy  = tonumber(ai.smy)
+        local ssx  = tonumber(ai.ssx)
+        local ssy  = tonumber(ai.ssy)
+        local function edist(x1, y1, x2, y2)
+          if not (x1 and y1 and x2 and y2) then return math.huge end
+          local ddx = x1 - x2; local ddy = y1 - y2
+          return math.sqrt(ddx * ddx + ddy * ddy)
+        end
+        local d_setup    = edist(atmx, atmy, smx, smy)
+        local d_standoff = edist(atmx, atmy, ssx, ssy)
+        local d_min      = math.min(d_setup, d_standoff)
+        local in_range   = d_min <= TANK_STAMP_NEAR_TILES
+        local in_combat_sub = ai.goal == "attack_pill" and ALLY_COMBAT_SUBS[ai.sub] and true or false
+        local active        = in_combat_sub and in_range
+
+        -- Diagnostic overlay: always rendered for any attack_pill ally
+        -- (on the ally_avoid_overlay layer which defaults on).  Shows
+        -- whether the 5x5 stamp is active and, when off, the live
+        -- euclidean distance to each of the two activation points.
+        if BRAIN_DEBUG_MODE and ai.goal == "attack_pill"
+           and pmx and pmy and atmx and atmy then
+          local r, g, b = active and 80 or 255,
+                          active and 255 or (in_combat_sub and 200 or 120),
+                          80
+          local function fmt_d(d)
+            return (d == math.huge) and "?" or string.format("%.1f", d)
+          end
+          local label1 = string.format("p%d BLOCK: %s",
+                                       ally_pn, active and "ON" or "OFF")
+          local label2 = string.format("sub=%s setup=%s standoff=%s thr=%d",
+                                       tostring(ai.sub or "?"),
+                                       fmt_d(d_setup), fmt_d(d_standoff),
+                                       TANK_STAMP_NEAR_TILES)
+          viz.text("ally_avoid_overlay", atmx + 0.5, atmy - 0.8,
+                   label1, "center", r, g, b, 255)
+          viz.text("ally_avoid_overlay", atmx + 0.5, atmy - 0.35,
+                   label2, "center", r, g, b, 230, 0.4)
+        end
+
         if ai.goal == "attack_pill" and ALLY_COMBAT_SUBS[ai.sub] then
-          local pmx = tonumber(ai.mx)
-          local pmy = tonumber(ai.my)
-          local atmx = tonumber(ai.tx)
-          local atmy = tonumber(ai.ty)
           if pmx and pmy and atmx and atmy then
-            -- Stamp a small radius around the ALLY TANK position
-            -- (broadcast tx/ty), not the pill target.  This is the
-            -- tile we actually want to keep clear so we don't drive
-            -- through them while they're shooting.
-            for dy = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
-              for dx = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
-                local ax = atmx + dx
-                local ay = atmy + dy
-                if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
-                  cpf.set_overlay(ax, ay, ALLY_AVOID_COST)
-                  if BRAIN_DEBUG_MODE and viz.is_on("ally_avoid_overlay") then
-                    viz.rect("ally_avoid_overlay",
-                      ax, ay, ax + 1, ay + 1, 255, 165, 0, 60)
-                  end
+            -- 5x5 tank stamp gated on euclidean ≤ 3 to setup or
+            -- standoff (see above).  Stops the breadcrumb trail while
+            -- they're still driving in from far away.
+            if in_range then
+              for dy = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
+                for dx = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
+                  stamp(atmx + dx, atmy + dy)
                 end
               end
             end
             -- Stamp firing lane: 2-tile-wide line from ally tank to
             -- pill target. Uses broadcast tx/ty for ally position.
+            -- (Unchanged — user wants the engage-to-pill lane to stay.)
             if U.mdist(atmx, atmy, pmx, pmy) <= 12 then
               local ldx = pmy - atmy
               local ldy = -(pmx - atmx)
@@ -1887,15 +1971,8 @@ function Brain.think(info)
               U.line_walk(atmx + 0.5, atmy + 0.5, pmx + 0.5, pmy + 0.5,
                 function(lx, ly)
                   for w = -1, 1 do
-                    local wx = U.mclamp(math.floor(lx + pnx * w + 0.5))
-                    local wy = U.mclamp(math.floor(ly + pny * w + 0.5))
-                    if wx >= 0 and wx <= 255 and wy >= 0 and wy <= 255 then
-                      cpf.set_overlay(wx, wy, ALLY_AVOID_COST)
-                      if BRAIN_DEBUG_MODE and viz.is_on("ally_avoid_overlay") then
-                        viz.rect("ally_avoid_overlay",
-                          wx, wy, wx + 1, wy + 1, 255, 165, 0, 60)
-                      end
-                    end
+                    stamp(U.mclamp(math.floor(lx + pnx * w + 0.5)),
+                          U.mclamp(math.floor(ly + pny * w + 0.5)))
                   end
                 end)
             end
@@ -5302,6 +5379,20 @@ function Brain.think(info)
       if state.goal.mx and state.goal.my then
         bsi.mx = tostring(state.goal.mx)
         bsi.my = tostring(state.goal.my)
+      end
+      -- Attack_pill setup + standoff coords so receivers can decide
+      -- "ally is within 3 euclidean tiles of either point" for the
+      -- ally-avoid 5x5 stamp.  Only sent on attack_pill goals where
+      -- these fields are meaningful.
+      if state.goal.kind == "attack_pill" then
+        if state.goal.approach_mx and state.goal.approach_my then
+          bsi.smx = tostring(state.goal.approach_mx)
+          bsi.smy = tostring(state.goal.approach_my)
+        end
+        if state.goal.standoff_mx and state.goal.standoff_my then
+          bsi.ssx = tostring(state.goal.standoff_mx)
+          bsi.ssy = tostring(state.goal.standoff_my)
+        end
       end
       -- Cost: pool_cache holds per-pool winners with .cost. Find the
       -- entry whose .goal matches our current goal (same kind + tile)

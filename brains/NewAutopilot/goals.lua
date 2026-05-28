@@ -2738,6 +2738,14 @@ local function get_formula_inner(e)
       e._armour_at_reject or 0, C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR,
       e._pillhp_at_reject or 0, C.ATTACK_PILL_UNSAFE_HP_THRESHOLD)
   end
+  if e._reject == "ally_pill_take_priority" then
+    local rem = e._reject_remaining or 0
+    local by  = e._priority_by
+    return string.format(
+      "REJECT ally_pill_take_priority %dt @(%d,%d)||reject:ally_pill_take_priority %dt — p%s is doing the take, holding off ~%.1fs",
+      rem, e._mx or 0, e._my or 0,
+      rem, tostring(by or "?"), rem / 50.0)
+  end
   if p == 1 then
     -- Rejected refuel base: short-circuit with REJECT formula so the
     -- breakdown panel makes clear why the row exists with INF cost.
@@ -3019,7 +3027,9 @@ local function get_formula(e)
     end
   end
   -- REJECT row already formatted by inner — no trailing term to append.
-  if e._reject == "ally_claimed" or e._reject == "armour_too_low" then
+  if e._reject == "ally_claimed"
+     or e._reject == "armour_too_low"
+     or e._reject == "ally_pill_take_priority" then
     return f
   end
   -- Cost-baked ally penalty (pool 1 soft +100, pool 8 hard +10000).  Only
@@ -4074,8 +4084,61 @@ local function sync_ally_claimed_rejects(state)
   local threshold = C.ALLY_CLAIMED_STEAL_THRESHOLD or 0
   local cur_armour = (state._last_info and state._last_info.armour) or 0
 
+  -- Refresh "ally pill-take priority" stamps: every tick an ally is
+  -- broadcasting attack_pill on a target, set/extend a deadline
+  -- (now + ALLY_PILL_TAKE_PRIORITY_TICKS) for that pill_id.  Used a
+  -- few lines down to REJECT capture_pill (pool 4) candidates so the
+  -- ally who killed the pill gets first dibs to capture it.  Stamps
+  -- decay naturally ~2s after the ally switches goals.
+  local priority_until = state.pill_ally_take_priority
+  if not priority_until then
+    priority_until = {}
+    state.pill_ally_take_priority = priority_until
+  end
+  local priority_ticks = C.ALLY_PILL_TAKE_PRIORITY_TICKS or 100
+  for ally_pn, slot in ally_state.iter_active(now, 1750) do
+    if ally_pn ~= self_pn then
+      local h = slot.info
+      if h.goal == "attack_pill" then
+        local aid = tonumber(h.target)
+        if aid then
+          priority_until[aid] = now + priority_ticks
+          -- Stash who triggered it so the REJECT row can name them.
+          priority_until["_by_" .. aid] = ally_pn
+        end
+      end
+    end
+  end
+
   for _, e in pairs(cache) do
     local pool_idx = e._p
+    -- Pool 4 (capture_pill) extra precondition: while an ally is
+    -- broadcasting attack_pill on the SAME pill, REJECT for ~2s after
+    -- their last broadcast so they get first dibs on the dead pill
+    -- they just killed.  Stamp self-refreshes every tick they're on
+    -- attack_pill, then decays once they switch goals (typically to
+    -- capture_pill themselves) — at which point the standard
+    -- ally_claimed REJECT takes over.
+    if pool_idx == 4 and e._id then
+      local until_t = priority_until[e._id]
+      if until_t and until_t > now then
+        if e._reject ~= "ally_pill_take_priority" then
+          e._reject = "ally_pill_take_priority"
+          e._reject_remaining = until_t - now
+          e._priority_by = priority_until["_by_" .. e._id]
+          e.formula = nil
+        else
+          e._reject_remaining = until_t - now
+          e._priority_by = priority_until["_by_" .. e._id]
+        end
+        goto continue_entry
+      elseif e._reject == "ally_pill_take_priority" then
+        e._reject = nil
+        e._reject_remaining = 0
+        e._priority_by = nil
+        e.formula = nil
+      end
+    end
     -- Pool 6 (attack_pill) extra precondition: refuse to take a near-
     -- full-HP pill on low armour.  Higher priority than ally_claimed
     -- — if we can't safely take it, who's cheapest doesn't matter.

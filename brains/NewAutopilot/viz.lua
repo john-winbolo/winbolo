@@ -215,7 +215,7 @@ M.IDS = {
   ally_state_overlay = { short = "Ally state table",
                          long  = "Right-middle HUD showing each ally's goal / sub / target / k=v data, fed by the chat-based ally_state slate" },
   ally_avoid_overlay = { short = "Ally avoid zones",
-                         long  = "Orange tiles around the pill target (and along the firing lane) for each ally bot mid-pill-take. Mirrors the cpf overlay cost stamped by ALLY_AVOID code so the bot doesn't drive through an ally's combat zone." },
+                         long  = "Orange tiles around an ally tank doing a pill take (5x5 when within STANDOFF+2 of pill), plus the firing lane to the pill. Also prints `BLOCK: ON/OFF sub=… d=N/T` next to each attack_pill ally so you can see live whether the 5x5 stamp is active and how close they are to the activation threshold." },
 
   -- plan_position chunked-sweep progress (low-tier multi-tick sweep).
   plan_position_progress = { short = "Plan-pos progress",

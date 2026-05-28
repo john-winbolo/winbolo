@@ -13,6 +13,41 @@ local opt = require("optimize")
 
 local M = {}
 
+-- Predictive "this shot will finish the kill" check used in attack_pill
+-- firing substates. Run cpf.simulate_shot_angle against the current tank
+-- pose; if the simulated trajectory hits the target pill tile AND
+-- (_on_target_in_flight + 1) >= pill.health, enter swerve THIS same tick
+-- instead of waiting for the next-tick shot_tracker tally. Saves ~1 brain
+-- tick of standing still under return fire on the kill shot. The trade
+-- the user explicitly accepted: if reality diverges (wall/tree/tank
+-- crosses the shell path post-launch) the pill survives at 1 HP, vs.
+-- eating an extra return shot.
+local function predict_kill_shot_and_swerve(state, world, info, goal, pmx, pmy)
+  if not goal or not goal.target_id then return end
+  local pill = world.pills and world.pills[goal.target_id]
+  if not pill or (pill.health or 0) <= 0 then return end
+  local in_flight = (goal._on_target_in_flight or 0) + 1
+  if in_flight < pill.health then return end
+  local angle_f = info.tank_angle or info.direction
+  local path = cpf.simulate_shot_angle(info.tankx, info.tanky, angle_f,
+                                        cpf.SHOT_TANK, info.gunrange or 14)
+  if not path then return end
+  for _, t in ipairs(path) do
+    if t.mx == pmx and t.my == pmy then
+      local attack = require("attack")
+      attack.enter_swerve(goal, world, state, info, pmx, pmy, "kill")
+      goal._swerve_pill_dead = true
+      if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
+        print2(string.format(
+          "SWERVE_ENTER t=%d site=predict tid=%s goal=(%d,%d) in_flight+1=%d hp=%d",
+          state.tick or 0, tostring(goal.target_id), pmx, pmy,
+          in_flight, pill.health))
+      end
+      return true
+    end
+  end
+end
+
 -- Debug logging toggle — set via API: curl http://localhost:29016/steerdebug?on
 M.debug = false
 
@@ -919,6 +954,11 @@ local function attack_pill_steer(state, world, info, goal)
       end
       if hits_pill then
         keys = keys | KEY_SHOOT
+        -- Pre-fire predictive swerve: if this on-target shot would be
+        -- the one that brings in-flight count up to remaining pill HP,
+        -- enter swerve right now (same tick as the shot fires) instead
+        -- of waiting for next-tick tracker confirmation.
+        predict_kill_shot_and_swerve(state, world, info, goal, goal.mx, goal.my)
         if BRAIN_DEBUG_MODE then
           charge_phase = charge_phase .. " FIRE"
           viz.hud_text("charge_status", 10, 90, "CHARGE, IN RANGE, FIRE (sim hits)",
@@ -1053,6 +1093,8 @@ local function attack_pill_steer(state, world, info, goal)
     if math.abs(corr) <= 1 and info.shells > C.SHELL_RESERVE then
       keys = keys | KEY_SHOOT
       goal._engage_aimed = true
+      -- Pre-fire predictive swerve (same rationale as charge).
+      predict_kill_shot_and_swerve(state, world, info, goal, goal.mx, goal.my)
     end
 
     if info.gunrange < C.GUNSIGHT_MAX then
@@ -1419,6 +1461,8 @@ local function attack_pill_steer(state, world, info, goal)
     end
     if math.abs(corr) <= 5 and info.shells > C.SHELL_RESERVE then
       keys = keys | KEY_SHOOT
+      -- Pre-fire predictive swerve (same rationale as charge).
+      predict_kill_shot_and_swerve(state, world, info, goal, goal.mx, goal.my)
     end
     if info.gunrange < C.GUNSIGHT_MAX then
       keys = keys | KEY_MORERANGE

@@ -186,6 +186,18 @@ M.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR  = 30
 M.PILL_DANGER_NEARBY_RADIUS = 3       -- 7x7 grid (radius 3) centered on pill
 M.PILL_DANGER_NEARBY_TICKS  = 1500    -- ~30 s of cooldown
 M.PILL_DANGER_NEARBY_MULT   = 1.5     -- 1.5x cost while stamp is active
+-- Ally-avoid overlay cost — stamped on the 5x5 around an allied tank
+-- doing a pill take (and the firing lane to the pill).  Comparable to
+-- STUCK_PENALTY (1500) so A* visibly routes around it instead of
+-- ignoring the tiny noise the prior value (10) added.
+M.ALLY_AVOID_COST           = 800
+-- Ally-pill-take priority window: when an ally is broadcasting
+-- attack_pill on a target, REJECT our capture_pill candidate for the
+-- same pill for this many ticks (~2 s @ 50Hz). Gives them first dibs
+-- at the dead pill they killed instead of us swooping in.  Refreshes
+-- every tick the ally is still on attack_pill, so it decays naturally
+-- once they switch to capture_pill themselves.
+M.ALLY_PILL_TAKE_PRIORITY_TICKS = 100
 M.REFUEL_MIN_STOCK = 5    -- skip bases with less than this in observed stock (not worth the trip)
 -- Dynamic refuel targets (state.shell_target / state.armour_target).
 -- Must stay above SHELLS_LOW (20) or offense pools (eval_attack_pill /

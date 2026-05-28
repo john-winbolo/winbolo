@@ -238,6 +238,7 @@ local function clear_attack_goal(state, reason)
   end
 end
 M.clear_attack_goal = clear_attack_goal
+M.enter_swerve      = enter_swerve
 
 -- Returns a non-nil reason string when current armour vs pill HP make
 -- pressing on with the take unsafe.  Used at the start of approach /
@@ -3843,25 +3844,36 @@ function M.update_attack_substate(goal, state, world, info)
       end
     end
 
-    -- Immediate swerve: pill dead OR fired enough shots
+    -- Immediate swerve trigger.  New rule (replaces fired >= bullets_needed):
+    -- pill dead OR the count of currently-in-flight on-target shells covers
+    -- the remaining pill HP.  C/D = _on_target_in_flight / pill.health.
+    -- update_shot_accounting re-simulates each in-flight shell against
+    -- live terrain every tick, so if a tree grows into the trajectory or
+    -- the shell dies short, it drops back out of in_flight and the gate
+    -- naturally fails — we fire a replacement next reload.  Steering's
+    -- pre-fire predictor (see steering.lua charge/shoot_pill/engage) may
+    -- have already entered swerve this same tick on the just-fired killing
+    -- shot; this gate handles the case where prediction didn't apply
+    -- (e.g. shell tracker confirmed an off-target shot's status flip).
     local bullets_fired = (goal._charge_shells or info.shells) - info.shells
     local pill_hp = pill and pill.health or 0
-    if pill_hp <= 0 or (goal._bullets_needed and bullets_fired >= goal._bullets_needed) then
+    local on_target_in_flight = goal._on_target_in_flight or 0
+    if pill_hp <= 0 or (pill_hp > 0 and on_target_in_flight >= pill_hp) then
       if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
         print2(string.format(
           "SWERVE_ENTER t=%d site=charge tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
-          "fired=%d needed=%s start_hp=%s",
+          "fired=%d in_flight=%d start_hp=%s",
           now, tostring(goal.target_id), pmx, pmy,
           tostring(pill == nil),
           tostring(pill and pill.health), tostring(pill and pill.owner),
           tostring(pill and pill.in_tank),
-          bullets_fired, tostring(goal._bullets_needed),
+          bullets_fired, on_target_in_flight,
           tostring(goal._charge_start_hp)))
       end
       enter_swerve(goal, world, state, info, pmx, pmy, "kill")
       goal._swerve_pill_dead = (pill_hp <= 0)
-      print(string.format(TAG .. " ATTACK: immediate swerve from charge (fired=%d needed=%d hp=%d kill_attempt=%s start_hp=%s)",
-            bullets_fired, goal._bullets_needed or 0, pill_hp,
+      print(string.format(TAG .. " ATTACK: immediate swerve from charge (fired=%d in_flight=%d hp=%d kill_attempt=%s start_hp=%s)",
+            bullets_fired, on_target_in_flight, pill_hp,
             tostring(goal._kill_attempt), tostring(goal._charge_start_hp)))
     end
     -- Steering handles movement and transition to engage
@@ -4333,9 +4345,15 @@ function M.update_attack_substate(goal, state, world, info)
 
     local should_swerve = false
     local pill_dead     = false
+    local on_target_in_flight = goal._on_target_in_flight or 0
     if pill_hp <= 0 then
       should_swerve = true
       pill_dead     = true
+    elseif pill_hp > 0 and on_target_in_flight >= pill_hp then
+      -- C/D rule (same as charge/engage): predicted in-flight shells
+      -- already cover remaining HP — start the swerve now.
+      should_swerve = true
+      pill_dead     = true   -- the in-flight shots are about to drop pill to 0
     elseif goal._shoot_hits_total >= C.ATTACK_CURVE_AFTER_HITS then
       should_swerve = true
     end
@@ -4372,23 +4390,25 @@ function M.update_attack_substate(goal, state, world, info)
     local bullets_fired = (goal._charge_shells or info.shells) - info.shells
     local pill_hp = pill and pill.health or 0
 
-    -- Immediate swerve: pill dead OR fired enough shots
-    if pill_hp <= 0 or (goal._bullets_needed and bullets_fired >= goal._bullets_needed) then
+    -- Immediate swerve: pill dead OR on-target in-flight covers remaining HP.
+    -- (Same C/D rule as charge — see comment block above the charge gate.)
+    local on_target_in_flight = goal._on_target_in_flight or 0
+    if pill_hp <= 0 or (pill_hp > 0 and on_target_in_flight >= pill_hp) then
       if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
         print2(string.format(
           "SWERVE_ENTER t=%d site=engage tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
-          "fired=%d needed=%s start_hp=%s kill_attempt=%s",
+          "fired=%d in_flight=%d start_hp=%s kill_attempt=%s",
           now, tostring(goal.target_id), pmx, pmy,
           tostring(pill == nil),
           tostring(pill and pill.health), tostring(pill and pill.owner),
           tostring(pill and pill.in_tank),
-          bullets_fired, tostring(goal._bullets_needed),
+          bullets_fired, on_target_in_flight,
           tostring(goal._charge_start_hp), tostring(goal._kill_attempt)))
       end
       enter_swerve(goal, world, state, info, pmx, pmy, "kill")
       goal._swerve_pill_dead = (pill_hp <= 0)
-      print(string.format(TAG .. " ATTACK: immediate swerve (fired=%d needed=%d hp=%d kill_attempt=%s start_hp=%s)",
-            bullets_fired, goal._bullets_needed or 0, pill_hp,
+      print(string.format(TAG .. " ATTACK: immediate swerve (fired=%d in_flight=%d hp=%d kill_attempt=%s start_hp=%s)",
+            bullets_fired, on_target_in_flight, pill_hp,
             tostring(goal._kill_attempt), tostring(goal._charge_start_hp)))
     else
       -- Count cumulative hits taken during this engage
