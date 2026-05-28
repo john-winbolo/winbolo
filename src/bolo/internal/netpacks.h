@@ -344,7 +344,6 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_LOBBY_OPEN_HOST_CHG  176  /* { bool 1 } */
 #define PACKET_LOBBY_TEAM_META_CHG  177  /* same payload as TEAM_META */
 #define PACKET_LOBBY_BOT_CONFIG_CHG 178  /* same payload as BOT_CONFIG */
-#define PACKET_LOBBY_REJECT         179  /* { origPacket 1, reasonCode 1 } */
 #define PACKET_LOBBY_BRAIN_LIST     181  /* { count 1, for each: nameLen 1, name,
                                           *   verLen 1, ver, pathLen 1, path } */
 #define PACKET_LOBBY_BOT_BRAIN_CHG  182  /* { slot 1, pathLen 1, path N } */
@@ -558,7 +557,8 @@ static inline bool lobbyBotNameAcceptable(
     return true;
 }
 
-/* Reject reason codes for PACKET_LOBBY_REJECT. */
+/* Reject reason codes. Carried in PACKET_LOBBY_MAP_UPLOAD_ACK and
+ * in CTRL_COMMAND_REJECTED control events. */
 #define LOBBY_REJECT_NOT_HOST          1   /* sender lacks authority */
 #define LOBBY_REJECT_LOCKED            2   /* setting is in serverLocks bitmask */
 #define LOBBY_REJECT_INVALID           3   /* malformed payload / out-of-range value */

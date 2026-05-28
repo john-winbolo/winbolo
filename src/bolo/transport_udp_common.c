@@ -118,7 +118,6 @@ const char *packetTypeName(uint8_t type) {
     case PACKET_LOBBY_BRAIN_LIST:   return "LOBBY_BRAIN_LIST";
     case PACKET_LOBBY_SET_MAP:      return "LOBBY_SET_MAP";
     case PACKET_LOBBY_SET_PASSWORD: return "LOBBY_SET_PASSWORD";
-    case PACKET_LOBBY_REJECT:       return "LOBBY_REJECT";
     case PACKET_LOBBY_MAP_LIST_REQ: return "LOBBY_MAP_LIST_REQ";
     case PACKET_LOBBY_MAP_LIST_RSP: return "LOBBY_MAP_LIST_RSP";
     case PACKET_LOBBY_MAP_SEARCH_REQ: return "LOBBY_MAP_SEARCH_REQ";

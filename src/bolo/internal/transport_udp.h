@@ -155,27 +155,6 @@ uint16_t transportUdpClientGetPing(Transport *t);
 void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
                                    int *bpsRecv, int *bpsSent, int *numErrors);
 
-/* Chat sends go through clientSimNetSendChat → transport->sendBytes
- * now — the per-transport sendChat helper is gone. */
-
-/* Send a name change request to the server.
- * newName: the desired new player name. */
-void transportUdpClientSendNameChange(Transport *t, const char *newName);
-
-/* Alliance ops go through clientSimNetSendAlliance{Request,Accept,Leave}
- * → transport->sendBytes now — the per-transport sendAlliance* helpers
- * are gone (same pattern as the chat helper). */
-
-/* Send a lock toggle to the server.
- * allow: TRUE = allow new players, FALSE = disallow. */
-void transportUdpClientSendLockToggle(Transport *t, bool allow);
-
-/* Send team selection to server. slot is the target lobby slot
- * (sender's own slot for self-moves, anyone for host/admin/openHost
- * moves). teamNumber: 0-16. */
-void transportUdpClientSendTeamSet(Transport *t, uint8_t slot,
-                                   uint8_t teamNumber);
-
 /* Enqueue a ClientCommand on the reliable carrier. Assigns cmdSeq,
  * appends to the per-connection out-queue, and eager-sends a
  * PACKET_COMMAND_TICK if the queue was empty. Retransmits until the
@@ -184,49 +163,7 @@ struct ClientCommand;
 void transportUdpClientSubmitCommand(Transport *t,
                                      const struct ClientCommand *cmd);
 
-/* Send ready/unready to server. */
-void transportUdpClientSendReady(Transport *t, bool ready);
-
-/* Send a chat message. destPlayer = 0xFF broadcasts. */
-void transportUdpClientSendChat(Transport *t, BYTE destPlayer,
-                                const char *message);
-void transportUdpClientSendAllianceRequest(Transport *t, BYTE toPlayer);
-void transportUdpClientSendAllianceAccept(Transport *t, BYTE toPlayer);
-void transportUdpClientSendAllianceLeave(Transport *t);
-void transportUdpClientSendGameVoteToggle(Transport *t,
-                                          uint8_t kind,
-                                          uint8_t toggleMode);
-
-/* Request server add a bot. teamNumber=0 and botName=NULL let the
- * server pick defaults. The on-wire payload keeps the [pathLen 1]
- * byte for byte-compat with the original ADD_BOT format, but always
- * emits pathLen=0 — the server has always ignored the brain payload
- * here, so brain selection rides on a follow-up SET_BOT_BRAIN. */
-void transportUdpClientSendAddBot(Transport *t, uint8_t teamNumber,
-                                  const char *botName);
-
-/* Request server remove a bot at the given slot. */
-void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum);
-
 /* ── Layout A lobby commands — Client → Server ───────────────────── */
-void transportUdpClientSendLobbySetting(Transport *t, uint8_t settingType,
-                                        const uint8_t *value, uint8_t valueLen);
-void transportUdpClientSendLobbyOpenHost(Transport *t, bool openHost);
-void transportUdpClientSendLobbyKick(Transport *t, uint8_t slot);
-void transportUdpClientSendLobbySetPassword(Transport *t, const char *pw);
-void transportUdpClientSendLobbyTeamMeta(Transport *t, uint8_t teamId,
-                                         uint8_t color, uint8_t namingPool,
-                                         const char *name);
-void transportUdpClientSendLobbyTeamClear(Transport *t, uint8_t teamId);
-void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
-                                          uint8_t difficulty, uint8_t personality,
-                                          const char *name);
-void transportUdpClientSendLobbySetBotBrain(Transport *t, uint8_t slot,
-                                            uint8_t brainIdx);
-void transportUdpClientSendLobbySetMap(Transport *t, const char *mapRelPath);
-void transportUdpClientSendLobbyPreviewCancel(Transport *t);
-void transportUdpClientSendLobbyPreviewCommit(Transport *t);
-void transportUdpClientSendLobbyPreviewRandom(Transport *t, const char *seedStr);
 void transportUdpClientSendLobbyMapListRequest(Transport *t, const char *relPath);
 void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
                                                  const char *relPath,
@@ -283,19 +220,6 @@ void udpClientHandleLobbyMapSearchRsp(struct ClientSim *cs,
 
 /* Re-authenticate WBN token after lobby reset between rounds. */
 void transportUdpClientSendWbnReauth(Transport *t);
-
-/* Request team balance from WBN (host only, enforcement is server-side). */
-void transportUdpClientSendBalanceRequest(Transport *t, uint8_t teamSize,
-                                           bool includeBots);
-
-/* Confirm and apply the current balance proposal. */
-void transportUdpClientSendBalanceApply(Transport *t);
-
-/* Dismiss the current balance proposal. */
-void transportUdpClientSendBalanceDismiss(Transport *t);
-
-/* Toggle map skip vote (server identifies player by source address). */
-void transportUdpClientSendMapSkipVote(Transport *t);
 
 /* Returns the server's reject reason string after a failed join.
  * Returns NULL if no reject reason is available. */
