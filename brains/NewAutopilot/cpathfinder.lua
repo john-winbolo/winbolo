@@ -381,12 +381,14 @@ end
 ---            dijkstra_start).
 ---   dx, dy:  destination
 ---   in_boat, shells, trees, mines, armour: passed to cost_to fallback
-function M.smart_cost(kind, sx, sy, dx, dy, in_boat, shells, trees, mines, armour)
+function M.smart_cost(kind, sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget, allow_boat)
   if C.DIJKSTRA_USE_FOR_GOALS then
     local c = cpf_dijkstra_lookup_by_kind(kind, dx, dy, in_boat or 0)
     if c < 1e29 then return c end
   end
-  return cpf_cost_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour)
+  return cpf_cost_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour,
+                     budget or 4000,
+                     allow_boat == nil and 1 or (allow_boat and 1 or 0))
 end
 
 --- Same as smart_cost but NO A* fallback. Returns math.huge when no

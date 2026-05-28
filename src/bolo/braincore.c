@@ -1080,8 +1080,10 @@ static int l_cpf_cost_to(lua_State *L) {
   int mines = (int)luaL_checkinteger(L, 8);
   int armour = (int)luaL_checkinteger(L, 9);
   int budget = (int)luaL_optinteger(L, 10, 4000);
-  float cost = brainPathfinderCostTo(pf, sx, sy, dx, dy, in_boat,
-                                      shells, trees, mines, armour, budget);
+  int allow_boat = (int)luaL_optinteger(L, 11, 1);
+  float cost = brainPathfinderCostToEx(pf, sx, sy, dx, dy, in_boat,
+                                        shells, trees, mines, armour,
+                                        budget, allow_boat);
   lua_pushnumber(L, (double)cost);
   return 1;
 }

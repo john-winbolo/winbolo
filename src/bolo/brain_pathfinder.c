@@ -1319,6 +1319,16 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
                              int sx, int sy, int dx, int dy,
                              int in_boat, int shells, int trees,
                              int mines, int armour, int budget) {
+  return brainPathfinderCostToEx(pf, sx, sy, dx, dy, in_boat,
+                                  shells, trees, mines, armour,
+                                  budget, 1 /*allow_boat*/);
+}
+
+float brainPathfinderCostToEx(BrainPathfinder *pf,
+                               int sx, int sy, int dx, int dy,
+                               int in_boat, int shells, int trees,
+                               int mines, int armour, int budget,
+                               int allow_boat) {
   int src_ni, dest_tile, expanded;
   float result;
   FILE *alog = astar_log;
@@ -1469,6 +1479,8 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
                 nx, ny, d, n_type, tc, tc >= COST_INF ? " INF" : "");
       }
       if (tc >= COST_INF) { n_neigh_inf++; continue; }
+      /* allow_boat=0: skip nodes that would transition into boat state */
+      if (!allow_boat && onBoat) { n_neigh_inf++; continue; }
 
       ni = node_idx(nx, ny, onBoat);
       if (get_closed(pf, ni)) { n_neigh_closed++; continue; }

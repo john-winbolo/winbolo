@@ -402,6 +402,16 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
                              int in_boat, int shells, int trees,
                              int mines, int armour, int budget);
 
+/* Same as CostTo but with allow_boat control. When allow_boat=0,
+ * tiles that would put the tank in a boat (TT_BOAT or water entered
+ * from land in a boat) are treated as impassable. Halves the search
+ * space when boat exploration isn't needed. */
+float brainPathfinderCostToEx(BrainPathfinder *pf,
+                               int sx, int sy, int dx, int dy,
+                               int in_boat, int shells, int trees,
+                               int mines, int armour, int budget,
+                               int allow_boat);
+
 /* Cost estimation (straight-line sample) */
 float brainPathfinderEstimateCost(BrainPathfinder *pf,
                                    int sx, int sy, int dx, int dy, int in_boat);

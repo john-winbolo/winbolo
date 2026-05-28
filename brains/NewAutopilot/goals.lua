@@ -2334,9 +2334,19 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   if dij_stale then
     dist_method = "astar"
     local boat = info.inboat and 1 or 0
+    -- Try land-only path first (no boat exploration). If unreachable,
+    -- retry allowing boats with a larger budget.
     dist_raw = smart_cost(KIND_NORMAL, tmx, tmy, obj.mx, obj.my, boat,
                           info.shells or 32, info.trees or 0,
-                          info.mines or 0, info.armour or 40)
+                          info.mines or 0, info.armour or 40,
+                          4000, false)
+    if dist_raw >= 1e29 then
+      dist_method = "astar_boat"
+      dist_raw = smart_cost(KIND_NORMAL, tmx, tmy, obj.mx, obj.my, boat,
+                            info.shells or 32, info.trees or 0,
+                            info.mines or 0, info.armour or 40,
+                            16000, true)
+    end
     if BRAIN_DEBUG_MODE then
       local _p2 = require("print2")
       _p2(string.format(
