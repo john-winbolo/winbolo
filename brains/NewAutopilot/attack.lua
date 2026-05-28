@@ -727,8 +727,9 @@ local function score_standoff(world, cx, cy, pill, info, orbit_radius)
       local d_fp_target = U.mdist(fp.mx, fp.my, pill.mx, pill.my)
       local d_fp_us = U.mdist(fp.mx, fp.my, cx, cy)
       local d_total = U.mdist(cx, cy, pill.mx, pill.my)
-      if d_fp_target < d_total and d_fp_us < d_total and d_fp_target >= 1 then
-        -- Between us and the target: shield bonus
+      if d_fp_target < (d_total - 1) and d_fp_us < d_total and d_fp_target >= 1 then
+        -- Between us and the target, at least 1 tile inside our standoff
+        -- radius (not flush against us) — real shield position.
         fpill_barrier_bonus = fpill_barrier_bonus + C.FPILL_BARRIER_BONUS
       elseif d_fp_target > d_total and d_fp_us <= 3 then
         -- Behind us (further from target), close enough to block shots
