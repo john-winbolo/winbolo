@@ -1796,14 +1796,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
     }
 
-    case PACKET_LOBBY_REJECT:
-        /* [header 8] [origPacket 1] [reasonCode 1] */
-        if (len >= PACKET_HEADER_SIZE + 2) {
-            c->clientSim->lobbyLastRejectPacket = buf[PACKET_HEADER_SIZE];
-            c->clientSim->lobbyLastRejectReason = buf[PACKET_HEADER_SIZE + 1];
-        }
-        break;
-
     case PACKET_PUNCH_REQUEST_ACK:
         /* Tracker acked our PUNCH_REQUEST. Status byte at PACKET_HEADER_SIZE
          * could drive UX someday; for now just consume so it doesn't fall

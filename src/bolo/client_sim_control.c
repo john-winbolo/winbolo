@@ -503,8 +503,17 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         break;
 
     case CTRL_COMMAND_REJECTED:
-        /* Reject is informational; correlation by origCmdSeq happens in
-         * the UI subscriber, which lands separately. */
+        /* Only react to rejects attributed to our own slot. In-process
+         * subscribers (SP-host, bots) receive every published reject;
+         * the wire path is already filtered by udpClientDeliverControl.
+         * lobbyLastRejectPacket stores origCmdType (the CMD_* enum
+         * value) — its previous semantics were "non-zero = pending
+         * reject" and the toast UI in imgui_lobby.cpp only checks for
+         * non-zero, so storing a CMD_* there is compatible. */
+        if (evt->u.commandRejected.origSlot == clientSimGetMyPlayerNum(cs)) {
+            cs->lobbyLastRejectPacket = evt->u.commandRejected.origCmdType;
+            cs->lobbyLastRejectReason = evt->u.commandRejected.reasonCode;
+        }
         break;
     }
 }
