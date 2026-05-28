@@ -239,6 +239,21 @@ local function clear_attack_goal(state, reason)
 end
 M.clear_attack_goal = clear_attack_goal
 
+-- Returns a non-nil reason string when current armour vs pill HP make
+-- pressing on with the take unsafe.  Used at the start of approach /
+-- build_walls / charge to abort attack_pill early instead of dying
+-- mid-charge.  The reason text feeds clear_attack_goal so the left-top
+-- "last attack cleared" overlay shows WHY we bailed.
+local function armour_unsafe_for_pill_take(info, pill_hp)
+  if not pill_hp or pill_hp < C.ATTACK_PILL_UNSAFE_HP_THRESHOLD then return nil end
+  local arm = info and info.armour or 0
+  if arm >= C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR then return nil end
+  return string.format("armour_too_low: arm=%d (need >= %d) vs pillHP=%d (>= %d)",
+                       arm, C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR,
+                       pill_hp, C.ATTACK_PILL_UNSAFE_HP_THRESHOLD)
+end
+M.armour_unsafe_for_pill_take = armour_unsafe_for_pill_take
+
 -- STILL_POS_TOL: max world-unit drift over the still-window that
 -- still counts as "stopped". Without this, a 1-wu-per-tick jitter
 -- (common on tree/swamp tiles where info.speed lies about actual
@@ -2496,6 +2511,59 @@ function M.update_attack_substate(goal, state, world, info)
 
   if not goal.substate then goal.substate = "plan_position" end
 
+  -- LGM-near-pill abort: a hostile LGM within the danger radius of the
+  -- target pill means the defender is right there ready to retake /
+  -- repair, AND will be supported by their tank. Different reaction
+  -- depending on substate:
+  --   * "Firing" substates (charge / shoot_pill / engage / in_range_aim
+  --     [_finetune]) — we have rounds in flight or are about to fire;
+  --     enter swerve to dodge return-fire instead of bailing flat-footed.
+  --   * Everything else — clear_attack_goal so pick_goal picks something
+  --     safer next tick.
+  -- Either way, stamp pill_danger_nearby[pill_id] = now + ~30s so the
+  -- eval re-pick adds a danger_nearby ×1.5 multiplier and we don't
+  -- bounce right back onto this same pill.
+  do
+    local LGM_RADIUS = C.PILL_DANGER_NEARBY_RADIUS or 3
+    local lgm_seen = nil
+    local perc = state.perc
+    if perc and perc.enemy_lgms then
+      for _, el in ipairs(perc.enemy_lgms) do
+        local dx = (el.mx or 0) - pmx
+        local dy = (el.my or 0) - pmy
+        if dx >= -LGM_RADIUS and dx <= LGM_RADIUS
+           and dy >= -LGM_RADIUS and dy <= LGM_RADIUS then
+          lgm_seen = el
+          break
+        end
+      end
+    end
+    if lgm_seen then
+      local pid = goal.target_id
+      if pid then
+        state.pill_danger_nearby = state.pill_danger_nearby or {}
+        state.pill_danger_nearby[pid] = now + (C.PILL_DANGER_NEARBY_TICKS or 1500)
+      end
+      local FIRING_SUBS = {
+        charge=true, shoot_pill=true, engage=true,
+        in_range_aim=true, in_range_aim_finetune=true,
+      }
+      local cur_sub = goal.substate or "?"
+      if FIRING_SUBS[cur_sub] then
+        print(string.format(TAG ..
+          " ATTACK: LGM@(%d,%d) within %dt of pill@(%d,%d) — entering swerve from %s",
+          lgm_seen.mx or -1, lgm_seen.my or -1, LGM_RADIUS, pmx, pmy, cur_sub))
+        enter_swerve(goal, world, state, info, pmx, pmy, "defensive")
+        return
+      else
+        clear_attack_goal(state, string.format(
+          "abort@%s — enemy LGM@(%d,%d) within %dt of pill@(%d,%d)",
+          cur_sub, lgm_seen.mx or -1, lgm_seen.my or -1, LGM_RADIUS, pmx, pmy))
+        return
+      end
+    end
+  end
+
   -- Before committing to plan_position, wait for the LGM to return.
   -- Without the builder we can't capture after killing or build shields.
   -- If the LGM is out (not in tank, not dead) and the builder isn't
@@ -3073,6 +3141,11 @@ function M.update_attack_substate(goal, state, world, info)
           print(string.format(TAG .. " ATTACK: plan_position -> gather_trees (%d/%d trees for %d walls)",
                 info.trees or 0, trees_needed, n_pots))
         else
+          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+          if unsafe then
+            clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
+            return
+          end
           goal.substate = "approach"
           print(string.format(TAG .. " ATTACK: plan_position -> approach, standoff=(%d,%d) precise=(%.1f,%.1f)",
                 goal.standoff_mx, goal.standoff_my,
@@ -3110,6 +3183,11 @@ function M.update_attack_substate(goal, state, world, info)
     local stalled = (now - (goal._gather_last_progress or now)) > 250  -- ~5 s
     local timed_out = (now - (goal._gather_start or now)) > (C.PPT_GATHER_TIMEOUT or 1500)
     if trees_have >= trees_need then
+      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+      if unsafe then
+        clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
+        return
+      end
       goal.substate = "approach"
       goal._trees_for_walls = nil
       goal._gather_start    = nil
@@ -3123,6 +3201,11 @@ function M.update_attack_substate(goal, state, world, info)
       -- frees init.lua's aim override to set aim_mx/aim_my from the
       -- pill-edge geometry instead of the corner the scan picked,
       -- which would otherwise be unprotected without walls.
+      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+      if unsafe then
+        clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
+        return
+      end
       goal.substate = "approach"
       goal._is_ppt = false
       goal._shield_scan = nil
@@ -3354,6 +3437,11 @@ function M.update_attack_substate(goal, state, world, info)
         end
         local decision_msg
         if needs_build then
+          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+          if unsafe then
+            clear_attack_goal(state, "abort@build_walls_entry — " .. unsafe)
+            return
+          end
           goal.substate = "build_walls"
           -- Reset the per-wall + global stall timers EVERY entry into
           -- build_walls so a re-entry (build_walls → aim → ... →
@@ -3828,6 +3916,11 @@ function M.update_attack_substate(goal, state, world, info)
           goal._is_ppt = false
           print(TAG .. " ATTACK: PPT had no shield_scan at aim — demoting to non-PPT charge")
         end
+        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+        if unsafe then
+          clear_attack_goal(state, "abort@charge_entry — " .. unsafe)
+          return
+        end
         goal.substate = "charge"
         goal._aim_locked = nil
         goal._charge_braking = nil
@@ -3863,6 +3956,11 @@ function M.update_attack_substate(goal, state, world, info)
         print(string.format(TAG .. " ATTACK: PPT detree done (shots=%d/%d), moving into range",
               fired, needed))
       else
+        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+        if unsafe then
+          clear_attack_goal(state, "abort@charge_entry — " .. unsafe)
+          return
+        end
         goal.substate = "charge"
         goal._charge_braking = nil
         print(string.format(TAG .. " ATTACK: detree done (shots=%d/%d), charging",

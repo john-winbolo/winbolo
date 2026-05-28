@@ -170,6 +170,22 @@ M.ARMOUR_MOD_PPT_DANGER = 75
 M.ARMOUR_COMBAT    = 30   -- seek resupply if next goal is attack_pill
 M.SHELLS_COMBAT    = 30   -- seek resupply if next goal is attack_pill
 M.ARMOUR_PER_PILL_HP = 2  -- estimated armour lost per pill HP when attacking
+-- Hard "don't take a healthy pill on low armour" gate.  Applied as a
+-- REJECT in the attack_pill eval pool and as an immediate abort at
+-- the start of approach / build_walls / charge.  Heuristic: a near-
+-- full-HP pill (>= UNSAFE_HP) deals more damage than we can absorb
+-- with < UNSAFE_ARMOUR_FLOOR plating, so refusing the take is better
+-- than dying mid-charge.
+M.ATTACK_PILL_UNSAFE_HP_THRESHOLD  = 13
+M.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR  = 30
+-- "danger_nearby" penalty: when we abort/swerve out of a pill take
+-- because an enemy LGM is within PILL_DANGER_NEARBY_RADIUS of the
+-- target, stamp the pill_id for PILL_DANGER_NEARBY_TICKS so its
+-- attack_pill (pool 6) cost is multiplied by PILL_DANGER_NEARBY_MULT
+-- and we don't bounce right back onto it.  50 ticks/s, so 1500 ≈ 30s.
+M.PILL_DANGER_NEARBY_RADIUS = 3       -- 7x7 grid (radius 3) centered on pill
+M.PILL_DANGER_NEARBY_TICKS  = 1500    -- ~30 s of cooldown
+M.PILL_DANGER_NEARBY_MULT   = 1.5     -- 1.5x cost while stamp is active
 M.REFUEL_MIN_STOCK = 5    -- skip bases with less than this in observed stock (not worth the trip)
 -- Dynamic refuel targets (state.shell_target / state.armour_target).
 -- Must stay above SHELLS_LOW (20) or offense pools (eval_attack_pill /

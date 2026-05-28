@@ -1838,13 +1838,16 @@ function Brain.think(info)
   -- allied bots that are mid-pill-take so we don't drive through
   -- their combat zone. Uses ally_state goal/substate + target mx/my.
   -- Also stamps a 2-tile-wide firing lane from the ally tank to the
-  -- pill (excluding approach phase where the tank could be far away).
+  -- pill. Includes approach now — if their tank is far from the pill
+  -- (>12 tiles) the firing-lane stamp is skipped below, so the only
+  -- effect from far is the small radius around the pill itself.
   local ALLY_COMBAT_SUBS = {
+    approach=true,
     aim=true, charge=true, engage=true, shoot_pill=true, swerve=true,
     in_range_position=true, in_range_aim=true, in_range_aim_pre=true,
     in_range_aim_finetune=true, build_walls=true, detree=true,
   }
-  local ALLY_AVOID_RADIUS = 3
+  local ALLY_AVOID_RADIUS = 2  -- 5x5 block around the ally tank itself
   local ALLY_AVOID_COST   = 10
   do
     local now_aa = state.tick or 0
@@ -1854,16 +1857,21 @@ function Brain.think(info)
         if ai.goal == "attack_pill" and ALLY_COMBAT_SUBS[ai.sub] then
           local pmx = tonumber(ai.mx)
           local pmy = tonumber(ai.my)
-          if pmx and pmy then
-            -- Stamp pill target radius
+          local atmx = tonumber(ai.tx)
+          local atmy = tonumber(ai.ty)
+          if pmx and pmy and atmx and atmy then
+            -- Stamp a small radius around the ALLY TANK position
+            -- (broadcast tx/ty), not the pill target.  This is the
+            -- tile we actually want to keep clear so we don't drive
+            -- through them while they're shooting.
             for dy = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
               for dx = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
-                local ax = pmx + dx
-                local ay = pmy + dy
+                local ax = atmx + dx
+                local ay = atmy + dy
                 if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
                   cpf.set_overlay(ax, ay, ALLY_AVOID_COST)
-                  if BRAIN_DEBUG_MODE and viz.is_on("ally_state_overlay") then
-                    viz.rect("ally_state_overlay",
+                  if BRAIN_DEBUG_MODE and viz.is_on("ally_avoid_overlay") then
+                    viz.rect("ally_avoid_overlay",
                       ax, ay, ax + 1, ay + 1, 255, 165, 0, 60)
                   end
                 end
@@ -1871,9 +1879,7 @@ function Brain.think(info)
             end
             -- Stamp firing lane: 2-tile-wide line from ally tank to
             -- pill target. Uses broadcast tx/ty for ally position.
-            local atmx = tonumber(ai.tx)
-            local atmy = tonumber(ai.ty)
-            if atmx and atmy and U.mdist(atmx, atmy, pmx, pmy) <= 12 then
+            if U.mdist(atmx, atmy, pmx, pmy) <= 12 then
               local ldx = pmy - atmy
               local ldy = -(pmx - atmx)
               local llen = math.max(1, math.sqrt(ldx * ldx + ldy * ldy))
@@ -1885,8 +1891,8 @@ function Brain.think(info)
                     local wy = U.mclamp(math.floor(ly + pny * w + 0.5))
                     if wx >= 0 and wx <= 255 and wy >= 0 and wy <= 255 then
                       cpf.set_overlay(wx, wy, ALLY_AVOID_COST)
-                      if BRAIN_DEBUG_MODE and viz.is_on("ally_state_overlay") then
-                        viz.rect("ally_state_overlay",
+                      if BRAIN_DEBUG_MODE and viz.is_on("ally_avoid_overlay") then
+                        viz.rect("ally_avoid_overlay",
                           wx, wy, wx + 1, wy + 1, 255, 165, 0, 60)
                       end
                     end

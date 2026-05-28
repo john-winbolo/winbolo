@@ -214,6 +214,8 @@ M.IDS = {
   -- (bot #, goal, substate, target, k=v data).
   ally_state_overlay = { short = "Ally state table",
                          long  = "Right-middle HUD showing each ally's goal / sub / target / k=v data, fed by the chat-based ally_state slate" },
+  ally_avoid_overlay = { short = "Ally avoid zones",
+                         long  = "Orange tiles around the pill target (and along the firing lane) for each ally bot mid-pill-take. Mirrors the cpf overlay cost stamped by ALLY_AVOID code so the bot doesn't drive through an ally's combat zone." },
 
   -- plan_position chunked-sweep progress (low-tier multi-tick sweep).
   plan_position_progress = { short = "Plan-pos progress",

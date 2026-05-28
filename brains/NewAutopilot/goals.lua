@@ -2731,6 +2731,13 @@ local function get_formula_inner(e)
       rem, e._mx or 0, e._my or 0,
       rem, tostring(by or "?"), their_str, our, diff_str)
   end
+  if e._reject == "armour_too_low" then
+    return string.format(
+      "REJECT armour_too_low @(%d,%d)||reject:armour_too_low — arm=%d (need >= %d) vs pillHP=%d (>= %d)",
+      e._mx or 0, e._my or 0,
+      e._armour_at_reject or 0, C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR,
+      e._pillhp_at_reject or 0, C.ATTACK_PILL_UNSAFE_HP_THRESHOLD)
+  end
   if p == 1 then
     -- Rejected refuel base: short-circuit with REJECT formula so the
     -- breakdown panel makes clear why the row exists with INF cost.
@@ -2924,17 +2931,24 @@ local function get_formula_inner(e)
     end
     local _tw = e._travel_wound or 1.0
     local _d_pickup = e._pickup_detail or "(no path captured)"
+    local _danger_term = e._danger_mult
+      and string.format(" * danger_nearby{%.2fx %dt}", e._danger_mult, e._danger_left or 0)
+      or ""
+    local _d_danger = e._danger_mult
+      and string.format("recent abort due to enemy LGM near pill — %.2fx multiplier, %dt (~%.1fs) remaining",
+            e._danger_mult, e._danger_left or 0, (e._danger_left or 0) / 50.0)
+      or "no recent LGM-near-pill abort on this target"
     f = string.format(
-      "spot{%.0f}@(%d,%d) + pickup{%.0f}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s + ammo{%s}"..
+      "(spot{%.0f}@(%d,%d) + pickup{%.0f}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s + ammo{%s})%s"..
       "||spot cost is offset-aware (target pill's danger contribution subtracted via load_danger_offset before A*); NOT scaled by hp or wound"..
-      "|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|ammo:%s|spot:%s",
+      "|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|ammo:%s|spot:%s|danger_nearby:%s",
       e._spot, e._spot_mx or 0, e._spot_my or 0,
       e._travel,
       e._spot_mx or 0, e._spot_my or 0, e._mx or 0, e._my or 0,
       _tw,
       e._stale, e._diff, e._anger, e._xfire, e._intcpt,
-      e._hp, _wound_detail, _ammo_str,
-      _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot)
+      e._hp, _wound_detail, _ammo_str, _danger_term,
+      _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot, _d_danger)
   elseif p == 7 then
     local _lgm_mult_b = e._lgm_mult or 1
     local _d_threat
@@ -3005,7 +3019,7 @@ local function get_formula(e)
     end
   end
   -- REJECT row already formatted by inner — no trailing term to append.
-  if e._reject == "ally_claimed" then
+  if e._reject == "ally_claimed" or e._reject == "armour_too_low" then
     return f
   end
   -- Cost-baked ally penalty (pool 1 soft +100, pool 8 hard +10000).  Only
@@ -3829,6 +3843,21 @@ function M.step_eval_queue(state, world, info)
       local combat = (stale_cost + diff_cost + anger_cost + xfire_cost + intcpt_cost) * hp_mult * wound_mult
       local c = spot_cost + travel * travel_wound + combat * capture_mult + base_extra + threat_cost + ammo_cost
 
+      -- danger_nearby multiplier (pool 6 only): if this pill was recently
+      -- stamped (enemy LGM seen within danger radius during a prior take
+      -- attempt), multiply cost so we don't bounce right back onto it
+      -- for ~30 s.  Self-clears when the deadline passes.
+      local _danger_nearby_mult = 1.0
+      local _danger_nearby_left = 0
+      if pool_idx == 6 and state.pill_danger_nearby then
+        local until_tick = state.pill_danger_nearby[id]
+        if until_tick and until_tick > now then
+          _danger_nearby_mult = C.PILL_DANGER_NEARBY_MULT or 1.5
+          _danger_nearby_left = until_tick - now
+          c = c * _danger_nearby_mult
+        end
+      end
+
       -- capture_pill: replace flat-multiplier formula with distance^1.5 + danger.
       --   path^1.5 * DIST_SCALE  → cheap nearby, grows fast with distance
       --   threat * DANGER_WEIGHT → hot zones push cost up regardless of distance
@@ -3958,6 +3987,8 @@ function M.step_eval_queue(state, world, info)
         entry._fin_age=_finish_other_age
         entry._fin_wpid=_finish_other_wp_id
         entry._commit_mult=_commit_mult
+        entry._danger_mult = (_danger_nearby_mult ~= 1.0) and _danger_nearby_mult or nil
+        entry._danger_left = (_danger_nearby_left > 0) and _danger_nearby_left or nil
       elseif pool_idx == 7 then
         entry._base=base_extra; entry._tv=_threat_val; entry._thr=threat_cost
         entry._lgm_mult=_p7_lgm_mult
@@ -4041,9 +4072,40 @@ local function sync_ally_claimed_rejects(state)
   local now = state.tick or 0
   local self_pn = (_SELF_PN ~= -1) and _SELF_PN or (state.player_number or -1)
   local threshold = C.ALLY_CLAIMED_STEAL_THRESHOLD or 0
+  local cur_armour = (state._last_info and state._last_info.armour) or 0
 
   for _, e in pairs(cache) do
     local pool_idx = e._p
+    -- Pool 6 (attack_pill) extra precondition: refuse to take a near-
+    -- full-HP pill on low armour.  Higher priority than ally_claimed
+    -- — if we can't safely take it, who's cheapest doesn't matter.
+    -- Live-evaluated every tick against current info.armour so it
+    -- self-clears the moment we refuel.
+    if pool_idx == 6 and e._hpv then
+      local pill_hp = e._hpv
+      if pill_hp >= C.ATTACK_PILL_UNSAFE_HP_THRESHOLD
+         and cur_armour > 0
+         and cur_armour < C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR then
+        if e._reject ~= "armour_too_low" then
+          e._reject = "armour_too_low"
+          e._reject_remaining = 0
+          e._armour_at_reject = cur_armour
+          e._pillhp_at_reject = pill_hp
+          e.formula = nil  -- re-render with REJECT text
+        else
+          e._armour_at_reject = cur_armour
+          e._pillhp_at_reject = pill_hp
+        end
+        goto continue_entry
+      elseif e._reject == "armour_too_low" then
+        -- Armour recovered (refueled) or pill HP dropped — clear.
+        e._reject = nil
+        e._reject_remaining = 0
+        e._armour_at_reject = nil
+        e._pillhp_at_reject = nil
+        e.formula = nil
+      end
+    end
     if _REJECT_POOLS[pool_idx] then
       -- Look up any active ally currently claiming this same (kind, target).
       local kind = _REJECT_POOLS[pool_idx]
@@ -4135,6 +4197,7 @@ local function sync_ally_claimed_rejects(state)
         e._ally_heartbeat = nil
       end
     end
+    ::continue_entry::
   end
 end
 
