@@ -2918,9 +2918,17 @@ function M.steer(state, world, info, goal)
     local turn_factor   = 1.0
     local turn_capped   = 256    -- after ramp, before distance ease
     local ramp_start    = plow_through and 20 or 10
-    local plow_dist_t   = plow_through and (eff_dist / 256.0) or 0
-    local plow_ease     = 0.0    -- 0 = full ramp, 1 = no cap
-    if abs_corr > ramp_start then
+    -- Hard distance gate: while target is >= 4 tiles out we keep the
+    -- turn-cap OFF entirely (turn_max_speed stays 256 = full speed) for
+    -- every goal type, plow or not. Inside 4 tiles the heading-error
+    -- ramp re-enables so the tank can still slow into a precise
+    -- landing. Used to be plow-only — non-plow goals would crawl the
+    -- whole way home at base_cap=48 every time the A* heading wobbled
+    -- past 14°, which made attack_pill approach feel sluggish across
+    -- the map.
+    local dist_t        = eff_dist / 256.0
+    local plow_ease     = (dist_t >= 4) and 1.0 or 0.0  -- legacy var name kept for viz
+    if abs_corr > ramp_start and dist_t < 4 then
       if plow_through then
         turn_base_cap = (under_fire or race_mode) and 128 or 96
       else
@@ -2929,18 +2937,6 @@ function M.steer(state, world, info, goal)
       turn_factor    = 1.0 - math.min((abs_corr - ramp_start) / 70.0, 1.0)
       turn_capped    = math.max(6, math.floor(turn_factor * turn_base_cap))
       turn_max_speed = turn_capped
-
-      if plow_through then
-        if plow_dist_t >= 10 then
-          plow_ease = 1.0
-        elseif plow_dist_t > 4 then
-          plow_ease = (plow_dist_t - 4) / 6.0
-        end
-        if plow_ease > 0 then
-          turn_max_speed = math.max(turn_max_speed,
-            math.floor(turn_max_speed * (1.0 - plow_ease) + 256 * plow_ease))
-        end
-      end
     end
 
     -- Plow-mode debug viz: two live lines below the tank (state + decision).
@@ -2973,25 +2969,21 @@ function M.steer(state, world, info, goal)
 
       local state_line = string.format(
         "PLOW  target_dist=%.1f tiles (to %s)  heading_err=%+d° (|%d| brad)",
-        plow_dist_t, target_kind, math.floor(deg + 0.5), abs_corr)
+        dist_t, target_kind, math.floor(deg + 0.5), abs_corr)
 
       local decision_line
       if abs_corr <= ramp_start then
         decision_line = string.format(
           "|err|=%d <= ramp_start=%d brad  ->  no cap  (turn_max_speed=%d)",
           abs_corr, ramp_start, turn_max_speed)
-      else
-        local ease_note
-        if plow_ease >= 1 then
-          ease_note = "dist>=10t -> full ease, cap lifts to 256"
-        elseif plow_ease <= 0 then
-          ease_note = "dist<=4t -> full cap applies"
-        else
-          ease_note = string.format("dist in 4-10t -> ease=%.2f blend", plow_ease)
-        end
+      elseif dist_t >= 4 then
         decision_line = string.format(
-          "base_cap=%d x ramp_factor=%.2f = %d  ->  %s  ->  turn_max_speed=%d",
-          turn_base_cap, turn_factor, turn_capped, ease_note, turn_max_speed)
+          "dist=%.1ft >= 4t -> cap OFF  (turn_max_speed=%d)",
+          dist_t, turn_max_speed)
+      else
+        decision_line = string.format(
+          "dist=%.1ft < 4t -> base_cap=%d x ramp_factor=%.2f = %d  (turn_max_speed=%d)",
+          dist_t, turn_base_cap, turn_factor, turn_capped, turn_max_speed)
       end
 
       viz.text("steering_text", twx, twy + 1.3, state_line,    "center", 180, 220, 255, 255)

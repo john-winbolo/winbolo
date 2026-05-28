@@ -2926,6 +2926,14 @@ function Brain.think(info)
     end
     opt(string.format("  update_pool_cache done %.2f ms", (clock_us() - t_pc0) / 1000))
 
+    -- Per-tick ally-claimed REJECT sync: maintains entry._reject on
+    -- cost_cache against the live ally_state slate so the pool grid and
+    -- any selection that consults cost_cache between replans see fresh
+    -- yield-decisions. Cheap (hash lookups per cached candidate).
+    if goals.sync_ally_claimed_rejects then
+      goals.sync_ally_claimed_rejects(state)
+    end
+
     -- Purge stale per-pill plan_position cache entries (pills that
     -- have been destroyed / picked up / captured friendly since last
     -- check). Cheap iteration over ~10-20 cached pills.

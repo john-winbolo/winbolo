@@ -4035,11 +4035,11 @@ local _REJECT_POOLS = {
   [7] = "attack_base",
 }
 
-local function sync_ally_claimed_rejects(state, info)
+local function sync_ally_claimed_rejects(state)
   local cache = state.cost_cache
-  if not cache or not info then return end
+  if not cache then return end
   local now = state.tick or 0
-  local self_pn = info.player_number or -1
+  local self_pn = (_SELF_PN ~= -1) and _SELF_PN or (state.player_number or -1)
   local threshold = C.ALLY_CLAIMED_STEAL_THRESHOLD or 0
 
   for _, e in pairs(cache) do
@@ -4064,6 +4064,21 @@ local function sync_ally_claimed_rejects(state, info)
               end
             end
             if matched then
+              -- Pool 6 (attack_pill) special-case: only REJECT while
+              -- ally is still in an early substate (approach /
+              -- plan_position). Once they're past that — aim / engage
+              -- / shoot_pill / swerve / rush / post_engage / etc —
+              -- they're already committed and exchanging fire. At
+              -- that point if our cost says we'd be cheaper we can
+              -- legitimately go take a *different* pill rather than
+              -- pile onto theirs, but we shouldn't REJECT our own
+              -- candidate based on their stale-ish commitment.
+              if pool_idx == 6 then
+                local sub = h.sub
+                if sub ~= "approach" and sub ~= "plan_position" then
+                  break  -- skip without setting match_*
+                end
+              end
               match_cost      = tonumber(h.cost)
               match_pn        = ally_pn
               match_heartbeat = 1750 - (now - slot.last_tick)
@@ -4157,7 +4172,8 @@ end
 -- =========================================================================
 function M.finalize_pools(state, world, info)
   -- ── Ally-claimed REJECT sync (runs before partial → pool_cache) ──
-  sync_ally_claimed_rejects(state, info)
+  _SELF_PN = info.player_number or _SELF_PN
+  sync_ally_claimed_rejects(state)
   rederive_pool_partial_best(state)
   local _t0 = clock_us()
   local tmx  = info.tankx >> 8
@@ -6468,7 +6484,16 @@ end
 --     ]
 --   }
 -- =========================================================================
+-- Public alias so init.lua can run the per-tick sync regardless of
+-- whether the pool grid is being rendered.
+M.sync_ally_claimed_rejects = sync_ally_claimed_rejects
+
 function M.get_pool_breakdown_json(state)
+  -- Run the ally-claimed REJECT sync every tick the grid is read so
+  -- the displayed _reject flags track live ally_state without waiting
+  -- for the next replan cycle.
+  if state.player_number then _SELF_PN = state.player_number end
+  sync_ally_claimed_rejects(state)
   if not BRAIN_POOL_VIZ then
     return string.format(
       '{"phase":"%s","tick":%d,"replan_left":0,"bot":%d,"sections":[{"id":"off","label":"Pool viz","rows":[{"id":0,"mx":0,"my":0,"cost":0,"formula":"BRAIN_POOL_VIZ is off","stale":-1,"active":false,"imminent":false,"reject":null}]}]}',
