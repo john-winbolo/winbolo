@@ -518,10 +518,12 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       break;
 
     case CTRL_COMMAND_REJECTED:
-      fprintf(f, ",\"origCmdSeq\":%u,\"origCmdType\":%u,\"reasonCode\":%u",
+      fprintf(f, ",\"origCmdSeq\":%u,\"origCmdType\":%u,"
+                 "\"reasonCode\":%u,\"origSlot\":%u",
               (unsigned)evt->u.commandRejected.origCmdSeq,
               (unsigned)evt->u.commandRejected.origCmdType,
-              (unsigned)evt->u.commandRejected.reasonCode);
+              (unsigned)evt->u.commandRejected.reasonCode,
+              (unsigned)evt->u.commandRejected.origSlot);
       break;
 
     case CTRL_EVENT_TYPE_COUNT:

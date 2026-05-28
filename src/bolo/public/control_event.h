@@ -261,16 +261,20 @@ typedef struct ControlEvent {
         } gameVoteState;
 
         /* CTRL_COMMAND_REJECTED — serverSimApplyCommand rejected a
-         * ClientCommand. origCmdSeq is the client-assigned cmdSeq from
-         * the offending ClientCommand (zero from callers that don't yet
-         * maintain a counter). origCmdType is (uint8_t)cmd->type;
-         * reasonCode is (uint8_t)CmdResult. Subscribers correlate by
-         * origCmdSeq and dismiss when stale — the event is
-         * informational, not authoritative. */
+         * ClientCommand. origSlot is the senderSlot the dispatcher
+         * attributed the command to; udpClientDeliverControl drops the
+         * event for any recipient whose playerNum != origSlot, so it
+         * reaches only the originator. origCmdSeq is the client-
+         * assigned cmdSeq from the offending ClientCommand (zero from
+         * callers that don't yet maintain a counter). origCmdType is
+         * (uint8_t)cmd->type; reasonCode is (uint8_t)CmdResult.
+         * Subscribers correlate by origCmdSeq and dismiss when stale —
+         * the event is informational, not authoritative. */
         struct {
             uint32_t origCmdSeq;
             uint8_t  origCmdType;
             uint8_t  reasonCode;
+            uint8_t  origSlot;
         } commandRejected;
     } u;
 } ControlEvent;

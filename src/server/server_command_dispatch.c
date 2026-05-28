@@ -584,6 +584,7 @@ CmdResult serverSimApplyCommand(ServerSim *sim, int senderSlot,
         evt.u.commandRejected.origCmdSeq  = cmd->cmdSeq;
         evt.u.commandRejected.origCmdType = (uint8_t)cmd->type;
         evt.u.commandRejected.reasonCode  = (uint8_t)r;
+        evt.u.commandRejected.origSlot    = (uint8_t)senderSlot;
         serverSimPublishControl(sim, &evt);
     }
     return r;

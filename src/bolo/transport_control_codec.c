@@ -1000,9 +1000,12 @@ static EncodeResult encodeGameVoteState(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
-/* Wire: [header 8] [origCmdSeq 4 BE] [origCmdType 1] [reasonCode 1] —
- * 6-byte body. serverSimApplyCommand publishes this on every non-CMD_OK
- * return; clients correlate by origCmdSeq and dismiss when stale. */
+/* Wire: [header 8] [origCmdSeq 4 BE] [origCmdType 1] [reasonCode 1]
+ * [origSlot 1] — 7-byte body. serverSimApplyCommand publishes this on
+ * every non-CMD_OK return; clients correlate by origCmdSeq and dismiss
+ * when stale. Per-recipient filtering lives in udpClientDeliverControl
+ * (matching CTRL_ALLIANCE_REQUEST) so non-originator slots never see
+ * the event. */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeCommandRejectedBody(const ControlEvent *evt,
@@ -1010,11 +1013,12 @@ static EncodeResult encodeCommandRejectedBody(const ControlEvent *evt,
                                               uint8_t *buf, size_t bufCap,
                                               size_t *outLen) {
     (void)recipient;
-    if (bufCap < 6) return ENCODE_OVERFLOW;
+    if (bufCap < 7) return ENCODE_OVERFLOW;
     packU32(buf, evt->u.commandRejected.origCmdSeq);
     buf[4] = evt->u.commandRejected.origCmdType;
     buf[5] = evt->u.commandRejected.reasonCode;
-    *outLen = 6;
+    buf[6] = evt->u.commandRejected.origSlot;
+    *outLen = 7;
     return ENCODE_OK;
 }
 
@@ -1433,12 +1437,13 @@ static bool decodeGameVoteStateBody(const uint8_t *buf, size_t len,
 
 static bool decodeCommandRejectedBody(const uint8_t *buf, size_t len,
                                       ControlEvent *outEvt) {
-    if (len < 6) return false;
+    if (len < 7) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_COMMAND_REJECTED;
     outEvt->u.commandRejected.origCmdSeq  = unpackU32(buf);
     outEvt->u.commandRejected.origCmdType = buf[4];
     outEvt->u.commandRejected.reasonCode  = buf[5];
+    outEvt->u.commandRejected.origSlot    = buf[6];
     return true;
 }
 

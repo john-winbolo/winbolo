@@ -652,6 +652,14 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
             }
         }
     }
+    if (evt->type == CTRL_COMMAND_REJECTED &&
+        evt->u.commandRejected.origSlot != client->playerNum) {
+        mpDiagLog("[srv] deliver FILTER slot=%d type=COMMAND_REJECTED "
+                  "origSlot=%d clientPlayerNum=%d",
+                  idx, (int)evt->u.commandRejected.origSlot,
+                  (int)client->playerNum);
+        return;
+    }
 
     /* Enqueue into this client's reliable control queue. */
     q = &udpServer.controlEventQueues[idx];

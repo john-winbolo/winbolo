@@ -11,4 +11,4 @@
 {"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":0,"name":"HeadlessBot1","country":"AU","clientType":2,"clientFlags":0,"allies":[0]}
 {"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"HeadlessBot2","country":"AU","clientType":2,"clientFlags":0,"allies":[1]}
 {"tick":0,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot2 has joined."}
-{"tick":88,"type":"CTRL_ALLIANCE_ACCEPT","acceptedBy":1,"newMember":0}
+{"tick":86,"type":"CTRL_ALLIANCE_ACCEPT","acceptedBy":1,"newMember":0}
