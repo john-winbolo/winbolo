@@ -63,6 +63,129 @@ local manual_keys = 0
 local AUTOSTART = true
 local ENABLE_LOGGING = false
 
+-- Shot-path safety check (init.lua version). Same logic as
+-- steering.lua's shot_path_clear. Blocks on walls, pillboxes,
+-- hostile bases. Forests and enemy tanks are OK.
+local function _shot_path_clear_init(info, world, target_wx, target_wy, target_mx, target_my)
+  local tank_positions = {}
+  if info.objects then
+    for _, ob in ipairs(info.objects) do
+      if ob.type == 2 then  -- OBJECT_TANK
+        tank_positions[#tank_positions + 1] = {
+          wx = ob.x, wy = ob.y,
+          player_num = ob.idnum or 255,
+        }
+      end
+    end
+  end
+  local tiles
+  if #tank_positions > 0 then
+    tiles = cpf.simulate_shot_with_tanks(info.tankx, info.tanky,
+                                         target_wx, target_wy,
+                                         cpf.SHOT_TANK, 0,
+                                         tank_positions,
+                                         info.player_number or 255)
+  else
+    tiles = cpf.simulate_shot(info.tankx, info.tanky,
+                              target_wx, target_wy,
+                              cpf.SHOT_TANK, 0)
+  end
+  if not tiles then return true end
+  local origin_mx = info.tankx >> 8
+  local origin_my = info.tanky >> 8
+  local do_viz = BRAIN_DEBUG_MODE and viz.is_on("shell_hit_dot")
+  local blocked = false
+  local block_reason = nil
+  local block_mx, block_my = nil, nil
+  for ti, st in ipairs(tiles) do
+    if st.hit_type and st.hit_type == 1 then
+      local tank_is_target = (st.mx == target_mx and st.my == target_my)
+      if do_viz then
+        local hit_tank = nil
+        for _, tp in ipairs(tank_positions) do
+          if tp.player_num == st.hit_id then hit_tank = tp; break end
+        end
+        if hit_tank then
+          local tcx = hit_tank.wx / 256.0
+          local tcy = hit_tank.wy / 256.0
+          local hr = tank_is_target and 0 or 255
+          local hg = tank_is_target and 255 or 0
+        end
+      end
+      if not tank_is_target then
+        blocked = true
+        block_reason = string.format("allied_tank#%d", st.hit_id or 0)
+        block_mx, block_my = st.mx, st.my
+      end
+      break
+    end
+    if st.mx == target_mx and st.my == target_my then
+      if do_viz then
+      end
+      break
+    end
+    if st.mx ~= origin_mx or st.my ~= origin_my then
+      local stt = U.ttype(st.mx, st.my)
+      if stt == C.T_BUILDING or stt == C.T_HALFBUILD then
+        blocked = true
+        block_reason = "wall"
+        block_mx, block_my = st.mx, st.my
+        if do_viz then
+        end
+        break
+      end
+      local plist = world.pill_at and world.pill_at[st.my * 256 + st.mx]
+      if plist then
+        for _, e in ipairs(plist) do
+          if e.pill and e.pill.health and e.pill.health > 0 then
+            blocked = true
+            block_reason = string.format("pill(hp=%d)", e.pill.health)
+            block_mx, block_my = st.mx, st.my
+            break
+          end
+        end
+        if blocked then break end
+      end
+      local bentry = world.base_at and world.base_at[st.my * 256 + st.mx]
+      if bentry and bentry.base and bentry.base.owner == "hostile" then
+        blocked = true
+        block_reason = "hostile_base"
+        block_mx, block_my = st.mx, st.my
+        break
+      end
+    end
+    if do_viz and not blocked then
+    end
+  end
+  if do_viz then
+    if blocked then
+    end
+    if viz.detail_circle then
+      local did = "shot_path_init"
+      local hdr = string.format("Shot path: from=(%d,%d) to=(%d,%d) result=%s",
+        origin_mx, origin_my, target_mx, target_my, blocked and "BLOCKED" or "CLEAR")
+      local mid_wx = (info.tankx + target_wx) / 2 / 256.0
+      local mid_wy = (info.tanky + target_wy) / 2 / 256.0
+      if tiles then
+        for i, st in ipairs(tiles) do
+          if st.hit_type and st.hit_type == 1 then
+          else
+            local tt = U.ttype(st.mx, st.my)
+            local tt_name = ({
+              [C.T_BUILDING] = "wall", [C.T_HALFBUILD] = "halfwall",
+              [C.T_FOREST] = "forest", [C.T_ROAD] = "road",
+              [C.T_GRASS] = "grass", [C.T_RIVER] = "river",
+              [C.T_DEEPSEA] = "deepsea", [C.T_SWAMP] = "swamp",
+              [C.T_RUBBLE] = "rubble",
+            })[tt] or tostring(tt)
+          end
+        end
+      end
+    end
+  end
+  return not blocked
+end
+
 -- Hoisted lookup tables (don't realloc every tick of every Brain.think).
 -- Used by stuck detection / urgent-replan gating downstream — file-scope
 -- so the loop bodies just do membership checks.
@@ -731,6 +854,26 @@ function Brain.think(info)
   state._last_info = info
   local now  = state.tick
 
+  -- Cautious mode: per-tick boolean.  When true, danger / threat
+  -- terms across cost formulas get multiplied by
+  -- C.CAUTIOUS_MODE_MULT (5×) so the bot biases hard toward
+  -- safer routes / targets.  Recomputed every tick — flips off
+  -- automatically when its triggers stop firing (no manual reset).
+  --
+  -- Current triggers (logical OR):
+  --   * LGM dead AND we're carrying pills in the tank — pills are
+  --     valuable cargo we shouldn't lose to a stray pill shot, and
+  --     without an LGM we can't rebuild walls / repair to recover
+  --     from a hit.  Both conditions must hold; either alone is fine.
+  --
+  -- Add more triggers here as use cases arise.  Stays per-tick (no
+  -- sticky latch) so the mode lifts the instant conditions clear.
+  do
+    local _carrying = (info.carried_pills or 0) > 0
+    local _lgm_dead = info.man_status == C.LGM_DEAD
+    state.cautious_mode = (_lgm_dead and _carrying) or false
+  end
+
   -- LGM registry: self slot updated every tick from info.man_*.
   -- A status transition (in_tank ↔ ground ↔ dead) sets the
   -- pending_lgm_broadcast flag so the periodic /info state broadcast
@@ -1234,6 +1377,78 @@ function Brain.think(info)
   opt(string.format("  cpf.load_danger done %.2f ms (rebuilt=%s)",
     (t_load_danger - t_threat_upd) / 1000, tostring(threat.rebuilt_this_tick)))
 
+  -- Overlay rebuild: pills/bases stamped as impassable/expensive in the
+  -- pathfinder. Moved here (right after danger load) so all downstream
+  -- goal evaluation sees fresh overlays — previously ran much later and
+  -- A* queries during eval would hit stale impassable stamps from dead pills.
+  threat.check_overlay_dirty(world)
+  if threat.overlay_dirty then
+    threat.rebuild_overlay(world)
+    metrics.inc("overlay_reloads")
+  else
+    metrics.inc("overlay_skips")
+  end
+  local t_overlay_early = clock_us()
+  opt(string.format("  overlay rebuild done %.2f ms (dirty=%s)",
+    (t_overlay_early - t_load_danger) / 1000, tostring(not threat.overlay_dirty)))
+
+  -- Ally avoidance: stamp a cost penalty around the pill target of
+  -- allied bots that are mid-pill-take so we don't drive through
+  -- their combat zone. Uses ally_state goal/substate + target mx/my.
+  -- Also stamps a 2-tile-wide firing lane from the ally tank to the
+  -- pill (excluding approach phase where the tank could be far away).
+  local ALLY_COMBAT_SUBS = {
+    aim=true, charge=true, engage=true, shoot_pill=true, swerve=true,
+    in_range_position=true, in_range_aim=true, in_range_aim_pre=true,
+    in_range_aim_finetune=true, build_walls=true, detree=true,
+  }
+  local ALLY_AVOID_RADIUS = 3
+  local ALLY_AVOID_COST   = 10
+  do
+    local now_aa = state.tick or 0
+    for ally_pn, slot in ally_state.iter_active(now_aa, 1750) do
+      if ally_pn ~= info.player_number then
+        local ai = slot.info
+        if ai.goal == "attack_pill" and ALLY_COMBAT_SUBS[ai.sub] then
+          local pmx = tonumber(ai.mx)
+          local pmy = tonumber(ai.my)
+          if pmx and pmy then
+            -- Stamp pill target radius
+            for dy = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
+              for dx = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
+                local ax = pmx + dx
+                local ay = pmy + dy
+                if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
+                  cpf.set_overlay(ax, ay, ALLY_AVOID_COST)
+                end
+              end
+            end
+            -- Stamp firing lane: 2-tile-wide line from ally tank to
+            -- pill target. Uses broadcast tx/ty for ally position.
+            local atmx = tonumber(ai.tx)
+            local atmy = tonumber(ai.ty)
+            if atmx and atmy and U.mdist(atmx, atmy, pmx, pmy) <= 12 then
+              local ldx = pmy - atmy
+              local ldy = -(pmx - atmx)
+              local llen = math.max(1, math.sqrt(ldx * ldx + ldy * ldy))
+              local pnx, pny = ldx / llen, ldy / llen
+              U.line_walk(atmx + 0.5, atmy + 0.5, pmx + 0.5, pmy + 0.5,
+                function(lx, ly)
+                  for w = -1, 1 do
+                    local wx = U.mclamp(math.floor(lx + pnx * w + 0.5))
+                    local wy = U.mclamp(math.floor(ly + pny * w + 0.5))
+                    if wx >= 0 and wx <= 255 and wy >= 0 and wy <= 255 then
+                      cpf.set_overlay(wx, wy, ALLY_AVOID_COST)
+                    end
+                  end
+                end)
+            end
+          end
+        end
+      end
+    end
+  end
+
   -- Push per-pill contribution maps to the host (BrainTest reads
   -- this for the shift-2 cycle-pill-overlay). Bindings no-op
   -- under non-host runtimes (game client, headless server).
@@ -1313,36 +1528,8 @@ function Brain.think(info)
   -- steering.lua re-stamps stuck-blacklist entries every tick (and now
   -- explicitly zeros them on expiry — see stuck_recovery) so those
   -- entries don't need an every-tick clear to stay consistent.
-  threat.check_overlay_dirty(world)
-  if threat.overlay_dirty then
-    cpf.clear_overlay()
-    for _, pm in pairs(world.pills) do
-      if pm.health > 0 then
-        if pm.owner == "friendly" then
-          -- Don't drive through our own pills
-          cpf.set_overlay(pm.mx, pm.my, 32767)
-        elseif pm.owner == "hostile" or pm.owner == "neutral" then
-          -- Hostile/neutral pills are impassable obstacles (can't drive on them)
-          cpf.set_overlay(pm.mx, pm.my, 32767)
-        end
-      end
-    end
-    for _, b in pairs(world.bases) do
-      if b.owner == "hostile" then
-        -- Hostile bases: 3x the cost of a wall (15 shots equivalent)
-        cpf.set_overlay(b.mx, b.my, 15 * C.WALL_SHOOT_COST)
-      end
-      -- Friendly/neutral bases are fine (road-like terrain, no overlay)
-    end
-    threat.snapshot_overlay(world)
-    threat.overlay_dirty = false
-    metrics.inc("overlay_reloads")
-  else
-    metrics.inc("overlay_skips")
-  end
-  local t_overlay = clock_us()
-  opt(string.format("  overlay rebuild done %.2f ms (dirty=%s)",
-    (t_overlay - t_influence) / 1000, tostring(threat.overlay_dirty == false)))
+  -- Overlay rebuild moved earlier (right after danger load) so goal
+  -- evaluation sees fresh data. See the block above t_overlay_early.
 
   local t3 = clock_us()
   metrics.set("us_threat", t3 - t2)
@@ -1634,52 +1821,87 @@ function Brain.think(info)
   -- waiting-to-respawn state: the engine holds armour at
   -- TANK_FULL_ARMOUR+1 (= 41) through the whole deathWait
   -- countdown (~200 ticks), giving us a wide window we can't miss.
-  -- Idempotent re-clearing during deathWait is harmless — the
-  -- brain has no control anyway while the tank is dead.
-  local _is_dead = (info.armour or 0) > C.TANK_FULL_ARMOUR
-  if info.newtank or _is_dead then
+  -- Respawn detection. bot_manager skips the brain while the tank is
+  -- dead (deathWait > 0), so we never see armour > 40. Instead detect
+  -- respawn by a large position jump between consecutive brain ticks:
+  -- the last tick was at the pre-death position, the next tick is at
+  -- the spawn point — if those are far apart, we just respawned.
+  -- Also catches the very first tick (state._prev_mx is nil).
+  local cur_mx = info.tankx >> 8
+  local cur_my = info.tanky >> 8
+  local _just_respawned = false
+  if state._prev_mx then
+    local jump = U.mdist(cur_mx, cur_my, state._prev_mx, state._prev_my)
+    if jump > C.RESPAWN_CACHE_WIPE_DIST then
+      _just_respawned = true
+    end
+  end
+  if _just_respawned then
     state.stuck_for = 0
     attack.clear_attack_goal(state)
-    if info.newtank then
-      log.event("respawn", string.format("%d,%d", info.tankx >> 8, info.tanky >> 8))
+    log.event("respawn", string.format("%d,%d", cur_mx, cur_my))
+    local jump_dist = U.mdist(cur_mx, cur_my,
+                              state._prev_mx or cur_mx,
+                              state._prev_my or cur_my)
+    state._respawn_wipe_until = now + 150
+    state._respawn_wipe_dist  = jump_dist
+    state._respawn_prev_mx    = state._prev_mx
+    state._respawn_prev_my    = state._prev_my
+    state._stuck_escape_count = nil
+    state._stuck_escape_mx    = nil
+    state._stuck_escape_my    = nil
+    state._desp_ticks         = 0
+    state._desp_mx            = nil
+    state._desp_my            = nil
+    state._stuck_desperate    = false
+    state.stuck_for           = 0
+    -- Set all cached costs to infinity so the eval queue re-evaluates
+    -- from the new position. Keeps the cache entries (and their viz
+    -- panel data) alive so the P overlay doesn't go blank — they just
+    -- lose every cost comparison until fresh values arrive.
+    if state.cost_cache then
+      for _, entry in pairs(state.cost_cache) do
+        entry.cost = math.huge
+      end
     end
-    -- Force-seed an explore goal on respawn so the first post-respawn
-    -- tick has a sane state.goal before goal_selection runs.  Coords
-    -- left at the tank's current tile (well-defined on respawn);
-    -- the explore planner will replace them with a real frontier
-    -- target on the next replan.  clear_attack_goal above set
-    -- kind="none" — overwriting to "explore" + cleared substate is
-    -- the canonical "alive, no plan yet" stance, the same state a
-    -- fresh brain starts in.
+    -- Wipe pool_cache so goal_selection sees an empty pool and falls
+    -- through to explore. The eval queue rebuild (~14 ticks) will
+    -- populate fresh winners from the new position.
+    state.pool_cache          = nil
+    state.eval_queue          = nil
+    state.eval_queue_pos      = nil
+    state._pill_eval_cache    = nil
+    state._pill_eval_progress = nil
+    state.goal_cooldowns      = {}
+    state.goal_history        = {}
+    state.blocked             = {}
+    state.banned_pill_angles  = {}
+    state.wounded_pill        = nil
+    -- Force-seed an explore goal so the first post-respawn tick has a
+    -- sane state.goal before goal_selection runs.
     state.goal.kind     = "explore"
     state.goal.substate = nil
-    state.goal.mx       = info.tankx >> 8
-    state.goal.my       = info.tanky >> 8
-    state.goal.wx       = U.m2w(state.goal.mx)
-    state.goal.wy       = U.m2w(state.goal.my)
+    state.goal.mx       = cur_mx
+    state.goal.my       = cur_my
+    state.goal.wx       = U.m2w(cur_mx)
+    state.goal.wy       = U.m2w(cur_my)
   end
 
-  -- Early return while dead. info.tankx/y hold the LAST-living tile
-  -- through the whole deathWait window (~200 ticks) — running threat,
-  -- perception, pcontrib, planning, etc. against those stale coords
-  -- pushes garbage into the danger map and the pillcontrib registry
-  -- for the duration. Just emit a no-op brain output (engine ignores
-  -- input from a dead tank anyway). Goal already cleared above.
-  if _is_dead then
-    return {
-      holdkeys    = 0,
-      tapkeys     = 0,
-      build       = nil,
-      wantallies  = info.allies,
-      messagedest = 0,
-      sendmessage = "",
-    }
+     and now <= state._respawn_wipe_until
+     and viz.is_on("hud_goal") then
+    if state._respawn_prev_mx then
+      local pmx = state._respawn_prev_mx + 0.5
+      local pmy = state._respawn_prev_my + 0.5
+      local R = C.RESPAWN_CACHE_WIPE_DIST
+    end
   end
+
+  -- Update prev position for next tick's respawn detection.
+  state._prev_mx = cur_mx
+  state._prev_my = cur_my
 
   -- Stuck detection
   local t_stuck0 = clock_us()
-  local cur_mx = info.tankx >> 8
-  local cur_my = info.tanky >> 8
 
   -- When attacking a pill in engage/ws_ substates we are intentionally
   -- stationary; don't count that as being stuck.
@@ -1698,6 +1920,21 @@ function Brain.think(info)
     or state.goal.kind == "wait_for_lgm"
   local attack_at_standoff = intentionally_stationary
 
+  -- Long-term desperation: track total ticks at the same tile.
+  -- After ~30s (1500 ticks) without moving, disable wsim kill-reject
+  -- so the bot commits to a goal even if the sim predicts death.
+  local DESPERATE_TICKS = 1500
+  if cur_mx == (state._desp_mx or -1) and cur_my == (state._desp_my or -1) then
+    state._desp_ticks = (state._desp_ticks or 0) + 1
+  else
+    state._desp_mx = cur_mx
+    state._desp_my = cur_my
+    state._desp_ticks = 0
+  end
+  state._stuck_desperate = state._desp_ticks >= DESPERATE_TICKS
+  if state._stuck_desperate and state._desp_ticks == DESPERATE_TICKS then
+  end
+
   if cur_mx == state.last_mx and cur_my == state.last_my
      and state.goal.kind ~= "none"
      and not attack_at_standoff
@@ -1714,18 +1951,40 @@ function Brain.think(info)
         local ux, uy = dx / len, dy / len
         local fmx, fmy
         -- Try decreasing distances from FLEE_PILL_DIST down to 1 tile.
+        -- Ensure flee destination is at least 1 tile away from current pos.
         for d = C.FLEE_PILL_DIST, 1, -1 do
           local tx = U.mclamp(math.floor(cur_mx + ux * d + 0.5))
           local ty = U.mclamp(math.floor(cur_my + uy * d + 0.5))
+          if tx == cur_mx and ty == cur_my then goto next_flee_d end
           local tt = U.ttype(tx, ty)
           if not U.is_water(tt)
              and tt ~= C.T_BUILDING and tt ~= C.T_HALFBUILD then
             fmx, fmy = tx, ty
             break
           end
+          ::next_flee_d::
         end
         if not fmx then
-          -- All of the flee ray is blocked; stay put.
+          -- Radial projection failed (pill too far, all tiles blocked).
+          -- Try any passable adjacent tile as a last resort.
+          for dy = -1, 1 do
+            for dx = -1, 1 do
+              if dx ~= 0 or dy ~= 0 then
+                local tx = U.mclamp(cur_mx + dx)
+                local ty = U.mclamp(cur_my + dy)
+                local tt = U.ttype(tx, ty)
+                if not U.is_water(tt)
+                   and tt ~= C.T_BUILDING and tt ~= C.T_HALFBUILD
+                   and tt ~= C.T_PILLBOX then
+                  fmx, fmy = tx, ty
+                  break
+                end
+              end
+            end
+            if fmx then break end
+          end
+        end
+        if not fmx then
           fmx, fmy = cur_mx, cur_my
         end
         log.event("stuck", string.format("%s@%d,%d->flee(%d,%d)",
@@ -2003,7 +2262,9 @@ function Brain.think(info)
         -- Base armour depleted — it went neutral, now just drive over to capture
         log.event("base_capturable", string.format("(%d,%d) owner=%s", gmx, gmy, b.owner))
         state.goal.kind = "capture_base"
+        state.goal.race_mode = true
         state.pf.status = "idle"
+        state.urgent_capture_base = { mx = gmx, my = gmy, tick = now }
       elseif b.owner ~= "hostile" then
         -- Base became friendly (someone else captured it)
         goal_valid = false
@@ -2079,6 +2340,9 @@ function Brain.think(info)
       if info.armour <= C.TANK_COMBAT_FLEE_ARMOUR
          or info.shells <= C.TANK_COMBAT_FLEE_SHELLS then
         goal_valid = false
+        -- Clear the pool cache so pick_goal doesn't re-select attack_tank
+        -- immediately — the low-resource condition persists until we refuel.
+        if state.pool_cache then state.pool_cache[9] = nil end
       end
     elseif gk == "refuel_at_base" or gk == "flee_to_base" then
       local b = W.base_at(world, gmx, gmy)
@@ -2183,9 +2447,26 @@ function Brain.think(info)
                        and enemy_lgm_count > (state.prev_enemy_lgm_count or 0)
                        and state.goal.kind ~= "kill_lgm"
     state.prev_enemy_lgm_count = enemy_lgm_count
+    -- Trigger urgent replan when we take damage from an enemy tank.
+    -- Detect by: took damage this tick + enemy tank visible + not
+    -- currently under pill fire (no angry pill in range).
+    local shot_by_tank = false
+    if state.took_damage_this_tick
+       and state.goal.kind ~= "attack_tank"
+       and state.perc and state.perc.enemy_tanks
+       and #state.perc.enemy_tanks > 0
+       and not (state.perc.under_fire) then
+      shot_by_tank = true
+      state._shot_by_tank = true
+      -- Clear pool cache so attack_tank gets re-evaluated fresh
+      if state.pool_cache then state.pool_cache[9] = nil end
+    else
+      state._shot_by_tank = false
+    end
     local urgent_replan = state.goal.kind == "none" or attack_tank_done
                        or tank_appeared or dead_pill_appeared
                        or new_base_appeared or lgm_appeared
+                       or shot_by_tank
     if urgent_replan then
       -- Record which factor(s) tripped the urgent replan so the HUD
       -- below can flash a banner that's visible for a few seconds.
@@ -2644,7 +2925,7 @@ function Brain.think(info)
   -- explore: tile marked visited on entry (expl.update), drive through.
   -- flee_pill: escaping, keep momentum toward next objective.
   local lookahead_kinds = {
-    capture_base = true, capture_pill = true,
+    capture_pill = true,
     explore = true, flee_pill = true,
   }
   if lookahead_kinds[state.goal.kind] and not state.command_goal then
@@ -2751,10 +3032,12 @@ function Brain.think(info)
     if perc and perc.enemy_tanks then
       for _, et in ipairs(perc.enemy_tanks) do
         if et.dist <= C.TANK_COMBAT_OPPORTUNISTIC_RANGE then
-          local aim_dir = U.aim_at(info.tankx, info.tanky,
-                                   U.m2w(et.mx), U.m2w(et.my))
+          local et_wx = U.m2w(et.mx)
+          local et_wy = U.m2w(et.my)
+          local aim_dir = U.aim_at(info.tankx, info.tanky, et_wx, et_wy)
           local aim_corr = U.adiff(info.direction, aim_dir)
-          if math.abs(aim_corr) <= C.TANK_COMBAT_OPPORTUNISTIC_AIM then
+          if math.abs(aim_corr) <= C.TANK_COMBAT_OPPORTUNISTIC_AIM
+             and _shot_path_clear_init(info, world, et_wx, et_wy, et.mx, et.my) then
             taps = taps | KEY_SHOOT
             log.event("opportunistic_tank_shot",
               string.format("at(%d,%d) dist=%d aim=%.0f",
@@ -2862,6 +3145,19 @@ function Brain.think(info)
                 if not (t.mx == origin_mx and t.my == origin_my) then
                   local tt = U.ttype(t.mx, t.my)
                   if tt == C.T_BUILDING or tt == C.T_HALFBUILD then
+                    los_blocked = true; break
+                  end
+                  local plist = world.pill_at and world.pill_at[t.my * 256 + t.mx]
+                  if plist then
+                    for _, pe in ipairs(plist) do
+                      if pe.pill and pe.pill.health and pe.pill.health > 0 then
+                        los_blocked = true; break
+                      end
+                    end
+                    if los_blocked then break end
+                  end
+                  local bentry = world.base_at and world.base_at[t.my * 256 + t.mx]
+                  if bentry and bentry.base and bentry.base.owner == "hostile" then
                     los_blocked = true; break
                   end
                 end
@@ -3490,6 +3786,8 @@ function Brain.think(info)
         bsi.lgm_back = "1"
       end
     end
+    bsi.tx = tostring(info.tankx >> 8)
+    bsi.ty = tostring(info.tanky >> 8)
     if state.goal and state.goal.kind and state.goal.kind ~= "none" then
       bsi.goal = state.goal.kind
       if state.goal.substate and state.goal.substate ~= "" then

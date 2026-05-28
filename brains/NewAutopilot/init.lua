@@ -1108,6 +1108,20 @@ function Brain.think(info)
     print2.set_bot(info.player_number or 0)
     print2.set_tick(now)
     print2("BEGIN bot tick=", now, " state.goal.kind = ", state.goal.kind, ", state.goal.substate = ", tostring(state.goal.substate))
+    -- A* logging is gated on _G._ENABLE_ASTAR_LOG (default off) — the
+    -- per-tile cost_to trace is verbose enough to noticeably slow the
+    -- sim. Set `_G._ENABLE_ASTAR_LOG = true` (e.g. from a launcher
+    -- script or debug console) before the first tick to opt in.
+    if _G._ENABLE_ASTAR_LOG then
+      if cpf.astar_log_set_tick then cpf.astar_log_set_tick(now) end
+      if not _G._ASTAR_LOG_OPENED and cpf.astar_log_enable then
+        _G._ASTAR_LOG_OPENED = true
+        if _G.DEBUG_SESSION_DIR then
+          cpf.astar_log_enable(_G.DEBUG_SESSION_DIR .. "/astar.log")
+          print2("ASTAR_LOG enabled at ", _G.DEBUG_SESSION_DIR, "/astar.log")
+        end
+      end
+    end
   end
   -- (opt.set_tick already fired at the top of think; just emit the
   -- BEGIN marker here.)
@@ -1795,15 +1809,9 @@ function Brain.think(info)
   -- Populate C pathfinder danger grid from Lua threat grid (single source of
   -- truth). Batch-load the whole grid in one C call instead of ~13K per-tile
   -- cpf.set_danger calls, and only when threat.update actually rebuilt it.
-  if BRAIN_DEBUG_MODE and threat.rebuilt_this_tick then
-    print2(string.format("THREAT_REBUILT t=%d", now))
-  end
   if threat.rebuilt_this_tick then
     cpf.load_pill_danger_from_threat()
     metrics.inc("danger_reloads")
-    if BRAIN_DEBUG_MODE then
-      print2(string.format("DANGER_LOADED t=%d (pf.danger_grid updated)", now))
-    end
   else
     metrics.inc("danger_skips")
   end
