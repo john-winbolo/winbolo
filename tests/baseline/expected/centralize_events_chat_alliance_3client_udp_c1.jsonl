@@ -8,9 +8,9 @@
 {"tick":0,"type":"CTRL_GAME_VOTE_STATE","kind":2,"active":0,"triggerSrc":0,"teamId":0,"threshold":0,"yesCount":0,"noCount":0,"eligibleCount":0,"secondsRemaining":0,"votes":0}
 {"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":0,"name":"HeadlessBot1","country":"AU","clientType":2,"clientFlags":0,"allies":[0]}
 {"tick":0,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot1 has joined."}
-{"tick":80,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"HeadlessBot2","country":"AU","clientType":2,"clientFlags":0,"allies":[1]}
-{"tick":80,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot2 has joined."}
-{"tick":100,"type":"CTRL_COMMAND_REJECTED","origCmdSeq":0,"origCmdType":8,"reasonCode":3,"origSlot":0}
+{"tick":82,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"HeadlessBot2","country":"AU","clientType":2,"clientFlags":0,"allies":[1]}
+{"tick":82,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot2 has joined."}
+{"tick":100,"type":"CTRL_COMMAND_REJECTED","origCmdSeq":1,"origCmdType":8,"reasonCode":3,"origSlot":0}
 {"tick":110,"type":"CTRL_PLAYER_JOIN","playerNum":2,"name":"HeadlessBot3","country":"AU","clientType":2,"clientFlags":0,"allies":[2]}
 {"tick":110,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot3 has joined."}
 {"tick":200,"type":"CTRL_ALLIANCE_ACCEPT","acceptedBy":2,"newMember":0}

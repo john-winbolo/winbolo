@@ -363,106 +363,60 @@ const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen) {
 }
 
 /* === Send wrappers ===
- * Most sends are still UDP-only (local transport ignores them) — those
- * wrappers continue to early-return on a non-UDP transport. Wrappers
- * for commands that have a CMD_* dispatcher arm route the local-
- * transport path through serverSimApplyCommand under the mutex. */
+ * Command helpers build a ClientCommand from their arguments and hand
+ * it to clientSimSubmitCommand, which routes through the reliable
+ * carrier on UDP or serverSimApplyCommand under the mutex on local. A
+ * few bespoke-channel helpers (snapshot input, map list/search, map
+ * upload, MapUseLocal, WbnReauth) keep their own UDP-only paths. */
 
 void clientSimNetSendChat(ClientSim *cs, BYTE destPlayer, const char *message) {
   if (cs == NULL || !cs->hasTransport) return;
   if (message == NULL || message[0] == '\0') return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendChat(&cs->transport, destPlayer, message);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   size_t msgLen = strlen(message);
   if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
   ClientCommand cmd = { .type = CMD_CHAT };
   cmd.u.chat.destPlayer = destPlayer;
   cmd.u.chat.bodyLen    = (uint16_t)msgLen;
   memcpy(cmd.u.chat.body, message, msgLen);
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendNameChange(ClientSim *cs, const char *newName) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendNameChange(&cs->transport, newName);
-    return;
-  }
-  if (cs->boundServerSim == NULL || newName == NULL) return;
+  if (newName == NULL || newName[0] == '\0') return;
   ClientCommand cmd = { .type = CMD_NAME_CHANGE };
   size_t nl = strlen(newName);
   if (nl >= PACKET_MAX_PLAYER_NAME) nl = PACKET_MAX_PLAYER_NAME - 1;
   memcpy(cmd.u.nameChange.newName, newName, nl);
   cmd.u.nameChange.newName[nl] = '\0';
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendAllianceRequest(ClientSim *cs, BYTE toPlayer) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendAllianceRequest(&cs->transport, toPlayer);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_ALLIANCE_REQUEST };
   cmd.u.allianceRequest.toPlayer = toPlayer;
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendAllianceAccept(ClientSim *cs, BYTE toPlayer) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendAllianceAccept(&cs->transport, toPlayer);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_ALLIANCE_ACCEPT };
   cmd.u.allianceAccept.newMember = toPlayer;
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendAllianceLeave(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendAllianceLeave(&cs->transport);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_ALLIANCE_LEAVE };
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLockToggle(ClientSim *cs, bool allow) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLockToggle(&cs->transport, allow);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_LOCK_TOGGLE };
   cmd.u.lockToggle.allow = allow;
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimSubmitCommand(ClientSim *cs, const ClientCommand *cmd) {
@@ -488,31 +442,15 @@ void clientSimNetSendTeamSet(ClientSim *cs, BYTE slot, BYTE teamNumber) {
 
 void clientSimNetSendReady(ClientSim *cs, bool ready) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendReady(&cs->transport, ready);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_READY };
   cmd.u.ready.ready = ready;
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendAddBot(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendAddBot(&cs->transport, 0, NULL);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_LOBBY_ADD_BOT };
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendAddBotConfigured(ClientSim *cs, BYTE teamNumber,
@@ -522,11 +460,6 @@ void clientSimNetSendAddBotConfigured(ClientSim *cs, BYTE teamNumber,
   /* brainIdx accepted for API symmetry; the server applies the default
    * brain on add. Use clientSimNetSendLobbySetBotBrain to change it. */
   (void)brainIdx;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendAddBot(&cs->transport, teamNumber, botName);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_LOBBY_ADD_BOT };
   cmd.u.lobbyAddBot.teamNumber = teamNumber;
   if (botName != NULL && botName[0] != '\0') {
@@ -535,25 +468,14 @@ void clientSimNetSendAddBotConfigured(ClientSim *cs, BYTE teamNumber,
     cmd.u.lobbyAddBot.nameLen = (uint8_t)nl;
     memcpy(cmd.u.lobbyAddBot.name, botName, nl);
   }
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendRemoveBot(ClientSim *cs, BYTE playerNum) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendRemoveBot(&cs->transport, playerNum);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_LOBBY_REMOVE_BOT };
   cmd.u.lobbyRemoveBot.slot = playerNum;
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
@@ -561,12 +483,6 @@ void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
                                     uint8_t personality,
                                     const char *name) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLobbyBotConfig(&cs->transport, slot,
-                                         difficulty, personality, name);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_LOBBY_BOT_CONFIG };
   cmd.u.lobbyBotConfig.slot        = slot;
   cmd.u.lobbyBotConfig.difficulty  = difficulty;
@@ -577,91 +493,50 @@ void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
     cmd.u.lobbyBotConfig.nameLen = (uint8_t)nl;
     memcpy(cmd.u.lobbyBotConfig.name, name, nl);
   }
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
                                       uint8_t brainIdx) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLobbySetBotBrain(&cs->transport, slot, brainIdx);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_LOBBY_SET_BOT_BRAIN };
   cmd.u.lobbySetBotBrain.slot     = slot;
   cmd.u.lobbySetBotBrain.brainIdx = brainIdx;
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLobbySetMap(&cs->transport, mapRelPath);
-    return;
-  }
-  if (cs->boundServerSim == NULL || mapRelPath == NULL) return;
+  if (mapRelPath == NULL) return;
   size_t pl = strlen(mapRelPath);
   if (pl == 0 || pl > 255) return;
   ClientCommand cmd = { .type = CMD_LOBBY_SET_MAP };
   cmd.u.lobbySetMap.relPathLen = (uint8_t)pl;
   memcpy(cmd.u.lobbySetMap.relPath, mapRelPath, pl);
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyPreviewCancel(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLobbyPreviewCancel(&cs->transport);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_LOBBY_PREVIEW_CANCEL };
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyPreviewCommit(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLobbyPreviewCommit(&cs->transport);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_LOBBY_PREVIEW_COMMIT };
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyPreviewRandom(ClientSim *cs, const char *seedStr) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLobbyPreviewRandom(&cs->transport, seedStr);
-    return;
-  }
-  if (cs->boundServerSim == NULL || seedStr == NULL) return;
+  if (seedStr == NULL) return;
   size_t sl = strlen(seedStr);
   if (sl == 0 || sl > 63) return;
   ClientCommand cmd = { .type = CMD_LOBBY_PREVIEW_RANDOM };
   cmd.u.lobbyPreviewRandom.seedLen = (uint8_t)sl;
   memcpy(cmd.u.lobbyPreviewRandom.seed, seedStr, sl);
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyMapListRequest(ClientSim *cs,
@@ -732,12 +607,6 @@ void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
                                    uint8_t color, uint8_t namingPool,
                                    const char *name) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLobbyTeamMeta(&cs->transport, teamId, color,
-                                        namingPool, name);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_LOBBY_TEAM_META };
   cmd.u.lobbyTeamMeta.teamId     = teamId;
   cmd.u.lobbyTeamMeta.color      = color;
@@ -748,35 +617,19 @@ void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
     cmd.u.lobbyTeamMeta.nameLen = (uint8_t)nl;
     memcpy(cmd.u.lobbyTeamMeta.name, name, nl);
   }
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyTeamClear(ClientSim *cs, BYTE teamId) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLobbyTeamClear(&cs->transport, teamId);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_LOBBY_TEAM_CLEAR };
   cmd.u.lobbyTeamClear.teamId = teamId;
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
                                   const uint8_t *value, uint8_t valueLen) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLobbySetting(&cs->transport, settingType, value, valueLen);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   if (valueLen > 32) return;
   ClientCommand cmd = { .type = CMD_LOBBY_SETTING };
   cmd.u.lobbySetting.settingType = settingType;
@@ -784,19 +637,11 @@ void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
   if (valueLen > 0 && value != NULL) {
     memcpy(cmd.u.lobbySetting.value, value, valueLen);
   }
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbySetPassword(ClientSim *cs, const char *pw) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLobbySetPassword(&cs->transport, pw);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_LOBBY_SET_PASSWORD };
   if (pw != NULL && pw[0] != '\0') {
     size_t pl = strlen(pw);
@@ -804,124 +649,57 @@ void clientSimNetSendLobbySetPassword(ClientSim *cs, const char *pw) {
     cmd.u.lobbySetPassword.pwLen = (uint8_t)pl;
     memcpy(cmd.u.lobbySetPassword.password, pw, pl);
   }
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLobbyOpenHost(&cs->transport, openHost);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_LOBBY_OPEN_HOST };
   cmd.u.lobbyOpenHost.openHost = openHost;
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyKick(ClientSim *cs, uint8_t slot) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLobbyKick(&cs->transport, slot);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_LOBBY_KICK };
   cmd.u.lobbyKick.slot = slot;
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendMapSkipVote(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendMapSkipVote(&cs->transport);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_MAP_SKIP_VOTE };
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendGameVoteToggle(ClientSim *cs,
                                     uint8_t kind, uint8_t toggleMode) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendGameVoteToggle(&cs->transport, kind, toggleMode);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_GAME_VOTE_TOGGLE };
   cmd.u.gameVoteToggle.kind       = kind;
   cmd.u.gameVoteToggle.toggleMode = toggleMode;
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize,
                                     bool includeBots) {
-  balanceDebugLog("[BAL CLIENT] SendBalanceRequest teamSize=%u includeBots=%d "
-                  "cs=%p hasTransport=%d isUdpTransport=%d",
-                  (unsigned)teamSize, includeBots ? 1 : 0,
-                  (void *)cs,
-                  cs ? cs->hasTransport : 0,
-                  cs ? cs->isUdpTransport : 0);
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    balanceDebugLog("[BAL CLIENT] calling transportUdpClientSendBalanceRequest");
-    transportUdpClientSendBalanceRequest(&cs->transport, teamSize, includeBots);
-    balanceDebugLog("[BAL CLIENT] transportUdpClientSendBalanceRequest returned");
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_BALANCE_REQUEST };
   cmd.u.balanceRequest.teamSize    = teamSize;
   cmd.u.balanceRequest.includeBots = includeBots;
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendBalanceApply(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendBalanceApply(&cs->transport);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_BALANCE_APPLY };
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendBalanceDismiss(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendBalanceDismiss(&cs->transport);
-    return;
-  }
-  if (cs->boundServerSim == NULL) return;
   ClientCommand cmd = { .type = CMD_BALANCE_DISMISS };
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendWbnReauth(ClientSim *cs) {

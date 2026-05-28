@@ -19,6 +19,6 @@
 {"tick":1054,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot1 has left."}
 {"tick":1054,"type":"CTRL_PLAYER_LEAVE","playerNum":0,"name":"HeadlessBot1","country":"AU"}
 {"tick":1054,"type":"CTRL_ALLIANCE_LEAVE","playerNum":0}
-{"tick":1084,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot2 has left."}
-{"tick":1084,"type":"CTRL_PLAYER_LEAVE","playerNum":1,"name":"HeadlessBot2","country":"AU"}
-{"tick":1084,"type":"CTRL_ALLIANCE_LEAVE","playerNum":1}
+{"tick":1086,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot2 has left."}
+{"tick":1086,"type":"CTRL_PLAYER_LEAVE","playerNum":1,"name":"HeadlessBot2","country":"AU"}
+{"tick":1086,"type":"CTRL_ALLIANCE_LEAVE","playerNum":1}
