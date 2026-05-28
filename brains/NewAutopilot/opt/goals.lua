@@ -98,20 +98,27 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
   local gmx, gmy = goal.mx, goal.my
   if tmx == gmx and tmy == gmy then return 0, false, "" end
 
-  -- For attack_pill: route to the firing position (spot), not the pill.
-  -- The tank shoots from standoff, never drives onto the pill tile.
+  -- Route to the ENGAGE point, not the target itself. The tank shoots
+  -- from standoff/range, never drives onto the target tile.
   -- Always use KIND_NORMAL (full danger) for wsim — we want the safest
   -- route to evaluate survivability, not the aggressive low-danger path.
   local wsim_kind = cpf.KIND_NORMAL
   local wsim_dx, wsim_dy = gmx, gmy
   if attack_pill_idx then
     if spot_mx and spot_my then
-      -- Use the pre-computed best firing position
       wsim_dx, wsim_dy = spot_mx, spot_my
     else
-      -- Fallback: cheapest adjacent tile to the pill
       local _, ax, ay = cpf.cheapest_adjacent_dij(cpf.KIND_NORMAL, gmx, gmy, 0)
       if ax then wsim_dx, wsim_dy = ax, ay end
+    end
+  elseif goal.kind == "attack_tank" or goal.kind == "attack_base" then
+    -- Route to the standoff/adjacent tile, not the target itself
+    local _, ax, ay = cpf.cheapest_adjacent_dij(cpf.KIND_NORMAL, gmx, gmy, 0)
+    if ax then wsim_dx, wsim_dy = ax, ay end
+  elseif goal.kind == "kill_lgm" then
+    -- Route to the shoot_from position if available
+    if goal.shoot_mx and goal.shoot_my then
+      wsim_dx, wsim_dy = goal.shoot_mx, goal.shoot_my
     end
   end
 
@@ -661,6 +668,15 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
     raw_cost = math.min(raw_cost, C.IMMINENT_CAPTURE_FLOOR)
     imminent = true
   end
+  -- Urgent capture: we just killed this base via attack_base. Heavily
+  -- discount the cost so the bot commits to capturing before the base
+  -- recharges for the enemy. Decays after 500 ticks (~10s).
+  local urgent = state.urgent_capture_base
+  if urgent and urgent.mx == base.mx and urgent.my == base.my
+     and (state.tick or 0) - urgent.tick < 500 then
+    raw_cost = math.min(raw_cost, C.IMMINENT_CAPTURE_FLOOR)
+    imminent = true
+  end
 
   local desc = ""  -- pool viz string; populated only when BRAIN_POOL_VIZ
   if BRAIN_POOL_VIZ then
@@ -1205,14 +1221,17 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
           cost = cost - aim_bonus
         end
 
-        -- Crossfire penalty: if enemy tank is near a hostile pill, we'll take pill fire too
+        -- Crossfire penalty: hostile pills near the enemy tank. Accumulates
+        -- across all pills in range and scales by anger — heated pills
+        -- fire instantly and are far deadlier than calm ones.
         for _, pt in ipairs(perc.pill_threats or {}) do
-          if U.mdist(et.mx, et.my, pt.pill.mx, pt.pill.my) <= C.TANK_COMBAT_NEAR_PILL_RANGE then
-            crossfire = C.TANK_COMBAT_NEAR_PILL_PENALTY
-            cost = cost + crossfire
-            break
+          local pd = U.mdist(et.mx, et.my, pt.pill.mx, pt.pill.my)
+          if pd <= C.TANK_COMBAT_NEAR_PILL_RANGE then
+            local anger_scale = math.max(0.5, (pt.anger or 0) + 0.5)
+            crossfire = crossfire + C.TANK_COMBAT_NEAR_PILL_PENALTY * anger_scale
           end
         end
+        cost = cost + crossfire
 
         -- Apply boat vulnerability multiplier (computed above both branches)
         if boat_mult < 1.0 then
@@ -1692,7 +1711,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local path_cost = smart_cost(KIND_NORMAL, tmx, tmy, best_mx, best_my, boat and 1 or 0,
                                 info.shells or 32, info.trees or 0, info.mines or 0, info.armour or 40)
   local raw_cost = path_cost + C.STRATEGIC_PLACE_BASE_COST + carry_value_penalty - carry_discount
-  local cost = math.max(1, raw_cost * C.STRATEGIC_PLACE_COST_MULT)
+  -- Last pill: 1.5× cost so the bot holds on to its only pill unless
+  -- placement is clearly worthwhile.
+  local last_pill_mult = 1.0
+  if (info.carried_pills or 0) == 1 then last_pill_mult = 1.5 end
+  local cost = math.max(1, raw_cost * C.STRATEGIC_PLACE_COST_MULT * last_pill_mult)
 
   -- Build pool-grid candidate list: winner gets actual cost, others get cost + score delta.
   -- Pool-grid panel data only — wrapped so lua_strip removes it from opt/.
@@ -2258,34 +2281,101 @@ local POOL_FILTERS = {
 -- can stash the components for the breakdown formula.
 local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   -- Distance to cheapest reachable adjacent tile (pill tile itself
-  -- carries an impassable overlay so we route to a neighbor).  Uses
-  -- the dijkstra-only variant — no A* fallback.
+  -- carries an impassable overlay so we route to a neighbor).
   --
-  -- Subtract the dead pill's stale danger contribution from the path
-  -- cost.  Capture targets are pills that just died (neutral / freshly
-  -- killed), but the danger slate may still carry their fire-field
-  -- contribution for a few ticks until the next pill_dirty rebuild.
-  -- Without this subtraction the dijkstra cost to the adjacent tile
-  -- includes phantom fire from the now-dead pill, which inflates the
-  -- score and can make a perfectly safe capture look risky.  Same
-  -- pattern attack_pill (pool 6) uses for its still-alive target.
-  local best_adj, best_ax, best_ay =
-      cpf.cheapest_adjacent_dij(cpf.KIND_NORMAL, obj.mx, obj.my, 0)
-  if best_adj >= math.huge then
-    return 1e30, 1e30, 1e30, 0
+  -- After a threat rebuild (pill died), the danger grid is updated
+  -- immediately but the Dijkstra slates still carry stale costs from
+  -- the old danger values until they complete their next run (~2 ticks).
+  -- During that window, fall back to A* (smart_cost) which reads the
+  -- live danger grid directly — avoids inflated costs from phantom
+  -- fire of dead pills baked into the old Dijkstra.
+  local dij_stale = false
+  if state.dij and threat.last_rebuild_tick > 0 then
+    local slates = state.dij.slates
+    local short_ok = slates[0] and slates[0].started_tick >= threat.last_rebuild_tick
+    local long_ok  = slates[2] and slates[2].started_tick >= threat.last_rebuild_tick
+    if not (short_ok or long_ok) then
+      dij_stale = true
+    end
   end
-  local pcontrib = threat.pill_contrib
-                   and threat.pill_contrib[obj.my * 256 + obj.mx]
   local dist_raw
-  if best_ax and pcontrib then
-    dist_raw = cpf.smart_cost_minus_pill_danger_dij_only(
-                  cpf.KIND_NORMAL, best_ax, best_ay,
-                  pcontrib, obj.mx, obj.my, 0)
-  else
-    dist_raw = best_adj
+  local dist_method = "dij"
+  -- Try dijkstra first using ONLY fresh slates. The C-side
+  -- dijkstra_lookup_by_kind (and thus cheapest_adjacent_dij) walks slates
+  -- newest-started-first and falls through to older ones when the newer
+  -- slate hasn't expanded the target yet. Backup slates can predate the
+  -- last threat rebuild — their g_cost still carries the dead pill's
+  -- danger, producing inflated costs. Enforce the invariant: trust a
+  -- dijkstra cost only if it came from a slate started AT OR AFTER the
+  -- last threat rebuild.
+  if not dij_stale and state.dij then
+    local slates = state.dij.slates
+    local min_tick = threat.last_rebuild_tick
+    local best_adj, best_ax, best_ay = math.huge, nil, nil
+    local NDX = { 0,  1,  1,  1,  0, -1, -1, -1 }
+    local NDY = {-1, -1,  0,  1,  1,  1,  0, -1 }
+    for d = 1, 8 do
+      local ax = obj.mx + NDX[d]
+      local ay = obj.my + NDY[d]
+      if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
+        local ac = math.huge
+        for idx = 0, 3 do
+          local s = slates[idx]
+          if s and s.started_tick >= min_tick then
+            local c = cpf.dijkstra_cost_at(idx, ax, ay, 0)
+            if c and c < ac then ac = c end
+          end
+        end
+        if ac < best_adj then
+          best_adj = ac; best_ax = ax; best_ay = ay
+        end
+      end
+    end
+    if best_adj < math.huge then
+      local pcontrib = threat.pill_contrib
+                       and threat.pill_contrib[obj.my * 256 + obj.mx]
+      if best_ax and pcontrib then
+        -- NOTE: smart_cost_minus_pill_danger_dij_only routes through C's
+        -- lookup_by_kind, which can still hit stale backups. For dead
+        -- pills (capture_pill's domain) pcontrib is nil so this branch
+        -- is unreached; left in place for the alive-pill code paths.
+        dist_raw = cpf.smart_cost_minus_pill_danger_dij_only(
+                      cpf.KIND_NORMAL, best_ax, best_ay,
+                      pcontrib, obj.mx, obj.my, 0)
+      else
+        dist_raw = best_adj
+      end
+    else
+      -- No fresh slate has expanded any neighbour yet — fall through to A*.
+      dij_stale = true
+    end
+  end
+
+  if dij_stale or not dist_raw then
+    dist_method = "astar"
+    local boat = info.inboat and 1 or 0
+    dist_raw = smart_cost(KIND_NORMAL, tmx, tmy, obj.mx, obj.my, boat,
+                          info.shells or 32, info.trees or 0,
+                          info.mines or 0, info.armour or 40,
+                          4000, false)
+    if dist_raw >= 1e29 then
+      dist_method = "astar_boat"
+      dist_raw = smart_cost(KIND_NORMAL, tmx, tmy, obj.mx, obj.my, boat,
+                            info.shells or 32, info.trees or 0,
+                            info.mines or 0, info.armour or 40,
+                            16000, true)
+    end
+    if dist_raw >= 1e29 then
+      return 1e30, 1e30, 1e30, 0
+    end
   end
   local dist_score = (dist_raw ^ 1.5) * C.CAPTURE_PILL_DIST_SCALE
   local danger_val = threat.at(obj.mx, obj.my)
+  -- Cautious-mode danger multiplier (see init.lua state.cautious_mode
+  -- and constants.lua CAUTIOUS_MODE_MULT).  Capture path that
+  -- runs through hostile territory costs more when we're in cautious
+  -- mode (e.g. LGM dead + carrying pills).
+  local _lgm_mult = state.cautious_mode and C.CAUTIOUS_MODE_MULT or 1
   -- Intercept: an enemy tank close enough to beat us to the pill
   -- (Manhattan dist ratio scaled by safety margin) bumps the cost.
   local our_dist = U.mdist(tmx, tmy, obj.mx, obj.my)
@@ -2301,9 +2391,9 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
     end
   end
   local c = C.CAPTURE_PILL_BASE_COST + dist_score
-          + danger_val * C.CAPTURE_PILL_DANGER_SCALE
+          + danger_val * C.CAPTURE_PILL_DANGER_SCALE * _lgm_mult
           + intercept
-  return c, dist_raw, dist_score, danger_val, intercept
+  return c, dist_raw, dist_score, danger_val, intercept, _lgm_mult, dist_method
 end
 
 -- build_eval_queue — called at the start of each replan cycle.
@@ -2441,12 +2531,13 @@ function M.build_eval_queue(state, world, info)
             _reject_remaining = reject.remaining or 0,
           }
         else
-          local c, _draw, dscore, dval, intcpt =
+          local c, _draw, dscore, dval, intcpt, _lm4, _dm4 =
             compute_pool4_cost(state, world, info, obj, tmx, tmy)
           state.cost_cache[ck] = {
             cost = c, raw = _draw, tick = now, _p = 4,
             _mx = obj.mx, _my = obj.my,
             _ds = dscore, _dv = dval, _intcpt = intcpt,
+            _dist_method = _dm4,
           }
         end
       end
@@ -2478,12 +2569,20 @@ function M.build_eval_queue(state, world, info)
     end
   end
 
-  -- Pool 7: attack_base (only if enough shells)
+  -- Pool 7: attack_base (only if enough shells, but always keep
+  -- the current target so a mid-attack base doesn't vanish from the
+  -- eval queue just because shells dipped to SHELLS_LOW)
   local has_hbases = not perc or (perc.hostile_base_count > 0)
-  if has_hbases and has_shells then
+  if has_hbases then
+    local cur_is_attack_base = state.goal and state.goal.kind == "attack_base"
+    local cur_mx = cur_is_attack_base and state.goal.mx or nil
+    local cur_my = cur_is_attack_base and state.goal.my or nil
     for id, obj in pairs(world.bases) do
       if filter_attack_base(obj, state) then
-        queue[#queue + 1] = { pool = 7, id = id, obj = obj }
+        local is_current = (cur_mx and obj.mx == cur_mx and obj.my == cur_my)
+        if has_shells or is_current then
+          queue[#queue + 1] = { pool = 7, id = id, obj = obj }
+        end
       end
     end
   end
@@ -2593,8 +2692,16 @@ local function get_formula_inner(e)
         e._reject, rem_tok, desc)
       return e.formula
     end
-    local _d_danger  = string.format("%.1f[danger_val] x %.1f[REFUEL_DANGER_WEIGHT] = %.0f",
-      e._dv, C.REFUEL_DANGER_WEIGHT, e._dang)
+    local _lgm_mult_d = e._lgm_mult or 1
+    local _d_danger
+    if _lgm_mult_d ~= 1 then
+      _d_danger = string.format(
+        "%.1f[danger_val] x %.1f[REFUEL_DANGER_WEIGHT] x %d (cautious mode) = %.0f",
+        e._dv, C.REFUEL_DANGER_WEIGHT, _lgm_mult_d, e._dang)
+    else
+      _d_danger = string.format("%.1f[danger_val] x %.1f[REFUEL_DANGER_WEIGHT] = %.0f",
+        e._dv, C.REFUEL_DANGER_WEIGHT, e._dang)
+    end
     local _d_stale   = fmt_stale_detail(e._age, e._stale)
     local _d_contest = e._contest > 0
       and string.format("enemy tank within %.0f[CONTESTED_BASE_RANGE] tiles → %.0f[CONTESTED_BASE_PENALTY]",
@@ -2623,8 +2730,8 @@ local function get_formula_inner(e)
       local _fm = e._fill_mult or 1
       local _lgm = e._lgm_wait_floor
       _shape_head = string.format(
-        " × ur{%.2f} + base{%.0f} - def{%.0f} × fill{%.2f}%s",
-        _u, _bf, _db, _fm,
+        " × ur{%.2f} - def{%.0f} × fill{%.2f}%s",
+        _u, _db, _fm,
         _lgm and string.format(" → lgm_wait_floor{%.0f}", _lgm) or "")
       local _arm     = e._arm or 0
       local _sh      = e._sh or 0
@@ -2656,11 +2763,18 @@ local function get_formula_inner(e)
         _d_urgency, _d_def, _d_fill, _d_lgm)
     end
 
+    local _safe_token = e._safe_refuel
+      and string.format(" × safe{%.2f}", C.REFUEL_NO_DANGER_DISCOUNT) or ""
+    local _safe_detail = e._safe_refuel
+      and string.format(
+        "|safe:danger_val=0 → multiply final cost by %.2f[REFUEL_NO_DANGER_DISCOUNT]",
+        C.REFUEL_NO_DANGER_DISCOUNT)
+      or ""
     f = string.format(
-      "A*{%.0f}@(%d,%d) + danger{%.0f} + stale{%.0f} + contest{%.0f} + hyst{%.0f} + deplete{%.0f}%s"..
-      "||danger:%s|stale:%s|contest:%s|hyst:%s|deplete:%s%s",
-      raw, e._mx or 0, e._my or 0, e._dang, e._stale, e._contest, e._hyst, e._dep, _shape_head,
-      _d_danger, _d_stale, _d_contest, _d_hyst, _d_deplete, _shape_detail)
+      "A*{%.0f}@(%d,%d) + base{%.0f} + danger{%.0f} + stale{%.0f} + contest{%.0f} + hyst{%.0f} + deplete{%.0f}%s%s"..
+      "||base:%.0f[REFUEL_BASE_COST]|danger:%s|stale:%s|contest:%s|hyst:%s|deplete:%s%s%s",
+      raw, e._mx or 0, e._my or 0, C.REFUEL_BASE_COST, e._dang, e._stale, e._contest, e._hyst, e._dep, _shape_head, _safe_token,
+      C.REFUEL_BASE_COST, _d_danger, _d_stale, _d_contest, _d_hyst, _d_deplete, _shape_detail, _safe_detail)
   elseif p == 6 then
     local _d_hp = string.format(
       "ATTACK_PILL_HP_MULT[%d] = %.2f (hand-tuned table: 5/10/18/28%% for hp 1-4, then linear 40%%→100%% over hp 5-15)",
@@ -2762,9 +2876,17 @@ local function get_formula_inner(e)
       e._hp, _wound_detail, _ammo_str,
       _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot)
   elseif p == 7 then
-    local _d_threat = string.format(
-      "%.2f[threat_val] x %.1f[ATTACK_BASE_THREAT_WEIGHT] = %.0f",
-      e._tv, C.ATTACK_BASE_THREAT_WEIGHT, e._thr)
+    local _lgm_mult_b = e._lgm_mult or 1
+    local _d_threat
+    if _lgm_mult_b ~= 1 then
+      _d_threat = string.format(
+        "%.2f[threat_val] x %.1f[ATTACK_BASE_THREAT_WEIGHT] x %d (cautious mode) = %.0f",
+        e._tv, C.ATTACK_BASE_THREAT_WEIGHT, _lgm_mult_b, e._thr)
+    else
+      _d_threat = string.format(
+        "%.2f[threat_val] x %.1f[ATTACK_BASE_THREAT_WEIGHT] = %.0f",
+        e._tv, C.ATTACK_BASE_THREAT_WEIGHT, e._thr)
+    end
     local _d_stale = fmt_stale_detail(e._age, e._stale)
     f = string.format(
       "A*{%.0f}@(%d,%d) + base{%.0f} + threat{%.0f} + stale{%.0f}||base:%.0f[ATTACK_BASE_EXTRA_COST]|threat:%s|stale:%s",
@@ -2782,7 +2904,8 @@ local function get_formula_inner(e)
         e._reject, rem_tok, e._mx or 0, e._my or 0,
         e._reject, rem_tok)
     else
-      local _cpill_danger_score = e._dv * C.CAPTURE_PILL_DANGER_SCALE
+      local _lgm_mult_c = e._lgm_mult or 1
+      local _cpill_danger_score = e._dv * C.CAPTURE_PILL_DANGER_SCALE * _lgm_mult_c
       local _intcpt = e._intcpt or 0
       -- Always-on intcpt term (matches attack_pill's formula display
       -- pattern at line 2795).  Empty when 0 was confusing — looked
@@ -2791,11 +2914,15 @@ local function get_formula_inner(e)
       local intcpt_det = _intcpt > 0
         and string.format("|intcpt:%.0f (enemy can beat us to pill)", _intcpt)
         or  "|intcpt:0 (no enemy tank within INTERCEPT_MAX_RANGE that can beat us)"
+      local _lgm_mult_str = (_lgm_mult_c ~= 1)
+        and string.format(" × %d (cautious mode)", _lgm_mult_c) or ""
+      local _lgm_mult_det = ""
+      local _dm_str = e._dist_method or "dij"
       f = string.format(
-        "base{%d} + dist{%.1f}@(%d,%d) + danger{%.1f} + intcpt{%.0f}||dist:%.0f^1.5 × %.3f[DIST_SCALE] = %.1f|danger:%.1f × %.3f[DANGER_SCALE] = %.1f%s",
-        C.CAPTURE_PILL_BASE_COST, e._ds, e._mx or 0, e._my or 0, _cpill_danger_score, _intcpt,
-        raw, C.CAPTURE_PILL_DIST_SCALE, e._ds,
-        e._dv, C.CAPTURE_PILL_DANGER_SCALE, _cpill_danger_score, intcpt_det)
+        "base{%d} + dist{%.1f}[%s]@(%d,%d) + danger{%.1f} + intcpt{%.0f}||dist:%.0f^1.5 × %.3f[DIST_SCALE] = %.1f [%s]|danger:%.1f × %.3f[DANGER_SCALE]%s = %.1f%s%s",
+        C.CAPTURE_PILL_BASE_COST, e._ds, _dm_str, e._mx or 0, e._my or 0, _cpill_danger_score, _intcpt,
+        raw, C.CAPTURE_PILL_DIST_SCALE, e._ds, _dm_str,
+        e._dv, C.CAPTURE_PILL_DANGER_SCALE, _lgm_mult_str, _cpill_danger_score, _lgm_mult_det, intcpt_det)
     end
   else
     f = string.format("A*{%.0f}@(%d,%d) + stale{%.0f}||stale:%s",
@@ -3030,7 +3157,12 @@ function M.step_eval_queue(state, world, info)
     if pool_idx == 1 then
       -- Refuel: uses its own scoring (danger + staleness + contested + hysteresis + depletion)
       local danger_val = threat.at(obj.mx, obj.my)
-      local danger_cost = danger_val * C.REFUEL_DANGER_WEIGHT
+      -- Cautious-mode danger multiplier (see init.lua state.cautious_mode
+      -- and constants.lua CAUTIOUS_MODE_MULT).  When the bot is
+      -- in cautious mode, danger terms get pumped so exposure costs
+      -- much more — biases hard toward safer refuel candidates.
+      local _lgm_mult = state.cautious_mode and C.CAUTIOUS_MODE_MULT or 1
+      local danger_cost = danger_val * C.REFUEL_DANGER_WEIGHT * _lgm_mult
 
       -- Depletion penalty: penalize bases that can't get us above LOW thresholds.
       -- need_* anchored at LOW (not TANK_FULL) so supply_ratio=1 once the base
@@ -3081,7 +3213,17 @@ function M.step_eval_queue(state, world, info)
          and obj.mx == state.goal.mx and obj.my == state.goal.my then
         hysteresis_cost = -C.REFUEL_SWITCH_THRESHOLD
       end
-      local score = raw_cost + danger_cost + stale_cost + contested_cost + hysteresis_cost + depletion_cost
+      -- Clamp hysteresis to non-negative so the current target gets stickier
+      -- (when same goal) but never goes BELOW zero — avoids refuel cost
+      -- being driven negative and dominating dead pills / other cheap goals.
+      local score = raw_cost + C.REFUEL_BASE_COST + danger_cost + stale_cost + contested_cost + math.max(hysteresis_cost, 0) + depletion_cost
+      -- Safe-refuel discount: when this base sits in zero-danger territory
+      -- (no pill / no tank threat), trim the cost so it wins ties against
+      -- bases with even mild exposure.  Compounds with everything above.
+      local _safe_refuel = (danger_val == 0)
+      if _safe_refuel then
+        score = score * C.REFUEL_NO_DANGER_DISCOUNT
+      end
 
       -- Ally-claimed penalty (refuel-specific small value).  Live look
       -- up so the per-target cost reflects ally claims regardless of
@@ -3127,6 +3269,8 @@ function M.step_eval_queue(state, world, info)
         _dv=danger_val, _dang=danger_cost, _age=_p1_age,
         _stale=stale_cost, _contest=contested_cost,
         _hyst=hysteresis_cost, _ratio=supply_ratio, _dep=depletion_cost,
+        _lgm_mult = _lgm_mult,
+        _safe_refuel = _safe_refuel or nil,
         ally_claimed_pen = _p1_ac_pen > 0 and _p1_ac_pen or nil,
         ally_claimed_by  = _p1_ac_by,
       }
@@ -3147,10 +3291,12 @@ function M.step_eval_queue(state, world, info)
       end
       -- Attack_base extra costs (same as finalization path)
       local base_extra, threat_cost, _threat_val = 0, 0, 0
+      local _p7_lgm_mult = 1
       if pool_idx == 7 then
         base_extra  = C.ATTACK_BASE_EXTRA_COST
         _threat_val = threat.at(obj.mx, obj.my)
-        threat_cost = _threat_val * C.ATTACK_BASE_THREAT_WEIGHT
+        _p7_lgm_mult = state.cautious_mode and C.CAUTIOUS_MODE_MULT or 1
+        threat_cost = _threat_val * C.ATTACK_BASE_THREAT_WEIGHT * _p7_lgm_mult
       end
       -- HP multiplier for attack_pill: weaker pills scale the entire cost
       -- down.  Lookup table (see ATTACK_PILL_HP_MULT at module top) — knee
@@ -3339,7 +3485,14 @@ function M.step_eval_queue(state, world, info)
                                     boat_flag, shells, trees, mines, armour, 4096)
             cpf.set_config("armour_drain_rate", 0.02)
             cpf.clear_danger_offset()
-            cpf.set_overlay(obj.mx, obj.my, 32767)
+            -- Only restamp the impassable overlay if the pill is still
+            -- alive. A dead pill's tile is walkable for capture; leaving
+            -- 32767 here would make subsequent A* treat it as a wall.
+            if (obj.health or 0) > 0 then
+              cpf.set_overlay(obj.mx, obj.my, 32767)
+            else
+              cpf.set_overlay(obj.mx, obj.my, 0)
+            end
             if _stuck_bl then
               for k in pairs(_stuck_bl) do
                 cpf.set_overlay(U.mkey_x(k), U.mkey_y(k), 1500)
@@ -3550,8 +3703,10 @@ function M.step_eval_queue(state, world, info)
       -- blows the cost up to ~297000 and falsifies the whole formula.
       local _cpill_dist_score, _cpill_danger_val, _cpill_intcpt = 0, 0, 0
       local _cpill_dist_raw = raw_cost
+      local _cpill_lgm_mult = 1
+      local _cpill_dist_method = "dij"
       if pool_idx == 4 then
-        c, _cpill_dist_raw, _cpill_dist_score, _cpill_danger_val, _cpill_intcpt =
+        c, _cpill_dist_raw, _cpill_dist_score, _cpill_danger_val, _cpill_intcpt, _cpill_lgm_mult, _cpill_dist_method =
           compute_pool4_cost(state, world, info, obj, tmx, tmy)
         -- Pool 4 skipped the smart_cost block (see above), so backfill
         -- raw_cost from compute_pool4_cost's distance — keeps the panel
@@ -3670,10 +3825,13 @@ function M.step_eval_queue(state, world, info)
         entry._commit_mult=_commit_mult
       elseif pool_idx == 7 then
         entry._base=base_extra; entry._tv=_threat_val; entry._thr=threat_cost
+        entry._lgm_mult=_p7_lgm_mult
         entry._stale=stale_cost; entry._age=_gen_age
       elseif pool_idx == 4 then
         entry._ds=_cpill_dist_score; entry._dv=_cpill_danger_val
         entry._intcpt=_cpill_intcpt
+        entry._lgm_mult=_cpill_lgm_mult
+        entry._dist_method=_cpill_dist_method
       else
         entry._stale=stale_cost; entry._age=_gen_age
       end
@@ -4049,7 +4207,7 @@ function M.finalize_pools(state, world, info)
   -- kill_lgm: pool 13 was just wiped by `state.pool_cache = {}` above.
   -- Re-inject so an LGM-sighting urgent_replan doesn't miss it and
   -- pick_goal can see kill_lgm as a candidate this tick.
-  M.refresh_kill_lgm(state, info)
+  M.refresh_kill_lgm(state, info, world)
 end
 
 -- =========================================================================
@@ -4082,7 +4240,7 @@ function M.update_pool_cache(state, world, info)
   -- Cache TTL is ~50 ticks, so the winner stays visible until the
   -- next re-eval refreshes the entry and the cycle restarts.
 
-  M.refresh_kill_lgm(state, info)
+  M.refresh_kill_lgm(state, info, world)
 end
 
 -- =========================================================================
@@ -4098,7 +4256,7 @@ end
 -- visible, clears pool_cache[13] + any stale 13:* cost_cache entries so
 -- a ghost target doesn't linger after the LGM goes back into its tank.
 -- =========================================================================
-function M.refresh_kill_lgm(state, info)
+function M.refresh_kill_lgm(state, info, world)
   if not state.pool_cache then return end
   local elgms = state.perc and state.perc.enemy_lgms
   if elgms and #elgms > 0 and (info.shells or 0) > 0 then
@@ -4171,12 +4329,15 @@ function M.refresh_kill_lgm(state, info)
         aim_bonus = math.min(C.TANK_COMBAT_AIM_BONUS, aim_cap)
       end
 
-      -- Crossfire penalty: LGM near a hostile pill (we'll take pill fire).
+      -- Crossfire penalty: hostile pills near the LGM. Accumulates
+      -- across all pills in range and scales by anger — a heated pill
+      -- (anger ~1.0) is much deadlier than a calm one.
       local crossfire = 0
       for _, pt in ipairs(perc.pill_threats or {}) do
-        if U.mdist(lgm.mx, lgm.my, pt.pill.mx, pt.pill.my) <= C.TANK_COMBAT_NEAR_PILL_RANGE then
-          crossfire = C.TANK_COMBAT_NEAR_PILL_PENALTY
-          break
+        local pd = U.mdist(lgm.mx, lgm.my, pt.pill.mx, pt.pill.my)
+        if pd <= C.TANK_COMBAT_NEAR_PILL_RANGE then
+          local anger_scale = math.max(0.5, (pt.anger or 0) + 0.5)
+          crossfire = crossfire + C.TANK_COMBAT_NEAR_PILL_PENALTY * anger_scale
         end
       end
 
@@ -4268,6 +4429,68 @@ function M.refresh_kill_lgm(state, info)
           aim_bonus, crossfire, boat_mult, tank_tile_threat, cost,
           shoot_mx, shoot_my, lgm.dist or 0, aim_diff, info.shells or 0,
           tostring(lgm.near_tank_idnum))
+      end
+
+      -- Repair-mission detection: if the LGM is walking a locked
+      -- straight line toward a damaged hostile pill, and we can't get
+      -- in shooting range of that pill before the LGM arrives, the
+      -- kill is futile — inflate the cost heavily.
+      if lgm.dest_locked and lgm.v_ema_x and lgm.v_ema_y then
+        local speed_wu = math.sqrt(lgm.v_ema_x * lgm.v_ema_x + lgm.v_ema_y * lgm.v_ema_y)
+        if speed_wu > 0.5 then
+          -- Project trajectory and check each tile for a damaged pill.
+          local repair_pill = nil
+          local lgm_arrive_ticks = nil
+          local steps = math.min(40, math.ceil(30 * 256 / (speed_wu + 0.01)))
+          for s = 1, steps do
+            local px = lgm.wx + lgm.v_ema_x * s * 10
+            local py = lgm.wy + lgm.v_ema_y * s * 10
+            local pmx = math.floor(px) >> 8
+            local pmy = math.floor(py) >> 8
+            if not U.in_map(pmx, pmy) then break end
+            local plist = world.pill_at and world.pill_at[pmy * 256 + pmx]
+            if plist then
+              for _, e in ipairs(plist) do
+                if e.pill and e.pill.health and e.pill.health > 0
+                   and e.pill.health < C.PILLS_MAX_HEALTH
+                   and (e.pill.owner == "hostile" or e.pill.owner == "neutral") then
+                  -- Check if the trajectory aims near the pill center
+                  local pcx = (pmx << 8) | 128
+                  local pcy = (pmy << 8) | 128
+                  local err = math.abs(px - pcx) + math.abs(py - pcy)
+                  if err < 192 then  -- ~0.75 tile tolerance
+                    repair_pill = e.pill
+                    local dist_to_pill = math.sqrt(
+                      (lgm.wx - pcx) * (lgm.wx - pcx) +
+                      (lgm.wy - pcy) * (lgm.wy - pcy))
+                    lgm_arrive_ticks = math.ceil(dist_to_pill / speed_wu)
+                    break
+                  end
+                end
+              end
+              if repair_pill then break end
+            end
+          end
+          if repair_pill and lgm_arrive_ticks then
+            -- Can we get in range of that pill before the LGM arrives?
+            local pill_mx = repair_pill.mx
+            local pill_my = repair_pill.my
+            local shoot_range = C.KILL_LGM_SHOOT_RANGE or 8
+            local our_cost = cpf.smart_cost_dij_only(KIND_NORMAL, pill_mx, pill_my, boat)
+            -- Rough travel time: dijkstra cost ≈ ticks at speed ~16 wu/tick
+            local our_ticks = our_cost and (our_cost * 256 / 16) or math.huge
+            if our_ticks > lgm_arrive_ticks then
+              -- We can't intercept — inflate cost
+              local repair_penalty = 500
+              cost = cost + repair_penalty
+              formula_str = formula_str ..
+                string.format(" +REPAIR_FUTILE{%d}(pill@(%d,%d) hp=%d lgm_arr=%dt our=%dt)",
+                  repair_penalty, pill_mx, pill_my,
+                  repair_pill.health, lgm_arrive_ticks,
+                  math.floor(our_ticks))
+            end
+          end
+        end
       end
 
       cand_rows[#cand_rows + 1] = {
@@ -4885,7 +5108,7 @@ local function goal_selection(state, world, info, quiet)
           -- for the breakdown panel).
           local bonus = _ref_bonus
           local mult  = _ref_mult
-          local base_cost = (entry.cost or 0) + C.REFUEL_BASE_COST - bonus
+          local base_cost = (entry.cost or 0) - bonus
           local final_cost = base_cost * mult
           -- LGM-wait floor: clamp cost down when waiting for LGM.
           -- Floor scales with threat at the base: safe spots clamp lower so
@@ -4947,6 +5170,29 @@ local function goal_selection(state, world, info, quiet)
       end
     end
 
+    -- ── Influence-based cost scaling ──
+    -- Goals in hostile territory (influence < -50) cost 2×; goals in
+    -- friendly territory (influence > 50) cost 0.5×. Skipped during
+    -- opening phase (territory not established yet).
+    if state.phase ~= "opening" then
+      local INF_EXEMPT = {
+        refuel_at_base=true,
+      }
+      for _, c in ipairs(pool) do
+        if c.goal and c.goal.mx and c.goal.my
+           and not INF_EXEMPT[c.goal.kind] then
+          local inf = cpf.influence_at(c.goal.mx, c.goal.my) or 0
+          if inf < -50 then
+            c.cost = c.cost * 2.0
+            c._inf_mult = 2.0
+          elseif inf > 50 then
+            c.cost = c.cost * 0.5
+            c._inf_mult = 0.5
+          end
+        end
+      end
+    end
+
     -- ── Apply hysteresis to discourage thrashing ──
     -- High-value opportunistic goals are exempt so they can win on raw
     -- cost (flee_to_base / rescue_lgm skip this pool entirely as
@@ -4963,8 +5209,17 @@ local function goal_selection(state, world, info, quiet)
     -- switch+commitment penalty on top reliably pushes it above any
     -- attack_pill incumbent, so the bot never actually picks the kill.
     local HYST_EXEMPT = { capture_pill = true, kill_lgm = true }
-    if not cur_is_attack_pill then
+    if not cur_is_attack_pill or state._shot_by_tank then
       HYST_EXEMPT.attack_tank = true
+    end
+    if C.EARLY_CAPTURE_BASE_HYST_EXEMPT and state.phase == "opening" then
+      HYST_EXEMPT.capture_base = true
+    end
+    if state.urgent_capture_base then
+      local uc = state.urgent_capture_base
+      if (state.tick or 0) - uc.tick < 500 then
+        HYST_EXEMPT.capture_base = true
+      end
     end
     local cur_group = goal_group(state.goal.kind)
     local ticks_on_goal = (state.tick or 0) - (state.goal_set_tick or 0)
@@ -4990,13 +5245,27 @@ local function goal_selection(state, world, info, quiet)
       -- from both additive SW+CM penalty AND the multiplicative ratio
       -- gate (the gate only fires for entries with c.hysteresis set,
       -- which we leave nil here).
-      if HYST_EXEMPT[c.goal.kind] or c._engage_break_lock then goto continue_hyst end
+      if HYST_EXEMPT[c.goal.kind] or c._engage_break_lock then
+        -- Exempt goals skip the type-switch penalty (switching from
+        -- another group is free). But within the same group, the
+        -- target-switch penalty still applies to prevent spinning
+        -- between targets (e.g. two capture_base candidates).
+        local cg = goal_group(c.goal.kind)
+        if cg == cur_group
+           and (c.goal.mx ~= state.goal.mx or c.goal.my ~= state.goal.my) then
+          c.cost = c.cost + C.GOAL_TARGET_SWITCH_PENALTY
+          c.hysteresis = "target"
+          c.switch_flat = C.GOAL_TARGET_SWITCH_PENALTY
+          c.commit_val  = 0
+        end
+        goto continue_hyst
+      end
       local cg = goal_group(c.goal.kind)
       local effective_commit = commitment
       if cur_is_attack_tank then
         effective_commit = effective_commit + C.ATTACK_TANK_COMMITMENT_BONUS
       end
-      if cur_is_attack_pill then
+      if cur_is_attack_pill and c.goal.kind ~= "attack_tank" then
         effective_commit = effective_commit + C.ATTACK_PILL_COMMITMENT_BONUS
       end
       if cg ~= cur_group then
@@ -5173,6 +5442,7 @@ local function goal_selection(state, world, info, quiet)
         -- Only sim goals that travel through danger (skip refuel/explore)
         local sim_kinds = { capture_base=true, capture_pill=true,
                             attack_pill=true, attack_base=true,
+                            attack_tank=true, kill_lgm=true,
                             place_pill_strategic=true }
         -- Don't sim our current attack target if we're mid-attack
         local skip = cur_attack_active
@@ -5206,8 +5476,10 @@ local function goal_selection(state, world, info, quiet)
           -- pills), so by default we suppress the reject there. Flip
           -- C.WSIM_KILL_REJECT_OPENING true to enforce it everywhere.
           local in_opening = (state.phase == "opening")
+          local desperate = state._stuck_desperate or false
           local enforce = C.WSIM_KILL_REJECT
                           and (C.WSIM_KILL_REJECT_OPENING or not in_opening)
+                          and not desperate
           if killed and enforce then
             c.cost = c.cost + 99999  -- effectively reject
             c.wsim_killed = true
@@ -5420,36 +5692,15 @@ function M.pick_goal(state, world, info, quiet)
       -- Fall through to exploration (if enabled)
     else
       local g = { kind = cg.kind, mx = cg.mx, my = cg.my, wx = cg.wx, wy = cg.wy }
-      -- For pill attacks via command, plan the best approach angle
+      -- For pill attacks via command, run through plan_position to
+      -- compute standoff + approach point properly.
       if cg.kind == "attack_pill" then
-        local pk   = U.mkey(cg.mx, cg.my)
-        local pill = nil
-        pill = attack.find_pill_at(world, cg.mx, cg.my)
-        if pill then
-          local smx, smy = attack.get_standoff(world, info, pk, pill, state)
-          local plan = state.pill_attack_plan
-          g.standoff_mx = smx; g.standoff_my = smy
-          g.substate = smx and "approach" or "plan"
-          g.wall_shield = plan and plan.wall_shield or false
-          g.wall_mx = plan and plan.wall_mx or nil
-          g.wall_my = plan and plan.wall_my or nil
-          g.prebuild_mx = plan and plan.prebuild_mx or nil
-          g.prebuild_my = plan and plan.prebuild_my or nil
-        end
+        g.substate = "plan_position"
+        g.target_id = cg.id
       elseif cg.kind == "pill_place" then
         -- Pill placement command: set substate if not already set
         if not g.substate then
           g.substate = "select_pill"
-        end
-      elseif cg.kind == "attack_pill" then
-        local pill = nil
-        pill = attack.find_pill_at(world, cg.mx, cg.my)
-        if pill then
-          -- Use normal standoff planner (no wall-shield) at BPC_STANDOFF distance
-          -- Pass orbit_radius so the planner scores terrain on the orbit arc
-          local smx, smy = attack.pick_standoff(world, info, pill, state, C.BPC_STANDOFF, C.BPC_STANDOFF)
-          g.standoff_mx = smx; g.standoff_my = smy
-          g.substate = smx and "approach" or "approach"
         end
       end
       return g
@@ -6177,6 +6428,7 @@ function M.get_pool_breakdown_json(state)
     tick = now,
     replan_left = replan_left,
     bot = state.player_number or 0,
+    debug_session = _G.DEBUG_SESSION_DIR or "",
     sections = sections,
   })
 end

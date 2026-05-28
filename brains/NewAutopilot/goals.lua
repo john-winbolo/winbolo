@@ -2330,12 +2330,60 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   end
   local dist_raw
   local dist_method = "dij"
-  local _dij_best_adj = nil  -- pre-subtraction Dijkstra cost (debug)
-  if dij_stale then
+  -- Try dijkstra first using ONLY fresh slates. The C-side
+  -- dijkstra_lookup_by_kind (and thus cheapest_adjacent_dij) walks slates
+  -- newest-started-first and falls through to older ones when the newer
+  -- slate hasn't expanded the target yet. Backup slates can predate the
+  -- last threat rebuild — their g_cost still carries the dead pill's
+  -- danger, producing inflated costs. Enforce the invariant: trust a
+  -- dijkstra cost only if it came from a slate started AT OR AFTER the
+  -- last threat rebuild.
+  if not dij_stale and state.dij then
+    local slates = state.dij.slates
+    local min_tick = threat.last_rebuild_tick
+    local best_adj, best_ax, best_ay = math.huge, nil, nil
+    local NDX = { 0,  1,  1,  1,  0, -1, -1, -1 }
+    local NDY = {-1, -1,  0,  1,  1,  1,  0, -1 }
+    for d = 1, 8 do
+      local ax = obj.mx + NDX[d]
+      local ay = obj.my + NDY[d]
+      if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
+        local ac = math.huge
+        for idx = 0, 3 do
+          local s = slates[idx]
+          if s and s.started_tick >= min_tick then
+            local c = cpf.dijkstra_cost_at(idx, ax, ay, 0)
+            if c and c < ac then ac = c end
+          end
+        end
+        if ac < best_adj then
+          best_adj = ac; best_ax = ax; best_ay = ay
+        end
+      end
+    end
+    if best_adj < math.huge then
+      local pcontrib = threat.pill_contrib
+                       and threat.pill_contrib[obj.my * 256 + obj.mx]
+      if best_ax and pcontrib then
+        -- NOTE: smart_cost_minus_pill_danger_dij_only routes through C's
+        -- lookup_by_kind, which can still hit stale backups. For dead
+        -- pills (capture_pill's domain) pcontrib is nil so this branch
+        -- is unreached; left in place for the alive-pill code paths.
+        dist_raw = cpf.smart_cost_minus_pill_danger_dij_only(
+                      cpf.KIND_NORMAL, best_ax, best_ay,
+                      pcontrib, obj.mx, obj.my, 0)
+      else
+        dist_raw = best_adj
+      end
+    else
+      -- No fresh slate has expanded any neighbour yet — fall through to A*.
+      dij_stale = true
+    end
+  end
+
+  if dij_stale or not dist_raw then
     dist_method = "astar"
     local boat = info.inboat and 1 or 0
-    -- Try land-only path first (no boat exploration). If unreachable,
-    -- retry allowing boats with a larger budget.
     dist_raw = smart_cost(KIND_NORMAL, tmx, tmy, obj.mx, obj.my, boat,
                           info.shells or 32, info.trees or 0,
                           info.mines or 0, info.armour or 40,
@@ -2347,117 +2395,11 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
                             info.mines or 0, info.armour or 40,
                             16000, true)
     end
-    if BRAIN_DEBUG_MODE then
-      local _p2 = require("print2")
-      _p2(string.format(
-        "CPILL_ASTAR t=%d from=(%d,%d) to=(%d,%d) boat=%d sh=%d tr=%d mn=%d arm=%d result=%.1f pill_hp=%d pill_own=%s",
-        state.tick or 0, tmx, tmy, obj.mx, obj.my, boat,
-        info.shells or 0, info.trees or 0, info.mines or 0, info.armour or 0,
-        dist_raw, obj.health or -1, obj.owner or "?"))
-      -- Dump the path A* found with per-tile danger, overlay, terrain,
-      -- and what's there (live pill, hostile base, etc.)
-      if cpf.trace_last_search and dist_raw < 1e29 and dist_raw > 100 then
-        local path = cpf.trace_last_search(obj.mx, obj.my)
-        if path and #path >= 2 then
-          local nwp = #path // 2
-          local total_ov, total_d, n_imp = 0, 0, 0
-          local TT = {
-            [C.T_BUILDING]="wall",   [C.T_HALFBUILD]="halfw",
-            [C.T_FOREST]="forest",   [C.T_ROAD]="road",
-            [C.T_GRASS]="grass",     [C.T_RIVER]="river",
-            [C.T_DEEPSEA]="deepsea", [C.T_SWAMP]="swamp",
-            [C.T_RUBBLE]="rubble",   [C.T_CRATER]="crater",
-            [C.T_BOAT]="boat",       [C.T_REFBASE]="base",
-            [C.T_PILLBOX]="pill",
-          }
-          local pill_lookup = {}
-          for _, pm in pairs(world.pills or {}) do
-            pill_lookup[pm.my * 256 + pm.mx] = pm
-          end
-          local base_lookup = {}
-          for _, b in pairs(world.bases or {}) do
-            base_lookup[b.my * 256 + b.mx] = b
-          end
-          for i = 1, nwp do
-            local px, py = path[2*i-1], path[2*i]
-            local ov = cpf.get_overlay and cpf.get_overlay(px, py) or 0
-            local d  = cpf.get_danger  and cpf.get_danger(px, py)  or 0
-            local tt = U.ttype(px, py)
-            local tt_name = TT[tt] or ("?"..tt)
-            total_ov = total_ov + ov
-            total_d  = total_d  + d
-            if ov >= 32767 then n_imp = n_imp + 1 end
-            local extras = ""
-            local pk = py * 256 + px
-            local pm = pill_lookup[pk]
-            if pm then
-              extras = extras .. string.format(" PILL[own=%s hp=%d]",
-                pm.owner or "?", pm.health or -1)
-            end
-            local b = base_lookup[pk]
-            if b then
-              extras = extras .. string.format(" BASE[own=%s arm=%d sh=%d]",
-                b.owner or "?", b.armour or -1, b.shells or -1)
-            end
-            -- Distance from straight line (to spot major detours)
-            local sdx, sdy = obj.mx - tmx, obj.my - tmy
-            local slen = math.max(1, math.sqrt(sdx*sdx + sdy*sdy))
-            local t_along = ((px-tmx)*sdx + (py-tmy)*sdy) / (slen*slen)
-            local lx, ly = tmx + sdx*t_along, tmy + sdy*t_along
-            local perp = math.sqrt((px-lx)*(px-lx) + (py-ly)*(py-ly))
-            _p2(string.format("  CPILL_PATH #%d (%d,%d) %s ov=%.0f d=%.0f perp=%.1f%s",
-              i, px, py, tt_name, ov, d, perp, extras))
-          end
-          _p2(string.format("  CPILL_PATH_SUM nwp=%d total_ov=%.0f total_d=%.0f n_imp=%d straight=%d ratio=%.2f",
-            nwp, total_ov, total_d, n_imp,
-            U.mdist(tmx, tmy, obj.mx, obj.my),
-            nwp / math.max(1, U.mdist(tmx, tmy, obj.mx, obj.my))))
-        else
-          local nwp = path and (#path // 2) or -1
-          _p2(string.format("  CPILL_PATH NO_TRACE — A* ran out of budget or no path exists (path_type=%s nwp=%d)",
-            type(path), nwp))
-        end
-      end
-    end
     if dist_raw >= 1e29 then
       return 1e30, 1e30, 1e30, 0
     end
-  else
-    local best_adj, best_ax, best_ay =
-        cpf.cheapest_adjacent_dij(cpf.KIND_NORMAL, obj.mx, obj.my, 0)
-    if best_adj >= math.huge then
-      return 1e30, 1e30, 1e30, 0
-    end
-    local pcontrib = threat.pill_contrib
-                     and threat.pill_contrib[obj.my * 256 + obj.mx]
-    if best_ax and pcontrib then
-      dist_raw = cpf.smart_cost_minus_pill_danger_dij_only(
-                    cpf.KIND_NORMAL, best_ax, best_ay,
-                    pcontrib, obj.mx, obj.my, 0)
-    else
-      dist_raw = best_adj
-    end
-    _dij_best_adj = best_adj  -- stash for debug
   end
   local dist_score = (dist_raw ^ 1.5) * C.CAPTURE_PILL_DIST_SCALE
-  if BRAIN_DEBUG_MODE then
-    local _s0_start = state.dij and state.dij.slates[0] and state.dij.slates[0].started_tick or -1
-    local _s2_start = state.dij and state.dij.slates[2] and state.dij.slates[2].started_tick or -1
-    local _p2 = require("print2")
-    local _danger_val = threat.at(obj.mx, obj.my) or -1
-    local _overlay_dirty = threat.overlay_dirty and "Y" or "N"
-    local _pf_overlay = cpf.get_overlay and cpf.get_overlay(obj.mx, obj.my) or -1
-    local _pf_danger  = cpf.get_danger  and cpf.get_danger(obj.mx, obj.my)  or -1
-    _p2(string.format(
-      "CPILL_DIST pill=(%d,%d) hp=%d own=%s method=%s best_adj=%.1f dist_raw=%.1f dist_score=%.1f dij_stale=%s rebuild_t=%d s0_start=%d s2_start=%d pcontrib=%s threat_d=%.1f pf_d=%.1f pf_ov=%.1f ov_dirty=%s tank=(%d,%d) t=%d",
-      obj.mx, obj.my, obj.health or -1, obj.owner or "?",
-      dist_method,
-      _dij_best_adj or -1, dist_raw, dist_score,
-      tostring(dij_stale), threat.last_rebuild_tick or 0,
-      _s0_start, _s2_start,
-      tostring(threat.pill_contrib and threat.pill_contrib[obj.my * 256 + obj.mx] ~= nil),
-      _danger_val, _pf_danger, _pf_overlay, _overlay_dirty, tmx, tmy, state.tick or 0))
-  end
   local danger_val = threat.at(obj.mx, obj.my)
   -- Cautious-mode danger multiplier (see init.lua state.cautious_mode
   -- and constants.lua CAUTIOUS_MODE_MULT).  Capture path that
@@ -3353,7 +3295,10 @@ function M.step_eval_queue(state, world, info)
         if BRAIN_DEBUG_MODE then print2("pool1 refuel hysteresis: base#", id, "@(", obj.mx, ",", obj.my,
                ") -", C.REFUEL_SWITCH_THRESHOLD) end
       end
-      local score = raw_cost + C.REFUEL_BASE_COST + danger_cost + stale_cost + contested_cost + hysteresis_cost + depletion_cost
+      -- Clamp hysteresis to non-negative so the current target gets stickier
+      -- (when same goal) but never goes BELOW zero — avoids refuel cost
+      -- being driven negative and dominating dead pills / other cheap goals.
+      local score = raw_cost + C.REFUEL_BASE_COST + danger_cost + stale_cost + contested_cost + math.max(hysteresis_cost, 0) + depletion_cost
       -- Safe-refuel discount: when this base sits in zero-danger territory
       -- (no pill / no tank threat), trim the cost so it wins ties against
       -- bases with even mild exposure.  Compounds with everything above.
@@ -3631,7 +3576,14 @@ function M.step_eval_queue(state, world, info)
                                     boat_flag, shells, trees, mines, armour, 4096)
             cpf.set_config("armour_drain_rate", 0.02)
             cpf.clear_danger_offset()
-            cpf.set_overlay(obj.mx, obj.my, 32767)
+            -- Only restamp the impassable overlay if the pill is still
+            -- alive. A dead pill's tile is walkable for capture; leaving
+            -- 32767 here would make subsequent A* treat it as a wall.
+            if (obj.health or 0) > 0 then
+              cpf.set_overlay(obj.mx, obj.my, 32767)
+            else
+              cpf.set_overlay(obj.mx, obj.my, 0)
+            end
             if _stuck_bl then
               for k in pairs(_stuck_bl) do
                 cpf.set_overlay(U.mkey_x(k), U.mkey_y(k), 1500)
