@@ -465,22 +465,25 @@ void clientSimNetSendLockToggle(ClientSim *cs, bool allow) {
   threadsReleaseMutex();
 }
 
-void clientSimNetSendTeamSet(ClientSim *cs, BYTE slot, BYTE teamNumber) {
-  if (cs == NULL || !cs->hasTransport) return;
+void clientSimSubmitCommand(ClientSim *cs, const ClientCommand *cmd) {
+  if (cs == NULL || !cs->hasTransport || cmd == NULL) return;
   if (cs->isUdpTransport) {
-    /* UDP wire encoding unchanged; server decodes into ClientCommand
-     * and dispatches through serverSimApplyCommand. */
-    transportUdpClientSendTeamSet(&cs->transport, slot, teamNumber);
+    transportUdpClientSubmitCommand(&cs->transport, cmd);
     return;
   }
   if (cs->boundServerSim == NULL) return;
+  threadsWaitForMutex();
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), cmd);
+  threadsReleaseMutex();
+}
+
+void clientSimNetSendTeamSet(ClientSim *cs, BYTE slot, BYTE teamNumber) {
+  if (cs == NULL || !cs->hasTransport) return;
   ClientCommand cmd = { .type = CMD_TEAM_SET };
   cmd.u.teamSet.slot = slot;
   cmd.u.teamSet.team = teamNumber;
-  threadsWaitForMutex();
-  (void)serverSimApplyCommand(cs->boundServerSim,
-                              clientSimGetMyPlayerNum(cs), &cmd);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendReady(ClientSim *cs, bool ready) {

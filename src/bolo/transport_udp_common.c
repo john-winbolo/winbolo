@@ -157,6 +157,8 @@ const char *packetTypeName(uint8_t type) {
     case PACKET_PUNCH_PROBE_REPLY:   return "PUNCH_PROBE_REPLY";
     case PACKET_CONTROL_TICK:      return "CONTROL_TICK";
     case PACKET_CONTROL_ACK:       return "CONTROL_ACK";
+    case PACKET_COMMAND_TICK:      return "COMMAND_TICK";
+    case PACKET_COMMAND_ACK:       return "COMMAND_ACK";
     default:                        return "UNKNOWN";
     }
 }

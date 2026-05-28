@@ -1352,6 +1352,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
              PACKET_MAX_PLAYER_NAME, "%s", name);
     udpServer.clients[slot].lastReceivedTick = udpServer.tickCount;
     udpServer.clients[slot].outSequence = 1;
+    udpServer.clients[slot].inboundCmdSeq = 0;
     udpServer.clients[slot].lastPingTime = udpServer.tickCount;
     udpServer.clients[slot].pingMs = 0;
     udpServer.clients[slot].wantRejoin = wantRejoin;
@@ -1957,6 +1958,7 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     udpServer.clients[idx].controlSub = SUBSCRIBER_HANDLE_INVALID;
     udpServer.clients[idx].connected = false;
     udpServer.clients[idx].nameStickySuffix = false;
+    udpServer.clients[idx].inboundCmdSeq = 0;
     memset(udpServer.clients[idx].playerName, 0, PACKET_MAX_PLAYER_NAME);
     udpServer.clientLocked[idx] = false;
 
@@ -2186,6 +2188,7 @@ bool transportUdpServerCreate(unsigned short port,
     for (i = 0; i < MAX_TANKS; i++) {
         udpServer.clients[i].connected = false;
         udpServer.clients[i].nameStickySuffix = false;
+        udpServer.clients[i].inboundCmdSeq = 0;
         udpServer.clients[i].controlSub = SUBSCRIBER_HANDLE_INVALID;
         memset(&udpServer.mapDownload[i], 0, sizeof(ClientMapDownload));
         udpServer.controlEventQueues[i].nextSeq = 1;
@@ -2833,6 +2836,36 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_CONTROL_ACK:
             serverHandleControlAck(buf, len, fromAddr);
             break;
+        case PACKET_COMMAND_TICK: {
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0) break;
+            UdpServerClient *client = &udpServer.clients[clientIdx];
+            if (len < PACKET_HEADER_SIZE + 1) break;
+            uint8_t count = buf[PACKET_HEADER_SIZE];
+            size_t pos = PACKET_HEADER_SIZE + 1;
+            for (uint8_t i = 0; i < count; i++) {
+                if (pos + 2 > (size_t)len) break;
+                uint16_t entryLen = unpackU16(buf + pos);
+                pos += 2;
+                if (pos + entryLen > (size_t)len) break;
+                ClientCommand cmd;
+                if (!commandCodecDecode(buf + pos, entryLen, &cmd)) {
+                    pos += entryLen;
+                    continue;
+                }
+                pos += entryLen;
+                if (cmd.cmdSeq <= client->inboundCmdSeq) continue;
+                if (cmd.cmdSeq != client->inboundCmdSeq + 1) continue;
+                (void)serverSimApplyCommand(sim, clientIdx, &cmd);
+                client->inboundCmdSeq = cmd.cmdSeq;
+            }
+            uint8_t ackBuf[PACKET_HEADER_SIZE + 4];
+            packHeader(ackBuf, PACKET_COMMAND_ACK, client->outSequence++);
+            packU32(ackBuf + PACKET_HEADER_SIZE, client->inboundCmdSeq);
+            sendto(udpServer.sock, (const char *)ackBuf, sizeof(ackBuf), 0,
+                   (struct sockaddr *)&client->addr, sizeof(client->addr));
+            break;
+        }
         case PACKET_CHAT_MESSAGE: {
             /* Wire: [header 8] [destPlayer 1] [message up to
              *       PACKET_MAX_CHAT_MESSAGE]. */

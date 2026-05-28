@@ -54,6 +54,13 @@
  * CLIENT SIDE
  * ================================================================ */
 
+#define OUT_CMD_QUEUE_CAP 64
+
+typedef struct {
+    ClientCommand cmd;          /* cmd.cmdSeq matches this entry's seq */
+    uint32_t lastSentMs;        /* 0 = never sent yet; eager send sets it */
+} OutCmdEntry;
+
 typedef struct {
     SOCKET sock;
     struct sockaddr_in serverAddr;
@@ -70,6 +77,17 @@ typedef struct {
     char wbnServerKey[WINBOLONET_KEY_LEN];
     bool wbnReauthSent;  /* TRUE after sending re-auth, reset when WBN flag restored */
     uint32_t outSequence;
+
+    /* Reliable outbound command carrier. cmdSeq is monotonic per
+     * connection (resets in transportUdpClientCreate). The queue holds
+     * one entry per submitted ClientCommand from outHeadSeq up to but
+     * not including outTailSeq. Capacity is fixed at OUT_CMD_QUEUE_CAP;
+     * overflow asserts in debug, silently drops in release (rare
+     * — user-action submit rate is bounded). */
+    OutCmdEntry outCmdQueue[OUT_CMD_QUEUE_CAP];
+    uint32_t outCmdNextSeq;   /* next cmdSeq to assign on submit (init 1) */
+    uint32_t outHeadSeq;      /* lowest unacked seq; advances on ACK */
+    uint32_t outTailSeq;      /* exclusive tail; outTailSeq == outCmdNextSeq */
 
     /* Input redundancy ring buffer */
     InputPacket inputRing[CLIENT_INPUT_RING_SIZE];
@@ -287,6 +305,53 @@ static void udpClientSendInput(void *ctx, const InputPacket *input) {
 
     len = buildInputPacket(c, buf);
     udpClientSendTo(c, buf, len);
+}
+
+/* Pack every entry in [outHeadSeq, outTailSeq) into a single
+ * PACKET_COMMAND_TICK and send. Updates each entry's lastSentMs. */
+static void udpClientDrainCommandQueue(TransportUdpClientCtx *c) {
+    if (c->outHeadSeq == c->outTailSeq) return;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    uint8_t buf[1400];
+    packHeader(buf, PACKET_COMMAND_TICK, c->outSequence++);
+    size_t pos = PACKET_HEADER_SIZE + 1;  /* +1 for count placeholder */
+    uint8_t count = 0;
+    uint32_t now = (uint32_t)SDL_GetTicks();
+    for (uint32_t seq = c->outHeadSeq; seq != c->outTailSeq; seq++) {
+        OutCmdEntry *e = &c->outCmdQueue[seq % OUT_CMD_QUEUE_CAP];
+        uint8_t entry[COMMAND_MAX_WIRE_BYTES];
+        size_t entryLen;
+        if (!commandCodecEncode(&e->cmd, entry, sizeof(entry), &entryLen)) {
+            continue;
+        }
+        if (pos + 2 + entryLen > sizeof(buf)) break;
+        packU16(buf + pos, (uint16_t)entryLen);
+        pos += 2;
+        memcpy(buf + pos, entry, entryLen);
+        pos += entryLen;
+        e->lastSentMs = now;
+        count++;
+        if (count == 255) break;
+    }
+    buf[PACKET_HEADER_SIZE] = count;
+    if (count > 0) udpClientSendTo(c, buf, (int)pos);
+}
+
+void transportUdpClientSubmitCommand(Transport *t, const ClientCommand *cmd) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (c->outTailSeq - c->outHeadSeq >= OUT_CMD_QUEUE_CAP) {
+        SDL_assert(0 && "out command queue full");
+        return;
+    }
+    bool wasEmpty = (c->outHeadSeq == c->outTailSeq);
+    uint32_t seq = c->outCmdNextSeq++;
+    OutCmdEntry *e = &c->outCmdQueue[seq % OUT_CMD_QUEUE_CAP];
+    e->cmd = *cmd;
+    e->cmd.cmdSeq = seq;
+    e->lastSentMs = 0;
+    c->outTailSeq = seq + 1;
+    if (wasEmpty) udpClientDrainCommandQueue(c);
 }
 
 /* Decode a localized payload (langid + arg list) at buf[startPos..len)
@@ -1631,6 +1696,18 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
     }
 
+    case PACKET_COMMAND_ACK: {
+        if (len < PACKET_HEADER_SIZE + 4) break;
+        uint32_t highest = unpackU32(buf + PACKET_HEADER_SIZE);
+        if (highest >= c->outHeadSeq) {
+            c->outHeadSeq = highest + 1;
+            if (c->outHeadSeq > c->outTailSeq) {
+                c->outHeadSeq = c->outTailSeq;
+            }
+        }
+        break;
+    }
+
     case PACKET_GAME_OVER:
         /* [header 8] */
         {
@@ -2019,6 +2096,16 @@ static bool udpClientTick(void *ctx) {
 
         /* Drive in-flight lobby map upload (no-op when none active). */
         udpClientUploadPump(c);
+
+        /* Retransmit head of the outbound command queue if the head
+         * entry was sent more than 80ms ago and is still unacked. */
+        if (c->outHeadSeq != c->outTailSeq) {
+            uint32_t now = (uint32_t)SDL_GetTicks();
+            OutCmdEntry *head = &c->outCmdQueue[c->outHeadSeq % OUT_CMD_QUEUE_CAP];
+            if (head->lastSentMs != 0 && (now - head->lastSentMs) > 80) {
+                udpClientDrainCommandQueue(c);
+            }
+        }
     }
 
     return true;
@@ -2117,6 +2204,9 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c = (TransportUdpClientCtx *)malloc(sizeof(TransportUdpClientCtx));
     memset(c, 0, sizeof(TransportUdpClientCtx));
     c->clientSim = clientSim;
+    c->outCmdNextSeq = 1;
+    c->outHeadSeq = 1;
+    c->outTailSeq = 1;
 
     bolo_net_init();
 

@@ -176,6 +176,14 @@ void transportUdpClientSendLockToggle(Transport *t, bool allow);
 void transportUdpClientSendTeamSet(Transport *t, uint8_t slot,
                                    uint8_t teamNumber);
 
+/* Enqueue a ClientCommand on the reliable carrier. Assigns cmdSeq,
+ * appends to the per-connection out-queue, and eager-sends a
+ * PACKET_COMMAND_TICK if the queue was empty. Retransmits until the
+ * server returns PACKET_COMMAND_ACK with the matching seq. */
+struct ClientCommand;
+void transportUdpClientSubmitCommand(Transport *t,
+                                     const struct ClientCommand *cmd);
+
 /* Send ready/unready to server. */
 void transportUdpClientSendReady(Transport *t, bool ready);
 
@@ -322,6 +330,10 @@ typedef struct UdpServerClient {
     char playerName[PACKET_MAX_PLAYER_NAME];
     uint32_t lastReceivedTick;   /* For timeout detection */
     uint32_t outSequence;        /* Outgoing packet sequence */
+    uint32_t inboundCmdSeq;      /* Highest contiguously processed cmdSeq from
+                                  * PACKET_COMMAND_TICK on this client. 0 before
+                                  * the client sends its first command. Updated
+                                  * atomically with serverSimApplyCommand. */
     uint32_t lastPingTime;       /* When we last sent a ping */
     uint16_t pingMs;             /* Last measured ping */
     uint32_t lastPongSentMs;     /* SDL_GetTicks() when last PONG was sent */

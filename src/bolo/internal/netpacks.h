@@ -428,6 +428,13 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_COMMAND_REJECTED        200  /* server → client (unicast)
                                               { origCmdSeq u32, origCmdType u8,
                                                 reasonCode u8, origSlot u8 } */
+#define PACKET_COMMAND_TICK            201  /* client → server
+                                              { count u8, for each:
+                                                entryLen u16,
+                                                codecPacket entryLen bytes
+                                                  (per commandCodecEncode) } */
+#define PACKET_COMMAND_ACK             202  /* server → client (unicast)
+                                              { highestProcessedCmdSeq u32 } */
 
 #define PACKET_GAME_VOTE_STATE         195  /* server → all clients
                                               { kind 1, active 1,
