@@ -2384,16 +2384,19 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   if dij_stale or not dist_raw then
     dist_method = "astar"
     local boat = info.inboat and 1 or 0
-    dist_raw = smart_cost(KIND_NORMAL, tmx, tmy, obj.mx, obj.my, boat,
-                          info.shells or 32, info.trees or 0,
-                          info.mines or 0, info.armour or 40,
-                          4000, false)
+    -- Strict A* — `smart_cost` queries dijkstra_lookup_by_kind first,
+    -- which is exactly the stale-backup leak we are trying to avoid in
+    -- this branch. Go straight to A* against the live danger grid.
+    dist_raw = cpf.cost_to_astar(tmx, tmy, obj.mx, obj.my, boat,
+                                  info.shells or 32, info.trees or 0,
+                                  info.mines or 0, info.armour or 40,
+                                  4000, false)
     if dist_raw >= 1e29 then
       dist_method = "astar_boat"
-      dist_raw = smart_cost(KIND_NORMAL, tmx, tmy, obj.mx, obj.my, boat,
-                            info.shells or 32, info.trees or 0,
-                            info.mines or 0, info.armour or 40,
-                            16000, true)
+      dist_raw = cpf.cost_to_astar(tmx, tmy, obj.mx, obj.my, boat,
+                                    info.shells or 32, info.trees or 0,
+                                    info.mines or 0, info.armour or 40,
+                                    16000, true)
     end
     if dist_raw >= 1e29 then
       return 1e30, 1e30, 1e30, 0

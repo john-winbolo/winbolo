@@ -294,6 +294,17 @@ function M.cost_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget
   return cpf_cost_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget or M._cost_to_budget)
 end
 
+--- Strict A* cost query — bypasses the Dijkstra-first shortcut in
+--- smart_cost. Use this when the caller has already decided the slate
+--- data is stale and wants A* against the live danger grid. allow_boat
+--- mirrors the cost_to_ex flag (1 = explore boat transitions, 0 = land-
+--- only, halves the search space).
+function M.cost_to_astar(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget, allow_boat)
+  return cpf_cost_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour,
+                     budget or M._cost_to_budget,
+                     allow_boat == nil and 1 or (allow_boat and 1 or 0))
+end
+
 --- Reset incremental cost_to state. Call once at start of replan cycle.
 function M.cost_to_reset(sx, sy, in_boat, shells, trees, mines, armour)
   cpf_cost_to_reset(sx, sy, in_boat, shells, trees, mines, armour)
@@ -557,6 +568,14 @@ end
 function M.get_danger(mx, my)
   if not cpf_get_danger then return 0 end
   return cpf_get_danger(mx, my)
+end
+
+function M.astar_log_enable(path)
+  if cpf_astar_log_enable then cpf_astar_log_enable(path) end
+end
+
+function M.astar_log_set_tick(tick)
+  if cpf_astar_log_set_tick then cpf_astar_log_set_tick(tick) end
 end
 
 M.SHOT_TANK = 0
