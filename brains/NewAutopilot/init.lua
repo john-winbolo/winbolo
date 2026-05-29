@@ -3561,6 +3561,9 @@ function Brain.think(info)
           -- Block this destination so goal selection picks something else
           local bk = U.mkey(state.goal.mx, state.goal.my)
           state.blocked[bk] = now + 600
+          print2(string.format(
+            "PF_FAIL_BLOCK t=%d goal=%s dest=(%d,%d) pos=(%d,%d) 600t",
+            now, state.goal.kind, state.goal.mx, state.goal.my, cur_mx, cur_my))
           attack.clear_attack_goal(state)
           state.pf_fail_count = 0
         else

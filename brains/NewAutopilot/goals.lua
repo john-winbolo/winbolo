@@ -2981,10 +2981,15 @@ local function get_formula_inner(e)
       local rem = e._reject_remaining or 0
       local rem_tok = (e._reject == "blocked" or e._reject == "stale")
                       and string.format(" %dt", rem) or ""
+      local desc = ({
+        in_tank = "pill is in flight (picked up by a tank)",
+        blocked = "tile on retry cooldown (recent stuck-escape or pathfinder failed to reach it)",
+        stale   = "not seen recently — fog of war",
+      })[e._reject] or "pill exists on the map but cannot be picked this tick"
       f = string.format(
-        "REJECT %s%s @(%d,%d)||reject:%s%s — pill exists on the map but cannot be picked this tick",
+        "REJECT %s%s @(%d,%d)||reject:%s%s — %s",
         e._reject, rem_tok, e._mx or 0, e._my or 0,
-        e._reject, rem_tok)
+        e._reject, rem_tok, desc)
     else
       local _lgm_mult_c = e._lgm_mult or 1
       local _cpill_danger_score = e._dv * C.CAPTURE_PILL_DANGER_SCALE * _lgm_mult_c
@@ -4089,53 +4094,93 @@ local function sync_ally_claimed_rejects(state, info)
   local cur_armour = (info and info.armour)
                      or (state._last_info and state._last_info.armour) or 0
 
-  -- Refresh "ally pill-take priority" stamps: every tick an ally is
-  -- broadcasting attack_pill on a target, set/extend a deadline
-  -- (now + ALLY_PILL_TAKE_PRIORITY_TICKS) for that pill_id.  Used a
-  -- few lines down to REJECT capture_pill (pool 4) candidates so the
-  -- ally who killed the pill gets first dibs to capture it.  Stamps
-  -- decay naturally ~2s after the ally switches goals.
-  local priority_until = state.pill_ally_take_priority
-  if not priority_until then
-    priority_until = {}
-    state.pill_ally_take_priority = priority_until
-  end
   local priority_ticks = C.ALLY_PILL_TAKE_PRIORITY_TICKS or 100
-  for ally_pn, slot in ally_state.iter_active(now, 1750) do
-    if ally_pn ~= self_pn then
-      local h = slot.info
-      if h.goal == "attack_pill" then
-        local aid = tonumber(h.target)
-        if aid then
-          priority_until[aid] = now + priority_ticks
-          -- Stash who triggered it so the REJECT row can name them.
-          priority_until["_by_" .. aid] = ally_pn
-        end
-      end
-    end
-  end
+  -- Per-pill snapshot keyed by pill_id: { until_t, by }.  Set ONCE the
+  -- first time a pool-4 entry for that pill appears in cost_cache; the
+  -- countdown ticks down from there regardless of the ally's substate.
+  -- Survives cache eviction-and-recreation (e._priority_check_done on
+  -- the entry alone wouldn't, because step_eval_queue rebuilds the
+  -- entry table on every re-eval).
+  state.pill_priority_set = state.pill_priority_set or {}
+  local pill_priority_set = state.pill_priority_set
 
   for _, e in pairs(cache) do
     local pool_idx = e._p
-    -- Pool 4 (capture_pill) extra precondition: while an ally is
-    -- broadcasting attack_pill on the SAME pill, REJECT for ~2s after
-    -- their last broadcast so they get first dibs on the dead pill
-    -- they just killed.  Stamp self-refreshes every tick they're on
-    -- attack_pill, then decays once they switch goals (typically to
-    -- capture_pill themselves) — at which point the standard
-    -- ally_claimed REJECT takes over.
+    -- Pool 4 (capture_pill) "ally did the take" REJECT.  Snapshot at
+    -- FIRST sighting: when a fresh capture_pill candidate appears (the
+    -- killed pill just became eligible), peek ally_state once for any
+    -- ally currently on attack_pill for the same pill_id.  If found,
+    -- stamp an absolute expiry tick and NEVER refresh it — the timer
+    -- counts down regardless of the ally's substate, so by the time
+    -- their ~2 s swerve finishes the REJECT has decayed and standard
+    -- ally_claimed takes over for the capture race.  Without the
+    -- "no refresh" rule the countdown would only start after the
+    -- swerve ended, leaving the killer's window closed by the time
+    -- they actually reached capture_pill.
     if pool_idx == 4 and e._id then
-      local until_t = priority_until[e._id]
-      if until_t and until_t > now then
+      -- Co-attacker exemption: if WE'RE also targeting this pill
+      -- (currently attack_pill or capture_pill on it), parallel ally
+      -- broadcasts don't reject us — we have at least as much "did
+      -- the take" priority. Cost comparison decides between co-killers.
+      local g = state.goal
+      local we_targeted_it = g
+        and (g.kind == "attack_pill" or g.kind == "capture_pill")
+        and ((g.target_id and g.target_id == e._id)
+             or (g.mx == e._mx and g.my == e._my))
+      -- First-sight snapshot per pill_id.  Mark "checked" even when no
+      -- priority applies so we don't re-scan ally_state every tick.
+      local stamp = pill_priority_set[e._id]
+      if stamp == nil and not we_targeted_it then
+        local found_pn
+        for ally_pn, slot in ally_state.iter_active(now, 1750) do
+          if ally_pn ~= self_pn then
+            local h = slot.info
+            if h.goal == "attack_pill" then
+              local aid = tonumber(h.target)
+              if aid == e._id then
+                found_pn = ally_pn
+                break
+              end
+            end
+          end
+        end
+        if found_pn then
+          stamp = { until_t = now + priority_ticks, by = found_pn, stamped_at = now }
+        else
+          stamp = { until_t = 0 }  -- "checked, no priority"
+        end
+        pill_priority_set[e._id] = stamp
+      end
+      -- Early-termination checks: end the priority window before until_t
+      -- when either (1) the killer's tank died after we stamped, or
+      -- (2) the killer's current goal is neither attack_pill nor
+      -- capture_pill on this pill_id (they abandoned the take).  Either
+      -- way the priority no longer serves its purpose so we hand the
+      -- contest back to standard ally_claimed cost-based REJECT.
+      if stamp and stamp.until_t > now and stamp.by then
+        local dead_at = state.tank_dead_at and state.tank_dead_at[stamp.by]
+        if dead_at and dead_at > (stamp.stamped_at or 0) then
+          stamp.until_t = 0
+        else
+          local ally_slot = ally_state.get(stamp.by)
+          if ally_slot and ally_slot.active then
+            local ag = ally_slot.info.goal
+            local at = tonumber(ally_slot.info.target)
+            local still_on_it = (ag == "attack_pill" or ag == "capture_pill")
+                                and at == e._id
+            if not still_on_it then
+              stamp.until_t = 0
+            end
+          end
+        end
+      end
+      if stamp and stamp.until_t > now and not we_targeted_it then
         if e._reject ~= "ally_pill_take_priority" then
           e._reject = "ally_pill_take_priority"
-          e._reject_remaining = until_t - now
-          e._priority_by = priority_until["_by_" .. e._id]
           e.formula = nil
-        else
-          e._reject_remaining = until_t - now
-          e._priority_by = priority_until["_by_" .. e._id]
         end
+        e._reject_remaining = stamp.until_t - now
+        e._priority_by      = stamp.by
         goto continue_entry
       elseif e._reject == "ally_pill_take_priority" then
         e._reject = nil
@@ -4178,8 +4223,17 @@ local function sync_ally_claimed_rejects(state, info)
       -- Look up any active ally currently claiming this same (kind, target).
       local kind = _REJECT_POOLS[pool_idx]
       local match_cost, match_pn, match_heartbeat = nil, nil, 0
+      local tank_dead_at = state.tank_dead_at
       for ally_pn, slot in ally_state.iter_active(now, 1750) do
-        if ally_pn ~= self_pn then
+        if ally_pn ~= self_pn
+           -- Skip allies whose tank is dead: any "they have the
+           -- claim" REJECT we'd set based on their broadcast is
+           -- stale.  They can't deliver on the goal until they
+           -- respawn, so let standard contention resume now.  When
+           -- they respawn and rebroadcast, the slot becomes valid
+           -- again automatically.
+           and not (tank_dead_at and tank_dead_at[ally_pn]
+                    and tank_dead_at[ally_pn] > (slot.last_tick or 0)) then
           local h = slot.info
           if h.goal == kind then
             local aid = tonumber(h.target)

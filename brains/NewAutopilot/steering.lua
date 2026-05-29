@@ -373,8 +373,9 @@ local function stuck_recovery(state, info, goal)
     do
       local _p2 = require("print2")
       _p2(string.format(
-        "STUCK_ESCAPE t=%d pos=(%d,%d) goal=%s count=%d",
-        now, tmx, tmy, goal.kind, state._stuck_escape_count))
+        "STUCK_ESCAPE t=%d pos=(%d,%d) goal=%s dest=(%d,%d) count=%d 600t",
+        now, tmx, tmy, goal.kind, goal.mx or 0, goal.my or 0,
+        state._stuck_escape_count))
       if BRAIN_DEBUG_MODE then
         print(string.format(
           "[STUCK_ESCAPE] t=%d pos=(%d,%d) goal=%s count=%d — clearing goal",
@@ -3223,9 +3224,12 @@ function M.steer(state, world, info, goal)
     end
 
     -- Opportunistic shooting while navigating.
-    -- Valid targets: enemy tanks, enemy bases, friendly pills (to "piss" them
+    -- Valid targets: enemy tanks, friendly pills (to "piss" them
     -- into firing at nearby enemies). Never shoot enemy/neutral pills — wastes
-    -- ammo and angers them for no gain.
+    -- ammo and angers them for no gain.  Enemy bases used to be in this
+    -- list but were removed — passing-by base shots don't deal enough
+    -- damage to be worth the shell + the threat of waking the base up
+    -- mid-transit on an unrelated goal.
     if not info.inboat and info.shells > C.SHELL_RESERVE then
       local perc = state.perc or {}
       local shot_fired = false
@@ -3244,24 +3248,6 @@ function M.steer(state, world, info, goal)
                   et.mx + 0.5, et.my + 0.5, 255, 255, 0, 120)
               end
               break
-            end
-          end
-        end
-      end
-
-      -- Enemy bases (free damage while passing)
-      if not shot_fired then
-        for _, b in pairs(world.bases) do
-          if b.owner == "hostile" and b.health > 0 then
-            local bd = U.mdist(tmx, tmy, b.mx, b.my)
-            if bd <= 8 then
-              local aim = U.aim_at(info.tankx, info.tanky, U.m2w(b.mx), U.m2w(b.my))
-              if math.abs(U.adiff(info.direction, aim)) < 8
-                 and shot_path_clear(info, world, U.m2w(b.mx), U.m2w(b.my), b.mx, b.my) then
-                taps = taps | KEY_SHOOT
-                shot_fired = true
-                break
-              end
             end
           end
         end
