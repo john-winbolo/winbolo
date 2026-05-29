@@ -86,8 +86,10 @@ typedef enum {
     CMD_REJECT_UPLOAD_LIMIT_HIT,
     CMD_REJECT_COOLDOWN,
     CMD_REJECT_BAD_STATE,
-    /* NameChange-specific reject codes. Wire side maps to
-     * PACKET_NAME_CHANGE_REJECT's NAME_REJECT_* codes. */
+    /* NameChange-specific reject codes. Surfaced to the originating
+     * client via CTRL_COMMAND_REJECTED.reasonCode; the lobby toast
+     * (renderLobbyRejectToast in imgui_lobby.cpp) maps each onto a
+     * STR_NAME_INVALID_* / STR_DLGSETNAME_INUSE_ERR lang string. */
     CMD_REJECT_NAME_EMPTY,
     CMD_REJECT_NAME_RESERVED_PREFIX,
     CMD_REJECT_NAME_RESERVED_SUFFIX,
