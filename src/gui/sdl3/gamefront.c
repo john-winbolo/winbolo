@@ -313,7 +313,7 @@ static BYTE udpPlayerNum = 0;
  * Chat callback uses the passed cs (not the module-static humanSim) so
  * the same function can be wired onto a bot's ClientSim too — bot chat
  * then flows down the same path human chat does: clientSimNetSendChat
- * → cs->transport.sendBytes → local transport publishes CTRL_CHAT. */
+ * → clientSimSubmitCommand → CMD_CHAT arm publishes CTRL_CHAT. */
 static void gameFrontChatSendCallback(struct ClientSim *cs, uint8_t fromPlayer,
                                       uint8_t destPlayer, const char *message) {
     (void)fromPlayer;
@@ -1183,10 +1183,8 @@ bool gameFrontSetDlgState(openingStates newState) {
           clientSimSetNetStatus(humanSim, netLobby);
         } else {
           /* No-lobby path: transport already installed the map inline
-           * on MAP_DOWNLOAD completion. Just finalise the local tank. */
-          clientMutexWaitFor();
-          clientSimNetSetupTankGo(humanSim);
-          clientMutexRelease();
+           * on MAP_DOWNLOAD completion; the first snapshot apply will
+           * fire the viewport finalisation. */
           gameFrontUpdateSteamPresence(humanSim);
         }
         dlgState = openFinished;
@@ -1379,12 +1377,9 @@ bool gameFrontSetDlgState(openingStates newState) {
               clientSimSetNetStatus(humanSim, netLobby);
               clientSimSetMapDownloadComplete(humanSim, true);
             }
-            if (isTutorial) {
-              /* Connect's snapshot apply already populated tank state;
-               * the tutorial's no-lobby path just needs the tank-go
-               * fixup before frame 1 renders. */
-              clientSimNetSetupTankGo(humanSim);
-            }
+            /* Tutorial (no-lobby) and lobby paths both rely on the
+             * first-snapshot apply inside the local transport to fire
+             * the viewport finalisation. */
             /* Add bot brains for local game if AI is enabled.
              * Serialise bot creation, team assignment, and the
              * reapply-alliances pass against the host timer thread,

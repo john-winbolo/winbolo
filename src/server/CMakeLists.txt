@@ -12,13 +12,13 @@
 #                        single-player builds (WinBoloIOS, android main,
 #                        wasm winbolo, WinBoloUnitTests) link it directly.
 #
-#   server_sim_static  — the server-side sim core (server_sim.c and the
-#                        message helpers in servermessages.c). Linked by
-#                        every binary that hosts a sim, including the
-#                        in-process single-player builds (WinBoloIOS,
+#   server_sim_static  — the server-side sim core (server_sim.c,
+#                        servermessages.c, and server_command_dispatch.c).
+#                        Linked by every binary that hosts a sim, including
+#                        the in-process single-player builds (WinBoloIOS,
 #                        BrainTest, MapEditor, android main, wasm
 #                        winbolo). Replaces the per-target inline
-#                        compilation of these two files those binaries
+#                        compilation of these files those binaries
 #                        used to do, which also drops the matching
 #                        per-file bolo_grant_internal_source_access
 #                        entries.
@@ -40,9 +40,10 @@
 #   server_frontend_stubs.c    — WinBoloDS only
 #   server_stubs.c             — non-server_static linkers (iOS,
 #                                BrainTest, MapEditor, android, wasm)
-#                                — stubs the transportUdpServer* and
-#                                serverLifecycle* symbols those binaries
-#                                don't pull in via server_static
+#                                — stubs the transportUdpServer*,
+#                                serverLifecycle*, and lobbyClientMayEdit
+#                                symbols those binaries don't pull in
+#                                via server_static
 #   server_dedicated_log.c     — WinBoloDS only (registers the replay-log
 #                                bus subscriber that touches
 #                                servermain.c-owned globals)
@@ -74,6 +75,7 @@ endif()
 
 add_library(server_sim_static STATIC
     server_sim.c
+    server_command_dispatch.c
     servermessages.c
 )
 

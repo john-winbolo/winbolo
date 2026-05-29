@@ -1,10 +1,14 @@
 {"tick":0,"type":"CTRL_GAME_PHASE","phase":"LOBBY","countdownSeconds":0}
 {"tick":0,"type":"CTRL_LOBBY_SETTINGS","mapName":"Everard Island","lobbyGameType":3,"lobbyHiddenMines":false,"lobbyAiType":0,"lobbyTimeLimit":-1,"lobbyPillCount":16,"lobbyBaseCount":11,"lobbyStartCount":16,"mapSkipAvailable":false,"netStat":0,"inLobby":true}
-{"tick":0,"type":"CTRL_LOBBY_BRAIN_LIST","count":1}
-{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":0}}
-{"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":0,"name":"HeadlessBot","country":"??","clientType":0,"clientFlags":0,"allies":[0]}
-{"tick":4,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"Bot 1","country":"??","clientType":0,"clientFlags":0,"allies":[1]}
-{"tick":6,"type":"CTRL_PLAYER_JOIN","playerNum":2,"name":"Bot 2","country":"??","clientType":0,"clientFlags":0,"allies":[2]}
+{"tick":0,"type":"CTRL_LOBBY_BRAIN_LIST"}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"XX","clientFlags":0,"clientType":0}}
+{"tick":0,"type":"CTRL_LOBBY_TEAM_META","teamId":1,"in_use":1,"color":0,"namingPool":0,"name":"Team 1"}
+{"tick":0,"type":"CTRL_LOBBY_TEAM_META","teamId":2,"in_use":1,"color":1,"namingPool":0,"name":"Team 2"}
+{"tick":0,"type":"CTRL_GAME_VOTE_STATE","kind":0,"active":0,"triggerSrc":0,"teamId":0,"threshold":1,"yesCount":0,"noCount":0,"eligibleCount":1,"secondsRemaining":0,"votes":0}
+{"tick":0,"type":"CTRL_GAME_VOTE_STATE","kind":0,"active":0,"triggerSrc":0,"teamId":0,"threshold":1,"yesCount":0,"noCount":0,"eligibleCount":1,"secondsRemaining":0,"votes":0}
+{"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":0,"name":"HeadlessBot","country":"XX","clientType":0,"clientFlags":0,"allies":[0]}
+{"tick":4,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"Bot 1","country":"XX","clientType":0,"clientFlags":0,"allies":[1]}
+{"tick":6,"type":"CTRL_PLAYER_JOIN","playerNum":2,"name":"Bot 2","country":"XX","clientType":0,"clientFlags":0,"allies":[2]}
 {"tick":20,"type":"CTRL_ALLIANCE_LEAVE","playerNum":0}
 {"tick":20,"type":"CTRL_ALLIANCE_LEAVE","playerNum":1}
 {"tick":20,"type":"CTRL_ALLIANCE_LEAVE","playerNum":2}

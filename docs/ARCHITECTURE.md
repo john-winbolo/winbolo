@@ -82,11 +82,12 @@ because the broken client did not run the same code path.
    not to add another include exception.
 
 2. **Do not build packets from the GUI.** `bolo_packets.h`,
-   `netpacks.h`, and `transport_udp.h` are T2. GUI code that today
-   calls `transportUdpClientSendChat(...)` must migrate to
-   `clientSimSendChat(cs, ...)`. The wire format is a private
-   contract between `client_sim` and `server_sim`; callers go
-   through the sim.
+   `netpacks.h`, and `transport_udp.h` are T2. GUI code that wants
+   to send a chat message calls `clientSimNetSendChat(cs, ...)` on
+   `client_net.h`; the wrapper builds a `ClientCommand` and routes
+   it through the bus. The wire format is a private contract
+   between `client_sim` and `server_sim`; callers go through the
+   sim.
 
 3. **Do not write to sim state directly.** Even if a field appears
    reachable through an internal header, mutating it from outside
@@ -250,7 +251,11 @@ if (isGameTick) {
 Lobby and chat actions go through dedicated send wrappers in
 `client_net.h` — `clientSimNetSendChat`, `clientSimNetSendReady`,
 `clientSimNetSendTeamSet`, `clientSimNetSendAllianceRequest`, etc.
-Never build wire packets directly; that's a T2 violation.
+Each wrapper builds a `ClientCommand` and submits it through
+`clientSimSubmitCommand`, which routes to the reliable UDP carrier
+or to `serverSimApplyCommand` under the mutex for in-process
+clients. Never build wire packets directly; that's a T2 violation.
+See "Adding a new client→server command" below for the recipe.
 
 **Tearing down.**
 
@@ -323,9 +328,10 @@ The bot pool is process-global — call `serverSimBotPoolInit` once at
 startup; multiple ServerSims share it.
 
 **Lobby → running transition.** Driven by the all-ready detector
-inside `serverSimLobbyCheckAllReady`, which the UDP packet handlers
-and the SP-host local-transport branch of `clientSimNetSendReady` both
-fire after a ready-toggle. The detector branches on
+inside `serverSimLobbyCheckAllReady`, fired from the `CMD_READY` arm
+of `serverSimApplyCommand` (`src/server/server_command_dispatch.c`)
+after a ready-toggle. Every client — UDP, SP-host, bot — reaches the
+same arm via `clientSimSubmitCommand`. The detector branches on
 `sim->worldPreLoaded`:
 
 - Fresh sim from `serverSimCreate*` → `serverSimStartGameInPlace`
@@ -421,13 +427,14 @@ The general shape:
 | Layer | Where the code goes |
 |---|---|
 | GUI input | `src/gui/sdl3/` — chat dialog calls `clientSimNetSendChat(cs, dst, msg)` |
-| T1 send wrapper | `src/bolo/public/client_net.h` declares `clientSimNetSendChat`; implementation in `src/bolo/client_net.c` builds the wire packet |
-| Wire (sender → server) | T2 packet type in `src/bolo/internal/bolo_packets.h` + send helper |
-| Server reception | `src/bolo/` handler decodes the packet, validates |
-| Server fanout — in-process | Publish a `ControlEvent` (e.g. `CTRL_PLAYER_CHAT`) via `serverSimPublishControl` — reaches local ClientSims, bots, host UI |
-| Server fanout — wire | Broadcast the chat packet to every connected remote client via the UDP transport |
-| Client reception — in-process | Local subscriber's `deliverCb` hands the message off to `frontEndMessages` |
-| Client reception — remote | UDP-connected client decodes the packet, applies it locally, and publishes its own `CTRL_PLAYER_CHAT` so its own in-process subscribers see it; then `frontEndMessages` |
+| T1 send wrapper | `client_net.h` declares `clientSimNetSendChat`; `client_net.c` builds a `ClientCommand` and calls `clientSimSubmitCommand` |
+| Submit | UDP: enqueue in the per-connection command queue; eager-send a `PACKET_COMMAND_TICK`. Local: hand `&cmd` to `serverSimApplyCommand` under the mutex |
+| Server reception (UDP) | `serverProcessPacket`'s `case PACKET_COMMAND_TICK:` loop decodes each entry via `commandCodecDecode`, dedupes by `cmdSeq`, calls `serverSimApplyCommand`, and unicasts back a `PACKET_COMMAND_ACK` |
+| Dispatcher | `applyCommandInner`'s `case CMD_CHAT:` arm in `src/server/server_command_dispatch.c` validates, mutates state, publishes `CTRL_CHAT` via `serverSimPublishControl` |
+| Server fanout — in-process | The publish reaches local ClientSims, bots, host UI, replay log |
+| Server fanout — wire | The per-client UDP subscriber encodes `CTRL_CHAT` via the control codec and unicasts `PACKET_CHAT_BROADCAST` to each remote client |
+| Client reception — in-process | Local subscriber's `deliverCb` calls `clientSimApplyControl`; its `CTRL_CHAT` case hands the message off to `frontEndMessages` |
+| Client reception — remote | UDP client decodes `PACKET_CHAT_BROADCAST`, builds a `ControlEvent`, calls `clientSimApplyControl` — same final path |
 | Render | Each frontend's `frontEndMessages` implementation paints the chat line |
 
 The two "Server fanout" rows are both required. Skipping the in-process
@@ -558,11 +565,15 @@ public/internal split provides.
    in `clientSimApplyControl` (`src/bolo/client_sim_control.c`) —
    the dispatcher covers SP, bots, and network in one place.
 
-5. **Send wrapper (if client-originated).** If a *client* needs to
-   trigger this event (e.g. a chat message), add a T1 send wrapper
-   on `client_net.h` (`clientSimNetSend<Name>`) that builds the wire
-   packet internally. Frontends call the wrapper; never build wire
-   packets in `src/gui/` or any non-bolo directory.
+5. **Send wrapper (if client-originated).** A client-originated event
+   means there's a corresponding `CMD_*` command. See "Adding a new
+   client→server command" below for the recipe. Briefly: add a
+   `clientSimNetSend<Name>` wrapper on `client_net.h` that builds a
+   `ClientCommand` and calls `clientSimSubmitCommand(cs, &cmd)`. The
+   dispatcher arm in `server_command_dispatch.c` runs the authority
+   check, mutates state, and publishes the `ControlEvent`. Frontends
+   call the wrapper; never build wire packets or `ClientCommand`
+   values in `src/gui/` or any non-bolo directory.
 
 ### Client-side dispatcher rule
 
@@ -603,14 +614,19 @@ publish recipe does not apply to them:
   that tail is fed by the bus — the snapshot module is the carrier,
   not the publisher.
 - **Per-client handshake and reliability.** `JOIN_ACCEPT`,
-  `JOIN_REJECT`, `NAME_CHANGE_REJECT`, `MAP_DOWNLOAD` chunks,
-  `PONG`, `PACKET_CONTROL_TICK` (lobby/countdown/gameover carrier
-  for the per-client control queue), and `PACKET_CONTROL_ACK` (the
-  matching client→server ACK) are point-to-point transport
-  mechanics. The two control packets are the wire carrier for
-  events that DO ride the bus — the bus publishes into the
-  per-client queue, and the queue drains via these packets when
-  snapshots aren't flowing.
+  `JOIN_REJECT`, `NAME_CHANGE_REJECT`, `MAP_DOWNLOAD` chunks, and
+  `PONG` are point-to-point transport mechanics. The reliable bus
+  has two parallel carriers for events that DO ride a queue:
+  - **Down-leg.** `PACKET_CONTROL_TICK` (server → client) and
+    `PACKET_CONTROL_ACK` (client → server) drain the per-client
+    `ControlEvent` queue when snapshots aren't flowing
+    (lobby / countdown / gameover).
+  - **Up-leg.** `PACKET_COMMAND_TICK` (client → server) and
+    `PACKET_COMMAND_ACK` (server → client, unicast) drain the
+    per-connection `ClientCommand` queue. Each entry carries a
+    client-assigned `cmdSeq` for dedupe and reject correlation.
+    See "Adding a new client→server command" below for the full
+    carrier semantics.
 - **`PLAYER_LIST` resync** is a load-bearing wire-only exception
   for a failure mode the reliable control queue does not reach:
   `transportUdpServerOnGameStart` wipes every per-client
@@ -642,6 +658,147 @@ publish recipe does not apply to them:
   the new code.
 - **Never change the on-wire layout of an existing packet** without
   versioning. Add a new packet ID instead.
+
+## Adding a new client→server command
+
+The mirror image of "Adding a new server event." Up-leg commands
+flow through one funnel — `clientSimSubmitCommand(cs, &cmd)` —
+regardless of transport. UDP enqueues into a per-connection reliable
+carrier; local hands the command directly to the dispatcher under
+the mutex. The same dispatcher arm runs in both cases, so SP-host
+and UDP cannot disagree on apply.
+
+### The flow
+
+```
+clientSimNetSend<Name>(cs, ...)             ← T1 wrapper, called by GUI
+  └─ build ClientCommand cmd { .type = CMD_<NAME>, .u.<name> = {...} }
+     clientSimSubmitCommand(cs, &cmd)
+        ├─ UDP   → transportUdpClientSubmitCommand → ClientCommandQueue
+        │         ↓ eager-send / 80ms retransmit
+        │         PACKET_COMMAND_TICK ────────────→ server
+        │         PACKET_COMMAND_ACK  ←────────────
+        │
+        └─ local → threadsWaitForMutex
+                   serverSimApplyCommand(sim, mySlot, &cmd)
+                   threadsReleaseMutex
+```
+
+Both arms end at `serverSimApplyCommand` in
+`src/server/server_command_dispatch.c`. The dispatcher is the single
+authority site — no per-transport mirror to drift.
+
+### Dispatcher contract
+
+`CmdResult serverSimApplyCommand(ServerSim *sim, int senderSlot, const ClientCommand *cmd)`:
+
+- **Mutex.** Caller holds `threadsMutex` (asserted in debug). UDP
+  server callers are already on the server-tick thread which holds
+  it. Local callers (SP-host, bots on a passive transport) wrap the
+  call in `threadsWaitForMutex()` / `threadsReleaseMutex()` —
+  `clientSimSubmitCommand` already does this for them.
+- **Sender attribution.** `senderSlot` is authoritative — for UDP
+  it comes from `serverFindClient(fromAddr)`; for local it comes
+  from `clientSimGetMyPlayerNum(cs)`. Wire payloads never carry an
+  attributing playerNum.
+- **State guards live in the arm**, not the dispatcher prelude. Most
+  lobby commands assert `serverSimIsLobbyEnabled(sim) && serverSimGetState(sim) == serverStateLobby`;
+  game-time commands assert their own state; ranked-only commands
+  (`CMD_BALANCE_*`, `CMD_WBN_REAUTH`) assert `serverSimGetRanked(sim)`.
+- **Tail effects stay with the arm**, not the dispatcher. Each arm
+  runs its own `serverSimPublish*`, `logAddEvent`, etc. in the same
+  order the original handler did.
+- **Reject publishing.** On any non-`CMD_OK` return the dispatcher
+  wrapper publishes
+  `CTRL_COMMAND_REJECTED { origCmdSeq, origCmdType, reasonCode, origSlot }`
+  via `serverSimPublishControl` — the unified reject channel for
+  client UI feedback.
+
+### Wire carrier
+
+- `PACKET_COMMAND_TICK` (client → server): `[header 8][count 1][for each: entryLen u16, codecPacket entryLen bytes]`.
+  Each `codecPacket` is a `commandCodecEncode` output with the
+  inner-entry header carrying the per-command packet number (e.g.
+  `PACKET_LOBBY_TEAM_SET`) as the type tag and a 4-byte `cmdSeq`
+  in the slot immediately after the header.
+- `PACKET_COMMAND_ACK` (server → client, unicast): `[header 8][highestProcessedCmdSeq u32]`.
+  Emitted at the end of every received `PACKET_COMMAND_TICK` —
+  carries the highest contiguously processed `cmdSeq`. The client
+  uses it to advance the queue head past acked entries.
+- **Send timing: eager-then-coalesce.** Each `clientSimSubmitCommand`
+  triggers an immediate `PACKET_COMMAND_TICK` if the queue was
+  previously empty. Subsequent submits within the same tick window
+  coalesce into the next outgoing frame.
+- **Retransmit.** The transport tick re-drains the unacked window
+  if the head entry's last send was more than ~80ms ago.
+- **Dedupe.** Server's `inboundCmdSeq` is the highest contiguously
+  applied `cmdSeq` per client. Entries at or below it are skipped;
+  out-of-order arrivals wait for the missing-gap retransmit.
+
+### Reject UX
+
+`CTRL_COMMAND_REJECTED` is broadcast through the same control bus
+the down-leg uses, but with two per-recipient filters:
+
+- The UDP per-client subscriber `udpClientDeliverControl` skips
+  delivery when `evt->u.commandRejected.origSlot != client->playerNum`,
+  matching the `CTRL_ALLIANCE_REQUEST` precedent. The codec stays
+  recipient-agnostic; the filter lives at the bus layer.
+- `clientSimApplyControl`'s `CTRL_COMMAND_REJECTED` arm filters by
+  `origSlot == clientSimGetMyPlayerNum(cs)` before mutating the
+  reject toast state. In-process subscribers receive every published
+  event, but only the originator's slot reacts.
+
+The reject is informational. The UI correlates by `origCmdSeq` and
+dismisses when the rejected command's effect was undone by a later
+successful submit — "most recent reject wins" is wrong because
+rejects can land after newer state mutations.
+
+### Recipe — adding a new command
+
+1. **Define the variant.** Add `CMD_<NAME>` to `ClientCommandType` in
+   `src/bolo/public/client_command.h` plus a payload struct in the
+   union (`u.<name>`). Variable-length payloads use fixed-size
+   in-union buffers sized to `PACKET_MAX_*`.
+2. **Add the codec pair.** In `src/bolo/transport_command_codec.c`,
+   add `commandEncode<Name>` and `commandDecode<Name>` next to the
+   existing variants, then register in the `commandCodecEncode` /
+   `commandCodecDecode` dispatch tables. Reuse an existing
+   `PACKET_*` packet number as the inner-entry tag.
+3. **Add the dispatcher arm.** New `case CMD_<NAME>:` in
+   `applyCommandInner` (`src/server/server_command_dispatch.c`).
+   Owns state guards, authority checks (`lobbyClientMayEdit`, slot
+   bounds), mutation, downstream publishes (`serverSimPublish*`),
+   logging. Returns `CMD_OK` or a `CMD_REJECT_*` code.
+4. **Add the send wrapper.** New `clientSimNetSend<Name>` in
+   `src/bolo/client_net.c` — five lines: NULL/transport guard, build
+   `ClientCommand`, fill `u.<name>`, call `clientSimSubmitCommand`.
+   Public declaration in `client_net.h`. The wrapper has no
+   transport branch; `clientSimSubmitCommand` owns the fanout.
+
+That is the whole change. Frontends call `clientSimNetSend<Name>`;
+nothing else.
+
+### Bespoke channels (when to skip the bus)
+
+A handful of helpers stay on their direct UDP path because they
+don't fit fire-and-apply:
+
+- `clientSimNetSendInput` — every-frame, snapshot-ACK paired.
+- `clientSimNetSendLobbyMapListRequest` / `…SearchRequest` —
+  request / paginated-response.
+- `clientSimNetSendLobbyMapUploadBytes` / `…MapUseLocal` — large
+  payload or chunked upload that doesn't fit fire-and-apply.
+- `clientSimNetSendWbnReauth` — synchronous WBN tracker round-trip
+  to mint a fresh playerKey before sending; the helper's work
+  happens between the join-state guard and the codec encode.
+
+These keep their per-command `transportUdpClientSend*` helper in
+`transport_udp_client.c` and a matching direct-receive
+`case PACKET_*:` arm in `serverProcessPacket`. They are not under
+the asymmetric-runtime invariant the rest of the up-leg enforces,
+and adding more of them re-opens the bug class — only add to this
+list when fire-and-apply genuinely doesn't fit.
 
 ## Localization
 
