@@ -2960,8 +2960,9 @@ static void lobbySendSetting(ClientSim *cs,
                              const uint8_t *value, uint8_t valueLen) {
     /* Pre-send validation for setting types that have a wire-side range
      * cap on the server. Drop out-of-range values rather than letting
-     * the server reject them — the server has the authoritative check
-     * (transport_udp_server.c) and emits LOBBY_REJECT_INVALID. */
+     * the server reject them — the dispatcher has the authoritative
+     * check (server_command_dispatch.c CMD_LOBBY_SET arm) and returns
+     * CMD_REJECT_INVALID. */
     if (settingType == LST_TIME_MINUTES && valueLen == 2) {
         uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
         if (mins < LOBBY_TIME_MINUTES_MIN ||
@@ -5110,16 +5111,23 @@ static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
 }
 
 /* ── Layout A — server reject toast ───────────────────────────────
- * Surfaces the last PACKET_LOBBY_REJECT as a one-line orange status
- * pill. Auto-clears after the user dismisses it (clicks the X) so
- * subsequent rejects re-trigger naturally. */
+ * Surfaces the last CTRL_COMMAND_REJECTED (delivered via
+ * clientSimApplyControl) as a one-line orange status pill. Auto-clears
+ * after the user dismisses it (clicks the X) so subsequent rejects
+ * re-trigger naturally. */
 static void renderLobbyRejectToast(ClientSim *cs, float s) {
     if (clientSimGetLobbyLastRejectPacket(cs) == 0) return;
     const char *reason = langGetText(STR_DLGLOBBY_REJECT_DEFAULT);
     switch (clientSimGetLobbyLastRejectReason(cs)) {
-        case 1: reason = langGetText(STR_DLGLOBBY_REJECT_NOTHOST); break;  /* LOBBY_REJECT_NOT_HOST */
-        case 2: reason = langGetText(STR_DLGLOBBY_REJECT_LOCKED);  break;  /* LOBBY_REJECT_LOCKED */
-        case 3: reason = langGetText(STR_DLGLOBBY_REJECT_INVALID); break;  /* LOBBY_REJECT_INVALID */
+        case  1: reason = langGetText(STR_DLGLOBBY_REJECT_NOTHOST);        break;  /* LOBBY_REJECT_NOT_HOST */
+        case  2: reason = langGetText(STR_DLGLOBBY_REJECT_LOCKED);         break;  /* LOBBY_REJECT_LOCKED */
+        case  3: reason = langGetText(STR_DLGLOBBY_REJECT_INVALID);        break;  /* LOBBY_REJECT_INVALID */
+        case  9: reason = langGetText(STR_NAME_INVALID_EMPTY);             break;  /* CMD_REJECT_NAME_EMPTY */
+        case 10: reason = langGetText(STR_NAME_INVALID_RESERVED_PREFIX);   break;  /* CMD_REJECT_NAME_RESERVED_PREFIX */
+        case 11: reason = langGetText(STR_NAME_INVALID_RESERVED_SUFFIX);   break;  /* CMD_REJECT_NAME_RESERVED_SUFFIX */
+        case 12: reason = langGetText(STR_NAME_INVALID_MIXED_SCRIPTS);     break;  /* CMD_REJECT_NAME_MIXED_SCRIPTS */
+        case 13: reason = langGetText(STR_NAME_INVALID_CHARS);             break;  /* CMD_REJECT_NAME_INVALID */
+        case 14: reason = langGetText(STR_DLGSETNAME_INUSE_ERR);           break;  /* CMD_REJECT_NAME_TAKEN */
         default: break;
     }
     ImGui::PushStyleColor(ImGuiCol_Text, wbThemeColor(g_theme->lockBadge));

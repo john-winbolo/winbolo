@@ -78,6 +78,7 @@ add_library(bolo_static STATIC
     swamp.c
     tank.c
     tankexp.c
+    transport_command_codec.c
     transport_control_codec.c
     transport_local.c
     transport_udp_common.c

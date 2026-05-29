@@ -261,6 +261,13 @@ netStatus clientSimGetNetStatus(ClientSim *cs);
 void clientSimSetNetType(ClientSim *cs, netType value);
 void clientSimSetNetStatus(ClientSim *cs, netStatus value);
 
+/* Submit a ClientCommand to the bound server. UDP transports enqueue
+ * into the reliable carrier (retransmit until ACKed); local transports
+ * apply directly under the threads mutex. cmdSeq is assigned internally
+ * for UDP; ignored for local. */
+struct ClientCommand;
+void clientSimSubmitCommand(ClientSim *cs, const struct ClientCommand *cmd);
+
 /* Callback setters (per-instance) */
 void clientSimSetChatSendFunc(ClientSim *cs, NetChatSendFunc func);
 void clientSimSetNameChangeSendFunc(ClientSim *cs, NetNameChangeSendFunc func);

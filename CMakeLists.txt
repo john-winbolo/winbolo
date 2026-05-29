@@ -2302,6 +2302,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_sp_shoot_through_timer.c
     tests/unit/test_ini_reader_writer.c
     tests/unit/test_lobby_control_variants.c
+    tests/unit/test_command_codec_roundtrip.c
+    tests/unit/test_command_rejected_apply.c
+    tests/unit/test_lobby_add_bot_dispatch.c
+    tests/unit/test_command_queue_drain.c
     tests/unit/test_game_vote_control.c
     tests/unit/test_vote_surrender.c
     tests/unit/test_vote_toggle_modes.c
@@ -2405,6 +2409,20 @@ set(_unit_test_names
     lobby_bot_config_codec_and_apply
     lobby_bot_brain_codec_and_apply
     lobby_brain_list_codec_and_apply
+    command_codec_roundtrip_variants
+    command_codec_cmdseq_slot
+    command_codec_bounds_checks
+    command_rejected_parks_name_codes
+    command_rejected_ignores_other_slot
+    command_rejected_clear_resets_both_fields
+    lobby_add_bot_rejects_empty_brain_path
+    lobby_add_bot_rejects_ai_none
+    lobby_add_bot_rejects_not_in_lobby
+    lobby_add_bot_rejects_non_host_sender
+    command_queue_first_submit_drains
+    command_queue_second_submit_does_not_drain
+    command_queue_ack_drains_pending_tail
+    command_queue_ack_clearing_queue_skips_drain
     vote_surrender_rejects_unassigned_caller
     vote_surrender_starts_for_real_team_caller
     vote_surrender_rejects_three_active_teams

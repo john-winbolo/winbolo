@@ -1,7 +1,10 @@
+{"tick":0,"type":"CTRL_MAP_DOWNLOAD_COMPLETE"}
 {"tick":0,"type":"CTRL_GAME_PHASE","phase":"RUNNING","countdownSeconds":0}
 {"tick":0,"type":"CTRL_LOBBY_SETTINGS","mapName":"Everard Island","lobbyGameType":1,"lobbyHiddenMines":true,"lobbyAiType":0,"lobbyTimeLimit":-1,"lobbyPillCount":16,"lobbyBaseCount":11,"lobbyStartCount":16,"mapSkipAvailable":false,"netStat":3,"inLobby":false}
-{"tick":0,"type":"CTRL_LOBBY_BRAIN_LIST","count":1}
-{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"??","clientFlags":0,"clientType":2}}
-{"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":0,"name":"HeadlessBot","country":"??","clientType":2,"clientFlags":0,"allies":[0]}
-{"tick":0,"type":"CTRL_MAP_DOWNLOAD_COMPLETE"}
-{"tick":98,"type":"CTRL_SERVER_SHUTDOWN"}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"AU","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_TEAM_META","teamId":1,"in_use":1,"color":0,"namingPool":0,"name":"Team 1"}
+{"tick":0,"type":"CTRL_LOBBY_TEAM_META","teamId":2,"in_use":1,"color":1,"namingPool":0,"name":"Team 2"}
+{"tick":0,"type":"CTRL_GAME_VOTE_STATE","kind":1,"active":0,"triggerSrc":0,"teamId":0,"threshold":1,"yesCount":0,"noCount":0,"eligibleCount":1,"secondsRemaining":0,"votes":0}
+{"tick":0,"type":"CTRL_GAME_VOTE_STATE","kind":2,"active":0,"triggerSrc":0,"teamId":0,"threshold":0,"yesCount":0,"noCount":0,"eligibleCount":0,"secondsRemaining":0,"votes":0}
+{"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":0,"name":"HeadlessBot","country":"AU","clientType":2,"clientFlags":0,"allies":[0]}
+{"tick":0,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot has joined."}
