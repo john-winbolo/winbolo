@@ -3211,14 +3211,16 @@ static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
   if (out_tiles == NULL || max_tiles <= 0) return 0;
 
   /* Shell length in map units. Tank passes sightLen/2 to shellsAddItem
-   * — INTEGER division. Use the same here so odd sight_len matches.
-   * For PILL shooter the engine passes PILLBOX_FIRE_DISTANCE directly. */
-  int len_units;
+   * as TURNTYPE/float — float division, so odd sight_len contributes a
+   * half-tile. For PILL shooter the engine passes PILLBOX_FIRE_DISTANCE
+   * (8.5) directly. Keep len_units float so shellLifeTicks sees the
+   * same fractional value the engine does. */
+  float len_units;
   if (shooter_type == BRAIN_SHOT_SHOOTER_PILL) {
-    len_units = (int)PILLBOX_FIRE_DISTANCE;
+    len_units = PILLBOX_FIRE_DISTANCE;
   } else {
     int sl = (sight_len > 0) ? sight_len : GUNSIGHT_MAX;
-    len_units = sl / 2;   /* match engine's integer / */
+    len_units = sl / 2.0f;
   }
 
   /* Spawn position + lifetime budget come from shells.c so the
