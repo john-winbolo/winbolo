@@ -3823,7 +3823,11 @@ void sdl3ImguiShowPlayersPanel(bool open) {
 
 bool sdl3ImguiWantsKeyboard(void) {
     if (!s_window) return false;
-    return ImGui::GetIO().WantCaptureKeyboard;
+    ImGuiIO &io = ImGui::GetIO();
+    if (io.WantTextInput) return true;
+    if (ImGui::GetCurrentContext()->ActiveId != 0) return true;
+    if (sdl3ImguiIsDialogOpen()) return true;
+    return false;
 }
 
 void sdl3ImguiClearNavFocus(void) {

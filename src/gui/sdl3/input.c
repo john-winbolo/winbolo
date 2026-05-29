@@ -218,30 +218,21 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 
   /* Mine laying is now handled via InputPacket — see inputIsMineKeyPressed() */
 
-  if (KEY_DOWN(setKeys->kiQuickTree)) {
-    curSelect = clientSimGetCurrentBuildSelect(cs);
-    if (curSelect != BsTrees) {
-      clientSimSetCurrentBuildSelect(cs, BsTrees);
-    }
-  } else if (KEY_DOWN(setKeys->kiQuickRoad)) {
-    curSelect = clientSimGetCurrentBuildSelect(cs);
-    if (curSelect != BsRoad) {
-      clientSimSetCurrentBuildSelect(cs, BsRoad);
-    }
-  } else if (KEY_DOWN(setKeys->kiQuickWall)) {
-    curSelect = clientSimGetCurrentBuildSelect(cs);
-    if (curSelect != BsBuilding) {
-      clientSimSetCurrentBuildSelect(cs, BsBuilding);
-    }
-  } else if (KEY_DOWN(setKeys->kiQuickPillbox)) {
-    curSelect = clientSimGetCurrentBuildSelect(cs);
-    if (curSelect != BsPillbox) {
-      clientSimSetCurrentBuildSelect(cs, BsPillbox);
-    }
-  } else if (KEY_DOWN(setKeys->kiQuickMine)) {
-    curSelect = clientSimGetCurrentBuildSelect(cs);
-    if (curSelect != BsMine) {
-      clientSimSetCurrentBuildSelect(cs, BsMine);
+  {
+    buildSelect newSelect = BsTrees; /* init to suppress warning */
+    bool wantSwitch = false;
+    if (KEY_DOWN(setKeys->kiQuickTree))         { newSelect = BsTrees;    wantSwitch = true; }
+    else if (KEY_DOWN(setKeys->kiQuickRoad))    { newSelect = BsRoad;     wantSwitch = true; }
+    else if (KEY_DOWN(setKeys->kiQuickWall))    { newSelect = BsBuilding; wantSwitch = true; }
+    else if (KEY_DOWN(setKeys->kiQuickPillbox)) { newSelect = BsPillbox;  wantSwitch = true; }
+    else if (KEY_DOWN(setKeys->kiQuickMine))    { newSelect = BsMine;     wantSwitch = true; }
+    if (wantSwitch) {
+      curSelect = clientSimGetCurrentBuildSelect(cs);
+      if (curSelect != newSelect) {
+        sdl3DrawSelectIndentsOff(curSelect, 0, 0);
+        sdl3DrawSelectIndentsOn(newSelect, 0, 0);
+        clientSimSetCurrentBuildSelect(cs, newSelect);
+      }
     }
   }
 
