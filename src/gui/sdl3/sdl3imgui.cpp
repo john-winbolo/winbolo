@@ -3412,6 +3412,33 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
 }
 #endif
 
+/* Drain any pending NAME_* reject (CTRL_COMMAND_REJECTED with a
+ * CMD_REJECT_NAME_* reason) into the in-game message overlay when
+ * we're not in the lobby. The lobby toast in renderLobbyRejectToast
+ * handles the in-lobby case; this closes the gap for in-game name
+ * changes (WinBolo > Change Name, Settings > Player Name), which
+ * non-WBN servers accept at any phase. Clearing the reject after
+ * surfacing avoids re-showing the same line in the lobby toast on
+ * return to lobby. Non-name reason codes (1-8) fall through and stay
+ * pending so the lobby toast still surfaces them later. */
+static void drainInGameNameReject(ClientSim *cs) {
+    if (!cs) return;
+    if (clientSimIsInLobby(cs)) return;
+    if (clientSimGetLobbyLastRejectPacket(cs) == 0) return;
+    langid msgId;
+    switch (clientSimGetLobbyLastRejectReason(cs)) {
+        case  9: msgId = STR_NAME_INVALID_EMPTY;           break;  /* CMD_REJECT_NAME_EMPTY */
+        case 10: msgId = STR_NAME_INVALID_RESERVED_PREFIX; break;  /* CMD_REJECT_NAME_RESERVED_PREFIX */
+        case 11: msgId = STR_NAME_INVALID_RESERVED_SUFFIX; break;  /* CMD_REJECT_NAME_RESERVED_SUFFIX */
+        case 12: msgId = STR_NAME_INVALID_MIXED_SCRIPTS;   break;  /* CMD_REJECT_NAME_MIXED_SCRIPTS */
+        case 13: msgId = STR_NAME_INVALID_CHARS;           break;  /* CMD_REJECT_NAME_INVALID */
+        case 14: msgId = STR_DLGSETNAME_INUSE_ERR;         break;  /* CMD_REJECT_NAME_TAKEN */
+        default: return;
+    }
+    clientSimNetStatusMessage(cs, langGetText(msgId));
+    clientSimClearLobbyLastReject(cs);
+}
+
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (!s_window || !s_renderer) return;
 
@@ -3501,6 +3528,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
      * vote-driven back-to-lobby is in-flight. Counts off the local
      * clock; no per-second server broadcast involved. */
     clientSimTickLobbyReturnCountdown(cs);
+    /* Surface in-game CMD_REJECT_NAME_* rejects through the message
+     * overlay. The lobby toast handles the in-lobby case. */
+    drainInGameNameReject(cs);
     renderPasswordModal();
     imguiKeySetupRenderInGamePopup(cs);
     renderJoinConfirmModal();
