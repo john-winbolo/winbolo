@@ -363,184 +363,119 @@ const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen) {
 }
 
 /* === Send wrappers ===
- * Most sends are still UDP-only (local transport ignores them) — those
- * wrappers continue to early-return on a non-UDP transport. The chat
- * wrapper below is the first to drop that gate: it builds the wire
- * packet itself and pushes it through the transport's sendBytes hook,
- * so bots (on a passive local transport) reach the server through the
- * same call path as a UDP-connected human. As features that need bot
- * participation come online — alliance, vote, team set, etc. — apply
- * the same pattern to those wrappers and mirror the matching handler
- * in transport_local.c's localSendBytes. */
+ * Command helpers build a ClientCommand from their arguments and hand
+ * it to clientSimSubmitCommand, which routes through the reliable
+ * carrier on UDP or serverSimApplyCommand under the mutex on local. A
+ * few bespoke-channel helpers (snapshot input, map list/search, map
+ * upload, MapUseLocal, WbnReauth) keep their own UDP-only paths. */
 
 void clientSimNetSendChat(ClientSim *cs, BYTE destPlayer, const char *message) {
-  uint8_t buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_CHAT_MESSAGE];
-  size_t msgLen;
-  size_t len;
-
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->transport.sendBytes == NULL) return;
   if (message == NULL || message[0] == '\0') return;
-
-  msgLen = strlen(message);
+  size_t msgLen = strlen(message);
   if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
-
-  /* PACKET_CHAT_MESSAGE wire format:
-   *   [magic 2][type 1][reserved 1][sequence 4][destPlayer 1][message...]
-   * Sequence stays zero — the server's chat handler doesn't consume it
-   * (UDP retransmit/redundancy applies to PACKET_INPUT only). */
-  buf[0] = BOLO_NEW_MAGIC_0;
-  buf[1] = BOLO_NEW_MAGIC_1;
-  buf[2] = PACKET_CHAT_MESSAGE;
-  buf[3] = 0;
-  memset(buf + 4, 0, 4);
-  buf[PACKET_HEADER_SIZE] = destPlayer;
-  memcpy(buf + PACKET_HEADER_SIZE + 1, message, msgLen);
-  len = PACKET_HEADER_SIZE + 1 + msgLen;
-
-  cs->transport.sendBytes(cs->transport.ctx, buf, len);
+  ClientCommand cmd = { .type = CMD_CHAT };
+  cmd.u.chat.destPlayer = destPlayer;
+  cmd.u.chat.bodyLen    = (uint16_t)msgLen;
+  memcpy(cmd.u.chat.body, message, msgLen);
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendNameChange(ClientSim *cs, const char *newName) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendNameChange(&cs->transport, newName);
+  if (cs == NULL || !cs->hasTransport) return;
+  if (newName == NULL || newName[0] == '\0') return;
+  ClientCommand cmd = { .type = CMD_NAME_CHANGE };
+  size_t nl = strlen(newName);
+  if (nl >= PACKET_MAX_PLAYER_NAME) nl = PACKET_MAX_PLAYER_NAME - 1;
+  memcpy(cmd.u.nameChange.newName, newName, nl);
+  cmd.u.nameChange.newName[nl] = '\0';
+  clientSimSubmitCommand(cs, &cmd);
 }
 
-/* Alliance send wrappers — same shape as clientSimNetSendChat above.
- * Build the wire packet inline and push through cs->transport.sendBytes.
- * Works on every transport: UDP unicasts to the server, local transport
- * dispatches in localSendBytes → serverSimAcceptAlliance / Leave (which
- * fire the WBN + replay-log side effects internally so all sources are
- * symmetric) or an inline CTRL_ALLIANCE_REQUEST publish for request. */
-
 void clientSimNetSendAllianceRequest(ClientSim *cs, BYTE toPlayer) {
-  uint8_t buf[PACKET_HEADER_SIZE + 2];
-
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->transport.sendBytes == NULL) return;
-
-  /* Wire: [magic 2][type 1][reserved 1][sequence 4][fromPlayer 1][toPlayer 1] */
-  buf[0] = BOLO_NEW_MAGIC_0;
-  buf[1] = BOLO_NEW_MAGIC_1;
-  buf[2] = PACKET_ALLIANCE_REQUEST;
-  buf[3] = 0;
-  memset(buf + 4, 0, 4);
-  buf[PACKET_HEADER_SIZE]     = clientSimGetMyPlayerNum(cs);
-  buf[PACKET_HEADER_SIZE + 1] = toPlayer;
-  cs->transport.sendBytes(cs->transport.ctx, buf, sizeof(buf));
+  ClientCommand cmd = { .type = CMD_ALLIANCE_REQUEST };
+  cmd.u.allianceRequest.toPlayer = toPlayer;
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendAllianceAccept(ClientSim *cs, BYTE toPlayer) {
-  uint8_t buf[PACKET_HEADER_SIZE + 2];
-
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->transport.sendBytes == NULL) return;
-
-  /* Wire: [header 8][fromPlayer 1][toPlayer 1]  fromPlayer = the
-   * accepter (us); toPlayer = who originally requested (newMember). */
-  buf[0] = BOLO_NEW_MAGIC_0;
-  buf[1] = BOLO_NEW_MAGIC_1;
-  buf[2] = PACKET_ALLIANCE_ACCEPT;
-  buf[3] = 0;
-  memset(buf + 4, 0, 4);
-  buf[PACKET_HEADER_SIZE]     = clientSimGetMyPlayerNum(cs);
-  buf[PACKET_HEADER_SIZE + 1] = toPlayer;
-  cs->transport.sendBytes(cs->transport.ctx, buf, sizeof(buf));
+  ClientCommand cmd = { .type = CMD_ALLIANCE_ACCEPT };
+  cmd.u.allianceAccept.newMember = toPlayer;
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendAllianceLeave(ClientSim *cs) {
-  uint8_t buf[PACKET_HEADER_SIZE + 1];
-
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->transport.sendBytes == NULL) return;
-
-  /* Wire: [header 8][playerNum 1] — the leaver is always us. */
-  buf[0] = BOLO_NEW_MAGIC_0;
-  buf[1] = BOLO_NEW_MAGIC_1;
-  buf[2] = PACKET_ALLIANCE_LEAVE;
-  buf[3] = 0;
-  memset(buf + 4, 0, 4);
-  buf[PACKET_HEADER_SIZE] = clientSimGetMyPlayerNum(cs);
-  cs->transport.sendBytes(cs->transport.ctx, buf, sizeof(buf));
+  ClientCommand cmd = { .type = CMD_ALLIANCE_LEAVE };
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLockToggle(ClientSim *cs, bool allow) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLockToggle(&cs->transport, allow);
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_LOCK_TOGGLE };
+  cmd.u.lockToggle.allow = allow;
+  clientSimSubmitCommand(cs, &cmd);
+}
+
+void clientSimSubmitCommand(ClientSim *cs, const ClientCommand *cmd) {
+  if (cs == NULL || !cs->hasTransport || cmd == NULL) return;
+  if (cs->isUdpTransport) {
+    transportUdpClientSubmitCommand(&cs->transport, cmd);
+    return;
+  }
+  if (cs->boundServerSim == NULL) return;
+  threadsWaitForMutex();
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), cmd);
+  threadsReleaseMutex();
 }
 
 void clientSimNetSendTeamSet(ClientSim *cs, BYTE slot, BYTE teamNumber) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    /* Wire carries the target slot; the server allows self-moves
-     * unconditionally and other-target moves only when the sender is
-     * host / admin / openHost (see lobbyClientMayEdit). */
-    transportUdpClientSendTeamSet(&cs->transport, slot, teamNumber);
-    return;
-  }
-  /* Local transport: mirror PACKET_LOBBY_TEAM_SET's server-side
-   * handler. Slot comes from the caller (SP-host can move any
-   * lobby slot, including bot slots); team must fit MAX_TANKS. */
-  if (cs->boundServerSim == NULL) return;
-  threadsWaitForMutex();
-  do {
-    ServerSim *sim = cs->boundServerSim;
-    if (!serverSimIsLobbyEnabled(sim) ||
-        serverSimGetState(sim) != serverStateLobby) break;
-    if (slot >= MAX_TANKS || teamNumber >= MAX_TANKS) break;
-    serverSimSetTeam(sim, slot, teamNumber);
-    serverSimPublishLobbySlot(sim, slot);
-    lobbyAutoUnreadyOnChange(sim);
-  } while (0);
-  threadsReleaseMutex();
+  ClientCommand cmd = { .type = CMD_TEAM_SET };
+  cmd.u.teamSet.slot = slot;
+  cmd.u.teamSet.team = teamNumber;
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendReady(ClientSim *cs, bool ready) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendReady(&cs->transport, ready);
-    return;
-  }
-  /* Local transport: drive the server-side ready toggle directly.
-   * Mirrors the PACKET_LOBBY_READY handler at transport_udp_server.c:
-   *   setReady → serverSimPublishLobbySlot → LobbyCheckAllReady. The all-ready
-   * detector picks the worldPreLoaded branch (StartGameInPlace) on a
-   * fresh SP sim, or the countdown branch on subsequent rounds. */
-  if (cs->boundServerSim == NULL) return;
-  threadsWaitForMutex();
-  if (serverSimIsLobbyEnabled(cs->boundServerSim) &&
-      serverSimGetState(cs->boundServerSim) == serverStateLobby) {
-    BYTE slot = clientSimGetMyPlayerNum(cs);
-    serverSimSetReady(cs->boundServerSim, slot, ready);
-    {
-      ControlEvent slotEvt;
-      memset(&slotEvt, 0, sizeof(slotEvt));
-      serverSimFillLobbySlotEvent(cs->boundServerSim, slot, &slotEvt);
-      serverSimPublishControl(cs->boundServerSim, &slotEvt);
-    }
-    serverSimLobbyCheckAllReady(cs->boundServerSim);
-  }
-  threadsReleaseMutex();
+  ClientCommand cmd = { .type = CMD_READY };
+  cmd.u.ready.ready = ready;
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendAddBot(ClientSim *cs) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendAddBot(&cs->transport, 0, NULL);
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_ADD_BOT };
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendAddBotConfigured(ClientSim *cs, BYTE teamNumber,
                                       uint8_t brainIdx,
                                       const char *botName) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  if (cs == NULL || !cs->hasTransport) return;
   /* brainIdx accepted for API symmetry; the server applies the default
    * brain on add. Use clientSimNetSendLobbySetBotBrain to change it. */
   (void)brainIdx;
-  transportUdpClientSendAddBot(&cs->transport, teamNumber, botName);
+  ClientCommand cmd = { .type = CMD_LOBBY_ADD_BOT };
+  cmd.u.lobbyAddBot.teamNumber = teamNumber;
+  if (botName != NULL && botName[0] != '\0') {
+    size_t nl = strlen(botName);
+    if (nl >= sizeof(cmd.u.lobbyAddBot.name)) return;
+    cmd.u.lobbyAddBot.nameLen = (uint8_t)nl;
+    memcpy(cmd.u.lobbyAddBot.name, botName, nl);
+  }
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendRemoveBot(ClientSim *cs, BYTE playerNum) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendRemoveBot(&cs->transport, playerNum);
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_REMOVE_BOT };
+  cmd.u.lobbyRemoveBot.slot = playerNum;
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
@@ -548,76 +483,60 @@ void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
                                     uint8_t personality,
                                     const char *name) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLobbyBotConfig(&cs->transport, slot,
-                                         difficulty, personality, name);
-    return;
+  ClientCommand cmd = { .type = CMD_LOBBY_BOT_CONFIG };
+  cmd.u.lobbyBotConfig.slot        = slot;
+  cmd.u.lobbyBotConfig.difficulty  = difficulty;
+  cmd.u.lobbyBotConfig.personality = personality;
+  if (name != NULL && name[0] != '\0') {
+    size_t nl = strlen(name);
+    if (nl > 31) return;  /* matches wire-side nameLen<=31 guard */
+    cmd.u.lobbyBotConfig.nameLen = (uint8_t)nl;
+    memcpy(cmd.u.lobbyBotConfig.name, name, nl);
   }
-  /* Local transport: mirror the PACKET_LOBBY_BOT_CONFIG handler in
-   * transport_udp_server.c so SP-host produces the same sim state as
-   * a UDP host. Held under the threads mutex so the timer thread
-   * can't race the apply. Empty name == "keep current name", same
-   * as the wire path's nameLen == 0 branch. */
-  if (cs->boundServerSim == NULL) return;
-  threadsWaitForMutex();
-  do {
-    ServerSim *sim = cs->boundServerSim;
-    if (!serverSimIsLobbyEnabled(sim) ||
-        serverSimGetState(sim) != serverStateLobby) break;
-    if (slot >= MAX_TANKS || difficulty > 2 || personality > 3) break;
-    if (!serverSimIsBot(sim, slot)) break;
-
-    char validatedName[PACKET_MAX_PLAYER_NAME];
-    const bool haveName = (name != NULL && name[0] != '\0');
-    if (haveName) {
-      if (strlen(name) > 31) break;
-      /* Format validation only. Uniqueness was already enforced by
-       * the SP-host caller against the ClientSim's lobby mirror,
-       * which on SP-host is what serverSimRenameBotSlot writes
-       * through — that mirror is the canonical name table here.
-       * The wire-side handler uses udpServer.clients[] for the same
-       * check, but that table is unused on SP-host. */
-      if (!lobbyBotNameAcceptable(name, validatedName, sizeof(validatedName),
-                                  (int)slot, NULL, NULL, NULL)) {
-        break;
-      }
-    }
-
-    /* SP-host has no UDP server, so the wire handler's
-     * transportUdpServerSetBotName step is a no-op here.
-     * serverSimSetBotConfig handles the write, the optional rename
-     * (sim.plyrs + CTRL_PLAYER_NAME via serverSimRenameBotSlot), the
-     * config + slot publishes, and the auto-unready tail. */
-    serverSimSetBotConfig(sim, slot, difficulty, personality,
-                          haveName ? validatedName : NULL);
-  } while (0);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
                                       uint8_t brainIdx) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbySetBotBrain(&cs->transport, slot, brainIdx);
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_SET_BOT_BRAIN };
+  cmd.u.lobbySetBotBrain.slot     = slot;
+  cmd.u.lobbySetBotBrain.brainIdx = brainIdx;
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbySetMap(&cs->transport, mapRelPath);
+  if (cs == NULL || !cs->hasTransport) return;
+  if (mapRelPath == NULL) return;
+  size_t pl = strlen(mapRelPath);
+  if (pl == 0 || pl > 255) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_SET_MAP };
+  cmd.u.lobbySetMap.relPathLen = (uint8_t)pl;
+  memcpy(cmd.u.lobbySetMap.relPath, mapRelPath, pl);
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyPreviewCancel(ClientSim *cs) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyPreviewCancel(&cs->transport);
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_PREVIEW_CANCEL };
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyPreviewCommit(ClientSim *cs) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyPreviewCommit(&cs->transport);
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_PREVIEW_COMMIT };
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyPreviewRandom(ClientSim *cs, const char *seedStr) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyPreviewRandom(&cs->transport, seedStr);
+  if (cs == NULL || !cs->hasTransport) return;
+  if (seedStr == NULL) return;
+  size_t sl = strlen(seedStr);
+  if (sl == 0 || sl > 63) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_PREVIEW_RANDOM };
+  cmd.u.lobbyPreviewRandom.seedLen = (uint8_t)sl;
+  memcpy(cmd.u.lobbyPreviewRandom.seed, seedStr, sl);
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyMapListRequest(ClientSim *cs,
@@ -688,141 +607,113 @@ void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
                                    uint8_t color, uint8_t namingPool,
                                    const char *name) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLobbyTeamMeta(&cs->transport, teamId, color,
-                                        namingPool, name);
-    return;
+  ClientCommand cmd = { .type = CMD_LOBBY_TEAM_META };
+  cmd.u.lobbyTeamMeta.teamId     = teamId;
+  cmd.u.lobbyTeamMeta.color      = color;
+  cmd.u.lobbyTeamMeta.namingPool = namingPool;
+  if (name != NULL) {
+    size_t nl = strlen(name);
+    if (nl > LOBBY_TEAM_NAME_LEN - 1) return;
+    cmd.u.lobbyTeamMeta.nameLen = (uint8_t)nl;
+    memcpy(cmd.u.lobbyTeamMeta.name, name, nl);
   }
-  /* Local transport: delegate to the shared setter so SP-host and
-   * wire follow one code path (including the pool-uniqueness rewrite
-   * and the publish + auto-unready tail). */
-  if (cs->boundServerSim == NULL) return;
-  threadsWaitForMutex();
-  do {
-    ServerSim *sim = cs->boundServerSim;
-    if (!serverSimIsLobbyEnabled(sim) ||
-        serverSimGetState(sim) != serverStateLobby) break;
-    if (teamId == 0 || teamId >= MAX_TANKS) break;
-    size_t nameLen = (name != NULL) ? strlen(name) : 0;
-    if (nameLen > LOBBY_TEAM_NAME_LEN - 1) break;
-    serverSimSetTeamMeta(sim, teamId, color, namingPool,
-                         (const uint8_t *)name, (uint8_t)nameLen);
-  } while (0);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyTeamClear(ClientSim *cs, BYTE teamId) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLobbyTeamClear(&cs->transport, teamId);
-    return;
-  }
-  /* Local transport: delegate to the shared setter. */
-  if (cs->boundServerSim == NULL) return;
-  threadsWaitForMutex();
-  do {
-    ServerSim *sim = cs->boundServerSim;
-    if (!serverSimIsLobbyEnabled(sim) ||
-        serverSimGetState(sim) != serverStateLobby) break;
-    if (teamId == 0 || teamId >= MAX_TANKS) break;
-    serverSimClearTeamMeta(sim, teamId);
-  } while (0);
-  threadsReleaseMutex();
+  ClientCommand cmd = { .type = CMD_LOBBY_TEAM_CLEAR };
+  cmd.u.lobbyTeamClear.teamId = teamId;
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
                                   const uint8_t *value, uint8_t valueLen) {
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->isUdpTransport) {
-    transportUdpClientSendLobbySetting(&cs->transport, settingType, value, valueLen);
-    return;
+  if (valueLen > 32) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_SETTING };
+  cmd.u.lobbySetting.settingType = settingType;
+  cmd.u.lobbySetting.valueLen    = valueLen;
+  if (valueLen > 0 && value != NULL) {
+    memcpy(cmd.u.lobbySetting.value, value, valueLen);
   }
-  /* Local transport: SP-host is its own operator, so the lock-bit /
-   * authority gates the UDP handler runs aren't applicable. The
-   * shared helper publishes settings + clears humans' ready state
-   * on success. */
-  if (cs->boundServerSim == NULL) return;
-  threadsWaitForMutex();
-  do {
-    ServerSim *sim = cs->boundServerSim;
-    if (!serverSimIsLobbyEnabled(sim) ||
-        serverSimGetState(sim) != serverStateLobby) break;
-    serverSimApplyLobbySetting(sim, settingType, value, valueLen);
-  } while (0);
-  threadsReleaseMutex();
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbySetPassword(ClientSim *cs, const char *pw) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbySetPassword(&cs->transport, pw);
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_SET_PASSWORD };
+  if (pw != NULL && pw[0] != '\0') {
+    size_t pl = strlen(pw);
+    if (pl >= sizeof(cmd.u.lobbySetPassword.password)) return;
+    cmd.u.lobbySetPassword.pwLen = (uint8_t)pl;
+    memcpy(cmd.u.lobbySetPassword.password, pw, pl);
+  }
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyOpenHost(&cs->transport, openHost);
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_OPEN_HOST };
+  cmd.u.lobbyOpenHost.openHost = openHost;
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyKick(ClientSim *cs, uint8_t slot) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendLobbyKick(&cs->transport, slot);
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_KICK };
+  cmd.u.lobbyKick.slot = slot;
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendMapSkipVote(ClientSim *cs) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendMapSkipVote(&cs->transport);
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_MAP_SKIP_VOTE };
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendGameVoteToggle(ClientSim *cs,
                                     uint8_t kind, uint8_t toggleMode) {
-  uint8_t buf[PACKET_HEADER_SIZE + 2];
-
   if (cs == NULL || !cs->hasTransport) return;
-  if (cs->transport.sendBytes == NULL) return;
-
-  /* Wire: [magic 2][type 1][reserved 1][sequence 4][kind 1][toggleMode 1].
-   * UDP transport delivers to transport_udp_server.c's PACKET_GAME_VOTE_TOGGLE
-   * case; local transport delivers to transport_local.c's matching case.
-   * Both end in serverSimGameVoteToggle. */
-  buf[0] = BOLO_NEW_MAGIC_0;
-  buf[1] = BOLO_NEW_MAGIC_1;
-  buf[2] = PACKET_GAME_VOTE_TOGGLE;
-  buf[3] = 0;
-  memset(buf + 4, 0, 4);
-  buf[PACKET_HEADER_SIZE]     = kind;
-  buf[PACKET_HEADER_SIZE + 1] = toggleMode;
-  cs->transport.sendBytes(cs->transport.ctx, buf, sizeof(buf));
+  ClientCommand cmd = { .type = CMD_GAME_VOTE_TOGGLE };
+  cmd.u.gameVoteToggle.kind       = kind;
+  cmd.u.gameVoteToggle.toggleMode = toggleMode;
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize,
                                     bool includeBots) {
-  balanceDebugLog("[BAL CLIENT] SendBalanceRequest teamSize=%u includeBots=%d "
-                  "cs=%p hasTransport=%d isUdpTransport=%d",
-                  (unsigned)teamSize, includeBots ? 1 : 0,
-                  (void *)cs,
-                  cs ? cs->hasTransport : 0,
-                  cs ? cs->isUdpTransport : 0);
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) {
-    balanceDebugLog("[BAL CLIENT] dropping: no UDP transport bound");
-    return;
-  }
-  balanceDebugLog("[BAL CLIENT] calling transportUdpClientSendBalanceRequest");
-  transportUdpClientSendBalanceRequest(&cs->transport, teamSize, includeBots);
-  balanceDebugLog("[BAL CLIENT] transportUdpClientSendBalanceRequest returned");
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_BALANCE_REQUEST };
+  cmd.u.balanceRequest.teamSize    = teamSize;
+  cmd.u.balanceRequest.includeBots = includeBots;
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendBalanceApply(ClientSim *cs) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendBalanceApply(&cs->transport);
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_BALANCE_APPLY };
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendBalanceDismiss(ClientSim *cs) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendBalanceDismiss(&cs->transport);
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_BALANCE_DISMISS };
+  clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendWbnReauth(ClientSim *cs) {
-  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
-  transportUdpClientSendWbnReauth(&cs->transport);
+  if (cs == NULL || !cs->hasTransport) return;
+  if (cs->isUdpTransport) {
+    transportUdpClientSendWbnReauth(&cs->transport);
+    return;
+  }
+  if (cs->boundServerSim == NULL) return;
+  ClientCommand cmd = { .type = CMD_WBN_REAUTH };  /* token left zeroed */
+  threadsWaitForMutex();
+  (void)serverSimApplyCommand(cs->boundServerSim,
+                              clientSimGetMyPlayerNum(cs), &cmd);
+  threadsReleaseMutex();
 }
 
 /* === Net stats === */

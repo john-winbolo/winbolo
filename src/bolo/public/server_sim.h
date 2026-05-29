@@ -31,6 +31,7 @@
 #include "alliance_enums.h"    /* baseAlliance, pillAlliance */
 #include "screentank.h"        /* tankAlliance */
 #include "brain_list.h"        /* BrainList — returned by serverSimGetBrainList */
+#include "client_command.h"    /* ClientCommand / CmdResult — serverSimApplyCommand */
 
 /* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
@@ -1134,6 +1135,38 @@ void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt);
  *********************************************************/
 void serverSimReceiveChat(ServerSim *sim, BYTE fromPlayer, BYTE destPlayer,
                           const void *body, size_t bodyLen);
+
+/*********************************************************
+ *NAME:          serverSimApplyCommand
+ *PURPOSE:
+ *  Single apply path for client→server commands. Switches
+ *  on cmd->type; each command arm runs its own authority
+ *  check, validation, mutation, and downstream publishes
+ *  (the dispatcher itself is just the switch). UDP server
+ *  decode handlers and local/SP-host clients both reach the
+ *  same arm, so the two transports cannot disagree on apply.
+ *
+ *  Mutex ownership: the caller holds threadsMutex. The
+ *  dispatcher does not acquire it. UDP server callers are
+ *  already on the server thread and hold it. Local/SP-host
+ *  callers in client_net.c, and bots running on a
+ *  transportLocalCreatePassive transport, must wrap the
+ *  call in threadsWaitForMutex() / threadsReleaseMutex().
+ *  Debug builds assert this via threadsCurrentlyHoldsMutex.
+ *
+ *  Sender attribution: senderSlot is the slot the command
+ *  is attributed to, unconditionally. UDP path resolves it
+ *  via serverFindClient(fromAddr) → clientIdx. Local path
+ *  uses clientSimGetMyPlayerNum(cs); each local transport
+ *  is per-slot by construction so the value is unambiguous.
+ *
+ *  State guards live in each command arm, not in a shared
+ *  prelude — most lobby commands require lobby phase, game-
+ *  time commands have their own phase guards, and ranked-
+ *  only commands gate on serverSimGetRanked.
+ *********************************************************/
+CmdResult serverSimApplyCommand(ServerSim *sim, int senderSlot,
+                                const ClientCommand *cmd);
 
 /*********************************************************
  *NAME:          serverSimAcceptAlliance

@@ -130,8 +130,8 @@ void shellAdvance1Tick(WORLD *x, WORLD *y,
   *y = (WORLD)((int)*y + yMove);
 }
 
-int shellLifeTicks(int len) {
-  int t = SHELL_LIFE * len - SHELL_START_ADD;
+int shellLifeTicks(float len) {
+  int t = 1 + (int)(SHELL_LIFE * len) - SHELL_START_ADD;
   return t < 0 ? 0 : t;
 }
 
@@ -243,7 +243,7 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   q->x = x;
   q->y = y;
   q->angle = angle;
-  q->length = (BYTE) shellLifeTicks((int)len);
+  q->length = (BYTE) shellLifeTicks(len);
   q->onBoat = onBoat;
   q->creator = sim->viewPlayer;
   q->owner = owner;

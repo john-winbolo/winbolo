@@ -469,10 +469,11 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         /* In-process delivery for chat. Mirrors the UDP path in
          * transport_udp_client.c (PACKET_CHAT_BROADCAST), but for
          * subscribers that aren't UDP clients (host humanSim, bot
-         * ClientSims). Without this, a bot publishing CTRL_CHAT via
-         * the local transport's sendBytes dispatch would never
-         * materialize in any recipient's MessageState — so /info
-         * traffic between bots would be invisible. */
+         * ClientSims). Without this, a bot's chat — submitted via
+         * clientSimSubmitCommand and republished by the CMD_CHAT
+         * arm as CTRL_CHAT — would never materialize in any
+         * recipient's MessageState, so /info traffic between bots
+         * would be invisible. */
         BYTE fromPlayer = evt->u.chat.fromPlayer;
         BYTE destPlayer = evt->u.chat.destPlayer;
         uint16_t bodyLen = evt->u.chat.bodyLen;
@@ -500,6 +501,20 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * SP read playerConnected directly, so no in-process state
          * mutation is needed here — the event exists so replay logs and
          * other subscribers see leaves alongside joins. */
+        break;
+
+    case CTRL_COMMAND_REJECTED:
+        /* Only react to rejects attributed to our own slot. In-process
+         * subscribers (SP-host, bots) receive every published reject;
+         * the wire path is already filtered by udpClientDeliverControl.
+         * lobbyLastRejectPacket stores origCmdType (the CMD_* enum
+         * value) — its previous semantics were "non-zero = pending
+         * reject" and the toast UI in imgui_lobby.cpp only checks for
+         * non-zero, so storing a CMD_* there is compatible. */
+        if (evt->u.commandRejected.origSlot == clientSimGetMyPlayerNum(cs)) {
+            cs->lobbyLastRejectPacket = evt->u.commandRejected.origCmdType;
+            cs->lobbyLastRejectReason = evt->u.commandRejected.reasonCode;
+        }
         break;
     }
 }

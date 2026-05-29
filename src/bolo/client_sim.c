@@ -768,13 +768,14 @@ void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *messa
   }
 }
 
-/* Default chatSendFunc: route outbound chat through the sim's own
- * transport. Set as the default for every ClientSim — frontends that
- * want different behavior can override via clientSimSetChatSendFunc,
- * but the default is correct for both UDP-connected humans and
- * in-process bots (their respective transport's sendBytes does the
- * right thing). fromPlayer is unused — the transport stamps the slot
- * either from the connection (UDP) or from lctx->playerNum (local). */
+/* Default chatSendFunc: route outbound chat through clientSimSubmitCommand
+ * via clientSimNetSendChat. Set as the default for every ClientSim —
+ * frontends that want different behavior can override via
+ * clientSimSetChatSendFunc, but the default is correct for both
+ * UDP-connected humans (carrier enqueue → server CMD_CHAT arm) and
+ * in-process bots (dispatcher under the mutex). fromPlayer is unused —
+ * the slot is stamped either from the connection (UDP) or from
+ * lctx->playerNum (local). */
 void clientSimDefaultChatSend(ClientSim *cs, BYTE fromPlayer, BYTE destPlayer,
                               const char *message) {
   (void)fromPlayer;

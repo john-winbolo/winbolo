@@ -45,6 +45,7 @@
 #include "mapgen.h"
 #include "brain_list_internal.h"   /* BRAIN_LIST_PATH_LEN — ADD_BOT pathLen bound */
 #include "transport_control_codec.h"
+#include "transport_command_codec.h"
 #include "wbn_key_codec.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../winbolonet/winbolonet_server.h"
@@ -216,7 +217,6 @@ typedef struct {
 static struct {
     SOCKET sock;
     bool running;
-    char password[MAP_STR_SIZE];
     UdpServerClient clients[MAX_TANKS];
     uint32_t tickCount;
 
@@ -471,20 +471,6 @@ static void serverSendJoinReject(const struct sockaddr_in *addr, langid id,
     udpSendTo(udpServer.sock, buf, pos, addr);
 }
 
-/* Send a PACKET_NAME_CHANGE_REJECT to a specific connected client.
- * Payload is a single reasonCode byte (NAME_REJECT_*). The client maps
- * it to a localized langid and surfaces it in the chat ring. */
-static void serverSendNameChangeReject(int clientIdx, uint8_t reasonCode) {
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
-    if (clientIdx < 0 || clientIdx >= MAX_TANKS) return;
-    if (!udpServer.clients[clientIdx].connected) return;
-    packHeader(buf, PACKET_NAME_CHANGE_REJECT, 0);
-    buf[PACKET_HEADER_SIZE] = reasonCode;
-    /* wire-only: per-client handshake (response to a single client's request) */
-    udpSendTo(udpServer.sock, buf, sizeof(buf),
-              &udpServer.clients[clientIdx].addr);
-}
-
 /* Short name for a ControlEventType — diagnostic logging only. */
 static const char *mpDiagCtrlName(int type) {
     switch (type) {
@@ -652,6 +638,14 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
             }
         }
     }
+    if (evt->type == CTRL_COMMAND_REJECTED &&
+        evt->u.commandRejected.origSlot != client->playerNum) {
+        mpDiagLog("[srv] deliver FILTER slot=%d type=COMMAND_REJECTED "
+                  "origSlot=%d clientPlayerNum=%d",
+                  idx, (int)evt->u.commandRejected.origSlot,
+                  (int)client->playerNum);
+        return;
+    }
 
     /* Enqueue into this client's reliable control queue. */
     q = &udpServer.controlEventQueues[idx];
@@ -731,17 +725,6 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
     transportUdpServerSendControlTick(idx);
 }
 
-/* Per-recipient reject: sent only to the originator of a rejected
- * lobby command. Reason codes in netpacks.h (LOBBY_REJECT_*). */
-static void lobbyRejectTo(struct sockaddr_in *addr, uint8_t origPacket,
-                          uint8_t reasonCode) {
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
-    packHeader(buf, PACKET_LOBBY_REJECT, 0);
-    buf[PACKET_HEADER_SIZE]     = origPacket;
-    buf[PACKET_HEADER_SIZE + 1] = reasonCode;
-    udpSendTo(udpServer.sock, buf, sizeof(buf), addr);
-}
-
 bool lobbyAnyOtherUploadActive(const bool *active, int exceptIdx) {
     int i;
     if (active == NULL) return false;
@@ -769,7 +752,7 @@ static void udpServerClearClientUploadState(int idx) {
  * Returns TRUE if the sender at clientIdx is allowed to issue the
  * command (host, OR open-host is on and they're an active player,
  * OR they're an admin). */
-static bool lobbyClientMayEdit(ServerSim *sim, int clientIdx) {
+bool lobbyClientMayEdit(ServerSim *sim, int clientIdx) {
     if (clientIdx < 0 || clientIdx >= MAX_TANKS) return FALSE;
     if (clientIdx == 0) return TRUE;  /* slot 0 = host */
     if (serverSimIsPlayerConnected(sim, clientIdx) &&
@@ -1111,8 +1094,9 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     }
 
     /* Check password */
-    if (udpServer.password[0] != '\0') {
-        if (strcmp(pass, udpServer.password) != 0) {
+    {
+        const char *expected = serverSimGetPassword(sim);
+        if (expected[0] != '\0' && strcmp(pass, expected) != 0) {
             char consoleMsg[128];
             snprintf(consoleMsg, sizeof(consoleMsg),
                      "Join rejected for '%s': Incorrect password", name);
@@ -1343,6 +1327,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
              PACKET_MAX_PLAYER_NAME, "%s", name);
     udpServer.clients[slot].lastReceivedTick = udpServer.tickCount;
     udpServer.clients[slot].outSequence = 1;
+    udpServer.clients[slot].inboundCmdSeq = 0;
     udpServer.clients[slot].lastPingTime = udpServer.tickCount;
     udpServer.clients[slot].pingMs = 0;
     udpServer.clients[slot].wantRejoin = wantRejoin;
@@ -1948,6 +1933,7 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     udpServer.clients[idx].controlSub = SUBSCRIBER_HANDLE_INVALID;
     udpServer.clients[idx].connected = false;
     udpServer.clients[idx].nameStickySuffix = false;
+    udpServer.clients[idx].inboundCmdSeq = 0;
     memset(udpServer.clients[idx].playerName, 0, PACKET_MAX_PLAYER_NAME);
     udpServer.clientLocked[idx] = false;
 
@@ -2157,10 +2143,8 @@ bool transportUdpServerCreate(unsigned short port,
         return false;
     }
 
-    memset(udpServer.password, 0, MAP_STR_SIZE);
-    if (password != NULL) {
-        strncpy(udpServer.password, password, MAP_STR_SIZE - 1);
-    }
+    serverSimSetPassword(sim, password,
+                         password != NULL ? strlen(password) : 0);
 
     udpServer.running = true;
     udpServer.tickCount = 0;
@@ -2179,6 +2163,7 @@ bool transportUdpServerCreate(unsigned short port,
     for (i = 0; i < MAX_TANKS; i++) {
         udpServer.clients[i].connected = false;
         udpServer.clients[i].nameStickySuffix = false;
+        udpServer.clients[i].inboundCmdSeq = 0;
         udpServer.clients[i].controlSub = SUBSCRIBER_HANDLE_INVALID;
         memset(&udpServer.mapDownload[i], 0, sizeof(ClientMapDownload));
         udpServer.controlEventQueues[i].nextSeq = 1;
@@ -2322,7 +2307,7 @@ static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
     pkt.free_pills = pillsGetNumNeutral(&gs->pb);
     pkt.free_bases = basesGetNumNeutral(&gs->bs);
 
-    pkt.has_password = udpServer.password[0] != '\0' ? 1 : 0;
+    pkt.has_password = serverSimGetPassword(sim)[0] != '\0' ? 1 : 0;
     pkt.spare2 = 0;
 
     /* wire-only: tracker / external reply (no in-process audience) */
@@ -2470,6 +2455,93 @@ void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
     udpServer.clients[playerNum].playerName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
 }
 
+bool transportUdpServerStartBalanceRequest(ServerSim *sim,
+                                           uint8_t teamSize,
+                                           bool includeBots) {
+    BalanceThreadData *btd = malloc(sizeof(BalanceThreadData));
+    if (!btd) {
+        balanceDebugLog("[BAL SERVER] dropped balance request: "
+                        "malloc(BalanceThreadData) failed");
+        return false;
+    }
+    SDL_Thread *t;
+    int i;
+    memset(btd, 0, sizeof(*btd));
+    btd->sim = sim;
+    btd->teamSize = teamSize;
+    btd->includeBots = includeBots;
+    btd->totalPlayers = 0;
+    btd->numBotSlots = 0;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!serverSimIsPlayerConnected(sim, i)) continue;
+        btd->totalPlayers++;
+        /* Include bot slots in the WBN request only when the caller
+         * asked for "Bots included". When !includeBots the bots are
+         * kicked at APPLY time and don't need to be skill-placed. */
+        if (btd->includeBots && serverSimIsBot(sim, (BYTE)i)) {
+            btd->botSlots[btd->numBotSlots++] = (uint8_t)i;
+        }
+    }
+    balanceDebugLog("[BAL SERVER] dispatching balance thread: "
+                    "totalPlayers=%u teamSize=%u includeBots=%d numBotSlots=%u",
+                    (unsigned)btd->totalPlayers,
+                    (unsigned)btd->teamSize,
+                    (int)btd->includeBots,
+                    (unsigned)btd->numBotSlots);
+    serverSimSetBalanceRequestInFlight(sim, true);
+    t = SDL_CreateThread(balanceThreadFunc, "WbnBalance", btd);
+    if (!t) {
+        serverSimSetBalanceRequestInFlight(sim, false);
+        free(btd);
+        balanceDebugLog("[BAL SERVER] FAILED to create balance thread");
+        serverSimConsoleMessage("Failed to start balance thread");
+        return false;
+    }
+    SDL_DetachThread(t);
+    balanceDebugLog("[BAL SERVER] balance thread created and detached");
+    return true;
+}
+
+void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
+                                       const char *token) {
+    if (!winbolonetIsRunning() || token == NULL || token[0] == '\0') {
+        return;
+    }
+    char errorMsg[512];
+    bool hasSteam = FALSE;
+    bool wbnIsSupporter = FALSE;
+    errorMsg[0] = '\0';
+    if (winboloNetVerifyClientKey(token,
+                                  udpServer.clients[slot].playerName,
+                                  slot, errorMsg,
+                                  &hasSteam, &wbnIsSupporter)) {
+        /* Re-merge using the clientHints captured at JOIN_REQUEST (the
+         * client doesn't re-send them on REAUTH; we re-verify against
+         * WBN, not the network). */
+        uint8_t storedHints = udpServer.clients[slot].clientHints;
+        uint8_t flags = storedHints & PLAYER_CLIENT_HINT_MASK;
+        flags |= PLAYER_FLAG_WBN_VERIFIED;
+        if (hasSteam) flags |= PLAYER_FLAG_WBN_STEAM_LINKED;
+        if (wbnIsSupporter) flags |= PLAYER_FLAG_SUPPORTER;
+        playersSetClientFlags(&serverSimGetGameSim(sim)->plyrs, slot, flags);
+        playersSetClientType (&serverSimGetGameSim(sim)->plyrs, slot,
+                              udpServer.clients[slot].clientType);
+        fprintf(stderr, "[UDP SERVER] Player %d WBN re-authenticated (steam=%d)\n",
+                slot, hasSteam ? 1 : 0);
+        if (serverSimGetState(sim) == serverStateRunning) {
+            winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
+                               slot, WINBOLO_NET_NO_PLAYER);
+        }
+        if (serverSimGetState(sim) == serverStateLobby ||
+            serverSimGetState(sim) == serverStateCountdown) {
+            serverSimPublishLobbySlot(sim, slot);
+        }
+    } else {
+        fprintf(stderr, "[UDP SERVER] Player %d WBN re-auth failed: %s\n",
+                slot, errorMsg);
+    }
+}
+
 const char *transportUdpServerGetPlayerName(BYTE playerNum) {
     if (playerNum >= MAX_TANKS) {
         return NULL;
@@ -2565,7 +2637,7 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
     pkt.num_players = numPlayers;
     pkt.free_pills = pillsGetNumNeutral(&gs->pb);
     pkt.free_bases = basesGetNumNeutral(&gs->bs);
-    pkt.has_password = udpServer.password[0] != '\0' ? 1 : 0;
+    pkt.has_password = serverSimGetPassword(sim)[0] != '\0' ? 1 : 0;
     pkt.spare2 = 0;
 
     sendto(udpServer.sock, (const char *)&pkt, sizeof(pkt), 0,
@@ -2739,124 +2811,34 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_CONTROL_ACK:
             serverHandleControlAck(buf, len, fromAddr);
             break;
-        case PACKET_CHAT_MESSAGE: {
-            /* Chat message format:
-             *   [header 8] [destPlayer 1] [message up to PACKET_MAX_CHAT_MESSAGE]
-             * Route through serverSimReceiveChat (the authoritative
-             * entry per docs/ARCHITECTURE.md) so wire-originated and
-             * in-process bot chat take the same path. */
+        case PACKET_COMMAND_TICK: {
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && len > PACKET_HEADER_SIZE + 1) {
-                uint8_t destPlayer = buf[PACKET_HEADER_SIZE];
-                int msgLen = len - PACKET_HEADER_SIZE - 1;
-                if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
-
-                serverSimReceiveChat(sim, (BYTE)clientIdx, destPlayer,
-                                     buf + PACKET_HEADER_SIZE + 1,
-                                     (size_t)msgLen);
-
-                /* Replay log only — same format as before. */
-                {
-                    char pstr[256];
-                    int pLen = msgLen;
-                    if (pLen > 255) pLen = 255;
-                    pstr[0] = (char)pLen;
-                    memcpy(pstr + 1, buf + PACKET_HEADER_SIZE + 1, pLen);
-                    if (destPlayer == 0xFF) {
-                        logAddEvent(log_MessageAll, (BYTE)clientIdx, 0, 0, 0, 0, pstr);
-                    } else {
-                        logAddEvent(log_MessagePlayers, (BYTE)clientIdx, destPlayer, 0, 0, 0, pstr);
-                    }
+            if (clientIdx < 0) break;
+            UdpServerClient *client = &udpServer.clients[clientIdx];
+            if (len < PACKET_HEADER_SIZE + 1) break;
+            uint8_t count = buf[PACKET_HEADER_SIZE];
+            size_t pos = PACKET_HEADER_SIZE + 1;
+            for (uint8_t i = 0; i < count; i++) {
+                if (pos + 2 > (size_t)len) break;
+                uint16_t entryLen = unpackU16(buf + pos);
+                pos += 2;
+                if (pos + entryLen > (size_t)len) break;
+                ClientCommand cmd;
+                if (!commandCodecDecode(buf + pos, entryLen, &cmd)) {
+                    pos += entryLen;
+                    continue;
                 }
+                pos += entryLen;
+                if (cmd.cmdSeq <= client->inboundCmdSeq) continue;
+                if (cmd.cmdSeq != client->inboundCmdSeq + 1) continue;
+                (void)serverSimApplyCommand(sim, clientIdx, &cmd);
+                client->inboundCmdSeq = cmd.cmdSeq;
             }
-            break;
-        }
-        case PACKET_NAME_CHANGE: {
-            /* Name change format:
-             *   [header 8] [playerNum 1] [newName PACKET_MAX_PLAYER_NAME] */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 &&
-                len >= PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME) {
-                char newName[PACKET_MAX_PLAYER_NAME];
-                int j;
-                bool nameTaken = FALSE;
-
-                /* WBN participants are not allowed to change their name */
-                if (winboloNetIsPlayerParticipant((BYTE)clientIdx)) {
-                    break;
-                }
-
-                memcpy(newName, buf + PACKET_HEADER_SIZE + 1,
-                       PACKET_MAX_PLAYER_NAME);
-                newName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
-
-                /* Validate the new name before any further checks.  On
-                 * rejection, send PACKET_NAME_CHANGE_REJECT so the
-                 * client can surface a localized reason — the client
-                 * also validates locally, so this is the defensive
-                 * fallback against tampered or stale clients. */
-                {
-                    char validated[PACKET_MAX_PLAYER_NAME];
-                    PlayerNameValidationError vErr = PLAYER_NAME_OK;
-                    if (!playerNameValidate(newName, validated,
-                                            sizeof(validated), &vErr)) {
-                        uint8_t reasonCode;
-                        switch (vErr) {
-                            case PLAYER_NAME_ERR_EMPTY:
-                                reasonCode = NAME_REJECT_EMPTY;
-                                break;
-                            case PLAYER_NAME_ERR_RESERVED_PREFIX:
-                                reasonCode = NAME_REJECT_RESERVED_PREFIX;
-                                break;
-                            case PLAYER_NAME_ERR_RESERVED_SUFFIX:
-                                reasonCode = NAME_REJECT_RESERVED_SUFFIX;
-                                break;
-                            case PLAYER_NAME_ERR_MIXED_SCRIPTS:
-                                reasonCode = NAME_REJECT_MIXED_SCRIPTS;
-                                break;
-                            case PLAYER_NAME_ERR_INVALID_UTF8:
-                            case PLAYER_NAME_ERR_DISALLOWED_CHAR:
-                            case PLAYER_NAME_ERR_TOO_LONG:
-                            default:
-                                reasonCode = NAME_REJECT_INVALID;
-                                break;
-                        }
-                        serverSendNameChangeReject(clientIdx, reasonCode);
-                        break;
-                    }
-                    strncpy(newName, validated, PACKET_MAX_PLAYER_NAME - 1);
-                    newName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
-                }
-
-                /* Check name uniqueness */
-                for (j = 0; j < MAX_TANKS; j++) {
-                    if (j != clientIdx && udpServer.clients[j].connected &&
-                        playerNameCompare(udpServer.clients[j].playerName, newName) == 0) {
-                        nameTaken = TRUE;
-                        break;
-                    }
-                }
-
-                if (nameTaken) {
-                    serverSendNameChangeReject(clientIdx, NAME_REJECT_TAKEN);
-                    break;
-                }
-
-                if (newName[0] != '\0') {
-                    char msg[30 + 2 * PACKET_MAX_PLAYER_NAME];
-                    snprintf(msg, sizeof(msg), "Player '%s' changed name to '%s'.",
-                             udpServer.clients[clientIdx].playerName, newName);
-                    serverSimConsoleMessage(msg);
-
-                    /* Update server-side name */
-                    snprintf(udpServer.clients[clientIdx].playerName,
-                             PACKET_MAX_PLAYER_NAME, "%s", newName);
-
-                    /* Update the players struct and publish CTRL_PLAYER_NAME. */
-                    serverSimSetPlayerName(serverSimGetActive(),
-                                           (BYTE)clientIdx, newName);
-                }
-            }
+            uint8_t ackBuf[PACKET_HEADER_SIZE + 4];
+            packHeader(ackBuf, PACKET_COMMAND_ACK, client->outSequence++);
+            packU32(ackBuf + PACKET_HEADER_SIZE, client->inboundCmdSeq);
+            sendto(udpServer.sock, (const char *)ackBuf, sizeof(ackBuf), 0,
+                   (struct sockaddr *)&client->addr, sizeof(client->addr));
             break;
         }
         case PACKET_QUIT: {
@@ -2875,93 +2857,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown)) {
                     serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
                 }
-            }
-            break;
-        }
-        case PACKET_LOCK_TOGGLE: {
-            /* Wire: [header 8] [allow 1].
-             *
-             * Authority model: this is the "Allow New Players: Now"
-             * toggle — host / admin / openHost-empowered clients
-             * unilaterally set the flag for the whole lobby. The
-             * old per-client lock-and-consensus model has been
-             * retired; non-host requests are silently dropped. */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || len < PACKET_HEADER_SIZE + 1) break;
-            if (!lobbyClientMayEdit(sim, clientIdx)) {
-                lobbyRejectTo(fromAddr, PACKET_LOCK_TOGGLE,
-                              LOBBY_REJECT_NOT_HOST);
-                break;
-            }
-            bool allow = buf[PACKET_HEADER_SIZE] != 0;
-            bool prev  = serverSimIsAcceptingJoins(sim);
-            if (prev == allow) break;  /* no-op */
-
-            serverSimSetAllowNewPlayers(sim, allow);
-            /* Keep the per-client lock flag in sync with the actor's
-             * intent for any legacy reader still inspecting it. */
-            udpServer.clientLocked[clientIdx] = !allow;
-
-            char msg[128];
-            snprintf(msg, sizeof(msg),
-                     "%s is now %s players to join.",
-                     udpServer.clients[clientIdx].playerName,
-                     allow ? "allowing" : "not allowing");
-            serverSimConsoleMessage(msg);
-            serverSendServerEnglishBroadcast(sim, msg);
-
-            /* Mirror to winbolo.net's games-list lock state so the
-             * tracker hides/shows the lobby accordingly. */
-            if (!udpServer.gameLocked) {
-                winboloNetSendLock(allow ? FALSE : TRUE);
-            }
-            break;
-        }
-        case PACKET_ALLIANCE_REQUEST: {
-            /* Wire: [header 8] [fromPlayer 1] [toPlayer 1] */
-            /* Ranked games disallow alliances entirely. */
-            if (serverSimGetRanked(sim)) break;
-            int clientIdx = serverFindClient(fromAddr);
-            fprintf(stderr, "[UDP SERVER] Alliance request: clientIdx=%d len=%d\n",
-                    clientIdx, len);
-            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 2) {
-                uint8_t toPlayer = buf[PACKET_HEADER_SIZE + 1];
-                fprintf(stderr, "[UDP SERVER] Alliance request from=%d to=%d connected=%d\n",
-                        clientIdx, toPlayer,
-                        (toPlayer < MAX_TANKS) ? udpServer.clients[toPlayer].connected : -1);
-                if (toPlayer < MAX_TANKS &&
-                    udpServer.clients[toPlayer].connected) {
-                    ControlEvent reqEvt;
-                    logAddEvent(log_AllyRequest, (BYTE)clientIdx, toPlayer, 0, 0, 0, NULL);
-                    memset(&reqEvt, 0, sizeof(reqEvt));
-                    reqEvt.type = CTRL_ALLIANCE_REQUEST;
-                    reqEvt.u.allianceRequest.fromPlayer = (BYTE)clientIdx;
-                    reqEvt.u.allianceRequest.toPlayer   = toPlayer;
-                    serverSimPublishControl(serverSimGetActive(), &reqEvt);
-                }
-            }
-            break;
-        }
-        case PACKET_ALLIANCE_ACCEPT: {
-            /* Wire: [header 8] [fromPlayer 1] [toPlayer 1]
-             * fromPlayer = the accepter, toPlayer = who requested.
-             * WBN tracker + replay-log side effects fire inside
-             * serverSimAcceptAlliance so every input source (wire,
-             * local transport, headless cmd-stdin) gets them. */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 2) {
-                uint8_t newMember = buf[PACKET_HEADER_SIZE + 1];
-                serverSimAcceptAlliance(serverSimGetActive(),
-                                        (BYTE)clientIdx, newMember);
-            }
-            break;
-        }
-        case PACKET_ALLIANCE_LEAVE: {
-            /* Wire: [header 8] [playerNum 1] — WBN + log side effects
-             * inside serverSimLeaveAlliance, same reasoning. */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 1) {
-                serverSimLeaveAlliance(serverSimGetActive(), (BYTE)clientIdx);
             }
             break;
         }
@@ -2991,461 +2886,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     }
                 }
             }
-            break;
-        }
-        case PACKET_LOBBY_TEAM_SET: {
-            /* Wire: [header 8] [targetSlot 1] [teamNumber 1].
-             *
-             * Authority: anyone may change their own team. Moving
-             * another player's slot (including bot slots) requires
-             * host / admin / openHost — same gate the drag-and-drop
-             * UI uses. */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 2) break;
-            uint8_t targetSlot = buf[PACKET_HEADER_SIZE];
-            uint8_t teamNum    = buf[PACKET_HEADER_SIZE + 1];
-            if (targetSlot >= MAX_TANKS || teamNum >= MAX_TANKS) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_SET,
-                              LOBBY_REJECT_INVALID);
-                break;
-            }
-            if ((int)targetSlot != clientIdx &&
-                !lobbyClientMayEdit(sim, clientIdx)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_SET,
-                              LOBBY_REJECT_NOT_HOST);
-                break;
-            }
-            serverSimSetTeam(sim, (BYTE)targetSlot, teamNum);
-            logAddEvent(log_TeamSet, (BYTE)targetSlot, teamNum, 0, 0, 0, NULL);
-            serverSimPublishLobbySlot(sim, (BYTE)targetSlot);
-            lobbyAutoUnreadyOnChange(sim);
-            break;
-        }
-        case PACKET_LOBBY_READY: {
-            /* Wire: [header 8] [playerNum 1] [ready 1] */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && serverSimIsLobbyEnabled(sim) &&
-                len >= PACKET_HEADER_SIZE + 2) {
-                bool ready = buf[PACKET_HEADER_SIZE + 1] != 0;
-
-                /* If the lobby is flagged Ranked, the lobby shape must
-                 * be 1v1 / 2v2 / 3v3 with equal-size human teams before
-                 * anyone is allowed to Ready up. The client mirrors this
-                 * check by disabling the Ready button + tooltip, so we
-                 * just silently drop ready=true requests that don't
-                 * qualify (no LOBBY_REJECT protocol for READY). Ready
-                 * OFF (unready) is always honored. */
-                if (ready && serverSimGetRanked(sim) &&
-                    serverSimGetState(sim) == serverStateLobby &&
-                    !serverSimRankedShapeReady(sim)) {
-                    /* Silently drop — client tooltip explains why. */
-                    break;
-                }
-
-                if (serverSimGetState(sim) == serverStateLobby) {
-                    serverSimSetReady(sim, (BYTE)clientIdx, ready);
-                    logAddEvent(ready ? log_PlayerReady : log_PlayerUnready, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
-                    serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
-                    serverSimLobbyCheckAllReady(sim);
-                    if (serverSimGetState(sim) == serverStateCountdown) {
-                        logAddEvent(log_CountdownStart, 0, 0, 0, 0, 0, NULL);
-                    }
-                } else if (serverSimGetState(sim) == serverStateCountdown && !ready) {
-                    /* Someone unreadied during countdown — revert to lobby */
-                    serverSimSetReady(sim, (BYTE)clientIdx, false);
-                    serverSimAbortCountdown(sim);
-                    logAddEvent(log_PlayerUnready, (BYTE)clientIdx, 0, 0, 0, 0, NULL);
-                    logAddEvent(log_CountdownCancel, 0, 0, 0, 0, 0, NULL);
-                    serverSimConsoleMessage("Countdown cancelled — player unreadied.");
-                    serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
-                }
-            }
-            break;
-        }
-        case PACKET_LOBBY_ADD_BOT: {
-            /* Wire: [header 8] [teamNumber 1] [pathLen 1] [path N]
-             *       [nameLen 1] [name M]. Server uses its own stored
-             *       brain config; client-picked teamNumber and botName
-             *       come from the team-aware Add Bot button. */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && serverSimIsLobbyEnabled(sim) &&
-                serverSimGetState(sim) == serverStateLobby &&
-                serverSimGetBotAiType(sim) != aiNone &&
-                serverSimGetBotBrainPath(sim)[0] != '\0') {
-                /* Parse wire payload — bounds-check each length so we
-                 * never read past the received bytes. teamNumber, name,
-                 * and path are all optional; missing or zero-length name
-                 * falls back to "Bot N". */
-                uint8_t teamNumber = 0;
-                char clientBotName[PACKET_MAX_PLAYER_NAME] = "";
-                int pos = PACKET_HEADER_SIZE;
-                if (len >= pos + 1) {
-                    teamNumber = buf[pos++];
-                    if (len >= pos + 1) {
-                        uint8_t pathLen = buf[pos++];
-                        if (pathLen < BRAIN_LIST_PATH_LEN &&
-                            len >= pos + pathLen) {
-                            pos += pathLen;  /* skip path; server uses its own */
-                            if (len >= pos + 1) {
-                                uint8_t nameLen = buf[pos++];
-                                if (nameLen < sizeof(clientBotName) &&
-                                    len >= pos + nameLen) {
-                                    memcpy(clientBotName, buf + pos, nameLen);
-                                    clientBotName[nameLen] = '\0';
-                                }
-                            }
-                        }
-                    }
-                }
-
-                /* Validate the client-supplied bot name before any state
-                 * mutation.  Empty name is a legitimate "let the server
-                 * pick a default" signal and stays in the fallback path
-                 * below.  A non-empty name has to clear the same
-                 * validator humans go through (controls, reserved
-                 * leading '*', mixed scripts, length) so chat and
-                 * scoreboard rendering can trust the form they receive.
-                 * Uniqueness runs against the connected-player table —
-                 * bots and humans share udpServer.clients[], and a
-                 * duplicate name breaks chat attribution and scoreboard
-                 * disambiguation either way. */
-                if (clientBotName[0] != '\0') {
-                    char validated[PACKET_MAX_PLAYER_NAME];
-                    if (!lobbyBotNameAcceptable(clientBotName, validated,
-                                                sizeof(validated), -1,
-                                                transportUdpServerGetPlayerName,
-                                                NULL, NULL)) {
-                        lobbyRejectTo(fromAddr, PACKET_LOBBY_ADD_BOT,
-                                      LOBBY_REJECT_INVALID);
-                        break;
-                    }
-                    /* Use the normalized form going forward so the bot
-                     * is registered under the exact name the validator
-                     * returned. */
-                    SDL_strlcpy(clientBotName, validated, sizeof(clientBotName));
-                }
-
-                /* Find first free player slot */
-                BYTE slot;
-                bool found = false;
-                for (slot = 0; slot < MAX_TANKS; slot++) {
-                    if (!serverSimIsPlayerConnected(sim, slot)) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (found) {
-                    char botName[64];
-                    if (clientBotName[0] != '\0') {
-                        SDL_strlcpy(botName, clientBotName, sizeof(botName));
-                    } else {
-                        snprintf(botName, sizeof(botName), "Bot %d", slot + 1);
-                    }
-                    if (botManagerAddBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
-                                         serverSimGetBotAiType(sim),
-                                         gameTypeGet(&serverSimGetGameSim(sim)->game),
-                                         serverSimGetGameSim(sim)->hiddenMines)) {
-                        transportUdpServerSetBotName(slot, botName);
-                        if (teamNumber > 0 && teamNumber < MAX_TANKS) {
-                            serverSimSetTeam(sim, slot, teamNumber);
-                        }
-                        serverSimPublishLobbySlot(sim, slot);
-                        serverSimPublishLobbyBotBrain(sim, slot);
-                        lobbyAutoUnreadyOnChange(sim);
-                    } else {
-                        WB_LOG_INFO(WB_LOG_CAT_NET,
-                                    "[LOBBY] ADD_BOT failed: botManagerAddBot(slot=%d) returned false",
-                                    (int)slot);
-                    }
-                }
-            }
-            break;
-        }
-        case PACKET_LOBBY_REMOVE_BOT: {
-            /* Wire: [header 8] [playerNum 1] */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && serverSimIsLobbyEnabled(sim) &&
-                serverSimGetState(sim) == serverStateLobby &&
-                len >= PACKET_HEADER_SIZE + 1) {
-                uint8_t targetSlot = buf[PACKET_HEADER_SIZE];
-                if (targetSlot < MAX_TANKS && serverSimIsBot(sim, targetSlot)) {
-                    serverSimRemoveBot(sim, targetSlot);
-                }
-            }
-            break;
-        }
-        case PACKET_LOBBY_SET_SETTING: {
-            /* Wire: [header 8] [settingType 1] [valueLen 1] [value N] */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 2) break;
-            if (!lobbyClientMayEdit(sim, clientIdx)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
-                              LOBBY_REJECT_NOT_HOST);
-                break;
-            }
-            if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
-            udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
-            uint8_t settingType = buf[PACKET_HEADER_SIZE];
-            uint8_t valueLen    = buf[PACKET_HEADER_SIZE + 1];
-            if (len < PACKET_HEADER_SIZE + 2 + valueLen ||
-                valueLen > 32) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
-                              LOBBY_REJECT_INVALID);
-                break;
-            }
-            const uint8_t *value = buf + PACKET_HEADER_SIZE + 2;
-
-            uint16_t lockBit = serverSimGetSettingLockBit(settingType);
-            if (lockBit == 0xFFFFu) {
-                /* Unknown setting — silently drop (forward-compat). */
-                break;
-            }
-            if (lockBit != 0u &&
-                (serverSimGetServerLocks(sim) & lockBit) != 0u) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
-                              LOBBY_REJECT_LOCKED);
-                break;
-            }
-
-            if (!serverSimApplyLobbySetting(sim, settingType, value, valueLen)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_SETTING,
-                              LOBBY_REJECT_INVALID);
-                break;
-            }
-            break;
-        }
-        case PACKET_LOBBY_OPEN_HOST: {
-            /* Wire: [header 8] [bool 1]. Host-only. */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx != 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 1) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_OPEN_HOST,
-                              LOBBY_REJECT_NOT_HOST);
-                break;
-            }
-            if (serverSimGetServerLocks(sim) & LOBBY_LOCK_OPEN_HOST) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_OPEN_HOST,
-                              LOBBY_REJECT_LOCKED);
-                break;
-            }
-            serverSimSetOpenHost(sim, buf[PACKET_HEADER_SIZE] != 0);
-            break;
-        }
-        case PACKET_LOBBY_TEAM_META: {
-            /* Wire: [header 8] [teamId 1] [color 1] [namingPool 1]
-             *       [nameLen 1] [name N] */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 4) break;
-            if (!lobbyClientMayEdit(sim, clientIdx)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_META,
-                              LOBBY_REJECT_NOT_HOST); break;
-            }
-            uint8_t teamId     = buf[PACKET_HEADER_SIZE + 0];
-            uint8_t color      = buf[PACKET_HEADER_SIZE + 1];
-            uint8_t namingPool = buf[PACKET_HEADER_SIZE + 2];
-            uint8_t nameLen    = buf[PACKET_HEADER_SIZE + 3];
-            if (teamId == 0 || teamId >= MAX_TANKS ||
-                nameLen > LOBBY_TEAM_NAME_LEN - 1 ||
-                len < PACKET_HEADER_SIZE + 4 + nameLen) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_META,
-                              LOBBY_REJECT_INVALID); break;
-            }
-            serverSimSetTeamMeta(sim, teamId, color, namingPool,
-                                 buf + PACKET_HEADER_SIZE + 4, nameLen);
-            break;
-        }
-        case PACKET_LOBBY_TEAM_CLEAR: {
-            /* Wire: [header 8] [teamId 1] */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 1) break;
-            if (!lobbyClientMayEdit(sim, clientIdx)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_CLEAR,
-                              LOBBY_REJECT_NOT_HOST); break;
-            }
-            uint8_t teamId = buf[PACKET_HEADER_SIZE];
-            if (teamId == 0 || teamId >= MAX_TANKS) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_TEAM_CLEAR,
-                              LOBBY_REJECT_INVALID); break;
-            }
-            serverSimClearTeamMeta(sim, teamId);
-            break;
-        }
-        case PACKET_LOBBY_BOT_CONFIG: {
-            /* Wire: [header 8] [slot 1] [difficulty 1] [personality 1]
-             *       [nameLen 1] [name N] */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 4) break;
-            if (!lobbyClientMayEdit(sim, clientIdx)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
-                              LOBBY_REJECT_NOT_HOST); break;
-            }
-            uint8_t slot        = buf[PACKET_HEADER_SIZE + 0];
-            uint8_t difficulty  = buf[PACKET_HEADER_SIZE + 1];
-            uint8_t personality = buf[PACKET_HEADER_SIZE + 2];
-            uint8_t nameLen     = buf[PACKET_HEADER_SIZE + 3];
-            if (slot >= MAX_TANKS || difficulty > 2 || personality > 3 ||
-                nameLen > 31 ||
-                len < PACKET_HEADER_SIZE + 4 + nameLen ||
-                !serverSimIsBot(sim, slot)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
-                              LOBBY_REJECT_INVALID); break;
-            }
-            /* Validate the client-supplied bot name before any state
-             * mutation.  Empty nameLen is a legitimate "keep current
-             * name" signal — difficulty / personality still apply.  A
-             * non-empty name has to clear the same validator humans go
-             * through (controls, reserved leading '*', mixed scripts,
-             * length) so chat and scoreboard rendering can trust the
-             * form they receive.  Uniqueness then runs against the
-             * connected-player table excluding the slot being updated,
-             * so a no-op rename or a normalization-preserving rename
-             * doesn't self-collide on the bot already sitting there. */
-            char validatedName[PACKET_MAX_PLAYER_NAME];
-            if (nameLen > 0) {
-                char rawName[PACKET_MAX_PLAYER_NAME];
-                memset(rawName, 0, sizeof(rawName));
-                memcpy(rawName, buf + PACKET_HEADER_SIZE + 4, nameLen);
-
-                if (!lobbyBotNameAcceptable(rawName, validatedName,
-                                            sizeof(validatedName), (int)slot,
-                                            transportUdpServerGetPlayerName,
-                                            NULL, NULL)) {
-                    lobbyRejectTo(fromAddr, PACKET_LOBBY_BOT_CONFIG,
-                                  LOBBY_REJECT_INVALID);
-                    break;
-                }
-            }
-            if (nameLen > 0) {
-                transportUdpServerSetBotName(slot, validatedName);
-            }
-            serverSimSetBotConfig(sim, slot, difficulty, personality,
-                                  nameLen > 0 ? validatedName : NULL);
-            break;
-        }
-        case PACKET_LOBBY_KICK: {
-            /* Wire: [header 8] [slot 1]. Host / admin / openHost. */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 1) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_KICK,
-                              LOBBY_REJECT_NOT_HOST); break;
-            }
-            if (!lobbyClientMayEdit(sim, clientIdx)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_KICK,
-                              LOBBY_REJECT_NOT_HOST); break;
-            }
-            uint8_t slot = buf[PACKET_HEADER_SIZE];
-            if (slot >= MAX_TANKS || slot == 0 /* can't kick host */ ||
-                (int)slot == clientIdx /* can't kick yourself */) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_KICK,
-                              LOBBY_REJECT_INVALID); break;
-            }
-            const char *name = transportUdpServerGetPlayerName(slot);
-            if (name) transportUdpServerKickPlayer(sim, name);
-            /* No explicit broadcast — the kick path itself fires the
-             * existing player-left flow. */
-            lobbyAutoUnreadyOnChange(sim);
-            break;
-        }
-        case PACKET_LOBBY_SET_BOT_BRAIN: {
-            /* Wire: [header 8] [slot 1] [brainIdx 1]. brainIdx == 0xFF
-             * resolves to the CLI-configured default brain; any other
-             * value must index into the server's brain catalogue. */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 2) break;
-            if (!lobbyClientMayEdit(sim, clientIdx)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_BOT_BRAIN,
-                              LOBBY_REJECT_NOT_HOST); break;
-            }
-            uint8_t slot     = buf[PACKET_HEADER_SIZE + 0];
-            uint8_t brainIdx = buf[PACKET_HEADER_SIZE + 1];
-            if (slot >= MAX_TANKS || !serverSimIsBot(sim, slot) ||
-                serverSimGetBrainPathForIdx(sim, brainIdx) == NULL) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_BOT_BRAIN,
-                              LOBBY_REJECT_INVALID); break;
-            }
-            serverSimSetBotBrainIdxFor(sim, slot, brainIdx);
-            botManagerSetBrainIdx(sim, slot, brainIdx);
-            break;
-        }
-        case PACKET_LOBBY_SET_MAP: {
-            /* Wire: [header 8] [pathLen 1] [path N]. Host / openHost
-             * / admin only, lobby state only. Path is relative to
-             * data/maps/ — reject absolute, Windows drive, and any
-             * ".." segment before opening the file. */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 1) break;
-            if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
-            udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
-            if (!lobbyClientMayEdit(sim, clientIdx)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
-                              LOBBY_REJECT_NOT_HOST);
-                break;
-            }
-            uint8_t pathLen = buf[PACKET_HEADER_SIZE];
-            if (pathLen == 0 || pathLen > 255 ||
-                len < PACKET_HEADER_SIZE + 1 + pathLen) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
-                              LOBBY_REJECT_INVALID);
-                break;
-            }
-            char relPath[256];
-            memcpy(relPath, buf + PACKET_HEADER_SIZE + 1, pathLen);
-            relPath[pathLen] = '\0';
-
-            bool safe = true;
-            if (relPath[0] == '/' || relPath[0] == '\\') safe = false;
-            else if (relPath[0] != '\0' && relPath[1] == ':') safe = false;
-            else {
-                for (const char *s = relPath; *s;) {
-                    if (s[0] == '.' && s[1] == '.' &&
-                        (s[2] == '\0' || s[2] == '/' || s[2] == '\\')) {
-                        safe = false; break;
-                    }
-                    while (*s && *s != '/' && *s != '\\') s++;
-                    while (*s == '/' || *s == '\\') s++;
-                }
-            }
-            if (!safe) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
-                              LOBBY_REJECT_INVALID);
-                WB_LOG_INFO(WB_LOG_CAT_NET,
-                            "[LOBBY] SET_MAP rejected: unsafe path '%s'",
-                            relPath);
-                break;
-            }
-
-            char fullPath[FILENAME_MAX];
-            SDL_snprintf(fullPath, sizeof(fullPath), "%s/%s",
-                         serverSimGetMapDirRoot(sim), relPath);
-
-            if (!serverSimReloadMap(sim, fullPath)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_MAP,
-                              LOBBY_REJECT_INVALID);
-                WB_LOG_INFO(WB_LOG_CAT_NET,
-                            "[LOBBY] SET_MAP failed: '%s'", fullPath);
-                break;
-            }
-
-            udpServer.pendingPersistActive = false;
-            WB_LOG_INFO(WB_LOG_CAT_NET,
-                        "[LOBBY] SET_MAP ok: '%s'", fullPath);
             break;
         }
         case PACKET_LOBBY_MAP_LIST_REQ: {
@@ -3951,179 +3391,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             } while (i < got);
             break;
         }
-        case PACKET_LOBBY_PREVIEW_CANCEL: {
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby) break;
-            if (!lobbyClientMayEdit(sim, clientIdx)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_CANCEL,
-                              LOBBY_REJECT_NOT_HOST);
-                break;
-            }
-            if (serverSimRevertPreview(sim)) {
-                udpServer.pendingPersistActive = false;
-                WB_LOG_INFO(WB_LOG_CAT_NET,
-                            "[LOBBY] PREVIEW_CANCEL: rolled back");
-            }
-            break;
-        }
-        case PACKET_LOBBY_PREVIEW_COMMIT: {
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby) break;
-            if (!lobbyClientMayEdit(sim, clientIdx)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_COMMIT,
-                              LOBBY_REJECT_NOT_HOST);
-                break;
-            }
-            if (serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_COMMIT,
-                              LOBBY_REJECT_LOCKED);
-                break;
-            }
-            if (udpServer.pendingPersistActive) {
-                SDL_CreateDirectory("data/maps/Uploads");
-                char target[FILENAME_MAX];
-                SDL_snprintf(target, sizeof(target),
-                             "data/maps/Uploads/%s.map",
-                             udpServer.pendingPersistName);
-                SDL_PathInfo info;
-                int suffix = 0;
-                while (SDL_GetPathInfo(target, &info)) {
-                    suffix++;
-                    if (suffix > 999) {
-                        target[0] = '\0';
-                        break;
-                    }
-                    SDL_snprintf(target, sizeof(target),
-                                 "data/maps/Uploads/%s (%d).map",
-                                 udpServer.pendingPersistName, suffix);
-                }
-                if (target[0] != '\0') {
-                    FILE *fp = fopen(target, "wb");
-                    if (fp) {
-                        size_t w = fwrite(udpServer.pendingPersistBytes, 1,
-                                          udpServer.pendingPersistLen, fp);
-                        fclose(fp);
-                        if (w != udpServer.pendingPersistLen) {
-                            WB_LOG_WARN(WB_LOG_CAT_NET,
-                                "persist write short: %zu of %u to '%s'",
-                                w, udpServer.pendingPersistLen, target);
-                        } else {
-                            WB_LOG_INFO(WB_LOG_CAT_NET,
-                                "persist wrote '%s' (%u bytes)",
-                                target, udpServer.pendingPersistLen);
-                        }
-                    } else {
-                        WB_LOG_WARN(WB_LOG_CAT_NET,
-                            "persist open failed: '%s'", target);
-                    }
-                } else {
-                    WB_LOG_WARN(WB_LOG_CAT_NET,
-                        "persist suffix cap hit for '%s.map'",
-                        udpServer.pendingPersistName);
-                }
-                udpServer.pendingPersistActive = false;
-            }
-            serverSimCommitPreview(sim);
-            WB_LOG_INFO(WB_LOG_CAT_NET,
-                        "[LOBBY] PREVIEW_COMMIT: kept current map");
-            break;
-        }
-        case PACKET_LOBBY_PREVIEW_RANDOM: {
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
-                serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 1) break;
-            if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
-            udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
-            if (!lobbyClientMayEdit(sim, clientIdx)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
-                              LOBBY_REJECT_NOT_HOST);
-                break;
-            }
-            if (serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
-                              LOBBY_REJECT_LOCKED);
-                break;
-            }
-            uint8_t seedLen = buf[PACKET_HEADER_SIZE];
-            if (seedLen == 0 || seedLen > 63 ||
-                len < PACKET_HEADER_SIZE + 1 + seedLen) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
-                              LOBBY_REJECT_INVALID);
-                break;
-            }
-            char seedStr[64];
-            memset(seedStr, 0, sizeof(seedStr));
-            memcpy(seedStr, buf + PACKET_HEADER_SIZE + 1, seedLen);
-
-            MapGenConfig cfg;
-            if (!mapGenSeedToConfig(seedStr, &cfg)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
-                              LOBBY_REJECT_INVALID);
-                WB_LOG_INFO(WB_LOG_CAT_NET,
-                            "[LOBBY] PREVIEW_RANDOM rejected: bad seed '%s'",
-                            seedStr);
-                break;
-            }
-            /* Seeds may have been generated against a different region;
-             * pin to the standard playable area. */
-            cfg.x1 = MAP_MINE_EDGE_LEFT + 1;
-            cfg.y1 = MAP_MINE_EDGE_TOP + 1;
-            cfg.x2 = MAP_MINE_EDGE_RIGHT - 1;
-            cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
-
-            if (!serverSimReloadRandomMap(sim, &cfg)) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_PREVIEW_RANDOM,
-                              LOBBY_REJECT_INVALID);
-                break;
-            }
-            udpServer.pendingPersistActive = false;
-            WB_LOG_INFO(WB_LOG_CAT_NET,
-                        "[LOBBY] PREVIEW_RANDOM ok: '%s'", seedStr);
-            break;
-        }
-        case PACKET_LOBBY_SET_PASSWORD: {
-            /* [header 8] [pwLen 1] [pw N] — host-only setter for the
-             * runtime password. pwLen 0 clears. We accept this both
-             * in lobby and during play (changing mid-game just gates
-             * new joiners; already-connected clients stay put). The
-             * password text never echoes — only the hasPassword bool
-             * propagates via the next lobby-state broadcast. */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 ||
-                len < PACKET_HEADER_SIZE + 1) break;
-            /* Host slot OR admin-flagged players only — openHost
-             * does NOT grant this. Allowing arbitrary connected
-             * players to set/change a password would let them lock
-             * the host out of their own server. */
-            bool isHost  = (clientIdx == 0);
-            bool isAdmin = serverSimIsPlayerConnected(sim, clientIdx) &&
-                (playersGetClientFlags(
-                    &serverSimGetGameSim(sim)->plyrs,
-                    (BYTE)clientIdx) & PLAYER_FLAG_ADMIN);
-            if (!isHost && !isAdmin) break;
-            if (serverSimGetServerLocks(sim) & LOBBY_LOCK_PASSWORD) {
-                lobbyRejectTo(fromAddr, PACKET_LOBBY_SET_PASSWORD,
-                              LOBBY_REJECT_LOCKED);
-                break;
-            }
-            int rpos = PACKET_HEADER_SIZE;
-            uint8_t pwLen = buf[rpos++];
-            if (pwLen >= MAP_STR_SIZE ||
-                rpos + pwLen > len) break;
-            memset(udpServer.password, 0, MAP_STR_SIZE);
-            if (pwLen > 0) {
-                memcpy(udpServer.password, buf + rpos, pwLen);
-                udpServer.password[pwLen] = '\0';
-            }
-            serverSimSetHasPassword(sim, udpServer.password[0] != '\0');
-            WB_LOG_INFO(WB_LOG_CAT_NET,
-                "lobby: password %s by slot %d",
-                pwLen > 0 ? "set" : "cleared", clientIdx);
-            break;
-        }
         case PACKET_LOBBY_MAP_PREVIEW_REQ: {
             /* [header 8] [pathLen 1] [path N]. Reads data/maps/<path>
              * from the server's filesystem and streams the bytes back
@@ -4209,200 +3476,12 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         }
         case PACKET_WBN_REAUTH: {
-            /* Wire: [header 8] [wbnJoinKey 65] */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN) {
-                char token[WBN_JOIN_KEY_WIRE_LEN];
-                memcpy(token, buf + PACKET_HEADER_SIZE, WBN_JOIN_KEY_WIRE_LEN);
-                token[WBN_JOIN_KEY_WIRE_LEN - 1] = '\0';
-
-                if (winbolonetIsRunning() && token[0] != '\0') {
-                    char errorMsg[512];
-                    bool hasSteam = FALSE;
-                    bool wbnIsSupporter = FALSE;
-                    errorMsg[0] = '\0';
-                    if (winboloNetVerifyClientKey(token,
-                                                  udpServer.clients[clientIdx].playerName,
-                                                  (BYTE)clientIdx, errorMsg,
-                                                  &hasSteam, &wbnIsSupporter)) {
-                        /* Re-merge using the clientHints captured at JOIN_REQUEST
-                         * (the client doesn't re-send them on REAUTH; we re-verify
-                         * against WBN, not the network). */
-                        uint8_t storedHints = udpServer.clients[clientIdx].clientHints;
-                        uint8_t flags = storedHints & PLAYER_CLIENT_HINT_MASK;
-                        flags |= PLAYER_FLAG_WBN_VERIFIED;
-                        if (hasSteam) flags |= PLAYER_FLAG_WBN_STEAM_LINKED;
-                        if (wbnIsSupporter) flags |= PLAYER_FLAG_SUPPORTER;
-                        playersSetClientFlags(&serverSimGetGameSim(sim)->plyrs, (BYTE)clientIdx, flags);
-                        playersSetClientType (&serverSimGetGameSim(sim)->plyrs, (BYTE)clientIdx,
-                                              udpServer.clients[clientIdx].clientType);
-                        fprintf(stderr, "[UDP SERVER] Player %d WBN re-authenticated (steam=%d)\n",
-                                clientIdx, hasSteam ? 1 : 0);
-                        /* If game is already running, send the join event now */
-                        if (serverSimGetState(sim) == serverStateRunning) {
-                            winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
-                                               (BYTE)clientIdx, WINBOLO_NET_NO_PLAYER);
-                        }
-                        /* Broadcast updated flags so other clients see WBN badge */
-                        if (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown) {
-                            serverSimPublishLobbySlot(sim, (BYTE)clientIdx);
-                        }
-                    } else {
-                        fprintf(stderr, "[UDP SERVER] Player %d WBN re-auth failed: %s\n",
-                                clientIdx, errorMsg);
-                    }
-                }
-            }
-            break;
-        }
-        case PACKET_BALANCE_REQUEST: {
-            /* Wire: [header 8] [teamSize 1] [includeBots 1] */
-            int clientIdx = serverFindClient(fromAddr);
-            const BalanceProposal *bp = serverSimGetBalanceProposal(sim);
-            balanceDebugLog("[BAL SERVER] received PACKET_BALANCE_REQUEST: "
-                            "clientIdx=%d lobbyEnabled=%d state=%d len=%d "
-                            "requestInFlight=%d pending=%d winbolonetIsRunning=%d",
-                            clientIdx,
-                            (int)serverSimIsLobbyEnabled(sim),
-                            (int)serverSimGetState(sim),
-                            (int)len,
-                            (int)bp->requestInFlight,
-                            (int)bp->pending,
-                            (int)winbolonetIsRunning());
-            if (clientIdx == 0 && serverSimIsLobbyEnabled(sim) &&
-                serverSimGetState(sim) == serverStateLobby &&
-                len >= PACKET_HEADER_SIZE + 2 &&
-                !serverSimGetBalanceProposal(sim)->requestInFlight &&
-                !serverSimGetBalanceProposal(sim)->pending &&
-                winbolonetIsRunning()) {
-                BalanceThreadData *btd = malloc(sizeof(BalanceThreadData));
-                if (btd) {
-                    SDL_Thread *t;
-                    int i;
-                    memset(btd, 0, sizeof(*btd));
-                    btd->sim = sim;
-                    btd->teamSize = buf[PACKET_HEADER_SIZE];
-                    btd->includeBots = (buf[PACKET_HEADER_SIZE + 1] != 0);
-                    btd->totalPlayers = 0;
-                    btd->numBotSlots = 0;
-                    for (i = 0; i < MAX_TANKS; i++) {
-                        if (!serverSimIsPlayerConnected(sim, i)) continue;
-                        btd->totalPlayers++;
-                        /* Include bot slots in the WBN request only when
-                         * the caller asked for "Bots included". When
-                         * !includeBots the bots are kicked at APPLY time
-                         * and don't need to be skill-placed. */
-                        if (btd->includeBots && serverSimIsBot(sim, (BYTE)i)) {
-                            btd->botSlots[btd->numBotSlots++] = (uint8_t)i;
-                        }
-                    }
-                    balanceDebugLog("[BAL SERVER] dispatching balance thread: "
-                                    "totalPlayers=%u teamSize=%u includeBots=%d numBotSlots=%u",
-                                    (unsigned)btd->totalPlayers,
-                                    (unsigned)btd->teamSize,
-                                    (int)btd->includeBots,
-                                    (unsigned)btd->numBotSlots);
-                    serverSimSetBalanceRequestInFlight(sim, true);
-                    t = SDL_CreateThread(balanceThreadFunc, "WbnBalance", btd);
-                    if (t) {
-                        SDL_DetachThread(t);
-                        balanceDebugLog("[BAL SERVER] balance thread created and detached");
-                    } else {
-                        serverSimSetBalanceRequestInFlight(sim, false);
-                        free(btd);
-                        balanceDebugLog("[BAL SERVER] FAILED to create balance thread");
-                        serverSimConsoleMessage("Failed to start balance thread");
-                    }
-                } else {
-                    balanceDebugLog("[BAL SERVER] dropped balance request: malloc(BalanceThreadData) failed");
-                }
-            } else {
-                balanceDebugLog("[BAL SERVER] dropped balance request: guards failed "
-                                "(clientIdx==0?%d lobbyEnabled?%d state==lobby?%d len>=10?%d "
-                                "!requestInFlight?%d !pending?%d wbnRunning?%d)",
-                                (int)(clientIdx == 0),
-                                (int)serverSimIsLobbyEnabled(sim),
-                                (int)(serverSimGetState(sim) == serverStateLobby),
-                                (int)(len >= PACKET_HEADER_SIZE + 2),
-                                (int)!serverSimGetBalanceProposal(sim)->requestInFlight,
-                                (int)!serverSimGetBalanceProposal(sim)->pending,
-                                (int)winbolonetIsRunning());
-            }
-            break;
-        }
-        case PACKET_BALANCE_APPLY: {
-            /* Wire: [header 8] (no payload) */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx == 0 && serverSimIsLobbyEnabled(sim) &&
-                serverSimGetState(sim) == serverStateLobby &&
-                serverSimGetBalanceProposal(sim)->pending) {
-                int i;
-                /* If the request was "humans only" (includeBots=false),
-                 * kick every bot before writing team assignments — the
-                 * caller has signed up for a clean human-only matchup
-                 * and the proposal contains no team for those slots. */
-                if (!serverSimGetBalanceProposal(sim)->includeBots) {
-                    for (i = 0; i < MAX_TANKS; i++) {
-                        if (serverSimIsBot(sim, (BYTE)i)) {
-                            serverSimRemoveBot(sim, (BYTE)i);
-                        }
-                    }
-                }
-                for (i = 0; i < MAX_TANKS; i++) {
-                    if (serverSimGetBalanceProposal(sim)->teamForSlot[i] != 0) {
-                        serverSimSetTeamBatch(sim, (BYTE)i, serverSimGetBalanceProposal(sim)->teamForSlot[i]);
-                        serverSimPublishLobbySlot(sim, (BYTE)i);
-                    }
-                }
-                serverSimReapplyTeamAlliances(sim);
-                serverSimClearBalanceProposal(sim);
-                /* Publish the cleared proposal so balanceProposalActive flips
-                 * back to false on every client — keeps canBalance gating
-                 * from staying disabled on the Balance-from-WBN button. */
-                {
-                    ControlEvent clrEvt;
-                    memset(&clrEvt, 0, sizeof(clrEvt));
-                    clrEvt.type = CTRL_BALANCE_PROPOSAL;
-                    serverSimPublishControl(sim, &clrEvt);
-                }
-                logAddEvent(log_BalanceApplied, 0, 0, 0, 0, 0, NULL);
-                serverSimConsoleMessage("Team balance applied");
-            }
-            break;
-        }
-        case PACKET_BALANCE_DISMISS: {
-            /* Wire: [header 8] (no payload) */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx == 0 && serverSimIsLobbyEnabled(sim) &&
-                serverSimGetState(sim) == serverStateLobby &&
-                serverSimGetBalanceProposal(sim)->pending) {
-                ControlEvent evt;
-                serverSimClearBalanceProposal(sim);
-                memset(&evt, 0, sizeof(evt));
-                evt.type = CTRL_BALANCE_PROPOSAL;
-                serverSimPublishControl(sim, &evt);
-            }
-            break;
-        }
-        case PACKET_MAP_SKIP_VOTE: {
-            /* Wire: [header 8] (no payload — server identifies player by source) */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 &&
-                !(serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP)) {
-                serverSimMapSkipVoteToggle(sim, (uint8_t)clientIdx);
-            }
-            break;
-        }
-        case PACKET_GAME_VOTE_TOGGLE: {
-            /* Wire: [header 8] [kind 1] [on 1]. */
-            if (len < PACKET_HEADER_SIZE + 2) break;
+            /* Wire: [header 8] [wbnJoinKey 65]. */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0) break;
-            if (udpServer.clientReqCooldownTicks[clientIdx] > 0) break;
-            udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
-            uint8_t kind   = buf[PACKET_HEADER_SIZE + 0];
-            uint8_t toggle = buf[PACKET_HEADER_SIZE + 1];
-            serverSimGameVoteToggle(sim, (uint8_t)clientIdx, kind, toggle);
+            ClientCommand cmd;
+            if (!commandCodecDecode(buf, len, &cmd)) break;
+            (void)serverSimApplyCommand(sim, clientIdx, &cmd);
             break;
         }
         case PACKET_PUNCH_NOTIFY: {
