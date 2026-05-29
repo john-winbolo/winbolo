@@ -1656,6 +1656,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             if (c->outHeadSeq > c->outTailSeq) {
                 c->outHeadSeq = c->outTailSeq;
             }
+            /* Drive the "coalesce into next outgoing frame" half of the
+             * plan's eager-then-coalesce contract: a submit that arrived
+             * while the head was in flight (wasEmpty=false → no immediate
+             * drain) waits here for the prior head to ack, then ships.
+             * Without this, never-sent tail entries sit forever because
+             * the retransmit timer's lastSentMs!=0 gate excludes them. */
+            if (c->outHeadSeq != c->outTailSeq) udpClientDrainCommandQueue(c);
         }
         break;
     }
