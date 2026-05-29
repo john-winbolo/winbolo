@@ -2444,7 +2444,7 @@ void transportUdpClientSendWbnReauth(Transport *t) {
     uint8_t buf[COMMAND_MAX_WIRE_BYTES];
     size_t len;
     if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
-        udpClientSendTo(c, buf, len);
+        udpClientSendTo(c, buf, (int)len);
     }
 }
 
