@@ -1396,38 +1396,119 @@ function Brain.think(info)
   -- allied bots that are mid-pill-take so we don't drive through
   -- their combat zone. Uses ally_state goal/substate + target mx/my.
   -- Also stamps a 2-tile-wide firing lane from the ally tank to the
-  -- pill (excluding approach phase where the tank could be far away).
+  -- pill. Includes approach now — if their tank is far from the pill
+  -- (>12 tiles) the firing-lane stamp is skipped below, so the only
+  -- effect from far is the small radius around the pill itself.
   local ALLY_COMBAT_SUBS = {
+    approach=true,
     aim=true, charge=true, engage=true, shoot_pill=true, swerve=true,
     in_range_position=true, in_range_aim=true, in_range_aim_pre=true,
     in_range_aim_finetune=true, build_walls=true, detree=true,
   }
-  local ALLY_AVOID_RADIUS = 3
-  local ALLY_AVOID_COST   = 10
+  local ALLY_AVOID_RADIUS = 2  -- 5x5 block around the ally tank itself
+  local ALLY_AVOID_COST   = C.ALLY_AVOID_COST or 800
+  -- Tank-5x5 only stamps when the ally tank is within
+  -- TANK_STAMP_NEAR_TILES *euclidean* of either their setup
+  -- (approach) point or their standoff point.  Both points are
+  -- broadcast in bsi.smx/smy and bsi.ssx/ssy on attack_pill goals.
+  -- Tighter than the prior "within 2 of pill" rule and avoids leaving
+  -- a breadcrumb trail while the ally is still driving in.
+  local TANK_STAMP_NEAR_TILES = 3
   do
     local now_aa = state.tick or 0
+    -- Clear previous tick's stamps so a moving ally doesn't leave a
+    -- breadcrumb trail of +800 cost behind them.  We stamp each tile
+    -- ourselves, so we know exactly which to zero.  Pill/base tiles
+    -- are never stamped (skipped at stamp time) so this clear can
+    -- safely write 0 without wiping rebuild_overlay's impassable
+    -- markers.
+    -- All persistent overlay sources we must NOT clobber:
+    --   - pill tiles (32767, rebuilt on dirty only)
+    --   - hostile-base tiles (~1500, rebuilt on dirty only)
+    --   - stuck_blacklist tiles (1500, re-stamped by steering AFTER us)
+    -- Skip those on both stamp AND clear so we never zero them and so
+    -- our +800 doesn't weaken a stronger pre-existing penalty.
+    local stuck_bl = state.stuck_blacklist
+    local stamped = state._ally_avoid_stamped
+    if stamped then
+      for k in pairs(stamped) do
+        if not (stuck_bl and stuck_bl[k]) then
+          cpf.set_overlay(U.mkey_x(k), U.mkey_y(k), 0)
+        end
+        stamped[k] = nil
+      end
+    else
+      stamped = {}
+      state._ally_avoid_stamped = stamped
+    end
+
+    local function stamp(x, y)
+      if x < 0 or x > 255 or y < 0 or y > 255 then return end
+      local pkey = y * 256 + x
+      if world.pill_at and world.pill_at[pkey] then return end
+      if world.base_at and world.base_at[pkey] then return end
+      local mk = U.mkey(x, y)
+      if stuck_bl and stuck_bl[mk] then return end  -- defer to stuck_blacklist
+      cpf.set_overlay(x, y, ALLY_AVOID_COST)
+      stamped[mk] = true
+    end
+
     for ally_pn, slot in ally_state.iter_active(now_aa, 1750) do
       if ally_pn ~= info.player_number then
         local ai = slot.info
+        -- Compute the "ally tank within 3 euclidean of either setup
+        -- or standoff" gate up front so both the diagnostic overlay
+        -- and the stamping block use the same source of truth.
+        local pmx = tonumber(ai.mx)
+        local pmy = tonumber(ai.my)
+        local atmx = tonumber(ai.tx)
+        local atmy = tonumber(ai.ty)
+        -- Parse the packed "p" field — 8 hex chars,
+        -- approach_mx/approach_my/standoff_mx/standoff_my each 2 chars.
+        -- Falls back to the legacy 4-key form if a peer is on old code.
+        local smx, smy, ssx, ssy
+        if ai.p and #ai.p == 8 then
+          smx = tonumber(ai.p:sub(1, 2), 16)
+          smy = tonumber(ai.p:sub(3, 4), 16)
+          ssx = tonumber(ai.p:sub(5, 6), 16)
+          ssy = tonumber(ai.p:sub(7, 8), 16)
+        else
+          smx = tonumber(ai.smx); smy = tonumber(ai.smy)
+          ssx = tonumber(ai.ssx); ssy = tonumber(ai.ssy)
+        end
+        local function edist(x1, y1, x2, y2)
+          if not (x1 and y1 and x2 and y2) then return math.huge end
+          local ddx = x1 - x2; local ddy = y1 - y2
+          return math.sqrt(ddx * ddx + ddy * ddy)
+        end
+        local d_setup    = edist(atmx, atmy, smx, smy)
+        local d_standoff = edist(atmx, atmy, ssx, ssy)
+        local d_min      = math.min(d_setup, d_standoff)
+        local in_range   = d_min <= TANK_STAMP_NEAR_TILES
+        local in_combat_sub = ai.goal == "attack_pill" and ALLY_COMBAT_SUBS[ai.sub] and true or false
+        local active        = in_combat_sub and in_range
+
+        -- Diagnostic overlay: always rendered for any attack_pill ally
+        -- (on the ally_avoid_overlay layer which defaults on).  Shows
+        -- whether the 5x5 stamp is active and, when off, the live
+        -- euclidean distance to each of the two activation points.
+
         if ai.goal == "attack_pill" and ALLY_COMBAT_SUBS[ai.sub] then
-          local pmx = tonumber(ai.mx)
-          local pmy = tonumber(ai.my)
-          if pmx and pmy then
-            -- Stamp pill target radius
-            for dy = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
-              for dx = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
-                local ax = pmx + dx
-                local ay = pmy + dy
-                if ax >= 0 and ax <= 255 and ay >= 0 and ay <= 255 then
-                  cpf.set_overlay(ax, ay, ALLY_AVOID_COST)
+          if pmx and pmy and atmx and atmy then
+            -- 5x5 tank stamp gated on euclidean ≤ 3 to setup or
+            -- standoff (see above).  Stops the breadcrumb trail while
+            -- they're still driving in from far away.
+            if in_range then
+              for dy = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
+                for dx = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
+                  stamp(atmx + dx, atmy + dy)
                 end
               end
             end
             -- Stamp firing lane: 2-tile-wide line from ally tank to
             -- pill target. Uses broadcast tx/ty for ally position.
-            local atmx = tonumber(ai.tx)
-            local atmy = tonumber(ai.ty)
-            if atmx and atmy and U.mdist(atmx, atmy, pmx, pmy) <= 12 then
+            -- (Unchanged — user wants the engage-to-pill lane to stay.)
+            if U.mdist(atmx, atmy, pmx, pmy) <= 12 then
               local ldx = pmy - atmy
               local ldy = -(pmx - atmx)
               local llen = math.max(1, math.sqrt(ldx * ldx + ldy * ldy))
@@ -1435,11 +1516,8 @@ function Brain.think(info)
               U.line_walk(atmx + 0.5, atmy + 0.5, pmx + 0.5, pmy + 0.5,
                 function(lx, ly)
                   for w = -1, 1 do
-                    local wx = U.mclamp(math.floor(lx + pnx * w + 0.5))
-                    local wy = U.mclamp(math.floor(ly + pny * w + 0.5))
-                    if wx >= 0 and wx <= 255 and wy >= 0 and wy <= 255 then
-                      cpf.set_overlay(wx, wy, ALLY_AVOID_COST)
-                    end
+                    stamp(U.mclamp(math.floor(lx + pnx * w + 0.5)),
+                          U.mclamp(math.floor(ly + pny * w + 0.5)))
                   end
                 end)
             end
@@ -1887,14 +1965,6 @@ function Brain.think(info)
     state.goal.wy       = U.m2w(cur_my)
   end
 
-     and now <= state._respawn_wipe_until
-     and viz.is_on("hud_goal") then
-    if state._respawn_prev_mx then
-      local pmx = state._respawn_prev_mx + 0.5
-      local pmy = state._respawn_prev_my + 0.5
-      local R = C.RESPAWN_CACHE_WIPE_DIST
-    end
-  end
 
   -- Update prev position for next tick's respawn detection.
   state._prev_mx = cur_mx
@@ -1935,10 +2005,26 @@ function Brain.think(info)
   if state._stuck_desperate and state._desp_ticks == DESPERATE_TICKS then
   end
 
+  -- Firing counts as progress: a bot that's planted while shooting at
+  -- a base / pill / tank isn't stuck, it's working.  Detect by shell
+  -- count dropping since last tick.  Without this, attack_base bots
+  -- that legitimately camp the capture tile while shooting nearby
+  -- defenders trip the 3-second stuck timer and abandon the take.
+  local fired_this_tick = state.last_shells ~= nil
+                          and info.shells ~= nil
+                          and info.shells < state.last_shells
+  state.last_shells = info.shells
+
+  if fired_this_tick then
+    -- Active firing is progress — reset the timer so a planted bot
+    -- shooting defenders doesn't trip stuck-flee mid-take.
+    state.stuck_for = 0
+  end
   if cur_mx == state.last_mx and cur_my == state.last_my
      and state.goal.kind ~= "none"
      and not attack_at_standoff
-     and not state.wall_clearing then
+     and not state.wall_clearing
+     and not fired_this_tick then
     state.stuck_for = state.stuck_for + 1
     if state.stuck_for > 150 then  -- ~3 s
       if state.goal.kind == "attack_pill" or state.goal.kind == "pill_place" then
@@ -2386,6 +2472,16 @@ function Brain.think(info)
       goals.update_pool_cache(state, world, info)
     end
     opt(string.format("  update_pool_cache done %.2f ms", (clock_us() - t_pc0) / 1000))
+
+    -- Per-tick ally-claimed REJECT sync: maintains entry._reject on
+    -- cost_cache against the live ally_state slate so the pool grid and
+    -- any selection that consults cost_cache between replans see fresh
+    -- yield-decisions. Cheap (hash lookups per cached candidate). Pass
+    -- info so the armour_too_low branch sees current armour (state.
+    -- _last_info isn't populated outside the panel builder).
+    if goals.sync_ally_claimed_rejects then
+      goals.sync_ally_claimed_rejects(state, info)
+    end
 
     -- Purge stale per-pill plan_position cache entries (pills that
     -- have been destroyed / picked up / captured friendly since last
@@ -3798,8 +3894,6 @@ function Brain.think(info)
       end
       -- Goal tile mx/my as a fallback for the ally_claimed match path
       -- (goals.lua:3660-3664) when target_id isn't carried through.
-      -- Cheap (~12 bytes on the wire) and lets the receiver match by
-      -- coordinates if id sync drifts between brains.
       if state.goal.mx and state.goal.my then
         bsi.mx = tostring(state.goal.mx)
         bsi.my = tostring(state.goal.my)
@@ -3846,6 +3940,55 @@ function Brain.think(info)
       state.last_broadcast_state_tick = now
       state.pending_lgm_broadcast = nil
       state.pending_lgm_back = nil
+    end
+
+    -- ── Build the /info extra payload (bse) and ship it on idle ticks ──
+    -- /info extra ships supplementary fields that don't fit the 128-byte
+    -- /info state budget.  Receiver MERGES into the slot (set_info is the
+    -- replacing kind; merge_info is the additive kind).  We only send
+    -- when send_msg is otherwise free AND the extras have changed since
+    -- last ship; bandwidth stays tiny and the receiver always has fresh
+    -- data within a tick or two of a goal transition.
+    local bse = state.broadcast_state_extra
+    if bse == nil then
+      bse = {}; state.broadcast_state_extra = bse
+    end
+    for k in pairs(bse) do bse[k] = nil end
+    -- Attack_pill setup + standoff coords packed as 8 hex chars (each
+    -- tile coord is 0..255 = 2 hex chars: approach_mx, approach_my,
+    -- standoff_mx, standoff_my).
+    if state.goal and state.goal.kind == "attack_pill"
+       and state.goal.approach_mx and state.goal.approach_my
+       and state.goal.standoff_mx and state.goal.standoff_my then
+      bse.p = string.format("%02X%02X%02X%02X",
+                            state.goal.approach_mx & 0xFF,
+                            state.goal.approach_my & 0xFF,
+                            state.goal.standoff_mx & 0xFF,
+                            state.goal.standoff_my & 0xFF)
+    end
+    local last_ext = state.last_broadcasted_state_extra
+    if last_ext == nil then
+      last_ext = {}; state.last_broadcasted_state_extra = last_ext
+    end
+    local extras_differ = false
+    for k, v in pairs(bse)      do if last_ext[k] ~= v then extras_differ = true break end end
+    if not extras_differ then
+      for k, v in pairs(last_ext) do if bse[k] ~= v then extras_differ = true break end end
+    end
+    -- Only send extras when nothing else is going out this tick and
+    -- there's actual change.  Heartbeat: every 1500 ticks, re-emit
+    -- whatever extras are current so a freshly-joined or stale-slot
+    -- ally picks them up without waiting for the next goal change.
+    state.last_broadcast_extra_tick = state.last_broadcast_extra_tick or 0
+    local extra_heartbeat_due = (now - state.last_broadcast_extra_tick) >= 1500
+    if not send_msg
+       and (next(bse) ~= nil or next(last_ext) ~= nil)
+       and (extras_differ or extra_heartbeat_due) then
+      send_msg = comms.format_extra(bse)
+      msg_dest = info.allies and info.allies or 0
+      for k in pairs(last_ext) do last_ext[k] = nil end
+      for k, v in pairs(bse)      do last_ext[k] = v end
+      state.last_broadcast_extra_tick = now
     end
   end
 

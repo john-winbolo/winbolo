@@ -26,6 +26,12 @@ print("[attack] loaded from: " .. tostring(debug.getinfo(1, "S").source))
 
 local M = {}
 
+local PRE_ENGAGE_SUBS = {
+  plan_position=true, approach=true, gather_trees=true, build_walls=true,
+  aim=true, in_range_position=true, in_range_aim_pre=true,
+  in_range_aim=true, in_range_aim_finetune=true, detree=true,
+}
+
 -- "Effectively stopped" gate for the substate transitions in approach
 -- and in_range_position. Returns true if EITHER the reported speed is
 -- at/below speed_tol OR the tank's wu position hasn't changed for the
@@ -102,6 +108,37 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
 
   local left_cover  = count_cover(lfx, lfy)
   local right_cover = count_cover(rfx, rfy)
+
+  -- Deep-water penalty on the swerve retreat path. The tank swerves
+  -- perpendicular then retreats outward from standoff to the setup
+  -- circle. Check each side's retreat line (from standoff radius to
+  -- approach radius along the swerve direction) for deep water.
+  local standoff_r = goal._is_ppt and C.PPT_STANDOFF or C.ATTACK_PILL_STANDOFF
+  local setup_r    = standoff_r + C.ATTACK_APPROACH_OFFSET
+  local DEEP_WATER_PENALTY = -50
+  local function check_retreat_deepsea(perp_x, perp_y)
+    local penalty = 0
+    -- Walk from standoff radius to setup radius along the swerve
+    -- direction (perpendicular + outward from pill).
+    -- Sample every 0.5 tiles along the retreat line.
+    local steps = math.ceil((setup_r - standoff_r) / 0.5)
+    for i = 0, steps do
+      local t = standoff_r + (setup_r - standoff_r) * i / steps
+      -- retreat point: pill center + swerve-perpendicular offset + outward
+      local rx = pcx + perp_x * 2 + ux * t
+      local ry = pcy + perp_y * 2 + uy * t
+      local rmx = math.floor(rx)
+      local rmy = math.floor(ry)
+      if U.in_map(rmx, rmy) and U.ttype(rmx, rmy) == C.T_DEEPSEA then
+        penalty = penalty + DEEP_WATER_PENALTY
+      end
+    end
+    return penalty
+  end
+
+  left_cover  = left_cover  + check_retreat_deepsea(-uy, ux)
+  right_cover = right_cover + check_retreat_deepsea(uy, -ux)
+
   goal._best_swerve_dir = left_cover >= right_cover and 1 or -1
   goal._swerve_viz = {
     lfx = lfx, lfy = lfy, left_cover = left_cover,
@@ -109,6 +146,45 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
     chosen = goal._best_swerve_dir,
     pcx = pcx, pcy = pcy,
   }
+end
+
+-- Enter swerve substate. Centralises the duplicated swerve-entry
+-- setup (timing, direction, pill-dead flag) so all 4 entry points
+-- (charge, engage-kill, engage-dodge, shoot_pill) share one path.
+--
+-- mode:
+--   "kill"      — pill dead or enough shots fired (offensive swerve)
+--   "defensive" — pill still alive, dodging return fire
+local LOW_HP_SWERVE = { [1] = 30, [2] = 36, [3] = 40 }
+local function enter_swerve(goal, world, state, info, pmx, pmy, mode)
+  local now = state.tick or 0
+  local tmx = info.tankx >> 8
+  local tmy = info.tanky >> 8
+  goal.substate    = "swerve"
+  goal._swerve_start = now
+  if mode == "kill" then
+    local low_hp_ticks = LOW_HP_SWERVE[goal._charge_start_hp]
+    if low_hp_ticks then
+      goal._swerve_ticks_left      = low_hp_ticks
+      goal._swerve_turn_ticks_left = math.min(low_hp_ticks, C.SWERVE_TURN_TICKS)
+    elseif goal._kill_attempt then
+      goal._swerve_ticks_left      = C.SWERVE_TOTAL_TICKS
+      goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
+    else
+      goal._swerve_ticks_left      = C.SWERVE_DEFENSIVE_TOTAL_TICKS
+      goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
+    end
+    goal._swerve_pill_dead = true
+  else
+    goal._swerve_ticks_left      = C.SWERVE_DEFENSIVE_TOTAL_TICKS
+    goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
+    goal._swerve_pill_dead       = false
+  end
+  if not goal._best_swerve_dir then
+    compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
+  end
+  goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
+  goal._engage_hits = nil
 end
 
 -- Clear the active goal, idle the pathfinder, and wipe ALL transient
@@ -162,6 +238,22 @@ local function clear_attack_goal(state, reason)
   end
 end
 M.clear_attack_goal = clear_attack_goal
+M.enter_swerve      = enter_swerve
+
+-- Returns a non-nil reason string when current armour vs pill HP make
+-- pressing on with the take unsafe.  Used at the start of approach /
+-- build_walls / charge to abort attack_pill early instead of dying
+-- mid-charge.  The reason text feeds clear_attack_goal so the left-top
+-- "last attack cleared" overlay shows WHY we bailed.
+local function armour_unsafe_for_pill_take(info, pill_hp)
+  if not pill_hp or pill_hp < C.ATTACK_PILL_UNSAFE_HP_THRESHOLD then return nil end
+  local arm = info and info.armour or 0
+  if arm >= C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR then return nil end
+  return string.format("armour_too_low: arm=%d (need >= %d) vs pillHP=%d (>= %d)",
+                       arm, C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR,
+                       pill_hp, C.ATTACK_PILL_UNSAFE_HP_THRESHOLD)
+end
+M.armour_unsafe_for_pill_take = armour_unsafe_for_pill_take
 
 -- STILL_POS_TOL: max world-unit drift over the still-window that
 -- still counts as "stopped". Without this, a 1-wu-per-tick jitter
@@ -345,6 +437,54 @@ local function standoff_shot_obstacle(goal, pill, world)
     end
   end
   return nil
+end
+
+-- Shot-path obstacle check: simulate a shell from the tank's current
+-- position toward the aim point. Count how many shots it would take to
+-- clear all obstacles (forest, walls) before the shell reaches the
+-- target pill tile. Returns (shots_needed, reason_str) where
+-- shots_needed is the extra shots to clear the path (0 = clear path),
+-- or (math.huge, reason) if an impassable obstacle (other pillbox) blocks.
+local function shot_path_obstacle_count(info, goal, world)
+  local pmx, pmy = goal.mx, goal.my
+  local aim_mx = goal.aim_mx or (pmx + 0.5)
+  local aim_my = goal.aim_my or (pmy + 0.5)
+  local target_wx = math.floor(aim_mx * 256 + 0.5)
+  local target_wy = math.floor(aim_my * 256 + 0.5)
+  local tiles = cpf.simulate_shot(info.tankx, info.tanky,
+                                  target_wx, target_wy,
+                                  cpf.SHOT_TANK, 0)
+  if not tiles then return 0, "no sim" end
+  local origin_mx = info.tankx >> 8
+  local origin_my = info.tanky >> 8
+  local shots = 0
+  local reached_pill = false
+  for _, t in ipairs(tiles) do
+    if t.mx == pmx and t.my == pmy then
+      reached_pill = true
+      break
+    end
+    if t.mx ~= origin_mx or t.my ~= origin_my then
+      local tt = U.ttype(t.mx, t.my)
+      if tt == C.T_BUILDING then
+        shots = shots + 5                    -- 1 hit → halfbuild + 4 life
+      elseif tt == C.T_HALFBUILD then
+        shots = shots + 4                    -- worst case: life=4
+      elseif tt == C.T_FOREST then
+        shots = shots + 1
+      else
+        local plist = world.pill_at and world.pill_at[t.my * 256 + t.mx]
+        if plist then
+          for _, e in ipairs(plist) do
+            if e.pill and e.pill.health and e.pill.health > 0 then
+              return math.huge, string.format("pill at (%d,%d) hp=%d", t.mx, t.my, e.pill.health)
+            end
+          end
+        end
+      end
+    end
+  end
+  return shots, nil, reached_pill
 end
 
 -- Count forest tiles on the Bresenham line from (x0,y0) to (x1,y1), excluding
@@ -578,25 +718,31 @@ local function score_standoff(world, cx, cy, pill, info, orbit_radius)
   local influence_pen = -(cpf.influence_at(cx, cy) or 0)
                         * C.ATTACK_STANDOFF_INFLUENCE_WEIGHT
 
-  -- Friendly pill as barrier bonus (aIndy): if a friendly pill is between us
-  -- and the target, it absorbs enemy fire — discount the position.
+  -- Friendly pill interaction: a friendly pill BETWEEN us and the target
+  -- (closer to the target) absorbs enemy fire — bonus. A friendly pill
+  -- BEHIND us (further from the target, on the shot path outward) blocks
+  -- our shells — penalty like a wall.
   local fpill_barrier_bonus = 0
+  local fpill_behind_pen = 0
   for _, fp in pairs(world.pills) do
     if fp.owner == "friendly" and fp.health > 0 then
-      -- Check if friendly pill is roughly on the line target→standoff
       local d_fp_target = U.mdist(fp.mx, fp.my, pill.mx, pill.my)
       local d_fp_us = U.mdist(fp.mx, fp.my, cx, cy)
       local d_total = U.mdist(cx, cy, pill.mx, pill.my)
-      -- Friendly pill is "between" if both distances are less than total
-      if d_fp_target < d_total and d_fp_us < d_total and d_fp_target >= 1 then
+      if d_fp_target < (d_total - 1) and d_fp_us < d_total and d_fp_target >= 1 then
+        -- Between us and the target, at least 1 tile inside our standoff
+        -- radius (not flush against us) — real shield position.
         fpill_barrier_bonus = fpill_barrier_bonus + C.FPILL_BARRIER_BONUS
+      elseif d_fp_target > d_total and d_fp_us <= 3 then
+        -- Behind us (further from target), close enough to block shots
+        fpill_behind_pen = fpill_behind_pen + 200
       end
     end
   end
 
   return approach + water_pen + pushback_pen + crossfire + escape_cost + tree_pen
        + approach_exposure + orbit_pen + threat_pen + influence_pen
-       - fpill_barrier_bonus
+       + fpill_behind_pen - fpill_barrier_bonus
 end
 
 -- Enumerate candidate standoff positions around `pill` and pick the best scored one.
@@ -2264,9 +2410,93 @@ function M.update_attack_substate(goal, state, world, info)
 
   if not goal.substate then goal.substate = "plan_position" end
 
+  -- LGM-near-pill abort: a hostile LGM within the danger radius of the
+  -- target pill means the defender is right there ready to retake /
+  -- repair, AND will be supported by their tank. Different reaction
+  -- depending on substate:
+  --   * "Firing" substates (charge / shoot_pill / engage / in_range_aim
+  --     [_finetune]) — we have rounds in flight or are about to fire;
+  --     enter swerve to dodge return-fire instead of bailing flat-footed.
+  --   * Everything else — clear_attack_goal so pick_goal picks something
+  --     safer next tick.
+  -- Either way, stamp pill_danger_nearby[pill_id] = now + ~30s so the
+  -- eval re-pick adds a danger_nearby ×1.5 multiplier and we don't
+  -- bounce right back onto this same pill.
+  do
+    local LGM_RADIUS = C.PILL_DANGER_NEARBY_RADIUS or 3
+    local lgm_seen = nil
+    local perc = state.perc
+    if perc and perc.enemy_lgms then
+      for _, el in ipairs(perc.enemy_lgms) do
+        local dx = (el.mx or 0) - pmx
+        local dy = (el.my or 0) - pmy
+        if dx >= -LGM_RADIUS and dx <= LGM_RADIUS
+           and dy >= -LGM_RADIUS and dy <= LGM_RADIUS then
+          lgm_seen = el
+          break
+        end
+      end
+    end
+    if lgm_seen then
+      local pid = goal.target_id
+      if pid then
+        state.pill_danger_nearby = state.pill_danger_nearby or {}
+        state.pill_danger_nearby[pid] = now + (C.PILL_DANGER_NEARBY_TICKS or 1500)
+      end
+      local FIRING_SUBS = {
+        charge=true, shoot_pill=true, engage=true,
+        in_range_aim=true, in_range_aim_finetune=true,
+      }
+      local cur_sub = goal.substate or "?"
+      if FIRING_SUBS[cur_sub] then
+        print(string.format(TAG ..
+          " ATTACK: LGM@(%d,%d) within %dt of pill@(%d,%d) — entering swerve from %s",
+          lgm_seen.mx or -1, lgm_seen.my or -1, LGM_RADIUS, pmx, pmy, cur_sub))
+        enter_swerve(goal, world, state, info, pmx, pmy, "defensive")
+        return
+      else
+        clear_attack_goal(state, string.format(
+          "abort@%s — enemy LGM@(%d,%d) within %dt of pill@(%d,%d)",
+          cur_sub, lgm_seen.mx or -1, lgm_seen.my or -1, LGM_RADIUS, pmx, pmy))
+        return
+      end
+    end
+  end
+
+  -- Before committing to plan_position, wait for the LGM to return.
+  -- Without the builder we can't capture after killing or build shields.
+  -- If the LGM is out (not in tank, not dead) and the builder isn't
+  -- actively dispatching it for THIS goal's purposes (gather_trees etc.),
+  -- hold in plan_position without doing work — the LGM will return and
+  -- we resume. This avoids aborting the goal (which causes oscillation)
+  -- while still not starting the expensive angle sweep until the LGM
+  -- is available.
+  if goal.substate == "plan_position"
+     and not goal.scan_spots
+     and info.man_status ~= C.LGM_INTANK
+     and info.man_status ~= C.LGM_DEAD then
+    return  -- hold, don't advance plan_position until LGM is back
+  end
+
   -- Only log on substate transitions (avoid spamming every tick)
   if goal.substate ~= goal._last_logged_sub then
     goal._last_logged_sub = goal.substate
+  end
+
+  -- Track whether the LGM was dead when this pill take started.
+  -- If it was dead and then respawns (transitions to ground/intank),
+  -- abort pre-engage substates so the bot can go pick up the builder
+  -- instead of continuing a take it started without one.
+  if not goal._lgm_was_dead_at_start then
+    goal._lgm_was_dead_at_start = (info.man_status == C.LGM_DEAD)
+  end
+  if goal._lgm_was_dead_at_start
+     and info.man_status ~= C.LGM_DEAD
+     and PRE_ENGAGE_SUBS[goal.substate] then
+    print(string.format(TAG .. " ATTACK: aborting pre-engage (%s) — LGM respawned mid-take (status=%d)",
+      goal.substate, info.man_status))
+    clear_attack_goal(state, "LGM respawned mid-take")
+    return
   end
 
   -- Look up pill
@@ -2307,6 +2537,17 @@ function M.update_attack_substate(goal, state, world, info)
       goal._is_ppt              = nil
       goal._trees_for_walls     = nil
       goal.scan_spots           = nil
+      goal.standoff_mx          = nil
+      goal.standoff_my          = nil
+      goal.standoff_fx          = nil
+      goal.standoff_fy          = nil
+      goal.approach_fx          = nil
+      goal.approach_fy          = nil
+      goal.approach_mx          = nil
+      goal.approach_my          = nil
+      goal._chosen_deg          = nil
+      goal._plan_show_tick      = nil
+      goal._plan_logged         = nil
       goal._plan_position_cleared = true
     end
     -- Only scan once, reuse stored results for drawing
@@ -2546,6 +2787,20 @@ function M.update_attack_substate(goal, state, world, info)
         local smx, smy = M.pick_standoff(world, info, pill, state)
         goal.standoff_mx = smx
         goal.standoff_my = smy
+        if smx then
+          goal.standoff_fx = smx + 0.5
+          goal.standoff_fy = smy + 0.5
+          local dx = goal.standoff_fx - (pmx + 0.5)
+          local dy = goal.standoff_fy - (pmy + 0.5)
+          local d = math.sqrt(dx * dx + dy * dy)
+          if d > 0.01 then
+            local ux, uy = dx / d, dy / d
+            goal.approach_fx = goal.standoff_fx + ux * C.ATTACK_APPROACH_OFFSET
+            goal.approach_fy = goal.standoff_fy + uy * C.ATTACK_APPROACH_OFFSET
+            goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
+            goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
+          end
+        end
         -- Fallback path: no shield scan needed (no winner from greens).
         -- Pair scan_spots assignment with the end of this branch so the
         -- block is idempotent under budget abort, same as the if-best
@@ -2661,6 +2916,11 @@ function M.update_attack_substate(goal, state, world, info)
           print(string.format(TAG .. " ATTACK: plan_position -> gather_trees (%d/%d trees for %d walls)",
                 info.trees or 0, trees_needed, n_pots))
         else
+          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+          if unsafe then
+            clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
+            return
+          end
           goal.substate = "approach"
           print(string.format(TAG .. " ATTACK: plan_position -> approach, standoff=(%d,%d) precise=(%.1f,%.1f)",
                 goal.standoff_mx, goal.standoff_my,
@@ -2692,6 +2952,11 @@ function M.update_attack_substate(goal, state, world, info)
     local stalled = (now - (goal._gather_last_progress or now)) > 250  -- ~5 s
     local timed_out = (now - (goal._gather_start or now)) > (C.PPT_GATHER_TIMEOUT or 1500)
     if trees_have >= trees_need then
+      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+      if unsafe then
+        clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
+        return
+      end
       goal.substate = "approach"
       goal._trees_for_walls = nil
       goal._gather_start    = nil
@@ -2705,6 +2970,11 @@ function M.update_attack_substate(goal, state, world, info)
       -- frees init.lua's aim override to set aim_mx/aim_my from the
       -- pill-edge geometry instead of the corner the scan picked,
       -- which would otherwise be unprotected without walls.
+      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+      if unsafe then
+        clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
+        return
+      end
       goal.substate = "approach"
       goal._is_ppt = false
       goal._shield_scan = nil
@@ -2781,13 +3051,41 @@ function M.update_attack_substate(goal, state, world, info)
 
       -- Reach the approach point (precise float, 1.5 tiles behind standoff).
       -- Tolerance: 64 wu (1/4 tile) AND speed <= 4.
-      local afx = goal.approach_fx or (goal.approach_mx and (goal.approach_mx + 0.5))
-                                    or (goal.standoff_mx and (goal.standoff_mx + 0.5))
-      local afy = goal.approach_fy or (goal.approach_my and (goal.approach_my + 0.5))
-                                    or (goal.standoff_my and (goal.standoff_my + 0.5))
+      if not goal.approach_fx and not goal.approach_mx then
+        -- Recover: compute approach point from standoff on the fly.
+        if goal.standoff_mx then
+          local sfx = goal.standoff_fx or (goal.standoff_mx + 0.5)
+          local sfy = goal.standoff_fy or (goal.standoff_my + 0.5)
+          local dx = sfx - (pmx + 0.5)
+          local dy = sfy - (pmy + 0.5)
+          local d = math.sqrt(dx * dx + dy * dy)
+          if d > 0.01 then
+            local ux, uy = dx / d, dy / d
+            goal.approach_fx = sfx + ux * C.ATTACK_APPROACH_OFFSET
+            goal.approach_fy = sfy + uy * C.ATTACK_APPROACH_OFFSET
+            goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
+            goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
+          else
+            goal.approach_fx = sfx
+            goal.approach_fy = sfy
+            goal.approach_mx = goal.standoff_mx
+            goal.approach_my = goal.standoff_my
+          end
+        else
+          goal.substate = "plan_position"
+          goal.scan_spots = nil
+          goal._plan_show_tick = nil
+          goal._plan_logged = nil
+          return
+        end
+      end
+      local afx = goal.approach_fx or (goal.approach_mx + 0.5)
+      local afy = goal.approach_fy or (goal.approach_my + 0.5)
       local awx = math.floor(afx * 256 + 0.5)
       local awy = math.floor(afy * 256 + 0.5)
       local adist = U.wdist(info.tankx, info.tanky, awx, awy)
+      if now % 25 == 0 then
+      end
       -- Closing the distance counts as progress and resets the timer.
       if goal._approach_last_dist == nil or adist < goal._approach_last_dist - 4 then
         goal._approach_last_progress = now
@@ -2884,6 +3182,11 @@ function M.update_attack_substate(goal, state, world, info)
         end
         local decision_msg
         if needs_build then
+          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+          if unsafe then
+            clear_attack_goal(state, "abort@build_walls_entry — " .. unsafe)
+            return
+          end
           goal.substate = "build_walls"
           -- Reset the per-wall + global stall timers EVERY entry into
           -- build_walls so a re-entry (build_walls → aim → ... →
@@ -3037,6 +3340,20 @@ function M.update_attack_substate(goal, state, world, info)
       end
     end
     goal._wall_build_idx = idx
+    -- Sync wall_mx/my + wall_shield so builder.lua's wall_shield
+    -- dispatch can find the current target. The PPT build_walls path
+    -- uses _wall_build_list (not the legacy goal.wall_mx), so without
+    -- this the builder never enters wall_shield mode and the LGM sits
+    -- idle for the entire build_walls phase.
+    if idx <= #list then
+      goal.wall_mx     = list[idx].mx
+      goal.wall_my     = list[idx].my
+      goal.wall_shield = true
+    else
+      goal.wall_mx     = nil
+      goal.wall_my     = nil
+      goal.wall_shield = nil
+    end
 
     -- Per-wall sub-timeout: if a single queue entry has been the
     -- current target for WALL_STALL_TICKS without finishing, skip to
@@ -3058,6 +3375,11 @@ function M.update_attack_substate(goal, state, world, info)
         goal._wall_idx_started = now
         goal._wall_idx_prev_tt = cur_tt
       elseif (now - goal._wall_idx_started) > WALL_STALL_TICKS then
+        -- Detailed post-mortem: dump everything we knew about this
+        -- slot at the moment the per-wall timer tripped, so we can see
+        -- WHY the LGM never moved it to T_BUILDING/T_HALFBUILD.  Goes
+        -- to print2 unconditionally (in BRAIN_DEBUG_MODE) so it lands
+        -- in the per-bot log without needing BRAIN_LOG_BUILDER set.
         idx = idx + 1
         goal._wall_build_idx = idx
         goal._wall_idx_started = nil
@@ -3148,33 +3470,52 @@ function M.update_attack_substate(goal, state, world, info)
       goal._charge_start_hp = pill_hp_now
     end
 
-    -- Immediate swerve: pill dead OR fired enough shots
+    -- Shot-path obstacle check: every tick, simulate the shell path
+    -- and count obstacles. Updates _bullets_needed so the swerve
+    -- trigger accounts for walls/trees that need clearing before the
+    -- shell reaches the pill. During charge the tank is still closing,
+    -- so "not reached" is normal — only abort on impassable obstacles
+    -- or insufficient ammo when the shot DOES reach.
+    do
+      local pill_hp_live = pill and pill.health or 0
+      local obstacle_shots, obstacle_reason, reached = shot_path_obstacle_count(info, goal, world)
+      if obstacle_shots == math.huge then
+        -- Impassable (pill in path) — abort regardless
+        print(string.format(TAG .. " CHARGE: impassable obstacle — %s, aborting", obstacle_reason))
+        clear_attack_goal(state, "shot path blocked: " .. obstacle_reason)
+        return
+      end
+      if reached then
+        local total_needed = obstacle_shots + pill_hp_live
+        if info.shells < total_needed then
+          print(string.format(TAG .. " CHARGE: not enough shells (%d obstacles + %d hp = %d needed, have %d) — aborting",
+            obstacle_shots, pill_hp_live, total_needed, info.shells))
+          clear_attack_goal(state, "not enough shells for obstacles")
+          return
+        end
+        goal._bullets_needed = total_needed
+      end
+    end
+
+    -- Immediate swerve trigger.  New rule (replaces fired >= bullets_needed):
+    -- pill dead OR the count of currently-in-flight on-target shells covers
+    -- the remaining pill HP.  C/D = _on_target_in_flight / pill.health.
+    -- update_shot_accounting re-simulates each in-flight shell against
+    -- live terrain every tick, so if a tree grows into the trajectory or
+    -- the shell dies short, it drops back out of in_flight and the gate
+    -- naturally fails — we fire a replacement next reload.  Steering's
+    -- pre-fire predictor (see steering.lua charge/shoot_pill/engage) may
+    -- have already entered swerve this same tick on the just-fired killing
+    -- shot; this gate handles the case where prediction didn't apply
+    -- (e.g. shell tracker confirmed an off-target shot's status flip).
     local bullets_fired = (goal._charge_shells or info.shells) - info.shells
     local pill_hp = pill and pill.health or 0
-    if pill_hp <= 0 or (goal._bullets_needed and bullets_fired >= goal._bullets_needed) then
-      goal.substate = "swerve"
-      goal._swerve_start = now
-      -- Low-HP pills get a much shorter swerve — the kill happens fast,
-      -- the pill won't get many (if any) shots off, so a long evasion
-      -- just delays the next goal. Lookup by HP at start of charge.
-      local LOW_HP_SWERVE = { [1] = 30, [2] = 36, [3] = 40 }
-      local low_hp_ticks = LOW_HP_SWERVE[goal._charge_start_hp]
-      if low_hp_ticks then
-        goal._swerve_ticks_left = low_hp_ticks
-        goal._swerve_turn_ticks_left = math.min(low_hp_ticks, C.SWERVE_TURN_TICKS)
-      elseif goal._kill_attempt then
-        goal._swerve_ticks_left = C.SWERVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
-      else
-        goal._swerve_ticks_left = C.SWERVE_DEFENSIVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
-      end
+    local on_target_in_flight = goal._on_target_in_flight or 0
+    if pill_hp <= 0 or (pill_hp > 0 and on_target_in_flight >= pill_hp) then
+      enter_swerve(goal, world, state, info, pmx, pmy, "kill")
       goal._swerve_pill_dead = (pill_hp <= 0)
-      compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
-      goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
-      goal._engage_hits = nil
-      print(string.format(TAG .. " ATTACK: immediate swerve from charge (fired=%d needed=%d hp=%d kill_attempt=%s start_hp=%s)",
-            bullets_fired, goal._bullets_needed or 0, pill_hp,
+      print(string.format(TAG .. " ATTACK: immediate swerve from charge (fired=%d in_flight=%d hp=%d kill_attempt=%s start_hp=%s)",
+            bullets_fired, on_target_in_flight, pill_hp,
             tostring(goal._kill_attempt), tostring(goal._charge_start_hp)))
     end
     -- Steering handles movement and transition to engage
@@ -3229,6 +3570,11 @@ function M.update_attack_substate(goal, state, world, info)
           goal._is_ppt = false
           print(TAG .. " ATTACK: PPT had no shield_scan at aim — demoting to non-PPT charge")
         end
+        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+        if unsafe then
+          clear_attack_goal(state, "abort@charge_entry — " .. unsafe)
+          return
+        end
         goal.substate = "charge"
         goal._aim_locked = nil
         goal._charge_braking = nil
@@ -3259,6 +3605,11 @@ function M.update_attack_substate(goal, state, world, info)
         print(string.format(TAG .. " ATTACK: PPT detree done (shots=%d/%d), moving into range",
               fired, needed))
       else
+        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+        if unsafe then
+          clear_attack_goal(state, "abort@charge_entry — " .. unsafe)
+          return
+        end
         goal.substate = "charge"
         goal._charge_braking = nil
         print(string.format(TAG .. " ATTACK: detree done (shots=%d/%d), charging",
@@ -3522,6 +3873,30 @@ function M.update_attack_substate(goal, state, world, info)
 
     local pill_hp = pill and pill.health or 0
 
+    -- Shot-path obstacle check: live-update _bullets_needed and abort
+    -- if path is blocked or ammo short. shoot_pill is stationary and
+    -- in range, so "not reached" is a real problem (aim is wrong or
+    -- something moved into the way).
+    do
+      local obstacle_shots, obstacle_reason, reached = shot_path_obstacle_count(info, goal, world)
+      local total_needed = obstacle_shots + pill_hp
+      if obstacle_shots == math.huge then
+        print(string.format(TAG .. " SHOOT_PILL: impassable obstacle — %s, aborting", obstacle_reason))
+        clear_attack_goal(state, "shot path blocked: " .. obstacle_reason)
+        return
+      elseif not reached then
+        print(string.format(TAG .. " SHOOT_PILL: shot does not reach pill tile, aborting"))
+        clear_attack_goal(state, "shot does not reach pill")
+        return
+      elseif info.shells < total_needed then
+        print(string.format(TAG .. " SHOOT_PILL: not enough shells (%d obstacles + %d hp = %d needed, have %d) — aborting",
+          obstacle_shots, pill_hp, total_needed, info.shells))
+        clear_attack_goal(state, "not enough shells for obstacles")
+        return
+      end
+      goal._bullets_needed = total_needed
+    end
+
     -- No-progress timeout. shoot_pill has no built-in escape if the
     -- shells are silently missing (trajectory off, friendly LGM in
     -- the lane, pill picked up — all leave pill HP unchanged while
@@ -3562,31 +3937,22 @@ function M.update_attack_substate(goal, state, world, info)
 
     local should_swerve = false
     local pill_dead     = false
+    local on_target_in_flight = goal._on_target_in_flight or 0
     if pill_hp <= 0 then
       should_swerve = true
       pill_dead     = true
+    elseif pill_hp > 0 and on_target_in_flight >= pill_hp then
+      -- C/D rule (same as charge/engage): predicted in-flight shells
+      -- already cover remaining HP — start the swerve now.
+      should_swerve = true
+      pill_dead     = true   -- the in-flight shots are about to drop pill to 0
     elseif goal._shoot_hits_total >= C.ATTACK_CURVE_AFTER_HITS then
       should_swerve = true
     end
 
     if should_swerve then
-      goal.substate    = "swerve"
-      goal._swerve_start = now
-      if pill_dead then
-        goal._swerve_ticks_left      = C.SWERVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
-      else
-        goal._swerve_ticks_left      = C.SWERVE_DEFENSIVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
-      end
-      goal._swerve_pill_dead = pill_dead
-      -- PPT skips the legacy aim substate where _best_swerve_dir is
-      -- normally computed, so compute it fresh here. Without this,
-      -- the `or random` fallback below would coin-flip the swerve
-      -- direction and could send the tank into a hazard.
-      compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
-      goal._swerve_dir       = goal._best_swerve_dir
-                               or ((now % 2 == 0) and 1 or -1)
+      enter_swerve(goal, world, state, info, pmx, pmy,
+                   pill_dead and "kill" or "defensive")
       print(string.format(TAG .. " ATTACK: PPT shoot_pill -> swerve (hits=%d hp=%d dead=%s)",
             goal._shoot_hits_total or 0, pill_hp, tostring(pill_dead)))
     end
@@ -3606,29 +3972,14 @@ function M.update_attack_substate(goal, state, world, info)
     local bullets_fired = (goal._charge_shells or info.shells) - info.shells
     local pill_hp = pill and pill.health or 0
 
-    -- Immediate swerve: pill dead OR fired enough shots
-    if pill_hp <= 0 or (goal._bullets_needed and bullets_fired >= goal._bullets_needed) then
-      goal.substate = "swerve"
-      goal._swerve_start = now
-      -- Low-HP shortcut from charge_start_hp (see charge handler).
-      local LOW_HP_SWERVE = { [1] = 30, [2] = 36, [3] = 40 }
-      local low_hp_ticks = LOW_HP_SWERVE[goal._charge_start_hp]
-      if low_hp_ticks then
-        goal._swerve_ticks_left = low_hp_ticks
-        goal._swerve_turn_ticks_left = math.min(low_hp_ticks, C.SWERVE_TURN_TICKS)
-      elseif goal._kill_attempt then
-        goal._swerve_ticks_left = C.SWERVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
-      else
-        goal._swerve_ticks_left = C.SWERVE_DEFENSIVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
-      end
+    -- Immediate swerve: pill dead OR on-target in-flight covers remaining HP.
+    -- (Same C/D rule as charge — see comment block above the charge gate.)
+    local on_target_in_flight = goal._on_target_in_flight or 0
+    if pill_hp <= 0 or (pill_hp > 0 and on_target_in_flight >= pill_hp) then
+      enter_swerve(goal, world, state, info, pmx, pmy, "kill")
       goal._swerve_pill_dead = (pill_hp <= 0)
-      compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
-      goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
-      goal._engage_hits = nil
-      print(string.format(TAG .. " ATTACK: immediate swerve (fired=%d needed=%d hp=%d kill_attempt=%s start_hp=%s)",
-            bullets_fired, goal._bullets_needed or 0, pill_hp,
+      print(string.format(TAG .. " ATTACK: immediate swerve (fired=%d in_flight=%d hp=%d kill_attempt=%s start_hp=%s)",
+            bullets_fired, on_target_in_flight, pill_hp,
             tostring(goal._kill_attempt), tostring(goal._charge_start_hp)))
     else
       -- Count cumulative hits taken during this engage
@@ -3651,14 +4002,7 @@ function M.update_attack_substate(goal, state, world, info)
         local pill_anger = pill and pill.anger or 0
         if pill_anger > C.ANGER_ATTACK_THRESHOLD then
           -- Pill is angry — swerve to dodge
-          goal.substate = "swerve"
-          goal._swerve_start = now
-          -- Defensive swerve (pill still alive): longer turn
-          goal._swerve_ticks_left = C.SWERVE_DEFENSIVE_TOTAL_TICKS
-          goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
-          goal._swerve_pill_dead = false
-          compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
-      goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
+          enter_swerve(goal, world, state, info, pmx, pmy, "defensive")
           print(string.format(TAG .. " ATTACK: swerving (hits=%d anger=%.2f xhair_off=%s)",
                 goal._engage_hits or 0, pill_anger, tostring(crosshairs_off)))
         else

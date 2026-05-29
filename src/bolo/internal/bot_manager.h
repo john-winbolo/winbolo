@@ -34,6 +34,7 @@
 #include "client_snapshot.h"
 #include "input_packet.h"  /* SnapshotHeader, TankSnapshot, ... MAX_SNAPSHOT_* */
 #include "control_event.h"
+#include "client_command.h"  /* ClientCommand — per-bot pending command queue */
 #include "../gui/sdl3/luabrainshandler.h"  /* LuaBrainInstance */
 
 /* Forward declarations */
@@ -125,6 +126,19 @@ typedef struct {
      * tick (tick_budget_exceeded). The bot stays alive; the producer
      * surfaces the kill to the next tick via bot->wasKilled. */
     bool                wasKilled;
+    /* Deferred ClientCommand queue: worker threads CAN'T call
+     * clientSimSubmitCommand directly because it acquires threadsMutex,
+     * which the producer (timer thread) holds for the duration of
+     * botManagerTick — that would deadlock the worker against the
+     * producer's wait-for-workers in botWorkerPoolRun.  Instead the
+     * worker pushes commands here from inside the brain-think stage,
+     * and the producer drains the queue in Stage 3 (serial, already
+     * under the mutex) via serverSimApplyCommand.  4 slots covers
+     * /info state + /info extra in a single tick plus a couple of
+     * future-proofing extras. */
+#define BOT_PENDING_CMD_MAX 4
+    ClientCommand       pendingCmds[BOT_PENDING_CMD_MAX];
+    int                 pendingCmdCount;
 } BotJobCtx;
 
 typedef struct BotManager {

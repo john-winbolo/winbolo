@@ -13,6 +13,35 @@ local opt = require("optimize")
 
 local M = {}
 
+-- Predictive "this shot will finish the kill" check used in attack_pill
+-- firing substates. Run cpf.simulate_shot_angle against the current tank
+-- pose; if the simulated trajectory hits the target pill tile AND
+-- (_on_target_in_flight + 1) >= pill.health, enter swerve THIS same tick
+-- instead of waiting for the next-tick shot_tracker tally. Saves ~1 brain
+-- tick of standing still under return fire on the kill shot. The trade
+-- the user explicitly accepted: if reality diverges (wall/tree/tank
+-- crosses the shell path post-launch) the pill survives at 1 HP, vs.
+-- eating an extra return shot.
+local function predict_kill_shot_and_swerve(state, world, info, goal, pmx, pmy)
+  if not goal or not goal.target_id then return end
+  local pill = world.pills and world.pills[goal.target_id]
+  if not pill or (pill.health or 0) <= 0 then return end
+  local in_flight = (goal._on_target_in_flight or 0) + 1
+  if in_flight < pill.health then return end
+  local angle_f = info.tank_angle or info.direction
+  local path = cpf.simulate_shot_angle(info.tankx, info.tanky, angle_f,
+                                        cpf.SHOT_TANK, info.gunrange or 14)
+  if not path then return end
+  for _, t in ipairs(path) do
+    if t.mx == pmx and t.my == pmy then
+      local attack = require("attack")
+      attack.enter_swerve(goal, world, state, info, pmx, pmy, "kill")
+      goal._swerve_pill_dead = true
+      return true
+    end
+  end
+end
+
 -- Debug logging toggle — set via API: curl http://localhost:29016/steerdebug?on
 M.debug = false
 
@@ -22,6 +51,136 @@ end
 
 -- Local alias for the shared turn+speed helper in util.lua
 local nav_turn_speed = U.nav_turn_speed
+
+-- Shot-path safety check: simulate a shell from the tank toward
+-- (target_wx, target_wy) and verify nothing dangerous is in the way.
+-- Returns true if the path is clear. Blocks on:
+--   walls, half-walls, hostile/neutral pillboxes, allied tanks,
+--   hostile bases (nearby pills will start shooting).
+-- Allows through: forests, enemy tanks, empty tiles.
+-- target_mx/my is the tile we're aiming at (excluded from the check).
+local function shot_path_clear(info, world, target_wx, target_wy, target_mx, target_my)
+  -- Build tanks array from visible objects for tank-aware simulation
+  local tank_positions = {}
+  if info.objects then
+    for _, ob in ipairs(info.objects) do
+      if ob.type == 2 then  -- OBJECT_TANK
+        tank_positions[#tank_positions + 1] = {
+          wx = ob.x, wy = ob.y,
+          player_num = ob.idnum or 255,
+        }
+      end
+    end
+  end
+  local tiles
+  if #tank_positions > 0 then
+    tiles = cpf.simulate_shot_with_tanks(info.tankx, info.tanky,
+                                         target_wx, target_wy,
+                                         cpf.SHOT_TANK, 0,
+                                         tank_positions,
+                                         info.player_number or 255)
+  else
+    tiles = cpf.simulate_shot(info.tankx, info.tanky,
+                              target_wx, target_wy,
+                              cpf.SHOT_TANK, 0)
+  end
+  if not tiles then return true end
+  local origin_mx = info.tankx >> 8
+  local origin_my = info.tanky >> 8
+  local do_viz = BRAIN_DEBUG_MODE and viz.is_on("shell_hit_dot")
+  local blocked = false
+  local block_reason = nil
+  local block_mx, block_my = nil, nil
+  for ti, st in ipairs(tiles) do
+    -- Tank hit entry from simulate_shot_with_tanks
+    if st.hit_type and st.hit_type == 1 then
+      local tank_is_target = (st.mx == target_mx and st.my == target_my)
+      if do_viz then
+        local hit_tank = nil
+        for _, tp in ipairs(tank_positions) do
+          if tp.player_num == st.hit_id then hit_tank = tp; break end
+        end
+        if hit_tank then
+          local tcx = hit_tank.wx / 256.0
+          local tcy = hit_tank.wy / 256.0
+          local hr = tank_is_target and 0 or 255
+          local hg = tank_is_target and 255 or 0
+        end
+      end
+      if not tank_is_target then
+        blocked = true
+        block_reason = string.format("allied_tank#%d", st.hit_id or 0)
+        block_mx, block_my = st.mx, st.my
+      end
+      break
+    end
+    if st.mx == target_mx and st.my == target_my then
+      if do_viz then
+      end
+      break
+    end
+    if st.mx ~= origin_mx or st.my ~= origin_my then
+      local stt = U.ttype(st.mx, st.my)
+      if stt == C.T_BUILDING or stt == C.T_HALFBUILD then
+        blocked = true
+        block_reason = "wall"
+        block_mx, block_my = st.mx, st.my
+        if do_viz then
+        end
+        break
+      end
+      local plist = world.pill_at and world.pill_at[st.my * 256 + st.mx]
+      if plist then
+        for _, e in ipairs(plist) do
+          if e.pill and e.pill.health and e.pill.health > 0 then
+            blocked = true
+            block_reason = string.format("pill(hp=%d)", e.pill.health)
+            block_mx, block_my = st.mx, st.my
+            break
+          end
+        end
+        if blocked then break end
+      end
+      local bentry = world.base_at and world.base_at[st.my * 256 + st.mx]
+      if bentry and bentry.base and bentry.base.owner == "hostile" then
+        blocked = true
+        block_reason = "hostile_base"
+        block_mx, block_my = st.mx, st.my
+        break
+      end
+    end
+    if do_viz and not blocked then
+    end
+  end
+  if do_viz then
+    if blocked then
+    end
+    -- Detail: full ordered sequence — accessible via D key click
+    if viz.detail_circle then
+      local did = "shot_path"
+      local hdr = string.format("Shot path: from=(%d,%d) to=(%d,%d) result=%s",
+        origin_mx, origin_my, target_mx, target_my, blocked and "BLOCKED" or "CLEAR")
+      local mid_wx = (info.tankx + target_wx) / 2 / 256.0
+      local mid_wy = (info.tanky + target_wy) / 2 / 256.0
+      if tiles then
+        for i, st in ipairs(tiles) do
+          if st.hit_type and st.hit_type == 1 then
+          else
+            local tt = U.ttype(st.mx, st.my)
+            local tt_name = ({
+              [C.T_BUILDING] = "wall", [C.T_HALFBUILD] = "halfwall",
+              [C.T_FOREST] = "forest", [C.T_ROAD] = "road",
+              [C.T_GRASS] = "grass", [C.T_RIVER] = "river",
+              [C.T_DEEPSEA] = "deepsea", [C.T_SWAMP] = "swamp",
+              [C.T_RUBBLE] = "rubble",
+            })[tt] or tostring(tt)
+          end
+        end
+      end
+    end
+  end
+  return not blocked
+end
 
 -- Per-tick accumulators feeding the nav-dispatch/path breakdown in the
 -- BrainTest "Capacity tiers" panel. Reset at the top of M.steer; written
@@ -85,7 +244,6 @@ local function intentionally_stationary(goal)
   if goal.kind == "pill_place"  and _pp_stationary[s] then return true end
   if goal.kind == "attack_tank" and _at_stationary[s] then return true end
   if goal.kind == "rescue_lgm" or goal.kind == "none" then return true end
-  if goal.kind == "refuel_at_base" or goal.kind == "flee_to_base" then return true end
   return false
 end
 
@@ -138,6 +296,8 @@ local function stuck_recovery(state, info, goal)
   if (now - sp.since) < STUCK_TICKS then return end
 
   -- No progress for STUCK_TICKS toward the same next-step tile: penalize it.
+  local tmx = info.tankx >> 8
+  local tmy = info.tanky >> 8
   local k = U.mkey(pf.next_mx, pf.next_my)
   if bl[k] == nil then
     cpf.set_overlay(pf.next_mx, pf.next_my, STUCK_PENALTY)
@@ -147,6 +307,36 @@ local function stuck_recovery(state, info, goal)
   bl[k] = now + STUCK_DURATION
   state.pf.status = "idle"  -- force A* recompute against the new overlay
   state.stuck_progress = nil
+
+  -- Hard escape: if stuck_recovery keeps firing at the same tank tile,
+  -- the bot is trapped regardless of how many neighbors are simultaneously
+  -- blacklisted (entries may expire between firings). Track consecutive
+  -- recoveries at the same position and escape after STUCK_HARD_ESCAPE.
+  local STUCK_HARD_ESCAPE = 3
+  if not state._stuck_escape_mx or state._stuck_escape_mx ~= tmx
+     or state._stuck_escape_my ~= tmy then
+    state._stuck_escape_mx = tmx
+    state._stuck_escape_my = tmy
+    state._stuck_escape_count = 1
+  else
+    state._stuck_escape_count = (state._stuck_escape_count or 0) + 1
+  end
+  if state._stuck_escape_count >= STUCK_HARD_ESCAPE then
+    state._stuck_escape_count = 0
+    do
+      local _p2 = require("print2")
+      _p2(string.format(
+        "STUCK_ESCAPE t=%d pos=(%d,%d) goal=%s dest=(%d,%d) count=%d 600t",
+        now, tmx, tmy, goal.kind, goal.mx or 0, goal.my or 0,
+        state._stuck_escape_count))
+    end
+    -- Block the goal destination so pick_goal doesn't re-select it.
+    local gk = U.mkey(goal.mx or 0, goal.my or 0)
+    state.blocked[gk] = now + 600
+    goal.kind = "none"
+    goal.substate = nil
+    state.pf.status = "idle"
+  end
 end
 
 -- Wrapper: call C pathfinder and update state.pf for compatibility with
@@ -704,6 +894,11 @@ local function attack_pill_steer(state, world, info, goal)
       end
       if hits_pill then
         keys = keys | KEY_SHOOT
+        -- Pre-fire predictive swerve: if this on-target shot would be
+        -- the one that brings in-flight count up to remaining pill HP,
+        -- enter swerve right now (same tick as the shot fires) instead
+        -- of waiting for next-tick tracker confirmation.
+        predict_kill_shot_and_swerve(state, world, info, goal, goal.mx, goal.my)
       else
       end
     end
@@ -803,6 +998,8 @@ local function attack_pill_steer(state, world, info, goal)
     if math.abs(corr) <= 1 and info.shells > C.SHELL_RESERVE then
       keys = keys | KEY_SHOOT
       goal._engage_aimed = true
+      -- Pre-fire predictive swerve (same rationale as charge).
+      predict_kill_shot_and_swerve(state, world, info, goal, goal.mx, goal.my)
     end
 
     if info.gunrange < C.GUNSIGHT_MAX then
@@ -1146,6 +1343,8 @@ local function attack_pill_steer(state, world, info, goal)
     end
     if math.abs(corr) <= 5 and info.shells > C.SHELL_RESERVE then
       keys = keys | KEY_SHOOT
+      -- Pre-fire predictive swerve (same rationale as charge).
+      predict_kill_shot_and_swerve(state, world, info, goal, goal.mx, goal.my)
     end
     if info.gunrange < C.GUNSIGHT_MAX then
       keys = keys | KEY_MORERANGE
@@ -1165,10 +1364,11 @@ local function attack_pill_steer(state, world, info, goal)
   if goal.substate == "approach" then
     -- Prefer precise float position; fall back to tile-snapped if the
     -- planner only produced an integer target.
-    local afx = goal.approach_fx or (goal.approach_mx and (goal.approach_mx + 0.5))
-                                  or (goal.standoff_mx and (goal.standoff_mx + 0.5))
-    local afy = goal.approach_fy or (goal.approach_my and (goal.approach_my + 0.5))
-                                  or (goal.standoff_my and (goal.standoff_my + 0.5))
+    if not goal.approach_fx and not goal.approach_mx then
+      return nil  -- no setup point yet; fall through to A* nav
+    end
+    local afx = goal.approach_fx or (goal.approach_mx + 0.5)
+    local afy = goal.approach_fy or (goal.approach_my + 0.5)
     if afx then
       local awx = math.floor(afx * 256 + 0.5)
       local awy = math.floor(afy * 256 + 0.5)
@@ -1182,9 +1382,27 @@ local function attack_pill_steer(state, world, info, goal)
         if adist > 16 then
           local move_dir = U.aim_at(info.tankx, info.tanky, awx, awy)
           local corr = U.adiff(info.direction, move_dir)
-          local k, t = nav_turn_speed(corr, info.speed, 4, 1)
-          keys = keys | k
-          taps = taps | t
+          -- Friction-stuck detection (mirrors in_range_position):
+          -- if the tank hasn't closed any distance for 8+ ticks,
+          -- force re-aim + accelerate instead of relying on
+          -- nav_turn_speed which may just spin at speed 0.
+          local now_t = state.tick or 0
+          if goal._approach_prev_sdist == nil
+             or math.abs(adist - goal._approach_prev_sdist) >= 2 then
+            goal._approach_prev_sdist  = adist
+            goal._approach_stuck_since = now_t
+          end
+          local stuck_ticks = now_t - (goal._approach_stuck_since or now_t)
+          if stuck_ticks >= 8 then
+            local k, t = nav_turn_speed(corr, 0, 4, 1)
+            keys = keys | k
+            taps = taps | t
+            if info.speed == 0 then keys = keys | KEY_FASTER end
+          else
+            local k, t = nav_turn_speed(corr, info.speed, 4, 1)
+            keys = keys | k
+            taps = taps | t
+          end
         elseif info.speed > 0 then
           keys = keys | KEY_SLOWER
         end
@@ -1262,10 +1480,12 @@ local function tank_combat_steer(state, world, info, goal)
   goal.wx = U.m2w(target.mx)
   goal.wy = U.m2w(target.my)
 
-  local dist_tiles = target.dist
-  -- Use sub-tile precise WU position (ob.x/ob.y), not tile-center from m2w
+  -- Euclidean distance for engage-range check (Manhattan overcounts diagonals)
   local twx = target.wx
   local twy = target.wy
+  local _ddx = (twx - info.tankx) / 256.0
+  local _ddy = (twy - info.tanky) / 256.0
+  local dist_tiles = math.sqrt(_ddx * _ddx + _ddy * _ddy)
 
   -- ── Draw persistent scan spots from standoff evaluation ──
 
@@ -1288,6 +1508,9 @@ local function tank_combat_steer(state, world, info, goal)
   if dist_tiles > C.TANK_COMBAT_ENGAGE_RANGE then
     -- ── CLOSE: navigate toward standoff position around enemy tank ──
     goal.substate = "close"
+    goal._engage_blocked_ticks = 0
+    goal._engage_stuck_mx = nil
+    goal._engage_stuck_my = nil
 
     -- Recompute standoff position every 5 ticks as the target moves.
     -- Pick the closest of 8 positions at STANDOFF range around the target
@@ -1370,7 +1593,6 @@ local function tank_combat_steer(state, world, info, goal)
       if info.speed > 0 then keys = keys | KEY_SLOWER end
     end
 
-    -- No shooting while closing — wait until in range (engage substate)
 
     log.reason("steer", { mode = "tank_combat_close",
       dist = dist_tiles, nav_mx = nav_mx, nav_my = nav_my, sub = "close" })
@@ -1419,9 +1641,44 @@ local function tank_combat_steer(state, world, info, goal)
   elseif aim_corr <  -1 then taps = taps | KEY_TURNLEFT
   end
 
-  -- Fire when aimed — wider tolerance because lead prediction compensates
-  if math.abs(aim_corr) < 8 and info.shells > C.TANK_COMBAT_FLEE_SHELLS then
-    keys = keys | KEY_SHOOT
+  -- Fire when aimed — wider tolerance because lead prediction compensates.
+  --
+  -- Stuck-fire: when aim is on the enemy but a wall keeps blocking the
+  -- shell path tick after tick (two tanks dug in across a wall), bypass
+  -- the LOS gate after TANK_COMBAT_STUCK_FIRE_TICKS so the shells chip
+  -- the wall down and eventually open LOS. Without this the bot just
+  -- stares at the wall forever, "engaging" but never firing.
+  local _aim_ok    = math.abs(aim_corr) < 8
+  local _shells_ok = info.shells > C.TANK_COMBAT_FLEE_SHELLS
+  -- Stuck only counts when WE are also pinned in place — if the bot is
+  -- still moving around looking for a clean angle it isn't stuck yet,
+  -- it's just mid-reposition. Reset whenever our tile changes.
+  local _stuck_in_place = (goal._engage_stuck_mx == tmx
+                           and goal._engage_stuck_my == tmy)
+  goal._engage_stuck_mx = tmx
+  goal._engage_stuck_my = tmy
+  if _aim_ok and _shells_ok then
+    local _clear = shot_path_clear(info, world, pred_wx, pred_wy,
+                                   math.floor(pred_wx) >> 8,
+                                   math.floor(pred_wy) >> 8)
+    if _clear then
+      keys = keys | KEY_SHOOT
+      goal._engage_blocked_ticks = 0
+    elseif _stuck_in_place then
+      goal._engage_blocked_ticks = (goal._engage_blocked_ticks or 0) + 1
+      if goal._engage_blocked_ticks >= C.TANK_COMBAT_STUCK_FIRE_TICKS then
+        keys = keys | KEY_SHOOT
+        log.event("tank_combat_stuck_fire",
+          string.format("blocked_ticks=%d aim_corr=%.0f dist=%.1f",
+                        goal._engage_blocked_ticks, aim_corr, dist_tiles))
+      end
+    else
+      -- Blocked but we moved this tick — not stuck, reset.
+      goal._engage_blocked_ticks = 0
+    end
+  else
+    -- Not aimed yet (still turning) or out of shells: don't accrue stuck count.
+    goal._engage_blocked_ticks = 0
   end
 
   -- Distance control: maintain optimal range with jinking
@@ -1444,6 +1701,8 @@ local function tank_combat_steer(state, world, info, goal)
     end
   end
 
+  -- Combat HUD: always shows current state when tank_combat_viz is on
+
   log.reason("steer", {
     mode = "tank_combat_engage",
     dist = dist_tiles, aim_corr = aim_corr,
@@ -1453,7 +1712,7 @@ local function tank_combat_steer(state, world, info, goal)
     spd_wu = target.speed / 4,
     wdist = wdist, shell_t = shell_travel_ticks,
     jink = jink_offset,
-    firing = math.abs(aim_corr) < 5 and info.shells > C.TANK_COMBAT_FLEE_SHELLS,
+    firing = (keys & KEY_SHOOT) ~= 0,
   })
   return keys, taps
 end
@@ -1479,6 +1738,9 @@ function M.steer(state, world, info, goal)
   local tmy  = info.tanky >> 8
   state._steer_lx = nil
   state._steer_ly = nil
+  if goal.kind ~= "kill_lgm" then
+    state._kill_lgm_halt = false
+  end
 
   -- Per-tile stuck-recovery: re-stamp the dynamic blacklist into the overlay
   -- (init.lua wipes it each tick) and watch progress toward pf.next_mx/my.
@@ -1624,8 +1886,7 @@ function M.steer(state, world, info, goal)
   local nav_mode = goal.nav_mode
   local needs_exact_center = nav_mode == "precision"
        or (goal.kind == "attack_pill"
-           and (goal.substate == "approach"
-                or goal.substate == "aim"
+           and (goal.substate == "aim"
                 or goal.substate == "detree"))
   local plow_through = nav_mode == "plow"
        or goal.kind == "capture_base"
@@ -2006,7 +2267,11 @@ function M.steer(state, world, info, goal)
   -- No goal or idle: brake to a stop.
   -- When attack_in_range, skip the navigation block and fall through to
   -- the engage aim/shoot block below.
-  if move_dir == nil and not attack_in_range then
+  -- Attack base: when we've arrived adjacent to the base (move_dir nil),
+  -- don't return early — fall through to the attack_base shooting block.
+  local attack_base_adjacent = (goal.kind == "attack_base" and move_dir == nil
+    and U.mdist(tmx, tmy, goal.mx, goal.my) <= 2)
+  if move_dir == nil and not attack_in_range and not attack_base_adjacent then
     if info.speed > 0 then
       keys = keys | KEY_SLOWER
     end
@@ -2318,9 +2583,17 @@ function M.steer(state, world, info, goal)
     local turn_factor   = 1.0
     local turn_capped   = 256    -- after ramp, before distance ease
     local ramp_start    = plow_through and 20 or 10
-    local plow_dist_t   = plow_through and (eff_dist / 256.0) or 0
-    local plow_ease     = 0.0    -- 0 = full ramp, 1 = no cap
-    if abs_corr > ramp_start then
+    -- Hard distance gate: while target is >= 4 tiles out we keep the
+    -- turn-cap OFF entirely (turn_max_speed stays 256 = full speed) for
+    -- every goal type, plow or not. Inside 4 tiles the heading-error
+    -- ramp re-enables so the tank can still slow into a precise
+    -- landing. Used to be plow-only — non-plow goals would crawl the
+    -- whole way home at base_cap=48 every time the A* heading wobbled
+    -- past 14°, which made attack_pill approach feel sluggish across
+    -- the map.
+    local dist_t        = eff_dist / 256.0
+    local plow_ease     = (dist_t >= 4) and 1.0 or 0.0  -- legacy var name kept for viz
+    if abs_corr > ramp_start and dist_t < 4 then
       if plow_through then
         turn_base_cap = (under_fire or race_mode) and 128 or 96
       else
@@ -2329,18 +2602,6 @@ function M.steer(state, world, info, goal)
       turn_factor    = 1.0 - math.min((abs_corr - ramp_start) / 70.0, 1.0)
       turn_capped    = math.max(6, math.floor(turn_factor * turn_base_cap))
       turn_max_speed = turn_capped
-
-      if plow_through then
-        if plow_dist_t >= 10 then
-          plow_ease = 1.0
-        elseif plow_dist_t > 4 then
-          plow_ease = (plow_dist_t - 4) / 6.0
-        end
-        if plow_ease > 0 then
-          turn_max_speed = math.max(turn_max_speed,
-            math.floor(turn_max_speed * (1.0 - plow_ease) + 256 * plow_ease))
-        end
-      end
     end
 
     -- Plow-mode debug viz: two live lines below the tank (state + decision).
@@ -2451,7 +2712,11 @@ function M.steer(state, world, info, goal)
       -- momentum helps escape the threat zone or win the capture race faster
       -- than braking and re-accelerating.
       local facing_brake = (under_fire or race_mode) and 16 or 8
-      if info.speed > facing_brake then keys = keys | KEY_SLOWER end
+      if info.speed > facing_brake then
+        keys = keys | KEY_SLOWER
+      elseif info.speed == 0 then
+        keys = keys | KEY_FASTER
+      end
     elseif orbit_brake then
       _throttle_branch = "orbit_brake"
       if info.speed > 8 then keys = keys | KEY_SLOWER end
@@ -2521,9 +2786,12 @@ function M.steer(state, world, info, goal)
     end
 
     -- Opportunistic shooting while navigating.
-    -- Valid targets: enemy tanks, enemy bases, friendly pills (to "piss" them
+    -- Valid targets: enemy tanks, friendly pills (to "piss" them
     -- into firing at nearby enemies). Never shoot enemy/neutral pills — wastes
-    -- ammo and angers them for no gain.
+    -- ammo and angers them for no gain.  Enemy bases used to be in this
+    -- list but were removed — passing-by base shots don't deal enough
+    -- damage to be worth the shell + the threat of waking the base up
+    -- mid-transit on an unrelated goal.
     if not info.inboat and info.shells > C.SHELL_RESERVE then
       local perc = state.perc or {}
       local shot_fired = false
@@ -2533,27 +2801,11 @@ function M.steer(state, world, info, goal)
         for _, et in ipairs(perc.enemy_tanks or {}) do
           if et.dist <= 8 then
             local aim = U.aim_at(info.tankx, info.tanky, U.m2w(et.mx), U.m2w(et.my))
-            if math.abs(U.adiff(info.direction, aim)) < 8 then
+            if math.abs(U.adiff(info.direction, aim)) < 8
+               and shot_path_clear(info, world, U.m2w(et.mx), U.m2w(et.my), et.mx, et.my) then
               taps = taps | KEY_SHOOT
               shot_fired = true
               break
-            end
-          end
-        end
-      end
-
-      -- Enemy bases (free damage while passing)
-      if not shot_fired then
-        for _, b in pairs(world.bases) do
-          if b.owner == "hostile" and b.health > 0 then
-            local bd = U.mdist(tmx, tmy, b.mx, b.my)
-            if bd <= 8 then
-              local aim = U.aim_at(info.tankx, info.tanky, U.m2w(b.mx), U.m2w(b.my))
-              if math.abs(U.adiff(info.direction, aim)) < 8 then
-                taps = taps | KEY_SHOOT
-                shot_fired = true
-                break
-              end
             end
           end
         end
@@ -2702,7 +2954,8 @@ function M.steer(state, world, info, goal)
       elseif corr <  -2 then taps = taps | KEY_TURNLEFT
       end
       local still_correcting = (taps & (KEY_TURNLEFT | KEY_TURNRIGHT)) ~= 0
-      if math.abs(corr) < 3 and not still_correcting then
+      if math.abs(corr) < 3 and not still_correcting
+         and shot_path_clear(info, world, goal.wx, goal.wy, goal.mx, goal.my) then
         keys = keys | KEY_SHOOT
       end
 

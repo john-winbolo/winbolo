@@ -170,6 +170,34 @@ M.ARMOUR_MOD_PPT_DANGER = 75
 M.ARMOUR_COMBAT    = 30   -- seek resupply if next goal is attack_pill
 M.SHELLS_COMBAT    = 30   -- seek resupply if next goal is attack_pill
 M.ARMOUR_PER_PILL_HP = 2  -- estimated armour lost per pill HP when attacking
+-- Hard "don't take a healthy pill on low armour" gate.  Applied as a
+-- REJECT in the attack_pill eval pool and as an immediate abort at
+-- the start of approach / build_walls / charge.  Heuristic: a near-
+-- full-HP pill (>= UNSAFE_HP) deals more damage than we can absorb
+-- with < UNSAFE_ARMOUR_FLOOR plating, so refusing the take is better
+-- than dying mid-charge.
+M.ATTACK_PILL_UNSAFE_HP_THRESHOLD  = 13
+M.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR  = 30
+-- "danger_nearby" penalty: when we abort/swerve out of a pill take
+-- because an enemy LGM is within PILL_DANGER_NEARBY_RADIUS of the
+-- target, stamp the pill_id for PILL_DANGER_NEARBY_TICKS so its
+-- attack_pill (pool 6) cost is multiplied by PILL_DANGER_NEARBY_MULT
+-- and we don't bounce right back onto it.  50 ticks/s, so 1500 ≈ 30s.
+M.PILL_DANGER_NEARBY_RADIUS = 3       -- 7x7 grid (radius 3) centered on pill
+M.PILL_DANGER_NEARBY_TICKS  = 1500    -- ~30 s of cooldown
+M.PILL_DANGER_NEARBY_MULT   = 1.5     -- 1.5x cost while stamp is active
+-- Ally-avoid overlay cost — stamped on the 5x5 around an allied tank
+-- doing a pill take (and the firing lane to the pill).  Comparable to
+-- STUCK_PENALTY (1500) so A* visibly routes around it instead of
+-- ignoring the tiny noise the prior value (10) added.
+M.ALLY_AVOID_COST           = 800
+-- Ally-pill-take priority window: when an ally is broadcasting
+-- attack_pill on a target, REJECT our capture_pill candidate for the
+-- same pill for this many ticks (~2 s @ 50Hz). Gives them first dibs
+-- at the dead pill they killed instead of us swooping in.  Refreshes
+-- every tick the ally is still on attack_pill, so it decays naturally
+-- once they switch to capture_pill themselves.
+M.ALLY_PILL_TAKE_PRIORITY_TICKS = 100
 M.REFUEL_MIN_STOCK = 5    -- skip bases with less than this in observed stock (not worth the trip)
 -- Dynamic refuel targets (state.shell_target / state.armour_target).
 -- Must stay above SHELLS_LOW (20) or offense pools (eval_attack_pill /
@@ -242,6 +270,18 @@ M.MAN_SPEED_BLESSED = 16  -- LGM speed on blessed square
 --   REFUEL: 20 × 20 = 400  → prefer safe base up to 400 path-cost units further
 --   FLEE:   20 × 80 = 1600 → at critical armour, cross most maps to reach safety
 M.REFUEL_DANGER_WEIGHT  = 20
+-- Danger/threat-term multiplier applied across goal cost formulas
+-- when state.cautious_mode is true (see init.lua).  Cautious mode
+-- triggers on conditions like "LGM dead AND carrying pills" — we
+-- can't afford to lose what we're carrying, so the danger terms
+-- in cost formulas get pumped to bias hard toward safer routes /
+-- targets.
+M.CAUTIOUS_MODE_MULT = 5
+-- Discount applied to refuel_at_base cost when the base's tile
+-- danger value is 0 (truly safe refuel spot).  Encourages choosing
+-- the safest available base when several refuels would otherwise
+-- tie on cost.
+M.REFUEL_NO_DANGER_DISCOUNT = 0.75
 M.FLEE_DANGER_WEIGHT    = 80
 -- Minimum score improvement required to switch from the current refuel/flee
 -- base to a different one.  Prevents flip-flopping between two bases that
@@ -432,6 +472,12 @@ M.GOAL_TARGET_SWITCH_PENALTY = 15  -- cost added when same group but different t
 -- different base when possible) since refuel is fungible.
 M.ALLY_CLAIMED_PENALTY        = 10000
 M.ALLY_CLAIMED_REFUEL_PENALTY = 100
+-- "Steal margin" used by the ally-claimed REJECT path on hard-pools
+-- (2,3,4,5,6,7). We only REJECT our candidate when the ally's
+-- broadcast cost is at least this many units below ours; within the
+-- band both bots keep the candidate so a 1-unit cost flicker (caused
+-- by broadcast tick lag / cache freshness mismatch) can't flip the
+-- yield direction every tick.
 M.ALLY_CLAIMED_STEAL_THRESHOLD = 100
 M.GOAL_COMMITMENT_PER_TICK = 0.5   -- extra switch penalty per tick spent on current goal
 M.GOAL_COMMITMENT_CAP      = 75    -- max commitment penalty (reached after 150 ticks / 3s)
@@ -484,6 +530,7 @@ M.GOAL_ABANDON_COOLDOWN    = 0     -- ticks before an abandoned goal can be pick
 M.WALL_SHIELD_COMMITMENT        = 200  -- extra switch penalty when wall-shield attack is in progress
 M.ATTACK_TANK_COMMITMENT_BONUS  = 50   -- extra commitment when currently fighting a tank (see it through)
 M.ATTACK_PILL_COMMITMENT_BONUS  = 80   -- extra commitment when mid-attack on a pill; also revokes hysteresis exemption for attack_tank/capture_pill so they can't interrupt for free
+M.EARLY_CAPTURE_BASE_HYST_EXEMPT = true -- opening phase: capture_base skips ALL hysteresis (switch + commit + history), same as capture_pill
 M.REFUEL_URGENCY_MIN       = 0.37  -- minimum urgency multiplier for refuel cost
                                    -- (with squared urgency: floor cost at
                                    -- bscore × 0.37; e.g. bscore=60 → ~22)
@@ -526,6 +573,7 @@ M.LGM_NEARBY_NOPACE_TICKS  = 30  -- ticks: if LGM arrives within this, don't slo
 M.WAIT_FOR_LGM_ENABLED     = false  -- master toggle; off = candidate never injected
 M.WAIT_FOR_LGM_COST        = 50     -- (only meaningful while ENABLED is true)
 M.ENEMY_LGM_RETURN_TICKS   = 3000     -- estimated ticks for enemy LGM to respawn (~60 sec)
+M.RESPAWN_CACHE_WIPE_DIST  = 12       -- tiles; if respawn point is farther than this from death point, wipe all distance-dependent caches
 M.ENEMY_LGM_DEAD_ATTACK_DISCOUNT = 0.5  -- multiply attack pill cost when enemy LGM is dead
 
 -- -------------------------------------------------------------------------
@@ -709,8 +757,8 @@ M.TANK_COMBAT_MIN_ARMOUR        = 10    -- don't engage with less armour
 M.TANK_COMBAT_MAX_RANGE         = 15    -- only consider tanks within this many tiles
 M.TANK_COMBAT_AIM_BONUS         = 40    -- cost reduction if already aimed near target
 M.TANK_COMBAT_AIM_THRESHOLD     = 20    -- bolo angle units (~28°) for aim bonus
-M.TANK_COMBAT_ENGAGE_RANGE      = 10    -- tiles: start shooting at this distance
-M.TANK_COMBAT_STANDOFF_RANGE    = 7     -- tiles: nav target when closing from outside engage range
+M.TANK_COMBAT_ENGAGE_RANGE      = 7     -- tiles: start shooting at this distance (~max shell range)
+M.TANK_COMBAT_STANDOFF_RANGE    = 7     -- tiles: nav target when closing (at max shell range)
 M.TANK_COMBAT_OPTIMAL_DIST      = 5     -- tiles: ideal engagement distance
 M.TANK_COMBAT_TOO_CLOSE         = 2     -- tiles: back off if closer than this
 M.TANK_COMBAT_FLEE_ARMOUR       = 6     -- disengage if armour drops to this
@@ -724,6 +772,12 @@ M.TANK_COMBAT_JINK_PERIOD       = 10    -- ticks between jink direction changes
 M.TANK_COMBAT_JINK_ANGLE        = 32    -- bolo angle offset for lateral jink (~45°)
 M.TANK_COMBAT_OPPORTUNISTIC_RANGE = 4   -- tiles: fire at enemy if already aimed near them
 M.TANK_COMBAT_OPPORTUNISTIC_AIM = 8     -- bolo angle units (~11°) aim tolerance for opportunistic shot
+-- Stuck-fire: when aimed at enemy but shot_path_clear keeps rejecting
+-- (wall in the way), fire anyway after this many ticks. Shells will
+-- chip the wall until LOS opens up, so two tanks dug in on opposite
+-- sides of a wall don't sit there forever. Reset whenever a normal
+-- clear shot fires or we leave engage. ~30 ticks ≈ 1s.
+M.TANK_COMBAT_STUCK_FIRE_TICKS  = 30
 
 -- Kill-LGM shoot gates.  LGMs are small (1 tile, hitbox even smaller),
 -- move slowly (~3 wu/tick), and die in one hit — so we fire from
@@ -886,15 +940,15 @@ M.WSIM_LGM_DEATH_PENALTY   = 200    -- extra cost if sim predicts LGM will die
 -- =========================================================================
 M.BRAIN_CAPACITY_LEVELS = {
   [10] = { dij_short=500, dij_long=560, scan_step=5,  pp_spread=1,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=8, tank_step=5,  sb_positions=28, sb_step=0.5 },
-  [9]  = { dij_short=500, dij_long=450, scan_step=5,  pp_spread=6,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=8, tank_step=5,  sb_positions=24, sb_step=0.6 },
-  [8]  = { dij_short=450, dij_long=350, scan_step=10, pp_spread=12, ttl_mult=1.1, eval_iv=1, wsim=5,     place_r=7, tank_step=10, sb_positions=20, sb_step=0.7 },
-  [7]  = { dij_short=400, dij_long=275, scan_step=10, pp_spread=17, ttl_mult=1.3, eval_iv=1, wsim=5,     place_r=7, tank_step=10, sb_positions=16, sb_step=0.9 },
-  [6]  = { dij_short=350, dij_long=200, scan_step=20, pp_spread=22, ttl_mult=1.5, eval_iv=2, wsim=3,     place_r=6, tank_step=10, sb_positions=14, sb_step=1.0 },
-  [5]  = { dij_short=300, dij_long=150, scan_step=20, pp_spread=28, ttl_mult=1.7, eval_iv=2, wsim=3,     place_r=5, tank_step=20, sb_positions=12, sb_step=1.2 },
-  [4]  = { dij_short=250, dij_long=100, scan_step=20, pp_spread=33, ttl_mult=2.0, eval_iv=3, wsim=1,     place_r=5, tank_step=20, sb_positions=10, sb_step=1.4 },
-  [3]  = { dij_short=200, dij_long=75,  scan_step=45, pp_spread=39, ttl_mult=2.5, eval_iv=3, wsim=1,     place_r=4, tank_step=45, sb_positions=8,  sb_step=1.75},
-  [2]  = { dij_short=150, dij_long=50,  scan_step=45, pp_spread=44, ttl_mult=3.0, eval_iv=4, wsim=false, place_r=3, tank_step=45, sb_positions=6,  sb_step=2.5 },
-  [1]  = { dij_short=100, dij_long=25,  scan_step=45, pp_spread=50, ttl_mult=4.0, eval_iv=5, wsim=false, place_r=2, tank_step=45, sb_positions=4,  sb_step=3.5 },
+  [9]  = { dij_short=500, dij_long=450, scan_step=5,  pp_spread=6,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=8, tank_step=5,  sb_positions=28, sb_step=0.5 },
+  [8]  = { dij_short=450, dij_long=350, scan_step=10, pp_spread=12, ttl_mult=1.1, eval_iv=1, wsim=5,     place_r=7, tank_step=10, sb_positions=28, sb_step=0.5 },
+  [7]  = { dij_short=400, dij_long=275, scan_step=10, pp_spread=17, ttl_mult=1.3, eval_iv=1, wsim=5,     place_r=7, tank_step=10, sb_positions=28, sb_step=0.5 },
+  [6]  = { dij_short=350, dij_long=200, scan_step=20, pp_spread=22, ttl_mult=1.5, eval_iv=2, wsim=3,     place_r=6, tank_step=10, sb_positions=28, sb_step=0.5 },
+  [5]  = { dij_short=300, dij_long=150, scan_step=20, pp_spread=28, ttl_mult=1.7, eval_iv=2, wsim=3,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5 },
+  [4]  = { dij_short=250, dij_long=100, scan_step=20, pp_spread=33, ttl_mult=2.0, eval_iv=3, wsim=1,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5 },
+  [3]  = { dij_short=200, dij_long=75,  scan_step=45, pp_spread=39, ttl_mult=2.5, eval_iv=3, wsim=1,     place_r=4, tank_step=45, sb_positions=28, sb_step=0.5 },
+  [2]  = { dij_short=150, dij_long=50,  scan_step=45, pp_spread=44, ttl_mult=3.0, eval_iv=4, wsim=false, place_r=3, tank_step=45, sb_positions=28, sb_step=0.5 },
+  [1]  = { dij_short=100, dij_long=25,  scan_step=45, pp_spread=50, ttl_mult=4.0, eval_iv=5, wsim=false, place_r=2, tank_step=45, sb_positions=28, sb_step=0.5 },
 }
 
 -- Tier control: per-tier ms history corroborates raise decisions; drops

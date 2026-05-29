@@ -2527,7 +2527,7 @@ function M.build_eval_queue(state, world, info)
         if reject then
           -- Skip the cost compute — entry just exists so the row shows.
           state.cost_cache[ck] = {
-            cost = 1e30, raw = 1e30, tick = now, _p = 4,
+            cost = 1e30, raw = 1e30, tick = now, _p = 4, _id = id,
             _mx = obj.mx, _my = obj.my,
             _ds = 0, _dv = 0, _intcpt = 0,
             _reject = reject.reason,
@@ -2537,7 +2537,7 @@ function M.build_eval_queue(state, world, info)
           local c, _draw, dscore, dval, intcpt, _lm4, _dm4 =
             compute_pool4_cost(state, world, info, obj, tmx, tmy)
           state.cost_cache[ck] = {
-            cost = c, raw = _draw, tick = now, _p = 4,
+            cost = c, raw = _draw, tick = now, _p = 4, _id = id,
             _mx = obj.mx, _my = obj.my,
             _ds = dscore, _dv = dval, _intcpt = intcpt,
             _dist_method = _dm4,
@@ -2674,6 +2674,37 @@ local function get_formula_inner(e)
   local p = e._p
   local raw = e.raw
   local f
+  -- Generic ally-claimed REJECT row.  Pools 2/3/4/5/6/7 use the per-tick
+  -- sync to set _reject="ally_claimed" against fresh ally_state.  We
+  -- render a uniform row so the pool grid shows who out-bid us and by
+  -- how much.
+  if e._reject == "ally_claimed" then
+    local rem = e._reject_remaining or 0
+    local their = e._ally_score
+    local by    = e._ally_by
+    local our   = e.cost or 0
+    local their_str = their and string.format("%.0f", their) or "?"
+    local diff_str  = (their and string.format(" (we_more_by=%.0f)", our - their)) or ""
+    return string.format(
+      "REJECT ally_claimed %dt @(%d,%d)||reject:ally_claimed %dt — p%s bid %s < ours %.0f%s",
+      rem, e._mx or 0, e._my or 0,
+      rem, tostring(by or "?"), their_str, our, diff_str)
+  end
+  if e._reject == "armour_too_low" then
+    return string.format(
+      "REJECT armour_too_low @(%d,%d)||reject:armour_too_low — arm=%d (need >= %d) vs pillHP=%d (>= %d)",
+      e._mx or 0, e._my or 0,
+      e._armour_at_reject or 0, C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR,
+      e._pillhp_at_reject or 0, C.ATTACK_PILL_UNSAFE_HP_THRESHOLD)
+  end
+  if e._reject == "ally_pill_take_priority" then
+    local rem = e._reject_remaining or 0
+    local by  = e._priority_by
+    return string.format(
+      "REJECT ally_pill_take_priority %dt @(%d,%d)||reject:ally_pill_take_priority %dt — p%s is doing the take, holding off ~%.1fs",
+      rem, e._mx or 0, e._my or 0,
+      rem, tostring(by or "?"), rem / 50.0)
+  end
   if p == 1 then
     -- Rejected refuel base: short-circuit with REJECT formula so the
     -- breakdown panel makes clear why the row exists with INF cost.
@@ -2867,17 +2898,24 @@ local function get_formula_inner(e)
     end
     local _tw = e._travel_wound or 1.0
     local _d_pickup = e._pickup_detail or "(no path captured)"
+    local _danger_term = e._danger_mult
+      and string.format(" * danger_nearby{%.2fx %dt}", e._danger_mult, e._danger_left or 0)
+      or ""
+    local _d_danger = e._danger_mult
+      and string.format("recent abort due to enemy LGM near pill — %.2fx multiplier, %dt (~%.1fs) remaining",
+            e._danger_mult, e._danger_left or 0, (e._danger_left or 0) / 50.0)
+      or "no recent LGM-near-pill abort on this target"
     f = string.format(
-      "spot{%.0f}@(%d,%d) + pickup{%.0f}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s + ammo{%s}"..
+      "(spot{%.0f}@(%d,%d) + pickup{%.0f}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s + ammo{%s})%s"..
       "||spot cost is offset-aware (target pill's danger contribution subtracted via load_danger_offset before A*); NOT scaled by hp or wound"..
-      "|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|ammo:%s|spot:%s",
+      "|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|ammo:%s|spot:%s|danger_nearby:%s",
       e._spot, e._spot_mx or 0, e._spot_my or 0,
       e._travel,
       e._spot_mx or 0, e._spot_my or 0, e._mx or 0, e._my or 0,
       _tw,
       e._stale, e._diff, e._anger, e._xfire, e._intcpt,
-      e._hp, _wound_detail, _ammo_str,
-      _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot)
+      e._hp, _wound_detail, _ammo_str, _danger_term,
+      _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot, _d_danger)
   elseif p == 7 then
     local _lgm_mult_b = e._lgm_mult or 1
     local _d_threat
@@ -2902,10 +2940,15 @@ local function get_formula_inner(e)
       local rem = e._reject_remaining or 0
       local rem_tok = (e._reject == "blocked" or e._reject == "stale")
                       and string.format(" %dt", rem) or ""
+      local desc = ({
+        in_tank = "pill is in flight (picked up by a tank)",
+        blocked = "tile on retry cooldown (recent stuck-escape or pathfinder failed to reach it)",
+        stale   = "not seen recently — fog of war",
+      })[e._reject] or "pill exists on the map but cannot be picked this tick"
       f = string.format(
-        "REJECT %s%s @(%d,%d)||reject:%s%s — pill exists on the map but cannot be picked this tick",
+        "REJECT %s%s @(%d,%d)||reject:%s%s — %s",
         e._reject, rem_tok, e._mx or 0, e._my or 0,
-        e._reject, rem_tok)
+        e._reject, rem_tok, desc)
     else
       local _lgm_mult_c = e._lgm_mult or 1
       local _cpill_danger_score = e._dv * C.CAPTURE_PILL_DANGER_SCALE * _lgm_mult_c
@@ -2947,17 +2990,43 @@ local function get_formula(e)
       return ""
     end
   end
-  -- Always-on ally_claimed term.  Value is 0 when no ally claims this
-  -- candidate, ALLY_CLAIMED_REFUEL_PENALTY (100) for pool 1 claims, or
-  -- ALLY_CLAIMED_PENALTY (10000) for everything else.  Computed at
-  -- read time (not baked into e.formula) so it tracks live changes
-  -- to e.ally_claimed_pen without cache invalidation.
+  -- REJECT row already formatted by inner — no trailing term to append.
+  if e._reject == "ally_claimed"
+     or e._reject == "armour_too_low"
+     or e._reject == "ally_pill_take_priority" then
+    return f
+  end
+  -- Cost-baked ally penalty (pool 1 soft +100, pool 8 hard +10000).  Only
+  -- emit the term when the penalty actually exists on this entry.
   local pen = e.ally_claimed_pen or 0
-  local by  = e.ally_claimed_by  or "-"
-  local term_disp = string.format(" + ally_claimed{%d}", pen)
-  local term_map  = string.format("|ally_claimed:%s (p%s)",
-                                  pen > 0 and "yielding to ally" or "no ally claim",
-                                  tostring(by))
+  local term_disp, term_map
+  if pen > 0 then
+    term_disp = string.format(" + ally_claimed{%d}", pen)
+    term_map  = string.format("|ally_claimed:yielding to ally (p%s)",
+                              tostring(e.ally_claimed_by or "-"))
+  elseif e._ally_score then
+    -- Hard-REJECT pool, ally is bidding, but we kept the candidate
+    -- (either we're cheaper or we're within the steal band).  Display
+    -- the bid + relationship so the band is visible without polluting
+    -- the cost equation.
+    local our   = e.cost or 0
+    local their = e._ally_score
+    local thr   = C.ALLY_CLAIMED_STEAL_THRESHOLD or 0
+    local rel
+    if our + thr < their then
+      rel = string.format("we cheaper by %.0f", their - our)
+    elseif their + thr < our then
+      rel = string.format("they cheaper by %.0f (would REJECT)", our - their)
+    else
+      rel = string.format("within steal band +/-%d", thr)
+    end
+    term_disp = ""  -- no cost contribution
+    term_map  = string.format("|ally_claimed:p%s bid %.0f, ours %.0f — %s",
+                              tostring(e._ally_by or "?"), their, our, rel)
+  else
+    -- No penalty, no ally claim — suppress the term entirely.
+    return f
+  end
   local sep_start = f:find("||", 1, true)
   if sep_start then
     return f:sub(1, sep_start - 1) .. term_disp .. " "
@@ -3696,6 +3765,21 @@ function M.step_eval_queue(state, world, info)
       local combat = (stale_cost + diff_cost + anger_cost + xfire_cost + intcpt_cost) * hp_mult * wound_mult
       local c = spot_cost + travel * travel_wound + combat * capture_mult + base_extra + threat_cost + ammo_cost
 
+      -- danger_nearby multiplier (pool 6 only): if this pill was recently
+      -- stamped (enemy LGM seen within danger radius during a prior take
+      -- attempt), multiply cost so we don't bounce right back onto it
+      -- for ~30 s.  Self-clears when the deadline passes.
+      local _danger_nearby_mult = 1.0
+      local _danger_nearby_left = 0
+      if pool_idx == 6 and state.pill_danger_nearby then
+        local until_tick = state.pill_danger_nearby[id]
+        if until_tick and until_tick > now then
+          _danger_nearby_mult = C.PILL_DANGER_NEARBY_MULT or 1.5
+          _danger_nearby_left = until_tick - now
+          c = c * _danger_nearby_mult
+        end
+      end
+
       -- capture_pill: replace flat-multiplier formula with distance^1.5 + danger.
       --   path^1.5 * DIST_SCALE  → cheap nearby, grows fast with distance
       --   threat * DANGER_WEIGHT → hot zones push cost up regardless of distance
@@ -3717,30 +3801,29 @@ function M.step_eval_queue(state, world, info)
         raw_cost = _cpill_dist_raw
       end
 
-      -- Ally-claimed penalty: applied here in the per-target evaluate
-      -- phase (not goal_selection) so the elevated cost is baked into
-      -- cost_cache and the per-pool row shows the +10000 in its cost
-      -- column AND the term breakdown.  Only pool 9 (attack_tank) is
-      -- exempt — tank threats are time-critical and locally observed;
-      -- a stale ally broadcast shouldn't pull us off a fight.  Pool 1
-      -- (refuel_at_base) uses the smaller refuel-specific penalty.
-      -- Map pool_idx → broadcast goal.kind string.  Pool 1's broadcast
-      -- kind is "refuel_at_base", not "refuel".
+      -- Ally-claimed handling for generic pools (2,3,4,5,6,7,8).
+      --
+      -- Pools 9 (attack_tank) and 13 (kill_lgm) are EXEMPT — time-
+      -- critical, locally observed; stale broadcasts shouldn't pull
+      -- us off a fight.  Pool 1 (refuel_at_base) has its own soft
+      -- +100 penalty handled in the pool-1 branch above.
+      --
+      -- "Hard" REJECT pools (2,3,4,5,6,7): we don't mutate cost here
+      -- any more.  Instead we just capture the ally's bid (kind +
+      -- target match) on the cache entry, and a per-tick sync sweep
+      -- (sync_ally_claimed_rejects, run before goal_competition)
+      -- decides whether to set entry._reject = "ally_claimed".  This
+      -- decouples REJECT freshness from the per-candidate eval cadence
+      -- — when an ally drops their goal, the un-REJECT lands next
+      -- tick, not on the next time this candidate happens to be
+      -- re-evaluated.
+      --
+      -- Pool 8 (place_strategic) keeps the legacy hard +10000 penalty
+      -- — the target is a tile and the existing behaviour is fine.
       local _ac_expected_kind = (pool_idx == 1) and "refuel_at_base"
                                 or (pool_idx == 8) and "place_pill_strategic"
                                 or POOL_NAMES[pool_idx]
-      local _ac_pen, _ac_by = 0, nil
-      -- Pools exempt from ally_claimed: 9 (attack_tank) and 13
-      -- (kill_lgm).  Both are time-critical, locally-observed kills
-      -- — a stale ally broadcast shouldn't pull us off the shot.
-      --
-      -- Note: we no longer exempt the "we got here first" case
-      -- (state.goal already on this candidate).  When two bots commit
-      -- to the same target on the same replan tick, both used to set
-      -- _ac_we_are_here=true and skip the cost comparison entirely,
-      -- so neither yielded → both ran to the same pill.  The cost
-      -- comparison below handles the simultaneity case correctly:
-      -- whoever's cheaper keeps it, the other yields.
+      local _ac_pen, _ac_by, _ac_their_cost, _ac_heartbeat_left = 0, nil, nil, 0
       if pool_idx ~= 9 and pool_idx ~= 13 then
         for ally_pn, slot in ally_state.iter_active(now, 1750) do
           if ally_pn ~= info.player_number then
@@ -3759,35 +3842,26 @@ function M.step_eval_queue(state, world, info)
               end
               if matched then
                 local their_cost = tonumber(info_h.cost)
-                -- Cost-comparison yield rule.  We KEEP this candidate
-                -- (no penalty) when WE'RE strictly cheaper, or we tie
-                -- on cost AND our player_number is lower (deterministic
-                -- tiebreaker so exactly one bot of any equal-cost pair
-                -- yields).  Otherwise we yield.  No deadband — even a
-                -- 1-cost-unit difference picks a winner, so two bots
-                -- never both yield on near-identical costs.
-                local we_keep
-                if their_cost == nil then
-                  -- Ally hasn't broadcast cost yet (first frame after
-                  -- goal pick); fall back to: we keep if we're newer
-                  -- in the registry, otherwise yield.  Conservative
-                  -- behavior — yield by default until both sides have
-                  -- a cost to compare.
-                  we_keep = (info.player_number < ally_pn)
-                elseif c < their_cost then
-                  we_keep = true
-                elseif c > their_cost then
-                  we_keep = false
-                else
-                  we_keep = (info.player_number < ally_pn)
+                _ac_their_cost = their_cost
+                _ac_by         = ally_pn
+                _ac_heartbeat_left = 1750 - (now - slot.last_tick)
+                if _ac_heartbeat_left < 0 then _ac_heartbeat_left = 0 end
+                if pool_idx == 8 then
+                  -- Legacy hard penalty path — kept for place_strategic.
+                  local we_keep
+                  if their_cost == nil then
+                    we_keep = (info.player_number < ally_pn)
+                  elseif c < their_cost then
+                    we_keep = true
+                  elseif c > their_cost then
+                    we_keep = false
+                  else
+                    we_keep = (info.player_number < ally_pn)
+                  end
+                  if we_keep then break end
+                  _ac_pen = C.ALLY_CLAIMED_PENALTY
+                  c = c + _ac_pen
                 end
-                if we_keep then
-                  break  -- keep our cost as-is
-                end
-                _ac_pen = (pool_idx == 1) and C.ALLY_CLAIMED_REFUEL_PENALTY
-                          or C.ALLY_CLAIMED_PENALTY
-                _ac_by  = ally_pn
-                c = c + _ac_pen
                 break
               end
             end
@@ -3798,10 +3872,19 @@ function M.step_eval_queue(state, world, info)
       -- Store raw components for lazy formula building (get_formula on cold path).
       -- Fields are flattened directly into the cache entry (no sub-table) to
       -- avoid an extra Lua table allocation per candidate per tick.
-      local entry = { cost = c, raw = raw_cost, tick = now, _p = pool_idx, _mx = obj.mx, _my = obj.my }
+      local entry = { cost = c, raw = raw_cost, tick = now, _p = pool_idx, _mx = obj.mx, _my = obj.my, _id = id }
       if _ac_pen > 0 then
         entry.ally_claimed_pen = _ac_pen
         entry.ally_claimed_by  = _ac_by
+      end
+      -- Cache the ally bid (if any) so the per-tick sync sweep can
+      -- maintain entry._reject="ally_claimed" + the REJECT-row text
+      -- without re-running cost compute. Cleared by the sync when
+      -- the heartbeat expires or the ally drops the claim.
+      if _ac_by and _ac_pen == 0 then  -- "hard REJECT pool" path, no penalty baked
+        entry._ally_score      = _ac_their_cost
+        entry._ally_by         = _ac_by
+        entry._ally_heartbeat  = _ac_heartbeat_left
       end
       if pool_idx == 6 then
         entry._travel=travel; entry._travel_wound=travel_wound; entry._stale=stale_cost; entry._age=_gen_age
@@ -3826,6 +3909,8 @@ function M.step_eval_queue(state, world, info)
         entry._fin_age=_finish_other_age
         entry._fin_wpid=_finish_other_wp_id
         entry._commit_mult=_commit_mult
+        entry._danger_mult = (_danger_nearby_mult ~= 1.0) and _danger_nearby_mult or nil
+        entry._danger_left = (_danger_nearby_left > 0) and _danger_nearby_left or nil
       elseif pool_idx == 7 then
         entry._base=base_extra; entry._tv=_threat_val; entry._thr=threat_cost
         entry._lgm_mult=_p7_lgm_mult
@@ -3844,6 +3929,7 @@ function M.step_eval_queue(state, world, info)
         id = id, mx = obj.mx, my = obj.my, cost = c,
         own = obj.owner or "?", hp = obj.health or 0,
         stale = obj.last_seen and (now - obj.last_seen) or 0,
+        obj = obj,  -- ref needed by rederive_pool_partial_best after sync
       }
       if c < pr.best_cost then
         pr.best_cost = c; pr.best_id = id; pr.best_obj = obj
@@ -3874,11 +3960,392 @@ function M.step_eval_queue(state, world, info)
 end
 
 -- =========================================================================
+-- sync_ally_claimed_rejects — per-replan sweep over cost_cache that
+-- maintains the ally-claimed REJECT flag against the live ally_state
+-- broadcast slate.  For pools 2/3/4/5/6/7 we no longer bake +10000 into
+-- entry.cost at eval time — we just stored entry._ally_score / _ally_by.
+-- This pass converts that into entry._reject = "ally_claimed" when the
+-- ally is cheaper by at least ALLY_CLAIMED_STEAL_THRESHOLD, and clears
+-- the reject when the ally drops the goal, the heartbeat expires, or
+-- our raw cost drops below theirs.
+--
+-- Result: ally-claim REJECT freshness decouples from per-candidate eval
+-- cadence — an ally yielding mid-cycle un-REJECTs us on the very next
+-- tick instead of waiting for the slow attack_pill re-eval window.
+-- =========================================================================
+local _REJECT_POOLS = {
+  [2] = "defend_pill",
+  [3] = "capture_base",
+  [4] = "capture_pill",
+  [5] = "repair_pill",
+  [6] = "attack_pill",
+  [7] = "attack_base",
+}
+
+-- Record every change in cost_cache[*]._reject to a per-pool/id history
+-- list so the pool-grid breakdown can show "this entry was rejected for
+-- reason X at tick T, cleared at tick U, ..." across the whole session.
+-- Called at the END of sync_ally_claimed_rejects so it captures any
+-- transitions sync just made, plus changes made elsewhere (build_eval_queue
+-- writing _reject="alive" / "in_tank" / "stale" / "blocked" / "depleted"
+-- etc.).  Stored on state.reject_history[pool:id] = { {tick, reason, by,
+-- prev}, ... } — unbounded per session but trivial memory in practice.
+local function record_reject_history(state)
+  local cache = state.cost_cache
+  if not cache then return end
+  local now = state.tick or 0
+  state.reject_history = state.reject_history or {}
+  local hist = state.reject_history
+  for _, e in pairs(cache) do
+    local cur = e._reject or false
+    local prev = e._last_reject_seen
+    if prev == nil then prev = false end
+    if cur ~= prev then
+      local key = (e._p or "?") .. ":" .. (e._id or "?")
+      local list = hist[key]
+      if not list then list = {}; hist[key] = list end
+      list[#list + 1] = {
+        t      = now,
+        reason = e._reject or nil,
+        by     = e._priority_by or e._ally_by or nil,
+        prev   = (prev ~= false) and prev or nil,
+      }
+      e._last_reject_seen = cur
+    end
+  end
+end
+
+local function sync_ally_claimed_rejects(state, info)
+  local cache = state.cost_cache
+  if not cache then return end
+  local now = state.tick or 0
+  local self_pn = (_SELF_PN ~= -1) and _SELF_PN or (state.player_number or -1)
+  local threshold = C.ALLY_CLAIMED_STEAL_THRESHOLD or 0
+  -- Prefer the live info passed by the caller; only fall back to the
+  -- cached _last_info (which gets populated by get_pool_breakdown_json,
+  -- not the per-tick brain loop) so the per-tick sync still sees the
+  -- right armour on every tick, not just when the pool grid is open.
+  local cur_armour = (info and info.armour)
+                     or (state._last_info and state._last_info.armour) or 0
+
+  local priority_ticks = C.ALLY_PILL_TAKE_PRIORITY_TICKS or 100
+  -- Per-pill snapshot keyed by pill_id: { until_t, by }.  Set ONCE the
+  -- first time a pool-4 entry for that pill appears in cost_cache; the
+  -- countdown ticks down from there regardless of the ally's substate.
+  -- Survives cache eviction-and-recreation (e._priority_check_done on
+  -- the entry alone wouldn't, because step_eval_queue rebuilds the
+  -- entry table on every re-eval).
+  state.pill_priority_set = state.pill_priority_set or {}
+  local pill_priority_set = state.pill_priority_set
+
+  for _, e in pairs(cache) do
+    local pool_idx = e._p
+    -- Diagnostic: log every pool-6 cache entry we visit, so we can see
+    -- whether the entry even reaches the sync loop and what its raw
+    -- fields look like.  Helps catch the "pool 6 entry exists but
+    -- sync skips it because _id is missing / _REJECT_POOLS gate
+    -- fails" class of bugs.
+    -- Pool 4 (capture_pill) "ally did the take" REJECT.  Snapshot at
+    -- FIRST sighting: when a fresh capture_pill candidate appears (the
+    -- killed pill just became eligible), peek ally_state once for any
+    -- ally currently on attack_pill for the same pill_id.  If found,
+    -- stamp an absolute expiry tick and NEVER refresh it — the timer
+    -- counts down regardless of the ally's substate, so by the time
+    -- their ~2 s swerve finishes the REJECT has decayed and standard
+    -- ally_claimed takes over for the capture race.  Without the
+    -- "no refresh" rule the countdown would only start after the
+    -- swerve ended, leaving the killer's window closed by the time
+    -- they actually reached capture_pill.
+    if pool_idx == 4 and e._id then
+      -- Co-attacker exemption: if WE'RE also targeting this pill
+      -- (currently attack_pill or capture_pill on it), parallel ally
+      -- broadcasts don't reject us — we have at least as much "did
+      -- the take" priority. Cost comparison decides between co-killers.
+      local g = state.goal
+      local we_targeted_it = g
+        and (g.kind == "attack_pill" or g.kind == "capture_pill")
+        and ((g.target_id and g.target_id == e._id)
+             or (g.mx == e._mx and g.my == e._my))
+      -- First-sight snapshot per pill_id.  Mark "checked" even when no
+      -- priority applies so we don't re-scan ally_state every tick.
+      -- Gate on "actually a capture candidate": entries with _reject
+      -- already set (alive / in_tank / blocked / stale) aren't real
+      -- pool-4 contenders yet — snapshotting then would lock in a
+      -- "no priority" stamp before the pill is even dead, then never
+      -- re-check when it actually becomes capturable.  Skip the
+      -- snapshot until the entry is reject-free OR was rejected for
+      -- ally_pill_take_priority specifically (which we own).
+      local entry_is_candidate = not e._reject
+                                 or e._reject == "ally_pill_take_priority"
+      local stamp = pill_priority_set[e._id]
+      if stamp == nil and not we_targeted_it and entry_is_candidate then
+        local found_pn
+        for ally_pn, slot in ally_state.iter_active(now, 1750) do
+          if ally_pn ~= self_pn then
+            local h = slot.info
+            if h.goal == "attack_pill" then
+              local aid = tonumber(h.target)
+              if aid == e._id then
+                found_pn = ally_pn
+                break
+              end
+            end
+          end
+        end
+        if found_pn then
+          stamp = { until_t = now + priority_ticks, by = found_pn, stamped_at = now }
+        else
+          stamp = { until_t = 0 }  -- "checked, no priority"
+        end
+        pill_priority_set[e._id] = stamp
+      end
+      -- Early-termination checks: end the priority window before until_t
+      -- when either (1) the killer's tank died after we stamped, or
+      -- (2) the killer's current goal is neither attack_pill nor
+      -- capture_pill on this pill_id (they abandoned the take).  Either
+      -- way the priority no longer serves its purpose so we hand the
+      -- contest back to standard ally_claimed cost-based REJECT.
+      if stamp and stamp.until_t > now and stamp.by then
+        local dead_at = state.tank_dead_at and state.tank_dead_at[stamp.by]
+        if dead_at and dead_at > (stamp.stamped_at or 0) then
+          stamp.until_t = 0
+        else
+          local ally_slot = ally_state.get(stamp.by)
+          if ally_slot and ally_slot.active then
+            local ag = ally_slot.info.goal
+            local at = tonumber(ally_slot.info.target)
+            local still_on_it = (ag == "attack_pill" or ag == "capture_pill")
+                                and at == e._id
+            if not still_on_it then
+              stamp.until_t = 0
+            end
+          end
+        end
+      end
+      if stamp and stamp.until_t > now and not we_targeted_it then
+        if e._reject ~= "ally_pill_take_priority" then
+          e._reject = "ally_pill_take_priority"
+          e.formula = nil
+        end
+        e._reject_remaining = stamp.until_t - now
+        e._priority_by      = stamp.by
+        goto continue_entry
+      elseif e._reject == "ally_pill_take_priority" then
+        e._reject = nil
+        e._reject_remaining = 0
+        e._priority_by = nil
+        e.formula = nil
+      end
+    end
+    -- Pool 6 (attack_pill) extra precondition: refuse to take a near-
+    -- full-HP pill on low armour.  Higher priority than ally_claimed
+    -- — if we can't safely take it, who's cheapest doesn't matter.
+    -- Live-evaluated every tick against current info.armour so it
+    -- self-clears the moment we refuel.
+    if pool_idx == 6 and e._hpv then
+      local pill_hp = e._hpv
+      if pill_hp >= C.ATTACK_PILL_UNSAFE_HP_THRESHOLD
+         and cur_armour > 0
+         and cur_armour < C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR then
+        if e._reject ~= "armour_too_low" then
+          e._reject = "armour_too_low"
+          e._reject_remaining = 0
+          e._armour_at_reject = cur_armour
+          e._pillhp_at_reject = pill_hp
+          e.formula = nil  -- re-render with REJECT text
+        else
+          e._armour_at_reject = cur_armour
+          e._pillhp_at_reject = pill_hp
+        end
+        goto continue_entry
+      elseif e._reject == "armour_too_low" then
+        -- Armour recovered (refueled) or pill HP dropped — clear.
+        e._reject = nil
+        e._reject_remaining = 0
+        e._armour_at_reject = nil
+        e._pillhp_at_reject = nil
+        e.formula = nil
+      end
+    end
+    if _REJECT_POOLS[pool_idx] then
+      -- Look up any active ally currently claiming this same (kind, target).
+      local kind = _REJECT_POOLS[pool_idx]
+      local match_cost, match_pn, match_heartbeat = nil, nil, 0
+      -- Pool 6 (attack_pill) flag: ally is past plan/approach — they're
+      -- engaging the pill.  Once that's set, no cost can peel us off:
+      -- we REJECT unconditionally (subject only to the we_hold
+      -- co-attacker exemption).  You can't steal a kill mid-take.
+      local force_engaging_reject = false
+      local match_sub = nil
+      local tank_dead_at = state.tank_dead_at
+      local _diag_p6 = BRAIN_DEBUG_MODE and pool_idx == 6 and e._id
+      local _diag_scanned = 0
+      for ally_pn, slot in ally_state.iter_active(now, 1750) do
+        if ally_pn ~= self_pn
+           -- Skip allies whose tank is dead: any "they have the
+           -- claim" REJECT we'd set based on their broadcast is
+           -- stale.  They can't deliver on the goal until they
+           -- respawn, so let standard contention resume now.  When
+           -- they respawn and rebroadcast, the slot becomes valid
+           -- again automatically.
+           and not (tank_dead_at and tank_dead_at[ally_pn]
+                    and tank_dead_at[ally_pn] > (slot.last_tick or 0)) then
+          local h = slot.info
+          if _diag_p6 then _diag_scanned = _diag_scanned + 1 end
+          if h.goal == kind then
+            local aid = tonumber(h.target)
+            local matched
+            if aid and e._id then
+              matched = (aid == e._id)
+            else
+              local amx = tonumber(h.mx)
+              local amy = tonumber(h.my)
+              if amx and amy then
+                matched = (amx == e._mx and amy == e._my)
+              end
+            end
+            if matched then
+              match_sub = h.sub
+              -- Pool 6: if the ally is past plan/approach, flag the
+              -- entry for unconditional REJECT below.  Cost is
+              -- irrelevant once an ally has started actively engaging
+              -- — nobody peels off a pill take mid-fight.
+              if pool_idx == 6 then
+                if match_sub ~= "approach" and match_sub ~= "plan_position" then
+                  force_engaging_reject = true
+                end
+              end
+              match_cost      = tonumber(h.cost)
+              match_pn        = ally_pn
+              match_heartbeat = 1750 - (now - slot.last_tick)
+              if match_heartbeat < 0 then match_heartbeat = 0 end
+              break
+            end
+          end
+        end
+      end
+      if _diag_p6 then
+        if match_pn then
+        elseif _diag_scanned > 0 then
+        end
+      end
+
+      if match_pn then
+        local our_cost = e.cost
+        local we_keep
+        -- "First to claim it, keeps it" rule.  Within the steal band
+        -- (neither side meaningfully cheaper), the current holder
+        -- keeps and the challenger yields — avoids both-bots-keep
+        -- which made two bots converge on the same target.  If
+        -- NEITHER is currently committed (fresh contention), break
+        -- the tie deterministically by player_number so one always
+        -- wins and we don't get the dual-yield "nobody takes it"
+        -- failure mode.
+        local kind = _REJECT_POOLS[pool_idx]
+        local g    = state.goal
+        local we_hold = g and g.kind == kind
+                       and ((g.target_id and e._id and g.target_id == e._id)
+                            or (g.mx == e._mx and g.my == e._my))
+        -- Pool 6 unconditional engaging REJECT.  Once the ally has
+        -- gone past plan/approach the take is in flight — no cost can
+        -- justify peeling them off, and arriving late as a "cheaper"
+        -- co-attacker just wastes our cycles since the ally finishes
+        -- the kill first.  Only exception is we_hold: a true race
+        -- where we ALSO committed to the same target.
+        if force_engaging_reject and not we_hold then
+          we_keep = false
+        elseif match_cost == nil then
+          -- Ally hasn't broadcast a cost yet (first frame post-pick).
+          -- They're still the holder (committed by goal).  We keep
+          -- only if we also hold it.
+          we_keep = we_hold
+        elseif our_cost + threshold < match_cost then
+          we_keep = true  -- we're meaningfully cheaper, keep
+        elseif match_cost + threshold < our_cost then
+          we_keep = false -- they're meaningfully cheaper, yield
+        else
+          -- Within the steal band: holder keeps.  Ally always holds
+          -- (they matched on goal+target).  We keep only if we ALSO
+          -- hold it (race: both committed to same target).  No more
+          -- pn tiebreak — bot0 was beating bot2 on cost ties because
+          -- pn=0 < pn=2, even though bot2 was the actual holder.
+          we_keep = we_hold
+        end
+        if we_keep then
+          if e._reject == "ally_claimed" then
+            e._reject = nil
+            e._reject_remaining = 0
+            e.formula = nil  -- re-render
+          end
+          e._ally_score     = match_cost
+          e._ally_by        = match_pn
+          e._ally_heartbeat = match_heartbeat
+        else
+          e._reject           = "ally_claimed"
+          e._reject_remaining = match_heartbeat
+          e._ally_score       = match_cost
+          e._ally_by          = match_pn
+          e._ally_heartbeat   = match_heartbeat
+          e.formula           = nil  -- re-render with REJECT text
+        end
+      else
+        -- No ally claiming this target any more — clear any prior reject.
+        if e._reject == "ally_claimed" then
+          e._reject = nil
+          e._reject_remaining = 0
+          e.formula = nil
+        end
+        e._ally_score     = nil
+        e._ally_by        = nil
+        e._ally_heartbeat = nil
+      end
+    end
+    ::continue_entry::
+  end
+  -- Snapshot any _reject transitions sync just made (or any made
+  -- earlier this tick by build_eval_queue / pool finalizers) into
+  -- state.reject_history so the pool-grid breakdown can surface the
+  -- full per-entry timeline.
+  record_reject_history(state)
+end
+
+-- Re-derive pool_partial best_cost/id/obj after sync_ally_claimed_rejects
+-- so finalize_pools doesn't pick a candidate that just got REJECT-flagged
+-- by the sync sweep.  Cheap: O(candidates per pool).
+local function rederive_pool_partial_best(state)
+  local partial = state.pool_partial
+  local cache = state.cost_cache
+  if not partial or not cache then return end
+  for pool_idx, pr in pairs(partial) do
+    if _REJECT_POOLS[pool_idx] and pr and pr.candidates then
+      local best_cost = math.huge
+      local best_id, best_obj = nil, nil
+      for _, cand in ipairs(pr.candidates) do
+        local ck = pool_idx .. ":" .. cand.id
+        local ce = cache[ck]
+        if ce and not ce._reject and (cand.cost or math.huge) < best_cost then
+          best_cost = cand.cost
+          best_id   = cand.id
+          best_obj  = cand.obj
+        end
+      end
+      pr.best_cost = best_cost
+      pr.best_id   = best_id
+      pr.best_obj  = best_obj
+    end
+  end
+end
+
+-- =========================================================================
 -- finalize_pools — called at decision tick.  Converts partial results
 -- into pool_cache entries (same format as the old evaluators returned).
 -- Also runs cheap evaluators that don't need incremental evaluation.
 -- =========================================================================
 function M.finalize_pools(state, world, info)
+  -- ── Ally-claimed REJECT sync (runs before partial → pool_cache) ──
+  _SELF_PN = info.player_number or _SELF_PN
+  sync_ally_claimed_rejects(state, info)
+  rederive_pool_partial_best(state)
   local _t0 = clock_us()
   local tmx  = info.tankx >> 8
   local tmy  = info.tanky >> 8
@@ -3927,7 +4394,12 @@ function M.finalize_pools(state, world, info)
           stale = obj.last_seen and (now - obj.last_seen) or 0,
           cached = true,
         }
-        if c < pr.best_cost then
+        -- Skip rejected entries when picking best — sync just ran
+        -- above and set _reject on entries that fail preconditions
+        -- (armour_too_low, ally_claimed, ally_pill_take_priority).
+        -- Without this guard the backfill loop would undo rederive's
+        -- work and pool 6 would re-pick a rejected pill.
+        if not cached._reject and c < pr.best_cost then
           pr.best_cost = c; pr.best_id = id; pr.best_obj = obj
         end
       end
@@ -5925,7 +6397,16 @@ end
 --     ]
 --   }
 -- =========================================================================
+-- Public alias so init.lua can run the per-tick sync regardless of
+-- whether the pool grid is being rendered.
+M.sync_ally_claimed_rejects = sync_ally_claimed_rejects
+
 function M.get_pool_breakdown_json(state)
+  -- Run the ally-claimed REJECT sync every tick the grid is read so
+  -- the displayed _reject flags track live ally_state without waiting
+  -- for the next replan cycle.
+  if state.player_number then _SELF_PN = state.player_number end
+  sync_ally_claimed_rejects(state)
   if not BRAIN_POOL_VIZ then
     return string.format(
       '{"phase":"%s","tick":%d,"replan_left":0,"bot":%d,"sections":[{"id":"off","label":"Pool viz","rows":[{"id":0,"mx":0,"my":0,"cost":0,"formula":"BRAIN_POOL_VIZ is off","stale":-1,"active":false,"imminent":false,"reject":null}]}]}',
@@ -5963,6 +6444,33 @@ function M.get_pool_breakdown_json(state)
   end
 
   -- Group eval_queue items by pool, same iteration as the text version.
+  -- Format a per-entry reject-history segment that gets appended to the
+  -- formula breakdown so the pool panel shows the full timeline of
+  -- _reject changes for this (pool, id) across the session.  Compact
+  -- form: "|history: t=NNNN <action>[/by=pN] / t=NNNN <action> / ...".
+  -- Cap at the last 8 events to keep the formula string under
+  -- pool_grid.cpp's 400-byte segment cap.
+  local function format_reject_history(rh)
+    if not rh or #rh == 0 then return "" end
+    local first = math.max(1, #rh - 7)
+    local parts = { "|history:" }
+    for i = first, #rh do
+      local h = rh[i]
+      local act
+      if h.reason then
+        act = "set:" .. h.reason
+        if h.by then act = act .. " by=p" .. tostring(h.by) end
+      else
+        act = "cleared"
+        if h.prev then act = act .. " (was " .. h.prev .. ")" end
+      end
+      parts[#parts + 1] = string.format(" t=%d %s", h.t or 0, act)
+      if i < #rh then parts[#parts + 1] = " /" end
+    end
+    return table.concat(parts)
+  end
+  local reject_history = state.reject_history or {}
+
   -- Capture cached.tick so we can compute staleness per row.
   local by_pool = {}
   for _, item in ipairs(state.eval_queue or {}) do
@@ -5971,15 +6479,27 @@ function M.get_pool_breakdown_json(state)
     if obj then
       by_pool[p] = by_pool[p] or {}
       local cached = cache[p .. ":" .. item.id]
+      local formula_str = (cached and get_formula(cached)) or ""
+      local hist_str = format_reject_history(reject_history[p .. ":" .. item.id])
+      if hist_str ~= "" then
+        local sep = formula_str:find("||", 1, true)
+        if sep then
+          formula_str = formula_str .. hist_str
+        else
+          formula_str = formula_str .. "||" .. hist_str:sub(2)
+        end
+      end
       by_pool[p][#by_pool[p] + 1] = {
         id = item.id, mx = obj.mx or 0, my = obj.my or 0,
         -- 1e30 (≥ renderer's 1e9 INF threshold) for candidates not yet
         -- evaluated, so the panel shows INF rather than a misleading -1.
         cost = (cached and cached.cost) or 1e30,
-        formula = (cached and get_formula(cached)) or "",
+        formula = formula_str,
         stale = (cached and cached.tick) and (now - cached.tick) or -1,
         reject = cached and cached._reject or nil,
         reject_remaining = cached and cached._reject_remaining or 0,
+        ally_score = cached and cached._ally_score or nil,
+        ally_by    = cached and cached._ally_by    or nil,
         imminent = (cached and cached.imminent) or false,
       }
     end

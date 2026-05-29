@@ -1937,8 +1937,7 @@ function Brain.think(info)
         -- (on the ally_avoid_overlay layer which defaults on).  Shows
         -- whether the 5x5 stamp is active and, when off, the live
         -- euclidean distance to each of the two activation points.
-        if BRAIN_DEBUG_MODE and ai.goal == "attack_pill"
-           and pmx and pmy and atmx and atmy then
+        if BRAIN_DEBUG_MODE and ai.goal == "attack_pill" and pmx and pmy and atmx and atmy then
           local r, g, b = active and 80 or 255,
                           active and 255 or (in_combat_sub and 200 or 120),
                           80
@@ -2452,9 +2451,7 @@ function Brain.think(info)
     state.goal.wy       = U.m2w(cur_my)
   end
 
-  if BRAIN_DEBUG_MODE and state._respawn_wipe_until
-     and now <= state._respawn_wipe_until
-     and viz.is_on("hud_goal") then
+  if BRAIN_DEBUG_MODE and state._respawn_wipe_until and now <= state._respawn_wipe_until and viz.is_on("hud_goal") then
     viz.hud_text("hud_goal", 10, 200,
       string.format("RESPAWN WIPE dist=%d (>%d)",
         state._respawn_wipe_dist or 0, C.RESPAWN_CACHE_WIPE_DIST),

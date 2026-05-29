@@ -87,6 +87,47 @@ int botManagerGetPendingThreads(const ServerSim *sim) {
     return sim ? sim->botMgr.pendingThreads : -1;
 }
 
+/* Bot chat send callback.
+ * The default clientSimDefaultChatSend → clientSimNetSendChat path takes
+ * threadsMutex inside clientSimSubmitCommand (client_net.c:429).  Bot
+ * brains run on worker threads inside the producer's botWorkerPoolRun
+ * call, during which the producer (timer thread) is HOLDING threadsMutex
+ * — the worker would block forever waiting for it, and the producer in
+ * turn is blocked waiting for the worker, deadlocking the whole game.
+ *
+ * Instead of submitting directly, we queue a CMD_CHAT on the bot's
+ * BotJobCtx and let Stage 3 (serial, on the producer thread, already
+ * under the mutex) drain the queue via serverSimApplyCommand.  Same
+ * end-result (CTRL_CHAT publish → in-process subscribers receive),
+ * just routed through the deferred queue. */
+static void botManagerQueueingChatSendCallback(ClientSim *cs,
+                                               uint8_t fromPlayer,
+                                               uint8_t destPlayer,
+                                               const char *message) {
+    (void)fromPlayer;
+    if (cs == NULL || message == NULL || message[0] == '\0') return;
+    ServerSim *sim = (ServerSim *)clientSimGetBoundServerSim(cs);
+    if (sim == NULL) return;
+    BYTE pn = clientSimGetMyPlayerNum(cs);
+    if (pn >= MAX_TANKS) return;
+    BotJobCtx *j = &sim->botMgr.jobs[pn];
+    if (j->pendingCmdCount >= BOT_PENDING_CMD_MAX) {
+        /* Queue full — drop. Two ticks back-to-back without a Stage-3
+         * drain shouldn't happen (drain runs every botManagerTick), and
+         * even if it did, dropping bot chat is preferable to allocating
+         * unbounded memory inside a worker. */
+        return;
+    }
+    ClientCommand *cmd = &j->pendingCmds[j->pendingCmdCount++];
+    memset(cmd, 0, sizeof(*cmd));
+    cmd->type = CMD_CHAT;
+    cmd->u.chat.destPlayer = destPlayer;
+    size_t msgLen = strlen(message);
+    if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
+    cmd->u.chat.bodyLen = (uint16_t)msgLen;
+    memcpy(cmd->u.chat.body, message, msgLen);
+}
+
 /* Apply any pending pool-resize request. Called from botManagerTick
  * before any dispatch happens, so the resize lands in the gap between
  * ticks. */
@@ -483,11 +524,15 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     clientSimCreate(bot->cs);
     clientSimSetIsBot(bot->cs, true);
     clientSimSetPlayerNum(bot->cs, playerNum);
-    /* Chat send: bot's ClientSim inherits clientSimDefaultChatSend from
-     * clientSimCreate. Outbound chat from brain.sendmessage flows through
-     * the same client_net.h path human chat uses → clientSimSubmitCommand
-     * → serverSimApplyCommand under the mutex → CMD_CHAT arm publishes
-     * CTRL_CHAT. No bot-specific wiring needed. */
+    /* Chat send: override the default clientSimDefaultChatSend with our
+     * own callback that QUEUES the chat as a pending CMD_CHAT on the
+     * bot's BotJobCtx instead of calling clientSimSubmitCommand
+     * directly.  The default path acquires threadsMutex inside
+     * clientSimSubmitCommand, which would deadlock against the producer
+     * thread (timer) that's currently holding it while waiting for the
+     * worker to finish.  Stage 3 of botManagerTick drains the queue
+     * serially under the held mutex. */
+    clientSimSetChatSendFunc(bot->cs, botManagerQueueingChatSendCallback);
 
     /* Load map data from the server before tankCreate so the bot's local
      * starts/pills/bases are populated when startsGetStart() runs — without
@@ -728,6 +773,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
         j->needRemove = false;
         j->hasInput   = false;
         j->wasKilled  = false;
+        j->pendingCmdCount = 0;
 
         bot->transport.getSnapshot(bot->transport.ctx, bot->playerNum,
                                    &j->hdr, j->tanks, MAX_TANKS,
@@ -881,6 +927,16 @@ void botManagerTick(ServerSim *sim, aiType ai) {
 
         sim->botMgr.bots[i].transport.sendInput(sim->botMgr.bots[i].transport.ctx, &j->pkt1);
         sim->botMgr.bots[i].transport.sendInput(sim->botMgr.bots[i].transport.ctx, &j->pkt2);
+
+        /* Drain any commands the worker queued via
+         * botManagerQueueingChatSendCallback.  We're on the producer
+         * thread here with threadsMutex already held (the timer
+         * callback acquired it before dispatching serverInstanceTick),
+         * so serverSimApplyCommand can run inline. */
+        for (int q = 0; q < j->pendingCmdCount; q++) {
+            (void)serverSimApplyCommand(sim, i, &j->pendingCmds[q]);
+        }
+        j->pendingCmdCount = 0;
 
         /* Budget-overrun telemetry: every overrun bumps the per-bot
          * counter; logging is rate-limited to once per ~50 ticks per

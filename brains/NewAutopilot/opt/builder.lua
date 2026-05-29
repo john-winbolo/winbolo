@@ -35,6 +35,8 @@ local viz    = require("viz")
 
 local M = {}
 
+print("[builder] loaded from: " .. tostring(debug.getinfo(1, "S").source))
+
 -- Hoisted: was reallocated inside the wall-build threat-blocker
 -- inner loop (per pill_threat × per direction = up to ~30 allocs/tick
 -- when in build mode). Module-scope constant.
@@ -89,6 +91,8 @@ function M.set_mode(state, world, info, goal)
   end
 
   -- Wall-shield attack: dispatch LGM to build/rebuild wall in specific substates
+  if kind == "attack_pill" and goal.substate == "build_walls" then
+  end
   if kind == "attack_pill" and goal.wall_shield and goal.wall_mx then
     local sub = goal.substate or ""
     if sub == "ws_prebuild" or sub == "ws_rebuild" or sub == "build_walls" then
@@ -618,6 +622,9 @@ function M.decide(state, world, info, now)
       end
       local has_trees   = info.trees >= cost
       local can_reach   = lgm_can_reach(info, wx, wy)
+      -- Used to log every 50 ticks; now fires every entry so we see
+      -- the WHOLE gate-evaluation history for a stalling wall_shield,
+      -- not just a 1-second sample. Cheap and BRAIN_DEBUG_MODE-gated.
       -- Exclude the target pill's own per-tile contribution from the
       -- safety check — we're committed to killing it, so its danger
       -- footprint shouldn't bully our LGM dispatch within its own
