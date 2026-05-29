@@ -4076,13 +4076,18 @@ local _REJECT_POOLS = {
   [7] = "attack_base",
 }
 
-local function sync_ally_claimed_rejects(state)
+local function sync_ally_claimed_rejects(state, info)
   local cache = state.cost_cache
   if not cache then return end
   local now = state.tick or 0
   local self_pn = (_SELF_PN ~= -1) and _SELF_PN or (state.player_number or -1)
   local threshold = C.ALLY_CLAIMED_STEAL_THRESHOLD or 0
-  local cur_armour = (state._last_info and state._last_info.armour) or 0
+  -- Prefer the live info passed by the caller; only fall back to the
+  -- cached _last_info (which gets populated by get_pool_breakdown_json,
+  -- not the per-tick brain loop) so the per-tick sync still sees the
+  -- right armour on every tick, not just when the pool grid is open.
+  local cur_armour = (info and info.armour)
+                     or (state._last_info and state._last_info.armour) or 0
 
   -- Refresh "ally pill-take priority" stamps: every tick an ally is
   -- broadcasting attack_pill on a target, set/extend a deadline
@@ -4217,19 +4222,32 @@ local function sync_ally_claimed_rejects(state)
       if match_pn then
         local our_cost = e.cost
         local we_keep
+        -- "First to claim it, keeps it" rule.  Within the steal band
+        -- (neither side meaningfully cheaper), the current holder
+        -- keeps and the challenger yields — avoids both-bots-keep
+        -- which made two bots converge on the same target.  If
+        -- NEITHER is currently committed (fresh contention), break
+        -- the tie deterministically by player_number so one always
+        -- wins and we don't get the dual-yield "nobody takes it"
+        -- failure mode.
+        local kind = _REJECT_POOLS[pool_idx]
+        local g    = state.goal
+        local we_hold = g and g.kind == kind
+                       and ((g.target_id and e._id and g.target_id == e._id)
+                            or (g.mx == e._mx and g.my == e._my))
         if match_cost == nil then
           -- Ally hasn't broadcast a cost yet (first frame post-pick).
-          -- Conservative: keep if we have the lower player_number.
-          we_keep = (self_pn < match_pn)
+          -- If we hold it, keep.  Otherwise tie-break by player_number.
+          we_keep = we_hold or (self_pn < match_pn)
         elseif our_cost + threshold < match_cost then
           we_keep = true  -- we're meaningfully cheaper, keep
         elseif match_cost + threshold < our_cost then
           we_keep = false -- they're meaningfully cheaper, yield
         else
-          -- Within the steal band: keep both candidates active (don't
-          -- REJECT on noise).  Tiebreak only matters when costs are
-          -- exactly equal — handled by leaving us with no reject.
-          we_keep = true
+          -- Within the steal band: holder keeps; otherwise lower
+          -- player_number wins.  (Cost-equal challengers never beat
+          -- a holder; you need the +threshold to "steal".)
+          we_keep = we_hold or (self_pn < match_pn)
         end
         if we_keep then
           if e._reject == "ally_claimed" then
@@ -4299,7 +4317,7 @@ end
 function M.finalize_pools(state, world, info)
   -- ── Ally-claimed REJECT sync (runs before partial → pool_cache) ──
   _SELF_PN = info.player_number or _SELF_PN
-  sync_ally_claimed_rejects(state)
+  sync_ally_claimed_rejects(state, info)
   rederive_pool_partial_best(state)
   local _t0 = clock_us()
   local tmx  = info.tankx >> 8
@@ -4349,7 +4367,12 @@ function M.finalize_pools(state, world, info)
           stale = obj.last_seen and (now - obj.last_seen) or 0,
           cached = true,
         }
-        if c < pr.best_cost then
+        -- Skip rejected entries when picking best — sync just ran
+        -- above and set _reject on entries that fail preconditions
+        -- (armour_too_low, ally_claimed, ally_pill_take_priority).
+        -- Without this guard the backfill loop would undo rederive's
+        -- work and pool 6 would re-pick a rejected pill.
+        if not cached._reject and c < pr.best_cost then
           pr.best_cost = c; pr.best_id = id; pr.best_obj = obj
         end
       end

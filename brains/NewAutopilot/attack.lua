@@ -3647,6 +3647,13 @@ function M.update_attack_substate(goal, state, world, info)
         -- real LGM progress on this slot. Reset the per-wall timer
         -- so the BUILD round-trip after a harvest doesn't trip the
         -- stall and skip a slot we're actively working on.
+        if BRAIN_DEBUG_MODE then
+          print2(string.format(
+            "WALL_RESET_TT t=%d idx=%d/%d slot=(%d,%d) tt:%d->%d age=%d",
+            now, idx, #list, target.mx, target.my,
+            goal._wall_idx_prev_tt, cur_tt,
+            now - (goal._wall_idx_started or now)))
+        end
         goal._wall_idx_started = now
         goal._wall_idx_prev_tt = cur_tt
       elseif (now - goal._wall_idx_started) > WALL_STALL_TICKS then
@@ -3654,6 +3661,29 @@ function M.update_attack_substate(goal, state, world, info)
           print(string.format(TAG ..
             " BUILD_WALLS: wall %d/%d at (%d,%d) stalled (%d ticks, tt=%d), skipping",
             idx, #list, target.mx, target.my, WALL_STALL_TICKS, cur_tt))
+        end
+        -- Detailed post-mortem: dump everything we knew about this
+        -- slot at the moment the per-wall timer tripped, so we can see
+        -- WHY the LGM never moved it to T_BUILDING/T_HALFBUILD.  Goes
+        -- to print2 unconditionally (in BRAIN_DEBUG_MODE) so it lands
+        -- in the per-bot log without needing BRAIN_LOG_BUILDER set.
+        if BRAIN_DEBUG_MODE then
+          local skip = state._wall_shield_skip
+          local skip_age   = skip and (now - (skip.tick or 0)) or -1
+          local skip_dump  = "none"
+          if skip then
+            skip_dump = string.format(
+              "wall=(%s,%s) trees=%s/%s reach=%s safe=%s angry=%s force=%s",
+              tostring(skip.wx), tostring(skip.wy),
+              tostring(skip.trees_have), tostring(skip.trees_need),
+              tostring(skip.can_reach), tostring(skip.path_safe),
+              tostring(skip.angry_pill_close), tostring(skip.force_mode))
+          end
+          print2(string.format(
+            "WALL_STALL_TRIP t=%d idx=%d/%d slot=(%d,%d) tt=%d man_status=%s trees=%s skip_age=%d skip=%s",
+            now, idx, #list, target.mx, target.my, cur_tt,
+            tostring(info.man_status), tostring(info.trees),
+            skip_age, skip_dump))
         end
         idx = idx + 1
         goal._wall_build_idx = idx
@@ -3676,6 +3706,14 @@ function M.update_attack_substate(goal, state, world, info)
       -- slot. Without this, a wall that needs harvest+build (two
       -- round-trips ≈ 10s) trips the 5s WALL_STALL even though the
       -- LGM is genuinely moving on its behalf.
+      if BRAIN_DEBUG_MODE then
+        local idx_dbg = goal._wall_build_idx or 0
+        local list_dbg = goal._wall_build_list and #goal._wall_build_list or 0
+        print2(string.format(
+          "WALL_RESET_LGM t=%d idx=%d/%d man_status:%d->%d",
+          now, idx_dbg, list_dbg,
+          goal._wall_build_prev_man, cur_man_status))
+      end
       if goal._wall_idx_started then
         goal._wall_idx_started = now
       end

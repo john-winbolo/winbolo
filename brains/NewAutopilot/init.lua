@@ -1908,10 +1908,19 @@ function Brain.think(info)
         local pmy = tonumber(ai.my)
         local atmx = tonumber(ai.tx)
         local atmy = tonumber(ai.ty)
-        local smx  = tonumber(ai.smx)
-        local smy  = tonumber(ai.smy)
-        local ssx  = tonumber(ai.ssx)
-        local ssy  = tonumber(ai.ssy)
+        -- Parse the packed "p" field — 8 hex chars,
+        -- approach_mx/approach_my/standoff_mx/standoff_my each 2 chars.
+        -- Falls back to the legacy 4-key form if a peer is on old code.
+        local smx, smy, ssx, ssy
+        if ai.p and #ai.p == 8 then
+          smx = tonumber(ai.p:sub(1, 2), 16)
+          smy = tonumber(ai.p:sub(3, 4), 16)
+          ssx = tonumber(ai.p:sub(5, 6), 16)
+          ssy = tonumber(ai.p:sub(7, 8), 16)
+        else
+          smx = tonumber(ai.smx); smy = tonumber(ai.smy)
+          ssx = tonumber(ai.ssx); ssy = tonumber(ai.ssy)
+        end
         local function edist(x1, y1, x2, y2)
           if not (x1 and y1 and x2 and y2) then return math.huge end
           local ddx = x1 - x2; local ddy = y1 - y2
@@ -2503,10 +2512,26 @@ function Brain.think(info)
     end
   end
 
+  -- Firing counts as progress: a bot that's planted while shooting at
+  -- a base / pill / tank isn't stuck, it's working.  Detect by shell
+  -- count dropping since last tick.  Without this, attack_base bots
+  -- that legitimately camp the capture tile while shooting nearby
+  -- defenders trip the 3-second stuck timer and abandon the take.
+  local fired_this_tick = state.last_shells ~= nil
+                          and info.shells ~= nil
+                          and info.shells < state.last_shells
+  state.last_shells = info.shells
+
+  if fired_this_tick then
+    -- Active firing is progress — reset the timer so a planted bot
+    -- shooting defenders doesn't trip stuck-flee mid-take.
+    state.stuck_for = 0
+  end
   if cur_mx == state.last_mx and cur_my == state.last_my
      and state.goal.kind ~= "none"
      and not attack_at_standoff
-     and not state.wall_clearing then
+     and not state.wall_clearing
+     and not fired_this_tick then
     state.stuck_for = state.stuck_for + 1
     if state.stuck_for > 150 then  -- ~3 s
       if state.goal.kind == "attack_pill" or state.goal.kind == "pill_place" then
@@ -3012,9 +3037,11 @@ function Brain.think(info)
     -- Per-tick ally-claimed REJECT sync: maintains entry._reject on
     -- cost_cache against the live ally_state slate so the pool grid and
     -- any selection that consults cost_cache between replans see fresh
-    -- yield-decisions. Cheap (hash lookups per cached candidate).
+    -- yield-decisions. Cheap (hash lookups per cached candidate). Pass
+    -- info so the armour_too_low branch sees current armour (state.
+    -- _last_info isn't populated outside the panel builder).
     if goals.sync_ally_claimed_rejects then
-      goals.sync_ally_claimed_rejects(state)
+      goals.sync_ally_claimed_rejects(state, info)
     end
 
     -- Purge stale per-pill plan_position cache entries (pills that
@@ -5374,25 +5401,9 @@ function Brain.think(info)
       end
       -- Goal tile mx/my as a fallback for the ally_claimed match path
       -- (goals.lua:3660-3664) when target_id isn't carried through.
-      -- Cheap (~12 bytes on the wire) and lets the receiver match by
-      -- coordinates if id sync drifts between brains.
       if state.goal.mx and state.goal.my then
         bsi.mx = tostring(state.goal.mx)
         bsi.my = tostring(state.goal.my)
-      end
-      -- Attack_pill setup + standoff coords so receivers can decide
-      -- "ally is within 3 euclidean tiles of either point" for the
-      -- ally-avoid 5x5 stamp.  Only sent on attack_pill goals where
-      -- these fields are meaningful.
-      if state.goal.kind == "attack_pill" then
-        if state.goal.approach_mx and state.goal.approach_my then
-          bsi.smx = tostring(state.goal.approach_mx)
-          bsi.smy = tostring(state.goal.approach_my)
-        end
-        if state.goal.standoff_mx and state.goal.standoff_my then
-          bsi.ssx = tostring(state.goal.standoff_mx)
-          bsi.ssy = tostring(state.goal.standoff_my)
-        end
       end
       -- Cost: pool_cache holds per-pool winners with .cost. Find the
       -- entry whose .goal matches our current goal (same kind + tile)
@@ -5436,6 +5447,55 @@ function Brain.think(info)
       state.last_broadcast_state_tick = now
       state.pending_lgm_broadcast = nil
       state.pending_lgm_back = nil
+    end
+
+    -- ── Build the /info extra payload (bse) and ship it on idle ticks ──
+    -- /info extra ships supplementary fields that don't fit the 128-byte
+    -- /info state budget.  Receiver MERGES into the slot (set_info is the
+    -- replacing kind; merge_info is the additive kind).  We only send
+    -- when send_msg is otherwise free AND the extras have changed since
+    -- last ship; bandwidth stays tiny and the receiver always has fresh
+    -- data within a tick or two of a goal transition.
+    local bse = state.broadcast_state_extra
+    if bse == nil then
+      bse = {}; state.broadcast_state_extra = bse
+    end
+    for k in pairs(bse) do bse[k] = nil end
+    -- Attack_pill setup + standoff coords packed as 8 hex chars (each
+    -- tile coord is 0..255 = 2 hex chars: approach_mx, approach_my,
+    -- standoff_mx, standoff_my).
+    if state.goal and state.goal.kind == "attack_pill"
+       and state.goal.approach_mx and state.goal.approach_my
+       and state.goal.standoff_mx and state.goal.standoff_my then
+      bse.p = string.format("%02X%02X%02X%02X",
+                            state.goal.approach_mx & 0xFF,
+                            state.goal.approach_my & 0xFF,
+                            state.goal.standoff_mx & 0xFF,
+                            state.goal.standoff_my & 0xFF)
+    end
+    local last_ext = state.last_broadcasted_state_extra
+    if last_ext == nil then
+      last_ext = {}; state.last_broadcasted_state_extra = last_ext
+    end
+    local extras_differ = false
+    for k, v in pairs(bse)      do if last_ext[k] ~= v then extras_differ = true break end end
+    if not extras_differ then
+      for k, v in pairs(last_ext) do if bse[k] ~= v then extras_differ = true break end end
+    end
+    -- Only send extras when nothing else is going out this tick and
+    -- there's actual change.  Heartbeat: every 1500 ticks, re-emit
+    -- whatever extras are current so a freshly-joined or stale-slot
+    -- ally picks them up without waiting for the next goal change.
+    state.last_broadcast_extra_tick = state.last_broadcast_extra_tick or 0
+    local extra_heartbeat_due = (now - state.last_broadcast_extra_tick) >= 1500
+    if not send_msg
+       and (next(bse) ~= nil or next(last_ext) ~= nil)
+       and (extras_differ or extra_heartbeat_due) then
+      send_msg = comms.format_extra(bse)
+      msg_dest = info.allies and info.allies or 0
+      for k in pairs(last_ext) do last_ext[k] = nil end
+      for k, v in pairs(bse)      do last_ext[k] = v end
+      state.last_broadcast_extra_tick = now
     end
   end
 

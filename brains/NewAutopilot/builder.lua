@@ -669,9 +669,12 @@ function M.decide(state, world, info, now)
       end
       local has_trees   = info.trees >= cost
       local can_reach   = lgm_can_reach(info, wx, wy)
-      if state.tick and state.tick % 50 == 0 then
+      -- Used to log every 50 ticks; now fires every entry so we see
+      -- the WHOLE gate-evaluation history for a stalling wall_shield,
+      -- not just a 1-second sample. Cheap and BRAIN_DEBUG_MODE-gated.
+      if BRAIN_DEBUG_MODE then
         print2(string.format("BUILDER_WALL_CHECK t=%d wall=(%d,%d) tt=%d trees=%d/%d reach=%s mode=%s force=%s",
-          state.tick, wx, wy, wtt, info.trees, cost,
+          state.tick or 0, wx, wy, wtt, info.trees, cost,
           tostring(can_reach), b.mode, tostring(b.mode == "wall_shield")))
       end
       -- Exclude the target pill's own per-tile contribution from the
@@ -742,11 +745,21 @@ function M.decide(state, world, info, now)
         if wtt == C.T_FOREST then
           log.reason("build", { mode = b.mode, why = "harvest forest before wall",
                                 wall_mx = wx, wall_my = wy })
+          if BRAIN_DEBUG_MODE then
+            print2(string.format(
+              "BUILDER_WALL_DISPATCH t=%d mode=%s action=FARM wall=(%d,%d) tt=%d trees=%d/%d reach=%s",
+              state.tick or 0, b.mode, wx, wy, wtt, info.trees, cost, tostring(can_reach)))
+          end
           return { x = wx, y = wy, action = BUILDMODE_FARM }
         end
         local why = b.mode == "base_shield" and "building wall to protect refuel"
                                               or "building wall for pill attack"
         log.reason("build", { mode = b.mode, why = why, wall_mx = wx, wall_my = wy })
+        if BRAIN_DEBUG_MODE then
+          print2(string.format(
+            "BUILDER_WALL_DISPATCH t=%d mode=%s action=BUILD wall=(%d,%d) tt=%d trees=%d/%d reach=%s",
+            state.tick or 0, b.mode, wx, wy, wtt, info.trees, cost, tostring(can_reach)))
+        end
         return { x = wx, y = wy, action = BUILDMODE_BUILD }
       end
       -- Stash gate failure on state so the brain can surface it (and
@@ -770,6 +783,17 @@ function M.decide(state, world, info, now)
         reach = can_reach, safe  = path_safe,
         force = force_mode,
       })
+      if BRAIN_DEBUG_MODE then
+        local parts = {}
+        if angry_pill_close then parts[#parts + 1] = "ANGRY_PILL" end
+        if not has_trees    then parts[#parts + 1] = string.format("TREES(%d/%d)", info.trees, cost) end
+        if not can_reach    then parts[#parts + 1] = "NO_REACH" end
+        if not path_safe    then parts[#parts + 1] = "UNSAFE_PATH" end
+        print2(string.format(
+          "BUILDER_WALL_SKIP t=%d mode=%s wall=(%d,%d) tt=%d force=%s reasons=%s",
+          state.tick or 0, b.mode, wx, wy, wtt, tostring(force_mode),
+          (#parts > 0 and table.concat(parts, "+") or "(none — already built?)")))
+      end
     end
     -- Wall already exists or can't build safely — fall through to default
     if b.mode == "wall_shield" then return nil end
