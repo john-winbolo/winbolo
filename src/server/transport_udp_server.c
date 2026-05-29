@@ -471,20 +471,6 @@ static void serverSendJoinReject(const struct sockaddr_in *addr, langid id,
     udpSendTo(udpServer.sock, buf, pos, addr);
 }
 
-/* Send a PACKET_NAME_CHANGE_REJECT to a specific connected client.
- * Payload is a single reasonCode byte (NAME_REJECT_*). The client maps
- * it to a localized langid and surfaces it in the chat ring. */
-static void serverSendNameChangeReject(int clientIdx, uint8_t reasonCode) {
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
-    if (clientIdx < 0 || clientIdx >= MAX_TANKS) return;
-    if (!udpServer.clients[clientIdx].connected) return;
-    packHeader(buf, PACKET_NAME_CHANGE_REJECT, 0);
-    buf[PACKET_HEADER_SIZE] = reasonCode;
-    /* wire-only: per-client handshake (response to a single client's request) */
-    udpSendTo(udpServer.sock, buf, sizeof(buf),
-              &udpServer.clients[clientIdx].addr);
-}
-
 /* Short name for a ControlEventType — diagnostic logging only. */
 static const char *mpDiagCtrlName(int type) {
     switch (type) {

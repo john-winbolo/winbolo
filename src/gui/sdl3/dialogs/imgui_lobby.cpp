@@ -5119,9 +5119,15 @@ static void renderLobbyRejectToast(ClientSim *cs, float s) {
     if (clientSimGetLobbyLastRejectPacket(cs) == 0) return;
     const char *reason = langGetText(STR_DLGLOBBY_REJECT_DEFAULT);
     switch (clientSimGetLobbyLastRejectReason(cs)) {
-        case 1: reason = langGetText(STR_DLGLOBBY_REJECT_NOTHOST); break;  /* LOBBY_REJECT_NOT_HOST */
-        case 2: reason = langGetText(STR_DLGLOBBY_REJECT_LOCKED);  break;  /* LOBBY_REJECT_LOCKED */
-        case 3: reason = langGetText(STR_DLGLOBBY_REJECT_INVALID); break;  /* LOBBY_REJECT_INVALID */
+        case  1: reason = langGetText(STR_DLGLOBBY_REJECT_NOTHOST);        break;  /* LOBBY_REJECT_NOT_HOST */
+        case  2: reason = langGetText(STR_DLGLOBBY_REJECT_LOCKED);         break;  /* LOBBY_REJECT_LOCKED */
+        case  3: reason = langGetText(STR_DLGLOBBY_REJECT_INVALID);        break;  /* LOBBY_REJECT_INVALID */
+        case  9: reason = langGetText(STR_NAME_INVALID_EMPTY);             break;  /* CMD_REJECT_NAME_EMPTY */
+        case 10: reason = langGetText(STR_NAME_INVALID_RESERVED_PREFIX);   break;  /* CMD_REJECT_NAME_RESERVED_PREFIX */
+        case 11: reason = langGetText(STR_NAME_INVALID_RESERVED_SUFFIX);   break;  /* CMD_REJECT_NAME_RESERVED_SUFFIX */
+        case 12: reason = langGetText(STR_NAME_INVALID_MIXED_SCRIPTS);     break;  /* CMD_REJECT_NAME_MIXED_SCRIPTS */
+        case 13: reason = langGetText(STR_NAME_INVALID_CHARS);             break;  /* CMD_REJECT_NAME_INVALID */
+        case 14: reason = langGetText(STR_DLGSETNAME_INUSE_ERR);           break;  /* CMD_REJECT_NAME_TAKEN */
         default: break;
     }
     ImGui::PushStyleColor(ImGuiCol_Text, wbThemeColor(g_theme->lockBadge));

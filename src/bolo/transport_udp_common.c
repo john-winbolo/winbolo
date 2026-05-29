@@ -89,7 +89,6 @@ const char *packetTypeName(uint8_t type) {
     case PACKET_MAP_DOWNLOAD:   return "MAP_DOWNLOAD";
     case PACKET_PLAYER_LIST:    return "PLAYER_LIST";
     case PACKET_NAME_CHANGE:        return "NAME_CHANGE";
-    case PACKET_NAME_CHANGE_REJECT: return "NAME_CHANGE_REJECT";
     case PACKET_ALLIANCE_REQUEST:   return "ALLIANCE_REQUEST";
     case PACKET_ALLIANCE_ACCEPT:    return "ALLIANCE_ACCEPT";
     case PACKET_ALLIANCE_LEAVE:     return "ALLIANCE_LEAVE";

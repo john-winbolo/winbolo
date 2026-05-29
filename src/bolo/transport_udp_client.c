@@ -1359,54 +1359,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
     }
 
-    case PACKET_NAME_CHANGE_REJECT:
-        /* Name change reject format:
-         *   [header 8] [reasonCode 1] */
-        if (len < PACKET_HEADER_SIZE + 1) {
-            fprintf(stderr, "[UDP CLIENT] PACKET_NAME_CHANGE_REJECT: short packet (len=%d)\n", len);
-        } else {
-            uint8_t reasonCode = buf[PACKET_HEADER_SIZE];
-            langid msgId;
-            const char *rendered;
-            char rendBuf[FILENAME_MAX];
-            switch (reasonCode) {
-                case NAME_REJECT_TAKEN:
-                    msgId = STR_DLGSETNAME_INUSE_ERR;
-                    break;
-                case NAME_REJECT_RESERVED_PREFIX:
-                    msgId = STR_NAME_INVALID_RESERVED_PREFIX;
-                    break;
-                case NAME_REJECT_RESERVED_SUFFIX:
-                    msgId = STR_NAME_INVALID_RESERVED_SUFFIX;
-                    break;
-                case NAME_REJECT_MIXED_SCRIPTS:
-                    msgId = STR_NAME_INVALID_MIXED_SCRIPTS;
-                    break;
-                case NAME_REJECT_EMPTY:
-                    msgId = STR_NAME_INVALID_EMPTY;
-                    break;
-                case NAME_REJECT_INVALID:
-                    msgId = STR_NAME_INVALID_CHARS;
-                    break;
-                default:
-                    fprintf(stderr, "[UDP CLIENT] PACKET_NAME_CHANGE_REJECT: unknown reasonCode=%u\n", reasonCode);
-                    msgId = STR_NAME_INVALID_CHARS;
-                    break;
-            }
-            rendered = langGetText(msgId);
-            rendBuf[0] = '\0';
-            if (rendered) {
-                strncpy(rendBuf, rendered, sizeof(rendBuf) - 1);
-                rendBuf[sizeof(rendBuf) - 1] = '\0';
-            }
-            if (c->clientSim->inLobby) {
-                clientSimAppendLobbyChat(c->clientSim, "Server", rendBuf);
-            } else {
-                clientSimNetStatusMessage(c->clientSim, rendBuf);
-            }
-        }
-        break;
-
     case PACKET_CHAT_BROADCAST: {
         /* Chat broadcast — wire format depends on fromPlayer (see netpacks.h):
          *   < MAX_TANKS  : player-to-player chat, payload is plain message
