@@ -200,6 +200,8 @@ bool clientSimCreate(ClientSim *cs) {
   BrainList savedBrainList = cs->lobbyBrainList;
   ControlObserverCb savedObserverCb  = cs->controlObserverCb;
   void             *savedObserverCtx = cs->controlObserverCtx;
+  ControlObserverCb savedTransportObserverCb  = cs->transportObserverCb;
+  void             *savedTransportObserverCtx = cs->transportObserverCtx;
   struct in_addr savedServerAddress  = cs->serverAddress;
   unsigned short savedServerPort     = cs->serverPort;
   bool           savedIsLanOnly      = cs->isLanOnly;
@@ -212,9 +214,12 @@ bool clientSimCreate(ClientSim *cs) {
   cs->lobbyBrainList     = savedBrainList;
   cs->controlObserverCb  = savedObserverCb;
   cs->controlObserverCtx = savedObserverCtx;
+  cs->transportObserverCb  = savedTransportObserverCb;
+  cs->transportObserverCtx = savedTransportObserverCtx;
   cs->serverAddress      = savedServerAddress;
   cs->serverPort         = savedServerPort;
   cs->isLanOnly          = savedIsLanOnly;
+  cs->pendingAllianceRequestFrom = 0xFF;
   /* Default chat-send callback: route outbound chat through this cs's
    * own transport. Bots, SP host humans, and UDP-connected humans all
    * use the same path out of the box. Frontends that want different
@@ -753,6 +758,22 @@ void clientSimSetControlObserver(ClientSim *cs, ControlObserverCb cb, void *ctx)
   if (cs == NULL) return;
   cs->controlObserverCb  = cb;
   cs->controlObserverCtx = ctx;
+}
+
+void clientSimSetTransportControlObserver(ClientSim *cs, ControlObserverCb cb, void *ctx) {
+  if (cs == NULL) return;
+  cs->transportObserverCb  = cb;
+  cs->transportObserverCtx = ctx;
+}
+
+BYTE clientSimGetPendingAllianceRequest(const ClientSim *cs) {
+  if (cs == NULL) return 0xFF;
+  return cs->pendingAllianceRequestFrom;
+}
+
+void clientSimClearPendingAllianceRequest(ClientSim *cs) {
+  if (cs == NULL) return;
+  cs->pendingAllianceRequestFrom = 0xFF;
 }
 
 void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message) {
