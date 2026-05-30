@@ -308,7 +308,20 @@ double botManagerComputePerBotTargetMs(const ServerSim *sim, int activeBots) {
     if (brainBudget < 1.0) {
         brainBudget = 1.0;
     }
-    double perBot = brainBudget * (double)sim->botMgr.threadsConfig
+    /* Parallelism comes from the live worker pool (N workers + the
+     * producer running one job inline = N+1 runners), NOT from the
+     * per-sim threadsConfig. In WinBoloDS the sim's BotManager is
+     * init'd (threadsConfig=1) before the global pool is created, and
+     * botManagerInit never back-fills threadsConfig — so reading it
+     * here would under-count runners to 1 and starve the budget. Use
+     * the pool size as ground truth; fall back to threadsConfig (which
+     * the BrainTest resize path keeps in sync with the pool) when it's
+     * larger, e.g. the inline-serial pool==0 case. */
+    int runners = botWorkerPoolGetSize() + 1;
+    if (sim->botMgr.threadsConfig > runners) {
+        runners = sim->botMgr.threadsConfig;
+    }
+    double perBot = brainBudget * (double)runners
                     / (double)activeBots;
     if (perBot > brainBudget) {
         perBot = brainBudget;
@@ -635,6 +648,60 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     return true;
 }
 
+/* Per-bot snapshot pull + ClientSim sync + brain-map refresh, run on
+ * the worker thread. Reads the ServerSim (immutable during the brain
+ * phase — serverSimTick already ran and inputs aren't applied until
+ * Stage 3) and the shared game map read-only; writes only this bot's
+ * own job buffers and ClientSim, so it parallelises safely across the
+ * pool. Returns false when the tank is dead and waiting to respawn —
+ * the caller then skips the think (j->hasInput stays false, so the
+ * producer sends no input for this bot, exactly as before). */
+static bool botSyncSnapshotForJob(BotJobCtx *j) {
+    BotContext *bot = j->bot;
+    ServerSim *sim  = j->sim;
+    GameSim *gs     = serverSimGetGameSim(sim);
+
+    bot->transport.getSnapshot(bot->transport.ctx, bot->playerNum,
+                               &j->hdr, j->tanks, MAX_TANKS,
+                               j->shells, MAX_SNAPSHOT_SHELLS,
+                               j->tkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
+                               j->bases, MAX_SNAPSHOT_BASES,
+                               j->pills, MAX_SNAPSHOT_PILLS,
+                               j->events, MAX_SNAPSHOT_EVENTS);
+
+    clientSimSyncFromSnapshot(bot->cs, &j->hdr,
+                              j->tanks, j->hdr.tankCount,
+                              j->shells, j->hdr.shellCount,
+                              j->tkExplosions, j->hdr.tkExplosionCount,
+                              j->bases, j->hdr.baseCount,
+                              j->pills, j->hdr.pillCount,
+                              j->events, j->hdr.reliableEventCount,
+                              bot->playerNum);
+
+    if (bot->ai == aiFull && bot->brain.isFirst) {
+        /* Full map on first tick */
+        screenBrainMapFillFromMap(bot->cs, &gs->mp, &gs->mns);
+    }
+    botUpdateBrainMap(bot, sim);
+
+    /* Skip brain while tank is dead (waiting to respawn). */
+    if (MY_TANK(bot->cs) != NULL &&
+        tankGetDeathWait(&MY_TANK(bot->cs)) > 0) {
+        return false;
+    }
+
+    /* Reset key state before brain runs */
+    *clientSimGetBrainHoldKeys(bot->cs) = 0;
+    *clientSimGetBrainTapKeys(bot->cs) = 0;
+    {
+        BuildInfo **bi = clientSimGetBrainBuildInfo(bot->cs);
+        if (*bi != NULL) {
+            (*bi)->action = 0;
+        }
+    }
+    return true;
+}
+
 /* Run brain.think for the bot, with the count hook already armed and
  * a deadline already populated by the wrapper. Single return point in
  * the wrapper guarantees the hook is uninstalled regardless of which
@@ -708,6 +775,15 @@ static void runBotThinkJob(int botIndex, void *userData) {
     BotJobCtx *j = &sim->botMgr.jobs[botIndex];
     BotContext *bot = j->bot;
 
+    /* Pull this bot's snapshot, sync its ClientSim, and refresh its
+     * brain map — formerly serial Stage-1 work, now parallelised here.
+     * A dead bot (respawn wait) syncs state but skips the think. Runs
+     * before t0/hook so its cost lands in the brain-phase wall-clock,
+     * not the per-bot think deadline (lastThinkMs stays brain-only). */
+    if (!botSyncSnapshotForJob(j)) {
+        return;
+    }
+
     /* Optional pre-think hook (BrainTest viz). NULL in WinBoloDS.
      * Set once at host init and never modified after, so reading the
      * function pointer here from a worker thread is safe. */
@@ -761,7 +837,19 @@ void botManagerTick(ServerSim *sim, aiType ai) {
 
     GameSim *gs = serverSimGetGameSim(sim);
 
-    /* ---- Stage 1: snapshot/sync (serial, on producer thread) ---- */
+    /* ---- Stage 1: select active bots (serial, cheap) ----
+     * Only decide which bots tick this frame. The heavy per-bot work —
+     * snapshot pull, ClientSim sync, and brain-map refresh — used to run
+     * here on the producer thread and dominated the serial budget; it
+     * now runs inside the worker job (botSyncSnapshotForJob), so it
+     * parallelises across the pool instead of draining the 20ms tick.
+     *
+     * One consequence: the dead-bot (respawn-wait) skip moved into the
+     * worker, because it reads ClientSim state that only exists after
+     * the sync. So a respawning bot is briefly counted in activeCount
+     * here (diluting the per-bot budget for the few ticks it's dead),
+     * but its worker early-returns before the think, so it costs no
+     * brain time. */
     for (BYTE i = 0; i < MAX_TANKS; i++) {
         BotContext *bot = &sim->botMgr.bots[i];
         if (!bot->active) continue;
@@ -774,48 +862,6 @@ void botManagerTick(ServerSim *sim, aiType ai) {
         j->hasInput   = false;
         j->wasKilled  = false;
         j->pendingCmdCount = 0;
-
-        bot->transport.getSnapshot(bot->transport.ctx, bot->playerNum,
-                                   &j->hdr, j->tanks, MAX_TANKS,
-                                   j->shells, MAX_SNAPSHOT_SHELLS,
-                                   j->tkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                                   j->bases, MAX_SNAPSHOT_BASES,
-                                   j->pills, MAX_SNAPSHOT_PILLS,
-                                   j->events, MAX_SNAPSHOT_EVENTS);
-
-        clientSimSyncFromSnapshot(bot->cs, &j->hdr,
-                                  j->tanks, j->hdr.tankCount,
-                                  j->shells, j->hdr.shellCount,
-                                  j->tkExplosions, j->hdr.tkExplosionCount,
-                                  j->bases, j->hdr.baseCount,
-                                  j->pills, j->hdr.pillCount,
-                                  j->events, j->hdr.reliableEventCount,
-                                  bot->playerNum);
-
-        if (bot->ai == aiFull && bot->brain.isFirst) {
-            /* Full map on first tick */
-            screenBrainMapFillFromMap(bot->cs, &gs->mp, &gs->mns);
-        }
-        botUpdateBrainMap(bot, sim);
-
-        /* Skip brain while tank is dead (waiting to respawn). Excluding
-         * dead bots here keeps the worker job branch-free on liveness
-         * and stops a respawning bot from inheriting another bot's queue
-         * slot mid-dispatch. */
-        if (MY_TANK(bot->cs) != NULL &&
-            tankGetDeathWait(&MY_TANK(bot->cs)) > 0) {
-            continue;
-        }
-
-        /* Reset key state before brain runs */
-        *clientSimGetBrainHoldKeys(bot->cs) = 0;
-        *clientSimGetBrainTapKeys(bot->cs) = 0;
-        {
-            BuildInfo **bi = clientSimGetBrainBuildInfo(bot->cs);
-            if (*bi != NULL) {
-                (*bi)->action = 0;
-            }
-        }
 
         sim->botMgr.jobIndices[activeCount++] = i;
     }
