@@ -120,6 +120,14 @@ static const UnitTestEntry s_tests[] = {
                                                  run_bot_chat_receive_from_human_lands_in_bot_inbox },
     { "bot_chat_receive_from_other_bot_via_broadcast",
                                                  run_bot_chat_receive_from_other_bot_via_broadcast },
+    { "alliance_request_flags_addressed",        run_alliance_request_flags_addressed        },
+    { "alliance_request_ignores_other_slot",     run_alliance_request_ignores_other_slot     },
+    { "phase_lobby_sets_inlobby",                run_phase_lobby_sets_inlobby                },
+    { "phase_gameover_resets_in_game",           run_phase_gameover_resets_in_game           },
+    { "player_join_appends_lobby_chat",          run_player_join_appends_lobby_chat          },
+    { "player_join_self_does_not_announce",      run_player_join_self_does_not_announce      },
+    { "player_leave_appends_lobby_chat",         run_player_leave_appends_lobby_chat         },
+    { "lobby_settings_clears_balance_proposal",  run_lobby_settings_clears_balance_proposal  },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

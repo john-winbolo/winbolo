@@ -1033,10 +1033,6 @@ bool gameFrontSetDlgState(openingStates newState) {
   bool returnValue = TRUE;
   openingStates prevState = dlgState;
 
-  WB_LOG_INFO(WB_LOG_CAT_GUI,
-              "[DIAG] gameFrontSetDlgState: %d -> %d (humanSim=%p spServerSim=%p)",
-              (int)dlgState, (int)newState, (void *)humanSim, (void *)spServerSim);
-
   /* Capture the entry path when committing to a game/lobby so the
    * post-lobby re-entry can skip the welcome screen. Only the browser
    * / manual-connect screens count — single-player / tutorial / map
@@ -1227,13 +1223,6 @@ bool gameFrontSetDlgState(openingStates newState) {
       dlgState = openStart;
     }
   } else if (dlgState == openSetup && newState == openFinished) {
-    WB_LOG_INFO(WB_LOG_CAT_GUI,
-                "[DIAG] openFinished SP-entry: name='%s' fileName='%s' gametype=%d compTanks=%d brainPath='%s' isTutorial=%d timeLen=%d startDelay=%d hiddenMines=%d botCount=%d playerTeam=%u",
-                gameFrontName, fileName, (int)gametype, (int)compTanks,
-                gameFrontBrainPath, (int)isTutorial,
-                (int)timeLen, (int)startDelay, (int)hiddenMines,
-                (int)gameFrontBotSetupData.count,
-                (unsigned)gameFrontBotSetupData.playerTeamNumber);
     dlgState = openFinished;
     /* New architecture: ServerSim owns the map and all game state.
      * Create the server sim, then load the map on the client side

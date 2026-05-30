@@ -282,6 +282,18 @@ void clientSimSetLockToggleSendFunc(ClientSim *cs, NetLockToggleSendFunc func);
  * (the test harness) whose lifetime is independent of the ClientSim. */
 void clientSimSetControlObserver(ClientSim *cs, ControlObserverCb cb, void *ctx);
 
+/* Transport-specific observer slot. Installed by the UDP transport for
+ * side-effects that live outside the bolo library (joinState transitions,
+ * re-join trigger, WBN re-auth, ACH_LONELY_LOBBY). Kept distinct from
+ * the test observer so a test harness doesn't displace it. */
+void clientSimSetTransportControlObserver(ClientSim *cs, ControlObserverCb cb, void *ctx);
+
+/* Pending alliance request from another player. Returns 0xFF when none.
+ * Set by the CTRL_ALLIANCE_REQUEST subscriber arm; frontends poll once
+ * per frame and pop the dialog when non-0xFF, then call clear. */
+BYTE clientSimGetPendingAllianceRequest(const ClientSim *cs);
+void clientSimClearPendingAllianceRequest(ClientSim *cs);
+
 /* Lobby chat helper — appends "name: message\n" to lobbyChatHistory */
 void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message);
 

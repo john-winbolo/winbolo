@@ -408,6 +408,20 @@ struct ClientSim {
      * clientSimCreate's memset alongside the transport fields. */
     ControlObserverCb controlObserverCb;
     void             *controlObserverCtx;
+
+    /* Transport-internal observer. Wired by the UDP transport to react
+     * to events whose side effects live below the bolo-lib boundary
+     * (joinState transitions, re-join trigger, WBN re-auth, etc.).
+     * Separate slot from controlObserverCb so tests don't displace it. */
+    ControlObserverCb transportObserverCb;
+    void             *transportObserverCtx;
+
+    /* Pending alliance request from another player. 0xFF when none.
+     * Set by the CTRL_ALLIANCE_REQUEST arm when toPlayer == myPlayerNum;
+     * frontends poll via clientSimGetPendingAllianceRequest and clear
+     * with clientSimClearPendingAllianceRequest after popping the
+     * dialog (or auto-rejecting). */
+    BYTE pendingAllianceRequestFrom;
 };
 
 BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
