@@ -703,9 +703,6 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
                      evt->u.playerJoin.name);
             extra = extraBuf;
         }
-        WB_LOG_INFO(WB_LOG_CAT_NET,
-                    "ctrl enqueue slot=%d seq=%u type=%d",
-                    idx, (unsigned)seq, (int)evt->type);
         mpDiagLog("[srv] ENQ slot=%d seq=%u type=%s qDepth=%d phase=%d syncInProg=%d%s",
                   idx, (unsigned)seq, mpDiagCtrlName((int)evt->type),
                   qDepth, phase, syncInProg, extra);
@@ -1839,14 +1836,6 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
 
     /* wire-only: per-tick snapshot — high-volume delta-encoded path with its own reliability discipline */
     udpSendTo(udpServer.sock, buf, pos, &client->addr);
-    if (serverSimGetTick(sim) % 50 == 0) {
-        WB_LOG_DEBUG(WB_LOG_CAT_NET, "[UDP SERVER] Send SNAPSHOT to slot %d: tick=%u tanks=%u shells=%u bases=%u pills=%u events=%u(ack=%u next=%u) mapEvts=%u(ack=%u next=%u) len=%d",
-                     clientIdx, serverSimGetTick(sim), (unsigned)hdr.tankCount, (unsigned)hdr.shellCount,
-                     (unsigned)hdr.baseCount,
-                     (unsigned)hdr.pillCount, reliableEventCount,
-                     evQ->ackedSeq, evQ->nextSeq,
-                     mapEventCount, mapQ->ackedSeq, mapQ->nextSeq, pos);
-    }
 }
 
 /* Disconnect a player by index.
@@ -2789,15 +2778,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
     }
 
     pktType = getPacketType(buf, len);
-    if (pktType != PACKET_INPUT && pktType != PACKET_MAP_ACK) {
-        WB_LOG_TRACE(WB_LOG_CAT_NET,
-            "recv %s (%u) len=%d from %s:%u",
-            packetTypeName(pktType), pktType, len,
-            inet_ntoa(fromAddr->sin_addr), ntohs(fromAddr->sin_port));
-        fprintf(stderr, "[UDP SERVER] Recv %s (%u) len=%d from %s:%u\n",
-                packetTypeName(pktType), pktType, len,
-                inet_ntoa(fromAddr->sin_addr), ntohs(fromAddr->sin_port));
-    }
     switch (pktType) {
         case PACKET_JOIN_REQUEST:
             serverHandleJoinRequest(buf, len, fromAddr, sim);
@@ -3612,9 +3592,6 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
 
     if (!udpServer.running) return;
     if (serverSimGetEventCount(sim) == 0 && serverSimGetMapEventCount(sim) == 0) return;
-
-    WB_LOG_DEBUG(WB_LOG_CAT_NET, "[UDP SERVER] Enqueuing %d events + %d map events from tick=%u",
-                 serverSimGetEventCount(sim), serverSimGetMapEventCount(sim), serverSimGetTick(sim));
 
     for (c = 0; c < MAX_TANKS; c++) {
         ClientEventQueue *cq;

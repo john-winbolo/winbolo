@@ -33,6 +33,7 @@
                                     * T2 grant for the bot-team assignment
                                     * in setup (see CMakeLists.txt). */
 #include "../../server/server_lifecycle.h"
+#include "../../server/threads.h"   /* threadsWaitForMutex / threadsReleaseMutex */
 
 #include <stdio.h>
 #include <string.h>
@@ -280,10 +281,18 @@ void bgGameTick(BgGame *bg) {
     if (!bg || !bg->valid || bg->numBots == 0) return;
     if (bg->hiddenByForeground) return;
 
+    /* serverSimApplyCommand asserts threadsCurrentlyHoldsMutex() — the
+     * bot-pool drain inside botManagerTick dispatches CMD_CHAT through
+     * that path when a bot's brain queues outbound chat, so the bg
+     * demo has to honour the same mutex contract the timer-callback
+     * tick path does. Pre-3701635 this path was contract-free; the
+     * dispatcher is now mutex-owning. */
+    threadsWaitForMutex();
     /* One bot pass per 20ms frame produces input for both halves of the
      * frame; serverSimTick internally runs the keys + game half-steps. */
     serverSimBotTick(bg->sim, aiFull);
     serverSimTick(bg->sim);
+    threadsReleaseMutex();
 
     /* Update camera to follow the tracked player (freeze while dead) */
     if (bg->cameraPlayer < MAX_TANKS) {

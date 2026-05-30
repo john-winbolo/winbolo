@@ -134,6 +134,18 @@ int run_bot_chat_send_to_other_bot_lands_in_recipient_inbox(void);
 int run_bot_chat_receive_from_human_lands_in_bot_inbox(void);
 int run_bot_chat_receive_from_other_bot_via_broadcast(void);
 
+/* Subscriber-arm orphan regressions (test_subscriber_arm_orphans.c).
+ * Each captures a side effect that was orphaned when its standalone
+ * PACKET_* handler was superseded by the unified control bus. */
+int run_alliance_request_flags_addressed(void);
+int run_alliance_request_ignores_other_slot(void);
+int run_phase_lobby_sets_inlobby(void);
+int run_phase_gameover_resets_in_game(void);
+int run_player_join_appends_lobby_chat(void);
+int run_player_join_self_does_not_announce(void);
+int run_player_leave_appends_lobby_chat(void);
+int run_lobby_settings_clears_balance_proposal(void);
+
 /* Reliable control-event queue regression tests (test_control_event_queue.c).
  * Each captures a specific bug that shipped during the
  * reliable-control-events rollout. */

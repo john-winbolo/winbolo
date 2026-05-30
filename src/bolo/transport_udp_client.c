@@ -2124,6 +2124,140 @@ static bool udpClientGetSnapshotVtable(void *ctx, BYTE clientIdx,
     return true;
 }
 
+/* Transport-internal observer wired by transportUdpClientCreate.  Runs
+ * during clientSimApplyControl alongside the (test-only) controlObserverCb.
+ * Handles side effects that used to live in standalone PACKET_* handlers
+ * (PACKET_ALLIANCE_UPDATE, PACKET_SERVER_SHUTDOWN, PACKET_GAME_OVER,
+ * PACKET_LOBBY_MAP_CHANGE, PACKET_LOBBY_SETTINGS) and were left orphaned
+ * when those packets were superseded by the body-codec control queue. */
+static void udpClientTransportObserver(void *ctx, const ControlEvent *evt) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
+    if (c == NULL || evt == NULL) return;
+    switch (evt->type) {
+    case CTRL_ALLIANCE_REQUEST:
+        /* Pop the SDL/frontend alliance-request dialog for UDP-connected
+         * clients.  The bolo-lib subscriber arm has already flagged
+         * pendingAllianceRequestFrom for headless/test paths. */
+        if (c->clientSim != NULL &&
+            evt->u.allianceRequest.toPlayer == c->playerNum) {
+            BYTE fromPN = evt->u.allianceRequest.fromPlayer;
+            char pName[FILENAME_MAX];
+            playersGetPlayerName(&c->clientSim->sim.plyrs, fromPN, pName, FALSE);
+            if (windowShowAllianceRequest() == TRUE) {
+                dialogAllianceSetName(pName, fromPN);
+            } else {
+                char str[FILENAME_MAX + 64];
+                snprintf(str, sizeof(str),
+                         "You have ignored alliance request from %s", pName);
+                clientMessageAdd(&c->clientSim->messages, networkStatus,
+                                 "Alliance Request", str);
+            }
+            /* Dialog has consumed the pending flag — clear so the
+             * frontend's optional poll path doesn't double-pop. */
+            c->clientSim->pendingAllianceRequestFrom = 0xFF;
+        }
+        break;
+
+    case CTRL_SERVER_SHUTDOWN:
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "CTRL_SERVER_SHUTDOWN received -> SERVER_SHUTDOWN");
+        c->joinState = UDP_CLIENT_SERVER_SHUTDOWN;
+        break;
+
+    case CTRL_GAME_OVER:
+        /* Defensive timeout reset.  The server pauses snapshots during
+         * the gameOver countdown and the catch-up loop can otherwise
+         * fire a spurious timeout before the server's own state
+         * machine fans out either CTRL_GAME_PHASE_LOBBY (back to
+         * lobby) or CTRL_SERVER_SHUTDOWN (nolobby shutdown).  Don't
+         * flip joinState here — wait for the explicit shutdown event,
+         * or stay connected for the lobby-return case. */
+        c->lastSnapshotTick = c->localTick;
+        break;
+
+    case CTRL_LOBBY_MAP_CHANGE:
+        /* Server loaded a new map mid-session.  Re-join to pull the
+         * fresh map + a clean state snapshot — same trigger the old
+         * PACKET_LOBBY_MAP_CHANGE handler fired. Local-transport reinstall
+         * is handled by the subscriber arm; UDP must round-trip.
+         *
+         * Gated on c->mapInstalled so the initial state-sync (which
+         * fans CTRL_LOBBY_MAP_CHANGE before the first map download has
+         * landed) doesn't tear down the join we're in the middle of
+         * completing — only a *change* away from a map we already
+         * have should re-trigger. */
+        if (c->clientSim != NULL && c->clientSim->isUdpTransport &&
+            c->mapInstalled) {
+            c->joinState = UDP_CLIENT_JOINING;
+            c->joinAttempts = 0;
+            c->ticksSinceJoinSent = JOIN_RETRY_INTERVAL;  /* send immediately */
+        }
+        break;
+
+    case CTRL_LOBBY_SETTINGS:
+        /* Settings arrival is a stable-lobby heartbeat.  Replicates the
+         * old PACKET_LOBBY_SETTINGS handler's side effects:
+         *   - Lonely-lobby Steam achievement tracking
+         *   - WBN re-auth when our slot lost its verified flag between
+         *     rounds (server re-registered with WBN)
+         * Balance-proposal clear is in the subscriber arm. */
+        if (c->clientSim != NULL) {
+            int connectedCount = 0;
+            for (int i = 0; i < MAX_TANKS; i++) {
+                if (c->clientSim->lobbySlots[i].connected) connectedCount++;
+            }
+            if (connectedCount == 1) {
+                if (c->clientSim->lobbyAloneStartTick == 0) {
+                    c->clientSim->lobbyAloneStartTick = SDL_GetTicks();
+                    if (c->clientSim->lobbyAloneStartTick == 0) {
+                        c->clientSim->lobbyAloneStartTick = 1;
+                    }
+                } else {
+                    uint32_t elapsed = SDL_GetTicks() - c->clientSim->lobbyAloneStartTick;
+                    if (elapsed >= 3600000) {
+                        steam_set_achievement("ACH_LONELY_LOBBY");
+                        steam_store_stats();
+                    }
+                }
+            } else {
+                c->clientSim->lobbyAloneStartTick = 0;
+            }
+
+            if (c->wbnApiToken[0] != '\0' && c->playerNum < MAX_TANKS &&
+                !(c->clientSim->lobbySlots[c->playerNum].clientFlags &
+                  PLAYER_FLAG_WBN_VERIFIED)) {
+                if (!c->wbnReauthSent) {
+                    char playerKey[WBN_JOIN_KEY_WIRE_LEN];
+                    char errMsg[256];
+                    memset(playerKey, 0, sizeof(playerKey));
+                    errMsg[0] = '\0';
+                    if (c->wbnServerKey[0] != '\0' &&
+                        winbolonetClientJoinSession(c->wbnApiToken,
+                                                    c->wbnServerKey,
+                                                    playerKey, errMsg)) {
+                        uint8_t ra[PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN];
+                        packHeader(ra, PACKET_WBN_REAUTH, c->outSequence++);
+                        memcpy(ra + PACKET_HEADER_SIZE, playerKey, WBN_JOIN_KEY_WIRE_LEN);
+                        udpClientSendTo(c, ra, sizeof(ra));
+                        c->wbnReauthSent = TRUE;
+                        WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Sent re-auth for slot %d", c->playerNum);
+                    } else {
+                        fprintf(stderr,
+                                "WinBolo.net re-auth exchange failed: %s\n",
+                                errMsg[0] ? errMsg : "(no server_key)");
+                    }
+                }
+            } else {
+                c->wbnReauthSent = FALSE;
+            }
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
 Transport transportUdpClientCreate(ClientSim *clientSim,
                                    const char *serverAddr,
                                    unsigned short serverPort,
@@ -2166,6 +2300,11 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->outCmdNextSeq = 1;
     c->outHeadSeq = 1;
     c->outTailSeq = 1;
+
+    /* Wire the transport observer so subscriber-arm events drive the
+     * transport-internal side effects (joinState transitions, re-join
+     * trigger, WBN re-auth, ACH_LONELY_LOBBY). */
+    clientSimSetTransportControlObserver(clientSim, udpClientTransportObserver, c);
 
     bolo_net_init();
 
@@ -2285,6 +2424,9 @@ void transportUdpClientDestroy(Transport *t) {
      * the host's own loopback client — serverInstanceShutdown will
      * have already disabled, this is just an idempotent no-op then. */
     mpDiagLogEnable(0);
+    if (c->clientSim != NULL) {
+        clientSimSetTransportControlObserver(c->clientSim, NULL, NULL);
+    }
     if (c->sock != INVALID_SOCKET) {
         /* Send graceful quit packet to server before closing */
         if (c->joinState == UDP_CLIENT_CONNECTED) {
