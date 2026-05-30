@@ -112,6 +112,19 @@ function M.merge_info(player_num, now, new_hash)
   -- common-case "this bot never sends extras" stays allocation-free.
   local extra = slot.extra
   if extra == nil then extra = {}; slot.extra = extra end
+  -- /info extra carries the sender's COMPLETE current extra set (the
+  -- sender rebuilds it from scratch each send), so any extra key absent
+  -- from new_hash has been dropped and must evict.  Without this a stale
+  -- "p=" (an ally's old attack_pill standoff) would linger forever,
+  -- because set_info deliberately protects extra keys from its own
+  -- eviction sweep.  /info state keys (never tracked on slot.extra) are
+  -- left untouched.
+  for k in pairs(extra) do
+    if new_hash[k] == nil then
+      info[k]  = nil
+      extra[k] = nil
+    end
+  end
   for k, v in pairs(new_hash) do
     info[k]  = v
     extra[k] = true

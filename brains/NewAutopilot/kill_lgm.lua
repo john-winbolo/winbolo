@@ -192,11 +192,6 @@ local function vels_match_diag(v1x, v1y, v2x, v2y)
   return true, "match", ang_deg, mag_ratio
 end
 
-local function vels_match(v1x, v1y, v2x, v2y)
-  local ok = vels_match_diag(v1x, v1y, v2x, v2y)
-  return ok
-end
-
 -- --------------------------------------------------------------------------
 -- M.update_velocity(state, lgm, now) → vx, vy
 --
@@ -403,7 +398,7 @@ function M.flight_ticks(sightLen)
 end
 
 -- --------------------------------------------------------------------------
--- M.predict_aim(tank_wx, tank_wy, lgm, enemy_tanks, history_entry)
+-- M.predict_aim(tank_wx, tank_wy, lgm, h)   -- h = per-LGM history entry
 --   → aim_wx, aim_wy, sightLen, flight_ticks, distance_wu, tier
 --
 -- Two-tier predictor:
@@ -419,8 +414,8 @@ end
 -- and the engine-sim path empirically over-lead in BrainTest by the
 -- same factor — the brain↔sim tick ratio plus the engine's per-tick
 -- motion budgets don't line up with the shell flight clock the way
--- the textbook math suggests.  Both scales tuned to 0.65 separately
--- so we can tune them independently later if needed.
+-- the textbook math suggests.  Both scales tuned empirically (currently
+-- 0.77) and kept separate so they can be tuned independently later.
 local LINEAR_LEAD_SCALE = 0.77
 local DEST_LEAD_SCALE   = 0.77
 M.LINEAR_LEAD_SCALE = LINEAR_LEAD_SCALE
