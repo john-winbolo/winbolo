@@ -692,6 +692,8 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
               lm, lr = strategic_location_mult(ub.mx, ub.my, state, world, info, "capture_base", nil)
               raw_cost = math.min(uc, C.IMMINENT_CAPTURE_FLOOR)
               imminent = true
+              -- Refresh the viz candidate list to the base we switched to.
+              bcands = { { id = ubid, mx = ub.mx, my = ub.my, cost = raw_cost } }
             end
           end
           break
@@ -4005,31 +4007,11 @@ local _REJECT_POOLS = {
 -- prev}, ... }, capped to the most recent REJECT_HISTORY_MAX transitions
 -- per key so it can't grow without bound over a long session.
 local REJECT_HISTORY_MAX = 16
-local function record_reject_history(state)
-  local cache = state.cost_cache
-  if not cache then return end
-  local now = state.tick or 0
-  state.reject_history = state.reject_history or {}
-  local hist = state.reject_history
-  for _, e in pairs(cache) do
-    local cur = e._reject or false
-    local prev = e._last_reject_seen
-    if prev == nil then prev = false end
-    if cur ~= prev then
-      local key = (e._p or "?") .. ":" .. (e._id or "?")
-      local list = hist[key]
-      if not list then list = {}; hist[key] = list end
-      list[#list + 1] = {
-        t      = now,
-        reason = e._reject or nil,
-        by     = e._priority_by or e._ally_by or nil,
-        prev   = (prev ~= false) and prev or nil,
-      }
-      if #list > REJECT_HISTORY_MAX then table.remove(list, 1) end
-      e._last_reject_seen = cur
-    end
-  end
-end
+-- Debug-only telemetry for the pool grid. Wrapped in a BRAIN_DEBUG_MODE
+-- block so lua_strip's --strip-block drops the whole body from opt/ —
+-- only the forward declaration (nil) survives there, and the sole caller
+-- is likewise BRAIN_DEBUG_MODE-gated, so it's never invoked in opt/.
+local record_reject_history
 
 local function sync_ally_claimed_rejects(state, info)
   local cache = state.cost_cache
