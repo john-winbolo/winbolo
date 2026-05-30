@@ -431,6 +431,14 @@ M.ATTACK_CURVE_AFTER_HITS = 3   -- hits taken before curving away
 M.ATTACK_CURVE_TICKS      = 100  -- ticks of swerve dodge (2 seconds)
 M.ATTACK_RUSH_ARRIVE      = 1   -- mdist to pill to count as "arrived" during rush
 
+-- Kill-rush fast path: a 1-HP, barely-provoked pill is a free kill. Skip the
+-- careful standoff/shield planning and just drive point-blank and fire on the
+-- first clear shot, eating whatever return fire the pill throws. Gated on
+-- armour so we can afford the hits.
+M.ATTACK_RUSH_MIN_ARMOUR  = 5     -- only rush when armour >= this (a 1-shot kill is near risk-free)
+M.ATTACK_RUSH_MAX_ANGER   = 0.34  -- pill anger must be <= this (~one PILL_ANGER_BUMP)
+M.ATTACK_RUSH_STANDOFF    = 1.5   -- tiles from pill center to park the point-blank charge
+
 -- Swerve durations (confirmed-kill swerve: pill dead or bullets_fired >= needed)
 M.SWERVE_TOTAL_TICKS      = 95  -- total swerve duration
 M.SWERVE_TURN_TICKS       = 35  -- ticks of turning at start of swerve
@@ -479,7 +487,12 @@ M.ALLY_CLAIMED_REFUEL_PENALTY = 100
 -- band both bots keep the candidate so a 1-unit cost flicker (caused
 -- by broadcast tick lag / cache freshness mismatch) can't flip the
 -- yield direction every tick.
-M.ALLY_CLAIMED_STEAL_THRESHOLD = 100
+M.ALLY_CLAIMED_STEAL_THRESHOLD = 100   -- (legacy additive band; superseded by the ratio below)
+-- Ratio-based steal band: a challenger must be at least this fraction cheaper
+-- than the current holder to take over a claimed goal. Scale-invariant, so it
+-- behaves the same for cheap pill captures (~20-40) and expensive base
+-- captures (~1000s). 0.10 = "must be >=10% cheaper to steal".
+M.ALLY_CLAIMED_STEAL_FRAC      = 0.10
 M.GOAL_COMMITMENT_PER_TICK = 0.5   -- extra switch penalty per tick spent on current goal
 M.GOAL_COMMITMENT_CAP      = 75    -- max commitment penalty (reached after 150 ticks / 3s)
 M.REFUEL_FULL_COST_MULT    = 3.0   -- pool-1 cost multiplier when tank is between low and full thresholds; applied at goal-selection time so stale cache costs scale with current state. At max fullness the entry is skipped entirely.
@@ -762,8 +775,14 @@ M.TANK_COMBAT_ENGAGE_RANGE      = 7     -- tiles: start shooting at this distanc
 M.TANK_COMBAT_STANDOFF_RANGE    = 7     -- tiles: nav target when closing (at max shell range)
 M.TANK_COMBAT_OPTIMAL_DIST      = 5     -- tiles: ideal engagement distance
 M.TANK_COMBAT_TOO_CLOSE         = 2     -- tiles: back off if closer than this
-M.TANK_COMBAT_FLEE_ARMOUR       = 6     -- disengage if armour drops to this
-M.TANK_COMBAT_FLEE_SHELLS       = 5     -- disengage if shells drop to this
+M.TANK_COMBAT_FLEE_ARMOUR       = 0     -- disengage if armour drops to this (0 = never flee on armour alone)
+M.TANK_COMBAT_FLEE_SHELLS       = 0     -- disengage if shells drop to this (0 = never flee on shells alone)
+-- Pillbox-crossfire disengage: break off a tank chase if our own tile is
+-- covered by this much enemy PILL danger (don't trade armour into a tank
+-- that's camping under its own pillboxes). Applies in EVERY phase — this is
+-- the disengage that actually matters. ~one angry pill or a couple of calm
+-- ones overlapping. Tune up to be more willing to fight near pills.
+M.TANK_COMBAT_DEFENDED_DANGER   = 30
 M.TANK_COMBAT_NEAR_PILL_PENALTY = 80    -- cost penalty if enemy is near a hostile pill (crossfire)
 M.TANK_COMBAT_NEAR_PILL_RANGE   = 5     -- tiles: how close to hostile pill counts
 M.TANK_COMBAT_BASE_COST         = 30    -- base cost so pills/captures usually win over tank hunting

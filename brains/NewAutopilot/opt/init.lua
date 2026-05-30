@@ -2435,9 +2435,18 @@ function Brain.think(info)
         end
       end
       if not has_target then goal_valid = false end
-      -- Also disengage if outgunned
-      if info.armour <= C.TANK_COMBAT_FLEE_ARMOUR
-         or info.shells <= C.TANK_COMBAT_FLEE_SHELLS then
+      -- Pillbox-crossfire disengage (every phase): if we're standing in heavy
+      -- enemy pill danger, drop the tank goal so we replan toward safety
+      -- instead of trading armour into a pillbox-defended position.
+      if threat.pill_at(info.tankx >> 8, info.tanky >> 8) >= C.TANK_COMBAT_DEFENDED_DANGER then
+        goal_valid = false
+        if state.pool_cache then state.pool_cache[9] = nil end
+      end
+      -- Also disengage if outgunned — but NOT during the opening phase,
+      -- where we stay aggressive regardless of armour/shells.
+      if state.phase ~= "opening"
+         and (info.armour <= C.TANK_COMBAT_FLEE_ARMOUR
+              or info.shells <= C.TANK_COMBAT_FLEE_SHELLS) then
         goal_valid = false
         -- Clear the pool cache so pick_goal doesn't re-select attack_tank
         -- immediately — the low-resource condition persists until we refuel.

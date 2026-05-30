@@ -310,6 +310,10 @@ M.IDS = {
   pill_shot_count    = { short = "Pill shot count",
                          long  = "Cyan '<in-flight shots>/<pill HP>' label floating above the target pill" },
 
+  -- Magenta path the kill_hardline take is driving to the tile beside the pill.
+  hardline_path       = { short = "Hardline path",
+                          long  = "Magenta line of the kill_hardline approach path (target pill's danger subtracted) + box on the chosen tile beside the pill" },
+
   -- HUD: raw swerve debug counters during swerve substate.
   hud_swerve_debug   = { short = "HUD: swerve debug",
                          long  = "Top-left SWERVE label + raw _swerve_*ticks_left / _swerve_pill_dead values" },

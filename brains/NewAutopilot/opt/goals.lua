@@ -1102,10 +1102,13 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
   -- because a target in deep sea is a boat (1 shot to sink) and we only need
   -- 1 shell to engage it. Other gates (DISABLED, low_armour, in_boat) still
   -- apply globally.
+  -- NOTE: the low-armour hard-rejection was removed intentionally — a
+  -- critically-wounded bot may still need/want to engage a tank in front
+  -- of it (e.g. it has no other escape). Armour still governs in-combat
+  -- behaviour (flee/disengage at TANK_COMBAT_FLEE_ARMOUR) elsewhere; this
+  -- only stops armour from blocking the attack_tank GOAL from being picked.
   local gate_reason = nil
   if not C.TANK_COMBAT_ENABLED then gate_reason = "DISABLED"
-  elseif info.armour < C.TANK_COMBAT_MIN_ARMOUR then
-    gate_reason = string.format("low_armour(%d<%d)", info.armour, C.TANK_COMBAT_MIN_ARMOUR)
   elseif info.inboat then gate_reason = "in_boat"
   end
   local low_shells_global = info.shells < C.TANK_COMBAT_MIN_SHELLS
@@ -1943,22 +1946,29 @@ end
 -- create a goal to pick it up (drive over dead/pissed pill). The existing
 -- place_pill_strategic system handles replanting once we carry it.
 -- =========================================================================
+-- Sentinel cost for a reposition candidate that can't actually act this
+-- replan. Large enough to never win the competition, but < 1e29 so the
+-- WINNERS strip still renders it (so its score stays visible every replan).
+-- The competition also skips any candidate carrying a `_reject`.
+local REPOSITION_REJECT_COST = 1e8
+
 local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
   if not C.PILL_REPOSITION_ENABLED then return nil end
-  if (info.carried_pills or 0) >= 1 then return nil end  -- already carrying
-  if info.man_status ~= C.LGM_INTANK then return nil end
-  if info.inboat then return nil end
 
-  -- Don't reposition during opening (need pills in place)
-  if state.phase == "opening" then return nil end
+  -- Always return a candidate so the WINNERS pool shows reposition's score
+  -- every replan. When it can't actually act, the candidate carries a
+  -- `_reject` reason (skipped by the goal competition, still rendered).
+  -- The only "no target" reject is having no friendly pills at all; the
+  -- rest are genuine "can't reposition right now" states.
 
-  local best_pill, best_pid, best_badness = nil, nil, 0
+  -- Worst-positioned friendly pill (highest badness). No threshold gate —
+  -- it competes on cost like any other goal when actionable.
+  local best_pill, best_pid, best_badness = nil, nil, -1
   for pid, p in pairs(world.pills) do
     if p.owner == "friendly" and p.health > 0 then
-      -- Score how "bad" this pill's position is
       local badness = 0
 
-      -- Distance from nearest friendly base (pills far from bases are less useful)
+      -- Distance from nearest friendly base (orphaned pills are less useful)
       local nearest_base_dist = math.huge
       for _, b in pairs(world.bases) do
         if b.owner == "friendly" then
@@ -1981,14 +1991,13 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
       end
       badness = badness + hostile_cover * 30
 
-      -- Bad terrain (pill on swamp/rubble/crater is hard to reach for repair)
+      -- Bad terrain (pill on swamp/rubble/crater)
       local ptt = U.ttype(p.mx, p.my)
       if ptt == C.T_SWAMP or ptt == C.T_RUBBLE or ptt == C.T_CRATER then
         badness = badness + 20
       end
 
-      -- Only reposition if badness exceeds threshold
-      if badness > C.PILL_REPOSITION_THRESHOLD and badness > best_badness then
+      if badness > best_badness then
         best_badness = badness
         best_pill = p
         best_pid = pid
@@ -1996,14 +2005,42 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
     end
   end
 
-  if not best_pill then return nil end
+  -- Reject reasons (the explicit one is "no friendly pills at all").
+  local reject = nil
+  if not best_pill then
+    reject = "no_team_pills"
+  elseif (info.carried_pills or 0) >= 1 then
+    reject = "carrying"
+  elseif info.man_status ~= C.LGM_INTANK then
+    reject = "lgm_busy"
+  elseif info.inboat then
+    reject = "inboat"
+  elseif state.phase == "opening" then
+    reject = "opening"   -- need pills in place during the opening
+  end
 
-  -- Cost: distance to the pill + inverse badness (worse position = cheaper to fix)
-  local pcost = U.estimate_cost(tmx, tmy, best_pill.mx, best_pill.my, boat, ammo)
-  local cost = pcost + 200 - best_badness  -- 200 base cost, reduced by badness
+  if reject then
+    local mx = best_pill and best_pill.mx or tmx
+    local my = best_pill and best_pill.my or tmy
+    return {
+      cost = REPOSITION_REJECT_COST,
+      _reject = reject,
+      goal = { kind = "capture_pill", mx = mx, my = my,
+               wx = U.m2w(mx), wy = U.m2w(my),
+               target_id = best_pid or 0, reposition = true },
+      desc = BRAIN_POOL_VIZ and string.format("reposition REJECT:%s badness=%.0f",
+             reject, math.max(0, best_badness)) or "",
+    }
+  end
+
+  -- Actionable: compete on cost (worse position = cheaper to fix).
+  local pcost = smart_cost(KIND_NORMAL, tmx, tmy, best_pill.mx, best_pill.my,
+                           boat and 1 or 0, info.shells or 32, info.trees or 0,
+                           info.mines or 0, info.armour or 40)
+  local cost = math.max(1, pcost + 200 - best_badness)
 
   return {
-    cost = math.max(1, cost),
+    cost = cost,
     goal = { kind = "capture_pill", mx = best_pill.mx, my = best_pill.my,
              wx = U.m2w(best_pill.mx), wy = U.m2w(best_pill.my),
              target_id = best_pid, reposition = true },
@@ -2033,6 +2070,7 @@ local POOL_EVALUATORS = {
 local POOL_NAMES = {
   "refuel", "defend_pill", "capture_base", "capture_pill", "repair_pill",
   "attack_pill", "attack_base", "place_strategic", "attack_tank",
+  [10] = "reposition",
   [12] = "wait_for_lgm",
   [13] = "kill_lgm",
 }
@@ -2155,7 +2193,7 @@ local INCREMENTAL_POOLS = {
 }
 
 -- Pools evaluated at finalize time (cheap, 0-1 A* calls)
-local FINALIZE_POOLS = { 2, 8, 9 }  -- defend_pill, place_pill, attack_tank
+local FINALIZE_POOLS = { 2, 8, 9, 10 }  -- defend_pill, place_pill, attack_tank, reposition_pill
 
 -- Filter functions for each incremental pool.
 -- Return true if the object is a valid candidate.
@@ -3026,14 +3064,14 @@ local function get_formula(e)
     -- the cost equation.
     local our   = e.cost or 0
     local their = e._ally_score
-    local thr   = C.ALLY_CLAIMED_STEAL_THRESHOLD or 0
+    local frac  = C.ALLY_CLAIMED_STEAL_FRAC or 0.25
     local rel
-    if our + thr < their then
-      rel = string.format("we cheaper by %.0f", their - our)
-    elseif their + thr < our then
-      rel = string.format("they cheaper by %.0f (would REJECT)", our - their)
+    if our < their * (1 - frac) then
+      rel = string.format("we cheaper by %.0f%%", (1 - our / math.max(1, their)) * 100)
+    elseif their < our * (1 - frac) then
+      rel = string.format("they cheaper by %.0f%% (would REJECT)", (1 - their / math.max(1, our)) * 100)
     else
-      rel = string.format("within steal band +/-%d", thr)
+      rel = string.format("within steal band (need %.0f%% cheaper)", frac * 100)
     end
     term_disp = ""  -- no cost contribution
     term_map  = string.format("|ally_claimed:p%s bid %.0f, ours %.0f — %s",
@@ -3979,8 +4017,8 @@ end
 -- maintains the ally-claimed REJECT flag against the live ally_state
 -- broadcast slate.  For pools 2/3/4/5/6/7 we no longer bake +10000 into
 -- entry.cost at eval time — we just stored entry._ally_score / _ally_by.
--- This pass converts that into entry._reject = "ally_claimed" when the
--- ally is cheaper by at least ALLY_CLAIMED_STEAL_THRESHOLD, and clears
+-- This pass converts that into entry._reject = "ally_claimed" unless we're
+-- cheaper than the holder by at least ALLY_CLAIMED_STEAL_FRAC (ratio), and clears
 -- the reject when the ally drops the goal, the heartbeat expires, or
 -- our raw cost drops below theirs.
 --
@@ -4018,7 +4056,7 @@ local function sync_ally_claimed_rejects(state, info)
   if not cache then return end
   local now = state.tick or 0
   local self_pn = (_SELF_PN ~= -1) and _SELF_PN or (state.player_number or -1)
-  local threshold = C.ALLY_CLAIMED_STEAL_THRESHOLD or 0
+  local steal_frac = C.ALLY_CLAIMED_STEAL_FRAC or 0.25
   -- Prefer the live info passed by the caller; only fall back to the
   -- cached _last_info (which gets populated by get_pool_breakdown_json,
   -- not the per-tick brain loop) so the per-tick sync still sees the
@@ -4257,9 +4295,9 @@ local function sync_ally_claimed_rejects(state, info)
           -- They're still the holder (committed by goal).  We keep
           -- only if we also hold it.
           we_keep = we_hold
-        elseif our_cost + threshold < match_cost then
-          we_keep = true  -- we're meaningfully cheaper, keep
-        elseif match_cost + threshold < our_cost then
+        elseif our_cost < match_cost * (1 - steal_frac) then
+          we_keep = true  -- we're meaningfully cheaper (>=frac), keep
+        elseif match_cost < our_cost * (1 - steal_frac) then
           we_keep = false -- they're meaningfully cheaper, yield
         else
           -- Within the steal band: holder keeps.  Ally always holds
@@ -4278,12 +4316,18 @@ local function sync_ally_claimed_rejects(state, info)
           e._ally_score     = match_cost
           e._ally_by        = match_pn
           e._ally_heartbeat = match_heartbeat
+          -- Stealing: an ally is also bidding on this target, but we keep it
+          -- by being meaningfully cheaper (not just first-claim hysteresis).
+          -- Surfaced as a chip in the pool visualizer.
+          e._stealing = (match_cost ~= nil)
+            and (our_cost < match_cost * (1 - steal_frac)) or false
         else
           e._reject           = "ally_claimed"
           e._reject_remaining = match_heartbeat
           e._ally_score       = match_cost
           e._ally_by          = match_pn
           e._ally_heartbeat   = match_heartbeat
+          e._stealing         = false
           e.formula           = nil  -- re-render with REJECT text
         end
       else
@@ -4296,6 +4340,7 @@ local function sync_ally_claimed_rejects(state, info)
         e._ally_score     = nil
         e._ally_by        = nil
         e._ally_heartbeat = nil
+        e._stealing       = nil
       end
     end
     ::continue_entry::
@@ -5538,7 +5583,7 @@ local function goal_selection(state, world, info, quiet)
     end
 
     for idx, entry in pairs(pc) do
-      if entry then
+      if entry and not entry._reject then
         -- Skip entries whose destination is blocked (e.g. by goal lookahead)
         local gmx = entry.goal and entry.goal.mx
         local gmy = entry.goal and entry.goal.my
@@ -6499,6 +6544,7 @@ function M.get_pool_breakdown_json(state)
         reject_remaining = cached and cached._reject_remaining or 0,
         ally_score = cached and cached._ally_score or nil,
         ally_by    = cached and cached._ally_by    or nil,
+        stealing   = (cached and cached._stealing) or false,
         imminent = (cached and cached.imminent) or false,
       }
     end
@@ -6653,6 +6699,8 @@ function M.get_pool_breakdown_json(state)
         formula = r.formula,
         reject = r.reject,
         reject_remaining = r.reject_remaining,
+        stealing = r.stealing or false,
+        ally_by = r.ally_by,
         imminent = r.imminent or false,
       }
     end
@@ -6885,7 +6933,7 @@ function M.get_pool_breakdown_json(state)
   -- summary as main pools so the WINNERS column is uniformly readable.
   -- Their detail formula comes from cost_cache (richer breakdown) when
   -- available, falling back to sw.desc (the short tagline).
-  for _, idx in ipairs({11, 12, 13}) do
+  for _, idx in ipairs({10, 11, 12, 13}) do
     local sw = pc[idx]
     if sw and sw.goal and sw.cost and sw.cost >= 0 and sw.cost < 1e29 then
       local synthetic_id = (idx << 16) | (sw.goal.target_id or 0)
@@ -6910,6 +6958,7 @@ function M.get_pool_breakdown_json(state)
         mx = sw.goal.mx, my = sw.goal.my,
         cost = sw.cost, weighted = sw.cost,
         is_winner = false,
+        reject = sw._reject,
         active_goal = (active_pool == idx and active_id == (sw.goal.target_id or 0)),
         stale = 0,
         formula = final_formula,
@@ -6919,10 +6968,15 @@ function M.get_pool_breakdown_json(state)
 
   -- Cell 10 = cross-pool WINNERS table (ranked ascending).
   table.sort(winners, function(a, b) return a.cost < b.cost end)
-  if winners[1] then winners[1].is_winner = true end
+  -- The winner is the cheapest NON-rejected row (rejected rows, e.g. a
+  -- reposition with no team pills, are shown for visibility but can't win).
+  local first_winner = nil
+  for _, w in ipairs(winners) do
+    if not w.reject then w.is_winner = true; first_winner = w; break end
+  end
   sections[#sections + 1] = {
     idx = 10, name = "WINNERS", weight = 1.0,
-    winner_id = (winners[1] and winners[1].id) or -1,
+    winner_id = (first_winner and first_winner.id) or -1,
     layout_cell = LAYOUT_CELL[10], rows = winners,
   }
 

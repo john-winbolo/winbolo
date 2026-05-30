@@ -125,6 +125,10 @@ struct Row {
      * non-empty, the row renders dimmed with a colored chip. */
     char   reject[24];
     int    rejectRemaining;
+    /* Steal indicator: we're keeping this goal away from an ally who's also
+     * bidding, by being meaningfully cheaper. allyBy = that ally's player#. */
+    bool   stealing;
+    int    allyBy;
 };
 
 struct Section {
@@ -205,6 +209,8 @@ static void parseRow(cJSON *jrow, Row *r, int section_idx, bool is_winners) {
     const char *rej = getStr(jrow, "reject", "");
     SDL_strlcpy(r->reject, rej, sizeof(r->reject));
     r->rejectRemaining = (int)getNum(jrow, "reject_remaining", 0);
+    r->stealing = getBool(jrow, "stealing", false);
+    r->allyBy   = (int)getNum(jrow, "ally_by", -1);
 }
 
 static int parseSections(cJSON *root, Section *out, int outMax) {
@@ -397,6 +403,17 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
         }
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                             ImGui::GetStyle().Alpha * 0.45f);
+    }
+
+    /* Steal chip — this row is kept away from an ally who's also bidding
+     * because we're meaningfully cheaper. Not a reject (row stays bright),
+     * so render it as a magenta chip with the ally's player number. */
+    if (r->stealing) {
+        ImGui::SameLine();
+        if (r->allyBy >= 0)
+            ImGui::TextColored(ImVec4(1.0f, 0.35f, 1.0f, 1), "[STEAL<-p%d]", r->allyBy);
+        else
+            ImGui::TextColored(ImVec4(1.0f, 0.35f, 1.0f, 1), "[STEAL]");
     }
 
     /* Line 2: dim formula.

@@ -459,11 +459,28 @@ local function shot_path_obstacle_count(info, goal, world)
   local origin_my = info.tanky >> 8
   local shots = 0
   local reached_pill = false
+  local prev_mx, prev_my = nil, nil
   for _, t in ipairs(tiles) do
+    -- Exact hit on the pill tile…
     if t.mx == pmx and t.my == pmy then
       reached_pill = true
       break
     end
+    -- …OR a diagonal corner-skip: a dead-on diagonal shot passes through the
+    -- CORNER of the pill tile, and the discretized walk records the two
+    -- flanking tiles but not the pill tile itself (so the exact test above
+    -- misses even though the shell visibly crosses the pill). When the step
+    -- from the previous tile to this one is diagonal, the shell also crossed
+    -- the two corner tiles (prev_mx,t.my) and (t.mx,prev_my) — accept the
+    -- pill if it's one of them.
+    if prev_mx and t.mx ~= prev_mx and t.my ~= prev_my then
+      if (pmx == prev_mx and pmy == t.my)
+         or (pmx == t.mx and pmy == prev_my) then
+        reached_pill = true
+        break
+      end
+    end
+    prev_mx, prev_my = t.mx, t.my
     if t.mx ~= origin_mx or t.my ~= origin_my then
       local tt = U.ttype(t.mx, t.my)
       if tt == C.T_BUILDING then
@@ -2353,10 +2370,33 @@ local function update_shot_accounting(goal, world)
         local path = cpf.simulate_shot(s.fire_fx, s.fire_fy, tx_w, ty_w,
                                        cpf.SHOT_TANK, 14)
         if path then
+          local o_mx = math.floor(s.fire_fx / 256)
+          local o_my = math.floor(s.fire_fy / 256)
           for _, t in ipairs(path) do
             if t.mx == pmx and t.my == pmy then
               on_target = true
               break
+            end
+            -- A tree, wall, or another live pillbox between the muzzle and
+            -- the pill stops the REAL shell short, so this shot will not
+            -- reach the pill even though the geometric ray crosses its tile.
+            -- Don't count such a shell as on-target/in-flight — otherwise the
+            -- "in-flight shells already cover the HP -> swerve" kill gate
+            -- fires on shots that are actually eaten by an obstacle, leaving
+            -- the pill alive. (Skip the muzzle's own tile.)
+            if t.mx ~= o_mx or t.my ~= o_my then
+              local tt = U.ttype(t.mx, t.my)
+              if tt == C.T_FOREST or tt == C.T_BUILDING or tt == C.T_HALFBUILD then
+                break
+              end
+              local plist = world.pill_at and world.pill_at[t.my * 256 + t.mx]
+              if plist then
+                local hit_other = false
+                for _, e in ipairs(plist) do
+                  if e.pill and (e.pill.health or 0) > 0 then hit_other = true break end
+                end
+                if hit_other then break end
+              end
             end
           end
         end
@@ -2422,7 +2462,7 @@ function M.update_attack_substate(goal, state, world, info)
   -- Either way, stamp pill_danger_nearby[pill_id] = now + ~30s so the
   -- eval re-pick adds a danger_nearby ×1.5 multiplier and we don't
   -- bounce right back onto this same pill.
-  do
+  if goal.substate ~= "kill_hardline" then
     local LGM_RADIUS = C.PILL_DANGER_NEARBY_RADIUS or 3
     local lgm_seen = nil
     local perc = state.perc
@@ -2471,8 +2511,16 @@ function M.update_attack_substate(goal, state, world, info)
   -- we resume. This avoids aborting the goal (which causes oscillation)
   -- while still not starting the expensive angle sweep until the LGM
   -- is available.
+  -- kill_hardline doesn't need the builder (no post-kill capture/shield), so
+  -- a hardline candidate must NOT be held here — let it fall through to the
+  -- plan_position detection below and switch immediately.
+  local _hardline_candidate = goal.substate == "plan_position"
+    and pill and (pill.health or 0) == 1
+    and info.armour >= (C.ATTACK_RUSH_MIN_ARMOUR or 5)
+    and (pill.anger or 0) <= (C.ATTACK_RUSH_MAX_ANGER or 0.34)
   if goal.substate == "plan_position"
      and not goal.scan_spots
+     and not _hardline_candidate
      and info.man_status ~= C.LGM_INTANK
      and info.man_status ~= C.LGM_DEAD then
     return  -- hold, don't advance plan_position until LGM is back
@@ -2535,6 +2583,12 @@ function M.update_attack_substate(goal, state, world, info)
       goal._wall_build_done     = nil
       goal._aim_locked          = nil
       goal._is_ppt              = nil
+      goal._kill_rush           = nil
+      goal._kill_rush_decided   = nil
+      goal._hardline_abort      = nil
+      goal._hardline_mx         = nil
+      goal._hardline_my         = nil
+      goal._hardline_bad        = nil
       goal._trees_for_walls     = nil
       goal.scan_spots           = nil
       goal.standoff_mx          = nil
@@ -2550,6 +2604,26 @@ function M.update_attack_substate(goal, state, world, info)
       goal._plan_logged         = nil
       goal._plan_position_cleared = true
     end
+
+    -- ── kill_hardline fast path ───────────────────────────────────────
+    -- A 1-HP pill that hasn't been provoked is a free kill: hand off to the
+    -- dedicated kill_hardline substate, which navs to a tile beside the pill
+    -- and fires on every clear shot (through trees) until it's dead. Gated on:
+    -- pill HP == 1, armour > ATTACK_RUSH_MIN_ARMOUR (soak the return fire),
+    -- and pill anger <= ATTACK_RUSH_MAX_ANGER. Decided ONCE per goal.
+    if not goal._kill_rush_decided then
+      goal._kill_rush_decided = true
+      local php    = pill and pill.health or 0
+      local panger = pill and pill.anger  or 0
+      if php == 1
+         and info.armour >= (C.ATTACK_RUSH_MIN_ARMOUR or 5)
+         and panger <= (C.ATTACK_RUSH_MAX_ANGER or 0.34) then
+        goal._kill_rush = true
+        goal.substate   = "kill_hardline"
+        return
+      end
+    end
+
     -- Only scan once, reuse stored results for drawing
     if not goal.scan_spots then
       goal._scan_tank_mx = tmx
@@ -3025,6 +3099,25 @@ function M.update_attack_substate(goal, state, world, info)
         goal._wall_build_idx          = nil
       end
     end
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
+  -- kill_hardline: nav to a tile beside the pill and fire on every clear
+  -- shot until it's dead. Steering (attack_pill_steer) owns the navigation,
+  -- neighbour-tile selection, and firing; this block only handles the two
+  -- terminal conditions — pill dead, or steering signalled it can't reach
+  -- any tile beside the pill (goal._hardline_abort).
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "kill_hardline" then
+    if goal._hardline_abort then
+      clear_attack_goal(state, "kill_hardline abort: " .. tostring(goal._hardline_abort))
+      return
+    end
+    if not pill or (pill.health or 0) <= 0 then
+      clear_attack_goal(state, "kill_hardline: pill dead")
+      return
+    end
+    -- nothing else to do — steering drives + fires; fall through to draw
   end
 
   -- ══════════════════════════════════════════════════════════════════
@@ -3535,6 +3628,18 @@ function M.update_attack_substate(goal, state, world, info)
       -- aim_tick is bumped each waiting tick so the 3-second aim
       -- timeout doesn't fire while we're just waiting on the cool-down.
       local anger = (pill and pill.anger) or 0
+      -- ONLY change over the original cool-down gate: the moment the pill is
+      -- calm enough that we'd open a hardline rush (anger at/below the rush
+      -- threshold), switch straight to the dedicated kill_hardline take
+      -- instead of continuing the normal aim path.
+      if pill and (pill.health or 0) == 1
+         and info.armour >= (C.ATTACK_RUSH_MIN_ARMOUR or 5)
+         and anger <= (C.ATTACK_RUSH_MAX_ANGER or 0.34) then
+        goal.substate    = "kill_hardline"
+        goal._kill_rush  = true
+        goal._aim_locked = nil
+        return
+      end
       if anger > 0.65 then
         goal.aim_tick = now
       else
