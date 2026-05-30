@@ -51,6 +51,18 @@ M.IDS = {
                      long  = "Orange/red dot at each shell's exact wu" },
   lgm_hitbox     = { short = "LGM hitbox dbg",
                      long  = "LGM orange dot + wu/tile coord text" },
+  -- Heavy per-tick disk I/O for shell hitbox + intersect diagnostics.
+  -- Default off: the file writes are expensive (one io.open/close per
+  -- visible shell per tick).  Enable when actively debugging hitbox
+  -- collisions.  Gates writes to hitboxes.log and intersect.log; the
+  -- visual overlays (shell_hitbox / shell_hit_dot) stay separately
+  -- togglable.
+  hitbox_logs    = { short = "Hitbox/intersect log files",
+                     long  = "Write hitboxes.log + intersect.log every tick (heavy disk I/O). Off by default; flip on only when debugging shell-hit-detection issues.",
+                     default_on = false },
+
+  hud_budget = { short = "HUD: budget + kill",
+                 long  = "Prominent top-of-screen banner showing last_ms / target_ms ratio (green/yellow/orange/red) plus a flashing red KILLED banner when brain.wasKilled was set last tick.  Reads _G.brain.{lastThinkMs,targetMs,wasKilled}." },
   cliff_safety   = { short = "Cliff safety",
                      long  = "Yellow look-ahead tiles + cliff brake label" },
   lgm_stranded   = { short = "LGM stranded dbg",
@@ -121,6 +133,8 @@ M.IDS = {
                         long  = "DETREE N/M (left=K) overlay above tank" },
 
   -- Pill take / shield system.
+  plan_trace             = { short = "Plan-pos trace",
+                             long  = "Always-on multiline label above tank showing each plan_position gate state: chunk status, spots/los/greens counts, best pick, shield scan result. Lets you see at a glance where the chain breaks." },
   shield_scan_candidates = { short = "Shield: candidates",
                              long  = "Per-candidate score boxes for the 8 ring positions + standoff" },
   shield_scan_blockers   = { short = "Shield: blockers",
@@ -169,7 +183,7 @@ M.IDS = {
   swerve_dir_choice = { short = "Swerve dir choice",
                         long  = "Sample lines + L/R cover scores for swerve direction pick" },
   bpc_cover_samples = { short = "BPC cover samples",
-                        long  = "Blue tile outlines from line_walk during BPC cover sweep" },
+                        long  = "Blue tile outlines from line_walk during BPC (Basic Pill Capture) cover sweep" },
 
   -- Misc tile/state markers.
   blocked_tiles     = { short = "Blocked tiles",
@@ -200,6 +214,16 @@ M.IDS = {
   -- (bot #, goal, substate, target, k=v data).
   ally_state_overlay = { short = "Ally state table",
                          long  = "Right-middle HUD showing each ally's goal / sub / target / k=v data, fed by the chat-based ally_state slate" },
+  ally_avoid_overlay = { short = "Ally avoid zones",
+                         long  = "Orange tiles around an ally tank doing a pill take (5x5 when within STANDOFF+2 of pill), plus the firing lane to the pill. Also prints `BLOCK: ON/OFF sub=… d=N/T` next to each attack_pill ally so you can see live whether the 5x5 stamp is active and how close they are to the activation threshold." },
+
+  -- plan_position chunked-sweep progress (low-tier multi-tick sweep).
+  plan_position_progress = { short = "Plan-pos progress",
+                             long  = "When the plan_position 72-angle sweep is chunked across N ticks at lower tiers, shows angle progress + tick counter near the tank" },
+
+  -- Chunked plan_position pill-eval sweep (one pill at a time, only the committed attack target).
+  pill_eval_progress     = { short = "Pill eval progress",
+                             long  = "Progress bar above the pill being evaluated by the chunked plan_position 72-angle sweep" },
 
   -- Chat log overlay (right side, below ally_state_overlay).
   chat_log_overlay   = { short = "Chat log",
@@ -213,6 +237,34 @@ M.IDS = {
 
   ally_claimed_marker = { short = "Ally claimed marker",
                           long  = "Semi-transparent gray rectangle over each pill/base another bot is currently broadcasting as their goal (sourced from ally_state slate)." },
+
+  enemy_lgm_marker = { short = "Enemy LGM marker",
+                       long  = "Yellow X over every visible hostile LGM with a small velocity arrow when it's moving. Sourced from perc.enemy_lgms." },
+
+  kill_lgm_status = { short = "Kill-LGM status",
+                      long  = "Per-LGM kill-evaluation labels (dist / aim corr / LOS clear-blocked / would-fire) plus a HUD summary line for the chosen target. Always shows when at least one hostile LGM is in view." },
+
+
+  lgm_registry_hud = { short = "HUD: LGM registry",
+                       long  = "Right-side HUD table with one row per known player_num's LGM state (status / tile / source / respawn countdown). Sourced from lgm_registry." },
+
+  lgm_registry_map = { short = "LGM registry map markers",
+                       long  = "Per-player tile rings on the map for every LGM the registry knows about: green=alive ally, red=alive enemy, gray=dead with respawn countdown. Skips self (covered by ally_lgm_marker / own-LGM overlay)." },
+
+  kill_lgm_engage  = { short = "Kill-LGM engage spot",
+                       long  = "Magenta ring on the chosen engage tile (the closest-reachable in-range boundary tile around the LGM, picked by refresh_kill_lgm) + a line from the tank to that tile. Shows where the bot is driving while out of range." },
+
+  kill_lgm_predict = { short = "Kill-LGM lead prediction",
+                       long  = "Ring + line from each visible LGM to the predicted shell-impact tile. Colored by predictor tier: yellow=linear (no straight-line lock yet), cyan=destination-locked engine sim (3-window match active). PRED label shows flight_ticks + tier." },
+
+  kill_lgm_sim_path  = { short = "Kill-LGM forward sim path",
+                         long  = "Dotted trail of the LGM's projected positions out to shell-impact-ticks, using the engine-faithful sim (terrain v_max, wall sliding, corner blocks). Only drawn when predict_aim picked the dest_lock tier (3 matching 10-tick velocity windows → straight-line walk detected); nothing shown for the linear fallback." },
+
+  test_lgm_target    = { short = "Test: LGM victim target",
+                         long  = "Cyan rect on the tile the victim bot's LGM is currently being dispatched to build. Test-harness only; only renders when the bot was flagged via BrainTest's -victim_ids <ids> CLI option (sets _BT_VICTIM=true)." },
+
+  test_victim_marker = { short = "Test: VICTIM marker",
+                         long  = "Big red VICTIM label + outline above the victim bot's own tank so it's instantly visible which bot is in test-victim mode (vs. the real attackers being tested). Renders whenever _BT_VICTIM is true (set by BrainTest's -victim_ids CLI flag)." },
 
   -- Tank combat standoff scan (attack_tank substate).
   tank_combat_standoff_scan = { short = "Tank combat standoff scan",
@@ -229,6 +281,9 @@ M.IDS = {
   -- Facing-away brake ring + correction label.
   facing_away_brake  = { short = "Facing-away brake",
                          long  = "Yellow ring around tank + correction angle label when facing-away brake fires" },
+
+  hud_throttle       = { short = "Throttle decision HUD",
+                         long  = "Top-left text showing which throttle elseif-branch fired this tick (cruise / ap_brake_zone / facing_away / kill_lgm_halt / boat_exit / etc.) plus key inputs (speed, abs_corr, eff_dist, brake_dist) and flags (boat_exit, inboat, cliff, facing_away, orbit, ap_brake) plus the keys actually pressed. Great for the 'tank stuck at speed 0' class of bug." },
 
   -- Misc init.lua extras.
   adjacent_tiles        = { short = "Adjacent tile boxes",

@@ -26,6 +26,12 @@ print("[attack] loaded from: " .. tostring(debug.getinfo(1, "S").source))
 
 local M = {}
 
+local PRE_ENGAGE_SUBS = {
+  plan_position=true, approach=true, gather_trees=true, build_walls=true,
+  aim=true, in_range_position=true, in_range_aim_pre=true,
+  in_range_aim=true, in_range_aim_finetune=true, detree=true,
+}
+
 -- "Effectively stopped" gate for the substate transitions in approach
 -- and in_range_position. Returns true if EITHER the reported speed is
 -- at/below speed_tol OR the tank's wu position hasn't changed for the
@@ -102,6 +108,37 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
 
   local left_cover  = count_cover(lfx, lfy)
   local right_cover = count_cover(rfx, rfy)
+
+  -- Deep-water penalty on the swerve retreat path. The tank swerves
+  -- perpendicular then retreats outward from standoff to the setup
+  -- circle. Check each side's retreat line (from standoff radius to
+  -- approach radius along the swerve direction) for deep water.
+  local standoff_r = goal._is_ppt and C.PPT_STANDOFF or C.ATTACK_PILL_STANDOFF
+  local setup_r    = standoff_r + C.ATTACK_APPROACH_OFFSET
+  local DEEP_WATER_PENALTY = -50
+  local function check_retreat_deepsea(perp_x, perp_y)
+    local penalty = 0
+    -- Walk from standoff radius to setup radius along the swerve
+    -- direction (perpendicular + outward from pill).
+    -- Sample every 0.5 tiles along the retreat line.
+    local steps = math.ceil((setup_r - standoff_r) / 0.5)
+    for i = 0, steps do
+      local t = standoff_r + (setup_r - standoff_r) * i / steps
+      -- retreat point: pill center + swerve-perpendicular offset + outward
+      local rx = pcx + perp_x * 2 + ux * t
+      local ry = pcy + perp_y * 2 + uy * t
+      local rmx = math.floor(rx)
+      local rmy = math.floor(ry)
+      if U.in_map(rmx, rmy) and U.ttype(rmx, rmy) == C.T_DEEPSEA then
+        penalty = penalty + DEEP_WATER_PENALTY
+      end
+    end
+    return penalty
+  end
+
+  left_cover  = left_cover  + check_retreat_deepsea(-uy, ux)
+  right_cover = right_cover + check_retreat_deepsea(uy, -ux)
+
   goal._best_swerve_dir = left_cover >= right_cover and 1 or -1
   goal._swerve_viz = {
     lfx = lfx, lfy = lfy, left_cover = left_cover,
@@ -109,9 +146,45 @@ local function compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
     chosen = goal._best_swerve_dir,
     pcx = pcx, pcy = pcy,
   }
-  print(string.format(TAG .. " ATTACK: swerve calc L(%.2f,%.2f)=%d R(%.2f,%.2f)=%d -> %s",
-        lfx, lfy, left_cover, rfx, rfy, right_cover,
-        goal._best_swerve_dir == 1 and "LEFT" or "RIGHT"))
+end
+
+-- Enter swerve substate. Centralises the duplicated swerve-entry
+-- setup (timing, direction, pill-dead flag) so all 4 entry points
+-- (charge, engage-kill, engage-dodge, shoot_pill) share one path.
+--
+-- mode:
+--   "kill"      — pill dead or enough shots fired (offensive swerve)
+--   "defensive" — pill still alive, dodging return fire
+local LOW_HP_SWERVE = { [1] = 30, [2] = 36, [3] = 40 }
+local function enter_swerve(goal, world, state, info, pmx, pmy, mode)
+  local now = state.tick or 0
+  local tmx = info.tankx >> 8
+  local tmy = info.tanky >> 8
+  goal.substate    = "swerve"
+  goal._swerve_start = now
+  if mode == "kill" then
+    local low_hp_ticks = LOW_HP_SWERVE[goal._charge_start_hp]
+    if low_hp_ticks then
+      goal._swerve_ticks_left      = low_hp_ticks
+      goal._swerve_turn_ticks_left = math.min(low_hp_ticks, C.SWERVE_TURN_TICKS)
+    elseif goal._kill_attempt then
+      goal._swerve_ticks_left      = C.SWERVE_TOTAL_TICKS
+      goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
+    else
+      goal._swerve_ticks_left      = C.SWERVE_DEFENSIVE_TOTAL_TICKS
+      goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
+    end
+    goal._swerve_pill_dead = true
+  else
+    goal._swerve_ticks_left      = C.SWERVE_DEFENSIVE_TOTAL_TICKS
+    goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
+    goal._swerve_pill_dead       = false
+  end
+  if not goal._best_swerve_dir then
+    compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
+  end
+  goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
+  goal._engage_hits = nil
 end
 
 -- Clear the active goal, idle the pathfinder, and wipe ALL transient
@@ -165,6 +238,22 @@ local function clear_attack_goal(state, reason)
   end
 end
 M.clear_attack_goal = clear_attack_goal
+M.enter_swerve      = enter_swerve
+
+-- Returns a non-nil reason string when current armour vs pill HP make
+-- pressing on with the take unsafe.  Used at the start of approach /
+-- build_walls / charge to abort attack_pill early instead of dying
+-- mid-charge.  The reason text feeds clear_attack_goal so the left-top
+-- "last attack cleared" overlay shows WHY we bailed.
+local function armour_unsafe_for_pill_take(info, pill_hp)
+  if not pill_hp or pill_hp < C.ATTACK_PILL_UNSAFE_HP_THRESHOLD then return nil end
+  local arm = info and info.armour or 0
+  if arm >= C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR then return nil end
+  return string.format("armour_too_low: arm=%d (need >= %d) vs pillHP=%d (>= %d)",
+                       arm, C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR,
+                       pill_hp, C.ATTACK_PILL_UNSAFE_HP_THRESHOLD)
+end
+M.armour_unsafe_for_pill_take = armour_unsafe_for_pill_take
 
 -- STILL_POS_TOL: max world-unit drift over the still-window that
 -- still counts as "stopped". Without this, a 1-wu-per-tick jitter
@@ -360,6 +449,54 @@ local function standoff_shot_obstacle(goal, pill, world)
     end
   end
   return nil
+end
+
+-- Shot-path obstacle check: simulate a shell from the tank's current
+-- position toward the aim point. Count how many shots it would take to
+-- clear all obstacles (forest, walls) before the shell reaches the
+-- target pill tile. Returns (shots_needed, reason_str) where
+-- shots_needed is the extra shots to clear the path (0 = clear path),
+-- or (math.huge, reason) if an impassable obstacle (other pillbox) blocks.
+local function shot_path_obstacle_count(info, goal, world)
+  local pmx, pmy = goal.mx, goal.my
+  local aim_mx = goal.aim_mx or (pmx + 0.5)
+  local aim_my = goal.aim_my or (pmy + 0.5)
+  local target_wx = math.floor(aim_mx * 256 + 0.5)
+  local target_wy = math.floor(aim_my * 256 + 0.5)
+  local tiles = cpf.simulate_shot(info.tankx, info.tanky,
+                                  target_wx, target_wy,
+                                  cpf.SHOT_TANK, 0)
+  if not tiles then return 0, "no sim" end
+  local origin_mx = info.tankx >> 8
+  local origin_my = info.tanky >> 8
+  local shots = 0
+  local reached_pill = false
+  for _, t in ipairs(tiles) do
+    if t.mx == pmx and t.my == pmy then
+      reached_pill = true
+      break
+    end
+    if t.mx ~= origin_mx or t.my ~= origin_my then
+      local tt = U.ttype(t.mx, t.my)
+      if tt == C.T_BUILDING then
+        shots = shots + 5                    -- 1 hit → halfbuild + 4 life
+      elseif tt == C.T_HALFBUILD then
+        shots = shots + 4                    -- worst case: life=4
+      elseif tt == C.T_FOREST then
+        shots = shots + 1
+      else
+        local plist = world.pill_at and world.pill_at[t.my * 256 + t.mx]
+        if plist then
+          for _, e in ipairs(plist) do
+            if e.pill and e.pill.health and e.pill.health > 0 then
+              return math.huge, string.format("pill at (%d,%d) hp=%d", t.mx, t.my, e.pill.health)
+            end
+          end
+        end
+      end
+    end
+  end
+  return shots, nil, reached_pill
 end
 
 -- Count forest tiles on the Bresenham line from (x0,y0) to (x1,y1), excluding
@@ -595,25 +732,31 @@ local function score_standoff(world, cx, cy, pill, info, orbit_radius)
   local influence_pen = -(cpf.influence_at(cx, cy) or 0)
                         * C.ATTACK_STANDOFF_INFLUENCE_WEIGHT
 
-  -- Friendly pill as barrier bonus (aIndy): if a friendly pill is between us
-  -- and the target, it absorbs enemy fire — discount the position.
+  -- Friendly pill interaction: a friendly pill BETWEEN us and the target
+  -- (closer to the target) absorbs enemy fire — bonus. A friendly pill
+  -- BEHIND us (further from the target, on the shot path outward) blocks
+  -- our shells — penalty like a wall.
   local fpill_barrier_bonus = 0
+  local fpill_behind_pen = 0
   for _, fp in pairs(world.pills) do
     if fp.owner == "friendly" and fp.health > 0 then
-      -- Check if friendly pill is roughly on the line target→standoff
       local d_fp_target = U.mdist(fp.mx, fp.my, pill.mx, pill.my)
       local d_fp_us = U.mdist(fp.mx, fp.my, cx, cy)
       local d_total = U.mdist(cx, cy, pill.mx, pill.my)
-      -- Friendly pill is "between" if both distances are less than total
-      if d_fp_target < d_total and d_fp_us < d_total and d_fp_target >= 1 then
+      if d_fp_target < (d_total - 1) and d_fp_us < d_total and d_fp_target >= 1 then
+        -- Between us and the target, at least 1 tile inside our standoff
+        -- radius (not flush against us) — real shield position.
         fpill_barrier_bonus = fpill_barrier_bonus + C.FPILL_BARRIER_BONUS
+      elseif d_fp_target > d_total and d_fp_us <= 3 then
+        -- Behind us (further from target), close enough to block shots
+        fpill_behind_pen = fpill_behind_pen + 200
       end
     end
   end
 
   return approach + water_pen + pushback_pen + crossfire + escape_cost + tree_pen
        + approach_exposure + orbit_pen + threat_pen + influence_pen
-       - fpill_barrier_bonus
+       + fpill_behind_pen - fpill_barrier_bonus
 end
 
 -- Enumerate candidate standoff positions around `pill` and pick the best scored one.
@@ -1167,17 +1310,353 @@ local _TILE_SAMPLE_OFFSETS = {
 -- Slate order for two-pass spot selection: short-range before long-range.
 local _SLATE_ORDER = { 0, 1, 2, 3 }
 
-function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, state, tmx, tmy)
+-- =========================================================================
+-- plan_position chunked angle sweep — full 72-spot quality preserved at
+-- every tier, just spread across more ticks at lower tiers via
+-- pp_spread.  ONLY runs when attack_pill is the committed goal (no
+-- background pre-caching for pills the bot may never attack).
+--
+-- Lifecycle for one committed pill take:
+--   1. plan_position substate calls M.advance_pill_eval_chunk every
+--      tick.
+--   2. If a fresh cached result exists in state._pill_eval_cache[pid]
+--      (TTL = 250 ticks / 5 s), the chunk call returns "cached" — no
+--      work done, plan_position uses the cached spots.
+--   3. Otherwise, M.evaluate_pill_difficulty processes one chunk
+--      (ceil(72 / pp_spread) angles).  Progress lives in
+--      state._pill_eval_progress[pid].
+--   4. When the cursor reaches 360 the sweep finalizes — result
+--      stored at state._pill_eval_cache[pid], progress entry cleared.
+--
+-- pp_spread = 1 (tier 10): one chunk = all 72 angles → single tick.
+-- pp_spread = 50 (tier 1): one chunk =  ceil(72/50) = 2 angles → ~36
+-- ticks (~0.72 s) wall-clock per sweep.
+-- =========================================================================
+local _PILL_EVAL_CACHE_TTL = 250  -- ticks (5 s @ 50 Hz)
+
+-- Fresh accumulator for a chunked plan_position scan.  All inter-chunk
+-- state (spots / all_valid / counters / timings) lives here so the
+-- function body can read and write through one table reference.
+function M.new_pill_eval_acc(detailed)
+  return {
+    spots      = detailed and {} or nil,
+    all_valid  = {},
+    best_score = math.huge,
+    best_spot  = nil,
+    -- Diagnostic counters (sub-µs to update; cumulative across chunks).
+    _angles_total = 0, _angles_los = 0, _angles_pass = 0,
+    _t_los        = 0, _t_scan_a   = 0, _t_scan_b    = 0,
+    _t_prefetch_us = 0,
+    _t_total_us    = 0,  -- summed across every chunk for the sweep
+  }
+end
+
+-- Two-pass selection: 50-bucket the LOS-valid spots, pick the cheapest-
+-- to-reach spot in the best bucket.  Plus the optimize.log diagnostic
+-- line (kept from the legacy single-shot version, now emitted after
+-- the full sweep completes — _t_*_us are cumulative across chunks).
+function M.finalize_pill_eval(acc, tmx, tmy)
+  local COST_INF = 1e29
+  local best_score = acc.best_score
+  local best_spot  = acc.best_spot
+  local all_valid  = acc.all_valid
+
+  if #all_valid > 0 then
+    local min_score = math.huge
+    for _, s in ipairs(all_valid) do
+      if s.score < min_score then min_score = s.score end
+    end
+    local bucket_floor = math.floor(min_score / 50) * 50
+    local bucket_ceil  = bucket_floor + 50
+
+    local bucket = {}
+    for _, s in ipairs(all_valid) do
+      if s.score >= bucket_floor and s.score < bucket_ceil then
+        bucket[#bucket + 1] = s
+      end
+    end
+
+    local costs      = {}
+    local slate_used = nil
+    for _, sl in ipairs(_SLATE_ORDER) do
+      local ok = true
+      for i, s in ipairs(bucket) do
+        local c = cpf.dijkstra_cost_at(sl, s.mx, s.my, 0)
+        if c >= COST_INF then ok = false; break end
+        costs[i] = c
+      end
+      if ok then slate_used = sl; break end
+    end
+
+    if not slate_used and tmx then
+      for i, s in ipairs(bucket) do
+        costs[i] = cpf.estimate_cost(tmx, tmy, s.mx, s.my, 0)
+      end
+    end
+
+    local best_dij = math.huge
+    for i, s in ipairs(bucket) do
+      local dij = costs[i] or math.huge
+      if s.spot then s.spot.in_bucket = true; s.spot._dij = dij end
+      if dij < best_dij then
+        best_dij   = dij
+        best_spot  = s
+        best_score = s.score
+      end
+    end
+  end
+
+  acc.best_score = best_score
+  acc.best_spot  = best_spot
+
+  -- Cumulative diagnostic emit (only on full-sweep finalize).  Skip
+  -- noise from sub-millisecond cheap cache-tier evals.
+  if BRAIN_PROFILE_LOG and (acc._t_total_us or 0) > 1000 then
+    local _pf = acc._t_prefetch_us or 0
+    local _t_other = acc._t_total_us - acc._t_los - acc._t_scan_a - acc._t_scan_b - _pf
+    opt.append("optimize.log", string.format(
+      "  [diag] pill_eval total=%.2f prefetch=%.2f los=%.2f scan_a=%.2f scan_b=%.2f other=%.2f angles=%d/%d/%d",
+      acc._t_total_us / 1000, _pf / 1000, acc._t_los / 1000, acc._t_scan_a / 1000,
+      acc._t_scan_b / 1000, _t_other / 1000,
+      acc._angles_pass, acc._angles_los, acc._angles_total))
+  end
+
+  return best_score, acc.spots, best_spot
+end
+
+-- (The chunked scan body itself is M.evaluate_pill_difficulty below.
+-- It accepts optional start_deg/end_deg/acc args; when acc is nil it
+-- runs the full 0..359 sweep in one shot and finalizes — back-compat
+-- with the legacy single-shot signature.)
+
+-- Advance one pill's chunked sweep by one chunk.  Called every tick
+-- by plan_position substate while attack_pill is committed.
+--
+-- Returns "cached" when a fresh result already exists (no work done),
+-- "in_progress" when the sweep advanced but isn't done yet, "done"
+-- when the final chunk just landed (caller can read
+-- state._pill_eval_cache[pid].spots).
+function M.advance_pill_eval_chunk(state, world, info, tmx, tmy, pid, pill)
+  if state == nil or pill == nil or pid == nil or pid < 0 then
+    return "cached"
+  end
+  state._pill_eval_cache    = state._pill_eval_cache    or {}
+  state._pill_eval_progress = state._pill_eval_progress or {}
+  local now = state.tick or 0
+  local sweep = state._pill_eval_progress[pid]
+  -- "done" lingers up to 50 ticks (1 s) so the visualizer can show the
+  -- completed bar; after that, drop it and let the cache TTL govern.
+  if sweep and sweep.done_tick and (now - sweep.done_tick) > 50 then
+    state._pill_eval_progress[pid] = nil
+    sweep = nil
+  end
+  local cached = state._pill_eval_cache[pid]
+  if cached and (now - cached.tick) <= _PILL_EVAL_CACHE_TTL
+     and (not sweep or sweep.done_tick) then
+    return "cached"
+  end
+  if not sweep then
+    sweep = {
+      acc        = M.new_pill_eval_acc(true),
+      deg_cursor = 0,
+      start_tick = now,
+      mx         = pill.mx,
+      my         = pill.my,
+    }
+    state._pill_eval_progress[pid] = sweep
+  end
+  local spread = (state._capacity and state._capacity.pp_spread) or 1
+  if spread < 1 then spread = 1 end
+  local angles_per_tick = math.ceil(72 / spread)
+  local end_deg = sweep.deg_cursor + (angles_per_tick - 1) * 5
+  if end_deg > 355 then end_deg = 355 end
+  M.evaluate_pill_difficulty(pill, world, true, nil, state.phase, state, tmx, tmy,
+                              sweep.deg_cursor, end_deg, sweep.acc)
+  sweep.deg_cursor = end_deg + 5
+  if sweep.deg_cursor > 355 then
+    local best_score, spots, best_spot = M.finalize_pill_eval(sweep.acc, tmx, tmy)
+    state._pill_eval_cache[pid] = {
+      tick = now, best_score = best_score, spots = spots, best_spot = best_spot,
+    }
+    sweep.done_tick = now
+    return "done"
+  end
+  return "in_progress"
+end
+
+-- Drop cache + in-progress entries for pills that are no longer
+-- attackable (destroyed, picked up, captured friendly, etc.).  Called
+-- once per tick from the main brain loop so dead entries don't leak
+-- across goal switches.
+function M.purge_dead_pill_eval_entries(state, world)
+  if state == nil or world == nil or world.pills == nil then return end
+  local pills = world.pills
+  if state._pill_eval_cache then
+    for pid, _ in pairs(state._pill_eval_cache) do
+      local p = pills[pid]
+      if not p or not p.health or p.health <= 0
+         or (p.owner ~= "hostile" and p.owner ~= "neutral") then
+        state._pill_eval_cache[pid] = nil
+      end
+    end
+  end
+  if state._pill_eval_progress then
+    for pid, _ in pairs(state._pill_eval_progress) do
+      local p = pills[pid]
+      if not p or not p.health or p.health <= 0
+         or (p.owner ~= "hostile" and p.owner ~= "neutral") then
+        state._pill_eval_progress[pid] = nil
+      end
+    end
+  end
+end
+
+-- Draw a small progress bar above the pill currently being eval'd.
+-- Only one sweep is ever in flight (plan_position drives one pill at
+-- a time), so this is a single label/bar — not a per-pill swarm.
+function M.draw_pill_eval_progress(viz, state)
+  if not BRAIN_DEBUG_MODE then return end
+  if not viz or not viz.is_on or not viz.is_on("pill_eval_progress") then return end
+  if not state._pill_eval_progress then return end
+  local now = state.tick or 0
+  for _, sweep in pairs(state._pill_eval_progress) do
+    if sweep.mx and sweep.my then
+      local px, py = sweep.mx + 0.5, sweep.my + 0.5
+      local angles_done = math.min(72, sweep.deg_cursor / 5)
+      local total_ticks = (sweep.done_tick or now) - (sweep.start_tick or now)
+      local done = sweep.done_tick ~= nil
+      local label
+      if done then
+        label = string.format("eval done 72/72 (%dt)", total_ticks)
+      else
+        label = string.format("eval %d/72 (%dt)", angles_done, total_ticks)
+      end
+      local r, g, b = 180, 220, 255
+      if done then r, g, b = 140, 240, 160 end
+      viz.text("pill_eval_progress", px, py - 1.4, label,
+               "center", r, g, b, 230, 0.4)
+      local bar_w, bar_h = 2.0, 0.18
+      local bar_x0 = px - bar_w / 2
+      local bar_y0 = py - 1.05
+      local frac = angles_done / 72
+      viz.rect("pill_eval_progress", bar_x0, bar_y0,
+               bar_x0 + bar_w, bar_y0 + bar_h, 60, 60, 60, 200)
+      viz.rect("pill_eval_progress", bar_x0, bar_y0,
+               bar_x0 + bar_w * frac, bar_y0 + bar_h, r, g, b, 220)
+    end
+  end
+end
+
+-- Always-on multiline label above the tank showing the current state of
+-- each plan_position gate (chunk → spots → greens → best → shield).
+-- Gives an at-a-glance read of which stage the pipeline reached and
+-- which one failed, without scrolling stdout.
+function M.draw_plan_trace(viz, state, info)
+  if not BRAIN_DEBUG_MODE then return end
+  if not viz or not viz.is_on or not viz.is_on("plan_trace") then return end
+  local t = state._plan_trace
+  if not t then return end
+  if not info or not info.tankx then return end
+  local tx = (info.tankx >> 8) + 0.5
+  local ty = (info.tanky >> 8) + 0.5
+
+  local goal = state.goal or {}
+  local age = (state.tick or 0) - (t.tick or 0)
+  local function push(lines, txt) lines[#lines + 1] = txt end
+  local lines = {}
+  push(lines, string.format("plan_trace  goal=%s sub=%s  age=%dt",
+                            tostring(goal.kind), tostring(goal.substate), age))
+  push(lines, string.format("  pill: pid=%s pmxy=(%s,%s)",
+                            tostring(t.pid), tostring(t.pmx), tostring(t.pmy)))
+  push(lines, string.format("  chunk: status=%s deg=%s",
+                            tostring(t.chunk_status), tostring(t.chunk_deg or "--")))
+  if t.spots_n then
+    push(lines, string.format("  spots: n=%d los=%d", t.spots_n, t.spots_los or 0))
+  else
+    push(lines, "  spots: (none — chunk not done)")
+  end
+  if t.influence_err then
+    push(lines, "  INFLUENCE PASS CRASHED:")
+    local n = 0
+    for line in tostring(t.influence_err):gmatch("[^\n]+") do
+      push(lines, "    " .. line); n = n + 1; if n >= 3 then break end
+    end
+    push(lines, string.format("    spot1: mx=%s my=%s",
+                              tostring(t.spot1_mx), tostring(t.spot1_my)))
+  elseif t.spots_n and not t.passed_influence then
+    push(lines, "  HALT after spots, before influence pass")
+  elseif t.passed_influence and t.passed_collect == nil then
+    push(lines, "  HALT in influence pass")
+  elseif t.passed_collect ~= nil and t.passed_fallback == nil then
+    push(lines, string.format("  HALT between collect=%d and fallback", t.passed_collect))
+  elseif t.passed_fallback ~= nil and t.greens_n == nil then
+    push(lines, string.format("  HALT after fallback=%d, before best", t.passed_fallback))
+  end
+  if t.greens_n then
+    push(lines, string.format("  greens: n=%d  best=(%s,%s) score=%s",
+                              t.greens_n,
+                              tostring(t.best_mx or "--"), tostring(t.best_my or "--"),
+                              t.best_score and string.format("%.1f", t.best_score) or "--"))
+  end
+  if t.no_best_fallback then
+    push(lines, "  best: NONE -- fell to pick_standoff (no shield.scan)")
+  end
+  if t.shield_err then
+    push(lines, "  shield: CRASHED")
+    -- Print first 3 lines of the traceback (err msg + first 2 frames).
+    local first_lines = {}
+    for line in tostring(t.shield_err):gmatch("[^\n]+") do
+      first_lines[#first_lines + 1] = line
+      if #first_lines >= 3 then break end
+    end
+    for _, l in ipairs(first_lines) do push(lines, "    " .. l) end
+    push(lines, "    args: " .. (t.shield_args or "?"))
+  elseif t.shield_ran then
+    local nb = t.shield_no_builder and " no_builder" or ""
+    if t.shield_best_score then
+      push(lines, string.format("  shield[%s]: cands=%d best=%.1f aim=%s%s",
+                                t.shield_path or "?", t.shield_cands_n or 0,
+                                t.shield_best_score,
+                                tostring(t.shield_best_aim_idx), nb))
+      push(lines, string.format("    actual=%d potential=%d  (a=%s p=%s n=%s)",
+                                t.shield_actual_n or 0, t.shield_pots_n or 0,
+                                t.shield_score_act and string.format("%.0f", t.shield_score_act) or "?",
+                                t.shield_score_pot and string.format("%.0f", t.shield_score_pot) or "?",
+                                t.shield_score_nb  and string.format("%.0f", t.shield_score_nb)  or "?"))
+    else
+      push(lines, string.format("  shield[%s]: cands=%d best=NONE%s -- PPT demoted",
+                                t.shield_path or "?", t.shield_cands_n or 0, nb))
+    end
+  elseif t.about_to_shield_scan then
+    push(lines, "  HALT INSIDE shield.scan -- crashed")
+    push(lines, "  args: " .. (t.shield_args or "?"))
+  elseif t.greens_n and (t.greens_n == 0 or not t.best_mx) then
+    push(lines, "  shield: (skipped — no best)")
+  elseif t.greens_n and t.best_mx then
+    push(lines, "  HALT between greens and shield.scan")
+  end
+
+  local y = ty - 2.8
+  for _, line in ipairs(lines) do
+    viz.text("plan_trace", tx + 1.2, y, line,
+             "left", 240, 240, 200, 230, 0.42)
+    y = y + 0.36
+  end
+end
+
+function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, state, tmx, tmy,
+                                     start_deg, end_deg, acc)
   -- Per-section diagnostic accumulators. Sub-µs to update; enables
   -- breakdown of where the ~2 ms first-eval cost lives. Logged via
   -- optimize.log when total > 1 ms.
   local _t_func0      = clock_us()
-  local _t_los        = 0
-  local _t_scan_a     = 0
-  local _t_scan_b     = 0
-  local _angles_total = 0
-  local _angles_los   = 0
-  local _angles_pass  = 0
+  -- Chunked mode: caller passes acc + an explicit [start_deg, end_deg]
+  -- range. We accumulate into acc and skip the post-loop two-pass
+  -- selection (caller does that via M.finalize_pill_eval once all
+  -- chunks are done). Single-shot mode: acc is nil, we run the full
+  -- 0..359 loop and the post-loop selection in one call (legacy).
+  local chunked    = acc ~= nil
+  acc              = acc or M.new_pill_eval_acc(detailed)
   local pmx, pmy = pill.mx, pill.my
   local step_deg = scan_step or C.ATTACK_SCAN_DEGREES
 
@@ -1217,10 +1696,22 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
               or (step_deg == 45) and ELLIPSE_STAMPS_45DEG
               or nil
 
-  local spots = detailed and {} or nil
-  local best_score = math.huge
-  local best_spot = nil  -- track best spot for returning
-  local all_valid = {}   -- collect all LOS-valid spots for two-pass selection
+  -- Bind to accumulator. In chunked mode acc was passed in (may already
+  -- have spots/all_valid populated from prior chunks); single-shot calls
+  -- created a fresh acc above so these start empty.
+  local spots      = acc.spots
+  local all_valid  = acc.all_valid
+  local best_score = acc.best_score
+  local best_spot  = acc.best_spot
+  -- Hoist diagnostic locals out of acc so the inner-loop body can still
+  -- use them by short name (kept the same names so the body code didn't
+  -- have to change). Written back to acc just before return.
+  local _angles_total = acc._angles_total
+  local _angles_los   = acc._angles_los
+  local _angles_pass  = acc._angles_pass
+  local _t_los        = acc._t_los
+  local _t_scan_a     = acc._t_scan_a
+  local _t_scan_b     = acc._t_scan_b
 
   -- Cache frequently-accessed tables as locals — single table index per
   -- tile in the stamp loops, no function call overhead, no GC pressure.
@@ -1233,7 +1724,11 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
   local _self_pcontrib = threat.pill_contrib[pmy * 256 + pmx]
   local _t_prefetch_us = 0
 
-  for deg = 0, 359, step_deg do
+  -- Chunked range: [start_deg, end_deg] step step_deg. Single-shot
+  -- callers pass nil, nil → full 0..359 sweep.
+  local _lo = start_deg or 0
+  local _hi = end_deg   or 359
+  for deg = _lo, _hi, step_deg do
     -- Skip banned approach angles (set by approach timeout). 5° bucket.
     if banned_for_pill then
       local bucket = math.floor((deg % 360) / 5) * 5
@@ -1498,106 +1993,165 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
     ::next_spot::
   end
 
-  -- Two-pass selection: group valid spots by score in 50-buckets,
-  -- take the best bucket, then pick the one with lowest travel cost.
-  --
-  -- Two-pass selection: group valid spots into 50-wide score buckets,
-  -- take the best bucket, then pick the closest spot by travel cost.
-  --
-  -- For the travel cost we need ONE slate that covers ALL bucket spots
-  -- so every comparison is within the same cost space. Try slates in
-  -- order (short-range first — most current — then long-range); the
-  -- first slate where every bucket spot has a finite cost wins. If no
-  -- single slate covers all spots, fall back to A* for each spot.
-  --   0 = KIND_NORMAL short-range   2 = KIND_PILL short-range
-  --   1 = KIND_NORMAL long-range    3 = KIND_PILL long-range
-  local COST_INF    = 1e29
+  -- Write the diagnostic + accumulator state back to acc so the next
+  -- chunk (and the legacy single-shot post-loop) sees the latest.
+  acc.spots         = spots
+  acc.all_valid     = all_valid
+  acc.best_score    = best_score
+  acc.best_spot     = best_spot
+  acc._angles_total = _angles_total
+  acc._angles_los   = _angles_los
+  acc._angles_pass  = _angles_pass
+  acc._t_los        = _t_los
+  acc._t_scan_a     = _t_scan_a
+  acc._t_scan_b     = _t_scan_b
+  acc._t_prefetch_us = _t_prefetch_us
+  -- Accumulate this chunk's wall time so finalize_pill_eval emits the
+  -- correct cumulative total when BRAIN_PROFILE_LOG is on.
+  acc._t_total_us   = (acc._t_total_us or 0) + (clock_us() - _t_func0)
 
-  if #all_valid > 0 then
-    local min_score = math.huge
-    for _, s in ipairs(all_valid) do
-      if s.score < min_score then min_score = s.score end
-    end
-    local bucket_floor = math.floor(min_score / 50) * 50
-    local bucket_ceil  = bucket_floor + 50
-
-    -- Collect bucket members once.
-    local bucket = {}
-    for _, s in ipairs(all_valid) do
-      if s.score >= bucket_floor and s.score < bucket_ceil then
-        bucket[#bucket + 1] = s
-      end
-    end
-
-    -- Find the first slate where every bucket spot has a finite cost.
-    local costs      = {}   -- costs[i] = travel cost for bucket[i]
-    local slate_used = nil
-    for _, sl in ipairs(_SLATE_ORDER) do
-      local ok = true
-      for i, s in ipairs(bucket) do
-        local c = cpf.dijkstra_cost_at(sl, s.mx, s.my, 0)
-        if c >= COST_INF then ok = false; break end
-        costs[i] = c
-      end
-      if ok then slate_used = sl; break end
-    end
-
-    -- No slate covers all spots — fall back to A* per spot.
-    if not slate_used and tmx then
-      for i, s in ipairs(bucket) do
-        costs[i] = cpf.estimate_cost(tmx, tmy, s.mx, s.my, 0)
-      end
-    end
-
-    -- Pick the bucket spot with the lowest cost and mark viz state.
-    local best_dij = math.huge
-    for i, s in ipairs(bucket) do
-      local dij = costs[i] or math.huge
-      if s.spot then s.spot.in_bucket = true; s.spot._dij = dij end
-      if dij < best_dij then
-        best_dij   = dij
-        best_spot  = s
-        best_score = s.score
-      end
-    end
+  -- Chunked mode skips the post-loop two-pass selection; caller invokes
+  -- M.finalize_pill_eval(acc, tmx, tmy) once all chunks are done.
+  if chunked then
+    return nil, spots, nil
   end
 
-  -- Per-call breakdown — emitted only when the call cost > 1 ms so we
-  -- don't flood optimize.log with cheap cache-hit-tier calls.
-  if BRAIN_PROFILE_LOG then
-    do
-      local _t_total = clock_us() - _t_func0
-      if _t_total > 1000 then
-        local _pf = _t_prefetch_us or -1
-        local _t_other = _t_total - _t_los - _t_scan_a - _t_scan_b - _pf
-        opt.append("optimize.log", string.format(
-          "  [diag] eval_pill_difficulty pill=(%d,%d) total=%.2f prefetch=%.2f los=%.2f scan_a=%.2f scan_b=%.2f other=%.2f angles=%d/%d/%d step=%s detailed=%s",
-          pmx, pmy,
-          _t_total / 1000, _pf / 1000, _t_los / 1000, _t_scan_a / 1000,
-          _t_scan_b / 1000, _t_other / 1000,
-          _angles_pass, _angles_los, _angles_total,
-          tostring(scan_step or C.ATTACK_SCAN_DEGREES),
-          tostring(detailed)))
-      end
-    end
-  end
-
-  return best_score, spots, best_spot
+  -- Single-shot mode: run the two-pass selection now (writes best_score,
+  -- best_spot back into acc) and return the legacy triple.
+  return M.finalize_pill_eval(acc, tmx, tmy)
 end
 
 -- =========================================================================
--- evaluate_tank_standoff — find best engagement position around enemy tank
+-- evaluate_tank_standoff — find best engagement position around enemy tank.
 --
--- Same concept as evaluate_pill_difficulty but for tank combat:
--- sample 8 positions at TANK_COMBAT_STANDOFF_RANGE around the target,
--- score each for terrain, maneuver space (ellipse), crossfire from
--- hostile pills, and wall obstructions. Returns the best standoff
--- tile coordinates and score, plus the A* cost to reach it.
+-- Walks the Manhattan-distance==R boundary around the enemy tank
+-- (R = TANK_COMBAT_STANDOFF_RANGE), filters tiles that are impassable
+-- or wall-blocked LOS, and picks the cheapest reachable one from the
+-- tank-rooted Dijkstra slate (KIND_NORMAL).  Mirror of the kill_lgm
+-- engage-spot picker in goals.refresh_kill_lgm — same pattern,
+-- different range and target.
 --
--- Returns: best_mx, best_my, best_score, path_cost, shells_on_arrival
---          or nil if no valid standoff position found.
+-- Falls back to a geometric point on the direct line enemy→tank at
+-- distance R when the Dijkstra slate hasn't reached any boundary tile
+-- (cold start / unreachable).
+--
+-- See M.evaluate_tank_standoff_ring8 for the prior 8-position ring
+-- approach (preserved for reference, currently unused).
+--
+-- Returns: best_mx, best_my, best_score, path_cost, shells_on_arrival,
+--          scan_spots, best_deg, or nil if no valid standoff position.
 -- =========================================================================
 function M.evaluate_tank_standoff(et, tmx, tmy, info, world, state)
+  local R = C.TANK_COMBAT_STANDOFF_RANGE
+  local boat = (info.inboat and 1) or 0
+  local best_cost = math.huge
+  local best_mx, best_my = nil, nil
+  local scan_spots = {}
+
+  -- Walk Manhattan boundary (|dx| + |dy| == R) around the enemy tank.
+  -- ~4*R tiles total (28 for R=7) — cheap.
+  for dx = -R, R do
+    local dy_abs = R - math.abs(dx)
+    local _ys = (dy_abs == 0) and { 0 } or { dy_abs, -dy_abs }
+    for _, dy in ipairs(_ys) do
+      local mx = et.mx + dx
+      local my = et.my + dy
+      if U.in_map(mx, my) then
+        local tt = U.ttype(mx, my)
+        local passable = (C.TERRAIN_COST_LAND[tt] or 9999) < 9999
+                         and not U.is_water(tt)
+        if passable then
+          -- Need clear LOS to the enemy tank from this position — a
+          -- walled-off engage spot is worthless.
+          local wall_hp = PF.wall_hp_between(mx, my, et.mx, et.my)
+          if wall_hp == 0 then
+            local c = cpf.smart_cost_dij_only(cpf.KIND_NORMAL, mx, my, boat)
+            scan_spots[#scan_spots + 1] = {
+              cx = mx + 0.5, cy = my + 0.5, mx = mx, my = my,
+              has_los = true, total_score = c or 99999,
+            }
+            if c and c < best_cost then
+              best_cost = c
+              best_mx, best_my = mx, my
+            end
+          else
+            scan_spots[#scan_spots + 1] = {
+              cx = mx + 0.5, cy = my + 0.5, mx = mx, my = my,
+              has_los = false, total_score = 999, reason = "wall_blocked",
+            }
+          end
+        else
+          scan_spots[#scan_spots + 1] = {
+            cx = mx + 0.5, cy = my + 0.5, mx = mx, my = my,
+            has_los = false, total_score = 999, reason = "impassable",
+          }
+        end
+      end
+    end
+  end
+
+  -- Geometric fallback: Dijkstra slate hasn't reached any boundary
+  -- tile yet (cold start / unreachable).  Pick the point on the
+  -- direct line enemy→tank at distance R so we still have a sensible
+  -- engage target.
+  if not best_mx then
+    local vdx = tmx - et.mx
+    local vdy = tmy - et.my
+    local vlen = math.sqrt(vdx * vdx + vdy * vdy)
+    if vlen > 0.5 then
+      best_mx = math.floor(et.mx + (vdx / vlen) * R + 0.5)
+      best_my = math.floor(et.my + (vdy / vlen) * R + 0.5)
+    else
+      best_mx, best_my = tmx, tmy
+    end
+    if best_mx < 0   then best_mx = 0   end
+    if best_mx > 255 then best_mx = 255 end
+    if best_my < 0   then best_my = 0   end
+    if best_my > 255 then best_my = 255 end
+    if not U.in_map(best_mx, best_my) then
+      return nil
+    end
+    best_cost = cpf.estimate_cost(tmx, tmy, best_mx, best_my, boat) * 0.1
+  end
+
+  local best_deg = math.deg(math.atan(best_mx - et.mx, -(best_my - et.my))) % 360
+  local shells_on_arrival = cpf.dijkstra_shells_at(cpf.KIND_NORMAL, best_mx, best_my)
+                         or cpf.astar_shells_at(best_mx, best_my)
+
+  if BRAIN_DEBUG_MODE then
+    print2(string.format("  attack_tank boundary-scan: enemy@(%d,%d) R=%d → standoff (%d,%d) dij=%.1f deg=%.0f",
+      et.mx, et.my, R, best_mx, best_my, best_cost, best_deg))
+  end
+
+  return best_mx, best_my, best_cost, best_cost, shells_on_arrival, scan_spots, best_deg
+end
+
+-- =========================================================================
+-- evaluate_tank_standoff_ring8 — LEGACY 8-position ring scoring (preserved
+-- for reference; not called from live code).
+--
+-- Samples 8 candidate tiles at TANK_COMBAT_STANDOFF_RANGE around the
+-- target (every 45°), scores each by terrain + maneuver-ellipse danger +
+-- crossfire + wall LOS, and returns the best one + its A* cost.  Same
+-- structure as evaluate_pill_difficulty.
+--
+-- We swapped to a Manhattan-boundary-scan version (see
+-- M.evaluate_tank_standoff below) that mirrors the kill_lgm engage-spot
+-- picker: walks every tile on the engage-range boundary and picks the
+-- one with the lowest Dijkstra cost.  Boundary scan trades the per-spot
+-- ellipse/crossfire scoring for far more position candidates (~28 vs 8)
+-- and shares the slate the steering layer already uses, so the chosen
+-- standoff is reachable by definition rather than being "best ring spot
+-- but maybe walled off."
+--
+-- Kept around in case we want to revisit the per-spot maneuver/crossfire
+-- scoring.  Safe to delete once the boundary-scan version has been in
+-- use for a while.
+--
+-- Returns: best_mx, best_my, best_score, path_cost, shells_on_arrival,
+--          scan_spots, best_deg, or nil if no valid standoff position.
+-- =========================================================================
+function M.evaluate_tank_standoff_ring8(et, tmx, tmy, info, world, state)
   if BRAIN_DEBUG_MODE then
     print2(string.format("attack_tank standoff: evaluating enemy@(%d,%d) from tank@(%d,%d) R=%d",
       et.mx, et.my, tmx, tmy, C.TANK_COMBAT_STANDOFF_RANGE))
@@ -1917,12 +2471,15 @@ function M.update_attack_substate(goal, state, world, info)
                     goal._kill_attempt and 255 or 200,
                     goal._kill_attempt and 100 or 50
     viz.hud_text("hud_kill_attempt", 10, 160, label, "topleft", r, g, b, 255)
+    local _viz_pill_hp = goal.target_id and (function()
+      local p = world.pills[goal.target_id]
+      return p and p.health or 0
+    end)() or 0
+    local _viz_obstacle = (goal._bullets_needed or 0) - _viz_pill_hp
+    if _viz_obstacle < 0 then _viz_obstacle = 0 end
     viz.hud_text("hud_kill_attempt", 10, 175,
-      string.format("bullets_needed=%d pill_hp=%d", goal._bullets_needed or 0,
-                    goal.target_id and (function()
-                      local p = world.pills[goal.target_id]
-                      return p and p.health or 0
-                    end)() or 0),
+      string.format("needed=%d (hp=%d + obstacles=%d)",
+                    goal._bullets_needed or 0, _viz_pill_hp, _viz_obstacle),
       "topleft", 200, 200, 200, 255)
     viz.hud_text("hud_kill_attempt", 10, 190,
       string.format("fired=%d on_pill=%d misses=%d",
@@ -1955,12 +2512,98 @@ function M.update_attack_substate(goal, state, world, info)
 
   if not goal.substate then goal.substate = "plan_position" end
 
+  -- LGM-near-pill abort: a hostile LGM within the danger radius of the
+  -- target pill means the defender is right there ready to retake /
+  -- repair, AND will be supported by their tank. Different reaction
+  -- depending on substate:
+  --   * "Firing" substates (charge / shoot_pill / engage / in_range_aim
+  --     [_finetune]) — we have rounds in flight or are about to fire;
+  --     enter swerve to dodge return-fire instead of bailing flat-footed.
+  --   * Everything else — clear_attack_goal so pick_goal picks something
+  --     safer next tick.
+  -- Either way, stamp pill_danger_nearby[pill_id] = now + ~30s so the
+  -- eval re-pick adds a danger_nearby ×1.5 multiplier and we don't
+  -- bounce right back onto this same pill.
+  do
+    local LGM_RADIUS = C.PILL_DANGER_NEARBY_RADIUS or 3
+    local lgm_seen = nil
+    local perc = state.perc
+    if perc and perc.enemy_lgms then
+      for _, el in ipairs(perc.enemy_lgms) do
+        local dx = (el.mx or 0) - pmx
+        local dy = (el.my or 0) - pmy
+        if dx >= -LGM_RADIUS and dx <= LGM_RADIUS
+           and dy >= -LGM_RADIUS and dy <= LGM_RADIUS then
+          lgm_seen = el
+          break
+        end
+      end
+    end
+    if lgm_seen then
+      local pid = goal.target_id
+      if pid then
+        state.pill_danger_nearby = state.pill_danger_nearby or {}
+        state.pill_danger_nearby[pid] = now + (C.PILL_DANGER_NEARBY_TICKS or 1500)
+      end
+      local FIRING_SUBS = {
+        charge=true, shoot_pill=true, engage=true,
+        in_range_aim=true, in_range_aim_finetune=true,
+      }
+      local cur_sub = goal.substate or "?"
+      if FIRING_SUBS[cur_sub] then
+        print(string.format(TAG ..
+          " ATTACK: LGM@(%d,%d) within %dt of pill@(%d,%d) — entering swerve from %s",
+          lgm_seen.mx or -1, lgm_seen.my or -1, LGM_RADIUS, pmx, pmy, cur_sub))
+        enter_swerve(goal, world, state, info, pmx, pmy, "defensive")
+        return
+      else
+        clear_attack_goal(state, string.format(
+          "abort@%s — enemy LGM@(%d,%d) within %dt of pill@(%d,%d)",
+          cur_sub, lgm_seen.mx or -1, lgm_seen.my or -1, LGM_RADIUS, pmx, pmy))
+        return
+      end
+    end
+  end
+
+  -- Before committing to plan_position, wait for the LGM to return.
+  -- Without the builder we can't capture after killing or build shields.
+  -- If the LGM is out (not in tank, not dead) and the builder isn't
+  -- actively dispatching it for THIS goal's purposes (gather_trees etc.),
+  -- hold in plan_position without doing work — the LGM will return and
+  -- we resume. This avoids aborting the goal (which causes oscillation)
+  -- while still not starting the expensive angle sweep until the LGM
+  -- is available.
+  if goal.substate == "plan_position"
+     and not goal.scan_spots
+     and info.man_status ~= C.LGM_INTANK
+     and info.man_status ~= C.LGM_DEAD then
+    return  -- hold, don't advance plan_position until LGM is back
+  end
+
   -- Only log on substate transitions (avoid spamming every tick)
   if goal.substate ~= goal._last_logged_sub then
     goal._last_logged_sub = goal.substate
     if BRAIN_DEBUG_MODE then
       print(string.format(TAG .. " [ATTACK] substate=%s pill=(%d,%d)", goal.substate, pmx, pmy))
     end
+  end
+
+  -- Track whether the LGM was dead when this pill take started.
+  -- If it was dead and then respawns (transitions to ground/intank),
+  -- abort pre-engage substates so the bot can go pick up the builder
+  -- instead of continuing a take it started without one.
+  if not goal._lgm_was_dead_at_start then
+    goal._lgm_was_dead_at_start = (info.man_status == C.LGM_DEAD)
+  end
+  if goal._lgm_was_dead_at_start
+     and info.man_status ~= C.LGM_DEAD
+     and PRE_ENGAGE_SUBS[goal.substate] then
+    print(string.format(TAG .. " ATTACK: aborting pre-engage (%s) — LGM respawned mid-take (status=%d)",
+      goal.substate, info.man_status))
+    print2(string.format("ATTACK_ABORT_LGM_RESPAWN sub=%s man_status=%d pill=(%d,%d)",
+      goal.substate, info.man_status, pmx, pmy))
+    clear_attack_goal(state, "LGM respawned mid-take")
+    return
   end
 
   -- Look up pill
@@ -1981,25 +2624,126 @@ function M.update_attack_substate(goal, state, world, info)
   -- plan_position: full terrain analysis to find best attack spot
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "plan_position" then
+    -- Fresh-entry cleanup: an earlier attack on this same pill (or any
+    -- prior goal-of-the-same-target round-trip) can leave stale shield
+    -- planning hanging on the goal struct.  goal.substate=plan_position
+    -- is the canonical fresh-start state for attack_pill, so wipe the
+    -- shield + scan + wall-build artifacts here before we recompute.
+    -- Re-entries within the same goal (we stayed in plan_position across
+    -- ticks) are idempotent — goal.scan_spots is what gates the
+    -- expensive re-scan below, and this runs even on the first tick of
+    -- the substate, which is the worst case (one extra nil assignment
+    -- batch per tick of plan_position).
+    if not goal._plan_position_cleared then
+      goal._shield_scan         = nil
+      goal._shield_scan_pending = nil
+      goal._wall_build_list     = nil
+      goal._wall_build_idx      = nil
+      goal._wall_build_done     = nil
+      goal._aim_locked          = nil
+      goal._is_ppt              = nil
+      goal._trees_for_walls     = nil
+      goal.scan_spots           = nil
+      goal.standoff_mx          = nil
+      goal.standoff_my          = nil
+      goal.standoff_fx          = nil
+      goal.standoff_fy          = nil
+      goal.approach_fx          = nil
+      goal.approach_fy          = nil
+      goal.approach_mx          = nil
+      goal.approach_my          = nil
+      goal._chosen_deg          = nil
+      goal._plan_show_tick      = nil
+      goal._plan_logged         = nil
+      goal._plan_position_cleared = true
+    end
     -- Only scan once, reuse stored results for drawing
     if not goal.scan_spots then
       goal._scan_tank_mx = tmx
       goal._scan_tank_my = tmy
 
       local _t_pp0 = BRAIN_PROFILE and clock_us() or 0
+      -- Per-pill cache of the plan_position angle sweep result.  Reusing
+      -- a cached sweep up to 5 s (250 ticks @ 50 Hz) old skips the
+      -- ~9 ms evaluate_pill_difficulty call entirely on re-entry.
+      -- Pills move slowly enough (anger decays over hundreds of ticks,
+      -- ownership flips are rare mid-take) that 5 s of staleness is
+      -- acceptable; downstream shield scan + standoff selection still
+      -- run fresh each time, picking up wall/blocker changes.
       -- Capacity-tier pp_spread: this is the heaviest single scan in
       -- the brain (~9 ms at 5° × 72 angles). When the tier requests a
-      -- spread > 1 we instead coarsen to 45° — 8 angles via precomputed
-      -- stamps, ~1 ms — keeping plan_position completion in a single
-      -- tick at low budgets. (Real multi-tick chunking would require
-      -- refactoring evaluate_pill_difficulty to be resumable; the
-      -- coarsen-to-45° gives the same headline savings without the
-      -- refactor.) nil at tier 10 → use the default 5° / ATTACK_SCAN_DEGREES.
-      local _pp_spread = (state._capacity and state._capacity.pp_spread) or 1
-      local _eff_step = nil
-      if _pp_spread > 1 then _eff_step = 45 end
-      local best_score, spots = M.evaluate_pill_difficulty(pill, world, true, _eff_step, state.phase, state, tmx, tmy)
-      goal.scan_spots = spots
+      -- spread > 1 we coarsen to 45° — 8 angles via precomputed
+      -- stamps, ~1 ms.  Cache hit path skips both costs.
+      -- Chunked plan_position angle sweep. State lives in
+      -- state._pill_eval_progress[pid]; result lands in
+      -- state._pill_eval_cache[pid] (TTL 250 ticks). No background
+      -- pre-caching — only the committed pill gets swept.
+      local pid = goal.target_id
+      local best_score, spots
+      local status = M.advance_pill_eval_chunk(state, world, info, tmx, tmy, pid, pill)
+      -- Plan-trace overlay: stamp every gate so the screen can show
+      -- exactly where the chain falls off. Reset at substate entry.
+      if BRAIN_DEBUG_MODE then
+        state._plan_trace = {
+          tick = state.tick or 0,
+          pid = pid, pmx = pmx, pmy = pmy,
+          chunk_status = status,
+        }
+        if state._pill_eval_progress and state._pill_eval_progress[pid] then
+          state._plan_trace.chunk_deg = state._pill_eval_progress[pid].deg_cursor
+        end
+      end
+      if status == "cached" or status == "done" then
+        local cached = state._pill_eval_cache and state._pill_eval_cache[pid]
+        if cached then
+          best_score = cached.best_score
+          spots      = cached.spots
+        end
+        if BRAIN_PROFILE_LOG and status == "cached" then
+          opt.append("optimize.log", string.format(
+            "  [as] plan_position CACHE HIT pid=%s pill=(%d,%d)",
+            tostring(pid), pmx, pmy))
+        end
+      end
+      -- if status == "in_progress", spots stays nil and the gate below
+      -- skips the rest of plan_position setup. Re-enters next tick.
+      -- Only proceed with the rest of plan_position setup if the angle
+      -- sweep is complete (cache hit OR final chunk just landed).
+      -- Otherwise spots is nil — chunking still in progress; the goal
+      -- re-enters plan_position next tick and continues the sweep.
+      if spots then
+      -- DIAG_PP_GATE: pin down which path lit `spots` so we can tell
+      -- a fresh completed sweep apart from a stale-cache hit.
+      -- status is "done" (just-completed this tick) or "cached"
+      -- (prior sweep within 250-tick TTL).  deg_cursor (if any) shows
+      -- where the in-flight sweep was — useful for spotting "cache hit
+      -- while a separate in-progress sweep was visible".
+      do
+        local _deg = "-"
+        if state._pill_eval_progress and state._pill_eval_progress[pid] then
+          _deg = tostring(state._pill_eval_progress[pid].deg_cursor)
+        end
+        print2(string.format(
+          "DIAG_PP_GATE pid=%s pill=(%d,%d) status=%s in_flight_deg=%s n_spots=%d",
+          tostring(pid), pmx, pmy, tostring(status), _deg, #spots))
+      end
+      -- (goal.scan_spots = spots is set AT THE END of this block — see
+      -- the matching assignment just before the `end` below.  If we set
+      -- it here, a tick_budget_exceeded abort mid-flow would leave the
+      -- substate stuck: scan_spots set → next tick skips this block →
+      -- greens/best never re-run, _shield_scan_pending never set.
+      -- Deferring the gate-bit until ALL the setup is done makes the
+      -- whole block idempotent across budget aborts — the cache in
+      -- state._pill_eval_cache survives, so re-entry just re-runs
+      -- greens/best from the same cached spots.)
+      -- plan-trace: count spots + LOS subset
+      if BRAIN_DEBUG_MODE and state._plan_trace then
+        local _t = state._plan_trace
+        _t.spots_n = #spots
+        local _los_n = 0
+        for _, _s in ipairs(spots) do if _s.has_los then _los_n = _los_n + 1 end end
+        _t.spots_los = _los_n
+      end
       if BRAIN_PROFILE_LOG then
         opt.append("optimize.log", string.format(
           "  [as] plan_position eval_pill=%.3f ms pill=(%d,%d)",
@@ -2018,17 +2762,19 @@ function M.update_attack_substate(goal, state, world, info)
           elseif s._influence < 0 then infl_adj = 5
           end
           s._infl_adj = infl_adj
-          s._adj_score = s.total_score + infl_adj
+          s._adj_score = (s.total_score or 999) + infl_adj
         end
       end
+      if BRAIN_DEBUG_MODE and state._plan_trace then state._plan_trace.passed_influence = true end
 
       -- Step 2: collect all "green" spots (adj_score < 10 with LOS)
       local greens = {}
       for _, s in ipairs(spots) do
-        if s.has_los and s._adj_score < 10 then
+        if s.has_los and s._adj_score and s._adj_score < 10 then
           greens[#greens + 1] = s
         end
       end
+      if BRAIN_DEBUG_MODE and state._plan_trace then state._plan_trace.passed_collect = #greens end
 
       -- Step 3: no greens — pick top-scoring LOS spot + all within 25% of it.
       -- "Within 25%" means adj_score <= top_score * 1.25 (lower is better).
@@ -2037,12 +2783,14 @@ function M.update_attack_substate(goal, state, world, info)
         for _, s in ipairs(spots) do
           if s.has_los then los_spots[#los_spots + 1] = s end
         end
-        table.sort(los_spots, function(a, b) return a._adj_score < b._adj_score end)
+        table.sort(los_spots, function(a, b)
+          return (a._adj_score or math.huge) < (b._adj_score or math.huge)
+        end)
         if #los_spots > 0 then
-          local top_score = los_spots[1]._adj_score
+          local top_score = los_spots[1]._adj_score or math.huge
           local threshold = top_score * 1.25
           for _, s in ipairs(los_spots) do
-            if s._adj_score <= threshold then
+            if (s._adj_score or math.huge) <= threshold then
               greens[#greens + 1] = s
             else
               break  -- sorted, so we can stop
@@ -2050,6 +2798,7 @@ function M.update_attack_substate(goal, state, world, info)
           end
         end
       end
+      if BRAIN_DEBUG_MODE and state._plan_trace then state._plan_trace.passed_fallback = #greens end
 
       local best = nil
       if #greens > 0 then
@@ -2072,12 +2821,22 @@ function M.update_attack_substate(goal, state, world, info)
         table.sort(greens, function(a, b) return (a._est or math.huge) < (b._est or math.huge) end)
         best = greens[1]
       end
+      if BRAIN_DEBUG_MODE and state._plan_trace then
+        state._plan_trace.greens_n = #greens
+        if best then
+          state._plan_trace.best_mx = best.mx
+          state._plan_trace.best_my = best.my
+          state._plan_trace.best_score = best.total_score
+        end
+      end
 
       -- Log selection
-      print(string.format(TAG .. " PLAN SELECT: greens=%d oranges=%s best=%s score=%.1f",
-            #greens, best_orange and string.format("%.1f", best_orange.total_score) or "none",
-            best and string.format("(%d,%d) %.1f", best.mx, best.my, best.total_score) or "none",
-            best and best.total_score or -1))
+      if BRAIN_DEBUG_MODE then
+        print(string.format(TAG .. " PLAN SELECT: greens=%d best=%s score=%.1f",
+              #greens,
+              best and string.format("(%d,%d) %.1f", best.mx, best.my, best.total_score) or "none",
+              best and best.total_score or -1))
+      end
 
       if best then
         goal.standoff_mx = best.mx   -- integer tile for A* nav
@@ -2104,7 +2863,7 @@ function M.update_attack_substate(goal, state, world, info)
           goal.approach_fx = best.cx
           goal.approach_fy = best.cy
         end
-        if not goal._plan_logged then
+        if BRAIN_DEBUG_MODE and not goal._plan_logged then
           local n_los = 0
           for _, s in ipairs(spots) do if s.has_los then n_los = n_los + 1 end end
           print(string.format(TAG .. " PLAN: pill@(%d,%d) best=(%d,%d) deg=%d score=%.1f (A=%.1f B=%.0f D=%.0f) candidates=%d",
@@ -2138,10 +2897,12 @@ function M.update_attack_substate(goal, state, world, info)
           end
           if force_low or force_mod then
             goal._is_ppt = true
-            print(string.format(TAG ..
-              " ATTACK: forcing PPT (armour=%d hp=%d reason=%s)",
-              info.armour, pill_hp,
-              force_low and "LOW_ARMOUR" or "MOD_ARMOUR+HOT_STANDOFF"))
+            if BRAIN_DEBUG_MODE then
+              print(string.format(TAG ..
+                " ATTACK: forcing PPT (armour=%d hp=%d reason=%s)",
+                info.armour, pill_hp,
+                force_low and "LOW_ARMOUR" or "MOD_ARMOUR+HOT_STANDOFF"))
+            end
           end
         end
         local scan_radius = goal._is_ppt and C.PPT_STANDOFF
@@ -2163,39 +2924,154 @@ function M.update_attack_substate(goal, state, world, info)
           end
         end
 
-        -- Wall-shielded standoff search: scan 8 nearby angles around the
-        -- chosen standoff and pick a more cover-protected spot if one
-        -- exists. Replaces standoff_* and recomputes approach_* in place
-        -- so all downstream substates see the new spot. Stash the scan
-        -- result for the upcoming build_walls substate (Phase 2) and for
-        -- the in-place viz overlay below.
-        -- No-builder mode: if the LGM is dead/parachuting we can't
-        -- place new walls, so the shield scan must score only
-        -- already-existing cover (walls + friendly pills). If
-        -- nothing scores, the demote below kicks PPT off and we
-        -- charge unshielded.
-        local no_builder = (info.man_status == C.LGM_DEAD)
-        -- (sb_spread lever was here, removed: the shield-scan call lives
-        -- inside the one-shot `if not goal.scan_spots` block, so delaying
-        -- it caused goal.aim_mx to never be set — downstream
-        -- in_range_position substate crashed dereferencing it. The proper
-        -- spread would need to also defer the substate transition past
-        -- the delay, which is a larger refactor. For now the lever is a
-        -- no-op; sb_spread in BRAIN_CAPACITY_LEVELS is informational only.)
-        local sscan = shield.scan(pill, world,
-                                  goal.standoff_mx, goal.standoff_my,
-                                  goal._chosen_deg or 0,
-                                  goal.standoff_fx, goal.standoff_fy,
-                                  scan_radius, no_builder, info.armour)
-        if no_builder and sscan and (not sscan.best or (sscan.best.score or 0) <= 0) then
-          print(TAG .. " ATTACK: LGM dead and no existing cover — demoting to no-shield")
-          goal._is_ppt = false
-          sscan = nil
+        -- Defer shield.scan to NEXT tick. The chunk-completion frame
+        -- has already paid for the final pill_eval chunk + influence
+        -- pass + greens picking; piling shield.scan on top tends to
+        -- blow the per-tick budget at low capacity tiers (the budget
+        -- hook then raises tick_budget_exceeded mid-influence-pass).
+        -- Splitting it across two ticks lets each stage fit naturally.
+        --
+        -- These two assignments are paired: scan_spots is the gate that
+        -- prevents re-entry into the chunked block; pending is the gate
+        -- that triggers the deferred shield-scan block.  Setting them
+        -- together (and last) makes the whole block idempotent under
+        -- budget abort — if we don't reach this point, scan_spots
+        -- stays nil and next tick re-runs the cheap re-derivation
+        -- (cached chunk, fresh greens/best) without losing the shield
+        -- step.
+        goal.scan_spots = spots
+        goal._shield_scan_pending = true
+      else
+        if BRAIN_DEBUG_MODE and not goal._plan_logged then
+          print(string.format(TAG .. " PLAN: no candidates for pill@(%d,%d), falling back", pmx, pmy))
+          goal._plan_logged = true
         end
-        if sscan then sscan.created_tick = now end
-        goal._shield_scan = sscan
+        local smx, smy = M.pick_standoff(world, info, pill, state)
+        goal.standoff_mx = smx
+        goal.standoff_my = smy
+        if smx then
+          goal.standoff_fx = smx + 0.5
+          goal.standoff_fy = smy + 0.5
+          local dx = goal.standoff_fx - (pmx + 0.5)
+          local dy = goal.standoff_fy - (pmy + 0.5)
+          local d = math.sqrt(dx * dx + dy * dy)
+          if d > 0.01 then
+            local ux, uy = dx / d, dy / d
+            goal.approach_fx = goal.standoff_fx + ux * C.ATTACK_APPROACH_OFFSET
+            goal.approach_fy = goal.standoff_fy + uy * C.ATTACK_APPROACH_OFFSET
+            goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
+            goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
+          end
+        end
+        -- Fallback path: no shield scan needed (no winner from greens).
+        -- Pair scan_spots assignment with the end of this branch so the
+        -- block is idempotent under budget abort, same as the if-best
+        -- branch above.
+        goal.scan_spots = spots
+        if BRAIN_DEBUG_MODE and state._plan_trace then
+          state._plan_trace.no_best_fallback = true
+        end
+      end
+      end -- if spots (chunk done or cache hit)
+    end -- if not goal.scan_spots (scan once)
+
+    -- ── Deferred shield.scan ─────────────────────────────────────────
+    -- Runs on the tick AFTER spot selection so the chunk-completion
+    -- frame doesn't also have to pay for shield.scan + its post-
+    -- processing (which can blow the per-tick budget at low capacity
+    -- tiers).  Reads goal.standoff_*/goal._chosen_deg already set by
+    -- the spot-selection pass; recomputes scan_radius from goal._is_ppt
+    -- (no need to persist it).
+    if goal._shield_scan_pending then
+      goal._shield_scan_pending = nil
+      local scan_radius = goal._is_ppt and C.PPT_STANDOFF
+                          or C.ATTACK_PILL_STANDOFF
+      local no_builder = (info.man_status == C.LGM_DEAD)
+      local _cap = state._capacity
+      local _sb_pos  = (_cap and _cap.sb_positions) or 28
+      local _sb_step = (_cap and _cap.sb_step)      or 0.5
+      if BRAIN_DEBUG_MODE and state._plan_trace then
+        state._plan_trace.about_to_shield_scan = true
+        state._plan_trace.shield_args = string.format(
+          "standoff=(%s,%s) deg=%s fx,fy=(%s,%s) R=%s nb=%s arm=%s sb=%dx%.2f",
+          tostring(goal.standoff_mx), tostring(goal.standoff_my),
+          tostring(goal._chosen_deg or 0),
+          tostring(goal.standoff_fx), tostring(goal.standoff_fy),
+          tostring(scan_radius), tostring(no_builder),
+          tostring(info.armour), _sb_pos, _sb_step)
+      end
+      local _ok, sscan_or_err = xpcall(function()
+        return shield.scan(pill, world,
+                           goal.standoff_mx, goal.standoff_my,
+                           goal._chosen_deg or 0,
+                           goal.standoff_fx, goal.standoff_fy,
+                           scan_radius, no_builder, info.armour,
+                           _sb_pos, _sb_step)
+      end, debug.traceback)
+      local sscan
+      if _ok then
+        sscan = sscan_or_err
+      else
+        local msg = tostring(sscan_or_err)
+        -- Re-raise budget abort so the brain runtime sees its own signal
+        -- and aborts the tick properly. Only catch genuine shield-scan
+        -- bugs (everything else).
+        if msg:find("tick_budget_exceeded", 1, true) then
+          error(sscan_or_err)
+        end
+        if BRAIN_DEBUG_MODE and state._plan_trace then
+          state._plan_trace.shield_err = msg
+        end
+        print(TAG .. " SHIELD SCAN CRASH:\n" .. msg)
+        sscan = nil
+      end
+      if BRAIN_DEBUG_MODE and state._plan_trace then
+        local _t = state._plan_trace
+        _t.shield_ran = true
+        if sscan and sscan.candidates then
+          _t.shield_cands_n = #sscan.candidates
+          _t.shield_path = "lua"
+        else
+          _t.shield_cands_n = 29
+          _t.shield_path = "C"
+        end
+        _t.shield_no_builder = no_builder
         if sscan and sscan.best then
-          local w = sscan.best
+          local b = sscan.best
+          _t.shield_best_score = b.score or 0
+          _t.shield_best_aim_idx = b.best_aim_idx
+          local aim = b.best_aim_idx and b.aims and b.aims[b.best_aim_idx]
+          if aim then
+            _t.shield_actual_n = aim.blockers and #aim.blockers or 0
+            _t.shield_pots_n   = aim.potential_blockers
+                                 and #aim.potential_blockers or 0
+          else
+            _t.shield_actual_n = 0
+            _t.shield_pots_n   = 0
+          end
+          _t.shield_score_act = b.score_actual
+          _t.shield_score_pot = b.score_potential
+          _t.shield_score_nb  = b.score_neighbor
+        else
+          _t.shield_best_score = nil
+          _t.shield_actual_n = 0
+          _t.shield_pots_n   = 0
+        end
+      end
+      if sscan and (not sscan.best or (sscan.best.score or 0) <= 0) then
+        if BRAIN_DEBUG_MODE then
+          local why = no_builder and "LGM dead and no existing cover"
+                                  or "no usable cover geometry (own shot blocked too)"
+          print(TAG .. " ATTACK: " .. why .. " — demoting to no-shield")
+        end
+        goal._is_ppt = false
+        sscan = nil
+      end
+      if sscan then sscan.created_tick = now end
+      goal._shield_scan = sscan
+      if sscan and sscan.best then
+        local w = sscan.best
+        if BRAIN_DEBUG_MODE then
           local n_blockers = 0
           if w.best_aim_idx and w.aims[w.best_aim_idx] then
             n_blockers = #w.aims[w.best_aim_idx].blockers
@@ -2204,51 +3080,36 @@ function M.update_attack_substate(goal, state, world, info)
                 goal.standoff_mx, goal.standoff_my, w.mx, w.my,
                 goal._chosen_deg or 0, w.deg, w.score,
                 n_blockers, w.best_aim_idx or 0))
-          goal.standoff_mx = w.mx
-          goal.standoff_my = w.my
-          goal.standoff_fx = w.cx
-          goal.standoff_fy = w.cy
-          goal._chosen_deg = w.deg
-          goal._scan_tick = state.tick   -- frame stamp for staged overlay reveal
-          -- Recompute approach point behind the new standoff.
-          local dxn = w.cx - (pmx + 0.5)
-          local dyn = w.cy - (pmy + 0.5)
-          local dn  = math.sqrt(dxn * dxn + dyn * dyn)
-          if dn > 0.01 then
-            local ux, uy = dxn / dn, dyn / dn
-            goal.approach_fx = w.cx + ux * C.ATTACK_APPROACH_OFFSET
-            goal.approach_fy = w.cy + uy * C.ATTACK_APPROACH_OFFSET
-            goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
-            goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
-          end
-          -- Aim/engage default to pill center; override to the exact
-          -- corner (or center) the shield scan chose so the tank shoots
-          -- through the protected lane it picked, not down the middle.
-          -- Use _TILE_FIRE (1 gu deeper than the scoring inset) so the
-          -- real gun aim has extra error tolerance vs. the scoring
-          -- pick. Same corner index — just shifted further inward.
-          local off = shield.AIM_OFFSETS_TILE_FIRE[w.best_aim_idx or 1]
-                      or shield.AIM_OFFSETS_TILE_FIRE[1]
-          goal.aim_mx = pmx + off[1]
-          goal.aim_my = pmy + off[2]
         end
-      else
-        if not goal._plan_logged then
-          print(string.format(TAG .. " PLAN: no candidates for pill@(%d,%d), falling back", pmx, pmy))
-          goal._plan_logged = true
+        goal.standoff_mx = w.mx
+        goal.standoff_my = w.my
+        goal.standoff_fx = w.cx
+        goal.standoff_fy = w.cy
+        goal._chosen_deg = w.deg
+        goal._scan_tick = state.tick
+        local dxn = w.cx - (pmx + 0.5)
+        local dyn = w.cy - (pmy + 0.5)
+        local dn  = math.sqrt(dxn * dxn + dyn * dyn)
+        if dn > 0.01 then
+          local ux, uy = dxn / dn, dyn / dn
+          goal.approach_fx = w.cx + ux * C.ATTACK_APPROACH_OFFSET
+          goal.approach_fy = w.cy + uy * C.ATTACK_APPROACH_OFFSET
+          goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
+          goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
         end
-        local smx, smy = M.pick_standoff(world, info, pill, state)
-        goal.standoff_mx = smx
-        goal.standoff_my = smy
+        local off = shield.AIM_OFFSETS_TILE_FIRE[w.best_aim_idx or 1]
+                    or shield.AIM_OFFSETS_TILE_FIRE[1]
+        goal.aim_mx = pmx + off[1]
+        goal.aim_my = pmy + off[2]
       end
-    end -- if not goal.scan_spots (scan once)
+    end
 
     -- Transition to approach after 3 ticks. The old 50-tick (1s) hold was
     -- for letting a human inspect the spot-scoring viz; planning is now
     -- reliable enough that we don't need the pause in normal play. 3 ticks
     -- is enough to be catchable when scrubbing a replay. Bump higher
     -- (e.g. 50 for 1 second) if the scoring viz needs live dwell time.
-    if goal.standoff_mx then
+    if goal.standoff_mx and not goal._shield_scan_pending then
       if not goal._plan_show_tick then
         goal._plan_show_tick = now
       elseif (now - goal._plan_show_tick) >= 3 then
@@ -2281,11 +3142,22 @@ function M.update_attack_substate(goal, state, world, info)
           print(string.format(TAG .. " ATTACK: plan_position -> gather_trees (%d/%d trees for %d walls)",
                 info.trees or 0, trees_needed, n_pots))
         else
+          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+          if unsafe then
+            clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
+            return
+          end
           goal.substate = "approach"
           print(string.format(TAG .. " ATTACK: plan_position -> approach, standoff=(%d,%d) precise=(%.1f,%.1f)",
                 goal.standoff_mx, goal.standoff_my,
                 goal.standoff_fx or goal.standoff_mx + 0.5,
                 goal.standoff_fy or goal.standoff_my + 0.5))
+          print2(string.format("PP_TO_APPROACH standoff=(%d,%d) precise=(%.1f,%.1f) approach=(%.1f,%.1f) deg=%s pill=(%d,%d)",
+                goal.standoff_mx, goal.standoff_my,
+                goal.standoff_fx or goal.standoff_mx + 0.5,
+                goal.standoff_fy or goal.standoff_my + 0.5,
+                goal.approach_fx or -1, goal.approach_fy or -1,
+                tostring(goal._chosen_deg), goal.mx, goal.my))
         end
       end
     end
@@ -2312,6 +3184,11 @@ function M.update_attack_substate(goal, state, world, info)
     local stalled = (now - (goal._gather_last_progress or now)) > 250  -- ~5 s
     local timed_out = (now - (goal._gather_start or now)) > (C.PPT_GATHER_TIMEOUT or 1500)
     if trees_have >= trees_need then
+      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+      if unsafe then
+        clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
+        return
+      end
       goal.substate = "approach"
       goal._trees_for_walls = nil
       goal._gather_start    = nil
@@ -2325,6 +3202,11 @@ function M.update_attack_substate(goal, state, world, info)
       -- frees init.lua's aim override to set aim_mx/aim_my from the
       -- pill-edge geometry instead of the corner the scan picked,
       -- which would otherwise be unprotected without walls.
+      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+      if unsafe then
+        clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
+        return
+      end
       goal.substate = "approach"
       goal._is_ppt = false
       goal._shield_scan = nil
@@ -2363,6 +3245,8 @@ function M.update_attack_substate(goal, state, world, info)
       if reason then
         print(string.format(TAG ..
           " SANITY: shot path blocked (%s) in %s — replanning", reason, sub))
+        print2(string.format("SANITY_REPLAN sub=%s reason=%s standoff=(%.1f,%.1f) pill=(%d,%d)",
+          sub, reason, goal.standoff_fx or -1, goal.standoff_fy or -1, goal.mx, goal.my))
         goal.substate                 = "plan_position"
         goal.scan_spots               = nil
         goal._shield_scan             = nil
@@ -2385,6 +3269,8 @@ function M.update_attack_substate(goal, state, world, info)
     if not goal.standoff_mx then
       goal.substate = "plan_position"
       goal.scan_spots = nil
+      goal._shield_scan = nil
+      goal._shield_scan_pending = nil
       goal._plan_show_tick = nil
       goal._plan_logged = nil
       print(TAG .. " ATTACK: approach has no standoff, replanning")
@@ -2399,13 +3285,47 @@ function M.update_attack_substate(goal, state, world, info)
 
       -- Reach the approach point (precise float, 1.5 tiles behind standoff).
       -- Tolerance: 64 wu (1/4 tile) AND speed <= 4.
-      local afx = goal.approach_fx or (goal.approach_mx and (goal.approach_mx + 0.5))
-                                    or (goal.standoff_mx and (goal.standoff_mx + 0.5))
-      local afy = goal.approach_fy or (goal.approach_my and (goal.approach_my + 0.5))
-                                    or (goal.standoff_my and (goal.standoff_my + 0.5))
+      if not goal.approach_fx and not goal.approach_mx then
+        -- Recover: compute approach point from standoff on the fly.
+        print2(string.format("APPROACH_RECOVER no setup point, computing from standoff=(%s,%s) pill=(%d,%d) deg=%s",
+          tostring(goal.standoff_mx), tostring(goal.standoff_my), pmx, pmy, tostring(goal._chosen_deg)))
+        if goal.standoff_mx then
+          local sfx = goal.standoff_fx or (goal.standoff_mx + 0.5)
+          local sfy = goal.standoff_fy or (goal.standoff_my + 0.5)
+          local dx = sfx - (pmx + 0.5)
+          local dy = sfy - (pmy + 0.5)
+          local d = math.sqrt(dx * dx + dy * dy)
+          if d > 0.01 then
+            local ux, uy = dx / d, dy / d
+            goal.approach_fx = sfx + ux * C.ATTACK_APPROACH_OFFSET
+            goal.approach_fy = sfy + uy * C.ATTACK_APPROACH_OFFSET
+            goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
+            goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
+          else
+            goal.approach_fx = sfx
+            goal.approach_fy = sfy
+            goal.approach_mx = goal.standoff_mx
+            goal.approach_my = goal.standoff_my
+          end
+        else
+          goal.substate = "plan_position"
+          goal.scan_spots = nil
+          goal._plan_show_tick = nil
+          goal._plan_logged = nil
+          return
+        end
+      end
+      local afx = goal.approach_fx or (goal.approach_mx + 0.5)
+      local afy = goal.approach_fy or (goal.approach_my + 0.5)
       local awx = math.floor(afx * 256 + 0.5)
       local awy = math.floor(afy * 256 + 0.5)
       local adist = U.wdist(info.tankx, info.tanky, awx, awy)
+      if now % 25 == 0 then
+        print2(string.format("APPROACH_TICK t=%d adist=%d tank=(%d,%d) approach_wu=(%d,%d) standoff=(%.1f,%.1f) last_prog=%d last_dist=%s",
+          now, adist, info.tankx, info.tanky, awx, awy,
+          goal.standoff_fx or -1, goal.standoff_fy or -1,
+          goal._approach_last_progress or -1, tostring(goal._approach_last_dist)))
+      end
       -- Closing the distance counts as progress and resets the timer.
       if goal._approach_last_dist == nil or adist < goal._approach_last_dist - 4 then
         goal._approach_last_progress = now
@@ -2425,6 +3345,8 @@ function M.update_attack_substate(goal, state, world, info)
         print(string.format(TAG ..
           " ATTACK: approach stalled (no progress in %d ticks, dist=%d) — abandoning attack_pill",
           APPROACH_STALL_GIVE_UP_TICKS, adist))
+        print2(string.format("APPROACH_ABANDON dist=%d stall=%d pill=(%d,%d)",
+          adist, APPROACH_STALL_GIVE_UP_TICKS, pmx, pmy))
         clear_attack_goal(state, "approach stalled")
         return
       end
@@ -2516,6 +3438,11 @@ function M.update_attack_substate(goal, state, world, info)
         end
         local decision_msg
         if needs_build then
+          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+          if unsafe then
+            clear_attack_goal(state, "abort@build_walls_entry — " .. unsafe)
+            return
+          end
           goal.substate = "build_walls"
           -- Reset the per-wall + global stall timers EVERY entry into
           -- build_walls so a re-entry (build_walls → aim → ... →
@@ -2580,6 +3507,8 @@ function M.update_attack_substate(goal, state, world, info)
           end
           print(string.format(TAG .. " ATTACK: approach stalled (no progress in %d ticks, dist=%d), replanning",
                 APPROACH_GIVE_UP_TICKS, adist))
+          print2(string.format("APPROACH_TIMEOUT dist=%d timeout=%d pill=(%d,%d) deg=%s",
+            adist, APPROACH_GIVE_UP_TICKS, pmx, pmy, tostring(goal._chosen_deg)))
           goal.substate = "plan_position"
           goal.scan_spots = nil
           goal._shield_scan = nil
@@ -2686,6 +3615,20 @@ function M.update_attack_substate(goal, state, world, info)
       end
     end
     goal._wall_build_idx = idx
+    -- Sync wall_mx/my + wall_shield so builder.lua's wall_shield
+    -- dispatch can find the current target. The PPT build_walls path
+    -- uses _wall_build_list (not the legacy goal.wall_mx), so without
+    -- this the builder never enters wall_shield mode and the LGM sits
+    -- idle for the entire build_walls phase.
+    if idx <= #list then
+      goal.wall_mx     = list[idx].mx
+      goal.wall_my     = list[idx].my
+      goal.wall_shield = true
+    else
+      goal.wall_mx     = nil
+      goal.wall_my     = nil
+      goal.wall_shield = nil
+    end
 
     -- Per-wall sub-timeout: if a single queue entry has been the
     -- current target for WALL_STALL_TICKS without finishing, skip to
@@ -2704,6 +3647,13 @@ function M.update_attack_substate(goal, state, world, info)
         -- real LGM progress on this slot. Reset the per-wall timer
         -- so the BUILD round-trip after a harvest doesn't trip the
         -- stall and skip a slot we're actively working on.
+        if BRAIN_DEBUG_MODE then
+          print2(string.format(
+            "WALL_RESET_TT t=%d idx=%d/%d slot=(%d,%d) tt:%d->%d age=%d",
+            now, idx, #list, target.mx, target.my,
+            goal._wall_idx_prev_tt, cur_tt,
+            now - (goal._wall_idx_started or now)))
+        end
         goal._wall_idx_started = now
         goal._wall_idx_prev_tt = cur_tt
       elseif (now - goal._wall_idx_started) > WALL_STALL_TICKS then
@@ -2711,6 +3661,29 @@ function M.update_attack_substate(goal, state, world, info)
           print(string.format(TAG ..
             " BUILD_WALLS: wall %d/%d at (%d,%d) stalled (%d ticks, tt=%d), skipping",
             idx, #list, target.mx, target.my, WALL_STALL_TICKS, cur_tt))
+        end
+        -- Detailed post-mortem: dump everything we knew about this
+        -- slot at the moment the per-wall timer tripped, so we can see
+        -- WHY the LGM never moved it to T_BUILDING/T_HALFBUILD.  Goes
+        -- to print2 unconditionally (in BRAIN_DEBUG_MODE) so it lands
+        -- in the per-bot log without needing BRAIN_LOG_BUILDER set.
+        if BRAIN_DEBUG_MODE then
+          local skip = state._wall_shield_skip
+          local skip_age   = skip and (now - (skip.tick or 0)) or -1
+          local skip_dump  = "none"
+          if skip then
+            skip_dump = string.format(
+              "wall=(%s,%s) trees=%s/%s reach=%s safe=%s angry=%s force=%s",
+              tostring(skip.wx), tostring(skip.wy),
+              tostring(skip.trees_have), tostring(skip.trees_need),
+              tostring(skip.can_reach), tostring(skip.path_safe),
+              tostring(skip.angry_pill_close), tostring(skip.force_mode))
+          end
+          print2(string.format(
+            "WALL_STALL_TRIP t=%d idx=%d/%d slot=(%d,%d) tt=%d man_status=%s trees=%s skip_age=%d skip=%s",
+            now, idx, #list, target.mx, target.my, cur_tt,
+            tostring(info.man_status), tostring(info.trees),
+            skip_age, skip_dump))
         end
         idx = idx + 1
         goal._wall_build_idx = idx
@@ -2733,6 +3706,14 @@ function M.update_attack_substate(goal, state, world, info)
       -- slot. Without this, a wall that needs harvest+build (two
       -- round-trips ≈ 10s) trips the 5s WALL_STALL even though the
       -- LGM is genuinely moving on its behalf.
+      if BRAIN_DEBUG_MODE then
+        local idx_dbg = goal._wall_build_idx or 0
+        local list_dbg = goal._wall_build_list and #goal._wall_build_list or 0
+        print2(string.format(
+          "WALL_RESET_LGM t=%d idx=%d/%d man_status:%d->%d",
+          now, idx_dbg, list_dbg,
+          goal._wall_build_prev_man, cur_man_status))
+      end
       if goal._wall_idx_started then
         goal._wall_idx_started = now
       end
@@ -2871,44 +3852,66 @@ function M.update_attack_substate(goal, state, world, info)
       goal._charge_start_hp = pill_hp_now
     end
 
-    -- Immediate swerve: pill dead OR fired enough shots
+    -- Shot-path obstacle check: every tick, simulate the shell path
+    -- and count obstacles. Updates _bullets_needed so the swerve
+    -- trigger accounts for walls/trees that need clearing before the
+    -- shell reaches the pill. During charge the tank is still closing,
+    -- so "not reached" is normal — only abort on impassable obstacles
+    -- or insufficient ammo when the shot DOES reach.
+    do
+      local pill_hp_live = pill and pill.health or 0
+      local obstacle_shots, obstacle_reason, reached = shot_path_obstacle_count(info, goal, world)
+      if obstacle_shots == math.huge then
+        -- Impassable (pill in path) — abort regardless
+        print(string.format(TAG .. " CHARGE: impassable obstacle — %s, aborting", obstacle_reason))
+        print2(string.format("CHARGE_ABORT_OBSTACLE reason=%s pill=(%d,%d)", obstacle_reason, pmx, pmy))
+        clear_attack_goal(state, "shot path blocked: " .. obstacle_reason)
+        return
+      end
+      if reached then
+        local total_needed = obstacle_shots + pill_hp_live
+        if info.shells < total_needed then
+          print(string.format(TAG .. " CHARGE: not enough shells (%d obstacles + %d hp = %d needed, have %d) — aborting",
+            obstacle_shots, pill_hp_live, total_needed, info.shells))
+          print2(string.format("CHARGE_ABORT_SHELLS obstacles=%d hp=%d needed=%d have=%d pill=(%d,%d)",
+            obstacle_shots, pill_hp_live, total_needed, info.shells, pmx, pmy))
+          clear_attack_goal(state, "not enough shells for obstacles")
+          return
+        end
+        goal._bullets_needed = total_needed
+      end
+    end
+
+    -- Immediate swerve trigger.  New rule (replaces fired >= bullets_needed):
+    -- pill dead OR the count of currently-in-flight on-target shells covers
+    -- the remaining pill HP.  C/D = _on_target_in_flight / pill.health.
+    -- update_shot_accounting re-simulates each in-flight shell against
+    -- live terrain every tick, so if a tree grows into the trajectory or
+    -- the shell dies short, it drops back out of in_flight and the gate
+    -- naturally fails — we fire a replacement next reload.  Steering's
+    -- pre-fire predictor (see steering.lua charge/shoot_pill/engage) may
+    -- have already entered swerve this same tick on the just-fired killing
+    -- shot; this gate handles the case where prediction didn't apply
+    -- (e.g. shell tracker confirmed an off-target shot's status flip).
     local bullets_fired = (goal._charge_shells or info.shells) - info.shells
     local pill_hp = pill and pill.health or 0
-    if pill_hp <= 0 or (goal._bullets_needed and bullets_fired >= goal._bullets_needed) then
+    local on_target_in_flight = goal._on_target_in_flight or 0
+    if pill_hp <= 0 or (pill_hp > 0 and on_target_in_flight >= pill_hp) then
       if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
         print2(string.format(
           "SWERVE_ENTER t=%d site=charge tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
-          "fired=%d needed=%s start_hp=%s",
+          "fired=%d in_flight=%d start_hp=%s",
           now, tostring(goal.target_id), pmx, pmy,
           tostring(pill == nil),
           tostring(pill and pill.health), tostring(pill and pill.owner),
           tostring(pill and pill.in_tank),
-          bullets_fired, tostring(goal._bullets_needed),
+          bullets_fired, on_target_in_flight,
           tostring(goal._charge_start_hp)))
       end
-      goal.substate = "swerve"
-      goal._swerve_start = now
-      -- Low-HP pills get a much shorter swerve — the kill happens fast,
-      -- the pill won't get many (if any) shots off, so a long evasion
-      -- just delays the next goal. Lookup by HP at start of charge.
-      local LOW_HP_SWERVE = { [1] = 30, [2] = 36, [3] = 40 }
-      local low_hp_ticks = LOW_HP_SWERVE[goal._charge_start_hp]
-      if low_hp_ticks then
-        goal._swerve_ticks_left = low_hp_ticks
-        goal._swerve_turn_ticks_left = math.min(low_hp_ticks, C.SWERVE_TURN_TICKS)
-      elseif goal._kill_attempt then
-        goal._swerve_ticks_left = C.SWERVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
-      else
-        goal._swerve_ticks_left = C.SWERVE_DEFENSIVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
-      end
+      enter_swerve(goal, world, state, info, pmx, pmy, "kill")
       goal._swerve_pill_dead = (pill_hp <= 0)
-      compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
-      goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
-      goal._engage_hits = nil
-      print(string.format(TAG .. " ATTACK: immediate swerve from charge (fired=%d needed=%d hp=%d kill_attempt=%s start_hp=%s)",
-            bullets_fired, goal._bullets_needed or 0, pill_hp,
+      print(string.format(TAG .. " ATTACK: immediate swerve from charge (fired=%d in_flight=%d hp=%d kill_attempt=%s start_hp=%s)",
+            bullets_fired, on_target_in_flight, pill_hp,
             tostring(goal._kill_attempt), tostring(goal._charge_start_hp)))
     end
     -- Steering handles movement and transition to engage
@@ -2946,13 +3949,28 @@ function M.update_attack_substate(goal, state, world, info)
         goal._detree_shells_at_start = info.shells  -- baseline for actual shots fired
         goal._detree_shots_needed = trees
         print(string.format(TAG .. " ATTACK: aimed, clearing %d trees", trees))
-      elseif goal._is_ppt then
+      elseif goal._is_ppt and goal._shield_scan then
         -- Shielded: skip the aggressive charge — move carefully into
         -- range, re-aim precisely, then shoot.
         goal.substate = "in_range_position"
         goal._aim_locked = nil
         print(TAG .. " ATTACK: shielded aimed, moving into firing range")
       else
+        -- Demote-on-missing-scan: if we were PPT but lost the shield
+        -- scan (sanity replan / partial re-plan), drop PPT and run the
+        -- non-PPT charge → engage path from where we are now (already
+        -- at or near the PPT standoff = ~7 tiles, well inside the
+        -- non-PPT 7.4-tile range, so charge typically completes in
+        -- one tick).
+        if goal._is_ppt and not goal._shield_scan then
+          goal._is_ppt = false
+          print(TAG .. " ATTACK: PPT had no shield_scan at aim — demoting to non-PPT charge")
+        end
+        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+        if unsafe then
+          clear_attack_goal(state, "abort@charge_entry — " .. unsafe)
+          return
+        end
         goal.substate = "charge"
         goal._aim_locked = nil
         goal._charge_braking = nil
@@ -2988,6 +4006,11 @@ function M.update_attack_substate(goal, state, world, info)
         print(string.format(TAG .. " ATTACK: PPT detree done (shots=%d/%d), moving into range",
               fired, needed))
       else
+        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+        if unsafe then
+          clear_attack_goal(state, "abort@charge_entry — " .. unsafe)
+          return
+        end
         goal.substate = "charge"
         goal._charge_braking = nil
         print(string.format(TAG .. " ATTACK: detree done (shots=%d/%d), charging",
@@ -3007,6 +4030,8 @@ function M.update_attack_substate(goal, state, world, info)
     if not goal.standoff_mx then
       goal.substate = "plan_position"
       goal.scan_spots = nil
+      goal._shield_scan = nil
+      goal._shield_scan_pending = nil
       goal._plan_show_tick = nil
       goal._plan_logged = nil
       print(TAG .. " ATTACK: in_range_position has no standoff, replanning")
@@ -3263,6 +4288,34 @@ function M.update_attack_substate(goal, state, world, info)
 
     local pill_hp = pill and pill.health or 0
 
+    -- Shot-path obstacle check: live-update _bullets_needed and abort
+    -- if path is blocked or ammo short. shoot_pill is stationary and
+    -- in range, so "not reached" is a real problem (aim is wrong or
+    -- something moved into the way).
+    do
+      local obstacle_shots, obstacle_reason, reached = shot_path_obstacle_count(info, goal, world)
+      local total_needed = obstacle_shots + pill_hp
+      if obstacle_shots == math.huge then
+        print(string.format(TAG .. " SHOOT_PILL: impassable obstacle — %s, aborting", obstacle_reason))
+        print2(string.format("SHOOT_PILL_ABORT_OBSTACLE reason=%s pill=(%d,%d)", obstacle_reason, pmx, pmy))
+        clear_attack_goal(state, "shot path blocked: " .. obstacle_reason)
+        return
+      elseif not reached then
+        print(string.format(TAG .. " SHOOT_PILL: shot does not reach pill tile, aborting"))
+        print2(string.format("SHOOT_PILL_ABORT_NOREACH pill=(%d,%d)", pmx, pmy))
+        clear_attack_goal(state, "shot does not reach pill")
+        return
+      elseif info.shells < total_needed then
+        print(string.format(TAG .. " SHOOT_PILL: not enough shells (%d obstacles + %d hp = %d needed, have %d) — aborting",
+          obstacle_shots, pill_hp, total_needed, info.shells))
+        print2(string.format("SHOOT_PILL_ABORT_SHELLS obstacles=%d hp=%d needed=%d have=%d pill=(%d,%d)",
+          obstacle_shots, pill_hp, total_needed, info.shells, pmx, pmy))
+        clear_attack_goal(state, "not enough shells for obstacles")
+        return
+      end
+      goal._bullets_needed = total_needed
+    end
+
     -- No-progress timeout. shoot_pill has no built-in escape if the
     -- shells are silently missing (trajectory off, friendly LGM in
     -- the lane, pill picked up — all leave pill HP unchanged while
@@ -3330,9 +4383,15 @@ function M.update_attack_substate(goal, state, world, info)
 
     local should_swerve = false
     local pill_dead     = false
+    local on_target_in_flight = goal._on_target_in_flight or 0
     if pill_hp <= 0 then
       should_swerve = true
       pill_dead     = true
+    elseif pill_hp > 0 and on_target_in_flight >= pill_hp then
+      -- C/D rule (same as charge/engage): predicted in-flight shells
+      -- already cover remaining HP — start the swerve now.
+      should_swerve = true
+      pill_dead     = true   -- the in-flight shots are about to drop pill to 0
     elseif goal._shoot_hits_total >= C.ATTACK_CURVE_AFTER_HITS then
       should_swerve = true
     end
@@ -3348,23 +4407,8 @@ function M.update_attack_substate(goal, state, world, info)
           tostring(pill and pill.in_tank),
           tostring(pill_dead), tostring(goal._shoot_hits_total)))
       end
-      goal.substate    = "swerve"
-      goal._swerve_start = now
-      if pill_dead then
-        goal._swerve_ticks_left      = C.SWERVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
-      else
-        goal._swerve_ticks_left      = C.SWERVE_DEFENSIVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
-      end
-      goal._swerve_pill_dead = pill_dead
-      -- PPT skips the legacy aim substate where _best_swerve_dir is
-      -- normally computed, so compute it fresh here. Without this,
-      -- the `or random` fallback below would coin-flip the swerve
-      -- direction and could send the tank into a hazard.
-      compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
-      goal._swerve_dir       = goal._best_swerve_dir
-                               or ((now % 2 == 0) and 1 or -1)
+      enter_swerve(goal, world, state, info, pmx, pmy,
+                   pill_dead and "kill" or "defensive")
       print(string.format(TAG .. " ATTACK: PPT shoot_pill -> swerve (hits=%d hp=%d dead=%s)",
             goal._shoot_hits_total or 0, pill_hp, tostring(pill_dead)))
     end
@@ -3384,40 +4428,25 @@ function M.update_attack_substate(goal, state, world, info)
     local bullets_fired = (goal._charge_shells or info.shells) - info.shells
     local pill_hp = pill and pill.health or 0
 
-    -- Immediate swerve: pill dead OR fired enough shots
-    if pill_hp <= 0 or (goal._bullets_needed and bullets_fired >= goal._bullets_needed) then
+    -- Immediate swerve: pill dead OR on-target in-flight covers remaining HP.
+    -- (Same C/D rule as charge — see comment block above the charge gate.)
+    local on_target_in_flight = goal._on_target_in_flight or 0
+    if pill_hp <= 0 or (pill_hp > 0 and on_target_in_flight >= pill_hp) then
       if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
         print2(string.format(
           "SWERVE_ENTER t=%d site=engage tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
-          "fired=%d needed=%s start_hp=%s kill_attempt=%s",
+          "fired=%d in_flight=%d start_hp=%s kill_attempt=%s",
           now, tostring(goal.target_id), pmx, pmy,
           tostring(pill == nil),
           tostring(pill and pill.health), tostring(pill and pill.owner),
           tostring(pill and pill.in_tank),
-          bullets_fired, tostring(goal._bullets_needed),
+          bullets_fired, on_target_in_flight,
           tostring(goal._charge_start_hp), tostring(goal._kill_attempt)))
       end
-      goal.substate = "swerve"
-      goal._swerve_start = now
-      -- Low-HP shortcut from charge_start_hp (see charge handler).
-      local LOW_HP_SWERVE = { [1] = 30, [2] = 36, [3] = 40 }
-      local low_hp_ticks = LOW_HP_SWERVE[goal._charge_start_hp]
-      if low_hp_ticks then
-        goal._swerve_ticks_left = low_hp_ticks
-        goal._swerve_turn_ticks_left = math.min(low_hp_ticks, C.SWERVE_TURN_TICKS)
-      elseif goal._kill_attempt then
-        goal._swerve_ticks_left = C.SWERVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_TURN_TICKS
-      else
-        goal._swerve_ticks_left = C.SWERVE_DEFENSIVE_TOTAL_TICKS
-        goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
-      end
+      enter_swerve(goal, world, state, info, pmx, pmy, "kill")
       goal._swerve_pill_dead = (pill_hp <= 0)
-      compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
-      goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
-      goal._engage_hits = nil
-      print(string.format(TAG .. " ATTACK: immediate swerve (fired=%d needed=%d hp=%d kill_attempt=%s start_hp=%s)",
-            bullets_fired, goal._bullets_needed or 0, pill_hp,
+      print(string.format(TAG .. " ATTACK: immediate swerve (fired=%d in_flight=%d hp=%d kill_attempt=%s start_hp=%s)",
+            bullets_fired, on_target_in_flight, pill_hp,
             tostring(goal._kill_attempt), tostring(goal._charge_start_hp)))
     else
       -- Count cumulative hits taken during this engage
@@ -3450,14 +4479,7 @@ function M.update_attack_substate(goal, state, world, info)
               tostring(pill and pill.in_tank),
               tostring(goal._engage_hits), pill_anger, tostring(crosshairs_off)))
           end
-          goal.substate = "swerve"
-          goal._swerve_start = now
-          -- Defensive swerve (pill still alive): longer turn
-          goal._swerve_ticks_left = C.SWERVE_DEFENSIVE_TOTAL_TICKS
-          goal._swerve_turn_ticks_left = C.SWERVE_DEFENSIVE_TURN_TICKS
-          goal._swerve_pill_dead = false
-          compute_best_swerve_dir(goal, world, pmx, pmy, tmx, tmy)
-      goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
+          enter_swerve(goal, world, state, info, pmx, pmy, "defensive")
           print(string.format(TAG .. " ATTACK: swerving (hits=%d anger=%.2f xhair_off=%s)",
                 goal._engage_hits or 0, pill_anger, tostring(crosshairs_off)))
         else
@@ -4013,20 +5035,44 @@ function M.update_attack_substate(goal, state, world, info)
     -- (no trees, angry pill, LGM can't reach, path unsafe) right next
     -- to the build queue so the user sees why a wall isn't going up
     -- instead of staring at an idle tank.
+    --
+    -- Window is generous (200 ticks ≈ 4 s) so a one-off skip stays
+    -- legible long enough to read; once a skip is older than that
+    -- it's stale and likely no longer the active blocker.
     if goal.substate == "build_walls" and state._wall_shield_skip
-       and (now - state._wall_shield_skip.tick) < 30 then
+       and (now - state._wall_shield_skip.tick) < 200 then
       local s = state._wall_shield_skip
       local parts = {}
-      if s.angry_pill_close then parts[#parts + 1] = "ANGRY_PILL" end
       if not s.has_trees    then parts[#parts + 1] =
-        string.format("TREES(%d/%d)", s.trees_have, s.trees_need) end
-      if not s.can_reach    then parts[#parts + 1] = "NO_REACH" end
-      if not s.path_safe    then parts[#parts + 1] = "UNSAFE_PATH" end
+        string.format("OUT_OF_TREES(have=%d need=%d)",
+                      s.trees_have or 0, s.trees_need or 0) end
+      if not s.can_reach    then parts[#parts + 1] = "LGM_NO_REACH" end
+      if not s.path_safe    then parts[#parts + 1] = "LGM_PATH_UNSAFE" end
+      if s.angry_pill_close then parts[#parts + 1] = "ANGRY_PILL_NEAR" end
       if #parts > 0 then
+        local age = now - s.tick
         labels[#labels + 1] = {
-          "WALL_SKIP: " .. table.concat(parts, " ") ..
-            string.format("  @(%d,%d)", s.wx or 0, s.wy or 0),
+          string.format("WALL_SKIP (%dt ago): %s @(%d,%d)%s",
+                        age, table.concat(parts, " "),
+                        s.wx or 0, s.wy or 0,
+                        s.force_mode and "  [force_mode: safety bypassed]" or ""),
           230, 80, 80, "wall_skip_reason" }
+      end
+    end
+
+    -- LGM status during build_walls: if the LGM isn't on the ground
+    -- (in tank / dead / parachuting) it physically cannot go out to
+    -- build walls.  Surface that directly rather than letting the
+    -- user wonder why nothing's happening.
+    if goal.substate == "build_walls" and info.man_status ~= nil then
+      local lgm_msg
+      if info.man_status == C.LGM_INTANK then
+        lgm_msg = "LGM_IN_TANK — needs to be dispatched"
+      elseif info.man_status == C.LGM_DEAD then
+        lgm_msg = "LGM_DEAD — no walls possible until respawn"
+      end
+      if lgm_msg then
+        labels[#labels + 1] = { lgm_msg, 230, 80, 80, "wall_skip_reason" }
       end
     end
 

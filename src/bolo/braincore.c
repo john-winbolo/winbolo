@@ -952,6 +952,34 @@ static int l_cpf_clear_overlay(lua_State *L) {
   return 0;
 }
 
+static int l_cpf_get_overlay(lua_State *L) {
+  CPF_GET(L);
+  int x = (int)luaL_checkinteger(L, 1);
+  int y = (int)luaL_checkinteger(L, 2);
+  lua_pushnumber(L, (double)brainPathfinderGetOverlay(pf, x, y));
+  return 1;
+}
+
+static int l_cpf_get_danger(lua_State *L) {
+  CPF_GET(L);
+  int x = (int)luaL_checkinteger(L, 1);
+  int y = (int)luaL_checkinteger(L, 2);
+  lua_pushnumber(L, (double)brainPathfinderGetDanger(pf, x, y));
+  return 1;
+}
+
+static int l_cpf_astar_log_enable(lua_State *L) {
+  const char *path = luaL_optstring(L, 1, NULL);
+  brainPathfinderEnableLogPath(path);
+  return 0;
+}
+
+static int l_cpf_astar_log_set_tick(lua_State *L) {
+  int tick = (int)luaL_checkinteger(L, 1);
+  brainPathfinderSetLogTick(tick);
+  return 0;
+}
+
 /* cpf_set_danger_offset(x, y, value) — set per-tile danger offset (negative = subtract) */
 static int l_cpf_set_danger_offset(lua_State *L) {
   CPF_GET(L);
@@ -1064,8 +1092,33 @@ static int l_cpf_cost_to(lua_State *L) {
   int mines = (int)luaL_checkinteger(L, 8);
   int armour = (int)luaL_checkinteger(L, 9);
   int budget = (int)luaL_optinteger(L, 10, 4000);
-  float cost = brainPathfinderCostTo(pf, sx, sy, dx, dy, in_boat,
-                                      shells, trees, mines, armour, budget);
+  int allow_boat = (int)luaL_optinteger(L, 11, 1);
+
+  /* Capture Lua traceback so the astar log shows who called this.
+   * Only when logging is actually enabled — building a traceback string
+   * walks the whole Lua stack and allocates, and cost_to is a hot path
+   * (bulk candidate eval), so this must be free when the log is off. */
+  if (brainPathfinderIsLogEnabled()) {
+    lua_getglobal(L, "debug");
+    if (lua_istable(L, -1)) {
+      lua_getfield(L, -1, "traceback");
+      if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, "");
+        lua_pushinteger(L, 2);
+        if (lua_pcall(L, 2, 1, 0) == LUA_OK && lua_isstring(L, -1)) {
+          brainPathfinderSetLogCaller(lua_tostring(L, -1));
+        }
+        lua_pop(L, 1);  /* traceback result or error */
+      } else {
+        lua_pop(L, 1);  /* non-function */
+      }
+    }
+    lua_pop(L, 1);  /* debug table */
+  }
+
+  float cost = brainPathfinderCostToEx(pf, sx, sy, dx, dy, in_boat,
+                                        shells, trees, mines, armour,
+                                        budget, allow_boat);
   lua_pushnumber(L, (double)cost);
   return 1;
 }
@@ -1433,6 +1486,53 @@ static int l_cpf_simulate_shot_angle(lua_State *L) {
   return 1;
 }
 
+/* cpf_simulate_shot_with_tanks(origin_wx, origin_wy, target_wx, target_wy,
+ *                              shooter_type, sight_len, tanks_table, owner_player)
+ *   -> { {mx=, my=, hit_type=, hit_id=}, ... }
+ * tanks_table is an array of {wx=, wy=, player_num=} entries.
+ * hit_type: 0=tile, 1=tank hit. hit_id: player number (when hit_type==1). */
+static int l_cpf_simulate_shot_with_tanks(lua_State *L) {
+  WORLD ox = (WORLD)luaL_checkinteger(L, 1);
+  WORLD oy = (WORLD)luaL_checkinteger(L, 2);
+  WORLD tx = (WORLD)luaL_checkinteger(L, 3);
+  WORLD ty = (WORLD)luaL_checkinteger(L, 4);
+  int shooter    = (int)luaL_optinteger(L, 5, BRAIN_SHOT_SHOOTER_TANK);
+  int sight_len  = (int)luaL_optinteger(L, 6, 0);
+  luaL_checktype(L, 7, LUA_TTABLE);
+  uint8_t owner  = (uint8_t)luaL_checkinteger(L, 8);
+
+  /* Read tanks table */
+  BrainShotTankPos tanks[MAX_TANKS];
+  int num_tanks = 0;
+  int tlen = (int)lua_rawlen(L, 7);
+  for (int i = 1; i <= tlen && num_tanks < MAX_TANKS; i++) {
+    lua_rawgeti(L, 7, i);
+    lua_getfield(L, -1, "wx");
+    lua_getfield(L, -2, "wy");
+    lua_getfield(L, -3, "player_num");
+    tanks[num_tanks].wx         = (WORLD)lua_tointeger(L, -3);
+    tanks[num_tanks].wy         = (WORLD)lua_tointeger(L, -2);
+    tanks[num_tanks].player_num = (uint8_t)lua_tointeger(L, -1);
+    lua_pop(L, 4);  /* pop 3 fields + table entry */
+    num_tanks++;
+  }
+
+  BrainShotTile tiles[64];
+  int n = brainPathfinderSimulateShotWithTanks(ox, oy, tx, ty,
+            shooter, sight_len, tanks, num_tanks, owner,
+            tiles, (int)(sizeof(tiles)/sizeof(tiles[0])));
+  lua_createtable(L, n, 0);
+  for (int i = 0; i < n; i++) {
+    lua_createtable(L, 0, 4);
+    lua_pushinteger(L, tiles[i].mx);       lua_setfield(L, -2, "mx");
+    lua_pushinteger(L, tiles[i].my);       lua_setfield(L, -2, "my");
+    lua_pushinteger(L, tiles[i].hit_type); lua_setfield(L, -2, "hit_type");
+    lua_pushinteger(L, tiles[i].hit_id);   lua_setfield(L, -2, "hit_id");
+    lua_rawseti(L, -2, i + 1);
+  }
+  return 1;
+}
+
 static int l_cpf_estimate_cost(lua_State *L) {
   CPF_GET(L);
   int sx = (int)luaL_checkinteger(L, 1);
@@ -1650,6 +1750,10 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_load_danger",                    l_cpf_load_danger },
     { "cpf_load_pill_danger_from_threat",   l_cpf_load_pill_danger_from_threat },
     { "cpf_set_overlay",          l_cpf_set_overlay },
+    { "cpf_get_overlay",          l_cpf_get_overlay },
+    { "cpf_get_danger",           l_cpf_get_danger },
+    { "cpf_astar_log_enable",     l_cpf_astar_log_enable },
+    { "cpf_astar_log_set_tick",   l_cpf_astar_log_set_tick },
     { "cpf_clear_overlay",        l_cpf_clear_overlay },
     { "cpf_set_danger_offset",    l_cpf_set_danger_offset },
     { "cpf_clear_danger_offset",  l_cpf_clear_danger_offset },
@@ -1678,6 +1782,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_estimate_cost",     l_cpf_estimate_cost },
     { "cpf_simulate_shot",        l_cpf_simulate_shot },
     { "cpf_simulate_shot_angle",  l_cpf_simulate_shot_angle },
+    { "cpf_simulate_shot_with_tanks", l_cpf_simulate_shot_with_tanks },
     { "cpf_danger_at",             l_cpf_danger_at },
     { "cpf_lgm_travel_ticks",      l_cpf_lgm_travel_ticks },
     { "cpf_lgm_travel_ticks_map",  l_cpf_lgm_travel_ticks_map },

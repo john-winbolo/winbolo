@@ -331,15 +331,25 @@ function M.process_events(world, info, state)
 
     elseif ev.type == EVENT_TANK_KILLED and d then
       -- data: [killedPlayer, killerPlayer] (or just [killedPlayer])
-      -- Informational; threat module can use this.
+      -- Stamp tick so coordination logic (e.g. capture_pill ally-priority
+      -- in goals.lua sync) can short-circuit windows that depend on a
+      -- now-dead ally finishing what they started.
+      local pn = d[1] or 0
+      state.tank_dead_at = state.tank_dead_at or {}
+      state.tank_dead_at[pn] = tick or 0
 
     elseif ev.type == EVENT_PLAYER_LEAVE and d then
       -- data: [playerNum]
       -- Player left; downstream systems will notice missing objects.
 
     elseif ev.type == EVENT_LGM_LOST and d then
-      -- data: [playerNum] — a player's builder was killed.
-      -- Informational; could be used for tactical decisions.
+      -- data: [victim_pn, killer_pn] — a player's builder was killed.
+      -- Stamp the death + respawn ETA on the lgm_registry so
+      -- attack_pill cost shaping, ally coordination, etc. can react.
+      local _lgmreg = package.loaded["lgm_registry"]
+      if _lgmreg then
+        _lgmreg.note_death(d[1] or 0, d[2] or 0, tick or 0)
+      end
     end
   end
 end

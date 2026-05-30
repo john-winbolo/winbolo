@@ -35,6 +35,8 @@ local viz    = require("viz")
 
 local M = {}
 
+print("[builder] loaded from: " .. tostring(debug.getinfo(1, "S").source))
+
 -- Hoisted: was reallocated inside the wall-build threat-blocker
 -- inner loop (per pill_threat × per direction = up to ~30 allocs/tick
 -- when in build mode). Module-scope constant.
@@ -89,6 +91,8 @@ function M.set_mode(state, world, info, goal)
   end
 
   -- Wall-shield attack: dispatch LGM to build/rebuild wall in specific substates
+  if kind == "attack_pill" and goal.substate == "build_walls" then
+  end
   if kind == "attack_pill" and goal.wall_shield and goal.wall_mx then
     local sub = goal.substate or ""
     if sub == "ws_prebuild" or sub == "ws_rebuild" or sub == "build_walls" then
@@ -422,20 +426,24 @@ function M.decide(state, world, info, now)
     end
   end
 
-  -- Priority 0.5: base shield — build wall to block pill fire while on any base.
-  -- Triggers ONLY on the tick we take damage (pill just fired → max window
-  -- before next shot). Checks all 8 directions for the best blocking tile.
-  -- Allow base shield when ON the base or within 1 tile of it.
-  -- Wall must be placed on one of the 8 tiles adjacent to the base.
+  -- Priority 0.5: base shield — build wall to block pill fire while on
+  -- a base.  Scoped to refuel_at_base + actually sitting on the base
+  -- tile: the shield only earns its keep when we're holding still on
+  -- the base to recharge.  Outside refuel (e.g. tank parked on a base
+  -- mid-attack pursuit) we don't want to spend trees on it.
+  -- Triggers ONLY on the tick we take damage (pill just fired → max
+  -- window before next shot).  Wall placed on one of the 8 tiles
+  -- adjacent to the base.
   local has_base = info.base and info.base.x
-  local near_base = has_base and U.mdist(tmx, tmy, info.base.x, info.base.y) <= 1
+  local on_base = has_base and tmx == info.base.x and tmy == info.base.y
+  local is_refueling = state.goal and state.goal.kind == "refuel_at_base"
   local has_trees = info.trees >= C.BASE_SHIELD_BUILD_COST
   local took_dmg = state.took_damage_this_tick
   local pill_threats_exist = state.perc and state.perc.pill_threats and #state.perc.pill_threats > 0
 
   -- Always show precondition status on the HUD when near a base
 
-  if near_base and has_trees and took_dmg then
+  if on_base and is_refueling and has_trees and took_dmg then
     local bmx, bmy = info.base.x, info.base.y
     local perc = state.perc
     local pill_threats = perc and perc.pill_threats or {}
@@ -614,6 +622,9 @@ function M.decide(state, world, info, now)
       end
       local has_trees   = info.trees >= cost
       local can_reach   = lgm_can_reach(info, wx, wy)
+      -- Used to log every 50 ticks; now fires every entry so we see
+      -- the WHOLE gate-evaluation history for a stalling wall_shield,
+      -- not just a 1-second sample. Cheap and BRAIN_DEBUG_MODE-gated.
       -- Exclude the target pill's own per-tile contribution from the
       -- safety check — we're committed to killing it, so its danger
       -- footprint shouldn't bully our LGM dispatch within its own
