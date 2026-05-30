@@ -409,12 +409,6 @@ SOCKET createUdpSocket(bool exclusive) {
 /* Send a buffer via UDP to a specific address */
 void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
                const struct sockaddr_in *addr) {
-    uint8_t pktType = getPacketType(buf, len);
-    if (pktType != PACKET_STATE_SNAPSHOT && pktType != PACKET_PONG && pktType != PACKET_INPUT) {
-        WB_LOG_DEBUG(WB_LOG_CAT_NET, "[UDP SEND] %s (%u) len=%d to %s:%u",
-                     packetTypeName(pktType), pktType, len,
-                     inet_ntoa(addr->sin_addr), ntohs(addr->sin_port));
-    }
     sendto(sock, (const char *)buf, len, 0,
            (const struct sockaddr *)addr, sizeof(*addr));
 }

@@ -695,10 +695,16 @@ void clientApplySnapshot(ClientSim *csPtr,
         break;
       case EVENT_SOUND:
         /* data: [soundId, mx, my, sourcePlayer] — play with distance attenuation.
-         * All sounds are now server-authoritative (isPredicting suppresses
-         * prediction-side sounds), so no filtering needed. */
+         * Sounds are server-authoritative (isPredicting suppresses prediction-side
+         * sounds). Bubbles and tank-sink are gated to the local player only:
+         * they're tied to the player's own boat/drown event and would otherwise
+         * play whenever any remote tank within distance went into water. */
         if (isHuman) {
-          clientSoundDist(&csPtr->sim, (sndEffects)events[i].data[0], events[i].data[1], events[i].data[2]);
+          sndEffects sid = (sndEffects)events[i].data[0];
+          bool selfOnly = (sid == bubbles || sid == tankSinkNear || sid == tankSinkFar);
+          if (!selfOnly || events[i].data[3] == csPtr->myPlayerNum) {
+            clientSoundDist(&csPtr->sim, sid, events[i].data[1], events[i].data[2]);
+          }
         }
         break;
       case EVENT_SOUND_SHOOT:

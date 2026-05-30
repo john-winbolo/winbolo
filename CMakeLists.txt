@@ -2333,6 +2333,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_bolo_rand.c
     tests/unit/test_lobby_runtime_fixes.c
     tests/unit/test_bot_chat_routing.c
+    tests/unit/test_subscriber_arm_orphans.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2481,6 +2482,14 @@ set(_unit_test_names
     bot_chat_send_to_other_bot_lands_in_recipient_inbox
     bot_chat_receive_from_human_lands_in_bot_inbox
     bot_chat_receive_from_other_bot_via_broadcast
+    alliance_request_flags_addressed
+    alliance_request_ignores_other_slot
+    phase_lobby_sets_inlobby
+    phase_gameover_resets_in_game
+    player_join_appends_lobby_chat
+    player_join_self_does_not_announce
+    player_leave_appends_lobby_chat
+    lobby_settings_clears_balance_proposal
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}

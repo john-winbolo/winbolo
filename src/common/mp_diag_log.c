@@ -24,7 +24,7 @@ static FILE       *gFile = NULL;
 static SDL_Mutex  *gMutex = NULL;
 static int         gInitDone = 0;
 static int         gInitFailed = 0;
-static int         gEnabled = 0;
+static int         gDiagLogEnabled = 0;
 static Uint64      gStartTicks = 0;
 
 static void mpDiagLogClose(void) {
@@ -56,55 +56,38 @@ static void mpDiagLogInit(void) {
         gInitFailed = 1;
         return;
     }
-    /* Unbuffered — we explicitly fflush() after every write, so any
-     * stdio buffer is just overhead.  Crucially, MSVC's debug ucrt
-     * asserts (via __debugbreak/0x80000003) when setvbuf gets
-     * _IOLBF/_IOFBF with size=0; POSIX accepts it as "use default".
-     * _IONBF doesn't take a size hint and works everywhere. */
-    setvbuf(gFile, NULL, _IONBF, 0);
+    /* Line-buffered with a real buffer: stdio flushes on newline (which
+     * every mpDiagLog call writes), but the per-line fwrite no longer
+     * hits the OS directly. The previous _IONBF + explicit fflush per
+     * call collapsed the bot brain budget once the in-process control
+     * bus started fanning CTRL_CHAT out to ~12 ClientSim subscribers per
+     * publish. Worst-case loss on a hard crash is one buffer's worth of
+     * tail, which is acceptable for a diagnostic log. */
+    setvbuf(gFile, NULL, _IOLBF, 8192);
     gStartTicks = SDL_GetTicks();
     atexit(mpDiagLogClose);
     gInitDone = 1;
     /* First line names ourselves so multi-process tails are unambiguous. */
     fprintf(gFile, "[     0.000] mp_diag_log: pid=%d file='%s'\n",
             mpDiagLogGetPid(), path);
-    fflush(gFile);
 }
 
 void mpDiagLogEnable(int enable) {
-    gEnabled = enable ? 1 : 0;
-    /* Lazy-init on the first enable so the file isn't created at all
-     * if the user never starts an MP host this session. */
-    if (gEnabled && !gInitDone) {
-        mpDiagLogInit();
-    }
-    if (gEnabled && gInitDone) {
-        Uint64 elapsed = SDL_GetTicks() - gStartTicks;
-        SDL_LockMutex(gMutex);
-        fprintf(gFile, "[%6llu.%03llu] mp_diag_log: ENABLE\n",
-                (unsigned long long)(elapsed / 1000),
-                (unsigned long long)(elapsed % 1000));
-        fflush(gFile);
-        SDL_UnlockMutex(gMutex);
-    } else if (!gEnabled && gInitDone) {
-        Uint64 elapsed = SDL_GetTicks() - gStartTicks;
-        SDL_LockMutex(gMutex);
-        fprintf(gFile, "[%6llu.%03llu] mp_diag_log: DISABLE\n",
-                (unsigned long long)(elapsed / 1000),
-                (unsigned long long)(elapsed % 1000));
-        fflush(gFile);
-        SDL_UnlockMutex(gMutex);
-    }
+    /* Hardcoded OFF: flip this to `gDiagLogEnabled = enable ? 1 : 0;` to re-enable
+     * the diag log. Disabled by default so no file is written and the call
+     * sites short-circuit at the gDiagLogEnabled check in mpDiagLog. */
+    (void)enable;
+    gDiagLogEnabled = 0;
 }
 
 int mpDiagLogIsEnabled(void) {
-    return gEnabled;
+    return gDiagLogEnabled;
 }
 
 void mpDiagLog(const char *fmt, ...) {
     va_list ap;
     Uint64 elapsed;
-    if (!gEnabled) return;
+    if (!gDiagLogEnabled) return;
     if (!gInitDone) {
         mpDiagLogInit();
         if (!gInitDone) return;
@@ -118,6 +101,5 @@ void mpDiagLog(const char *fmt, ...) {
     vfprintf(gFile, fmt, ap);
     va_end(ap);
     fputc('\n', gFile);
-    fflush(gFile);
     SDL_UnlockMutex(gMutex);
 }
