@@ -1629,6 +1629,9 @@ static int  optProfileLog = 0;
 static int  optLogJson    = 0;
 static int  optAutoStart = 0;
 static int  optMaxTicks = 0;   /* 0 = run forever */
+/* Brain-dispatch thread count (workers + producer). 0 = use the default
+ * (2). Set via -threads; clamped to [1, cores] at init. */
+static int  optThreads = 0;
 
 static void printUsage(const char *prog) {
     fprintf(stderr,
@@ -1637,6 +1640,7 @@ static void printUsage(const char *prog) {
         "Options:\n"
         "  -brain PATH      Brain script directory (default: brains/NewAutopilot)\n"
         "  -noplayers N     Number of bot players (default: 1)\n"
+        "  -threads N       Brain dispatch threads incl. producer (default: 2, max: cores)\n"
         "  -teams N         Split bots into N teams via round-robin (default: 0 = FFA)\n"
         "  -map PATH        Map file (default: built-in Everard Island)\n"
         "  -follow N        Follow bot N with camera (default: 0)\n"
@@ -1686,6 +1690,10 @@ static bool parseArgs(int argc, char **argv) {
             optNumPlayers = atoi(argv[++i]);
             if (optNumPlayers < 1) optNumPlayers = 1;
             if (optNumPlayers > 16) optNumPlayers = 16;
+        } else if ((strcmp(argv[i], "-threads") == 0 || strcmp(argv[i], "--threads") == 0) && i + 1 < argc) {
+            optThreads = atoi(argv[++i]);
+            if (optThreads < 1) optThreads = 1;
+            if (optThreads > MAX_TANKS) optThreads = MAX_TANKS;
         } else if ((strcmp(argv[i], "-teams") == 0 || strcmp(argv[i], "--teams") == 0) && i + 1 < argc) {
             optNumTeams = atoi(argv[++i]);
             if (optNumTeams < 0) optNumTeams = 0;
@@ -4563,9 +4571,10 @@ int main(int argc, char *argv[]) {
     app.viewCenterY = ((app.mapMinY + app.mapMaxY) / 2) << 8;
 
     /* Add bots.  Default to 2 brain dispatch threads — enough parallelism
-     * for most maps without over-subscribing the CPU. */
+     * for most maps without over-subscribing the CPU. Override with
+     * -threads N (workers + producer). */
     {
-        int desired_threads = 2;
+        int desired_threads = (optThreads > 0) ? optThreads : 2;
         int cores = SDL_GetNumLogicalCPUCores();
         if (desired_threads > cores) desired_threads = cores;
         if (!botManagerInit(desired_threads)) {
@@ -5422,6 +5431,16 @@ int main(int argc, char *argv[]) {
         int tickMs = SPEED_PRESETS[app.speedIndex];
         if (!app.paused) {
             Uint64 now = SDL_GetTicks();
+            /* Spiral-of-death guard. When per-tick work (brain + recording
+             * capture) exceeds tickMs — which it does for large games — an
+             * unclamped catch-up loop runs ever more ticks per frame and
+             * starves rendering (observed: 24 ticks/frame, <1 fps). Cap the
+             * ticks we run per render frame; if still behind after the cap,
+             * abandon the backlog (lastTickTime = now). The sim then runs
+             * slower than real time under load, but the UI stays responsive
+             * — the right trade-off for a debug/visualizer tool. */
+            const int kMaxTicksPerFrame = 4;
+            int liveTicksThisFrame = 0;
             while (now - lastTickTime >= (Uint64)tickMs) {
                 if (app.playbackMode) {
                     if (app.playbackFrame + 1 < app.recording.count) {
@@ -5448,6 +5467,15 @@ int main(int argc, char *argv[]) {
                     }
                 }
                 lastTickTime += tickMs;
+                if (++liveTicksThisFrame >= kMaxTicksPerFrame) {
+                    /* Hit the per-frame cap. If real time has already
+                     * outrun us again, drop the accumulated backlog so the
+                     * next frame starts fresh instead of compounding. */
+                    if (now - lastTickTime >= (Uint64)tickMs) {
+                        lastTickTime = now;
+                    }
+                    break;
+                }
             }
         } else {
             lastTickTime = SDL_GetTicks();
