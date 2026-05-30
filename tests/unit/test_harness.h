@@ -125,6 +125,15 @@ int run_countdown_abort_publishes_phase(void);
 int run_lobby_auto_unready_clears_humans_keeps_bots(void);
 int run_mapdir_root_fallback(void);
 
+/* Bot chat routing (test_bot_chat_routing.c) — exercises serverSimApplyCommand
+ * with a bot's slot as senderSlot and inspects the recipient ClientSim's
+ * brain inbox. Confirms bots send and receive through the same CMD_CHAT
+ * dispatcher arm + CTRL_CHAT subscriber funnel as humans. */
+int run_bot_chat_send_to_human_lands_in_human_inbox(void);
+int run_bot_chat_send_to_other_bot_lands_in_recipient_inbox(void);
+int run_bot_chat_receive_from_human_lands_in_bot_inbox(void);
+int run_bot_chat_receive_from_other_bot_via_broadcast(void);
+
 /* Reliable control-event queue regression tests (test_control_event_queue.c).
  * Each captures a specific bug that shipped during the
  * reliable-control-events rollout. */
