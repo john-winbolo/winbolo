@@ -308,7 +308,20 @@ double botManagerComputePerBotTargetMs(const ServerSim *sim, int activeBots) {
     if (brainBudget < 1.0) {
         brainBudget = 1.0;
     }
-    double perBot = brainBudget * (double)sim->botMgr.threadsConfig
+    /* Parallelism comes from the live worker pool (N workers + the
+     * producer running one job inline = N+1 runners), NOT solely from
+     * the per-sim threadsConfig. In WinBoloDS the sim's BotManager is
+     * init'd (threadsConfig=1) before the global pool is created, and
+     * botManagerInit never back-fills threadsConfig — so reading it
+     * alone would under-count runners to 1 and starve the budget. Use
+     * the pool size as ground truth; fall back to threadsConfig (which
+     * the BrainTest resize path keeps in sync with the pool) when it's
+     * larger, e.g. the inline-serial pool==0 case. */
+    int runners = botWorkerPoolGetSize() + 1;
+    if (sim->botMgr.threadsConfig > runners) {
+        runners = sim->botMgr.threadsConfig;
+    }
+    double perBot = brainBudget * (double)runners
                     / (double)activeBots;
     if (perBot > brainBudget) {
         perBot = brainBudget;
