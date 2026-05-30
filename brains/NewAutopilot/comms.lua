@@ -52,7 +52,7 @@ function M.process_message(sender, text, tick)
   local state_payload = text:match("^/info state(.*)$")
   if state_payload then
     local hash = {}
-    for k, v in state_payload:gmatch("(%w+)=(%S+)") do
+    for k, v in state_payload:gmatch("([%w_]+)=(%S+)") do
       hash[k] = v
     end
     ally_state.set_info(sender, tick, hash)
@@ -62,7 +62,7 @@ function M.process_message(sender, text, tick)
   local extra_payload = text:match("^/info extra(.*)$")
   if extra_payload then
     local hash = {}
-    for k, v in extra_payload:gmatch("(%w+)=(%S+)") do
+    for k, v in extra_payload:gmatch("([%w_]+)=(%S+)") do
       hash[k] = v
     end
     ally_state.merge_info(sender, tick, hash)

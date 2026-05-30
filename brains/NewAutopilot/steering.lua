@@ -70,7 +70,7 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
   local tank_positions = {}
   if info.objects then
     for _, ob in ipairs(info.objects) do
-      if ob.type == 2 then  -- OBJECT_TANK
+      if ob.type == OBJECT_TANK then  -- 0; type 2 is OBJECT_PILLBOX, not a tank
         tank_positions[#tank_positions + 1] = {
           wx = ob.x, wy = ob.y,
           player_num = ob.idnum or 255,

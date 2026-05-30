@@ -70,7 +70,7 @@ local function _shot_path_clear_init(info, world, target_wx, target_wy, target_m
   local tank_positions = {}
   if info.objects then
     for _, ob in ipairs(info.objects) do
-      if ob.type == 2 then  -- OBJECT_TANK
+      if ob.type == OBJECT_TANK then  -- 0; type 2 is OBJECT_PILLBOX, not a tank
         tank_positions[#tank_positions + 1] = {
           wx = ob.x, wy = ob.y,
           player_num = ob.idnum or 255,
@@ -3163,8 +3163,10 @@ function Brain.think(info)
   local KILL_LGM_LOS_CHECK_INTERVAL = 10
   -- Per-tick evaluation table — populated for every visible LGM so the
   -- kill_lgm_status viz can show a label per LGM regardless of whether
-  -- we actually fired this tick.  Cleared at the top of the block.
-  state._kill_lgm_eval = {}
+  -- we actually fired this tick.  Cleared in place (not reallocated) at
+  -- the top of the block to avoid per-tick GC churn.
+  state._kill_lgm_eval = state._kill_lgm_eval or {}
+  for i = #state._kill_lgm_eval, 1, -1 do state._kill_lgm_eval[i] = nil end
   local _no_shells = info.shells <= C.SHELL_RESERVE
   local _shoot_busy = (keys & KEY_SHOOT) ~= 0 or (taps & KEY_SHOOT) ~= 0
   local _already_fired = false
@@ -3179,6 +3181,12 @@ function Brain.think(info)
   if state.perc and state.perc.enemy_lgms then
     state._kill_lgm_los = state._kill_lgm_los or {}
     local los_cache = state._kill_lgm_los
+    -- Prune stale entries (LGMs that died/left) so the cache can't grow
+    -- unbounded over a match, and a tile-keyed entry can't outlive its
+    -- LGM and wrongly answer for a different LGM that reuses the tile.
+    for k, ce in pairs(los_cache) do
+      if now - ce.tick > KILL_LGM_LOS_CHECK_INTERVAL * 2 then los_cache[k] = nil end
+    end
     for _, elm in ipairs(state.perc.enemy_lgms) do
       -- Euclidean distance in tiles (was Manhattan).  The shoot-range
       -- gate + status label both want true distance, not the
@@ -3213,10 +3221,10 @@ function Brain.think(info)
         _ev.aim_mx = math.floor(aim_wx + 0.5) >> 8
         _ev.aim_my = math.floor(aim_wy + 0.5) >> 8
         -- Cheap pre-gate: if we're more than ~22° off the lead point
-        -- the Euclidean check below would reject anyway, but the LOS
-        -- raycast isn't worth running for that case.  KILL_LGM_SHOOT_AIM
-        -- (5 angle units ≈ 7°) was historically a too-tight LATERAL
-        -- check on its own; we now use it just as a coarse-reject.
+        -- the Euclidean check below would reject anyway, so skip the
+        -- LOS raycast for that case. (A tighter ~7° lateral gate was
+        -- historically used here but proved too strict for a moving
+        -- target; this coarse 16-unit reject replaced it.)
         if math.abs(aim_corr) > 16 then  -- ~22° quick-reject
           _ev.status = "off_aim"
         else
@@ -3378,15 +3386,26 @@ function Brain.think(info)
                 or (_primary_lgm.wx + (_primary_lgm.v_ema_x or 0))
     local lgm_wy = _primary_lgm.predicted_wy
                 or (_primary_lgm.wy + (_primary_lgm.v_ema_y or 0))
-    local TURNS  = { { k = 0,             d =  0,          n = "T:none" },
-                     { k = KEY_TURNLEFT,  d = -TURN_DELTA, n = "T:L"    },
-                     { k = KEY_TURNRIGHT, d =  TURN_DELTA, n = "T:R"    } }
-    local SPEEDS = { { k = 0,             d =  0,           n = "S:none" },
-                     { k = KEY_FASTER,    d =  SPEED_DELTA, n = "S:+"    },
-                     { k = KEY_SLOWER,    d = -SPEED_DELTA, n = "S:-"    } }
-    local GUNS   = { { k = 0,             d =  0,         n = "G:none" },
-                     { k = KEY_MORERANGE, d =  GUN_DELTA, n = "G:+"    },
-                     { k = KEY_LESSRANGE, d = -GUN_DELTA, n = "G:-"    } }
+    -- Build the turn/speed/gun descriptor tables ONCE (cached on state)
+    -- rather than reallocating 9 records every tick the goal is kill_lgm.
+    -- Built lazily here, not at module scope, because the KEY_* globals
+    -- are host-injected and guaranteed present by the first tick.
+    local mt = state._kill_lgm_move_tables
+    if not mt then
+      mt = {
+        TURNS  = { { k = 0,             d =  0,          n = "T:none" },
+                   { k = KEY_TURNLEFT,  d = -TURN_DELTA, n = "T:L"    },
+                   { k = KEY_TURNRIGHT, d =  TURN_DELTA, n = "T:R"    } },
+        SPEEDS = { { k = 0,             d =  0,           n = "S:none" },
+                   { k = KEY_FASTER,    d =  SPEED_DELTA, n = "S:+"    },
+                   { k = KEY_SLOWER,    d = -SPEED_DELTA, n = "S:-"    } },
+        GUNS   = { { k = 0,             d =  0,         n = "G:none" },
+                   { k = KEY_MORERANGE, d =  GUN_DELTA, n = "G:+"    },
+                   { k = KEY_LESSRANGE, d = -GUN_DELTA, n = "G:-"    } },
+      }
+      state._kill_lgm_move_tables = mt
+    end
+    local TURNS, SPEEDS, GUNS = mt.TURNS, mt.SPEEDS, mt.GUNS
     local TWO_PI_OVER_256 = math.pi * 2 / 256
     local best_score = math.huge
     local best_keys  = 0
