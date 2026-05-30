@@ -1,3 +1,10 @@
 # Authors
 
-_To be populated._
+John Morrison
+Andrew Roth
+
+## Older v1 changes
+Min
+Nathan Bryant
+Sticks
+jhood
