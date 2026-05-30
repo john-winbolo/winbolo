@@ -457,6 +457,11 @@ file(GLOB IOS_DATA_SOUNDS "${CMAKE_SOURCE_DIR}/data/sounds/*.wav")
 file(GLOB IOS_DATA_SVG "${CMAKE_SOURCE_DIR}/data/svg/*.png" "${CMAKE_SOURCE_DIR}/data/svg/*.svg")
 file(GLOB IOS_DATA_UI "${CMAKE_SOURCE_DIR}/data/ui/*.svg")
 file(GLOB IOS_LANG_FILES "${CMAKE_SOURCE_DIR}/data/lang/*.txt")
+# About-box markdown docs that live at the repo root but ship in data/
+set(IOS_ABOUT_DOCS
+    "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+    "${CMAKE_SOURCE_DIR}/AUTHORS.md"
+)
 
 # Bolo engine sources that stay per-target (HAVE_STEAM-divergent).
 # Everything else now lives in bolo_static (added via add_subdirectory
@@ -519,6 +524,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_lobby.cpp
     src/gui/sdl3/dialogs/imgui_settings.cpp
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
+    src/gui/sdl3/dialogs/imgui_about.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/map_preview_view.cpp
@@ -557,6 +563,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     ${IOS_DATA_SVG}
     ${IOS_DATA_UI}
     ${IOS_LANG_FILES}
+    ${IOS_ABOUT_DOCS}
     ${IOS_ASSET_CATALOG}
 )
 
@@ -589,6 +596,9 @@ set_source_files_properties(${IOS_DATA_UI} PROPERTIES
 )
 set_source_files_properties(${IOS_LANG_FILES} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/lang"
+)
+set_source_files_properties(${IOS_ABOUT_DOCS} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "data"
 )
 set_source_files_properties(${IOS_DATA_ROOT} PROPERTIES
     MACOSX_PACKAGE_LOCATION ""
@@ -630,6 +640,7 @@ target_include_directories(WinBoloIOS PRIVATE
     src/gui/mobile
     src/server
     src/mapeditor
+    src/third_party/imgui_markdown
 )
 bolo_apply_include_rules(WinBoloIOS gui)
 bolo_grant_internal_source_access(WinBoloIOS
@@ -650,6 +661,7 @@ target_compile_definitions(WinBoloIOS PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1003,7 +1015,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_stars.cpp
@@ -1082,6 +1094,7 @@ target_compile_definitions(WinBolo PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1246,6 +1259,18 @@ add_custom_command(TARGET WinBolo POST_BUILD
     COMMENT "Copying WinBolo data files to output directory"
 )
 
+# Ship the top-level docs (Third Party Notices, Authors) inside data/
+# so the About box can find them via SDL_GetBasePath()/data/.
+add_custom_command(TARGET WinBolo POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+        "${WINBOLO_DATA_DIR}/data/THIRD_PARTY_NOTICES.md"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/AUTHORS.md"
+        "${WINBOLO_DATA_DIR}/data/AUTHORS.md"
+    COMMENT "Copying About-box markdown docs to data/"
+)
+
 add_custom_command(TARGET WinBolo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -1352,6 +1377,7 @@ target_compile_definitions(WinBoloDS PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1550,6 +1576,7 @@ target_compile_definitions(LogViewer PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1676,6 +1703,7 @@ target_compile_definitions(WinBoloHeadless PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1792,6 +1820,7 @@ target_compile_definitions(winbolo_gym PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1921,6 +1950,7 @@ target_compile_definitions(BrainTest PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -2009,6 +2039,7 @@ target_compile_definitions(MapEditor PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -2368,6 +2399,7 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}

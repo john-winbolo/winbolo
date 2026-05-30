@@ -6,6 +6,7 @@
 #                             string so a -D override sticks across configures
 #   WINBOLO_GIT_HASH        — `git rev-parse --short HEAD`, or "unknown"
 #   WINBOLO_BUILD_DATE      — yyyy-mm-dd of this configure
+#   WINBOLO_BUILD_YEAR      — yyyy of this configure
 #   BOLO_VERSION_MAJOR/MINOR/REVISION
 #                           — per-byte network protocol version digits derived
 #                             from WINBOLO_VERSION (e.g. "1.18" -> 1, 1, 8)
@@ -26,6 +27,7 @@ if(NOT WINBOLO_GIT_HASH)
     set(WINBOLO_GIT_HASH "unknown")
 endif()
 string(TIMESTAMP WINBOLO_BUILD_DATE "%Y-%m-%d")
+string(TIMESTAMP WINBOLO_BUILD_YEAR "%Y")
 
 # Derive network protocol version bytes from WINBOLO_VERSION.
 # Each digit of the version string (skipping dots) becomes one byte.

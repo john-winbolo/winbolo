@@ -39,6 +39,8 @@ extern "C" {
 #include "../../lang.h"
 }
 
+#include "imgui_about.h"   /* aboutPopupOpen / aboutPopupRender */
+
 /* Match openingStates enum from gamefront.h */
 enum {
     RESULT_SINGLEPLAYER = 5,   /* openSetup */
@@ -80,69 +82,6 @@ static SDL_Texture *loadPng(SDL_Renderer *renderer, const char *filename) {
     SDL_DestroySurface(surf);
     stbi_image_free(data);
     return tex;
-}
-
-/* Composite the shield logo onto `target` with an additive "sun glint" band
- * traversing left-to-right at progress `t` in [0,1]. The band is built from
- * 16 vertical strips of `logo` re-drawn with SDL_BLENDMODE_ADD and Gaussian-
- * weighted alpha — re-drawing the logo (rather than a plain quad) makes the
- * additive contribution automatically masked by the logo's own alpha, so
- * the glint only brightens pixels inside the shield silhouette. */
-static void composeShimmerFrame(SDL_Renderer *r, SDL_Texture *target,
-                                 SDL_Texture *logo, int w, int h, float t) {
-    SDL_Texture *prevTarget = SDL_GetRenderTarget(r);
-
-    SDL_BlendMode prevTexBlend;
-    SDL_GetTextureBlendMode(logo, &prevTexBlend);
-    Uint8 prevR = 255, prevG = 255, prevB = 255;
-    SDL_GetTextureColorMod(logo, &prevR, &prevG, &prevB);
-    Uint8 prevA = 255;
-    SDL_GetTextureAlphaMod(logo, &prevA);
-
-    SDL_SetRenderTarget(r, target);
-    SDL_SetRenderClipRect(r, NULL);
-    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
-    SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
-    SDL_RenderClear(r);
-
-    /* Pass 1: opaque logo */
-    SDL_SetTextureBlendMode(logo, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureColorMod(logo, 255, 255, 255);
-    SDL_SetTextureAlphaMod(logo, 255);
-    SDL_RenderTexture(r, logo, NULL, NULL);
-
-    /* Pass 2: additive glint band */
-    const int NSTRIPS = 16;
-    const float bandHalfW = (float)w * 0.25f;
-    const float stripW    = (bandHalfW * 2.0f) / (float)NSTRIPS;
-    const float sigma     = bandHalfW * 0.5f;
-    const float centerX   = -bandHalfW + t * ((float)w + 2.0f * bandHalfW);
-
-    SDL_SetTextureBlendMode(logo, SDL_BLENDMODE_ADD);
-    for (int i = 0; i < NSTRIPS; i++) {
-        float offset = ((float)i - (float)(NSTRIPS - 1) * 0.5f) * stripW;
-        float ratio  = offset / sigma;
-        float gauss  = SDL_expf(-ratio * ratio);
-        Uint8 alpha  = (Uint8)(gauss * 200.0f);
-        if (alpha == 0) continue;
-
-        SDL_Rect clip;
-        clip.x = (int)(centerX + offset - stripW * 0.5f);
-        clip.y = 0;
-        clip.w = (int)stripW + 1;
-        clip.h = h;
-        if (clip.x + clip.w <= 0 || clip.x >= w) continue;
-
-        SDL_SetRenderClipRect(r, &clip);
-        SDL_SetTextureAlphaMod(logo, alpha);
-        SDL_RenderTexture(r, logo, NULL, NULL);
-    }
-
-    /* Restore */
-    SDL_SetTextureAlphaMod(logo, prevA);
-    SDL_SetTextureColorMod(logo, prevR, prevG, prevB);
-    SDL_SetTextureBlendMode(logo, prevTexBlend);
-    SDL_SetRenderTarget(r, prevTarget);
 }
 
 extern "C" int imguiWelcomeShow(void) {
@@ -192,15 +131,9 @@ extern "C" int imguiWelcomeShow(void) {
     /* Load images */
     SDL_Texture *logoTex = loadPng(renderer, "smalllogo-transparent.png");
 
-    /* Query logo dimensions. nativeW/H are the texture's pixel size and are
-     * used for the shimmer offscreen target so the SDL render-target pass
-     * is a 1:1 copy of the source — without that, the shimmer texture would
-     * downscale 265→200 in SDL and then ImGui downscales again 200→198.75,
-     * softening the text on the shield and making the logo look subtly
-     * smaller mid-sweep than when displayed directly. */
-    float nativeW = 0.0f, nativeH = 0.0f;
     float logoW = 0.0f, logoH = 0.0f;
     if (logoTex) {
+        float nativeW = 0.0f, nativeH = 0.0f;
         SDL_GetTextureSize(logoTex, &nativeW, &nativeH);
         logoW = nativeW * 0.75f;
         logoH = nativeH * 0.75f;
@@ -219,19 +152,6 @@ extern "C" int imguiWelcomeShow(void) {
      * dialog is up. Cleared / overwritten when the user enters a lobby
      * or starts a game. */
     gameFrontSetSteamPresenceMenu();
-
-    /* Logo shimmer: a 1.5s "sun glint" sweep, fired on hover entry and on
-     * a 75–105s randomised idle timer. Offscreen target is cached for the
-     * dialog lifetime and recreated on logo size change (e.g. DPI/resize). */
-    const Uint64 SHIMMER_DURATION_MS = 1500;
-    const Uint64 SHIMMER_AUTO_MIN_MS = 75000;
-    const Uint64 SHIMMER_AUTO_MAX_MS = 105000;
-    Uint64 shimmerStartMs    = 0;  /* 0 = idle */
-    Uint64 shimmerNextAutoMs = 0;  /* 0 = needs init */
-    SDL_Texture *shimmerTarget = nullptr;
-    int shimmerTargetW = 0;
-    int shimmerTargetH = 0;
-    bool wasLogoHovered = false;
 
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
@@ -275,51 +195,6 @@ extern "C" int imguiWelcomeShow(void) {
         /* Query actual window size each frame (handles resize) */
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
-
-        /* --- Shimmer state update + offscreen composition --- */
-        Uint64 nowMs = SDL_GetTicks();
-        bool sweeping = (shimmerStartMs != 0) &&
-                        (nowMs - shimmerStartMs < SHIMMER_DURATION_MS);
-        if (shimmerStartMs != 0 && !sweeping) shimmerStartMs = 0;
-
-        if (shimmerNextAutoMs == 0) {
-            Uint32 range = (Uint32)(SHIMMER_AUTO_MAX_MS - SHIMMER_AUTO_MIN_MS);
-            shimmerNextAutoMs = nowMs + SHIMMER_AUTO_MIN_MS +
-                                (Uint64)SDL_rand((Sint32)range);
-        }
-        if (!sweeping && nowMs >= shimmerNextAutoMs) {
-            shimmerStartMs = nowMs;
-            sweeping = true;
-            Uint32 range = (Uint32)(SHIMMER_AUTO_MAX_MS - SHIMMER_AUTO_MIN_MS);
-            shimmerNextAutoMs = nowMs + SHIMMER_AUTO_MIN_MS +
-                                (Uint64)SDL_rand((Sint32)range);
-        }
-
-        ImTextureID logoImageTexID = (ImTextureID)logoTex;
-        if (sweeping && logoTex && logoW > 0.0f && logoH > 0.0f) {
-            int targetW = (int)nativeW;
-            int targetH = (int)nativeH;
-            if (!shimmerTarget ||
-                shimmerTargetW != targetW || shimmerTargetH != targetH) {
-                if (shimmerTarget) SDL_DestroyTexture(shimmerTarget);
-                shimmerTarget = SDL_CreateTexture(renderer,
-                                                  SDL_PIXELFORMAT_RGBA32,
-                                                  SDL_TEXTUREACCESS_TARGET,
-                                                  targetW, targetH);
-                if (shimmerTarget) {
-                    SDL_SetTextureBlendMode(shimmerTarget, SDL_BLENDMODE_BLEND);
-                    shimmerTargetW = targetW;
-                    shimmerTargetH = targetH;
-                }
-            }
-            if (shimmerTarget) {
-                float t = (float)(nowMs - shimmerStartMs) /
-                          (float)SHIMMER_DURATION_MS;
-                composeShimmerFrame(renderer, shimmerTarget, logoTex,
-                                    shimmerTargetW, shimmerTargetH, t);
-                logoImageTexID = (ImTextureID)shimmerTarget;
-            }
-        }
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
@@ -366,16 +241,7 @@ extern "C" int imguiWelcomeShow(void) {
                     restoreX = (float)winW - logoW;
                 float restoreY = restoreMargin;
                 ImGui::SetCursorPos(ImVec2(restoreX, restoreY));
-                ImGui::Image(logoImageTexID, ImVec2(logoW, logoH));
-
-                /* Hover entry triggers a sweep — edge-detected so a slow
-                 * drag across the logo doesn't fire repeatedly, and a sweep
-                 * already in progress is left alone. */
-                bool isHovered = ImGui::IsItemHovered();
-                if (!sweeping && isHovered && !wasLogoHovered) {
-                    shimmerStartMs = nowMs;
-                }
-                wasLogoHovered = isHovered;
+                ImGui::Image((ImTextureID)logoTex, ImVec2(logoW, logoH));
             }
 
             /* Transparent menu buttons below the logo */
@@ -546,72 +412,46 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PopStyleVar(3);
         }
 
-        /* Version label — bottom-right of screen.
-         * Idle shows "vX.Y"; hovering cross-fades to the full
-         * "vX.Y \xC2\xB7 <sha> \xC2\xB7 <date>" over ~180ms, fading back
-         * out on un-hover. A 1px black drop shadow keeps both forms
-         * legible over varied terrain in the background. */
+        /* Version label — bottom-right of screen. Click to open About;
+         * full version/hash/date is shown there instead of inline. A 1px
+         * black drop shadow keeps the text legible over varied terrain. */
         {
-            char shortVer[32], fullVer[96];
+            char shortVer[32];
             SDL_snprintf(shortVer, sizeof(shortVer), "v%s", WINBOLO_VERSION);
-            SDL_snprintf(fullVer, sizeof(fullVer),
-                         "v%s \xC2\xB7 %s \xC2\xB7 %s",
-                         WINBOLO_VERSION, WINBOLO_GIT_HASH, WINBOLO_BUILD_DATE);
 
-            ImVec2 shortSize = ImGui::CalcTextSize(shortVer);
-            ImVec2 fullSize  = ImGui::CalcTextSize(fullVer);
+            ImVec2 verSize = ImGui::CalcTextSize(shortVer);
             const float margin = 12.0f * s;
 
-            /* Anchor the long form's bottom-right corner; the short form
-             * right-aligns to the same edge so the visible right edge of
-             * the text stays still through the cross-fade. */
-            ImGui::SetCursorPos(ImVec2((float)winW - fullSize.x - margin,
-                                       (float)winH - fullSize.y - margin));
-            ImVec2 fullScreen = ImGui::GetCursorScreenPos();
-            const float rightX = fullScreen.x + fullSize.x;
+            ImGui::SetCursorPos(ImVec2((float)winW - verSize.x - margin,
+                                       (float)winH - verSize.y - margin));
+            ImVec2 verScreen = ImGui::GetCursorScreenPos();
 
-            /* Stable hover hit-rect covers the long form so hover state
-             * doesn't toggle as the text width grows/shrinks mid-fade. */
-            bool hovering = ImGui::IsMouseHoveringRect(
-                fullScreen,
-                ImVec2(rightX, fullScreen.y + fullSize.y));
-
-            static float s_phase = 0.0f;       /* 0 = short, 1 = full */
-            const float FADE_SEC = 0.45f;
-            const float target = hovering ? 1.0f : 0.0f;
-            const float step = ImGui::GetIO().DeltaTime / FADE_SEC;
-            if (s_phase < target) {
-                s_phase = (s_phase + step >= target) ? target : s_phase + step;
-            } else if (s_phase > target) {
-                s_phase = (s_phase - step <= target) ? target : s_phase - step;
+            /* Invisible button captures the click + drives hover state.
+             * Sized to the rendered text so the hit rect is exactly the
+             * label, not the surrounding gutter. */
+            ImGui::InvisibleButton("##aboutver", verSize);
+            bool hovered = ImGui::IsItemHovered();
+            if (ImGui::IsItemClicked()) {
+                aboutPopupOpen();
+            }
+            if (hovered) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             }
 
             ImDrawList *dl = ImGui::GetWindowDrawList();
-            const float shortA = 1.0f - s_phase;
-            const float fullA  = s_phase;
-
-            if (shortA > 0.01f) {
-                ImVec2 pos(rightX - shortSize.x, fullScreen.y);
-                dl->AddText(ImVec2(pos.x + 1.0f, pos.y + 1.0f),
-                            IM_COL32(0, 0, 0, (int)(180 * shortA)), shortVer);
-                dl->AddText(pos,
-                            IM_COL32(235, 235, 235, (int)(230 * shortA)), shortVer);
-            }
-            if (fullA > 0.01f) {
-                dl->AddText(ImVec2(fullScreen.x + 1.0f, fullScreen.y + 1.0f),
-                            IM_COL32(0, 0, 0, (int)(180 * fullA)), fullVer);
-                dl->AddText(fullScreen,
-                            IM_COL32(235, 235, 235, (int)(230 * fullA)), fullVer);
-            }
-            /* Confirm the SetCursorPos above by submitting a zero-area
-             * Dummy — the version text uses GetWindowDrawList directly so
-             * ImGui's content tracker doesn't otherwise see anything after
-             * the cursor was moved, and End() asserts in debug builds
-             * (ErrorCheckUsingSetCursorPosToExtendParentBoundaries). */
-            ImGui::Dummy(ImVec2(0.0f, 0.0f));
+            ImU32 fg = hovered
+                ? IM_COL32(255, 255, 255, 255)
+                : IM_COL32(235, 235, 235, 230);
+            dl->AddText(ImVec2(verScreen.x + 1.0f, verScreen.y + 1.0f),
+                        IM_COL32(0, 0, 0, 180), shortVer);
+            dl->AddText(verScreen, fg, shortVer);
         }
 
         ImGui::End(); /* ##WelcomeBg host */
+
+        /* About box (opens on version-label click). Renders as a modal
+         * popup over the welcome screen. */
+        aboutPopupRender();
 
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
@@ -631,7 +471,6 @@ extern "C" int imguiWelcomeShow(void) {
     }
 
     /* Clean up textures */
-    if (shimmerTarget) SDL_DestroyTexture(shimmerTarget);
     if (logoTex) SDL_DestroyTexture(logoTex);
 
     /* Tear down ImGui */
