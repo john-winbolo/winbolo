@@ -109,6 +109,9 @@ local function try_open(dir)
   if not f then
     fail_hard("io.open", path .. " : " .. tostring(err))
   end
+  -- Line-buffer so the log is readable while the brain is still running
+  -- (default full buffering hides recent writes until process exit).
+  if f.setvbuf then pcall(f.setvbuf, f, "line") end
   file = f
   print(string.format("[print2] opened %s", path))
 end

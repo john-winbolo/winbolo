@@ -294,6 +294,17 @@ function M.cost_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget
   return cpf_cost_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget or M._cost_to_budget)
 end
 
+--- Strict A* cost query — bypasses the Dijkstra-first shortcut in
+--- smart_cost. Use this when the caller has already decided the slate
+--- data is stale and wants A* against the live danger grid. allow_boat
+--- mirrors the cost_to_ex flag (1 = explore boat transitions, 0 = land-
+--- only, halves the search space).
+function M.cost_to_astar(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget, allow_boat)
+  return cpf_cost_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour,
+                     budget or M._cost_to_budget,
+                     allow_boat == nil and 1 or (allow_boat and 1 or 0))
+end
+
 --- Reset incremental cost_to state. Call once at start of replan cycle.
 function M.cost_to_reset(sx, sy, in_boat, shells, trees, mines, armour)
   cpf_cost_to_reset(sx, sy, in_boat, shells, trees, mines, armour)
@@ -381,12 +392,14 @@ end
 ---            dijkstra_start).
 ---   dx, dy:  destination
 ---   in_boat, shells, trees, mines, armour: passed to cost_to fallback
-function M.smart_cost(kind, sx, sy, dx, dy, in_boat, shells, trees, mines, armour)
+function M.smart_cost(kind, sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget, allow_boat)
   if C.DIJKSTRA_USE_FOR_GOALS then
     local c = cpf_dijkstra_lookup_by_kind(kind, dx, dy, in_boat or 0)
     if c < 1e29 then return c end
   end
-  return cpf_cost_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour)
+  return cpf_cost_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour,
+                     budget or 4000,
+                     allow_boat == nil and 1 or (allow_boat and 1 or 0))
 end
 
 --- Same as smart_cost but NO A* fallback. Returns math.huge when no
@@ -528,8 +541,47 @@ function M.simulate_shot_angle(ox, oy, angle, shooter_type, sight_len)
     sight_len or 0)
 end
 
+--- Tank-aware shot simulation: same as simulate_shot but also checks
+--- for tank hitbox intersections (128 wu box). Returns entries with
+--- hit_type=0 (tile) or hit_type=1 (tank hit, hit_id=player_num).
+--- Shell stops on the first tank hit (consumed).
+--- tanks: array of {wx=, wy=, player_num=} entries.
+--- owner_player: the firing player (excluded from hit checks).
+function M.simulate_shot_with_tanks(ox, oy, tx, ty, shooter_type, sight_len, tanks, owner_player)
+  if not cpf_simulate_shot_with_tanks then
+    return M.simulate_shot(ox, oy, tx, ty, shooter_type, sight_len)
+  end
+  return cpf_simulate_shot_with_tanks(
+    math.floor(ox + 0.5), math.floor(oy + 0.5),
+    math.floor(tx + 0.5), math.floor(ty + 0.5),
+    shooter_type or M.SHOT_TANK,
+    sight_len or 0,
+    tanks,
+    owner_player)
+end
+
+function M.get_overlay(mx, my)
+  if not cpf_get_overlay then return 0 end
+  return cpf_get_overlay(mx, my)
+end
+
+function M.get_danger(mx, my)
+  if not cpf_get_danger then return 0 end
+  return cpf_get_danger(mx, my)
+end
+
+function M.astar_log_enable(path)
+  if cpf_astar_log_enable then cpf_astar_log_enable(path) end
+end
+
+function M.astar_log_set_tick(tick)
+  if cpf_astar_log_set_tick then cpf_astar_log_set_tick(tick) end
+end
+
 M.SHOT_TANK = 0
 M.SHOT_PILL = 1
+M.SHOT_HIT_TILE = 0
+M.SHOT_HIT_TANK = 1
 
 --- Estimate LGM travel time in game ticks (world coordinates).
 --- Returns ticks to arrive, or -1 if stuck/blocked.

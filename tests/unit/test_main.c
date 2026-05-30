@@ -112,6 +112,14 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_auto_unready_clears_humans_keeps_bots",
                                                  run_lobby_auto_unready_clears_humans_keeps_bots },
     { "mapdir_root_fallback",                    run_mapdir_root_fallback                    },
+    { "bot_chat_send_to_human_lands_in_human_inbox",
+                                                 run_bot_chat_send_to_human_lands_in_human_inbox },
+    { "bot_chat_send_to_other_bot_lands_in_recipient_inbox",
+                                                 run_bot_chat_send_to_other_bot_lands_in_recipient_inbox },
+    { "bot_chat_receive_from_human_lands_in_bot_inbox",
+                                                 run_bot_chat_receive_from_human_lands_in_bot_inbox },
+    { "bot_chat_receive_from_other_bot_via_broadcast",
+                                                 run_bot_chat_receive_from_other_bot_via_broadcast },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

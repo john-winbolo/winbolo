@@ -464,8 +464,14 @@ end
 -- existing walls and friendly pills count toward the protection
 -- score. attack.lua passes this when info.man_status == LGM_DEAD.
 function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
-                standoff_cx, standoff_cy, radius, no_builder, tank_armour)
+                standoff_cx, standoff_cy, radius, no_builder, tank_armour,
+                positions, step_deg)
   if not pill or not world then return { candidates = {}, best = nil } end
+  -- Tier-gated ring density.  Defaults preserve the legacy 28×0.5° sweep.
+  -- Lua fallback path uses these locals below; C scan_c receives them
+  -- via the new args 20/21.
+  local NUM = positions or M.NUM_CANDIDATES
+  local SDG = step_deg  or M.STEP_DEG
   local pmx, pmy = pill.mx, pill.my
   -- Caller can override the standoff circle radius (PPT uses a tighter
   -- one). Defaults to the standard ATTACK_PILL_STANDOFF.
@@ -530,7 +536,8 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       pill_table,
       standoff_mx or math.floor(sx), standoff_my or math.floor(sy),
       no_builder and true or false,
-      n_fav, fs1, fb1, fs2, fb2, min_chain, max_bonus)
+      n_fav, fs1, fb1, fs2, fb2, min_chain, max_bonus,
+      NUM, SDG)
 
     if r then
       local standoff_cand = { cx = sx, cy = sy,
@@ -577,9 +584,9 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   candidates[1].mx = standoff_mx
   candidates[1].my = standoff_my
 
-  local half = M.NUM_CANDIDATES * 0.5
-  for i = 1, M.NUM_CANDIDATES do
-    local offset = (i - half - 0.5) * M.STEP_DEG
+  local half = NUM * 0.5
+  for i = 1, NUM do
+    local offset = (i - half - 0.5) * SDG
     local deg = standoff_deg + offset
     local rad = math.rad(deg)
     local cx = pcx + math.sin(rad) * R
@@ -1400,7 +1407,15 @@ end
 
 function M.draw_overlay(scan, now_tick)
   if not BRAIN_DEBUG_MODE then return end
-  if not scan or not scan.candidates then return end
+  -- Need at least one of: candidates array (Lua scan path) or a best
+  -- winner / standoff fallback (C scan path).  The C path doesn't
+  -- surface scan.candidates; Pass A/B short-circuit on nil so only
+  -- Pass C (the winner's blocker borders) draws — which is what we
+  -- want.  Without this looser gate, the entire blocker viz silently
+  -- disappeared whenever scan_c was used.
+  if not scan or (not scan.candidates and not scan.best and not scan.standoff) then
+    return
+  end
 
   -- After NONWINNER_FADE_TICKS, hide everything but the chosen viz
   -- target so the screen de-clutters once the user has had time to
@@ -1420,7 +1435,7 @@ function M.draw_overlay(scan, now_tick)
   -- (small circle at cx/cy), so a click on the marker still hit-tests
   -- to its entry — but even after fade, clicking the spot will land
   -- on the registered hit area.
-  if viz.detail_circle then
+  if viz.detail_circle and scan.candidates then
     for ci, c in ipairs(scan.candidates) do
       local did = string.format("shield_cand_%d", ci)
       local kind_str = c.kind == "standoff" and "STANDOFF" or "candidate"
@@ -1494,7 +1509,7 @@ function M.draw_overlay(scan, now_tick)
   -- Pass B: visible markers + score labels. Honors the hide_losers
   -- fade so the on-screen cluster stays clean a few seconds after
   -- the scan is generated.
-  for ci, c in ipairs(scan.candidates) do
+  for ci, c in ipairs(scan.candidates or {}) do
     if hide_losers and c ~= kept_target then goto next_cand_draw end
     local color_r, color_g, color_b
     if not c.valid_tile then

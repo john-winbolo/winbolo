@@ -35,6 +35,8 @@ local viz    = require("viz")
 
 local M = {}
 
+print("[builder] loaded from: " .. tostring(debug.getinfo(1, "S").source))
+
 -- Hoisted: was reallocated inside the wall-build threat-blocker
 -- inner loop (per pill_threat × per direction = up to ~30 allocs/tick
 -- when in build mode). Module-scope constant.
@@ -89,6 +91,10 @@ function M.set_mode(state, world, info, goal)
   end
 
   -- Wall-shield attack: dispatch LGM to build/rebuild wall in specific substates
+  if kind == "attack_pill" and goal.substate == "build_walls" then
+    print2(string.format("BUILDER_SETMODE sub=build_walls wall_shield=%s wall_mx=%s wall_my=%s",
+      tostring(goal.wall_shield), tostring(goal.wall_mx), tostring(goal.wall_my)))
+  end
   if kind == "attack_pill" and goal.wall_shield and goal.wall_mx then
     local sub = goal.substate or ""
     if sub == "ws_prebuild" or sub == "ws_rebuild" or sub == "build_walls" then
@@ -452,13 +458,17 @@ function M.decide(state, world, info, now)
     end
   end
 
-  -- Priority 0.5: base shield — build wall to block pill fire while on any base.
-  -- Triggers ONLY on the tick we take damage (pill just fired → max window
-  -- before next shot). Checks all 8 directions for the best blocking tile.
-  -- Allow base shield when ON the base or within 1 tile of it.
-  -- Wall must be placed on one of the 8 tiles adjacent to the base.
+  -- Priority 0.5: base shield — build wall to block pill fire while on
+  -- a base.  Scoped to refuel_at_base + actually sitting on the base
+  -- tile: the shield only earns its keep when we're holding still on
+  -- the base to recharge.  Outside refuel (e.g. tank parked on a base
+  -- mid-attack pursuit) we don't want to spend trees on it.
+  -- Triggers ONLY on the tick we take damage (pill just fired → max
+  -- window before next shot).  Wall placed on one of the 8 tiles
+  -- adjacent to the base.
   local has_base = info.base and info.base.x
-  local near_base = has_base and U.mdist(tmx, tmy, info.base.x, info.base.y) <= 1
+  local on_base = has_base and tmx == info.base.x and tmy == info.base.y
+  local is_refueling = state.goal and state.goal.kind == "refuel_at_base"
   local has_trees = info.trees >= C.BASE_SHIELD_BUILD_COST
   local took_dmg = state.took_damage_this_tick
   local pill_threats_exist = state.perc and state.perc.pill_threats and #state.perc.pill_threats > 0
@@ -466,16 +476,17 @@ function M.decide(state, world, info, now)
   -- Always show precondition status on the HUD when near a base
   if BRAIN_DEBUG_MODE and has_base then
     local parts = {}
-    parts[#parts + 1] = near_base and "near_base:YES" or string.format("near_base:NO(dist=%d)", has_base and U.mdist(tmx, tmy, info.base.x, info.base.y) or -1)
+    parts[#parts + 1] = on_base and "on_base:YES" or string.format("on_base:NO(dist=%d)", has_base and U.mdist(tmx, tmy, info.base.x, info.base.y) or -1)
+    parts[#parts + 1] = is_refueling and "refueling:YES" or string.format("refueling:NO(%s)", state.goal and state.goal.kind or "?")
     parts[#parts + 1] = has_trees and string.format("trees:YES(%d)", info.trees) or string.format("trees:NO(%d<%d)", info.trees, C.BASE_SHIELD_BUILD_COST)
     parts[#parts + 1] = took_dmg and "took_dmg:YES" or "took_dmg:NO"
     parts[#parts + 1] = pill_threats_exist and string.format("threats:%d", #state.perc.pill_threats) or "threats:0"
-    local all_ok = near_base and has_trees and took_dmg and pill_threats_exist
+    local all_ok = on_base and is_refueling and has_trees and took_dmg and pill_threats_exist
     local cr, cg = all_ok and 0 or 200, all_ok and 200 or 100
     viz.hud_text("base_shield_viz", 10, 72, "BaseShield: " .. table.concat(parts, " | "), "topleft", cr, cg, 0)
   end
 
-  if near_base and has_trees and took_dmg then
+  if on_base and is_refueling and has_trees and took_dmg then
     local bmx, bmy = info.base.x, info.base.y
     local perc = state.perc
     local pill_threats = perc and perc.pill_threats or {}
@@ -658,6 +669,14 @@ function M.decide(state, world, info, now)
       end
       local has_trees   = info.trees >= cost
       local can_reach   = lgm_can_reach(info, wx, wy)
+      -- Used to log every 50 ticks; now fires every entry so we see
+      -- the WHOLE gate-evaluation history for a stalling wall_shield,
+      -- not just a 1-second sample. Cheap and BRAIN_DEBUG_MODE-gated.
+      if BRAIN_DEBUG_MODE then
+        print2(string.format("BUILDER_WALL_CHECK t=%d wall=(%d,%d) tt=%d trees=%d/%d reach=%s mode=%s force=%s",
+          state.tick or 0, wx, wy, wtt, info.trees, cost,
+          tostring(can_reach), b.mode, tostring(b.mode == "wall_shield")))
+      end
       -- Exclude the target pill's own per-tile contribution from the
       -- safety check — we're committed to killing it, so its danger
       -- footprint shouldn't bully our LGM dispatch within its own
@@ -726,11 +745,21 @@ function M.decide(state, world, info, now)
         if wtt == C.T_FOREST then
           log.reason("build", { mode = b.mode, why = "harvest forest before wall",
                                 wall_mx = wx, wall_my = wy })
+          if BRAIN_DEBUG_MODE then
+            print2(string.format(
+              "BUILDER_WALL_DISPATCH t=%d mode=%s action=FARM wall=(%d,%d) tt=%d trees=%d/%d reach=%s",
+              state.tick or 0, b.mode, wx, wy, wtt, info.trees, cost, tostring(can_reach)))
+          end
           return { x = wx, y = wy, action = BUILDMODE_FARM }
         end
         local why = b.mode == "base_shield" and "building wall to protect refuel"
                                               or "building wall for pill attack"
         log.reason("build", { mode = b.mode, why = why, wall_mx = wx, wall_my = wy })
+        if BRAIN_DEBUG_MODE then
+          print2(string.format(
+            "BUILDER_WALL_DISPATCH t=%d mode=%s action=BUILD wall=(%d,%d) tt=%d trees=%d/%d reach=%s",
+            state.tick or 0, b.mode, wx, wy, wtt, info.trees, cost, tostring(can_reach)))
+        end
         return { x = wx, y = wy, action = BUILDMODE_BUILD }
       end
       -- Stash gate failure on state so the brain can surface it (and
@@ -754,6 +783,17 @@ function M.decide(state, world, info, now)
         reach = can_reach, safe  = path_safe,
         force = force_mode,
       })
+      if BRAIN_DEBUG_MODE then
+        local parts = {}
+        if angry_pill_close then parts[#parts + 1] = "ANGRY_PILL" end
+        if not has_trees    then parts[#parts + 1] = string.format("TREES(%d/%d)", info.trees, cost) end
+        if not can_reach    then parts[#parts + 1] = "NO_REACH" end
+        if not path_safe    then parts[#parts + 1] = "UNSAFE_PATH" end
+        print2(string.format(
+          "BUILDER_WALL_SKIP t=%d mode=%s wall=(%d,%d) tt=%d force=%s reasons=%s",
+          state.tick or 0, b.mode, wx, wy, wtt, tostring(force_mode),
+          (#parts > 0 and table.concat(parts, "+") or "(none — already built?)")))
+      end
     end
     -- Wall already exists or can't build safely — fall through to default
     if b.mode == "wall_shield" then return nil end

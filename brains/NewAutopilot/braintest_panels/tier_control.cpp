@@ -17,7 +17,7 @@
  *     "ratio_ewma":<float>,
  *     "levels": [
  *       { "tier":1, "dij_short":..., "dij_long":..., "scan_step":...,
- *         "pp_spread":..., "sb_spread":..., "ttl_mult":...,
+ *         "pp_spread":..., "ttl_mult":...,
  *         "eval_iv":..., "wsim": <int|null|false>, "place_r":...,
  *         "tank_step":..., "ms": <float|null> },
  *       ... (10 entries)
@@ -665,6 +665,30 @@ void renderTierControl(int registry_idx, const char *body) {
         pushTierOverride(registry_idx, 0, s_apply_to_all);
     }
 
+    /* Keyboard shortcuts (fire whenever the tier panel is rendered;
+     * ImGui::IsKeyPressed is global, no panel focus required).
+     *   F4 — bump tier override one higher (lock).  First press from
+     *        Auto anchors at current live tier + 1.
+     *   F5 — bump tier override one lower (lock).
+     *   F6 — clear override, return to Auto.
+     * Honors the "apply to all bots" checkbox above. */
+    {
+        int anchor = overrideActive ? overrideTier : tier;
+        if (ImGui::IsKeyPressed(ImGuiKey_F4, false)) {
+            int next = anchor + 1;
+            if (next > 10) next = 10;
+            pushTierOverride(registry_idx, next, s_apply_to_all);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
+            int next = anchor - 1;
+            if (next < 1) next = 1;
+            pushTierOverride(registry_idx, next, s_apply_to_all);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_F6, false)) {
+            pushTierOverride(registry_idx, 0, s_apply_to_all);
+        }
+    }
+
     /* ── Brain dispatch thread count ──────────────────────────────────
      * Process-wide. Total runners = workers + producer; 1 means serial
      * dispatch (no workers). Slider stashes the request as pending —
@@ -749,7 +773,6 @@ void renderTierControl(int registry_idx, const char *body) {
         row("dij_long",   "%.0f", getNum(active, "dij_long",  0));
         row("scan_step",  "%.0f°", getNum(active, "scan_step", 0));
         row("pp_spread",  "%.0f", getNum(active, "pp_spread", 1));
-        row("sb_spread",  "%.0f", getNum(active, "sb_spread", 1));
         row("ttl_mult",   "%.2fx", getNum(active, "ttl_mult", 1));
         row("eval_iv",    "every %.0f tick(s)", getNum(active, "eval_iv", 1));
         {
@@ -820,11 +843,9 @@ void renderTierControl(int registry_idx, const char *body) {
             "scan_step: eval_pill_difficulty step in degrees (5/10/20/45). "
             "5° = 72 angles (full); 45° = 8 angles (precomputed stamps).");
         ImGui::TextWrapped(
-            "pp_spread: plan_position scan spread (currently coarsens to "
-            "45° when > 1, peak ~9ms → ~1ms).");
-        ImGui::TextWrapped(
-            "sb_spread: shield-blocker scan spread (currently a no-op; "
-            "kept in table for future use).");
+            "pp_spread: plan_position 72-angle scan spread over N ticks "
+            "(1=sync; tier 1 = 50 → ~1s for full sweep). Full resolution "
+            "always preserved.");
         ImGui::TextWrapped(
             "ttl_mult: multiplier on pool-6 diff_cache distance-tier TTLs "
             "(50/150/500 base).");
