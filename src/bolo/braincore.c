@@ -968,6 +968,18 @@ static int l_cpf_get_danger(lua_State *L) {
   return 1;
 }
 
+static int l_cpf_astar_log_enable(lua_State *L) {
+  const char *path = luaL_optstring(L, 1, NULL);
+  brainPathfinderEnableLogPath(path);
+  return 0;
+}
+
+static int l_cpf_astar_log_set_tick(lua_State *L) {
+  int tick = (int)luaL_checkinteger(L, 1);
+  brainPathfinderSetLogTick(tick);
+  return 0;
+}
+
 /* cpf_set_danger_offset(x, y, value) — set per-tile danger offset (negative = subtract) */
 static int l_cpf_set_danger_offset(lua_State *L) {
   CPF_GET(L);
@@ -1081,6 +1093,29 @@ static int l_cpf_cost_to(lua_State *L) {
   int armour = (int)luaL_checkinteger(L, 9);
   int budget = (int)luaL_optinteger(L, 10, 4000);
   int allow_boat = (int)luaL_optinteger(L, 11, 1);
+
+  /* Capture Lua traceback so the astar log shows who called this.
+   * Only when logging is actually enabled — building a traceback string
+   * walks the whole Lua stack and allocates, and cost_to is a hot path
+   * (bulk candidate eval), so this must be free when the log is off. */
+  if (brainPathfinderIsLogEnabled()) {
+    lua_getglobal(L, "debug");
+    if (lua_istable(L, -1)) {
+      lua_getfield(L, -1, "traceback");
+      if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, "");
+        lua_pushinteger(L, 2);
+        if (lua_pcall(L, 2, 1, 0) == LUA_OK && lua_isstring(L, -1)) {
+          brainPathfinderSetLogCaller(lua_tostring(L, -1));
+        }
+        lua_pop(L, 1);  /* traceback result or error */
+      } else {
+        lua_pop(L, 1);  /* non-function */
+      }
+    }
+    lua_pop(L, 1);  /* debug table */
+  }
+
   float cost = brainPathfinderCostToEx(pf, sx, sy, dx, dy, in_boat,
                                         shells, trees, mines, armour,
                                         budget, allow_boat);
@@ -1717,6 +1752,8 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_set_overlay",          l_cpf_set_overlay },
     { "cpf_get_overlay",          l_cpf_get_overlay },
     { "cpf_get_danger",           l_cpf_get_danger },
+    { "cpf_astar_log_enable",     l_cpf_astar_log_enable },
+    { "cpf_astar_log_set_tick",   l_cpf_astar_log_set_tick },
     { "cpf_clear_overlay",        l_cpf_clear_overlay },
     { "cpf_set_danger_offset",    l_cpf_set_danger_offset },
     { "cpf_clear_danger_offset",  l_cpf_clear_danger_offset },

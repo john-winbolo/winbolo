@@ -223,6 +223,10 @@ void brainPathfinderDijkstraPreheat(BrainPathfinder *pf);
 
 /* Debug logging — writes detailed A* info to astar_costto.log */
 void brainPathfinderEnableLog(int enable);
+void brainPathfinderEnableLogPath(const char *path);
+int brainPathfinderIsLogEnabled(void);
+void brainPathfinderSetLogTick(int tick);
+void brainPathfinderSetLogCaller(const char *caller);
 /* Independent toggle for the per-step incremental Dijkstra log
  * (dijkstra.log). Off by default; the per-tick STEP entries are
  * high-frequency and add measurable overhead, so this isn't piggy-

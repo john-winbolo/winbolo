@@ -1283,12 +1283,57 @@ do_search:
  * This keeps the inner loop fast for bulk candidate evaluation. */
 static FILE *astar_log = NULL;
 static int astar_log_enabled = 0;
+static int astar_log_tick = 0;  /* current tick prefix for ASTAR log lines */
+static char astar_log_caller[2048] = "";  /* Lua call context for next cost_to */
 
 /* Separate log for the incremental Dijkstra. NOT enabled together with
  * the cost_to log because the per-tick STEP entries are high-frequency
  * and add measurable overhead. Toggle independently via
  * brainPathfinderEnableDijkstraLog(). */
 static FILE *dijkstra_log = NULL;
+
+void brainPathfinderSetLogTick(int tick) {
+  astar_log_tick = tick;
+}
+
+void brainPathfinderSetLogCaller(const char *caller) {
+  if (caller) {
+    size_t n = strlen(caller);
+    if (n >= sizeof(astar_log_caller)) n = sizeof(astar_log_caller) - 1;
+    memcpy(astar_log_caller, caller, n);
+    astar_log_caller[n] = '\0';
+  } else {
+    astar_log_caller[0] = '\0';
+  }
+}
+
+void brainPathfinderEnableLogPath(const char *path) {
+  if (astar_log) {
+    fflush(astar_log);
+    fclose(astar_log);
+    astar_log = NULL;
+  }
+  if (path) {
+    astar_log = fopen(path, "w");
+    if (astar_log) {
+      /* Line-buffer so writes appear without needing fclose. The
+       * default fully-buffered mode hides recent activity from anyone
+       * tailing the file while the brain is still running. */
+      setvbuf(astar_log, NULL, _IONBF, 0);  /* unbuffered — writes appear immediately */
+      fprintf(astar_log, "=== cost_to debug log ===\n");
+      fflush(astar_log);
+      astar_log_enabled = 1;
+    } else {
+      astar_log_enabled = 0;
+    }
+  } else {
+    astar_log_enabled = 0;
+  }
+}
+
+int brainPathfinderIsLogEnabled(void) {
+  return astar_log_enabled;
+}
 
 void brainPathfinderEnableLog(int enable) {
   astar_log_enabled = enable;
@@ -1359,6 +1404,10 @@ float brainPathfinderCostToEx(BrainPathfinder *pf,
     int dst_type = pf->map[dy * MAP_SIZE + dx] & 0x0F;
     fprintf(alog, "=== cost_to(%d,%d)->(%d,%d) boat=%d sh=%d tr=%d mn=%d arm=%d budget=%d src_terrain=%d dst_terrain=%d ===\n",
             sx,sy,dx,dy,in_boat,shells,trees,mines,armour,budget,src_type,dst_type);
+    if (astar_log_caller[0]) {
+      fprintf(alog, "CALLER:\n%s\n", astar_log_caller);
+      astar_log_caller[0] = '\0';  /* consume — caller sets per-call */
+    }
   }
 
   /* Clamp */
@@ -1428,10 +1477,12 @@ float brainPathfinderCostToEx(BrainPathfinder *pf,
     closed_set(pf->closed, ci);
     expanded++;
 
-    if (alog && expanded <= 20) {
+    if (alog) {
       int tile_type = pf->map[cy * MAP_SIZE + cx] & 0x0F;
-      fprintf(alog, "  expand #%d: (%d,%d) boat=%d g=%.2f terrain=%d f_top=%.2f\n",
-              expanded, cx, cy, cur_boat, pf->g_cost[ci], tile_type, entry.f);
+      uint16_t ov = pf->overlay_grid[cy * MAP_SIZE + cx];
+      uint16_t dg = pf->danger_grid[cy * MAP_SIZE + cx];
+      fprintf(alog, "ASTAR_DBG t=%d expand #%d: (%d,%d) boat=%d g=%.2f terrain=%d ov=%d d=%d f=%.2f\n",
+              astar_log_tick, expanded, cx, cy, cur_boat, pf->g_cost[ci], tile_type, ov, dg, entry.f);
     }
 
     /* Destination reached */
@@ -1473,10 +1524,12 @@ float brainPathfinderCostToEx(BrainPathfinder *pf,
                          cur_shells, cur_trees, cur_mines, cur_armour,
                          &shells_used, &trees_used, &mines_used, &armour_used,
                          &onBoat);
-      if (alog && expanded <= 20) {
+      if (alog) {
         int n_type = pf->map[ny * MAP_SIZE + nx] & 0x0F;
-        fprintf(alog, "    neigh(%d,%d) d=%d terrain=%d cost=%.2f%s\n",
-                nx, ny, d, n_type, tc, tc >= COST_INF ? " INF" : "");
+        uint16_t n_ov = pf->overlay_grid[ny * MAP_SIZE + nx];
+        uint16_t n_dg = pf->danger_grid[ny * MAP_SIZE + nx];
+        fprintf(alog, "ASTAR_DBG t=%d   neigh(%d,%d) d=%d terrain=%d ov=%d dg=%d cost=%.2f%s\n",
+                astar_log_tick, nx, ny, d, n_type, n_ov, n_dg, tc, tc >= COST_INF ? " INF" : "");
       }
       if (tc >= COST_INF) { n_neigh_inf++; continue; }
       /* allow_boat=0: skip nodes that would transition into boat state */
@@ -1538,6 +1591,10 @@ float brainPathfinderCostToEx(BrainPathfinder *pf,
   pf->status = -1;
   pf->dest_x = -1;
   pf->dest_y = -1;
+
+  /* Flush so the log is readable while the brain is still running
+   * (Windows MSVCRT treats _IOLBF as _IOFBF for files). */
+  if (alog) fflush(alog);
 
   return result;
 }

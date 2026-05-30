@@ -1994,7 +1994,10 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
     dpf->dest_x = -1;
     dpf->dest_y = -1;
 
-    /* Run A* to completion with a generous budget */
+    /* Run PathTo so pf->status / closed set / parent chain get populated
+     * — required by brainPathfinderTracePath below to draw the pink
+     * click-path line.  Cost is read from pf->g_cost at the dest node
+     * (cheaper of land vs boat layer). */
     int nx, ny;
     int status = 0;
     for (int iter = 0; iter < 20 && status == 0; iter++) {
@@ -2002,13 +2005,6 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
                                         in_boat, res_shells, res_trees, res_mines, res_armour,
                                         100000, &nx, &ny);
     }
-
-    /* A* cost: real path cost if A* completed, sentinel otherwise so
-     * the HUD can render "unreached" without conflating with the
-     * estimate. Node space is doubled for boat/land: land nodes at
-     * y*256+x, boat nodes at 65536+y*256+x. Take the minimum so water
-     * tiles (only reachable in boat mode) show the correct cost rather
-     * than reading the uninitialized land-mode slot (which is 0). */
     if (status == 1) {
         int ni_land = dmy * 256 + dmx;
         int ni_boat = 65536 + ni_land;
