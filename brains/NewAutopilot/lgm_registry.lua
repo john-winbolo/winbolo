@@ -189,7 +189,7 @@ function M.draw_map(viz, now, self_pn, allies_bitmap)
         viz.circle("lgm_registry_map", cx, cy, 0.4, r, g, b, 200)
         viz.text("lgm_registry_map", cx, cy - 0.5,
                  string.format("p%d dead %ds", pn,
-                               math.max(0, ((s.respawn_eta or now) - now) / 50)),
+                               math.max(0, math.floor(((s.respawn_eta or now) - now) / 50))),
                  "center", r, g, b, 200)
       else
         r, g, b = is_ally and 100 or 255, is_ally and 220 or 120, is_ally and 100 or 120

@@ -35,8 +35,6 @@ local viz    = require("viz")
 
 local M = {}
 
-print("[builder] loaded from: " .. tostring(debug.getinfo(1, "S").source))
-
 -- Hoisted: was reallocated inside the wall-build threat-blocker
 -- inner loop (per pill_threat × per direction = up to ~30 allocs/tick
 -- when in build mode). Module-scope constant.
@@ -130,8 +128,9 @@ function M.set_mode(state, world, info, goal)
     local tmx = info.tankx >> 8
     local tmy = info.tanky >> 8
     local pdist = U.mdist(tmx, tmy, goal.mx, goal.my)
-    if pdist <= 1 and (info.carried_pills or 0) > 0
-       and info.man_status == C.LGM_INTANK and not info.inboat then
+    local _pp_ok = pdist <= 1 and (info.carried_pills or 0) > 0
+       and info.man_status == C.LGM_INTANK and not info.inboat
+    if _pp_ok then
       b.mode = "place_pill"
       b.pill_target = { mx = goal.mx, my = goal.my }
     end
@@ -577,9 +576,12 @@ function M.decide(state, world, info, now)
   -- Priority 2.4: pill placement — dispatch LGM to place pill at target
   if b.mode == "place_pill" and b.pill_target then
     local px, py = b.pill_target.mx, b.pill_target.my
-    if (info.carried_pills or 0) > 0
-       and lgm_can_reach(info, px, py)
-       and danger.lgm_path_safe_enhanced(info, px, py, C.LGM_DANGER_HIGH, now, world) then
+    -- Evaluate each gate into a local (preserving short-circuit) so the
+    -- diagnostic can show WHICH gate blocked the build.
+    local have_pill = (info.carried_pills or 0) > 0
+    local can_reach = have_pill and lgm_can_reach(info, px, py)
+    local path_safe = can_reach and danger.lgm_path_safe_enhanced(info, px, py, C.LGM_DANGER_HIGH, now, world)
+    if have_pill and can_reach and path_safe then
       log.reason("build", { mode = "place_pill", why = "placing pill",
                              pill_mx = px, pill_my = py })
       return { x = px, y = py, action = BUILDMODE_PBOX }

@@ -668,14 +668,36 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
     raw_cost = math.min(raw_cost, C.IMMINENT_CAPTURE_FLOOR)
     imminent = true
   end
-  -- Urgent capture: we just killed this base via attack_base. Heavily
+  -- Urgent capture: we just killed a base via attack_base. Heavily
   -- discount the cost so the bot commits to capturing before the base
   -- recharges for the enemy. Decays after 500 ticks (~10s).
   local urgent = state.urgent_capture_base
-  if urgent and urgent.mx == base.mx and urgent.my == base.my
-     and (state.tick or 0) - urgent.tick < 500 then
-    raw_cost = math.min(raw_cost, C.IMMINENT_CAPTURE_FLOOR)
-    imminent = true
+  if urgent and (state.tick or 0) - urgent.tick < 500 then
+    if urgent.mx == base.mx and urgent.my == base.my then
+      raw_cost = math.min(raw_cost, C.IMMINENT_CAPTURE_FLOOR)
+      imminent = true
+    else
+      -- nearest_where picked a different (closer) capturable base, so the
+      -- urgent base never surfaced as the candidate. Evaluate it directly
+      -- and switch to it if it's still capturable and reachable — otherwise
+      -- the bot wanders off the base it just neutralized.
+      for ubid, ub in pairs(world.bases) do
+        if ub.mx == urgent.mx and ub.my == urgent.my then
+          if ub.owner == "neutral" or (ub.owner == "hostile" and ub.health == 0) then
+            local uc = smart_cost(KIND_NORMAL, tmx, tmy, ub.mx, ub.my,
+                                  boat and 1 or 0, info.shells or 32, info.trees or 0,
+                                  info.mines or 0, info.armour or 40)
+            if uc and uc <= C.IMMINENT_CAPTURE_PATH_COST then
+              base, bid = ub, ubid
+              lm, lr = strategic_location_mult(ub.mx, ub.my, state, world, info, "capture_base", nil)
+              raw_cost = math.min(uc, C.IMMINENT_CAPTURE_FLOOR)
+              imminent = true
+            end
+          end
+          break
+        end
+      end
+    end
   end
 
   local desc = ""  -- pool viz string; populated only when BRAIN_POOL_VIZ
@@ -2024,15 +2046,6 @@ local KIND_TO_POOL = {
   repair_pill = 5, attack_pill = 6, attack_base = 7,
   place_pill_strategic = 8, attack_tank = 9, wait_for_lgm = 12,
   kill_lgm = 13,
-}
-
--- Reverse map: actual goal.kind → pool index, for looking up cost_cache
--- entries by candidate.  Note pool 1 (refuel) and pool 8 (place_strategic)
--- have different UI labels than their goal.kind values.
-local KIND_TO_POOL = {
-  refuel_at_base = 1, defend_pill = 2, capture_base = 3, capture_pill = 4,
-  repair_pill = 5, attack_pill = 6, attack_base = 7,
-  place_pill_strategic = 8, attack_tank = 9, wait_for_lgm = 12,
 }
 
 -- (LOCK_SUBS defined above eval_attack_tank.)
@@ -3989,7 +4002,9 @@ local _REJECT_POOLS = {
 -- transitions sync just made, plus changes made elsewhere (build_eval_queue
 -- writing _reject="alive" / "in_tank" / "stale" / "blocked" / "depleted"
 -- etc.).  Stored on state.reject_history[pool:id] = { {tick, reason, by,
--- prev}, ... } — unbounded per session but trivial memory in practice.
+-- prev}, ... }, capped to the most recent REJECT_HISTORY_MAX transitions
+-- per key so it can't grow without bound over a long session.
+local REJECT_HISTORY_MAX = 16
 local function record_reject_history(state)
   local cache = state.cost_cache
   if not cache then return end
@@ -4010,6 +4025,7 @@ local function record_reject_history(state)
         by     = e._priority_by or e._ally_by or nil,
         prev   = (prev ~= false) and prev or nil,
       }
+      if #list > REJECT_HISTORY_MAX then table.remove(list, 1) end
       e._last_reject_seen = cur
     end
   end
@@ -4305,8 +4321,9 @@ local function sync_ally_claimed_rejects(state, info)
   -- Snapshot any _reject transitions sync just made (or any made
   -- earlier this tick by build_eval_queue / pool finalizers) into
   -- state.reject_history so the pool-grid breakdown can surface the
-  -- full per-entry timeline.
-  record_reject_history(state)
+  -- full per-entry timeline.  Debug-only: it's pure telemetry for the
+  -- pool grid, and walks the whole cost_cache every tick — kept off the
+  -- production (opt/) hot path. (One line so lua_strip removes it.)
 end
 
 -- Re-derive pool_partial best_cost/id/obj after sync_ally_claimed_rejects
