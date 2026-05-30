@@ -2354,6 +2354,13 @@ function Brain.think(info)
       elseif b.owner ~= "hostile" then
         -- Base became friendly (someone else captured it)
         goal_valid = false
+      elseif (info.shells or 0) <= 0 then
+        -- Out of ammo: can't damage a live hostile base. Drop and replan
+        -- (refuel is urgent at 0 shells). Clear pool 7 so we don't
+        -- immediately re-select it from stale cache. (The neutral →
+        -- capture_base drive-over above is reached first and needs no ammo.)
+        goal_valid = false
+        if state.pool_cache then state.pool_cache[7] = nil end
       end
     elseif gk == "capture_pill" then
       -- W.pill_at filters out health==0 pills, but capture_pill targets dead pills.
@@ -2391,6 +2398,12 @@ function Brain.think(info)
           if not (p and p.owner == "friendly") and state.pool_cache then
             state.pool_cache[6] = nil
           end
+        elseif (info.shells or 0) <= 0 then
+          -- Out of ammo: we can't damage the pill, so don't sit on it.
+          -- Drop and replan (refuel is urgent at 0 shells). Clear pool 6
+          -- so we don't immediately re-select it from stale cache.
+          goal_valid = false
+          if state.pool_cache then state.pool_cache[6] = nil end
         end
       end
     elseif gk == "pill_place" and not state.capture_objective then
