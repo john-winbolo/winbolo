@@ -81,6 +81,7 @@ extern "C" {
 #include "dialogs/imgui_dialog_utils.h"
 #include "dialogs/dialog_footer.h"
 #include "dialogs/imgui_keysetup.h"
+#include "dialogs/imgui_about.h"
 #include "platform/mac_menubar.h"
 
 extern "C" void windowSetQuitting(void);
@@ -293,7 +294,6 @@ static char s_settingsNameBuf[33] = "";  /* PLAYER_NAME_LEN = 33 */
 static bool s_wbnInitialised     = false;
 
 /* Modal dialog state */
-static bool s_showAbout          = false;
 static bool s_closeAllPopups     = false;
 
 static bool s_showChangeName     = false;
@@ -1320,34 +1320,8 @@ static void renderPlayersPanel(ClientSim *cs) {
     ImGui::End();
 }
 
-/* -------------------------------------------------------
- * About modal
- * ------------------------------------------------------- */
-static void renderAboutModal(void) {
-    char title[128];
-    snprintf(title, sizeof(title), "%s###about", langGetText(STR_DLGABOUT_TITLE));
-    if (s_showAbout) {
-        ImGui::OpenPopup(title);
-        s_showAbout = false;
-    }
-    static float s_fadeAbout = 0.0f;
-    bool aboutOpen = true;
-    if (ImGui::BeginPopupModal(title, &aboutOpen,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
-                            imguiPopupFadeAlpha(&s_fadeAbout));
-        if (s_closeAllPopups) { ImGui::PopStyleVar(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-        ImGui::TextUnformatted(langGetText(STR_DLGABOUT_VERSION));
-        ImGui::TextUnformatted(langGetText(STR_DLGABOUT_COPYRIGHT));
-        ImGui::Separator();
-        ImGui::TextDisabled("%s", langGetText(STR_DLGABOUT_BOLOCOPYRIGHT));
-        int f = WBUI::DialogFooter(/*cancelLabel*/ nullptr,
-                                   langGetText(STR_OK));
-        if (f != WBUI::FOOTER_NONE) ImGui::CloseCurrentPopup();
-        ImGui::PopStyleVar();
-        ImGui::EndPopup();
-    }
-}
+/* About modal + linked markdown popups live in dialogs/imgui_about.cpp so
+ * the welcome screen (its own ImGui context) can show the same dialog. */
 
 /* -------------------------------------------------------
  * "Join Game?" confirmation modal — shown when a winbolo://
@@ -2627,7 +2601,7 @@ static void renderMenuBar(ClientSim *cs) {
     /* ---- Help ---------------------------------------- */
     if (ImGui::BeginMenu(langGetText(STR_MENU_HELP))) {
         if (ImGui::MenuItem(langGetText(STR_MENU_HELP)))  { /* TODO: open help file */ }
-        if (ImGui::MenuItem(langGetText(STR_MENU_ABOUT))) s_showAbout = true;
+        if (ImGui::MenuItem(langGetText(STR_MENU_ABOUT))) aboutPopupOpen();
         ImGui::EndMenu();
     }
 
@@ -3492,7 +3466,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     renderPlayersPanel(cs);
 
     /* Modal dialogs */
-    renderAboutModal();
+    aboutPopupRender();
     renderChangeNameModal(cs);
     renderAllianceRequest(cs);
     renderGameVoteWidgets(cs);
@@ -3524,7 +3498,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                 "###sysinfo", "###netinfo", "###gameinfo",
                 "###sendmsg", "###playerspanel", "###settings",
                 "###brainsettings", "###alliancereq",
-                "###about", "###changename",
+                "###about", "###thirdparty", "###authors", "###changename",
                 "###passwordreq", "###keysetup",
             };
             bool overDialog = false;
@@ -3559,6 +3533,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                 s_brainSettingsOpen  = false;
                 s_allianceVisible    = false;
                 s_closeAllPopups = true;
+                aboutPopupCloseAll();
                 dialogDismissKeyboard(s_window);
             }
         }
@@ -3758,7 +3733,7 @@ void sdl3ImguiShowSettings(void) {
     }
 }
 extern "C" void sdl3ImguiShowAbout(void) {
-    s_showAbout = true;
+    aboutPopupOpen();
 }
 extern "C" void sdl3ImguiShowChangeName(void) {
     s_showChangeName = true;

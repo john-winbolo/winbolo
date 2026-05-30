@@ -39,6 +39,8 @@ extern "C" {
 #include "../../lang.h"
 }
 
+#include "imgui_about.h"   /* aboutPopupOpen / aboutPopupRender */
+
 /* Match openingStates enum from gamefront.h */
 enum {
     RESULT_SINGLEPLAYER = 5,   /* openSetup */
@@ -546,72 +548,46 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PopStyleVar(3);
         }
 
-        /* Version label — bottom-right of screen.
-         * Idle shows "vX.Y"; hovering cross-fades to the full
-         * "vX.Y \xC2\xB7 <sha> \xC2\xB7 <date>" over ~180ms, fading back
-         * out on un-hover. A 1px black drop shadow keeps both forms
-         * legible over varied terrain in the background. */
+        /* Version label — bottom-right of screen. Click to open About;
+         * full version/hash/date is shown there instead of inline. A 1px
+         * black drop shadow keeps the text legible over varied terrain. */
         {
-            char shortVer[32], fullVer[96];
+            char shortVer[32];
             SDL_snprintf(shortVer, sizeof(shortVer), "v%s", WINBOLO_VERSION);
-            SDL_snprintf(fullVer, sizeof(fullVer),
-                         "v%s \xC2\xB7 %s \xC2\xB7 %s",
-                         WINBOLO_VERSION, WINBOLO_GIT_HASH, WINBOLO_BUILD_DATE);
 
-            ImVec2 shortSize = ImGui::CalcTextSize(shortVer);
-            ImVec2 fullSize  = ImGui::CalcTextSize(fullVer);
+            ImVec2 verSize = ImGui::CalcTextSize(shortVer);
             const float margin = 12.0f * s;
 
-            /* Anchor the long form's bottom-right corner; the short form
-             * right-aligns to the same edge so the visible right edge of
-             * the text stays still through the cross-fade. */
-            ImGui::SetCursorPos(ImVec2((float)winW - fullSize.x - margin,
-                                       (float)winH - fullSize.y - margin));
-            ImVec2 fullScreen = ImGui::GetCursorScreenPos();
-            const float rightX = fullScreen.x + fullSize.x;
+            ImGui::SetCursorPos(ImVec2((float)winW - verSize.x - margin,
+                                       (float)winH - verSize.y - margin));
+            ImVec2 verScreen = ImGui::GetCursorScreenPos();
 
-            /* Stable hover hit-rect covers the long form so hover state
-             * doesn't toggle as the text width grows/shrinks mid-fade. */
-            bool hovering = ImGui::IsMouseHoveringRect(
-                fullScreen,
-                ImVec2(rightX, fullScreen.y + fullSize.y));
-
-            static float s_phase = 0.0f;       /* 0 = short, 1 = full */
-            const float FADE_SEC = 0.45f;
-            const float target = hovering ? 1.0f : 0.0f;
-            const float step = ImGui::GetIO().DeltaTime / FADE_SEC;
-            if (s_phase < target) {
-                s_phase = (s_phase + step >= target) ? target : s_phase + step;
-            } else if (s_phase > target) {
-                s_phase = (s_phase - step <= target) ? target : s_phase - step;
+            /* Invisible button captures the click + drives hover state.
+             * Sized to the rendered text so the hit rect is exactly the
+             * label, not the surrounding gutter. */
+            ImGui::InvisibleButton("##aboutver", verSize);
+            bool hovered = ImGui::IsItemHovered();
+            if (ImGui::IsItemClicked()) {
+                aboutPopupOpen();
+            }
+            if (hovered) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             }
 
             ImDrawList *dl = ImGui::GetWindowDrawList();
-            const float shortA = 1.0f - s_phase;
-            const float fullA  = s_phase;
-
-            if (shortA > 0.01f) {
-                ImVec2 pos(rightX - shortSize.x, fullScreen.y);
-                dl->AddText(ImVec2(pos.x + 1.0f, pos.y + 1.0f),
-                            IM_COL32(0, 0, 0, (int)(180 * shortA)), shortVer);
-                dl->AddText(pos,
-                            IM_COL32(235, 235, 235, (int)(230 * shortA)), shortVer);
-            }
-            if (fullA > 0.01f) {
-                dl->AddText(ImVec2(fullScreen.x + 1.0f, fullScreen.y + 1.0f),
-                            IM_COL32(0, 0, 0, (int)(180 * fullA)), fullVer);
-                dl->AddText(fullScreen,
-                            IM_COL32(235, 235, 235, (int)(230 * fullA)), fullVer);
-            }
-            /* Confirm the SetCursorPos above by submitting a zero-area
-             * Dummy — the version text uses GetWindowDrawList directly so
-             * ImGui's content tracker doesn't otherwise see anything after
-             * the cursor was moved, and End() asserts in debug builds
-             * (ErrorCheckUsingSetCursorPosToExtendParentBoundaries). */
-            ImGui::Dummy(ImVec2(0.0f, 0.0f));
+            ImU32 fg = hovered
+                ? IM_COL32(255, 255, 255, 255)
+                : IM_COL32(235, 235, 235, 230);
+            dl->AddText(ImVec2(verScreen.x + 1.0f, verScreen.y + 1.0f),
+                        IM_COL32(0, 0, 0, 180), shortVer);
+            dl->AddText(verScreen, fg, shortVer);
         }
 
         ImGui::End(); /* ##WelcomeBg host */
+
+        /* About box (opens on version-label click). Renders as a modal
+         * popup over the welcome screen. */
+        aboutPopupRender();
 
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);

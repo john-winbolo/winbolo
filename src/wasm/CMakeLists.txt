@@ -180,6 +180,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_lobby.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keysetup.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/imgui_about.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_popup.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_view.cpp
     ${SRC_ROOT}/gui/sdl3/wb_theme.cpp
@@ -230,6 +231,7 @@ target_include_directories(winbolo PRIVATE
     ${SRC_ROOT}/server
     ${SRC_ROOT}/mapeditor
     ${cjson_SOURCE_DIR}
+    ${SRC_ROOT}/third_party/imgui_markdown
 )
 bolo_apply_include_rules(winbolo gui)
 bolo_grant_internal_source_access(winbolo
@@ -242,6 +244,7 @@ target_compile_definitions(winbolo PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
