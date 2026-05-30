@@ -150,10 +150,6 @@ static uint8_t s_lastChosenBrainIdx = 0xFF;
  * teamId-aware add-bot packet). */
 static void lobbySendAddBot(ClientSim *cs,
                             int namingPool, uint8_t teamNumber) {
-    WB_LOG_INFO(WB_LOG_CAT_GUI,
-                "[DIAG] lobbySendAddBot ENTRY cs=%p namingPool=%d teamNumber=%u isSP=%d",
-                (void *)cs, namingPool, (unsigned)teamNumber,
-                cs ? (int)clientSimIsSinglePlayer(cs) : -1);
     /* Validate the sticky brain pick against the current catalogue:
      * an out-of-range sticky (e.g. catalogue shrunk between picks)
      * falls back to the server-default sentinel. */
@@ -164,29 +160,15 @@ static void lobbySendAddBot(ClientSim *cs,
     }
     if (cs && clientSimIsSinglePlayer(cs)) {
         ServerSim *sim = gameFrontGetSinglePlayerServerSim();
-        if (!sim) { WB_LOG_WARN(WB_LOG_CAT_GUI, "[DIAG] lobbySendAddBot SP: sim=NULL"); return; }
-        if (serverSimGetState(sim) != serverStateLobby) {
-            WB_LOG_WARN(WB_LOG_CAT_GUI, "[DIAG] lobbySendAddBot SP: state=%d not lobby",
-                        (int)serverSimGetState(sim));
-            return;
-        }
+        if (!sim) return;
+        if (serverSimGetState(sim) != serverStateLobby) return;
         /* Find first free slot */
         BYTE slot;
         for (slot = 1; slot < MAX_TANKS; slot++) {
             if (!serverSimIsPlayerConnected(sim, slot)) break;
         }
-        if (slot >= MAX_TANKS) {
-            WB_LOG_WARN(WB_LOG_CAT_GUI, "[DIAG] lobbySendAddBot SP: no free slot");
-            return;
-        }
-        if (serverSimGetBotBrainPath(sim)[0] == '\0') {
-            WB_LOG_WARN(WB_LOG_CAT_GUI, "[DIAG] lobbySendAddBot SP: botBrainPath empty");
-            return;
-        }
-        WB_LOG_INFO(WB_LOG_CAT_GUI,
-                    "[DIAG] lobbySendAddBot SP: picked slot=%u brain='%s' stickyIdx=%u",
-                    (unsigned)slot, serverSimGetBotBrainPath(sim),
-                    (unsigned)stickyBrainIdx);
+        if (slot >= MAX_TANKS) return;
+        if (serverSimGetBotBrainPath(sim)[0] == '\0') return;
 
         /* Pick a name. If a pool override is supplied we use it; else
          * fall back to "Bot N". Build the used-names list from current
@@ -221,10 +203,6 @@ static void lobbySendAddBot(ClientSim *cs,
             SDL_strlcpy(botName, validated, sizeof(botName));
         }
 
-        WB_LOG_INFO(WB_LOG_CAT_GUI,
-                    "[DIAG]   about to serverSimCreateBot slot=%u name='%s' aiType=%d gameType=%d",
-                    (unsigned)slot, botName, (int)serverSimGetBotAiType(sim),
-                    (int)clientSimGetLobbyGameType(cs));
         /* Serialise against the SDL timer thread's serverInstanceTick.
          * The publish flag inside serverSim is single-thread; without the
          * mutex the lobby heartbeat in serverInstanceTick can re-enter
@@ -249,7 +227,6 @@ static void lobbySendAddBot(ClientSim *cs,
          * event itself. */
         serverSimPublishLobbySlot(sim, slot);
         threadsReleaseMutex();
-        WB_LOG_INFO(WB_LOG_CAT_GUI, "[DIAG]   serverSimCreateBot returned slot=%u", (unsigned)slot);
         /* Bot's name came from the pool — not an override. */
         s_botNameOverridden[slot] = false;
         if (teamNumber > 0 && teamNumber < MAX_TANKS) {
@@ -2960,8 +2937,9 @@ static void lobbySendSetting(ClientSim *cs,
                              const uint8_t *value, uint8_t valueLen) {
     /* Pre-send validation for setting types that have a wire-side range
      * cap on the server. Drop out-of-range values rather than letting
-     * the server reject them — the server has the authoritative check
-     * (transport_udp_server.c) and emits LOBBY_REJECT_INVALID. */
+     * the server reject them — the dispatcher has the authoritative
+     * check (server_command_dispatch.c CMD_LOBBY_SET arm) and returns
+     * CMD_REJECT_INVALID. */
     if (settingType == LST_TIME_MINUTES && valueLen == 2) {
         uint16_t mins = (uint16_t)((value[0] << 8) | value[1]);
         if (mins < LOBBY_TIME_MINUTES_MIN ||
@@ -5110,16 +5088,23 @@ static void renderConnectivityBadge(SDL_Renderer *renderer, float s) {
 }
 
 /* ── Layout A — server reject toast ───────────────────────────────
- * Surfaces the last PACKET_LOBBY_REJECT as a one-line orange status
- * pill. Auto-clears after the user dismisses it (clicks the X) so
- * subsequent rejects re-trigger naturally. */
+ * Surfaces the last CTRL_COMMAND_REJECTED (delivered via
+ * clientSimApplyControl) as a one-line orange status pill. Auto-clears
+ * after the user dismisses it (clicks the X) so subsequent rejects
+ * re-trigger naturally. */
 static void renderLobbyRejectToast(ClientSim *cs, float s) {
     if (clientSimGetLobbyLastRejectPacket(cs) == 0) return;
     const char *reason = langGetText(STR_DLGLOBBY_REJECT_DEFAULT);
     switch (clientSimGetLobbyLastRejectReason(cs)) {
-        case 1: reason = langGetText(STR_DLGLOBBY_REJECT_NOTHOST); break;  /* LOBBY_REJECT_NOT_HOST */
-        case 2: reason = langGetText(STR_DLGLOBBY_REJECT_LOCKED);  break;  /* LOBBY_REJECT_LOCKED */
-        case 3: reason = langGetText(STR_DLGLOBBY_REJECT_INVALID); break;  /* LOBBY_REJECT_INVALID */
+        case  1: reason = langGetText(STR_DLGLOBBY_REJECT_NOTHOST);        break;  /* LOBBY_REJECT_NOT_HOST */
+        case  2: reason = langGetText(STR_DLGLOBBY_REJECT_LOCKED);         break;  /* LOBBY_REJECT_LOCKED */
+        case  3: reason = langGetText(STR_DLGLOBBY_REJECT_INVALID);        break;  /* LOBBY_REJECT_INVALID */
+        case  9: reason = langGetText(STR_NAME_INVALID_EMPTY);             break;  /* CMD_REJECT_NAME_EMPTY */
+        case 10: reason = langGetText(STR_NAME_INVALID_RESERVED_PREFIX);   break;  /* CMD_REJECT_NAME_RESERVED_PREFIX */
+        case 11: reason = langGetText(STR_NAME_INVALID_RESERVED_SUFFIX);   break;  /* CMD_REJECT_NAME_RESERVED_SUFFIX */
+        case 12: reason = langGetText(STR_NAME_INVALID_MIXED_SCRIPTS);     break;  /* CMD_REJECT_NAME_MIXED_SCRIPTS */
+        case 13: reason = langGetText(STR_NAME_INVALID_CHARS);             break;  /* CMD_REJECT_NAME_INVALID */
+        case 14: reason = langGetText(STR_DLGSETNAME_INUSE_ERR);           break;  /* CMD_REJECT_NAME_TAKEN */
         default: break;
     }
     ImGui::PushStyleColor(ImGuiCol_Text, wbThemeColor(g_theme->lockBadge));
@@ -5526,18 +5511,6 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     WB_LOG_INFO(WB_LOG_CAT_GUI, "[LOBBY] imguiLobbyShow called cs=%p inLobby=%d netStat=%d isSP=%d",
             (void*)cs, cs ? (int)clientSimIsInLobby(cs) : -1, cs ? (int)clientSimGetNetStatus(cs) : -1,
             cs ? (int)clientSimIsSinglePlayer(cs) : -1);
-    if (cs) {
-        /* [DIAG] dump slot state every entry — shows whether the slot data is reaching the lobby UI. */
-        for (BYTE i = 0; i < MAX_TANKS; i++) {
-            const ClientLobbySlot *sl = clientSimGetLobbySlot(cs, i);
-            if (sl && sl->connected) {
-                WB_LOG_INFO(WB_LOG_CAT_GUI,
-                            "[DIAG]   slot %u: team=%u ready=%d isBot=%d name='%s'",
-                            (unsigned)i, (unsigned)sl->teamNumber,
-                            (int)sl->ready, (int)sl->isBot, sl->playerName);
-            }
-        }
-    }
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
     if (!window || !renderer) return 0;

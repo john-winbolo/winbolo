@@ -1000,6 +1000,44 @@ static EncodeResult encodeGameVoteState(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+/* Wire: [header 8] [origCmdSeq 4 BE] [origCmdType 1] [reasonCode 1]
+ * [origSlot 1] — 7-byte body. serverSimApplyCommand publishes this on
+ * every non-CMD_OK return; clients correlate by origCmdSeq and dismiss
+ * when stale. Per-recipient filtering lives in udpClientDeliverControl
+ * (matching CTRL_ALLIANCE_REQUEST) so non-originator slots never see
+ * the event. */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeCommandRejectedBody(const ControlEvent *evt,
+                                              const struct UdpServerClient *recipient,
+                                              uint8_t *buf, size_t bufCap,
+                                              size_t *outLen) {
+    (void)recipient;
+    if (bufCap < 7) return ENCODE_OVERFLOW;
+    packU32(buf, evt->u.commandRejected.origCmdSeq);
+    buf[4] = evt->u.commandRejected.origCmdType;
+    buf[5] = evt->u.commandRejected.reasonCode;
+    buf[6] = evt->u.commandRejected.origSlot;
+    *outLen = 7;
+    return ENCODE_OK;
+}
+
+static EncodeResult encodeCommandRejected(const ControlEvent *evt,
+                                          const struct UdpServerClient *recipient,
+                                          uint8_t *buf, size_t bufCap,
+                                          size_t *outLen) {
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_COMMAND_REJECTED, 0);
+    size_t bodyLen = 0;
+    EncodeResult r = encodeCommandRejectedBody(evt, recipient,
+                                               buf + PACKET_HEADER_SIZE,
+                                               bufCap - PACKET_HEADER_SIZE,
+                                               &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
 /* ================================================================
  * Decoders — body-only (the existing wire-packet dispatcher in
  * transportControlCodecDecoder already strips the PacketHeader
@@ -1397,6 +1435,18 @@ static bool decodeGameVoteStateBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+static bool decodeCommandRejectedBody(const uint8_t *buf, size_t len,
+                                      ControlEvent *outEvt) {
+    if (len < 7) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_COMMAND_REJECTED;
+    outEvt->u.commandRejected.origCmdSeq  = unpackU32(buf);
+    outEvt->u.commandRejected.origCmdType = buf[4];
+    outEvt->u.commandRejected.reasonCode  = buf[5];
+    outEvt->u.commandRejected.origSlot    = buf[6];
+    return true;
+}
+
 /* ================================================================
  * Encoder lookup — indexed by ControlEventType. Variants without
  * a wire form leave NULL slots (CTRL_MAP_DOWNLOAD_COMPLETE is
@@ -1430,6 +1480,7 @@ static const ControlEncodeFn s_encoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_BRAIN_LIST]   = encodeLobbyBrainList,
     [CTRL_GAME_VOTE_STATE]    = encodeGameVoteState,
     [CTRL_SERVER_TEXT]        = encodeServerText,
+    [CTRL_COMMAND_REJECTED]   = encodeCommandRejected,
 };
 
 /* ================================================================
@@ -1465,6 +1516,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_BRAIN_LIST]      = encodeLobbyBrainListBody,
     [CTRL_GAME_VOTE_STATE]       = encodeGameVoteStateBody,
     [CTRL_SERVER_TEXT]           = encodeServerTextBody,
+    [CTRL_COMMAND_REJECTED]      = encodeCommandRejectedBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -1493,6 +1545,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_BRAIN_LIST]      = decodeLobbyBrainListBody,
     [CTRL_GAME_VOTE_STATE]       = decodeGameVoteStateBody,
     [CTRL_SERVER_TEXT]           = decodeServerTextBody,
+    [CTRL_COMMAND_REJECTED]      = decodeCommandRejectedBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -1521,6 +1574,7 @@ ControlDecodeFn transportControlCodecDecoder(uint16_t packetType) {
         case PACKET_LOBBY_BOT_BRAIN_CHG:  return decodeLobbyBotBrainBody;
         case PACKET_LOBBY_BRAIN_LIST:     return decodeLobbyBrainListBody;
         case PACKET_GAME_VOTE_STATE:      return decodeGameVoteStateBody;
+        case PACKET_COMMAND_REJECTED:     return decodeCommandRejectedBody;
         default:                      return NULL;
     }
 }

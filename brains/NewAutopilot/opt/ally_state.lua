@@ -46,6 +46,7 @@ function M.init()
       }
     else
       for k in pairs(slot.info) do slot.info[k] = nil end
+      if slot.extra then for k in pairs(slot.extra) do slot.extra[k] = nil end end
       slot.last_tick = 0
       slot.active    = false
     end
@@ -81,10 +82,53 @@ function M.set_info(player_num, now, new_hash)
   local slot = M.slots[player_num]
   if slot == nil then return end
   local info = slot.info
-  -- Clear every existing key so anything absent from new_hash evicts.
-  for k in pairs(info) do info[k] = nil end
+  -- Clear every existing key so anything absent from new_hash evicts —
+  -- EXCEPT keys that arrived via /info extra (tracked on slot.extra),
+  -- which represent supplementary fields the sender ships on idle
+  -- ticks.  Without this protection a /info state arriving after a
+  -- /info extra would wipe attack_pill's "p=..." until the sender's
+  -- next idle tick, leaving receivers blind in between.
+  local extra = slot.extra
+  for k in pairs(info) do
+    if not (extra and extra[k]) then info[k] = nil end
+  end
   -- Apply new keys.
   for k, v in pairs(new_hash) do info[k] = v end
+  slot.last_tick = now
+  slot.active    = true
+end
+
+-- Merge new_hash into the slot WITHOUT clearing existing keys.
+-- Used by /info extra so a sender can ship supplementary fields on a
+-- separate tick without wiping the keys an earlier /info state set.
+-- Updates last_tick so heartbeat-style staleness checks still see the
+-- slot as fresh.
+function M.merge_info(player_num, now, new_hash)
+  local slot = M.slots[player_num]
+  if slot == nil then return end
+  local info = slot.info
+  -- Track every key we receive via /info extra on slot.extra so the
+  -- next /info state doesn't wipe them.  Lazy-init the set so the
+  -- common-case "this bot never sends extras" stays allocation-free.
+  local extra = slot.extra
+  if extra == nil then extra = {}; slot.extra = extra end
+  -- /info extra carries the sender's COMPLETE current extra set (the
+  -- sender rebuilds it from scratch each send), so any extra key absent
+  -- from new_hash has been dropped and must evict.  Without this a stale
+  -- "p=" (an ally's old attack_pill standoff) would linger forever,
+  -- because set_info deliberately protects extra keys from its own
+  -- eviction sweep.  /info state keys (never tracked on slot.extra) are
+  -- left untouched.
+  for k in pairs(extra) do
+    if new_hash[k] == nil then
+      info[k]  = nil
+      extra[k] = nil
+    end
+  end
+  for k, v in pairs(new_hash) do
+    info[k]  = v
+    extra[k] = true
+  end
   slot.last_tick = now
   slot.active    = true
 end
@@ -93,6 +137,7 @@ function M.clear(player_num)
   local slot = M.slots[player_num]
   if slot == nil then return end
   for k in pairs(slot.info) do slot.info[k] = nil end
+  if slot.extra then for k in pairs(slot.extra) do slot.extra[k] = nil end end
   slot.last_tick = 0
   slot.active    = false
 end

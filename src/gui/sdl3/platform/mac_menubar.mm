@@ -399,7 +399,7 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
     if (g_clientSim) clientSimLeaveAllianceSelf((struct ClientSim *)g_clientSim);
 }
 /* Vote handlers — mirror the in-window Players menu vote items in
- * sdl3imgui.cpp. The send wrapper routes through cs->transport.sendBytes
+ * sdl3imgui.cpp. The send wrapper routes through clientSimSubmitCommand
  * (chat/alliance pattern), so the same call covers UDP and SP-host.
  * The widget-visible setter opens the local-side vote panel; once the
  * server publishes CTRL_GAME_VOTE_STATE the widget populates. The

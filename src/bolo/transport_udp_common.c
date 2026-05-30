@@ -89,7 +89,6 @@ const char *packetTypeName(uint8_t type) {
     case PACKET_MAP_DOWNLOAD:   return "MAP_DOWNLOAD";
     case PACKET_PLAYER_LIST:    return "PLAYER_LIST";
     case PACKET_NAME_CHANGE:        return "NAME_CHANGE";
-    case PACKET_NAME_CHANGE_REJECT: return "NAME_CHANGE_REJECT";
     case PACKET_ALLIANCE_REQUEST:   return "ALLIANCE_REQUEST";
     case PACKET_ALLIANCE_ACCEPT:    return "ALLIANCE_ACCEPT";
     case PACKET_ALLIANCE_LEAVE:     return "ALLIANCE_LEAVE";
@@ -118,7 +117,6 @@ const char *packetTypeName(uint8_t type) {
     case PACKET_LOBBY_BRAIN_LIST:   return "LOBBY_BRAIN_LIST";
     case PACKET_LOBBY_SET_MAP:      return "LOBBY_SET_MAP";
     case PACKET_LOBBY_SET_PASSWORD: return "LOBBY_SET_PASSWORD";
-    case PACKET_LOBBY_REJECT:       return "LOBBY_REJECT";
     case PACKET_LOBBY_MAP_LIST_REQ: return "LOBBY_MAP_LIST_REQ";
     case PACKET_LOBBY_MAP_LIST_RSP: return "LOBBY_MAP_LIST_RSP";
     case PACKET_LOBBY_MAP_SEARCH_REQ: return "LOBBY_MAP_SEARCH_REQ";
@@ -157,6 +155,9 @@ const char *packetTypeName(uint8_t type) {
     case PACKET_PUNCH_PROBE_REPLY:   return "PUNCH_PROBE_REPLY";
     case PACKET_CONTROL_TICK:      return "CONTROL_TICK";
     case PACKET_CONTROL_ACK:       return "CONTROL_ACK";
+    case PACKET_COMMAND_TICK:      return "COMMAND_TICK";
+    case PACKET_COMMAND_ACK:       return "COMMAND_ACK";
+    case PACKET_COMMAND_REJECTED:  return "COMMAND_REJECTED";
     default:                        return "UNKNOWN";
     }
 }
@@ -408,12 +409,6 @@ SOCKET createUdpSocket(bool exclusive) {
 /* Send a buffer via UDP to a specific address */
 void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
                const struct sockaddr_in *addr) {
-    uint8_t pktType = getPacketType(buf, len);
-    if (pktType != PACKET_STATE_SNAPSHOT && pktType != PACKET_PONG && pktType != PACKET_INPUT) {
-        WB_LOG_DEBUG(WB_LOG_CAT_NET, "[UDP SEND] %s (%u) len=%d to %s:%u",
-                     packetTypeName(pktType), pktType, len,
-                     inet_ntoa(addr->sin_addr), ntohs(addr->sin_port));
-    }
     sendto(sock, (const char *)buf, len, 0,
            (const struct sockaddr *)addr, sizeof(*addr));
 }

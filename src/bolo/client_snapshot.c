@@ -28,9 +28,11 @@
  *    clientBuildInputPacket  - pack keys/build into an InputPacket
  *                              (public — declared in client_net.h)
  *    clientApplySnapshot     - apply a server snapshot to the ClientSim
- *                              (internal — declared in client_snapshot.h)
- *    clientSimNetSetupTankGo - finalize tank setup after server places it
- *                              (public — declared in client_net.h)
+ *                              (internal — declared in client_snapshot.h);
+ *                              the local-tank first-snapshot branch is
+ *                              where the viewport finalisation (centre +
+ *                              mine-view clear + recalc) fires, once per
+ *                              game life, so frontends don't orchestrate it.
  *
  *  Companion file: brain_data.c (Lua-brain data shaping).
  *********************************************************/
@@ -298,7 +300,20 @@ void clientApplySnapshot(ClientSim *csPtr,
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
         csPtr->clientState.hasPredictedTank = TRUE;
         if (isHuman) {
+          /* The local tank just became live on the map: the server's chosen
+           * start has been copied into MY_TANK above, and the transport has
+           * already driven map install (inline on MAP_DOWNLOAD for nolobby,
+           * via the CTRL_GAME_PHASE LOBBY→RUNNING watcher for lobby) — so
+           * viewport->mineView is allocated. Centre on the tank, clear the
+           * per-player seen-mines tracking, and recalc the viewport. */
+          BYTE count, count2;
           clientSimCenterTank(csPtr);
+          for (count = 0; count < MAIN_BACK_BUFFER_SIZE_X; count++) {
+            for (count2 = 0; count2 < MAIN_BACK_BUFFER_SIZE_Y; count2++) {
+              (*clientSimGetMineView(csPtr))->mineItem[count][count2] = FALSE;
+            }
+          }
+          clientSimRecalc(csPtr);
         }
       } else if (csPtr->clientState.initialized && csPtr->clientState.hasPredictedTank && MY_TANK(csPtr) != NULL) {
         /* Build a temporary tank-like state for reconciliation.
@@ -680,10 +695,16 @@ void clientApplySnapshot(ClientSim *csPtr,
         break;
       case EVENT_SOUND:
         /* data: [soundId, mx, my, sourcePlayer] — play with distance attenuation.
-         * All sounds are now server-authoritative (isPredicting suppresses
-         * prediction-side sounds), so no filtering needed. */
+         * Sounds are server-authoritative (isPredicting suppresses prediction-side
+         * sounds). Bubbles and tank-sink are gated to the local player only:
+         * they're tied to the player's own boat/drown event and would otherwise
+         * play whenever any remote tank within distance went into water. */
         if (isHuman) {
-          clientSoundDist(&csPtr->sim, (sndEffects)events[i].data[0], events[i].data[1], events[i].data[2]);
+          sndEffects sid = (sndEffects)events[i].data[0];
+          bool selfOnly = (sid == bubbles || sid == tankSinkNear || sid == tankSinkFar);
+          if (!selfOnly || events[i].data[3] == csPtr->myPlayerNum) {
+            clientSoundDist(&csPtr->sim, sid, events[i].data[1], events[i].data[2]);
+          }
         }
         break;
       case EVENT_SOUND_SHOOT:
@@ -970,35 +991,4 @@ void clientApplySnapshot(ClientSim *csPtr,
   if (isHuman) {
     csPtr->viewport.needRecalc = TRUE;
   }
-}
-
-/*********************************************************
-*NAME:          clientSimNetSetupTankGo
-*AUTHOR:        John Morrison
-*CREATION DATE: 27/2/99
-*LAST MODIFIED: 27/11/99
-*PURPOSE:
-*  Map download is complete and we are ready to start
-*  playing.
-*********************************************************/
-void clientSimNetSetupTankGo(ClientSim *csPtr) {
-  BYTE count;   /* Looping variables */
-  BYTE count2;
-
-  /* The server is authoritative for tank placement: serverSimAddPlayer
-   * has already chosen the start and the first snapshot has copied the
-   * position into MY_TANK. Calling startsGetStart on the client here
-   * would re-pick locally and, if it disagrees with the server (different
-   * sim state at the moment of call), leave the view centered on a spot
-   * the tank jumps away from on the next snapshot. Just centre on the
-   * existing position. */
-  clientSimCenterTank(csPtr);
-
-  for (count = 0; count < MAIN_BACK_BUFFER_SIZE_X; count++) {
-    for (count2 = 0; count2 < MAIN_BACK_BUFFER_SIZE_Y; count2++) {
-      (*clientSimGetMineView(csPtr))->mineItem[count][count2] = FALSE;
-    }
-  }
-
-  clientSimRecalc(csPtr);
 }

@@ -54,6 +54,20 @@ int run_lobby_team_meta_codec_and_apply(void);
 int run_lobby_bot_config_codec_and_apply(void);
 int run_lobby_bot_brain_codec_and_apply(void);
 int run_lobby_brain_list_codec_and_apply(void);
+int run_command_codec_roundtrip_variants(void);
+int run_command_codec_cmdseq_slot(void);
+int run_command_codec_bounds_checks(void);
+int run_command_rejected_parks_name_codes(void);
+int run_command_rejected_ignores_other_slot(void);
+int run_command_rejected_clear_resets_both_fields(void);
+int run_lobby_add_bot_rejects_empty_brain_path(void);
+int run_lobby_add_bot_rejects_ai_none(void);
+int run_lobby_add_bot_rejects_not_in_lobby(void);
+int run_lobby_add_bot_rejects_non_host_sender(void);
+int run_command_queue_first_submit_drains(void);
+int run_command_queue_second_submit_does_not_drain(void);
+int run_command_queue_ack_drains_pending_tail(void);
+int run_command_queue_ack_clearing_queue_skips_drain(void);
 int run_game_vote_state_codec_back_to_lobby(void);
 int run_game_vote_state_codec_surrender_passed(void);
 int run_game_vote_state_decoder_rejects_short(void);
@@ -110,6 +124,27 @@ int run_bolo_rand_golden_sequence(void);
 int run_countdown_abort_publishes_phase(void);
 int run_lobby_auto_unready_clears_humans_keeps_bots(void);
 int run_mapdir_root_fallback(void);
+
+/* Bot chat routing (test_bot_chat_routing.c) — exercises serverSimApplyCommand
+ * with a bot's slot as senderSlot and inspects the recipient ClientSim's
+ * brain inbox. Confirms bots send and receive through the same CMD_CHAT
+ * dispatcher arm + CTRL_CHAT subscriber funnel as humans. */
+int run_bot_chat_send_to_human_lands_in_human_inbox(void);
+int run_bot_chat_send_to_other_bot_lands_in_recipient_inbox(void);
+int run_bot_chat_receive_from_human_lands_in_bot_inbox(void);
+int run_bot_chat_receive_from_other_bot_via_broadcast(void);
+
+/* Subscriber-arm orphan regressions (test_subscriber_arm_orphans.c).
+ * Each captures a side effect that was orphaned when its standalone
+ * PACKET_* handler was superseded by the unified control bus. */
+int run_alliance_request_flags_addressed(void);
+int run_alliance_request_ignores_other_slot(void);
+int run_phase_lobby_sets_inlobby(void);
+int run_phase_gameover_resets_in_game(void);
+int run_player_join_appends_lobby_chat(void);
+int run_player_join_self_does_not_announce(void);
+int run_player_leave_appends_lobby_chat(void);
+int run_lobby_settings_clears_balance_proposal(void);
 
 /* Reliable control-event queue regression tests (test_control_event_queue.c).
  * Each captures a specific bug that shipped during the

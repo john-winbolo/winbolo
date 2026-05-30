@@ -87,6 +87,47 @@ int botManagerGetPendingThreads(const ServerSim *sim) {
     return sim ? sim->botMgr.pendingThreads : -1;
 }
 
+/* Bot chat send callback.
+ * The default clientSimDefaultChatSend → clientSimNetSendChat path takes
+ * threadsMutex inside clientSimSubmitCommand (client_net.c:429).  Bot
+ * brains run on worker threads inside the producer's botWorkerPoolRun
+ * call, during which the producer (timer thread) is HOLDING threadsMutex
+ * — the worker would block forever waiting for it, and the producer in
+ * turn is blocked waiting for the worker, deadlocking the whole game.
+ *
+ * Instead of submitting directly, we queue a CMD_CHAT on the bot's
+ * BotJobCtx and let Stage 3 (serial, on the producer thread, already
+ * under the mutex) drain the queue via serverSimApplyCommand.  Same
+ * end-result (CTRL_CHAT publish → in-process subscribers receive),
+ * just routed through the deferred queue. */
+static void botManagerQueueingChatSendCallback(ClientSim *cs,
+                                               uint8_t fromPlayer,
+                                               uint8_t destPlayer,
+                                               const char *message) {
+    (void)fromPlayer;
+    if (cs == NULL || message == NULL || message[0] == '\0') return;
+    ServerSim *sim = (ServerSim *)clientSimGetBoundServerSim(cs);
+    if (sim == NULL) return;
+    BYTE pn = clientSimGetMyPlayerNum(cs);
+    if (pn >= MAX_TANKS) return;
+    BotJobCtx *j = &sim->botMgr.jobs[pn];
+    if (j->pendingCmdCount >= BOT_PENDING_CMD_MAX) {
+        /* Queue full — drop. Two ticks back-to-back without a Stage-3
+         * drain shouldn't happen (drain runs every botManagerTick), and
+         * even if it did, dropping bot chat is preferable to allocating
+         * unbounded memory inside a worker. */
+        return;
+    }
+    ClientCommand *cmd = &j->pendingCmds[j->pendingCmdCount++];
+    memset(cmd, 0, sizeof(*cmd));
+    cmd->type = CMD_CHAT;
+    cmd->u.chat.destPlayer = destPlayer;
+    size_t msgLen = strlen(message);
+    if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
+    cmd->u.chat.bodyLen = (uint16_t)msgLen;
+    memcpy(cmd->u.chat.body, message, msgLen);
+}
+
 /* Apply any pending pool-resize request. Called from botManagerTick
  * before any dispatch happens, so the resize lands in the gap between
  * ticks. */
@@ -267,7 +308,20 @@ double botManagerComputePerBotTargetMs(const ServerSim *sim, int activeBots) {
     if (brainBudget < 1.0) {
         brainBudget = 1.0;
     }
-    double perBot = brainBudget * (double)sim->botMgr.threadsConfig
+    /* Parallelism comes from the live worker pool (N workers + the
+     * producer running one job inline = N+1 runners), NOT from the
+     * per-sim threadsConfig. In WinBoloDS the sim's BotManager is
+     * init'd (threadsConfig=1) before the global pool is created, and
+     * botManagerInit never back-fills threadsConfig — so reading it
+     * here would under-count runners to 1 and starve the budget. Use
+     * the pool size as ground truth; fall back to threadsConfig (which
+     * the BrainTest resize path keeps in sync with the pool) when it's
+     * larger, e.g. the inline-serial pool==0 case. */
+    int runners = botWorkerPoolGetSize() + 1;
+    if (sim->botMgr.threadsConfig > runners) {
+        runners = sim->botMgr.threadsConfig;
+    }
+    double perBot = brainBudget * (double)runners
                     / (double)activeBots;
     if (perBot > brainBudget) {
         perBot = brainBudget;
@@ -483,10 +537,15 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     clientSimCreate(bot->cs);
     clientSimSetIsBot(bot->cs, true);
     clientSimSetPlayerNum(bot->cs, playerNum);
-    /* Chat send: bot's ClientSim inherits clientSimDefaultChatSend from
-     * clientSimCreate. Outbound chat from brain.sendmessage flows through
-     * the same client_net.h path human chat uses → local transport's
-     * sendBytes publishes CTRL_CHAT. No bot-specific wiring needed. */
+    /* Chat send: override the default clientSimDefaultChatSend with our
+     * own callback that QUEUES the chat as a pending CMD_CHAT on the
+     * bot's BotJobCtx instead of calling clientSimSubmitCommand
+     * directly.  The default path acquires threadsMutex inside
+     * clientSimSubmitCommand, which would deadlock against the producer
+     * thread (timer) that's currently holding it while waiting for the
+     * worker to finish.  Stage 3 of botManagerTick drains the queue
+     * serially under the held mutex. */
+    clientSimSetChatSendFunc(bot->cs, botManagerQueueingChatSendCallback);
 
     /* Load map data from the server before tankCreate so the bot's local
      * starts/pills/bases are populated when startsGetStart() runs — without
@@ -513,6 +572,23 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
      * NULL for cs to skip the localTick snapshot-apply hook. */
     bot->transport = transportLocalCreatePassive(sim, NULL, playerNum);
 
+    /* Bind the transport into the bot's ClientSim so client_net.h
+     * send wrappers (clientSimNetSendChat in particular) actually
+     * fire instead of bailing on `!cs->hasTransport`.  Mirrors the
+     * field setup at the bottom of clientSimNetConnectLocalSim
+     * (client_net.c:199-204) — keep this sequence in lockstep with
+     * that one so the host's local ClientSim and a bot's local
+     * ClientSim look identical from the sim's POV.  Without these
+     * bindings, brain.sendmessage was silently dropped at the
+     * clientSimNetSendChat hasTransport gate — the symptom was
+     * info.messages always empty on every bot. */
+    bot->cs->transport      = bot->transport;
+    bot->cs->hasTransport   = true;
+    bot->cs->isUdpTransport = false;
+    clientSimSetBoundServerSim(bot->cs, sim);
+    clientSimSetLocalTransport(bot->cs, true);
+    clientSimSetNetType(bot->cs, netSingle);
+
     /* Register this bot's ClientSim as a control-event subscriber so
      * out-of-band roster/lobby/phase state from the server reaches it
      * the same way snapshots do. Sync runs inside register and uses the
@@ -534,7 +610,8 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
         fprintf(stderr, "botManager: failed to create brain for bot %d\n", playerNum);
         serverSimUnregisterSubscriber(sim, bot->controlSub);
         bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
-        transportLocalDestroy(&bot->transport);
+        /* Transport ownership moved to bot->cs (see binding above);
+         * clientSimDestroy will tear it down via cs->transport. */
         clientSimDestroy(bot->cs);
         bot->cs = NULL;
         serverSimRemovePlayer(sim, playerNum);
@@ -568,6 +645,60 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
 
     fprintf(stderr, "botManager: bot %d started with brain '%s'\n",
             playerNum, brainName);
+    return true;
+}
+
+/* Per-bot snapshot pull + ClientSim sync + brain-map refresh, run on
+ * the worker thread. Reads the ServerSim (immutable during the brain
+ * phase — serverSimTick already ran and inputs aren't applied until
+ * Stage 3) and the shared game map read-only; writes only this bot's
+ * own job buffers and ClientSim, so it parallelises safely across the
+ * pool. Returns false when the tank is dead and waiting to respawn —
+ * the caller then skips the think (j->hasInput stays false, so the
+ * producer sends no input for this bot, exactly as before). */
+static bool botSyncSnapshotForJob(BotJobCtx *j) {
+    BotContext *bot = j->bot;
+    ServerSim *sim  = j->sim;
+    GameSim *gs     = serverSimGetGameSim(sim);
+
+    bot->transport.getSnapshot(bot->transport.ctx, bot->playerNum,
+                               &j->hdr, j->tanks, MAX_TANKS,
+                               j->shells, MAX_SNAPSHOT_SHELLS,
+                               j->tkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
+                               j->bases, MAX_SNAPSHOT_BASES,
+                               j->pills, MAX_SNAPSHOT_PILLS,
+                               j->events, MAX_SNAPSHOT_EVENTS);
+
+    clientSimSyncFromSnapshot(bot->cs, &j->hdr,
+                              j->tanks, j->hdr.tankCount,
+                              j->shells, j->hdr.shellCount,
+                              j->tkExplosions, j->hdr.tkExplosionCount,
+                              j->bases, j->hdr.baseCount,
+                              j->pills, j->hdr.pillCount,
+                              j->events, j->hdr.reliableEventCount,
+                              bot->playerNum);
+
+    if (bot->ai == aiFull && bot->brain.isFirst) {
+        /* Full map on first tick */
+        screenBrainMapFillFromMap(bot->cs, &gs->mp, &gs->mns);
+    }
+    botUpdateBrainMap(bot, sim);
+
+    /* Skip brain while tank is dead (waiting to respawn). */
+    if (MY_TANK(bot->cs) != NULL &&
+        tankGetDeathWait(&MY_TANK(bot->cs)) > 0) {
+        return false;
+    }
+
+    /* Reset key state before brain runs */
+    *clientSimGetBrainHoldKeys(bot->cs) = 0;
+    *clientSimGetBrainTapKeys(bot->cs) = 0;
+    {
+        BuildInfo **bi = clientSimGetBrainBuildInfo(bot->cs);
+        if (*bi != NULL) {
+            (*bi)->action = 0;
+        }
+    }
     return true;
 }
 
@@ -644,6 +775,15 @@ static void runBotThinkJob(int botIndex, void *userData) {
     BotJobCtx *j = &sim->botMgr.jobs[botIndex];
     BotContext *bot = j->bot;
 
+    /* Pull this bot's snapshot, sync its ClientSim, and refresh its
+     * brain map — formerly serial Stage-1 work, now parallelised here.
+     * A dead bot (respawn wait) syncs state but skips the think. Runs
+     * before t0/hook so its cost lands in the brain-phase wall-clock,
+     * not the per-bot think deadline (lastThinkMs stays brain-only). */
+    if (!botSyncSnapshotForJob(j)) {
+        return;
+    }
+
     /* Optional pre-think hook (BrainTest viz). NULL in WinBoloDS.
      * Set once at host init and never modified after, so reading the
      * function pointer here from a worker thread is safe. */
@@ -697,7 +837,19 @@ void botManagerTick(ServerSim *sim, aiType ai) {
 
     GameSim *gs = serverSimGetGameSim(sim);
 
-    /* ---- Stage 1: snapshot/sync (serial, on producer thread) ---- */
+    /* ---- Stage 1: select active bots (serial, cheap) ----
+     * Only decide which bots tick this frame. The heavy per-bot work —
+     * snapshot pull, ClientSim sync, and brain-map refresh — used to run
+     * here on the producer thread and dominated the serial budget; it
+     * now runs inside the worker job (botSyncSnapshotForJob), so it
+     * parallelises across the pool instead of draining the 20ms tick.
+     *
+     * One consequence: the dead-bot (respawn-wait) skip moved into the
+     * worker, because it reads ClientSim state that only exists after
+     * the sync. So a respawning bot is briefly counted in activeCount
+     * here (diluting the per-bot budget for the few ticks it's dead),
+     * but its worker early-returns before the think, so it costs no
+     * brain time. */
     for (BYTE i = 0; i < MAX_TANKS; i++) {
         BotContext *bot = &sim->botMgr.bots[i];
         if (!bot->active) continue;
@@ -709,48 +861,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
         j->needRemove = false;
         j->hasInput   = false;
         j->wasKilled  = false;
-
-        bot->transport.getSnapshot(bot->transport.ctx, bot->playerNum,
-                                   &j->hdr, j->tanks, MAX_TANKS,
-                                   j->shells, MAX_SNAPSHOT_SHELLS,
-                                   j->tkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                                   j->bases, MAX_SNAPSHOT_BASES,
-                                   j->pills, MAX_SNAPSHOT_PILLS,
-                                   j->events, MAX_SNAPSHOT_EVENTS);
-
-        clientSimSyncFromSnapshot(bot->cs, &j->hdr,
-                                  j->tanks, j->hdr.tankCount,
-                                  j->shells, j->hdr.shellCount,
-                                  j->tkExplosions, j->hdr.tkExplosionCount,
-                                  j->bases, j->hdr.baseCount,
-                                  j->pills, j->hdr.pillCount,
-                                  j->events, j->hdr.reliableEventCount,
-                                  bot->playerNum);
-
-        if (bot->ai == aiFull && bot->brain.isFirst) {
-            /* Full map on first tick */
-            screenBrainMapFillFromMap(bot->cs, &gs->mp, &gs->mns);
-        }
-        botUpdateBrainMap(bot, sim);
-
-        /* Skip brain while tank is dead (waiting to respawn). Excluding
-         * dead bots here keeps the worker job branch-free on liveness
-         * and stops a respawning bot from inheriting another bot's queue
-         * slot mid-dispatch. */
-        if (MY_TANK(bot->cs) != NULL &&
-            tankGetDeathWait(&MY_TANK(bot->cs)) > 0) {
-            continue;
-        }
-
-        /* Reset key state before brain runs */
-        *clientSimGetBrainHoldKeys(bot->cs) = 0;
-        *clientSimGetBrainTapKeys(bot->cs) = 0;
-        {
-            BuildInfo **bi = clientSimGetBrainBuildInfo(bot->cs);
-            if (*bi != NULL) {
-                (*bi)->action = 0;
-            }
-        }
+        j->pendingCmdCount = 0;
 
         sim->botMgr.jobIndices[activeCount++] = i;
     }
@@ -863,6 +974,16 @@ void botManagerTick(ServerSim *sim, aiType ai) {
         sim->botMgr.bots[i].transport.sendInput(sim->botMgr.bots[i].transport.ctx, &j->pkt1);
         sim->botMgr.bots[i].transport.sendInput(sim->botMgr.bots[i].transport.ctx, &j->pkt2);
 
+        /* Drain any commands the worker queued via
+         * botManagerQueueingChatSendCallback.  We're on the producer
+         * thread here with threadsMutex already held (the timer
+         * callback acquired it before dispatching serverInstanceTick),
+         * so serverSimApplyCommand can run inline. */
+        for (int q = 0; q < j->pendingCmdCount; q++) {
+            (void)serverSimApplyCommand(sim, i, &j->pendingCmds[q]);
+        }
+        j->pendingCmdCount = 0;
+
         /* Budget-overrun telemetry: every overrun bumps the per-bot
          * counter; logging is rate-limited to once per ~50 ticks per
          * bot so a chronically slow bot doesn't flood. Reads
@@ -952,7 +1073,11 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
     luaBrainInstanceDestroy(&bot->brain);
     serverSimUnregisterSubscriber(sim, bot->controlSub);
     bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
-    transportLocalDestroy(&bot->transport);
+    /* Transport ownership moved to bot->cs (botManagerAddBot binds
+     * bot->cs->transport = bot->transport); clientSimDestroy tears it
+     * down via cs->transport.  Don't call transportLocalDestroy on
+     * bot->transport here — it's the same underlying TransportLocalCtx
+     * and would double-free. */
     clientSimDestroy(bot->cs);
     bot->cs = NULL;
     serverSimRemovePlayer(sim, playerNum);

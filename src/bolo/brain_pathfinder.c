@@ -784,6 +784,16 @@ void brainPathfinderClearOverlay(BrainPathfinder *pf) {
   }
 }
 
+float brainPathfinderGetOverlay(const BrainPathfinder *pf, int x, int y) {
+  if (!pf || x < 0 || x >= MAP_SIZE || y < 0 || y >= MAP_SIZE) return 0.0f;
+  return (float)pf->overlay_grid[y * MAP_SIZE + x];
+}
+
+float brainPathfinderGetDanger(const BrainPathfinder *pf, int x, int y) {
+  if (!pf || x < 0 || x >= MAP_SIZE || y < 0 || y >= MAP_SIZE) return 0.0f;
+  return (float)pf->danger_grid[y * MAP_SIZE + x];
+}
+
 /* ------------------------------------------------------------------ */
 /* Cost computation (inner loop)                                       */
 /* ------------------------------------------------------------------ */
@@ -1273,12 +1283,57 @@ do_search:
  * This keeps the inner loop fast for bulk candidate evaluation. */
 static FILE *astar_log = NULL;
 static int astar_log_enabled = 0;
+static int astar_log_tick = 0;  /* current tick prefix for ASTAR log lines */
+static char astar_log_caller[2048] = "";  /* Lua call context for next cost_to */
 
 /* Separate log for the incremental Dijkstra. NOT enabled together with
  * the cost_to log because the per-tick STEP entries are high-frequency
  * and add measurable overhead. Toggle independently via
  * brainPathfinderEnableDijkstraLog(). */
 static FILE *dijkstra_log = NULL;
+
+void brainPathfinderSetLogTick(int tick) {
+  astar_log_tick = tick;
+}
+
+void brainPathfinderSetLogCaller(const char *caller) {
+  if (caller) {
+    size_t n = strlen(caller);
+    if (n >= sizeof(astar_log_caller)) n = sizeof(astar_log_caller) - 1;
+    memcpy(astar_log_caller, caller, n);
+    astar_log_caller[n] = '\0';
+  } else {
+    astar_log_caller[0] = '\0';
+  }
+}
+
+void brainPathfinderEnableLogPath(const char *path) {
+  if (astar_log) {
+    fflush(astar_log);
+    fclose(astar_log);
+    astar_log = NULL;
+  }
+  if (path) {
+    astar_log = fopen(path, "w");
+    if (astar_log) {
+      /* Line-buffer so writes appear without needing fclose. The
+       * default fully-buffered mode hides recent activity from anyone
+       * tailing the file while the brain is still running. */
+      setvbuf(astar_log, NULL, _IONBF, 0);  /* unbuffered — writes appear immediately */
+      fprintf(astar_log, "=== cost_to debug log ===\n");
+      fflush(astar_log);
+      astar_log_enabled = 1;
+    } else {
+      astar_log_enabled = 0;
+    }
+  } else {
+    astar_log_enabled = 0;
+  }
+}
+
+int brainPathfinderIsLogEnabled(void) {
+  return astar_log_enabled;
+}
 
 void brainPathfinderEnableLog(int enable) {
   astar_log_enabled = enable;
@@ -1309,6 +1364,16 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
                              int sx, int sy, int dx, int dy,
                              int in_boat, int shells, int trees,
                              int mines, int armour, int budget) {
+  return brainPathfinderCostToEx(pf, sx, sy, dx, dy, in_boat,
+                                  shells, trees, mines, armour,
+                                  budget, 1 /*allow_boat*/);
+}
+
+float brainPathfinderCostToEx(BrainPathfinder *pf,
+                               int sx, int sy, int dx, int dy,
+                               int in_boat, int shells, int trees,
+                               int mines, int armour, int budget,
+                               int allow_boat) {
   int src_ni, dest_tile, expanded;
   float result;
   FILE *alog = astar_log;
@@ -1339,6 +1404,10 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
     int dst_type = pf->map[dy * MAP_SIZE + dx] & 0x0F;
     fprintf(alog, "=== cost_to(%d,%d)->(%d,%d) boat=%d sh=%d tr=%d mn=%d arm=%d budget=%d src_terrain=%d dst_terrain=%d ===\n",
             sx,sy,dx,dy,in_boat,shells,trees,mines,armour,budget,src_type,dst_type);
+    if (astar_log_caller[0]) {
+      fprintf(alog, "CALLER:\n%s\n", astar_log_caller);
+      astar_log_caller[0] = '\0';  /* consume — caller sets per-call */
+    }
   }
 
   /* Clamp */
@@ -1408,10 +1477,12 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
     closed_set(pf->closed, ci);
     expanded++;
 
-    if (alog && expanded <= 20) {
+    if (alog) {
       int tile_type = pf->map[cy * MAP_SIZE + cx] & 0x0F;
-      fprintf(alog, "  expand #%d: (%d,%d) boat=%d g=%.2f terrain=%d f_top=%.2f\n",
-              expanded, cx, cy, cur_boat, pf->g_cost[ci], tile_type, entry.f);
+      uint16_t ov = pf->overlay_grid[cy * MAP_SIZE + cx];
+      uint16_t dg = pf->danger_grid[cy * MAP_SIZE + cx];
+      fprintf(alog, "ASTAR_DBG t=%d expand #%d: (%d,%d) boat=%d g=%.2f terrain=%d ov=%d d=%d f=%.2f\n",
+              astar_log_tick, expanded, cx, cy, cur_boat, pf->g_cost[ci], tile_type, ov, dg, entry.f);
     }
 
     /* Destination reached */
@@ -1453,12 +1524,16 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
                          cur_shells, cur_trees, cur_mines, cur_armour,
                          &shells_used, &trees_used, &mines_used, &armour_used,
                          &onBoat);
-      if (alog && expanded <= 20) {
+      if (alog) {
         int n_type = pf->map[ny * MAP_SIZE + nx] & 0x0F;
-        fprintf(alog, "    neigh(%d,%d) d=%d terrain=%d cost=%.2f%s\n",
-                nx, ny, d, n_type, tc, tc >= COST_INF ? " INF" : "");
+        uint16_t n_ov = pf->overlay_grid[ny * MAP_SIZE + nx];
+        uint16_t n_dg = pf->danger_grid[ny * MAP_SIZE + nx];
+        fprintf(alog, "ASTAR_DBG t=%d   neigh(%d,%d) d=%d terrain=%d ov=%d dg=%d cost=%.2f%s\n",
+                astar_log_tick, nx, ny, d, n_type, n_ov, n_dg, tc, tc >= COST_INF ? " INF" : "");
       }
       if (tc >= COST_INF) { n_neigh_inf++; continue; }
+      /* allow_boat=0: skip nodes that would transition into boat state */
+      if (!allow_boat && onBoat) { n_neigh_inf++; continue; }
 
       ni = node_idx(nx, ny, onBoat);
       if (get_closed(pf, ni)) { n_neigh_closed++; continue; }
@@ -1516,6 +1591,10 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
   pf->status = -1;
   pf->dest_x = -1;
   pf->dest_y = -1;
+
+  /* Flush so the log is readable while the brain is still running
+   * (Windows MSVCRT treats _IOLBF as _IOFBF for files). */
+  if (alog) fflush(alog);
 
   return result;
 }
@@ -3211,14 +3290,16 @@ static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
   if (out_tiles == NULL || max_tiles <= 0) return 0;
 
   /* Shell length in map units. Tank passes sightLen/2 to shellsAddItem
-   * — INTEGER division. Use the same here so odd sight_len matches.
-   * For PILL shooter the engine passes PILLBOX_FIRE_DISTANCE directly. */
-  int len_units;
+   * as TURNTYPE/float — float division, so odd sight_len contributes a
+   * half-tile. For PILL shooter the engine passes PILLBOX_FIRE_DISTANCE
+   * (8.5) directly. Keep len_units float so shellLifeTicks sees the
+   * same fractional value the engine does. */
+  float len_units;
   if (shooter_type == BRAIN_SHOT_SHOOTER_PILL) {
-    len_units = (int)PILLBOX_FIRE_DISTANCE;
+    len_units = PILLBOX_FIRE_DISTANCE;
   } else {
     int sl = (sight_len > 0) ? sight_len : GUNSIGHT_MAX;
-    len_units = sl / 2;   /* match engine's integer / */
+    len_units = sl / 2.0f;
   }
 
   /* Spawn position + lifetime budget come from shells.c so the
@@ -3242,6 +3323,8 @@ static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
     int my = (int)((unsigned)origin_wy >> TANK_SHIFT_MAPSIZE);
     out_tiles[count].mx = (uint8_t)mx;
     out_tiles[count].my = (uint8_t)my;
+    out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+    out_tiles[count].hit_id = 0;
     last_mx = mx;
     last_my = my;
     count++;
@@ -3254,6 +3337,8 @@ static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
     if ((mx != last_mx || my != last_my) && count < max_tiles) {
       out_tiles[count].mx = (uint8_t)mx;
       out_tiles[count].my = (uint8_t)my;
+      out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+      out_tiles[count].hit_id = 0;
       last_mx = mx;
       last_my = my;
       count++;
@@ -3275,8 +3360,109 @@ static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
     if (mx != last_mx || my != last_my) {
       out_tiles[count].mx = (uint8_t)mx;
       out_tiles[count].my = (uint8_t)my;
+      out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+      out_tiles[count].hit_id = 0;
       last_mx = mx;
       last_my = my;
+      count++;
+    }
+  }
+
+  return count;
+}
+
+/* Tank-aware shot simulation. Same tile walk as simulate_shot_walk but
+ * also checks for tank hitbox intersections (128 wu box, same as
+ * tankIsTankHit in tank.c) at every sub-tick position. When a tank is
+ * hit, a hit_type=BRAIN_SHOT_HIT_TANK entry is emitted and the walk
+ * stops (shell consumed). Owner tank is excluded from hit checks. */
+static int simulate_shot_walk_tanks(WORLD origin_wx, WORLD origin_wy,
+                                     TURNTYPE angle,
+                                     int shooter_type, int sight_len,
+                                     const BrainShotTankPos *tanks, int num_tanks,
+                                     uint8_t owner_player,
+                                     BrainShotTile *out_tiles, int max_tiles) {
+  if (out_tiles == NULL || max_tiles <= 0) return 0;
+
+  int len_units;
+  if (shooter_type == BRAIN_SHOT_SHOOTER_PILL) {
+    len_units = (int)PILLBOX_FIRE_DISTANCE;
+  } else {
+    int sl = (sight_len > 0) ? sight_len : GUNSIGHT_MAX;
+    len_units = sl / 2;
+  }
+
+  WORLD x, y;
+  shellSpawnPos(origin_wx, origin_wy, angle, &x, &y);
+  int ticks = shellLifeTicks(len_units);
+
+  int32_t xStep = 0, yStep = 0;
+  utilCalcDistanceHP(&xStep, &yStep, angle, SHELL_SPEED);
+  int32_t xAcc = 0, yAcc = 0;
+
+  int count = 0;
+  int last_mx = -1, last_my = -1;
+
+  /* Origin tile */
+  {
+    int mx = (int)((unsigned)origin_wx >> TANK_SHIFT_MAPSIZE);
+    int my = (int)((unsigned)origin_wy >> TANK_SHIFT_MAPSIZE);
+    out_tiles[count].mx = (uint8_t)mx;
+    out_tiles[count].my = (uint8_t)my;
+    out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+    out_tiles[count].hit_id = 0;
+    last_mx = mx; last_my = my;
+    count++;
+  }
+
+  /* Post-offset tile */
+  {
+    int mx = (int)((unsigned)x >> TANK_SHIFT_MAPSIZE);
+    int my = (int)((unsigned)y >> TANK_SHIFT_MAPSIZE);
+    if ((mx != last_mx || my != last_my) && count < max_tiles) {
+      out_tiles[count].mx = (uint8_t)mx;
+      out_tiles[count].my = (uint8_t)my;
+      out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+      out_tiles[count].hit_id = 0;
+      last_mx = mx; last_my = my;
+      count++;
+    }
+  }
+
+  for (int t = 0; t < ticks && count < max_tiles; t++) {
+    xAcc += xStep;
+    yAcc += yStep;
+    int xMove = xAcc >> 8;
+    int yMove = yAcc >> 8;
+    xAcc -= xMove << 8;
+    yAcc -= yMove << 8;
+    x = (WORLD)((int)x + xMove);
+    y = (WORLD)((int)y + yMove);
+
+    /* Tank hitbox check — 128 wu box, same as tankIsTankHit */
+    for (int i = 0; i < num_tanks; i++) {
+      if (tanks[i].player_num == owner_player) continue;
+      if (abs((int)tanks[i].wx - (int)x) < 128 &&
+          abs((int)tanks[i].wy - (int)y) < 128) {
+        int mx = (int)((unsigned)x >> TANK_SHIFT_MAPSIZE);
+        int my = (int)((unsigned)y >> TANK_SHIFT_MAPSIZE);
+        out_tiles[count].mx = (uint8_t)mx;
+        out_tiles[count].my = (uint8_t)my;
+        out_tiles[count].hit_type = BRAIN_SHOT_HIT_TANK;
+        out_tiles[count].hit_id = tanks[i].player_num;
+        count++;
+        return count;  /* shell consumed by tank hit */
+      }
+    }
+
+    int mx = (int)((unsigned)x >> TANK_SHIFT_MAPSIZE);
+    int my = (int)((unsigned)y >> TANK_SHIFT_MAPSIZE);
+    if (mx != last_mx || my != last_my) {
+      out_tiles[count].mx = (uint8_t)mx;
+      out_tiles[count].my = (uint8_t)my;
+      out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+      out_tiles[count].hit_id = 0;
+      last_mx = mx; last_my = my;
       count++;
     }
   }
@@ -3317,4 +3503,21 @@ int brainPathfinderSimulateShotAngle(WORLD origin_wx, WORLD origin_wy,
   return simulate_shot_walk(origin_wx, origin_wy, (TURNTYPE)a,
                             shooter_type, sight_len,
                             out_tiles, max_tiles);
+}
+
+/* Public entry: shot simulation with tank hitbox checking. */
+int brainPathfinderSimulateShotWithTanks(WORLD origin_wx, WORLD origin_wy,
+                                          WORLD target_wx, WORLD target_wy,
+                                          int shooter_type, int sight_len,
+                                          const BrainShotTankPos *tanks, int num_tanks,
+                                          uint8_t owner_player,
+                                          BrainShotTile *out_tiles, int max_tiles) {
+  if (out_tiles == NULL || max_tiles <= 0) return 0;
+  if (origin_wx == target_wx && origin_wy == target_wy) return 0;
+  TURNTYPE angle = shellAngleFromTarget(origin_wx, origin_wy,
+                                        target_wx, target_wy);
+  return simulate_shot_walk_tanks(origin_wx, origin_wy, angle,
+                                  shooter_type, sight_len,
+                                  tanks, num_tanks, owner_player,
+                                  out_tiles, max_tiles);
 }

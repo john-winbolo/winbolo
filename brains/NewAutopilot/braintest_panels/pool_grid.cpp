@@ -99,6 +99,7 @@ ImVec4 poolColorFor(int idx) {
     if (idx == 10) return ImVec4(1.0f, 1.0f,  1.0f,  1);   /* winners: white */
     if (idx == 11) return ImVec4(0.7f, 0.5f,  1.0f,  1);   /* def_build: violet */
     if (idx == 12) return ImVec4(0.55f,0.85f, 0.55f, 1);   /* wait_for_lgm: sage */
+    if (idx == 13) return ImVec4(1.0f, 0.85f, 0.2f,  1);   /* kill_lgm: yellow */
     return ImVec4(0.8f, 0.8f, 0.8f, 1);
 }
 
@@ -670,6 +671,7 @@ void renderPoolGrid(int registry_idx, const char *body) {
     const char *phase = getStr(root, "phase", "?");
     int  tickIn      = (int)getNum(root, "tick", -1);
     int  replanIn    = (int)getNum(root, "replan_left", -1);
+    const char *debugSession = getStr(root, "debug_session", "");
     bool isReplanTick = (replanIn == 0);
     int  followBot    = (int)getNum(root, "bot", -1);
 
@@ -687,7 +689,7 @@ void renderPoolGrid(int registry_idx, const char *body) {
     Section sections[MAX_SECS];
     int nSections = parseSections(root, sections, MAX_SECS);
 
-    Section *byIdx[13] = {0};
+    Section *byIdx[14] = {0};
     for (int i = 0; i < nSections; i++) {
         if (sections[i].idx >= 1 && sections[i].idx <= 12) {
             byIdx[sections[i].idx] = &sections[i];
@@ -739,6 +741,18 @@ void renderPoolGrid(int registry_idx, const char *body) {
         ImGui::Text("  Tick %d  Phase: %s", tickIn, phase);
     else
         ImGui::Text("  Phase: %s", phase);
+    if (debugSession[0] != '\0') {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                           "  [%s]", debugSession);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Copy")) {
+            char clip[256];
+            SDL_snprintf(clip, sizeof(clip), "%s bot%d tick %d",
+                         debugSession, followBot, tickIn);
+            SDL_SetClipboardText(clip);
+        }
+    }
     ImGui::SameLine();
     if (replanIn == 0) {
         ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1),
@@ -757,11 +771,13 @@ void renderPoolGrid(int registry_idx, const char *body) {
 
     /* 2x5 grid for sections 1..10. */
     ImVec2 avail = ImGui::GetContentRegionAvail();
-    /* Reserve room at the bottom for the def_build (11) +
-     * wait_for_lgm (12) strips when those sections exist. */
+    /* Reserve room at the bottom for the def_build (11) /
+     * wait_for_lgm (12) / kill_lgm (13) strips when those sections
+     * exist. */
     float reservedH = 0.0f;
     if (byIdx[11]) reservedH += 56.0f;
     if (byIdx[12]) reservedH += 56.0f;
+    if (byIdx[13]) reservedH += 56.0f;
     const float gap = 4.0f;
     float gridH = avail.y - reservedH;
     if (gridH < 100.0f) gridH = 100.0f;
@@ -802,6 +818,15 @@ void renderPoolGrid(int registry_idx, const char *body) {
         ImVec2 a12 = ImGui::GetContentRegionAvail();
         ImGui::BeginChild("##cell12", ImVec2(a12.x, 52.0f), true);
         renderSection(st, byIdx[12]);
+        ImGui::EndChild();
+    }
+    /* kill_lgm (13) — single-row strip. Pool injected directly from
+     * perception (no eval_queue / goal_competition path), so only
+     * present while a hostile LGM is visible. */
+    if (byIdx[13]) {
+        ImVec2 a13 = ImGui::GetContentRegionAvail();
+        ImGui::BeginChild("##cell13", ImVec2(a13.x, 52.0f), true);
+        renderSection(st, byIdx[13]);
         ImGui::EndChild();
     }
 

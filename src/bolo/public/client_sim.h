@@ -261,6 +261,13 @@ netStatus clientSimGetNetStatus(ClientSim *cs);
 void clientSimSetNetType(ClientSim *cs, netType value);
 void clientSimSetNetStatus(ClientSim *cs, netStatus value);
 
+/* Submit a ClientCommand to the bound server. UDP transports enqueue
+ * into the reliable carrier (retransmit until ACKed); local transports
+ * apply directly under the threads mutex. cmdSeq is assigned internally
+ * for UDP; ignored for local. */
+struct ClientCommand;
+void clientSimSubmitCommand(ClientSim *cs, const struct ClientCommand *cmd);
+
 /* Callback setters (per-instance) */
 void clientSimSetChatSendFunc(ClientSim *cs, NetChatSendFunc func);
 void clientSimSetNameChangeSendFunc(ClientSim *cs, NetNameChangeSendFunc func);
@@ -274,6 +281,18 @@ void clientSimSetLockToggleSendFunc(ClientSim *cs, NetLockToggleSendFunc func);
  * transport binding is: the observer is owned by an external party
  * (the test harness) whose lifetime is independent of the ClientSim. */
 void clientSimSetControlObserver(ClientSim *cs, ControlObserverCb cb, void *ctx);
+
+/* Transport-specific observer slot. Installed by the UDP transport for
+ * side-effects that live outside the bolo library (joinState transitions,
+ * re-join trigger, WBN re-auth, ACH_LONELY_LOBBY). Kept distinct from
+ * the test observer so a test harness doesn't displace it. */
+void clientSimSetTransportControlObserver(ClientSim *cs, ControlObserverCb cb, void *ctx);
+
+/* Pending alliance request from another player. Returns 0xFF when none.
+ * Set by the CTRL_ALLIANCE_REQUEST subscriber arm; frontends poll once
+ * per frame and pop the dialog when non-0xFF, then call clear. */
+BYTE clientSimGetPendingAllianceRequest(const ClientSim *cs);
+void clientSimClearPendingAllianceRequest(ClientSim *cs);
 
 /* Lobby chat helper — appends "name: message\n" to lobbyChatHistory */
 void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message);

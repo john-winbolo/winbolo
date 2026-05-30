@@ -57,6 +57,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->controlObserverCb(cs->controlObserverCtx, evt);
     }
 
+    /* Transport-internal observer hook. Same contract as the test
+     * observer, separate slot so the two don't displace each other.
+     * Wired by the UDP transport for joinState / re-join / WBN re-auth
+     * side effects that don't belong in the bolo lib subscriber. */
+    if (cs->transportObserverCb != NULL) {
+        cs->transportObserverCb(cs->transportObserverCtx, evt);
+    }
+
     /* Self-skip on CTRL_PLAYER_LEAVE only: a recipient must not process
      * their own departure. CTRL_PLAYER_JOIN is allowed for self because
      * playersSetPlayer's self-branch (inUse already TRUE, iMyPlayerNum
@@ -75,7 +83,16 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
 
     switch (evt->type) {
     case CTRL_ALLIANCE_REQUEST:
-        /* No state mutation — request is UI/dialog territory. */
+        /* Flag a pending request for the addressed slot. The transport
+         * observer (transport_udp_client.c) pops the SDL dialog for
+         * UDP-connected clients; the host's local-transport ClientSim
+         * exposes the field via clientSimGetPendingAllianceRequest so
+         * its frontend can poll. In-process subscribers (bots) see
+         * every publish; gate on the addressed slot so only the
+         * intended recipient flags. */
+        if (evt->u.allianceRequest.toPlayer == cs->myPlayerNum) {
+            cs->pendingAllianceRequestFrom = evt->u.allianceRequest.fromPlayer;
+        }
         break;
 
     case CTRL_ALLIANCE_ACCEPT:
@@ -111,6 +128,11 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                          nameBuf, ccBuf,
                          0, 0, 0, 0, 0, FALSE,
                          numAllies, numAllies > 0 ? allies : NULL, FALSE);
+        if (pNum != cs->myPlayerNum && cs->inLobby) {
+            char joinMsg[PACKET_MAX_PLAYER_NAME + 16];
+            snprintf(joinMsg, sizeof(joinMsg), "%s has joined.", nameBuf);
+            clientSimAppendLobbyChat(cs, "***", joinMsg);
+        }
         break;
     }
 
@@ -124,15 +146,6 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     }
 
     case CTRL_LOBBY_SLOT:
-        WB_LOG_INFO(WB_LOG_CAT_CLIENT,
-                    "[DIAG] clientSimApplyControl CTRL_LOBBY_SLOT cs=%p slot=%u team=%u ready=%d isBot=%d name='%s' connected=%d",
-                    (void *)cs,
-                    (unsigned)evt->u.lobbySlot.playerNum,
-                    (unsigned)evt->u.lobbySlot.slot.teamNumber,
-                    (int)evt->u.lobbySlot.slot.ready,
-                    (int)evt->u.lobbySlot.slot.isBot,
-                    evt->u.lobbySlot.slot.playerName,
-                    (int)evt->u.lobbySlot.slot.connected);
         mpDiagLog("[clientSim] APPLY CTRL_LOBBY_SLOT cs=%p myPlayerNum=%d slot=%u team=%u ready=%d isBot=%d name='%.12s' connected=%d",
                   (void *)cs, (int)cs->myPlayerNum,
                   (unsigned)evt->u.lobbySlot.playerNum,
@@ -196,6 +209,12 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         clientSimSetHiddenMines(cs,    evt->u.lobbySettings.lobbyHiddenMines);
         clientSimSetGmeStartDelay(cs,  evt->u.lobbySettings.lobbyStartDelay);
         clientSimSetGmeLength(cs,      evt->u.lobbySettings.lobbyTimeLimit);
+        /* A fresh lobby snapshot supersedes any pending balance
+         * proposal — the server only re-publishes if it still has a
+         * live one. Otherwise the client's "Teams balanced" success
+         * label would linger past its intended one-shot lifetime. */
+        cs->balanceProposalActive = false;
+        memset(cs->balanceProposal, 0, sizeof(cs->balanceProposal));
         break;
 
     case CTRL_LOBBY_TEAM_META: {
@@ -355,6 +374,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     case CTRL_GAME_PHASE_LOBBY:
         cs->netStat = netLobby;
         cs->countdownSeconds = 0;
+        /* Mirror of the RUNNING arm's inLobby flip. Without this the
+         * client stays in the in-game UI after a back-to-lobby /
+         * surrender vote passes — the server flips to lobby state and
+         * publishes this event, but the frontend's clientSimIsInLobby
+         * gate stays false until a follow-up CTRL_LOBBY_SETTINGS
+         * arrives carrying inLobby=true, which only happens on hosts
+         * with lobbyEnabled. */
+        cs->inLobby = true;
         break;
     case CTRL_GAME_PHASE_COUNTDOWN:
         cs->netStat = netLobbyCountdown;
@@ -371,11 +398,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->inLobby = false;
         break;
     case CTRL_GAME_PHASE_GAME_OVER:
-        /* Lobby-branch reset; non-lobby end-of-game is transport-internal. */
-        if (cs->inLobby) {
-            cs->netStat = netLobby;
-            cs->countdownSeconds = 0;
-        }
+        /* Reset countdown unconditionally — used to be gated on
+         * cs->inLobby, but that meant in-game game-over (vote pass /
+         * map win / surrender chain) left netStat and countdown
+         * untouched on the client, blocking the return-to-lobby UI
+         * transition. The transport-internal joinState flip for the
+         * non-lobby case is handled by the transport observer. */
+        cs->netStat = netLobby;
+        cs->countdownSeconds = 0;
         break;
 
     case CTRL_GAME_OVER: {
@@ -469,10 +499,11 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         /* In-process delivery for chat. Mirrors the UDP path in
          * transport_udp_client.c (PACKET_CHAT_BROADCAST), but for
          * subscribers that aren't UDP clients (host humanSim, bot
-         * ClientSims). Without this, a bot publishing CTRL_CHAT via
-         * the local transport's sendBytes dispatch would never
-         * materialize in any recipient's MessageState — so /info
-         * traffic between bots would be invisible. */
+         * ClientSims). Without this, a bot's chat — submitted via
+         * clientSimSubmitCommand and republished by the CMD_CHAT
+         * arm as CTRL_CHAT — would never materialize in any
+         * recipient's MessageState, so /info traffic between bots
+         * would be invisible. */
         BYTE fromPlayer = evt->u.chat.fromPlayer;
         BYTE destPlayer = evt->u.chat.destPlayer;
         uint16_t bodyLen = evt->u.chat.bodyLen;
@@ -494,12 +525,36 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         break;
     }
 
-    case CTRL_PLAYER_LEAVE:
-        /* Lobby chat "X has left" rendering stays at the wire boundary
-         * (transport_udp_client.c PACKET_PLAYER_LEFT branch).  Bots and
-         * SP read playerConnected directly, so no in-process state
-         * mutation is needed here — the event exists so replay logs and
-         * other subscribers see leaves alongside joins. */
+    case CTRL_PLAYER_LEAVE: {
+        /* Lobby chat "X has left" rendering. Used to live in
+         * transport_udp_client.c's PACKET_PLAYER_LEFT branch, but that
+         * path is dead now that CTRL_PLAYER_LEAVE rides the control
+         * queue. Bots and SP read playerConnected directly, so no
+         * additional state mutation is needed here. */
+        BYTE pNum = evt->u.playerLeave.playerNum;
+        if (pNum != cs->myPlayerNum && cs->inLobby) {
+            char nameBuf[PACKET_MAX_PLAYER_NAME];
+            memcpy(nameBuf, evt->u.playerLeave.name, sizeof(nameBuf));
+            nameBuf[sizeof(nameBuf) - 1] = '\0';
+            char leaveMsg[PACKET_MAX_PLAYER_NAME + 16];
+            snprintf(leaveMsg, sizeof(leaveMsg), "%s has left.", nameBuf);
+            clientSimAppendLobbyChat(cs, "***", leaveMsg);
+        }
+        break;
+    }
+
+    case CTRL_COMMAND_REJECTED:
+        /* Only react to rejects attributed to our own slot. In-process
+         * subscribers (SP-host, bots) receive every published reject;
+         * the wire path is already filtered by udpClientDeliverControl.
+         * lobbyLastRejectPacket stores origCmdType (the CMD_* enum
+         * value) — its previous semantics were "non-zero = pending
+         * reject" and the toast UI in imgui_lobby.cpp only checks for
+         * non-zero, so storing a CMD_* there is compatible. */
+        if (evt->u.commandRejected.origSlot == clientSimGetMyPlayerNum(cs)) {
+            cs->lobbyLastRejectPacket = evt->u.commandRejected.origCmdType;
+            cs->lobbyLastRejectReason = evt->u.commandRejected.reasonCode;
+        }
         break;
     }
 }

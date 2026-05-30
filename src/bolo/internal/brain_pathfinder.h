@@ -223,6 +223,10 @@ void brainPathfinderDijkstraPreheat(BrainPathfinder *pf);
 
 /* Debug logging — writes detailed A* info to astar_costto.log */
 void brainPathfinderEnableLog(int enable);
+void brainPathfinderEnableLogPath(const char *path);
+int brainPathfinderIsLogEnabled(void);
+void brainPathfinderSetLogTick(int tick);
+void brainPathfinderSetLogCaller(const char *caller);
 /* Independent toggle for the per-step incremental Dijkstra log
  * (dijkstra.log). Off by default; the per-tick STEP entries are
  * high-frequency and add measurable overhead, so this isn't piggy-
@@ -379,6 +383,8 @@ int16_t brainPathfinderInfluenceAt(BrainPathfinder *pf, int x, int y);
 /* Custom overlay (modder extension point) */
 void brainPathfinderSetOverlay(BrainPathfinder *pf, int x, int y, float value);
 void brainPathfinderClearOverlay(BrainPathfinder *pf);
+float brainPathfinderGetOverlay(const BrainPathfinder *pf, int x, int y);
+float brainPathfinderGetDanger(const BrainPathfinder *pf, int x, int y);
 
 /* Per-search danger offset — subtracted from danger on the fly during A*.
  * Use to model a specific pill as dead without touching the danger grid.
@@ -399,6 +405,16 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
                              int sx, int sy, int dx, int dy,
                              int in_boat, int shells, int trees,
                              int mines, int armour, int budget);
+
+/* Same as CostTo but with allow_boat control. When allow_boat=0,
+ * tiles that would put the tank in a boat (TT_BOAT or water entered
+ * from land in a boat) are treated as impassable. Halves the search
+ * space when boat exploration isn't needed. */
+float brainPathfinderCostToEx(BrainPathfinder *pf,
+                               int sx, int sy, int dx, int dy,
+                               int in_boat, int shells, int trees,
+                               int mines, int armour, int budget,
+                               int allow_boat);
 
 /* Cost estimation (straight-line sample) */
 float brainPathfinderEstimateCost(BrainPathfinder *pf,
@@ -462,10 +478,24 @@ int brainPathfinderFindFrontLine(BrainPathfinder *pf,
 #define BRAIN_SHOT_SHOOTER_TANK 0
 #define BRAIN_SHOT_SHOOTER_PILL 1
 
+/* hit_type: 0 = map tile traversal, 1 = tank hit at this position.
+ * When hit_type==1, hit_id is the player number of the tank hit
+ * and mx/my is the tile the shell was on when the hit occurred. */
 typedef struct {
   uint8_t mx;
   uint8_t my;
+  uint8_t hit_type;
+  uint8_t hit_id;
 } BrainShotTile;
+
+#define BRAIN_SHOT_HIT_TILE 0
+#define BRAIN_SHOT_HIT_TANK 1
+
+/* Tank position for simulate_shot_with_tanks. */
+typedef struct {
+  WORLD wx, wy;
+  uint8_t player_num;
+} BrainShotTankPos;
 
 /* Returns the number of unique tiles written to out_tiles
  * (de-duplicated against the previous tile, never against earlier
@@ -494,6 +524,19 @@ int brainPathfinderSimulateShotAngle(WORLD origin_wx, WORLD origin_wy,
                                      float angle,
                                      int shooter_type, int sight_len,
                                      BrainShotTile *out_tiles, int max_tiles);
+
+/* Same as brainPathfinderSimulateShot but also checks for tank hits.
+ * Tank positions are passed via tanks/num_tanks. When the shell enters
+ * the 128 wu hitbox of a tank, a hit_type=1 entry is emitted at that
+ * point in the sequence (interspersed with tile entries). The shell
+ * stops on the first tank hit (same as the engine). owner_player is
+ * the firing player — own tank is excluded from hit checks. */
+int brainPathfinderSimulateShotWithTanks(WORLD origin_wx, WORLD origin_wy,
+                                          WORLD target_wx, WORLD target_wy,
+                                          int shooter_type, int sight_len,
+                                          const BrainShotTankPos *tanks, int num_tanks,
+                                          uint8_t owner_player,
+                                          BrainShotTile *out_tiles, int max_tiles);
 
 /* ── Serialization (for exact trace replay) ────────────────── */
 

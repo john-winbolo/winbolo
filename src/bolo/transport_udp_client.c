@@ -36,6 +36,7 @@
 #include "control_event.h"
 #include "client_sim_control.h"
 #include "transport_control_codec.h"
+#include "transport_command_codec.h"
 #include "wbn_key_codec.h"
 #include "bolo_map_validate.h"
 #include "wire_limits.h"
@@ -53,6 +54,13 @@
  * CLIENT SIDE
  * ================================================================ */
 
+#define OUT_CMD_QUEUE_CAP 64
+
+typedef struct {
+    ClientCommand cmd;          /* cmd.cmdSeq matches this entry's seq */
+    uint32_t lastSentMs;        /* 0 = never sent yet; eager send sets it */
+} OutCmdEntry;
+
 typedef struct {
     SOCKET sock;
     struct sockaddr_in serverAddr;
@@ -69,6 +77,17 @@ typedef struct {
     char wbnServerKey[WINBOLONET_KEY_LEN];
     bool wbnReauthSent;  /* TRUE after sending re-auth, reset when WBN flag restored */
     uint32_t outSequence;
+
+    /* Reliable outbound command carrier. cmdSeq is monotonic per
+     * connection (resets in transportUdpClientCreate). The queue holds
+     * one entry per submitted ClientCommand from outHeadSeq up to but
+     * not including outTailSeq. Capacity is fixed at OUT_CMD_QUEUE_CAP;
+     * overflow asserts in debug, silently drops in release (rare
+     * — user-action submit rate is bounded). */
+    OutCmdEntry outCmdQueue[OUT_CMD_QUEUE_CAP];
+    uint32_t outCmdNextSeq;   /* next cmdSeq to assign on submit (init 1) */
+    uint32_t outHeadSeq;      /* lowest unacked seq; advances on ACK */
+    uint32_t outTailSeq;      /* exclusive tail; outTailSeq == outCmdNextSeq */
 
     /* Input redundancy ring buffer */
     InputPacket inputRing[CLIENT_INPUT_RING_SIZE];
@@ -288,14 +307,51 @@ static void udpClientSendInput(void *ctx, const InputPacket *input) {
     udpClientSendTo(c, buf, len);
 }
 
-/* Client sendBytes: thin wrapper around udpClientSendTo. Lets
- * client_net.h send wrappers build the wire packet themselves and
- * push it through a transport-agnostic interface (see the local
- * transport's localSendBytes for the in-process counterpart). */
-static void udpClientSendBytes(void *ctx, const uint8_t *buf, size_t len) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
+/* Pack every entry in [outHeadSeq, outTailSeq) into a single
+ * PACKET_COMMAND_TICK and send. Updates each entry's lastSentMs. */
+static void udpClientDrainCommandQueue(TransportUdpClientCtx *c) {
+    if (c->outHeadSeq == c->outTailSeq) return;
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    udpClientSendTo(c, buf, (int)len);
+    uint8_t buf[1400];
+    packHeader(buf, PACKET_COMMAND_TICK, c->outSequence++);
+    size_t pos = PACKET_HEADER_SIZE + 1;  /* +1 for count placeholder */
+    uint8_t count = 0;
+    uint32_t now = (uint32_t)SDL_GetTicks();
+    for (uint32_t seq = c->outHeadSeq; seq != c->outTailSeq; seq++) {
+        OutCmdEntry *e = &c->outCmdQueue[seq % OUT_CMD_QUEUE_CAP];
+        uint8_t entry[COMMAND_MAX_WIRE_BYTES];
+        size_t entryLen;
+        if (!commandCodecEncode(&e->cmd, entry, sizeof(entry), &entryLen)) {
+            continue;
+        }
+        if (pos + 2 + entryLen > sizeof(buf)) break;
+        packU16(buf + pos, (uint16_t)entryLen);
+        pos += 2;
+        memcpy(buf + pos, entry, entryLen);
+        pos += entryLen;
+        e->lastSentMs = now;
+        count++;
+        if (count == 255) break;
+    }
+    buf[PACKET_HEADER_SIZE] = count;
+    if (count > 0) udpClientSendTo(c, buf, (int)pos);
+}
+
+void transportUdpClientSubmitCommand(Transport *t, const ClientCommand *cmd) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (c->outTailSeq - c->outHeadSeq >= OUT_CMD_QUEUE_CAP) {
+        SDL_assert(0 && "out command queue full");
+        return;
+    }
+    bool wasEmpty = (c->outHeadSeq == c->outTailSeq);
+    uint32_t seq = c->outCmdNextSeq++;
+    OutCmdEntry *e = &c->outCmdQueue[seq % OUT_CMD_QUEUE_CAP];
+    e->cmd = *cmd;
+    e->cmd.cmdSeq = seq;
+    e->lastSentMs = 0;
+    c->outTailSeq = seq + 1;
+    if (wasEmpty) udpClientDrainCommandQueue(c);
 }
 
 /* Decode a localized payload (langid + arg list) at buf[startPos..len)
@@ -535,6 +591,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_LOBBY_BRAIN_LIST: return "LOBBY_BRAIN_LIST";
     case CTRL_GAME_VOTE_STATE:  return "GAME_VOTE_STATE";
     case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
+    case CTRL_COMMAND_REJECTED: return "COMMAND_REJECTED";
     default:                    return "<unknown>";
     }
 }
@@ -1302,54 +1359,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
     }
 
-    case PACKET_NAME_CHANGE_REJECT:
-        /* Name change reject format:
-         *   [header 8] [reasonCode 1] */
-        if (len < PACKET_HEADER_SIZE + 1) {
-            fprintf(stderr, "[UDP CLIENT] PACKET_NAME_CHANGE_REJECT: short packet (len=%d)\n", len);
-        } else {
-            uint8_t reasonCode = buf[PACKET_HEADER_SIZE];
-            langid msgId;
-            const char *rendered;
-            char rendBuf[FILENAME_MAX];
-            switch (reasonCode) {
-                case NAME_REJECT_TAKEN:
-                    msgId = STR_DLGSETNAME_INUSE_ERR;
-                    break;
-                case NAME_REJECT_RESERVED_PREFIX:
-                    msgId = STR_NAME_INVALID_RESERVED_PREFIX;
-                    break;
-                case NAME_REJECT_RESERVED_SUFFIX:
-                    msgId = STR_NAME_INVALID_RESERVED_SUFFIX;
-                    break;
-                case NAME_REJECT_MIXED_SCRIPTS:
-                    msgId = STR_NAME_INVALID_MIXED_SCRIPTS;
-                    break;
-                case NAME_REJECT_EMPTY:
-                    msgId = STR_NAME_INVALID_EMPTY;
-                    break;
-                case NAME_REJECT_INVALID:
-                    msgId = STR_NAME_INVALID_CHARS;
-                    break;
-                default:
-                    fprintf(stderr, "[UDP CLIENT] PACKET_NAME_CHANGE_REJECT: unknown reasonCode=%u\n", reasonCode);
-                    msgId = STR_NAME_INVALID_CHARS;
-                    break;
-            }
-            rendered = langGetText(msgId);
-            rendBuf[0] = '\0';
-            if (rendered) {
-                strncpy(rendBuf, rendered, sizeof(rendBuf) - 1);
-                rendBuf[sizeof(rendBuf) - 1] = '\0';
-            }
-            if (c->clientSim->inLobby) {
-                clientSimAppendLobbyChat(c->clientSim, "Server", rendBuf);
-            } else {
-                clientSimNetStatusMessage(c->clientSim, rendBuf);
-            }
-        }
-        break;
-
     case PACKET_CHAT_BROADCAST: {
         /* Chat broadcast — wire format depends on fromPlayer (see netpacks.h):
          *   < MAX_TANKS  : player-to-player chat, payload is plain message
@@ -1639,6 +1648,25 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
     }
 
+    case PACKET_COMMAND_ACK: {
+        if (len < PACKET_HEADER_SIZE + 4) break;
+        uint32_t highest = unpackU32(buf + PACKET_HEADER_SIZE);
+        if (highest >= c->outHeadSeq) {
+            c->outHeadSeq = highest + 1;
+            if (c->outHeadSeq > c->outTailSeq) {
+                c->outHeadSeq = c->outTailSeq;
+            }
+            /* Drive the "coalesce into next outgoing frame" half of the
+             * plan's eager-then-coalesce contract: a submit that arrived
+             * while the head was in flight (wasEmpty=false → no immediate
+             * drain) waits here for the prior head to ack, then ships.
+             * Without this, never-sent tail entries sit forever because
+             * the retransmit timer's lastSentMs!=0 gate excludes them. */
+            if (c->outHeadSeq != c->outTailSeq) udpClientDrainCommandQueue(c);
+        }
+        break;
+    }
+
     case PACKET_GAME_OVER:
         /* [header 8] */
         {
@@ -1803,14 +1831,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
     }
-
-    case PACKET_LOBBY_REJECT:
-        /* [header 8] [origPacket 1] [reasonCode 1] */
-        if (len >= PACKET_HEADER_SIZE + 2) {
-            c->clientSim->lobbyLastRejectPacket = buf[PACKET_HEADER_SIZE];
-            c->clientSim->lobbyLastRejectReason = buf[PACKET_HEADER_SIZE + 1];
-        }
-        break;
 
     case PACKET_PUNCH_REQUEST_ACK:
         /* Tracker acked our PUNCH_REQUEST. Status byte at PACKET_HEADER_SIZE
@@ -2035,6 +2055,16 @@ static bool udpClientTick(void *ctx) {
 
         /* Drive in-flight lobby map upload (no-op when none active). */
         udpClientUploadPump(c);
+
+        /* Retransmit head of the outbound command queue if the head
+         * entry was sent more than 80ms ago and is still unacked. */
+        if (c->outHeadSeq != c->outTailSeq) {
+            uint32_t now = (uint32_t)SDL_GetTicks();
+            OutCmdEntry *head = &c->outCmdQueue[c->outHeadSeq % OUT_CMD_QUEUE_CAP];
+            if (head->lastSentMs != 0 && (now - head->lastSentMs) > 80) {
+                udpClientDrainCommandQueue(c);
+            }
+        }
     }
 
     return true;
@@ -2094,6 +2124,140 @@ static bool udpClientGetSnapshotVtable(void *ctx, BYTE clientIdx,
     return true;
 }
 
+/* Transport-internal observer wired by transportUdpClientCreate.  Runs
+ * during clientSimApplyControl alongside the (test-only) controlObserverCb.
+ * Handles side effects that used to live in standalone PACKET_* handlers
+ * (PACKET_ALLIANCE_UPDATE, PACKET_SERVER_SHUTDOWN, PACKET_GAME_OVER,
+ * PACKET_LOBBY_MAP_CHANGE, PACKET_LOBBY_SETTINGS) and were left orphaned
+ * when those packets were superseded by the body-codec control queue. */
+static void udpClientTransportObserver(void *ctx, const ControlEvent *evt) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
+    if (c == NULL || evt == NULL) return;
+    switch (evt->type) {
+    case CTRL_ALLIANCE_REQUEST:
+        /* Pop the SDL/frontend alliance-request dialog for UDP-connected
+         * clients.  The bolo-lib subscriber arm has already flagged
+         * pendingAllianceRequestFrom for headless/test paths. */
+        if (c->clientSim != NULL &&
+            evt->u.allianceRequest.toPlayer == c->playerNum) {
+            BYTE fromPN = evt->u.allianceRequest.fromPlayer;
+            char pName[FILENAME_MAX];
+            playersGetPlayerName(&c->clientSim->sim.plyrs, fromPN, pName, FALSE);
+            if (windowShowAllianceRequest() == TRUE) {
+                dialogAllianceSetName(pName, fromPN);
+            } else {
+                char str[FILENAME_MAX + 64];
+                snprintf(str, sizeof(str),
+                         "You have ignored alliance request from %s", pName);
+                clientMessageAdd(&c->clientSim->messages, networkStatus,
+                                 "Alliance Request", str);
+            }
+            /* Dialog has consumed the pending flag — clear so the
+             * frontend's optional poll path doesn't double-pop. */
+            c->clientSim->pendingAllianceRequestFrom = 0xFF;
+        }
+        break;
+
+    case CTRL_SERVER_SHUTDOWN:
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "CTRL_SERVER_SHUTDOWN received -> SERVER_SHUTDOWN");
+        c->joinState = UDP_CLIENT_SERVER_SHUTDOWN;
+        break;
+
+    case CTRL_GAME_OVER:
+        /* Defensive timeout reset.  The server pauses snapshots during
+         * the gameOver countdown and the catch-up loop can otherwise
+         * fire a spurious timeout before the server's own state
+         * machine fans out either CTRL_GAME_PHASE_LOBBY (back to
+         * lobby) or CTRL_SERVER_SHUTDOWN (nolobby shutdown).  Don't
+         * flip joinState here — wait for the explicit shutdown event,
+         * or stay connected for the lobby-return case. */
+        c->lastSnapshotTick = c->localTick;
+        break;
+
+    case CTRL_LOBBY_MAP_CHANGE:
+        /* Server loaded a new map mid-session.  Re-join to pull the
+         * fresh map + a clean state snapshot — same trigger the old
+         * PACKET_LOBBY_MAP_CHANGE handler fired. Local-transport reinstall
+         * is handled by the subscriber arm; UDP must round-trip.
+         *
+         * Gated on c->mapInstalled so the initial state-sync (which
+         * fans CTRL_LOBBY_MAP_CHANGE before the first map download has
+         * landed) doesn't tear down the join we're in the middle of
+         * completing — only a *change* away from a map we already
+         * have should re-trigger. */
+        if (c->clientSim != NULL && c->clientSim->isUdpTransport &&
+            c->mapInstalled) {
+            c->joinState = UDP_CLIENT_JOINING;
+            c->joinAttempts = 0;
+            c->ticksSinceJoinSent = JOIN_RETRY_INTERVAL;  /* send immediately */
+        }
+        break;
+
+    case CTRL_LOBBY_SETTINGS:
+        /* Settings arrival is a stable-lobby heartbeat.  Replicates the
+         * old PACKET_LOBBY_SETTINGS handler's side effects:
+         *   - Lonely-lobby Steam achievement tracking
+         *   - WBN re-auth when our slot lost its verified flag between
+         *     rounds (server re-registered with WBN)
+         * Balance-proposal clear is in the subscriber arm. */
+        if (c->clientSim != NULL) {
+            int connectedCount = 0;
+            for (int i = 0; i < MAX_TANKS; i++) {
+                if (c->clientSim->lobbySlots[i].connected) connectedCount++;
+            }
+            if (connectedCount == 1) {
+                if (c->clientSim->lobbyAloneStartTick == 0) {
+                    c->clientSim->lobbyAloneStartTick = SDL_GetTicks();
+                    if (c->clientSim->lobbyAloneStartTick == 0) {
+                        c->clientSim->lobbyAloneStartTick = 1;
+                    }
+                } else {
+                    uint32_t elapsed = SDL_GetTicks() - c->clientSim->lobbyAloneStartTick;
+                    if (elapsed >= 3600000) {
+                        steam_set_achievement("ACH_LONELY_LOBBY");
+                        steam_store_stats();
+                    }
+                }
+            } else {
+                c->clientSim->lobbyAloneStartTick = 0;
+            }
+
+            if (c->wbnApiToken[0] != '\0' && c->playerNum < MAX_TANKS &&
+                !(c->clientSim->lobbySlots[c->playerNum].clientFlags &
+                  PLAYER_FLAG_WBN_VERIFIED)) {
+                if (!c->wbnReauthSent) {
+                    char playerKey[WBN_JOIN_KEY_WIRE_LEN];
+                    char errMsg[256];
+                    memset(playerKey, 0, sizeof(playerKey));
+                    errMsg[0] = '\0';
+                    if (c->wbnServerKey[0] != '\0' &&
+                        winbolonetClientJoinSession(c->wbnApiToken,
+                                                    c->wbnServerKey,
+                                                    playerKey, errMsg)) {
+                        uint8_t ra[PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN];
+                        packHeader(ra, PACKET_WBN_REAUTH, c->outSequence++);
+                        memcpy(ra + PACKET_HEADER_SIZE, playerKey, WBN_JOIN_KEY_WIRE_LEN);
+                        udpClientSendTo(c, ra, sizeof(ra));
+                        c->wbnReauthSent = TRUE;
+                        WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Sent re-auth for slot %d", c->playerNum);
+                    } else {
+                        fprintf(stderr,
+                                "WinBolo.net re-auth exchange failed: %s\n",
+                                errMsg[0] ? errMsg : "(no server_key)");
+                    }
+                }
+            } else {
+                c->wbnReauthSent = FALSE;
+            }
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
 Transport transportUdpClientCreate(ClientSim *clientSim,
                                    const char *serverAddr,
                                    unsigned short serverPort,
@@ -2133,6 +2297,14 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c = (TransportUdpClientCtx *)malloc(sizeof(TransportUdpClientCtx));
     memset(c, 0, sizeof(TransportUdpClientCtx));
     c->clientSim = clientSim;
+    c->outCmdNextSeq = 1;
+    c->outHeadSeq = 1;
+    c->outTailSeq = 1;
+
+    /* Wire the transport observer so subscriber-arm events drive the
+     * transport-internal side effects (joinState transitions, re-join
+     * trigger, WBN re-auth, ACH_LONELY_LOBBY). */
+    clientSimSetTransportControlObserver(clientSim, udpClientTransportObserver, c);
 
     bolo_net_init();
 
@@ -2142,7 +2314,6 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         c->joinState = UDP_CLIENT_ERROR;
         t.recordInput = udpClientRecordInput;
         t.sendInput = udpClientSendInput;
-        t.sendBytes = udpClientSendBytes;
         t.tick = udpClientTick;
         t.getSnapshot = udpClientGetSnapshotVtable;
         t.ctx = c;
@@ -2169,7 +2340,6 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
             c->joinState = UDP_CLIENT_ERROR;
             t.recordInput = udpClientRecordInput;
             t.sendInput = udpClientSendInput;
-            t.sendBytes = udpClientSendBytes;
             t.tick = udpClientTick;
             t.getSnapshot = udpClientGetSnapshotVtable;
             t.ctx = c;
@@ -2234,7 +2404,6 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
 
     t.recordInput = udpClientRecordInput;
     t.sendInput = udpClientSendInput;
-    t.sendBytes = udpClientSendBytes;
     t.tick = udpClientTick;
     t.getSnapshot = udpClientGetSnapshotVtable;
     t.ctx = c;
@@ -2255,6 +2424,9 @@ void transportUdpClientDestroy(Transport *t) {
      * the host's own loopback client — serverInstanceShutdown will
      * have already disabled, this is just an idempotent no-op then. */
     mpDiagLogEnable(0);
+    if (c->clientSim != NULL) {
+        clientSimSetTransportControlObserver(c->clientSim, NULL, NULL);
+    }
     if (c->sock != INVALID_SOCKET) {
         /* Send graceful quit packet to server before closing */
         if (c->joinState == UDP_CLIENT_CONNECTED) {
@@ -2398,102 +2570,8 @@ uint8_t transportUdpClientGetMapDownloadPercent(Transport *t) {
     return pct > 100 ? 100 : (uint8_t)pct;
 }
 
-/* Send a name change request to the server. */
-void transportUdpClientSendNameChange(Transport *t, const char *newName) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + PACKET_MAX_PLAYER_NAME];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    if (newName == NULL || newName[0] == '\0') return;
-
-    packHeader(buf, PACKET_NAME_CHANGE, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = c->playerNum;
-    memset(buf + PACKET_HEADER_SIZE + 1, 0, PACKET_MAX_PLAYER_NAME);
-    strncpy((char *)(buf + PACKET_HEADER_SIZE + 1), newName,
-            PACKET_MAX_PLAYER_NAME - 1);
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-/* Send a lock toggle to the server.
- * Wire: [header 8] [allow 1] */
-void transportUdpClientSendLockToggle(Transport *t, bool allow) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_LOCK_TOGGLE, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = allow ? 1 : 0;
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-
-/* ---- Client lobby send functions ---- */
-
-void transportUdpClientSendTeamSet(Transport *t, uint8_t slot,
-                                   uint8_t teamNumber) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_LOBBY_TEAM_SET, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = slot;
-    buf[PACKET_HEADER_SIZE + 1] = teamNumber;
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-void transportUdpClientSendReady(Transport *t, bool ready) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_LOBBY_READY, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = c->playerNum;
-    buf[PACKET_HEADER_SIZE + 1] = ready ? 1 : 0;
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-void transportUdpClientSendAddBot(Transport *t, uint8_t teamNumber,
-                                  const char *botName) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 3 + PACKET_MAX_PLAYER_NAME];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    if (botName == NULL) botName = "";
-    int nameLen = (int)strlen(botName);
-    if (nameLen >= PACKET_MAX_PLAYER_NAME) nameLen = PACKET_MAX_PLAYER_NAME - 1;
-    if (nameLen > 31)                      nameLen = 31;
-
-    /* The wire format still carries a [pathLen 1][path] pair after the
-     * team byte for byte-compatibility with older servers; the server
-     * already ignores the brain payload here, so we always emit
-     * pathLen=0 (and zero path bytes). */
-    int pos = PACKET_HEADER_SIZE;
-    packHeader(buf, PACKET_LOBBY_ADD_BOT, c->outSequence++);
-    buf[pos++] = teamNumber;
-    buf[pos++] = 0; /* pathLen */
-    buf[pos++] = (uint8_t)nameLen;
-    if (nameLen > 0) { memcpy(buf + pos, botName, nameLen); pos += nameLen; }
-    udpClientSendTo(c, buf, pos);
-}
-
-void transportUdpClientSendRemoveBot(Transport *t, uint8_t playerNum) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_LOBBY_REMOVE_BOT, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = playerNum;
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
 void transportUdpClientSendWbnReauth(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN];
     char playerKey[WBN_JOIN_KEY_WIRE_LEN];
     char errMsg[256];
 
@@ -2509,250 +2587,17 @@ void transportUdpClientSendWbnReauth(Transport *t) {
         return;
     }
 
-    packHeader(buf, PACKET_WBN_REAUTH, c->outSequence++);
-    memcpy(buf + PACKET_HEADER_SIZE, playerKey, WBN_JOIN_KEY_WIRE_LEN);
-    udpClientSendTo(c, buf, sizeof(buf));
-}
+    ClientCommand cmd = { .type = CMD_WBN_REAUTH };
+    memcpy(cmd.u.wbnReauth.token, playerKey, WBN_JOIN_KEY_WIRE_LEN);
 
-/* ---- Client balance send functions ---- */
-
-void transportUdpClientSendBalanceRequest(Transport *t, uint8_t teamSize,
-                                           bool includeBots) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
-
-    balanceDebugLog("[BAL XPORT-CLIENT] SendBalanceRequest entry: "
-                    "joinState=%d teamSize=%u includeBots=%d outSeq=%u",
-                    (int)c->joinState, (unsigned)teamSize,
-                    includeBots ? 1 : 0, (unsigned)c->outSequence);
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) {
-        balanceDebugLog("[BAL XPORT-CLIENT] dropping: joinState != CONNECTED (=%d)",
-                        (int)c->joinState);
-        return;
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, (int)len);
     }
-
-    packHeader(buf, PACKET_BALANCE_REQUEST, c->outSequence++);
-    buf[PACKET_HEADER_SIZE]     = teamSize;
-    buf[PACKET_HEADER_SIZE + 1] = includeBots ? 1 : 0;
-    balanceDebugLog("[BAL XPORT-CLIENT] calling udpClientSendTo: %u bytes",
-                    (unsigned)sizeof(buf));
-    udpClientSendTo(c, buf, sizeof(buf));
-    balanceDebugLog("[BAL XPORT-CLIENT] udpClientSendTo returned");
-}
-
-void transportUdpClientSendBalanceApply(Transport *t) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_BALANCE_APPLY, c->outSequence++);
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-void transportUdpClientSendBalanceDismiss(Transport *t) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_BALANCE_DISMISS, c->outSequence++);
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-void transportUdpClientSendMapSkipVote(Transport *t) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_MAP_SKIP_VOTE, c->outSequence++);
-    udpClientSendTo(c, buf, sizeof(buf));
 }
 
 /* ── Layout A lobby commands — Client → Server ───────────────────── */
-
-void transportUdpClientSendLobbySetting(Transport *t,
-                                        uint8_t settingType,
-                                        const uint8_t *value, uint8_t valueLen) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2 + 32];
-    int len;
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    if (valueLen > 32) valueLen = 32;
-    if (valueLen > 0 && value == NULL) return;
-
-    packHeader(buf, PACKET_LOBBY_SET_SETTING, c->outSequence++);
-    buf[PACKET_HEADER_SIZE]     = settingType;
-    buf[PACKET_HEADER_SIZE + 1] = valueLen;
-    if (valueLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 2, value, valueLen);
-    len = PACKET_HEADER_SIZE + 2 + valueLen;
-    udpClientSendTo(c, buf, len);
-}
-
-void transportUdpClientSendLobbyOpenHost(Transport *t, bool openHost) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_LOBBY_OPEN_HOST, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = openHost ? 1 : 0;
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-void transportUdpClientSendLobbyKick(Transport *t, uint8_t slot) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_LOBBY_KICK, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = slot;
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-void transportUdpClientSendLobbySetPassword(Transport *t, const char *pw) {
-    if (!t) return;
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    int pwLen = pw ? (int)strlen(pw) : 0;
-    /* Match the server-side buffer ceiling (MAP_STR_SIZE - 1) so the
-     * receiver doesn't have to truncate. 255 covers the 1-byte pwLen
-     * field anyway. */
-    if (pwLen > 200) pwLen = 200;
-
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + 200];
-    packHeader(buf, PACKET_LOBBY_SET_PASSWORD, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = (uint8_t)pwLen;
-    if (pwLen > 0) {
-        memcpy(buf + PACKET_HEADER_SIZE + 1, pw, (size_t)pwLen);
-    }
-    udpClientSendTo(c, buf, PACKET_HEADER_SIZE + 1 + pwLen);
-}
-
-void transportUdpClientSendLobbyTeamMeta(Transport *t, uint8_t teamId,
-                                         uint8_t color, uint8_t namingPool,
-                                         const char *name) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 4 + 31];
-    int nameLen, len;
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    if (name == NULL) name = "";
-
-    nameLen = (int)strlen(name);
-    if (nameLen > 31) nameLen = 31;
-
-    packHeader(buf, PACKET_LOBBY_TEAM_META, c->outSequence++);
-    buf[PACKET_HEADER_SIZE + 0] = teamId;
-    buf[PACKET_HEADER_SIZE + 1] = color;
-    buf[PACKET_HEADER_SIZE + 2] = namingPool;
-    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)nameLen;
-    if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 4, name, nameLen);
-    len = PACKET_HEADER_SIZE + 4 + nameLen;
-    udpClientSendTo(c, buf, len);
-}
-
-void transportUdpClientSendLobbyTeamClear(Transport *t, uint8_t teamId) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_LOBBY_TEAM_CLEAR, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = teamId;
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-void transportUdpClientSendLobbyBotConfig(Transport *t, uint8_t slot,
-                                          uint8_t difficulty, uint8_t personality,
-                                          const char *name) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 4 + 31];
-    int nameLen, len;
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    if (name == NULL) name = "";
-
-    nameLen = (int)strlen(name);
-    if (nameLen > 31) nameLen = 31;
-
-    packHeader(buf, PACKET_LOBBY_BOT_CONFIG, c->outSequence++);
-    buf[PACKET_HEADER_SIZE + 0] = slot;
-    buf[PACKET_HEADER_SIZE + 1] = difficulty;
-    buf[PACKET_HEADER_SIZE + 2] = personality;
-    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)nameLen;
-    if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 4, name, nameLen);
-    len = PACKET_HEADER_SIZE + 4 + nameLen;
-    udpClientSendTo(c, buf, len);
-}
-
-void transportUdpClientSendLobbySetBotBrain(Transport *t, uint8_t slot,
-                                            uint8_t brainIdx) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 2];
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_LOBBY_SET_BOT_BRAIN, c->outSequence++);
-    buf[PACKET_HEADER_SIZE + 0] = slot;
-    buf[PACKET_HEADER_SIZE + 1] = brainIdx;
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-void transportUdpClientSendLobbySetMap(Transport *t,
-                                       const char *mapRelPath) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + 256];
-    int pathLen, len;
-
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    if (mapRelPath == NULL) mapRelPath = "";
-
-    pathLen = (int)strlen(mapRelPath);
-    if (pathLen > 255) pathLen = 255;
-
-    packHeader(buf, PACKET_LOBBY_SET_MAP, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = (uint8_t)pathLen;
-    if (pathLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 1, mapRelPath, pathLen);
-    len = PACKET_HEADER_SIZE + 1 + pathLen;
-    udpClientSendTo(c, buf, len);
-}
-
-void transportUdpClientSendLobbyPreviewCancel(Transport *t) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    uint8_t buf[PACKET_HEADER_SIZE];
-    packHeader(buf, PACKET_LOBBY_PREVIEW_CANCEL, c->outSequence++);
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-void transportUdpClientSendLobbyPreviewCommit(Transport *t) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    uint8_t buf[PACKET_HEADER_SIZE];
-    packHeader(buf, PACKET_LOBBY_PREVIEW_COMMIT, c->outSequence++);
-    udpClientSendTo(c, buf, sizeof(buf));
-}
-
-void transportUdpClientSendLobbyPreviewRandom(Transport *t,
-                                              const char *seedStr) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    if (!seedStr) seedStr = "";
-    int seedLen = (int)strlen(seedStr);
-    if (seedLen > 63) seedLen = 63;
-
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + 64];
-    packHeader(buf, PACKET_LOBBY_PREVIEW_RANDOM, c->outSequence++);
-    buf[PACKET_HEADER_SIZE] = (uint8_t)seedLen;
-    if (seedLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 1, seedStr, seedLen);
-    udpClientSendTo(c, buf, PACKET_HEADER_SIZE + 1 + seedLen);
-}
 
 void transportUdpClientSendLobbyMapListRequest(Transport *t,
                                                 const char *relPath) {

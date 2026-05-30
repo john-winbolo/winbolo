@@ -2333,6 +2333,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_sp_shoot_through_timer.c
     tests/unit/test_ini_reader_writer.c
     tests/unit/test_lobby_control_variants.c
+    tests/unit/test_command_codec_roundtrip.c
+    tests/unit/test_command_rejected_apply.c
+    tests/unit/test_lobby_add_bot_dispatch.c
+    tests/unit/test_command_queue_drain.c
     tests/unit/test_game_vote_control.c
     tests/unit/test_vote_surrender.c
     tests/unit/test_vote_toggle_modes.c
@@ -2359,6 +2363,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_inbox.c
     tests/unit/test_bolo_rand.c
     tests/unit/test_lobby_runtime_fixes.c
+    tests/unit/test_bot_chat_routing.c
+    tests/unit/test_subscriber_arm_orphans.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2437,6 +2443,20 @@ set(_unit_test_names
     lobby_bot_config_codec_and_apply
     lobby_bot_brain_codec_and_apply
     lobby_brain_list_codec_and_apply
+    command_codec_roundtrip_variants
+    command_codec_cmdseq_slot
+    command_codec_bounds_checks
+    command_rejected_parks_name_codes
+    command_rejected_ignores_other_slot
+    command_rejected_clear_resets_both_fields
+    lobby_add_bot_rejects_empty_brain_path
+    lobby_add_bot_rejects_ai_none
+    lobby_add_bot_rejects_not_in_lobby
+    lobby_add_bot_rejects_non_host_sender
+    command_queue_first_submit_drains
+    command_queue_second_submit_does_not_drain
+    command_queue_ack_drains_pending_tail
+    command_queue_ack_clearing_queue_skips_drain
     vote_surrender_rejects_unassigned_caller
     vote_surrender_starts_for_real_team_caller
     vote_surrender_rejects_three_active_teams
@@ -2490,6 +2510,18 @@ set(_unit_test_names
     countdown_abort_publishes_phase
     lobby_auto_unready_clears_humans_keeps_bots
     mapdir_root_fallback
+    bot_chat_send_to_human_lands_in_human_inbox
+    bot_chat_send_to_other_bot_lands_in_recipient_inbox
+    bot_chat_receive_from_human_lands_in_bot_inbox
+    bot_chat_receive_from_other_bot_via_broadcast
+    alliance_request_flags_addressed
+    alliance_request_ignores_other_slot
+    phase_lobby_sets_inlobby
+    phase_gameover_resets_in_game
+    player_join_appends_lobby_chat
+    player_join_self_does_not_announce
+    player_leave_appends_lobby_chat
+    lobby_settings_clears_balance_proposal
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}

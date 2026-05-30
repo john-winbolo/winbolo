@@ -1857,11 +1857,6 @@ void serverSimSetTeamBatch(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
     if (teamNumber >= MAX_TANKS) {
         teamNumber = 1;
     }
-    WB_LOG_INFO(WB_LOG_CAT_SERVER,
-                "[DIAG] serverSimSetTeamBatch slot=%u oldTeam=%u newTeam=%u",
-                (unsigned)playerNum,
-                (unsigned)sim->lobbyPlayers[playerNum].teamNumber,
-                (unsigned)teamNumber);
     sim->lobbyPlayers[playerNum].teamNumber = teamNumber;
 }
 
@@ -1920,21 +1915,8 @@ void serverSimSetBotPreThinkHook(ServerSim *sim,
 bool serverSimCreateBot(ServerSim *sim, BYTE playerNum,
                         const char *brainPath, const char *brainName,
                         aiType ai, gameType game, bool hiddenMines) {
-    WB_LOG_INFO(WB_LOG_CAT_SERVER,
-                "[DIAG] serverSimCreateBot ENTRY sim=%p slot=%u brain='%s' name='%s' ai=%d state=%d",
-                (void *)sim, (unsigned)playerNum,
-                brainPath ? brainPath : "(null)",
-                brainName ? brainName : "(null)",
-                (int)ai, sim ? (int)sim->state : -1);
-    bool ok = botManagerAddBot(sim, playerNum, brainPath, brainName,
-                               ai, game, hiddenMines);
-    WB_LOG_INFO(WB_LOG_CAT_SERVER,
-                "[DIAG] serverSimCreateBot EXIT slot=%u ok=%d (post-state: connected=%d team=%u isBot=%d)",
-                (unsigned)playerNum, (int)ok,
-                sim ? (int)sim->playerConnected[playerNum] : -1,
-                sim ? (unsigned)sim->lobbyPlayers[playerNum].teamNumber : 0,
-                sim ? (int)sim->lobbyPlayers[playerNum].isBot : -1);
-    return ok;
+    return botManagerAddBot(sim, playerNum, brainPath, brainName,
+                            ai, game, hiddenMines);
 }
 
 void serverSimRemoveBot(ServerSim *sim, BYTE playerNum) {
@@ -2030,6 +2012,21 @@ void serverSimSetHasPassword(ServerSim *sim, bool hasPassword) {
      * (they only gate new joiners) and must NOT clear humans' ready
      * state or abort an in-flight countdown. */
     serverSimPublishLobbySettings(sim);
+}
+
+void serverSimSetPassword(ServerSim *sim, const char *pw, size_t len) {
+    if (sim == NULL) return;
+    memset(sim->password, 0, sizeof(sim->password));
+    if (pw != NULL && len > 0) {
+        if (len > sizeof(sim->password) - 1) len = sizeof(sim->password) - 1;
+        memcpy(sim->password, pw, len);
+        sim->password[len] = '\0';
+    }
+}
+
+const char *serverSimGetPassword(const ServerSim *sim) {
+    if (sim == NULL) return "";
+    return sim->password;
 }
 
 void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled) {
@@ -2813,10 +2810,15 @@ void serverSimReturnToLobby(ServerSim *sim) {
      * which survives the reset; clientFlags is sim-side only, so it
      * has to be snapshotted here. */
     uint8_t savedClientFlags[MAX_TANKS];
+    char savedBotNames[MAX_TANKS][PLAYER_NAME_LEN];
     for (i = 0; i < MAX_TANKS; i++) {
         savedConnected[i] = sim->playerConnected[i];
         savedLobby[i] = sim->lobbyPlayers[i];
         savedClientFlags[i] = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
+        savedBotNames[i][0] = '\0';
+        if (sim->lobbyPlayers[i].isBot && sim->playerConnected[i]) {
+            playersGetPlayerName(&sim->sim.plyrs, (BYTE)i, savedBotNames[i], TRUE);
+        }
     }
 
     /* Full world reset — reloads map from cached data */
@@ -2850,9 +2852,17 @@ void serverSimReturnToLobby(ServerSim *sim) {
      * not the WBN session, and stay preserved across the reset. */
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
-        const char *name = transportUdpServerGetPlayerName(i);
-        const char *country = transportUdpServerGetClientCountryCode(i);
-        uint8_t clientType = transportUdpServerGetClientType(i);
+        const char *name = NULL;
+        const char *country = NULL;
+        uint8_t clientType = 0;
+        if (sim->lobbyPlayers[i].isBot) {
+            name = savedBotNames[i];
+            if (name[0] == '\0') name = "Bot";
+        } else {
+            name = transportUdpServerGetPlayerName(i);
+            country = transportUdpServerGetClientCountryCode(i);
+            clientType = transportUdpServerGetClientType(i);
+        }
         if (name == NULL) continue;
         char countryBuf[3] = "XX";
         if (country != NULL) {
@@ -3669,6 +3679,40 @@ static void publishServerMessage(ServerSim *sim, const char *message) {
      * CTRL_SERVER_TEXT handler (newswire / lobby chat); UDP clients
      * receive the codec-encoded PACKET_CHAT_BROADCAST(fromPlayer=0xFE)
      * via the encoder table. */
+    serverSimPublishControl(sim, &evt);
+}
+
+/* serverSimReceiveChat — authoritative entry for any chat the server
+ * accepts, regardless of which transport delivered the input.
+ *
+ * Per docs/ARCHITECTURE.md "Worked example — adding a chat message":
+ * every audience (in-process subscribers + UDP-connected clients) must
+ * see the same event. We achieve that by routing both inputs (the UDP
+ * server's PACKET_CHAT_MESSAGE handler and the bot pool's chat-send
+ * callback) through here, then publishing a single CTRL_CHAT — the
+ * per-client subscriber in transport_udp_server.c fans it back out on
+ * the wire (via the codec encoder) and the in-process CTRL_CHAT
+ * handler in client_sim_control.c materializes it into recipient
+ * MessageStates.
+ *
+ * fromPlayer must be a real slot (0..MAX_TANKS-1); destPlayer is the
+ * single recipient or 0xFF for broadcast. body/bodyLen is the raw chat
+ * payload (no length prefix). Caller is responsible for keeping
+ * bodyLen <= PACKET_MAX_CHAT_MESSAGE. */
+void serverSimReceiveChat(ServerSim *sim, BYTE fromPlayer, BYTE destPlayer,
+                          const void *body, size_t bodyLen) {
+    ControlEvent evt;
+    if (sim == NULL || body == NULL || fromPlayer >= MAX_TANKS) return;
+    if (bodyLen > PACKET_MAX_CHAT_MESSAGE) bodyLen = PACKET_MAX_CHAT_MESSAGE;
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_CHAT;
+    evt.u.chat.fromPlayer = fromPlayer;
+    evt.u.chat.destPlayer = destPlayer;
+    evt.u.chat.bodyLen    = (uint16_t)bodyLen;
+    if (bodyLen > 0) {
+        memcpy(evt.u.chat.body, body, bodyLen);
+    }
     serverSimPublishControl(sim, &evt);
 }
 

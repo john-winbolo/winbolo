@@ -47,17 +47,6 @@ struct ServerSim;
  *                For local transport this is the same as
  *                sendInput (immediate enqueue).
  * sendInput:     Record and send an InputPacket to the server.
- * sendBytes:     Deliver a fully-built wire packet to the
- *                server. UDP impl unicasts it; local impl
- *                decodes the packet type and dispatches to
- *                the matching T1 ServerSim entry. Lets
- *                client_net.h send wrappers stay transport-
- *                agnostic — a bot on a local transport, a
- *                host human on a local transport, and a
- *                UDP-connected remote client all use the
- *                same client_net.h call path. Packet body
- *                must include the standard 8-byte header
- *                (caller builds it via packHeader).
  * tick:          Run one server tick (local transport calls
  *                serverSimTick; network transport is a no-op).
  * getSnapshot:   Retrieve the latest snapshot from the server.
@@ -71,7 +60,6 @@ struct ServerSim;
 typedef struct {
     void (*recordInput)(void *ctx, const InputPacket *input);
     void (*sendInput)(void *ctx, const InputPacket *input);
-    void (*sendBytes)(void *ctx, const uint8_t *buf, size_t len);
     bool (*tick)(void *ctx);
     bool (*getSnapshot)(void *ctx, BYTE clientIdx,
                         SnapshotHeader *hdr,

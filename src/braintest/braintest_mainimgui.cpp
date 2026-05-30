@@ -135,6 +135,7 @@ void mainImGuiRenderShortcuts(bool *visible) {
         {"- / _",   "Zoom out"},
         {"V",       "Toggle V dialog (visualization filter)"},
         {"S",       "Toggle Shot Simulator panel"},
+        {"D",       "Toggle viz-detail inspector (clickable map primitives + body text)"},
         {"F1",      "Toggle this shortcut list"},
         {"Esc",     "Quit"},
         {NULL,      NULL},

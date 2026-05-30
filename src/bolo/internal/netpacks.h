@@ -289,13 +289,6 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_PUNCH_PROBE_REQUEST  156   /* host → tracker, this commit */
 #define PACKET_PUNCH_PROBE_REPLY    157   /* tracker → host, this commit */
 
-/* Server -> Client: rejection for a PACKET_NAME_CHANGE attempt. Payload
- * is a single reasonCode byte (NAME_REJECT_*). The accept path keeps
- * broadcasting PACKET_NAME_CHANGE on success — this is only emitted on
- * rejection. Wire format change is unversioned; server and client
- * update in lockstep. */
-#define PACKET_NAME_CHANGE_REJECT   158
-
 /* Server -> Client: lobby-wide settings (map, game type, limits, ...).
  * Produced by the CTRL_LOBBY_SETTINGS codec encoder; replaces the
  * settings-tail portion of the legacy composite PACKET_LOBBY_STATE.
@@ -344,7 +337,6 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_LOBBY_OPEN_HOST_CHG  176  /* { bool 1 } */
 #define PACKET_LOBBY_TEAM_META_CHG  177  /* same payload as TEAM_META */
 #define PACKET_LOBBY_BOT_CONFIG_CHG 178  /* same payload as BOT_CONFIG */
-#define PACKET_LOBBY_REJECT         179  /* { origPacket 1, reasonCode 1 } */
 #define PACKET_LOBBY_BRAIN_LIST     181  /* { count 1, for each: nameLen 1, name,
                                           *   verLen 1, ver, pathLen 1, path } */
 #define PACKET_LOBBY_BOT_BRAIN_CHG  182  /* { slot 1, pathLen 1, path N } */
@@ -425,6 +417,17 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                               the server infers the
                                               voter's team from their
                                               own slot. */
+#define PACKET_COMMAND_REJECTED        200  /* server → client (unicast)
+                                              { origCmdSeq u32, origCmdType u8,
+                                                reasonCode u8, origSlot u8 } */
+#define PACKET_COMMAND_TICK            201  /* client → server
+                                              { count u8, for each:
+                                                entryLen u16,
+                                                codecPacket entryLen bytes
+                                                  (per commandCodecEncode) } */
+#define PACKET_COMMAND_ACK             202  /* server → client (unicast)
+                                              { highestProcessedCmdSeq u32 } */
+
 #define PACKET_GAME_VOTE_STATE         195  /* server → all clients
                                               { kind 1, active 1,
                                                 triggerSrc 1, teamId 1,
@@ -547,7 +550,8 @@ static inline bool lobbyBotNameAcceptable(
     return true;
 }
 
-/* Reject reason codes for PACKET_LOBBY_REJECT. */
+/* Reject reason codes. Carried in PACKET_LOBBY_MAP_UPLOAD_ACK and
+ * in CTRL_COMMAND_REJECTED control events. */
 #define LOBBY_REJECT_NOT_HOST          1   /* sender lacks authority */
 #define LOBBY_REJECT_LOCKED            2   /* setting is in serverLocks bitmask */
 #define LOBBY_REJECT_INVALID           3   /* malformed payload / out-of-range value */
@@ -555,13 +559,6 @@ static inline bool lobbyBotNameAcceptable(
 #define LOBBY_REJECT_UPLOAD_DISABLED   5   /* host disabled map uploads */
 #define LOBBY_REJECT_UPLOAD_LIMIT_HIT  6   /* per-map storage cap reached */
 #define LOBBY_REJECT_COOLDOWN          7   /* per-client request cooldown active */
-
-#define NAME_REJECT_INVALID         1   /* validator: any *_INVALID_* error */
-#define NAME_REJECT_TAKEN           2   /* duplicate via playerNameCompare */
-#define NAME_REJECT_RESERVED_PREFIX 3   /* leading '*' */
-#define NAME_REJECT_RESERVED_SUFFIX 4   /* -unverified */
-#define NAME_REJECT_MIXED_SCRIPTS   5   /* single-script rule */
-#define NAME_REJECT_EMPTY           6   /* empty after strip */
 
 /* Alliance update event types */
 #define ALLIANCE_EVENT_REQUEST  0

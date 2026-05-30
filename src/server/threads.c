@@ -158,3 +158,7 @@ void threadsReleaseMutex(void) {
   SDL_UnlockMutex(hMutexHandle);
 }
 
+bool threadsCurrentlyHoldsMutex(void) {
+  return mutexOwner == SDL_GetCurrentThreadID();
+}
+

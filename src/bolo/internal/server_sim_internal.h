@@ -182,6 +182,7 @@ struct ServerSim {
 
     /* WBN registration — cached from CLI args for re-registration between rounds */
     bool         hasPassword;             /* Server has a password set */
+    char         password[MAP_STR_SIZE];  /* Runtime join-handshake password text */
 
     /* WBN team balance proposal */
     BalanceProposal balanceProposal;

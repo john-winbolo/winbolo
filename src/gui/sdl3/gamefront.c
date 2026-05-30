@@ -313,7 +313,7 @@ static BYTE udpPlayerNum = 0;
  * Chat callback uses the passed cs (not the module-static humanSim) so
  * the same function can be wired onto a bot's ClientSim too — bot chat
  * then flows down the same path human chat does: clientSimNetSendChat
- * → cs->transport.sendBytes → local transport publishes CTRL_CHAT. */
+ * → clientSimSubmitCommand → CMD_CHAT arm publishes CTRL_CHAT. */
 static void gameFrontChatSendCallback(struct ClientSim *cs, uint8_t fromPlayer,
                                       uint8_t destPlayer, const char *message) {
     (void)fromPlayer;
@@ -1033,10 +1033,6 @@ bool gameFrontSetDlgState(openingStates newState) {
   bool returnValue = TRUE;
   openingStates prevState = dlgState;
 
-  WB_LOG_INFO(WB_LOG_CAT_GUI,
-              "[DIAG] gameFrontSetDlgState: %d -> %d (humanSim=%p spServerSim=%p)",
-              (int)dlgState, (int)newState, (void *)humanSim, (void *)spServerSim);
-
   /* Capture the entry path when committing to a game/lobby so the
    * post-lobby re-entry can skip the welcome screen. Only the browser
    * / manual-connect screens count — single-player / tutorial / map
@@ -1183,10 +1179,8 @@ bool gameFrontSetDlgState(openingStates newState) {
           clientSimSetNetStatus(humanSim, netLobby);
         } else {
           /* No-lobby path: transport already installed the map inline
-           * on MAP_DOWNLOAD completion. Just finalise the local tank. */
-          clientMutexWaitFor();
-          clientSimNetSetupTankGo(humanSim);
-          clientMutexRelease();
+           * on MAP_DOWNLOAD completion; the first snapshot apply will
+           * fire the viewport finalisation. */
           gameFrontUpdateSteamPresence(humanSim);
         }
         dlgState = openFinished;
@@ -1229,13 +1223,6 @@ bool gameFrontSetDlgState(openingStates newState) {
       dlgState = openStart;
     }
   } else if (dlgState == openSetup && newState == openFinished) {
-    WB_LOG_INFO(WB_LOG_CAT_GUI,
-                "[DIAG] openFinished SP-entry: name='%s' fileName='%s' gametype=%d compTanks=%d brainPath='%s' isTutorial=%d timeLen=%d startDelay=%d hiddenMines=%d botCount=%d playerTeam=%u",
-                gameFrontName, fileName, (int)gametype, (int)compTanks,
-                gameFrontBrainPath, (int)isTutorial,
-                (int)timeLen, (int)startDelay, (int)hiddenMines,
-                (int)gameFrontBotSetupData.count,
-                (unsigned)gameFrontBotSetupData.playerTeamNumber);
     dlgState = openFinished;
     /* New architecture: ServerSim owns the map and all game state.
      * Create the server sim, then load the map on the client side
@@ -1379,12 +1366,9 @@ bool gameFrontSetDlgState(openingStates newState) {
               clientSimSetNetStatus(humanSim, netLobby);
               clientSimSetMapDownloadComplete(humanSim, true);
             }
-            if (isTutorial) {
-              /* Connect's snapshot apply already populated tank state;
-               * the tutorial's no-lobby path just needs the tank-go
-               * fixup before frame 1 renders. */
-              clientSimNetSetupTankGo(humanSim);
-            }
+            /* Tutorial (no-lobby) and lobby paths both rely on the
+             * first-snapshot apply inside the local transport to fire
+             * the viewport finalisation. */
             /* Add bot brains for local game if AI is enabled.
              * Serialise bot creation, team assignment, and the
              * reapply-alliances pass against the host timer thread,
