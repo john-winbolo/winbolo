@@ -78,6 +78,7 @@
 #include "server_sim.h"
 #include "server_sim_lifecycle.h"
 #include "bot_worker_pool.h"
+#include "bot_manager.h"
 #include "game_sim.h"
 #include "../server/server_lifecycle.h"
 #include "../server/threads.h"
