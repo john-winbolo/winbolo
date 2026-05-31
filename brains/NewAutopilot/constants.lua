@@ -349,6 +349,8 @@ M.WOUNDED_COMMIT_DISCOUNT      = 0.5
 -- (PPT_STANDOFF), and a slower / more precise charge so the carefully
 -- chosen wall-shielded angle is preserved instead of overshooting it.
 M.PPT_HEALTH_THRESHOLD = 8     -- only PPT if pill HP >= this
+M.PPT_ANGER_THRESHOLD  = 0.34  -- ...OR force PPT when pill anger > this (~>1 hit): an angry pill reloads fast, don't charge it bare
+M.SWERVE_SKIP_ARMOUR_PER_HP = 5  -- skip the kill/curve swerve while pill.health*this <= armour (we can tank finishing it, so buck in)
 M.PPT_STANDOFF         = 7.0   -- pull in slightly closer than ATTACK_PILL_STANDOFF
 M.PPT_CHARGE_MAX_SPEED = 4     -- speed cap during PPT charge (creep, not rush)
 M.PPT_CHARGE_BRAKE_DIST = 32   -- start braking inside this many wu of standoff
@@ -431,6 +433,14 @@ M.ATTACK_CURVE_AFTER_HITS = 3   -- hits taken before curving away
 M.ATTACK_CURVE_TICKS      = 100  -- ticks of swerve dodge (2 seconds)
 M.ATTACK_RUSH_ARRIVE      = 1   -- mdist to pill to count as "arrived" during rush
 
+-- Kill-rush fast path: a 1-HP, barely-provoked pill is a free kill. Skip the
+-- careful standoff/shield planning and just drive point-blank and fire on the
+-- first clear shot, eating whatever return fire the pill throws. Gated on
+-- armour so we can afford the hits.
+M.ATTACK_RUSH_MIN_ARMOUR  = 5     -- only rush when armour >= this (a 1-shot kill is near risk-free)
+M.ATTACK_RUSH_MAX_ANGER   = 0.34  -- pill anger must be <= this (~one PILL_ANGER_BUMP)
+M.ATTACK_RUSH_STANDOFF    = 1.5   -- tiles from pill center to park the point-blank charge
+
 -- Swerve durations (confirmed-kill swerve: pill dead or bullets_fired >= needed)
 M.SWERVE_TOTAL_TICKS      = 95  -- total swerve duration
 M.SWERVE_TURN_TICKS       = 35  -- ticks of turning at start of swerve
@@ -479,7 +489,12 @@ M.ALLY_CLAIMED_REFUEL_PENALTY = 100
 -- band both bots keep the candidate so a 1-unit cost flicker (caused
 -- by broadcast tick lag / cache freshness mismatch) can't flip the
 -- yield direction every tick.
-M.ALLY_CLAIMED_STEAL_THRESHOLD = 100
+M.ALLY_CLAIMED_STEAL_THRESHOLD = 100   -- (legacy additive band; superseded by the ratio below)
+-- Ratio-based steal band: a challenger must be at least this fraction cheaper
+-- than the current holder to take over a claimed goal. Scale-invariant, so it
+-- behaves the same for cheap pill captures (~20-40) and expensive base
+-- captures (~1000s). 0.10 = "must be >=10% cheaper to steal".
+M.ALLY_CLAIMED_STEAL_FRAC      = 0.10
 M.GOAL_COMMITMENT_PER_TICK = 0.5   -- extra switch penalty per tick spent on current goal
 M.GOAL_COMMITMENT_CAP      = 75    -- max commitment penalty (reached after 150 ticks / 3s)
 M.REFUEL_FULL_COST_MULT    = 3.0   -- pool-1 cost multiplier when tank is between low and full thresholds; applied at goal-selection time so stale cache costs scale with current state. At max fullness the entry is skipped entirely.
@@ -714,6 +729,25 @@ M.STRATEGIC_PLACE_ENEMY_PILL_FAR_BONUS     = 10   -- small bonus for general pro
 
 -- Pill war reinforcement
 M.STRATEGIC_PLACE_WAR_ZONE_BONUS          = 60   -- bonus for tiles near an active pill war
+-- Portfolio model (see PILL_REPOSITION_PLAN.md / pill_portfolio.lua). Classify
+-- friendly pills into back/front/aggressive and bias placement toward the
+-- under-target role (35/45/20). BACK_INFLUENCE_MIN: influence above this counts
+-- as "back" (solidly friendly); negative = aggressive; near-front-line = front.
+M.STRATEGIC_PLACE_BACK_INFLUENCE_MIN = 5     -- influence > this = back protector
+-- Per-unit deficit bias. Strong (>= BEYOND_FRONT_PENALTY) so an under-target
+-- aggressive role can pull placement past sc3's beyond-front penalty.
+M.STRATEGIC_PLACE_PORTFOLIO_WEIGHT   = 120
+-- Protective coverage: bonus per friendly pill / base within fire range a spot
+-- covers. Pills weighted higher (mutual support is the key protector signal).
+M.STRATEGIC_PLACE_COVERAGE_PILL_WEIGHT = 25
+M.STRATEGIC_PLACE_COVERAGE_BASE_WEIGHT = 15
+-- Base guardian: every friendly base should have >=1 pill in shooting range.
+-- Big bonus per currently-unguarded base a candidate spot would cover.
+M.STRATEGIC_PLACE_GUARDIAN_BONUS = 150
+-- Out-of-ratio urgency: placement cost is discounted when a pill type is in
+-- deficit. Per-deficit-unit fraction, capped.
+M.STRATEGIC_PLACE_IMBALANCE_DISCOUNT     = 0.25
+M.STRATEGIC_PLACE_IMBALANCE_MAX_DISCOUNT = 0.60
 -- Flat cost multiplier for place_pill_strategic. <1 = preferred. Combined
 -- with the carry discount this makes "I'm holding a pill" a near-overriding
 -- priority compared to attack/capture goals.
@@ -762,8 +796,14 @@ M.TANK_COMBAT_ENGAGE_RANGE      = 7     -- tiles: start shooting at this distanc
 M.TANK_COMBAT_STANDOFF_RANGE    = 7     -- tiles: nav target when closing (at max shell range)
 M.TANK_COMBAT_OPTIMAL_DIST      = 5     -- tiles: ideal engagement distance
 M.TANK_COMBAT_TOO_CLOSE         = 2     -- tiles: back off if closer than this
-M.TANK_COMBAT_FLEE_ARMOUR       = 6     -- disengage if armour drops to this
-M.TANK_COMBAT_FLEE_SHELLS       = 5     -- disengage if shells drop to this
+M.TANK_COMBAT_FLEE_ARMOUR       = 0     -- disengage if armour drops to this (0 = never flee on armour alone)
+M.TANK_COMBAT_FLEE_SHELLS       = 0     -- disengage if shells drop to this (0 = never flee on shells alone)
+-- Pillbox-crossfire disengage: break off a tank chase if our own tile is
+-- covered by this much enemy PILL danger (don't trade armour into a tank
+-- that's camping under its own pillboxes). Applies in EVERY phase — this is
+-- the disengage that actually matters. ~one angry pill or a couple of calm
+-- ones overlapping. Tune up to be more willing to fight near pills.
+M.TANK_COMBAT_DEFENDED_DANGER   = 30
 M.TANK_COMBAT_NEAR_PILL_PENALTY = 80    -- cost penalty if enemy is near a hostile pill (crossfire)
 M.TANK_COMBAT_NEAR_PILL_RANGE   = 5     -- tiles: how close to hostile pill counts
 M.TANK_COMBAT_BASE_COST         = 30    -- base cost so pills/captures usually win over tank hunting
@@ -815,14 +855,30 @@ M.EMERGENCY_DROP_SEARCH_DIRS    = 8     -- directions to search for safe drop ti
 M.BASE_KILLER_TEAM_ADVANTAGE    = 2     -- activate when team has this many more players
 M.BASE_KILLER_ATTACK_DISCOUNT   = 0.3   -- multiply attack_base cost (makes bases top priority)
 M.BASE_KILLER_PILL_PENALTY      = 2.0   -- multiply attack_pill cost (deprioritize pills)
+M.BASE_THREAT_PILL_DISCOUNT     = 0.5   -- multiply attack_pill combat cost when the pill is in firing range of a friendly base (clear base threats fast)
 
 -- Friendly pill as barrier bonus (aIndy: use friendly pills as shields)
 M.FPILL_BARRIER_BONUS           = 80    -- cost reduction when friendly pill is between us and target
 
--- Pill repositioning (aIndy: "pissing" — move badly positioned friendly pills)
+-- Pill repositioning. Legacy badness conditions (ORPHAN_DIST/THRESHOLD, AFAIK
+-- from aIndy's "pissing") are RETIRED — reposition now scores on the influence
+-- portfolio (see pill_portfolio.lua / PILL_REPOSITION_PLAN.md): cost is driven
+-- primarily by category balance (35/45/20 back/front/aggressive).
 M.PILL_REPOSITION_ENABLED       = true
-M.PILL_REPOSITION_ORPHAN_DIST   = 15    -- tiles from nearest friendly base to consider "orphaned"
-M.PILL_REPOSITION_THRESHOLD     = 50    -- minimum badness score to trigger repositioning
+M.PILL_REPOSITION_BASE_COST     = 200   -- flat floor so reposition isn't trivially cheap
+M.PILL_REPOSITION_SURPLUS_W     = 150   -- PRIMARY: discount per pill over its category allotment
+M.PILL_REPOSITION_COVERAGE_PILL_W = 25  -- cost added per friendly pill covered in fire range (keep good spots)
+M.PILL_REPOSITION_COVERAGE_BASE_W = 20  -- cost added per friendly base covered in fire range
+M.PILL_REPOSITION_ADJACENCY_W   = 30    -- discount per friendly pill in the 8 neighbors (double-take risk)
+M.PILL_REPOSITION_OVEREXTEND_W  = 60    -- discount for an aggressive pill deeper than -50 influence
+M.PILL_REPOSITION_LEGACY_CAP    = 75    -- cap on the legacy "bad spot" discount (orphan/crossfire/terrain); secondary to surplus
+M.PILL_ROLE_REEVAL_TICKS        = 3000  -- re-evaluate a pill's back/front/aggro role every 60s (influence shifts over time)
+M.PILL_UTILITY_TARGET_FRAC      = 0.25  -- desired share of pills available as blockers/utility; below this, hold a spare pill in tank
+M.PILL_REPOSITION_MIN_SHELLS    = 15    -- need this many shells to reposition (must shoot the pill down to 0 to pick it up)
+M.REPOSITION_DEMOLISH_GRACE_TICKS = 1500 -- ~30s: while demolishing a pill for reposition, suppress repair_pill on it (avoid shoot→repair→shoot oscillation)
+-- Legacy (unused; kept for reference / any external readers):
+M.PILL_REPOSITION_ORPHAN_DIST   = 15
+M.PILL_REPOSITION_THRESHOLD     = 50
 
 -- Defensive trail dropping
 M.TRAIL_DROP_ENABLED            = true
@@ -863,7 +919,7 @@ M.PHASE_WEIGHTS = {
     capture_base     = 1.0,
     capture_pill     = 1.0,
     repair_pill      = 0.8,
-    attack_pill      = 0.8,
+    attack_pill      = 0.6,
     attack_base      = 1.2,
     place_strategic  = 0.7,
     defend_pill      = 0.5,

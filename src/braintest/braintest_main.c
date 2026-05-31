@@ -4079,6 +4079,32 @@ static void appRender(BrainTestApp *app) {
         SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
     }
 
+    /* Big, unmissable MANUAL MODE banner. Manual control hijacks the
+     * keyboard — Space becomes Shoot, not pause/resume — so make it
+     * impossible to miss that you're in it. Pulses so it reads as a live
+     * state, not a static label. */
+    if (app->manualControl) {
+        const char *msg = "MANUAL MODE  -  press M to exit";
+        float scale = 3.0f;
+        float tw = (float)strlen(msg) * 8.0f * scale;
+        float th = 8.0f * scale;
+        float x = (screenW - tw) * 0.5f;
+        if (x < 8.0f) x = 8.0f;
+        float y = 14.0f;
+        float pulse = 0.55f + 0.45f * sinf((float)SDL_GetTicks() * 0.006f);
+        Uint8 a = (Uint8)(pulse * 255.0f);
+        SDL_FRect bg = { x - 12.0f, y - 8.0f, tw + 24.0f, th + 16.0f };
+        SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(app->renderer, 170, 0, 0, (Uint8)(a * 0.75f));
+        SDL_RenderFillRect(app->renderer, &bg);
+        SDL_SetRenderDrawColor(app->renderer, 255, 70, 70, 255);
+        SDL_RenderRect(app->renderer, &bg);
+        SDL_SetRenderScale(app->renderer, scale, scale);
+        SDL_SetRenderDrawColor(app->renderer, 255, 235, 235, a);
+        SDL_RenderDebugText(app->renderer, x / scale, y / scale, msg);
+        SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
+    }
+
     /* Shot-sim result on top of the map (under ImGui panels). */
     renderShotSimResult(app, screenW, screenH);
 
@@ -5009,6 +5035,12 @@ int main(int argc, char *argv[]) {
                     vizDetailWindowToggle();
                     break;
                 case SDLK_M: {
+                    /* Manual control hijacks the keyboard (Space = Shoot)
+                     * and only makes sense against the live sim — don't let
+                     * it turn on while reviewing recorded history. */
+                    if (!app.manualControl && app.playbackMode) {
+                        break;
+                    }
                     app.manualControl = !app.manualControl;
                     /* Notify the brain via the optional hook. Brains
                      * that don't implement Brain.set_manual_mode just
@@ -5397,6 +5429,16 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             }
+        }
+
+        /* Manual control only applies to the LIVE sim. The moment we enter
+         * playback (scrub back in time), force it off so the keyboard goes
+         * back to BrainTest (notably Space = pause/resume, not Shoot). */
+        if (app.playbackMode && app.manualControl) {
+            app.manualControl = false;
+            serverSimBotExecLua(app.sim, app.followBot,
+                "if brain and brain.set_manual_mode then "
+                "brain.set_manual_mode(0) end");
         }
 
         /* Arrow key scrolling (continuous while held) */
