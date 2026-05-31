@@ -1456,9 +1456,16 @@ end
 
 local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, ammo)
   if not C.STRATEGIC_PLACE_ENABLED then return nil end
-  if (info.carried_pills or 0) < 1 then return nil end
-  if info.man_status ~= C.LGM_INTANK then return nil end
-  if info.inboat then return nil end
+  -- Can we actually place right now?
+  local actionable = (info.carried_pills or 0) >= 1
+                     and info.man_status == C.LGM_INTANK
+                     and not info.inboat
+  -- In DEBUG only, still run the scan to feed the best-spot overlays even when
+  -- we can't place — gated on an overlay being on, so a live game (where
+  -- BRAIN_DEBUG_MODE is false) never pays for this and just returns here.
+  local viz_only = BRAIN_DEBUG_MODE
+                   and (vizmod.is_on("pill_best_spots_back") or vizmod.is_on("pill_best_spots_aggro"))
+  if not actionable and not viz_only then return nil end
 
   -- ── Carry value penalty ─────────────────────────────────────────────────
   -- Increase placement cost when carrying is more useful than placing.
@@ -1817,6 +1824,8 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   end
 
   if not best_mx then
+    -- viz_only with no candidates: nothing to stash, no goal to emit.
+    if not actionable then return nil end
     return eval_place_pill_fallback(state, world, info, tmx, tmy, boat, ammo, carry_discount)
   end
 
@@ -1849,17 +1858,18 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local cands = {}
   if BRAIN_DEBUG_MODE then
     table.sort(all_cands, function(a, b) return a.score > b.score end)
-    -- Stash the top back / front candidate spots for the map overlay
-    -- (orange=back, purple=front). Highest-scoring first.
+    -- Stash the top back / aggro candidate spots for the map overlays
+    -- (pill_best_spots_back = orange, pill_best_spots_aggro = red).
+    -- Highest-scoring first.
     do
-      local sb, sf = {}, {}
+      local sb, sa = {}, {}
       for _, c in ipairs(all_cands) do
         if c.cat == "back"  and #sb < 8 then sb[#sb + 1] = { mx = c.mx, my = c.my } end
-        if c.cat == "front" and #sf < 8 then sf[#sf + 1] = { mx = c.mx, my = c.my } end
-        if #sb >= 8 and #sf >= 8 then break end
+        if c.cat == "aggro" and #sa < 8 then sa[#sa + 1] = { mx = c.mx, my = c.my } end
+        if #sb >= 8 and #sa >= 8 then break end
       end
       state._place_spots_back  = sb
-      state._place_spots_front = sf
+      state._place_spots_aggro = sa
     end
     for _, c in ipairs(all_cands) do
       local is_win = (c.mx == best_mx and c.my == best_my)
@@ -1880,6 +1890,9 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     end
   end
 
+  -- viz_only (debug overlay): scan + spot stash done above; emit no goal.
+  if not actionable then return nil end
+
   return {
     cost = cost,
     goal = { kind = "place_pill_strategic", mx = best_mx, my = best_my,
@@ -1897,18 +1910,17 @@ end
 -- "back" pill, purple for a "front" pill (top-scoring first, brightest = best).
 -- Fed by the candidate scan in eval_place_pill_strategic (state._place_spots_*).
 function M.draw_pill_spots(viz, state)
-  if not viz or not viz.is_on or not viz.is_on("pill_best_spots") then return end
-  if not viz.rect or not state then return end
-  local function draw(list, r, g, b)
-    if not list then return end
+  if not viz or not viz.is_on or not viz.rect or not state then return end
+  local function draw(id, list, r, g, b)
+    if not viz.is_on(id) or not list then return end
     for i, s in ipairs(list) do
-      local a = (i == 1) and 220 or 110   -- best spot brightest
-      viz.rect("pill_best_spots", s.mx + 0.15, s.my + 0.15,
-               s.mx + 0.85, s.my + 0.85, r, g, b, a, false)
+      -- Bold filled translucent square so it stands out; best spot most opaque.
+      local a = (i == 1) and 170 or 90
+      viz.rect(id, s.mx, s.my, s.mx + 1, s.my + 1, r, g, b, a, true)
     end
   end
-  draw(state._place_spots_back,  255, 150,  0)   -- orange = back
-  draw(state._place_spots_front, 190,  80, 255)  -- purple = front
+  draw("pill_best_spots_back",  state._place_spots_back,  255, 150,  0)  -- orange = back
+  draw("pill_best_spots_aggro", state._place_spots_aggro, 255,  70,  70) -- red = aggro
 end
 
 -- =========================================================================

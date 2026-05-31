@@ -1445,9 +1445,16 @@ end
 
 local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, ammo)
   if not C.STRATEGIC_PLACE_ENABLED then return nil end
-  if (info.carried_pills or 0) < 1 then return nil end
-  if info.man_status ~= C.LGM_INTANK then return nil end
-  if info.inboat then return nil end
+  -- Can we actually place right now?
+  local actionable = (info.carried_pills or 0) >= 1
+                     and info.man_status == C.LGM_INTANK
+                     and not info.inboat
+  -- In DEBUG only, still run the scan to feed the best-spot overlays even when
+  -- we can't place — gated on an overlay being on, so a live game (where
+  -- BRAIN_DEBUG_MODE is false) never pays for this and just returns here.
+  local viz_only = BRAIN_DEBUG_MODE
+                   and (vizmod.is_on("pill_best_spots_back") or vizmod.is_on("pill_best_spots_aggro"))
+  if not actionable and not viz_only then return nil end
 
   -- ── Carry value penalty ─────────────────────────────────────────────────
   -- Increase placement cost when carrying is more useful than placing.
@@ -1806,6 +1813,8 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   end
 
   if not best_mx then
+    -- viz_only with no candidates: nothing to stash, no goal to emit.
+    if not actionable then return nil end
     return eval_place_pill_fallback(state, world, info, tmx, tmy, boat, ammo, carry_discount)
   end
 
@@ -1837,6 +1846,9 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- Pool-grid panel data only — wrapped so lua_strip removes it from opt/.
   local cands = {}
 
+  -- viz_only (debug overlay): scan + spot stash done above; emit no goal.
+  if not actionable then return nil end
+
   return {
     cost = cost,
     goal = { kind = "place_pill_strategic", mx = best_mx, my = best_my,
@@ -1854,16 +1866,16 @@ end
 -- "back" pill, purple for a "front" pill (top-scoring first, brightest = best).
 -- Fed by the candidate scan in eval_place_pill_strategic (state._place_spots_*).
 function M.draw_pill_spots(viz, state)
-  if not viz or not viz.is_on or not viz.is_on("pill_best_spots") then return end
-  if not viz.rect or not state then return end
-  local function draw(list, r, g, b)
-    if not list then return end
+  if not viz or not viz.is_on or not viz.rect or not state then return end
+  local function draw(id, list, r, g, b)
+    if not viz.is_on(id) or not list then return end
     for i, s in ipairs(list) do
-      local a = (i == 1) and 220 or 110   -- best spot brightest
+      -- Bold filled translucent square so it stands out; best spot most opaque.
+      local a = (i == 1) and 170 or 90
     end
   end
-  draw(state._place_spots_back,  255, 150,  0)   -- orange = back
-  draw(state._place_spots_front, 190,  80, 255)  -- purple = front
+  draw("pill_best_spots_back",  state._place_spots_back,  255, 150,  0)  -- orange = back
+  draw("pill_best_spots_aggro", state._place_spots_aggro, 255,  70,  70) -- red = aggro
 end
 
 -- =========================================================================

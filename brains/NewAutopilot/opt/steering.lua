@@ -24,27 +24,12 @@ local M = {}
 -- crosses the shell path post-launch) the pill survives at 1 HP, vs.
 -- eating an extra return shot.
 local function predict_kill_shot_and_swerve(state, world, info, goal, pmx, pmy)
-  if not goal or not goal.target_id then return end
-  local pill = world.pills and world.pills[goal.target_id]
-  if not pill or (pill.health or 0) <= 0 then return end
-  local in_flight = (goal._on_target_in_flight or 0) + 1
-  if in_flight < pill.health then return end
-  -- Tank-the-finish: if we can absorb the rest of the kill (hp*5 <= armour),
-  -- don't peel off on the kill shot — keep firing/holding to finish it.
-  local attack = require("attack")
-  if attack.can_tank_finish and attack.can_tank_finish(pill, info) then return end
-  local angle_f = info.tank_angle or info.direction
-  local path = cpf.simulate_shot_angle(info.tankx, info.tanky, angle_f,
-                                        cpf.SHOT_TANK, info.gunrange or 14)
-  if not path then return end
-  for _, t in ipairs(path) do
-    if t.mx == pmx and t.my == pmy then
-      local attack = require("attack")
-      attack.enter_swerve(goal, world, state, info, pmx, pmy, "kill")
-      goal._swerve_pill_dead = true
-      return true
-    end
-  end
+  -- DISABLED: we now keep firing until the pill is ACTUALLY dead (cyan 0/0)
+  -- rather than peeling off on the in-flight kill prediction, which stopped a
+  -- shot short whenever an in-flight shell diverged. The dead-pill swerve in
+  -- attack.lua's charge/engage/shoot_pill handles the exit. No-op so the call
+  -- sites don't need touching.
+  return
 end
 
 -- Debug logging toggle — set via API: curl http://localhost:29016/steerdebug?on

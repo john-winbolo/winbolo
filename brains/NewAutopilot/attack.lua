@@ -4043,10 +4043,10 @@ function M.update_attack_substate(goal, state, world, info)
     local bullets_fired = (goal._charge_shells or info.shells) - info.shells
     local pill_hp = pill and pill.health or 0
     local on_target_in_flight = goal._on_target_in_flight or 0
-    -- Tank-the-finish: don't swerve off the charge while the pill's alive and
-    -- hp*5 <= armour — buck in and finish (the dead-pill case still swerves to exit).
-    if (pill_hp <= 0 or (pill_hp > 0 and on_target_in_flight >= pill_hp))
-       and not can_tank_finish(pill, info) then
+    -- Keep firing until the pill is ACTUALLY dead — don't swerve off on the
+    -- in-flight prediction (on_target_in_flight >= hp), which stops one shot
+    -- short if any in-flight shell diverges. Swerve only once hp hits 0.
+    if pill_hp <= 0 then
       if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
         print2(string.format(
           "SWERVE_ENTER t=%d site=charge tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
@@ -4551,13 +4551,10 @@ function M.update_attack_substate(goal, state, world, info)
     -- the kill (hp*5 <= armour), don't peel off — keep firing.
     local tank_finish = can_tank_finish(pill, info)
     if pill_hp <= 0 then
+      -- Keep firing until the pill is ACTUALLY dead — no in-flight-prediction
+      -- early swerve (that stops a shot short when a shell diverges).
       should_swerve = true
       pill_dead     = true
-    elseif pill_hp > 0 and on_target_in_flight >= pill_hp and not tank_finish then
-      -- C/D rule (same as charge/engage): predicted in-flight shells
-      -- already cover remaining HP — start the swerve now.
-      should_swerve = true
-      pill_dead     = true   -- the in-flight shots are about to drop pill to 0
     elseif goal._shoot_hits_total >= C.ATTACK_CURVE_AFTER_HITS and not tank_finish then
       should_swerve = true
     end
@@ -4594,12 +4591,10 @@ function M.update_attack_substate(goal, state, world, info)
     local bullets_fired = (goal._charge_shells or info.shells) - info.shells
     local pill_hp = pill and pill.health or 0
 
-    -- Immediate swerve: pill dead OR on-target in-flight covers remaining HP.
-    -- (Same C/D rule as charge — see comment block above the charge gate.)
-    -- Tank-the-finish: skip while pill alive and hp*5 <= armour (buck in).
+    -- Keep firing until the pill is ACTUALLY dead (cyan 0/0) — don't swerve on
+    -- the in-flight prediction, which stops a shot short if a shell diverges.
     local on_target_in_flight = goal._on_target_in_flight or 0
-    if (pill_hp <= 0 or (pill_hp > 0 and on_target_in_flight >= pill_hp))
-       and not can_tank_finish(pill, info) then
+    if pill_hp <= 0 then
       if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
         print2(string.format(
           "SWERVE_ENTER t=%d site=engage tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
