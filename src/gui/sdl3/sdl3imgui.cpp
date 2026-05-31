@@ -3907,6 +3907,16 @@ SDL_Texture *sdl3ImguiGetSteamIcon(void) {
     return s_iconSteam;
 }
 
+SDL_Texture *sdl3ImguiGetBrainIcon(void) {
+    ensureWbnIconsLoaded();
+    return s_iconBrain;
+}
+
+bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {
+    if (playerNum >= MAX_PLAYERS) return false;
+    return (s_playerFlags[playerNum] & PLAYER_FLAG_BOT) != 0;
+}
+
 SDL_Texture *sdl3ImguiGetPlatformIcon(uint8_t clientType) {
     ensurePlatformIconsLoaded();
     if (clientType >= CLIENT_TYPE_COUNT) return nullptr;

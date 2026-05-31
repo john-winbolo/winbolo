@@ -243,6 +243,23 @@ SDL_Texture *sdl3ImguiGetGlobeIcon(void);
 SDL_Texture *sdl3ImguiGetSteamIcon(void);
 
 /*********************************************************
+*NAME:          sdl3ImguiGetBrainIcon
+*PURPOSE:
+*  Returns the SDL_Texture for the AI-brain icon (the badge
+*  shown for bot players). Loads the SVG lazily on first
+*  call. Returns NULL if the SVG could not be loaded.
+*********************************************************/
+SDL_Texture *sdl3ImguiGetBrainIcon(void);
+
+/*********************************************************
+*NAME:          sdl3ImguiPlayerIsBot
+*PURPOSE:
+*  Returns true if the given player slot is flagged as a
+*  bot (PLAYER_FLAG_BOT) in the cached player list.
+*********************************************************/
+bool sdl3ImguiPlayerIsBot(unsigned char playerNum);
+
+/*********************************************************
 *NAME:          sdl3ImguiGetPlatformIcon
 *PURPOSE:
 *  Returns the SDL_Texture for the platform icon matching
