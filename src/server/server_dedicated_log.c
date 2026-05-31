@@ -105,6 +105,27 @@ static void handleLobbyEnter(ServerSim *sim) {
     }
 }
 
+static void handleLobbyMapChange(ServerSim *sim) {
+    char pstr[256];
+    int nameLen;
+
+    if (!sim->wantLogging || !logIsRecording()) {
+        return;
+    }
+
+    /* Record the chosen map name as a server message so the viewer's
+     * chat timeline shows what the host previewed in the lobby. The
+     * authoritative snapshot is rewritten when the countdown ends
+     * (handleGameStart); these messages are just a cheap audit trail
+     * that doesn't churn the heavy pills/bases/starts/RLE state. */
+    nameLen = (int)snprintf(pstr + 1, sizeof(pstr) - 1,
+                            "Map changed to %s", sim->mapName);
+    if (nameLen < 0) return;
+    if (nameLen > 255) nameLen = 255;
+    pstr[0] = (char)nameLen;
+    logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, pstr);
+}
+
 static void handleGameStart(ServerSim *sim) {
     if (!sim->wantLogging) {
         return;
@@ -112,6 +133,12 @@ static void handleGameStart(ServerSim *sim) {
 
     if (logIsRecording()) {
         logAddEvent(log_LobbyExit, 0, 0, 0, 0, 0, NULL);
+        /* Rewrite the world snapshot with whatever map the lobby
+         * settled on. The original snapshot from handleLobbyEnter
+         * froze the map at lobby-entry time, so any in-lobby map
+         * swap would otherwise leave the viewer playing the round
+         * against the wrong terrain/pills/bases. */
+        logWriteSnapshot(sim, TRUE);
         return;
     }
 
@@ -149,6 +176,9 @@ static void serverDedicatedLogDeliver(void *ctx, const ControlEvent *evt) {
             break;
         case CTRL_GAME_PHASE_GAME_OVER:
             handleGameOver(sim);
+            break;
+        case CTRL_LOBBY_MAP_CHANGE:
+            handleLobbyMapChange(sim);
             break;
         default:
             break;

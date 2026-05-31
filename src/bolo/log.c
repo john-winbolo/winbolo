@@ -152,7 +152,7 @@ void logWriteTick() {
 void logWriteEvents(BYTE key) {
   BYTE data[3];
   unsigned short us;
-  
+
   if (logNumEvents > 0) {
     if (logNumEvents < LOG_SIZE_LONG_DIFF) {
       data[0] = LOG_EVENT ^ key;
@@ -600,18 +600,21 @@ bool logWriteSnapshot(ServerSim *ssim, bool check) {
 
   if (logNumEvents > 0) {
     logWriteEvents(logOldKey);
+    /* logWriteEvents flushes the queued events but leaves logOldKey
+     * stale at the pre-tick value, while logKey has advanced to the
+     * last event's code. The reader's blockKey after a LOG_EVENT block
+     * equals that last event code, so without re-syncing here the
+     * snapshot marker we write next would be XOR'd with the wrong key
+     * and the whole stream desyncs. The empty branch below gets this
+     * for free via logWriteEmpty's own logOldKey = logKey tail. */
+    logOldKey = logKey;
   } else {
     logWriteEmpty();
     if (logLastEmpty == TRUE) {
-  //    printf("Not snapshotting because nothing happened!\n");
       return TRUE;
     }
     logLastEmpty = TRUE;
-    // Nothing happened return?
   }
-
-  //printf(" Good\n");
-
 
   data[0] = LOG_EVENT_SNAPSHOT;
   ret = writeData(data, 1, logOldKey);
