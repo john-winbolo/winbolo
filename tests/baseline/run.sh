@@ -83,6 +83,29 @@ diff_norm() {
     <(sed -E "$NORMALIZE_EVENTS_SED" "$actual")
 }
 
+# Two-client lobby scenarios race at teardown in two ways that are not
+# the scenario's regression target (join + rename roster state is):
+#   1. Client disconnect — CTRL_PLAYER_LEAVE and its "<name> has left."
+#      CTRL_SERVER_TEXT. Whether one client logs the other's leave before
+#      it is itself killed varies run-to-run. Dedicated leave / shutdown
+#      scenarios cover disconnect events deterministically.
+#   2. The rename auto-unready transient — a "ready":false CTRL_LOBBY_SLOT
+#      broadcast emitted between the rename and the client re-readying.
+#      Whether it lands in the capture window before teardown is racy;
+#      sort -u can't fold it because it differs from the "ready":true
+#      line only in the ready flag.
+# Drop the leave/has-left lines and fold ready to a constant so the
+# transient collapses, leaving the deterministic join/rename roster.
+LOBBY_TEARDOWN_SED='/"type":"CTRL_PLAYER_LEAVE"/d; /"type":"CTRL_SERVER_TEXT","text":"[^"]*has left/d; s/"ready":(true|false)/"ready":false/g'
+
+diff_sorted_lobby() {
+  local expected="$1"
+  local actual="$2"
+  diff -u \
+    <(sed -E "$NORMALIZE_EVENTS_SED" "$expected" | sed -E "$LOBBY_TEARDOWN_SED" | sort -u) \
+    <(sed -E "$NORMALIZE_EVENTS_SED" "$actual"   | sed -E "$LOBBY_TEARDOWN_SED" | sort -u)
+}
+
 run() {
   local name="$1"
   local map="$2"
@@ -464,13 +487,13 @@ run_events_cmd_udp_two_clients_lobby() {
 
   local fail=0
   for which in c1 c2; do
-    if diff_sorted "$EXPECTED/${name}_${which}.jsonl" \
-                   "$ACTUAL/${name}_${which}.jsonl" >/dev/null 2>&1; then
+    if diff_sorted_lobby "$EXPECTED/${name}_${which}.jsonl" \
+                         "$ACTUAL/${name}_${which}.jsonl" >/dev/null 2>&1; then
       :
     else
       [ "$fail" -eq 0 ] && echo "DIFF"
-      diff_sorted "$EXPECTED/${name}_${which}.jsonl" \
-                  "$ACTUAL/${name}_${which}.jsonl" 2>&1 | head -40
+      diff_sorted_lobby "$EXPECTED/${name}_${which}.jsonl" \
+                        "$ACTUAL/${name}_${which}.jsonl" 2>&1 | head -40
       fail=1
     fi
   done

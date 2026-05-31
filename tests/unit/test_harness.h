@@ -157,6 +157,14 @@ int run_player_join_self_does_not_announce(void);
 int run_player_leave_appends_lobby_chat(void);
 int run_lobby_settings_clears_balance_proposal(void);
 
+/* Identity-survives-reset regressions (test_identity_survives_reset.c).
+ * Connection identity (name, country, clientType, clientFlags incl.
+ * PLAYER_FLAG_BOT) must survive the per-round world reset; it was twice
+ * dropped on the networked game-start path. */
+int run_reset_round_state_preserves_identity(void);
+int run_start_game_preserves_client_flags(void);
+int run_return_to_lobby_drops_wbn_keeps_identity(void);
+
 /* Reliable control-event queue regression tests (test_control_event_queue.c).
  * Each captures a specific bug that shipped during the
  * reliable-control-events rollout. */

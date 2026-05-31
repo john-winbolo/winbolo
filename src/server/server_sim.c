@@ -2807,24 +2807,13 @@ void serverSimReturnToLobby(ServerSim *sim) {
         }
     }
 
-    /* Save connection, lobby state, and the identity bits the lobby UI
-     * sources from `sim->sim.plyrs->item[i]` — serverSimResetGameWorld
-     * destroys the Players struct (step 11), so name / country /
-     * clientType / clientFlags would otherwise come back empty and
-     * every roster row would render with a blank name. Name, country,
-     * and clientType have a durable mirror in udpServer.clients[i]
-     * which survives the reset; clientFlags is sim-side only, so it
-     * has to be snapshotted here. */
-    uint8_t savedClientFlags[MAX_TANKS];
-    char savedBotNames[MAX_TANKS][PLAYER_NAME_LEN];
+    /* Save connection and lobby state (sim-level arrays cleared by the
+     * reset). Player identity in sim->sim.plyrs->item[i] (name, country,
+     * clientType, clientFlags, brain name) is preserved in-place by
+     * serverSimResetGameWorld, so it no longer needs snapshotting here. */
     for (i = 0; i < MAX_TANKS; i++) {
         savedConnected[i] = sim->playerConnected[i];
         savedLobby[i] = sim->lobbyPlayers[i];
-        savedClientFlags[i] = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
-        savedBotNames[i][0] = '\0';
-        if (sim->lobbyPlayers[i].isBot && sim->playerConnected[i]) {
-            playersGetPlayerName(&sim->sim.plyrs, (BYTE)i, savedBotNames[i], TRUE);
-        }
     }
 
     /* Full world reset — reloads map from cached data */
@@ -2845,41 +2834,15 @@ void serverSimReturnToLobby(ServerSim *sim) {
     sim->gameLength = sim->originalGameLength;
     sim->emptyResetTicks = -1;
 
-    /* Re-register identity into the freshly-recreated Players struct.
-     * Name / country / clientType come from the transport's per-slot
-     * array (durable across serverSimResetGameWorld). clientFlags
-     * comes from the pre-reset snapshot above with the WBN-session
-     * bits cleared — the WBN session is about to be torn down and
-     * re-registered with a fresh server_key (see
-     * winbolonetReturnToLobby in the caller), so each client must
-     * re-auth via PACKET_WBN_REAUTH against the new session. Other
-     * clientFlags bits (CLIENT_TYPE_*, platform, STEAM_BUILD,
-     * SUPPORTER, ADMIN) are identity bits tied to the connection,
-     * not the WBN session, and stay preserved across the reset. */
+    /* Identity (name, country, clientType, clientFlags, brain name) survives
+     * the reset in-place. The one deliberate change on return-to-lobby is to
+     * drop the WBN-session bits: the WBN session is torn down and re-registered
+     * with a fresh server_key (see winbolonetReturnToLobby in the caller), so
+     * each client must re-auth via PACKET_WBN_REAUTH against the new session.
+     * Connection-scoped bits (STEAM_BUILD, SUPPORTER, ADMIN, BOT) stay. */
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
-        const char *name = NULL;
-        const char *country = NULL;
-        uint8_t clientType = 0;
-        if (sim->lobbyPlayers[i].isBot) {
-            name = savedBotNames[i];
-            if (name[0] == '\0') name = "Bot";
-        } else {
-            name = transportUdpServerGetPlayerName(i);
-            country = transportUdpServerGetClientCountryCode(i);
-            clientType = transportUdpServerGetClientType(i);
-        }
-        if (name == NULL) continue;
-        char countryBuf[3] = "XX";
-        if (country != NULL) {
-            countryBuf[0] = country[0];
-            countryBuf[1] = country[1];
-        }
-        playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, (BYTE)i,
-                         (char *)name, countryBuf,
-                         0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
-        playersSetClientType(&sim->sim.plyrs, (BYTE)i, clientType);
-        uint8_t f = savedClientFlags[i];
+        uint8_t f = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
         f &= (uint8_t)~(PLAYER_FLAG_WBN_VERIFIED |
                         PLAYER_FLAG_WBN_STEAM_LINKED);
         playersSetClientFlags(&sim->sim.plyrs, (BYTE)i, f);
@@ -3041,13 +3004,18 @@ void serverSimResetGameWorld(ServerSim *sim) {
     sim->prevPillCount = 0;
     sim->prevBaseCount = 0;
 
-    /* 11. Reset player connection state and players struct */
+    /* 11. Reset player connection state and per-slot round/world state.
+     * Connection identity (name, country, clientType, clientFlags, bot/WBN
+     * flags, brain name) is preserved in-place: it is connection-scoped, not
+     * round-scoped, and is cleared on the leave path (serverSimRemovePlayer),
+     * not here. Callers no longer hand-restore identity across the reset —
+     * that duplicated, drift-prone dance is what dropped PLAYER_FLAG_BOT and
+     * the country code on the networked game-start path. */
     for (i = 0; i < MAX_TANKS; i++) {
         sim->playerConnected[i] = FALSE;
+        playersResetRoundState(&sim->sim.plyrs, i);
     }
     sim->hadPlayersEver = FALSE;
-    playersDestroy(&sim->sim.plyrs);
-    playersCreate(&sim->sim.plyrs, TRUE);
 
     /* The world is no longer the pristine one set up by
      * serverSimCreate* — subsequent lobby→running transitions
@@ -3169,20 +3137,12 @@ void serverSimStartGameInPlace(ServerSim *sim) {
 void serverSimStartGame(ServerSim *sim) {
     BYTE i;
     /* Save connected-player state before resetting – resetGameWorld clears
-       playerConnected[], but we need it to create tanks below. Also save
-       clientFlags: resetGameWorld destroys the Players struct (clientFlags
-       reset to 0), and the name re-registration below goes through
-       playersSetPlayer, which never touches clientFlags. Without this the
-       PLAYER_FLAG_BOT / WBN / SUPPORTER / STEAM identity bits would come
-       back empty for every player on the first running snapshot/PLAYER_LIST
-       — bots lose their brain badge and humans lose their WBN/Steam icons.
-       (serverSimReturnToLobby does the same save/restore for the same
-       reason.) */
+       playerConnected[], but we need it to create tanks below. Player
+       identity (name, country, clientType, clientFlags) is preserved across
+       the reset by serverSimResetGameWorld, so it no longer needs saving. */
     bool savedConnected[MAX_TANKS];
-    uint8_t savedClientFlags[MAX_TANKS];
     for (i = 0; i < MAX_TANKS; i++) {
         savedConnected[i] = sim->playerConnected[i];
-        savedClientFlags[i] = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
     }
 
     activeSim = sim;
@@ -3210,22 +3170,9 @@ void serverSimStartGame(ServerSim *sim) {
         }
     }
 
-    /* Re-register player names — resetGameWorld destroyed the Players struct,
-     * so names must be restored from the transport's client name array. */
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (!sim->playerConnected[i]) continue;
-        const char *name = transportUdpServerGetPlayerName(i);
-        if (name != NULL) {
-            playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, i, (char *)name, "XX",
-                             0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
-        }
-        /* Restore the identity flags wiped by the reset (playersSetPlayer
-         * never touches clientFlags). Re-stamp PLAYER_FLAG_BOT for bot slots
-         * as belt-and-braces. */
-        uint8_t flags = savedClientFlags[i];
-        if (sim->lobbyPlayers[i].isBot) flags |= PLAYER_FLAG_BOT;
-        playersSetClientFlags(&sim->sim.plyrs, (BYTE)i, flags);
-    }
+    /* Player identity (name, country, clientType, clientFlags including
+     * PLAYER_FLAG_BOT) survives the reset in-place — no re-registration
+     * needed. */
 
     sim->gameLength = sim->originalGameLength;
 
