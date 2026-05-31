@@ -1229,9 +1229,16 @@ endif()
 # Steamworks SDK integration (optional)
 set(STEAMWORKS_SDK_DIR "${CMAKE_SOURCE_DIR}/third_party/steamworks")
 if(EXISTS "${STEAMWORKS_SDK_DIR}/public/steam/steam_api.h")
+    if(APPLE)
+        set(STEAM_RUNTIME_LIB "${STEAMWORKS_SDK_DIR}/redistributable_bin/osx/libsteam_api.dylib")
+    elseif(WIN32)
+        set(STEAM_RUNTIME_LIB "${STEAMWORKS_SDK_DIR}/redistributable_bin/win64/steam_api64.dll")
+    else()
+        set(STEAM_RUNTIME_LIB "${STEAMWORKS_SDK_DIR}/redistributable_bin/linux64/libsteam_api.so")
+    endif()
     add_library(steam_api SHARED IMPORTED)
     set_target_properties(steam_api PROPERTIES
-        IMPORTED_LOCATION "${STEAMWORKS_SDK_DIR}/redistributable_bin/linux64/libsteam_api.so"
+        IMPORTED_LOCATION "${STEAM_RUNTIME_LIB}"
         IMPORTED_IMPLIB "${STEAMWORKS_SDK_DIR}/redistributable_bin/win64/steam_api64.lib"
         INTERFACE_INCLUDE_DIRECTORIES "${STEAMWORKS_SDK_DIR}/public"
     )
@@ -1324,6 +1331,20 @@ if(EXISTS "${STEAMWORKS_SDK_DIR}/public/steam/steam_api.h")
                 "${STEAMWORKS_SDK_DIR}/redistributable_bin/win64/steam_api64.dll"
                 "$<TARGET_FILE_DIR:WinBolo>"
             COMMENT "Copying steam_api64.dll to WinBolo output directory"
+        )
+    elseif(APPLE)
+        add_custom_command(TARGET WinBolo POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${STEAMWORKS_SDK_DIR}/redistributable_bin/osx/libsteam_api.dylib"
+                "$<TARGET_FILE_DIR:WinBolo>"
+            COMMENT "Copying libsteam_api.dylib to WinBolo bundle"
+        )
+    else()
+        add_custom_command(TARGET WinBolo POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${STEAMWORKS_SDK_DIR}/redistributable_bin/linux64/libsteam_api.so"
+                "$<TARGET_FILE_DIR:WinBolo>"
+            COMMENT "Copying libsteam_api.so to WinBolo output directory"
         )
     endif()
     add_custom_command(TARGET WinBolo POST_BUILD
