@@ -58,9 +58,14 @@ static void handleGameOver(ServerSim *sim) {
         char key[WINBOLONET_KEY_LEN];
         winboloNetGetServerKey(key);
         if (key[0] != '\0') {
-            httpCreate();
+            /* HTTP layer is owned by winboloNetServerCreate (alive for the
+             * whole session); do NOT bracket the upload with
+             * httpCreate/httpDestroy. The httpDestroy used to fire here
+             * cleared curl global state mid-session, so the very next
+             * winbolonetReturnToLobby -> server/quit + server/register
+             * calls would early-return on !httpStarted and surface as
+             * "WBN disabled" with no DEBUG trace. */
             httpSendLogFile(fileName, key, FALSE);
-            httpDestroy();
         }
     }
 }
