@@ -313,9 +313,9 @@ void playersGetCountryCode(players *plrs, BYTE playerNum, char *dest);
 *NAME:          playersGetAccountFlags
 *PURPOSE:
 * Returns the player's account-flag byte: bit 0 = WBN
-* participant, bit 1 = Steam participant. Mirrors
-* PLAYER_FLAG_WBN_VERIFIED / PLAYER_FLAG_WBN_STEAM_LINKED. Zero if
-* the slot is not in use.
+* participant, bit 1 = Steam participant, bit 5 = bot. Mirrors
+* PLAYER_FLAG_WBN_VERIFIED / PLAYER_FLAG_WBN_STEAM_LINKED /
+* PLAYER_FLAG_BOT. Zero if the slot is not in use.
 *
 *ARGUMENTS:
 * plrs - Pointer to the players object

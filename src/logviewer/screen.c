@@ -621,7 +621,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
           snprintf(mem, sizeof(mem), "%s", str);
         } else if (g_lv->loadedLogVersion == LOG_VERSION_V1) {
           /* Version 1: opt2-opt3 are 2-char country code,
-           * opt4 is accountFlags (bit 0=WBN, bit 1=Steam),
+           * opt4 is accountFlags (bit 0=WBN, bit 1=Steam, bit 5=bot),
            * opt5 reserved (zero in current writers). */
           snprintf(mem, sizeof(mem), "[%c%c]", opt2, opt3);
           accountFlags = opt4;
