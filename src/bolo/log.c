@@ -135,6 +135,21 @@ void logWriteEmpty() {
 void logWriteTick() {
   BYTE savedKey = logOldKey;
 
+  /* First call pins the owner thread. logStart runs from main() at
+   * startup (sync-replay of CTRL_GAME_PHASE_LOBBY inside
+   * serverDedicatedLogInstall), but every tick afterwards runs from the
+   * SDL timer thread — capturing the owner at logStart would pin the
+   * wrong thread and drop every subsequent logAddEvent. logWriteTick is
+   * only ever called from the timer thread (serverSimLogTick /
+   * simRunHalfStep), so capturing here pins the correct one. The
+   * startup-thread window between logStart and the first logWriteTick
+   * has no concurrent writers (worker pool isn't running yet), so the
+   * log_LobbyEnter / log_PlayerJoined writes during sync-replay pass
+   * through with logOwnerThread still 0. */
+  if (logOwnerThread == 0) {
+    logOwnerThread = SDL_GetCurrentThreadID();
+  }
+
   if (logIsRunning == TRUE) {
     if (logNumEvents > 0) {
       logWriteEmpty();
@@ -776,7 +791,13 @@ bool logStart(char *fileName, ServerSim *ssim, BYTE ai, BYTE maxPlayers, bool us
   returnValue = TRUE;
   logStop(); /* Stop the current log if it is running */
   logLastEmpty = FALSE;
-  logOwnerThread = SDL_GetCurrentThreadID();
+  /* Reset owner-thread capture so the next logWriteTick re-pins it.
+   * Necessary across round boundaries: handleLobbyEnter for a new round
+   * calls logStart on whichever thread published CTRL_GAME_PHASE_LOBBY
+   * (timer thread), so the previous round's owner would still be the
+   * timer thread and the check would pass — but clearing it lets the
+   * capture stay correctly scoped per-log. */
+  logOwnerThread = 0;
 
   count = 0;
   while (count < MAX_TANKS) {
