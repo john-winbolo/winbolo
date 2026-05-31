@@ -51,6 +51,7 @@ local shot_tracker = require("shot_tracker")
 local viz      = require("viz")
 local ally_state = require("ally_state")
 ally_state.init()
+local pill_table = require("pill_table")
 local lgm_registry = require("lgm_registry")
 lgm_registry.init()
 
@@ -909,17 +910,16 @@ function Brain.think(info)
   -- automatically when its triggers stop firing (no manual reset).
   --
   -- Current triggers (logical OR):
-  --   * LGM dead AND we're carrying pills in the tank — pills are
-  --     valuable cargo we shouldn't lose to a stray pill shot, and
-  --     without an LGM we can't rebuild walls / repair to recover
-  --     from a hit.  Both conditions must hold; either alone is fine.
+  --   * We're carrying any pill in the tank (>=1) — pills are valuable
+  --     cargo we shouldn't lose to a stray pill shot, so bias toward
+  --     safe routes/targets while we hold one. (Previously also required
+  --     a dead LGM; relaxed so even a single carried pill triggers it.)
   --
   -- Add more triggers here as use cases arise.  Stays per-tick (no
   -- sticky latch) so the mode lifts the instant conditions clear.
   do
     local _carrying = (info.carried_pills or 0) > 0
-    local _lgm_dead = info.man_status == C.LGM_DEAD
-    state.cautious_mode = (_lgm_dead and _carrying) or false
+    state.cautious_mode = _carrying or false
   end
 
   -- LGM registry: self slot updated every tick from info.man_*.
@@ -2486,6 +2486,9 @@ function Brain.think(info)
     or (state.goal.kind == "attack_tank" and TANK_COMBAT_STATIONARY_SUBS[state.goal.substate or ""])
     -- refuel_at_base only counts as stationary when actually parked on the base
     or (state.goal.kind == "refuel_at_base" and W.tank_on_friendly_base(world, info))
+    -- Reposition: parked next to our own pill, deliberately shooting it down.
+    or (state.goal.kind == "capture_pill" and state.goal.reposition
+        and state.goal.substate == "reposition_shoot")
     or state.goal.kind == "rescue_lgm"
     or state.goal.kind == "wait_for_lgm"
   local attack_at_standoff = intentionally_stationary
@@ -2935,7 +2938,22 @@ function Brain.think(info)
        -- owned dead pills, so validation must too — otherwise the goal
        -- gets invalidated the tick after selection and we ping-pong
        -- into attack_pill on a different target.
-      if not p then goal_valid = false end
+      if not p then
+        if state.goal.reposition then
+          -- Reposition: the target is our OWN live pill. We drive up to it
+          -- (capture nav) and shoot it down (reposition_shoot substate);
+          -- only once it's dead does the spatial-index lookup above find it
+          -- and the normal pickup runs. Stay valid while it's still friendly
+          -- and alive and we have ammo to finish the job.
+          local lp = world.pills[state.goal.target_id]
+          if not lp or lp.owner ~= "friendly" or (lp.health or 0) <= 0
+             or (info.shells or 0) <= 0 then
+            goal_valid = false
+          end
+        else
+          goal_valid = false
+        end
+      end
     elseif gk == "attack_pill" and not state.capture_objective then
       -- Autonomous attack (not cp command): invalid if pill died or changed side
       -- BUT NOT during swerve — swerve must complete to dodge damage,
@@ -2989,9 +3007,18 @@ function Brain.think(info)
         end
       end
       if not has_target then goal_valid = false end
-      -- Also disengage if outgunned
-      if info.armour <= C.TANK_COMBAT_FLEE_ARMOUR
-         or info.shells <= C.TANK_COMBAT_FLEE_SHELLS then
+      -- Pillbox-crossfire disengage (every phase): if we're standing in heavy
+      -- enemy pill danger, drop the tank goal so we replan toward safety
+      -- instead of trading armour into a pillbox-defended position.
+      if threat.pill_at(info.tankx >> 8, info.tanky >> 8) >= C.TANK_COMBAT_DEFENDED_DANGER then
+        goal_valid = false
+        if state.pool_cache then state.pool_cache[9] = nil end
+      end
+      -- Also disengage if outgunned — but NOT during the opening phase,
+      -- where we stay aggressive regardless of armour/shells.
+      if state.phase ~= "opening"
+         and (info.armour <= C.TANK_COMBAT_FLEE_ARMOUR
+              or info.shells <= C.TANK_COMBAT_FLEE_SHELLS) then
         goal_valid = false
         -- Clear the pool cache so pick_goal doesn't re-select attack_tank
         -- immediately — the low-resource condition persists until we refuel.
@@ -3052,6 +3079,60 @@ function Brain.think(info)
     -- _last_info isn't populated outside the panel builder).
     if goals.sync_ally_claimed_rejects then
       goals.sync_ally_claimed_rejects(state, info)
+    end
+
+    -- Team reposition coordination: track the last tick anyone (self or an
+    -- ally) was repositioning a pill. While someone is, reset to now so the
+    -- time-based reposition discount (eval_reposition_pill) is 0 and the team
+    -- doesn't pile on; it then grows the longer it's been since the last move.
+    do
+      local repositioning = (state.goal.kind == "capture_pill" and state.goal.reposition) and true or false
+      -- Tiles allies are demolishing for a reposition (repos=1 + their goal
+      -- tile mx/my). eval_repair_pill skips these so we don't heal a pill a
+      -- teammate is busy shooting down.
+      local ally_demolish = nil
+      if ally_state.iter_active then
+        for pn, slot in ally_state.iter_active(now, 1750) do
+          if pn ~= info.player_number and slot.info and slot.info.repos == "1" then
+            repositioning = true
+            local amx = tonumber(slot.info.mx)
+            local amy = tonumber(slot.info.my)
+            if amx and amy then
+              ally_demolish = ally_demolish or {}
+              ally_demolish[amy * C.MAP_W + amx] = true
+            end
+          end
+        end
+      end
+      state._ally_demolish_tiles = ally_demolish
+      if repositioning or not state.last_team_reposition_tick then
+        state.last_team_reposition_tick = now
+      end
+    end
+
+    -- Pill blocker / utility tracking: a pre-existing friendly pill on the
+    -- firing line of an active pill take is a "blocker" → role utility until
+    -- the take ends. Each bot computes its own blockers + broadcasts them
+    -- (bsi.pblk); here we union the whole team's blocker ids each tick and flag
+    -- those pills _in_use so PP.role_of reports "utility". Rebuilt live, so a
+    -- pill reverts to back/front/aggro as soon as the take stops broadcasting.
+    do
+      local util = {}
+      local mine = attack.current_blocker_pids and attack.current_blocker_pids(state, world) or nil
+      state._blocker_pids = mine
+      if mine then for _, pid in ipairs(mine) do util[pid] = true end end
+      if ally_state.iter_active then
+        for pn, slot in ally_state.iter_active(now, 1750) do
+          if pn ~= info.player_number and slot.info and slot.info.pblk then
+            for s in string.gmatch(slot.info.pblk, "%d+") do
+              util[tonumber(s)] = true
+            end
+          end
+        end
+      end
+      for pid, p in pairs(world.pills) do
+        p._in_use = util[pid] and true or nil
+      end
     end
 
     -- Purge stale per-pill plan_position cache entries (pills that
@@ -3135,10 +3216,18 @@ function Brain.think(info)
     else
       state._shot_by_tank = false
     end
+    -- attack_pill in disengage / plan_position is non-committed: if an enemy
+    -- tank is in range, replan now so attack_tank (HYST-exempt in these
+    -- substates) can preempt immediately instead of finishing the maneuver.
+    local atk_pill_interruptible = state.goal.kind == "attack_pill"
+        and (state.goal.substate == "disengage" or state.goal.substate == "plan_position")
+        and state.perc and state.perc.enemy_tanks
+        and #state.perc.enemy_tanks > 0
+
     local urgent_replan = state.goal.kind == "none" or attack_tank_done
                        or tank_appeared or dead_pill_appeared
                        or new_base_appeared or lgm_appeared
-                       or shot_by_tank
+                       or shot_by_tank or atk_pill_interruptible
     if urgent_replan then
       -- Record which factor(s) tripped the urgent replan so the HUD
       -- below can flash a banner that's visible for a few seconds.
@@ -3146,6 +3235,7 @@ function Brain.think(info)
       local reason
       if lgm_appeared           then reason = "LGM APPEARED"
       elseif tank_appeared      then reason = "TANK APPEARED"
+      elseif atk_pill_interruptible then reason = "TANK PREEMPT (pill loose)"
       elseif dead_pill_appeared then reason = "DEAD PILL"
       elseif new_base_appeared  then reason = "BASE DISCOVERED"
       elseif attack_tank_done   then reason = "ATTACK_TANK DONE"
@@ -5076,6 +5166,8 @@ function Brain.think(info)
     -- gap and we don't trust their state.
     ally_state.draw(viz, state.tick, info.player_number, 1750)
     ally_state.draw_chat_log(viz, state.tick, info.player_number)
+    pill_table.draw(viz, world, state, info)
+    goals.draw_pill_spots(viz, state)
     attack.draw_pill_eval_progress(viz, state)
     attack.draw_plan_trace(viz, state, info)
     lgm_registry.draw_hud(viz, state.tick, info.player_number)
@@ -5464,6 +5556,16 @@ function Brain.think(info)
       end
       if state.goal.target_id and state.goal.target_id >= 0 then
         bsi.target = tostring(state.goal.target_id)
+      end
+      -- Reposition marker: tells the team someone is repositioning a pill, so
+      -- everyone resets the time-based reposition discount (don't pile on).
+      if state.goal.kind == "capture_pill" and state.goal.reposition then
+        bsi.repos = "1"
+      end
+      -- Pill ids we're using as blockers in this take (so the team marks them
+      -- utility). Computed in the team-tracking block above this tick.
+      if state._blocker_pids and #state._blocker_pids > 0 then
+        bsi.pblk = table.concat(state._blocker_pids, ",")
       end
       -- Goal tile mx/my as a fallback for the ally_claimed match path
       -- (goals.lua:3660-3664) when target_id isn't carried through.
