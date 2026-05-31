@@ -1882,6 +1882,32 @@ void sdl3DrawMainScreenBlack(RECT *rcWindow) {
   SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
 }
 
+void sdl3DrawReturningToLobby(ClientSim *cs) {
+  if (!gRenderer) return;
+  /* Reuse the chrome + black-playfield draw, justBlack=true skips the
+   * download progress bar that was the source of the white screen. */
+  sdl3DrawDownloadScreen(cs, NULL, TRUE);
+
+  /* Centred caption in the playfield. Tablet mode uses a different
+   * playfield rect; only the desktop layout matters for this transition
+   * (the mobile UIs don't expose a vote-to-lobby flow). */
+  if (uiModeIsTablet()) return;
+
+  int zf = gZoomFactor;
+  int originX = MAIN_OFFSET_X * zf;
+  int originY = MAIN_OFFSET_Y * zf;
+  int playfieldW = MAIN_SCREEN_SIZE_X * TILE_SIZE_X * zf;
+  int playfieldH = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * zf;
+  const char *caption = "Returning to lobby";
+  int textW = 0, textH = 0;
+  if (gFontMsg && TTF_GetStringSize(gFontMsg, caption, 0, &textW, &textH)) {
+    float tx = (float)(originX + (playfieldW - textW) / 2);
+    float ty = (float)(originY + (playfieldH - textH) / 2);
+    SDL_Color white = {200, 200, 200, 255};
+    sdl3RenderText(gFontMsg, caption, white, tx, ty);
+  }
+}
+
 int drawGetFrameRate(void) {
   return (int)g_dwFrameTotal;
 }

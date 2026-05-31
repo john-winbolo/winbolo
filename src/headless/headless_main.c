@@ -274,6 +274,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_ALLIANCE_REQUEST:      return "CTRL_ALLIANCE_REQUEST";
     case CTRL_ALLIANCE_ACCEPT:       return "CTRL_ALLIANCE_ACCEPT";
     case CTRL_ALLIANCE_LEAVE:        return "CTRL_ALLIANCE_LEAVE";
+    case CTRL_ALLIANCE_RESET:        return "CTRL_ALLIANCE_RESET";
     case CTRL_PLAYER_JOIN:           return "CTRL_PLAYER_JOIN";
     case CTRL_PLAYER_LEAVE:          return "CTRL_PLAYER_LEAVE";
     case CTRL_PLAYER_NAME:           return "CTRL_PLAYER_NAME";
@@ -339,6 +340,17 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       fprintf(f, ",\"playerNum\":%u",
               (unsigned)evt->u.allianceLeave.playerNum);
       break;
+
+    case CTRL_ALLIANCE_RESET: {
+      BYTE k;
+      fprintf(f, ",\"allies\":[");
+      for (k = 0; k < MAX_TANKS; k++) {
+        fprintf(f, "%s%u", (k == 0) ? "" : ",",
+                (unsigned)evt->u.allianceReset.allies[k]);
+      }
+      fprintf(f, "]");
+      break;
+    }
 
     case CTRL_PLAYER_JOIN: {
       BYTE k;

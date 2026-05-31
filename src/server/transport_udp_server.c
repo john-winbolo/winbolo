@@ -477,6 +477,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_ALLIANCE_REQUEST: return "ALLIANCE_REQUEST";
     case CTRL_ALLIANCE_ACCEPT:  return "ALLIANCE_ACCEPT";
     case CTRL_ALLIANCE_LEAVE:   return "ALLIANCE_LEAVE";
+    case CTRL_ALLIANCE_RESET:   return "ALLIANCE_RESET";
     case CTRL_PLAYER_JOIN:      return "PLAYER_JOIN";
     case CTRL_PLAYER_NAME:      return "PLAYER_NAME";
     case CTRL_LOBBY_SLOT:       return "LOBBY_SLOT";

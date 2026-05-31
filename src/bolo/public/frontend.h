@@ -276,6 +276,18 @@ void frontEndUpdatePlayerPing(struct ClientSim *cs, playerNumbers value, uint16_
 void frontEndDrawDownload(struct ClientSim *cs, bool justBlack);
 
 /*********************************************************
+*NAME:          frontEndDrawReturningToLobby
+*PURPOSE:
+* Render the in-game window during the game-over countdown
+* phase (netStat=netLobby but inLobby=false). The previous
+* behaviour fell through to frontEndDrawDownload which drew
+* the download progress bar — at 100% it filled the whole
+* playfield with white, presenting as a multi-second white
+* screen between game end and lobby reappearance.
+*********************************************************/
+void frontEndDrawReturningToLobby(struct ClientSim *cs);
+
+/*********************************************************
 *NAME:          frontEndSetPlayerCheckState
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/3/99

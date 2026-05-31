@@ -134,6 +134,11 @@ static const UnitTestEntry s_tests[] = {
     { "player_join_self_does_not_announce",      run_player_join_self_does_not_announce      },
     { "player_leave_appends_lobby_chat",         run_player_leave_appends_lobby_chat         },
     { "lobby_settings_clears_balance_proposal",  run_lobby_settings_clears_balance_proposal  },
+    { "alliance_reset_codec_roundtrip",          run_alliance_reset_codec_roundtrip          },
+    { "alliance_reset_decoder_rejects_short",    run_alliance_reset_decoder_rejects_short    },
+    { "alliance_reset_reapply_publishes_one_event",
+                                                 run_alliance_reset_reapply_publishes_one_event },
+    { "alliance_reset_apply_rebuilds_alliances", run_alliance_reset_apply_rebuilds_alliances },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

@@ -157,6 +157,14 @@ int run_player_join_self_does_not_announce(void);
 int run_player_leave_appends_lobby_chat(void);
 int run_lobby_settings_clears_balance_proposal(void);
 
+/* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
+ * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
+ * the host's reliable control queue at game start with 16 players. */
+int run_alliance_reset_codec_roundtrip(void);
+int run_alliance_reset_decoder_rejects_short(void);
+int run_alliance_reset_reapply_publishes_one_event(void);
+int run_alliance_reset_apply_rebuilds_alliances(void);
+
 /* Reliable control-event queue regression tests (test_control_event_queue.c).
  * Each captures a specific bug that shipped during the
  * reliable-control-events rollout. */
