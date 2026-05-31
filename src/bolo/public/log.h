@@ -259,6 +259,23 @@ bool logStart(char *fileName, ServerSim *ssim, BYTE ai, BYTE maxPlayers, bool us
 bool logWriteSnapshot(ServerSim *ssim, bool check);
 
 /*********************************************************
+*NAME:          logSetLobbyMode
+*PURPOSE:
+* Toggles lobby recording mode. While enabled, logAddEvent
+* drops world-mutation opcodes (map/pill/base/shell/sound/
+* tank/lgm position) and logWriteSnapshot emits an empty
+* world (no pills/bases/starts, all deep sea, no tanks).
+* Lobby roster events (PlayerJoined/Quit/Leaving, TeamSet,
+* Ready/Unready, CountdownStart/Cancel, BalanceApplied,
+* MapSkip*, MessageServer/All/Players, ChangeName, votes)
+* pass through unchanged.
+*
+*ARGUMENTS:
+*  enabled - TRUE to enter lobby mode, FALSE to leave it
+*********************************************************/
+void logSetLobbyMode(bool enabled);
+
+/*********************************************************
 *NAME:          logCheckTankSame
 *AUTHOR:        John Morrison
 *CREATION DATE: 24/01/05

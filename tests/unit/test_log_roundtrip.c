@@ -111,6 +111,58 @@ static int readByte(const uint8_t *buf, size_t len, size_t pos, uint8_t key) {
     return buf[pos] ^ key;
 }
 
+/* Snapshot shape decoded for tests that need to verify the lobby
+ * empty-world payload sizes. Filled by decodeSnapshot in addition to
+ * the usual advance-pos behaviour of skipSnapshot. */
+typedef struct {
+    int pillsPayloadLen;   /* raw payload length after the 1-byte size */
+    int basesPayloadLen;
+    int startsPayloadLen;
+    int mapRunCount;       /* number of runs read, NOT counting the terminator */
+    int playerStubCount;   /* number of 2-byte (not-in-use) player blocks */
+    int playerFullCount;   /* number of >2-byte player blocks */
+} snapshotShape;
+
+/* Decode the snapshot at *pos, advancing *pos past it. Fills *shape with
+ * the per-section sizes so the caller can assert on the lobby shape. */
+static bool decodeSnapshot(const uint8_t *buf, size_t len, size_t *pos, uint8_t key,
+                           snapshotShape *shape) {
+    size_t p = *pos;
+    int n;
+    memset(shape, 0, sizeof(*shape));
+    if (p + 8 > len) return false;
+    p += 8;                                      /* startDelay + timeLimit */
+    if ((n = readByte(buf, len, p, key)) < 0) return false;
+    shape->pillsPayloadLen = n;
+    p += 1 + (size_t)n;
+    if ((n = readByte(buf, len, p, key)) < 0) return false;
+    shape->basesPayloadLen = n;
+    p += 1 + (size_t)n;
+    if ((n = readByte(buf, len, p, key)) < 0) return false;
+    shape->startsPayloadLen = n;
+    p += 1 + (size_t)n;
+    while (1) {
+        if (p + 4 > len) return false;
+        int dlen = readByte(buf, len, p,     key);
+        int y    = readByte(buf, len, p + 1, key);
+        int sx   = readByte(buf, len, p + 2, key);
+        int ex   = readByte(buf, len, p + 3, key);
+        p += 4;
+        if (dlen == 4 && y == 255 && sx == 255 && ex == 255) break;
+        if (dlen < 4) return false;
+        p += (size_t)(dlen - 4);
+        shape->mapRunCount++;
+    }
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if ((n = readByte(buf, len, p, key)) < 0) return false;
+        if (n == 2) shape->playerStubCount++;
+        else        shape->playerFullCount++;
+        p += 1 + (size_t)n;
+    }
+    *pos = p;
+    return true;
+}
+
 /* Skip a full snapshot body (post-marker), updating pos in place.
  * Returns false on short read or malformed map-run terminator. */
 static bool skipSnapshot(const uint8_t *buf, size_t len, size_t *pos, uint8_t key) {
@@ -438,5 +490,148 @@ int run_log_roundtrip_snapshot_keeps_chain_synced(void) {
     UT_ASSERT(got[4] == log_BalanceApplied);
     UT_ASSERT(got[5] == log_CountdownStart);
     UT_ASSERT(got[6] == log_LobbyExit);
+    return 0;
+}
+
+/* Lobby-mode snapshot must be the empty-world shape: a 0-pill, 0-base,
+ * 0-start payload (each 1 byte long: just the count=0), a single
+ * deep-sea terminator run (no body runs), and 16 2-byte not-in-use
+ * player stubs. Asserting the shape catches future regressions where
+ * the snapshot writer accidentally falls back to the real-world path
+ * while lobby mode is on. */
+int run_log_roundtrip_lobby_snapshot_is_empty_world(void) {
+    char fname[64];
+    mkTempPath(fname, sizeof(fname), "lobbysnap");
+    remove(fname);
+
+    ServerSim *sim = ut_make_running_sim("Tester");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim failed");
+
+    logCreate();
+    logSetLobbyMode(TRUE);
+    UT_ASSERT_MSG(logStart(fname, sim, 0, MAX_TANKS, FALSE),
+                  "logStart failed");
+    logWriteTick();  /* pin owner thread */
+
+    /* Fire one lobby-allowed event so we exercise the tick flush
+     * after the opening snapshot — easier to spot mis-alignment. */
+    logAddEvent(log_LobbyEnter, 0, 0, 0, 0, 0, NULL);
+    logWriteTick();
+    logStop();
+    logDestroy();
+    serverSimDestroy(sim);
+
+    uint8_t *buf = NULL;
+    size_t   blen = 0;
+    UT_ASSERT_MSG(extractLogDat(fname, &buf, &blen), "extractLogDat failed");
+
+    size_t  blockStart = 0;
+    uint8_t initKey    = 0;
+    UT_ASSERT_MSG(locateSnapshotMarker(buf, blen, &blockStart, &initKey),
+                  "header parse failed");
+
+    /* The first outer byte at blockStart is the snapshot marker
+     * (LOG_EVENT_SNAPSHOT) XOR'd with initKey. Consume it then decode. */
+    size_t pos = blockStart;
+    int code = readByte(buf, blen, pos, initKey);
+    pos++;
+    UT_ASSERT_MSG(code == LOG_EVENT_SNAPSHOT,
+                  "expected initial snapshot marker, got %d", code);
+
+    snapshotShape shape;
+    UT_ASSERT_MSG(decodeSnapshot(buf, blen, &pos, initKey, &shape),
+                  "decodeSnapshot failed on lobby snapshot");
+    free(buf);
+    remove(fname);
+
+    UT_ASSERT_MSG(shape.pillsPayloadLen  == 1,
+                  "lobby pills payload len = %d (want 1)",
+                  shape.pillsPayloadLen);
+    UT_ASSERT_MSG(shape.basesPayloadLen  == 1,
+                  "lobby bases payload len = %d (want 1)",
+                  shape.basesPayloadLen);
+    UT_ASSERT_MSG(shape.startsPayloadLen == 1,
+                  "lobby starts payload len = %d (want 1)",
+                  shape.startsPayloadLen);
+    UT_ASSERT_MSG(shape.mapRunCount      == 0,
+                  "lobby map run count = %d (want 0, terminator only)",
+                  shape.mapRunCount);
+    UT_ASSERT_MSG(shape.playerStubCount  == MAX_TANKS,
+                  "lobby player stub count = %d (want %d)",
+                  shape.playerStubCount, MAX_TANKS);
+    UT_ASSERT_MSG(shape.playerFullCount  == 0,
+                  "lobby player full count = %d (want 0)",
+                  shape.playerFullCount);
+    return 0;
+}
+
+/* In lobby mode, logAddEvent must drop world-mutation opcodes
+ * (MapChange, PillSet*, BaseSet*, Shell, Sound*, etc.) so the lobby
+ * segment doesn't get polluted with deltas against the deep-sea base
+ * world. Lobby-flow events (LobbyEnter/Exit, joins, ready, countdown,
+ * team, alliance, chat) must pass through. After clearing the flag,
+ * world events resume being written. */
+int run_log_roundtrip_lobby_mode_drops_world_events(void) {
+    char fname[64];
+    mkTempPath(fname, sizeof(fname), "lobbydrop");
+    remove(fname);
+
+    ServerSim *sim = ut_make_running_sim("Tester");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim failed");
+
+    logCreate();
+    logSetLobbyMode(TRUE);
+    UT_ASSERT_MSG(logStart(fname, sim, 0, MAX_TANKS, FALSE),
+                  "logStart failed");
+    logWriteTick();
+
+    /* Lobby segment — mix allowed events with world-mutation events.
+     * Only the allowed events should survive the gate. */
+    logAddEvent(log_LobbyEnter,     0, 0, 0, 0, 0, NULL);
+    logAddEvent(log_MapChange,      10, 20, 5, 0, 0, NULL);    /* dropped */
+    logAddEvent(log_TeamSet,        2, 1, 0, 0, 0, NULL);
+    logAddEvent(log_PillSetHealth,  0x21, 0, 0, 0, 0, NULL);   /* dropped */
+    logAddEvent(log_CountdownStart, 0, 0, 0, 0, 0, NULL);
+    logAddEvent(log_Shell,          42, 64, 0x42, 3, 0, NULL); /* dropped */
+    logAddEvent(log_AllyAccept,     1, 2, 0, 0, 0, NULL);
+    logWriteTick();
+
+    /* Game-start transition: leave lobby mode, exit lobby, run normally. */
+    logSetLobbyMode(FALSE);
+    logAddEvent(log_LobbyExit,      0, 0, 0, 0, 0, NULL);
+    logAddEvent(log_BaseSetOwner,   3, 4, 1, 0, 0, NULL);      /* kept */
+    logAddEvent(log_Shell,          50, 60, 0x33, 1, 0, NULL); /* kept */
+    logWriteTick();
+
+    logStop();
+    logDestroy();
+    serverSimDestroy(sim);
+
+    uint8_t *buf = NULL;
+    size_t   blen = 0;
+    UT_ASSERT_MSG(extractLogDat(fname, &buf, &blen), "extractLogDat failed");
+
+    size_t  blockStart = 0;
+    uint8_t initKey    = 0;
+    UT_ASSERT_MSG(locateSnapshotMarker(buf, blen, &blockStart, &initKey),
+                  "header parse failed");
+
+    uint8_t got[64];
+    int     nGot      = 0;
+    int     nSnap     = 0;
+    int     rc        = walkLog(buf, blen, blockStart, initKey,
+                                got, &nGot, (int)sizeof(got), &nSnap);
+    free(buf);
+    remove(fname);
+
+    UT_ASSERT_MSG(rc == 0, "walkLog rc=%d", rc);
+    UT_ASSERT_MSG(nGot == 7, "expected 7 events post-gate, got %d", nGot);
+    UT_ASSERT(got[0] == log_LobbyEnter);
+    UT_ASSERT(got[1] == log_TeamSet);
+    UT_ASSERT(got[2] == log_CountdownStart);
+    UT_ASSERT(got[3] == log_AllyAccept);
+    UT_ASSERT(got[4] == log_LobbyExit);
+    UT_ASSERT(got[5] == log_BaseSetOwner);
+    UT_ASSERT(got[6] == log_Shell);
     return 0;
 }

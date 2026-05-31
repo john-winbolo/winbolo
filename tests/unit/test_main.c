@@ -131,6 +131,10 @@ static const UnitTestEntry s_tests[] = {
     { "log_roundtrip_basic",                     run_log_roundtrip_basic                     },
     { "log_roundtrip_snapshot_keeps_chain_synced",
                                                  run_log_roundtrip_snapshot_keeps_chain_synced },
+    { "log_roundtrip_lobby_snapshot_is_empty_world",
+                                                 run_log_roundtrip_lobby_snapshot_is_empty_world },
+    { "log_roundtrip_lobby_mode_drops_world_events",
+                                                 run_log_roundtrip_lobby_mode_drops_world_events },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

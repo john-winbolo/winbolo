@@ -111,6 +111,11 @@ static void handleLobbyEnter(ServerSim *sim) {
             strncat(fileName, ".wbv", 512 - flen - 1);
         }
     }
+    /* Flip lobby mode on BEFORE logStart so its opening snapshot is
+     * the empty-world variant (no pills/bases/starts, deep-sea map,
+     * no tanks). handleGameStart clears the flag and rewrites a
+     * snapshot of the real world when the countdown ends. */
+    logSetLobbyMode(TRUE);
     isLogging = logStart(fileName, sim,
                          0, MAX_TANKS, sim->hasPassword);
     if (isLogging) {
@@ -130,6 +135,10 @@ static void handleLobbyEnter(ServerSim *sim) {
             }
         }
         fprintf(stderr, "Logging to %s (lobby)\n", fileName);
+    } else {
+        /* logStart failed — drop the flag so a later no-lobby
+         * handleGameStart logStart isn't poisoned. */
+        logSetLobbyMode(FALSE);
     }
 }
 
@@ -160,12 +169,31 @@ static void handleGameStart(ServerSim *sim) {
     }
 
     if (logIsRecording()) {
+        BYTE i, j;
+        /* Leave lobby mode BEFORE log_LobbyExit so the marker, the
+         * alliance audit events, and the rewriting snapshot all land
+         * in the running segment under normal writer semantics. */
+        logSetLobbyMode(FALSE);
         logAddEvent(log_LobbyExit, 0, 0, 0, 0, 0, NULL);
+        /* Team-derived alliances from serverSimReapplyTeamAlliances are
+         * applied silently — playersAcceptAlliance writes the bitmap but
+         * doesn't emit log events the way the in-game /accept path does
+         * (server_sim.c:4744). Walk the connected-player pairs here and
+         * emit log_AllyAccept for each ally so the viewer's newswire
+         * matches what the snapshot is about to encode. */
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (!sim->playerConnected[i]) continue;
+            for (j = (BYTE)(i + 1); j < MAX_TANKS; j++) {
+                if (!sim->playerConnected[j]) continue;
+                if (playersIsAllie(&sim->sim.plyrs, i, j)) {
+                    logAddEvent(log_AllyAccept, i, j, 0, 0, 0, NULL);
+                }
+            }
+        }
         /* Rewrite the world snapshot with whatever map the lobby
          * settled on. The original snapshot from handleLobbyEnter
-         * froze the map at lobby-entry time, so any in-lobby map
-         * swap would otherwise leave the viewer playing the round
-         * against the wrong terrain/pills/bases. */
+         * was the empty-world lobby variant; this is the first real
+         * pills/bases/starts/RLE state the viewer sees. */
         logWriteSnapshot(sim, TRUE);
         return;
     }

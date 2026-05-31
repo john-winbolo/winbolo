@@ -158,6 +158,8 @@ int run_queue_enqueue_into_empty_after_wipe(void);
 int run_queue_hasspace_at_capacity(void);
 int run_log_roundtrip_basic(void);
 int run_log_roundtrip_snapshot_keeps_chain_synced(void);
+int run_log_roundtrip_lobby_snapshot_is_empty_world(void);
+int run_log_roundtrip_lobby_mode_drops_world_events(void);
 
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map
  * with one player added at slot 0. Caller is responsible for
