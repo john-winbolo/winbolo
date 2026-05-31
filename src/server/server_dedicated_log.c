@@ -33,6 +33,7 @@
 #include "../winbolonet/winbolonet_server.h"
 #include "../winbolonet/http.h"
 
+#include "server_lifecycle.h"
 #include "server_dedicated_log.h"
 
 extern bool isLogging;
@@ -44,30 +45,52 @@ extern char fileName[];
  * through this file-static pointer instead. */
 static ServerSim *s_logSim = NULL;
 
+/* Round-end stash. handleGameOver finalizes the log and copies the
+ * filename here; the lobby/empty-reset cleanup site uploads it after
+ * WBN server/quit and before server/register. Empty string == nothing
+ * pending. */
+static char s_pendingUploadFile[512];
+
 void makeLogFileName(char *outFileName, const char *mapName);
 
-static void handleGameOver(ServerSim *sim) {
-    (void)sim;
+void serverDedicatedLogStashCurrentRound(void) {
     if (!isLogging) {
         return;
     }
     logStop();
     isLogging = FALSE;
+    if (!dontSendLog) {
+        strncpy(s_pendingUploadFile, fileName, sizeof(s_pendingUploadFile) - 1);
+        s_pendingUploadFile[sizeof(s_pendingUploadFile) - 1] = '\0';
+    } else {
+        s_pendingUploadFile[0] = '\0';
+    }
+}
 
-    if (!dontSendLog && winbolonetIsRunning()) {
+void serverDedicatedLogFlushPendingUpload(void) {
+    if (s_pendingUploadFile[0] == '\0') {
+        return;
+    }
+    if (winbolonetIsRunning()) {
         char key[WINBOLONET_KEY_LEN];
         winboloNetGetServerKey(key);
         if (key[0] != '\0') {
-            /* HTTP layer is owned by winboloNetServerCreate (alive for the
-             * whole session); do NOT bracket the upload with
-             * httpCreate/httpDestroy. The httpDestroy used to fire here
-             * cleared curl global state mid-session, so the very next
-             * winbolonetReturnToLobby -> server/quit + server/register
-             * calls would early-return on !httpStarted and surface as
-             * "WBN disabled" with no DEBUG trace. */
-            httpSendLogFile(fileName, key, FALSE);
+            httpSendLogFile(s_pendingUploadFile, key, FALSE);
         }
     }
+    s_pendingUploadFile[0] = '\0';
+}
+
+static void handleGameOver(ServerSim *sim) {
+    /* No-lobby (-quitonwin): server is about to shut down via
+     * servermain.c, which sends server/quit (winbolonetDestroy →
+     * winbolonetGoodbye) before its own logStop + httpSendLogFile.
+     * That path already has the correct ordering, so leave isLogging
+     * and fileName intact for it. */
+    if (!sim->lobbyEnabled) {
+        return;
+    }
+    serverDedicatedLogStashCurrentRound();
 }
 
 static void handleLobbyEnter(ServerSim *sim) {
@@ -196,4 +219,8 @@ void serverDedicatedLogInstall(ServerSim *sim) {
     }
     s_logSim = sim;
     serverSimRegisterSubscriber(sim, serverDedicatedLogDeliver, NULL);
+    /* Hand the lifecycle our stash/flush so its lobby/empty-reset
+     * cleanup can drive the per-round upload. */
+    serverLifecycleSetRoundLogHooks(serverDedicatedLogStashCurrentRound,
+                                    serverDedicatedLogFlushPendingUpload);
 }

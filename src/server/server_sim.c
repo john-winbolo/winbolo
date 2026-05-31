@@ -2845,7 +2845,8 @@ void serverSimReturnToLobby(ServerSim *sim) {
      * comes from the pre-reset snapshot above with the WBN-session
      * bits cleared — the WBN session is about to be torn down and
      * re-registered with a fresh server_key (see
-     * winbolonetReturnToLobby in the caller), so each client must
+     * winbolonetEndSession / winbolonetBeginSession in the caller),
+     * so each client must
      * re-auth via PACKET_WBN_REAUTH against the new session. Other
      * clientFlags bits (CLIENT_TYPE_*, platform, STEAM_BUILD,
      * SUPPORTER, ADMIN) are identity bits tied to the connection,

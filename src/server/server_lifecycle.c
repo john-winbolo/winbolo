@@ -31,6 +31,27 @@
 #include "server_sim_lifecycle.h"
 #include "server_lifecycle.h"
 
+/* Round-end log hooks installed by WinBoloDS via
+ * serverLifecycleSetRoundLogHooks. NULL on every other binary that
+ * links server_static, so the lifecycle's stash/flush calls become
+ * no-ops there. */
+static void (*s_roundLogStash)(void) = NULL;
+static void (*s_roundLogFlush)(void) = NULL;
+
+void serverLifecycleSetRoundLogHooks(void (*stash)(void),
+                                     void (*flush)(void)) {
+  s_roundLogStash = stash;
+  s_roundLogFlush = flush;
+}
+
+static void roundLogStash(void) {
+  if (s_roundLogStash != NULL) s_roundLogStash();
+}
+
+static void roundLogFlush(void) {
+  if (s_roundLogFlush != NULL) s_roundLogFlush();
+}
+
 static char  instanceTrackerAddr[FILENAME_MAX] = "";
 static unsigned short instanceTrackerPort = 0;
 static unsigned short instanceUdpPort = 0;
@@ -336,9 +357,20 @@ void serverInstanceTick(ServerSim *sim) {
       if (sim->mapDirFiles != NULL) {
         serverSimMapDirPickRandom(sim);
       }
-      /* Re-register with WBN for the new round */
+      /* End the round's WBN session, upload the round log against the
+       * just-quit key (WBN rejects uploads to an active session), then
+       * register a fresh session for the next round. The upload has to
+       * sit between End and Begin — End sends server/quit so WBN will
+       * accept the upload, Begin overwrites winboloNetServerKey with
+       * the new round's key. handleGameOver already stashed the
+       * round's filename when the GAME_OVER phase fired; Flush is a
+       * no-op when there's nothing pending or when WBN is offline. */
       if (winbolonetIsRunning()) {
-        winbolonetReturnToLobby(
+        winbolonetEndSession();
+      }
+      roundLogFlush();
+      if (winbolonetIsRunning()) {
+        winbolonetBeginSession(
           sim->mapName, sim->serverPort,
           (BYTE)gameTypeGet(&sim->sim.game),
           (BYTE)sim->botAiType,
@@ -443,6 +475,10 @@ void serverInstanceTick(ServerSim *sim) {
       sim->state != serverStateCountdown &&
       serverSimCheckEmptyReset(sim)) {
     serverSimConsoleMessage("Empty reset timer expired. Resetting to lobby...");
+    /* Empty-reset fires from the running state without going through
+     * GAME_OVER, so handleGameOver never stashed the in-flight round.
+     * Do it here so the upload below picks it up. */
+    roundLogStash();
     serverSimResetGameWorld(sim);
     sim->state = serverStateLobby;
     sim->gameLength = sim->originalGameLength;
@@ -452,9 +488,15 @@ void serverInstanceTick(ServerSim *sim) {
     if (sim->mapDirFiles != NULL) {
       serverSimMapDirPickRandom(sim);
     }
-    /* Re-register with WBN for the new round */
+    /* End the WBN session, upload the round's log against the just-
+     * quit key, then begin a new session for the next round. Same
+     * sandwich as the game-over → lobby site (see comment there). */
     if (winbolonetIsRunning()) {
-      winbolonetReturnToLobby(
+      winbolonetEndSession();
+    }
+    roundLogFlush();
+    if (winbolonetIsRunning()) {
+      winbolonetBeginSession(
         sim->mapName, sim->serverPort,
         (BYTE)gameTypeGet(&sim->sim.game),
         (BYTE)sim->botAiType,
@@ -467,6 +509,16 @@ void serverInstanceTick(ServerSim *sim) {
         serverSimGetNumPlayers(sim));
       /* Same rotation push as the game-over → lobby site. */
       transportUdpServerBroadcastWbnRekey(sim);
+    }
+    /* Empty-reset bypasses serverSimReturnToLobby, so the lobby phase
+     * event is never published from the state machine. Publish it
+     * explicitly so handleLobbyEnter fires and starts a fresh log for
+     * the next round (mirroring serverSimReturnToLobby's tail). */
+    {
+      ControlEvent evt;
+      memset(&evt, 0, sizeof(evt));
+      serverSimFillGamePhaseEvent(sim, &evt);
+      serverSimPublishControl(sim, &evt);
     }
   }
 

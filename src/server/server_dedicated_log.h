@@ -13,4 +13,23 @@ struct ServerSim;
 
 void serverDedicatedLogInstall(struct ServerSim *sim);
 
+/* Finalize the current round's log (logStop, isLogging=false) and
+ * stash its filename for a later upload. Called from handleGameOver
+ * for lobby-enabled rounds and from the empty-reset path. WBN log
+ * uploads require that the session has already been ended via
+ * server/quit, so the upload itself is deferred to
+ * serverDedicatedLogFlushPendingUpload — the caller is expected to
+ * sandwich that flush between winbolonetEndSession() and
+ * winbolonetBeginSession() so the upload runs against the just-
+ * quit session's still-valid server_key. */
+void serverDedicatedLogStashCurrentRound(void);
+
+/* Upload the stashed round log (if any) to WinBolo.net via
+ * httpSendLogFile, using the current winboloNetServerKey. Caller
+ * must have already POSTed server/quit (WBN rejects uploads to an
+ * active session) and must not yet have POSTed server/register
+ * (registration overwrites winboloNetServerKey, invalidating the
+ * URL key the upload needs). Clears the stash either way. */
+void serverDedicatedLogFlushPendingUpload(void);
+
 #endif /* SERVER_DEDICATED_LOG_H */
