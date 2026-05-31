@@ -335,6 +335,20 @@ void serverInstanceTick(ServerSim *sim) {
             }
           }
         }
+        /* Force a snapshot to every client in the same tick as the
+         * RUNNING publish above. The running-state branch's periodic
+         * transportUdpServerSend fires on the NEXT tick (~20ms), so
+         * without this push the client receives CTRL_GAME_PHASE_RUNNING,
+         * flips inLobby=false, and renders its (stale, round-1) MY_TANK
+         * for a frame before the first authoritative snapshot lands.
+         * serverSendSnapshot drains the per-client control queue into
+         * the same packet, so RUNNING and the fresh tank state arrive
+         * bundled — pairs with the client's hasPredictedTank=FALSE
+         * reset on LOBBY to make that first snapshot run the init
+         * branch (stocks, camera centre). */
+        if (instanceAcceptRemoteClients) {
+          transportUdpServerSend(sim);
+        }
       } else if (sim->state == serverStateCountdown &&
                  sim->countdownTicks > 0 &&
                  sim->countdownTicks % 50 == 0) {
