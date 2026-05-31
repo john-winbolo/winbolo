@@ -1987,6 +1987,9 @@ function Brain.think(info)
     or (state.goal.kind == "attack_tank" and TANK_COMBAT_STATIONARY_SUBS[state.goal.substate or ""])
     -- refuel_at_base only counts as stationary when actually parked on the base
     or (state.goal.kind == "refuel_at_base" and W.tank_on_friendly_base(world, info))
+    -- Reposition: parked next to our own pill, deliberately shooting it down.
+    or (state.goal.kind == "capture_pill" and state.goal.reposition
+        and state.goal.substate == "reposition_shoot")
     or state.goal.kind == "rescue_lgm"
     or state.goal.kind == "wait_for_lgm"
   local attack_at_standoff = intentionally_stationary
@@ -2382,7 +2385,22 @@ function Brain.think(info)
        -- owned dead pills, so validation must too — otherwise the goal
        -- gets invalidated the tick after selection and we ping-pong
        -- into attack_pill on a different target.
-      if not p then goal_valid = false end
+      if not p then
+        if state.goal.reposition then
+          -- Reposition: the target is our OWN live pill. We drive up to it
+          -- (capture nav) and shoot it down (reposition_shoot substate);
+          -- only once it's dead does the spatial-index lookup above find it
+          -- and the normal pickup runs. Stay valid while it's still friendly
+          -- and alive and we have ammo to finish the job.
+          local lp = world.pills[state.goal.target_id]
+          if not lp or lp.owner ~= "friendly" or (lp.health or 0) <= 0
+             or (info.shells or 0) <= 0 then
+            goal_valid = false
+          end
+        else
+          goal_valid = false
+        end
+      end
     elseif gk == "attack_pill" and not state.capture_objective then
       -- Autonomous attack (not cp command): invalid if pill died or changed side
       -- BUT NOT during swerve — swerve must complete to dodge damage,
@@ -2512,14 +2530,24 @@ function Brain.think(info)
     -- doesn't pile on; it then grows the longer it's been since the last move.
     do
       local repositioning = (state.goal.kind == "capture_pill" and state.goal.reposition) and true or false
-      if not repositioning and ally_state.iter_active then
+      -- Tiles allies are demolishing for a reposition (repos=1 + their goal
+      -- tile mx/my). eval_repair_pill skips these so we don't heal a pill a
+      -- teammate is busy shooting down.
+      local ally_demolish = nil
+      if ally_state.iter_active then
         for pn, slot in ally_state.iter_active(now, 1750) do
           if pn ~= info.player_number and slot.info and slot.info.repos == "1" then
             repositioning = true
-            break
+            local amx = tonumber(slot.info.mx)
+            local amy = tonumber(slot.info.my)
+            if amx and amy then
+              ally_demolish = ally_demolish or {}
+              ally_demolish[amy * C.MAP_W + amx] = true
+            end
           end
         end
       end
+      state._ally_demolish_tiles = ally_demolish
       if repositioning or not state.last_team_reposition_tick then
         state.last_team_reposition_tick = now
       end

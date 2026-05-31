@@ -16,9 +16,9 @@ local M = {}
 local FRONT_NEAR_RADIUS = 3   -- tiles: "front" if within this of a sign-flip
 
 -- Portfolio targets (share of friendly pills, excluding in-use).
-M.TARGET_BACK  = 0.35
-M.TARGET_FRONT = 0.45
-M.TARGET_AGGRO = 0.20
+M.TARGET_BACK  = 0.25
+M.TARGET_FRONT = 0.50
+M.TARGET_AGGRO = 0.25
 
 -- A tile is on the front line if it has influence AND an orthogonal neighbor
 -- of opposite sign (mirrors brainPathfinderFindFrontLine / the "3" overlay).

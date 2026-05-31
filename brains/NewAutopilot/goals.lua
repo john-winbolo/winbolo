@@ -779,10 +779,22 @@ end
 local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
   local has_damaged = not state.perc or (state.perc.friendly_pills_damaged > 0)
   if not (has_damaged and info.man_status == C.LGM_INTANK and info.trees > 0) then return nil end
+  -- Don't repair a pill we're actively demolishing for a reposition (set by
+  -- reposition_steer). A damaged pill is cheaper to repair, so without this
+  -- the bot would heal the pill it's shooting down — shoot→repair→shoot.
+  local dmx, dmy
+  if state._demolish_tick
+     and (state.tick - state._demolish_tick) < (C.REPOSITION_DEMOLISH_GRACE_TICKS or 1500) then
+    dmx, dmy = state._demolish_mx, state._demolish_my
+  end
+  -- Tiles allies broadcast as their reposition target (init.lua, from repos=1).
+  local ally_demolish = state._ally_demolish_tiles
   local pill, pid, pcost, pcands = nearest_where(world.pills, world, tmx, tmy,
     function(p)
       return p.owner == "friendly" and p.health > 0
              and p.health < C.PILLS_MAX_HEALTH
+             and not (dmx and p.mx == dmx and p.my == dmy)
+             and not (ally_demolish and ally_demolish[p.my * C.MAP_W + p.mx])
     end, boat, ammo, state, info, KIND_NORMAL)
   if not pill then return nil end
   local damage = C.PILLS_MAX_HEALTH - pill.health
@@ -1810,6 +1822,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
 
         all_cands[#all_cands + 1] = {
           mx = cx, my = cy, score = score,
+          inf = cpf.influence_at(cx, cy),
           cat = PP.category_by_influence(cpf.influence_at(cx, cy)),
           sc1=sc1, sc2=sc2, sc3=sc3, sc4=sc4, sc5=sc5,
           sc6=sc6, sc7=sc7, sc8=sc8, sc9=sc9, sc10=sc10,
@@ -1864,8 +1877,10 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     do
       local sb, sa = {}, {}
       for _, c in ipairs(all_cands) do
-        if c.cat == "back"  and #sb < 8 then sb[#sb + 1] = { mx = c.mx, my = c.my } end
-        if c.cat == "aggro" and #sa < 8 then sa[#sa + 1] = { mx = c.mx, my = c.my } end
+        -- Overlay only shows strongly-positioned spots: back = deep in our
+        -- influence (>= 50), aggro = deep in enemy influence (< -50).
+        if c.cat == "back"  and (c.inf or 0) >=  50 and #sb < 8 then sb[#sb + 1] = { mx = c.mx, my = c.my } end
+        if c.cat == "aggro" and (c.inf or 0) <  -50 and #sa < 8 then sa[#sa + 1] = { mx = c.mx, my = c.my } end
         if #sb >= 8 and #sa >= 8 then break end
       end
       state._place_spots_back  = sb
@@ -2243,6 +2258,10 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
   local reject = nil
   if not best_pill then
     reject = "no_team_pills"
+  elseif (info.shells or 0) < (C.PILL_REPOSITION_MIN_SHELLS or 15) then
+    -- Repositioning means shooting our own pill down to 0 to pick it up, then
+    -- replacing it — pointless if we can't afford to kill it.
+    reject = "low_ammo"
   elseif (info.carried_pills or 0) >= 1 then
     reject = "carrying"
   elseif info.man_status ~= C.LGM_INTANK then
@@ -2285,12 +2304,17 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
 
   return {
     cost = cost,
+    -- Reposition = capture_pill on our OWN pill: drive right up to it, then
+    -- the reposition shoot_pill substate turns to face it and fires until it's
+    -- dead, after which the normal capture pickup + place_pill re-drop runs.
     goal = { kind = "capture_pill", mx = best_pill.mx, my = best_pill.my,
              wx = U.m2w(best_pill.mx), wy = U.m2w(best_pill.my),
              target_id = best_pid, reposition = true },
+    -- All-plus formula; discount terms carry their own minus sign so a
+    -- negative value in the table reads clearly as a discount.
     desc = BRAIN_POOL_VIZ and string.format(
-           "cost{%.0f}= A*{%.0f}+base{%.0f}+cov{%.0f}-surplus{%.0f}-adj{%.0f}-over{%.0f}-legacy{%.0f}-team{%.0f} | %s pill#%d@(%d,%d) | balance back %d/%d front %d/%d aggro %d/%d",
-           cost, pcost, C.PILL_REPOSITION_BASE_COST, bCov, bSurp, bAdj, bOver, bLeg, team_disc,
+           "cost{%.0f}= A*{%.0f} + base{%.0f} + cov{%.0f} + surplus{%.0f} + adj{%.0f} + over{%.0f} + legacy{%.0f} + team{%.0f} | %s pill#%d@(%d,%d) | balance back %d/%d front %d/%d aggro %d/%d",
+           cost, pcost, C.PILL_REPOSITION_BASE_COST, bCov, -bSurp, -bAdj, -bOver, -bLeg, -team_disc,
            tostring(bCat), best_pid, best_pill.mx, best_pill.my,
            counts.back, targets.back, counts.front, targets.front, counts.aggro, targets.aggro) or "",
   }

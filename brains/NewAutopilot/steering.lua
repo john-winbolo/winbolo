@@ -834,6 +834,63 @@ end
 -- =========================================================================
 -- Attack pill steering — aim, engage, rush substates
 -- =========================================================================
+-- Reposition: self-contained steering for the shoot phase of a reposition
+-- capture_pill goal. The APPROACH is handled by the general capture
+-- navigation below (drives the tank right up to its own pill); once we're
+-- within firing range this takes over: stop, turn to face the pill, and
+-- fire until it's dead or we run out of ammo. When the pill dies (or we're
+-- dry), it hands back to the normal capture pickup by returning nil.
+-- Returns nil while still approaching so the general nav drives us in.
+local function reposition_steer(state, world, info, goal)
+  if goal.kind ~= "capture_pill" or not goal.reposition then return nil end
+  local pill = world.pills and world.pills[goal.target_id]
+  -- Shoot phase over: pill gone / dead / no longer ours / out of ammo.
+  -- Fall through so the normal capture pickup (or a replan) takes over.
+  if not pill or pill.owner ~= "friendly" or (pill.health or 0) <= 0
+     or (info.shells or 0) <= 0 then
+    goal.substate = nil
+    return nil
+  end
+
+  -- Not in firing range yet → let general capture nav drive us right up.
+  local pill_wx, pill_wy = U.m2w(goal.mx), U.m2w(goal.my)
+  local dist          = U.wdist(info.tankx, info.tanky, pill_wx, pill_wy)
+  local fire_range_wu = ((info.gunrange or 14) / 2.0) * 256
+  if dist > fire_range_wu then
+    goal.substate = "approach"
+    return nil
+  end
+
+  -- In range: stop, face the pill, fire until dead / dry.
+  goal.substate = "reposition_shoot"
+  -- Mark this pill "being demolished" so repair_pill won't try to heal the
+  -- very pill we're tearing down (a damaged pill is CHEAPER to repair, which
+  -- would otherwise create a shoot→repair→shoot oscillation). Grace-expires
+  -- on its own; see eval_repair_pill.
+  state._demolish_mx   = goal.mx
+  state._demolish_my   = goal.my
+  state._demolish_tick = state.tick
+  local keys, taps = 0, 0
+  if info.gunrange < C.GUNSIGHT_MAX then keys = keys | KEY_MORERANGE end
+  if info.speed > 0 then keys = keys | KEY_SLOWER end
+  local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
+                             goal.mx + 0.5, goal.my + 0.5)
+  local corr    = U.adiff(info.direction, aim_dir)
+  local h, t = U.aim_turn_bits(corr, 6, 1)
+  keys = keys | h; taps = taps | t
+  -- Friendly pill won't shoot back, so fire down to the last shell.
+  if math.abs(corr) <= 1 and (info.shells or 0) > 0 then
+    keys = keys | KEY_SHOOT
+  end
+  if BRAIN_DEBUG_MODE and viz.is_on("hud_attack_status") then
+    viz.hud_text("hud_attack_status", 10, 44,
+      string.format("Reposition shoot: pill#%d hp=%d shells=%d",
+                    goal.target_id or 0, pill.health or 0, info.shells or 0),
+      "topleft", 255, 180, 80)
+  end
+  return keys, taps
+end
+
 local function attack_pill_steer(state, world, info, goal)
   if goal.kind ~= "attack_pill" then return nil end
   local keys = 0
@@ -2190,6 +2247,20 @@ function M.steer(state, world, info, goal)
     if k then
       if BRAIN_PROFILE then
         opt(string.format("  steer/attack_pill done %.2f ms",
+                          (clock_us() - _t_phase) / 1000))
+      end
+      return k, t
+    end
+  end
+
+  -- Reposition shoot: once driven up to our own pill, stop and shoot it
+  -- down. Returns nil while still approaching, so we fall through to the
+  -- general capture navigation that drives us in.
+  if goal.kind == "capture_pill" and goal.reposition then
+    local k, t = reposition_steer(state, world, info, goal)
+    if k then
+      if BRAIN_PROFILE then
+        opt(string.format("  steer/reposition done %.2f ms",
                           (clock_us() - _t_phase) / 1000))
       end
       return k, t
