@@ -1526,6 +1526,14 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   }
 }
 
+void frontEndDrawReturningToLobby(ClientSim *cs) {
+  if (hideMainView == FALSE && drawBusy == FALSE) {
+    DWORD tick = SDL_GetTicks();
+    sdl3DrawReturningToLobby(cs);
+    dwSysFrame += (SDL_GetTicks() - tick);
+  }
+}
+
 void frontEndGameOver(ClientSim *cs) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   SDL_RemoveTimer(timerFrameID);

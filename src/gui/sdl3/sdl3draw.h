@@ -153,6 +153,17 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
 void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack);
 
 /*********************************************************
+*NAME:          sdl3DrawReturningToLobby
+*PURPOSE:
+*  Same chrome + black playfield as sdl3DrawDownloadScreen
+*  with justBlack=true, plus a centred "Returning to lobby"
+*  caption. Rendered during the brief post-game window
+*  where the server has sent CTRL_GAME_PHASE_GAME_OVER
+*  but inLobby has not yet flipped.
+*********************************************************/
+void sdl3DrawReturningToLobby(ClientSim *cs);
+
+/*********************************************************
 *NAME:          sdl3DrawMainScreenBlack
 *PURPOSE:
 *  Mirror of drawMainScreenBlack — clears SDL window.

@@ -2356,6 +2356,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_command_codec_roundtrip.c
     tests/unit/test_command_rejected_apply.c
+    tests/unit/test_alliance_reset.c
     tests/unit/test_lobby_add_bot_dispatch.c
     tests/unit/test_command_queue_drain.c
     tests/unit/test_game_vote_control.c
@@ -2550,6 +2551,10 @@ set(_unit_test_names
     player_join_self_does_not_announce
     player_leave_appends_lobby_chat
     lobby_settings_clears_balance_proposal
+    alliance_reset_codec_roundtrip
+    alliance_reset_decoder_rejects_short
+    alliance_reset_reapply_publishes_one_event
+    alliance_reset_apply_rebuilds_alliances
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}

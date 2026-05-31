@@ -688,6 +688,12 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   }
 }
 
+void frontEndDrawReturningToLobby(ClientSim *cs) {
+  if (hideMainView == FALSE && drawBusy == FALSE) {
+    sdl3DrawReturningToLobby(cs);
+  }
+}
+
 void frontEndGameOver(ClientSim *cs) {
   (void)cs;
   imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBTIMELIMIT_END),

@@ -67,6 +67,14 @@ typedef enum {
     CTRL_GAME_VOTE_STATE,
     CTRL_SERVER_TEXT,
     CTRL_COMMAND_REJECTED,
+    /* Single-event batch of the lobby alliance matrix. Replaces the
+     * O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that serverSimReapply-
+     * TeamAlliances used to fan out at every game start (worst case 120
+     * events for 16 players on one team). The burst overflowed the
+     * 128-deep per-client reliable control queue under loopback
+     * latency, kicking the host from their own server. One event
+     * carrying the full bitmap → one queue slot, regardless of N. */
+    CTRL_ALLIANCE_RESET,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -95,6 +103,16 @@ typedef struct ControlEvent {
         struct {
             BYTE playerNum;
         } allianceLeave;
+
+        /* CTRL_ALLIANCE_RESET — full alliance matrix snapshot.
+         * Per-player ally bitmap: bit j set in allies[i] ⇔ slot i and
+         * slot j are allied. Apply order on the client: clear every
+         * slot's alliance, then re-accept per the matrix (mirrors the
+         * server's reapplyTeamAlliances rebuild). Self-bit is set for
+         * every connected slot; unconnected slots are 0. */
+        struct {
+            uint16_t allies[MAX_TANKS];
+        } allianceReset;
 
         /* CTRL_PLAYER_JOIN */
         struct {

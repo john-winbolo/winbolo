@@ -76,7 +76,17 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
   }
   ns = clientSimGetNetStatus(csPtr);
   if (ns != netRunning && ns != netFailed) {
-    frontEndDrawDownload(csPtr, FALSE);
+    /* netStat=netLobby with inLobby=false is the brief post-game window
+     * between CTRL_GAME_PHASE_GAME_OVER and inLobby flipping. Falling
+     * through to frontEndDrawDownload here used to paint the download
+     * progress bar at 100%, which presented as a multi-second white
+     * playfield. Separate path renders a "Returning to lobby" caption
+     * over a black playfield instead. */
+    if ((ns == netLobby || ns == netLobbyCountdown) && !clientSimIsInLobby(csPtr)) {
+      frontEndDrawReturningToLobby(csPtr);
+    } else {
+      frontEndDrawDownload(csPtr, FALSE);
+    }
     return;
   }
   if (clientSimGetGameSim(csPtr)->inStartFind == TRUE) {

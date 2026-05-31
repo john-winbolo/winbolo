@@ -564,6 +564,7 @@ static inline bool lobbyBotNameAcceptable(
 #define ALLIANCE_EVENT_REQUEST  0
 #define ALLIANCE_EVENT_ACCEPT   1
 #define ALLIANCE_EVENT_LEAVE    2
+#define ALLIANCE_EVENT_RESET    3   /* full per-player ally bitmap; CTRL_ALLIANCE_RESET */
 
 /* Magic bytes for new protocol packets */
 #define BOLO_NEW_MAGIC_0  'W'

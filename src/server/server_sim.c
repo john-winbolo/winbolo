@@ -3057,23 +3057,41 @@ void serverSimResetGameWorld(ServerSim *sim) {
 }
 
 void serverSimReapplyTeamAlliances(ServerSim *sim) {
+    /* Apply alliances locally and build the full matrix; publish exactly
+     * one CTRL_ALLIANCE_RESET carrying it. The earlier shape — one
+     * CTRL_ALLIANCE_ACCEPT per allied pair — fanned out up to
+     * N×(N-1)/2 events on a single tick (120 for a 16-player team),
+     * filling the 128-deep per-client reliable queue before the host's
+     * main thread could send a CONTROL_ACK back over loopback. The host
+     * got kicked from their own server and the disconnect path recursed
+     * through "Elvis has left." broadcasts until the timer thread's
+     * stack overflowed. One batched event sidesteps both problems and
+     * compresses the wire (~33 bytes vs up to ~480). */
+    ControlEvent evt;
     BYTE i, j;
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_ALLIANCE_RESET;
+
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
+        /* Self-bit set for every connected slot — the matrix is then a
+         * full description of which slots exist as well as which pairs
+         * are allied. Slots that exist but are unaffiliated still get
+         * their self-bit (allies[i] = 1 << i), so the client knows the
+         * slot is live and any prior alliances should be cleared. */
+        evt.u.allianceReset.allies[i] |= (uint16_t)(1u << i);
         if (sim->lobbyPlayers[i].teamNumber == 0) continue;
         for (j = i + 1; j < MAX_TANKS; j++) {
             if (!sim->playerConnected[j]) continue;
-            if (sim->lobbyPlayers[j].teamNumber == sim->lobbyPlayers[i].teamNumber) {
-                ControlEvent allyEvt;
-                playersAcceptAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, j, TRUE);
-                memset(&allyEvt, 0, sizeof(allyEvt));
-                allyEvt.type = CTRL_ALLIANCE_ACCEPT;
-                allyEvt.u.allianceAccept.acceptedBy = i;
-                allyEvt.u.allianceAccept.newMember  = j;
-                serverSimPublishControl(sim, &allyEvt);
-            }
+            if (sim->lobbyPlayers[j].teamNumber != sim->lobbyPlayers[i].teamNumber) continue;
+            playersAcceptAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, j, TRUE);
+            evt.u.allianceReset.allies[i] |= (uint16_t)(1u << j);
+            evt.u.allianceReset.allies[j] |= (uint16_t)(1u << i);
         }
     }
+
+    serverSimPublishControl(sim, &evt);
 }
 
 /* At game start, all connected players' restock timers would otherwise
