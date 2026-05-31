@@ -118,3 +118,12 @@ WinBolo uses the following third-party libraries and code.
 - Location: src/lzw/
 - Original author: David Bourgin (1994-1995)
 - Modified for WinBolo; distributed under GPL v2+
+
+## Data Files
+
+### DB-IP IP-to-Country Lite
+- Location: data/dbip-country-lite.mmdb
+- License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+- https://db-ip.com/db/download/ip-to-country-lite
+- Author: DB-IP (https://db-ip.com)
+- Used by the server (and the in-client game browser) for IP-to-country lookups via libmaxminddb. Rebuilt monthly; download the latest .mmdb and replace the file in place.

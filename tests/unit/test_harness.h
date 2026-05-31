@@ -165,6 +165,14 @@ int run_reset_round_state_preserves_identity(void);
 int run_start_game_preserves_client_flags(void);
 int run_return_to_lobby_drops_wbn_keeps_identity(void);
 
+/* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
+ * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
+ * the host's reliable control queue at game start with 16 players. */
+int run_alliance_reset_codec_roundtrip(void);
+int run_alliance_reset_decoder_rejects_short(void);
+int run_alliance_reset_reapply_publishes_one_event(void);
+int run_alliance_reset_apply_rebuilds_alliances(void);
+
 /* Reliable control-event queue regression tests (test_control_event_queue.c).
  * Each captures a specific bug that shipped during the
  * reliable-control-events rollout. */
@@ -175,6 +183,10 @@ int run_queue_stale_ack_above_nextSeq(void);
 int run_queue_wipe_resets_both_seqs(void);
 int run_queue_enqueue_into_empty_after_wipe(void);
 int run_queue_hasspace_at_capacity(void);
+int run_log_roundtrip_basic(void);
+int run_log_roundtrip_snapshot_keeps_chain_synced(void);
+int run_log_roundtrip_lobby_snapshot_is_empty_world(void);
+int run_log_roundtrip_lobby_mode_drops_world_events(void);
 
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map
  * with one player added at slot 0. Caller is responsible for

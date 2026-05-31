@@ -98,6 +98,10 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   (void)cs; (void)justBlack;
 }
 
+void frontEndDrawReturningToLobby(ClientSim *cs) {
+  (void)cs;
+}
+
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
   (void)cs; (void)value; (void)isChecked;
 }

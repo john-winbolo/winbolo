@@ -944,6 +944,14 @@ STR_LV_MAP_SKIP_VOTE={player} zagłosował za pominięciem mapy.
 STR_LV_MAP_SKIPPED=Mapa pominięta. Nowa mapa: {string1}
 STR_LV_TEAM_BALANCE=Wyrównanie drużyn zastosowane.
 
+# Log viewer — zdarzenia głosowania w grze
+STR_LV_VOTE_START_LOBBY={player} zainicjował głosowanie za powrotem do lobby.
+STR_LV_VOTE_START_SURRENDER={player} zainicjował głosowanie za poddaniem się.
+STR_LV_VOTE_CAST_YES={player} zagłosował tak.
+STR_LV_VOTE_CAST_NO={player} zagłosował nie.
+STR_LV_VOTE_PASSED=Głosowanie przeszło.
+STR_LV_VOTE_FAILED=Głosowanie nie przeszło.
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=Otwórz
 STR_LV_MENU_ACTION=Akcja

@@ -1141,18 +1141,24 @@ do_search:
 
       if (nx < 0 || nx > 255 || ny < 0 || ny > 255) continue;
 
-      /* Block diagonal moves through impassable corners:
-       * If both adjacent cardinal tiles have speed 0, diagonal is blocked.
-       * Also block if either cardinal neighbor is deep sea and we're not
-       * in a boat — the tank would clip through the deep sea tile and die.
-       * In a boat, block diagonals that clip through land — the game
-       * physics would touch the land tile and disembark the tank. */
+      /* Block diagonal moves through impassable corners.
+       * On foot a full-tile tank cannot squeeze diagonally past ANY solid
+       * corner tile, so block the diagonal if EITHER cardinal corner is
+       * impassable (speed 0 = building/halfbuild). The old rule required
+       * BOTH corners solid, which let the tank cut the corner between a
+       * wall and a passable-but-overlaid tile (e.g. a live pill, which is
+       * grass-like terrain + a danger overlay, not solid in the grid).
+       * Boats keep the both-zero rule plus the land-clip checks below. */
       if (DX8[d] != 0 && DY8[d] != 0) {
         int adj_x_type = pf->map[(cy * MAP_SIZE) + (cx + DX8[d])] & 0x0F;
         int adj_y_type = pf->map[((cy + DY8[d]) * MAP_SIZE) + cx] & 0x0F;
         float speed_x = pf->terrain_speed_table[adj_x_type];
         float speed_y = pf->terrain_speed_table[adj_y_type];
-        if (speed_x == 0.0f && speed_y == 0.0f) continue;
+        if (!cur_boat) {
+          if (speed_x == 0.0f || speed_y == 0.0f) continue;
+        } else {
+          if (speed_x == 0.0f && speed_y == 0.0f) continue;
+        }
         /* On foot, block diagonals that clip through deep sea */
         if (!cur_boat && (adj_x_type == TT_DEEPSEA || adj_y_type == TT_DEEPSEA)) continue;
         /* In boat, block diagonals that clip through land */

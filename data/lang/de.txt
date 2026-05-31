@@ -944,6 +944,14 @@ STR_LV_MAP_SKIP_VOTE={player} hat zum Überspringen der Karte gestimmt.
 STR_LV_MAP_SKIPPED=Karte übersprungen. Neue Karte: {string1}
 STR_LV_TEAM_BALANCE=Team-Ausgleich angewendet.
 
+# Log viewer — Abstimmungen im Spiel
+STR_LV_VOTE_START_LOBBY={player} hat eine Abstimmung zur Rückkehr in die Lobby gestartet.
+STR_LV_VOTE_START_SURRENDER={player} hat eine Abstimmung zur Aufgabe gestartet.
+STR_LV_VOTE_CAST_YES={player} hat mit Ja gestimmt.
+STR_LV_VOTE_CAST_NO={player} hat mit Nein gestimmt.
+STR_LV_VOTE_PASSED=Abstimmung angenommen.
+STR_LV_VOTE_FAILED=Abstimmung abgelehnt.
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=Öffnen
 STR_LV_MENU_ACTION=Aktion

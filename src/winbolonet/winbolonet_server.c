@@ -571,30 +571,32 @@ void winboloNetSendLock(bool isLocked) {
 }
 
 /*********************************************************
-*NAME:          winbolonetReturnToLobby
+*NAME:          winbolonetEndSession
 *PURPOSE:
-* Handles the WBN session cycle when the server returns to
-* the lobby between rounds. Quits the old session, clears
-* player keys and events, and registers a new session with
-* the new map/settings. HTTP layer is preserved.
+* Ends the current WBN session: drains the background
+* thread, POSTs server/quit, clears the bearer + per-slot
+* player keys, and resets the event queue. The HTTP layer
+* stays alive so a subsequent winbolonetBeginSession can
+* re-register (and so the per-round log uploader can fire
+* httpSendLogFile in between, against the still-valid
+* winboloNetServerKey — WBN rejects uploads to an active
+* session, so the upload has to follow the server/quit
+* POST but precede server/register's key swap).
 *********************************************************/
-bool winbolonetReturnToLobby(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
+void winbolonetEndSession(void) {
   BYTE count;
   cJSON *body = NULL;
   cJSON *resp = NULL;
-  int status;
-  char versionStr[16];
 
   if (winboloNetRunning != TRUE) {
-    return FALSE;
+    return;
   }
 
-  serverSimConsoleMessage("WinBolo.net: Returning to lobby...");
+  serverSimConsoleMessage("WinBolo.net: Ending session...");
 
-  /* 1. Drain background thread queue and stop thread */
   winbolonetThreadDestroy();
 
-  /* 2. Quit old session (carries the still-valid bearer for this POST) */
+  /* server/quit carries the still-valid bearer for this POST. */
   body = cJSON_CreateObject();
   cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   wbn_api_call_server("server/quit", body, &resp);
@@ -606,22 +608,38 @@ bool winbolonetReturnToLobby(char *mapName, unsigned short port, BYTE gameType, 
     }
     cJSON_Delete(resp);
   }
-  resp = NULL;
 
   /* Old session is over — the old bearer is now invalid. Clear before
-   * the new register issues a fresh pair. */
+   * the next BeginSession issues a fresh pair. httpSendLogFile is
+   * permissive about missing bearer, so the round-end log upload that
+   * runs between End and Begin still works against just the URL key. */
   httpClearServerBearerToken();
 
-  /* 3. Clear all player keys */
   for (count = 0; count < MAX_TANKS; count++) {
     winboloNetPlayerKey[count][0] = '\0';
   }
 
-  /* 4. Reset event queue */
   winbolonetEventsDestroy();
   winbolonetEventsCreate();
+}
 
-  /* 5. Register new session with in_lobby flag */
+/*********************************************************
+*NAME:          winbolonetBeginSession
+*PURPOSE:
+* Registers a fresh WBN session for the next round and
+* restarts the background thread. Pairs with
+* winbolonetEndSession at round boundaries.
+*********************************************************/
+bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
+  char versionStr[16];
+
+  if (winboloNetRunning != TRUE) {
+    return FALSE;
+  }
+
   snprintf(versionStr, sizeof(versionStr), "%d.%d%d", BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR, BOLO_VERSION_REVISION);
 
   body = cJSON_CreateObject();
@@ -686,7 +704,6 @@ bool winbolonetReturnToLobby(char *mapName, unsigned short port, BYTE gameType, 
 
   cJSON_Delete(resp);
 
-  /* 6. Restart background thread */
   winbolonetThreadCreate();
   winboloNetLastSent = time(NULL);
 

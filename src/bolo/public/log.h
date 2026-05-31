@@ -98,7 +98,10 @@ log_CountdownStart,
 log_CountdownCancel,
 log_MapSkipVote,
 log_MapSkipApplied,
-log_BalanceApplied
+log_BalanceApplied,
+log_GameVoteStart,   // opt1=kind, opt2=initiator, opt3=team (0 = global)
+log_GameVoteCast,    // opt1=kind, opt2=player,    opt3=voteYes
+log_GameVoteEnd      // opt1=kind, opt2=result (0=failed,1=passed)
 } logitem;
 
 typedef struct {
@@ -254,6 +257,23 @@ bool logStart(char *fileName, ServerSim *ssim, BYTE ai, BYTE maxPlayers, bool us
 * check - Whether to check if running or not
 *********************************************************/
 bool logWriteSnapshot(ServerSim *ssim, bool check);
+
+/*********************************************************
+*NAME:          logSetLobbyMode
+*PURPOSE:
+* Toggles lobby recording mode. While enabled, logAddEvent
+* drops world-mutation opcodes (map/pill/base/shell/sound/
+* tank/lgm position) and logWriteSnapshot emits an empty
+* world (no pills/bases/starts, all deep sea, no tanks).
+* Lobby roster events (PlayerJoined/Quit/Leaving, TeamSet,
+* Ready/Unready, CountdownStart/Cancel, BalanceApplied,
+* MapSkip*, MessageServer/All/Players, ChangeName, votes)
+* pass through unchanged.
+*
+*ARGUMENTS:
+*  enabled - TRUE to enter lobby mode, FALSE to leave it
+*********************************************************/
+void logSetLobbyMode(bool enabled);
 
 /*********************************************************
 *NAME:          logCheckTankSame

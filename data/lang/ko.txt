@@ -944,6 +944,14 @@ STR_LV_MAP_SKIP_VOTE={player}님이 맵 건너뛰기에 투표했어요.
 STR_LV_MAP_SKIPPED=맵을 건너뛰었어요. 새 맵: {string1}
 STR_LV_TEAM_BALANCE=팀 밸런스가 적용됐어요.
 
+# Log viewer — 게임 내 투표 이벤트
+STR_LV_VOTE_START_LOBBY={player}님이 로비로 돌아가기 투표를 시작했어요.
+STR_LV_VOTE_START_SURRENDER={player}님이 항복 투표를 시작했어요.
+STR_LV_VOTE_CAST_YES={player}님이 찬성에 투표했어요.
+STR_LV_VOTE_CAST_NO={player}님이 반대에 투표했어요.
+STR_LV_VOTE_PASSED=투표가 통과됐어요.
+STR_LV_VOTE_FAILED=투표가 부결됐어요.
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=열기
 STR_LV_MENU_ACTION=동작

@@ -10,6 +10,7 @@ local log = require("logger")
 local bpc = require("bpc")
 local viz = require("viz")
 local opt = require("optimize")
+local threat = require("threat")
 
 local M = {}
 
@@ -23,29 +24,12 @@ local M = {}
 -- crosses the shell path post-launch) the pill survives at 1 HP, vs.
 -- eating an extra return shot.
 local function predict_kill_shot_and_swerve(state, world, info, goal, pmx, pmy)
-  if not goal or not goal.target_id then return end
-  local pill = world.pills and world.pills[goal.target_id]
-  if not pill or (pill.health or 0) <= 0 then return end
-  local in_flight = (goal._on_target_in_flight or 0) + 1
-  if in_flight < pill.health then return end
-  local angle_f = info.tank_angle or info.direction
-  local path = cpf.simulate_shot_angle(info.tankx, info.tanky, angle_f,
-                                        cpf.SHOT_TANK, info.gunrange or 14)
-  if not path then return end
-  for _, t in ipairs(path) do
-    if t.mx == pmx and t.my == pmy then
-      local attack = require("attack")
-      attack.enter_swerve(goal, world, state, info, pmx, pmy, "kill")
-      goal._swerve_pill_dead = true
-      if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
-        print2(string.format(
-          "SWERVE_ENTER t=%d site=predict tid=%s goal=(%d,%d) in_flight+1=%d hp=%d",
-          state.tick or 0, tostring(goal.target_id), pmx, pmy,
-          in_flight, pill.health))
-      end
-      return true
-    end
-  end
+  -- DISABLED: we now keep firing until the pill is ACTUALLY dead (cyan 0/0)
+  -- rather than peeling off on the in-flight kill prediction, which stopped a
+  -- shot short whenever an in-flight shell diverged. The dead-pill swerve in
+  -- attack.lua's charge/engage/shoot_pill handles the exit. No-op so the call
+  -- sites don't need touching.
+  return
 end
 
 -- Debug logging toggle — set via API: curl http://localhost:29016/steerdebug?on
@@ -850,6 +834,63 @@ end
 -- =========================================================================
 -- Attack pill steering — aim, engage, rush substates
 -- =========================================================================
+-- Reposition: self-contained steering for the shoot phase of a reposition
+-- capture_pill goal. The APPROACH is handled by the general capture
+-- navigation below (drives the tank right up to its own pill); once we're
+-- within firing range this takes over: stop, turn to face the pill, and
+-- fire until it's dead or we run out of ammo. When the pill dies (or we're
+-- dry), it hands back to the normal capture pickup by returning nil.
+-- Returns nil while still approaching so the general nav drives us in.
+local function reposition_steer(state, world, info, goal)
+  if goal.kind ~= "capture_pill" or not goal.reposition then return nil end
+  local pill = world.pills and world.pills[goal.target_id]
+  -- Shoot phase over: pill gone / dead / no longer ours / out of ammo.
+  -- Fall through so the normal capture pickup (or a replan) takes over.
+  if not pill or pill.owner ~= "friendly" or (pill.health or 0) <= 0
+     or (info.shells or 0) <= 0 then
+    goal.substate = nil
+    return nil
+  end
+
+  -- Not in firing range yet → let general capture nav drive us right up.
+  local pill_wx, pill_wy = U.m2w(goal.mx), U.m2w(goal.my)
+  local dist          = U.wdist(info.tankx, info.tanky, pill_wx, pill_wy)
+  local fire_range_wu = ((info.gunrange or 14) / 2.0) * 256
+  if dist > fire_range_wu then
+    goal.substate = "approach"
+    return nil
+  end
+
+  -- In range: stop, face the pill, fire until dead / dry.
+  goal.substate = "reposition_shoot"
+  -- Mark this pill "being demolished" so repair_pill won't try to heal the
+  -- very pill we're tearing down (a damaged pill is CHEAPER to repair, which
+  -- would otherwise create a shoot→repair→shoot oscillation). Grace-expires
+  -- on its own; see eval_repair_pill.
+  state._demolish_mx   = goal.mx
+  state._demolish_my   = goal.my
+  state._demolish_tick = state.tick
+  local keys, taps = 0, 0
+  if info.gunrange < C.GUNSIGHT_MAX then keys = keys | KEY_MORERANGE end
+  if info.speed > 0 then keys = keys | KEY_SLOWER end
+  local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
+                             goal.mx + 0.5, goal.my + 0.5)
+  local corr    = U.adiff(info.direction, aim_dir)
+  local h, t = U.aim_turn_bits(corr, 6, 1)
+  keys = keys | h; taps = taps | t
+  -- Friendly pill won't shoot back, so fire down to the last shell.
+  if math.abs(corr) <= 1 and (info.shells or 0) > 0 then
+    keys = keys | KEY_SHOOT
+  end
+  if BRAIN_DEBUG_MODE and viz.is_on("hud_attack_status") then
+    viz.hud_text("hud_attack_status", 10, 44,
+      string.format("Reposition shoot: pill#%d hp=%d shells=%d",
+                    goal.target_id or 0, pill.health or 0, info.shells or 0),
+      "topleft", 255, 180, 80)
+  end
+  return keys, taps
+end
+
 local function attack_pill_steer(state, world, info, goal)
   if goal.kind ~= "attack_pill" then return nil end
   local keys = 0
@@ -1530,6 +1571,113 @@ local function attack_pill_steer(state, world, info, goal)
     end
   end
 
+  -- ── kill_hardline: nav to a tile beside the pill, fire on every clear
+  --    shot until it's dead. Keeps moving toward the target even while
+  --    firing. Re-picks the neighbour tile each tick (nearest navigable to
+  --    the bot); if none of the 8 are reachable, signals abort to attack.lua.
+  if goal.substate == "kill_hardline" then
+    local pill = goal.target_id and world.pills and world.pills[goal.target_id]
+    if not pill or (pill.health or 0) <= 0 then return nil end
+    local pmx, pmy = pill.mx, pill.my
+    local pill_wx, pill_wy = U.m2w(pmx), U.m2w(pmy)
+
+    local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+
+    -- Pick a navigable tile beside the pill (nearest the bot first), skipping
+    -- any that prior ticks proved unreachable. Stick with the committed tile
+    -- until it's blacklisted, so the incremental A* below isn't restarted
+    -- every tick.
+    goal._hardline_bad = goal._hardline_bad or {}
+    local function pick_neighbour()
+      local best, bd
+      for ddx = -1, 1 do
+        for ddy = -1, 1 do
+          if not (ddx == 0 and ddy == 0) then
+            local cx, cy = pmx + ddx, pmy + ddy
+            local k = cy * 256 + cx
+            if U.in_map(cx, cy) and not goal._hardline_bad[k] then
+              local d = U.wdist(info.tankx, info.tanky, U.m2w(cx), U.m2w(cy))
+              if not bd or d < bd then bd = d; best = { mx = cx, my = cy } end
+            end
+          end
+        end
+      end
+      return best
+    end
+    if not goal._hardline_mx
+       or goal._hardline_bad[goal._hardline_my * 256 + goal._hardline_mx] then
+      local c = pick_neighbour()
+      if not c then
+        goal._hardline_abort = "no navigable tile beside pill"
+        if info.speed > 0 then keys = keys | KEY_SLOWER end
+        return keys, taps
+      end
+      goal._hardline_mx, goal._hardline_my = c.mx, c.my
+    end
+
+    -- Path to the chosen tile with the TARGET pill's own danger field
+    -- subtracted — we're about to kill it, so its fire shouldn't deflect our
+    -- approach. set_danger_offset only applies during A*, so skip the
+    -- Dijkstra slate (skip_dijkstra=true) for this search.
+    local pcontrib = threat.pill_contrib and threat.pill_contrib[pmy * 256 + pmx]
+    if pcontrib then cpf.load_danger_offset(pcontrib, -1) end
+    local status, nx, ny = cpf.path_to(tmx, tmy,
+      goal._hardline_mx, goal._hardline_my,
+      info.inboat and 1 or 0, info.shells or 0, info.trees or 0,
+      info.mines or 0, info.armour or 40, C.ASTAR_BUDGET, true)
+    local trace = cpf.trace_last_search(goal._hardline_mx, goal._hardline_my)
+    if pcontrib then cpf.clear_danger_offset() end
+
+    if status == -1 then
+      -- Chosen tile is unreachable — blacklist it and re-pick next tick.
+      goal._hardline_bad[goal._hardline_my * 256 + goal._hardline_mx] = true
+      goal._hardline_mx, goal._hardline_my = nil, nil
+      if info.speed > 0 then keys = keys | KEY_SLOWER end
+      return keys, taps
+    end
+
+    -- trace_last_search returns a FLAT array {x1,y1,x2,y2,...}; waypoint i is
+    -- (trace[2*i-1], trace[2*i]) and the count is #trace // 2.
+    local tn = trace and (#trace // 2) or 0
+
+    -- Overlay: the path the hardline take is driving (magenta).
+    if BRAIN_DEBUG_MODE and viz.is_on("hardline_path") and tn > 1 then
+      for i = 2, tn do
+        local ax, ay = trace[2 * i - 3], trace[2 * i - 2]
+        local bx, by = trace[2 * i - 1], trace[2 * i]
+        viz.line("hardline_path", ax + 0.5, ay + 0.5, bx + 0.5, by + 0.5, 255, 0, 255, 220)
+      end
+      viz.rect("hardline_path", goal._hardline_mx + 0.2, goal._hardline_my + 0.2, goal._hardline_mx + 0.8, goal._hardline_my + 0.8, 255, 0, 255, 160)
+    end
+
+    -- KEEP MOVING toward the path (even while firing below). Aim a few tiles
+    -- ahead along the trace for a smoother heading than the immediate step.
+    local lookx, looky = goal._hardline_mx, goal._hardline_my
+    if tn >= 4 then lookx, looky = trace[7], trace[8]
+    elseif nx and nx >= 0 and tn < 2 then lookx, looky = nx, ny end
+    local move_dir = U.aim_at(info.tankx, info.tanky, U.m2w(lookx), U.m2w(looky))
+    local mcorr = U.adiff(info.direction, move_dir)
+    local k, t = nav_turn_speed(mcorr, info.speed, 48, 4)
+    keys = keys | k
+    taps = taps | t
+
+    -- Extend gunsight to max so the shot reaches.
+    if info.gunrange < C.GUNSIGHT_MAX then keys = keys | KEY_MORERANGE end
+
+    -- Within (shoot distance + 1) tiles of the pill, fire whenever the shot
+    -- will hit the pillbox and NOT a base / other pill / allied tank. Shells
+    -- travel gunrange/2 map tiles; forests are shot through. shot_path_clear
+    -- is the same safety check used elsewhere.
+    local shoot_tiles = (info.gunrange or C.GUNSIGHT_MAX) / 2.0
+    local fire_w      = (shoot_tiles + 1.0) * 256.0
+    local dist_to_pill = U.wdist(info.tankx, info.tanky, pill_wx, pill_wy)
+    if dist_to_pill <= fire_w and info.shells > C.SHELL_RESERVE
+       and shot_path_clear(info, world, pill_wx, pill_wy, pmx, pmy) then
+      keys = keys | KEY_SHOOT
+    end
+    return keys, taps
+  end
+
   -- other: fall through to main steer for A* navigation
   return nil
 end
@@ -1674,9 +1822,23 @@ local function tank_combat_steer(state, world, info, goal)
     keys = keys | KEY_MORERANGE
   end
 
-  -- Disengage check: flee if outgunned
-  if info.armour <= C.TANK_COMBAT_FLEE_ARMOUR
-     or info.shells <= C.TANK_COMBAT_FLEE_SHELLS then
+  -- Pillbox-crossfire disengage (applies in EVERY phase — this is the one
+  -- that matters): if our current tile is heavily covered by the enemy's own
+  -- pillboxes, break off rather than trade armour into a defended nest.
+  local _pdanger = threat.pill_at(tmx, tmy)
+  if _pdanger >= C.TANK_COMBAT_DEFENDED_DANGER then
+    goal.substate = "disengage"
+    log.reason("steer", { mode = "tank_combat_pill_danger",
+      danger = _pdanger, thr = C.TANK_COMBAT_DEFENDED_DANGER })
+    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    return keys, taps
+  end
+
+  -- Disengage check: flee if outgunned. Skipped entirely during the opening
+  -- phase — early aggression is worth more than preserving armour/shells.
+  if state.phase ~= "opening"
+     and (info.armour <= C.TANK_COMBAT_FLEE_ARMOUR
+          or info.shells <= C.TANK_COMBAT_FLEE_SHELLS) then
     goal.substate = "disengage"
     -- Will be invalidated next replan
     log.reason("steer", { mode = "tank_combat_disengage",
@@ -2085,6 +2247,20 @@ function M.steer(state, world, info, goal)
     if k then
       if BRAIN_PROFILE then
         opt(string.format("  steer/attack_pill done %.2f ms",
+                          (clock_us() - _t_phase) / 1000))
+      end
+      return k, t
+    end
+  end
+
+  -- Reposition shoot: once driven up to our own pill, stop and shoot it
+  -- down. Returns nil while still approaching, so we fall through to the
+  -- general capture navigation that drives us in.
+  if goal.kind == "capture_pill" and goal.reposition then
+    local k, t = reposition_steer(state, world, info, goal)
+    if k then
+      if BRAIN_PROFILE then
+        opt(string.format("  steer/reposition done %.2f ms",
                           (clock_us() - _t_phase) / 1000))
       end
       return k, t

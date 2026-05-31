@@ -107,6 +107,29 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                              evt->u.allianceLeave.playerNum, FALSE);
         break;
 
+    case CTRL_ALLIANCE_RESET: {
+        /* Mirror serverSimReapplyTeamAlliances on the receiver: clear
+         * every existing alliance, then re-accept per the matrix the
+         * server sent. Matrix is symmetric — iterate the upper triangle
+         * only. Self-bit is informational (slot is connected) and does
+         * not produce an accept. */
+        BYTE i, j;
+        for (i = 0; i < MAX_TANKS; i++) {
+            playersLeaveAlliance(&cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
+                                 i, FALSE);
+        }
+        for (i = 0; i < MAX_TANKS; i++) {
+            uint16_t mask = evt->u.allianceReset.allies[i];
+            for (j = (BYTE)(i + 1); j < MAX_TANKS; j++) {
+                if (mask & (uint16_t)(1u << j)) {
+                    playersAcceptAlliance(&cs->sim, &cs->sim.plyrs,
+                                          cs->myPlayerNum, i, j, FALSE);
+                }
+            }
+        }
+        break;
+    }
+
     case CTRL_PLAYER_JOIN: {
         BYTE pNum = evt->u.playerJoin.playerNum;
         char nameBuf[PACKET_MAX_PLAYER_NAME];
@@ -382,6 +405,13 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * arrives carrying inLobby=true, which only happens on hosts
          * with lobbyEnabled. */
         cs->inLobby = true;
+        /* Clear the predicted-tank latch so the next round's first
+         * snapshot takes clientApplySnapshot's first-snapshot init
+         * branch (sets stocks, jump-cuts the camera via
+         * clientSimCenterTank) instead of the reconcile branch, which
+         * only snaps position and leaves stocks + camera tracking
+         * stale from the previous round. */
+        cs->clientState.hasPredictedTank = FALSE;
         break;
     case CTRL_GAME_PHASE_COUNTDOWN:
         cs->netStat = netLobbyCountdown;

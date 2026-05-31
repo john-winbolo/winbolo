@@ -33,6 +33,7 @@
 #include "../winbolonet/winbolonet_server.h"
 #include "../winbolonet/http.h"
 
+#include "server_lifecycle.h"
 #include "server_dedicated_log.h"
 
 extern bool isLogging;
@@ -44,25 +45,52 @@ extern char fileName[];
  * through this file-static pointer instead. */
 static ServerSim *s_logSim = NULL;
 
+/* Round-end stash. handleGameOver finalizes the log and copies the
+ * filename here; the lobby/empty-reset cleanup site uploads it after
+ * WBN server/quit and before server/register. Empty string == nothing
+ * pending. */
+static char s_pendingUploadFile[512];
+
 void makeLogFileName(char *outFileName, const char *mapName);
 
-static void handleGameOver(ServerSim *sim) {
-    (void)sim;
+void serverDedicatedLogStashCurrentRound(void) {
     if (!isLogging) {
         return;
     }
     logStop();
     isLogging = FALSE;
+    if (!dontSendLog) {
+        strncpy(s_pendingUploadFile, fileName, sizeof(s_pendingUploadFile) - 1);
+        s_pendingUploadFile[sizeof(s_pendingUploadFile) - 1] = '\0';
+    } else {
+        s_pendingUploadFile[0] = '\0';
+    }
+}
 
-    if (!dontSendLog && winbolonetIsRunning()) {
+void serverDedicatedLogFlushPendingUpload(void) {
+    if (s_pendingUploadFile[0] == '\0') {
+        return;
+    }
+    if (winbolonetIsRunning()) {
         char key[WINBOLONET_KEY_LEN];
         winboloNetGetServerKey(key);
         if (key[0] != '\0') {
-            httpCreate();
-            httpSendLogFile(fileName, key, FALSE);
-            httpDestroy();
+            httpSendLogFile(s_pendingUploadFile, key, FALSE);
         }
     }
+    s_pendingUploadFile[0] = '\0';
+}
+
+static void handleGameOver(ServerSim *sim) {
+    /* No-lobby (-quitonwin): server is about to shut down via
+     * servermain.c, which sends server/quit (winbolonetDestroy →
+     * winbolonetGoodbye) before its own logStop + httpSendLogFile.
+     * That path already has the correct ordering, so leave isLogging
+     * and fileName intact for it. */
+    if (!sim->lobbyEnabled) {
+        return;
+    }
+    serverDedicatedLogStashCurrentRound();
 }
 
 static void handleLobbyEnter(ServerSim *sim) {
@@ -83,6 +111,11 @@ static void handleLobbyEnter(ServerSim *sim) {
             strncat(fileName, ".wbv", 512 - flen - 1);
         }
     }
+    /* Flip lobby mode on BEFORE logStart so its opening snapshot is
+     * the empty-world variant (no pills/bases/starts, deep-sea map,
+     * no tanks). handleGameStart clears the flag and rewrites a
+     * snapshot of the real world when the countdown ends. */
+    logSetLobbyMode(TRUE);
     isLogging = logStart(fileName, sim,
                          0, MAX_TANKS, sim->hasPassword);
     if (isLogging) {
@@ -102,7 +135,32 @@ static void handleLobbyEnter(ServerSim *sim) {
             }
         }
         fprintf(stderr, "Logging to %s (lobby)\n", fileName);
+    } else {
+        /* logStart failed — drop the flag so a later no-lobby
+         * handleGameStart logStart isn't poisoned. */
+        logSetLobbyMode(FALSE);
     }
+}
+
+static void handleLobbyMapChange(ServerSim *sim) {
+    char pstr[256];
+    int nameLen;
+
+    if (!sim->wantLogging || !logIsRecording()) {
+        return;
+    }
+
+    /* Record the chosen map name as a server message so the viewer's
+     * chat timeline shows what the host previewed in the lobby. The
+     * authoritative snapshot is rewritten when the countdown ends
+     * (handleGameStart); these messages are just a cheap audit trail
+     * that doesn't churn the heavy pills/bases/starts/RLE state. */
+    nameLen = (int)snprintf(pstr + 1, sizeof(pstr) - 1,
+                            "Map changed to %s", sim->mapName);
+    if (nameLen < 0) return;
+    if (nameLen > 255) nameLen = 255;
+    pstr[0] = (char)nameLen;
+    logAddEvent(log_MessageServer, 0, 0, 0, 0, 0, pstr);
 }
 
 static void handleGameStart(ServerSim *sim) {
@@ -111,7 +169,32 @@ static void handleGameStart(ServerSim *sim) {
     }
 
     if (logIsRecording()) {
+        BYTE i, j;
+        /* Leave lobby mode BEFORE log_LobbyExit so the marker, the
+         * alliance audit events, and the rewriting snapshot all land
+         * in the running segment under normal writer semantics. */
+        logSetLobbyMode(FALSE);
         logAddEvent(log_LobbyExit, 0, 0, 0, 0, 0, NULL);
+        /* Team-derived alliances from serverSimReapplyTeamAlliances are
+         * applied silently — playersAcceptAlliance writes the bitmap but
+         * doesn't emit log events the way the in-game /accept path does
+         * (server_sim.c:4744). Walk the connected-player pairs here and
+         * emit log_AllyAccept for each ally so the viewer's newswire
+         * matches what the snapshot is about to encode. */
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (!sim->playerConnected[i]) continue;
+            for (j = (BYTE)(i + 1); j < MAX_TANKS; j++) {
+                if (!sim->playerConnected[j]) continue;
+                if (playersIsAllie(&sim->sim.plyrs, i, j)) {
+                    logAddEvent(log_AllyAccept, i, j, 0, 0, 0, NULL);
+                }
+            }
+        }
+        /* Rewrite the world snapshot with whatever map the lobby
+         * settled on. The original snapshot from handleLobbyEnter
+         * was the empty-world lobby variant; this is the first real
+         * pills/bases/starts/RLE state the viewer sees. */
+        logWriteSnapshot(sim, TRUE);
         return;
     }
 
@@ -150,6 +233,9 @@ static void serverDedicatedLogDeliver(void *ctx, const ControlEvent *evt) {
         case CTRL_GAME_PHASE_GAME_OVER:
             handleGameOver(sim);
             break;
+        case CTRL_LOBBY_MAP_CHANGE:
+            handleLobbyMapChange(sim);
+            break;
         default:
             break;
     }
@@ -161,4 +247,8 @@ void serverDedicatedLogInstall(ServerSim *sim) {
     }
     s_logSim = sim;
     serverSimRegisterSubscriber(sim, serverDedicatedLogDeliver, NULL);
+    /* Hand the lifecycle our stash/flush so its lobby/empty-reset
+     * cleanup can drive the per-round upload. */
+    serverLifecycleSetRoundLogHooks(serverDedicatedLogStashCurrentRound,
+                                    serverDedicatedLogFlushPendingUpload);
 }

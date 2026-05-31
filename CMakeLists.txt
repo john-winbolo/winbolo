@@ -1229,9 +1229,16 @@ endif()
 # Steamworks SDK integration (optional)
 set(STEAMWORKS_SDK_DIR "${CMAKE_SOURCE_DIR}/third_party/steamworks")
 if(EXISTS "${STEAMWORKS_SDK_DIR}/public/steam/steam_api.h")
+    if(APPLE)
+        set(STEAM_RUNTIME_LIB "${STEAMWORKS_SDK_DIR}/redistributable_bin/osx/libsteam_api.dylib")
+    elseif(WIN32)
+        set(STEAM_RUNTIME_LIB "${STEAMWORKS_SDK_DIR}/redistributable_bin/win64/steam_api64.dll")
+    else()
+        set(STEAM_RUNTIME_LIB "${STEAMWORKS_SDK_DIR}/redistributable_bin/linux64/libsteam_api.so")
+    endif()
     add_library(steam_api SHARED IMPORTED)
     set_target_properties(steam_api PROPERTIES
-        IMPORTED_LOCATION "${STEAMWORKS_SDK_DIR}/redistributable_bin/linux64/libsteam_api.so"
+        IMPORTED_LOCATION "${STEAM_RUNTIME_LIB}"
         IMPORTED_IMPLIB "${STEAMWORKS_SDK_DIR}/redistributable_bin/win64/steam_api64.lib"
         INTERFACE_INCLUDE_DIRECTORIES "${STEAMWORKS_SDK_DIR}/public"
     )
@@ -1324,6 +1331,20 @@ if(EXISTS "${STEAMWORKS_SDK_DIR}/public/steam/steam_api.h")
                 "${STEAMWORKS_SDK_DIR}/redistributable_bin/win64/steam_api64.dll"
                 "$<TARGET_FILE_DIR:WinBolo>"
             COMMENT "Copying steam_api64.dll to WinBolo output directory"
+        )
+    elseif(APPLE)
+        add_custom_command(TARGET WinBolo POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${STEAMWORKS_SDK_DIR}/redistributable_bin/osx/libsteam_api.dylib"
+                "$<TARGET_FILE_DIR:WinBolo>"
+            COMMENT "Copying libsteam_api.dylib to WinBolo bundle"
+        )
+    else()
+        add_custom_command(TARGET WinBolo POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${STEAMWORKS_SDK_DIR}/redistributable_bin/linux64/libsteam_api.so"
+                "$<TARGET_FILE_DIR:WinBolo>"
+            COMMENT "Copying libsteam_api.so to WinBolo output directory"
         )
     endif()
     add_custom_command(TARGET WinBolo POST_BUILD
@@ -2335,6 +2356,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_command_codec_roundtrip.c
     tests/unit/test_command_rejected_apply.c
+    tests/unit/test_alliance_reset.c
     tests/unit/test_lobby_add_bot_dispatch.c
     tests/unit/test_command_queue_drain.c
     tests/unit/test_game_vote_control.c
@@ -2367,6 +2389,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_internal_msg_routing.c
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
+    tests/unit/test_log_roundtrip.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2533,6 +2556,14 @@ set(_unit_test_names
     reset_round_state_preserves_identity
     start_game_preserves_client_flags
     return_to_lobby_drops_wbn_keeps_identity
+    log_roundtrip_basic
+    log_roundtrip_snapshot_keeps_chain_synced
+    log_roundtrip_lobby_snapshot_is_empty_world
+    log_roundtrip_lobby_mode_drops_world_events
+    alliance_reset_codec_roundtrip
+    alliance_reset_decoder_rejects_short
+    alliance_reset_reapply_publishes_one_event
+    alliance_reset_apply_rebuilds_alliances
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}

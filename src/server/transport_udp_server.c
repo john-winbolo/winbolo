@@ -477,6 +477,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_ALLIANCE_REQUEST: return "ALLIANCE_REQUEST";
     case CTRL_ALLIANCE_ACCEPT:  return "ALLIANCE_ACCEPT";
     case CTRL_ALLIANCE_LEAVE:   return "ALLIANCE_LEAVE";
+    case CTRL_ALLIANCE_RESET:   return "ALLIANCE_RESET";
     case CTRL_PLAYER_JOIN:      return "PLAYER_JOIN";
     case CTRL_PLAYER_NAME:      return "PLAYER_NAME";
     case CTRL_LOBBY_SLOT:       return "LOBBY_SLOT";
@@ -1906,6 +1907,17 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
         char chatMsg[32 + PACKET_MAX_PLAYER_NAME];
         snprintf(chatMsg, sizeof(chatMsg), "%s has left.",
                  udpServer.clients[idx].playerName);
+        /* Flip connected=false BEFORE the broadcast. Without this, the
+         * "X has left." event re-enters udpClientDeliverControl for this
+         * same slot; if the leaving slot's queue is what overflowed in
+         * the first place (the path that brought us into this function
+         * via the queue-overflow branch), the enqueue fails again and
+         * recurses back into serverDisconnectClient — unbounded
+         * recursion until the timer thread's stack blows. The deliver
+         * callback's existing !connected short-circuit makes the
+         * broadcast a no-op for this slot; the other slots still see
+         * "X has left." normally. */
+        udpServer.clients[idx].connected = false;
         serverSendServerEnglishBroadcast(sim, chatMsg);
     }
 
@@ -1920,7 +1932,6 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
      * invokes serverSimRemovePlayer; no hand-built broadcast here. */
     serverSimUnregisterSubscriber(sim, udpServer.clients[idx].controlSub);
     udpServer.clients[idx].controlSub = SUBSCRIBER_HANDLE_INVALID;
-    udpServer.clients[idx].connected = false;
     udpServer.clients[idx].nameStickySuffix = false;
     udpServer.clients[idx].inboundCmdSeq = 0;
     memset(udpServer.clients[idx].playerName, 0, PACKET_MAX_PLAYER_NAME);

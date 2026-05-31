@@ -137,6 +137,18 @@ static const UnitTestEntry s_tests[] = {
     { "reset_round_state_preserves_identity",    run_reset_round_state_preserves_identity    },
     { "start_game_preserves_client_flags",       run_start_game_preserves_client_flags       },
     { "return_to_lobby_drops_wbn_keeps_identity", run_return_to_lobby_drops_wbn_keeps_identity },
+    { "log_roundtrip_basic",                     run_log_roundtrip_basic                     },
+    { "log_roundtrip_snapshot_keeps_chain_synced",
+                                                 run_log_roundtrip_snapshot_keeps_chain_synced },
+    { "log_roundtrip_lobby_snapshot_is_empty_world",
+                                                 run_log_roundtrip_lobby_snapshot_is_empty_world },
+    { "log_roundtrip_lobby_mode_drops_world_events",
+                                                 run_log_roundtrip_lobby_mode_drops_world_events },
+    { "alliance_reset_codec_roundtrip",          run_alliance_reset_codec_roundtrip          },
+    { "alliance_reset_decoder_rejects_short",    run_alliance_reset_decoder_rejects_short    },
+    { "alliance_reset_reapply_publishes_one_event",
+                                                 run_alliance_reset_reapply_publishes_one_event },
+    { "alliance_reset_apply_rebuilds_alliances", run_alliance_reset_apply_rebuilds_alliances },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

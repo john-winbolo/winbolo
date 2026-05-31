@@ -931,6 +931,14 @@ STR_LV_MAP_SKIP_VOTE={player} voted to skip map.
 STR_LV_MAP_SKIPPED=Map skipped. New map: {string1}
 STR_LV_TEAM_BALANCE=Team balance applied.
 
+# Log viewer — in-game vote events
+STR_LV_VOTE_START_LOBBY={player} started a vote to return to lobby.
+STR_LV_VOTE_START_SURRENDER={player} started a vote to surrender.
+STR_LV_VOTE_CAST_YES={player} voted yes.
+STR_LV_VOTE_CAST_NO={player} voted no.
+STR_LV_VOTE_PASSED=Vote passed.
+STR_LV_VOTE_FAILED=Vote failed.
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=Open
 STR_LV_MENU_ACTION=Action
