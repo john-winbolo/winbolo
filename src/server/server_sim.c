@@ -2892,6 +2892,31 @@ void serverSimReturnToLobby(ServerSim *sim) {
     /* Lobby state fan-out happens via the control-event bus — the
      * caller publishes CTRL_LOBBY_SLOT + CTRL_LOBBY_SETTINGS. */
 
+    /* Push the freshly-reset map back to every audience. The server's
+     * map was restored to cachedMapData by resetGameWorld above (or
+     * to a freshly-generated random / rotation map), but every
+     * client — UDP-remote and in-process (SP, bots, host's own
+     * loopback) — still carries the in-game mutations from the
+     * round that just ended (felled trees, built walls, mine
+     * craters). Neither the periodic snapshot's full-sync (carries
+     * map checksum only) nor the CTRL_GAME_PHASE_LOBBY event
+     * redistributes terrain bytes.
+     *
+     * Mirror serverSimApplyMapChange: the wire helper refreshes the
+     * UDP-side cached compressed map / JOIN_ACCEPT / per-client
+     * download tracking, and the CTRL_LOBBY_MAP_CHANGE publish fans
+     * out via the bus so in-process subscribers (SP ClientSim, bots)
+     * reinstall via boundServerSim — see client_sim_control.c:260.
+     * The two together close the asymmetric-runtime gap: SP players
+     * would otherwise keep round-end terrain through the next round. */
+    transportUdpServerOnLobbyMapChange(sim);
+    {
+        ControlEvent mapEvt;
+        memset(&mapEvt, 0, sizeof(mapEvt));
+        mapEvt.type = CTRL_LOBBY_MAP_CHANGE;
+        serverSimPublishControl(sim, &mapEvt);
+    }
+
     /* Publish CTRL_GAME_PHASE_LOBBY so subscribers (e.g. the
      * dedicated-server log writer) see the GAME_OVER→LOBBY
      * transition. Existing CTRL_LOBBY_SLOT / CTRL_LOBBY_SETTINGS

@@ -534,6 +534,24 @@ void serverInstanceTick(ServerSim *sim) {
       serverSimFillGamePhaseEvent(sim, &evt);
       serverSimPublishControl(sim, &evt);
     }
+    /* Push the freshly-reset map to every audience — same reasoning
+     * as the serverSimReturnToLobby tail. The wire helper updates
+     * the UDP server's cached compressed map / JOIN_ACCEPT / per-
+     * client download tracking; the CTRL_LOBBY_MAP_CHANGE publish
+     * fans through the bus so in-process subscribers reinstall via
+     * boundServerSim. Empty-reset is usually a no-op for the wire
+     * leg (no UDP clients at the moment the reset fires), but any
+     * SP host or replay-log subscriber bound to this sim still
+     * needs the event. */
+    if (instanceAcceptRemoteClients) {
+      transportUdpServerOnLobbyMapChange(sim);
+    }
+    {
+      ControlEvent mapEvt;
+      memset(&mapEvt, 0, sizeof(mapEvt));
+      mapEvt.type = CTRL_LOBBY_MAP_CHANGE;
+      serverSimPublishControl(sim, &mapEvt);
+    }
   }
 
   threadsReleaseMutex();
