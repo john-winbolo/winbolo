@@ -96,6 +96,52 @@ void playersCreate(players *plrs, bool isServer) {
 }
 
 /*********************************************************
+*NAME:          playersResetRoundState
+*PURPOSE:
+* Resets one slot's round/world state (position, alliance,
+* LGM, transient flags) while preserving its connection
+* identity: inUse, playerName, location, clientType,
+* clientFlags, and the slot's playerBrainNames entry.
+*
+* Used by a world reset between rounds so player identity
+* survives without each caller hand-restoring it — the
+* asymmetry that previously dropped PLAYER_FLAG_BOT (and the
+* country code) on the networked game-start path.
+*
+*ARGUMENTS:
+* plrs      - Pointer to the players object
+* playerNum - Slot to reset
+*********************************************************/
+void playersResetRoundState(players *plrs, BYTE playerNum) {
+  player *p;
+
+  if (playerNum >= MAX_TANKS || (*plrs) == NULL) {
+    return;
+  }
+  p = &(*plrs)->item[playerNum];
+
+  /* Alliance holds an allocation — tear down and recreate empty. */
+  allienceDestroy(&p->allie);
+  p->allie = allienceCreate();
+
+  p->mapX = 0;
+  p->mapY = 0;
+  p->pixelX = 0;
+  p->pixelY = 0;
+  p->frame = 0;
+  p->onBoat = FALSE;
+  p->lgmMapX = 0;
+  p->lgmMapY = 0;
+  p->lgmPixelX = 0;
+  p->lgmPixelY = 0;
+  p->lgmFrame = 0;
+  p->speed = 0;
+  p->ping = 0;
+  p->isChecked = FALSE;
+  p->needUpdate = FALSE;
+}
+
+/*********************************************************
 *NAME:          playersDestroy
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99

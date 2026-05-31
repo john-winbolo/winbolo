@@ -2388,6 +2388,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_bot_chat_routing.c
     tests/unit/test_brain_internal_msg_routing.c
     tests/unit/test_subscriber_arm_orphans.c
+    tests/unit/test_identity_survives_reset.c
     tests/unit/test_log_roundtrip.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
@@ -2552,8 +2553,13 @@ set(_unit_test_names
     player_join_self_does_not_announce
     player_leave_appends_lobby_chat
     lobby_settings_clears_balance_proposal
+    reset_round_state_preserves_identity
+    start_game_preserves_client_flags
+    return_to_lobby_drops_wbn_keeps_identity
     log_roundtrip_basic
     log_roundtrip_snapshot_keeps_chain_synced
+    log_roundtrip_lobby_snapshot_is_empty_world
+    log_roundtrip_lobby_mode_drops_world_events
     alliance_reset_codec_roundtrip
     alliance_reset_decoder_rejects_short
     alliance_reset_reapply_publishes_one_event

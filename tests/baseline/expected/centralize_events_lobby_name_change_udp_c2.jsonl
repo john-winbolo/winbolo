@@ -19,12 +19,12 @@
 {"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"Renamed1","teamNumber":1,"ready":true,"isBot":false,"pingMs":20,"countryCode":"AU","clientFlags":0,"clientType":2}}
 {"tick":0,"type":"CTRL_GAME_PHASE","phase":"COUNTDOWN","countdownSeconds":5}
 {"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"Renamed1","teamNumber":1,"ready":true,"isBot":false,"pingMs":20,"countryCode":"AU","clientFlags":0,"clientType":2}}
-{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"Renamed2","teamNumber":2,"ready":true,"isBot":false,"pingMs":21,"countryCode":"AU","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"Renamed2","teamNumber":2,"ready":true,"isBot":false,"pingMs":20,"countryCode":"AU","clientFlags":0,"clientType":2}}
 {"tick":0,"type":"CTRL_GAME_PHASE","phase":"COUNTDOWN","countdownSeconds":4}
 {"tick":0,"type":"CTRL_GAME_PHASE","phase":"COUNTDOWN","countdownSeconds":3}
 {"tick":0,"type":"CTRL_GAME_PHASE","phase":"COUNTDOWN","countdownSeconds":2}
 {"tick":0,"type":"CTRL_GAME_PHASE","phase":"COUNTDOWN","countdownSeconds":1}
 {"tick":0,"type":"CTRL_ALLIANCE_LEAVE","playerNum":0}
 {"tick":0,"type":"CTRL_ALLIANCE_LEAVE","playerNum":1}
-{"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":0,"name":"Renamed1","country":"AU","clientType":0,"clientFlags":0,"allies":[]}
+{"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":0,"name":"Renamed1","country":"AU","clientType":2,"clientFlags":0,"allies":[]}
 {"tick":0,"type":"CTRL_GAME_PHASE","phase":"RUNNING","countdownSeconds":0}
