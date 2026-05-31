@@ -132,6 +132,17 @@ void serverInstanceTick(ServerSim *sim);
  * botManagerDestroy(sim). Does NOT destroy or free sim — caller owns. */
 void serverInstanceShutdown(ServerSim *sim);
 
+/* Round-end log-upload hooks for WinBoloDS. Only the dedicated-server
+ * binary ships server_dedicated_log.c (it touches servermain.c-owned
+ * globals and the http stack); the other server_static consumers
+ * (WinBolo, WinBoloHeadless, winbolo_gym, WinBoloUnitTests) leave
+ * these unset and the lifecycle treats them as no-ops. WinBoloDS
+ * registers serverDedicatedLogStashCurrentRound /
+ * serverDedicatedLogFlushPendingUpload via serverDedicatedLogInstall
+ * at startup. */
+void serverLifecycleSetRoundLogHooks(void (*stash)(void),
+                                     void (*flush)(void));
+
 typedef enum {
   SERVER_PORTMAP_DISABLED,    /* not requested (dedicated default,
                                  joiners, or BOLO_PORTMAP=OFF builds) */

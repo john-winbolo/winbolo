@@ -251,3 +251,4 @@ bool logCheckTankSame(BYTE playerNum, BYTE mx, BYTE my, BYTE pxy, BYTE opt) {
     (void)playerNum; (void)mx; (void)my; (void)pxy; (void)opt;
     return true;
 }
+void logSetLobbyMode(bool enabled) { (void)enabled; }

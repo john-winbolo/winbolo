@@ -2388,6 +2388,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_bot_chat_routing.c
     tests/unit/test_brain_internal_msg_routing.c
     tests/unit/test_subscriber_arm_orphans.c
+    tests/unit/test_log_roundtrip.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2551,6 +2552,8 @@ set(_unit_test_names
     player_join_self_does_not_announce
     player_leave_appends_lobby_chat
     lobby_settings_clears_balance_proposal
+    log_roundtrip_basic
+    log_roundtrip_snapshot_keeps_chain_synced
     alliance_reset_codec_roundtrip
     alliance_reset_decoder_rejects_short
     alliance_reset_reapply_publishes_one_event
