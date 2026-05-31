@@ -272,6 +272,13 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   lua_pushinteger(L, info->allies ? *(info->allies) : 0);
   lua_setfield(L, -2, "allies");
 
+  /* Per-slot PLAYER_FLAG_BOT bitmap (bit N = slot N is a brain).
+   * Brains intersect with `allies` (and invert) to address allied
+   * humans only — see the human-goal-change broadcast in
+   * NewAutopilot. */
+  lua_pushinteger(L, info->player_bots ? *(info->player_bots) : 0);
+  lua_setfield(L, -2, "player_bots");
+
   /* Tank state */
   lua_pushinteger(L, info->tankx);          lua_setfield(L, -2, "tankx");
   lua_pushinteger(L, info->tanky);          lua_setfield(L, -2, "tanky");

@@ -5399,6 +5399,40 @@ function Brain.think(info)
   -- surfaces immediately. Phase 1 populator: clobber broadcast_state_info
   -- with goal/sub/target read off the current goal.
   do
+    -- Goal-change detector for the human-readable announcement at the
+    -- end of this block. The /info state slate covers allied bots via
+    -- the internal channel; humans get a plain-English line only on
+    -- a real (kind, target_id) transition AND no more than once per
+    -- HUMAN_GOAL_MIN_INTERVAL ticks per bot. mx/my are intentionally
+    -- not part of the fingerprint — they shift on every retarget
+    -- within the same goal pursuit (e.g. pill snaps to a slightly
+    -- different tile) and would dominate the announcement volume.
+    do
+      local HUMAN_GOAL_MIN_INTERVAL = 500   -- ticks = 10 s at 50 Hz
+      local cur_kind = (state.goal and state.goal.kind) or "idle"
+      local cur_id   = (state.goal and state.goal.target_id) or -1
+      state.last_announced_goal = state.last_announced_goal
+                                  or { kind = "", target_id = -2, tick = -10000 }
+      local lag = state.last_announced_goal
+      local cooldown_ok = (now - (lag.tick or -10000)) >= HUMAN_GOAL_MIN_INTERVAL
+      if cooldown_ok and (lag.kind ~= cur_kind or lag.target_id ~= cur_id) then
+        -- No "NewAutopilot:" prefix — chat row shows the speaker's
+        -- name already, so the brain name would double up.
+        local line
+        if cur_kind == "idle" then
+          line = "idle"
+        elseif cur_id >= 0 then
+          line = string.format("%s #%d", cur_kind, cur_id)
+        else
+          line = cur_kind
+        end
+        state.pending_human_goal_msg = line
+        lag.kind = cur_kind
+        lag.target_id = cur_id
+        lag.tick = now
+      end
+    end
+
     -- Lazy init in case the brain was created before these state fields
     -- were added (state. is set in open()) — keeps a hot-reload from
     -- erroring out on nil.
@@ -5467,13 +5501,13 @@ function Brain.think(info)
     local lgm_change_due = state.pending_lgm_broadcast == true
     if (differs or heartbeat_due or lgm_change_due) and not send_msg then
       send_msg = comms.format_state(bsi)
-      -- Only allies see our state — broadcasting to enemies would
-      -- leak strategy (goal, target, cost). info.allies is the
-      -- engine's alliance bitmap including self; that's fine since
-      -- self-sends are filtered out at the in-process CTRL_CHAT
-      -- handler. If we have no allies the message is dropped by
-      -- playersSendAiMessage (no bits set).
-      msg_dest = info.allies and info.allies or 0
+      -- Internal channel: messagedest=0 routes through the brain
+      -- inbox of every allied bot in this sim and is shown locally
+      -- on MSG_AI when run from the Brains menu — see
+      -- brain_data.c's brainDataExtractInfo. No human's newswire
+      -- ever sees /info state, so we can fire it on every goal
+      -- change and the 30 s heartbeat without polluting chat.
+      msg_dest = 0
       for k in pairs(last) do last[k] = nil end
       for k, v in pairs(bsi) do last[k] = v end
       state.last_broadcast_state_tick = now
@@ -5524,10 +5558,32 @@ function Brain.think(info)
        and (next(bse) ~= nil or next(last_ext) ~= nil)
        and (extras_differ or extra_heartbeat_due) then
       send_msg = comms.format_extra(bse)
-      msg_dest = info.allies and info.allies or 0
+      -- Internal channel, same routing as /info state above.
+      msg_dest = 0
       for k in pairs(last_ext) do last_ext[k] = nil end
       for k, v in pairs(bse)      do last_ext[k] = v end
       state.last_broadcast_extra_tick = now
+    end
+
+    -- Human goal-change line — fired only when the message slot is
+    -- still free this tick (slate + extras have first dibs). Targets
+    -- allied humans: info.player_bots carries the engine's
+    -- PLAYER_FLAG_BOT bitmap (see braincore.c) so masking it out of
+    -- info.allies leaves humans on our team. If a busy tick prevents
+    -- the announcement going out, we defer; the next tick's slate
+    -- heartbeat is at most 30 s away so the slot frees up quickly.
+    if not send_msg and state.pending_human_goal_msg then
+      local allies = info.allies or 0
+      local bots   = info.player_bots or 0
+      local human_allies = allies & ~bots
+      if human_allies ~= 0 then
+        send_msg = state.pending_human_goal_msg
+        msg_dest = human_allies
+      end
+      -- Drop unconditionally: with no humans on our team there's
+      -- nothing to announce, and we don't want this queue growing
+      -- across ticks. A future ally join produces its own change.
+      state.pending_human_goal_msg = nil
     end
   end
 
