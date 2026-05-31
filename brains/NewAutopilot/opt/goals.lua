@@ -2244,14 +2244,15 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
   -- Actionable: travel (to a passable neighbour of the pill, not its
   -- impassable tile) + balance-driven position cost.
   local pcost = travel_cost_to_pill(best_pill.mx, best_pill.my, boat)
-  -- Team time discount: -10 per 30s since anyone last repositioned, capped at
-  -- -100. Resets to 0 the moment any teammate repositions (state.last_team_
+  -- Team time discount: -5 per 30s since anyone last repositioned, capped at
+  -- -50. Resets to 0 the moment any teammate repositions (state.last_team_
   -- reposition_tick is bumped to now in the tick loop). Makes the team slowly
-  -- more willing to reposition, but one move at a time.
+  -- more willing to reposition, but one move at a time. Kept gentle so
+  -- repositioning stays a slow background tidy-up, not a frequent pull.
   local team_disc = 0
   if state.last_team_reposition_tick then
     local elapsed = (state.tick or 0) - state.last_team_reposition_tick
-    team_disc = math.min(100, math.floor(elapsed / 1500) * 10)
+    team_disc = math.min(50, math.floor(elapsed / 1500) * 5)
   end
   local cost = math.max(1, pcost + best_pcost - team_disc)
 
