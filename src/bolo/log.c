@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <string.h>
 //#include <winsock2.h>
+#include <SDL3/SDL.h>
 #include "global.h"
 #include "util.h"
 #include "bolo_map.h"
@@ -52,6 +53,18 @@ BYTE logOldKey; /* Old key needed for writing state */
 bool logLastEmpty; /* Was the last log empty? */
 
 logTanks logCheckTanks;
+
+/* Thread that owns the log writer. Captured at logStart. Every mutating
+ * entry point bails if called from any other thread.
+ *
+ * Why: log.c keeps its writer state (logMem / logKey / logNumEvents / ...)
+ * in file-static globals with no synchronisation. The bot worker pool
+ * reaches logAddEvent via clientSimSyncFromSnapshot -> mapSetPos on each
+ * bot's own ClientSim, and concurrent writers interleave bytes in logMem
+ * and desync the XOR-key chain — the resulting .wbv opens, plays for
+ * ~60s, then trips the viewer's lv-corrupt diagnostic. The owner check
+ * makes those off-thread calls drop silently. */
+static SDL_ThreadID logOwnerThread = 0;
 
 /*********************************************************
 *NAME:          logCreate
@@ -257,6 +270,9 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
   bool changeKey = TRUE; /* Whether to change the encryption key or not */
   unsigned short wordsLen; /* Safe length for words data */
 
+  if (logOwnerThread != 0 && SDL_GetCurrentThreadID() != logOwnerThread) {
+    return;
+  }
   if (logIsRunning == TRUE && logMem != NULL) {
     /* Bounds check: ensure we have room in the log buffer.
        Max single event is 6 bytes header + 256 bytes words data */
@@ -729,6 +745,7 @@ bool logStart(char *fileName, ServerSim *ssim, BYTE ai, BYTE maxPlayers, bool us
   returnValue = TRUE;
   logStop(); /* Stop the current log if it is running */
   logLastEmpty = FALSE;
+  logOwnerThread = SDL_GetCurrentThreadID();
 
   count = 0;
   while (count < MAX_TANKS) {
