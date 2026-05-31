@@ -263,10 +263,15 @@ void clientApplySnapshot(ClientSim *csPtr,
     frontEndUpdatePlayerPing(csPtr, (playerNumbers)pn, tanks[i].pingMs);
     {
       /* Snapshot is authoritative only for these bits — preserve any others
-       * (e.g. STEAM_BUILD set once from JOIN_REQUEST) across snapshot ticks. */
+       * (e.g. STEAM_BUILD set once from JOIN_REQUEST) across snapshot ticks.
+       * PLAYER_FLAG_BOT belongs here too: it is server-set and stable, and a
+       * client that learns of a slot via the snapshot (or a lobby slot) never
+       * sees the CTRL_PLAYER_JOIN that would otherwise carry it, so the
+       * snapshot is the only channel that reaches every client. */
       const uint8_t snapshotMask = PLAYER_FLAG_WBN_VERIFIED
                                  | PLAYER_FLAG_WBN_STEAM_LINKED
-                                 | PLAYER_FLAG_SUPPORTER;
+                                 | PLAYER_FLAG_SUPPORTER
+                                 | PLAYER_FLAG_BOT;
       uint8_t cur = playersGetClientFlags(&csPtr->sim.plyrs, pn);
       uint8_t next = (uint8_t)((cur & ~snapshotMask) | (tanks[i].clientFlags & snapshotMask));
       playersSetClientFlags(&csPtr->sim.plyrs, pn, next);
@@ -521,7 +526,7 @@ void clientApplySnapshot(ClientSim *csPtr,
         fprintf(stderr, "[SCREEN] Auto-registering player %d from snapshot (pos=%u,%u)\n",
                 pn, tanks[i].worldX, tanks[i].worldY);
         playersSetPlayer(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, pn, name, "XX",
-                         0, 0, 0, 0, 0, FALSE, 0, NULL, csPtr->isBot);
+                         0, 0, 0, 0, 0, FALSE, 0, NULL, FALSE);
       }
 
       /* Store speed on player struct for brain access (brain API uses * 4 scale) */
