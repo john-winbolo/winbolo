@@ -263,7 +263,11 @@ void clientApplySnapshot(ClientSim *csPtr,
     frontEndUpdatePlayerPing(csPtr, (playerNumbers)pn, tanks[i].pingMs);
     {
       /* Snapshot is authoritative only for these bits — preserve any others
-       * (e.g. STEAM_BUILD set once from JOIN_REQUEST) across snapshot ticks. */
+       * (e.g. STEAM_BUILD set once from JOIN_REQUEST, PLAYER_FLAG_BOT set at
+       * bot creation) across snapshot ticks. Out-of-view (stub) tanks send
+       * clientFlags=0, so bits not in this mask must be kept from the
+       * existing value rather than clobbered from the wire. PLAYER_FLAG_BOT
+       * must NOT go in this mask for that reason. */
       const uint8_t snapshotMask = PLAYER_FLAG_WBN_VERIFIED
                                  | PLAYER_FLAG_WBN_STEAM_LINKED
                                  | PLAYER_FLAG_SUPPORTER;
@@ -521,7 +525,7 @@ void clientApplySnapshot(ClientSim *csPtr,
         fprintf(stderr, "[SCREEN] Auto-registering player %d from snapshot (pos=%u,%u)\n",
                 pn, tanks[i].worldX, tanks[i].worldY);
         playersSetPlayer(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, pn, name, "XX",
-                         0, 0, 0, 0, 0, FALSE, 0, NULL, csPtr->isBot);
+                         0, 0, 0, 0, 0, FALSE, 0, NULL, FALSE);
       }
 
       /* Store speed on player struct for brain access (brain API uses * 4 scale) */

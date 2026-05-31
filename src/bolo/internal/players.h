@@ -133,6 +133,20 @@ void playersCreate(players *plrs, bool isServer);
 void playersDestroy(players *plrs);
 
 /*********************************************************
+*NAME:          playersResetRoundState
+*PURPOSE:
+* Resets one slot's round/world state while preserving its
+* connection identity (inUse, playerName, location,
+* clientType, clientFlags, playerBrainNames). Used by a
+* world reset between rounds.
+*
+*ARGUMENTS:
+* plrs      - Pointer to the players object
+* playerNum - Slot to reset
+*********************************************************/
+void playersResetRoundState(players *plrs, BYTE playerNum);
+
+/*********************************************************
 *NAME:          playersSetSelf
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99

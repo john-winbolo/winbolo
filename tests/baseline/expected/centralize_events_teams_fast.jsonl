@@ -7,8 +7,8 @@
 {"tick":0,"type":"CTRL_GAME_VOTE_STATE","kind":0,"active":0,"triggerSrc":0,"teamId":0,"threshold":1,"yesCount":0,"noCount":0,"eligibleCount":1,"secondsRemaining":0,"votes":0}
 {"tick":0,"type":"CTRL_GAME_VOTE_STATE","kind":0,"active":0,"triggerSrc":0,"teamId":0,"threshold":1,"yesCount":0,"noCount":0,"eligibleCount":1,"secondsRemaining":0,"votes":0}
 {"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":0,"name":"HeadlessBot","country":"XX","clientType":0,"clientFlags":0,"allies":[0]}
-{"tick":4,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"Bot 1","country":"XX","clientType":0,"clientFlags":0,"allies":[1]}
-{"tick":6,"type":"CTRL_PLAYER_JOIN","playerNum":2,"name":"Bot 2","country":"XX","clientType":0,"clientFlags":0,"allies":[2]}
+{"tick":4,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"Bot 1","country":"XX","clientType":0,"clientFlags":32,"allies":[1]}
+{"tick":6,"type":"CTRL_PLAYER_JOIN","playerNum":2,"name":"Bot 2","country":"XX","clientType":0,"clientFlags":32,"allies":[2]}
 {"tick":14,"type":"CTRL_ALLIANCE_ACCEPT","acceptedBy":0,"newMember":2}
 {"tick":20,"type":"CTRL_ALLIANCE_ACCEPT","acceptedBy":0,"newMember":1}
 {"tick":20,"type":"CTRL_ALLIANCE_ACCEPT","acceptedBy":0,"newMember":2}
