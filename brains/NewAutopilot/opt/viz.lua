@@ -214,6 +214,12 @@ M.IDS = {
   -- (bot #, goal, substate, target, k=v data).
   ally_state_overlay = { short = "Ally state table",
                          long  = "Right-middle HUD showing each ally's goal / sub / target / k=v data, fed by the chat-based ally_state slate" },
+  pill_portfolio     = { short = "Pill portfolio table",
+                         long  = "Far-left HUD: one row per friendly pillbox, colored by reposition category (back/front/aggressive/in-use), with a legend below. Categories use the influence/front-line ('3') definition." },
+  pill_best_spots_back  = { short = "Best BACK pill spots",
+                            long  = "Map overlay: top evaluated placement spots for a BACK pill, as bold filled orange squares (most opaque = best). Pairs with the '3' influence view. Fed by the place_pill_strategic candidate scan." },
+  pill_best_spots_aggro = { short = "Best AGGRO pill spots",
+                            long  = "Map overlay: top evaluated placement spots for an AGGRESSIVE pill, as bold filled red squares (most opaque = best). Pairs with the '3' influence view." },
   ally_avoid_overlay = { short = "Ally avoid zones",
                          long  = "Orange tiles around an ally tank doing a pill take (5x5 when within STANDOFF+2 of pill), plus the firing lane to the pill. Also prints `BLOCK: ON/OFF sub=… d=N/T` next to each attack_pill ally so you can see live whether the 5x5 stamp is active and how close they are to the activation threshold." },
 
@@ -309,6 +315,10 @@ M.IDS = {
   -- Floating "<in-flight>/<pill HP>" label above the target pill.
   pill_shot_count    = { short = "Pill shot count",
                          long  = "Cyan '<in-flight shots>/<pill HP>' label floating above the target pill" },
+
+  -- Magenta path the kill_hardline take is driving to the tile beside the pill.
+  hardline_path       = { short = "Hardline path",
+                          long  = "Magenta line of the kill_hardline approach path (target pill's danger subtracted) + box on the chosen tile beside the pill" },
 
   -- HUD: raw swerve debug counters during swerve substate.
   hud_swerve_debug   = { short = "HUD: swerve debug",

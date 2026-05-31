@@ -39,6 +39,8 @@
 #include "starts.h"
 #include "tank.h"
 #include "players.h"
+#include "messages.h"      /* messageInboxPush for botManagerDeliverInternalMessage */
+#include "util.h"          /* utilCtoPString for the inbox payload */
 #include "allience.h"
 #include "mines.h"
 #include "client_sim.h"
@@ -1061,6 +1063,47 @@ void botManagerSetTeams(ServerSim *sim, const BYTE *teamOf, BYTE numPlayers) {
                 allienceAdd(&clientSimGetGameSim(sim->botMgr.bots[k].cs)->plyrs->item[i].allie, j);
             }
         }
+    }
+}
+
+void botManagerDeliverInternalMessage(ServerSim *sim, BYTE fromPlayer,
+                                      const char *msg) {
+    if (sim == NULL || msg == NULL || msg[0] == '\0') return;
+    if (fromPlayer >= MAX_TANKS) return;
+    GameSim *gs = serverSimGetGameSim(sim);
+    if (gs == NULL || gs->plyrs == NULL) return;
+
+    /* Author's own alliance bitmap is authoritative for "who is on my
+     * team right now" — same source the broadcast path used when the
+     * message still went out over the chat wire. Includes self; we
+     * skip the self bit below. */
+    PlayerBitMap allies = playersGetAlliesBitMap(&gs->plyrs, fromPlayer);
+
+    /* Pre-build the inbox payload once; messageInboxPush copies it
+     * into each receiver's ring slot. Clamp at the inbox buffer in
+     * case a brain ever sends past PACKET_MAX_CHAT_MESSAGE — the
+     * wire path enforces the same cap but this path skips that. */
+    char pbuf[BRAIN_INBOX_MSG_LEN];
+    size_t mlen = strlen(msg);
+    if (mlen > BRAIN_INBOX_MSG_LEN - 2) {
+        mlen = BRAIN_INBOX_MSG_LEN - 2;
+    }
+    pbuf[0] = (char)mlen;
+    memcpy(pbuf + 1, msg, mlen);
+    pbuf[mlen + 1] = '\0';
+
+    for (BYTE i = 0; i < MAX_TANKS; i++) {
+        if (i == fromPlayer) continue;
+        if (!(allies & ((PlayerBitMap)1u << i))) continue;
+        BotContext *bc = &sim->botMgr.bots[i];
+        /* Human allies (or any non-bot slot) are skipped intentionally:
+         * the whole point of the internal channel is that humans never
+         * see it. botMgr only has entries for managed bot slots so
+         * `active` doubles as a "this is a bot we host" gate. */
+        if (!bc->active || bc->cs == NULL) continue;
+        MessageState *ms = clientSimGetMessages(bc->cs);
+        if (ms == NULL) continue;
+        messageInboxPush(ms, fromPlayer, pbuf);
     }
 }
 

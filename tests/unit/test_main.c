@@ -120,6 +120,12 @@ static const UnitTestEntry s_tests[] = {
                                                  run_bot_chat_receive_from_human_lands_in_bot_inbox },
     { "bot_chat_receive_from_other_bot_via_broadcast",
                                                  run_bot_chat_receive_from_other_bot_via_broadcast },
+    { "internal_msg_reaches_allied_bot",         run_internal_msg_reaches_allied_bot         },
+    { "internal_msg_skips_sender_self",          run_internal_msg_skips_sender_self          },
+    { "internal_msg_skips_non_allied_bot",       run_internal_msg_skips_non_allied_bot       },
+    { "internal_msg_skips_inactive_bot_slot",    run_internal_msg_skips_inactive_bot_slot    },
+    { "internal_msg_handles_oversized_body",     run_internal_msg_handles_oversized_body     },
+    { "internal_msg_null_inputs_are_noop",       run_internal_msg_null_inputs_are_noop       },
     { "alliance_request_flags_addressed",        run_alliance_request_flags_addressed        },
     { "alliance_request_ignores_other_slot",     run_alliance_request_ignores_other_slot     },
     { "phase_lobby_sets_inlobby",                run_phase_lobby_sets_inlobby                },
@@ -135,6 +141,11 @@ static const UnitTestEntry s_tests[] = {
                                                  run_log_roundtrip_lobby_snapshot_is_empty_world },
     { "log_roundtrip_lobby_mode_drops_world_events",
                                                  run_log_roundtrip_lobby_mode_drops_world_events },
+    { "alliance_reset_codec_roundtrip",          run_alliance_reset_codec_roundtrip          },
+    { "alliance_reset_decoder_rejects_short",    run_alliance_reset_decoder_rejects_short    },
+    { "alliance_reset_reapply_publishes_one_event",
+                                                 run_alliance_reset_reapply_publishes_one_event },
+    { "alliance_reset_apply_rebuilds_alliances", run_alliance_reset_apply_rebuilds_alliances },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

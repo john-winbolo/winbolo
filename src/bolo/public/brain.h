@@ -214,6 +214,11 @@ typedef struct
 	u_short num_players;	// How many players currently active in this game?
 	u_char36 **playernames;	// Array of pointers to pascal strings
 	PlayerBitMap *allies;	// Who you are currently allied to
+	/* Per-slot PLAYER_FLAG_BOT bitmap: bit N set iff slot N is a
+	 * brain-driven player. Brains use (allies & ~player_bots) to
+	 * pick out allied humans only — e.g. for chat that should reach
+	 * teammates but not other bots' inboxes. */
+	PlayerBitMap *player_bots;
 
 	WORLD_X tankx;
 	WORLD_Y tanky;

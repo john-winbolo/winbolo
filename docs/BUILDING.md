@@ -275,6 +275,8 @@ OpenMP is detected automatically by CMake. If not found, the gym library still b
 
 If `data/dbip-country-lite.mmdb` is present, the server will use it for IP-to-country lookups via libmaxminddb (built automatically).
 
+The database is the **DB-IP IP-to-Country Lite** file, distributed under CC BY 4.0 and rebuilt monthly. To refresh it, download the latest MaxMind-format (.mmdb) file from https://db-ip.com/db/download/ip-to-country-lite, gunzip it, and drop it in at `data/dbip-country-lite.mmdb`. Attribution lives in `THIRD_PARTY_NOTICES.md`.
+
 ### Sentry crash reporting
 
 Enabled by default. Pass a DSN to activate crash reporting:

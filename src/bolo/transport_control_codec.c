@@ -72,6 +72,12 @@
  * ControlEventType already discriminates request/accept/leave). */
 #define ALLIANCE_UPDATE_PAYLOAD 3
 #define ALLIANCE_BODY_PAYLOAD   2
+/* CTRL_ALLIANCE_RESET — full matrix carried as MAX_TANKS×uint16_t bigendian
+ * (per-player ally bitmap). Discriminator byte ALLIANCE_EVENT_RESET prefixes
+ * the wire-packet payload; the body-only flavor (reliable carrier) drops
+ * the discriminator the same way ACCEPT/LEAVE bodies do. */
+#define ALLIANCE_RESET_BODY_PAYLOAD   (2 * MAX_TANKS)
+#define ALLIANCE_RESET_WIRE_PAYLOAD   (1 + ALLIANCE_RESET_BODY_PAYLOAD)
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeAllianceRequestBody(const ControlEvent *evt,
@@ -158,6 +164,38 @@ static EncodeResult encodeAllianceLeave(const ControlEvent *evt,
     buf[PACKET_HEADER_SIZE] = ALLIANCE_EVENT_LEAVE;
     size_t bodyLen = 0;
     EncodeResult r = encodeAllianceLeaveBody(
+        evt, recipient,
+        buf + PACKET_HEADER_SIZE + 1,
+        bufCap - PACKET_HEADER_SIZE - 1, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + 1 + bodyLen;
+    return ENCODE_OK;
+}
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeAllianceResetBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    (void)recipient;
+    if (bufCap < ALLIANCE_RESET_BODY_PAYLOAD) return ENCODE_OVERFLOW;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        packU16(buf + 2 * i, evt->u.allianceReset.allies[i]);
+    }
+    *outLen = ALLIANCE_RESET_BODY_PAYLOAD;
+    return ENCODE_OK;
+}
+
+static EncodeResult encodeAllianceReset(const ControlEvent *evt,
+                                        const struct UdpServerClient *recipient,
+                                        uint8_t *buf, size_t bufCap,
+                                        size_t *outLen) {
+    const size_t needed = PACKET_HEADER_SIZE + ALLIANCE_RESET_WIRE_PAYLOAD;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_ALLIANCE_UPDATE, 0);
+    buf[PACKET_HEADER_SIZE] = ALLIANCE_EVENT_RESET;
+    size_t bodyLen = 0;
+    EncodeResult r = encodeAllianceResetBody(
         evt, recipient,
         buf + PACKET_HEADER_SIZE + 1,
         bufCap - PACKET_HEADER_SIZE - 1, &bodyLen);
@@ -1078,6 +1116,17 @@ static bool decodeAllianceLeaveBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+static bool decodeAllianceResetBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    if (len < ALLIANCE_RESET_BODY_PAYLOAD) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_ALLIANCE_RESET;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        outEvt->u.allianceReset.allies[i] = unpackU16(buf + 2 * i);
+    }
+    return true;
+}
+
 static bool decodeAllianceUpdate(const uint8_t *buf, size_t len,
                                  ControlEvent *outEvt) {
     if (len < ALLIANCE_UPDATE_PAYLOAD) return false;
@@ -1088,6 +1137,8 @@ static bool decodeAllianceUpdate(const uint8_t *buf, size_t len,
             return decodeAllianceAcceptBody(buf + 1, len - 1, outEvt);
         case ALLIANCE_EVENT_LEAVE:
             return decodeAllianceLeaveBody(buf + 1, len - 1, outEvt);
+        case ALLIANCE_EVENT_RESET:
+            return decodeAllianceResetBody(buf + 1, len - 1, outEvt);
         default:
             return false;
     }
@@ -1481,6 +1532,7 @@ static const ControlEncodeFn s_encoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_GAME_VOTE_STATE]    = encodeGameVoteState,
     [CTRL_SERVER_TEXT]        = encodeServerText,
     [CTRL_COMMAND_REJECTED]   = encodeCommandRejected,
+    [CTRL_ALLIANCE_RESET]     = encodeAllianceReset,
 };
 
 /* ================================================================
@@ -1517,6 +1569,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_GAME_VOTE_STATE]       = encodeGameVoteStateBody,
     [CTRL_SERVER_TEXT]           = encodeServerTextBody,
     [CTRL_COMMAND_REJECTED]      = encodeCommandRejectedBody,
+    [CTRL_ALLIANCE_RESET]        = encodeAllianceResetBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -1546,6 +1599,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_GAME_VOTE_STATE]       = decodeGameVoteStateBody,
     [CTRL_SERVER_TEXT]           = decodeServerTextBody,
     [CTRL_COMMAND_REJECTED]      = decodeCommandRejectedBody,
+    [CTRL_ALLIANCE_RESET]        = decodeAllianceResetBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

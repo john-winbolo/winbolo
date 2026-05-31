@@ -366,7 +366,15 @@ void lv_playersMakeScreenName(BYTE playerNum, char *dest) {
   label[0] = '\0';
   if (plrs.item[playerNum].inUse == TRUE) {
     lv_labelMakeTankLabel(label, plrs.item[playerNum].playerName, plrs.item[playerNum].location, FALSE);
-    snprintf(dest, FILENAME_MAX, "%s", label);
+    /* Tag bot tanks so a replay viewer can tell a brain-driven slot
+     * apart from a human at a glance. The label font is fixed-width
+     * ASCII so a plain prefix is portable across every platform's
+     * SDL3_ttf build. */
+    if (plrs.item[playerNum].accountFlags & LV_PLAYER_FLAG_BOT) {
+      snprintf(dest, FILENAME_MAX, "[AI] %s", label);
+    } else {
+      snprintf(dest, FILENAME_MAX, "%s", label);
+    }
   }
 }
 
@@ -659,6 +667,11 @@ void lv_playersLeaveGame(BYTE playerNum, bool announce) {
 *********************************************************/
 bool lv_playersIsInUse(BYTE playerNumber) {
   return plrs.item[playerNumber].inUse;
+}
+
+bool lv_playersIsBot(BYTE playerNumber) {
+  if (!plrs.item[playerNumber].inUse) return FALSE;
+  return (plrs.item[playerNumber].accountFlags & LV_PLAYER_FLAG_BOT) ? TRUE : FALSE;
 }
 
 /*********************************************************

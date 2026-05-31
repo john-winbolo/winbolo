@@ -329,6 +329,12 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   }
 }
 
+void frontEndDrawReturningToLobby(ClientSim *cs) {
+  if (hideMainView == FALSE && drawBusy == FALSE) {
+    sdl3DrawReturningToLobby(cs);
+  }
+}
+
 void frontEndGameOver(ClientSim *cs) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Game over (time limit expired)");

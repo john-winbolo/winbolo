@@ -527,7 +527,9 @@ uint8_t playersGetAccountFlags(players *plrs, BYTE playerNum) {
   uint8_t flags = 0;
   if (plrs != NULL && (*plrs)->item[playerNum].inUse == TRUE) {
     flags = (*plrs)->item[playerNum].clientFlags
-            & (PLAYER_FLAG_WBN_VERIFIED | PLAYER_FLAG_WBN_STEAM_LINKED);
+            & (PLAYER_FLAG_WBN_VERIFIED
+               | PLAYER_FLAG_WBN_STEAM_LINKED
+               | PLAYER_FLAG_BOT);
   }
   return flags;
 }

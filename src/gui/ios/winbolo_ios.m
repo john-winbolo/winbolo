@@ -835,6 +835,12 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
     }
 }
 
+void frontEndDrawReturningToLobby(ClientSim *cs) {
+    if (hideMainView == FALSE && drawBusy == FALSE) {
+        sdl3DrawReturningToLobby(cs);
+    }
+}
+
 void frontEndGameOver(ClientSim *cs) {
     (void)cs;
     SDL_Log("[iOS] Game over (time limit expired)");

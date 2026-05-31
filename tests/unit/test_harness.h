@@ -134,6 +134,17 @@ int run_bot_chat_send_to_other_bot_lands_in_recipient_inbox(void);
 int run_bot_chat_receive_from_human_lands_in_bot_inbox(void);
 int run_bot_chat_receive_from_other_bot_via_broadcast(void);
 
+/* Internal brain-message routing (test_brain_internal_msg_routing.c) —
+ * pins botManagerDeliverInternalMessage: bot brains sending with
+ * messagedest=0 fan out into allied bot inboxes only, never the chat
+ * wire, never a human's newswire. */
+int run_internal_msg_reaches_allied_bot(void);
+int run_internal_msg_skips_sender_self(void);
+int run_internal_msg_skips_non_allied_bot(void);
+int run_internal_msg_skips_inactive_bot_slot(void);
+int run_internal_msg_handles_oversized_body(void);
+int run_internal_msg_null_inputs_are_noop(void);
+
 /* Subscriber-arm orphan regressions (test_subscriber_arm_orphans.c).
  * Each captures a side effect that was orphaned when its standalone
  * PACKET_* handler was superseded by the unified control bus. */
@@ -145,6 +156,14 @@ int run_player_join_appends_lobby_chat(void);
 int run_player_join_self_does_not_announce(void);
 int run_player_leave_appends_lobby_chat(void);
 int run_lobby_settings_clears_balance_proposal(void);
+
+/* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
+ * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
+ * the host's reliable control queue at game start with 16 players. */
+int run_alliance_reset_codec_roundtrip(void);
+int run_alliance_reset_decoder_rejects_short(void);
+int run_alliance_reset_reapply_publishes_one_event(void);
+int run_alliance_reset_apply_rebuilds_alliances(void);
 
 /* Reliable control-event queue regression tests (test_control_event_queue.c).
  * Each captures a specific bug that shipped during the
