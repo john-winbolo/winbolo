@@ -855,6 +855,7 @@ M.EMERGENCY_DROP_SEARCH_DIRS    = 8     -- directions to search for safe drop ti
 M.BASE_KILLER_TEAM_ADVANTAGE    = 2     -- activate when team has this many more players
 M.BASE_KILLER_ATTACK_DISCOUNT   = 0.3   -- multiply attack_base cost (makes bases top priority)
 M.BASE_KILLER_PILL_PENALTY      = 2.0   -- multiply attack_pill cost (deprioritize pills)
+M.BASE_THREAT_PILL_DISCOUNT     = 0.5   -- multiply attack_pill combat cost when the pill is in firing range of a friendly base (clear base threats fast)
 
 -- Friendly pill as barrier bonus (aIndy: use friendly pills as shields)
 M.FPILL_BARRIER_BONUS           = 80    -- cost reduction when friendly pill is between us and target
@@ -918,7 +919,7 @@ M.PHASE_WEIGHTS = {
     capture_base     = 1.0,
     capture_pill     = 1.0,
     repair_pill      = 0.8,
-    attack_pill      = 0.75,
+    attack_pill      = 0.6,
     attack_base      = 1.2,
     place_strategic  = 0.7,
     defend_pill      = 0.5,

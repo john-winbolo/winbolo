@@ -862,17 +862,16 @@ function Brain.think(info)
   -- automatically when its triggers stop firing (no manual reset).
   --
   -- Current triggers (logical OR):
-  --   * LGM dead AND we're carrying pills in the tank — pills are
-  --     valuable cargo we shouldn't lose to a stray pill shot, and
-  --     without an LGM we can't rebuild walls / repair to recover
-  --     from a hit.  Both conditions must hold; either alone is fine.
+  --   * We're carrying any pill in the tank (>=1) — pills are valuable
+  --     cargo we shouldn't lose to a stray pill shot, so bias toward
+  --     safe routes/targets while we hold one. (Previously also required
+  --     a dead LGM; relaxed so even a single carried pill triggers it.)
   --
   -- Add more triggers here as use cases arise.  Stays per-tick (no
   -- sticky latch) so the mode lifts the instant conditions clear.
   do
     local _carrying = (info.carried_pills or 0) > 0
-    local _lgm_dead = info.man_status == C.LGM_DEAD
-    state.cautious_mode = (_lgm_dead and _carrying) or false
+    state.cautious_mode = _carrying or false
   end
 
   -- LGM registry: self slot updated every tick from info.man_*.

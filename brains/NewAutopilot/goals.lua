@@ -918,6 +918,24 @@ local function attack_pill_adjustments(pill, pcost, state, world)
     if BRAIN_POOL_VIZ then antic_desc = antic_desc .. " *bkiller" end
   end
 
+  -- Base under threat: an enemy/neutral pill within firing range of one of
+  -- our bases is shelling (or about to shell) it — clearing it is urgent, so
+  -- knock 50% off the combat cost.
+  do
+    local threatens_base = false
+    for _, b in pairs(world.bases) do
+      if b.owner == "friendly"
+         and U.mdist(pill.mx, pill.my, b.mx, b.my) <= C.PILL_FIRE_RANGE then
+        threatens_base = true
+        break
+      end
+    end
+    if threatens_base then
+      combat_cost = combat_cost * (C.BASE_THREAT_PILL_DISCOUNT or 0.5)
+      if BRAIN_POOL_VIZ then antic_desc = antic_desc .. " *baseThreat" end
+    end
+  end
+
   -- Final cost = fixed path cost + scaled combat cost
   return pcost + combat_cost, antic_desc
 end
