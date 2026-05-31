@@ -944,6 +944,14 @@ STR_LV_MAP_SKIP_VOTE={player} ha votato per saltare la mappa.
 STR_LV_MAP_SKIPPED=Mappa saltata. Nuova mappa: {string1}
 STR_LV_TEAM_BALANCE=Equilibrio squadre applicato.
 
+# Log viewer — votazioni in partita
+STR_LV_VOTE_START_LOBBY={player} ha avviato una votazione per tornare alla sala d'attesa.
+STR_LV_VOTE_START_SURRENDER={player} ha avviato una votazione per arrendersi.
+STR_LV_VOTE_CAST_YES={player} ha votato sì.
+STR_LV_VOTE_CAST_NO={player} ha votato no.
+STR_LV_VOTE_PASSED=Votazione approvata.
+STR_LV_VOTE_FAILED=Votazione respinta.
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=Apri
 STR_LV_MENU_ACTION=Azione

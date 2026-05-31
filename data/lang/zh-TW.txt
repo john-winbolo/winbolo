@@ -944,6 +944,14 @@ STR_LV_MAP_SKIP_VOTE={player} 投票跳過地圖。
 STR_LV_MAP_SKIPPED=地圖已跳過。新地圖：{string1}
 STR_LV_TEAM_BALANCE=隊伍平衡已套用。
 
+# Log viewer — 遊戲內投票事件
+STR_LV_VOTE_START_LOBBY={player} 發起了返回大廳的投票。
+STR_LV_VOTE_START_SURRENDER={player} 發起了投降的投票。
+STR_LV_VOTE_CAST_YES={player} 投了贊成票。
+STR_LV_VOTE_CAST_NO={player} 投了反對票。
+STR_LV_VOTE_PASSED=投票通過。
+STR_LV_VOTE_FAILED=投票未通過。
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=開啟
 STR_LV_MENU_ACTION=操作

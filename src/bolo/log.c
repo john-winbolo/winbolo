@@ -541,6 +541,37 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
       logAddToMemory((logMem+logMemSize), words, (BYTE) wordsLen);
       logMemSize += wordsLen;
       break;
+    case log_GameVoteStart:
+      /* event code + kind + initiator player + team (0 = global) */
+      *(logMem+logMemSize) = itemNum ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt1 ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt2 ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt3 ^ logKey;
+      logMemSize++;
+      break;
+    case log_GameVoteCast:
+      /* event code + kind + player + voteYes (0/1) */
+      *(logMem+logMemSize) = itemNum ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt1 ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt2 ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt3 ^ logKey;
+      logMemSize++;
+      break;
+    case log_GameVoteEnd:
+      /* event code + kind + result (0=failed,1=passed) */
+      *(logMem+logMemSize) = itemNum ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt1 ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt2 ^ logKey;
+      logMemSize++;
+      break;
     default:
       changeKey = FALSE;
       logNumEvents--;

@@ -944,6 +944,14 @@ STR_LV_MAP_SKIP_VOTE={player} röstade för att hoppa över kartan.
 STR_LV_MAP_SKIPPED=Karta överhoppad. Ny karta: {string1}
 STR_LV_TEAM_BALANCE=Lagbalans tillämpad.
 
+# Log viewer — röstningshändelser i spelet
+STR_LV_VOTE_START_LOBBY={player} startade en omröstning om att återvända till lobbyn.
+STR_LV_VOTE_START_SURRENDER={player} startade en omröstning om att kapitulera.
+STR_LV_VOTE_CAST_YES={player} röstade ja.
+STR_LV_VOTE_CAST_NO={player} röstade nej.
+STR_LV_VOTE_PASSED=Omröstning godkänd.
+STR_LV_VOTE_FAILED=Omröstning misslyckades.
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=Öppna
 STR_LV_MENU_ACTION=Åtgärd

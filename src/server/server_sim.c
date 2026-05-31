@@ -3852,7 +3852,7 @@ void serverSimGameVoteResetAll(ServerSim *sim) {
 }
 
 static void gameVoteStart(ServerSim *sim, uint8_t kind, uint8_t triggerSrc,
-                          uint8_t teamId, uint64_t nowMs) {
+                          uint8_t teamId, uint64_t nowMs, uint8_t initiator) {
     struct ServerGameVote *gv = gameVoteSlot(sim, kind);
     if (!gv) return;
     memset(gv, 0, sizeof(*gv));
@@ -3863,6 +3863,7 @@ static void gameVoteStart(ServerSim *sim, uint8_t kind, uint8_t triggerSrc,
     gv->startMs     = nowMs;
     gv->deadlineMs  = nowMs + (uint64_t)GAME_VOTE_DEADLINE_SECONDS * 1000ULL;
     gv->lastHeartbeatMs = nowMs;
+    logAddEvent(log_GameVoteStart, kind, initiator, teamId, 0, 0, NULL);
 }
 
 static void gameVoteConclude(ServerSim *sim, struct ServerGameVote *gv,
@@ -3870,6 +3871,9 @@ static void gameVoteConclude(ServerSim *sim, struct ServerGameVote *gv,
     gv->active = finalState;
     gv->concludedAtMs = nowMs;
     publishGameVoteState(sim, gv->kind);
+    logAddEvent(log_GameVoteEnd, gv->kind,
+                finalState == GAME_VOTE_ACTIVE_PASSED ? 1 : 0,
+                0, 0, 0, NULL);
 }
 
 /* Fire the actual pass effects (countdown for back-to-lobby,
@@ -3901,7 +3905,7 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
         struct ServerGameVote *btl = gameVoteSlot(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
         if (btl && btl->active != GAME_VOTE_ACTIVE_RUNNING) {
             gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
-                          GAME_VOTE_TRIGGER_POST_SURRENDER, 0, nowMs);
+                          GAME_VOTE_TRIGGER_POST_SURRENDER, 0, nowMs, NEUTRAL);
             publishGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
         }
     }
@@ -3983,9 +3987,10 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
             publishGameVoteState(sim, kind);
             return;
         }
-        gameVoteStart(sim, kind, GAME_VOTE_TRIGGER_MANUAL, teamId, nowMs);
+        gameVoteStart(sim, kind, GAME_VOTE_TRIGGER_MANUAL, teamId, nowMs, playerNum);
         gv->votesMask    |= (uint16_t)(1u << playerNum);
         gv->answeredMask |= (uint16_t)(1u << playerNum);
+        logAddEvent(log_GameVoteCast, kind, playerNum, 1, 0, 0, NULL);
 
         /* Check whether opening + auto-YES already constitutes a pass.
          * Solo (threshold==1) starts the 5-s grace immediately so the
@@ -4013,7 +4018,7 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
 
     if (gv->active != GAME_VOTE_ACTIVE_RUNNING) {
         /* First voter starts the vote. */
-        gameVoteStart(sim, kind, GAME_VOTE_TRIGGER_MANUAL, teamId, nowMs);
+        gameVoteStart(sim, kind, GAME_VOTE_TRIGGER_MANUAL, teamId, nowMs, playerNum);
     } else if (kind == GAME_VOTE_KIND_SURRENDER &&
                gv->teamId != sim->lobbyPlayers[playerNum].teamNumber) {
         /* Different-team player can't vote on a team's surrender. */
@@ -4026,6 +4031,8 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
     } else {
         gv->votesMask &= (uint16_t)~(1u << playerNum);
     }
+    logAddEvent(log_GameVoteCast, kind, playerNum,
+                toggleMode == GAME_VOTE_TOGGLE_YES ? 1 : 0, 0, 0, NULL);
 
     gameVotePruneVotes(sim, gv);
 
@@ -4115,7 +4122,7 @@ static void gameVoteCheckBaseMonopoly(ServerSim *sim, uint64_t nowMs) {
     publishServerMessage(sim, buf);
 
     gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
-                  GAME_VOTE_TRIGGER_BASE_MONOPOLY, monoTeam, nowMs);
+                  GAME_VOTE_TRIGGER_BASE_MONOPOLY, monoTeam, nowMs, NEUTRAL);
     /* Pre-cast YES for every eligible voter. */
     gv->votesMask    = gameVoteEligibleMask(sim, GAME_VOTE_KIND_BACK_TO_LOBBY, 0);
     gv->answeredMask = gv->votesMask;

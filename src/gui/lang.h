@@ -1369,6 +1369,14 @@
 #define STR_VOTE_SURRENDER_PICK_TEAM_TIP    1394
 #define STR_VOTE_SURRENDER_TWO_TEAMS_TIP    1395
 
+/* Logviewer — in-game vote events */
+#define STR_LV_VOTE_START_LOBBY             1396
+#define STR_LV_VOTE_START_SURRENDER         1397
+#define STR_LV_VOTE_CAST_YES                1398
+#define STR_LV_VOTE_CAST_NO                 1399
+#define STR_LV_VOTE_PASSED                  1400
+#define STR_LV_VOTE_FAILED                  1401
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

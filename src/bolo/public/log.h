@@ -98,7 +98,10 @@ log_CountdownStart,
 log_CountdownCancel,
 log_MapSkipVote,
 log_MapSkipApplied,
-log_BalanceApplied
+log_BalanceApplied,
+log_GameVoteStart,   // opt1=kind, opt2=initiator, opt3=team (0 = global)
+log_GameVoteCast,    // opt1=kind, opt2=player,    opt3=voteYes
+log_GameVoteEnd      // opt1=kind, opt2=result (0=failed,1=passed)
 } logitem;
 
 typedef struct {

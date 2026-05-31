@@ -944,6 +944,14 @@ STR_LV_MAP_SKIP_VOTE={player} heeft gestemd om de kaart over te slaan.
 STR_LV_MAP_SKIPPED=Kaart overgeslagen. Nieuwe kaart: {string1}
 STR_LV_TEAM_BALANCE=Teambalans toegepast.
 
+# Log viewer — stemgebeurtenissen in het spel
+STR_LV_VOTE_START_LOBBY={player} heeft een stemming gestart om terug naar de lobby te gaan.
+STR_LV_VOTE_START_SURRENDER={player} heeft een stemming gestart om zich over te geven.
+STR_LV_VOTE_CAST_YES={player} heeft ja gestemd.
+STR_LV_VOTE_CAST_NO={player} heeft nee gestemd.
+STR_LV_VOTE_PASSED=Stemming aangenomen.
+STR_LV_VOTE_FAILED=Stemming verworpen.
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=Openen
 STR_LV_MENU_ACTION=Actie
