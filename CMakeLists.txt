@@ -2364,6 +2364,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_bolo_rand.c
     tests/unit/test_lobby_runtime_fixes.c
     tests/unit/test_bot_chat_routing.c
+    tests/unit/test_brain_internal_msg_routing.c
     tests/unit/test_subscriber_arm_orphans.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
@@ -2514,6 +2515,12 @@ set(_unit_test_names
     bot_chat_send_to_other_bot_lands_in_recipient_inbox
     bot_chat_receive_from_human_lands_in_bot_inbox
     bot_chat_receive_from_other_bot_via_broadcast
+    internal_msg_reaches_allied_bot
+    internal_msg_skips_sender_self
+    internal_msg_skips_non_allied_bot
+    internal_msg_skips_inactive_bot_slot
+    internal_msg_handles_oversized_body
+    internal_msg_null_inputs_are_noop
     alliance_request_flags_addressed
     alliance_request_ignores_other_slot
     phase_lobby_sets_inlobby
