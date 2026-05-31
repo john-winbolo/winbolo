@@ -944,6 +944,14 @@ STR_LV_MAP_SKIP_VOTE={player} проголосовал за пропуск ка�
 STR_LV_MAP_SKIPPED=Карта пропущена. Новая карта: {string1}
 STR_LV_TEAM_BALANCE=Баланс команд применён.
 
+# Log viewer — голосования в игре
+STR_LV_VOTE_START_LOBBY={player} начал голосование за возврат в лобби.
+STR_LV_VOTE_START_SURRENDER={player} начал голосование за сдачу.
+STR_LV_VOTE_CAST_YES={player} проголосовал «за».
+STR_LV_VOTE_CAST_NO={player} проголосовал «против».
+STR_LV_VOTE_PASSED=Голосование прошло.
+STR_LV_VOTE_FAILED=Голосование провалилось.
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=Открыть
 STR_LV_MENU_ACTION=Действие

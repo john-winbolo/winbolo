@@ -2851,7 +2851,8 @@ void serverSimReturnToLobby(ServerSim *sim) {
      * comes from the pre-reset snapshot above with the WBN-session
      * bits cleared — the WBN session is about to be torn down and
      * re-registered with a fresh server_key (see
-     * winbolonetReturnToLobby in the caller), so each client must
+     * winbolonetEndSession / winbolonetBeginSession in the caller),
+     * so each client must
      * re-auth via PACKET_WBN_REAUTH against the new session. Other
      * clientFlags bits (CLIENT_TYPE_*, platform, STEAM_BUILD,
      * SUPPORTER, ADMIN) are identity bits tied to the connection,
@@ -2896,6 +2897,31 @@ void serverSimReturnToLobby(ServerSim *sim) {
     serverSimConsoleMessage("Returned to lobby.");
     /* Lobby state fan-out happens via the control-event bus — the
      * caller publishes CTRL_LOBBY_SLOT + CTRL_LOBBY_SETTINGS. */
+
+    /* Push the freshly-reset map back to every audience. The server's
+     * map was restored to cachedMapData by resetGameWorld above (or
+     * to a freshly-generated random / rotation map), but every
+     * client — UDP-remote and in-process (SP, bots, host's own
+     * loopback) — still carries the in-game mutations from the
+     * round that just ended (felled trees, built walls, mine
+     * craters). Neither the periodic snapshot's full-sync (carries
+     * map checksum only) nor the CTRL_GAME_PHASE_LOBBY event
+     * redistributes terrain bytes.
+     *
+     * Mirror serverSimApplyMapChange: the wire helper refreshes the
+     * UDP-side cached compressed map / JOIN_ACCEPT / per-client
+     * download tracking, and the CTRL_LOBBY_MAP_CHANGE publish fans
+     * out via the bus so in-process subscribers (SP ClientSim, bots)
+     * reinstall via boundServerSim — see client_sim_control.c:260.
+     * The two together close the asymmetric-runtime gap: SP players
+     * would otherwise keep round-end terrain through the next round. */
+    transportUdpServerOnLobbyMapChange(sim);
+    {
+        ControlEvent mapEvt;
+        memset(&mapEvt, 0, sizeof(mapEvt));
+        mapEvt.type = CTRL_LOBBY_MAP_CHANGE;
+        serverSimPublishControl(sim, &mapEvt);
+    }
 
     /* Publish CTRL_GAME_PHASE_LOBBY so subscribers (e.g. the
      * dedicated-server log writer) see the GAME_OVER→LOBBY
@@ -3291,7 +3317,6 @@ void serverSimStartGame(ServerSim *sim) {
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
     BYTE tempBuf[65536];
     int len;
-    BYTE i;
 
     if (sim->state != serverStateLobby) {
         return FALSE;
@@ -3342,10 +3367,13 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
         }
     }
 
-    /* Reset all lobby players' ready state */
-    for (i = 0; i < MAX_TANKS; i++) {
-        sim->lobbyPlayers[i].ready = FALSE;
-    }
+    /* Map changed — unready humans, keep bots ready, abort any
+     * in-flight countdown, and republish affected slots. The earlier
+     * bare loop here cleared bots' ready flags too, which silently
+     * blocked the next all-ready check (bot.ready=FALSE → countdown
+     * never started). Match the serverSimReloadMap pattern, which
+     * delegates to serverSimApplyMapChange → lobbyAutoUnreadyOnChange. */
+    lobbyAutoUnreadyOnChange(sim);
 
     return TRUE;
 }
@@ -3876,7 +3904,7 @@ void serverSimGameVoteResetAll(ServerSim *sim) {
 }
 
 static void gameVoteStart(ServerSim *sim, uint8_t kind, uint8_t triggerSrc,
-                          uint8_t teamId, uint64_t nowMs) {
+                          uint8_t teamId, uint64_t nowMs, uint8_t initiator) {
     struct ServerGameVote *gv = gameVoteSlot(sim, kind);
     if (!gv) return;
     memset(gv, 0, sizeof(*gv));
@@ -3887,6 +3915,7 @@ static void gameVoteStart(ServerSim *sim, uint8_t kind, uint8_t triggerSrc,
     gv->startMs     = nowMs;
     gv->deadlineMs  = nowMs + (uint64_t)GAME_VOTE_DEADLINE_SECONDS * 1000ULL;
     gv->lastHeartbeatMs = nowMs;
+    logAddEvent(log_GameVoteStart, kind, initiator, teamId, 0, 0, NULL);
 }
 
 static void gameVoteConclude(ServerSim *sim, struct ServerGameVote *gv,
@@ -3894,6 +3923,9 @@ static void gameVoteConclude(ServerSim *sim, struct ServerGameVote *gv,
     gv->active = finalState;
     gv->concludedAtMs = nowMs;
     publishGameVoteState(sim, gv->kind);
+    logAddEvent(log_GameVoteEnd, gv->kind,
+                finalState == GAME_VOTE_ACTIVE_PASSED ? 1 : 0,
+                0, 0, 0, NULL);
 }
 
 /* Fire the actual pass effects (countdown for back-to-lobby,
@@ -3925,7 +3957,7 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
         struct ServerGameVote *btl = gameVoteSlot(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
         if (btl && btl->active != GAME_VOTE_ACTIVE_RUNNING) {
             gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
-                          GAME_VOTE_TRIGGER_POST_SURRENDER, 0, nowMs);
+                          GAME_VOTE_TRIGGER_POST_SURRENDER, 0, nowMs, NEUTRAL);
             publishGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
         }
     }
@@ -4007,9 +4039,10 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
             publishGameVoteState(sim, kind);
             return;
         }
-        gameVoteStart(sim, kind, GAME_VOTE_TRIGGER_MANUAL, teamId, nowMs);
+        gameVoteStart(sim, kind, GAME_VOTE_TRIGGER_MANUAL, teamId, nowMs, playerNum);
         gv->votesMask    |= (uint16_t)(1u << playerNum);
         gv->answeredMask |= (uint16_t)(1u << playerNum);
+        logAddEvent(log_GameVoteCast, kind, playerNum, 1, 0, 0, NULL);
 
         /* Check whether opening + auto-YES already constitutes a pass.
          * Solo (threshold==1) starts the 5-s grace immediately so the
@@ -4037,7 +4070,7 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
 
     if (gv->active != GAME_VOTE_ACTIVE_RUNNING) {
         /* First voter starts the vote. */
-        gameVoteStart(sim, kind, GAME_VOTE_TRIGGER_MANUAL, teamId, nowMs);
+        gameVoteStart(sim, kind, GAME_VOTE_TRIGGER_MANUAL, teamId, nowMs, playerNum);
     } else if (kind == GAME_VOTE_KIND_SURRENDER &&
                gv->teamId != sim->lobbyPlayers[playerNum].teamNumber) {
         /* Different-team player can't vote on a team's surrender. */
@@ -4050,6 +4083,8 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
     } else {
         gv->votesMask &= (uint16_t)~(1u << playerNum);
     }
+    logAddEvent(log_GameVoteCast, kind, playerNum,
+                toggleMode == GAME_VOTE_TOGGLE_YES ? 1 : 0, 0, 0, NULL);
 
     gameVotePruneVotes(sim, gv);
 
@@ -4139,7 +4174,7 @@ static void gameVoteCheckBaseMonopoly(ServerSim *sim, uint64_t nowMs) {
     publishServerMessage(sim, buf);
 
     gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
-                  GAME_VOTE_TRIGGER_BASE_MONOPOLY, monoTeam, nowMs);
+                  GAME_VOTE_TRIGGER_BASE_MONOPOLY, monoTeam, nowMs, NEUTRAL);
     /* Pre-cast YES for every eligible voter. */
     gv->votesMask    = gameVoteEligibleMask(sim, GAME_VOTE_KIND_BACK_TO_LOBBY, 0);
     gv->answeredMask = gv->votesMask;

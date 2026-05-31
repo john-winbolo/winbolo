@@ -304,9 +304,11 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
   return FALSE;
 }
 
-bool winbolonetReturnToLobby(char *mapName, unsigned short port, BYTE gameType, BYTE ai,
-                             bool mines, bool password, BYTE numBases, BYTE numPills,
-                             BYTE freeBases, BYTE freePills, BYTE numPlayers) {
+void winbolonetEndSession(void) { }
+
+bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai,
+                            bool mines, bool password, BYTE numBases, BYTE numPills,
+                            BYTE freeBases, BYTE freePills, BYTE numPlayers) {
   (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines; (void)password;
   (void)numBases; (void)numPills; (void)freeBases; (void)freePills; (void)numPlayers;
   return FALSE;

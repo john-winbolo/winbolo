@@ -1090,6 +1090,40 @@ void lv_screenProcessLog(unsigned short numEvents) {
     case log_BalanceApplied:
       lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_TEAM_BALANCE, NULL);
       break;
+    case log_GameVoteStart:
+      logReadBytes(&opt1, 1);  /* kind */
+      logReadBytes(&opt2, 1);  /* initiator */
+      logReadBytes(&opt3, 1);  /* team (0 = global) */
+      lv_playersGetPlayerName(opt2, str);
+      {
+        MessageArgs args = {0};
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE,
+                      opt1 == GAME_VOTE_KIND_SURRENDER
+                          ? STR_LV_VOTE_START_SURRENDER
+                          : STR_LV_VOTE_START_LOBBY,
+                      &args);
+      }
+      break;
+    case log_GameVoteCast:
+      logReadBytes(&opt1, 1);  /* kind */
+      logReadBytes(&opt2, 1);  /* player */
+      logReadBytes(&opt3, 1);  /* voteYes (0/1) */
+      lv_playersGetPlayerName(opt2, str);
+      {
+        MessageArgs args = {0};
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE,
+                      opt3 ? STR_LV_VOTE_CAST_YES : STR_LV_VOTE_CAST_NO,
+                      &args);
+      }
+      break;
+    case log_GameVoteEnd:
+      logReadBytes(&opt1, 1);  /* kind */
+      logReadBytes(&opt2, 1);  /* result */
+      lv_messageAdd(networkStatus, MESSAGE_NETSERVER,
+                    opt2 ? STR_LV_VOTE_PASSED : STR_LV_VOTE_FAILED, NULL);
+      break;
     default:
       lv_windowStop(TRUE);
       count = numEvents;
@@ -1460,12 +1494,15 @@ static int walkSkipEventBody(BYTE code) {
     case log_SoundExplosion:
     case log_SoundBigExplosion:
     case log_SoundManDie:
+    case log_GameVoteEnd:
       { BYTE b[2]; if (logReadBytes(b, 2) != 2) return -1; }
       return 2;
     case log_MapChange:
     case log_BaseSetOwner:
     case log_PillSetOwner:
     case log_PillSetPlace:
+    case log_GameVoteStart:
+    case log_GameVoteCast:
       { BYTE b[3]; if (logReadBytes(b, 3) != 3) return -1; }
       return 3;
     case log_BaseSetStock:

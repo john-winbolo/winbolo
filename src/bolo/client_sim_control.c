@@ -405,6 +405,13 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * arrives carrying inLobby=true, which only happens on hosts
          * with lobbyEnabled. */
         cs->inLobby = true;
+        /* Clear the predicted-tank latch so the next round's first
+         * snapshot takes clientApplySnapshot's first-snapshot init
+         * branch (sets stocks, jump-cuts the camera via
+         * clientSimCenterTank) instead of the reconcile branch, which
+         * only snaps position and leaves stocks + camera tracking
+         * stale from the previous round. */
+        cs->clientState.hasPredictedTank = FALSE;
         break;
     case CTRL_GAME_PHASE_COUNTDOWN:
         cs->netStat = netLobbyCountdown;

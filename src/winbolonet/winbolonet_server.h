@@ -161,13 +161,29 @@ void winboloNetSendLock(bool isLocked);
 void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills);
 
 /*********************************************************
-*NAME:          winbolonetReturnToLobby
+*NAME:          winbolonetEndSession
 *PURPOSE:
-* Handles the WBN session cycle when the server returns to
-* the lobby between rounds. Quits the old session, clears
-* player keys and events, and registers a new session with
-* the new map/settings. HTTP layer is preserved.
-* Returns TRUE on success, FALSE on registration failure.
+* Ends the current WBN session: drains the background
+* thread, POSTs server/quit, clears the server bearer,
+* clears per-slot player keys, and resets the event queue.
+* The HTTP layer stays alive. Caller pairs this with
+* winbolonetBeginSession to start the next round; for
+* round-end log uploads, callers also call
+* serverDedicatedLogFlushPendingUpload between the two so
+* the upload runs after WBN accepts that the session is
+* over and before server/register issues a new key.
+*********************************************************/
+void winbolonetEndSession(void);
+
+/*********************************************************
+*NAME:          winbolonetBeginSession
+*PURPOSE:
+* Registers a fresh WBN session with the supplied
+* map/settings, stores the new server_key + bearer, and
+* restarts the background thread. Pairs with
+* winbolonetEndSession at round boundaries.
+* Returns TRUE on success, FALSE on registration failure
+* (sets winboloNetRunning=FALSE on failure).
 *
 *ARGUMENTS:
 * mapName    - Name of the new map
@@ -182,7 +198,7 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
 * freePills  - Free pills
 * numPlayers - Number of players in the game
 *********************************************************/
-bool winbolonetReturnToLobby(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers);
+bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers);
 
 /*********************************************************
 *NAME:          winbolonetSendLobbyStatus

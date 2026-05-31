@@ -944,6 +944,14 @@ STR_LV_MAP_SKIP_VOTE={player} haritayı atlamak için oy kullandı.
 STR_LV_MAP_SKIPPED=Harita atlandı. Yeni harita: {string1}
 STR_LV_TEAM_BALANCE=Takım dengesi uygulandı.
 
+# Log viewer — oyun içi oylama olayları
+STR_LV_VOTE_START_LOBBY={player} lobiye dönmek için oylama başlattı.
+STR_LV_VOTE_START_SURRENDER={player} teslim olmak için oylama başlattı.
+STR_LV_VOTE_CAST_YES={player} evet oyu kullandı.
+STR_LV_VOTE_CAST_NO={player} hayır oyu kullandı.
+STR_LV_VOTE_PASSED=Oylama geçti.
+STR_LV_VOTE_FAILED=Oylama başarısız oldu.
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=Aç
 STR_LV_MENU_ACTION=Eylem

@@ -944,6 +944,14 @@ STR_LV_MAP_SKIP_VOTE={player} がマップのスキップに投票しました�
 STR_LV_MAP_SKIPPED=マップがスキップされました。新しいマップ: {string1}
 STR_LV_TEAM_BALANCE=チームバランスが適用されました。
 
+# Log viewer — ゲーム内投票イベント
+STR_LV_VOTE_START_LOBBY={player} がロビーへ戻る投票を開始しました。
+STR_LV_VOTE_START_SURRENDER={player} が降伏の投票を開始しました。
+STR_LV_VOTE_CAST_YES={player} が賛成票を投じました。
+STR_LV_VOTE_CAST_NO={player} が反対票を投じました。
+STR_LV_VOTE_PASSED=投票が可決されました。
+STR_LV_VOTE_FAILED=投票が否決されました。
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=開く
 STR_LV_MENU_ACTION=アクション

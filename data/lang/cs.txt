@@ -944,6 +944,14 @@ STR_LV_MAP_SKIP_VOTE={player} hlasoval pro přeskočení mapy.
 STR_LV_MAP_SKIPPED=Mapa přeskočena. Nová mapa: {string1}
 STR_LV_TEAM_BALANCE=Vyrovnání týmů použito.
 
+# Log viewer — hlasování ve hře
+STR_LV_VOTE_START_LOBBY={player} zahájil hlasování o návrat do lobby.
+STR_LV_VOTE_START_SURRENDER={player} zahájil hlasování o vzdání se.
+STR_LV_VOTE_CAST_YES={player} hlasoval ano.
+STR_LV_VOTE_CAST_NO={player} hlasoval ne.
+STR_LV_VOTE_PASSED=Hlasování prošlo.
+STR_LV_VOTE_FAILED=Hlasování neprošlo.
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=Otevřít
 STR_LV_MENU_ACTION=Akce

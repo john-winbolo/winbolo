@@ -404,8 +404,8 @@ void transportUdpServerOnLobbyMapChange(struct ServerSim *sim);
 void transportUdpServerRetransmitUnackedControl(void);
 
 /* Broadcast PACKET_WBN_REKEY to every connected WBN-participating client
- * carrying the current server_key.  Called after each
- * winbolonetReturnToLobby succeeds so still-connected clients can mint a
+ * carrying the current server_key.  Called after each round-end
+ * winbolonetBeginSession succeeds so still-connected clients can mint a
  * fresh player_key against the rotated session and re-auth via the
  * existing lobby-snapshot machinery.  No-op when WBN isn't running. */
 void transportUdpServerBroadcastWbnRekey(struct ServerSim *sim);

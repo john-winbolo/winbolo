@@ -1160,7 +1160,7 @@ that compiles it. Neither binary calls the auth functions —
 there is no UI to invoke them — so `winbolonetAuthLogin`,
 `winbolonetAuthSteam`, and `winbolonetAuthValidate` are dead
 code in these builds. See "Cross-tier dependency" below.
-| `WinBoloIOS`, `WinBoloAndroid`, `BrainTest`, `MapEditor`, `WinBoloUnitTests`, wasm, `Gym` | — | — | — | Stubbed. Each platform-class group has its own stub file: `android/winbolonet_stub.c`, `gui/ios/ios_stubs.c`, `wasm/winbolonet_wasm.c`, and `gym/winbolonet_stub.c`. Gym's lives in its own file because gym links `server_static`, which references the lifecycle-driven WBN surface (`winbolonetReturnToLobby`, `winbolonetSendLobbyStatus`) the other stub sets don't carry. `bolo/log.c`'s `winboloNetGetServerKey` call is satisfied by every stub, returning an empty string. |
+| `WinBoloIOS`, `WinBoloAndroid`, `BrainTest`, `MapEditor`, `WinBoloUnitTests`, wasm, `Gym` | — | — | — | Stubbed. Each platform-class group has its own stub file: `android/winbolonet_stub.c`, `gui/ios/ios_stubs.c`, `wasm/winbolonet_wasm.c`, and `gym/winbolonet_stub.c`. Gym's lives in its own file because gym links `server_static`, which references the lifecycle-driven WBN surface (`winbolonetEndSession`, `winbolonetBeginSession`, `winbolonetSendLobbyStatus`) the other stub sets don't carry. `bolo/log.c`'s `winboloNetGetServerKey` call is satisfied by every stub, returning an empty string. |
 
 **Gym caveat.** Gym is an offline ML training harness with no
 business phoning home. It inherits the `server_static` runtime,
@@ -1205,8 +1205,8 @@ something authoritative to the tracker. Modelled on
    header), parse the response. Use the `_server` variant
    whenever a bearer has been minted — everything except
    bootstrap calls that run before or instead of one.
-   `server/register` (and the in-lobby re-register inside
-   `winbolonetReturnToLobby`) use plain `wbn_api_call` because
+   `server/register` (and the round-boundary re-register inside
+   `winbolonetBeginSession`) use plain `wbn_api_call` because
    that call is what mints the bearer in the first place;
    `client/verify` uses plain `wbn_api_call` because the WBN API
    defines it as unauthenticated. The endpoint prefix is not the
@@ -1244,7 +1244,7 @@ ever carries a capability scoped to that server.
 `winbolonet_core` (`wbn_bearer.c`). Never logged, never persisted
 (not even to the INI prefs), never reaches a UI surface,
 discarded on every session rollover —
-`winbolonetReturnToLobby` clears it immediately after the
+`winbolonetEndSession` clears it immediately after the
 `server/quit` POST, and `winbolonetDestroy(TRUE)` clears it on
 shutdown. The next `register` call mints a fresh pair.
 Authenticated calls go through `wbn_api_call_server` /
@@ -1260,9 +1260,9 @@ variants and the log upload.
 
 **Lobby re-keying contract.** WBN issues a fresh `server_key`
 for every pre-game / game cycle. When a server's
-`winbolonetReturnToLobby` completes successfully, the lifecycle
-code broadcasts `PACKET_WBN_REKEY` to every WBN-participating
-remote client, carrying the new `server_key` zero-padded into the
+round-end `winbolonetEndSession` / `winbolonetBeginSession`
+pair completes successfully, the lifecycle code broadcasts
+`PACKET_WBN_REKEY` to every WBN-participating remote client, carrying the new `server_key` zero-padded into the
 65-byte `wbnJoinKey`-shaped wire envelope (same encode/decode
 helpers in `bolo/wbn_key_codec.c`, by design — the uniform shape
 is intentional). On receipt, each client stores the new key and
