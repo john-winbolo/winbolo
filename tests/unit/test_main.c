@@ -128,6 +128,9 @@ static const UnitTestEntry s_tests[] = {
     { "player_join_self_does_not_announce",      run_player_join_self_does_not_announce      },
     { "player_leave_appends_lobby_chat",         run_player_leave_appends_lobby_chat         },
     { "lobby_settings_clears_balance_proposal",  run_lobby_settings_clears_balance_proposal  },
+    { "log_roundtrip_basic",                     run_log_roundtrip_basic                     },
+    { "log_roundtrip_snapshot_keeps_chain_synced",
+                                                 run_log_roundtrip_snapshot_keeps_chain_synced },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 
