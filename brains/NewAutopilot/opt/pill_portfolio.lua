@@ -62,13 +62,31 @@ function M.category_by_influence(inf)
   return "front"
 end
 
--- Current friendly-pill counts per category (precise classify; few pills).
-function M.counts(world)
+-- Cached role for an EXISTING pill, re-evaluated every PILL_ROLE_REEVAL_TICKS
+-- (~60s). Influence shifts over time — an aggressive pill can become a front
+-- pill as the line moves — but classifying live every tick both costs the
+-- near_front scan and makes categories flicker. Cache on the pill; refresh on
+-- a stagger. `tick` drives the refresh; pass the current sim tick.
+function M.role_of(pill, tick)
+  if not pill then return "front" end
+  if pill._in_use then return "inuse" end
+  tick = tick or 0
+  local stale = (not pill.role) or (not pill.role_tick)
+    or (tick - pill.role_tick) >= (C.PILL_ROLE_REEVAL_TICKS or 3000)
+  if stale then
+    pill.role      = (M.classify(pill.mx, pill.my, false))
+    pill.role_tick = tick
+  end
+  return pill.role
+end
+
+-- Current friendly-pill counts per category, using the cached 60s role.
+function M.counts(world, tick)
   local c = { back = 0, front = 0, aggro = 0, inuse = 0 }
   if not world or not world.pills then return c end
   for _, p in pairs(world.pills) do
     if p.owner == "friendly" and (p.health or 0) > 0 then
-      local cat = M.classify(p.mx, p.my, p._in_use)
+      local cat = M.role_of(p, tick)
       c[cat] = (c[cat] or 0) + 1
     end
   end

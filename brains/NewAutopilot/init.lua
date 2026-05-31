@@ -3064,6 +3064,25 @@ function Brain.think(info)
       goals.sync_ally_claimed_rejects(state, info)
     end
 
+    -- Team reposition coordination: track the last tick anyone (self or an
+    -- ally) was repositioning a pill. While someone is, reset to now so the
+    -- time-based reposition discount (eval_reposition_pill) is 0 and the team
+    -- doesn't pile on; it then grows the longer it's been since the last move.
+    do
+      local repositioning = (state.goal.kind == "capture_pill" and state.goal.reposition) and true or false
+      if not repositioning and ally_state.iter_active then
+        for pn, slot in ally_state.iter_active(now, 1750) do
+          if pn ~= info.player_number and slot.info and slot.info.repos == "1" then
+            repositioning = true
+            break
+          end
+        end
+      end
+      if repositioning or not state.last_team_reposition_tick then
+        state.last_team_reposition_tick = now
+      end
+    end
+
     -- Purge stale per-pill plan_position cache entries (pills that
     -- have been destroyed / picked up / captured friendly since last
     -- check). Cheap iteration over ~10-20 cached pills.
@@ -5096,6 +5115,7 @@ function Brain.think(info)
     ally_state.draw(viz, state.tick, info.player_number, 1750)
     ally_state.draw_chat_log(viz, state.tick, info.player_number)
     pill_table.draw(viz, world, state, info)
+    goals.draw_pill_spots(viz, state)
     attack.draw_pill_eval_progress(viz, state)
     attack.draw_plan_trace(viz, state, info)
     lgm_registry.draw_hud(viz, state.tick, info.player_number)
@@ -5450,6 +5470,11 @@ function Brain.think(info)
       end
       if state.goal.target_id and state.goal.target_id >= 0 then
         bsi.target = tostring(state.goal.target_id)
+      end
+      -- Reposition marker: tells the team someone is repositioning a pill, so
+      -- everyone resets the time-based reposition discount (don't pile on).
+      if state.goal.kind == "capture_pill" and state.goal.reposition then
+        bsi.repos = "1"
       end
       -- Goal tile mx/my as a fallback for the ally_claimed match path
       -- (goals.lua:3660-3664) when target_id isn't carried through.

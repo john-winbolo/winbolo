@@ -216,6 +216,8 @@ M.IDS = {
                          long  = "Right-middle HUD showing each ally's goal / sub / target / k=v data, fed by the chat-based ally_state slate" },
   pill_portfolio     = { short = "Pill portfolio table",
                          long  = "Far-left HUD: one row per friendly pillbox, colored by reposition category (back/front/aggressive/in-use), with a legend below. Categories use the influence/front-line ('3') definition." },
+  pill_best_spots    = { short = "Best pill spots",
+                         long  = "Map overlay (pairs with the '3' influence/front-line view): the top evaluated placement spots — orange for a BACK pill, purple for a FRONT pill (brightest = best). Fed by the place_pill_strategic candidate scan." },
   ally_avoid_overlay = { short = "Ally avoid zones",
                          long  = "Orange tiles around an ally tank doing a pill take (5x5 when within STANDOFF+2 of pill), plus the firing lane to the pill. Also prints `BLOCK: ON/OFF sub=… d=N/T` next to each attack_pill ally so you can see live whether the 5x5 stamp is active and how close they are to the activation threshold." },
 

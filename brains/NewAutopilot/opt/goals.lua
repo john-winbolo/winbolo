@@ -1634,7 +1634,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- the projected total (current + the one we're about to place). Candidate
   -- tiles in an under-target category get a strong bonus so placement fills
   -- the deficit role (35% back / 45% front / 20% aggressive, >=1 back).
-  local pf_counts  = PP.counts(world)
+  local pf_counts  = PP.counts(world, state.tick)
   local pf_total   = pf_counts.back + pf_counts.front + pf_counts.aggro
   local pf_targets = PP.targets(pf_total + 1)
   -- Biggest category deficit → placement is cheaper (more urgent) when our
@@ -1792,6 +1792,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
 
         all_cands[#all_cands + 1] = {
           mx = cx, my = cy, score = score,
+          cat = PP.category_by_influence(cpf.influence_at(cx, cy)),
           sc1=sc1, sc2=sc2, sc3=sc3, sc4=sc4, sc5=sc5,
           sc6=sc6, sc7=sc7, sc8=sc8, sc9=sc9, sc10=sc10,
           sc11=sc11, sc12=sc12, sc13=sc13,
@@ -1840,6 +1841,22 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
            pf_counts.aggro, pf_targets.aggro, #unguarded_bases) or "",
     cands = cands,
   }
+end
+
+-- Map overlay: the best evaluated placement spots by category — orange for a
+-- "back" pill, purple for a "front" pill (top-scoring first, brightest = best).
+-- Fed by the candidate scan in eval_place_pill_strategic (state._place_spots_*).
+function M.draw_pill_spots(viz, state)
+  if not viz or not viz.is_on or not viz.is_on("pill_best_spots") then return end
+  if not viz.rect or not state then return end
+  local function draw(list, r, g, b)
+    if not list then return end
+    for i, s in ipairs(list) do
+      local a = (i == 1) and 220 or 110   -- best spot brightest
+    end
+  end
+  draw(state._place_spots_back,  255, 150,  0)   -- orange = back
+  draw(state._place_spots_front, 190,  80, 255)  -- purple = front
 end
 
 -- =========================================================================
@@ -2035,6 +2052,26 @@ end
 -- The competition also skips any candidate carrying a `_reject`.
 local REPOSITION_REJECT_COST = 1e8
 
+-- Travel cost to REACH a (live) pill. A live pillbox tile is impassable in the
+-- cost surface (you can't drive onto it), so smart_cost to the pill tile itself
+-- returns COST_INF and wrongly makes reposition look infinitely expensive. We
+-- can't stand on it anyway — cost to the cheapest passable NEIGHBOUR instead,
+-- using Dijkstra-slate lookups only (no A* fallback). Returns math.huge if the
+-- pill is genuinely unreachable (then reposition simply won't pick it).
+local function travel_cost_to_pill(pmx, pmy, boat)
+  local bf   = boat and 1 or 0
+  local best = math.huge
+  for dy = -1, 1 do
+    for dx = -1, 1 do
+      if dx ~= 0 or dy ~= 0 then
+        local c = cpf.smart_cost_dij_only(KIND_NORMAL, pmx + dx, pmy + dy, bf)
+        if c and c < best then best = c end
+      end
+    end
+  end
+  return best
+end
+
 local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
   if not C.PILL_REPOSITION_ENABLED then return nil end
 
@@ -2054,15 +2091,16 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
   --   - adjacency (friendly pill in the 8 surrounding tiles — double-take risk)
   --   - overext   (aggressive pill deeper than -50 influence — pull it back)
   -- We pick the LOWEST position-cost pill (most worth moving), then add travel.
-  local counts  = PP.counts(world)
+  local counts  = PP.counts(world, state.tick)
   local total   = counts.back + counts.front + counts.aggro
   local targets = PP.targets(total)
 
   local best_pill, best_pid, best_pcost
-  local bCat, bCov, bAdj, bSurp, bOver = nil, 0, 0, 0, 0
+  local bCat, bCov, bAdj, bSurp, bOver, bLeg = nil, 0, 0, 0, 0, 0
   for pid, p in pairs(world.pills) do
     if p.owner == "friendly" and p.health > 0 and not p._in_use then
-      local cat, inf = PP.classify(p.mx, p.my, false)
+      local cat = PP.role_of(p, state.tick)   -- cached 60s role
+      local inf = cpf.influence_at(p.mx, p.my)
 
       -- Coverage within fire range (exclude self from the pill count).
       local pills_cov = count_pills_near(world, p.mx, p.my, C.PILL_FIRE_RANGE, "friendly") - 1
@@ -2096,12 +2134,43 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
       local adj_pen   = adj * C.PILL_REPOSITION_ADJACENCY_W
       local over_disc = (cat == "aggro" and inf < -50) and C.PILL_REPOSITION_OVEREXTEND_W or 0
 
+      -- Legacy "bad spot" score (aIndy: orphaned from bases + crossfire from
+      -- enemy pills + bad terrain). It genuinely measured spot quality, so keep
+      -- it as a normalized SECONDARY signal: a one-directional badness that only
+      -- discounts a bad spot toward repositioning, capped so it can't override
+      -- the balance-driven surplus term.
+      local legacy = 0
+      local nearest_base = math.huge
+      for _, b in pairs(world.bases) do
+        if b.owner == "friendly" then
+          local bd = U.mdist(p.mx, p.my, b.mx, b.my)
+          if bd < nearest_base then nearest_base = bd end
+        end
+      end
+      if nearest_base > C.PILL_REPOSITION_ORPHAN_DIST then
+        legacy = legacy + (nearest_base - C.PILL_REPOSITION_ORPHAN_DIST) * 5
+      end
+      local hostile_near = 0
+      for _, op in pairs(world.pills) do
+        if (op.owner == "hostile" or op.owner == "neutral") and (op.health or 0) > 0
+           and U.mdist(p.mx, p.my, op.mx, op.my) <= C.PILL_FIRE_RANGE then
+          hostile_near = hostile_near + 1
+        end
+      end
+      legacy = legacy + hostile_near * 30
+      local ptt = U.ttype(p.mx, p.my)
+      if ptt == C.T_SWAMP or ptt == C.T_RUBBLE or ptt == C.T_CRATER then
+        legacy = legacy + 20
+      end
+      local legacy_disc = math.min(legacy, C.PILL_REPOSITION_LEGACY_CAP or 75)
+
       -- Lower = more worth repositioning.
-      local pcost_pos = C.PILL_REPOSITION_BASE_COST + cov - surp_disc - adj_pen - over_disc
+      local pcost_pos = C.PILL_REPOSITION_BASE_COST + cov
+                        - surp_disc - adj_pen - over_disc - legacy_disc
 
       if not best_pcost or pcost_pos < best_pcost then
         best_pcost = pcost_pos; best_pill = p; best_pid = pid
-        bCat, bCov, bAdj, bSurp, bOver = cat, cov, adj_pen, surp_disc, over_disc
+        bCat, bCov, bAdj, bSurp, bOver, bLeg = cat, cov, adj_pen, surp_disc, over_disc, legacy_disc
       end
     end
   end
@@ -2136,11 +2205,19 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
     }
   end
 
-  -- Actionable: travel + balance-driven position cost.
-  local pcost = smart_cost(KIND_NORMAL, tmx, tmy, best_pill.mx, best_pill.my,
-                           boat and 1 or 0, info.shells or 32, info.trees or 0,
-                           info.mines or 0, info.armour or 40)
-  local cost = math.max(1, pcost + best_pcost)
+  -- Actionable: travel (to a passable neighbour of the pill, not its
+  -- impassable tile) + balance-driven position cost.
+  local pcost = travel_cost_to_pill(best_pill.mx, best_pill.my, boat)
+  -- Team time discount: -10 per 30s since anyone last repositioned, capped at
+  -- -100. Resets to 0 the moment any teammate repositions (state.last_team_
+  -- reposition_tick is bumped to now in the tick loop). Makes the team slowly
+  -- more willing to reposition, but one move at a time.
+  local team_disc = 0
+  if state.last_team_reposition_tick then
+    local elapsed = (state.tick or 0) - state.last_team_reposition_tick
+    team_disc = math.min(100, math.floor(elapsed / 1500) * 10)
+  end
+  local cost = math.max(1, pcost + best_pcost - team_disc)
 
   return {
     cost = cost,
@@ -2148,8 +2225,8 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
              wx = U.m2w(best_pill.mx), wy = U.m2w(best_pill.my),
              target_id = best_pid, reposition = true },
     desc = BRAIN_POOL_VIZ and string.format(
-           "cost{%.0f}= A*{%.0f}+base{%.0f}+cov{%.0f}-surplus{%.0f}-adj{%.0f}-over{%.0f} | %s pill#%d@(%d,%d) | balance back %d/%d front %d/%d aggro %d/%d",
-           cost, pcost, C.PILL_REPOSITION_BASE_COST, bCov, bSurp, bAdj, bOver,
+           "cost{%.0f}= A*{%.0f}+base{%.0f}+cov{%.0f}-surplus{%.0f}-adj{%.0f}-over{%.0f}-legacy{%.0f}-team{%.0f} | %s pill#%d@(%d,%d) | balance back %d/%d front %d/%d aggro %d/%d",
+           cost, pcost, C.PILL_REPOSITION_BASE_COST, bCov, bSurp, bAdj, bOver, bLeg, team_disc,
            tostring(bCat), best_pid, best_pill.mx, best_pill.my,
            counts.back, targets.back, counts.front, targets.front, counts.aggro, targets.aggro) or "",
   }

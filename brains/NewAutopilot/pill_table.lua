@@ -5,7 +5,8 @@
 -- it sits near an influence sign-flip boundary (see brainPathfinderFindFrontLine).
 -- Debug viz only — all drawing goes through viz.* which lua_strip removes
 -- from opt/, so this is a no-op in production/splash builds.
-local PP = require("pill_portfolio")
+local PP  = require("pill_portfolio")
+local cpf = require("cpathfinder")
 
 local M = {}
 
@@ -49,7 +50,8 @@ function M.draw(viz, world, state, info)
     if p.in_tank then
       intank[#intank + 1] = { id = id }
     elseif p.owner == "friendly" and (p.health or 0) > 0 then
-      local cat, inf = M.classify(p)
+      local cat = PP.role_of(p, state and state.tick)   -- cached 60s role
+      local inf = cpf.influence_at(p.mx, p.my)
       if counts[cat] ~= nil then counts[cat] = counts[cat] + 1 end
       rows[#rows + 1] = { id = id, label = cat, key = cat, inf = inf }
     elseif p.owner == "friendly" then

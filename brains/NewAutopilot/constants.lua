@@ -870,6 +870,8 @@ M.PILL_REPOSITION_COVERAGE_PILL_W = 25  -- cost added per friendly pill covered 
 M.PILL_REPOSITION_COVERAGE_BASE_W = 20  -- cost added per friendly base covered in fire range
 M.PILL_REPOSITION_ADJACENCY_W   = 30    -- discount per friendly pill in the 8 neighbors (double-take risk)
 M.PILL_REPOSITION_OVEREXTEND_W  = 60    -- discount for an aggressive pill deeper than -50 influence
+M.PILL_REPOSITION_LEGACY_CAP    = 75    -- cap on the legacy "bad spot" discount (orphan/crossfire/terrain); secondary to surplus
+M.PILL_ROLE_REEVAL_TICKS        = 3000  -- re-evaluate a pill's back/front/aggro role every 60s (influence shifts over time)
 -- Legacy (unused; kept for reference / any external readers):
 M.PILL_REPOSITION_ORPHAN_DIST   = 15
 M.PILL_REPOSITION_THRESHOLD     = 50
