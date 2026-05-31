@@ -3268,7 +3268,6 @@ void serverSimStartGame(ServerSim *sim) {
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
     BYTE tempBuf[65536];
     int len;
-    BYTE i;
 
     if (sim->state != serverStateLobby) {
         return FALSE;
@@ -3319,10 +3318,13 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
         }
     }
 
-    /* Reset all lobby players' ready state */
-    for (i = 0; i < MAX_TANKS; i++) {
-        sim->lobbyPlayers[i].ready = FALSE;
-    }
+    /* Map changed — unready humans, keep bots ready, abort any
+     * in-flight countdown, and republish affected slots. The earlier
+     * bare loop here cleared bots' ready flags too, which silently
+     * blocked the next all-ready check (bot.ready=FALSE → countdown
+     * never started). Match the serverSimReloadMap pattern, which
+     * delegates to serverSimApplyMapChange → lobbyAutoUnreadyOnChange. */
+    lobbyAutoUnreadyOnChange(sim);
 
     return TRUE;
 }
