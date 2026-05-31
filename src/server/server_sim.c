@@ -3169,10 +3169,20 @@ void serverSimStartGameInPlace(ServerSim *sim) {
 void serverSimStartGame(ServerSim *sim) {
     BYTE i;
     /* Save connected-player state before resetting – resetGameWorld clears
-       playerConnected[], but we need it to create tanks below. */
+       playerConnected[], but we need it to create tanks below. Also save
+       clientFlags: resetGameWorld destroys the Players struct (clientFlags
+       reset to 0), and the name re-registration below goes through
+       playersSetPlayer, which never touches clientFlags. Without this the
+       PLAYER_FLAG_BOT / WBN / SUPPORTER / STEAM identity bits would come
+       back empty for every player on the first running snapshot/PLAYER_LIST
+       — bots lose their brain badge and humans lose their WBN/Steam icons.
+       (serverSimReturnToLobby does the same save/restore for the same
+       reason.) */
     bool savedConnected[MAX_TANKS];
+    uint8_t savedClientFlags[MAX_TANKS];
     for (i = 0; i < MAX_TANKS; i++) {
         savedConnected[i] = sim->playerConnected[i];
+        savedClientFlags[i] = playersGetClientFlags(&sim->sim.plyrs, (BYTE)i);
     }
 
     activeSim = sim;
@@ -3209,6 +3219,12 @@ void serverSimStartGame(ServerSim *sim) {
             playersSetPlayer(NULL, &sim->sim.plyrs, NEUTRAL, i, (char *)name, "XX",
                              0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
         }
+        /* Restore the identity flags wiped by the reset (playersSetPlayer
+         * never touches clientFlags). Re-stamp PLAYER_FLAG_BOT for bot slots
+         * as belt-and-braces. */
+        uint8_t flags = savedClientFlags[i];
+        if (sim->lobbyPlayers[i].isBot) flags |= PLAYER_FLAG_BOT;
+        playersSetClientFlags(&sim->sim.plyrs, (BYTE)i, flags);
     }
 
     sim->gameLength = sim->originalGameLength;
