@@ -13,11 +13,12 @@ local M = {}
 local AGGRO_DEEP = -50  -- influence deeper than this = overextended
 
 local COLORS = {
-  back   = {  90, 220, 120 },  -- green:  holding friendly territory
-  front  = { 255, 225,  70 },  -- yellow: on/near the front line
-  aggro  = { 255,  95,  55 },  -- red:    in enemy influence
-  intank = { 120, 200, 255 },  -- cyan:   currently carried in a tank
-  down   = { 130, 130, 130 },  -- gray:   dead on the ground
+  back    = {  90, 220, 120 },  -- green:  holding friendly territory
+  front   = { 255, 225,  70 },  -- yellow: on/near the front line
+  aggro   = { 255,  95,  55 },  -- red:    in enemy influence
+  utility = {  80, 215, 205 },  -- teal:   blocker in an active pill take
+  intank  = { 120, 200, 255 },  -- cyan:   currently carried in a tank
+  down    = { 130, 130, 130 },  -- gray:   dead on the ground
 }
 
 -- Category for a friendly pill (delegates to the shared portfolio model).
@@ -43,7 +44,7 @@ function M.draw(viz, world, state, info)
   -- Classify placed pills, tally categories, and gather in-tank / down pills.
   -- An in-tank pill can be built into ANY role, so it doesn't count toward the
   -- current portfolio — instead we assign it the role it SHOULD fill.
-  local counts = { back = 0, front = 0, aggro = 0 }
+  local counts = { back = 0, front = 0, aggro = 0, utility = 0 }
   local rows = {}
   local intank = {}
   for id, p in pairs(world.pills) do

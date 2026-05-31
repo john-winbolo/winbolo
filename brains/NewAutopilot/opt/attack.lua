@@ -240,6 +240,32 @@ end
 M.clear_attack_goal = clear_attack_goal
 M.enter_swerve      = enter_swerve
 
+local _EMPTY = {}
+-- Friendly pills currently serving as BLOCKERS in this bot's active pill take:
+-- pre-existing friendly pills on the firing line between our committed standoff
+-- and the target pill (same geometry as the standoff-scorer's barrier bonus).
+-- Returns a list of pill ids (the shared empty table when not in a take).
+function M.current_blocker_pids(state, world)
+  local g = state and state.goal
+  if not g or g.kind ~= "attack_pill" then return _EMPTY end
+  local sx, sy = g.standoff_mx, g.standoff_my
+  local pmx, pmy = g.mx, g.my
+  if not (sx and sy and pmx and pmy) or not (world and world.pills) then return _EMPTY end
+  local d_total = U.mdist(sx, sy, pmx, pmy)
+  local out
+  for pid, fp in pairs(world.pills) do
+    if fp.owner == "friendly" and (fp.health or 0) > 0 then
+      local d_fp_target = U.mdist(fp.mx, fp.my, pmx, pmy)
+      local d_fp_us     = U.mdist(fp.mx, fp.my, sx, sy)
+      if d_fp_target < (d_total - 1) and d_fp_us < d_total and d_fp_target >= 1 then
+        out = out or {}
+        out[#out + 1] = pid
+      end
+    end
+  end
+  return out or _EMPTY
+end
+
 -- Skip the swerve/curve-away when we can simply TANK the rest of the kill:
 -- while the pill is still alive and pill.health * SWERVE_SKIP_ARMOUR_PER_HP
 -- <= our armour, we can absorb finishing it, so buck in and keep firing

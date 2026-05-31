@@ -3083,6 +3083,31 @@ function Brain.think(info)
       end
     end
 
+    -- Pill blocker / utility tracking: a pre-existing friendly pill on the
+    -- firing line of an active pill take is a "blocker" → role utility until
+    -- the take ends. Each bot computes its own blockers + broadcasts them
+    -- (bsi.pblk); here we union the whole team's blocker ids each tick and flag
+    -- those pills _in_use so PP.role_of reports "utility". Rebuilt live, so a
+    -- pill reverts to back/front/aggro as soon as the take stops broadcasting.
+    do
+      local util = {}
+      local mine = attack.current_blocker_pids and attack.current_blocker_pids(state, world) or nil
+      state._blocker_pids = mine
+      if mine then for _, pid in ipairs(mine) do util[pid] = true end end
+      if ally_state.iter_active then
+        for pn, slot in ally_state.iter_active(now, 1750) do
+          if pn ~= info.player_number and slot.info and slot.info.pblk then
+            for s in string.gmatch(slot.info.pblk, "%d+") do
+              util[tonumber(s)] = true
+            end
+          end
+        end
+      end
+      for pid, p in pairs(world.pills) do
+        p._in_use = util[pid] and true or nil
+      end
+    end
+
     -- Purge stale per-pill plan_position cache entries (pills that
     -- have been destroyed / picked up / captured friendly since last
     -- check). Cheap iteration over ~10-20 cached pills.
@@ -5475,6 +5500,11 @@ function Brain.think(info)
       -- everyone resets the time-based reposition discount (don't pile on).
       if state.goal.kind == "capture_pill" and state.goal.reposition then
         bsi.repos = "1"
+      end
+      -- Pill ids we're using as blockers in this take (so the team marks them
+      -- utility). Computed in the team-tracking block above this tick.
+      if state._blocker_pids and #state._blocker_pids > 0 then
+        bsi.pblk = table.concat(state._blocker_pids, ",")
       end
       -- Goal tile mx/my as a fallback for the ally_claimed match path
       -- (goals.lua:3660-3664) when target_id isn't carried through.

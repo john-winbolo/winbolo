@@ -872,6 +872,7 @@ M.PILL_REPOSITION_ADJACENCY_W   = 30    -- discount per friendly pill in the 8 n
 M.PILL_REPOSITION_OVEREXTEND_W  = 60    -- discount for an aggressive pill deeper than -50 influence
 M.PILL_REPOSITION_LEGACY_CAP    = 75    -- cap on the legacy "bad spot" discount (orphan/crossfire/terrain); secondary to surplus
 M.PILL_ROLE_REEVAL_TICKS        = 3000  -- re-evaluate a pill's back/front/aggro role every 60s (influence shifts over time)
+M.PILL_UTILITY_TARGET_FRAC      = 0.15  -- desired share of pills available as blockers/utility; below this, hold a spare pill in tank
 -- Legacy (unused; kept for reference / any external readers):
 M.PILL_REPOSITION_ORPHAN_DIST   = 15
 M.PILL_REPOSITION_THRESHOLD     = 50

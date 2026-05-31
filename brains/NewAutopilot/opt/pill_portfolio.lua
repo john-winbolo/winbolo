@@ -47,7 +47,7 @@ end
 -- (category, influence). `in_use` flags a pill reserved for a pill take.
 function M.classify(mx, my, in_use)
   local inf = cpf.influence_at(mx, my)
-  if in_use then return "inuse", inf end
+  if in_use then return "utility", inf end
   if M.near_front(mx, my) then return "front", inf end
   if inf < 0 then return "aggro", inf end
   if inf > C.STRATEGIC_PLACE_BACK_INFLUENCE_MIN then return "back", inf end
@@ -69,7 +69,10 @@ end
 -- a stagger. `tick` drives the refresh; pass the current sim tick.
 function M.role_of(pill, tick)
   if not pill then return "front" end
-  if pill._in_use then return "inuse" end
+  -- A pill currently serving as a blocker in an active pill take is "utility"
+  -- (overrides its back/front/aggro role) until the take ends. Driven live by
+  -- the team blocker broadcast (pill._in_use), so it reverts automatically.
+  if pill._in_use then return "utility" end
   tick = tick or 0
   local stale = (not pill.role) or (not pill.role_tick)
     or (tick - pill.role_tick) >= (C.PILL_ROLE_REEVAL_TICKS or 3000)
@@ -82,7 +85,7 @@ end
 
 -- Current friendly-pill counts per category, using the cached 60s role.
 function M.counts(world, tick)
-  local c = { back = 0, front = 0, aggro = 0, inuse = 0 }
+  local c = { back = 0, front = 0, aggro = 0, utility = 0 }
   if not world or not world.pills then return c end
   for _, p in pairs(world.pills) do
     if p.owner == "friendly" and (p.health or 0) > 0 then

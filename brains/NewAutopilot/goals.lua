@@ -1823,10 +1823,17 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local path_cost = smart_cost(KIND_NORMAL, tmx, tmy, best_mx, best_my, boat and 1 or 0,
                                 info.shells or 32, info.trees or 0, info.mines or 0, info.armour or 40)
   local raw_cost = path_cost + C.STRATEGIC_PLACE_BASE_COST + carry_value_penalty - carry_discount
-  -- Last pill: 1.5× cost so the bot holds on to its only pill unless
-  -- placement is clearly worthwhile.
+  -- Last pill: 1.5× cost so the bot holds on to its only pill — but ONLY while
+  -- we're short on blocker/utility pills (so a spare can be dropped as a
+  -- blocker for a take). Once we have enough utility pills, don't hoard — place
+  -- the spare normally.
   local last_pill_mult = 1.0
-  if (info.carried_pills or 0) == 1 then last_pill_mult = 1.5 end
+  if (info.carried_pills or 0) == 1 then
+    local util_target = math.max(1, math.floor(pf_total * (C.PILL_UTILITY_TARGET_FRAC or 0.15) + 0.5))
+    if (pf_counts.utility or 0) < util_target then
+      last_pill_mult = 1.5
+    end
+  end
   local cost = math.max(1, raw_cost * C.STRATEGIC_PLACE_COST_MULT * last_pill_mult)
   -- Out-of-ratio discount: cheaper (more urgent) to place when a pill type is
   -- in deficit; no change when balanced. Capped so it never goes free.
