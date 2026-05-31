@@ -503,11 +503,14 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
     BOOL verified  = (slot->pflags & 0x01) != 0;  /* PLAYER_FLAG_WBN_VERIFIED */
     BOOL linked    = (slot->pflags & 0x02) != 0;  /* PLAYER_FLAG_WBN_STEAM_LINKED */
     BOOL supporter = (slot->pflags & 0x04) != 0;  /* PLAYER_FLAG_SUPPORTER */
-    _flagImage        = macMenubarFlagIcon(slot->country);
-    _platformBasename = macMenubarPlatformBasename(slot->ptype);
-    _platformGold     = (verified && supporter) ? YES : NO;
-    _hasWbn           = verified ? YES : NO;
-    _hasSteam         = linked   ? YES : NO;
+    BOOL isBot     = (slot->pflags & 0x20) != 0;  /* PLAYER_FLAG_BOT */
+    /* Bot rows: no country flag, brain icon in the platform-icon slot,
+     * no WBN/Steam badges (a bot can never be either). */
+    _flagImage        = isBot ? nil : macMenubarFlagIcon(slot->country);
+    _platformBasename = isBot ? @"brain" : macMenubarPlatformBasename(slot->ptype);
+    _platformGold     = (!isBot && verified && supporter) ? YES : NO;
+    _hasWbn           = (!isBot && verified) ? YES : NO;
+    _hasSteam         = (!isBot && linked)   ? YES : NO;
     _name             = slot->name[0] ? [NSString stringWithUTF8String:slot->name] : @"";
     int ping = slot->ping;
     if (ping <= 0) {

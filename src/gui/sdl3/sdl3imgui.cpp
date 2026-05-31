@@ -254,6 +254,7 @@ static uint8_t  s_playerFlags[MAX_PLAYERS] = {};
 /* WBN/Steam icon textures */
 static SDL_Texture *s_iconGlobe = nullptr;
 static SDL_Texture *s_iconSteam = nullptr;
+static SDL_Texture *s_iconBrain = nullptr;
 static bool s_wbnIconsLoaded = false;
 #define WBN_ICON_SIZE 14
 
@@ -263,8 +264,9 @@ static void ensureWbnIconsLoaded(void) {
     SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
     s_iconGlobe = imguiLoadSvgIconWhite(r, "data/ui/globe.svg", WBN_ICON_SIZE);
     s_iconSteam = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
-    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] globe=%p steam=%p s_renderer=%p drawRenderer=%p",
-            (void *)s_iconGlobe, (void *)s_iconSteam,
+    s_iconBrain = imguiLoadSvgIconWhite(r, "data/ui/brain.svg", WBN_ICON_SIZE);
+    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] globe=%p steam=%p brain=%p s_renderer=%p drawRenderer=%p",
+            (void *)s_iconGlobe, (void *)s_iconSteam, (void *)s_iconBrain,
             (void *)s_renderer, (void *)sdl3DrawGetRenderer());
 }
 
@@ -1165,8 +1167,9 @@ static void renderPlayersPanel(ClientSim *cs) {
             ImGui::SameLine();
         }
 
-        /* Flag icon */
-        if (s_playerCountry[i][0] != '\0') {
+        /* Flag icon — skipped for bots (no real country; renderPlayerName
+         * below shows a brain icon in the platform-icon slot instead). */
+        if (!(s_playerFlags[i] & PLAYER_FLAG_BOT) && s_playerCountry[i][0] != '\0') {
             SDL_Texture *flagTex = flagsGetTexture(s_playerCountry[i]);
             if (flagTex) {
                 ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
@@ -1174,7 +1177,7 @@ static void renderPlayersPanel(ClientSim *cs) {
             }
         }
 
-        /* Platform / WBN / Steam icons */
+        /* Platform / WBN / Steam icons (brain icon for bots) */
         renderPlayerName(NULL, s_playerFlags[i], s_playerClientType[i], "", false);
 
         const char *label = s_playerName[i][0] ? s_playerName[i] : nullptr;
@@ -2411,8 +2414,11 @@ static void renderMenuBar(ClientSim *cs) {
                 ImGui::PopStyleColor();
                 ImGui::SameLine();
             }
-            /* Render flag icon inline before player name */
-            if (s_playerEnabled[i] && s_playerCountry[i][0] != '\0') {
+            /* Render flag icon inline before player name. Skipped for
+             * bots — the brain icon emitted by renderPlayerName below
+             * takes the platform-icon slot and stands in for both. */
+            if (s_playerEnabled[i] && !(s_playerFlags[i] & PLAYER_FLAG_BOT)
+                && s_playerCountry[i][0] != '\0') {
                 SDL_Texture *flagTex = flagsGetTexture(s_playerCountry[i]);
                 if (flagTex) {
                     ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
@@ -3921,33 +3927,41 @@ static const char *platformName(uint8_t ct) {
 void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry) {
     ensurePlatformIconsLoaded();
-    SDL_Texture *platTex = sdl3ImguiGetPlatformIcon(clientType);
-    if (platTex) {
-        ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
-        /* ImGui 1.91.9+ removed tint_col from Image(); ImageWithBg takes
-         * (size, uv0, uv1, bg_col, tint_col) - bg transparent. */
-        ImGui::ImageWithBg((ImTextureID)platTex,
-                           ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
-                           ImVec2(0, 0), ImVec2(1, 1),
-                           ImVec4(0, 0, 0, 0), tint);
-        if (ImGui::IsItemHovered()) {
-            const char *plat = platformName(clientType);
-            if (flags & PLAYER_FLAG_SUPPORTER)
-                ImGui::SetTooltip("%s — Supporter", plat);
-            else
-                ImGui::SetTooltip("%s", plat);
-        }
-        ImGui::SameLine();
-    }
-
     ensureWbnIconsLoaded();
-    if ((flags & PLAYER_FLAG_WBN_VERIFIED) && s_iconGlobe) {
-        ImGui::Image((ImTextureID)s_iconGlobe, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+    if ((flags & PLAYER_FLAG_BOT) && s_iconBrain) {
+        /* Bot slot: brain icon stands in for the platform badge and the
+         * WBN/Steam badges are skipped — a bot can never be either. */
+        ImGui::Image((ImTextureID)s_iconBrain, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("AI player");
         ImGui::SameLine();
-    }
-    if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
-        ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-        ImGui::SameLine();
+    } else {
+        SDL_Texture *platTex = sdl3ImguiGetPlatformIcon(clientType);
+        if (platTex) {
+            ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
+            /* ImGui 1.91.9+ removed tint_col from Image(); ImageWithBg takes
+             * (size, uv0, uv1, bg_col, tint_col) - bg transparent. */
+            ImGui::ImageWithBg((ImTextureID)platTex,
+                               ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
+                               ImVec2(0, 0), ImVec2(1, 1),
+                               ImVec4(0, 0, 0, 0), tint);
+            if (ImGui::IsItemHovered()) {
+                const char *plat = platformName(clientType);
+                if (flags & PLAYER_FLAG_SUPPORTER)
+                    ImGui::SetTooltip("%s — Supporter", plat);
+                else
+                    ImGui::SetTooltip("%s", plat);
+            }
+            ImGui::SameLine();
+        }
+
+        if ((flags & PLAYER_FLAG_WBN_VERIFIED) && s_iconGlobe) {
+            ImGui::Image((ImTextureID)s_iconGlobe, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+            ImGui::SameLine();
+        }
+        if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
+            ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+            ImGui::SameLine();
+        }
     }
     /* Icon-only mode: a NULL/empty name skips the text and trailing
      * country flag so callers can use this helper to render just the
@@ -3986,6 +4000,7 @@ void sdl3ImguiCleanup(void) {
     flagsDestroy();
     if (s_iconGlobe) { SDL_DestroyTexture(s_iconGlobe); s_iconGlobe = nullptr; }
     if (s_iconSteam) { SDL_DestroyTexture(s_iconSteam); s_iconSteam = nullptr; }
+    if (s_iconBrain) { SDL_DestroyTexture(s_iconBrain); s_iconBrain = nullptr; }
     s_wbnIconsLoaded = false;
     for (int i = 0; i < CLIENT_TYPE_COUNT; i++) {
         /* Slot may alias another (e.g. WEB → globe.svg), but each load returns a

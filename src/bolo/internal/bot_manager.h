@@ -363,6 +363,31 @@ void botManagerSetTeams(struct ServerSim *sim,
                         const BYTE *teamOf, BYTE numPlayers);
 
 /*********************************************************
+ *NAME:          botManagerDeliverInternalMessage
+ *PURPOSE:
+ *  Fans an internal (messagedest=0) brain message from
+ *  fromPlayer's bot into every allied bot's MessageState
+ *  inbox. Used by brain_data.c so the NewAutopilot
+ *  coordination slate (/info state, /info extra) and any
+ *  future bot-to-bot signalling can ride the same brain API
+ *  as real chat without touching the chat wire or any
+ *  human's newswire. Non-bot allies are skipped because
+ *  there is no inbox to write into and human visibility is
+ *  the whole thing we are avoiding here. No-op for slots
+ *  that aren't active bots in this sim.
+ *
+ *ARGUMENTS:
+ *  sim        - The ServerSim hosting the bot manager
+ *  fromPlayer - Slot of the bot that produced the message
+ *  msg        - C string (no length prefix); will be wrapped
+ *               into the inbox Pascal-string format. May be
+ *               truncated to PACKET_MAX_CHAT_MESSAGE bytes.
+ *********************************************************/
+void botManagerDeliverInternalMessage(struct ServerSim *sim,
+                                      BYTE fromPlayer,
+                                      const char *msg);
+
+/*********************************************************
  *NAME:          botManagerRemoveBot
  *PURPOSE:
  *  Destroys a bot's brain, transport, and ClientSim.

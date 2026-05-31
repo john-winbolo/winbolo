@@ -1842,7 +1842,13 @@ bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
         return false;
     }
 
-    serverSimAddPlayer(sim, playerNum, cfg->brainName, false);
+    /* Stamp PLAYER_FLAG_BOT before addPlayerInternal so the log_PlayerJoined
+     * event it emits, and the CTRL_PLAYER_JOIN that fillAndPublishPlayerJoin
+     * fans out, both carry the bot identity. A bot slot inherits no human
+     * identity bits — set rather than OR. */
+    playersSetClientFlags(&sim->sim.plyrs, playerNum, PLAYER_FLAG_BOT);
+    addPlayerInternal(sim, playerNum, cfg->brainName, false);
+    fillAndPublishPlayerJoin(sim, playerNum);
 
     sim->lobbyPlayers[playerNum].isBot      = true;
     sim->lobbyPlayers[playerNum].ready      = true;
