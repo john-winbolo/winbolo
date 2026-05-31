@@ -217,20 +217,22 @@ asks — no "should I ask" heuristic.
 - **Hard declines (never help), regardless of state:**
   - **Low health** (below a help threshold), or
   - **Low / no ammo** (can't contribute fire).
-- **Answerable from FREE / uncommitted states only** — i.e. its current goal is
-  interruptible:
-  - **no goal / exploring / plain navigation / `reposition`** → answer.
-  - **own solo `attack_pill` still in `plan_position`** (hasn't committed to a
-    standoff/charge) → answer (abandon the un-started solo take).
-  - **already attacking the SAME pill** (`attack_pill` on the blitz's target,
-    any substate) → answer and converge — two solo takes on one pill should
-    merge into the blitz.
-- **Declines from any COMMITTED objective** (`decline reason = busy`):
-  `capture_base` / `capture_pill` / `repair_pill` / `defend_pill` /
-  `attack_base` / `place_pill_strategic` / `attack_tank` / `refuel_at_base` /
-  `flee` / `kill_lgm` / `wait_for_lgm`, **or** an `attack_pill` already past
-  `plan_position` (approach/aim/charge/engage) on a *different* pill — don't
-  abandon a take that's already underway.
+- **Answerable from these INTERRUPTIBLE states** (drop it to join the blitz):
+  - **no goal / exploring / plain navigation / `reposition`**.
+  - **own solo `attack_pill` in `plan_position`, `approach`, or `build_walls`**
+    (not yet aiming/charging) → abandon and join.
+  - **already attacking the SAME pill** (`attack_pill` on the blitz target, any
+    substate) → answer and **converge** — two solo takes on one pill merge.
+  - **`refuel_at_base` only if NOT desperate** — shells ≥ min AND armour ≥ min
+    (it was topping off, not actually low; it can spare the trip).
+  - **`place_pill_strategic`**, **`capture_base`**, **`attack_base`**,
+    **`attack_tank`** → flexible objectives worth dropping for a blitz.
+- **Declines from a hard-committed objective** (`decline reason = busy`):
+  `capture_pill` / `repair_pill` / `defend_pill` / `kill_lgm` /
+  `wait_for_lgm` / `flee`; **`refuel_at_base` when below min shells/armour**
+  (genuinely needs it); **or** an `attack_pill` already past `approach`
+  (aim/charge/engage) on a *different* pill — don't abandon a take that's
+  already firing.
 - **Already in a squad** (committed to an active blitz):
   - **Default: stay.** Don't dissolve your squad to chase a request.
   - **Exception — large squad can spare one:** if the squad size ≥ a threshold,

@@ -126,6 +126,7 @@ function M.update(world, info, tick)
           owner         = owner_str,
           anger         = 0,
           anger_tick    = 0,
+          last_hit_tick = 0,
           last_seen     = tick,
           under_attack  = false,
           attack_tick   = 0,
@@ -148,6 +149,7 @@ function M.update(world, info, tick)
         if new_health < old_health and new_health > 0 then
           p.anger      = math.min(1.0, (p.anger or 0) + C.PILL_ANGER_BUMP)
           p.anger_tick = tick
+          p.last_hit_tick = tick   -- only on REAL damage (never on decay)
         elseif p.anger > 0 and tick > p.anger_tick then
           local elapsed = tick - p.anger_tick
           p.anger = math.max(0, p.anger - elapsed / C.PILL_ANGER_DECAY)
@@ -235,6 +237,7 @@ function M.process_events(world, info, state)
             owner         = owner_str,
             anger         = 0,
             anger_tick    = 0,
+            last_hit_tick = 0,
             last_seen     = tick,
             in_tank       = in_tank,
             under_attack  = false,
@@ -255,6 +258,7 @@ function M.process_events(world, info, state)
           if new_health < old_health and new_health > 0 then
             p.anger      = math.min(1.0, (p.anger or 0) + C.PILL_ANGER_BUMP)
             p.anger_tick = tick
+            p.last_hit_tick = tick   -- only on REAL damage (never on decay)
           end
 
           if owner_str == "friendly" and new_health < old_health and new_health > 0 then

@@ -1,6 +1,8 @@
 # Pill Repositioning — design
 
-Status: **design only — not implemented.** Branch: `bot-improvements-2026-05-30`.
+Status: **core implemented** (balance-driven reposition + placement deficit/guardian
+bias). Branch: `bot-improvements-2026-05-30`. Legacy aIndy badness conditions are
+retired; reject reasons kept. Calibration of weights/influence cutoffs still TODO.
 
 Goal: periodically detect a **poorly-positioned friendly pill** and move it to a
 better spot. Scoring is an **influence-panel portfolio model**: classify each

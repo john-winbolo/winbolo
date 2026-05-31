@@ -349,6 +349,8 @@ M.WOUNDED_COMMIT_DISCOUNT      = 0.5
 -- (PPT_STANDOFF), and a slower / more precise charge so the carefully
 -- chosen wall-shielded angle is preserved instead of overshooting it.
 M.PPT_HEALTH_THRESHOLD = 8     -- only PPT if pill HP >= this
+M.PPT_ANGER_THRESHOLD  = 0.34  -- ...OR force PPT when pill anger > this (~>1 hit): an angry pill reloads fast, don't charge it bare
+M.SWERVE_SKIP_ARMOUR_PER_HP = 5  -- skip the kill/curve swerve while pill.health*this <= armour (we can tank finishing it, so buck in)
 M.PPT_STANDOFF         = 7.0   -- pull in slightly closer than ATTACK_PILL_STANDOFF
 M.PPT_CHARGE_MAX_SPEED = 4     -- speed cap during PPT charge (creep, not rush)
 M.PPT_CHARGE_BRAKE_DIST = 32   -- start braking inside this many wu of standoff
@@ -727,6 +729,25 @@ M.STRATEGIC_PLACE_ENEMY_PILL_FAR_BONUS     = 10   -- small bonus for general pro
 
 -- Pill war reinforcement
 M.STRATEGIC_PLACE_WAR_ZONE_BONUS          = 60   -- bonus for tiles near an active pill war
+-- Portfolio model (see PILL_REPOSITION_PLAN.md / pill_portfolio.lua). Classify
+-- friendly pills into back/front/aggressive and bias placement toward the
+-- under-target role (35/45/20). BACK_INFLUENCE_MIN: influence above this counts
+-- as "back" (solidly friendly); negative = aggressive; near-front-line = front.
+M.STRATEGIC_PLACE_BACK_INFLUENCE_MIN = 5     -- influence > this = back protector
+-- Per-unit deficit bias. Strong (>= BEYOND_FRONT_PENALTY) so an under-target
+-- aggressive role can pull placement past sc3's beyond-front penalty.
+M.STRATEGIC_PLACE_PORTFOLIO_WEIGHT   = 120
+-- Protective coverage: bonus per friendly pill / base within fire range a spot
+-- covers. Pills weighted higher (mutual support is the key protector signal).
+M.STRATEGIC_PLACE_COVERAGE_PILL_WEIGHT = 25
+M.STRATEGIC_PLACE_COVERAGE_BASE_WEIGHT = 15
+-- Base guardian: every friendly base should have >=1 pill in shooting range.
+-- Big bonus per currently-unguarded base a candidate spot would cover.
+M.STRATEGIC_PLACE_GUARDIAN_BONUS = 150
+-- Out-of-ratio urgency: placement cost is discounted when a pill type is in
+-- deficit. Per-deficit-unit fraction, capped.
+M.STRATEGIC_PLACE_IMBALANCE_DISCOUNT     = 0.25
+M.STRATEGIC_PLACE_IMBALANCE_MAX_DISCOUNT = 0.60
 -- Flat cost multiplier for place_pill_strategic. <1 = preferred. Combined
 -- with the carry discount this makes "I'm holding a pill" a near-overriding
 -- priority compared to attack/capture goals.
@@ -838,10 +859,20 @@ M.BASE_KILLER_PILL_PENALTY      = 2.0   -- multiply attack_pill cost (deprioriti
 -- Friendly pill as barrier bonus (aIndy: use friendly pills as shields)
 M.FPILL_BARRIER_BONUS           = 80    -- cost reduction when friendly pill is between us and target
 
--- Pill repositioning (aIndy: "pissing" — move badly positioned friendly pills)
+-- Pill repositioning. Legacy badness conditions (ORPHAN_DIST/THRESHOLD, AFAIK
+-- from aIndy's "pissing") are RETIRED — reposition now scores on the influence
+-- portfolio (see pill_portfolio.lua / PILL_REPOSITION_PLAN.md): cost is driven
+-- primarily by category balance (35/45/20 back/front/aggressive).
 M.PILL_REPOSITION_ENABLED       = true
-M.PILL_REPOSITION_ORPHAN_DIST   = 15    -- tiles from nearest friendly base to consider "orphaned"
-M.PILL_REPOSITION_THRESHOLD     = 50    -- minimum badness score to trigger repositioning
+M.PILL_REPOSITION_BASE_COST     = 200   -- flat floor so reposition isn't trivially cheap
+M.PILL_REPOSITION_SURPLUS_W     = 150   -- PRIMARY: discount per pill over its category allotment
+M.PILL_REPOSITION_COVERAGE_PILL_W = 25  -- cost added per friendly pill covered in fire range (keep good spots)
+M.PILL_REPOSITION_COVERAGE_BASE_W = 20  -- cost added per friendly base covered in fire range
+M.PILL_REPOSITION_ADJACENCY_W   = 30    -- discount per friendly pill in the 8 neighbors (double-take risk)
+M.PILL_REPOSITION_OVEREXTEND_W  = 60    -- discount for an aggressive pill deeper than -50 influence
+-- Legacy (unused; kept for reference / any external readers):
+M.PILL_REPOSITION_ORPHAN_DIST   = 15
+M.PILL_REPOSITION_THRESHOLD     = 50
 
 -- Defensive trail dropping
 M.TRAIL_DROP_ENABLED            = true

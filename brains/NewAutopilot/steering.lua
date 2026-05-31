@@ -29,6 +29,10 @@ local function predict_kill_shot_and_swerve(state, world, info, goal, pmx, pmy)
   if not pill or (pill.health or 0) <= 0 then return end
   local in_flight = (goal._on_target_in_flight or 0) + 1
   if in_flight < pill.health then return end
+  -- Tank-the-finish: if we can absorb the rest of the kill (hp*5 <= armour),
+  -- don't peel off on the kill shot — keep firing/holding to finish it.
+  local attack = require("attack")
+  if attack.can_tank_finish and attack.can_tank_finish(pill, info) then return end
   local angle_f = info.tank_angle or info.direction
   local path = cpf.simulate_shot_angle(info.tankx, info.tanky, angle_f,
                                         cpf.SHOT_TANK, info.gunrange or 14)

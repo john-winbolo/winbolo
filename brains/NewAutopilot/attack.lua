@@ -240,6 +240,17 @@ end
 M.clear_attack_goal = clear_attack_goal
 M.enter_swerve      = enter_swerve
 
+-- Skip the swerve/curve-away when we can simply TANK the rest of the kill:
+-- while the pill is still alive and pill.health * SWERVE_SKIP_ARMOUR_PER_HP
+-- <= our armour, we can absorb finishing it, so buck in and keep firing
+-- instead of peeling off (which costs shots/time). Only true for a live pill —
+-- once it's dead the normal swerve still runs to exit/capture.
+local function can_tank_finish(pill, info)
+  local hp = pill and (pill.health or 0) or 0
+  return hp > 0 and hp * (C.SWERVE_SKIP_ARMOUR_PER_HP or 5) <= (info.armour or 0)
+end
+M.can_tank_finish = can_tank_finish
+
 -- Returns a non-nil reason string when current armour vs pill HP make
 -- pressing on with the take unsafe.  Used at the start of approach /
 -- build_walls / charge to abort attack_pill early instead of dying
@@ -2619,7 +2630,11 @@ function M.update_attack_substate(goal, state, world, info)
   local _hardline_candidate = goal.substate == "plan_position"
     and pill and (pill.health or 0) == 1
     and info.armour >= (C.ATTACK_RUSH_MIN_ARMOUR or 5)
-    and (pill.anger or 0) <= (C.ATTACK_RUSH_MAX_ANGER or 0.34)
+    and ((pill.anger or 0) <= (C.ATTACK_RUSH_MAX_ANGER or 0.34)
+         -- ...or known-calm by time: a 1-HP pill can't re-heat, so once it's
+         -- gone PILL_ANGER_DECAY ticks without a hit it's fully calm even if
+         -- the anger proxy reads stale-high.
+         or ((state.tick or 0) - (pill.last_hit_tick or 0)) >= (C.PILL_ANGER_DECAY or 3000))
   if goal.substate == "plan_position"
      and not goal.scan_spots
      and not _hardline_candidate
@@ -2970,13 +2985,25 @@ function M.update_attack_substate(goal, state, world, info)
               force_mod = true
             end
           end
-          if force_low or force_mod then
+          -- Angry pill: anger above ~1 hit's worth means it reloads fast and
+          -- will punish a bare hardline/non-PPT charge — take the wall shield
+          -- even on a soft pill. Gate on a RECENT real hit: a pill at low HP
+          -- can't re-heat (any shot kills it), so once it's gone PILL_ANGER_DECAY
+          -- ticks without a hit it's known-calm — don't let stale anger force a
+          -- wall then (the bot should hardline).
+          local _now = state.tick or 0
+          local hit_recent = pill and pill.last_hit_tick
+            and (_now - pill.last_hit_tick) < (C.PILL_ANGER_DECAY or 3000)
+          local force_anger = hit_recent and (pill.anger or 0) > (C.PPT_ANGER_THRESHOLD or 0.34)
+          if force_low or force_mod or force_anger then
             goal._is_ppt = true
+            local reason = force_low and "LOW_ARMOUR"
+                        or force_mod and "MOD_ARMOUR+HOT_STANDOFF"
+                        or string.format("ANGRY_PILL(%.2f)", pill and pill.anger or 0)
             if BRAIN_DEBUG_MODE then
               print(string.format(TAG ..
-                " ATTACK: forcing PPT (armour=%d hp=%d reason=%s)",
-                info.armour, pill_hp,
-                force_low and "LOW_ARMOUR" or "MOD_ARMOUR+HOT_STANDOFF"))
+                " ATTACK: forcing PPT (armour=%d hp=%d anger=%.2f reason=%s)",
+                info.armour, pill_hp, pill and pill.anger or 0, reason))
             end
           end
         end
@@ -3990,7 +4017,10 @@ function M.update_attack_substate(goal, state, world, info)
     local bullets_fired = (goal._charge_shells or info.shells) - info.shells
     local pill_hp = pill and pill.health or 0
     local on_target_in_flight = goal._on_target_in_flight or 0
-    if pill_hp <= 0 or (pill_hp > 0 and on_target_in_flight >= pill_hp) then
+    -- Tank-the-finish: don't swerve off the charge while the pill's alive and
+    -- hp*5 <= armour — buck in and finish (the dead-pill case still swerves to exit).
+    if (pill_hp <= 0 or (pill_hp > 0 and on_target_in_flight >= pill_hp))
+       and not can_tank_finish(pill, info) then
       if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
         print2(string.format(
           "SWERVE_ENTER t=%d site=charge tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
@@ -4491,15 +4521,18 @@ function M.update_attack_substate(goal, state, world, info)
     local should_swerve = false
     local pill_dead     = false
     local on_target_in_flight = goal._on_target_in_flight or 0
+    -- Tank-the-finish: while the pill is alive and we can absorb the rest of
+    -- the kill (hp*5 <= armour), don't peel off — keep firing.
+    local tank_finish = can_tank_finish(pill, info)
     if pill_hp <= 0 then
       should_swerve = true
       pill_dead     = true
-    elseif pill_hp > 0 and on_target_in_flight >= pill_hp then
+    elseif pill_hp > 0 and on_target_in_flight >= pill_hp and not tank_finish then
       -- C/D rule (same as charge/engage): predicted in-flight shells
       -- already cover remaining HP — start the swerve now.
       should_swerve = true
       pill_dead     = true   -- the in-flight shots are about to drop pill to 0
-    elseif goal._shoot_hits_total >= C.ATTACK_CURVE_AFTER_HITS then
+    elseif goal._shoot_hits_total >= C.ATTACK_CURVE_AFTER_HITS and not tank_finish then
       should_swerve = true
     end
 
@@ -4537,8 +4570,10 @@ function M.update_attack_substate(goal, state, world, info)
 
     -- Immediate swerve: pill dead OR on-target in-flight covers remaining HP.
     -- (Same C/D rule as charge — see comment block above the charge gate.)
+    -- Tank-the-finish: skip while pill alive and hp*5 <= armour (buck in).
     local on_target_in_flight = goal._on_target_in_flight or 0
-    if pill_hp <= 0 or (pill_hp > 0 and on_target_in_flight >= pill_hp) then
+    if (pill_hp <= 0 or (pill_hp > 0 and on_target_in_flight >= pill_hp))
+       and not can_tank_finish(pill, info) then
       if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then
         print2(string.format(
           "SWERVE_ENTER t=%d site=engage tid=%s goal=(%d,%d) pill_nil=%s hp=%s own=%s in_tank=%s " ..
@@ -4560,8 +4595,10 @@ function M.update_attack_substate(goal, state, world, info)
       goal._engage_hits = (goal._engage_hits or 0) + hits_taken
 
       -- Swerve early: after taking ATTACK_CURVE_AFTER_HITS hits, dodge
-      -- This triggers while crosshairs are still on pill — preemptive evasion
+      -- This triggers while crosshairs are still on pill — preemptive evasion.
+      -- Skip when we can tank the finish (hp*5 <= armour): buck in instead.
       local should_swerve = goal._engage_hits >= C.ATTACK_CURVE_AFTER_HITS
+                            and not can_tank_finish(pill, info)
 
       -- Also check if crosshairs off pill (knocked out of range)
       -- Float angle so the displayed crosshair matches the engine's

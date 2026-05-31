@@ -51,6 +51,7 @@ local shot_tracker = require("shot_tracker")
 local viz      = require("viz")
 local ally_state = require("ally_state")
 ally_state.init()
+local pill_table = require("pill_table")
 local lgm_registry = require("lgm_registry")
 lgm_registry.init()
 
@@ -2581,10 +2582,18 @@ function Brain.think(info)
     else
       state._shot_by_tank = false
     end
+    -- attack_pill in disengage / plan_position is non-committed: if an enemy
+    -- tank is in range, replan now so attack_tank (HYST-exempt in these
+    -- substates) can preempt immediately instead of finishing the maneuver.
+    local atk_pill_interruptible = state.goal.kind == "attack_pill"
+        and (state.goal.substate == "disengage" or state.goal.substate == "plan_position")
+        and state.perc and state.perc.enemy_tanks
+        and #state.perc.enemy_tanks > 0
+
     local urgent_replan = state.goal.kind == "none" or attack_tank_done
                        or tank_appeared or dead_pill_appeared
                        or new_base_appeared or lgm_appeared
-                       or shot_by_tank
+                       or shot_by_tank or atk_pill_interruptible
     if urgent_replan then
       -- Record which factor(s) tripped the urgent replan so the HUD
       -- below can flash a banner that's visible for a few seconds.
@@ -2592,6 +2601,7 @@ function Brain.think(info)
       local reason
       if lgm_appeared           then reason = "LGM APPEARED"
       elseif tank_appeared      then reason = "TANK APPEARED"
+      elseif atk_pill_interruptible then reason = "TANK PREEMPT (pill loose)"
       elseif dead_pill_appeared then reason = "DEAD PILL"
       elseif new_base_appeared  then reason = "BASE DISCOVERED"
       elseif attack_tank_done   then reason = "ATTACK_TANK DONE"

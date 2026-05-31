@@ -19,6 +19,7 @@ local threat = require("threat")
 local vizmod = require("viz")
 local json   = require("json")
 local ally_state = require("ally_state")
+local PP     = require("pill_portfolio")
 local _SELF_PN = -1   -- updated each tick by step_eval_queue / get_pool_breakdown_json
 
 local M = {}
@@ -1037,6 +1038,18 @@ local function count_pills_near(world, mx, my, radius, owner_filter)
   return count
 end
 
+-- Count friendly bases within radius of a map position (for protective-pill
+-- coverage scoring — how many bases a spot can defend within fire range).
+local function count_friendly_bases_near(world, mx, my, radius)
+  local count = 0
+  for _, b in pairs(world.bases) do
+    if b.owner == "friendly" and U.mdist(mx, my, b.mx, b.my) <= radius then
+      count = count + 1
+    end
+  end
+  return count
+end
+
 -- Find nearest hostile pill to a map position
 local function nearest_hostile_pill_pos(world, mx, my)
   local best_d = math.huge
@@ -1628,13 +1641,39 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local best_mx, best_my = nil, nil
   local all_cands = {}
 
+  -- Portfolio state: classify existing friendly pills and compute targets for
+  -- the projected total (current + the one we're about to place). Candidate
+  -- tiles in an under-target category get a strong bonus so placement fills
+  -- the deficit role (35% back / 45% front / 20% aggressive, >=1 back).
+  local pf_counts  = PP.counts(world)
+  local pf_total   = pf_counts.back + pf_counts.front + pf_counts.aggro
+  local pf_targets = PP.targets(pf_total + 1)
+  -- Biggest category deficit → placement is cheaper (more urgent) when our
+  -- pill types are out of ratio, and 0 when balanced.
+  local pf_max_deficit = 0
+  for _, cat in ipairs({ "back", "front", "aggro" }) do
+    local d = (pf_targets[cat] or 0) - (pf_counts[cat] or 0)
+    if d > pf_max_deficit then pf_max_deficit = d end
+  end
+
+  -- Base-guardian priority: every friendly base should have >=1 pill in
+  -- shooting range. Precompute the friendly bases that currently have NONE,
+  -- so a candidate covering one gets a big bonus (place the first guardian).
+  local unguarded_bases = {}
+  for _, b in pairs(world.bases) do
+    if b.owner == "friendly"
+       and count_pills_near(world, b.mx, b.my, C.PILL_FIRE_RANGE, "friendly") == 0 then
+      unguarded_bases[#unguarded_bases + 1] = b
+    end
+  end
+
   for dy = -R, R do
     for dx = -R, R do
       local cx = U.mclamp(search_mx + dx)
       local cy = U.mclamp(search_my + dy)
       if U.is_placeable(cx, cy, world) then
         local score = 0
-        local sc1, sc2, sc3, sc4, sc5, sc6, sc7, sc8, sc9, sc10 = 0,0,0,0,0,0,0,0,0,0
+        local sc1, sc2, sc3, sc4, sc5, sc6, sc7, sc8, sc9, sc10, sc11, sc12, sc13 = 0,0,0,0,0,0,0,0,0,0,0,0,0
 
         -- 1. Base proximity
         local _, _, base_dist = nearest_friendly_base_pos(world, cx, cy)
@@ -1729,10 +1768,44 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           end
         end
 
+        -- 11. Portfolio deficit bias: push placement toward the under-target
+        --     category (back/front/aggressive). Strong weight so a deficit
+        --     role gets filled — and so aggressive placement can overcome the
+        --     beyond-front penalty (sc3) when aggro is short.
+        do
+          local cat = PP.category_by_influence(cpf.influence_at(cx, cy))
+          local deficit = (pf_targets[cat] or 0) - (pf_counts[cat] or 0)
+          sc11 = deficit * C.STRATEGIC_PLACE_PORTFOLIO_WEIGHT
+          score = score + sc11
+        end
+
+        -- 12. Protective coverage: how many friendly pills (+ bases) this spot
+        --     covers within fire range — the key "good back protector" signal.
+        do
+          local pills_cov = count_pills_near(world, cx, cy, C.PILL_FIRE_RANGE, "friendly")
+          local bases_cov = count_friendly_bases_near(world, cx, cy, C.PILL_FIRE_RANGE)
+          sc12 = pills_cov * C.STRATEGIC_PLACE_COVERAGE_PILL_WEIGHT
+               + bases_cov * C.STRATEGIC_PLACE_COVERAGE_BASE_WEIGHT
+          score = score + sc12
+        end
+
+        -- 13. Base-guardian: every friendly base should have >=1 pill in
+        --     shooting range. Big bonus per currently-unguarded base this spot
+        --     would cover — top placement priority.
+        if #unguarded_bases > 0 then
+          for _, ub in ipairs(unguarded_bases) do
+            if U.mdist(cx, cy, ub.mx, ub.my) <= C.PILL_FIRE_RANGE then
+              sc13 = sc13 + C.STRATEGIC_PLACE_GUARDIAN_BONUS
+            end
+          end
+          score = score + sc13
+        end
+
         all_cands[#all_cands + 1] = {
           mx = cx, my = cy, score = score,
           sc1=sc1, sc2=sc2, sc3=sc3, sc4=sc4, sc5=sc5,
           sc6=sc6, sc7=sc7, sc8=sc8, sc9=sc9, sc10=sc10,
+          sc11=sc11, sc12=sc12, sc13=sc13,
         }
         if score > best_score then
           best_score = score; best_mx = cx; best_my = cy
@@ -1754,6 +1827,14 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local last_pill_mult = 1.0
   if (info.carried_pills or 0) == 1 then last_pill_mult = 1.5 end
   local cost = math.max(1, raw_cost * C.STRATEGIC_PLACE_COST_MULT * last_pill_mult)
+  -- Out-of-ratio discount: cheaper (more urgent) to place when a pill type is
+  -- in deficit; no change when balanced. Capped so it never goes free.
+  local imbalance_mult = 1.0
+  if pf_max_deficit > 0 then
+    imbalance_mult = 1.0 - math.min(C.STRATEGIC_PLACE_IMBALANCE_MAX_DISCOUNT,
+                                    pf_max_deficit * C.STRATEGIC_PLACE_IMBALANCE_DISCOUNT)
+    cost = math.max(1, cost * imbalance_mult)
+  end
 
   -- Build pool-grid candidate list: winner gets actual cost, others get cost + score delta.
   -- Pool-grid panel data only — wrapped so lua_strip removes it from opt/.
@@ -1764,9 +1845,10 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
       local is_win = (c.mx == best_mx and c.my == best_my)
       local cand_cost = is_win and cost or math.max(0.01, cost + (best_score - c.score))
       local fmt = string.format(
-        "score{%.0f}: prx{%.0f} def{%.0f} inf{%.0f} spc{%.0f} los{%.0f} thr{%.0f} dst{%.0f} spk{%.0f} ep{%.0f} wz{%.0f}%s",
+        "score{%.0f}: prx{%.0f} def{%.0f} inf{%.0f} spc{%.0f} los{%.0f} thr{%.0f} dst{%.0f} spk{%.0f} ep{%.0f} wz{%.0f} port{%.0f} cov{%.0f} grd{%.0f}%s",
         c.score, c.sc1, c.sc2, c.sc3, c.sc4, c.sc5, c.sc6, c.sc7, c.sc8, c.sc9, c.sc10,
-        is_win and string.format(" path{%.0f}", path_cost) or "")
+        c.sc11 or 0, c.sc12 or 0, c.sc13 or 0,
+        is_win and string.format(" path{%.0f} xbal{%.2f}", path_cost, imbalance_mult) or "")
       cands[#cands + 1] = {
         id = c.my * 256 + c.mx,
         mx = c.mx, my = c.my,
@@ -1782,9 +1864,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     cost = cost,
     goal = { kind = "place_pill_strategic", mx = best_mx, my = best_my,
              wx = U.m2w(best_mx), wy = U.m2w(best_my) },
-    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f} center=%s score=%.0f",
+    desc = BRAIN_POOL_VIZ and string.format("(A*{%.0f}+base{%.0f}+carry_pen{%.0f}-carry{%.0f})*mult{%.2f}*bal{%.2f} center=%s score=%.0f | balance back %d/%d front %d/%d aggro %d/%d unguarded=%d",
            path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_value_penalty, carry_discount,
-           C.STRATEGIC_PLACE_COST_MULT, search_reason, best_score) or "",
+           C.STRATEGIC_PLACE_COST_MULT, imbalance_mult, search_reason, best_score,
+           pf_counts.back, pf_targets.back, pf_counts.front, pf_targets.front,
+           pf_counts.aggro, pf_targets.aggro, #unguarded_bases) or "",
     cands = cands,
   }
 end
@@ -1991,46 +2075,64 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
   -- The only "no target" reject is having no friendly pills at all; the
   -- rest are genuine "can't reposition right now" states.
 
-  -- Worst-positioned friendly pill (highest badness). No threshold gate —
-  -- it competes on cost like any other goal when actionable.
-  local best_pill, best_pid, best_badness = nil, nil, -1
+  -- Reposition cost is driven primarily by our pill-type BALANCE: a pill in a
+  -- category (back/front/aggressive) that's OVER its 35/45/20 allotment gets a
+  -- big surplus discount, so the bot sheds from over-full roles. Secondary
+  -- terms keep good spots / break ties within a category:
+  --   + coverage  (friendly pills + bases in fire range — keep good protectors
+  --                / mutual support; raises cost = leave it)
+  --   - surplus   (category over allotment — PRIMARY; lowers cost = move out)
+  --   - adjacency (friendly pill in the 8 surrounding tiles — double-take risk)
+  --   - overext   (aggressive pill deeper than -50 influence — pull it back)
+  -- We pick the LOWEST position-cost pill (most worth moving), then add travel.
+  local counts  = PP.counts(world)
+  local total   = counts.back + counts.front + counts.aggro
+  local targets = PP.targets(total)
+
+  local best_pill, best_pid, best_pcost
+  local bCat, bCov, bAdj, bSurp, bOver = nil, 0, 0, 0, 0
   for pid, p in pairs(world.pills) do
-    if p.owner == "friendly" and p.health > 0 then
-      local badness = 0
+    if p.owner == "friendly" and p.health > 0 and not p._in_use then
+      local cat, inf = PP.classify(p.mx, p.my, false)
 
-      -- Distance from nearest friendly base (orphaned pills are less useful)
-      local nearest_base_dist = math.huge
-      for _, b in pairs(world.bases) do
-        if b.owner == "friendly" then
-          local bd = U.mdist(p.mx, p.my, b.mx, b.my)
-          if bd < nearest_base_dist then nearest_base_dist = bd end
-        end
-      end
-      if nearest_base_dist > C.PILL_REPOSITION_ORPHAN_DIST then
-        badness = badness + (nearest_base_dist - C.PILL_REPOSITION_ORPHAN_DIST) * 5
-      end
+      -- Coverage within fire range (exclude self from the pill count).
+      local pills_cov = count_pills_near(world, p.mx, p.my, C.PILL_FIRE_RANGE, "friendly") - 1
+      if pills_cov < 0 then pills_cov = 0 end
+      local bases_cov = count_friendly_bases_near(world, p.mx, p.my, C.PILL_FIRE_RANGE)
+      local cov = pills_cov * C.PILL_REPOSITION_COVERAGE_PILL_W
+                + bases_cov * C.PILL_REPOSITION_COVERAGE_BASE_W
 
-      -- Exposure: count hostile pills within range (crossfire)
-      local hostile_cover = 0
-      for _, op in pairs(world.pills) do
-        if (op.owner == "hostile" or op.owner == "neutral") and op.health > 0 then
-          if U.mdist(p.mx, p.my, op.mx, op.my) <= C.PILL_FIRE_RANGE then
-            hostile_cover = hostile_cover + 1
+      -- Adjacency: friendly pills in the 8 surrounding tiles (double-take risk).
+      local adj = 0
+      if world.pill_at then
+        for dy = -1, 1 do
+          for dx = -1, 1 do
+            if not (dx == 0 and dy == 0) then
+              local entries = world.pill_at[(p.my + dy) * 256 + (p.mx + dx)]
+              if entries then
+                for _, e in ipairs(entries) do
+                  local op = e.pill
+                  if op and op.owner == "friendly" and (op.health or 0) > 0 then
+                    adj = adj + 1
+                  end
+                end
+              end
+            end
           end
         end
       end
-      badness = badness + hostile_cover * 30
 
-      -- Bad terrain (pill on swamp/rubble/crater)
-      local ptt = U.ttype(p.mx, p.my)
-      if ptt == C.T_SWAMP or ptt == C.T_RUBBLE or ptt == C.T_CRATER then
-        badness = badness + 20
-      end
+      local surplus   = math.max(0, (counts[cat] or 0) - (targets[cat] or 0))
+      local surp_disc = surplus * C.PILL_REPOSITION_SURPLUS_W
+      local adj_pen   = adj * C.PILL_REPOSITION_ADJACENCY_W
+      local over_disc = (cat == "aggro" and inf < -50) and C.PILL_REPOSITION_OVEREXTEND_W or 0
 
-      if badness > best_badness then
-        best_badness = badness
-        best_pill = p
-        best_pid = pid
+      -- Lower = more worth repositioning.
+      local pcost_pos = C.PILL_REPOSITION_BASE_COST + cov - surp_disc - adj_pen - over_disc
+
+      if not best_pcost or pcost_pos < best_pcost then
+        best_pcost = pcost_pos; best_pill = p; best_pid = pid
+        bCat, bCov, bAdj, bSurp, bOver = cat, cov, adj_pen, surp_disc, over_disc
       end
     end
   end
@@ -2058,24 +2160,29 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
       goal = { kind = "capture_pill", mx = mx, my = my,
                wx = U.m2w(mx), wy = U.m2w(my),
                target_id = best_pid or 0, reposition = true },
-      desc = BRAIN_POOL_VIZ and string.format("reposition REJECT:%s badness=%.0f",
-             reject, math.max(0, best_badness)) or "",
+      desc = BRAIN_POOL_VIZ and string.format(
+             "REJECT{%s} | balance back %d/%d front %d/%d aggro %d/%d",
+             reject, counts.back, targets.back, counts.front, targets.front,
+             counts.aggro, targets.aggro) or "",
     }
   end
 
-  -- Actionable: compete on cost (worse position = cheaper to fix).
+  -- Actionable: travel + balance-driven position cost.
   local pcost = smart_cost(KIND_NORMAL, tmx, tmy, best_pill.mx, best_pill.my,
                            boat and 1 or 0, info.shells or 32, info.trees or 0,
                            info.mines or 0, info.armour or 40)
-  local cost = math.max(1, pcost + 200 - best_badness)
+  local cost = math.max(1, pcost + best_pcost)
 
   return {
     cost = cost,
     goal = { kind = "capture_pill", mx = best_pill.mx, my = best_pill.my,
              wx = U.m2w(best_pill.mx), wy = U.m2w(best_pill.my),
              target_id = best_pid, reposition = true },
-    desc = BRAIN_POOL_VIZ and string.format("reposition_pill#%d@(%d,%d) cost=%.0f badness=%.0f",
-           best_pid, best_pill.mx, best_pill.my, cost, best_badness) or "",
+    desc = BRAIN_POOL_VIZ and string.format(
+           "cost{%.0f}= A*{%.0f}+base{%.0f}+cov{%.0f}-surplus{%.0f}-adj{%.0f}-over{%.0f} | %s pill#%d@(%d,%d) | balance back %d/%d front %d/%d aggro %d/%d",
+           cost, pcost, C.PILL_REPOSITION_BASE_COST, bCov, bSurp, bAdj, bOver,
+           tostring(bCat), best_pid, best_pill.mx, best_pill.my,
+           counts.back, targets.back, counts.front, targets.front, counts.aggro, targets.aggro) or "",
   }
 end
 
@@ -5928,13 +6035,21 @@ local function goal_selection(state, world, info, quiet)
     -- lock (cost < 9) handles real tank threats; everything else
     -- shouldn't yank us off the attack.
     local cur_is_attack_pill = (state.goal.kind == "attack_pill")
+    -- attack_pill's disengage / plan_position are non-committed substates
+    -- (breaking off, or still choosing a standoff — no shells/position
+    -- invested yet). In those, let attack_tank preempt on raw cost just as
+    -- if we weren't mid-take, so a tank that wins the pool interrupts
+    -- immediately instead of finishing the maneuver.
+    local _cur_sub = state.goal and state.goal.substate
+    local atk_pill_loose = cur_is_attack_pill
+        and (_cur_sub == "disengage" or _cur_sub == "plan_position")
     -- kill_lgm: ALWAYS exempt.  Enemy LGMs are extremely time-critical
     -- (1-shot kill, ~10s of vulnerability before they return to tank)
     -- and the cost formula (20 + dist*1.5) is already very low — adding
     -- switch+commitment penalty on top reliably pushes it above any
     -- attack_pill incumbent, so the bot never actually picks the kill.
     local HYST_EXEMPT = { capture_pill = true, kill_lgm = true }
-    if not cur_is_attack_pill or state._shot_by_tank then
+    if not cur_is_attack_pill or state._shot_by_tank or atk_pill_loose then
       HYST_EXEMPT.attack_tank = true
     end
     if C.EARLY_CAPTURE_BASE_HYST_EXEMPT and state.phase == "opening" then

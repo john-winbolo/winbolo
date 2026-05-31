@@ -385,6 +385,13 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1), "%dt", r->staleTicks);
     }
 
+    /* Per-row phase multiplier (same xN.N as the section header). Shows how
+     * this pool's raw cost is scaled in the competition — the "weighted
+     * (xphase)" value in the detail popup is cost x this. Drawn to the right
+     * of the staleness timestamp. */
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.55f, 0.78f, 1.0f, 1), "x%.2f", s->phase_weight);
+
     /* Reject chip — appears on the same line as cost/wt/stale. Pop'd
      * the dim alpha briefly so the chip itself reads at full opacity. */
     if (isRej) {
