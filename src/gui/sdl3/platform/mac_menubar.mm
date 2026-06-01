@@ -35,7 +35,6 @@ extern "C" void sdl3ImguiSetFrameRate(int rate);
 extern "C" void sdl3ImguiSetZoom(int zoom);
 extern "C" void sdl3ImguiSetMessageLabelLen(struct ClientSim *cs, int len);
 extern "C" void sdl3ImguiSetTankLabelLen(struct ClientSim *cs, int len);
-extern "C" void sdl3ImguiCycleDevicePreset(void);
 
 extern "C" void windowMenuAllowNewPlayers_toggle(struct ClientSim *cs);
 extern "C" void windowSoundEffects_toggle(void);
@@ -87,7 +86,6 @@ static NSMenu     *s_windowSizeMenu          = nil;
 static NSMenu     *s_messageLabelsMenu       = nil;
 static NSMenu     *s_tankLabelsMenu          = nil;
 static NSMenuItem *s_smoothScrollingItem     = nil;
-static NSMenuItem *s_deviceItem              = nil;
 static NSMenuItem *s_autoScrollingItem       = nil;
 static NSMenuItem *s_showGunsightItem        = nil;
 static NSMenuItem *s_pillLabelsItem          = nil;
@@ -225,7 +223,6 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onPillboxLabels:(id)sender;
 - (void)onBaseLabels:(id)sender;
 - (void)onHideMainView:(id)sender;
-- (void)onCycleDevice:(id)sender;
 - (void)onSetFrameRate:(id)sender;
 - (void)onSetZoom:(id)sender;
 - (void)onSetMessageLabel:(id)sender;
@@ -321,10 +318,6 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onHideMainView:(id)sender {
     (void)sender;
     windowHideMainView_toggle();
-}
-- (void)onCycleDevice:(id)sender {
-    (void)sender;
-    sdl3ImguiCycleDevicePreset();
 }
 - (void)onSetFrameRate:(id)sender {
     NSMenuItem *item = (NSMenuItem *)sender;
@@ -1018,16 +1011,6 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [editMenu addItem:hideMainViewItem];
     s_hideMainViewItem = hideMainViewItem;
 
-    [editMenu addItem:[NSMenuItem separatorItem]];
-
-    NSMenuItem *deviceItem = [[NSMenuItem alloc]
-        initWithTitle:LANG_STR(STR_MENU_DEVICE)
-        action:@selector(onCycleDevice:)
-        keyEquivalent:@"t"];
-    [deviceItem setTarget:g_bridge];
-    [editMenu addItem:deviceItem];
-    s_deviceItem = deviceItem;
-
     /* WinBolo menu — game-state toggles and player commands. Mirrors the
      * ImGui WinBolo menu in renderMenuBar(). The in-window Settings entry
      * is intentionally dropped here — App > Preferences (⌘,) opens the
@@ -1371,10 +1354,6 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
             }
             [item setEnabled:enabled];
         }
-    }
-
-    if (s_deviceItem && s->deviceLabel[0]) {
-        [s_deviceItem setTitle:[NSString stringWithUTF8String:s->deviceLabel]];
     }
 
     if (s_autoScrollingItem)         [s_autoScrollingItem         setState:(s->autoScrolling         ? NSControlStateValueOn : NSControlStateValueOff)];

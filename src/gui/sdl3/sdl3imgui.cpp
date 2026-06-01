@@ -2321,17 +2321,6 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::MenuItem(langGetText(STR_MENU_BASE_LABELS),    KMOD_PRIMARY_LABEL "B", (bool)showBaseLabels)) windowShowBaseLabels_toggle(cs);
         ImGui::Separator();
         if (ImGui::MenuItem(langGetText(STR_MENU_HIDE_MAIN),      KMOD_PRIMARY_LABEL "H", (bool)hideMainView))   windowHideMainView_toggle();
-        ImGui::Separator();
-        {
-            const char *presetLabel = (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets)
-                ? s_devicePresets[g_currentDevicePreset].name : langGetText(STR_MENU_DESKTOP);
-            char deviceMenuItem[96];
-            SDL_snprintf(deviceMenuItem, sizeof(deviceMenuItem), "%s %s",
-                         langGetText(STR_MENU_DEVICE), presetLabel);
-            if (ImGui::MenuItem(deviceMenuItem, KMOD_PRIMARY_LABEL "T")) {
-                dialogCycleDevicePreset(sdl3DrawGetWindow());
-            }
-        }
 
         ImGui::EndMenu();
     }
@@ -3064,10 +3053,6 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             case SDL_SCANCODE_R:
                 clientSimRequestAllianceSelected(cs);
                 continue;
-            case SDL_SCANCODE_T:
-                /* Cycle through device resolution presets */
-                dialogCycleDevicePreset(sdl3DrawGetWindow());
-                continue;
             default:
                 break;
             }
@@ -3305,13 +3290,6 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->fit2x = (2 * SDL3_SCREEN_W <= dispW) && (2 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
     s->fit3x = (3 * SDL3_SCREEN_W <= dispW) && (3 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
     s->fit4x = (4 * SDL3_SCREEN_W <= dispW) && (4 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
-
-    const char *presetLabel =
-        (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets)
-            ? s_devicePresets[g_currentDevicePreset].name
-            : langGetText(STR_MENU_DESKTOP);
-    SDL_snprintf(s->deviceLabel, sizeof s->deviceLabel, "%s %s",
-                 langGetText(STR_MENU_DEVICE), presetLabel);
 
     /* Alliance gating — mirrors the in-window Players menu pre-compute
      * at line ~2157. NULL cs leaves both predicates false, so the native
@@ -3798,9 +3776,6 @@ extern "C" void sdl3ImguiSetMessageLabelLen(ClientSim *cs, int len) {
 }
 extern "C" void sdl3ImguiSetTankLabelLen(ClientSim *cs, int len) {
     windowSetTankLabelLen(cs, (labelLen)len);
-}
-extern "C" void sdl3ImguiCycleDevicePreset(void) {
-    dialogCycleDevicePreset(sdl3DrawGetWindow());
 }
 
 /* Brain-control trampolines for the macOS native Brains menu.
