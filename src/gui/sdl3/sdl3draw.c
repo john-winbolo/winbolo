@@ -1758,10 +1758,60 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
   }
 }
 
-void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
-  (void)rcWindow;
-  if (!gRenderer) return;
+/* Blit gGameRenderTarget into the window scaled to fit below the menu bar.
+ * Mirrors the end-of-frame blit in sdl3DrawMainScreen / sdl3DrawRedrawAll;
+ * keeping a copy here so the download / returning-to-lobby paths can share
+ * the same window-coordinate transform without disturbing those callers. */
+static void sdl3BlitGameRTToWindow(void) {
+  SDL_SetRenderTarget(gRenderer, NULL);
 
+  int winW, winH;
+  SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
+
+  float menuBarHeight = (float)MENU_BAR_HEIGHT;
+  float availW = (float)winW;
+  float availH = (float)winH - menuBarHeight;
+
+  float gameAspect = (float)gGameRTWidth / (float)gGameRTHeight;
+  float availAspect = availW / availH;
+  float aspectDiff = gameAspect - availAspect;
+  if (aspectDiff < 0) aspectDiff = -aspectDiff;
+
+  float destW, destH, destX, destY;
+  if (aspectDiff < 0.01f) {
+    destX = 0;
+    destY = menuBarHeight;
+    destW = availW;
+    destH = availH;
+  } else if (gameAspect > availAspect) {
+    destW = availW;
+    destH = availW / gameAspect;
+    destX = 0;
+    destY = menuBarHeight + (availH - destH) / 2.0f;
+  } else {
+    destH = availH;
+    destW = availH * gameAspect;
+    destX = (availW - destW) / 2.0f;
+    destY = menuBarHeight;
+  }
+
+  gGameDestRect.x = destX;
+  gGameDestRect.y = destY;
+  gGameDestRect.w = destW;
+  gGameDestRect.h = destH;
+  gGameScale = destW / (float)gGameRTWidth;
+
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderFillRect(gRenderer, NULL);
+  SDL_SetTextureBlendMode(gGameRenderTarget, SDL_BLENDMODE_NONE);
+  SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);
+}
+
+/* Body of the download / returning-to-lobby chrome draw. Runs against
+ * whatever render target the caller has set up (either gGameRenderTarget
+ * on the desktop resizable path or the window directly on the mobile /
+ * fixed paths). */
+static void sdl3DrawDownloadScreenContent(ClientSim *cs, bool justBlack) {
   int zf = gZoomFactor;
   bool tabletMode = uiModeIsTablet();
 
@@ -1873,6 +1923,25 @@ void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
   }
 }
 
+void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
+  (void)rcWindow;
+  if (!gRenderer) return;
+
+  sdl3DrawAdaptRenderTarget();
+  bool tabletMode = uiModeIsTablet();
+  bool useRenderTarget = !tabletMode && gGameRenderTarget != NULL;
+
+  if (useRenderTarget) {
+    SDL_SetRenderTarget(gRenderer, gGameRenderTarget);
+  }
+
+  sdl3DrawDownloadScreenContent(cs, justBlack);
+
+  if (useRenderTarget) {
+    sdl3BlitGameRTToWindow();
+  }
+}
+
 void sdl3DrawMainScreenBlack(RECT *rcWindow) {
   (void)rcWindow;
   if (gRenderer == NULL) {
@@ -1884,27 +1953,40 @@ void sdl3DrawMainScreenBlack(RECT *rcWindow) {
 
 void sdl3DrawReturningToLobby(ClientSim *cs) {
   if (!gRenderer) return;
-  /* Reuse the chrome + black-playfield draw, justBlack=true skips the
-   * download progress bar that was the source of the white screen. */
-  sdl3DrawDownloadScreen(cs, NULL, TRUE);
+
+  sdl3DrawAdaptRenderTarget();
+  bool tabletMode = uiModeIsTablet();
+  bool useRenderTarget = !tabletMode && gGameRenderTarget != NULL;
+
+  if (useRenderTarget) {
+    SDL_SetRenderTarget(gRenderer, gGameRenderTarget);
+  }
+
+  /* justBlack=true skips the download progress bar that was the source of
+   * the white screen. */
+  sdl3DrawDownloadScreenContent(cs, TRUE);
 
   /* Centred caption in the playfield. Tablet mode uses a different
    * playfield rect; only the desktop layout matters for this transition
    * (the mobile UIs don't expose a vote-to-lobby flow). */
-  if (uiModeIsTablet()) return;
+  if (!tabletMode) {
+    int zf = gZoomFactor;
+    int originX = MAIN_OFFSET_X * zf;
+    int originY = MAIN_OFFSET_Y * zf;
+    int playfieldW = MAIN_SCREEN_SIZE_X * TILE_SIZE_X * zf;
+    int playfieldH = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * zf;
+    const char *caption = "Returning to lobby";
+    int textW = 0, textH = 0;
+    if (gFontMsg && TTF_GetStringSize(gFontMsg, caption, 0, &textW, &textH)) {
+      float tx = (float)(originX + (playfieldW - textW) / 2);
+      float ty = (float)(originY + (playfieldH - textH) / 2);
+      SDL_Color white = {200, 200, 200, 255};
+      sdl3RenderText(gFontMsg, caption, white, tx, ty);
+    }
+  }
 
-  int zf = gZoomFactor;
-  int originX = MAIN_OFFSET_X * zf;
-  int originY = MAIN_OFFSET_Y * zf;
-  int playfieldW = MAIN_SCREEN_SIZE_X * TILE_SIZE_X * zf;
-  int playfieldH = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * zf;
-  const char *caption = "Returning to lobby";
-  int textW = 0, textH = 0;
-  if (gFontMsg && TTF_GetStringSize(gFontMsg, caption, 0, &textW, &textH)) {
-    float tx = (float)(originX + (playfieldW - textW) / 2);
-    float ty = (float)(originY + (playfieldH - textH) / 2);
-    SDL_Color white = {200, 200, 200, 255};
-    sdl3RenderText(gFontMsg, caption, white, tx, ty);
+  if (useRenderTarget) {
+    sdl3BlitGameRTToWindow();
   }
 }
 
