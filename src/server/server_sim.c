@@ -378,6 +378,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->previousMapData = NULL;
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
+    sim->mapMd5Valid = FALSE;
+    memset(sim->mapMd5, 0, sizeof(sim->mapMd5));
     sim->sim.hiddenMines = hiddenMines;
     sim->sim.isServer = TRUE;
     sim->sim.isLocalTransport = TRUE;
@@ -2111,11 +2113,11 @@ void serverSimSetEmptyResetMinutes(ServerSim *sim, int minutes) {
 }
 
 void serverSimSetMapName(ServerSim *sim, const char *name) {
-    /* The BMAPBOLO md5 is computed only on the in-memory load path
-     * (serverSimReloadCompressedInMemory) where the canonical .map
-     * bytes are in hand. Any other map-set route invalidates the
-     * cached hash so a stale value is never reported to WBN. */
-    sim->mapMd5Valid = FALSE;
+    /* Name only — the map md5 tracks content, not the display name, so
+     * it is set/cleared by the content-load paths (serverSimReloadMap,
+     * serverSimChangeMap, serverSimReloadCompressedInMemory) and the
+     * revert path. Touching it here would wipe a freshly-computed hash
+     * when callers fix up the display name after a content load. */
     if (name == NULL || name[0] == '\0') {
         sim->mapName[0] = '\0';
         return;
@@ -5734,6 +5736,10 @@ bool serverSimRevertPreview(ServerSim *sim) {
         return FALSE;
     }
     basesClearMines(&sim->sim);
+
+    /* Reverted to the previous map from its compressed bytes — we no
+     * longer have its .map file to hash, so clear the cached md5. */
+    sim->mapMd5Valid = FALSE;
 
     memcpy(sim->mapName, sim->previousMapName, sizeof(sim->mapName));
     len = serverSimGetCompressedMap(sim, tempBuf);
