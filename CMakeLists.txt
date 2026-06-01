@@ -2207,7 +2207,7 @@ if(HAVE_SENTRY AND TARGET crashpad_handler)
 endif()
 
 add_custom_target(dist
-    DEPENDS WinBolo WinBoloDS LogViewer
+    DEPENDS WinBolo WinBoloDS LogViewer MapEditor BrainTest
     COMMENT "Creating distribution zip ${DIST_ZIP}"
 
     COMMAND ${CMAKE_COMMAND} -E rm -rf "${DIST_DIR}"
@@ -2218,6 +2218,8 @@ add_custom_target(dist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:WinBolo>"   "${DIST_DIR}/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:WinBoloDS>" "${DIST_DIR}/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:LogViewer>" "${DIST_DIR}/"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:MapEditor>" "${DIST_DIR}/"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:BrainTest>" "${DIST_DIR}/"
     ${DIST_CRASHPAD_HANDLER_CMD}
 
     # Shared libraries — glob all DLLs / .so / .dylib from the build output
