@@ -332,6 +332,7 @@ typedef struct {
 static int balanceThreadFunc(void *data) {
     BalanceThreadData *btd = (BalanceThreadData *)data;
     ServerSim *sim = btd->sim;
+    bool includeBots = btd->includeBots;  /* captured before free(btd) below */
 
     /* This blocks on HTTP — runs outside the game mutex */
     serverSimRequestBalanceProposal(sim, btd->totalPlayers, btd->teamSize,
