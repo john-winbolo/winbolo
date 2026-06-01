@@ -1325,3 +1325,7 @@ STR_VOTE_DRAW_TAG= (무승부)
 STR_VOTE_NEEDS_RUNNING_TIP=게임이 시작된 후 사용할 수 있어요.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=항복 투표 전에 팀을 선택해 주세요.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=항복은 인간 플레이어가 있는 팀이\n정확히 두 팀 남아 있을 때만 사용할 수 있어요.
+
+# Volume — slider label and Mac preset submenu items
+STR_MENU_VOLUME=볼륨
+STR_VOLUME_MUTE=음소거

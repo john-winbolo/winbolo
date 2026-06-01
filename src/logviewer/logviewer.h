@@ -129,6 +129,7 @@ typedef struct LogViewerState {
   bool         playIsPlaying;
   bool         isLoaded;
   bool         isSoundsPlaying;
+  int          soundVolume;     /* 0-100; passed to lv_soundSetVolume() */
   bool         useTeamColours;
   bool         wantScreenUpdate;
   bool         doubleSpeed;

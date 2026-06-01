@@ -79,6 +79,7 @@ extern "C" {
   extern bool soundEffects;
   extern bool backgroundSound;
   extern bool useSoundKeepalive;
+  extern int  soundVolume;
   extern bool showNewswireMessages;
   extern bool showAssistantMessages;
   extern bool showAIMessages;
@@ -94,6 +95,7 @@ extern "C" {
   void windowSoundEffects_toggle(void);
   void windowBackgroundSoundChange_toggle(void);
   void windowSoundKeepalive(void);
+  void windowSetSoundVolume(int pct);
   void windowMenuNewswire_toggle(struct ClientSim *cs);
   void windowMenuAssistant_toggle(struct ClientSim *cs);
   void windowMenuAI_toggle(struct ClientSim *cs);
@@ -708,6 +710,13 @@ extern "C" void imguiSettingsShow(void) {
                 }
             }
 #endif
+            {
+                int vol = soundVolume;
+                ImGui::SetNextItemWidth(200.0f);
+                if (ImGui::SliderInt(langGetText(STR_MENU_VOLUME), &vol, 0, 100, "%d%%")) {
+                    windowSetSoundVolume(vol);
+                }
+            }
         }
 
         /* ---- Messages ---- */

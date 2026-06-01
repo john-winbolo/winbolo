@@ -40,6 +40,7 @@ extern bool showGunsight;
 extern bool soundEffects;
 extern bool backgroundSound;
 extern bool useSoundKeepalive;
+extern int  soundVolume;
 extern bool allowNewPlayers;
 extern bool showNewswireMessages;
 extern bool showAssistantMessages;
@@ -184,6 +185,12 @@ void windowSoundKeepalive(void) {
   if (soundEffects == TRUE && soundIsPlayable() == TRUE) {
     soundKeepalive(useSoundKeepalive);
   }
+}
+void windowSetSoundVolume(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  soundVolume = pct;
+  soundSetVolume(pct);
 }
 void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
   allowNewPlayers = !allowNewPlayers;

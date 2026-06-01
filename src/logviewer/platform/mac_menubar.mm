@@ -7,6 +7,7 @@
 
 extern "C" {
 #include "../logviewer.h"
+#include "../sound.h"
 #include "../draw.h"
 #include "../dns.h"
 #include "../imgui/imgui_main_menu.h"
@@ -49,6 +50,7 @@ static NSMenuItem *s_lv_modeSelectItem = nil;
 static NSMenuItem *s_lv_useTeamColoursItem = nil;
 static NSMenuItem *s_lv_tankCentredItem    = nil;
 static NSMenuItem *s_lv_soundEffectsItem   = nil;
+static NSMenu     *s_lv_volumeMenu         = nil;
 static NSMenuItem *s_lv_dnsLookupsItem     = nil;
 static NSMenuItem *s_lv_winControlsItem    = nil;
 static NSMenuItem *s_lv_winEventsItem      = nil;
@@ -85,6 +87,7 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleUseTeamColours:(id)sender;
 - (void)onToggleTankCentred:(id)sender;
 - (void)onToggleSoundEffects:(id)sender;
+- (void)onSetSoundVolume:(id)sender;
 - (void)onToggleDnsLookups:(id)sender;
 - (void)onTeamColoursDialog:(id)sender;
 - (void)onToggleControls:(id)sender;
@@ -150,6 +153,14 @@ static void lv_push_sdl_quit(void) {
 - (void)onToggleSoundEffects:(id)sender {
     (void)sender;
     if (s_lv_state) s_lv_state->isSoundsPlaying = s_lv_state->isSoundsPlaying ? false : true;
+}
+- (void)onSetSoundVolume:(id)sender {
+    NSMenuItem *item = (NSMenuItem *)sender;
+    int pct = (int)[item tag];
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    if (s_lv_state) s_lv_state->soundVolume = pct;
+    lv_soundSetVolume(pct);
 }
 - (void)onToggleDnsLookups:(id)sender { (void)sender; lv_imgui_toggle_dns_lookups(); }
 - (void)onTeamColoursDialog:(id)sender { (void)sender; lv_imgui_show_team_colours_dialog(); }
@@ -433,6 +444,29 @@ void lv_mac_menubar_install(struct SDL_Window *win, struct LogViewerState *lvSta
     [optionsMenu addItem:soundEffects];
     s_lv_soundEffectsItem = soundEffects;
 
+    /* Volume submenu — mirrors the main game's preset list. */
+    NSMenuItem *volumeRoot = [optionsMenu addItemWithTitle:LANG_STR(STR_MENU_VOLUME)
+                                                    action:nil
+                                             keyEquivalent:@""];
+    NSMenu *volumeMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_MENU_VOLUME)];
+    [volumeRoot setSubmenu:volumeMenu];
+
+    const int lvVolumePresets[] = { 0, 25, 50, 75, 100 };
+    for (size_t i = 0; i < sizeof(lvVolumePresets) / sizeof(lvVolumePresets[0]); i++) {
+        int pct = lvVolumePresets[i];
+        NSString *title = (pct == 0)
+            ? LANG_STR(STR_VOLUME_MUTE)
+            : [NSString stringWithFormat:@"%d%%", pct];
+        NSMenuItem *item = [[NSMenuItem alloc]
+            initWithTitle:title
+            action:@selector(onSetSoundVolume:)
+            keyEquivalent:@""];
+        [item setTarget:s_lv_bridge];
+        [item setTag:pct];
+        [volumeMenu addItem:item];
+    }
+    s_lv_volumeMenu = volumeMenu;
+
     NSMenuItem *dnsLookups = [[NSMenuItem alloc]
         initWithTitle:LANG_STR(STR_LV_DNS_LOOKUPS)
         action:@selector(onToggleDnsLookups:)
@@ -574,6 +608,7 @@ void lv_mac_menubar_uninstall(void) {
     s_lv_useTeamColoursItem = nil;
     s_lv_tankCentredItem = nil;
     s_lv_soundEffectsItem = nil;
+    s_lv_volumeMenu = nil;
     s_lv_dnsLookupsItem = nil;
     s_lv_winControlsItem = nil;
     s_lv_winEventsItem = nil;
@@ -605,6 +640,11 @@ void lv_mac_menubar_refresh(const struct LvMenuState *s) {
     }
     if (s_lv_tankCentredItem)  [s_lv_tankCentredItem  setState:(s->tankCentred  ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_lv_soundEffectsItem) [s_lv_soundEffectsItem setState:(s->soundEffects ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_lv_volumeMenu) {
+        for (NSMenuItem *item in [s_lv_volumeMenu itemArray]) {
+            [item setState:(([item tag] == s->soundVolume) ? NSControlStateValueOn : NSControlStateValueOff)];
+        }
+    }
     if (s_lv_dnsLookupsItem)   [s_lv_dnsLookupsItem   setState:(s->dnsLookups   ? NSControlStateValueOn : NSControlStateValueOff)];
 
     if (s_lv_winControlsItem) [s_lv_winControlsItem setState:(s->showControls ? NSControlStateValueOn : NSControlStateValueOff)];

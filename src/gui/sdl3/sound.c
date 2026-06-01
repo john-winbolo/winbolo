@@ -335,7 +335,12 @@ bool soundSetup(void) {
         return FALSE;
     }
 
-    SDL_SetAudioStreamGain(audioStream, 0.25f);
+    /* Apply the current master volume (loaded from prefs or default).
+     * The extern lives in winbolo.c. */
+    {
+        extern int soundVolume;
+        SDL_SetAudioStreamGain(audioStream, (float)soundVolume / 100.0f);
+    }
 
     /* Load all sound effects from data/sounds/ relative to the executable */
     {
@@ -686,5 +691,13 @@ void soundSetMuted(bool mute) {
             SDL_UnlockMutex(slotsMutex);
         }
         SDL_ResumeAudioStreamDevice(audioStream);
+    }
+}
+
+void soundSetVolume(int pct) {
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    if (audioStream) {
+        SDL_SetAudioStreamGain(audioStream, (float)pct / 100.0f);
     }
 }

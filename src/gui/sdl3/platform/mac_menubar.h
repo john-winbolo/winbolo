@@ -71,6 +71,7 @@ struct MacMenuState {
     bool soundEffects;
     bool backgroundSound;
     bool useSoundKeepalive;
+    int  soundVolume;          /* 0-100; Volume submenu shows preset checkmark */
     bool newswireMessages;
     bool assistantMessages;
     bool aiMessages;

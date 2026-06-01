@@ -1321,3 +1321,7 @@ STR_VOTE_DRAW_TAG= (Remis)
 STR_VOTE_NEEDS_RUNNING_TIP=Dostępne po rozpoczęciu gry.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Wybierz drużynę przed głosowaniem o poddanie.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Poddanie jest dostępne tylko gdy pozostają dokładnie dwie drużyny\nz ludzkimi graczami.
+
+# Volume — slider label and Mac preset submenu items
+STR_MENU_VOLUME=Głośność
+STR_VOLUME_MUTE=Wycisz

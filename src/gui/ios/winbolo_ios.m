@@ -73,6 +73,7 @@ bool showGunsight = FALSE;
 bool soundEffects = TRUE;
 bool backgroundSound = FALSE;
 bool useSoundKeepalive = FALSE;
+int  soundVolume = 50;
 bool allowNewPlayers = TRUE;
 
 bool showNewswireMessages = TRUE;
@@ -676,6 +677,12 @@ void windowShowGunsight_toggle(void) {
 void windowSoundEffects_toggle(void) { soundEffects = !soundEffects; }
 void windowBackgroundSoundChange_toggle(void) { backgroundSound = !backgroundSound; }
 void windowSoundKeepalive(void) { useSoundKeepalive = !useSoundKeepalive; }
+void windowSetSoundVolume(int pct) {
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    soundVolume = pct;
+    soundSetVolume(pct);
+}
 void windowAutomaticScrolling_toggle(ClientSim *cs) {
     autoScrollingEnabled = !autoScrollingEnabled;
     if (cs) clientSimSetAutoScroll(cs, autoScrollingEnabled);

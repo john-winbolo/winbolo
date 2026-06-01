@@ -1325,3 +1325,7 @@ STR_VOTE_DRAW_TAG= (Pareggio)
 STR_VOTE_NEEDS_RUNNING_TIP=Disponibile quando la partita è in corso.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Scegli una squadra prima di votare la resa.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=La resa è disponibile solo quando rimangono esattamente due squadre\ncon giocatori umani.
+
+# Volume — slider label and Mac preset submenu items
+STR_MENU_VOLUME=Volume
+STR_VOLUME_MUTE=Disattiva audio

@@ -104,6 +104,9 @@ bool soundEffects = TRUE;
 /* Do we play background sound */
 bool backgroundSound = TRUE;
 
+/* Master volume (0-100); applied to the audio stream gain */
+int soundVolume = 50;
+
 /* Is Sound Keepalive enabled */
 bool useSoundKeepalive = TRUE;
 
@@ -1222,6 +1225,13 @@ void windowSoundKeepalive(void) {
   if (soundEffects == TRUE && soundIsPlayable() == TRUE) {
     soundKeepalive(useSoundKeepalive);
   }
+}
+
+void windowSetSoundVolume(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  soundVolume = pct;
+  soundSetVolume(pct);
 }
 
 void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {

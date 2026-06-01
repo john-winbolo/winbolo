@@ -40,6 +40,7 @@ extern "C" void windowMenuAllowNewPlayers_toggle(struct ClientSim *cs);
 extern "C" void windowSoundEffects_toggle(void);
 extern "C" void windowBackgroundSoundChange_toggle(void);
 extern "C" void windowSoundKeepalive(void);
+extern "C" void windowSetSoundVolume(int pct);
 extern "C" void windowMenuNewswire_toggle(struct ClientSim *cs);
 extern "C" void windowMenuAssistant_toggle(struct ClientSim *cs);
 extern "C" void windowMenuAI_toggle(struct ClientSim *cs);
@@ -95,6 +96,7 @@ static NSMenuItem *s_noOwnLabelItem          = nil;
 static NSMenuItem *s_allowNewPlayersItem     = nil;
 static NSMenuItem *s_soundEffectsItem        = nil;
 static NSMenuItem *s_backgroundSoundItem     = nil;
+static NSMenu     *s_volumeMenu              = nil;
 static NSMenuItem *s_soundKeepaliveItem      = nil;
 static NSMenuItem *s_newswireMessagesItem    = nil;
 static NSMenuItem *s_assistantMessagesItem   = nil;
@@ -233,6 +235,7 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onSoundEffects:(id)sender;
 - (void)onBackgroundSound:(id)sender;
 - (void)onSoundKeepalive:(id)sender;
+- (void)onSetSoundVolume:(id)sender;
 - (void)onNewswireMessages:(id)sender;
 - (void)onAssistantMessages:(id)sender;
 - (void)onAIMessages:(id)sender;
@@ -358,6 +361,10 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onSoundKeepalive:(id)sender {
     (void)sender;
     windowSoundKeepalive();
+}
+- (void)onSetSoundVolume:(id)sender {
+    NSMenuItem *item = (NSMenuItem *)sender;
+    windowSetSoundVolume((int)[item tag]);
 }
 - (void)onNewswireMessages:(id)sender {
     (void)sender;
@@ -1070,6 +1077,31 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [winBoloMenu addItem:soundKeepaliveItem];
     s_soundKeepaliveItem = soundKeepaliveItem;
 
+    /* Volume submenu — fixed presets (Mute, 25%, 50%, 75%, 100%).
+     * Tags carry the percentage; the active preset gets a checkmark in
+     * mac_menubar_refresh(). */
+    NSMenuItem *volumeRoot = [winBoloMenu addItemWithTitle:LANG_STR(STR_MENU_VOLUME)
+                                                    action:nil
+                                             keyEquivalent:@""];
+    NSMenu *volumeMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_MENU_VOLUME)];
+    [volumeRoot setSubmenu:volumeMenu];
+
+    const int volumePresets[] = { 0, 25, 50, 75, 100 };
+    for (size_t i = 0; i < sizeof(volumePresets) / sizeof(volumePresets[0]); i++) {
+        int pct = volumePresets[i];
+        NSString *title = (pct == 0)
+            ? LANG_STR(STR_VOLUME_MUTE)
+            : [NSString stringWithFormat:@"%d%%", pct];
+        NSMenuItem *item = [[NSMenuItem alloc]
+            initWithTitle:title
+            action:@selector(onSetSoundVolume:)
+            keyEquivalent:@""];
+        [item setTarget:g_bridge];
+        [item setTag:pct];
+        [volumeMenu addItem:item];
+    }
+    s_volumeMenu = volumeMenu;
+
     [winBoloMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *newswireMsgsItem = [[NSMenuItem alloc]
@@ -1366,6 +1398,11 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
     if (s_soundEffectsItem)          [s_soundEffectsItem          setState:(s->soundEffects          ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_backgroundSoundItem)       [s_backgroundSoundItem       setState:(s->backgroundSound       ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_soundKeepaliveItem)        [s_soundKeepaliveItem        setState:(s->useSoundKeepalive     ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_volumeMenu) {
+        for (NSMenuItem *item in [s_volumeMenu itemArray]) {
+            [item setState:(([item tag] == s->soundVolume) ? NSControlStateValueOn : NSControlStateValueOff)];
+        }
+    }
     if (s_newswireMessagesItem)      [s_newswireMessagesItem      setState:(s->newswireMessages      ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_assistantMessagesItem)     [s_assistantMessagesItem     setState:(s->assistantMessages     ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_aiMessagesItem)            [s_aiMessagesItem            setState:(s->aiMessages            ? NSControlStateValueOn : NSControlStateValueOff)];

@@ -1325,3 +1325,7 @@ STR_VOTE_DRAW_TAG= (Beraberlik)
 STR_VOTE_NEEDS_RUNNING_TIP=Oyun başladıktan sonra kullanılabilir.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Teslim olmak için oy kullanmadan önce bir takım seçin.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Teslim olma yalnızca insan oyunculu tam olarak iki takım\nkaldığında kullanılabilir.
+
+# Volume — slider label and Mac preset submenu items
+STR_MENU_VOLUME=Ses düzeyi
+STR_VOLUME_MUTE=Sessiz

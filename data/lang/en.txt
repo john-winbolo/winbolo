@@ -1307,3 +1307,7 @@ STR_VOTE_NEEDS_RUNNING_TIP=Available once the game is running.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Pick a team before voting to surrender.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Surrender is only available when exactly two teams\nwith human players remain.
 
+# Volume — slider label and Mac preset submenu items
+STR_MENU_VOLUME=Volume
+STR_VOLUME_MUTE=Mute
+

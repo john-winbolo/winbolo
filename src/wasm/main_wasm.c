@@ -54,6 +54,7 @@ bool showGunsight = FALSE;
 bool soundEffects = TRUE;
 bool backgroundSound = TRUE;
 bool useSoundKeepalive = FALSE;
+int  soundVolume = 50;
 bool allowNewPlayers = TRUE;
 
 bool showNewswireMessages = TRUE;
@@ -528,6 +529,12 @@ void windowSoundKeepalive(void) {
   if (soundEffects == TRUE && soundIsPlayable() == TRUE) {
     soundKeepalive(useSoundKeepalive);
   }
+}
+void windowSetSoundVolume(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  soundVolume = pct;
+  soundSetVolume(pct);
 }
 void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
   allowNewPlayers = !allowNewPlayers;

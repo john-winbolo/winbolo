@@ -114,4 +114,14 @@ bool soundIsPlayable(void);
 *********************************************************/
 void soundSetMuted(bool mute);
 
+/*********************************************************
+*NAME:          soundSetVolume
+*PURPOSE:
+*  Sets the master output gain on the audio stream.
+*
+*ARGUMENTS:
+*  pct - volume percentage in [0, 100]
+*********************************************************/
+void soundSetVolume(int pct);
+
 #endif /* SOUND_H */

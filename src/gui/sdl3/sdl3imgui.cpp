@@ -155,6 +155,7 @@ extern "C" void windowShowBaseLabels_toggle(struct ClientSim *cs);
 extern "C" void windowSoundEffects_toggle(void);
 extern "C" void windowBackgroundSoundChange_toggle(void);
 extern "C" void windowSoundKeepalive(void);
+extern "C" void windowSetSoundVolume(int pct);
 extern "C" void windowMenuAllowNewPlayers_toggle(struct ClientSim *cs);
 extern "C" void windowMenuNewswire_toggle(struct ClientSim *cs);
 extern "C" void windowMenuAssistant_toggle(struct ClientSim *cs);
@@ -191,6 +192,7 @@ extern "C" bool soundEffects;
 extern "C" void soundSetMuted(bool mute);
 extern "C" bool backgroundSound;
 extern "C" bool useSoundKeepalive;
+extern "C" int  soundVolume;
 extern "C" bool showNewswireMessages;
 extern "C" bool showAssistantMessages;
 extern "C" bool showAIMessages;
@@ -2156,6 +2158,13 @@ static void renderSettingsPanel(ClientSim *cs) {
                 windowSoundKeepalive();
             }
         }
+        {
+            int vol = soundVolume;
+            ImGui::SetNextItemWidth(200.0f);
+            if (ImGui::SliderInt(langGetText(STR_MENU_VOLUME), &vol, 0, 100, "%d%%")) {
+                windowSetSoundVolume(vol);
+            }
+        }
     }
 
     /* ---- Messages ---- */
@@ -2334,6 +2343,16 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_EFFECTS),   nullptr, (bool)soundEffects))              windowSoundEffects_toggle();
         if (ImGui::MenuItem(langGetText(STR_MENU_BACKGROUND_SOUND),nullptr, (bool)backgroundSound))           windowBackgroundSoundChange_toggle();
         if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_KEEPALIVE), nullptr, (bool)useSoundKeepalive))         windowSoundKeepalive();
+        {
+            int vol = soundVolume;
+            const float sliderW = 160.0f;
+            ImGui::TextUnformatted(langGetText(STR_MENU_VOLUME));
+            ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - sliderW);
+            ImGui::SetNextItemWidth(sliderW);
+            if (ImGui::SliderInt("##volume", &vol, 0, 100, "%d%%")) {
+                windowSetSoundVolume(vol);
+            }
+        }
         ImGui::Separator();
         if (ImGui::MenuItem(langGetText(STR_MENU_NEWSWIRE_MSGS),   nullptr, (bool)showNewswireMessages))      windowMenuNewswire_toggle(cs);
         if (ImGui::MenuItem(langGetText(STR_MENU_ASSISTANT_MSGS),  nullptr, (bool)showAssistantMessages))     windowMenuAssistant_toggle(cs);
@@ -3266,6 +3285,7 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->soundEffects          = soundEffects;
     s->backgroundSound       = backgroundSound;
     s->useSoundKeepalive     = useSoundKeepalive;
+    s->soundVolume           = soundVolume;
     s->newswireMessages      = showNewswireMessages;
     s->assistantMessages     = showAssistantMessages;
     s->aiMessages            = showAIMessages;
