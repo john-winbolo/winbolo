@@ -49,6 +49,7 @@
 #include "../../common/wb_log.h"
 #include "../../winbolonet/winbolonet_core.h"
 #include "bolo_rand.h"
+#include "platform_net.h"
 #include "client_render.h"
 #include "client_sim.h"
 #include "frontend.h"
@@ -231,6 +232,19 @@ int main(int argc, char *argv[]) {
   ClientSim *cs = NULL;
 
   bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
+
+  /* Hold a process-wide Winsock reference for the app's lifetime. The
+   * server-ping path (discoveryPingServer) does a WSAStartup/WSACleanup
+   * pair per call, and runs concurrently from the game-browser's
+   * fire-and-forget ping threads and the main thread's pre-flight host
+   * ping. Without this baseline the refcount can hit zero when one ping
+   * finishes while others have open sockets, and WSACleanup at zero
+   * forcibly deallocates every socket in the process and cancels pending
+   * blocking calls — corrupting the in-flight pings (observed as a
+   * 0xc0000409 stack/heap fault on internet -> new -> back -> new). The
+   * baseline keeps the count >= 1 so per-call pairs only ever go 2<->1.
+   * Process exit reclaims it; no matching cleanup needed. */
+  bolo_net_init();
 
   for (int i = 1; i < argc; i++) {
     if (cmdLine[0] == '\0') {
