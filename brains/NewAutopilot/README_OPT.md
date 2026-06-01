@@ -43,7 +43,7 @@ strip.bat D:\path\to\lua_strip.exe
 
 ```
 "D:\Development\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" `
-  D:\Development\winbolo\build\lua_strip.vcxproj `
+  D:\Development\winbolo2\build\lua_strip.vcxproj `
   /p:Configuration=Release /p:Platform=x64 /nologo /v:minimal
 ```
 

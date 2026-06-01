@@ -2125,6 +2125,23 @@ end
 local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
   if not C.PILL_REPOSITION_ENABLED then return nil end
 
+  -- Reposition disabled for stability: it wasn't working right (bots were
+  -- shooting their own pills far too much) and we want to release soon, so we
+  -- always reject rather than risk the broken behavior. Always reject so the
+  -- goal never wins the competition. Returns a visible reject candidate
+  -- (rather than nil) so the pool still shows it. Wrapped in a `do ... end`
+  -- so the early return is legal Lua despite the original logic below.
+  do
+    return {
+      cost = REPOSITION_REJECT_COST,
+      _reject = "disabled",
+      goal = { kind = "capture_pill", mx = tmx, my = tmy,
+               wx = U.m2w(tmx), wy = U.m2w(tmy),
+               target_id = 0, reposition = true },
+      desc = BRAIN_POOL_VIZ and "REJECT{disabled}" or nil,
+    }
+  end
+
   -- Always return a candidate so the WINNERS pool shows reposition's score
   -- every replan. When it can't actually act, the candidate carries a
   -- `_reject` reason (skipped by the goal competition, still rendered).
