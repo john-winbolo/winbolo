@@ -172,6 +172,42 @@ static int          gTabletVpZoom = 0;
 static int          gDragOffsetX = 0;
 static int          gDragOffsetY = 0;
 
+/* Sub-pixel autoscroll smoothing.
+ *
+ * The engine moves the viewport in 1-tile (BYTE) steps inside
+ * scrollAutoScroll. Without interpolation each step is a visible
+ * 16-pixel snap at game-tick rate; the rate cap in scroll.c slows
+ * the cadence but every step is still a hard hop.
+ *
+ * Per render frame we compare the engine's tile-aligned offset
+ * (clientSimGetXOffset / YOffset, T1) against the previously-observed
+ * value. When it changes we snapshot the old position and the
+ * SDL_GetTicks() at the change; for the next SMOOTH_AUTOSCROLL_WINDOW_MS
+ * we add a fractional (prev - current) * tileW offset that linearly
+ * decays to zero. Independent of gDragOffsetX/Y above — both feed
+ * additively into edgeX/edgeY at draw time.
+ *
+ * Reset triggers (both snap, no ease):
+ *   - Active ClientSim pointer changes (new game / view-player swap)
+ *   - Engine offset jumps by more than SMOOTH_AUTOSCROLL_SNAP_TILES
+ *     (respawn at a distant spot, teleport, scrollCenterObject) */
+/* Smoothing window — set to match the fastest engine pan cadence so
+ * consecutive pans don't overlap and snap to a new "prev" mid-slide.
+ * TK_UPDATE_TIME=2 ticks = 100 ms is the fireball pan rate during the
+ * tank-explosion death sequence, so the window equals that to keep
+ * dead-tank tracking smooth instead of rubbery. Autoscroll's natural
+ * cadence (rate cap 5 ticks/tile = 250 ms) leaves comfortable headroom
+ * and the slide completes well before the next autoscroll tile move. */
+#define SMOOTH_AUTOSCROLL_WINDOW_MS  100
+#define SMOOTH_AUTOSCROLL_SNAP_TILES 4
+static const void *gSmoothLastCs        = NULL;
+static BYTE        gSmoothLastEngineX   = 0;
+static BYTE        gSmoothLastEngineY   = 0;
+static BYTE        gSmoothPrevEngineX   = 0;
+static BYTE        gSmoothPrevEngineY   = 0;
+static Uint32      gSmoothChangeTimeMsX = 0;
+static Uint32      gSmoothChangeTimeMsY = 0;
+
 /* Configurable status panel origins (zoomed pixel coords).
    -1 means "use desktop default" (zf * STATUS_*_LEFT/TOP).
    Set by sdl3DrawSetStatusPanelOrigins() for tablet mode. */
@@ -1306,6 +1342,65 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
      on desktop.  Value is 0 when neither is active. */
   edgeX += gDragOffsetX;
   edgeY += gDragOffsetY;
+
+  /* Sub-pixel autoscroll smoothing — see gSmoothLastEngine* block at
+   * the top of this file. Eases between successive engine tile-step
+   * updates so the viewport glides instead of snapping. */
+  if (cs != NULL) {
+    BYTE   engineX  = clientSimGetXOffset(cs);
+    BYTE   engineY  = clientSimGetYOffset(cs);
+    Uint32 nowMs    = SDL_GetTicks();
+    int    tileWpx  = TILE_SIZE_X * gZoomFactor;
+    int    tileHpx  = TILE_SIZE_Y * gZoomFactor;
+
+    /* New ClientSim — snap, don't ease across a game/sim swap. */
+    if (cs != gSmoothLastCs) {
+      gSmoothLastCs        = cs;
+      gSmoothLastEngineX   = engineX;
+      gSmoothLastEngineY   = engineY;
+      gSmoothPrevEngineX   = engineX;
+      gSmoothPrevEngineY   = engineY;
+      gSmoothChangeTimeMsX = nowMs;
+      gSmoothChangeTimeMsY = nowMs;
+    }
+
+    if (engineX != gSmoothLastEngineX) {
+      int dx = (int)engineX - (int)gSmoothLastEngineX;
+      if (dx < 0) dx = -dx;
+      /* Big delta = teleport (respawn, view-player change). Snap. */
+      gSmoothPrevEngineX   = (dx > SMOOTH_AUTOSCROLL_SNAP_TILES) ? engineX
+                                                                 : gSmoothLastEngineX;
+      gSmoothLastEngineX   = engineX;
+      gSmoothChangeTimeMsX = nowMs;
+    }
+    if (engineY != gSmoothLastEngineY) {
+      int dy = (int)engineY - (int)gSmoothLastEngineY;
+      if (dy < 0) dy = -dy;
+      gSmoothPrevEngineY   = (dy > SMOOTH_AUTOSCROLL_SNAP_TILES) ? engineY
+                                                                 : gSmoothLastEngineY;
+      gSmoothLastEngineY   = engineY;
+      gSmoothChangeTimeMsY = nowMs;
+    }
+
+    {
+      Uint32 elapsedX = nowMs - gSmoothChangeTimeMsX;
+      Uint32 elapsedY = nowMs - gSmoothChangeTimeMsY;
+      /* dPrev = prev - current; with engine moving forward this is
+       * negative, so adding (1 - t) * dPrev * tileW pulls edgeX back
+       * toward the previous position at t=0 and converges to zero at
+       * t=1, producing the smooth slide. */
+      if (elapsedX < SMOOTH_AUTOSCROLL_WINDOW_MS) {
+        float t = (float)elapsedX / (float)SMOOTH_AUTOSCROLL_WINDOW_MS;
+        int dPrev = (int)gSmoothPrevEngineX - (int)gSmoothLastEngineX;
+        edgeX += (int)((float)(dPrev * tileWpx) * (1.0f - t));
+      }
+      if (elapsedY < SMOOTH_AUTOSCROLL_WINDOW_MS) {
+        float t = (float)elapsedY / (float)SMOOTH_AUTOSCROLL_WINDOW_MS;
+        int dPrev = (int)gSmoothPrevEngineY - (int)gSmoothLastEngineY;
+        edgeY += (int)((float)(dPrev * tileHpx) * (1.0f - t));
+      }
+    }
+  }
 
   if (sdl3LoadTiles()) {
     int tileW  = TILE_SIZE_X * gZoomFactor;
