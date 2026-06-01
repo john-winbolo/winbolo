@@ -84,11 +84,11 @@
 #include "brain_data.h"
 #include "client_sim.h"
 #include "util.h"
-#include "na_overlay_pillcontrib.h"
-#include "na_threat.h"
-#include "na_shield_stamp.h"
-#include "na_opt_log.h"
-#include "na_attack.h"
+#include "gh_overlay_pillcontrib.h"
+#include "gh_threat.h"
+#include "gh_shield_stamp.h"
+#include "gh_opt_log.h"
+#include "gh_attack.h"
 #include "../clientmutex.h"
 #include "../gamefront.h"
 #include "luabrainshandler.h"
@@ -546,7 +546,7 @@ static int sdl_lua_searcher(lua_State *L) {
 }
 
 /* Helper: extract the brain directory from a path.
- * Handles paths like "brains/NewAutopilot/init.lua" and "brains/NewAutopilot/".
+ * Handles paths like "brains/GoalHunter/init.lua" and "brains/GoalHunter/".
  * Returns true and writes into brainDir if a directory was extracted. */
 static bool extract_brain_dir(const char *path, char *brainDir, size_t brainDirLen) {
   size_t pathLen = SDL_strlen(path);
@@ -621,7 +621,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
 
   /* Zero the BotContext* slot before any C binding can run. Lua does not
    * zero-init extraspace, and brain.open() below can reach botFromLua via
-   * na_threat / cpf bindings. botManagerAddBot writes the real pointer
+   * gh_threat / cpf bindings. botManagerAddBot writes the real pointer
    * after this function returns. */
   *(void **)lua_getextraspace(L) = NULL;
 
@@ -739,12 +739,12 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   brainCoreRegisterVizDetail(L);
   /* pill_contrib bindings (pillcontrib_clear / _begin_pill / _add_tile)
    * for the per-pill danger overlay (shift-2 in BrainTest). NULL-callback
-   * no-op outside BrainTest. NewAutopilot-specific — lives in the bot's
+   * no-op outside BrainTest. GoalHunter-specific — lives in the bot's
    * own C directory so the engine's brain runtime stays generic. */
   naPillContribRegister(L, player_num);
-  /* na_threat — NewAutopilot threat-grid C kernel. Provides terrain
+  /* gh_threat — GoalHunter threat-grid C kernel. Provides terrain
    * factor cache + pill stamping. Tunables are set from Lua via
-   * na_threat.configure so cloners can tweak constants without
+   * gh_threat.configure so cloners can tweak constants without
    * recompiling. */
   naThreatRegister(L);
   naShieldStampRegister(L);

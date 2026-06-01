@@ -367,7 +367,7 @@ void botManagerSetTeams(struct ServerSim *sim,
  *PURPOSE:
  *  Fans an internal (messagedest=0) brain message from
  *  fromPlayer's bot into every allied bot's MessageState
- *  inbox. Used by brain_data.c so the NewAutopilot
+ *  inbox. Used by brain_data.c so the GoalHunter
  *  coordination slate (/info state, /info extra) and any
  *  future bot-to-bot signalling can ride the same brain API
  *  as real chat without touching the chat wire or any
@@ -573,7 +573,7 @@ int botManagerGetActiveBotCount(const struct ServerSim *sim);
  *PURPOSE:
  *  Active-bot count for the sim that owns the bot whose
  *  lua_State this is. Used by brain C bindings that have
- *  only an L (e.g. NewAutopilot's pillcontrib overlay) and
+ *  only an L (e.g. GoalHunter's pillcontrib overlay) and
  *  need to gate on multi-bot vs single-bot mode.
  *
  *  Returns 0 when L has no associated bot (e.g. the

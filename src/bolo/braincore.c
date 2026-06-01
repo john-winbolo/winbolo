@@ -50,7 +50,7 @@
 #include "braincore.h"
 #include "brain_pathfinder.h"
 
-/* C-side pill_grid from the na_threat brain module (same link unit). */
+/* C-side pill_grid from the gh_threat brain module (same link unit). */
 extern float *naThreatGetPillGrid(lua_State *L);
 
 /* ------------------------------------------------------------------ */
@@ -275,7 +275,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   /* Per-slot PLAYER_FLAG_BOT bitmap (bit N = slot N is a brain).
    * Brains intersect with `allies` (and invert) to address allied
    * humans only — see the human-goal-change broadcast in
-   * NewAutopilot. */
+   * GoalHunter. */
   lua_pushinteger(L, info->player_bots ? *(info->player_bots) : 0);
   lua_setfield(L, -2, "player_bots");
 
@@ -2256,8 +2256,8 @@ void brainCoreRegisterVizDetail(lua_State *L) {
   lua_pushcfunction(L, l_overlay_detail_clear); lua_setglobal(L, "overlay_detail_clear");
 }
 
-/* NOTE: pill_contrib bindings moved to brains/NewAutopilot/c/
- * na_overlay_pillcontrib.c — they were specific to NewAutopilot's
+/* NOTE: pill_contrib bindings moved to brains/GoalHunter/c/
+ * gh_overlay_pillcontrib.c — they were specific to GoalHunter's
  * BrainTest overlay and shouldn't live in the generic brain runtime. */
 
 /* ------------------------------------------------------------------ */

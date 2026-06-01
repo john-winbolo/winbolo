@@ -32,7 +32,7 @@
 
 /* Walk one brain's directory and accumulate the maximum mtime over
  * any .lua file. Recurses into sub-directories (most brains have a
- * single level but the NewAutopilot tree has an opt/ folder). Result
+ * single level but the GoalHunter tree has an opt/ folder). Result
  * is 0 when nothing was found. */
 static time_t brainListMaxMtime(const char *brainDir) {
     time_t best = 0;
