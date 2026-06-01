@@ -121,6 +121,8 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
             return false;
         }
     }
+    /* Embedded sim: silence its console messages — no server console. */
+    serverSimSetQuiet(bg->sim, true);
     /* bg_game is a local headless sim — no lobby, run immediately.
      * acceptRemoteClients=false short-circuits UDP/WBN/tracker/NAT
      * inside serverInstanceStartup; cfg.skipLobby transitions the
