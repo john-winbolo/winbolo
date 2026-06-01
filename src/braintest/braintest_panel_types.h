@@ -1,7 +1,7 @@
 /*********************************************************
  * braintest_panel_types.h
  *
- * Map from panel "type" string (e.g. "NewAutopilot:pool_grid")
+ * Map from panel "type" string (e.g. "GoalHunter:pool_grid")
  * to the C render function that draws it. Per-bot panel
  * modules in brains/<bot>/braintest_panels/(*.cpp) call
  * panelTypeRegister() at static-init time to add themselves;

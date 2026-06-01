@@ -1,7 +1,7 @@
 /*********************************************************
  * Per-pill, per-tile danger contribution registry.
  *
- * The brain (NewAutopilot/threat.lua) precomputes a map of
+ * The brain (GoalHunter/threat.lua) precomputes a map of
  * which tiles each individual pill contributes danger to, and
  * by how much. The cost evaluator subtracts a target pill's
  * contribution from the approach cost so the pill we're about

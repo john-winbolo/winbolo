@@ -49,7 +49,7 @@ typedef struct {
     int   bot_owner;
     char  name[PANEL_REG_NAME_MAX];
     /* Renderer the host should invoke for this panel's body.
-     * Already namespaced by brain ("NewAutopilot:pool_grid")
+     * Already namespaced by brain ("GoalHunter:pool_grid")
      * so two bots with different schemas registering the same
      * short type don't collide. Unknown types fall back to
      * "text" with a one-time warning. */

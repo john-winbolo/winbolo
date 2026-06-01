@@ -539,7 +539,7 @@ set(IOS_MOBILE_SOURCES
 )
 
 # Lua brain scripts to bundle
-file(GLOB IOS_BRAIN_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/NewAutopilot/*.lua")
+file(GLOB IOS_BRAIN_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/GoalHunter/*.lua")
 
 
 add_executable(WinBoloIOS MACOSX_BUNDLE
@@ -583,7 +583,7 @@ set_source_files_properties(${IOS_DATA_MAPS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/maps"
 )
 set_source_files_properties(${IOS_BRAIN_SCRIPTS} PROPERTIES
-    MACOSX_PACKAGE_LOCATION "Brains/NewAutopilot"
+    MACOSX_PACKAGE_LOCATION "Brains/GoalHunter"
 )
 set_source_files_properties(${IOS_DATA_SOUNDS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/sounds"
@@ -1281,8 +1281,8 @@ add_custom_command(TARGET WinBolo POST_BUILD
 add_custom_command(TARGET WinBolo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/NewAutopilot"
-        "${WINBOLO_DATA_DIR}/Brains/NewAutopilot"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
+        "${WINBOLO_DATA_DIR}/Brains/GoalHunter"
     COMMENT "Copying brain scripts to output Brains/ directory"
 )
 
@@ -1514,8 +1514,8 @@ endif()
 add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloDS>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/NewAutopilot"
-        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/NewAutopilot"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
+        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter"
     COMMENT "Copying brain scripts to WinBoloDS output Brains/ directory"
 )
 
@@ -1787,8 +1787,8 @@ add_custom_command(TARGET WinBoloHeadless POST_BUILD
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/NewAutopilot"
-        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/NewAutopilot"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
+        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter"
     COMMENT "Copying brain scripts to WinBoloHeadless output directory"
 )
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
@@ -2016,8 +2016,8 @@ add_custom_command(TARGET BrainTest POST_BUILD
 add_custom_command(TARGET BrainTest POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BrainTest>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/NewAutopilot"
-        "$<TARGET_FILE_DIR:BrainTest>/Brains/NewAutopilot"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
+        "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:BrainTest>/data"
     COMMENT "Copying BrainTest data files to output directory"
@@ -2231,7 +2231,7 @@ add_custom_target(dist
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data" "${DIST_DIR}/data"
 
     # Brain scripts
-    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/brains/NewAutopilot" "${DIST_DIR}/Brains/NewAutopilot"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/brains/GoalHunter" "${DIST_DIR}/Brains/GoalHunter"
 
     # Create zip
     COMMAND ${CMAKE_COMMAND} -E rm -f "${DIST_ZIP}"

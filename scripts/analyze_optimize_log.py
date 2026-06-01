@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze optimize.log produced by the NewAutopilot brain.
+"""Analyze optimize.log produced by the GoalHunter brain.
 
 Usage:
     python analyze_optimize_log.py [path/to/optimize.log] [--session N] [--top N]
