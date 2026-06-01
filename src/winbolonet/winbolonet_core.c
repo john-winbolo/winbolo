@@ -49,6 +49,17 @@ char winboloNetPlayerKey[MAX_TANKS][WINBOLONET_KEY_LEN];
 * Cleans up any open libraries.
 *********************************************************/
 void winbolonetDestroy(bool isServer) {
+  /* Listen-server case: the host is both the client and the server in
+   * one process, sharing this module. The client teardown (netDestroy
+   * -> winbolonetDestroy(FALSE)) runs before the server teardown, so if
+   * it tore the module down here it would set winboloNetRunning=FALSE
+   * and the server's winbolonetDestroy(TRUE) would skip server/quit —
+   * leaving the game listed on WinBolo.net. While a server key is held
+   * this process is the server; defer teardown to the server-side call.
+   * A pure client never holds a server key, so it is unaffected. */
+  if (isServer == FALSE && winboloNetServerKey[0] != '\0') {
+    return;
+  }
   serverSimConsoleMessage("WinBolo.net Shutdown");
   if (winboloNetRunning == TRUE) {
     winbolonetThreadDestroy();
