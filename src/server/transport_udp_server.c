@@ -2159,7 +2159,6 @@ bool transportUdpServerCreate(unsigned short port,
         (addrToUse && *addrToUse) ? addrToUse : "0.0.0.0",
         (unsigned)serverSimGetMaxPlayers(sim),
         (password && *password) ? "yes" : "no");
-    fprintf(stderr, "[UDP SERVER] Created, bound to port %u\n", port);
     udpServer.compressedMapSize = 0;
 
     for (i = 0; i < MAX_TANKS; i++) {
@@ -2186,12 +2185,10 @@ bool transportUdpServerCreate(unsigned short port,
     recvThread = SDL_CreateThread(serverRecvThreadFunc, "SrvRecv", NULL);
     if (recvThread) {
         WB_LOG_INFO(WB_LOG_CAT_NET, "recv thread started");
-        fprintf(stderr, "[UDP SERVER] Recv thread started\n");
     } else {
         WB_LOG_WARN(WB_LOG_CAT_NET,
             "failed to create recv thread, using polled fallback: %s",
             SDL_GetError());
-        fprintf(stderr, "[UDP SERVER] WARNING: Failed to create recv thread, using polled fallback\n");
         SDL_SetAtomicInt(&recvThreadRunning, 0);
     }
 #endif
