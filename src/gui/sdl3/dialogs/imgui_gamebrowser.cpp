@@ -63,6 +63,16 @@ static const int DIALOG_H = 768;
 
 #define STRVER_LEN 4
 
+/* Servers older than this are hidden from the tracker list. Version strings
+ * are "%d.%d%d" (e.g. "1.19"), so a lexicographic compare of the first
+ * STRVER_LEN chars orders the 1.x series correctly. */
+#define BROWSER_MIN_VERSION "1.19"
+
+static bool browserVersionAllowed(const char *ver) {
+    if (ver == nullptr || strlen(ver) < STRVER_LEN) return false;
+    return strncmp(ver, BROWSER_MIN_VERSION, STRVER_LEN) >= 0;
+}
+
 /* ---- Per-server enriched data ---- */
 struct ServerEntry {
     /* From tracker/broadcast */
@@ -495,6 +505,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                             e.address, &e.port, e.mapName, e.version,
                             &e.numPlayers, &e.numBases, &e.numPills,
                             &e.mines, &e.game, &e.ai, &e.password);
+
+                        /* Hide servers older than BROWSER_MIN_VERSION. */
+                        if (!browserVersionAllowed(e.version)) {
+                            continue;
+                        }
 
                         resolveCountryCode(e);
                         newServers.push_back(e);
