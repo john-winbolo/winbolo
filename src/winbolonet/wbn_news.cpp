@@ -18,6 +18,7 @@
 extern "C" {
 #include <SDL3/SDL.h>
 #include "http.h"
+#include "../common/wb_log.h"
 }
 
 #include <atomic>
@@ -51,9 +52,9 @@ extern "C" WbnNewsFetch *wbn_news_fetch_start(void) {
         } else if (status == 429) {
             /* Rate-limit hit. Retry-After header isn't exposed by
              * wbn_api_get today; log the status alone. */
-            fprintf(stderr, "WinBolo.net news: received HTTP 429 (rate limited)\n");
+            WB_LOG_WARN(WB_LOG_CAT_NET, "news: received HTTP 429 (rate limited)");
         } else if (status != 200) {
-            fprintf(stderr, "WinBolo.net news: HTTP %d\n", status);
+            WB_LOG_WARN(WB_LOG_CAT_NET, "news: HTTP %d", status);
         }
 
         free(response);

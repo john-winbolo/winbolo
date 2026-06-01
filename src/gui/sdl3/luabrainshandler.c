@@ -596,6 +596,31 @@ static void setup_brain_package_path(lua_State *L, const char *path) {
   }
 }
 
+/* Lua print() replacement for the release client: routes brain output
+ * through wb_log (category LUA, debug level) instead of stdout, so it
+ * stays silent unless WINBOLO_LOG enables it (e.g. WINBOLO_LOG=lua=debug).
+ * Concatenates its arguments tab-separated, matching stock print(). */
+static int l_brain_log_print(lua_State *L) {
+  char buf[1024];
+  int pos = 0;
+  int n = lua_gettop(L);
+  for (int i = 1; i <= n; i++) {
+    if (i > 1 && pos < (int)sizeof(buf) - 1) buf[pos++] = '\t';
+    const char *s = luaL_tolstring(L, i, NULL);
+    if (s) {
+      int slen = (int)strlen(s);
+      int room = (int)sizeof(buf) - pos - 1;
+      if (slen > room) slen = room;
+      memcpy(buf + pos, s, (size_t)slen);
+      pos += slen;
+    }
+    lua_pop(L, 1); /* pop the luaL_tolstring result */
+  }
+  buf[pos] = '\0';
+  WB_LOG_DEBUG(WB_LOG_CAT_LUA, "%s", buf);
+  return 0;
+}
+
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, ClientSim *cs,
                             aiType aiMode, bool debug_mode,
@@ -626,6 +651,13 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   *(void **)lua_getextraspace(L) = NULL;
 
   luaL_openlibs(L);
+
+  /* Replace stock print() (writes to stdout) with one that routes brain
+   * output through wb_log, so brains stay silent unless WINBOLO_LOG asks
+   * for them. */
+  lua_pushcfunction(L, l_brain_log_print);
+  lua_setglobal(L, "print");
+
   brainCoreRegisterConstants(L);
 
   /* Signal to the brain whether it's running under BrainTest (debug) or

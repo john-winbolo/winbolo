@@ -1246,6 +1246,9 @@ bool gameFrontSetDlgState(openingStates newState) {
           spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen);
         }
         if (spServerSim != NULL) {
+          /* Embedded server: silence its console messages (Thread Manager
+           * Startup, Game started!, …) — the client has no server console. */
+          serverSimSetQuiet(spServerSim, true);
           bgGameSetHiddenByForeground(bgGameGetShared(), true);
           /* Single-player runs through the same serverInstanceStartup +
            * timer-thread ticking path as the host, so SP and listen-server
@@ -1823,6 +1826,8 @@ bool gameFrontSetupServer(void) {
   if (spServerSim == NULL) {
     return FALSE;
   }
+  /* Embedded listen server: silence its console messages — no server console. */
+  serverSimSetQuiet(spServerSim, true);
 
   /* Resolve a brain path so the lobby's "Add Bot" works regardless of
    * whether the host set compTanks at startup. The AI Policy can be

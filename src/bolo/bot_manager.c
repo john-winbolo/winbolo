@@ -452,8 +452,8 @@ static bool botManagerReloadBrain(ServerSim *sim, BotContext *bot,
                                 bot->cs, bot->ai,
                                 sim->botMgr.defaultDebugMode,
                                 (int)bot->playerNum)) {
-        fprintf(stderr,
-                "botManager: failed to reload brain '%s' for bot %d\n",
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                "botManager: failed to reload brain '%s' for bot %d",
                 brainPath, (int)bot->playerNum);
         return false;
     }
@@ -470,8 +470,8 @@ static bool botManagerReloadBrain(ServerSim *sim, BotContext *bot,
     if (bot->brain.worldsim != NULL) {
         brainWorldSimSetAbortFlag(bot->brain.worldsim, &bot->abort_flag);
     }
-    fprintf(stderr,
-            "botManager: bot %d reloaded with brain '%s'\n",
+    WB_LOG_INFO(WB_LOG_CAT_SIM,
+            "botManager: bot %d reloaded with brain '%s'",
             (int)bot->playerNum, brainName);
     return true;
 }
@@ -554,7 +554,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
      * starts loaded it early-returns on numStarts==0, leaving tankCreate's
      * out-params undefined. */
     if (!botLoadMapFromServer(bot, sim)) {
-        fprintf(stderr, "botManager: failed to load map for bot %d\n", playerNum);
+        WB_LOG_WARN(WB_LOG_CAT_SIM, "botManager: failed to load map for bot %d", playerNum);
         clientSimDestroy(bot->cs);
         bot->cs = NULL;
         serverSimRemovePlayer(sim, playerNum);
@@ -609,7 +609,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     if (!luaBrainInstanceCreate(&bot->brain, brainPath, brainName,
                                 bot->cs, ai, sim->botMgr.defaultDebugMode,
                                 playerNum)) {
-        fprintf(stderr, "botManager: failed to create brain for bot %d\n", playerNum);
+        WB_LOG_WARN(WB_LOG_CAT_SIM, "botManager: failed to create brain for bot %d", playerNum);
         serverSimUnregisterSubscriber(sim, bot->controlSub);
         bot->controlSub = SUBSCRIBER_HANDLE_INVALID;
         /* Transport ownership moved to bot->cs (see binding above);
@@ -645,7 +645,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     bot->active = true;
     sim->botMgr.numBots++;
 
-    fprintf(stderr, "botManager: bot %d started with brain '%s'\n",
+    WB_LOG_INFO(WB_LOG_CAT_SIM, "botManager: bot %d started with brain '%s'",
             playerNum, brainName);
     return true;
 }
@@ -1032,7 +1032,7 @@ void botManagerOnGameStart(ServerSim *sim) {
 
         /* Reload the bot's ClientSim map from the server (map was reset) */
         if (!botLoadMapFromServer(bot, sim)) {
-            fprintf(stderr, "botManager: failed to reload map for bot %d on game start\n", i);
+            WB_LOG_WARN(WB_LOG_CAT_SIM, "botManager: failed to reload map for bot %d on game start", i);
             continue;
         }
 
@@ -1128,7 +1128,7 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
     bot->active = false;
     sim->botMgr.numBots--;
 
-    fprintf(stderr, "botManager: bot %d removed\n", playerNum);
+    WB_LOG_INFO(WB_LOG_CAT_SIM, "botManager: bot %d removed", playerNum);
 }
 
 void botManagerDestroy(ServerSim *sim) {

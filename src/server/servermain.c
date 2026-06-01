@@ -1110,6 +1110,15 @@ int main(int argc, char **argv) {
    * Create (when sim was an embedded zero-struct that Create then
    * clobbered). */
   serverMessageSetQuietMode(serverSim, isQuiet ? TRUE : FALSE);
+  {
+    char banner[256];
+    snprintf(banner, sizeof banner,
+             "WinBolo Server - v%s\n"
+             "Copyright 1998-2026 John Morrison\n"
+             "Bolo Copyright 1987-1995 Stuart Cheshire",
+             WINBOLO_VERSION);
+    serverMessageConsoleMessage(serverSim, banner);
+  }
   if (findArg(argc, argv, "logfile") != ARG_NOT_FOUND) {
     serverMessagesSetLogFile(serverSim, (char *) argv[findArg(argc, argv, "logfile")]);
   }

@@ -24,9 +24,12 @@
  *   AUDIO, ASSET, LUA, MAP, LOGVIEWER, PLATFORM.
  *
  * RUNTIME CONTROL
- *   Env var WINBOLO_LOG=net=trace,server=debug,*=info  (parsed by
- *   wb_log_init). Or call SDL_SetLogPriority() / SDL_SetLogPriorities()
- *   directly at any time.
+ *   Logging is OPT-IN. With WINBOLO_LOG unset, wb_log_init installs a
+ *   silent sink, opens no log file, and emits nothing to console or disk.
+ *   Set WINBOLO_LOG=net=trace,server=debug,*=info (parsed by wb_log_init)
+ *   to enable output and select which categories are written. Or call
+ *   SDL_SetLogPriority() / SDL_SetLogPriorities() directly at any time to
+ *   re-enable console output (file logging needs WINBOLO_LOG at startup).
  *
  * COMPILE-TIME LEVEL
  *   Define WB_LOG_LEVEL to one of WB_LOG_LEVEL_TRACE/DEBUG/INFO/WARN/
@@ -95,14 +98,16 @@ enum {
  * prefOrgName / prefAppName: passed to SDL_GetPrefPath to locate a
  *   user-writable directory. If either is NULL, the log is written next
  *   to the executable (SDL_GetBasePath).
- * logFileBaseName: e.g. "winbolo.log". Existing files are rotated
- *   (.log -> .log.1 -> .log.2 -> .log.3, oldest dropped).
+ * logFileBaseName: e.g. "winbolo.log". Only opened when WINBOLO_LOG is
+ *   set; existing files are then rotated (.log -> .log.1 -> .log.2 ->
+ *   .log.3, oldest dropped).
  *
- * Honours the WINBOLO_LOG env var on entry (per-category priorities).
- * Safe to call after SDL_Init(0); does not require any subsystem.
+ * Honours the WINBOLO_LOG env var on entry (per-category priorities); an
+ * unset/empty spec leaves logging silent. Safe to call after SDL_Init(0);
+ * does not require any subsystem.
  *
- * Returns true on success. On failure, logging continues to stderr
- * via SDL's default sink.
+ * Returns true if a log file was opened (i.e. logging was enabled and the
+ * file opened successfully), false otherwise.
  */
 bool wb_log_init(const char *prefOrgName,
                  const char *prefAppName,
