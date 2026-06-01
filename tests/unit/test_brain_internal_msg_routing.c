@@ -4,7 +4,7 @@
  * Pins behavior of botManagerDeliverInternalMessage: the dispatcher
  * arm brain_data.c picks when a bot brain emits a message with
  * messagedest == 0 while running under the bot manager. The intent
- * is bot-coordination chatter (NewAutopilot's /info state slate)
+ * is bot-coordination chatter (GoalHunter's /info state slate)
  * that must reach every allied bot's brain inbox WITHOUT touching
  * the chat wire — so no human ever sees it in their newswire and
  * no UDP packet leaves the host.

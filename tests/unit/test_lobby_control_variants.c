@@ -303,7 +303,7 @@ int run_lobby_brain_list_codec_and_apply(void) {
         memset(&in, 0, sizeof(in));
         in.type = CTRL_LOBBY_BRAIN_LIST;
         in.u.lobbyBrainList.list.count = 1;
-        strncpy(in.u.lobbyBrainList.list.entries[0].name,    "NewAutopilot",
+        strncpy(in.u.lobbyBrainList.list.entries[0].name,    "GoalHunter",
                 BRAIN_LIST_NAME_LEN - 1);
         strncpy(in.u.lobbyBrainList.list.entries[0].version, "2026-05-11 12:30",
                 BRAIN_LIST_VER_LEN - 1);
@@ -313,7 +313,7 @@ int run_lobby_brain_list_codec_and_apply(void) {
         UT_ASSERT(out.type == CTRL_LOBBY_BRAIN_LIST);
         UT_ASSERT(out.u.lobbyBrainList.list.count == 1);
         UT_ASSERT(strcmp(out.u.lobbyBrainList.list.entries[0].name,
-                         "NewAutopilot") == 0);
+                         "GoalHunter") == 0);
         UT_ASSERT(strcmp(out.u.lobbyBrainList.list.entries[0].version,
                          "2026-05-11 12:30") == 0);
     }

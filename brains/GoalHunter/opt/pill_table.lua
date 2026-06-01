@@ -1,0 +1,119 @@
+-- GoalHunter/pill_table.lua
+-- Far-left HUD: every friendly pillbox as a row, colored by reposition
+-- category (back / front / aggressive / in-use). Categories use the SAME
+-- front-line definition as the "3" influence overlay: a tile is "front" when
+-- it sits near an influence sign-flip boundary (see brainPathfinderFindFrontLine).
+-- Debug viz only — all drawing goes through viz.* which lua_strip removes
+-- from opt/, so this is a no-op in production/splash builds.
+local PP  = require("pill_portfolio")
+local cpf = require("cpathfinder")
+
+local M = {}
+
+local AGGRO_DEEP = -50  -- influence deeper than this = overextended
+
+local COLORS = {
+  back    = {  90, 220, 120 },  -- green:  holding friendly territory
+  front   = { 255, 225,  70 },  -- yellow: on/near the front line
+  aggro   = { 255,  95,  55 },  -- red:    in enemy influence
+  utility = {  80, 215, 205 },  -- teal:   blocker in an active pill take
+  intank  = { 120, 200, 255 },  -- cyan:   currently carried in a tank
+  down    = { 130, 130, 130 },  -- gray:   dead on the ground
+}
+
+-- Category for a friendly pill (delegates to the shared portfolio model).
+-- Returns (category, influence).
+function M.classify(p)
+  return PP.classify(p.mx, p.my, p._in_use)
+end
+
+-- What category of pill the followed bot is about to build, if it's holding
+-- one and has a strategic-placement target. Returns (category, mx, my) or nil.
+local function building_intent(state, info)
+  if not state or not state.goal then return nil end
+  local g = state.goal
+  if g.kind ~= "place_pill_strategic" or not g.mx then return nil end
+  local cat = PP.classify(g.mx, g.my)
+  return cat, g.mx, g.my
+end
+
+function M.draw(viz, world, state, info)
+  if not viz or not viz.is_on or not viz.is_on("pill_portfolio") then return end
+  if not viz.hud_text or not world or not world.pills then return end
+
+  -- Classify placed pills, tally categories, and gather in-tank / down pills.
+  -- An in-tank pill can be built into ANY role, so it doesn't count toward the
+  -- current portfolio — instead we assign it the role it SHOULD fill.
+  local counts = { back = 0, front = 0, aggro = 0, utility = 0 }
+  local rows = {}
+  local intank = {}
+  for id, p in pairs(world.pills) do
+    if p.in_tank then
+      intank[#intank + 1] = { id = id }
+    elseif p.owner == "friendly" and (p.health or 0) > 0 then
+      local cat = PP.role_of(p, state and state.tick)   -- cached 60s role
+      local inf = cpf.influence_at(p.mx, p.my)
+      if counts[cat] ~= nil then counts[cat] = counts[cat] + 1 end
+      rows[#rows + 1] = { id = id, label = cat, key = cat, inf = inf }
+    elseif p.owner == "friendly" then
+      rows[#rows + 1] = { id = id, label = "[down]", key = "down" }
+    end
+  end
+
+  -- Targets over the EVENTUAL total (placed + the in-tank pills we'll build).
+  local placed_total = counts.back + counts.front + counts.aggro
+  local targets = PP.targets(placed_total + #intank)
+  local need = {
+    back  = targets.back  - counts.back,
+    front = targets.front - counts.front,
+    aggro = targets.aggro - counts.aggro,
+  }
+
+  -- Greedily assign each in-tank pill the biggest remaining deficit role,
+  -- so the table reflects what each carried pill should be built as.
+  local rem = { back = need.back, front = need.front, aggro = need.aggro }
+  local function pick_role()
+    local best, bestd = "front", -1e9
+    for _, c in ipairs({ "back", "front", "aggro" }) do
+      if rem[c] > bestd then bestd = rem[c]; best = c end
+    end
+    return best
+  end
+  for _, t in ipairs(intank) do
+    local role = pick_role()
+    rem[role] = rem[role] - 1
+    rows[#rows + 1] = { id = t.id, label = "[tank->" .. role .. "]",
+                        key = role, intank = true }
+  end
+  table.sort(rows, function(a, b) return a.id < b.id end)
+
+  -- Left-MIDDLE anchor.
+  local x, y, dy = 8, 330, 14
+
+  y = y + dy
+
+  -- Ratio line: have/target per category; missing (deficit) shown as (-N).
+  do
+    local bd = (need.back  > 0) and string.format("(-%d)", need.back)  or ""
+    local fd = (need.front > 0) and string.format("(-%d)", need.front) or ""
+    local ad = (need.aggro > 0) and string.format("(-%d)", need.aggro) or ""
+    y = y + dy
+  end
+
+  for _, r in ipairs(rows) do
+    local c = COLORS[r.key] or { 200, 200, 200 }
+    local deep = (r.key == "aggro" and r.inf and r.inf < AGGRO_DEEP) and " !deep" or ""
+    y = y + dy
+  end
+
+  -- "Building" intent: when the followed bot holds a pill and has chosen a
+  -- placement tile, show which category that tile is (the pill "type").
+  local bcat, bmx, bmy = building_intent(state, info)
+  if bcat then
+    local c = COLORS[bcat] or { 255, 255, 255 }
+    local carry = (info and (info.carried_pills or 0) > 0) and "holding" or "planning"
+    y = y + dy
+  end
+end
+
+return M

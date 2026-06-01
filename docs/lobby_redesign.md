@@ -267,10 +267,10 @@ Behavior:
 
 Plumbed through the protocol now. The brain side:
 
-- v1: NewAutopilot accepts a `brain.set_config({difficulty, personality})`
+- v1: GoalHunter accepts a `brain.set_config({difficulty, personality})`
   Lua call but ignores the values. Lets us ship the UI + protocol without
   rewriting the brain.
-- Future: NewAutopilot consumes the values. e.g. `difficulty=easy` lowers
+- Future: GoalHunter consumes the values. e.g. `difficulty=easy` lowers
   pillbox aim accuracy, `personality=aggressive` shifts goal weighting
   toward attack_pill / attack_tank.
 

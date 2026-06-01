@@ -139,7 +139,7 @@ typedef struct {
 
 /* Per-bot config — extends bot identity with difficulty + personality
  * the Layout A AiConfig sub-panel writes. Brain consumption is deferred
- * (NewAutopilot accepts the values via brain.set_config but ignores
+ * (GoalHunter accepts the values via brain.set_config but ignores
  * them in v1). Indexed by slot (matches bot's playerNum). */
 typedef struct {
   uint8_t difficulty;   /* 0=easy, 1=normal, 2=hard */
@@ -384,8 +384,8 @@ typedef struct {
     char     brainName[64];     /* brain identity: basename of the brain
                                  * script path, with .lua stripped and
                                  * "init" replaced by the parent directory
-                                 * name (e.g. "NewAutopilot" for
-                                 * brains/NewAutopilot/init.lua) */
+                                 * name (e.g. "GoalHunter" for
+                                 * brains/GoalHunter/init.lua) */
     double   lastThinkMs;       /* most recent brain tick */
     double   targetMs;          /* target the next tick will use */
     uint32_t overrunCount;      /* cumulative since session start */

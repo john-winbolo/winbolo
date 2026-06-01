@@ -25,7 +25,7 @@
  *     BrainTest [options]
  *
  *   Options:
- *     -brain PATH      Brain script (default: brains/NewAutopilot)
+ *     -brain PATH      Brain script (default: brains/GoalHunter)
  *     -noplayers N     Number of bot players (default: 1)
  *     -map PATH        Map file (default: built-in Everard Island)
  *     -follow N        Follow bot N with camera (default: 0)
@@ -99,7 +99,7 @@
 #include "braintest_vizdetail_registry.h"
 #include "braintest_vizdetailwindow.h"
 #include "braintest_pillcontrib_registry.h"
-#include "na_overlay_pillcontrib.h"
+#include "gh_overlay_pillcontrib.h"
 #include "brain_pathfinder.h"
 
 /* Built-in text renderer lives in panelwindow.cpp (needs ImGui). */
@@ -1369,7 +1369,7 @@ static void preThinkHook(int playerNum) {
  * are single characters. */
 static bool isReservedShortcut(char k) {
     /* P is intentionally NOT here — the old host-owned P-window-with-
-     * tabs is gone, so bots are free to claim P (e.g. NewAutopilot's
+     * tabs is gone, so bots are free to claim P (e.g. GoalHunter's
      * Pool breakdown). */
     static const char *reserved = "VMXHFTLGCBQ";
     if (k == '\0') return false;
@@ -1383,7 +1383,7 @@ static bool isReservedShortcut(char k) {
 /* Brain → host callback for the panel registry. Auto-namespaces
  * the panel type with the registering bot's brain name so two
  * brains registering "pool_grid" with different schemas don't
- * collide ("NewAutopilot:pool_grid" vs "OtherBot:pool_grid").
+ * collide ("GoalHunter:pool_grid" vs "OtherBot:pool_grid").
  * Per-bot panel modules in brains/<botname>/braintest_panels/
  * register their renderers under the same namespaced names.
  *
@@ -1598,7 +1598,7 @@ static void signalHandler(int sig) {
 /* Command-line parsing                                                */
 /* ------------------------------------------------------------------ */
 
-static char optBrain[512] = "brains/NewAutopilot";
+static char optBrain[512] = "brains/GoalHunter";
 static char optMap[512]   = "";
 static int  optNumPlayers = 1;
 static int  optNumTeams   = 0;   /* 0 = FFA (no alliances); otherwise round-robin team assignment */
@@ -1638,7 +1638,7 @@ static void printUsage(const char *prog) {
         "Usage: %s [options]\n"
         "\n"
         "Options:\n"
-        "  -brain PATH      Brain script directory (default: brains/NewAutopilot)\n"
+        "  -brain PATH      Brain script directory (default: brains/GoalHunter)\n"
         "  -noplayers N     Number of bot players (default: 1)\n"
         "  -threads N       Brain dispatch threads incl. producer (default: 2, max: cores)\n"
         "  -teams N         Split bots into N teams via round-robin (default: 0 = FFA)\n"
@@ -4682,8 +4682,8 @@ int main(int argc, char *argv[]) {
 
     if (findBrainScript(optBrain, brainPath, sizeof(brainPath))) {
         fprintf(stderr, "  Brain script: %s\n", brainPath);
-        /* Extract brain dir basename ("brains/NewAutopilot" or
-         * "brains/NewAutopilot/init.lua" -> "NewAutopilot") so the
+        /* Extract brain dir basename ("brains/GoalHunter" or
+         * "brains/GoalHunter/init.lua" -> "GoalHunter") so the
          * panel-register callback can namespace types with it. */
         char brainName[64] = "";
         {
@@ -5363,7 +5363,7 @@ int main(int argc, char *argv[]) {
 
                         /* Forward to brain.on_click(mx, my, {shift,
                          * ctrl, alt}) so brains can implement custom
-                         * click handlers — NewAutopilot uses
+                         * click handlers — GoalHunter uses
                          * shift+click to toggle the pill inspector
                          * overlay and ctrl+click to force-attack a
                          * pill. The cost-query path above runs

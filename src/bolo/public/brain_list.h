@@ -39,7 +39,7 @@
 #define BRAIN_LIST_VER_LEN    24
 
 typedef struct {
-    char name[BRAIN_LIST_NAME_LEN];     /* "NewAutopilot" — dir name */
+    char name[BRAIN_LIST_NAME_LEN];     /* "GoalHunter" — dir name */
     char version[BRAIN_LIST_VER_LEN];   /* "2026-05-11 12:30" or "" */
 } BrainListEntry;
 

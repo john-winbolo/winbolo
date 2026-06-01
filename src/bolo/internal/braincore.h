@@ -317,10 +317,10 @@ void brainCoreSetYieldCallback(void (*cb)(void));
 void brainCoreRegisterVizDetail(lua_State *L);
 
 /* NOTE: pill_contrib bindings used to live here. They were specific to
- * NewAutopilot's BrainTest overlay (shift-2 cycle-through-pills), so they
- * moved to brains/NewAutopilot/c/na_overlay_pillcontrib.h to keep this
+ * GoalHunter's BrainTest overlay (shift-2 cycle-through-pills), so they
+ * moved to brains/GoalHunter/c/gh_overlay_pillcontrib.h to keep this
  * header generic. Hosts that want the overlay should also
- *   #include "na_overlay_pillcontrib.h"
+ *   #include "gh_overlay_pillcontrib.h"
  * and call naPillContribRegister(L) after brainCore* registrations. */
 
 #endif /* BRAINCORE_H */
