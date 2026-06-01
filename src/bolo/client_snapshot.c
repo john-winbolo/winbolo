@@ -522,7 +522,7 @@ void clientApplySnapshot(ClientSim *csPtr,
       if (csPtr->sim.plyrs != NULL && playersIsInUse(&csPtr->sim.plyrs, pn) == FALSE) {
         char name[FILENAME_MAX];
         sprintf(name, "Player %d", pn);
-        fprintf(stderr, "[SCREEN] Auto-registering player %d from snapshot (pos=%u,%u)\n",
+        WB_LOG_INFO(WB_LOG_CAT_CLIENT, "Auto-registering player %d from snapshot (pos=%u,%u)",
                 pn, tanks[i].worldX, tanks[i].worldY);
         playersSetPlayer(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, pn, name, "XX",
                          0, 0, 0, 0, 0, FALSE, 0, NULL, FALSE);
@@ -986,7 +986,7 @@ void clientApplySnapshot(ClientSim *csPtr,
   if (hdr->mapChecksum != 0) {
     uint16_t clientChecksum = mapCalcChecksum(&csPtr->sim.mp);
     if (clientChecksum != hdr->mapChecksum) {
-      fprintf(stderr, "[SCREEN] Map checksum mismatch: server=%04x client=%04x\n",
+      WB_LOG_WARN(WB_LOG_CAT_CLIENT, "Map checksum mismatch: server=%04x client=%04x",
               hdr->mapChecksum, clientChecksum);
     }
   }
