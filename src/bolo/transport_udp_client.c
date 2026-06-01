@@ -366,8 +366,8 @@ static bool decodeLocalizedPayload(const uint8_t *buf, int len, int startPos,
     uint16_t id16;
     int i;
     if (pos + 3 > len) {
-        fprintf(stderr,
-                "[UDP CLIENT] localized payload truncated (need 3 hdr bytes, len=%d pos=%d)\n",
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+                "localized payload truncated (need 3 hdr bytes, len=%d pos=%d)",
                 len, pos);
         return false;
     }
@@ -375,12 +375,12 @@ static bool decodeLocalizedPayload(const uint8_t *buf, int len, int startPos,
     pos += 2;
     argCount = buf[pos++];
     if (id16 == 0) {
-        fprintf(stderr, "[UDP CLIENT] localized payload langid=0\n");
+        WB_LOG_WARN(WB_LOG_CAT_NET, "localized payload langid=0");
         return false;
     }
     if (argCount > 4) {
-        fprintf(stderr,
-                "[UDP CLIENT] localized payload argCount=%u exceeds 4\n",
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+                "localized payload argCount=%u exceeds 4",
                 argCount);
         return false;
     }
@@ -390,21 +390,21 @@ static bool decodeLocalizedPayload(const uint8_t *buf, int len, int startPos,
         char *dst = NULL;
         size_t cap = 0;
         if (pos + 1 > len) {
-            fprintf(stderr,
-                    "[UDP CLIENT] localized payload truncated at arg %d lenByte\n",
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                    "localized payload truncated at arg %d lenByte",
                     i);
             return false;
         }
         aLen = buf[pos++];
         if (pos + aLen > len) {
-            fprintf(stderr,
-                    "[UDP CLIENT] localized payload truncated: arg %d aLen=%u\n",
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                    "localized payload truncated: arg %d aLen=%u",
                     i, aLen);
             return false;
         }
         if (aLen >= PLAYER_NAME_LEN) {
-            fprintf(stderr,
-                    "[UDP CLIENT] localized payload arg %d aLen=%u exceeds %d\n",
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                    "localized payload arg %d aLen=%u exceeds %d",
                     i, aLen, PLAYER_NAME_LEN - 1);
             return false;
         }
@@ -1554,8 +1554,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     c->wbnReauthSent = TRUE;
                     WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Sent re-auth for slot %d", c->playerNum);
                 } else {
-                    fprintf(stderr,
-                            "WinBolo.net re-auth exchange failed: %s\n",
+                    WB_LOG_WARN(WB_LOG_CAT_NET,
+                            "[WBN] re-auth exchange failed: %s",
                             errMsg[0] ? errMsg : "(no server_key)");
                     /* Leave wbnReauthSent FALSE so the next snapshot
                      * tick retries.  No backoff — out of scope here. */
@@ -1966,8 +1966,8 @@ static bool udpClientTick(void *ctx) {
                     if (!winbolonetClientJoinSession(c->wbnApiToken,
                                                      c->wbnServerKey,
                                                      playerKey, errMsg)) {
-                        fprintf(stderr,
-                                "WinBolo.net join exchange failed: %s\n",
+                        WB_LOG_WARN(WB_LOG_CAT_NET,
+                                "[WBN] join exchange failed: %s",
                                 errMsg[0] ? errMsg : "(no detail)");
                         /* Degraded: ship empty wbnJoinKey, server treats
                          * the JOIN as anonymous (no WBN attribution). */
@@ -2244,8 +2244,8 @@ static void udpClientTransportObserver(void *ctx, const ControlEvent *evt) {
                         c->wbnReauthSent = TRUE;
                         WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Sent re-auth for slot %d", c->playerNum);
                     } else {
-                        fprintf(stderr,
-                                "WinBolo.net re-auth exchange failed: %s\n",
+                        WB_LOG_WARN(WB_LOG_CAT_NET,
+                                "[WBN] re-auth exchange failed: %s",
                                 errMsg[0] ? errMsg : "(no server_key)");
                     }
                 }
@@ -2584,7 +2584,7 @@ void transportUdpClientSendWbnReauth(Transport *t) {
     errMsg[0] = '\0';
     if (!winbolonetClientJoinSession(c->wbnApiToken, c->wbnServerKey,
                                      playerKey, errMsg)) {
-        fprintf(stderr, "WinBolo.net re-auth exchange failed: %s\n",
+        WB_LOG_WARN(WB_LOG_CAT_NET, "[WBN] re-auth exchange failed: %s",
                 errMsg[0] ? errMsg : "(no detail)");
         return;
     }

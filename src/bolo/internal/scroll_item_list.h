@@ -65,6 +65,15 @@ typedef struct {
   BYTE tankSpeed;      /* Tank speed — 0 disables directional logic */
   WORLD tankWX;        /* Tank world X — used by the directional veto in process */
   WORLD tankWY;        /* Tank world Y */
+  /* Stickiness control. Caller sets forceForwardImportant=TRUE to OR
+   * a sticky override on top of the natural check, holding the
+   * directional veto active across short angle wobbles that would
+   * otherwise flip the natural check off and let behind items
+   * suddenly pull the camera. lastNaturalForwardImportant exposes the
+   * pre-override result so the caller can drive its sticky counter
+   * (reset when the natural check fires; decrement otherwise). */
+  bool forceForwardImportant;
+  bool lastNaturalForwardImportant;
 } ScrollItemList;
 
 /*********************************************************

@@ -40,8 +40,13 @@
 extern bool smoothScrollingEnabled;
 
 /* Smooth-scroll speed: game pixels advanced per scroll tick.
-   Tile = 16 game pixels.  Adjust to taste. */
-static int smoothScrollSpeedPx = 4;
+   Tile = 16 game pixels, game runs at 20 ticks/sec, so:
+     px=4  →  5 tiles/sec
+     px=6  →  7.5 tiles/sec  (default)
+     px=8  → 10 tiles/sec
+     px=12 → 15 tiles/sec
+   Adjust to taste. */
+static int smoothScrollSpeedPx = 6;
 
 /* Sub-tile pixel accumulators for smooth scrolling (in zoomed pixels,
    matching gDragOffsetX/Y units). */

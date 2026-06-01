@@ -212,22 +212,30 @@ bool wb_log_init(const char *prefOrgName,
                  const char *logFileBaseName) {
     if (g_installed) return true;
 
-    /* Resolve directory: prefer SDL_GetPrefPath when both org+app given;
-       otherwise fall back to base path; otherwise current working dir. */
-    char *dir = NULL;  /* must be SDL_free()d if non-null */
-    if (prefOrgName && prefAppName) {
-        dir = SDL_GetPrefPath(prefOrgName, prefAppName);
-    }
-    if (!dir) {
-        const char *base = SDL_GetBasePath();
-        if (base) {
-            size_t n = strlen(base) + 1;
-            dir = (char *)SDL_malloc(n);
-            if (dir) memcpy(dir, base, n);
-        }
-    }
+    /* Logging is opt-in. With no WINBOLO_LOG spec we install a silent sink,
+       open no log file, and emit nothing to console or disk. Set
+       WINBOLO_LOG (e.g. "*=info" or "net=trace,server=debug") to turn
+       output back on; the spec selects which categories are written. */
+    const char *logSpec = SDL_getenv("WINBOLO_LOG");
+    const bool enabled = (logSpec && *logSpec);
 
-    if (logFileBaseName && *logFileBaseName) {
+    g_log_path[0] = '\0';
+    if (enabled && logFileBaseName && *logFileBaseName) {
+        /* Resolve directory: prefer SDL_GetPrefPath when both org+app given;
+           otherwise fall back to base path; otherwise current working dir. */
+        char *dir = NULL;  /* must be SDL_free()d if non-null */
+        if (prefOrgName && prefAppName) {
+            dir = SDL_GetPrefPath(prefOrgName, prefAppName);
+        }
+        if (!dir) {
+            const char *base = SDL_GetBasePath();
+            if (base) {
+                size_t n = strlen(base) + 1;
+                dir = (char *)SDL_malloc(n);
+                if (dir) memcpy(dir, base, n);
+            }
+        }
+
         if (dir) {
             SDL_snprintf(g_log_path, sizeof g_log_path, "%s%s", dir, logFileBaseName);
         } else {
@@ -239,11 +247,9 @@ bool wb_log_init(const char *prefOrgName,
             /* Couldn't open — clear path so wb_log_path() returns NULL. */
             g_log_path[0] = '\0';
         }
-    } else {
-        g_log_path[0] = '\0';
-    }
 
-    if (dir) SDL_free(dir);
+        if (dir) SDL_free(dir);
+    }
 
     /* Install our sink, capturing the previous one (always the SDL
        default unless someone else installed first). */
@@ -255,15 +261,21 @@ bool wb_log_init(const char *prefOrgName,
     SDL_SetLogOutputFunction(file_sink, NULL);
     g_installed = true;
 
-    /* Apply env-var overrides AFTER the sink is installed so the
-       "session start" banner below honours them. */
-    apply_env_log_spec(SDL_getenv("WINBOLO_LOG"));
+    /* Silence every category by default, then let the env spec re-enable
+       what it names. Unset/empty spec leaves everything off, so no message
+       reaches the sink (no console echo, no file writes). A later
+       SDL_SetLogPriority() at runtime can still re-enable console output,
+       but file logging requires WINBOLO_LOG to be set at startup. */
+    SDL_SetLogPriorities(SDL_LOG_PRIORITY_COUNT);
+    if (enabled) {
+        apply_env_log_spec(logSpec);
 
-    /* Session banner — useful when reading old logs cold. */
-    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                "wb_log: session start, file=%s, compile-level=%d",
-                g_log_path[0] ? g_log_path : "(none)",
-                (int)WB_LOG_LEVEL);
+        /* Session banner — useful when reading old logs cold. */
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "wb_log: session start, file=%s, compile-level=%d",
+                    g_log_path[0] ? g_log_path : "(none)",
+                    (int)WB_LOG_LEVEL);
+    }
 
     return g_log_file != NULL;
 }

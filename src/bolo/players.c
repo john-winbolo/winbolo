@@ -50,6 +50,7 @@
 #include "game_sim.h"
 #include "gametype.h"
 #include "util.h"
+#include "../common/wb_log.h"
 
 /* Hidden-by-trees visibility test for player items (tanks or LGMs).
  * Returns FALSE when the viewer is within MIN_SIGHT_DISTANCE squares so
@@ -962,7 +963,7 @@ BYTE playersGetNumPlayers(players *plrs) {
   } else {
 	// At this point we will print a message to the console, and then allow the function to return
 	// hopefully this will allow a logfile to be generated rather than a seg fault, so that we can perhaps track this error better.
-    fprintf(stderr, "Players is equal to zero, something has happened that shouldn't have.\n");
+    WB_LOG_ERROR(WB_LOG_CAT_SIM, "Players is equal to zero, something has happened that shouldn't have.");
   }
   return returnValue;
 }

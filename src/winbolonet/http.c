@@ -60,6 +60,7 @@ int WritePrivateProfileString(const char *section, const char *key,
 
 #include "global.h"
 #include "http.h"
+#include "../common/wb_log.h"
 #include "winbolonet_core.h"
 #include "wbn_bearer.h"
 #include "wbn_prefs_path.h"
@@ -339,8 +340,8 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
     curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
   }
 
-  fprintf(stderr, "WinBolo.net DEBUG wbn_api_post: POST %s\n", url);
-  fprintf(stderr, "WinBolo.net DEBUG wbn_api_post: body=%s\n", json_body);
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_api_post: POST %s", url);
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_api_post: body=%s", json_body);
 
   CURLcode res = curl_easy_perform(curl);
 
@@ -351,12 +352,12 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
   curl_easy_cleanup(curl);
 
   if (res != CURLE_OK) {
-    fprintf(stderr, "WinBolo.net DEBUG wbn_api_post [%s]: curl error: %s\n", endpoint, curl_easy_strerror(res));
+    WB_LOG_WARN(WB_LOG_CAT_NET, "wbn_api_post [%s]: curl error: %s", endpoint, curl_easy_strerror(res));
     free(respBuf.data);
     return -1;
   }
 
-  fprintf(stderr, "WinBolo.net DEBUG wbn_api_post [%s]: HTTP %ld, response=%s\n",
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_api_post [%s]: HTTP %ld, response=%s",
           endpoint, http_code, respBuf.data ? respBuf.data : "(null)");
 
   if (response_out) {
@@ -468,7 +469,7 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
   (void)wantFeedback;
 
   if (!httpStarted || fileName == NULL || key == NULL) {
-    fprintf(stderr, "WinBolo.net DEBUG httpSendLogFile: skipped (httpStarted=%d, fileName=%s, key=%s)\n",
+    WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: skipped (httpStarted=%d, fileName=%s, key=%s)",
             httpStarted, fileName ? fileName : "NULL", key ? "(set)" : "NULL");
     return false;
   }
@@ -477,8 +478,8 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
   char url[FILENAME_MAX + 64];
   snprintf(url, sizeof(url), "%s/log.php?key=%s", wbnBaseUrl, key);
 
-  fprintf(stderr, "WinBolo.net DEBUG httpSendLogFile: POST %s\n", url);
-  fprintf(stderr, "WinBolo.net DEBUG httpSendLogFile: file=%s\n", fileName);
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: POST %s", url);
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: file=%s", fileName);
 
   /* Check file exists and log its size */
   {
@@ -487,15 +488,15 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
       fseek(f, 0, SEEK_END);
       long fsize = ftell(f);
       fclose(f);
-      fprintf(stderr, "WinBolo.net DEBUG httpSendLogFile: file size=%ld bytes\n", fsize);
+      WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: file size=%ld bytes", fsize);
     } else {
-      fprintf(stderr, "WinBolo.net DEBUG httpSendLogFile: ERROR cannot open file '%s': %s\n", fileName, strerror(errno));
+      WB_LOG_WARN(WB_LOG_CAT_NET, "httpSendLogFile: cannot open file '%s': %s", fileName, strerror(errno));
     }
   }
 
   CURL *curl = curl_easy_init();
   if (!curl) {
-    fprintf(stderr, "WinBolo.net DEBUG httpSendLogFile: curl_easy_init failed\n");
+    WB_LOG_WARN(WB_LOG_CAT_NET, "httpSendLogFile: curl_easy_init failed");
     return false;
   }
 
@@ -551,11 +552,11 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
   }
 
   if (res != CURLE_OK) {
-    fprintf(stderr, "WinBolo.net DEBUG httpSendLogFile: curl error: %s\n", curl_easy_strerror(res));
+    WB_LOG_WARN(WB_LOG_CAT_NET, "httpSendLogFile: curl error: %s", curl_easy_strerror(res));
     return false;
   }
 
-  fprintf(stderr, "WinBolo.net DEBUG httpSendLogFile: HTTP %ld, response=%s\n", httpCode, respBuf);
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: HTTP %ld, response=%s", httpCode, respBuf);
   return true;
 }
 
@@ -578,9 +579,9 @@ int wbn_api_get(const char *path, char **response_out) {
    * it here on first use is safe. */
   if (!httpStarted) (void)httpCreate();
   if (!httpStarted) {
-    fprintf(stderr,
-        "WinBolo.net DEBUG wbn_api_get [%s]: SKIP — httpStarted=false "
-        "after lazy httpCreate(); curl init or INI Host= is broken\n",
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+        "wbn_api_get [%s]: SKIP — httpStarted=false after lazy httpCreate(); "
+        "curl init or INI Host= is broken",
         path ? path : "(null)");
     return -1;
   }
@@ -627,7 +628,7 @@ int wbn_api_get(const char *path, char **response_out) {
     curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
   }
 
-  fprintf(stderr, "WinBolo.net DEBUG wbn_api_get: GET %s\n", url);
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_api_get: GET %s", url);
 
   CURLcode res = curl_easy_perform(curl);
 
@@ -638,12 +639,12 @@ int wbn_api_get(const char *path, char **response_out) {
   curl_easy_cleanup(curl);
 
   if (res != CURLE_OK) {
-    fprintf(stderr, "WinBolo.net DEBUG wbn_api_get [%s]: curl error: %s\n", path, curl_easy_strerror(res));
+    WB_LOG_WARN(WB_LOG_CAT_NET, "wbn_api_get [%s]: curl error: %s", path, curl_easy_strerror(res));
     free(respBuf.data);
     return -1;
   }
 
-  fprintf(stderr, "WinBolo.net DEBUG wbn_api_get [%s]: HTTP %ld\n", path, http_code);
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_api_get [%s]: HTTP %ld", path, http_code);
 
   if (response_out) {
     *response_out = respBuf.data;
@@ -706,7 +707,7 @@ int wbn_api_download(const char *path, const char *dest_path) {
     curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
   }
 
-  fprintf(stderr, "WinBolo.net DEBUG wbn_api_download: GET %s -> %s\n", url, dest_path);
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_api_download: GET %s -> %s", url, dest_path);
 
   CURLcode res = curl_easy_perform(curl);
 
@@ -718,7 +719,7 @@ int wbn_api_download(const char *path, const char *dest_path) {
   fclose(fp);
 
   if (res != CURLE_OK) {
-    fprintf(stderr, "WinBolo.net DEBUG wbn_api_download: curl error: %s\n", curl_easy_strerror(res));
+    WB_LOG_WARN(WB_LOG_CAT_NET, "wbn_api_download: curl error: %s", curl_easy_strerror(res));
     remove(dest_path);
     return -1;
   }
@@ -865,7 +866,7 @@ int wbn_api_download_to_memory(const char *path, uint8_t **data_out, size_t *siz
     curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
   }
 
-  fprintf(stderr, "WinBolo.net DEBUG wbn_api_download_to_memory: GET %s\n", url);
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_api_download_to_memory: GET %s", url);
 
   CURLcode res = curl_easy_perform(curl);
 
@@ -876,7 +877,7 @@ int wbn_api_download_to_memory(const char *path, uint8_t **data_out, size_t *siz
   curl_easy_cleanup(curl);
 
   if (res != CURLE_OK) {
-    fprintf(stderr, "WinBolo.net DEBUG wbn_api_download_to_memory: curl error: %s\n", curl_easy_strerror(res));
+    WB_LOG_WARN(WB_LOG_CAT_NET, "wbn_api_download_to_memory: curl error: %s", curl_easy_strerror(res));
     free(respBuf.data);
     return -1;
   }

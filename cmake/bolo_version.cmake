@@ -2,16 +2,16 @@
 # the standalone wasm sub-project (src/wasm/CMakeLists.txt).
 #
 # Sets:
-#   WINBOLO_VERSION         — semantic version string (e.g. "1.18"); cache
+#   WINBOLO_VERSION         — semantic version string (e.g. "1.19"); cache
 #                             string so a -D override sticks across configures
 #   WINBOLO_GIT_HASH        — `git rev-parse --short HEAD`, or "unknown"
 #   WINBOLO_BUILD_DATE      — yyyy-mm-dd of this configure
 #   WINBOLO_BUILD_YEAR      — yyyy of this configure
 #   BOLO_VERSION_MAJOR/MINOR/REVISION
 #                           — per-byte network protocol version digits derived
-#                             from WINBOLO_VERSION (e.g. "1.18" -> 1, 1, 8)
+#                             from WINBOLO_VERSION (e.g. "1.19" -> 1, 1, 9)
 
-set(WINBOLO_VERSION "1.18" CACHE STRING "WinBolo version number")
+set(WINBOLO_VERSION "1.19" CACHE STRING "WinBolo version number")
 
 # Anchor on this module's directory (always cmake/ under the repo root)
 # so the wasm sub-project — whose CMAKE_SOURCE_DIR is src/wasm/ — still
@@ -31,7 +31,7 @@ string(TIMESTAMP WINBOLO_BUILD_YEAR "%Y")
 
 # Derive network protocol version bytes from WINBOLO_VERSION.
 # Each digit of the version string (skipping dots) becomes one byte.
-# E.g. "1.18" -> MAJOR=0x01, MINOR=0x01, REVISION=0x08.
+# E.g. "1.19" -> MAJOR=0x01, MINOR=0x01, REVISION=0x09.
 string(REPLACE "." "" _VER_DIGITS "${WINBOLO_VERSION}")
 string(SUBSTRING "${_VER_DIGITS}" 0 1 _VER_D0)
 string(SUBSTRING "${_VER_DIGITS}" 1 1 _VER_D1)
