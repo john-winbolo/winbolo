@@ -27,6 +27,7 @@
 #include "frontend.h"
 #include "server_sim.h"
 #include "../server/threads.h"
+#include "../winbolonet/winbolonet_server.h"
 
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
   (void)cs; (void)shells; (void)mines; (void)armour; (void)trees;
@@ -203,8 +204,8 @@ void netErrorOccured(void) {}
 /* WinBoloNet stubs (client_sim.c / bases.c / log.c reference these) */
 bool winbolonetIsRunning(void) { return FALSE; }
 void winbolonetDestroy(bool isServer) { (void)isServer; }
-void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB) {
-  (void)eventType; (void)isServer; (void)playerA; (void)playerB;
+void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
+  (void)eventType; (void)isServer; (void)playerA; (void)playerB; (void)aIsBot; (void)bIsBot;
 }
 void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
@@ -233,3 +234,7 @@ bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize,
 void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills) {
   (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;
 }
+
+void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) { (void)info; }
+
+void winbolonetSendLobbyUpdate(void) { }

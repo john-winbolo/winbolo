@@ -98,7 +98,7 @@ void winbolonetGoodbye(void) {
 *PURPOSE:
 * Adds a WinBolo.net Event for sending to the server.
 *********************************************************/
-void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB) {
+void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
   const char *keyA;
   const char *keyB;
   char emptyKey[WINBOLONET_KEY_LEN];
@@ -110,11 +110,12 @@ void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE player
     keyA = winboloNetPlayerKey[playerA];
     if (playerB == WINBOLO_NET_NO_PLAYER) {
       keyB = emptyKey;
+      bIsBot = FALSE;
     } else {
       if (playerB >= MAX_TANKS) return;
       keyB = winboloNetPlayerKey[playerB];
     }
-    winbolonetEventsAddItem(eventType, keyA, keyB);
+    winbolonetEventsAddItem(eventType, keyA, keyB, aIsBot, bIsBot);
   }
 }
 

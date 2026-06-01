@@ -338,6 +338,19 @@ void playersGetCountryCode(players *plrs, BYTE playerNum, char *dest);
 uint8_t playersGetAccountFlags(players *plrs, BYTE playerNum);
 
 /*********************************************************
+*NAME:          playersIsBot
+*PURPOSE:
+* Returns TRUE if the player slot is a bot (PLAYER_FLAG_BOT
+* set). Safe on both server and client; FALSE for out-of-
+* range or unused slots.
+*
+*ARGUMENTS:
+* plrs      - Pointer to the players object
+* playerNum - The player number
+*********************************************************/
+bool playersIsBot(players *plrs, BYTE playerNum);
+
+/*********************************************************
 *NAME:          playersMakeMessageName
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99

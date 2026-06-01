@@ -1449,7 +1449,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     }
 
     winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
-                       (BYTE)slot, WINBOLO_NET_NO_PLAYER);
+                       (BYTE)slot, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
 
     if (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown) {
         /* Publish a lobby-slot update for the new player so existing
@@ -1899,7 +1899,7 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
         snprintf(msg, sizeof(msg), "%s is quitting.",
                  udpServer.clients[idx].playerName);
         winbolonetAddEvent(WINBOLO_NET_EVENT_QUITTING, TRUE,
-                           (BYTE)idx, WINBOLO_NET_NO_PLAYER);
+                           (BYTE)idx, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
     } else {
         snprintf(msg, sizeof(msg), "%s timed out.",
                  udpServer.clients[idx].playerName);
@@ -2544,7 +2544,7 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
                 slot, hasSteam ? 1 : 0);
         if (serverSimGetState(sim) == serverStateRunning) {
             winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
-                               slot, WINBOLO_NET_NO_PLAYER);
+                               slot, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
         }
         if (serverSimGetState(sim) == serverStateLobby ||
             serverSimGetState(sim) == serverStateCountdown) {

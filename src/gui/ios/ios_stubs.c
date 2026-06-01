@@ -14,6 +14,7 @@
 
 #include "global.h"
 #include "client_sim.h"
+#include "../../winbolonet/winbolonet_server.h"
 
 /* Portable RECT */
 #ifndef _WIN32
@@ -54,8 +55,8 @@ void winbolonetGoodbye(void) {}
 void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
     (void)array; (void)length; (void)numTeams;
 }
-void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB) {
-    (void)eventType; (void)isServer; (void)playerA; (void)playerB;
+void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
+    (void)eventType; (void)isServer; (void)playerA; (void)playerB; (void)aIsBot; (void)bIsBot;
 }
 void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePills, bool sendNow) {
     (void)numPlayers; (void)numFreeBases; (void)numFreePills; (void)sendNow;
@@ -97,12 +98,12 @@ void winbolonetThreadAddRequest(const char *ep, const char *jb) { (void)ep; (voi
 
 void winbolonetEventsCreate(void) {}
 void winbolonetEventsDestroy(void) {}
-void winbolonetEventsAddItem(BYTE itemType, const char *keyA, const char *keyB) {
-    (void)itemType; (void)keyA; (void)keyB;
+void winbolonetEventsAddItem(BYTE itemType, const char *keyA, const char *keyB, bool aIsBot, bool bIsBot) {
+    (void)itemType; (void)keyA; (void)keyB; (void)aIsBot; (void)bIsBot;
 }
 int winbolonetEventsGetSize(void) { return 0; }
-BYTE winbolonetEventsRemove(char *keyA, char *keyB) {
-    (void)keyA; (void)keyB;
+BYTE winbolonetEventsRemove(char *keyA, char *keyB, bool *aIsBot, bool *bIsBot) {
+    (void)keyA; (void)keyB; (void)aIsBot; (void)bIsBot;
     return 0;
 }
 
@@ -217,6 +218,10 @@ void windowSmoothScrolling_toggle(void) {}
 void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills) {
     (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;
 }
+
+void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) { (void)info; }
+
+void winbolonetSendLobbyUpdate(void) { }
 
 /* ---- skins stubs (requires minizip/zlib) ---- */
 

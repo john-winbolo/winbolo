@@ -35,8 +35,8 @@ void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
   (void)array; (void)length; (void)numTeams;
 }
 
-void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB) {
-  (void)eventType; (void)isServer; (void)playerA; (void)playerB;
+void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
+  (void)eventType; (void)isServer; (void)playerA; (void)playerB; (void)aIsBot; (void)bIsBot;
 }
 
 void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePills, bool sendNow) {
@@ -108,3 +108,7 @@ bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, B
 void winbolonetSendLobbyStatus(bool inLobby) {
   (void)inLobby;
 }
+
+void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) { (void)info; }
+
+void winbolonetSendLobbyUpdate(void) { }

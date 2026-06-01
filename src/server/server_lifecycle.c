@@ -160,6 +160,9 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
 
   instanceUseWbn = cfg->acceptRemoteClients && cfg->useWbn;
   if (instanceUseWbn) {
+    /* Populate the WBN lobby snapshot so register carries the
+     * extended settings + human/bot counts on the first POST. */
+    serverSimRefreshWbnLobbyInfo(sim);
     winbolonetCreateServer(sim->mapName, cfg->udpPort,
                            (BYTE)gameTypeGet(&sim->sim.game),
                            cfg->compTanks,
@@ -331,7 +334,7 @@ void serverInstanceTick(ServerSim *sim) {
             if (sim->playerConnected[pi] &&
                 winboloNetIsPlayerParticipant(pi)) {
               winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
-                                 pi, WINBOLO_NET_NO_PLAYER);
+                                 pi, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
             }
           }
         }
@@ -384,6 +387,7 @@ void serverInstanceTick(ServerSim *sim) {
       }
       roundLogFlush();
       if (winbolonetIsRunning()) {
+        serverSimRefreshWbnLobbyInfo(sim);
         winbolonetBeginSession(
           sim->mapName, sim->serverPort,
           (BYTE)gameTypeGet(&sim->sim.game),
@@ -558,7 +562,12 @@ void serverInstanceTick(ServerSim *sim) {
 
   if (wbnTime > 100) {
     threadsWaitForMutex();
+    /* Refresh the WBN lobby snapshot so server/update carries current
+     * human/bot counts, then flush a deferred lobby_update if its rate
+     * window has elapsed. */
+    serverSimRefreshWbnLobbyInfo(sim);
     winbolonetServerUpdate(serverSimGetNumPlayers(sim), serverSimGetNumNeutralBases(sim), serverSimGetNumNeutralPills(sim), FALSE);
+    serverSimWbnLobbyTick(sim);
     threadsReleaseMutex();
     wbnTime = 0;
   }

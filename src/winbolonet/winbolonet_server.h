@@ -41,6 +41,62 @@ typedef struct BalanceProposal BalanceProposal;
 #endif
 
 /*********************************************************
+* Current lobby/server state pushed to WinBolo.net.
+*
+* The server keeps a copy of this in the winbolonet module
+* via winbolonetSetLobbyInfo(); the register / beginSession
+* / update body builders and winbolonetSendLobbyUpdate()
+* read the extended fields from it (the winbolonet module
+* has no ServerSim handle of its own). map/md5/counts/
+* settings are all carried so a single lobby_update POST is
+* a complete, idempotent snapshot.
+*********************************************************/
+typedef struct {
+  char     map[256];                 /* Map name */
+  char     mapMd5[33];               /* 32 hex of BMAPBOLO bytes; "" if none */
+  bool     randomMap;                /* Randomly generated map */
+  BYTE     gameType;                 /* 1=open, 2=tournament, 3=strict */
+  BYTE     ai;                       /* aiType policy (0..3) */
+  bool     mines;                    /* Hidden mines */
+  bool     ranked;                   /* Ranked match */
+  bool     allowNewPlayers;          /* Lobby join gate */
+  bool     autoLock;                 /* Auto-lock on game start */
+  bool     timeLimit;               /* Time limit enabled (false=unlimited) */
+  uint16_t timeMinutes;              /* Time limit in minutes */
+  uint16_t lobbyLocks;               /* LOBBY_LOCK_* bitmask */
+  BYTE     numBases;                 /* Total bases */
+  BYTE     numPills;                 /* Total pills */
+  BYTE     freeBases;                /* Neutral bases */
+  BYTE     freePills;                /* Neutral pills */
+  BYTE     numHumans;                /* Connected human players */
+  BYTE     numBots;                  /* Bot players */
+} WbnLobbyInfo;
+
+/*********************************************************
+*NAME:          winbolonetSetLobbyInfo
+*PURPOSE:
+* Stashes the current lobby/server state in the winbolonet
+* module. The register / beginSession / update builders and
+* winbolonetSendLobbyUpdate read the extended fields from
+* this copy. Call before register/update and whenever the
+* lobby state changes.
+*
+*ARGUMENTS:
+* info - Pointer to the current lobby state
+*********************************************************/
+void winbolonetSetLobbyInfo(const WbnLobbyInfo *info);
+
+/*********************************************************
+*NAME:          winbolonetSendLobbyUpdate
+*PURPOSE:
+* Sends the full current lobby snapshot (map + settings +
+* counts) via POST /api/v1/server/lobby_update, keyed by
+* the server key. Idempotent; queued via the background
+* thread (fire-and-forget). Supersedes server/map.
+*********************************************************/
+void winbolonetSendLobbyUpdate(void);
+
+/*********************************************************
 *NAME:          winbolonetCreateServer
 *PURPOSE:
 * Initialises the WinBolo.net module for a game server.
