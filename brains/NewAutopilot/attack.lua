@@ -1331,6 +1331,12 @@ do
   end
 
   local function try_save(stamps)
+    -- Only persist the cache in debug mode. The committed los_stamp_cache.lua
+    -- matches the shipped standoff radius, so production (winbolo.exe,
+    -- BRAIN_DEBUG_MODE off) loads it and never reaches here. If a constant
+    -- change ever invalidates the committed file, production still computes
+    -- the stamps in memory above — it just won't write a file to disk.
+    if not BRAIN_DEBUG_MODE then return end
     local path = cache_path()
     local f = io.open(path, "w")
     if not f then return end

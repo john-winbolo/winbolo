@@ -846,8 +846,8 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
         const char *e = lua_tostring(L, -1);
         WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: failed to load '%s': %s",
                 resolvedPath, e);
-        FILE *ef = fopen("brain_error.log", "a");
-        if (ef) { fprintf(ef, "luaBrainInstance load (buffer) '%s' error: %s\n", resolvedPath, e ? e : "(null)"); fclose(ef); }
+        if (debug_mode) { FILE *ef = fopen("brain_error.log", "a");
+        if (ef) { fprintf(ef, "luaBrainInstance load (buffer) '%s' error: %s\n", resolvedPath, e ? e : "(null)"); fclose(ef); } }
         lua_close(L);
         return false;
       }
@@ -855,8 +855,8 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
       const char *e = lua_tostring(L, -1);
       WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: failed to load '%s': %s",
               resolvedPath, e);
-      FILE *ef = fopen("brain_error.log", "a");
-      if (ef) { fprintf(ef, "luaBrainInstance load (file) '%s' error: %s\n", resolvedPath, e ? e : "(null)"); fclose(ef); }
+      if (debug_mode) { FILE *ef = fopen("brain_error.log", "a");
+      if (ef) { fprintf(ef, "luaBrainInstance load (file) '%s' error: %s\n", resolvedPath, e ? e : "(null)"); fclose(ef); } }
       lua_close(L);
       return false;
     }
@@ -865,15 +865,15 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     const char *e = lua_tostring(L, -1);
     WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: error running '%s': %s",
             path, e);
-    FILE *ef = fopen("brain_error.log", "a");
-    if (ef) { fprintf(ef, "luaBrainInstance run '%s' error: %s\n", path, e ? e : "(null)"); fclose(ef); }
+    if (debug_mode) { FILE *ef = fopen("brain_error.log", "a");
+    if (ef) { fprintf(ef, "luaBrainInstance run '%s' error: %s\n", path, e ? e : "(null)"); fclose(ef); } }
     lua_close(L);
     return false;
   }
   if (!lua_istable(L, -1)) {
     WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: '%s' did not return a table", path);
-    FILE *ef = fopen("brain_error.log", "a");
-    if (ef) { fprintf(ef, "luaBrainInstance: '%s' did not return a table\n", path); fclose(ef); }
+    if (debug_mode) { FILE *ef = fopen("brain_error.log", "a");
+    if (ef) { fprintf(ef, "luaBrainInstance: '%s' did not return a table\n", path); fclose(ef); } }
     lua_close(L);
     return false;
   }

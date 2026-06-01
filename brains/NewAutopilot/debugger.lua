@@ -546,6 +546,9 @@ end
 
 function M.restore_state_ldump(data)
     local function dbglog(msg)
+        -- Production hosts (winbolo.exe) run with BRAIN_DEBUG_MODE off;
+        -- skip the file write so no logs hit disk outside debug runs.
+        if not BRAIN_DEBUG_MODE then return end
         local f = io.open("ldump_debug.log", "a")
         if f then f:write(msg .. "\n"); f:flush(); f:close() end
     end
