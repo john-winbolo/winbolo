@@ -860,14 +860,20 @@ if(ENABLE_SENTRY AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
     FetchContent_Declare(
         sentry
         GIT_REPOSITORY https://github.com/getsentry/sentry-native.git
-        GIT_TAG        0.7.17
+        GIT_TAG        0.14.2
         GIT_SHALLOW    TRUE
         SYSTEM
         EXCLUDE_FROM_ALL
     )
     set(SENTRY_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    # Crashpad has poor MinGW/GCC 15 support; use inproc backend on MinGW.
-    if(MINGW)
+    # Use the inproc backend on toolchains where crashpad's vendored
+    # mini_chromium / libc++ headers don't compile cleanly:
+    #   - MinGW / GCC 15: poor crashpad support upstream.
+    #   - Apple / Xcode 26: stricter constexpr rules + <math.h> macro
+    #     collisions inside libc++ headers (isnan / isfinite) hit
+    #     crashpad TUs that include <format> / <cmath>. Upstream
+    #     crashpad has not been updated for these yet.
+    if(MINGW OR APPLE)
         set(SENTRY_BACKEND "inproc" CACHE STRING "" FORCE)
     else()
         set(SENTRY_BACKEND "crashpad" CACHE STRING "" FORCE)
