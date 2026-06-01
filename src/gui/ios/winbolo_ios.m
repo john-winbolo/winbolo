@@ -848,6 +848,10 @@ void frontEndDrawReturningToLobby(ClientSim *cs) {
     }
 }
 
+void frontEndAudioReturningToLobby(bool active) {
+    soundSetReturningToLobby(active);
+}
+
 void frontEndGameOver(ClientSim *cs) {
     (void)cs;
     SDL_Log("[iOS] Game over (time limit expired)");

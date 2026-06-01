@@ -701,3 +701,17 @@ void soundSetVolume(int pct) {
         SDL_SetAudioStreamGain(audioStream, (float)pct / 100.0f);
     }
 }
+
+void soundSetReturningToLobby(bool active) {
+    static float savedGain = 1.0f;
+    static bool muteActive = false;
+    if (!isPlayable || !audioStream) return;
+    if (active && !muteActive) {
+        savedGain = SDL_GetAudioStreamGain(audioStream);
+        SDL_SetAudioStreamGain(audioStream, 0.0f);
+        muteActive = true;
+    } else if (!active && muteActive) {
+        SDL_SetAudioStreamGain(audioStream, savedGain);
+        muteActive = false;
+    }
+}

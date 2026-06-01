@@ -288,6 +288,19 @@ void frontEndDrawDownload(struct ClientSim *cs, bool justBlack);
 void frontEndDrawReturningToLobby(struct ClientSim *cs);
 
 /*********************************************************
+*NAME:          frontEndAudioReturningToLobby
+*PURPOSE:
+* Silences audio for the game-over → lobby transition so
+* lingering shell/explosion/engine playback doesn't keep
+* sounding behind the "Returning to lobby" screen. The
+* user's chosen volume is restored on the way out.
+*
+*ARGUMENTS:
+*  active - TRUE when entering the transition, FALSE on exit
+*********************************************************/
+void frontEndAudioReturningToLobby(bool active);
+
+/*********************************************************
 *NAME:          frontEndSetPlayerCheckState
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/3/99

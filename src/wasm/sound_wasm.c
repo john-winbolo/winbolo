@@ -65,6 +65,11 @@ static const char *kSoundFiles[WB_NUM_SOUNDS] = {
 
 static bool s_isPlayable = FALSE;
 
+/* Mirrors the last value handed to wb_audio_set_gain. WebAudio doesn't
+ * expose a read path back to C, so we shadow it here for the
+ * returning-to-lobby save/restore. */
+static double s_currentGain = 0.5;
+
 /* -------------------------------------------------------
  * JS-side helpers, defined inline via EM_JS.
  *
@@ -244,5 +249,21 @@ void soundSetMuted(bool mute) {
 void soundSetVolume(int pct) {
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
-  wb_audio_set_gain((double)pct / 100.0);
+  s_currentGain = (double)pct / 100.0;
+  wb_audio_set_gain(s_currentGain);
+}
+
+void soundSetReturningToLobby(bool active) {
+  static double savedGain = 0.5;
+  static bool muteActive = false;
+  if (!s_isPlayable) return;
+  if (active && !muteActive) {
+    savedGain = s_currentGain;
+    wb_audio_set_gain(0.0);
+    muteActive = true;
+  } else if (!active && muteActive) {
+    wb_audio_set_gain(savedGain);
+    s_currentGain = savedGain;
+    muteActive = false;
+  }
 }

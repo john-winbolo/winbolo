@@ -1544,6 +1544,10 @@ void frontEndDrawReturningToLobby(ClientSim *cs) {
   }
 }
 
+void frontEndAudioReturningToLobby(bool active) {
+  soundSetReturningToLobby(active);
+}
+
 void frontEndGameOver(ClientSim *cs) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   SDL_RemoveTimer(timerFrameID);

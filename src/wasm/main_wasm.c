@@ -701,6 +701,10 @@ void frontEndDrawReturningToLobby(ClientSim *cs) {
   }
 }
 
+void frontEndAudioReturningToLobby(bool active) {
+  soundSetReturningToLobby(active);
+}
+
 void frontEndGameOver(ClientSim *cs) {
   (void)cs;
   imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBTIMELIMIT_END),
