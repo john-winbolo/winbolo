@@ -310,32 +310,8 @@ bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize,
   }
   cJSON_AddItemToObject(body, "player_keys", playerKeys);
 
-  /* Dump the request body before sending so the WBN traffic is
-   * inspectable from the server's stderr without an external proxy.
-   * Same shape on the way back below so request/response can be
-   * eyeballed as a pair. */
-  {
-    char *reqDump = cJSON_PrintUnformatted(body);
-    if (reqDump != NULL) {
-      balanceDebugLog("[WBN balance] REQUEST  server/balance %s", reqDump);
-      free(reqDump);
-    } else {
-      balanceDebugLog("[WBN balance] REQUEST  server/balance (cJSON_PrintUnformatted returned NULL)");
-    }
-  }
-
-  balanceDebugLog("[WBN balance] calling wbn_api_call_server(\"server/balance\")...");
   status = wbn_api_call_server("server/balance", body, &resp);
-  balanceDebugLog("[WBN balance] wbn_api_call_server returned status=%d resp=%p",
-                  status, (void *)resp);
   cJSON_Delete(body);
-
-  {
-    char *respDump = resp ? cJSON_PrintUnformatted(resp) : NULL;
-    balanceDebugLog("[WBN balance] RESPONSE status=%d body=%s",
-                    status, respDump ? respDump : "(null)");
-    if (respDump) free(respDump);
-  }
 
   if (status != 200 || resp == NULL) {
     serverSimConsoleMessage("WBN: Balance request failed");

@@ -32,34 +32,6 @@
 #include <string.h>
 #include <time.h>
 
-void balanceDebugLog(const char *fmt, ...) {
-  static FILE *s_f = NULL;
-  static int   s_failed = 0;
-  if (s_failed) return;
-  if (s_f == NULL) {
-    s_f = fopen("balance.log", "a");
-    if (s_f == NULL) { s_failed = 1; return; }
-    /* unbuffered so a crash doesn't lose the last lines */
-    setvbuf(s_f, NULL, _IONBF, 0);
-    time_t now = time(NULL);
-    struct tm tmv;
-#ifdef _WIN32
-    localtime_s(&tmv, &now);
-#else
-    tmv = *localtime(&now);
-#endif
-    fprintf(s_f, "\n----- balance.log opened %04d-%02d-%02d %02d:%02d:%02d -----\n",
-            tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
-            tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
-  }
-  va_list ap;
-  va_start(ap, fmt);
-  vfprintf(s_f, fmt, ap);
-  va_end(ap);
-  fputc('\n', s_f);
-  fflush(s_f);
-}
-
 /* === Lifecycle === */
 
 static void clientSimTeardownTransport(ClientSim *cs) {

@@ -6243,10 +6243,7 @@ void serverSimPublishLobbySettings(ServerSim *sim) {
     if (!sim) return;
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbySettingsEvent(sim, &evt);
-    balanceDebugLog("[RANKED SERVER] publishLobbySettings: sim->ranked=%d evt.lobbyRanked=%d",
-                    (int)sim->ranked, (int)evt.u.lobbySettings.lobbyRanked);
     serverSimPublishControl(sim, &evt);
-    balanceDebugLog("[RANKED SERVER] publishLobbySettings: publishControl returned");
 }
 
 /* Shared apply path for the LST_* setting cluster carried in

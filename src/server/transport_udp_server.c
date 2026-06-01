@@ -332,21 +332,11 @@ typedef struct {
 static int balanceThreadFunc(void *data) {
     BalanceThreadData *btd = (BalanceThreadData *)data;
     ServerSim *sim = btd->sim;
-    bool includeBots = btd->includeBots;
-
-    balanceDebugLog("[BAL THREAD] enter: totalPlayers=%u teamSize=%u "
-                    "numBotSlots=%u includeBots=%d -- about to call WBN",
-                    (unsigned)btd->totalPlayers, (unsigned)btd->teamSize,
-                    (unsigned)btd->numBotSlots, (int)includeBots);
 
     /* This blocks on HTTP — runs outside the game mutex */
     serverSimRequestBalanceProposal(sim, btd->totalPlayers, btd->teamSize,
                                      btd->numBotSlots > 0 ? btd->botSlots : NULL,
                                      btd->numBotSlots);
-
-    balanceDebugLog("[BAL THREAD] WBN call returned; "
-                    "proposal.pending=%d",
-                    (int)serverSimGetBalanceProposal(sim)->pending);
 
     free(btd);
 
@@ -1175,7 +1165,6 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         if (winboloNetVerifyClientKey(wbnJoinKey, name, (BYTE)slot, errorMsg,
                                       &wbnHasSteam, &wbnIsSupporter)) {
             fprintf(stderr, "[UDP SERVER] Player '%s' verified with WinBolo.net\n", name);
-            balanceDebugLog("[WBN VERIFY] OK player='%s' slot=%d", name, slot);
             incomingIsWBN = true;
         } else {
             /* Degrade to non-WBN join instead of rejecting outright.
@@ -1188,8 +1177,6 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
                      "WinBolo.net verification failed: %s. Proceeding "
                      "without WBN.net features.", errorMsg);
             fprintf(stderr, "[UDP SERVER] %s (player='%s')\n", failMsg, name);
-            balanceDebugLog("[WBN VERIFY] FAILED player='%s' slot=%d reason='%s' "
-                            "— admitting as non-WBN", name, slot, errorMsg);
             serverSimConsoleMessage(failMsg);
             incomingIsWBN = false;
         }
@@ -2474,8 +2461,6 @@ bool transportUdpServerStartBalanceRequest(ServerSim *sim,
                                            bool includeBots) {
     BalanceThreadData *btd = malloc(sizeof(BalanceThreadData));
     if (!btd) {
-        balanceDebugLog("[BAL SERVER] dropped balance request: "
-                        "malloc(BalanceThreadData) failed");
         return false;
     }
     SDL_Thread *t;
@@ -2496,23 +2481,15 @@ bool transportUdpServerStartBalanceRequest(ServerSim *sim,
             btd->botSlots[btd->numBotSlots++] = (uint8_t)i;
         }
     }
-    balanceDebugLog("[BAL SERVER] dispatching balance thread: "
-                    "totalPlayers=%u teamSize=%u includeBots=%d numBotSlots=%u",
-                    (unsigned)btd->totalPlayers,
-                    (unsigned)btd->teamSize,
-                    (int)btd->includeBots,
-                    (unsigned)btd->numBotSlots);
     serverSimSetBalanceRequestInFlight(sim, true);
     t = SDL_CreateThread(balanceThreadFunc, "WbnBalance", btd);
     if (!t) {
         serverSimSetBalanceRequestInFlight(sim, false);
         free(btd);
-        balanceDebugLog("[BAL SERVER] FAILED to create balance thread");
         serverSimConsoleMessage("Failed to start balance thread");
         return false;
     }
     SDL_DetachThread(t);
-    balanceDebugLog("[BAL SERVER] balance thread created and detached");
     return true;
 }
 
