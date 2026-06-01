@@ -2718,6 +2718,12 @@ function M.update_attack_substate(goal, state, world, info)
   -- ══════════════════════════════════════════════════════════════════
   -- plan_position: full terrain analysis to find best attack spot
   -- ══════════════════════════════════════════════════════════════════
+  -- _plan_position_cleared gates a once-per-episode clear; it MUST reset when we
+  -- leave plan_position, or a second pass (plan_position -> aim -> shoot_pill ->
+  -- swerve -> plan_position) inherits the first attack's stale _wall_build_list /
+  -- _is_ppt / _aim_locked / _shield_scan and the re-entry build_walls stalls.
+  if goal.substate ~= "plan_position" then goal._plan_position_cleared = nil end
+
   if goal.substate == "plan_position" then
     -- Fresh-entry cleanup: an earlier attack on this same pill (or any
     -- prior goal-of-the-same-target round-trip) can leave stale shield
@@ -3964,7 +3970,7 @@ function M.update_attack_substate(goal, state, world, info)
           goal._build_decision_msg = "BUILD_WALLS 0 BUILT: " .. why
           goal._build_decision_until = now + 500   -- ~10s @ 50Hz
           goal._build_decision_is_failure = true   -- viz reads this for red color
-          print(TAG .. " " .. goal._build_decision_msg)
+          print2(TAG .. " " .. goal._build_decision_msg)
         end
       end
       goal.wall_shield = false
