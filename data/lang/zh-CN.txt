@@ -1331,3 +1331,7 @@ STR_MENU_VOLUME=音量
 STR_VOLUME_MUTE=静音
 STR_REJECT_VERSION_MISMATCH=服务器版本为 {string1}，您的版本为 {string2} — 请更新。
 STR_RETURNING_TO_LOBBY=正在返回大厅
+
+# Balance — WBN-failure status pill + reject toast for non-ranked balance state
+STR_DLGLOBBY_REJECT_BAD_STATE=当前不允许
+STR_DLGLOBBY_BAL_STATUS_FAILED=WBN 平衡失败

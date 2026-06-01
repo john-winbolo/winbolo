@@ -298,6 +298,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_GAME_VOTE_STATE:       return "CTRL_GAME_VOTE_STATE";
     case CTRL_SERVER_TEXT:           return "CTRL_SERVER_TEXT";
     case CTRL_COMMAND_REJECTED:      return "CTRL_COMMAND_REJECTED";
+    case CTRL_BALANCE_FAILED:        return "CTRL_BALANCE_FAILED";
     default:                         return NULL;
   }
 }
@@ -536,6 +537,11 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
               (unsigned)evt->u.commandRejected.origCmdType,
               (unsigned)evt->u.commandRejected.reasonCode,
               (unsigned)evt->u.commandRejected.origSlot);
+      break;
+
+    case CTRL_BALANCE_FAILED:
+      fprintf(f, ",\"reasonCode\":%u",
+              (unsigned)evt->u.balanceFailed.reasonCode);
       break;
 
     case CTRL_EVENT_TYPE_COUNT:

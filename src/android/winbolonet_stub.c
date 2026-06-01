@@ -35,8 +35,8 @@ void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
   (void)array; (void)length; (void)numTeams;
 }
 
-void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB) {
-  (void)eventType; (void)isServer; (void)playerA; (void)playerB;
+void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
+  (void)eventType; (void)isServer; (void)playerA; (void)playerB; (void)aIsBot; (void)bIsBot;
 }
 
 void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePills, bool sendNow) {
@@ -87,6 +87,10 @@ bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorM
 void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills) {
   (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;
 }
+
+void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) { (void)info; }
+
+void winbolonetSendLobbyUpdate(void) { }
 
 bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize,
                                      const uint8_t *botSlots, uint8_t numBotSlots,

@@ -40,7 +40,7 @@
 #include "players.h"
 #include "server_sim.h"  /* serverSimGetCompressedMap / serverSimGetMapName */
 #include "../steam/steam_wrapper.h"
-#include "global.h"      /* balanceDebugLog */
+#include "global.h"
 #include "../common/wb_log.h"
 #include "../common/mp_diag_log.h"
 
@@ -196,27 +196,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->inLobby          = evt->u.lobbySettings.inLobby;
         cs->lobbyOpenHost            = evt->u.lobbySettings.lobbyOpenHost;
         cs->lobbyAutoLockOnGameStart = evt->u.lobbySettings.lobbyAutoLockOnGameStart;
-        {
-            bool prevR = cs->lobbyRanked;
-            cs->lobbyRanked          = evt->u.lobbySettings.lobbyRanked;
-            /* Unconditional log so we can see every settings arrival
-             * even when ranked stays the same — tells us whether the
-             * client is receiving publishes at all. */
-            balanceDebugLog("[RANKED CLIENT] CTRL_LOBBY_SETTINGS arrived: "
-                            "lobbyRanked prev=%d new=%d (changed=%d) cs=%p",
-                            (int)prevR, (int)cs->lobbyRanked,
-                            (int)(prevR != cs->lobbyRanked), (void *)cs);
-        }
-        {
-            bool prevA = cs->lobbyAllowNewPlayers;
-            cs->lobbyAllowNewPlayers = evt->u.lobbySettings.lobbyAllowNewPlayers;
-            if (prevA != cs->lobbyAllowNewPlayers) {
-                balanceDebugLog("[ALLOW CLIENT] CTRL_LOBBY_SETTINGS arrived: "
-                                "lobbyAllowNewPlayers %d -> %d cs=%p",
-                                (int)prevA, (int)cs->lobbyAllowNewPlayers,
-                                (void *)cs);
-            }
-        }
+        cs->lobbyRanked          = evt->u.lobbySettings.lobbyRanked;
+        cs->lobbyAllowNewPlayers = evt->u.lobbySettings.lobbyAllowNewPlayers;
         cs->lobbyWbnAvailable = evt->u.lobbySettings.lobbyWbnAvailable;
         cs->lobbyServerLocks         = evt->u.lobbySettings.lobbyServerLocks;
         cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;
@@ -326,6 +307,16 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         break;
     }
+
+    case CTRL_BALANCE_FAILED:
+        /* Latched so the lobby UI's per-frame status row can flip the
+         * "Asking WBN…" pill to the failure label as soon as we hear
+         * back from the server — no need to wait out the 8 s NOREPLY
+         * timeout. The control event is unicast to the host slot, so
+         * remote clients won't see it. */
+        cs->lastBalanceFailedMs     = SDL_GetTicks();
+        cs->lastBalanceFailedReason = evt->u.balanceFailed.reasonCode;
+        break;
 
     case CTRL_MAP_SKIP_STATE: {
         int i;

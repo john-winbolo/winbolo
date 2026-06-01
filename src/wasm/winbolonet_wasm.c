@@ -33,9 +33,9 @@ void httpSetAltIpAddress(char *ip)                                 { (void)ip; }
  * ------------------------------------------------------- */
 void winbolonetEventsCreate(void)                                  { }
 void winbolonetEventsDestroy(void)                                 { }
-void winbolonetEventsAddItem(BYTE t, const char *a, const char *b) { (void)t; (void)a; (void)b; }
+void winbolonetEventsAddItem(BYTE t, const char *a, const char *b, bool aIsBot, bool bIsBot) { (void)t; (void)a; (void)b; (void)aIsBot; (void)bIsBot; }
 int  winbolonetEventsGetSize(void)                                 { return 0; }
-BYTE winbolonetEventsRemove(char *a, char *b)                      { (void)a; (void)b; return WINBOLONET_EVENT_NOITEM; }
+BYTE winbolonetEventsRemove(char *a, char *b, bool *aIsBot, bool *bIsBot)  { (void)a; (void)b; (void)aIsBot; (void)bIsBot; return WINBOLONET_EVENT_NOITEM; }
 
 /* -------------------------------------------------------
  * winbolonetthread.h
@@ -80,8 +80,8 @@ void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
 }
 
 void winbolonetAddEvent(BYTE eventType, bool isServer,
-                         BYTE playerA, BYTE playerB) {
-  (void)eventType; (void)isServer; (void)playerA; (void)playerB;
+                         BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
+  (void)eventType; (void)isServer; (void)playerA; (void)playerB; (void)aIsBot; (void)bIsBot;
 }
 
 void winboloNetSendLock(bool isLocked)                             { (void)isLocked; }
@@ -89,6 +89,10 @@ void winboloNetSendLock(bool isLocked)                             { (void)isLoc
 void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills) {
   (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;
 }
+
+void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) { (void)info; }
+
+void winbolonetSendLobbyUpdate(void) { }
 
 bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter) {
   (void)playerKey; (void)playerName; (void)playerNum;

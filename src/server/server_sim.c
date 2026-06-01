@@ -80,6 +80,7 @@
 #include "mapgen.h"
 #include "../common/wb_log.h"
 #include "../common/mp_diag_log.h"
+#include "../common/md5.h"
 #include "server_sim_join.h"
 #include "playername_validate.h"
 
@@ -315,7 +316,8 @@ static void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed, BYTE deathC
     ev.data[2] = deathCause;
     ev.data[3] = carriedPills;
     serverSimAddEvent(sim, &ev);
-    winbolonetAddEvent(WINBOLO_NET_EVENT_TANK_KILL, TRUE, killer, killed);
+    winbolonetAddEvent(WINBOLO_NET_EVENT_TANK_KILL, TRUE, killer, killed,
+                       botManagerIsBot(sim, killer), botManagerIsBot(sim, killed));
     logAddEvent(log_KillPlayer, killed, killer, 0, 0, 0, NULL);
     logAddEvent(log_PlayerDied, killed, 0, 0, 0, 0, NULL);
 }
@@ -376,6 +378,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->previousMapData = NULL;
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
+    sim->mapMd5Valid = FALSE;
+    memset(sim->mapMd5, 0, sizeof(sim->mapMd5));
     sim->sim.hiddenMines = hiddenMines;
     sim->sim.isServer = TRUE;
     sim->sim.isLocalTransport = TRUE;
@@ -1625,7 +1629,8 @@ LocalJoinResult serverSimLocalJoin(ServerSim *sim,
             winboloNetGetServerKey(serverKey);
             if (serverKey[0] != '\0') {
                 winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
-                                   (BYTE)slot, WINBOLO_NET_NO_PLAYER);
+                                   (BYTE)slot, WINBOLO_NET_NO_PLAYER,
+                                   botManagerIsBot(sim, (BYTE)slot), FALSE);
             }
         }
     }
@@ -1782,9 +1787,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
             }
             serverSimMapSkipVotesReset(sim);
             publishMapSkipState(sim);
-            winbolonetSendMapChange(sim->mapName,
-                basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb),
-                basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb));
+            serverSimWbnLobbyUpdate(sim, FALSE);
         }
     }
 
@@ -2110,6 +2113,11 @@ void serverSimSetEmptyResetMinutes(ServerSim *sim, int minutes) {
 }
 
 void serverSimSetMapName(ServerSim *sim, const char *name) {
+    /* Name only — the map md5 tracks content, not the display name, so
+     * it is set/cleared by the content-load paths (serverSimReloadMap,
+     * serverSimChangeMap, serverSimReloadCompressedInMemory) and the
+     * revert path. Touching it here would wipe a freshly-computed hash
+     * when callers fix up the display name after a content load. */
     if (name == NULL || name[0] == '\0') {
         sim->mapName[0] = '\0';
         return;
@@ -2691,6 +2699,112 @@ BYTE serverSimGetNumPlayers(ServerSim *sim) {
     return num;
 }
 
+BYTE serverSimGetNumHumans(ServerSim *sim) {
+    BYTE count;
+    BYTE num = 0;
+    for (count = 0; count < MAX_TANKS; count++) {
+        if (sim->playerConnected[count] && !botManagerIsBot(sim, count)) {
+            num++;
+        }
+    }
+    return num;
+}
+
+/* Compute and cache the MD5 of a BMAPBOLO .map file so WBN can match
+ * the map against its library. Streams the file (handles any size) and
+ * only accepts it when the BMAPBOLO magic is present; clears the valid
+ * flag on any failure or non-.map input. */
+static void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path) {
+    FILE *f;
+    BYTE buf[8192];
+    size_t n;
+    Md5Ctx ctx;
+    bool headerChecked = FALSE;
+    bool isBmap = FALSE;
+    if (sim == NULL) return;
+    sim->mapMd5Valid = FALSE;
+    if (path == NULL || path[0] == '\0') return;
+    f = fopen(path, "rb");
+    if (f == NULL) return;
+    md5Init(&ctx);
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+        if (!headerChecked) {
+            headerChecked = TRUE;
+            isBmap = (n >= (sizeof(MAP_HEADER) - 1) &&
+                      memcmp(buf, MAP_HEADER, sizeof(MAP_HEADER) - 1) == 0);
+            if (!isBmap) break;
+        }
+        md5Update(&ctx, buf, n);
+    }
+    fclose(f);
+    if (isBmap) {
+        md5Final(sim->mapMd5, &ctx);
+        sim->mapMd5Valid = TRUE;
+    }
+}
+
+/* Minimum seconds between server/lobby_update sends — bursty lobby
+ * edits (e.g. time-limit slider) coalesce into one send per window. */
+#define WBN_LOBBY_UPDATE_INTERVAL 30
+
+void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
+    WbnLobbyInfo info;
+    if (sim == NULL) return;
+    memset(&info, 0, sizeof(info));
+    snprintf(info.map, sizeof(info.map), "%s", sim->mapName);
+    /* map_md5 is the hash of the canonical BMAPBOLO bytes; meaningful
+     * only for known (non-random) maps WBN can match in its library. */
+    if (sim->mapMd5Valid && !sim->randomMapEnabled) {
+        static const char hexd[] = "0123456789abcdef";
+        int i;
+        for (i = 0; i < 16; i++) {
+            info.mapMd5[i * 2]     = hexd[(sim->mapMd5[i] >> 4) & 0xF];
+            info.mapMd5[i * 2 + 1] = hexd[sim->mapMd5[i] & 0xF];
+        }
+        info.mapMd5[32] = '\0';
+    } else {
+        info.mapMd5[0] = '\0';
+    }
+    info.randomMap       = sim->randomMapEnabled ? true : false;
+    info.gameType        = (BYTE)gameTypeGet(&sim->sim.game);
+    info.ai              = (BYTE)sim->botAiType;
+    info.mines           = sim->sim.hiddenMines ? true : false;
+    info.ranked          = sim->ranked ? true : false;
+    info.allowNewPlayers = sim->allowNewPlayers ? true : false;
+    info.autoLock        = sim->autoLockOnGameStart ? true : false;
+    info.timeLimit       = serverSimGetTimeLimit(sim) ? true : false;
+    info.timeMinutes     = serverSimGetTimeMinutes(sim);
+    info.lobbyLocks      = sim->serverLocks;
+    info.numBases        = basesGetNumBases(&sim->sim.bs);
+    info.numPills        = pillsGetNumPills(&sim->sim.pb);
+    info.freeBases       = serverSimGetNumNeutralBases(sim);
+    info.freePills       = serverSimGetNumNeutralPills(sim);
+    info.numHumans       = serverSimGetNumHumans(sim);
+    info.numBots         = botManagerGetNumBots(sim);
+    winbolonetSetLobbyInfo(&info);
+}
+
+void serverSimWbnLobbyUpdate(ServerSim *sim, bool force) {
+    time_t now;
+    if (sim == NULL || !winbolonetIsRunning()) return;
+    now = time(NULL);
+    if (!force && (now - sim->wbnLobbyLastSent) < WBN_LOBBY_UPDATE_INTERVAL) {
+        /* Within the rate-limit window: defer to the next tick. */
+        sim->wbnLobbyDirty = TRUE;
+        return;
+    }
+    serverSimRefreshWbnLobbyInfo(sim);
+    winbolonetSendLobbyUpdate();
+    sim->wbnLobbyLastSent = now;
+    sim->wbnLobbyDirty = FALSE;
+}
+
+void serverSimWbnLobbyTick(ServerSim *sim) {
+    if (sim != NULL && sim->wbnLobbyDirty) {
+        serverSimWbnLobbyUpdate(sim, FALSE);
+    }
+}
+
 BYTE serverSimGetNumNeutralBases(ServerSim *sim) {
     return basesGetNumNeutral(&sim->sim.bs);
 }
@@ -2928,6 +3042,10 @@ void serverSimLobbyCheckAllReady(ServerSim *sim) {
     } else {
         /* Anything fanning over the wire, or a subsequent round (full
          * reset via countdown + StartGame). */
+        /* Force a final WBN lobby snapshot before the countdown so the
+         * tracker reflects the exact map/settings/roster the game
+         * starts with, regardless of the 30s batch window. */
+        serverSimWbnLobbyUpdate(sim, TRUE);
         sim->state = serverStateCountdown;
         sim->countdownTicks = LOBBY_COUNTDOWN_TICKS;
         serverSimConsoleMessage("All players ready! Starting countdown...");
@@ -3296,6 +3414,9 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
         return FALSE;
     }
 
+    /* Hash the canonical BMAPBOLO file so WBN can match it. */
+    serverSimCacheMapMd5FromFile(sim, mapFileName);
+
     basesClearMines(&sim->sim);
 
     /* Update cached map data */
@@ -3371,7 +3492,8 @@ void serverSimSendWbnWinEvents(ServerSim *sim) {
     for (count = 0; count < MAX_TANKS; count++) {
         if (!sim->playerConnected[count]) continue;
         if (playersIsAllie(&sim->sim.plyrs, count, first) || count == first) {
-            winbolonetAddEvent(WINBOLO_NET_EVENT_WIN, TRUE, count, WINBOLO_NET_NO_PLAYER);
+            winbolonetAddEvent(WINBOLO_NET_EVENT_WIN, TRUE, count, WINBOLO_NET_NO_PLAYER,
+                               botManagerIsBot(sim, count), FALSE);
         }
     }
 }
@@ -3657,9 +3779,7 @@ void serverSimMapSkipVoteToggle(ServerSim *sim, uint8_t playerNum) {
             logAddEvent(log_MapSkipApplied, 0, 0, 0, 0, 0, pstr);
         }
         serverSimMapSkipVotesReset(sim);
-        winbolonetSendMapChange(sim->mapName,
-            basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb),
-            basesGetNumBases(&sim->sim.bs), pillsGetNumPills(&sim->sim.pb));
+        serverSimWbnLobbyUpdate(sim, FALSE);
     }
     publishMapSkipState(sim);
 }
@@ -4754,7 +4874,8 @@ void serverSimAcceptAlliance(ServerSim *sim, BYTE accepter, BYTE newMember) {
      * them uniformly. winbolonetAddEvent is gated internally by
      * winbolonetIsRunning(), so SP / non-WBN-aware builds pay nothing.
      * logAddEvent is gated by whether a replay log is open. */
-    winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE, accepter, newMember);
+    winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_JOIN, TRUE, accepter, newMember,
+                       botManagerIsBot(sim, accepter), botManagerIsBot(sim, newMember));
     logAddEvent(log_AllyAccept, accepter, newMember, 0, 0, 0, NULL);
 }
 
@@ -4772,7 +4893,8 @@ void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum) {
     serverSimPublishControl(sim, &evt);
     /* WBN + replay-log side effects — see serverSimAcceptAlliance. */
     winbolonetAddEvent(WINBOLO_NET_EVENT_ALLY_LEAVE, TRUE,
-                       playerNum, WINBOLO_NET_NO_PLAYER);
+                       playerNum, WINBOLO_NET_NO_PLAYER,
+                       botManagerIsBot(sim, playerNum), FALSE);
     logAddEvent(log_AllyLeave, playerNum, 0, 0, 0, 0, NULL);
 }
 
@@ -4857,6 +4979,12 @@ void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
         mpDiagLog("[bus] PUBLISH type=%d subscribers=%d%s",
                   (int)evt->type, snapCount, extra);
     }
+    /* Make sim visible to deliver callbacks that recover it via
+     * serverSimGetActive() (e.g. udpClientDeliverControl's enqueue
+     * diagnostic + running-phase early-send gate). The main thread
+     * already sets this per tick; worker threads (WBN balance) have
+     * NULL in their TLS slot until we set it here. */
+    activeSim = sim;
     for (i = 0; i < snapCount; i++) {
         snapshot[i].deliver(snapshot[i].ctx, evt);
     }
@@ -5317,6 +5445,10 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
         return FALSE;
     }
 
+    /* Hash the canonical BMAPBOLO file so WBN can match it. This is the
+     * path the lobby map chooser uses (CMD_LOBBY_SET_MAP). */
+    serverSimCacheMapMd5FromFile(sim, mapFileName);
+
     basesClearMines(&sim->sim);
 
     /* Update map name from basename, strip .map suffix. */
@@ -5458,10 +5590,17 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
         loadedOk = (mapRead(tmpPath, &sim->sim.mp, &sim->sim.pb,
                             &sim->sim.bs, &sim->sim.ss) == TRUE);
         remove(tmpPath);
+        /* These bytes are the canonical BMAPBOLO .map file — hash them
+         * so WBN can match the map against its library. */
+        if (loadedOk) {
+            md5Compute(bytes, (size_t)len, sim->mapMd5);
+            sim->mapMd5Valid = TRUE;
+        }
     } else {
         loadedOk = (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb,
                                          &sim->sim.bs, &sim->sim.ss,
                                          (BYTE *)bytes, len) == TRUE);
+        sim->mapMd5Valid = FALSE;
     }
     if (!loadedOk) {
         WB_LOG_ERROR(WB_LOG_CAT_SERVER,
@@ -5597,6 +5736,10 @@ bool serverSimRevertPreview(ServerSim *sim) {
         return FALSE;
     }
     basesClearMines(&sim->sim);
+
+    /* Reverted to the previous map from its compressed bytes — we no
+     * longer have its .map file to hash, so clear the cached md5. */
+    sim->mapMd5Valid = FALSE;
 
     memcpy(sim->mapName, sim->previousMapName, sizeof(sim->mapName));
     len = serverSimGetCompressedMap(sim, tempBuf);
@@ -6100,10 +6243,7 @@ void serverSimPublishLobbySettings(ServerSim *sim) {
     if (!sim) return;
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbySettingsEvent(sim, &evt);
-    balanceDebugLog("[RANKED SERVER] publishLobbySettings: sim->ranked=%d evt.lobbyRanked=%d",
-                    (int)sim->ranked, (int)evt.u.lobbySettings.lobbyRanked);
     serverSimPublishControl(sim, &evt);
-    balanceDebugLog("[RANKED SERVER] publishLobbySettings: publishControl returned");
 }
 
 /* Shared apply path for the LST_* setting cluster carried in
@@ -6210,6 +6350,7 @@ bool serverSimApplyLobbySetting(ServerSim *sim,
     if (!serverSimApplyLobbySettingInner(sim, lst, value, len)) return false;
     serverSimPublishLobbySettings(sim);
     lobbyAutoUnreadyOnChange(sim);
+    serverSimWbnLobbyUpdate(sim, FALSE);
     return true;
 }
 
@@ -6235,6 +6376,7 @@ static void serverSimApplyMapChange(ServerSim *sim) {
     }
     serverSimPublishLobbySettings(sim);
     lobbyAutoUnreadyOnChange(sim);
+    serverSimWbnLobbyUpdate(sim, FALSE);
 }
 
 /* Auto-unready: any meaningful lobby change clears every human's

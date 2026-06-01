@@ -1331,3 +1331,7 @@ STR_MENU_VOLUME=Ses düzeyi
 STR_VOLUME_MUTE=Sessiz
 STR_REJECT_VERSION_MISMATCH=Sunucu {string1} sürümünde, sizde {string2} var — lütfen güncelleyin.
 STR_RETURNING_TO_LOBBY=Lobiye dönülüyor
+
+# Balance — WBN-failure status pill + reject toast for non-ranked balance state
+STR_DLGLOBBY_REJECT_BAD_STATE=şu an izin verilmiyor
+STR_DLGLOBBY_BAL_STATUS_FAILED=WBN dengesi başarısız

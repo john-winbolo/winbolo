@@ -47,6 +47,65 @@ extern char winboloNetPlayerKey[MAX_TANKS][WINBOLONET_KEY_LEN];
 
 static time_t winboloNetLastSent;
 
+/* Current lobby/server state, stashed by winbolonetSetLobbyInfo and
+ * read by the register/beginSession/update builders and
+ * winbolonetSendLobbyUpdate. Zero-initialised until the server sets
+ * it. */
+static WbnLobbyInfo s_lobbyInfo;
+
+void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) {
+  if (info != NULL) {
+    s_lobbyInfo = *info;
+  }
+}
+
+/* Adds the extended lobby/setting fields shared by register,
+ * beginSession and lobby_update to a cJSON body from the stashed
+ * lobby info. Counts are sent both split (num_humans/num_bots) and
+ * summed (num_players) so existing consumers keep working. */
+static void winbolonetAddLobbyInfoFields(cJSON *body) {
+  cJSON_AddStringToObject(body, "map_md5", s_lobbyInfo.mapMd5);
+  cJSON_AddBoolToObject(body, "random_map", s_lobbyInfo.randomMap);
+  cJSON_AddBoolToObject(body, "ranked", s_lobbyInfo.ranked);
+  cJSON_AddBoolToObject(body, "allow_new_players", s_lobbyInfo.allowNewPlayers);
+  cJSON_AddBoolToObject(body, "auto_lock", s_lobbyInfo.autoLock);
+  cJSON_AddBoolToObject(body, "time_limit", s_lobbyInfo.timeLimit);
+  cJSON_AddNumberToObject(body, "time_minutes", s_lobbyInfo.timeMinutes);
+  cJSON_AddNumberToObject(body, "lobby_locks", s_lobbyInfo.lobbyLocks);
+  cJSON_AddNumberToObject(body, "num_humans", s_lobbyInfo.numHumans);
+  cJSON_AddNumberToObject(body, "num_bots", s_lobbyInfo.numBots);
+}
+
+void winbolonetSendLobbyUpdate(void) {
+  cJSON *body = NULL;
+  char *json_str;
+
+  if (winboloNetRunning != TRUE) {
+    return;
+  }
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddStringToObject(body, "map", s_lobbyInfo.map);
+  cJSON_AddNumberToObject(body, "num_bases", s_lobbyInfo.numBases);
+  cJSON_AddNumberToObject(body, "num_pills", s_lobbyInfo.numPills);
+  cJSON_AddNumberToObject(body, "free_bases", s_lobbyInfo.freeBases);
+  cJSON_AddNumberToObject(body, "free_pills", s_lobbyInfo.freePills);
+  cJSON_AddNumberToObject(body, "game_type", s_lobbyInfo.gameType);
+  cJSON_AddNumberToObject(body, "ai", s_lobbyInfo.ai);
+  cJSON_AddBoolToObject(body, "mines", s_lobbyInfo.mines);
+  cJSON_AddNumberToObject(body, "num_players",
+                          s_lobbyInfo.numHumans + s_lobbyInfo.numBots);
+  winbolonetAddLobbyInfoFields(body);
+
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    winbolonetThreadAddServerRequest("server/lobby_update", json_str);
+    free(json_str);
+  }
+  cJSON_Delete(body);
+}
+
 /*********************************************************
 *NAME:          winbolonetCreateServer
 *PURPOSE:
@@ -95,6 +154,7 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
   cJSON_AddNumberToObject(body, "num_players", numPlayers);
   cJSON_AddStringToObject(body, "version", versionStr);
   cJSON_AddBoolToObject(body, "in_lobby", TRUE);
+  winbolonetAddLobbyInfoFields(body);
 
   status = wbn_api_call("server/register", body, &resp);
   cJSON_Delete(body);
@@ -250,32 +310,8 @@ bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize,
   }
   cJSON_AddItemToObject(body, "player_keys", playerKeys);
 
-  /* Dump the request body before sending so the WBN traffic is
-   * inspectable from the server's stderr without an external proxy.
-   * Same shape on the way back below so request/response can be
-   * eyeballed as a pair. */
-  {
-    char *reqDump = cJSON_PrintUnformatted(body);
-    if (reqDump != NULL) {
-      balanceDebugLog("[WBN balance] REQUEST  server/balance %s", reqDump);
-      free(reqDump);
-    } else {
-      balanceDebugLog("[WBN balance] REQUEST  server/balance (cJSON_PrintUnformatted returned NULL)");
-    }
-  }
-
-  balanceDebugLog("[WBN balance] calling wbn_api_call_server(\"server/balance\")...");
   status = wbn_api_call_server("server/balance", body, &resp);
-  balanceDebugLog("[WBN balance] wbn_api_call_server returned status=%d resp=%p",
-                  status, (void *)resp);
   cJSON_Delete(body);
-
-  {
-    char *respDump = resp ? cJSON_PrintUnformatted(resp) : NULL;
-    balanceDebugLog("[WBN balance] RESPONSE status=%d body=%s",
-                    status, respDump ? respDump : "(null)");
-    if (respDump) free(respDump);
-  }
 
   if (status != 200 || resp == NULL) {
     serverSimConsoleMessage("WBN: Balance request failed");
@@ -359,6 +395,8 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
   static BYTE staticNumPlayers = 0;
   static BYTE staticNumFreeBases = 0;
   static BYTE staticNumFreePills = 0;
+  static BYTE staticNumHumans = 0;
+  static BYTE staticNumBots = 0;
   int size;
   cJSON *body = NULL;
   cJSON *events = NULL;
@@ -366,6 +404,8 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
   cJSON *resp = NULL;
   char keyA[WINBOLONET_KEY_LEN];
   char keyB[WINBOLONET_KEY_LEN];
+  bool evtAIsBot;
+  bool evtBIsBot;
   BYTE val;
 
   if (winboloNetRunning != TRUE) {
@@ -373,23 +413,29 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
   }
 
   size = winbolonetEventsGetSize();
-  if (size == 0 && staticNumFreePills == numFreePills && numFreeBases == staticNumFreeBases && numPlayers == staticNumPlayers && time(NULL) - winboloNetLastSent <= WINBOLO_NET_MAX_NOSEND) {
+  if (size == 0 && staticNumFreePills == numFreePills && numFreeBases == staticNumFreeBases && numPlayers == staticNumPlayers && staticNumHumans == s_lobbyInfo.numHumans && staticNumBots == s_lobbyInfo.numBots && time(NULL) - winboloNetLastSent <= WINBOLO_NET_MAX_NOSEND) {
     return;
   }
 
   staticNumFreePills = numFreePills;
   staticNumFreeBases = numFreeBases;
   staticNumPlayers = numPlayers;
+  staticNumHumans = s_lobbyInfo.numHumans;
+  staticNumBots = s_lobbyInfo.numBots;
 
   body = cJSON_CreateObject();
   cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddNumberToObject(body, "num_players", staticNumPlayers);
+  cJSON_AddNumberToObject(body, "num_humans", s_lobbyInfo.numHumans);
+  cJSON_AddNumberToObject(body, "num_bots", s_lobbyInfo.numBots);
   cJSON_AddNumberToObject(body, "free_bases", staticNumFreeBases);
   cJSON_AddNumberToObject(body, "free_pills", staticNumFreePills);
 
-  /* Drain event queue into JSON array */
+  /* Drain event queue into JSON array. Bot actors carry no WBN key,
+   * so a_is_bot/b_is_bot are emitted (true only) to distinguish AI
+   * actions from unregistered humans. */
   events = cJSON_CreateArray();
-  val = winbolonetEventsRemove(keyA, keyB);
+  val = winbolonetEventsRemove(keyA, keyB, &evtAIsBot, &evtBIsBot);
   while (val != WINBOLONET_EVENT_NOITEM) {
     eventObj = cJSON_CreateObject();
     cJSON_AddNumberToObject(eventObj, "type", val);
@@ -399,8 +445,14 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
     if (keyB[0] != '\0') {
       cJSON_AddStringToObject(eventObj, "player_b", keyB);
     }
+    if (evtAIsBot) {
+      cJSON_AddBoolToObject(eventObj, "a_is_bot", TRUE);
+    }
+    if (evtBIsBot) {
+      cJSON_AddBoolToObject(eventObj, "b_is_bot", TRUE);
+    }
     cJSON_AddItemToArray(events, eventObj);
-    val = winbolonetEventsRemove(keyA, keyB);
+    val = winbolonetEventsRemove(keyA, keyB, &evtAIsBot, &evtBIsBot);
   }
   cJSON_AddItemToObject(body, "events", events);
 
@@ -519,7 +571,7 @@ void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, 
   cJSON *body = NULL;
   cJSON *resp = NULL;
 
-  winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_LEAVE, TRUE, playerNum, WINBOLO_NET_NO_PLAYER);
+  winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_LEAVE, TRUE, playerNum, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
   if (winboloNetPlayerKey[playerNum][0] == '\0' || winboloNetRunning != TRUE) {
     return;
   }
@@ -656,6 +708,7 @@ bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, B
   cJSON_AddNumberToObject(body, "num_players", numPlayers);
   cJSON_AddStringToObject(body, "version", versionStr);
   cJSON_AddBoolToObject(body, "in_lobby", TRUE);
+  winbolonetAddLobbyInfoFields(body);
 
   status = wbn_api_call("server/register", body, &resp);
   cJSON_Delete(body);

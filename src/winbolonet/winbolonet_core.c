@@ -49,6 +49,17 @@ char winboloNetPlayerKey[MAX_TANKS][WINBOLONET_KEY_LEN];
 * Cleans up any open libraries.
 *********************************************************/
 void winbolonetDestroy(bool isServer) {
+  /* Listen-server case: the host is both the client and the server in
+   * one process, sharing this module. The client teardown (netDestroy
+   * -> winbolonetDestroy(FALSE)) runs before the server teardown, so if
+   * it tore the module down here it would set winboloNetRunning=FALSE
+   * and the server's winbolonetDestroy(TRUE) would skip server/quit —
+   * leaving the game listed on WinBolo.net. While a server key is held
+   * this process is the server; defer teardown to the server-side call.
+   * A pure client never holds a server key, so it is unaffected. */
+  if (isServer == FALSE && winboloNetServerKey[0] != '\0') {
+    return;
+  }
   serverSimConsoleMessage("WinBolo.net Shutdown");
   if (winboloNetRunning == TRUE) {
     winbolonetThreadDestroy();
@@ -98,7 +109,7 @@ void winbolonetGoodbye(void) {
 *PURPOSE:
 * Adds a WinBolo.net Event for sending to the server.
 *********************************************************/
-void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB) {
+void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
   const char *keyA;
   const char *keyB;
   char emptyKey[WINBOLONET_KEY_LEN];
@@ -110,11 +121,12 @@ void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE player
     keyA = winboloNetPlayerKey[playerA];
     if (playerB == WINBOLO_NET_NO_PLAYER) {
       keyB = emptyKey;
+      bIsBot = FALSE;
     } else {
       if (playerB >= MAX_TANKS) return;
       keyB = winboloNetPlayerKey[playerB];
     }
-    winbolonetEventsAddItem(eventType, keyA, keyB);
+    winbolonetEventsAddItem(eventType, keyA, keyB, aIsBot, bIsBot);
   }
 }
 

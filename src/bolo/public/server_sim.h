@@ -797,6 +797,42 @@ bool serverSimCheckAutoClose(ServerSim *sim);
 BYTE serverSimGetNumPlayers(ServerSim *sim);
 
 /*********************************************************
+ *NAME:          serverSimGetNumHumans
+ *PURPOSE:
+ *  Returns the number of connected non-bot (human) players.
+ *********************************************************/
+BYTE serverSimGetNumHumans(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimRefreshWbnLobbyInfo
+ *PURPOSE:
+ *  Rebuilds the WinBolo.net lobby snapshot from current sim
+ *  state and stashes it via winbolonetSetLobbyInfo so the
+ *  register/update/lobby_update bodies pick up the latest
+ *  map, settings and human/bot counts.
+ *********************************************************/
+void serverSimRefreshWbnLobbyInfo(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimWbnLobbyUpdate
+ *PURPOSE:
+ *  Sends a server/lobby_update snapshot. Rate-limited to one
+ *  send per WBN_LOBBY_UPDATE_INTERVAL seconds unless force is
+ *  TRUE (used right before the lobby countdown starts); a
+ *  throttled call instead marks the snapshot dirty for the
+ *  next tick.
+ *********************************************************/
+void serverSimWbnLobbyUpdate(ServerSim *sim, bool force);
+
+/*********************************************************
+ *NAME:          serverSimWbnLobbyTick
+ *PURPOSE:
+ *  Flushes a deferred (dirty) lobby_update if the rate-limit
+ *  window has passed. Called from the periodic WBN tick.
+ *********************************************************/
+void serverSimWbnLobbyTick(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimGetNumNeutralBases
  *PURPOSE:
  *  Returns the number of neutral bases.

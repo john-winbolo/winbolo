@@ -412,6 +412,12 @@ bool         clientSimIsBalanceProposalActive(const ClientSim *cs);
  * the proposal arrival on the same mutex hold. Returns 0 if no
  * proposal has arrived this session. */
 uint64_t     clientSimGetLastBalanceProposalArrivedMs(const ClientSim *cs);
+/* SDL_GetTicks at the most recent CTRL_BALANCE_FAILED arrival (0 if
+ * never), and the carried reason byte. Reason 0 means "no failure on
+ * record"; non-zero values follow the wire enum in control_event.h
+ * (1=http, 2=wbn error body, 3=internal). */
+uint64_t     clientSimGetLastBalanceFailedMs(const ClientSim *cs);
+uint8_t      clientSimGetLastBalanceFailedReason(const ClientSim *cs);
 bool         clientSimIsLabelOwnTank(const ClientSim *cs);
 buildSelect  clientSimGetCurrentBuildSelect(const ClientSim *cs);
 gameType     clientSimGetLobbyGameType(const ClientSim *cs);

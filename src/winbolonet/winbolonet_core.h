@@ -86,8 +86,10 @@ void winbolonetGoodbye(void);
 * isServer  - Are we the server for this and not a client
 * playerA   - Player A player Number
 * playerB   - Player B player Number
+* aIsBot    - TRUE if player A is a bot (no WBN key)
+* bIsBot    - TRUE if player B is a bot (no WBN key)
 *********************************************************/
-void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB);
+void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot);
 
 /*********************************************************
 *NAME:          winbolonetIsRunning

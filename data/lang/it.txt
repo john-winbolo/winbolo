@@ -1331,3 +1331,7 @@ STR_MENU_VOLUME=Volume
 STR_VOLUME_MUTE=Disattiva audio
 STR_REJECT_VERSION_MISMATCH=Il server è alla versione {string1}, tu hai {string2} — aggiorna per favore.
 STR_RETURNING_TO_LOBBY=Ritorno alla lobby
+
+# Balance — WBN-failure status pill + reject toast for non-ranked balance state
+STR_DLGLOBBY_REJECT_BAD_STATE=non consentito adesso
+STR_DLGLOBBY_BAL_STATUS_FAILED=bilanciamento WBN fallito

@@ -14,6 +14,7 @@
 #define SERVER_SIM_INTERNAL_H
 
 #include <stddef.h>
+#include <time.h>
 #include "server_sim.h"
 #include "game_sim.h"        /* GameSim layout — used by the sim field below */
 #include "position_history.h" /* PosHistory — used by posHistory / lgmPosHistory */
@@ -81,6 +82,14 @@ struct ServerSim {
                                       * incoming player is promoted to host.
                                       * Consumed by the join handler. */
     uint16_t serverLocks;          /* LOBBY_LOCK_* bitmask, set from CLI */
+    /* WBN lobby_update batching: lobby/setting/map changes mark the
+     * snapshot dirty; it is flushed on the periodic WBN tick at most
+     * every WBN_LOBBY_UPDATE_INTERVAL seconds, and force-sent before
+     * the lobby countdown starts. */
+    bool     wbnLobbyDirty;        /* a lobby field changed since last send */
+    time_t   wbnLobbyLastSent;     /* last server/lobby_update send time */
+    uint8_t  mapMd5[16];           /* MD5 of the active map's BMAPBOLO bytes */
+    bool     mapMd5Valid;          /* mapMd5 holds a usable hash */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
     BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
     bool     worldPreLoaded;       /* TRUE while the world is fresh from

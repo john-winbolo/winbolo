@@ -225,10 +225,6 @@ void clientSimNetSendGameVoteToggle(ClientSim *cs,
  * lobby as the proposal is applied (humans-only matchup). */
 void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize,
                                     bool includeBots);
-/* Debug: append a printf-style line to ./balance.log in cwd. Lazily
- * opens the file on first call, flushes after every write. Safe to
- * call from any thread (single FILE* + best-effort, no mutex). */
-void balanceDebugLog(const char *fmt, ...);
 
 void clientSimNetSendBalanceApply(ClientSim *cs);
 void clientSimNetSendBalanceDismiss(ClientSim *cs);

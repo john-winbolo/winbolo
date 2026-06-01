@@ -1076,6 +1076,34 @@ static EncodeResult encodeCommandRejected(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+/* recipient: safe — ignored. */
+static EncodeResult encodeBalanceFailedBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    (void)recipient;
+    if (bufCap < 1) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.balanceFailed.reasonCode;
+    *outLen = 1;
+    return ENCODE_OK;
+}
+
+static EncodeResult encodeBalanceFailed(const ControlEvent *evt,
+                                        const struct UdpServerClient *recipient,
+                                        uint8_t *buf, size_t bufCap,
+                                        size_t *outLen) {
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_BALANCE_FAILED, 0);
+    size_t bodyLen = 0;
+    EncodeResult r = encodeBalanceFailedBody(evt, recipient,
+                                             buf + PACKET_HEADER_SIZE,
+                                             bufCap - PACKET_HEADER_SIZE,
+                                             &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
 /* ================================================================
  * Decoders — body-only (the existing wire-packet dispatcher in
  * transportControlCodecDecoder already strips the PacketHeader
@@ -1498,6 +1526,15 @@ static bool decodeCommandRejectedBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+static bool decodeBalanceFailedBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    if (len < 1) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_BALANCE_FAILED;
+    outEvt->u.balanceFailed.reasonCode = buf[0];
+    return true;
+}
+
 /* ================================================================
  * Encoder lookup — indexed by ControlEventType. Variants without
  * a wire form leave NULL slots (CTRL_MAP_DOWNLOAD_COMPLETE is
@@ -1533,6 +1570,7 @@ static const ControlEncodeFn s_encoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SERVER_TEXT]        = encodeServerText,
     [CTRL_COMMAND_REJECTED]   = encodeCommandRejected,
     [CTRL_ALLIANCE_RESET]     = encodeAllianceReset,
+    [CTRL_BALANCE_FAILED]     = encodeBalanceFailed,
 };
 
 /* ================================================================
@@ -1570,6 +1608,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SERVER_TEXT]           = encodeServerTextBody,
     [CTRL_COMMAND_REJECTED]      = encodeCommandRejectedBody,
     [CTRL_ALLIANCE_RESET]        = encodeAllianceResetBody,
+    [CTRL_BALANCE_FAILED]        = encodeBalanceFailedBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -1600,6 +1639,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SERVER_TEXT]           = decodeServerTextBody,
     [CTRL_COMMAND_REJECTED]      = decodeCommandRejectedBody,
     [CTRL_ALLIANCE_RESET]        = decodeAllianceResetBody,
+    [CTRL_BALANCE_FAILED]        = decodeBalanceFailedBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -1629,6 +1669,7 @@ ControlDecodeFn transportControlCodecDecoder(uint16_t packetType) {
         case PACKET_LOBBY_BRAIN_LIST:     return decodeLobbyBrainListBody;
         case PACKET_GAME_VOTE_STATE:      return decodeGameVoteStateBody;
         case PACKET_COMMAND_REJECTED:     return decodeCommandRejectedBody;
+        case PACKET_BALANCE_FAILED:       return decodeBalanceFailedBody;
         default:                      return NULL;
     }
 }
