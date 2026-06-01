@@ -1786,13 +1786,16 @@ local function tank_combat_steer(state, world, info, goal)
   local jink_offset = jink_phase == 0 and C.TANK_COMBAT_JINK_ANGLE
                                        or -C.TANK_COMBAT_JINK_ANGLE
 
-  -- Turn toward predicted target position. Inner deadband tightened
-  -- from ±2° to ±1° so small residual aim errors get tap-corrected
-  -- before lead prediction grows them back next tick.
-  if     aim_corr >  10 then keys = keys | KEY_TURNRIGHT
-  elseif aim_corr < -10 then keys = keys | KEY_TURNLEFT
-  elseif aim_corr >   1 then taps = taps | KEY_TURNRIGHT
-  elseif aim_corr <  -1 then taps = taps | KEY_TURNLEFT
+  -- Turn toward predicted target position. Always HOLD the turn key
+  -- beyond a ±1 brad deadband (no tap tier): a tap presses the key for a
+  -- single engine input read, and the engine's firstLeft/firstRight ramp
+  -- means a tap rotates at ~1/8 the held rate — so at small aim errors the
+  -- tank crept onto target in slow motion. Holding gives full engine
+  -- turn-rate and lets the ramp build, swinging onto target fast. The
+  -- right call in a chaotic point-blank fight where some overshoot/
+  -- oscillation is acceptable.
+  if     aim_corr >  1 then keys = keys | KEY_TURNRIGHT
+  elseif aim_corr < -1 then keys = keys | KEY_TURNLEFT
   end
 
   -- Fire when aimed — wider tolerance because lead prediction compensates.
@@ -1839,11 +1842,17 @@ local function tank_combat_steer(state, world, info, goal)
   if dist_tiles < C.TANK_COMBAT_TOO_CLOSE then
     -- Too close: reverse away
     if info.speed > 0 then keys = keys | KEY_SLOWER end
-    -- Jink by turning slightly off-axis
-    if jink_offset > 0 then
-      taps = taps | KEY_TURNRIGHT
-    else
-      taps = taps | KEY_TURNLEFT
+    -- Jink by turning slightly off-axis — but ONLY when the aim turn above
+    -- isn't already holding a turn key. Otherwise the jink tap presses the
+    -- opposite turn in the same engine read, the two cancel to a near-zero
+    -- net turn, and we're back to slow-motion rotation. Aim wins; jink only
+    -- fires when aim is inside the deadband (no hold active).
+    if (keys & (KEY_TURNLEFT | KEY_TURNRIGHT)) == 0 then
+      if jink_offset > 0 then
+        taps = taps | KEY_TURNRIGHT
+      else
+        taps = taps | KEY_TURNLEFT
+      end
     end
   elseif dist_tiles <= C.TANK_COMBAT_ENGAGE_RANGE then
     -- In range: hold moderate speed for evasion, use jink
