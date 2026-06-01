@@ -1325,3 +1325,9 @@ STR_VOTE_DRAW_TAG= (Oavgjort)
 STR_VOTE_NEEDS_RUNNING_TIP=Tillgängligt när spelet har startat.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Välj ett lag innan du röstar för att ge upp.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Ge upp är bara tillgängligt när exakt två lag\nmed mänskliga spelare återstår.
+
+# Volume — slider label and Mac preset submenu items
+STR_MENU_VOLUME=Volym
+STR_VOLUME_MUTE=Tyst
+STR_REJECT_VERSION_MISMATCH=Servern har version {string1}, du har {string2} — vänligen uppdatera.
+STR_RETURNING_TO_LOBBY=Återvänder till lobbyn

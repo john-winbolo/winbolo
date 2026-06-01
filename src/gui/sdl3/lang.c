@@ -1248,6 +1248,17 @@ static const LangEntry langTable[] = {
     {1393, "Available once the game is running."},
     {1394, "Pick a team before voting to surrender."},
     {1395, "Surrender is only available when exactly two teams\nwith human players remain."},
+
+    {1396, "{player} started a vote to return to lobby."},
+    {1397, "{player} started a vote to surrender."},
+    {1398, "{player} voted yes."},
+    {1399, "{player} voted no."},
+    {1400, "Vote passed."},
+    {1401, "Vote failed."},
+
+    {1402, "Volume"},
+    {1403, "Mute"},
+    {1404, "Returning to lobby"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

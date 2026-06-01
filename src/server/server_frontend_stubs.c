@@ -84,6 +84,7 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
 void frontEndUpdatePlayerPing(struct ClientSim *cs, playerNumbers value, uint16_t ping) { (void)cs; (void)value; (void)ping; }
 void frontEndDrawDownload(ClientSim *cs, bool justBlack) { (void)cs; (void)justBlack; }
 void frontEndDrawReturningToLobby(ClientSim *cs) { (void)cs; }
+void frontEndAudioReturningToLobby(bool active) { (void)active; }
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) { (void)cs; (void)value; (void)isChecked; }
 void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
 void frontEndSetActiveClientSim(struct ClientSim *cs) { (void)cs; }

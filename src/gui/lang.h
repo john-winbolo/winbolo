@@ -1377,6 +1377,14 @@
 #define STR_LV_VOTE_PASSED                  1400
 #define STR_LV_VOTE_FAILED                  1401
 
+/* Volume — slider label and Mac preset submenu items */
+#define STR_MENU_VOLUME                     1402
+#define STR_VOLUME_MUTE                     1403
+
+/* Caption shown in the playfield during the game-over → lobby
+ * transition, after a round ends and before the lobby UI appears. */
+#define STR_RETURNING_TO_LOBBY              1404
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

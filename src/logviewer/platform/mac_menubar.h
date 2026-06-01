@@ -23,6 +23,7 @@ struct LvMenuState {
     bool gameViewActive;       /* gameView — disables Use Team Colours */
     bool tankCentred;          /* checkbox */
     bool soundEffects;         /* checkbox */
+    int  soundVolume;          /* 0-100; Volume submenu checkmark */
     bool dnsLookups;           /* checkbox */
     bool showControls;
     bool showEvents;

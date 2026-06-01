@@ -66,12 +66,12 @@ struct MacMenuState {
     bool noOwnLabel;       /* !labelSelf — drawn checked when own-tank label is hidden */
     int  labelMsg;         /* lblShort / lblLong; matched against item tag */
     int  labelTank;        /* lblNone / lblShort / lblLong; matched against item tag */
-    char deviceLabel[64];  /* Full Edit > Device menu item title, e.g. "Device iPhone" */
     /* WinBolo menu */
     bool allowNewPlayers;
     bool soundEffects;
     bool backgroundSound;
     bool useSoundKeepalive;
+    int  soundVolume;          /* 0-100; Volume submenu shows preset checkmark */
     bool newswireMessages;
     bool assistantMessages;
     bool aiMessages;

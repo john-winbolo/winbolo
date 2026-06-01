@@ -424,6 +424,13 @@ static void loadPreferences(void) {
     lv_platform_config_get_string("LOGVIEWER", "Sounds", "Yes", line, sizeof(line));
     g_lv->isSoundsPlaying = (tolower((unsigned char)line[0]) == 'y') ? TRUE : FALSE;
 
+    /* Sound Volume (0-100, mirrors main game) */
+    lv_platform_config_get_string("LOGVIEWER", "Sound Volume", "50", line, sizeof(line));
+    g_lv->soundVolume = atoi(line);
+    if (g_lv->soundVolume < 0) g_lv->soundVolume = 0;
+    if (g_lv->soundVolume > 100) g_lv->soundVolume = 100;
+    lv_soundSetVolume(g_lv->soundVolume);
+
     /* DNS Lookups */
     lv_platform_config_get_string("LOGVIEWER", "DNS Lookups", "No", line, sizeof(line));
     dns = (tolower((unsigned char)line[0]) == 'y') ? TRUE : FALSE;
@@ -469,6 +476,10 @@ static void savePreferences(void) {
 
     /* Sound Effects */
     lv_platform_config_set_string("LOGVIEWER", "Sounds", g_lv->isSoundsPlaying ? "Yes" : "No");
+
+    /* Sound Volume */
+    snprintf(val, sizeof(val), "%d", g_lv->soundVolume);
+    lv_platform_config_set_string("LOGVIEWER", "Sound Volume", val);
 
     /* Use Team Colours */
     lv_platform_config_set_string("LOGVIEWER", "Use Team Colours", g_lv->useTeamColours ? "Yes" : "No");
@@ -519,6 +530,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     g_lv->screenSizeY = MAIN_SCREEN_SIZE_Y + 15; /* default 30 */
     g_lv->isLoaded = FALSE;
     g_lv->isSoundsPlaying = TRUE;
+    g_lv->soundVolume = 50;
 
     /* Game-view skin state — calloc above already zeroed these, but be
      * explicit so the defaults are visible alongside the other init. */
@@ -1004,6 +1016,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
             lvms.gameViewActive   = g_lv->gameView ? true : false;
             lvms.tankCentred      = lv_imgui_get_tank_centred() ? true : false;
             lvms.soundEffects     = g_lv->isSoundsPlaying ? true : false;
+            lvms.soundVolume      = g_lv->soundVolume;
             lvms.dnsLookups       = lv_imgui_get_dns_lookups() ? true : false;
             lvms.showControls     = lv_g_show_controls_window;
             lvms.showEvents       = lv_g_show_events_window;

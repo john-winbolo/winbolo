@@ -37,6 +37,7 @@ extern "C" {
     void lv_screenTankCentred(int enabled);
     int lv_dnsSetEnabled(int enabled);
     void lv_imgui_events_clear(void);
+    void lv_soundSetVolume(int pct);
 }
 
 static LogViewerState *s_lv = nullptr;
@@ -375,6 +376,20 @@ int lv_imgui_main_menu_bar(void) {
             if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_EFFECTS), NULL, s_lv->isSoundsPlaying != 0)) {
                 s_lv->isSoundsPlaying = s_lv->isSoundsPlaying ? 0 : 1;
                 clicked = 1;
+            }
+            {
+                int vol = s_lv->soundVolume;
+                const float sliderW = 160.0f;
+                ImGui::TextUnformatted(langGetText(STR_MENU_VOLUME));
+                ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - sliderW);
+                ImGui::SetNextItemWidth(sliderW);
+                if (ImGui::SliderInt("##volume", &vol, 0, 100, "%d%%")) {
+                    if (vol < 0) vol = 0;
+                    if (vol > 100) vol = 100;
+                    s_lv->soundVolume = vol;
+                    lv_soundSetVolume(vol);
+                    clicked = 1;
+                }
             }
             if (ImGui::MenuItem(langGetText(STR_LV_DNS_LOOKUPS), NULL, s_dns_lookups)) {
                 s_dns_lookups = !s_dns_lookups;

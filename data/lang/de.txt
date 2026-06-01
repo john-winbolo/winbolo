@@ -1325,3 +1325,9 @@ STR_VOTE_DRAW_TAG= (Unentschieden)
 STR_VOTE_NEEDS_RUNNING_TIP=Verfügbar, sobald das Spiel läuft.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Wähle ein Team, bevor du über die Aufgabe abstimmst.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Aufgeben ist nur verfügbar, wenn genau zwei Teams\nmit menschlichen Spielern verbleiben.
+
+# Volume — slider label and Mac preset submenu items
+STR_MENU_VOLUME=Lautstärke
+STR_VOLUME_MUTE=Stumm
+STR_REJECT_VERSION_MISMATCH=Server hat Version {string1}, du hast {string2} — bitte aktualisieren.
+STR_RETURNING_TO_LOBBY=Zurück zur Lobby

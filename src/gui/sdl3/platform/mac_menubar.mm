@@ -35,12 +35,12 @@ extern "C" void sdl3ImguiSetFrameRate(int rate);
 extern "C" void sdl3ImguiSetZoom(int zoom);
 extern "C" void sdl3ImguiSetMessageLabelLen(struct ClientSim *cs, int len);
 extern "C" void sdl3ImguiSetTankLabelLen(struct ClientSim *cs, int len);
-extern "C" void sdl3ImguiCycleDevicePreset(void);
 
 extern "C" void windowMenuAllowNewPlayers_toggle(struct ClientSim *cs);
 extern "C" void windowSoundEffects_toggle(void);
 extern "C" void windowBackgroundSoundChange_toggle(void);
 extern "C" void windowSoundKeepalive(void);
+extern "C" void windowSetSoundVolume(int pct);
 extern "C" void windowMenuNewswire_toggle(struct ClientSim *cs);
 extern "C" void windowMenuAssistant_toggle(struct ClientSim *cs);
 extern "C" void windowMenuAI_toggle(struct ClientSim *cs);
@@ -87,7 +87,6 @@ static NSMenu     *s_windowSizeMenu          = nil;
 static NSMenu     *s_messageLabelsMenu       = nil;
 static NSMenu     *s_tankLabelsMenu          = nil;
 static NSMenuItem *s_smoothScrollingItem     = nil;
-static NSMenuItem *s_deviceItem              = nil;
 static NSMenuItem *s_autoScrollingItem       = nil;
 static NSMenuItem *s_showGunsightItem        = nil;
 static NSMenuItem *s_pillLabelsItem          = nil;
@@ -97,6 +96,7 @@ static NSMenuItem *s_noOwnLabelItem          = nil;
 static NSMenuItem *s_allowNewPlayersItem     = nil;
 static NSMenuItem *s_soundEffectsItem        = nil;
 static NSMenuItem *s_backgroundSoundItem     = nil;
+static NSMenu     *s_volumeMenu              = nil;
 static NSMenuItem *s_soundKeepaliveItem      = nil;
 static NSMenuItem *s_newswireMessagesItem    = nil;
 static NSMenuItem *s_assistantMessagesItem   = nil;
@@ -225,7 +225,6 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onPillboxLabels:(id)sender;
 - (void)onBaseLabels:(id)sender;
 - (void)onHideMainView:(id)sender;
-- (void)onCycleDevice:(id)sender;
 - (void)onSetFrameRate:(id)sender;
 - (void)onSetZoom:(id)sender;
 - (void)onSetMessageLabel:(id)sender;
@@ -236,6 +235,7 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onSoundEffects:(id)sender;
 - (void)onBackgroundSound:(id)sender;
 - (void)onSoundKeepalive:(id)sender;
+- (void)onSetSoundVolume:(id)sender;
 - (void)onNewswireMessages:(id)sender;
 - (void)onAssistantMessages:(id)sender;
 - (void)onAIMessages:(id)sender;
@@ -322,10 +322,6 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
     (void)sender;
     windowHideMainView_toggle();
 }
-- (void)onCycleDevice:(id)sender {
-    (void)sender;
-    sdl3ImguiCycleDevicePreset();
-}
 - (void)onSetFrameRate:(id)sender {
     NSMenuItem *item = (NSMenuItem *)sender;
     sdl3ImguiSetFrameRate((int)[item tag]);
@@ -365,6 +361,10 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onSoundKeepalive:(id)sender {
     (void)sender;
     windowSoundKeepalive();
+}
+- (void)onSetSoundVolume:(id)sender {
+    NSMenuItem *item = (NSMenuItem *)sender;
+    windowSetSoundVolume((int)[item tag]);
 }
 - (void)onNewswireMessages:(id)sender {
     (void)sender;
@@ -1018,16 +1018,6 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [editMenu addItem:hideMainViewItem];
     s_hideMainViewItem = hideMainViewItem;
 
-    [editMenu addItem:[NSMenuItem separatorItem]];
-
-    NSMenuItem *deviceItem = [[NSMenuItem alloc]
-        initWithTitle:LANG_STR(STR_MENU_DEVICE)
-        action:@selector(onCycleDevice:)
-        keyEquivalent:@"t"];
-    [deviceItem setTarget:g_bridge];
-    [editMenu addItem:deviceItem];
-    s_deviceItem = deviceItem;
-
     /* WinBolo menu — game-state toggles and player commands. Mirrors the
      * ImGui WinBolo menu in renderMenuBar(). The in-window Settings entry
      * is intentionally dropped here — App > Preferences (⌘,) opens the
@@ -1086,6 +1076,31 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [soundKeepaliveItem setTarget:g_bridge];
     [winBoloMenu addItem:soundKeepaliveItem];
     s_soundKeepaliveItem = soundKeepaliveItem;
+
+    /* Volume submenu — fixed presets (Mute, 25%, 50%, 75%, 100%).
+     * Tags carry the percentage; the active preset gets a checkmark in
+     * mac_menubar_refresh(). */
+    NSMenuItem *volumeRoot = [winBoloMenu addItemWithTitle:LANG_STR(STR_MENU_VOLUME)
+                                                    action:nil
+                                             keyEquivalent:@""];
+    NSMenu *volumeMenu = [[NSMenu alloc] initWithTitle:LANG_STR(STR_MENU_VOLUME)];
+    [volumeRoot setSubmenu:volumeMenu];
+
+    const int volumePresets[] = { 0, 25, 50, 75, 100 };
+    for (size_t i = 0; i < sizeof(volumePresets) / sizeof(volumePresets[0]); i++) {
+        int pct = volumePresets[i];
+        NSString *title = (pct == 0)
+            ? LANG_STR(STR_VOLUME_MUTE)
+            : [NSString stringWithFormat:@"%d%%", pct];
+        NSMenuItem *item = [[NSMenuItem alloc]
+            initWithTitle:title
+            action:@selector(onSetSoundVolume:)
+            keyEquivalent:@""];
+        [item setTarget:g_bridge];
+        [item setTag:pct];
+        [volumeMenu addItem:item];
+    }
+    s_volumeMenu = volumeMenu;
 
     [winBoloMenu addItem:[NSMenuItem separatorItem]];
 
@@ -1373,10 +1388,6 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
         }
     }
 
-    if (s_deviceItem && s->deviceLabel[0]) {
-        [s_deviceItem setTitle:[NSString stringWithUTF8String:s->deviceLabel]];
-    }
-
     if (s_autoScrollingItem)         [s_autoScrollingItem         setState:(s->autoScrolling         ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_showGunsightItem)          [s_showGunsightItem          setState:(s->showGunsight          ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_pillLabelsItem)            [s_pillLabelsItem            setState:(s->showPillLabels        ? NSControlStateValueOn : NSControlStateValueOff)];
@@ -1387,6 +1398,11 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
     if (s_soundEffectsItem)          [s_soundEffectsItem          setState:(s->soundEffects          ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_backgroundSoundItem)       [s_backgroundSoundItem       setState:(s->backgroundSound       ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_soundKeepaliveItem)        [s_soundKeepaliveItem        setState:(s->useSoundKeepalive     ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_volumeMenu) {
+        for (NSMenuItem *item in [s_volumeMenu itemArray]) {
+            [item setState:(([item tag] == s->soundVolume) ? NSControlStateValueOn : NSControlStateValueOff)];
+        }
+    }
     if (s_newswireMessagesItem)      [s_newswireMessagesItem      setState:(s->newswireMessages      ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_assistantMessagesItem)     [s_assistantMessagesItem     setState:(s->assistantMessages     ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_aiMessagesItem)            [s_aiMessagesItem            setState:(s->aiMessages            ? NSControlStateValueOn : NSControlStateValueOff)];

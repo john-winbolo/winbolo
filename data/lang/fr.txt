@@ -1325,3 +1325,9 @@ STR_VOTE_DRAW_TAG= (Nul)
 STR_VOTE_NEEDS_RUNNING_TIP=Disponible une fois la partie lancée.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Choisissez une équipe avant de voter pour l'abandon.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=L'abandon n'est disponible que lorsqu'il reste exactement deux équipes\navec des joueurs humains.
+
+# Volume — slider label and Mac preset submenu items
+STR_MENU_VOLUME=Volume
+STR_VOLUME_MUTE=Muet
+STR_REJECT_VERSION_MISMATCH=Le serveur est en version {string1}, vous avez {string2} — veuillez mettre à jour.
+STR_RETURNING_TO_LOBBY=Retour au lobby
