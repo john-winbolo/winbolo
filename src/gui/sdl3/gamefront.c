@@ -1840,7 +1840,14 @@ bool gameFrontSetupServer(void) {
   cfg.password            = password;
   cfg.maxPlayers          = MAX_TANKS;
   cfg.acceptRemoteClients = true;
-  cfg.useWbn              = gameFrontWbnUse;
+  /* Internet games always register on WinBolo.net so the server is
+   * publicly listed, regardless of whether the host is signed in:
+   * server/register is anonymous and returns its own server_token for
+   * later server/ calls. Being signed in (gameFrontWbnUse) only governs
+   * whether the host's own tank is WBN-identified for ratings, handled
+   * separately on the client-join path. The LAN-only block below forces
+   * this back off for Local games. */
+  cfg.useWbn              = TRUE;
   cfg.compTanks           = (BYTE)compTanks;
   cfg.useTracker          = gameFrontTrackerEnabled;
   cfg.trackerAddr         = gameFrontTrackerAddr;
