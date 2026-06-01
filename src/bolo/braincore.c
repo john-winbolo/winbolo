@@ -50,7 +50,7 @@
 #include "braincore.h"
 #include "brain_pathfinder.h"
 
-/* C-side pill_grid from the na_threat brain module (same link unit). */
+/* C-side pill_grid from the gh_threat brain module (same link unit). */
 extern float *naThreatGetPillGrid(lua_State *L);
 
 /* ------------------------------------------------------------------ */
@@ -275,7 +275,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   /* Per-slot PLAYER_FLAG_BOT bitmap (bit N = slot N is a brain).
    * Brains intersect with `allies` (and invert) to address allied
    * humans only — see the human-goal-change broadcast in
-   * NewAutopilot. */
+   * GoalHunter. */
   lua_pushinteger(L, info->player_bots ? *(info->player_bots) : 0);
   lua_setfield(L, -2, "player_bots");
 
@@ -589,6 +589,18 @@ static bool brc_read_session_dir(lua_State *L, char *out, size_t outsz) {
   return ok;
 }
 
+/* Best-effort read of _G.BRAIN_DEBUG_MODE. Returns true only when the
+ * global is explicitly truthy. Production hosts (WinBolo / WinBoloDS)
+ * set it false at brain creation, so brains there write NO crash/error
+ * files to disk — stderr surfacing still fires regardless. */
+static bool brc_debug_mode(lua_State *L) {
+  int top = lua_gettop(L);
+  lua_getglobal(L, "BRAIN_DEBUG_MODE");
+  bool on = lua_toboolean(L, -1) != 0;
+  lua_settop(L, top);
+  return on;
+}
+
 /* Rate-limit key in the Lua registry: stores the last UNIX timestamp
  * a crash file was written for this brain. Per-brain (each brain has
  * its own lua_State + registry) so two brains crashing at the same
@@ -655,6 +667,11 @@ void brc_write_crash_log(lua_State *L,
   char session_dir[512];
   bool has_session = brc_read_session_dir(L, session_dir, sizeof(session_dir));
 
+  /* Debug-mode gate: production hosts (WinBolo / WinBoloDS) run brains
+   * with BRAIN_DEBUG_MODE=false, where we write NO crash files to disk.
+   * The stderr surface below still fires so crashes are never silent. */
+  bool debug_mode = brc_debug_mode(L);
+
   /* Rate-limit: if this brain crashed within the last
    * BRC_CRASH_RATE_LIMIT_SECS, skip the file write so a perpetually-
    * crashing brain (we no longer remove the bot on Lua error — see
@@ -677,7 +694,7 @@ void brc_write_crash_log(lua_State *L,
                  prefix, ts_utc, pid, (void *)lptr);
   }
 
-  FILE *f = suppress_file ? NULL : fopen(path, "wb");
+  FILE *f = (suppress_file || !debug_mode) ? NULL : fopen(path, "wb");
   if (f) {
     fprintf(f, "===== BRAIN CRASH =====\n");
     fprintf(f, "[BRAIN_CRASH] method=brain.%s\n", method);
@@ -706,6 +723,11 @@ void brc_write_crash_log(lua_State *L,
             "— file SUPPRESSED (rate-limit: same brain crashed within %ds)\n",
             method, ts_local, bot_idx, tick, (void *)lptr,
             BRC_CRASH_RATE_LIMIT_SECS);
+  } else if (!debug_mode) {
+    fprintf(stderr,
+            "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) "
+            "— file logging disabled (BRAIN_DEBUG_MODE off)\n",
+            method, ts_local, bot_idx, tick, (void *)lptr);
   } else {
     fprintf(stderr,
             "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) — see %s\n",
@@ -716,8 +738,9 @@ void brc_write_crash_log(lua_State *L,
 
   /* One-line index entry in brain_error.log (inside the session dir if
    * applicable) for tail-watchers; back-points at the full crash file.
-   * Skipped on rate-limit so the index doesn't grow without bound. */
-  if (!suppress_file) {
+   * Skipped on rate-limit so the index doesn't grow without bound, and
+   * skipped entirely in production (BRAIN_DEBUG_MODE off). */
+  if (!suppress_file && debug_mode) {
     char idx_path[1024];
     SDL_snprintf(idx_path, sizeof(idx_path), "%s/brain_error.log", prefix);
     FILE *idx = fopen(idx_path, "a");
@@ -742,7 +765,7 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed) {
   lua_getglobal(L, "brain");
   if (!lua_istable(L, -1)) {
     fprintf(stderr, "brainCore: 'brain' global is not a table\n");
-    { FILE *ef = fopen("brain_error.log", "a"); if (ef) { fprintf(ef, "brain global is not a table (type=%d)\n", lua_type(L, -1)); fclose(ef); } }
+    if (brc_debug_mode(L)) { FILE *ef = fopen("brain_error.log", "a"); if (ef) { fprintf(ef, "brain global is not a table (type=%d)\n", lua_type(L, -1)); fclose(ef); } }
     lua_settop(L, top);
     return false;
   }
@@ -750,7 +773,7 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed) {
   lua_getfield(L, -1, "think");
   if (!lua_isfunction(L, -1)) {
     fprintf(stderr, "brainCore: brain.think is not a function\n");
-    { FILE *ef = fopen("brain_error.log", "a"); if (ef) { fprintf(ef, "brain.think is not a function (type=%d)\n", lua_type(L, -1)); fclose(ef); } }
+    if (brc_debug_mode(L)) { FILE *ef = fopen("brain_error.log", "a"); if (ef) { fprintf(ef, "brain.think is not a function (type=%d)\n", lua_type(L, -1)); fclose(ef); } }
     lua_settop(L, top);
     return false;
   }
@@ -2233,8 +2256,8 @@ void brainCoreRegisterVizDetail(lua_State *L) {
   lua_pushcfunction(L, l_overlay_detail_clear); lua_setglobal(L, "overlay_detail_clear");
 }
 
-/* NOTE: pill_contrib bindings moved to brains/NewAutopilot/c/
- * na_overlay_pillcontrib.c — they were specific to NewAutopilot's
+/* NOTE: pill_contrib bindings moved to brains/GoalHunter/c/
+ * gh_overlay_pillcontrib.c — they were specific to GoalHunter's
  * BrainTest overlay and shouldn't live in the generic brain runtime. */
 
 /* ------------------------------------------------------------------ */

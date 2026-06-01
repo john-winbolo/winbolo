@@ -282,7 +282,7 @@ target_link_options(winbolo PRIVATE
     "SHELL:--preload-file ${DATA_DIR}@/data"
     "SHELL:--preload-file ${PRELOAD_DIR}/EverardIsland.map@/data/EverardIsland.map"
     "SHELL:--preload-file ${PRELOAD_DIR}/InbuiltTutorial.map@/data/InbuiltTutorial.map"
-    "SHELL:--preload-file ${REPO_ROOT}/brains/NewAutopilot@/Brains/NewAutopilot"
+    "SHELL:--preload-file ${REPO_ROOT}/brains/GoalHunter@/Brains/GoalHunter"
     "SHELL:-sEXPORTED_FUNCTIONS=['_main']"
     "SHELL:-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
     -sALLOW_MEMORY_GROWTH=1
