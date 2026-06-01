@@ -1259,6 +1259,11 @@ static const LangEntry langTable[] = {
     {1402, "Volume"},
     {1403, "Mute"},
     {1404, "Returning to lobby"},
+
+    /* Reject toast — BAD_STATE generic reason */
+    {1405, "not allowed right now"},
+    /* Balance status pill — WBN failure (server-side) */
+    {1406, "WBN balance failed"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

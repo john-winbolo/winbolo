@@ -703,8 +703,10 @@ authority site — no per-transport mirror to drift.
   attributing playerNum.
 - **State guards live in the arm**, not the dispatcher prelude. Most
   lobby commands assert `serverSimIsLobbyEnabled(sim) && serverSimGetState(sim) == serverStateLobby`;
-  game-time commands assert their own state; ranked-only commands
-  (`CMD_BALANCE_*`, `CMD_WBN_REAUTH`) assert `serverSimGetRanked(sim)`.
+  game-time commands assert their own state; `CMD_WBN_REAUTH` asserts
+  `serverSimGetRanked(sim)`. `CMD_BALANCE_*` is host-only
+  (`senderSlot == 0`) + lobby-state but does not require ranked — a
+  non-ranked host can still ask WBN to skill-balance the teams.
 - **Tail effects stay with the arm**, not the dispatcher. Each arm
   runs its own `serverSimPublish*`, `logAddEvent`, etc. in the same
   order the original handler did.

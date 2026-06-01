@@ -327,6 +327,16 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         break;
     }
 
+    case CTRL_BALANCE_FAILED:
+        /* Latched so the lobby UI's per-frame status row can flip the
+         * "Asking WBN…" pill to the failure label as soon as we hear
+         * back from the server — no need to wait out the 8 s NOREPLY
+         * timeout. The control event is unicast to the host slot, so
+         * remote clients won't see it. */
+        cs->lastBalanceFailedMs     = SDL_GetTicks();
+        cs->lastBalanceFailedReason = evt->u.balanceFailed.reasonCode;
+        break;
+
     case CTRL_MAP_SKIP_STATE: {
         int i;
         for (i = 0; i < MAX_TANKS; i++) {

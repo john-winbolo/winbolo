@@ -1331,3 +1331,7 @@ STR_MENU_VOLUME=볼륨
 STR_VOLUME_MUTE=음소거
 STR_REJECT_VERSION_MISMATCH=서버는 버전 {string1}이고, 당신은 {string2}입니다 — 업데이트해 주세요.
 STR_RETURNING_TO_LOBBY=로비로 돌아갑니다
+
+# Balance — WBN-failure status pill + reject toast for non-ranked balance state
+STR_DLGLOBBY_REJECT_BAD_STATE=지금은 허용되지 않아요
+STR_DLGLOBBY_BAL_STATUS_FAILED=WBN 밸런스 조정 실패

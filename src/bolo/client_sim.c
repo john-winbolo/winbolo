@@ -1134,6 +1134,12 @@ bool clientSimIsBalanceProposalActive(const ClientSim *cs){ return cs->balancePr
 uint64_t clientSimGetLastBalanceProposalArrivedMs(const ClientSim *cs) {
     return cs ? cs->lastBalanceProposalArrivedMs : 0;
 }
+uint64_t clientSimGetLastBalanceFailedMs(const ClientSim *cs) {
+    return cs ? cs->lastBalanceFailedMs : 0;
+}
+uint8_t  clientSimGetLastBalanceFailedReason(const ClientSim *cs) {
+    return cs ? cs->lastBalanceFailedReason : 0;
+}
 bool clientSimIsLabelOwnTank(const ClientSim *cs)         { return cs->labelOwnTank; }
 
 buildSelect clientSimGetCurrentBuildSelect(const ClientSim *cs) { return cs->currentBuildSelect; }

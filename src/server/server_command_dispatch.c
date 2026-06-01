@@ -489,7 +489,6 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_BALANCE_REQUEST: {
-        if (!serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
         if (senderSlot != 0) return CMD_REJECT_NOT_HOST;
         if (!serverSimIsLobbyEnabled(sim) ||
             serverSimGetState(sim) != serverStateLobby) {
@@ -505,7 +504,6 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_BALANCE_APPLY: {
-        if (!serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
         if (senderSlot != 0) return CMD_REJECT_NOT_HOST;
         if (!serverSimIsLobbyEnabled(sim) ||
             serverSimGetState(sim) != serverStateLobby) {
@@ -545,7 +543,6 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_BALANCE_DISMISS: {
-        if (!serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
         if (senderSlot != 0) return CMD_REJECT_NOT_HOST;
         if (!serverSimIsLobbyEnabled(sim) ||
             serverSimGetState(sim) != serverStateLobby) {

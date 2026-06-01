@@ -75,6 +75,12 @@ typedef enum {
      * latency, kicking the host from their own server. One event
      * carrying the full bitmap → one queue slot, regardless of N. */
     CTRL_ALLIANCE_RESET,
+    /* CTRL_BALANCE_FAILED — server's balance worker finished without a
+     * usable proposal (WBN returned non-200, null body, or an error
+     * field). Unicast to the host slot via udpClientDeliverControl so
+     * the lobby's "Asking WBN…" pill can flip to a failure label
+     * immediately instead of waiting out the 8 s NOREPLY timeout. */
+    CTRL_BALANCE_FAILED,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -294,6 +300,14 @@ typedef struct ControlEvent {
             uint8_t  reasonCode;
             uint8_t  origSlot;
         } commandRejected;
+
+        /* CTRL_BALANCE_FAILED — single-byte reason code so the host
+         * UI can distinguish "WBN said no" from "no eligible players"
+         * later. reasons today: 1 = http (transport/status), 2 = error
+         * field in WBN body, 3 = internal (thread/state). */
+        struct {
+            uint8_t reasonCode;
+        } balanceFailed;
     } u;
 } ControlEvent;
 

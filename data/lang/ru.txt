@@ -1329,3 +1329,7 @@ STR_MENU_VOLUME=Громкость
 STR_VOLUME_MUTE=Без звука
 STR_REJECT_VERSION_MISMATCH=Сервер версии {string1}, у вас {string2} — пожалуйста, обновитесь.
 STR_RETURNING_TO_LOBBY=Возврат в лобби
+
+# Balance — WBN-failure status pill + reject toast for non-ranked balance state
+STR_DLGLOBBY_REJECT_BAD_STATE=сейчас недоступно
+STR_DLGLOBBY_BAL_STATUS_FAILED=Баланс WBN не удался

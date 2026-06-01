@@ -228,6 +228,15 @@ struct ClientSim {
                                             * the auto-apply clear publish that
                                             * follows resets balanceProposalActive
                                             * before the next render frame. */
+    uint64_t lastBalanceFailedMs;          /* SDL_GetTicks at the last
+                                            * CTRL_BALANCE_FAILED arrival.
+                                            * Lobby UI compares against the
+                                            * popup-confirm timestamp to flip
+                                            * "Asking WBN…" to a failure pill
+                                            * immediately on server error,
+                                            * bypassing the 8 s NOREPLY
+                                            * fallback. */
+    uint8_t  lastBalanceFailedReason;      /* Mirrors CTRL_BALANCE_FAILED.reasonCode. */
 
     /* ── Layout A lobby state (client-side mirror of server) ──────
      * Populated from PACKET_LOBBY_*_CHG broadcasts. The team metadata

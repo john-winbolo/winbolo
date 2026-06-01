@@ -4857,6 +4857,12 @@ void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
         mpDiagLog("[bus] PUBLISH type=%d subscribers=%d%s",
                   (int)evt->type, snapCount, extra);
     }
+    /* Make sim visible to deliver callbacks that recover it via
+     * serverSimGetActive() (e.g. udpClientDeliverControl's enqueue
+     * diagnostic + running-phase early-send gate). The main thread
+     * already sets this per tick; worker threads (WBN balance) have
+     * NULL in their TLS slot until we set it here. */
+    activeSim = sim;
     for (i = 0; i < snapCount; i++) {
         snapshot[i].deliver(snapshot[i].ctx, evt);
     }

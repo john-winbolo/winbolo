@@ -407,6 +407,15 @@ static int balanceThreadFunc(void *data) {
         }
         logAddEvent(log_BalanceApplied, 0, 0, 0, 0, 0, NULL);
         serverSimConsoleMessage("Team balance applied (WBN)");
+    } else {
+        /* WBN call returned without a usable proposal (non-200, null
+         * body, or an "error" field — see winbolonet_server.c). Tell
+         * the host so its "Asking WBN…" pill can flip immediately. */
+        ControlEvent failEvt;
+        memset(&failEvt, 0, sizeof(failEvt));
+        failEvt.type = CTRL_BALANCE_FAILED;
+        failEvt.u.balanceFailed.reasonCode = 1; /* http/transport */
+        serverSimPublishControl(sim, &failEvt);
     }
     threadsReleaseMutex();
     return 0;
@@ -645,6 +654,11 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
                   "origSlot=%d clientPlayerNum=%d",
                   idx, (int)evt->u.commandRejected.origSlot,
                   (int)client->playerNum);
+        return;
+    }
+    if (evt->type == CTRL_BALANCE_FAILED && client->playerNum != 0) {
+        /* The balance flow is host-driven; only slot 0 needs the
+         * failure pill. Skip the fan-out for everyone else. */
         return;
     }
 

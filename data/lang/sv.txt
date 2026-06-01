@@ -1331,3 +1331,7 @@ STR_MENU_VOLUME=Volym
 STR_VOLUME_MUTE=Tyst
 STR_REJECT_VERSION_MISMATCH=Servern har version {string1}, du har {string2} — vänligen uppdatera.
 STR_RETURNING_TO_LOBBY=Återvänder till lobbyn
+
+# Balance — WBN-failure status pill + reject toast for non-ranked balance state
+STR_DLGLOBBY_REJECT_BAD_STATE=inte tillåtet just nu
+STR_DLGLOBBY_BAL_STATUS_FAILED=WBN-balansering misslyckades

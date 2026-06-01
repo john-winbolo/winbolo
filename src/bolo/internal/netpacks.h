@@ -427,6 +427,10 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                                   (per commandCodecEncode) } */
 #define PACKET_COMMAND_ACK             202  /* server → client (unicast)
                                               { highestProcessedCmdSeq u32 } */
+#define PACKET_BALANCE_FAILED          203  /* server → host (unicast)
+                                              { reasonCode u8 } — fired when
+                                              the balance worker finishes
+                                              without a usable proposal */
 
 #define PACKET_GAME_VOTE_STATE         195  /* server → all clients
                                               { kind 1, active 1,

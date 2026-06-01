@@ -3529,6 +3529,8 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
             if (s_balReqSentMs != 0) {
                 uint64_t arrivedMs =
                     clientSimGetLastBalanceProposalArrivedMs(cs);
+                uint64_t failedMs =
+                    clientSimGetLastBalanceFailedMs(cs);
                 if (arrivedMs != 0 && arrivedMs >= s_balReqSentMs) {
                     /* Server auto-applies the split now, so we use the
                      * one-shot timestamp the dispatcher latches when the
@@ -3538,6 +3540,14 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                     s_balLastResultText  = langGetText(STR_DLGLOBBY_BAL_STATUS_BALANCED);
                     s_balLastResultColor = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
                     s_balLastResultUntilMs = now + 6000;
+                    s_balReqSentMs = 0;
+                } else if (failedMs != 0 && failedMs >= s_balReqSentMs) {
+                    /* Server told us the WBN call returned without a
+                     * usable proposal — flip to the failure pill now
+                     * instead of waiting out the 8 s NOREPLY clock. */
+                    s_balLastResultText  = langGetText(STR_DLGLOBBY_BAL_STATUS_FAILED);
+                    s_balLastResultColor = ImVec4(0.9f, 0.4f, 0.3f, 1.0f);
+                    s_balLastResultUntilMs = now + 8000;
                     s_balReqSentMs = 0;
                 } else if (now - s_balReqSentMs < 8000) {
                     liveText  = langGetText(STR_DLGLOBBY_BAL_STATUS_ASKING);
@@ -5099,6 +5109,7 @@ static void renderLobbyRejectToast(ClientSim *cs, float s) {
         case  1: reason = langGetText(STR_DLGLOBBY_REJECT_NOTHOST);        break;  /* LOBBY_REJECT_NOT_HOST */
         case  2: reason = langGetText(STR_DLGLOBBY_REJECT_LOCKED);         break;  /* LOBBY_REJECT_LOCKED */
         case  3: reason = langGetText(STR_DLGLOBBY_REJECT_INVALID);        break;  /* LOBBY_REJECT_INVALID */
+        case  8: reason = langGetText(STR_DLGLOBBY_REJECT_BAD_STATE);      break;  /* CMD_REJECT_BAD_STATE */
         case  9: reason = langGetText(STR_NAME_INVALID_EMPTY);             break;  /* CMD_REJECT_NAME_EMPTY */
         case 10: reason = langGetText(STR_NAME_INVALID_RESERVED_PREFIX);   break;  /* CMD_REJECT_NAME_RESERVED_PREFIX */
         case 11: reason = langGetText(STR_NAME_INVALID_RESERVED_SUFFIX);   break;  /* CMD_REJECT_NAME_RESERVED_SUFFIX */
