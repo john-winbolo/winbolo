@@ -1299,6 +1299,14 @@ STR_VOTE_NEEDS_RUNNING_TIP=Available once the game is running.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Pick a team before voting to surrender.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Surrender is only available when exactly two teams\nwith human players remain.
 
+# Logviewer — in-game vote events
+STR_LV_VOTE_START_LOBBY={player} started a vote to return to lobby.
+STR_LV_VOTE_START_SURRENDER={player} started a vote to surrender.
+STR_LV_VOTE_CAST_YES={player} voted yes.
+STR_LV_VOTE_CAST_NO={player} voted no.
+STR_LV_VOTE_PASSED=Vote passed.
+STR_LV_VOTE_FAILED=Vote failed.
+
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Volume
 STR_VOLUME_MUTE=Mute
