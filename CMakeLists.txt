@@ -730,7 +730,7 @@ find_package(OpenMP)
 # Classic "pillmassage" bug — pillboxes miss tanks at very close range due to
 # the original Bolo forward-prediction formula breaking down at short distances.
 # Enable for authentic behaviour matching the original game.
-option(ENABLE_PILLMASSAGE_BUG "Enable classic Bolo pillmassage close-range miss bug" ON)
+option(ENABLE_PILLMASSAGE_BUG "Enable classic Bolo pillmassage close-range miss bug" OFF)
 if(ENABLE_PILLMASSAGE_BUG)
     add_compile_definitions(ENABLE_PILLMASSAGE_BUG)
 endif()
