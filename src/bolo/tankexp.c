@@ -191,8 +191,6 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
   BYTE newmy;
   BYTE currentPos;          /* Current map square terrain */
   BYTE playerNum;           /* Our player number */
-  BYTE testX;               /* Screen Move Position Checks */
-  BYTE testY;
   BYTE count;               /* Looping variable */
 
 
@@ -203,11 +201,16 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
     return;
   }
 
-  testX= 0;
-  testY = 0;
   *updateTime = 0;
   playerNum = sim->viewPlayer;
   position = *tke;
+  /* The per-fireball clientSimPanX/PanY calls that used to live in the
+   * loop below were removed: scrollCenterObject in client_ui_events.c
+   * already snaps the camera to the leading own-fireball once per tick,
+   * and the pan-per-fireball was an additional shift that fought that
+   * snap (manifesting as +2/-1 oscillations every TK_UPDATE_TIME ticks
+   * during the death sequence). playerNum is still used below for the
+   * deep-sea-death sound branch. */
 
   while (NonEmpty(position)) {
     needUpdate = TRUE;
@@ -233,16 +236,6 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
       newX = (WORLD) (position->x + moveX);
       newY = (WORLD) (position->y + moveY);
 
-      /*  Moving screen position check */
-      if (sim->isServer == FALSE) {
-        conv = newX;
-        conv >>= TANK_SHIFT_MAPSIZE;
-        testX = (BYTE) conv;
-        conv = newY;
-        conv >>= TANK_SHIFT_MAPSIZE;
-        testY = (BYTE) conv;
-      }
-
       /* Collision Test */
       if (newX > 0) {
         newX += TK_WIDTH_CHECK;
@@ -264,26 +257,10 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
 
       if ((mapGetSpeed(sim,mp,pb,bs,mx,newmy, FALSE, NEUTRAL)) > 0) {
         position->y = (WORLD) (position->y + moveY);
-        if (sim->isServer == FALSE && position->creator == playerNum) {
-          if (testY > my) {
-            clientSimPanY((struct ClientSim *)sim, +1);
-          } else if (testY < my) {
-            clientSimPanY((struct ClientSim *)sim, -1);
-          } else {
-            my = my;
-          }
-        }
         my = newmy;
       }
       if ((mapGetSpeed(sim,mp,pb,bs,newmx,my, FALSE, NEUTRAL)) > 0) {
         position->x = (WORLD) (position->x + moveX);
-        if (sim->isServer == FALSE && position->creator == playerNum) {
-          if (testX > mx) {
-            clientSimPanX((struct ClientSim *)sim, +1);
-          } else if (testX < mx) {
-            clientSimPanX((struct ClientSim *)sim, -1);
-          }
-        }
         mx = newmx;
       }
       /* Update the length */
