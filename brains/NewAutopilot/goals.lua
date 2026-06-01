@@ -2095,6 +2095,29 @@ function M.get_strategic_place_heatmap(state, world, info)
 end
 
 -- =========================================================================
+-- Travel cost to REACH a (live) pill. A live pillbox tile is impassable in the
+-- cost surface (you can't drive onto it), so smart_cost to the pill tile itself
+-- returns COST_INF and wrongly makes the pill look infinitely expensive. We
+-- can't stand on it anyway — cost to the cheapest passable NEIGHBOUR instead,
+-- using Dijkstra-slate lookups only (no A* fallback). Returns math.huge if the
+-- pill is genuinely unreachable (then the caller simply won't pick it).
+-- Shared by eval_defend_pill and eval_reposition_pill.
+-- =========================================================================
+local function travel_cost_to_pill(pmx, pmy, boat)
+  local bf   = boat and 1 or 0
+  local best = math.huge
+  for dy = -1, 1 do
+    for dx = -1, 1 do
+      if dx ~= 0 or dy ~= 0 then
+        local c = cpf.smart_cost_dij_only(KIND_NORMAL, pmx + dx, pmy + dy, bf)
+        if c and c < best then best = c end
+      end
+    end
+  end
+  return best
+end
+
+-- =========================================================================
 -- Defend pill: respond to sustained attacks on friendly pills
 -- =========================================================================
 local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
@@ -2115,10 +2138,19 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
     end
   end
 
-  local travel = smart_cost(KIND_NORMAL, tmx, tmy, target.mx, target.my, boat and 1 or 0,
-                              info.shells or 32, info.trees or 0, info.mines or 0, info.armour or 40)
+  -- Cheap straight-line pre-gate: Manhattan tile distance is a lower bound
+  -- on the real path cost, so if even that exceeds the travel budget the
+  -- pill is unreachable in time — reject before paying for any cost lookup.
+  if U.mdist(tmx, tmy, target.mx, target.my) > C.DEFEND_PILL_MAX_TRAVEL then
+    return nil
+  end
 
-  -- Don't go if it's too far (pill will be dead before we arrive)
+  -- Dijkstra-slate cost to the cheapest passable neighbour of the pill
+  -- (the pill tile itself is an impassable live pillbox). O(1) lookup
+  -- against the per-tick slate — no A* detour. math.huge if unreachable.
+  local travel = travel_cost_to_pill(target.mx, target.my, boat)
+
+  -- Don't go if it's too far / unreachable (pill will be dead before we arrive)
   if travel > C.DEFEND_PILL_MAX_TRAVEL then return nil end
 
   -- Urgency bonus: more damage = lower cost (more urgent)
@@ -2131,7 +2163,7 @@ local function eval_defend_pill(state, world, info, tmx, tmy, boat, ammo)
     goal = { kind = "defend_pill", mx = target.mx, my = target.my,
              wx = U.m2w(target.mx), wy = U.m2w(target.my),
              pill_id = target.id },
-    desc = BRAIN_POOL_VIZ and string.format("A*{%.0f}+base{%.0f}-urgency{%.0f} dmg=%d",
+    desc = BRAIN_POOL_VIZ and string.format("dij{%.0f}+base{%.0f}-urgency{%.0f} dmg=%d",
            travel, C.DEFEND_PILL_BASE_COST, urgency, target.damage) or "",
   }
 end
@@ -2148,26 +2180,6 @@ end
 -- WINNERS strip still renders it (so its score stays visible every replan).
 -- The competition also skips any candidate carrying a `_reject`.
 local REPOSITION_REJECT_COST = 1e8
-
--- Travel cost to REACH a (live) pill. A live pillbox tile is impassable in the
--- cost surface (you can't drive onto it), so smart_cost to the pill tile itself
--- returns COST_INF and wrongly makes reposition look infinitely expensive. We
--- can't stand on it anyway — cost to the cheapest passable NEIGHBOUR instead,
--- using Dijkstra-slate lookups only (no A* fallback). Returns math.huge if the
--- pill is genuinely unreachable (then reposition simply won't pick it).
-local function travel_cost_to_pill(pmx, pmy, boat)
-  local bf   = boat and 1 or 0
-  local best = math.huge
-  for dy = -1, 1 do
-    for dx = -1, 1 do
-      if dx ~= 0 or dy ~= 0 then
-        local c = cpf.smart_cost_dij_only(KIND_NORMAL, pmx + dx, pmy + dy, bf)
-        if c and c < best then best = c end
-      end
-    end
-  end
-  return best
-end
 
 local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
   if not C.PILL_REPOSITION_ENABLED then return nil end
