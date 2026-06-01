@@ -1329,3 +1329,5 @@ STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Aufgeben ist nur verfügbar, wenn genau zwei Te
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Lautstärke
 STR_VOLUME_MUTE=Stumm
+STR_REJECT_VERSION_MISMATCH=Server hat Version {string1}, du hast {string2} — bitte aktualisieren.
+STR_RETURNING_TO_LOBBY=Zurück zur Lobby

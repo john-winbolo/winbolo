@@ -66,6 +66,7 @@
 #include "screenlgm.h"
 #include "client_render.h"
 #include "macos_pinch.h"
+#include "../lang.h"
 
 /* From gui/winbolo.h (can't include directly — Win32 headers) */
 #ifndef NO_SELECT
@@ -1975,7 +1976,7 @@ void sdl3DrawReturningToLobby(ClientSim *cs) {
     int originY = MAIN_OFFSET_Y * zf;
     int playfieldW = MAIN_SCREEN_SIZE_X * TILE_SIZE_X * zf;
     int playfieldH = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * zf;
-    const char *caption = "Returning to lobby";
+    const char *caption = langGetText(STR_RETURNING_TO_LOBBY);
     int textW = 0, textH = 0;
     if (gFontMsg && TTF_GetStringSize(gFontMsg, caption, 0, &textW, &textH)) {
       float tx = (float)(originX + (playfieldW - textW) / 2);

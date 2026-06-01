@@ -1329,3 +1329,5 @@ STR_VOTE_SURRENDER_TWO_TEAMS_TIP=僅當恰好剩餘兩支有人類玩家的隊�
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=音量
 STR_VOLUME_MUTE=靜音
+STR_REJECT_VERSION_MISMATCH=伺服器版本為 {string1}，您的版本為 {string2} — 請更新。
+STR_RETURNING_TO_LOBBY=正在返回大廳

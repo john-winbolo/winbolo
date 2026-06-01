@@ -1329,3 +1329,5 @@ STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Overgeven is alleen beschikbaar als er precies 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Volume
 STR_VOLUME_MUTE=Dempen
+STR_REJECT_VERSION_MISMATCH=Server is versie {string1}, jij hebt {string2} — update alsjeblieft.
+STR_RETURNING_TO_LOBBY=Terug naar lobby

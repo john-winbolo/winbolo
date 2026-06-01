@@ -1329,3 +1329,5 @@ STR_VOTE_SURRENDER_TWO_TEAMS_TIP=항복은 인간 플레이어가 있는 팀이\
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=볼륨
 STR_VOLUME_MUTE=음소거
+STR_REJECT_VERSION_MISMATCH=서버는 버전 {string1}이고, 당신은 {string2}입니다 — 업데이트해 주세요.
+STR_RETURNING_TO_LOBBY=로비로 돌아갑니다

@@ -1329,3 +1329,5 @@ STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Teslim olma yalnızca insan oyunculu tam olarak
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Ses düzeyi
 STR_VOLUME_MUTE=Sessiz
+STR_REJECT_VERSION_MISMATCH=Sunucu {string1} sürümünde, sizde {string2} var — lütfen güncelleyin.
+STR_RETURNING_TO_LOBBY=Lobiye dönülüyor

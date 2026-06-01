@@ -1327,3 +1327,5 @@ STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Сдача доступна только ког
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Громкость
 STR_VOLUME_MUTE=Без звука
+STR_REJECT_VERSION_MISMATCH=Сервер версии {string1}, у вас {string2} — пожалуйста, обновитесь.
+STR_RETURNING_TO_LOBBY=Возврат в лобби

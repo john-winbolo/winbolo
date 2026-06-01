@@ -1329,3 +1329,5 @@ STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Ge upp är bara tillgängligt när exakt två l
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Volym
 STR_VOLUME_MUTE=Tyst
+STR_REJECT_VERSION_MISMATCH=Servern har version {string1}, du har {string2} — vänligen uppdatera.
+STR_RETURNING_TO_LOBBY=Återvänder till lobbyn

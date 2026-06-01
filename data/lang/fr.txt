@@ -1329,3 +1329,5 @@ STR_VOTE_SURRENDER_TWO_TEAMS_TIP=L'abandon n'est disponible que lorsqu'il reste 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Volume
 STR_VOLUME_MUTE=Muet
+STR_REJECT_VERSION_MISMATCH=Le serveur est en version {string1}, vous avez {string2} — veuillez mettre à jour.
+STR_RETURNING_TO_LOBBY=Retour au lobby

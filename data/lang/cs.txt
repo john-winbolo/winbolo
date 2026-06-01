@@ -1329,3 +1329,5 @@ STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Vzdání je dostupné pouze tehdy, kdy zbývaj�
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Hlasitost
 STR_VOLUME_MUTE=Ztlumit
+STR_REJECT_VERSION_MISMATCH=Server je verze {string1}, vy máte {string2} — prosím aktualizujte.
+STR_RETURNING_TO_LOBBY=Návrat do lobby

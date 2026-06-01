@@ -1329,3 +1329,5 @@ STR_VOTE_SURRENDER_TWO_TEAMS_TIP=La resa è disponibile solo quando rimangono es
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Volume
 STR_VOLUME_MUTE=Disattiva audio
+STR_REJECT_VERSION_MISMATCH=Il server è alla versione {string1}, tu hai {string2} — aggiorna per favore.
+STR_RETURNING_TO_LOBBY=Ritorno alla lobby

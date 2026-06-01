@@ -1329,3 +1329,5 @@ STR_VOTE_SURRENDER_TWO_TEAMS_TIP=降伏は人間のプレイヤーがいるチ�
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=音量
 STR_VOLUME_MUTE=ミュート
+STR_REJECT_VERSION_MISMATCH=サーバーはバージョン {string1}、あなたは {string2} です — アップデートしてください。
+STR_RETURNING_TO_LOBBY=ロビーに戻ります
