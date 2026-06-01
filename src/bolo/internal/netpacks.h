@@ -38,7 +38,7 @@
 
 /* Version bytes derived from WINBOLO_VERSION via CMake.
  * Encoding: each digit of the version string (skipping dots) becomes one byte.
- * E.g. "1.18" -> MAJOR=0x01, MINOR=0x01, REVISION=0x08.
+ * E.g. "1.19" -> MAJOR=0x01, MINOR=0x01, REVISION=0x09.
  * BOLO_VERSION_MAJOR/MINOR/REVISION are defined as compile definitions by CMake. */
 #define BOLO_VERSION_MAJORPOS    4
 #define BOLO_VERSION_MINORPOS    5
