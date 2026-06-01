@@ -155,6 +155,7 @@ extern "C" void windowShowBaseLabels_toggle(struct ClientSim *cs);
 extern "C" void windowSoundEffects_toggle(void);
 extern "C" void windowBackgroundSoundChange_toggle(void);
 extern "C" void windowSoundKeepalive(void);
+extern "C" void windowSetSoundVolume(int pct);
 extern "C" void windowMenuAllowNewPlayers_toggle(struct ClientSim *cs);
 extern "C" void windowMenuNewswire_toggle(struct ClientSim *cs);
 extern "C" void windowMenuAssistant_toggle(struct ClientSim *cs);
@@ -191,6 +192,7 @@ extern "C" bool soundEffects;
 extern "C" void soundSetMuted(bool mute);
 extern "C" bool backgroundSound;
 extern "C" bool useSoundKeepalive;
+extern "C" int  soundVolume;
 extern "C" bool showNewswireMessages;
 extern "C" bool showAssistantMessages;
 extern "C" bool showAIMessages;
@@ -2156,6 +2158,13 @@ static void renderSettingsPanel(ClientSim *cs) {
                 windowSoundKeepalive();
             }
         }
+        {
+            int vol = soundVolume;
+            ImGui::SetNextItemWidth(200.0f);
+            if (ImGui::SliderInt(langGetText(STR_MENU_VOLUME), &vol, 0, 100, "%d%%")) {
+                windowSetSoundVolume(vol);
+            }
+        }
     }
 
     /* ---- Messages ---- */
@@ -2321,17 +2330,6 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::MenuItem(langGetText(STR_MENU_BASE_LABELS),    KMOD_PRIMARY_LABEL "B", (bool)showBaseLabels)) windowShowBaseLabels_toggle(cs);
         ImGui::Separator();
         if (ImGui::MenuItem(langGetText(STR_MENU_HIDE_MAIN),      KMOD_PRIMARY_LABEL "H", (bool)hideMainView))   windowHideMainView_toggle();
-        ImGui::Separator();
-        {
-            const char *presetLabel = (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets)
-                ? s_devicePresets[g_currentDevicePreset].name : langGetText(STR_MENU_DESKTOP);
-            char deviceMenuItem[96];
-            SDL_snprintf(deviceMenuItem, sizeof(deviceMenuItem), "%s %s",
-                         langGetText(STR_MENU_DEVICE), presetLabel);
-            if (ImGui::MenuItem(deviceMenuItem, KMOD_PRIMARY_LABEL "T")) {
-                dialogCycleDevicePreset(sdl3DrawGetWindow());
-            }
-        }
 
         ImGui::EndMenu();
     }
@@ -2345,6 +2343,16 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_EFFECTS),   nullptr, (bool)soundEffects))              windowSoundEffects_toggle();
         if (ImGui::MenuItem(langGetText(STR_MENU_BACKGROUND_SOUND),nullptr, (bool)backgroundSound))           windowBackgroundSoundChange_toggle();
         if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_KEEPALIVE), nullptr, (bool)useSoundKeepalive))         windowSoundKeepalive();
+        {
+            int vol = soundVolume;
+            const float sliderW = 160.0f;
+            ImGui::TextUnformatted(langGetText(STR_MENU_VOLUME));
+            ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - sliderW);
+            ImGui::SetNextItemWidth(sliderW);
+            if (ImGui::SliderInt("##volume", &vol, 0, 100, "%d%%")) {
+                windowSetSoundVolume(vol);
+            }
+        }
         ImGui::Separator();
         if (ImGui::MenuItem(langGetText(STR_MENU_NEWSWIRE_MSGS),   nullptr, (bool)showNewswireMessages))      windowMenuNewswire_toggle(cs);
         if (ImGui::MenuItem(langGetText(STR_MENU_ASSISTANT_MSGS),  nullptr, (bool)showAssistantMessages))     windowMenuAssistant_toggle(cs);
@@ -3064,10 +3072,6 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             case SDL_SCANCODE_R:
                 clientSimRequestAllianceSelected(cs);
                 continue;
-            case SDL_SCANCODE_T:
-                /* Cycle through device resolution presets */
-                dialogCycleDevicePreset(sdl3DrawGetWindow());
-                continue;
             default:
                 break;
             }
@@ -3281,6 +3285,7 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->soundEffects          = soundEffects;
     s->backgroundSound       = backgroundSound;
     s->useSoundKeepalive     = useSoundKeepalive;
+    s->soundVolume           = soundVolume;
     s->newswireMessages      = showNewswireMessages;
     s->assistantMessages     = showAssistantMessages;
     s->aiMessages            = showAIMessages;
@@ -3305,13 +3310,6 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->fit2x = (2 * SDL3_SCREEN_W <= dispW) && (2 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
     s->fit3x = (3 * SDL3_SCREEN_W <= dispW) && (3 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
     s->fit4x = (4 * SDL3_SCREEN_W <= dispW) && (4 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
-
-    const char *presetLabel =
-        (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets)
-            ? s_devicePresets[g_currentDevicePreset].name
-            : langGetText(STR_MENU_DESKTOP);
-    SDL_snprintf(s->deviceLabel, sizeof s->deviceLabel, "%s %s",
-                 langGetText(STR_MENU_DEVICE), presetLabel);
 
     /* Alliance gating — mirrors the in-window Players menu pre-compute
      * at line ~2157. NULL cs leaves both predicates false, so the native
@@ -3798,9 +3796,6 @@ extern "C" void sdl3ImguiSetMessageLabelLen(ClientSim *cs, int len) {
 }
 extern "C" void sdl3ImguiSetTankLabelLen(ClientSim *cs, int len) {
     windowSetTankLabelLen(cs, (labelLen)len);
-}
-extern "C" void sdl3ImguiCycleDevicePreset(void) {
-    dialogCycleDevicePreset(sdl3DrawGetWindow());
 }
 
 /* Brain-control trampolines for the macOS native Brains menu.

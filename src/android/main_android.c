@@ -53,6 +53,7 @@ bool showGunsight = FALSE;
 bool soundEffects = TRUE;
 bool backgroundSound = TRUE;
 bool useSoundKeepalive = FALSE;
+int  soundVolume = 50;
 bool allowNewPlayers = TRUE;
 
 bool showNewswireMessages = TRUE;

@@ -34,6 +34,7 @@
 #include "client_sim_control.h"
 #include "client_sim_internal.h"
 #include "client_sim.h"
+#include "frontend.h"    /* frontEndAudioReturningToLobby */
 #include "messages.h"
 #include "netpacks.h"
 #include "players.h"
@@ -405,6 +406,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * arrives carrying inLobby=true, which only happens on hosts
          * with lobbyEnabled. */
         cs->inLobby = true;
+        frontEndAudioReturningToLobby(false);
         /* Clear the predicted-tank latch so the next round's first
          * snapshot takes clientApplySnapshot's first-snapshot init
          * branch (sets stocks, jump-cuts the camera via
@@ -416,6 +418,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     case CTRL_GAME_PHASE_COUNTDOWN:
         cs->netStat = netLobbyCountdown;
         cs->countdownSeconds = evt->u.gamePhase.countdownSeconds;
+        frontEndAudioReturningToLobby(false);
         break;
     case CTRL_GAME_PHASE_RUNNING:
         cs->netStat = netRunning;
@@ -426,6 +429,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * the RUNNING phase event and every subscriber should pick
          * up the lobby→game flip from this event. */
         cs->inLobby = false;
+        frontEndAudioReturningToLobby(false);
         break;
     case CTRL_GAME_PHASE_GAME_OVER:
         /* Reset countdown unconditionally — used to be gated on
@@ -436,6 +440,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * non-lobby case is handled by the transport observer. */
         cs->netStat = netLobby;
         cs->countdownSeconds = 0;
+        /* Silence in-flight playback so engine/shell/explosion
+         * sounds don't keep draining behind the "Returning to
+         * lobby" caption. Restored on the next phase event. */
+        frontEndAudioReturningToLobby(true);
         break;
 
     case CTRL_GAME_OVER: {

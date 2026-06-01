@@ -931,14 +931,6 @@ STR_LV_MAP_SKIP_VOTE={player} voted to skip map.
 STR_LV_MAP_SKIPPED=Map skipped. New map: {string1}
 STR_LV_TEAM_BALANCE=Team balance applied.
 
-# Log viewer — in-game vote events
-STR_LV_VOTE_START_LOBBY={player} started a vote to return to lobby.
-STR_LV_VOTE_START_SURRENDER={player} started a vote to surrender.
-STR_LV_VOTE_CAST_YES={player} voted yes.
-STR_LV_VOTE_CAST_NO={player} voted no.
-STR_LV_VOTE_PASSED=Vote passed.
-STR_LV_VOTE_FAILED=Vote failed.
-
 # Log viewer main menu
 STR_LV_MENU_OPEN=Open
 STR_LV_MENU_ACTION=Action
@@ -1306,4 +1298,17 @@ STR_VOTE_DRAW_TAG= (Draw)
 STR_VOTE_NEEDS_RUNNING_TIP=Available once the game is running.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Pick a team before voting to surrender.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Surrender is only available when exactly two teams\nwith human players remain.
+
+# Logviewer — in-game vote events
+STR_LV_VOTE_START_LOBBY={player} started a vote to return to lobby.
+STR_LV_VOTE_START_SURRENDER={player} started a vote to surrender.
+STR_LV_VOTE_CAST_YES={player} voted yes.
+STR_LV_VOTE_CAST_NO={player} voted no.
+STR_LV_VOTE_PASSED=Vote passed.
+STR_LV_VOTE_FAILED=Vote failed.
+
+# Volume — slider label and Mac preset submenu items
+STR_MENU_VOLUME=Volume
+STR_VOLUME_MUTE=Mute
+STR_RETURNING_TO_LOBBY=Returning to lobby
 

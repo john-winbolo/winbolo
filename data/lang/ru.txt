@@ -1323,3 +1323,9 @@ STR_VOTE_DRAW_TAG= (Ничья)
 STR_VOTE_NEEDS_RUNNING_TIP=Доступно после начала игры.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Выберите команду перед голосованием о сдаче.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Сдача доступна только когда остаётся ровно две команды\nс живыми игроками.
+
+# Volume — slider label and Mac preset submenu items
+STR_MENU_VOLUME=Громкость
+STR_VOLUME_MUTE=Без звука
+STR_REJECT_VERSION_MISMATCH=Сервер версии {string1}, у вас {string2} — пожалуйста, обновитесь.
+STR_RETURNING_TO_LOBBY=Возврат в лобби

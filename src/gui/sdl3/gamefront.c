@@ -410,6 +410,7 @@ extern bool showGunsight;
 extern bool soundEffects;
 extern bool backgroundSound;
 extern bool useSoundKeepalive;
+extern int  soundVolume;
 extern bool showNewswireMessages;
 extern bool showAssistantMessages;
 extern bool showAIMessages;
@@ -1839,7 +1840,14 @@ bool gameFrontSetupServer(void) {
   cfg.password            = password;
   cfg.maxPlayers          = MAX_TANKS;
   cfg.acceptRemoteClients = true;
-  cfg.useWbn              = gameFrontWbnUse;
+  /* Internet games always register on WinBolo.net so the server is
+   * publicly listed, regardless of whether the host is signed in:
+   * server/register is anonymous and returns its own server_token for
+   * later server/ calls. Being signed in (gameFrontWbnUse) only governs
+   * whether the host's own tank is WBN-identified for ratings, handled
+   * separately on the client-join path. The LAN-only block below forces
+   * this back off for Local games. */
+  cfg.useWbn              = TRUE;
   cfg.compTanks           = (BYTE)compTanks;
   cfg.useTracker          = gameFrontTrackerEnabled;
   cfg.trackerAddr         = gameFrontTrackerAddr;
@@ -2054,6 +2062,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   backgroundSound = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("MENU", "Sound keepalive", "No", buff, FILENAME_MAX, prefsFile);
   useSoundKeepalive = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Sound Volume", "50", buff, FILENAME_MAX, prefsFile);
+  soundVolume = atoi(buff);
+  if (soundVolume < 0) soundVolume = 0;
+  if (soundVolume > 100) soundVolume = 100;
   GetPrivateProfileString("MENU", "Show Newswire Messages", "Yes", buff, FILENAME_MAX, prefsFile);
   showNewswireMessages = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("MENU", "Show Assistant Messages", "Yes", buff, FILENAME_MAX, prefsFile);
@@ -2236,6 +2248,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   WritePrivateProfileString("MENU", "Sound Effects", TRUEFALSE_TO_STR(soundEffects), prefsFile);
   WritePrivateProfileString("MENU", "Allow Background Sound", TRUEFALSE_TO_STR(backgroundSound), prefsFile);
   WritePrivateProfileString("MENU", "Sound keepalive", TRUEFALSE_TO_STR(useSoundKeepalive), prefsFile);
+  intToStr(soundVolume, buff, sizeof(buff));
+  WritePrivateProfileString("MENU", "Sound Volume", buff, prefsFile);
   WritePrivateProfileString("MENU", "Show Newswire Messages", TRUEFALSE_TO_STR(showNewswireMessages), prefsFile);
   WritePrivateProfileString("MENU", "Show Assistant Messages", TRUEFALSE_TO_STR(showAssistantMessages), prefsFile);
   WritePrivateProfileString("MENU", "Show AI Messages", TRUEFALSE_TO_STR(showAIMessages), prefsFile);

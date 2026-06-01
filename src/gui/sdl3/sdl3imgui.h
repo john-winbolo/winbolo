@@ -173,7 +173,6 @@ void sdl3ImguiSetFrameRate(int rate);
 void sdl3ImguiSetZoom(int zoom);
 void sdl3ImguiSetMessageLabelLen(struct ClientSim *cs, int len);
 void sdl3ImguiSetTankLabelLen(struct ClientSim *cs, int len);
-void sdl3ImguiCycleDevicePreset(void);
 
 /*********************************************************
 *NAME:          sdl3ImguiStopBrain

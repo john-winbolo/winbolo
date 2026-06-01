@@ -102,6 +102,10 @@ void frontEndDrawReturningToLobby(ClientSim *cs) {
   (void)cs;
 }
 
+void frontEndAudioReturningToLobby(bool active) {
+  (void)active;
+}
+
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
   (void)cs; (void)value; (void)isChecked;
 }

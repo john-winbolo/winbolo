@@ -1325,3 +1325,9 @@ STR_VOTE_DRAW_TAG= （引き分け）
 STR_VOTE_NEEDS_RUNNING_TIP=ゲームが開始してから使用できます。
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=降伏に投票する前にチームを選択してください。
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=降伏は人間のプレイヤーがいるチームが\nちょうど2チーム残っている場合にのみ使用できます。
+
+# Volume — slider label and Mac preset submenu items
+STR_MENU_VOLUME=音量
+STR_VOLUME_MUTE=ミュート
+STR_REJECT_VERSION_MISMATCH=サーバーはバージョン {string1}、あなたは {string2} です — アップデートしてください。
+STR_RETURNING_TO_LOBBY=ロビーに戻ります

@@ -490,26 +490,9 @@ static inline void dialogApplyDevicePreset(SDL_Window *win, int idx) {
             p->mode == UI_MODE_TABLET ? "TABLET" : "DESKTOP");
 }
 
-/* Cycle to the next device preset. Call from Ctrl+T handler. */
-static inline void dialogCycleDevicePreset(SDL_Window *win) {
-    g_currentDevicePreset = (g_currentDevicePreset + 1) % s_numDevicePresets;
-    dialogApplyDevicePreset(win, g_currentDevicePreset);
-}
-
-/* Check an SDL event for Ctrl+T and cycle presets if matched.
- * Returns true if the event was consumed. */
 static inline bool dialogHandleDevicePresetEvent(SDL_Window *win, const SDL_Event *ev) {
-#ifndef __APPLE__
-    if (ev->type == SDL_EVENT_KEY_DOWN &&
-        (ev->key.mod & KMOD_PRIMARY) &&
-        ev->key.scancode == SDL_SCANCODE_T) {
-        dialogCycleDevicePreset(win);
-        return true;
-    }
-#else
     (void)win;
     (void)ev;
-#endif
     return false;
 }
 

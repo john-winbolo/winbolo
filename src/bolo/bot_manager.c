@@ -1342,7 +1342,7 @@ char *botManagerEvalLuaString(ServerSim *sim, BYTE playerNum, const char *src) {
     if (luaL_loadstring(L, src) != LUA_OK) {
         Uint64 now = SDL_GetTicks();
         if (now - sLastErrLogMs > 2000) {
-            SDL_Log("brain %d: panel eval compile error: %s",
+            WB_LOG_WARN(WB_LOG_CAT_LUA, "brain %d: panel eval compile error: %s",
                     playerNum, lua_tostring(L, -1));
             sLastErrLogMs = now;
         }
@@ -1352,7 +1352,7 @@ char *botManagerEvalLuaString(ServerSim *sim, BYTE playerNum, const char *src) {
     if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
         Uint64 now = SDL_GetTicks();
         if (now - sLastErrLogMs > 2000) {
-            SDL_Log("brain %d: panel eval runtime error: %s",
+            WB_LOG_WARN(WB_LOG_CAT_LUA, "brain %d: panel eval runtime error: %s",
                     playerNum, lua_tostring(L, -1));
             sLastErrLogMs = now;
         }
