@@ -799,7 +799,7 @@ static bool lobbyServerMapsGeneratePreview(const char *entryPath,
      * client-side transport receive logic that assembles chunks
      * and invokes mapPreviewCacheDeliverFromMapBytes. Until that
      * lands, MP clients see no preview on Server Maps. */
-    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
         "[SM-PREVIEW] MP path not yet wired for '%s'", entryPath);
     return false;
 }
@@ -1136,12 +1136,12 @@ static void wbnMapsParseFolderJson(const char *json) {
      * API is actually returning for id/count without dumping a
      * 250-entry blob. Drops the mutex first since this can be
      * chatty. */
-    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
         "[WBN-TAB] parsed folder id=%d path='%s' subs=%zu entries=%zu",
         newFolderId, canonicalPath.c_str(),
         subs.size(), entries.size());
     for (size_t i = 0; i < subs.size() && i < 6; i++) {
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
             "[WBN-TAB]   sub[%zu] id=%d count=%d name='%s'",
             i, subs[i].id, subs[i].count, subs[i].name.c_str());
     }
@@ -1292,7 +1292,7 @@ static void spWbnSubmit(uint32_t mapId) {
         char infoPath[64];
         SDL_snprintf(infoPath, sizeof(infoPath), "maps/info/%u",
                      (unsigned)mapId);
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-SP] info fetch: /api/v1/%s", infoPath);
         char *infoJson = nullptr;
         int infoStatus = wbn_api_get(infoPath, &infoJson);
@@ -1322,13 +1322,13 @@ static void spWbnSubmit(uint32_t mapId) {
         char filePath[64];
         SDL_snprintf(filePath, sizeof(filePath), "maps/file/%u",
                      (unsigned)mapId);
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-SP] file fetch: /api/v1/%s", filePath);
         uint8_t *bytes = nullptr;
         size_t   bytesLen = 0;
         int dlStatus = wbn_api_download_to_memory_cancellable(
             filePath, &bytes, &bytesLen, &s_spWbnCancel);
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-SP] file fetch result: /api/v1/%s -> %d (%zu bytes)",
                     filePath, dlStatus, bytesLen);
 
@@ -1376,7 +1376,7 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
         clientSimSetLobbyWbnPreviewStatus(cs, 3);
         clientSimSetLobbyWbnPreviewErrMsg(cs,
             res.err.empty() ? langGetText(STR_DLGLOBBY_WBN_ERR_MAPFAILED) : res.err.c_str());
-        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+        WB_LOG_WARN(WB_LOG_CAT_GUI,
                     "[WBN-SP] fetch failed: %s",
                     res.err.empty() ? "(unknown)" : res.err.c_str());
         return;
@@ -1432,7 +1432,7 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
     if (!clientSimIsSinglePlayer(cs)) {
         uint8_t upStatus = clientSimGetLobbyMapUploadStatus(cs);
         if (upStatus == 1 || upStatus == 2) {
-            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
                 "[WBN-MP] another upload is in flight; ignoring pick");
             return;
         }
@@ -1461,7 +1461,7 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
             reinterpret_cast<const uint8_t *>(res.bytes.data()),
             res.bytes.size(), wireName)) {
         if (clientSimIsSinglePlayer(cs)) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+            WB_LOG_WARN(WB_LOG_CAT_GUI,
                         "[WBN-SP] map install rejected bytes");
         }
         clientSimSetLobbyWbnPreviewStatus(cs, 3);
@@ -1474,11 +1474,11 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
     clientSimSetLobbyWbnPreviewStatus(cs, 2);
     s_chooseMapPreviewPending = true;
     if (clientSimIsSinglePlayer(cs)) {
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-SP] applied '%s' (%zu bytes)",
                     displayName, res.bytes.size());
     } else {
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
             "[WBN-MP] uploading '%s' (%u bytes)",
             safeName.c_str(), (unsigned)res.bytes.size());
     }
@@ -1492,12 +1492,12 @@ static void wbnMapsKickFolderFetch(int folderId) {
         if (folderId > 0) SDL_snprintf(path, sizeof(path), "maps/%d", folderId);
         else              SDL_strlcpy(path, "maps", sizeof(path));
         const char *base = httpGetBaseUrl();
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-TAB] folder fetch: %s/api/v1/%s",
                     (base && *base) ? base : "(no base)", path);
         char *resp = nullptr;
         int status = wbn_api_get(path, &resp);
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-TAB] folder fetch result: %s/api/v1/%s -> %d",
                     (base && *base) ? base : "(no base)", path, status);
         if (seq == s_wbnMapsFetchSeq.load()) {
@@ -1542,12 +1542,12 @@ static void wbnMapsKickSearchFetch(const char *queryRaw) {
     std::string path = "maps/search?name=" + enc;
     std::thread([path, qcopy, seq]() {
         const char *base = httpGetBaseUrl();
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-TAB] search fetch: %s/api/v1/%s",
                     (base && *base) ? base : "(no base)", path.c_str());
         char *resp = nullptr;
         int status = wbn_api_get(path.c_str(), &resp);
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-TAB] search fetch result: %s/api/v1/%s -> %d",
                     (base && *base) ? base : "(no base)", path.c_str(),
                     status);
@@ -1557,7 +1557,7 @@ static void wbnMapsKickSearchFetch(const char *queryRaw) {
                  * so we can see exactly what shape the search
                  * endpoint returns (folder fields might differ
                  * from the /maps/<id> shape we modelled on). */
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-TAB] search raw response (first 600c): %.600s",
                     resp);
                 wbnMapsParseSearchJson(resp, qcopy.c_str());
@@ -1621,7 +1621,7 @@ static void wbnMapsListProvider(MapChooserState *state,
             (!hasResults || query != state->searchFilter) &&
             s_wbnSearchLastReq != state->searchFilter) {
             s_wbnSearchLastReq = state->searchFilter;
-            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
                 "[WBN-TAB] provider kicking search for '%s'",
                 state->searchFilter);
             wbnMapsKickSearchFetch(state->searchFilter);
@@ -1633,7 +1633,7 @@ static void wbnMapsListProvider(MapChooserState *state,
          * and inspect the first few search hits for folder info. */
         static int s_wbnSrchLogTick = 0;
         if (++s_wbnSrchLogTick % 60 == 1) {
-            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
                 "[WBN-TAB] search branch filter='%s' recursive=%d "
                 "cached='%s' has=%d inFlight=%d hits=%zu err='%s'",
                 state->searchFilter,
@@ -1641,7 +1641,7 @@ static void wbnMapsListProvider(MapChooserState *state,
                 query.c_str(), (int)hasResults, (int)srchInFlight,
                 results.size(), srchErr.c_str());
             for (size_t i = 0; i < results.size() && i < 4; i++) {
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[WBN-TAB]   hit[%zu] id=%d folder=(id=%d name='%s') name='%s'",
                     i, results[i].id, results[i].folderId,
                     results[i].folderName.c_str(),
@@ -1718,7 +1718,7 @@ static void wbnMapsListProvider(MapChooserState *state,
     bool inFlight = s_wbnMapsFetching.load();
     static int s_wbnLogTick = 0;
     if (++s_wbnLogTick % 60 == 1) {
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+        WB_LOG_INFO(WB_LOG_CAT_GUI,
             "[WBN-TAB] provider relPath='%s' targetId=%d "
             "cached=(id=%d path='%s' has=%d) match=%d inFlight=%d "
             "lastReq=%d subs=%zu entries=%zu err='%s'",
@@ -1732,7 +1732,7 @@ static void wbnMapsListProvider(MapChooserState *state,
     if (!cacheMatches && !inFlight) {
         if (s_wbnMapsLastRequested != targetId) {
             s_wbnMapsLastRequested = targetId;
-            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
                 "[WBN-TAB] provider kicking fetch for folderId=%d "
                 "(relPath='%s')", targetId, relPath);
             wbnMapsKickFolderFetch(targetId);

@@ -25,6 +25,7 @@
 #include "input_packet.h"
 #include "transport.h"
 #include "gui_message.h"
+#include "../../common/wb_log.h"
 #include "../../server/server_sim.h"
 #include "../../server/threads.h"
 #include "../brainsHandler.h"
@@ -188,9 +189,9 @@ int main(int argc, char *argv[]) {
         NSError *err = nil;
         AVAudioSession *session = [AVAudioSession sharedInstance];
         [session setCategory:AVAudioSessionCategoryAmbient error:&err];
-        if (err) SDL_Log("AVAudioSession setCategory failed: %s", [[err localizedDescription] UTF8String]);
+        if (err) WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "AVAudioSession setCategory failed: %s", [[err localizedDescription] UTF8String]);
         [session setActive:YES error:&err];
-        if (err) SDL_Log("AVAudioSession setActive failed: %s", [[err localizedDescription] UTF8String]);
+        if (err) WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "AVAudioSession setActive failed: %s", [[err localizedDescription] UTF8String]);
     }
 
     SDL_Init(0);
@@ -199,25 +200,25 @@ int main(int argc, char *argv[]) {
     const char *basePath = SDL_GetBasePath();
     if (basePath) {
         chdir(basePath);
-        SDL_Log("Base path: %s", basePath);
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "Base path: %s", basePath);
     }
 
 
     if (clientMutexCreate() == FALSE) {
-        SDL_Log("[iOS] Failed to create client mutex");
+        WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[iOS] Failed to create client mutex");
         return 1;
     }
 
     dialogBackendInit();
 
-    SDL_Log("[iOS] Starting gameFrontStart...");
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Starting gameFrontStart...");
     if (gameFrontStart("", &keys, FALSE, NULL) == FALSE) {
-        SDL_Log("[iOS] gameFrontStart FAILED");
+        WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[iOS] gameFrontStart FAILED");
         clientMutexDestroy();
         SDL_Quit();
         return 1;
     }
-    SDL_Log("[iOS] gameFrontStart OK");
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] gameFrontStart OK");
 
 ios_game_start:
     /* Set up ImGui and touch input */
@@ -264,13 +265,13 @@ ios_game_start:
                         safeRight  = safeRight  * tw / winW;
                         safeBottom = safeBottom * th / winH;
                     }
-                    SDL_Log("[iOS] Safe area insets: L=%d T=%d R=%d B=%d",
+                    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Safe area insets: L=%d T=%d R=%d B=%d",
                             safeLeft, safeTop, safeRight, safeBottom);
                 }
             }
 
             touchInputSetup(tw, th, safeLeft, safeTop, safeRight, safeBottom);
-            SDL_Log("[iOS] Touch coordinate space: %dx%d", tw, th);
+            WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Touch coordinate space: %dx%d", tw, th);
         }
     }
 
@@ -283,12 +284,12 @@ ios_game_start:
     /* Handle lobby if server uses lobby mode */
     if (cs && clientSimIsInLobby(cs) &&
         (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
-        SDL_Log("[iOS] Entering lobby");
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Entering lobby");
         sdl3ImguiCleanup();
         const DialogBackend *db = dialogBackendGet();
         int lobbyResult = db->lobbyShow(cs);
         if (lobbyResult == 0) {
-            SDL_Log("[iOS] Left lobby, cleaning up");
+            WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Left lobby, cleaning up");
             gameFrontEnd(&keys, FALSE, TRUE);
             clientMutexDestroy();
             sdl3DrawCleanup();
@@ -301,7 +302,7 @@ ios_game_start:
          * the map onto the ClientSim, so we fall straight through
          * to the per-frame game-tick loop below. */
         clientSimSetNetStatus(cs, netRunning);
-        SDL_Log("[iOS] Lobby complete, game starting");
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Lobby complete, game starting");
         {
             SDL_Window *win = sdl3DrawGetWindow();
             SDL_Renderer *ren = sdl3DrawGetRenderer();
@@ -338,7 +339,7 @@ ios_game_start:
 
     lastFrameTime = SDL_GetTicks();
 
-    SDL_Log("[iOS] Starting main loop");
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Starting main loop");
 
     /* Main game loop */
 #define IOS_FRAME_CAP_MS 16
@@ -364,7 +365,7 @@ ios_game_start:
                     if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                         winboloQuit = TRUE;
                     } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND) {
-                        SDL_Log("[iOS] Resuming from background");
+                        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Resuming from background");
                         paused = FALSE;
                         lastFrameTime = SDL_GetTicks();
                         gameTickAccum = 0.0;
@@ -403,11 +404,11 @@ ios_game_start:
                 if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_TERMINATING) {
                     winboloQuit = TRUE;
                 } else if (ev.type == SDL_EVENT_DID_ENTER_BACKGROUND) {
-                    SDL_Log("[iOS] Entering background, pausing");
+                    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Entering background, pausing");
                     paused = TRUE;
                     soundSetMuted(TRUE);
                 } else if (ev.type == SDL_EVENT_WILL_ENTER_FOREGROUND) {
-                    SDL_Log("[iOS] Resuming from background");
+                    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Resuming from background");
                     paused = FALSE;
                     lastFrameTime = SDL_GetTicks();
                     gameTickAccum = 0.0;
@@ -460,18 +461,18 @@ ios_game_start:
         }
     }
 
-    SDL_Log("[iOS] Main loop ended, cleaning up");
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Main loop ended, cleaning up");
 
     sdl3ImguiCleanup();
     gameFrontEnd(&keys, TRUE, winboloQuit);
 
     if (!winboloQuit) {
-        SDL_Log("[iOS] Returning to menu (windowNewGame)");
+        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Returning to menu (windowNewGame)");
         /* Restart the pre-game dialogs and re-enter the game loop */
         if (gameFrontStart("", &keys, TRUE, NULL)) {
             goto ios_game_start;
         }
-        SDL_Log("[iOS] gameFrontStart failed after leave game");
+        WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[iOS] gameFrontStart failed after leave game");
     }
 
     clientMutexDestroy();
@@ -714,7 +715,7 @@ void windowMenuNetwork_toggle(ClientSim *cs) { showNetworkStatusMessages = !show
 void windowMenuNetworkDebug_toggle(ClientSim *cs) { showNetworkDebugMessages = !showNetworkDebugMessages; (void)cs; }
 
 void windowNewGame(void) {
-  SDL_Log("[iOS] windowNewGame: leaving game");
+  WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] windowNewGame: leaving game");
   winboloQuit = FALSE;
   finishedLoop = TRUE;
 }
@@ -854,7 +855,7 @@ void frontEndAudioReturningToLobby(bool active) {
 
 void frontEndGameOver(ClientSim *cs) {
     (void)cs;
-    SDL_Log("[iOS] Game over (time limit expired)");
+    WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[iOS] Game over (time limit expired)");
     finishedLoop = TRUE;
 }
 
