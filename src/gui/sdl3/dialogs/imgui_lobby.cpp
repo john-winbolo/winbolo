@@ -5695,7 +5695,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
          * by the standard !complete "Downloading…" gate (once
          * seqChanged / downloadInvalidated fires). */
         if (downloadInvalidated || seqChanged || nameChanged) {
-            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
                 "[LOBBY/PREVIEW] reset: downloadInvalidated=%d seqChanged=%d nameChanged=%d curName='%s' prevName='%s' seq=%u complete=%d hasTransport=%d isSP=%d",
                 (int)downloadInvalidated, (int)seqChanged, (int)nameChanged,
                 curMapName ? curMapName : "(null)",
@@ -5737,7 +5737,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         if (awaitingMapChangePacket) {
             awaitingFrames++;
             if (awaitingFrames > kAwaitingMaxFrames) {
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[LOBBY/PREVIEW] awaiting MAP_CHANGE timed out after %d frames; forcing rebuild",
                     awaitingFrames);
                 awaitingMapChangePacket = false;
@@ -5790,7 +5790,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     dataSource = "local-direct";
                 }
             }
-            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+            WB_LOG_INFO(WB_LOG_CAT_GUI,
                 "[LOBBY/PREVIEW] rebuild attempt: source=%s mapLen=%d mapData=%p mapPreviewBuilt(prior)=0 hasTransport=%d",
                 dataSource, mapLen, (const void *)mapData, (int)hasTransport);
             if (mapData && mapLen > 0) {
@@ -5802,7 +5802,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 SDL_Texture *prev = mapPreviewTex;
                 mapPreviewTex = buildMapPreview(renderer, mapData, mapLen, &mapBounds);
                 if (prev) SDL_DestroyTexture(prev);
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[LOBBY/PREVIEW] rebuild done: tex=%p bounds=(%d..%d, %d..%d)",
                     (const void *)mapPreviewTex,
                     mapBounds.minX, mapBounds.maxX,
