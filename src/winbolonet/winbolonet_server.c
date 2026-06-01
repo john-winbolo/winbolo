@@ -94,6 +94,8 @@ void winbolonetSendLobbyUpdate(void) {
   cJSON_AddNumberToObject(body, "game_type", s_lobbyInfo.gameType);
   cJSON_AddNumberToObject(body, "ai", s_lobbyInfo.ai);
   cJSON_AddBoolToObject(body, "mines", s_lobbyInfo.mines);
+  cJSON_AddNumberToObject(body, "num_players",
+                          s_lobbyInfo.numHumans + s_lobbyInfo.numBots);
   winbolonetAddLobbyInfoFields(body);
 
   json_str = cJSON_PrintUnformatted(body);

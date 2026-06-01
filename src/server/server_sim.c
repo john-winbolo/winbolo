@@ -2708,6 +2708,39 @@ BYTE serverSimGetNumHumans(ServerSim *sim) {
     return num;
 }
 
+/* Compute and cache the MD5 of a BMAPBOLO .map file so WBN can match
+ * the map against its library. Streams the file (handles any size) and
+ * only accepts it when the BMAPBOLO magic is present; clears the valid
+ * flag on any failure or non-.map input. */
+static void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path) {
+    FILE *f;
+    BYTE buf[8192];
+    size_t n;
+    Md5Ctx ctx;
+    bool headerChecked = FALSE;
+    bool isBmap = FALSE;
+    if (sim == NULL) return;
+    sim->mapMd5Valid = FALSE;
+    if (path == NULL || path[0] == '\0') return;
+    f = fopen(path, "rb");
+    if (f == NULL) return;
+    md5Init(&ctx);
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+        if (!headerChecked) {
+            headerChecked = TRUE;
+            isBmap = (n >= (sizeof(MAP_HEADER) - 1) &&
+                      memcmp(buf, MAP_HEADER, sizeof(MAP_HEADER) - 1) == 0);
+            if (!isBmap) break;
+        }
+        md5Update(&ctx, buf, n);
+    }
+    fclose(f);
+    if (isBmap) {
+        md5Final(sim->mapMd5, &ctx);
+        sim->mapMd5Valid = TRUE;
+    }
+}
+
 /* Minimum seconds between server/lobby_update sends — bursty lobby
  * edits (e.g. time-limit slider) coalesce into one send per window. */
 #define WBN_LOBBY_UPDATE_INTERVAL 30
@@ -3378,6 +3411,9 @@ bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {
     if (mapRead(mapFileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
         return FALSE;
     }
+
+    /* Hash the canonical BMAPBOLO file so WBN can match it. */
+    serverSimCacheMapMd5FromFile(sim, mapFileName);
 
     basesClearMines(&sim->sim);
 
