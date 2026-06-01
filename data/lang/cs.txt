@@ -1331,3 +1331,7 @@ STR_MENU_VOLUME=Hlasitost
 STR_VOLUME_MUTE=Ztlumit
 STR_REJECT_VERSION_MISMATCH=Server je verze {string1}, vy máte {string2} — prosím aktualizujte.
 STR_RETURNING_TO_LOBBY=Návrat do lobby
+
+# Balance — WBN-failure status pill + reject toast for non-ranked balance state
+STR_DLGLOBBY_REJECT_BAD_STATE=momentálně není povoleno
+STR_DLGLOBBY_BAL_STATUS_FAILED=WBN vyvážení selhalo

@@ -13,6 +13,7 @@
 #include "client_sim.h"
 #include "frontend.h"
 #include "server_sim.h"
+#include "../../src/winbolonet/winbolonet_server.h"
 #include "luabrainshandler.h"
 #include "lang_message.h"
 #include "nat_portmap.h"
@@ -255,8 +256,8 @@ void netErrorOccured(void) {}
 
 bool winbolonetIsRunning(void) { return FALSE; }
 void winbolonetDestroy(bool isServer) { (void)isServer; }
-void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB) {
-  (void)eventType; (void)isServer; (void)playerA; (void)playerB;
+void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
+  (void)eventType; (void)isServer; (void)playerA; (void)playerB; (void)aIsBot; (void)bIsBot;
 }
 void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
@@ -293,6 +294,10 @@ bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize,
 void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills) {
   (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;
 }
+
+void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) { (void)info; }
+
+void winbolonetSendLobbyUpdate(void) { }
 
 /* Stubbed because server_lifecycle.c references these but they live
  * outside server_static (per-target client networking dependencies:

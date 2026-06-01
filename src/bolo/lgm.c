@@ -1391,9 +1391,11 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
       /* Log it */
       logAddEvent(log_LostMan, (*lgman)->playerNum, 0, 0, 0, 0, NULL);
       /* WinBolo.net it */
-      winbolonetAddEvent(WINBOLO_NET_EVENT_LGM_LOST, TRUE, (*lgman)->playerNum, WINBOLO_NET_NO_PLAYER);
+      winbolonetAddEvent(WINBOLO_NET_EVENT_LGM_LOST, TRUE, (*lgman)->playerNum, WINBOLO_NET_NO_PLAYER,
+                         playersIsBot(&sim->plyrs, (*lgman)->playerNum), FALSE);
       if (owner != NEUTRAL) {
-        winbolonetAddEvent(WINBOLO_NET_EVENT_LGM_KILL, TRUE, owner, (*lgman)->playerNum);
+        winbolonetAddEvent(WINBOLO_NET_EVENT_LGM_KILL, TRUE, owner, (*lgman)->playerNum,
+                           playersIsBot(&sim->plyrs, owner), playersIsBot(&sim->plyrs, (*lgman)->playerNum));
       }
       /* Process message */
       {

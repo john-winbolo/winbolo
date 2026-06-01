@@ -3283,27 +3283,6 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
      * only. Fires BEFORE the early-return so we can see whether the
      * function is reached at all and which condition trips the
      * early-out. */
-    {
-        static int s_firstCallCount = 0;
-        static bool s_lastHasTransport = false, s_lastIsSP = false;
-        static int  s_lastMyPN = -2;
-        bool hasT = clientSimHasTransport(cs);
-        bool isSP = clientSimIsSinglePlayer(cs);
-        bool changed = (hasT != s_lastHasTransport || isSP != s_lastIsSP ||
-                        myPlayerNum != s_lastMyPN);
-        /* Always log the first few calls so we can confirm the function
-         * is reached even when no state ever changes from the sentinel. */
-        if (changed || s_firstCallCount < 3) {
-            s_firstCallCount++;
-            balanceDebugLog("[BAL FUNC] renderAllowNewPlayersRow entry: "
-                            "myPlayerNum=%d hasTransport=%d isSP=%d effectiveHost=%d -> %s",
-                            myPlayerNum, (int)hasT, (int)isSP, (int)effectiveHost,
-                            (!hasT || isSP) ? "EARLY-RETURN" : "render");
-            s_lastHasTransport = hasT;
-            s_lastIsSP = isSP;
-            s_lastMyPN = myPlayerNum;
-        }
-    }
     /* Row stays visible to non-host players too so they can see the
      * Ranked Game indicator — but the "Allow New Players" controls
      * and the Ranked toggle itself stay disabled for them. */
@@ -3313,18 +3292,11 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
     ImGui::TextDisabled("Allow New Players:");
     if (!effectiveHost) ImGui::BeginDisabled();
     bool allowJoin = clientSimGetLobbyAllowNewPlayers(cs);
-    bool allowJoinPrev = allowJoin;
     ImGui::SameLine();
     char allowNowId[64];
     SDL_snprintf(allowNowId, sizeof(allowNowId), "%s##allowNow", langGetText(STR_DLGLOBBY_ALLOW_NOW));
     if (ImGui::Checkbox(allowNowId, &allowJoin)) {
-        balanceDebugLog("[ALLOW CLIENT] checkbox toggled: prevSim=%d newLocal=%d "
-                        "sending LockToggle(allow=%d) cs=%p",
-                        (int)allowJoinPrev, (int)allowJoin,
-                        (int)allowJoin, (void *)cs);
         clientSimNetSendLockToggle(cs, allowJoin);
-        balanceDebugLog("[ALLOW CLIENT] post-send sim allowNewPlayers=%d",
-                        (int)clientSimGetLobbyAllowNewPlayers(cs));
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_ALLOWNOW));
@@ -3397,22 +3369,12 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
 
         bool rankedLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_RANKED) != 0;
         bool canToggle = effectiveHost && !botsBlock && !rankedLocked;
-        bool rankedReadAtRender = rankedV;
         if (!canToggle) ImGui::BeginDisabled();
         char rankedId[64];
         SDL_snprintf(rankedId, sizeof(rankedId), "%s##ranked", langGetText(STR_DLGLOBBY_RANKED));
         if (ImGui::Checkbox(rankedId, &rankedV)) {
             uint8_t v = rankedV ? 1 : 0;
-            balanceDebugLog("[RANKED CLIENT] checkbox toggled: prevSim=%d newLocal=%d "
-                            "effectiveHost=%d botCount=%d isSP=%d isLanOnly=%d",
-                            (int)rankedReadAtRender, (int)rankedV,
-                            (int)effectiveHost, botCount,
-                            (int)clientSimIsSinglePlayer(cs),
-                            (int)clientSimIsLanOnly(cs));
             lobbySendSetting(cs, LST_RANKED, &v, 1);
-            balanceDebugLog("[RANKED CLIENT] lobbySendSetting returned; "
-                            "post-call sim ranked=%d",
-                            (int)clientSimGetLobbyRanked(cs));
         }
         if (!canToggle) ImGui::EndDisabled();
         if (rankedLocked) renderLockBadge();
@@ -3475,44 +3437,11 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
             !clientSimIsSinglePlayer(cs) && !clientSimIsLanOnly(cs) &&
             clientSimGetLobbyWbnAvailable(cs)) {
         ImGui::SameLine(0.0f, 12.0f * s);
-        /* Log state at button-render time, throttled to changes only,
-         * so the lobby spam stays low but we can see canBalance
-         * flipping. If a click fires no [BAL OUTER] line, this log
-         * shows what state the disable wrapper was in. */
-        {
-            static bool s_lastEff = false, s_lastEnough = false, s_lastProp = false, s_lastCan = false;
-            static int  s_lastConn = -1;
-            static bool s_firstRender = true;
-            if (s_firstRender ||
-                s_lastEff != effectiveHost ||
-                s_lastEnough != enoughForBalance ||
-                s_lastProp != proposalActive ||
-                s_lastCan != canBalance ||
-                s_lastConn != connectedCount) {
-                s_firstRender = false;
-                balanceDebugLog("[BAL RENDER] state: effectiveHost=%d enoughForBalance=%d "
-                                "(connected=%d) proposalActive=%d canBalance=%d "
-                                "hasTransport=%d isSP=%d",
-                                (int)effectiveHost, (int)enoughForBalance, connectedCount,
-                                (int)proposalActive, (int)canBalance,
-                                (int)clientSimHasTransport(cs),
-                                (int)clientSimIsSinglePlayer(cs));
-                s_lastEff = effectiveHost;
-                s_lastEnough = enoughForBalance;
-                s_lastProp = proposalActive;
-                s_lastCan = canBalance;
-                s_lastConn = connectedCount;
-            }
-        }
         if (!canBalance) ImGui::BeginDisabled();
         char balBtnLabel[64];
         SDL_snprintf(balBtnLabel, sizeof(balBtnLabel), "%s##balwbn_btn",
                      langGetText(STR_DLGLOBBY_BAL_BTN));
         bool outerClicked = ImGui::Button(balBtnLabel);
-        bool btnHovered  = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
-        bool btnActive   = ImGui::IsItemActive();
-        bool mouseDown   = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-        bool mouseClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
         if (!canBalance) ImGui::EndDisabled();
 
         /* Short status to the right of the button so the host gets
@@ -3529,6 +3458,8 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
             if (s_balReqSentMs != 0) {
                 uint64_t arrivedMs =
                     clientSimGetLastBalanceProposalArrivedMs(cs);
+                uint64_t failedMs =
+                    clientSimGetLastBalanceFailedMs(cs);
                 if (arrivedMs != 0 && arrivedMs >= s_balReqSentMs) {
                     /* Server auto-applies the split now, so we use the
                      * one-shot timestamp the dispatcher latches when the
@@ -3538,6 +3469,14 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                     s_balLastResultText  = langGetText(STR_DLGLOBBY_BAL_STATUS_BALANCED);
                     s_balLastResultColor = ImVec4(0.4f, 0.8f, 0.4f, 1.0f);
                     s_balLastResultUntilMs = now + 6000;
+                    s_balReqSentMs = 0;
+                } else if (failedMs != 0 && failedMs >= s_balReqSentMs) {
+                    /* Server told us the WBN call returned without a
+                     * usable proposal — flip to the failure pill now
+                     * instead of waiting out the 8 s NOREPLY clock. */
+                    s_balLastResultText  = langGetText(STR_DLGLOBBY_BAL_STATUS_FAILED);
+                    s_balLastResultColor = ImVec4(0.9f, 0.4f, 0.3f, 1.0f);
+                    s_balLastResultUntilMs = now + 8000;
                     s_balReqSentMs = 0;
                 } else if (now - s_balReqSentMs < 8000) {
                     liveText  = langGetText(STR_DLGLOBBY_BAL_STATUS_ASKING);
@@ -3558,22 +3497,7 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                 ImGui::TextColored(showColor, "%s", showText);
             }
         }
-        /* Loud, unconditional diagnostic: any time the mouse is hovering
-         * the button OR a left click happens while hovering, dump full
-         * state. This catches the disabled-button case where ImGui eats
-         * the click silently. */
-        if (btnHovered && mouseClicked) {
-            balanceDebugLog("[BAL HOVER-CLICK] canBalance=%d outerClicked=%d active=%d down=%d "
-                            "effHost=%d enough=%d conn=%d propActive=%d",
-                            (int)canBalance, (int)outerClicked, (int)btnActive, (int)mouseDown,
-                            (int)effectiveHost, (int)enoughForBalance,
-                            connectedCount, (int)proposalActive);
-        }
         if (outerClicked) {
-            balanceDebugLog("[BAL OUTER] Balance from WBN clicked: "
-                            "effectiveHost=%d enough=%d (conn=%d) propActive=%d canBalance=%d",
-                            (int)effectiveHost, (int)enoughForBalance, connectedCount,
-                            (int)proposalActive, (int)canBalance);
             ImGui::OpenPopup(kBalancePopup);
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -3594,16 +3518,6 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
         if (ImGui::BeginPopupModal(kBalancePopup, &s_balOpen,
                                     ImGuiWindowFlags_AlwaysAutoResize
                                     | ImGuiWindowFlags_NoSavedSettings)) {
-            /* Per-frame log while the popup body is being drawn so we
-             * can confirm BeginPopupModal returned TRUE. Spammy by
-             * design — should only appear while the modal is on
-             * screen. */
-            static int s_lastBodyFrame = -1;
-            if (ImGui::GetFrameCount() != s_lastBodyFrame) {
-                balanceDebugLog("[BAL POPUP] body rendering frame=%d botCount=%d",
-                                ImGui::GetFrameCount(), botCount);
-                s_lastBodyFrame = ImGui::GetFrameCount();
-            }
             ImGui::TextWrapped("%s", langGetText(STR_DLGLOBBY_BAL_POPUP_BODY));
             if (botCount > 0) {
                 ImGui::Spacing();
@@ -3635,8 +3549,6 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                 SDL_snprintf(balHumanLabel, sizeof(balHumanLabel), "%s##balhuman",
                              langGetText(STR_DLGLOBBY_BAL_HUMANS_ONLY));
                 if (ImGui::Button(balBotsLabel, ImVec2(btnW, btnH))) {
-                    balanceDebugLog("[BAL POPUP] Bots included clicked: teamSize=%u",
-                                    (unsigned)teamSize);
                     s_balReqSentMs = SDL_GetTicks();
                     s_balLastResultText = NULL;
                     clientSimNetSendBalanceRequest(cs, teamSize, /*includeBots=*/true);
@@ -3644,8 +3556,6 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                 }
                 ImGui::SameLine();
                 if (ImGui::Button(balHumanLabel, ImVec2(btnW, btnH))) {
-                    balanceDebugLog("[BAL POPUP] Humans only clicked: teamSize=%u",
-                                    (unsigned)teamSize);
                     s_balReqSentMs = SDL_GetTicks();
                     s_balLastResultText = NULL;
                     clientSimNetSendBalanceRequest(cs, teamSize, /*includeBots=*/false);
@@ -3656,8 +3566,6 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
                 SDL_snprintf(balGoLabel, sizeof(balGoLabel), "%s##balgo",
                              langGetText(STR_DLGLOBBY_BAL_GO));
                 if (ImGui::Button(balGoLabel, ImVec2(btnW, btnH))) {
-                    balanceDebugLog("[BAL POPUP] Balance clicked: teamSize=%u",
-                                    (unsigned)teamSize);
                     s_balReqSentMs = SDL_GetTicks();
                     s_balLastResultText = NULL;
                     clientSimNetSendBalanceRequest(cs, teamSize, /*includeBots=*/false);
@@ -5099,6 +5007,7 @@ static void renderLobbyRejectToast(ClientSim *cs, float s) {
         case  1: reason = langGetText(STR_DLGLOBBY_REJECT_NOTHOST);        break;  /* LOBBY_REJECT_NOT_HOST */
         case  2: reason = langGetText(STR_DLGLOBBY_REJECT_LOCKED);         break;  /* LOBBY_REJECT_LOCKED */
         case  3: reason = langGetText(STR_DLGLOBBY_REJECT_INVALID);        break;  /* LOBBY_REJECT_INVALID */
+        case  8: reason = langGetText(STR_DLGLOBBY_REJECT_BAD_STATE);      break;  /* CMD_REJECT_BAD_STATE */
         case  9: reason = langGetText(STR_NAME_INVALID_EMPTY);             break;  /* CMD_REJECT_NAME_EMPTY */
         case 10: reason = langGetText(STR_NAME_INVALID_RESERVED_PREFIX);   break;  /* CMD_REJECT_NAME_RESERVED_PREFIX */
         case 11: reason = langGetText(STR_NAME_INVALID_RESERVED_SUFFIX);   break;  /* CMD_REJECT_NAME_RESERVED_SUFFIX */

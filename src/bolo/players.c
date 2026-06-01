@@ -580,6 +580,11 @@ uint8_t playersGetAccountFlags(players *plrs, BYTE playerNum) {
   return flags;
 }
 
+bool playersIsBot(players *plrs, BYTE playerNum) {
+  if (playerNum >= MAX_TANKS) return FALSE;
+  return (playersGetAccountFlags(plrs, playerNum) & PLAYER_FLAG_BOT) != 0;
+}
+
 /*********************************************************
 *NAME:          playersMakeMessageName
 *AUTHOR:        John Morrison

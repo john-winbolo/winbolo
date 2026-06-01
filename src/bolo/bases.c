@@ -689,7 +689,8 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate) {
 
     /* WinBolo.net Stuff */
     if (migrate == FALSE && owner != NEUTRAL) {
-      winbolonetAddEvent(WINBOLO_NET_EVENT_BASE_CAPTURE, isServer, owner, WINBOLO_NET_NO_PLAYER);
+      winbolonetAddEvent(WINBOLO_NET_EVENT_BASE_CAPTURE, isServer, owner, WINBOLO_NET_NO_PLAYER,
+                         playersIsBot(&sim->plyrs, owner), FALSE);
     }
 
   }
@@ -758,9 +759,11 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
         /* WinBolo.net Stuff */
         if (migrate == FALSE && owner != NEUTRAL) {
           if (returnValue == NEUTRAL) {
-            winbolonetAddEvent(WINBOLO_NET_EVENT_BASE_CAPTURE, isServer, owner, WINBOLO_NET_NO_PLAYER);
+            winbolonetAddEvent(WINBOLO_NET_EVENT_BASE_CAPTURE, isServer, owner, WINBOLO_NET_NO_PLAYER,
+                               playersIsBot(&sim->plyrs, owner), FALSE);
           } else {
-            winbolonetAddEvent(WINBOLO_NET_EVENT_BASE_STEAL, isServer, owner, returnValue);
+            winbolonetAddEvent(WINBOLO_NET_EVENT_BASE_STEAL, isServer, owner, returnValue,
+                               playersIsBot(&sim->plyrs, owner), playersIsBot(&sim->plyrs, returnValue));
           }
         }
 

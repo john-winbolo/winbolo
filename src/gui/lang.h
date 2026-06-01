@@ -1385,6 +1385,16 @@
  * transition, after a round ends and before the lobby UI appears. */
 #define STR_RETURNING_TO_LOBBY              1404
 
+/* Reject toast — server rejected an action because the lobby is in
+ * the wrong state (e.g. balance request while a proposal is already
+ * in flight). */
+#define STR_DLGLOBBY_REJECT_BAD_STATE       1405
+
+/* Balance — host-side failure pill: shown when the server reports
+ * that a WBN balance call returned without a usable proposal, so
+ * the host doesn't have to wait out the 8 s NOREPLY fallback. */
+#define STR_DLGLOBBY_BAL_STATUS_FAILED      1406
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */
