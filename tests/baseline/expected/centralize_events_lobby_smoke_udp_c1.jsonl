@@ -10,12 +10,14 @@
 {"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"AU","clientFlags":0,"clientType":2}}
 {"tick":0,"type":"CTRL_MAP_DOWNLOAD_COMPLETE"}
 {"tick":0,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot1 has joined."}
+{"tick":0,"type":"CTRL_ALLIANCE_RESET","allies":[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}
 {"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"AU","clientFlags":0,"clientType":2}}
 {"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"HeadlessBot2","country":"AU","clientType":2,"clientFlags":0,"allies":[1]}
 {"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":2,"ready":false,"isBot":false,"pingMs":0,"countryCode":"AU","clientFlags":0,"clientType":2}}
 {"tick":0,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot2 has joined."}
+{"tick":0,"type":"CTRL_ALLIANCE_RESET","allies":[1,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}
 {"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":2,"ready":false,"isBot":false,"pingMs":0,"countryCode":"AU","clientFlags":0,"clientType":2}}
-{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":2,"ready":true,"isBot":false,"pingMs":21,"countryCode":"AU","clientFlags":0,"clientType":2}}
+{"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"HeadlessBot2","teamNumber":2,"ready":true,"isBot":false,"pingMs":20,"countryCode":"AU","clientFlags":0,"clientType":2}}
 {"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":1,"ready":true,"isBot":false,"pingMs":20,"countryCode":"AU","clientFlags":0,"clientType":2}}
 {"tick":0,"type":"CTRL_GAME_PHASE","phase":"COUNTDOWN","countdownSeconds":5}
 {"tick":0,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot1","teamNumber":1,"ready":true,"isBot":false,"pingMs":20,"countryCode":"AU","clientFlags":0,"clientType":2}}
@@ -26,5 +28,6 @@
 {"tick":0,"type":"CTRL_GAME_PHASE","phase":"COUNTDOWN","countdownSeconds":1}
 {"tick":0,"type":"CTRL_ALLIANCE_LEAVE","playerNum":0}
 {"tick":0,"type":"CTRL_ALLIANCE_LEAVE","playerNum":1}
+{"tick":0,"type":"CTRL_ALLIANCE_RESET","allies":[1,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}
 {"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"HeadlessBot2","country":"AU","clientType":2,"clientFlags":0,"allies":[]}
 {"tick":0,"type":"CTRL_GAME_PHASE","phase":"RUNNING","countdownSeconds":0}
