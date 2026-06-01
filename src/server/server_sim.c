@@ -5443,6 +5443,10 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
         return FALSE;
     }
 
+    /* Hash the canonical BMAPBOLO file so WBN can match it. This is the
+     * path the lobby map chooser uses (CMD_LOBBY_SET_MAP). */
+    serverSimCacheMapMd5FromFile(sim, mapFileName);
+
     basesClearMines(&sim->sim);
 
     /* Update map name from basename, strip .map suffix. */
