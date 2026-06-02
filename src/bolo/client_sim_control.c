@@ -405,6 +405,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * only snaps position and leaves stocks + camera tracking
          * stale from the previous round. */
         cs->clientState.hasPredictedTank = FALSE;
+        /* Drop the round that just ended. The world mirror (tanks, spent
+         * shells, in-flight explosions) is otherwise only rewritten by
+         * the next game's first snapshot, so without this the frozen
+         * last round lingers behind the lobby — departed players' tanks
+         * sitting where they stopped. Map/pill/base reset is owned by the
+         * CTRL_LOBBY_MAP_CHANGE path, not here. Runs identically on SP,
+         * host, and remote clients since it hangs off this one event. */
+        clientSimResetWorld(cs);
         break;
     case CTRL_GAME_PHASE_COUNTDOWN:
         cs->netStat = netLobbyCountdown;
