@@ -115,6 +115,10 @@ struct ServerSim {
     int32_t      countdownTicks;     /* Countdown timer (in ticks) */
     int32_t      originalGameLength; /* Cached for reset between rounds */
     bool         hadPlayersEver;     /* For auto-close detection */
+    bool         roundHadHuman;      /* A human was present during this running
+                                      * round; gates the return-to-lobby when
+                                      * the last human leaves so a bot-only
+                                      * game start doesn't loop. */
     bool         quitOnWin;          /* Server should check for win condition */
     bool         autoCloseOnEmpty;   /* Server should close when all players leave */
     char         pendingWinMessage[512]; /* Win message to send after returning to lobby */

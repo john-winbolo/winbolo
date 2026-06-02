@@ -974,6 +974,29 @@ static void simRunHalfStep(ServerSim *sim) {
         }
     }
 
+    /* End the round once the last human leaves, so the server drops back
+     * to the lobby instead of looping a bot-only game forever (which it
+     * otherwise does — the empty/auto-close checks count bots via
+     * serverSimGetNumPlayers). Gated on roundHadHuman so a game that
+     * legitimately started with only bots (all bots ready) isn't ended
+     * the instant it starts, which would loop start<->gameover. Only for
+     * lobby-enabled servers; a no-lobby game-over means shutdown, which a
+     * transient human dropout shouldn't trigger. Suppress the win message
+     * — nobody won, everyone left. Routes through the normal GAME_OVER ->
+     * countdown -> returnToLobby flow (WBN swap, log flush, republish). */
+    if (sim->lobbyEnabled) {
+        if (serverSimGetNumHumans(sim) > 0) {
+            sim->roundHadHuman = true;
+        } else if (sim->roundHadHuman) {
+            mapSetChangeCallback(NULL);
+            serverSimSetSuppressNextWinMessage(sim, true);
+            serverSimConsoleMessage("No human players remaining. Returning to lobby.");
+            serverSimEnterGameOver(sim);
+            sim->tick++;
+            return;
+        }
+    }
+
     /* Server tick parity controls world systems only.
      * Per-player keys vs game is determined by the INPUT's tick parity,
      * so client/server parity is always aligned regardless of when
@@ -3257,6 +3280,10 @@ static void serverSimStaggerBaseTimers(ServerSim *sim) {
 void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
 
+    /* Fresh round — the last-human-left return-to-lobby check arms only
+     * once a human is seen this round. */
+    sim->roundHadHuman = false;
+
     /* Wire any bots in the roster into the running game (idempotent on
      * a fresh sim with zero bots). */
     botManagerOnGameStart(sim);
@@ -3339,6 +3366,9 @@ void serverSimStartGame(ServerSim *sim) {
 
     /* Fresh round — drop any vote state from the previous game. */
     serverSimGameVoteResetAll(sim);
+
+    /* Arms the last-human-left return-to-lobby check from a clean slate. */
+    sim->roundHadHuman = false;
 
     /* Reset the game world (map, world systems, queues, tick) */
     serverSimResetGameWorld(sim);
