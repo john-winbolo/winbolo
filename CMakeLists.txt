@@ -2238,6 +2238,11 @@ add_custom_target(dist
     # Data assets (includes data/lang)
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data" "${DIST_DIR}/data"
 
+    # About-box docs (Authors, Third Party Notices) ship inside data/ so the
+    # About box can find them via SDL_GetBasePath()/data/.
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" "${DIST_DIR}/data/THIRD_PARTY_NOTICES.md"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/AUTHORS.md" "${DIST_DIR}/data/AUTHORS.md"
+
     # Brain scripts
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/brains/GoalHunter" "${DIST_DIR}/Brains/GoalHunter"
 
