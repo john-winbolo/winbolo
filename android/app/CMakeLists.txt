@@ -161,10 +161,10 @@ target_link_libraries(imgui_backends PUBLIC SDL3::SDL3)
 # client_mapload.c and nat_portmap.c are not referenced in this build —
 # android calls into the sim through its own android_gamesetup path
 # and has no NAT-PMP / UPnP wrapper.
-set(WINBOLO_VERSION "1.19")
+set(WINBOLO_VERSION "1.20")
 set(BOLO_VERSION_MAJOR 1)
-set(BOLO_VERSION_MINOR 1)
-set(BOLO_VERSION_REVISION 9)
+set(BOLO_VERSION_MINOR 2)
+set(BOLO_VERSION_REVISION 0)
 add_subdirectory(${PROJ_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
 add_subdirectory(${PROJ_ROOT}/src/server ${CMAKE_BINARY_DIR}/server_static)
 add_subdirectory(${PROJ_ROOT}/brains ${CMAKE_BINARY_DIR}/bot_brains_static)
@@ -273,10 +273,10 @@ target_link_libraries(main PRIVATE
 target_compile_definitions(main PRIVATE
     HAVE_SCREEN_C=1
     HAVE_MAXMINDDB=1
-    WINBOLO_VERSION="1.19"
+    WINBOLO_VERSION="1.20"
     BOLO_VERSION_MAJOR=1
-    BOLO_VERSION_MINOR=1
-    BOLO_VERSION_REVISION=9
+    BOLO_VERSION_MINOR=2
+    BOLO_VERSION_REVISION=0
 )
 
 target_compile_options(main PRIVATE
