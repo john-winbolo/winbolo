@@ -1086,7 +1086,7 @@ BYTE playersGetFirstNotUsed(players *plrs) {
 * plrs - Pointer to the players object 
 * playerNum - The number of the player that has left
 *********************************************************/
-void playersLeaveGame(ClientSim *csParam, GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer) {
+void playersLeaveGame(ClientSim *csParam, GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer, bool announce) {
   BYTE count;                /* Looping variable */
 
 
@@ -1116,8 +1116,13 @@ void playersLeaveGame(ClientSim *csParam, GameSim *sim, players *plrs, BYTE self
         frontEndStatusTank(csParam, (BYTE) (playerNum + 1), tankNone);
         frontEndSetPlayerCheckState(csParam, (playerNumbers) playerNum, FALSE);
       }
-      /* Make a message about it */
-      sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
+      /* Make a message about it — only when asked. The in-game newswire
+       * "<name> has left the game" is wrong for a lobby removal (e.g.
+       * removing a bot before the game starts): it would sit queued and
+       * surface at game start. Callers pass announce=false in the lobby. */
+      if (announce) {
+        sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
+      }
     }
   }
 }
@@ -1902,7 +1907,7 @@ void playersConnectionLost(ClientSim *csParam, GameSim *sim, players *plrs, BYTE
   count = 0;
   while (count < MAX_TANKS) {
     if ((*plrs)->item[count].inUse == TRUE && count != selfPlayer) {
-      playersLeaveGame(csParam, sim, plrs, selfPlayer, count, FALSE);
+      playersLeaveGame(csParam, sim, plrs, selfPlayer, count, FALSE, TRUE);
     }
     count++;
   }

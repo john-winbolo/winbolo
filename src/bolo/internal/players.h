@@ -553,10 +553,13 @@ BYTE playersGetFirstNotUsed(players *plrs);
 * A player has left the game.
 *
 *ARGUMENTS:
-* plrs - Pointer to the players object 
+* plrs - Pointer to the players object
 * playerNum - The number of the player that has left
+* announce  - Post the in-game "has left the game" newswire. Pass false
+*             for lobby removals so the message doesn't surface at game
+*             start.
 *********************************************************/
-void playersLeaveGame(struct ClientSim *csParam, struct GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer);
+void playersLeaveGame(struct ClientSim *csParam, struct GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer, bool announce);
 
 /*********************************************************
 *NAME:          playersSetMenuItems

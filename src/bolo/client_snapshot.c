@@ -845,14 +845,15 @@ void clientApplySnapshot(ClientSim *csPtr,
         }
         break;
       case EVENT_PLAYER_LEAVE:
-        /* data: [playerNum] — server says this player disconnected */
-        {
-          BYTE leavePlayer = events[i].data[0];
-          if (leavePlayer < MAX_TANKS && csPtr->sim.plyrs != NULL &&
-              playersIsInUse(&csPtr->sim.plyrs, leavePlayer) == TRUE) {
-            playersLeaveGame(csPtr, &csPtr->sim, &csPtr->sim.plyrs, csPtr->myPlayerNum, leavePlayer, FALSE);
-          }
-        }
+        /* Intentionally no player removal here. Removal rides the reliable
+         * CTRL_PLAYER_LEAVE control event (client_sim_control.c), which is
+         * delivered immediately and carries identity. This snapshot
+         * game-event is slot-only and accumulates in sim->events while no
+         * snapshots flow (e.g. the whole lobby); by the time it is flushed
+         * at game start the slot may have been reused by a new player, so
+         * acting on it would wrongly remove the new occupant (rendering it
+         * as "???") and emit a bogus "<name> has left". The event is still
+         * consumed for bot brain input (the other switch above). */
         break;
       case EVENT_SERVER_MSG:
         /* data: [msgId] — server status message (human only) */
