@@ -1395,6 +1395,10 @@
  * the host doesn't have to wait out the 8 s NOREPLY fallback. */
 #define STR_DLGLOBBY_BAL_STATUS_FAILED      1406
 
+/* Network Info — inbound snapshot loss for the last 1-second window.
+ * {number} = percentage, {number2} = lost count, {number3} = total expected. */
+#define STR_DLGNETINFO_LOSS                 1407
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

@@ -163,6 +163,17 @@ typedef struct {
     uint32_t bpsSent;             /* Last completed bytes/sec (sent) */
     uint32_t netErrors;           /* Cumulative: stale snapshots, truncated packets */
 
+    /* Inbound snapshot loss tracking.  Snapshots arrive once per server
+     * frame (sim->tick advances by 2 per frame), so consecutive snapshots
+     * have serverTick spaced by 2; a larger gap means snapshots were lost
+     * on the wire. */
+    uint32_t lastSnapshotServerTick;  /* serverTick of last accepted snapshot (0 = none) */
+    uint32_t snapshotsRecvThisSec;    /* Snapshots accepted in current 1-second window */
+    uint32_t snapshotsLostThisSec;    /* Snapshots inferred lost in current 1-second window */
+    uint32_t snapshotsRecvLast;       /* Last completed window: accepted */
+    uint32_t snapshotsLostLast;       /* Last completed window: lost */
+    uint32_t snapshotsLostTotal;      /* Cumulative inferred-lost snapshots since join */
+
     bool wantRejoin;               /* Request rejoin (restore pills/bases) on connect */
 
     /* Phase 3 — UDP hole-punching fallback. Empty trackerAddr disables
@@ -939,6 +950,22 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         pos += 4;
         c->snapshotHdr.lastProcessedInput = unpackU32(buf + pos);
         pos += 4;
+
+        /* Snapshot loss accounting.  Consecutive snapshots' serverTick
+         * values are 2 apart; a delta > 2 means snapshots were lost in
+         * transit.  Cap absurd jumps (round restart, joined mid-game)
+         * so they don't poison the per-second window. */
+        if (c->lastSnapshotServerTick != 0 &&
+            c->snapshotHdr.serverTick > c->lastSnapshotServerTick) {
+            uint32_t delta = c->snapshotHdr.serverTick - c->lastSnapshotServerTick;
+            if (delta > 2 && delta < 1000) {
+                uint32_t lost = (delta / 2) - 1;
+                c->snapshotsLostThisSec += lost;
+                c->snapshotsLostTotal += lost;
+            }
+        }
+        c->lastSnapshotServerTick = c->snapshotHdr.serverTick;
+        c->snapshotsRecvThisSec++;
         tankCount = buf[pos++];
         shellCount = buf[pos++];
         tkExplosionCount = buf[pos++];
@@ -1906,10 +1933,14 @@ static bool udpClientTick(void *ctx) {
         c->ppsSent = c->packetsSentThisSec;
         c->bpsRecv = c->bytesRecvThisSec;
         c->bpsSent = c->bytesSentThisSec;
+        c->snapshotsRecvLast = c->snapshotsRecvThisSec;
+        c->snapshotsLostLast = c->snapshotsLostThisSec;
         c->packetsRecvThisSec = 0;
         c->packetsSentThisSec = 0;
         c->bytesRecvThisSec = 0;
         c->bytesSentThisSec = 0;
+        c->snapshotsRecvThisSec = 0;
+        c->snapshotsLostThisSec = 0;
         c->ppsWindowStart = c->localTick;
     }
 
@@ -2399,6 +2430,12 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->outSequence = 1;
 
     c->lastSnapshotSeq = 0;
+    c->lastSnapshotServerTick = 0;
+    c->snapshotsRecvThisSec = 0;
+    c->snapshotsLostThisSec = 0;
+    c->snapshotsRecvLast = 0;
+    c->snapshotsLostLast = 0;
+    c->snapshotsLostTotal = 0;
     c->hasSnapshot = false;
     c->reliableEventAck = 1;  /* First valid seq is 1 */
     c->mapEventAck = 1;       /* First valid map event seq is 1 */
@@ -2530,7 +2567,9 @@ uint16_t transportUdpClientGetPing(Transport *t) {
 }
 
 void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
-                                   int *bpsRecv, int *bpsSent, int *numErrors) {
+                                   int *bpsRecv, int *bpsSent, int *numErrors,
+                                   int *snapshotsRecv, int *snapshotsLost,
+                                   int *snapshotsLostTotal) {
     TransportUdpClientCtx *c;
     if (t == NULL || t->ctx == NULL) {
         *ppsRecv = 0;
@@ -2538,6 +2577,9 @@ void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
         *bpsRecv = 0;
         *bpsSent = 0;
         *numErrors = 0;
+        if (snapshotsRecv) *snapshotsRecv = 0;
+        if (snapshotsLost) *snapshotsLost = 0;
+        if (snapshotsLostTotal) *snapshotsLostTotal = 0;
         return;
     }
     c = (TransportUdpClientCtx *)t->ctx;
@@ -2546,6 +2588,9 @@ void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
     *bpsRecv = (int)c->bpsRecv;
     *bpsSent = (int)c->bpsSent;
     *numErrors = (int)c->netErrors;
+    if (snapshotsRecv) *snapshotsRecv = (int)c->snapshotsRecvLast;
+    if (snapshotsLost) *snapshotsLost = (int)c->snapshotsLostLast;
+    if (snapshotsLostTotal) *snapshotsLostTotal = (int)c->snapshotsLostTotal;
 }
 
 const char *transportUdpClientGetJoinRejectReason(Transport *t) {

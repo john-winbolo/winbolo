@@ -268,6 +268,7 @@ STR_DLGNETINFO_KBIN=KB/s 入：
 STR_DLGNETINFO_KBOUT=KB/s 出：
 STR_DLGNETINFO_PACKETS_RATE=包/秒：{number} 入 / {number2} 出
 STR_DLGNETINFO_KB_RATE=KB/秒：{string1} 入 / {string2} 出
+STR_DLGNETINFO_LOSS=丢包率：{number}% ({number2}/{number3} 本秒, {number4} 本局累计)
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=复制种子

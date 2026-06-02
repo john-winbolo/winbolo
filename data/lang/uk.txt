@@ -268,6 +268,7 @@ STR_DLGNETINFO_KBIN=КБ/с вхід:
 STR_DLGNETINFO_KBOUT=КБ/с вихід:
 STR_DLGNETINFO_PACKETS_RATE=Пакетів/с: {number} вхід / {number2} вихід
 STR_DLGNETINFO_KB_RATE=КБ/с: {string1} вхід / {string2} вихід
+STR_DLGNETINFO_LOSS=Втрата пакетів: {number}% ({number2}/{number3} за сек, {number4} за гру)
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Копіювати seed

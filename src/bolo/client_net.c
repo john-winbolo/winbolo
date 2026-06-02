@@ -696,15 +696,22 @@ uint16_t clientSimGetNetPing(const ClientSim *cs) {
 }
 
 void clientSimGetUdpNetStats(ClientSim *cs, int *ppsRecv, int *ppsSent,
-                             int *bpsRecv, int *bpsSent, int *numErrors) {
+                             int *bpsRecv, int *bpsSent, int *numErrors,
+                             int *snapshotsRecv, int *snapshotsLost,
+                             int *snapshotsLostTotal) {
   if (ppsRecv) *ppsRecv = 0;
   if (ppsSent) *ppsSent = 0;
   if (bpsRecv) *bpsRecv = 0;
   if (bpsSent) *bpsSent = 0;
   if (numErrors) *numErrors = 0;
+  if (snapshotsRecv) *snapshotsRecv = 0;
+  if (snapshotsLost) *snapshotsLost = 0;
+  if (snapshotsLostTotal) *snapshotsLostTotal = 0;
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
   transportUdpClientGetNetStats(&cs->transport, ppsRecv, ppsSent,
-                                bpsRecv, bpsSent, numErrors);
+                                bpsRecv, bpsSent, numErrors,
+                                snapshotsRecv, snapshotsLost,
+                                snapshotsLostTotal);
 }
 
 /* === Local-transport tuning === */
