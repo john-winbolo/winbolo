@@ -3298,6 +3298,18 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * once a human is seen this round. */
     sim->roundHadHuman = false;
 
+    /* Flush any game-events queued during the lobby before the first
+     * running snapshot goes out. The sim doesn't tick in the lobby, so the
+     * per-tick drain never runs and discrete events accumulate — most
+     * visibly EVENT_PLAYER_LEAVE from removing a bot. The full-reset start
+     * path (serverSimStartGame -> serverSimResetGameWorld) already clears
+     * these; this in-place SP path bypasses the reset, so without this the
+     * stale deltas flush at game start and a slot-only EVENT_PLAYER_LEAVE
+     * lands on whatever slot has since been reused. World state rides the
+     * snapshot's own arrays, not these queues, so flushing loses nothing. */
+    sim->eventCount = 0;
+    sim->mapEventCount = 0;
+
     /* Wire any bots in the roster into the running game (idempotent on
      * a fresh sim with zero bots). */
     botManagerOnGameStart(sim);
