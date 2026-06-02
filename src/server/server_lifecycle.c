@@ -238,6 +238,11 @@ void serverInstanceTick(ServerSim *sim) {
     transportUdpServerRecv(sim);
   }
 
+  /* Run deferred removals for slots force-disconnected mid-publish (control
+   * queue overflow). Done here, after recv processing and outside any
+   * publish, so serverSimRemovePlayer can safely fan its events out. */
+  transportUdpServerDrainPendingRemovals(sim);
+
   if (sim->state == serverStateRunning) {
     /* Run brain AI bots — queues two InputPackets per bot (keys + game) */
     if (serverSimGetNumBots(sim) > 0) {

@@ -308,6 +308,11 @@ void transportUdpServerSend(struct ServerSim *sim);
 /* Drain the recv thread's packet queue (use when recv thread is active). */
 void transportUdpServerDrainRecvQueue(struct ServerSim *sim);
 
+/* Run deferred sim-side removals for slots force-disconnected from inside
+ * a control deliver callback (queue overflow). Call at a safe point in the
+ * tick, outside any control-event publish. */
+void transportUdpServerDrainPendingRemovals(struct ServerSim *sim);
+
 /* Returns true if a dedicated recv thread is running. */
 bool transportUdpServerHasRecvThread(void);
 
