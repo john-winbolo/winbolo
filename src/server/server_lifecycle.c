@@ -404,6 +404,12 @@ void serverInstanceTick(ServerSim *sim) {
          * inside; no-op when WBN isn't running. */
         transportUdpServerBroadcastWbnRekey(sim);
       }
+      /* Close the rotation window: the new session's server_key is now
+       * installed, so the deferred lobby_update (held dirty by
+       * serverSimReturnToLobby's map pick) flushes against the right
+       * key on the next WBN tick. Cleared unconditionally so a WBN-off
+       * run doesn't leave the flag stuck. */
+      sim->wbnSessionRotating = FALSE;
       /* Republish the bot brain catalogue.  Mid-game joiners were gated
        * out of the BrainList during their sync replay (see
        * serverSimSyncSubscriber), so they need it now before the lobby
@@ -493,6 +499,11 @@ void serverInstanceTick(ServerSim *sim) {
       sim->state != serverStateCountdown &&
       serverSimCheckEmptyReset(sim)) {
     serverSimConsoleMessage("Empty reset timer expired. Resetting to lobby...");
+    /* Empty-reset bypasses serverSimReturnToLobby, so open the WBN
+     * session-rotation window here before the map pick below reports
+     * the next round's map. Cleared after BeginSession installs the
+     * new key. */
+    sim->wbnSessionRotating = TRUE;
     /* Empty-reset fires from the running state without going through
      * GAME_OVER, so handleGameOver never stashed the in-flight round.
      * Do it here so the upload below picks it up. */
@@ -528,6 +539,8 @@ void serverInstanceTick(ServerSim *sim) {
       /* Same rotation push as the game-over → lobby site. */
       transportUdpServerBroadcastWbnRekey(sim);
     }
+    /* Close the rotation window — new key installed (or WBN off). */
+    sim->wbnSessionRotating = FALSE;
     /* Empty-reset bypasses serverSimReturnToLobby, so the lobby phase
      * event is never published from the state machine. Publish it
      * explicitly so handleLobbyEnter fires and starts a fresh log for

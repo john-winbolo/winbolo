@@ -137,6 +137,8 @@ static const UnitTestEntry s_tests[] = {
     { "reset_round_state_preserves_identity",    run_reset_round_state_preserves_identity    },
     { "start_game_preserves_client_flags",       run_start_game_preserves_client_flags       },
     { "return_to_lobby_drops_wbn_keeps_identity", run_return_to_lobby_drops_wbn_keeps_identity },
+    { "wbn_lobby_update_deferred_during_rotation", run_wbn_lobby_update_deferred_during_rotation },
+    { "wbn_lobby_update_sends_when_not_rotating",  run_wbn_lobby_update_sends_when_not_rotating  },
     { "log_roundtrip_basic",                     run_log_roundtrip_basic                     },
     { "log_roundtrip_snapshot_keeps_chain_synced",
                                                  run_log_roundtrip_snapshot_keeps_chain_synced },

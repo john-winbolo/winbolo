@@ -2787,6 +2787,17 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
 void serverSimWbnLobbyUpdate(ServerSim *sim, bool force) {
     time_t now;
     if (sim == NULL || !winbolonetIsRunning()) return;
+    /* During a session rotation (round end → new register) the
+     * still-set winboloNetServerKey belongs to the round that just
+     * quit. Sending a lobby_update now would rename that finished
+     * game's map on the tracker. Hold the change as dirty; it flushes
+     * on the next WBN tick once BeginSession has installed the new
+     * key (see serverInstanceTick's rotation sites). force is honored
+     * for nothing here — the rotation guard outranks it. */
+    if (sim->wbnSessionRotating) {
+        sim->wbnLobbyDirty = TRUE;
+        return;
+    }
     now = time(NULL);
     if (!force && (now - sim->wbnLobbyLastSent) < WBN_LOBBY_UPDATE_INTERVAL) {
         /* Within the rate-limit window: defer to the next tick. */
@@ -2877,6 +2888,13 @@ void serverSimReturnToLobby(ServerSim *sim) {
     if (!sim->lobbyEnabled) {
         return;
     }
+
+    /* Open the WBN session-rotation window. The map regenerate / rotation
+     * below and the post-tick lifecycle map pick both touch the new
+     * round's map; without this guard their serverSimWbnLobbyUpdate would
+     * report that map against the just-finished round's server_key. The
+     * lifecycle clears the flag after BeginSession installs the new key. */
+    sim->wbnSessionRotating = TRUE;
 
     /* Clear in-game vote state — any in-flight or just-concluded votes
      * are scoped to the round we're leaving. */

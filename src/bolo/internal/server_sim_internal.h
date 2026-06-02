@@ -88,6 +88,12 @@ struct ServerSim {
      * the lobby countdown starts. */
     bool     wbnLobbyDirty;        /* a lobby field changed since last send */
     time_t   wbnLobbyLastSent;     /* last server/lobby_update send time */
+    bool     wbnSessionRotating;   /* TRUE between round-end and the next
+                                      * session's register: suppresses
+                                      * lobby_update so the next round's map
+                                      * never reports against the old (just-
+                                      * quit) server_key. The change is held
+                                      * as dirty and flushed on the new key. */
     uint8_t  mapMd5[16];           /* MD5 of the active map's BMAPBOLO bytes */
     bool     mapMd5Valid;          /* mapMd5 holds a usable hash */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
