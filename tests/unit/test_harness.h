@@ -175,6 +175,7 @@ int run_wbn_lobby_update_sends_when_not_rotating(void);
  * (no phantom re-announce), and the last human leaving a running game
  * returns the server to the lobby. */
 int run_remove_player_clears_slot(void);
+int run_return_to_lobby_clears_phantom_slot(void);
 int run_last_human_leave_returns_to_lobby(void);
 int run_humanless_round_does_not_autoend(void);
 

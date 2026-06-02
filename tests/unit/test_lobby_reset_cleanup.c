@@ -70,6 +70,29 @@ int run_remove_player_clears_slot(void) {
     return 0;
 }
 
+/* ---- 1b. Return-to-lobby reconciles an inUse-but-disconnected phantom. ---- */
+int run_return_to_lobby_clears_phantom_slot(void) {
+    ServerSim *sim = make_lobby_sim();
+    UT_ASSERT(sim != NULL);
+
+    serverSimAddPlayer(sim, 1, "Ghost", false);
+    UT_ASSERT(playersIsInUse(&serverSimGetGameSim(sim)->plyrs, 1) == TRUE);
+
+    /* Simulate a slot that lost its connection without going through the
+     * leave path (e.g. the control-queue-overflow disconnect): inUse stays
+     * set while playerConnected is cleared. The round-boundary sweep must
+     * heal it. */
+    sim->playerConnected[1] = FALSE;
+
+    serverSimReturnToLobby(sim);
+
+    UT_ASSERT_MSG(playersIsInUse(&serverSimGetGameSim(sim)->plyrs, 1) == FALSE,
+                  "return-to-lobby must clear an inUse-but-disconnected slot");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
 /* ---- 2. Last human leaving a running game returns to the lobby. ---- */
 int run_last_human_leave_returns_to_lobby(void) {
     ServerSim *sim = make_lobby_sim();

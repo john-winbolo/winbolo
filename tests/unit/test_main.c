@@ -140,6 +140,7 @@ static const UnitTestEntry s_tests[] = {
     { "wbn_lobby_update_deferred_during_rotation", run_wbn_lobby_update_deferred_during_rotation },
     { "wbn_lobby_update_sends_when_not_rotating",  run_wbn_lobby_update_sends_when_not_rotating  },
     { "remove_player_clears_slot",                 run_remove_player_clears_slot                 },
+    { "return_to_lobby_clears_phantom_slot",       run_return_to_lobby_clears_phantom_slot       },
     { "last_human_leave_returns_to_lobby",         run_last_human_leave_returns_to_lobby         },
     { "humanless_round_does_not_autoend",          run_humanless_round_does_not_autoend          },
     { "log_roundtrip_basic",                     run_log_roundtrip_basic                     },

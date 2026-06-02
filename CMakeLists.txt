@@ -2574,6 +2574,7 @@ set(_unit_test_names
     wbn_lobby_update_deferred_during_rotation
     wbn_lobby_update_sends_when_not_rotating
     remove_player_clears_slot
+    return_to_lobby_clears_phantom_slot
     last_human_leave_returns_to_lobby
     humanless_round_does_not_autoend
     log_roundtrip_basic
