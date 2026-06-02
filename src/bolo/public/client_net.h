@@ -233,7 +233,9 @@ void clientSimNetSendWbnReauth(ClientSim *cs);
 /* === Net stats === */
 uint16_t clientSimGetNetPing(const ClientSim *cs);
 void     clientSimGetUdpNetStats(ClientSim *cs, int *ppsRecv, int *ppsSent,
-                                 int *bpsRecv, int *bpsSent, int *numErrors);
+                                 int *bpsRecv, int *bpsSent, int *numErrors,
+                                 int *snapshotsRecv, int *snapshotsLost,
+                                 int *snapshotsLostTotal);
 
 /* === Local-transport tuning === */
 void     clientSimNetSetLocalDelay(ClientSim *cs, uint16_t delay_ms);

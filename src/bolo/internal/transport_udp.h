@@ -151,9 +151,15 @@ bool transportUdpClientGetSnapshot(Transport *t,
 uint16_t transportUdpClientGetPing(Transport *t);
 
 /* Returns client-side network stats: packets/sec received, packets/sec sent,
- * bytes/sec received, bytes/sec sent, and cumulative error count. */
+ * bytes/sec received, bytes/sec sent, cumulative error count, the
+ * snapshots-received / snapshots-lost counts from the most recently
+ * completed 1-second window (loss is inferred from serverTick gaps),
+ * and the cumulative inferred-lost snapshot count since join.
+ * Out pointers after numErrors may be NULL. */
 void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
-                                   int *bpsRecv, int *bpsSent, int *numErrors);
+                                   int *bpsRecv, int *bpsSent, int *numErrors,
+                                   int *snapshotsRecv, int *snapshotsLost,
+                                   int *snapshotsLostTotal);
 
 /* Enqueue a ClientCommand on the reliable carrier. Assigns cmdSeq,
  * appends to the per-connection out-queue, and eager-sends a

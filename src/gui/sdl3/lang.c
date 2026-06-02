@@ -1264,6 +1264,8 @@ static const LangEntry langTable[] = {
     {1405, "not allowed right now"},
     /* Balance status pill — WBN failure (server-side) */
     {1406, "WBN balance failed"},
+    /* Net Info — inbound snapshot loss for the last 1-second window */
+    {1407, "Packet loss: {number}% ({number2}/{number3} this sec, {number4} game total)"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
