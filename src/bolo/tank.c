@@ -896,6 +896,17 @@ void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yP
       x = (WORLD)(x + (xAccHP >> 8));  xAccHP &= 0xFF;
       y = (WORLD)(y + (yAccHP >> 8));  yAccHP &= 0xFF;
     }
+    /* Live shells travel ~2 game units (32 WORLD units = one SHELL_SPEED
+     * tick) further than the point computed above, so the crosshair sat
+     * 2 game units short of where shells actually land. Nudge it out
+     * along the aim direction to compensate. */
+    {
+      int leadX, leadY;
+      utilCalcDistance(&leadX, &leadY, (*value)->angle, SHELL_SPEED);
+      x = (WORLD)(x + leadX);
+      y = (WORLD)(y + leadY);
+    }
+
     x = (WORLD)(x - TANK_SUBTRACT);
     y = (WORLD)(y - TANK_SUBTRACT);
 
