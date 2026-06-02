@@ -22,10 +22,16 @@
 #      below.
 #
 # Usage:
-#   scripts/sign_macos.sh [BUILD_DIR]
+#   scripts/sign_macos.sh [--app NAME]... [BUILD_DIR]
 #
 # BUILD_DIR defaults to cmake-build-release. Override via the positional
 # argument or the BUILD_DIR env var.
+#
+# --app NAME   Sign only the named target instead of every bundle in
+#              BUILD_DIR. Repeat the flag to select several. NAME is a
+#              bundle/binary name, e.g. "WinBolo.app", "MapEditor.app",
+#              "Log Viewer.app", or "WinBoloDS". Without --app, all
+#              targets found in BUILD_DIR are processed.
 #
 # Environment overrides:
 #   APPLE_DEVELOPER_ID_APPLICATION  Force a specific signing identity.
@@ -35,7 +41,76 @@
 
 set -euo pipefail
 
-BUILD_DIR="${1:-${BUILD_DIR:-cmake-build-release}}"
+# All targets the build produces, in processing order. The leading entries
+# are .app bundles (individually notarized + stapled); WinBoloDS is a bare
+# Mach-O signed but not individually notarized. KNOWN_TARGETS drives both
+# --app validation and the default "process everything" behavior.
+KNOWN_TARGETS=(
+    "WinBolo.app"
+    "MapEditor.app"
+    "Log Viewer.app"
+    "WinBoloDS"
+)
+
+# Parse optional --app filters and the positional BUILD_DIR.
+REQUESTED_APPS=()
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --app|-app)
+            [[ $# -ge 2 ]] || { echo "ERROR: $1 requires a value" >&2; exit 1; }
+            REQUESTED_APPS+=("$2")
+            shift 2
+            ;;
+        --app=*|-app=*)
+            REQUESTED_APPS+=("${1#*app=}")
+            shift
+            ;;
+        -h|--help)
+            sed -n '24,38p' "$0"
+            exit 0
+            ;;
+        -*)
+            echo "ERROR: unknown option '$1'." >&2
+            echo "Run 'scripts/sign_macos.sh --help' for usage." >&2
+            exit 1
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Validate any requested names against the known target list so a typo
+# fails loudly instead of silently signing nothing.
+if [[ ${#REQUESTED_APPS[@]} -gt 0 ]]; then
+    for want in "${REQUESTED_APPS[@]}"; do
+        ok=0
+        for known in "${KNOWN_TARGETS[@]}"; do
+            [[ "$want" == "$known" ]] && { ok=1; break; }
+        done
+        if [[ "$ok" -eq 0 ]]; then
+            echo "ERROR: unknown --app target '$want'." >&2
+            printf 'Valid targets: %s\n' "${KNOWN_TARGETS[*]}" >&2
+            exit 1
+        fi
+    done
+fi
+
+# Returns 0 if the given target basename should be processed: true when no
+# --app filter was given, or when the basename matches a requested name.
+want_target() {
+    [[ ${#REQUESTED_APPS[@]} -eq 0 ]] && return 0
+    local base; base=$(basename "$1")
+    local want
+    for want in "${REQUESTED_APPS[@]}"; do
+        [[ "$base" == "$want" ]] && return 0
+    done
+    return 1
+}
+
+BUILD_DIR="${POSITIONAL[0]:-${BUILD_DIR:-cmake-build-release}}"
 NOTARY_PROFILE="${APPLE_NOTARY_PROFILE:-winbolo-notary}"
 ENTITLEMENTS="src/gui/sdl3/platform/winbolo.entitlements"
 
@@ -79,6 +154,7 @@ APPS=(
 
 ANY_PROCESSED=0
 for APP in "${APPS[@]}"; do
+    want_target "$APP" || continue
     if [[ ! -d "$APP" ]]; then
         echo "Skipping $APP (not built)"
         continue
@@ -138,7 +214,7 @@ done
 # the DMG level in package_macos.sh — that single notarytool submission
 # covers every signed binary inside the DMG.
 SERVER_BIN="$BUILD_DIR/WinBoloDS"
-if [[ -f "$SERVER_BIN" ]]; then
+if want_target "$SERVER_BIN" && [[ -f "$SERVER_BIN" ]]; then
     ANY_PROCESSED=1
     echo ""
     echo "=== $SERVER_BIN ==="
@@ -153,7 +229,7 @@ if [[ -f "$SERVER_BIN" ]]; then
     codesign --verify --strict --verbose=2 "$SERVER_BIN" 2>&1 | sed 's/^/        /'
 
     echo "  ✓ $SERVER_BIN signed (notarized via DMG)"
-else
+elif want_target "$SERVER_BIN"; then
     echo "Skipping $SERVER_BIN (not built)"
 fi
 
