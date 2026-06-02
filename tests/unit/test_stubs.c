@@ -254,7 +254,14 @@ void netRemovePlayer(BYTE playerNum) { (void)playerNum; }
 void netRequestStartPosition(void) {}
 void netErrorOccured(void) {}
 
-bool winbolonetIsRunning(void) { return FALSE; }
+/* Test-controllable WBN state. Defaults match a WBN-off run so every
+ * other test is unaffected; the session-rotation test flips
+ * wbnStubRunning on and watches wbnStubLobbyUpdateCalls to prove the
+ * next round's map is never reported on the old server_key. */
+bool wbnStubRunning = FALSE;
+int  wbnStubLobbyUpdateCalls = 0;
+
+bool winbolonetIsRunning(void) { return wbnStubRunning; }
 void winbolonetDestroy(bool isServer) { (void)isServer; }
 void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
   (void)eventType; (void)isServer; (void)playerA; (void)playerB; (void)aIsBot; (void)bIsBot;
@@ -297,7 +304,7 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
 
 void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) { (void)info; }
 
-void winbolonetSendLobbyUpdate(void) { }
+void winbolonetSendLobbyUpdate(void) { wbnStubLobbyUpdateCalls++; }
 
 /* Stubbed because server_lifecycle.c references these but they live
  * outside server_static (per-target client networking dependencies:

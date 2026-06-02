@@ -405,6 +405,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * only snaps position and leaves stocks + camera tracking
          * stale from the previous round. */
         cs->clientState.hasPredictedTank = FALSE;
+        /* Drop the round that just ended. The world mirror (tanks, spent
+         * shells, in-flight explosions) is otherwise only rewritten by
+         * the next game's first snapshot, so without this the frozen
+         * last round lingers behind the lobby — departed players' tanks
+         * sitting where they stopped. Map/pill/base reset is owned by the
+         * CTRL_LOBBY_MAP_CHANGE path, not here. Runs identically on SP,
+         * host, and remote clients since it hangs off this one event. */
+        clientSimResetWorld(cs);
         break;
     case CTRL_GAME_PHASE_COUNTDOWN:
         cs->netStat = netLobbyCountdown;
@@ -555,16 +563,25 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     }
 
     case CTRL_PLAYER_LEAVE: {
-        /* Lobby chat "X has left" rendering. Used to live in
-         * transport_udp_client.c's PACKET_PLAYER_LEFT branch, but that
-         * path is dead now that CTRL_PLAYER_LEAVE rides the control
-         * queue. Bots and SP read playerConnected directly, so no
-         * additional state mutation is needed here. */
+        /* Reliable player removal. The snapshot's EVENT_PLAYER_LEAVE
+         * (client_snapshot.c) also calls playersLeaveGame, but that
+         * rides an unreliable, un-retransmitted snapshot — if the
+         * snapshot carrying it was dropped, the departed player stayed
+         * frozen in place forever (remote players render from
+         * cs->sim.plyrs, not tanks[], and nothing else cleared them).
+         * CTRL_PLAYER_LEAVE is on the reliable control queue, so do the
+         * removal here too. playersLeaveGame is idempotent via its inUse
+         * guard: whichever path arrives first removes the player, the
+         * other is a no-op, so there is no duplicate quit newswire.
+         * Self never reaches here — the early self-skip switch above
+         * returned already. */
         BYTE pNum = evt->u.playerLeave.playerNum;
-        if (pNum != cs->myPlayerNum && cs->inLobby) {
-            char nameBuf[PACKET_MAX_PLAYER_NAME];
-            memcpy(nameBuf, evt->u.playerLeave.name, sizeof(nameBuf));
-            nameBuf[sizeof(nameBuf) - 1] = '\0';
+        char nameBuf[PACKET_MAX_PLAYER_NAME];
+        memcpy(nameBuf, evt->u.playerLeave.name, sizeof(nameBuf));
+        nameBuf[sizeof(nameBuf) - 1] = '\0';
+        playersLeaveGame(cs, &cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
+                         pNum, FALSE);
+        if (cs->inLobby) {
             char leaveMsg[PACKET_MAX_PLAYER_NAME + 16];
             snprintf(leaveMsg, sizeof(leaveMsg), "%s has left.", nameBuf);
             clientSimAppendLobbyChat(cs, "***", leaveMsg);
