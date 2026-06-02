@@ -579,8 +579,11 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         char nameBuf[PACKET_MAX_PLAYER_NAME];
         memcpy(nameBuf, evt->u.playerLeave.name, sizeof(nameBuf));
         nameBuf[sizeof(nameBuf) - 1] = '\0';
+        /* announce=false in the lobby: the in-game newswire is wrong there
+         * (it would queue and pop at game start); the lobby chat line below
+         * is the right surface. In-game, announce the leave on the newswire. */
         playersLeaveGame(cs, &cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
-                         pNum, FALSE);
+                         pNum, FALSE, !cs->inLobby);
         if (cs->inLobby) {
             char leaveMsg[PACKET_MAX_PLAYER_NAME + 16];
             snprintf(leaveMsg, sizeof(leaveMsg), "%s has left.", nameBuf);
