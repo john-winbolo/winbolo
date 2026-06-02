@@ -19,10 +19,9 @@
  *********************************************************/
 
 #include "minimap_render.h"
-#include "../../bolo/bolo_map.h"
-#include "../../bolo/pillbox.h"
-#include "../../bolo/bases.h"
-#include "../../bolo/starts.h"
+#include "client_mappreview.h"
+#include "global.h"  /* MAP_MINE_EDGE_*, MINE_START/END/SUBTRACT, terrain constants */
+#include "types.h"   /* struct mapObj/pillsObj/basesObj/startsObj layouts */
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -48,15 +47,16 @@ void minimapTerrainColor(BYTE terrain, uint8_t *r, uint8_t *g, uint8_t *b) {
     }
 }
 
-void minimapRenderPixels(const struct mapObj *mp,
-                         const struct basesObj *bs,
-                         const struct pillsObj *pb,
-                         const struct startsObj *ss,
+void minimapRenderPixels(const MapPreview *view,
                          uint8_t *pixels,
                          MinimapBounds *bounds,
                          uint32_t flags) {
     int minX = MINIMAP_SIZE, minY = MINIMAP_SIZE, maxX = 0, maxY = 0;
     int x, y;
+    const struct mapObj    *mp = clientMapPreviewMap(view);
+    const struct pillsObj  *pb = clientMapPreviewPills(view);
+    const struct basesObj  *bs = clientMapPreviewBases(view);
+    const struct startsObj *ss = clientMapPreviewStarts(view);
 
     for (y = 0; y < MINIMAP_SIZE; y++) {
         for (x = 0; x < MINIMAP_SIZE; x++) {
@@ -110,7 +110,7 @@ void minimapRenderPixels(const struct mapObj *mp,
         static const uint8_t pillCol[3]  = {255, 0, 0};     /* red */
         static const uint8_t baseCol[3]  = {255, 255, 255}; /* white */
         static const uint8_t startCol[3] = {255, 255, 0};   /* yellow */
-        minimapDrawObjects(pixels, bs, pb, ss, pillCol, baseCol, startCol);
+        minimapDrawObjects(pixels, view, pillCol, baseCol, startCol);
     }
 
     if (bounds) {
@@ -122,13 +122,14 @@ void minimapRenderPixels(const struct mapObj *mp,
 }
 
 void minimapDrawObjects(uint8_t *pixels,
-                        const struct basesObj *bs,
-                        const struct pillsObj *pb,
-                        const struct startsObj *ss,
+                        const MapPreview *view,
                         const uint8_t pillColor[3],
                         const uint8_t baseColor[3],
                         const uint8_t startColor[3]) {
     int i, dx, dy;
+    const struct pillsObj  *pb = clientMapPreviewPills(view);
+    const struct basesObj  *bs = clientMapPreviewBases(view);
+    const struct startsObj *ss = clientMapPreviewStarts(view);
 
     if (pillColor && pb) {
         for (i = 0; i < pb->numPills; i++) {
@@ -189,10 +190,7 @@ void minimapDrawObjects(uint8_t *pixels,
 }
 
 SDL_Texture *minimapCreateTexture(SDL_Renderer *renderer,
-                                  const struct mapObj *mp,
-                                  const struct basesObj *bs,
-                                  const struct pillsObj *pb,
-                                  const struct startsObj *ss,
+                                  const MapPreview *view,
                                   MinimapBounds *bounds,
                                   uint32_t flags) {
     uint8_t *pixels;
@@ -202,7 +200,7 @@ SDL_Texture *minimapCreateTexture(SDL_Renderer *renderer,
     pixels = (uint8_t *)malloc(MINIMAP_SIZE * MINIMAP_SIZE * 4);
     if (!pixels) return NULL;
 
-    minimapRenderPixels(mp, bs, pb, ss, pixels, bounds, flags);
+    minimapRenderPixels(view, pixels, bounds, flags);
 
     surface = SDL_CreateSurfaceFrom(
         MINIMAP_SIZE, MINIMAP_SIZE, SDL_PIXELFORMAT_RGBA32,
@@ -221,56 +219,29 @@ SDL_Texture *minimapFromCompressed(SDL_Renderer *renderer,
                                    const BYTE *compressedData, int dataLen,
                                    MinimapBounds *bounds,
                                    int *outPills, int *outBases, int *outStarts) {
-    map mp;
-    pillboxes pb;
-    bases bs;
-    starts ss;
     SDL_Texture *tex;
 
-    mapCreate(&mp);
-    pillsCreate(&pb);
-    basesCreate(&bs);
-    startsCreate(&ss);
+    MapPreview *mp = clientMapPreviewLoadFromBuffer(compressedData, dataLen);
+    if (!mp) return NULL;
 
-    if (!mapLoadCompressedMap(&mp, &pb, &bs, &ss, (BYTE *)compressedData, dataLen)) {
-        mapDestroy(&mp);
-        pillsDestroy(&pb);
-        basesDestroy(&bs);
-        startsDestroy(&ss);
-        return NULL;
-    }
+    if (outPills)  *outPills  = clientMapPreviewGetPillCount(mp);
+    if (outBases)  *outBases  = clientMapPreviewGetBaseCount(mp);
+    if (outStarts) *outStarts = clientMapPreviewGetStartCount(mp);
 
-    if (outPills)  *outPills  = pillsGetNumPills(&pb);
-    if (outBases)  *outBases  = basesGetNumBases(&bs);
-    if (outStarts) *outStarts = startsGetNumStarts(&ss);
+    tex = minimapCreateTexture(renderer, mp, bounds, 0);
 
-    tex = minimapCreateTexture(renderer, mp, bs, pb, ss, bounds, 0);
-
-    mapDestroy(&mp);
-    pillsDestroy(&pb);
-    basesDestroy(&bs);
-    startsDestroy(&ss);
+    clientMapPreviewDestroy(mp);
     return tex;
 }
 
 SDL_Texture *minimapFromFile(SDL_Renderer *renderer, const char *mapPath,
                              MinimapBounds *bounds,
                              int *outPills, int *outBases, int *outStarts) {
-    map mp;
-    pillboxes pb;
-    bases bs;
-    starts ss;
-    bool loaded;
     SDL_Texture *tex;
 
-    mapCreate(&mp);
-    pillsCreate(&pb);
-    basesCreate(&bs);
-    startsCreate(&ss);
-
-    /* Try direct fopen-based mapRead first (desktop) */
-    loaded = (mapRead((char *)mapPath, &mp, &pb, &bs, &ss) == TRUE);
-    if (!loaded) {
+    /* Try direct fopen-based load first (desktop) */
+    MapPreview *mp = clientMapPreviewLoadFromFile(mapPath);
+    if (!mp) {
         /* Try SDL_LoadFile (Android APK) -> temp file -> mapRead */
         size_t fileSize = 0;
         void *fileData = SDL_LoadFile(mapPath, &fileSize);
@@ -283,30 +254,21 @@ SDL_Texture *minimapFromFile(SDL_Renderer *renderer, const char *mapPath,
             if (fp) {
                 fwrite(fileData, 1, fileSize, fp);
                 fclose(fp);
-                loaded = (mapRead(tmpPath, &mp, &pb, &bs, &ss) == TRUE);
+                mp = clientMapPreviewLoadFromFile(tmpPath);
                 remove(tmpPath);
             }
             SDL_free(fileData);
         }
     }
 
-    if (!loaded) {
-        mapDestroy(&mp);
-        pillsDestroy(&pb);
-        basesDestroy(&bs);
-        startsDestroy(&ss);
-        return NULL;
-    }
+    if (!mp) return NULL;
 
-    if (outPills)  *outPills  = pillsGetNumPills(&pb);
-    if (outBases)  *outBases  = basesGetNumBases(&bs);
-    if (outStarts) *outStarts = startsGetNumStarts(&ss);
+    if (outPills)  *outPills  = clientMapPreviewGetPillCount(mp);
+    if (outBases)  *outBases  = clientMapPreviewGetBaseCount(mp);
+    if (outStarts) *outStarts = clientMapPreviewGetStartCount(mp);
 
-    tex = minimapCreateTexture(renderer, mp, bs, pb, ss, bounds, 0);
+    tex = minimapCreateTexture(renderer, mp, bounds, 0);
 
-    mapDestroy(&mp);
-    pillsDestroy(&pb);
-    basesDestroy(&bs);
-    startsDestroy(&ss);
+    clientMapPreviewDestroy(mp);
     return tex;
 }

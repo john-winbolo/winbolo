@@ -120,4 +120,15 @@ void inputButtonInput(keyItems *setKeys, SDL_Scancode scancode, bool newState);
 *********************************************************/
 uint8_t inputConsumeGunsightAdj(void);
 
+/*********************************************************
+*NAME:          inputBumpGunsight
+*PURPOSE:
+*  Queues a single gunsight adjustment from a non-keyboard
+*  source (e.g. mouse wheel). Positive direction = increase,
+*  negative = decrease. Consumed by the next
+*  inputConsumeGunsightAdj() call on the input-packet tick.
+*  Calling again before consume overwrites the pending value.
+*********************************************************/
+void inputBumpGunsight(int direction);
+
 #endif /* _SDL3_INPUT_H */

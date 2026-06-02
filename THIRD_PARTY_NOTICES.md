@@ -80,6 +80,20 @@ WinBolo uses the following third-party libraries and code.
 - Authors: Steven G. Johnson, Jiahao Chen, Peter Colberg, Tony Kelman, Scott P. Jones, and other contributors; Public Software Group e. V.
 - Used for UTF-8 NFC normalization and codepoint property lookup in player-name validation
 
+### imgui_markdown
+- Location: src/third_party/imgui_markdown/
+- Commit: 7f88a689f783b5f628a2c446ccc2e7198e732dfe (2026-05-18)
+- License: Zlib
+- https://github.com/juliettef/imgui_markdown
+- Authors: Juliette Foucaut, Doug Binks
+- Used to render the in-game news popup (headings, emphasis, links, images)
+
+### MD5 (RFC 1321 reference)
+- Location: src/bolo/md5.c, src/bolo/public/md5.h
+- License: Public domain
+- https://www.rfc-editor.org/rfc/rfc1321
+- Used for the lobby map-upload MD5 handshake (integrity check only — not cryptographically safe)
+
 ## Fonts
 
 ### Inter
@@ -104,3 +118,12 @@ WinBolo uses the following third-party libraries and code.
 - Location: src/lzw/
 - Original author: David Bourgin (1994-1995)
 - Modified for WinBolo; distributed under GPL v2+
+
+## Data Files
+
+### DB-IP IP-to-Country Lite
+- Location: data/dbip-country-lite.mmdb
+- License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+- https://db-ip.com/db/download/ip-to-country-lite
+- Author: DB-IP (https://db-ip.com)
+- Used by the server (and the in-client game browser) for IP-to-country lookups via libmaxminddb. Rebuilt monthly; download the latest .mmdb and replace the file in place.

@@ -27,13 +27,19 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#if !BOLO_MOBILE
+#include "imgui_news.h"
+#endif
 
 extern "C" {
 #include "../sdl3draw.h"
 #include "../bg_game.h"
 #include "imgui_welcome.h"
 #include "../../gamefront.h"
+#include "../../lang.h"
 }
+
+#include "imgui_about.h"   /* aboutPopupOpen / aboutPopupRender */
 
 /* Match openingStates enum from gamefront.h */
 enum {
@@ -46,20 +52,6 @@ enum {
     RESULT_LOGVIEWER    = 21,  /* openLogViewer */
     RESULT_QUIT         = -1
 };
-
-/* Try to load a BMP from next to the exe, then from data/ */
-static SDL_Texture *loadBmp(SDL_Renderer *renderer, const char *filename) {
-    SDL_Surface *surf = SDL_LoadBMP(filename);
-    if (!surf) {
-        char path[512];
-        SDL_snprintf(path, sizeof(path), "data/%s", filename);
-        surf = SDL_LoadBMP(path);
-    }
-    if (!surf) return nullptr;
-    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
-    SDL_DestroySurface(surf);
-    return tex;
-}
 
 /* Load a PNG with alpha via SDL_IOFromFile + stb_image.
    SDL_IOFromFile works with Android APK assets, unlike plain fopen. */
@@ -123,6 +115,7 @@ extern "C" int imguiWelcomeShow(void) {
     /* Set up ImGui context for this dialog */
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -136,24 +129,14 @@ extern "C" int imguiWelcomeShow(void) {
     dialogApplyScaling(s);
 
     /* Load images */
-    SDL_Texture *logoTex     = loadPng(renderer, "smalllogo-transparent.png");
-    /* Icons in the same order as modes[] below. Tutorial is the first
-     * row (no icon yet). */
-    SDL_Texture *btnIcons[7] = {
-        nullptr,  /* tutorial */
-        loadBmp(renderer, "button_practice.bmp"),  /* single player */
-        loadBmp(renderer, "button_internet.bmp"),  /* internet */
-        loadBmp(renderer, "button_lan.bmp"),       /* local */
-        nullptr,  /* map editor */
-        nullptr,  /* log viewer */
-        nullptr,  /* settings */
-    };
+    SDL_Texture *logoTex = loadPng(renderer, "smalllogo-transparent.png");
 
-    /* Query logo dimensions (scaled) */
     float logoW = 0.0f, logoH = 0.0f;
     if (logoTex) {
-        SDL_GetTextureSize(logoTex, &logoW, &logoH);
-        logoW *= 0.75f; logoH *= 0.75f;
+        float nativeW = 0.0f, nativeH = 0.0f;
+        SDL_GetTextureSize(logoTex, &nativeW, &nativeH);
+        logoW = nativeW * 0.75f;
+        logoH = nativeH * 0.75f;
         if (s > 1.05f) { logoW *= s; logoH *= s; }
     }
 
@@ -161,19 +144,30 @@ extern "C" int imguiWelcomeShow(void) {
     BgGame *bg = bgGameGetShared();
     bool hasBg = (bg != nullptr);
 
-    /* Dialog visibility toggle with animation.
-     * Start minimized when there is a background game to watch;
-     * otherwise start fully visible (e.g. Android where bg may not load). */
-    bool dialogVisible = !hasBg;
-    float dialogAlpha = hasBg ? 0.0f : 1.0f;
-    Uint64 lastFrameTime = SDL_GetTicks();
-
     int result = RESULT_QUIT;
     bool running = true;
     Uint64 lastTickTime = SDL_GetTicks();
 
+    /* Show "In main menu" in the Steam friends list while the welcome
+     * dialog is up. Cleared / overwritten when the user enters a lobby
+     * or starts a game. */
+    gameFrontSetSteamPresenceMenu();
+
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
+
+        /* Host-OS menus (macOS Dock) post transitions through gamefront.
+         * Treat a pending entry as if the equivalent ghost button was
+         * clicked — the openingStates enum already matches the RESULT_*
+         * codes byte-for-byte. */
+        {
+            openingStates pending;
+            if (gameFrontConsumeRequestedTransition(&pending)) {
+                result = (int)pending;
+                running = false;
+            }
+        }
+
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
@@ -202,23 +196,6 @@ extern "C" int imguiWelcomeShow(void) {
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
 
-        /* Animate dialog alpha */
-        Uint64 now = SDL_GetTicks();
-        float dt = (float)(now - lastFrameTime) / 1000.0f;
-        lastFrameTime = now;
-        if (dt > 0.1f) dt = 0.1f;
-        {
-            float target = dialogVisible ? 1.0f : 0.0f;
-            float speed = 4.0f;
-            if (dialogAlpha < target) {
-                dialogAlpha += speed * dt;
-                if (dialogAlpha > target) dialogAlpha = target;
-            } else if (dialogAlpha > target) {
-                dialogAlpha -= speed * dt;
-                if (dialogAlpha < target) dialogAlpha = target;
-            }
-        }
-
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         dialogOverrideFramebufferScale(renderer);
@@ -236,57 +213,48 @@ extern "C" int imguiWelcomeShow(void) {
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-        /* When dialog is hidden, show restore button in top-right with transparent buttons */
-        if (hasBg && dialogAlpha < 0.01f) {
+#if !BOLO_MOBILE
+        /* Single kick per program run — newsPopupKickFetch is idempotent
+         * but the static guard avoids the call entirely once we've kicked. */
+        static bool sNewsKicked = false;
+        if (!sNewsKicked) {
+            newsPopupKickFetch();
+            sNewsKicked = true;
+        }
+#endif
+
+        /* Top-right logo + ghost menu column. Logo is purely decorative. */
+        {
             const float restoreMargin = 12.0f * s;
-            float restoreX, restoreY;
+            const float miniBtnW      = 180.0f * s;
 
-            /* Show logo at actual size as the restore button */
             if (logoTex && logoW > 0.0f) {
-                restoreX = (float)winW - logoW - restoreMargin;
-                restoreY = restoreMargin;
+                /* Center the logo horizontally over the button column. The
+                 * logo can be wider than miniBtnW, in which case the offset
+                 * goes negative and the logo extends past the column on both
+                 * sides equally — that's the intended look. Only clamp if
+                 * the centred position would extend past the window's right
+                 * edge entirely. */
+                float restoreX = (float)winW - miniBtnW - restoreMargin
+                                 + (miniBtnW - logoW) * 0.5f;
+                if (restoreX + logoW > (float)winW)
+                    restoreX = (float)winW - logoW;
+                float restoreY = restoreMargin;
                 ImGui::SetCursorPos(ImVec2(restoreX, restoreY));
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.3f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 0.5f));
-
-                if (ImGui::ImageButton("##restoreDialog", (ImTextureID)logoTex,
-                                       ImVec2(logoW, logoH))) {
-                    dialogVisible = true;
-                }
-
-                ImGui::PopStyleColor(3);
-                ImGui::PopStyleVar(1);
-            } else {
-                const float restoreSize = 40.0f * s;
-                restoreX = (float)winW - restoreSize - restoreMargin;
-                restoreY = restoreMargin;
-                ImGui::SetCursorPos(ImVec2(restoreX, restoreY));
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f * s);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.1f, 0.1f, 0.1f, 0.6f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.8f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.3f, 0.9f));
-
-                if (ImGui::Button("W##restoreDialog", ImVec2(restoreSize, restoreSize))) {
-                    dialogVisible = true;
-                }
-
-                ImGui::PopStyleColor(3);
-                ImGui::PopStyleVar(2);
+                ImGui::Image((ImTextureID)logoTex, ImVec2(logoW, logoH));
             }
 
             /* Transparent menu buttons below the logo */
-            const float miniBtnW = 180.0f * s;
             const float miniBtnH = 30.0f * s;
             const float miniBtnGap = 4.0f * s;
 #if BOLO_MOBILE
             const float ghostBtnAlpha = 0.6f;
             const float ghostTextAlpha = 0.9f;
 #else
-            const float ghostBtnAlpha = 0.15f;
-            const float ghostTextAlpha = 0.75f;
+            /* Without the background game, buttons need higher base alpha
+             * to stay readable against the solid dark clear color. */
+            const float ghostBtnAlpha = hasBg ? 0.15f : 0.6f;
+            const float ghostTextAlpha = hasBg ? 0.75f : 0.9f;
 #endif
             float logoBottom = (logoTex && logoW > 0.0f) ? restoreMargin + logoH : restoreMargin + 40.0f * s;
             float btnX = (float)winW - miniBtnW - restoreMargin;
@@ -299,7 +267,12 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, ghostTextAlpha));
 
             const bool showTutorial = gameFrontGetShowTutorialButton();
-            struct { langid labelId; int code; bool show; } miniModes[] = {
+            /* rawLabel, when non-null, signals a non-exit action: the click
+             * handler dispatches by rawLabel string rather than setting
+             * result/running. Display text still goes through
+             * langGetText(labelId) whenever labelId is non-zero; rawLabel
+             * is only used as the visible text when labelId == 0. */
+            struct { langid labelId; int code; bool show; const char* rawLabel; } miniModes[] = {
                 { STR_DLGSETTINGS_TUTORIAL, RESULT_TUTORIAL,     showTutorial },
                 { STR_DLGWELCOME_SINGLE,    RESULT_SINGLEPLAYER, true },
                 { STR_DLGWELCOME_INTERNET,  RESULT_INTERNET,     true },
@@ -310,6 +283,7 @@ extern "C" int imguiWelcomeShow(void) {
 #endif
                 { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true },
 #if !BOLO_MOBILE
+                { STR_DLGWELCOME_NEWS,      0,                   true, "News" },
                 { STR_DLGOPENING_BUTTON2,   RESULT_QUIT,         true },
 #endif
             };
@@ -326,11 +300,36 @@ extern "C" int imguiWelcomeShow(void) {
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
                 }
                 char miniLabel[96];
-                SDL_snprintf(miniLabel, sizeof(miniLabel), "%s##mini", langGetText(miniModes[i].labelId));
+                const char* labelText = (miniModes[i].labelId != 0)
+                    ? langGetText(miniModes[i].labelId)
+                    : miniModes[i].rawLabel;
+                SDL_snprintf(miniLabel, sizeof(miniLabel), "%s##mini", labelText);
                 if (ImGui::Button(miniLabel, ImVec2(miniBtnW, miniBtnH))) {
-                    result = miniModes[i].code;
-                    running = false;
+#if !BOLO_MOBILE
+                    if (miniModes[i].rawLabel && SDL_strcmp(miniModes[i].rawLabel, "News") == 0) {
+                        newsPopupOpenManual();
+                    } else
+#endif
+                    {
+                        result = miniModes[i].code;
+                        running = false;
+                    }
                 }
+                imguiHandOnHover();
+#if !BOLO_MOBILE
+                /* Unread dot on the News button when fresh items exist. */
+                if (miniModes[i].rawLabel &&
+                    SDL_strcmp(miniModes[i].rawLabel, "News") == 0 &&
+                    newsPopupHasUnread()) {
+                    ImVec2 itemMin = ImGui::GetItemRectMin();
+                    ImVec2 itemMax = ImGui::GetItemRectMax();
+                    float dotR = 4.0f * s;
+                    ImVec2 dotCenter(itemMax.x - dotR - 6.0f * s,
+                                     (itemMin.y + itemMax.y) * 0.5f);
+                    ImGui::GetWindowDrawList()->AddCircleFilled(
+                        dotCenter, dotR, IM_COL32(220, 60, 60, 230));
+                }
+#endif
                 if (hovered) {
                     ImGui::PopStyleColor();
                 }
@@ -345,141 +344,12 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PopStyleVar(1);
         }
 
-        /* Centered dialog panel — only when visible or animating */
-        if (dialogAlpha > 0.01f) {
-            float panelW = 500.0f * s, panelH = 570.0f * s;
-            if (panelW > (float)winW * 0.9f) panelW = (float)winW * 0.9f;
-            if (panelH > (float)winH * 0.9f) panelH = (float)winH * 0.9f;
-
-            ImGui::SetNextWindowPos(ImVec2(((float)winW - panelW) * 0.5f, ((float)winH - panelH) * 0.5f));
-            ImGui::SetNextWindowSize(ImVec2(panelW, panelH));
-            ImGui::SetNextWindowBgAlpha(0.7f * dialogAlpha);
-            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, dialogAlpha);
-            ImGui::Begin("##Welcome", nullptr,
-                         ImGuiWindowFlags_NoTitleBar |
-                         ImGuiWindowFlags_NoResize |
-                         ImGuiWindowFlags_NoMove |
-                         ImGuiWindowFlags_NoCollapse |
-                         ImGuiWindowFlags_NoScrollbar);
-
-            /* Hide arrow button — top-right corner */
-            if (hasBg) {
-                const float arrowBtnSize = 24.0f * s;
-                const float arrowMargin = 6.0f * s;
-                ImGui::SetCursorPos(ImVec2(panelW - arrowBtnSize - arrowMargin, arrowMargin));
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f * s);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 0.5f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.4f, 0.4f, 0.4f, 0.6f));
-
-                if (ImGui::Button("##hideDialog", ImVec2(arrowBtnSize, arrowBtnSize))) {
-                    dialogVisible = false;
-                }
-                ImVec2 btnMin = ImGui::GetItemRectMin();
-                ImVec2 btnMax = ImGui::GetItemRectMax();
-                float cx = (btnMin.x + btnMax.x) * 0.5f;
-                float cy = (btnMin.y + btnMax.y) * 0.5f;
-                float sz = 6.0f * s;
-                ImVec2 tri[3] = {
-                    ImVec2(cx + sz, cy),
-                    ImVec2(cx - sz, cy - sz),
-                    ImVec2(cx - sz, cy + sz),
-                };
-                ImU32 arrowCol = IM_COL32(200, 200, 200, (int)(180 * dialogAlpha));
-                ImGui::GetWindowDrawList()->AddTriangleFilled(tri[0], tri[1], tri[2], arrowCol);
-
-                ImGui::PopStyleColor(3);
-                ImGui::PopStyleVar(2);
-            }
-
-            /* Logo banner */
-            ImGui::SetCursorPosY(8.0f * s);
-            if (logoTex && logoW > 0.0f) {
-                ImGui::SetCursorPosX((panelW - logoW) * 0.5f);
-                ImGui::Image((ImTextureID)logoTex, ImVec2(logoW, logoH));
-            } else {
-                ImGui::SetWindowFontScale(2.0f);
-                const char *title = langGetText(STR_MENU_WINBOLO);
-                ImVec2 textSize = ImGui::CalcTextSize(title);
-                ImGui::SetCursorPosX((panelW - textSize.x) * 0.5f);
-                ImGui::Text("%s", title);
-                ImGui::SetWindowFontScale(1.0f);
-            }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            /* Game mode buttons with icons */
-            const float btnW = 220.0f * s;
-            const float btnH = 36.0f * s;
-            const float iconSize = 32.0f * s;
-            const float iconGap = 6.0f * s;
-            const float rowW = iconSize + iconGap + btnW;
-            const float rowStartX = (panelW - rowW) * 0.5f;
-
-            const bool showTutorialMain = gameFrontGetShowTutorialButton();
-            struct { langid labelId; int code; bool show; } modes[] = {
-                { STR_DLGSETTINGS_TUTORIAL, RESULT_TUTORIAL,     showTutorialMain },
-                { STR_DLGWELCOME_SINGLE,    RESULT_SINGLEPLAYER, true },
-                { STR_DLGWELCOME_INTERNET,  RESULT_INTERNET,     true },
-                { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true },
-#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
-                { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    true },
-                { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    true },
-#endif
-                { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true },
-            };
-            int modeCount = sizeof(modes) / sizeof(modes[0]);
-
-            for (int i = 0; i < modeCount; i++) {
-                if (!modes[i].show) continue;
-                /* Small gap before Map Editor and before Settings */
-                if (modes[i].code == RESULT_MAPEDITOR || modes[i].code == RESULT_SETTINGS) {
-                    ImGui::Spacing();
-                    ImGui::Spacing();
-                }
-
-                float rowY = ImGui::GetCursorPosY();
-
-                ImGui::SetCursorPosX(rowStartX);
-                if (btnIcons[i]) {
-                    ImGui::SetCursorPosY(rowY + (btnH - iconSize) * 0.5f);
-                    ImGui::Image((ImTextureID)btnIcons[i], ImVec2(iconSize, iconSize));
-                } else {
-                    ImGui::Dummy(ImVec2(iconSize, iconSize));
-                }
-
-                ImGui::SameLine(0.0f, iconGap);
-                ImGui::SetCursorPosY(rowY);
-                if (ImGui::Button(langGetText(modes[i].labelId), ImVec2(btnW, btnH))) {
-                    result = modes[i].code;
-                    running = false;
-                }
-                ImGui::Spacing();
-            }
-
-
 #if !BOLO_MOBILE
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            /* Quit button — right-aligned */
-            {
-                const float quitW = 120.0f * s;
-                ImGui::SetCursorPosX(panelW - quitW - 16.0f * s);
-                if (ImGui::Button(langGetText(STR_DLGOPENING_BUTTON2), ImVec2(quitW, btnH))) {
-                    result = RESULT_QUIT;
-                    running = false;
-                }
-            }
+        /* Drive the news popup state machine. Renders the consent dialog
+         * or the news modal when either is open, otherwise polls the
+         * fetch handle and decides whether to auto-open. */
+        newsPopupTick();
 #endif
-
-            ImGui::End(); /* ##Welcome panel */
-            ImGui::PopStyleVar(); /* Alpha */
-        }
 
         /* Play/Pause button — bottom-left */
         if (hasBg) {
@@ -509,8 +379,9 @@ extern "C" int imguiWelcomeShow(void) {
             }
 
             if (ImGui::Button("##playPause", ImVec2(ppSize, ppSize))) {
-                bg->paused = !bg->paused;
+                bgGameTogglePause(bg);
             }
+            imguiHandOnHover();
 
             ImVec2 ppMin = ImGui::GetItemRectMin();
             ImVec2 ppMax = ImGui::GetItemRectMax();
@@ -541,16 +412,46 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PopStyleVar(3);
         }
 
-        /* Version label — bottom-right of screen */
+        /* Version label — bottom-right of screen. Click to open About;
+         * full version/hash/date is shown there instead of inline. A 1px
+         * black drop shadow keeps the text legible over varied terrain. */
         {
-            const char *ver = "v" WINBOLO_VERSION;
-            ImVec2 verSize = ImGui::CalcTextSize(ver);
-            ImGui::SetCursorPos(ImVec2((float)winW - verSize.x - 12.0f * s,
-                                       (float)winH - verSize.y - 12.0f * s));
-            ImGui::TextDisabled("%s", ver);
+            char shortVer[32];
+            SDL_snprintf(shortVer, sizeof(shortVer), "v%s", WINBOLO_VERSION);
+
+            ImVec2 verSize = ImGui::CalcTextSize(shortVer);
+            const float margin = 12.0f * s;
+
+            ImGui::SetCursorPos(ImVec2((float)winW - verSize.x - margin,
+                                       (float)winH - verSize.y - margin));
+            ImVec2 verScreen = ImGui::GetCursorScreenPos();
+
+            /* Invisible button captures the click + drives hover state.
+             * Sized to the rendered text so the hit rect is exactly the
+             * label, not the surrounding gutter. */
+            ImGui::InvisibleButton("##aboutver", verSize);
+            bool hovered = ImGui::IsItemHovered();
+            if (ImGui::IsItemClicked()) {
+                aboutPopupOpen();
+            }
+            if (hovered) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            }
+
+            ImDrawList *dl = ImGui::GetWindowDrawList();
+            ImU32 fg = hovered
+                ? IM_COL32(255, 255, 255, 255)
+                : IM_COL32(235, 235, 235, 230);
+            dl->AddText(ImVec2(verScreen.x + 1.0f, verScreen.y + 1.0f),
+                        IM_COL32(0, 0, 0, 180), shortVer);
+            dl->AddText(verScreen, fg, shortVer);
         }
 
         ImGui::End(); /* ##WelcomeBg host */
+
+        /* About box (opens on version-label click). Renders as a modal
+         * popup over the welcome screen. */
+        aboutPopupRender();
 
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
@@ -558,9 +459,8 @@ extern "C" int imguiWelcomeShow(void) {
 
         if (hasBg) {
             bgGameRender(bg, renderer, winW, winH);
-            int overlayAlpha = (int)(40.0f + dialogAlpha * 100.0f);
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, (Uint8)overlayAlpha);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 40);
             SDL_FRect overlayRect = { 0, 0, (float)winW, (float)winH };
             SDL_RenderFillRect(renderer, &overlayRect);
         }
@@ -571,9 +471,6 @@ extern "C" int imguiWelcomeShow(void) {
     }
 
     /* Clean up textures */
-    for (int i = 0; i < 4; i++) {
-        if (btnIcons[i]) SDL_DestroyTexture(btnIcons[i]);
-    }
     if (logoTex) SDL_DestroyTexture(logoTex);
 
     /* Tear down ImGui */

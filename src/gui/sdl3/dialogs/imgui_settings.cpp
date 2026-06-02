@@ -31,6 +31,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "stb_image.h"
@@ -49,14 +50,15 @@ extern "C" {
 #  include <dirent.h>
 #  include <sys/stat.h>
 #endif
-#include "../../../bolo/global.h"
-#include "../../../bolo/screen.h"
-#include "../../../bolo/playername_validate.h"
+#include "global.h"
+#include "client_enums.h"  /* labelLen */
+#include "playername_validate.h"
 #include "../bg_game.h"
 #include "../../lang.h"
 #include "imgui_settings.h"
 #include "imgui_keysetup.h"
 #include "imgui_winbolonet.h"
+#include "imgui_news.h"
 }
 
 /* Frame-rate / zoom constants (mirrors winbolo.h values) */
@@ -91,6 +93,7 @@ extern "C" {
   extern bool soundEffects;
   extern bool backgroundSound;
   extern bool useSoundKeepalive;
+  extern int  soundVolume;
   extern bool showNewswireMessages;
   extern bool showAssistantMessages;
   extern bool showAIMessages;
@@ -106,6 +109,7 @@ extern "C" {
   void windowSoundEffects_toggle(void);
   void windowBackgroundSoundChange_toggle(void);
   void windowSoundKeepalive(void);
+  void windowSetSoundVolume(int pct);
   void windowMenuNewswire_toggle(struct ClientSim *cs);
   void windowMenuAssistant_toggle(struct ClientSim *cs);
   void windowMenuAI_toggle(struct ClientSim *cs);
@@ -752,6 +756,7 @@ extern "C" void imguiSettingsShow(void) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -905,12 +910,31 @@ extern "C" void imguiSettingsShow(void) {
                      ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse);
         if (!panelOpen) {
-            /* User clicked the X — same path as the bottom Close. */
+            /* User clicked the window X — same path as the bottom Close. */
             if (imguiSettingsHasUnappliedSkinPreview()) {
                 ImGui::OpenPopup("##applySkin");
             } else {
                 running = false;
             }
+        }
+
+        /* Top-right close X. Route through the same skin-preview confirm. */
+        if (WBUI::DrawPanelCloseX()) {
+            if (imguiSettingsHasUnappliedSkinPreview()) {
+                ImGui::OpenPopup("##applySkin");
+            } else {
+                running = false;
+            }
+        }
+
+        /* Title */
+        {
+            ImGui::SetWindowFontScale(1.4f);
+            const char *title = langGetText(STR_DLGSETTINGS_TITLE);
+            ImVec2 textSize = ImGui::CalcTextSize(title);
+            ImGui::SetCursorPosX((panelW - textSize.x) * 0.5f);
+            ImGui::Text("%s", title);
+            ImGui::SetWindowFontScale(1.0f);
         }
 
         /* ---- Player ---- */
@@ -992,6 +1016,7 @@ extern "C" void imguiSettingsShow(void) {
                         }
                     }
                 }
+                imguiHandOnHover();
             }
             if (wbnActive) ImGui::EndDisabled();
             if (wbnActive) {
@@ -1097,10 +1122,12 @@ extern "C" void imguiSettingsShow(void) {
                                        iconSz)) {
                     openInfo = true;
                 }
+                imguiHandOnHover();
             } else {
                 if (ImGui::SmallButton("?##langInfoBtn")) {
                     openInfo = true;
                 }
+                imguiHandOnHover();
             }
             if (openInfo) {
                 ImGui::OpenPopup("##LangInfoPopup");
@@ -1165,6 +1192,7 @@ extern "C" void imguiSettingsShow(void) {
             if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(120, 0))) {
                 showKeySetup = true;
             }
+            imguiHandOnHover();
 #endif
         }
 
@@ -1444,6 +1472,7 @@ extern "C" void imguiSettingsShow(void) {
                 gameFrontRequestPlayTutorial();
                 running = false;  /* Close settings; openSettings handler routes to openTutorial. */
             }
+            imguiHandOnHover();
             ImGui::SameLine();
             {
                 bool showOnMain = gameFrontGetShowTutorialButton();
@@ -1475,6 +1504,13 @@ extern "C" void imguiSettingsShow(void) {
                 }
             }
 #endif
+            {
+                int vol = soundVolume;
+                ImGui::SetNextItemWidth(200.0f);
+                if (ImGui::SliderInt(langGetText(STR_MENU_VOLUME), &vol, 0, 100, "%d%%")) {
+                    windowSetSoundVolume(vol);
+                }
+            }
         }
 
         /* ---- Messages ---- */
@@ -1529,6 +1565,16 @@ extern "C" void imguiSettingsShow(void) {
                     gameFrontUseNatTraversal = b;
                 }
             }
+            {
+                const char *cur = newsPrefGetAutoShow();
+                /* "unset" and "show" both default the checkbox to
+                 * checked; only an explicit "dontShow" unchecks it.
+                 * Toggling never writes "unset". */
+                bool b = (strcmp(cur, "dontShow") != 0);
+                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_NEWS_AUTOSHOW), &b)) {
+                    newsPrefSetAutoShow(b ? "show" : "dontShow");
+                }
+            }
         }
 #endif
 
@@ -1549,11 +1595,14 @@ extern "C" void imguiSettingsShow(void) {
         ImGui::Separator();
         ImGui::Spacing();
 
-        float btnW = 80.0f;
-        float btnX = (panelW - btnW) / 2.0f;
-        ImGui::SetCursorPosX(btnX);
-        if (ImGui::Button(langGetText(STR_CLOSE), ImVec2(btnW, 0)) ||
-            ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        /* Close is affirmative here ("I'm done, keep settings"), not a
+         * cancel-equivalent — Settings has no destructive action to
+         * back out of, changes apply live. Use the confirm slot so it
+         * gets default primary styling, not the muted Cancel grey.
+         * Route through the skin-preview confirm if a preview is unapplied. */
+        int f = WBUI::DialogFooter(/*cancelLabel*/ nullptr,
+                                   /*confirmLabel*/ langGetText(STR_CLOSE));
+        if (f != WBUI::FOOTER_NONE || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             if (imguiSettingsHasUnappliedSkinPreview()) {
                 ImGui::OpenPopup("##applySkin");
             } else {
@@ -1653,6 +1702,7 @@ extern "C" void imguiSettingsShow(void) {
 
             IMGUI_CHECKVERSION();
             ImGui::CreateContext();
+            imguiRegisterPlatformOpenUrl();
             ImGuiIO &ioNew = ImGui::GetIO();
             ioNew.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
             ioNew.IniFilename = nullptr;

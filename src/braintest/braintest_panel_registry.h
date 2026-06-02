@@ -26,6 +26,15 @@
 extern "C" {
 #endif
 
+struct ServerSim;
+
+/* Accessor for the braintest binary's current sim, used by
+ * panel renderers (under brains/<name>/braintest_panels/) that
+ * need to call serverSim* wrappers but don't otherwise have
+ * a sim handle. Returns the file-static sim mirror updated
+ * each frame by braintest_main.c's panel-render path. */
+struct ServerSim *braintestGetCurrentSim(void);
+
 #define PANEL_REG_MAX           32
 #define PANEL_REG_NAME_MAX      64
 #define PANEL_REG_TYPE_MAX      24
@@ -40,7 +49,7 @@ typedef struct {
     int   bot_owner;
     char  name[PANEL_REG_NAME_MAX];
     /* Renderer the host should invoke for this panel's body.
-     * Already namespaced by brain ("NewAutopilot:pool_grid")
+     * Already namespaced by brain ("GoalHunter:pool_grid")
      * so two bots with different schemas registering the same
      * short type don't collide. Unknown types fall back to
      * "text" with a one-time warning. */

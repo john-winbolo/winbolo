@@ -22,6 +22,7 @@
  *********************************************************/
 
 #include "transport_udp_internal.h"
+#include "../common/wb_log.h"
 
 /* ================================================================
  * Serialization helpers — pack/unpack structs to/from wire format
@@ -86,6 +87,7 @@ const char *packetTypeName(uint8_t type) {
     case PACKET_PONG:           return "PONG";
     case PACKET_GAME_EVENT:     return "GAME_EVENT";
     case PACKET_MAP_DOWNLOAD:   return "MAP_DOWNLOAD";
+    case PACKET_PLAYER_LIST:    return "PLAYER_LIST";
     case PACKET_NAME_CHANGE:        return "NAME_CHANGE";
     case PACKET_ALLIANCE_REQUEST:   return "ALLIANCE_REQUEST";
     case PACKET_ALLIANCE_ACCEPT:    return "ALLIANCE_ACCEPT";
@@ -97,24 +99,71 @@ const char *packetTypeName(uint8_t type) {
     case PACKET_LOBBY_READY:        return "LOBBY_READY";
     case PACKET_LOBBY_ADD_BOT:      return "LOBBY_ADD_BOT";
     case PACKET_LOBBY_REMOVE_BOT:   return "LOBBY_REMOVE_BOT";
-    case PACKET_LOBBY_STATE:        return "LOBBY_STATE";
     case PACKET_LOBBY_UPDATE:       return "LOBBY_UPDATE";
+    case PACKET_LOBBY_SETTINGS:     return "LOBBY_SETTINGS";
+    case PACKET_LOBBY_SET_SETTING:  return "LOBBY_SET_SETTING";
+    case PACKET_LOBBY_SETTING_CHG:  return "LOBBY_SETTING_CHG";
+    case PACKET_LOBBY_OPEN_HOST:    return "LOBBY_OPEN_HOST";
+    case PACKET_LOBBY_OPEN_HOST_CHG: return "LOBBY_OPEN_HOST_CHG";
+    case PACKET_LOBBY_TEAM_META:    return "LOBBY_TEAM_META";
+    case PACKET_LOBBY_TEAM_META_CHG: return "LOBBY_TEAM_META_CHG";
+    case PACKET_LOBBY_TEAM_CLEAR:   return "LOBBY_TEAM_CLEAR";
+    case PACKET_LOBBY_BOT_CONFIG:   return "LOBBY_BOT_CONFIG";
+    case PACKET_LOBBY_BOT_CONFIG_CHG: return "LOBBY_BOT_CONFIG_CHG";
+    case PACKET_LOBBY_KICK:         return "LOBBY_KICK";
+    case PACKET_KICKED:             return "KICKED";
+    case PACKET_LOBBY_SET_BOT_BRAIN: return "LOBBY_SET_BOT_BRAIN";
+    case PACKET_LOBBY_BOT_BRAIN_CHG: return "LOBBY_BOT_BRAIN_CHG";
+    case PACKET_LOBBY_BRAIN_LIST:   return "LOBBY_BRAIN_LIST";
+    case PACKET_LOBBY_SET_MAP:      return "LOBBY_SET_MAP";
+    case PACKET_LOBBY_SET_PASSWORD: return "LOBBY_SET_PASSWORD";
+    case PACKET_LOBBY_MAP_LIST_REQ: return "LOBBY_MAP_LIST_REQ";
+    case PACKET_LOBBY_MAP_LIST_RSP: return "LOBBY_MAP_LIST_RSP";
+    case PACKET_LOBBY_MAP_SEARCH_REQ: return "LOBBY_MAP_SEARCH_REQ";
+    case PACKET_LOBBY_MAP_SEARCH_RSP: return "LOBBY_MAP_SEARCH_RSP";
+    case PACKET_LOBBY_MAP_UPLOAD_BEGIN: return "LOBBY_MAP_UPLOAD_BEGIN";
+    case PACKET_LOBBY_MAP_UPLOAD_CHUNK: return "LOBBY_MAP_UPLOAD_CHUNK";
+    case PACKET_LOBBY_MAP_UPLOAD_ACK:   return "LOBBY_MAP_UPLOAD_ACK";
+    case PACKET_LOBBY_MAP_UPLOAD_DONE:  return "LOBBY_MAP_UPLOAD_DONE";
+    case PACKET_LOBBY_MAP_USE_LOCAL:     return "LOBBY_MAP_USE_LOCAL";
+    case PACKET_LOBBY_MAP_USE_LOCAL_NACK: return "LOBBY_MAP_USE_LOCAL_NACK";
+    case PACKET_LOBBY_MAP_PREVIEW_REQ:   return "LOBBY_MAP_PREVIEW_REQ";
+    case PACKET_LOBBY_MAP_PREVIEW_BEGIN: return "LOBBY_MAP_PREVIEW_BEGIN";
+    case PACKET_LOBBY_MAP_PREVIEW_CHUNK: return "LOBBY_MAP_PREVIEW_CHUNK";
+    case PACKET_LOBBY_MAP_PREVIEW_ERR:   return "LOBBY_MAP_PREVIEW_ERR";
+    case PACKET_LOBBY_PREVIEW_CANCEL: return "LOBBY_PREVIEW_CANCEL";
+    case PACKET_LOBBY_PREVIEW_COMMIT: return "LOBBY_PREVIEW_COMMIT";
+    case PACKET_LOBBY_PREVIEW_RANDOM: return "LOBBY_PREVIEW_RANDOM";
     case PACKET_COUNTDOWN:          return "COUNTDOWN";
     case PACKET_GAME_START:         return "GAME_START";
     case PACKET_GAME_OVER:          return "GAME_OVER";
     case PACKET_LOBBY_MAP_CHANGE:   return "LOBBY_MAP_CHANGE";
     case PACKET_WBN_REAUTH:        return "WBN_REAUTH";
+    case PACKET_WBN_REKEY:         return "WBN_REKEY";
     case PACKET_BALANCE_REQUEST:   return "BALANCE_REQUEST";
     case PACKET_BALANCE_PROPOSAL:  return "BALANCE_PROPOSAL";
     case PACKET_BALANCE_APPLY:     return "BALANCE_APPLY";
     case PACKET_BALANCE_DISMISS:   return "BALANCE_DISMISS";
     case PACKET_MAP_SKIP_VOTE:     return "MAP_SKIP_VOTE";
     case PACKET_MAP_SKIP_STATE:    return "MAP_SKIP_STATE";
+    case PACKET_GAME_VOTE_TOGGLE:  return "GAME_VOTE_TOGGLE";
+    case PACKET_GAME_VOTE_STATE:   return "GAME_VOTE_STATE";
+    case PACKET_PUNCH_REQUEST:       return "PUNCH_REQUEST";
+    case PACKET_PUNCH_NOTIFY:        return "PUNCH_NOTIFY";
+    case PACKET_PUNCH_REQUEST_ACK:   return "PUNCH_REQUEST_ACK";
+    case PACKET_PUNCH_PROBE_REQUEST: return "PUNCH_PROBE_REQUEST";
+    case PACKET_PUNCH_PROBE_REPLY:   return "PUNCH_PROBE_REPLY";
+    case PACKET_CONTROL_TICK:      return "CONTROL_TICK";
+    case PACKET_CONTROL_ACK:       return "CONTROL_ACK";
+    case PACKET_COMMAND_TICK:      return "COMMAND_TICK";
+    case PACKET_COMMAND_ACK:       return "COMMAND_ACK";
+    case PACKET_COMMAND_REJECTED:  return "COMMAND_REJECTED";
+    case PACKET_BALANCE_FAILED:    return "BALANCE_FAILED";
     default:                        return "UNKNOWN";
     }
 }
 
-/* Serialize one InputPacket into buf. Returns bytes written (21). */
+/* Serialize one InputPacket into buf. Returns bytes written (25). */
 int packInputPacket(uint8_t *buf, const InputPacket *pkt) {
     packU32(buf, pkt->tick);
     buf[4] = pkt->playerNum;
@@ -126,8 +175,9 @@ int packInputPacket(uint8_t *buf, const InputPacket *pkt) {
     buf[10] = pkt->flags;
     packU32(buf + 11, pkt->eventAck);
     packU32(buf + 15, pkt->mapEventAck);
-    packU16(buf + 19, pkt->pingMs);
-    return 21;
+    packU32(buf + 19, pkt->controlEventAck);
+    packU16(buf + 23, pkt->pingMs);
+    return 25;
 }
 
 void unpackInputPacket(const uint8_t *buf, InputPacket *pkt) {
@@ -141,7 +191,8 @@ void unpackInputPacket(const uint8_t *buf, InputPacket *pkt) {
     pkt->flags = buf[10];
     pkt->eventAck = unpackU32(buf + 11);
     pkt->mapEventAck = unpackU32(buf + 15);
-    pkt->pingMs = unpackU16(buf + 19);
+    pkt->controlEventAck = unpackU32(buf + 19);
+    pkt->pingMs = unpackU16(buf + 23);
 }
 
 /* Serialize one TankSnapshot into buf. Returns bytes written: 1 for a stub
@@ -320,8 +371,17 @@ void unpackPillSnapshot(const uint8_t *buf, PillSnapshot *ps) {
  * Socket helpers
  * ================================================================ */
 
-/* Create a non-blocking UDP socket */
-SOCKET createUdpSocket(void) {
+/* Create a non-blocking UDP socket.
+ *
+ * exclusive=true: caller wants a hard failure on bind() if the port is
+ *   already in use (server case — a second listen-server host on the
+ *   same machine must NOT silently share the port with the first). On
+ *   Windows that means SO_EXCLUSIVEADDRUSE and skipping SO_REUSEADDR;
+ *   SO_REUSEADDR there is permissive enough that two binds to the same
+ *   port both succeed and the OS dispatches packets to one of them.
+ * exclusive=false: ephemeral / client socket — set SO_REUSEADDR so a
+ *   rebind after an unclean exit doesn't fail with EADDRINUSE. */
+SOCKET createUdpSocket(bool exclusive) {
     SOCKET sock;
     unsigned long nonBlock = 1;
     int reuse = 1;
@@ -330,15 +390,19 @@ SOCKET createUdpSocket(void) {
     if (sock == INVALID_SOCKET) {
         return INVALID_SOCKET;
     }
-    /* Allow rebinding immediately after a previous process exits without
-     * a clean close — the OS may not have reaped the port descriptor yet
-     * (most visible on Windows after a force-quit). */
-    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
-               (const char *)&reuse, sizeof(reuse));
-#ifdef SO_REUSEPORT
-    setsockopt(sock, SOL_SOCKET, SO_REUSEPORT,
-               (const char *)&reuse, sizeof(reuse));
+    if (exclusive) {
+#ifdef _WIN32
+        setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                   (const char *)&reuse, sizeof(reuse));
 #endif
+    } else {
+        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
+                   (const char *)&reuse, sizeof(reuse));
+#ifdef SO_REUSEPORT
+        setsockopt(sock, SOL_SOCKET, SO_REUSEPORT,
+                   (const char *)&reuse, sizeof(reuse));
+#endif
+    }
     ioctlsocket(sock, FIONBIO, &nonBlock);
     return sock;
 }
@@ -346,12 +410,6 @@ SOCKET createUdpSocket(void) {
 /* Send a buffer via UDP to a specific address */
 void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
                const struct sockaddr_in *addr) {
-    uint8_t pktType = getPacketType(buf, len);
-    if (pktType != PACKET_STATE_SNAPSHOT && pktType != PACKET_PONG && pktType != PACKET_INPUT) {
-        fprintf(stderr, "[UDP SEND] %s (%u) len=%d to %s:%u\n",
-                packetTypeName(pktType), pktType, len,
-                inet_ntoa(addr->sin_addr), ntohs(addr->sin_port));
-    }
     sendto(sock, (const char *)buf, len, 0,
            (const struct sockaddr *)addr, sizeof(*addr));
 }

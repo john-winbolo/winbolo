@@ -26,11 +26,11 @@
 *********************************************************/
 
 /* Includes */
-#include "global.h"
-#include "bases.h"
+#include "lv_global.h"
+#include "lv_bases.h"
 #include "backend.h"
-#include "players.h"
-#include "messages.h"
+#include "lv_players.h"
+#include "lv_messages.h"
 #include "../gui/lang.h"
 
 
@@ -335,10 +335,10 @@ BYTE lv_basesSetOwner(bases *value, BYTE baseNum, BYTE owner, BYTE migrate) {
   } else if ((*value)->item[baseNum].owner != owner) {
     lv_playersMakeMessageName(owner, ownerName);
     MessageArgs args = {0};
-    snprintf(args.playerName, sizeof(args.playerName), "%s", ownerName);
+    snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, ownerName);
     if (returnValue != NEUTRAL) {
       lv_playersGetPlayerName(returnValue, oldOwner);
-      snprintf(args.otherName, sizeof(args.otherName), "%s", oldOwner);
+      snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, oldOwner);
       lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_BASE, &args);
     } else {
       /* Wording normalizes to bolo's MESSAGE_CAPTURE_BASE

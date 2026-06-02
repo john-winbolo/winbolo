@@ -31,6 +31,7 @@
 #include <limits.h>
 #include <SDL3/SDL.h>
 #include "../common/wb_log.h"
+#include "bolo_rand.h"
 #include "global.h"
 #include "players.h"
 #include "starts.h"
@@ -138,6 +139,12 @@ void startsSetStart(starts *value, start *item, BYTE startNum) {
     startNum--;
     (((*value)->item[startNum]).x) = item->x;
     (((*value)->item[startNum]).y) = item->y;
+    /* Clamp dir to [0, 15]. Downstream defenders (server_sim.c,
+     * client_sim.c, startsConvertDir's default case) all handle
+     * out-of-range dir today, but that's a maintenance burden on
+     * every future caller. Clamp once at the entry point so the
+     * rest of the codebase can trust the field. */
+    if (item->dir > 15) item->dir = 0;
     (((*value)->item[startNum]).dir) = item->dir;
   }
 }
@@ -336,7 +343,7 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
 
   friendlyChoice = -1;
   fallbackChoice = -1;
-  offset = (BYTE)(rand() % numStarts);
+  offset = (BYTE)bolo_rand_below((uint32_t)numStarts);
 
   for (count = 0; count < numStarts; count++) {
     idx = (BYTE)((offset + count) % numStarts);
@@ -581,15 +588,15 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
     BYTE i;
     for (i = 0; i < numOwn; i++) pool[poolSize++] = ownCandidates[i];
     for (i = 0; i < numNeutral; i++) pool[poolSize++] = neutralCandidates[i];
-    idx = pool[rand() % poolSize];
+    idx = pool[bolo_rand_below((uint32_t)poolSize)];
   } else if (numOwn > 0) {
-    idx = ownCandidates[rand() % numOwn];
+    idx = ownCandidates[bolo_rand_below((uint32_t)numOwn)];
   } else if (numNeutral > 0) {
-    idx = neutralCandidates[rand() % numNeutral];
+    idx = neutralCandidates[bolo_rand_below((uint32_t)numNeutral)];
   } else if (numSafe > 0) {
-    idx = safeCandidates[rand() % numSafe];
+    idx = safeCandidates[bolo_rand_below((uint32_t)numSafe)];
   } else if (numFallback > 0) {
-    idx = fallbackCandidates[rand() % numFallback];
+    idx = fallbackCandidates[bolo_rand_below((uint32_t)numFallback)];
   }
 
   WB_LOG_DEBUG(WB_LOG_CAT_SIM, "[starts] chose start %d (%d,%d)", idx, (*value)->item[idx].x, (*value)->item[idx].y);
@@ -1106,7 +1113,7 @@ void startsGetRandStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE 
   BYTE bt;      /* Used to convert the BMAP starts (0 = east) to my starts */
 
   if ((*value)->numStarts > 0) {
-    rnd = rand() % (*value)->numStarts;
+    rnd = (int)bolo_rand_below((uint32_t)(*value)->numStarts);
     *x = (*value)->item[rnd].x;
     *y = (*value)->item[rnd].y;
     bt = startsConvertDir((*value)->item[rnd].dir);

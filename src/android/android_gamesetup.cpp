@@ -21,16 +21,22 @@
 #include "../gui/imgui_theme.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
+#include "../gui/sdl3/dialogs/imgui_dialog_utils.h"
 
 extern "C" {
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/bg_game.h"
 #include "../gui/gamefront.h"
 #include "../gui/lang.h"
-#include "../bolo/global.h"
-#include "../bolo/screen.h"
-#include "../bolo/client_sim.h"
-#include "../gui/sdl3/dialogs/imgui_gamesetup.h"
+#include "global.h"
+#include "bolo_map_validate.h"
+#include "client_sim.h"
+
+/* The desktop imgui_gamesetup screen has been removed in favor of the
+ * lobby flow. The Android port still uses its own setup dialog (this
+ * file) — declare the entry point inline so we don't have to keep
+ * around a one-symbol header for it. */
+int imguiGameSetupShow(struct ClientSim *cs);
 }
 
 #define NUM_SECONDS 60
@@ -99,6 +105,7 @@ static void scanBundledMaps(void) {
 }
 
 extern "C" int imguiGameSetupShow(ClientSim *cs) {
+    (void)cs;  /* map validation moved to boloMapValidate; cs unused */
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
     if (!window || !renderer) return 0;
@@ -258,9 +265,8 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                         /* Inbuilt map */
                         gameFrontSetFileName((char *)"");
                     } else {
-                        /* Try to load the selected map to validate it */
-                        bool ok = screenLoadMapCS(cs, (char *)mapFiles[i], gameOpen, FALSE, 0,
-                                                UNLIMITED_GAME_TIME, (char *)"Me", TRUE);
+                        /* Validate the selected map before remembering it. */
+                        bool ok = boloMapValidate(mapFiles[i], NULL, 0);
                         if (ok) {
                             gameFrontSetFileName((char *)mapFiles[i]);
                         } else {
@@ -371,12 +377,14 @@ extern "C" int imguiGameSetupShow(ClientSim *cs) {
                 result = 1;
                 running = false;
             }
+            imguiHandOnHover();
 
             ImGui::SameLine(0.0f, 16.0f * uiScale);
 
             if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH))) {
                 running = false;
             }
+            imguiHandOnHover();
         }
 
         ImGui::EndGroup();

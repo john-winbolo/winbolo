@@ -29,8 +29,8 @@
 #ifndef SOUND_H
 #define SOUND_H
 
-#include "../bolo/global.h"
-#include "../bolo/screen.h"
+#include "global.h"
+#include "client_enums.h"  /* sndEffects */
 
 /*********************************************************
 *NAME:          soundSetup
@@ -113,5 +113,30 @@ bool soundIsPlayable(void);
 *  mute - TRUE to pause, FALSE to resume
 *********************************************************/
 void soundSetMuted(bool mute);
+
+/*********************************************************
+*NAME:          soundSetVolume
+*PURPOSE:
+*  Sets the master output gain on the audio stream.
+*
+*ARGUMENTS:
+*  pct - volume percentage in [0, 100]
+*********************************************************/
+void soundSetVolume(int pct);
+
+/*********************************************************
+*NAME:          soundSetReturningToLobby
+*PURPOSE:
+*  Saves and zeros the output gain while the game-over →
+*  lobby transition is held, then restores the previous gain
+*  on the way out. Idempotent: repeat calls with the same
+*  state are no-ops, so the user's chosen volume (including
+*  a muted 0) is preserved regardless of how many phase
+*  events fan out.
+*
+*ARGUMENTS:
+*  active - TRUE to snapshot+silence, FALSE to restore
+*********************************************************/
+void soundSetReturningToLobby(bool active);
 
 #endif /* SOUND_H */

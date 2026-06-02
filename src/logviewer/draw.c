@@ -29,10 +29,10 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "global.h"
-#include "screenlgm.h"
+#include "lv_global.h"
+#include "lv_screenlgm.h"
 #include "tiles.h"
-#include "tilenum.h"
+#include "lv_tilenum.h"
 #include "positions.h"
 #include "draw.h"
 #include "logviewer.h"

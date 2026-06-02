@@ -35,33 +35,35 @@
   #define USING_SDL
 #endif
 
-#include "../bolo/everard_map.h"
+#include "everard_map.h"
 
-#include "../bolo/debug_file_output.h"
+#include "bolo_rand.h"
+#include "debug_file_output.h"
 #include "geolookup.h"
-#include "../bolo/global.h"
-#include "../bolo/gametype.h"
+#include "global.h"
+#include "gametype.h"
 #include "threads.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
+#include "../winbolonet/winbolonet_server.h"
 #include "server_sim.h"
-#include "../mapeditor/mapeditor_generate.h"
-#include "../bolo/log.h"
-#include "../bolo/transport_udp.h"
-#include "../bolo/bot_manager.h"
+#include "server_sim_lifecycle.h"
+#include "mapgen.h"
+#include "log.h"
+#include "transport_udp.h"
+#include "bot_manager.h"
+#include "bot_worker_pool.h"
+#include "server_dedicated_log.h"
 #include "server_lifecycle.h"
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
+#include "../headless/cmd_stdin.h"
+#include "wire_limits.h"
 
 /* Constants previously from backend.h */
 #define GAME_TICK_LENGTH 10
 #ifndef GAME_NUMGAMETICKS_SEC
 #define GAME_NUMGAMETICKS_SEC (1000 / 20)
 #endif
-
-/* From backend.c / timer code */
-void initWinboloTimer(void);
-DWORD winboloTimer(void);
-void endWinboloTimer(void);
 
 /* From servermessages.c — called directly now instead of through servercore wrappers */
 void serverMessageSetQuietMode(ServerSim *sim, bool modeOn);
@@ -98,7 +100,7 @@ bool statusFile = FALSE;
 
 time_t ticks = 0;
 
-static ServerSim serverSim;
+static ServerSim *serverSim = NULL;
 
 /* Tracker settings (set from command-line args, read by timer) */
 static char  sTrackerAddr[FILENAME_MAX] = "";
@@ -190,7 +192,7 @@ void saveMap(char *line) {
       }
     }
     transportUdpServerSendServerMessage("Server Admin saved map file.");
-    if (serverSimSaveMap(&serverSim, ptr) == FALSE) {
+    if (serverSimSaveMap(serverSim, ptr) == FALSE) {
       fprintf(stderr, "Sorry, an error occured saving the map. Is the path correct?\n");
     } else {
       logAddEvent(log_SaveMap, 0, 0, 0, 0, 0, NULL);
@@ -232,7 +234,7 @@ void processKeys(bool isQuiet) {
 	size_t newbuflen;
 
 	if (isQuiet == TRUE || isNoInput == TRUE) {
-		while (!(serverSim.state == serverStateGameOver && !serverSim.lobbyEnabled)) {
+		while (!(serverSimGetState(serverSim) == serverStateGameOver && !serverSimIsLobbyEnabled(serverSim))) {
 			if (alarmRaised == alarmInterrupt) {
 				break;
 			}
@@ -245,7 +247,7 @@ void processKeys(bool isQuiet) {
 			CloseHandle(hThread);
 		}
 
-		while (strncmp(keyBuff, "quit", 4) != 0 && !(serverSim.state == serverStateGameOver && !serverSim.lobbyEnabled)) {
+		while (strncmp(keyBuff, "quit", 4) != 0 && !(serverSimGetState(serverSim) == serverStateGameOver && !serverSimIsLobbyEnabled(serverSim))) {
 			if (alarmRaised == alarmInterrupt) {
 				strcpy(keyBuff, "quit");
 				continue;
@@ -261,15 +263,15 @@ void processKeys(bool isQuiet) {
 					printHelp();
 				} else if (strncmp(keyBuff, "unlock", 6) == 0) {
 					threadsWaitForMutex();
-					transportUdpServerSetLock(&serverSim, FALSE);
+					transportUdpServerSetLock(serverSim, FALSE);
 					threadsReleaseMutex();
 				} else if (strncmp(keyBuff, "lock", 4) == 0) {
 					threadsWaitForMutex();
-					transportUdpServerSetLock(&serverSim, TRUE);
+					transportUdpServerSetLock(serverSim, TRUE);
 					threadsReleaseMutex();
 				} else if (strncmp(keyBuff, "info", 4) == 0) {
 					threadsWaitForMutex();
-					serverSimInformation(&serverSim, transportUdpServerGetLock());
+					serverSimInformation(serverSim, transportUdpServerGetLock());
 					threadsReleaseMutex();
 				} else if (strncmp(keyBuff, "savemap", 7) == 0) {
 					threadsWaitForMutex();
@@ -293,7 +295,7 @@ void processKeys(bool isQuiet) {
 					newbuflen = strlen(playerKick);
 					playerKick[newbuflen - 1] = '\0';
 					threadsWaitForMutex();
-					transportUdpServerKickPlayer(&serverSim, playerKick);
+					transportUdpServerKickPlayer(serverSim, playerKick);
 					threadsReleaseMutex();
 				} else if (strncmp(keyBuff, "quit", 4) == 0) {
 					/* Loop's while-condition will exit on next check */
@@ -326,37 +328,37 @@ void processKeys(bool isQuiet) {
   FD_SET(STDIN_FILENO, &fdmask);
 
   if (isQuiet == TRUE || isNoInput == TRUE) {
-    while (!(serverSim.state == serverStateGameOver && !serverSim.lobbyEnabled)) {
+    while (!(serverSimGetState(serverSim) == serverStateGameOver && !serverSimIsLobbyEnabled(serverSim))) {
       if (alarmRaised == alarmInterrupt) {
         break;
       } else if (alarmRaised == alarmLock) {
         threadsWaitForMutex();
-        transportUdpServerSetLock(&serverSim, TRUE);
+        transportUdpServerSetLock(serverSim, TRUE);
         threadsReleaseMutex();
         alarmRaised = alarmNone;
       } else if (alarmRaised == alarmUnlock) {
         threadsWaitForMutex();
-        transportUdpServerSetLock(&serverSim, FALSE);
+        transportUdpServerSetLock(serverSim, FALSE);
         threadsReleaseMutex();
         alarmRaised = alarmNone;
       }
       sleep(1);
     }
   } else {
-    while (strncmp(keyBuff, "quit", 4) != 0 && !(serverSim.state == serverStateGameOver && !serverSim.lobbyEnabled)) {
+    while (strncmp(keyBuff, "quit", 4) != 0 && !(serverSimGetState(serverSim) == serverStateGameOver && !serverSimIsLobbyEnabled(serverSim))) {
       if (strncmp(keyBuff, "help", 4) == 0) {
         printHelp();
       } else if (strncmp(keyBuff, "unlock", 6) == 0) {
         threadsWaitForMutex();
-        transportUdpServerSetLock(&serverSim, FALSE);
+        transportUdpServerSetLock(serverSim, FALSE);
         threadsReleaseMutex();
       } else if (strncmp(keyBuff, "lock", 4) == 0) {
         threadsWaitForMutex();
-        transportUdpServerSetLock(&serverSim, TRUE);
+        transportUdpServerSetLock(serverSim, TRUE);
         threadsReleaseMutex();
       } else if (strncmp(keyBuff, "info", 4) == 0) {
         threadsWaitForMutex();
-        serverSimInformation(&serverSim, transportUdpServerGetLock());
+        serverSimInformation(serverSim, transportUdpServerGetLock());
         threadsReleaseMutex();
       } else if (strncmp(keyBuff, "savemap", 7) == 0) {
         threadsWaitForMutex();
@@ -380,7 +382,7 @@ void processKeys(bool isQuiet) {
         newbuflen = strlen(playerKick);
         playerKick[newbuflen - 1] = '\0';
         threadsWaitForMutex();
-        transportUdpServerKickPlayer(&serverSim, playerKick);
+        transportUdpServerKickPlayer(serverSim, playerKick);
         threadsReleaseMutex();
       } else if (strncmp(keyBuff, "quit", 4) == 0) {
         /* Loop's while-condition will exit on next check */
@@ -418,12 +420,88 @@ void processKeys(bool isQuiet) {
 #endif
 
 /*********************************************************
+ * Scripted command dispatch (-cmd-stdin).
+ *
+ * Reads JSON-per-line commands from FILE and dispatches at
+ * each command's tick (server-side serverSimGetTick). Used by
+ * the centralize test harness to drive server-originated
+ * events deterministically: start_game, reapply_alliances,
+ * shutdown, exit. Client-originated ops (add_bot, set_team,
+ * etc.) error out — those belong on WinBoloHeadless --cmd-stdin.
+ *
+ * Replaces processKeys when -cmd-stdin is supplied; the two
+ * are mutually exclusive (so the stdin-reader thread on
+ * Windows and the select() on Linux are not contested).
+ *********************************************************/
+static void processCmdStdin(CmdStdin *cs) {
+    while (1) {
+        if (alarmRaised == alarmInterrupt) break;
+        if (serverSimGetState(serverSim) == serverStateGameOver &&
+            !serverSimIsLobbyEnabled(serverSim)) {
+            break;
+        }
+
+        CmdLine cmd;
+        if (!cmdStdinPeek(cs, &cmd)) {
+            /* EOF — keep the server running until SIGINT or game-over
+             * matches the processKeys quiet path. The scenario fixture
+             * is expected to supply an explicit exit/shutdown op once
+             * its goldens have been written. */
+#ifdef _WIN32
+            Sleep(50);
+#else
+            SDL_Delay(50);
+#endif
+            continue;
+        }
+
+        uint32_t serverTick = serverSimGetTick(serverSim);
+        if (cmd.tick > serverTick) {
+#ifdef _WIN32
+            Sleep(10);
+#else
+            SDL_Delay(10);
+#endif
+            continue;
+        }
+
+        cmdStdinConsume(cs);
+        bool keepGoing = true;
+        threadsWaitForMutex();
+        switch (cmd.op) {
+            case CMD_OP_START_GAME:
+                serverSimStartGame(serverSim);
+                break;
+            case CMD_OP_REAPPLY_ALLIANCES:
+                serverSimReapplyTeamAlliances(serverSim);
+                break;
+            case CMD_OP_SHUTDOWN:
+            case CMD_OP_EXIT:
+                /* Both paths break the main loop. The cleanup code
+                 * in main() runs serverInstanceShutdown which, via
+                 * transportUdpServerStop, publishes
+                 * CTRL_SERVER_SHUTDOWN to connected clients. */
+                keepGoing = false;
+                break;
+            default:
+                fprintf(stderr,
+                        "cmd-stdin: line %d: op '%s' not valid in WinBoloDS mode\n",
+                        cmd.lineNumber, cmdOpName(cmd.op));
+                threadsReleaseMutex();
+                exit(2);
+        }
+        threadsReleaseMutex();
+        if (!keepGoing) break;
+    }
+}
+
+/*********************************************************
 *NAME:          serverGameTimer
 *AUTHOR:        John Morrison
 *CREATION DATE: 24/11/98
 *LAST MODIFIED: 20/3/99
 *PURPOSE:
-* The Game Timer. If there are no events to prcess this 
+* The Game Timer. If there are no events to prcess this
 * routine is called. If the elapsed
 *
 *ARGUMENTS:
@@ -432,17 +510,17 @@ void processKeys(bool isQuiet) {
 #ifdef _WIN32
 void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2) {
   DWORD tick;
-  tick = winboloTimer();
+  tick = SDL_GetTicks();
 #else
   Uint32 SDLCALL serverGameTimer(void *userdata, SDL_TimerID timerID, Uint32 interval) {
   (void)userdata; (void)timerID;
   DWORD tick;
-  tick = winboloTimer();
+  tick = SDL_GetTicks();
 #endif
 
   if ((tick - oldTick) > SERVER_TICK_LENGTH) {
     while ((tick - oldTick) > SERVER_TICK_LENGTH) {
-      serverInstanceTick(&serverSim);
+      serverInstanceTick(serverSim);
       ticks++;
       oldTick += SERVER_TICK_LENGTH;
     }
@@ -478,6 +556,11 @@ void printArgs() {
   fprintf(stderr, "<Delay>       - Specifies the start delay (in seconds) (none if not specified)\n");
   fprintf(stderr, "<Limit>       - Specifies the game time limit (in minutes)\n");
   fprintf(stderr, "                \"-1\" for no time limit (none if not specified)\n");
+  fprintf(stderr, "-ticks <N>    - Exit cleanly after N game-ticks of running play.\n");
+  fprintf(stderr, "                \"0\" or omitted means unlimited (default).\n");
+  fprintf(stderr, "-ticklimit <N> - End the current game (transition to GAME_OVER) after N\n");
+  fprintf(stderr, "                game-ticks of running play. Unlike -ticks, the server is\n");
+  fprintf(stderr, "                not asked to exit; in lobby mode the round returns to lobby.\n");
   fprintf(stderr, "<Password>    - Game Password (none if not specified)\n");
   fprintf(stderr, "<tracker>     - Internet tracker to notify. Options:\n");
   fprintf(stderr, "                -tracker alone uses default (%s:%d)\n", DEFAULT_TRACKER_ADDR, DEFAULT_TRACKER_PORT);
@@ -495,6 +578,7 @@ void printArgs() {
   fprintf(stderr, "-logfile      - Write all output to file instead of console.\n");
   fprintf(stderr, "-maxplayers   - Specifies the maximum number of players that can be on this\n");
   fprintf(stderr, "                server.\n");
+  fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
   fprintf(stderr, "-log          - Create game log file (filename optional)\n");
   fprintf(stderr, "-dontsendlog  - Don't upload game log to winbolo.net\n");
   fprintf(stderr, "-statusFile	 - Save list of unlocked players to a file.\n");
@@ -506,6 +590,15 @@ void printArgs() {
   fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
   fprintf(stderr, "                them, or a different one to fight against them.\n");
   fprintf(stderr, "-nolobby      - Skip lobby, start game immediately (backward-compatible mode)\n");
+  fprintf(stderr, "-autolock     - Start with auto-lock-on-game-start enabled\n");
+  fprintf(stderr, "-ranked       - Start with the lobby flagged Ranked (also forces auto-lock-on-game-start)\n");
+  fprintf(stderr, "-openhost     - Start with Open Host on so any connected player can edit lobby settings\n");
+  fprintf(stderr, "-firstjoinhost- On an empty dedicated server, promote the next joiner to host;\n");
+  fprintf(stderr, "                slot re-opens when the host leaves\n");
+  fprintf(stderr, "-lock <list>  - Comma-separated list of lobby settings to lock as read-only.\n");
+  fprintf(stderr, "                Valid: gametype, ai, mines, timelimit (alias: limit),\n");
+  fprintf(stderr, "                autolock, password, ranked, openhost, map.\n");
+  fprintf(stderr, "                e.g. -lock gametype,ranked,map\n");
   fprintf(stderr, "-quitonwin    - Quit server when a player/alliance wins\n");
   fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
   fprintf(stderr, "                (enabled by default, resets after 5 minutes)\n");
@@ -785,7 +878,13 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
 #include <time.h>
 
 int main(int argc, char **argv) {
-  srand((unsigned int)(time(NULL) ^ getpid()));
+  bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
+  {
+    int seedArg = findArg(argc, argv, "seed");
+    if (seedArg != ARG_NOT_FOUND) {
+      bolo_srand(strtoull((char *)argv[seedArg], NULL, 0));
+    }
+  }
   sentryInit("WinBoloDS", argc, argv);
   atexit(sentryClose);
   wb_log_init("WinBolo", "WinBoloDS", "winbolods.log");
@@ -825,13 +924,11 @@ int main(int argc, char **argv) {
     setWriteToDebugFileStream(-1);
   }
 
-  serverMessageSetQuietMode(&serverSim, FALSE);
   isQuiet = FALSE;
   isNoInput = FALSE;
   maxPlayers = 0;
 
   alarmRaised = alarmNone;
-  initWinboloTimer();
 #ifdef _WIN32
   /* Set up console ctrl handler */
   SetConsoleCtrlHandler(consoleCtrlHandler, TRUE);
@@ -847,7 +944,6 @@ int main(int argc, char **argv) {
     printArgs();
     exit(0);
   }
-  serverSim.botAiType = ai;
 
   /* Copy tracker settings to file-scope globals for the timer */
   sTrackerUse = trackerUse;
@@ -858,13 +954,9 @@ int main(int argc, char **argv) {
   }
 
   if (argExist(argc, argv, "quiet") == TRUE) {
-    serverMessageSetQuietMode(&serverSim, TRUE);
     isQuiet = TRUE;
   }
   isNoInput = argExist(argc, argv, "noinput");
-  if (findArg(argc, argv, "logfile") != ARG_NOT_FOUND) {
-    serverMessagesSetLogFile(&serverSim, (char *) argv[findArg(argc, argv, "logfile")]);
-  }
 
   if (argExist(argc, argv, "maxplayers") == TRUE) {
     maxPlayers = atoi((char *) argv[findArg(argc, argv, "maxplayers")]);
@@ -880,11 +972,7 @@ int main(int argc, char **argv) {
   }
 #endif
   /* IP-to-country geolocation (DB-IP Lite) */
-  if (geoLookupCreate("data/dbip-country-lite.mmdb")) {
-    serverMessageConsoleMessage(&serverSim,"Geo lookup database loaded.\n");
-  } else {
-    serverMessageConsoleMessage(&serverSim,"Geo lookup database not found — country codes will be XX.\n");
-  }
+  bool geoLookupOk = geoLookupCreate("data/dbip-country-lite.mmdb");
 
   /* Create server simulation */
   if (strncmp(mapName, "-randommap", 10) == 0) {
@@ -923,7 +1011,7 @@ int main(int argc, char **argv) {
     } else {
       /* Plain "-randommap" — fully random */
       int types[] = { MAPGEN_TOURNAMENT, MAPGEN_NATURAL, MAPGEN_MAZE, MAPGEN_FRACTAL };
-      cfg = mapGenDefaultConfig(types[rand() % 4]);
+      cfg = mapGenDefaultConfig(types[bolo_rand_below(4)]);
     }
 
     /* Force tournament maps to max objects */
@@ -943,7 +1031,8 @@ int main(int argc, char **argv) {
     cfg.x1 = 21; cfg.y1 = 21;
     cfg.x2 = 235; cfg.y2 = 235;
 
-    if (serverSimCreateRandomMap(&serverSim, &cfg, game, hiddenMines, srtDelay, gmeLen) == FALSE) {
+    serverSim = serverSimCreateRandomMap(&cfg, game, hiddenMines, srtDelay, gmeLen);
+    if (serverSim == NULL) {
       fprintf(stderr, "Error generating random map\n");
 #ifdef USING_SDL
       SDL_Quit();
@@ -957,13 +1046,11 @@ int main(int argc, char **argv) {
       char msg[128];
       mapGenConfigToSeed(&cfg, seedBuf, sizeof(seedBuf));
       snprintf(msg, sizeof(msg), "Generated random map with seed: %s", seedBuf);
-      serverMessageConsoleMessage(&serverSim, msg);
+      serverMessageConsoleMessage(serverSim, msg);
     }
 
     /* Store config for between-round regeneration */
-    serverSim.randomMapEnabled = true;
-    serverSim.randomMapConfig = cfg;
-    serverSim.randomMapFixedSeed = hasFixedSeed;
+    serverSimEnableRandomMap(serverSim, &cfg, hasFixedSeed);
 
   } else if (strcmp(mapName, "-inbuilt") == 0) {
 #ifdef _MSC_VER
@@ -974,47 +1061,71 @@ int main(int argc, char **argv) {
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-    if (serverSimCreateCompressed(&serverSim, emap, 5097, game, hiddenMines, srtDelay, gmeLen) == FALSE) {
+    serverSim = serverSimCreateCompressed(emap, 5097, "Everard Island", game, hiddenMines, srtDelay, gmeLen);
+    if (serverSim == NULL) {
       fprintf(stderr, "Error starting server simulation (inbuilt map)\n");
 #ifdef USING_SDL
       SDL_Quit();
 #endif
       return 0;
     }
-    strncpy(serverSim.mapName, "Everard Island", MAP_STR_SIZE - 1);
-    serverSim.mapName[MAP_STR_SIZE - 1] = '\0';
+    serverSimSetMapName(serverSim, "Everard Island");
   } else if (strcmp(mapName, "-mapdir") == 0) {
-    /* -mapdir without -map: build the map list into a temporary, then pick
-     * a random initial map. serverSimCreate zeroes the struct, so we restore
-     * the list after creation. */
-    char **savedFiles;
-    int savedCount;
+    /* -mapdir without -map: scan the directory for valid maps, pick one at
+     * random for the initial Create, then transfer the list onto the
+     * created sim. */
+    char **scannedFiles = NULL;
+    int scannedCount = 0;
     int mdArg = findArg(argc, argv, "mapdir");
-    if (serverSimMapDirBuild(&serverSim, (char *)argv[mdArg]) == FALSE) {
+    if (serverSimScanMapDir((const char *)argv[mdArg], &scannedFiles, &scannedCount) == FALSE) {
 #ifdef USING_SDL
       SDL_Quit();
 #endif
       return 0;
     }
-    savedFiles = serverSim.mapDirFiles;
-    savedCount = serverSim.mapDirCount;
-    if (serverSimCreate(&serverSim, savedFiles[rand() % savedCount], game, hiddenMines, srtDelay, gmeLen) == FALSE) {
+    serverSim = serverSimCreate(scannedFiles[bolo_rand_below((uint32_t)scannedCount)], game, hiddenMines, srtDelay, gmeLen);
+    if (serverSim == NULL) {
+      int i;
+      for (i = 0; i < scannedCount; i++) SDL_free(scannedFiles[i]);
+      free(scannedFiles);
       fprintf(stderr, "Error starting server simulation\n");
 #ifdef USING_SDL
       SDL_Quit();
 #endif
       return 0;
     }
-    serverSim.mapDirFiles = savedFiles;
-    serverSim.mapDirCount = savedCount;
+    serverSimInstallMapDirList(serverSim, scannedFiles, scannedCount);
   } else {
-    if (serverSimCreate(&serverSim, mapName, game, hiddenMines, srtDelay, gmeLen) == FALSE) {
+    serverSim = serverSimCreate(mapName, game, hiddenMines, srtDelay, gmeLen);
+    if (serverSim == NULL) {
       fprintf(stderr, "Error starting server simulation\n");
 #ifdef USING_SDL
       SDL_Quit();
 #endif
       return 0;
     }
+  }
+
+  /* sim now exists — perform the init that used to happen before
+   * Create (when sim was an embedded zero-struct that Create then
+   * clobbered). */
+  serverMessageSetQuietMode(serverSim, isQuiet ? TRUE : FALSE);
+  {
+    char banner[256];
+    snprintf(banner, sizeof banner,
+             "WinBolo Server - v%s\n"
+             "Copyright 1998-2026 John Morrison\n"
+             "Bolo Copyright 1987-1995 Stuart Cheshire",
+             WINBOLO_VERSION);
+    serverMessageConsoleMessage(serverSim, banner);
+  }
+  if (findArg(argc, argv, "logfile") != ARG_NOT_FOUND) {
+    serverMessagesSetLogFile(serverSim, (char *) argv[findArg(argc, argv, "logfile")]);
+  }
+  if (geoLookupOk) {
+    serverMessageConsoleMessage(serverSim, "Geo lookup database loaded.\n");
+  } else {
+    serverMessageConsoleMessage(serverSim, "Geo lookup database not found — country codes will be XX.\n");
   }
 
   useAddr = NULL;
@@ -1025,43 +1136,117 @@ int main(int argc, char **argv) {
   }
 
   statusFile = argExist(argc, argv, "statusFile");
-  serverSim.quitOnWin = argExist(argc, argv, "quitonwin");
-  serverSim.autoCloseOnEmpty = argExist(argc, argv, "autoclose");
+  serverSimSetQuitOnWin(serverSim, argExist(argc, argv, "quitonwin") == TRUE);
+  serverSimSetAutoCloseOnEmpty(serverSim, argExist(argc, argv, "autoclose") == TRUE);
+
+  {
+    int argNum = findArg(argc, argv, "ticks");
+    if (argNum != ARG_NOT_FOUND) {
+      serverSimSetTickLimit(serverSim, (int32_t)strtoul((char *)argv[argNum], NULL, 0));
+    }
+  }
+  {
+    int argNum = findArg(argc, argv, "ticklimit");
+    if (argNum != ARG_NOT_FOUND) {
+      serverSimSetGameTickLimit(serverSim, (int32_t)strtoul((char *)argv[argNum], NULL, 0));
+    }
+  }
 
   /* Empty reset configuration — on by default */
-  if (argExist(argc, argv, "noemptyreset") == TRUE) {
-    serverSim.emptyResetEnabled = FALSE;
-  }
+  bool emptyResetEnabled = (argExist(argc, argv, "noemptyreset") == FALSE);
   {
     int argNum = findArg(argc, argv, "emptyresetmins");
     if (argNum != ARG_NOT_FOUND) {
       int mins = atoi((char *)argv[argNum]);
       if (mins > 0) {
-        serverSim.emptyResetMinutes = mins;
+        serverSimSetEmptyResetMinutes(serverSim, mins);
       }
     }
   }
 
-  /* -nolobby: skip lobby, start running immediately (backward-compatible mode) */
-  if (argExist(argc, argv, "nolobby") == TRUE) {
-    serverSim.lobbyEnabled = FALSE;
-    serverSim.emptyResetEnabled = FALSE;
-    serverSim.state = serverStateRunning;
+  /* Lobby presets — set initial values for lobby toggles the host can
+   * normally flip in the UI. Only meaningful in lobby mode; if
+   * -nolobby is also set, the lobby state machine is skipped and the
+   * initial values just bake into the running game's settings. ranked
+   * forces autolock-on-game-start inside serverInstanceStartup. */
+  bool autoLockOnGameStart = (argExist(argc, argv, "autolock") == TRUE);
+  bool ranked              = (argExist(argc, argv, "ranked") == TRUE);
+  bool openHost            = (argExist(argc, argv, "openhost") == TRUE);
+  if (argExist(argc, argv, "firstjoinhost") == TRUE) {
+    serverSimSetFirstJoinerBecomesHost(serverSim, true);
+  }
+
+  /* -lock <comma-list> — bit-OR a set of LOBBY_LOCK_* flags into the
+   * server's lock mask. Locked settings are read-only from any client
+   * (including host / admin / openHost); the lobby UI renders them
+   * disabled with a lock badge. Plumbed end-to-end before this flag
+   * existed but inert because nothing set the mask; this fixes that.
+   * Valid names: gametype, ai, mines, timelimit, autolock, password,
+   * ranked, openhost, map. Unknown names emit a warning and are
+   * skipped (forward-compat for future locks). */
+  uint16_t serverLocks = 0;
+  {
+    int argNum = findArg(argc, argv, "lock");
+    if (argNum != ARG_NOT_FOUND) {
+      const char *list = (const char *)argv[argNum];
+      char tmp[256];
+      strncpy(tmp, list, sizeof(tmp) - 1);
+      tmp[sizeof(tmp) - 1] = '\0';
+      char *saveptr = NULL;
+      (void)saveptr;
+      for (char *tok = strtok(tmp, ","); tok != NULL; tok = strtok(NULL, ",")) {
+        /* trim + lowercase */
+        while (*tok == ' ') tok++;
+        char lo[64];
+        int li = 0;
+        for (int i = 0; tok[i] && li < 63; i++) {
+          char c = tok[i];
+          if (c == ' ') continue;
+          if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+          lo[li++] = c;
+        }
+        lo[li] = '\0';
+        if      (strcmp(lo, "gametype") == 0)  serverLocks |= LOBBY_LOCK_GAME_TYPE;
+        else if (strcmp(lo, "ai") == 0)        serverLocks |= LOBBY_LOCK_AI_POLICY;
+        else if (strcmp(lo, "mines") == 0)     serverLocks |= LOBBY_LOCK_MINES;
+        else if (strcmp(lo, "timelimit") == 0 ||
+                 strcmp(lo, "limit") == 0)     serverLocks |= LOBBY_LOCK_TIME_LIMIT;
+        else if (strcmp(lo, "autolock") == 0)  serverLocks |= LOBBY_LOCK_AUTO_LOCK_ON_GAME;
+        else if (strcmp(lo, "password") == 0)  serverLocks |= LOBBY_LOCK_PASSWORD;
+        else if (strcmp(lo, "ranked") == 0)    serverLocks |= LOBBY_LOCK_RANKED;
+        else if (strcmp(lo, "openhost") == 0)  serverLocks |= LOBBY_LOCK_OPEN_HOST;
+        else if (strcmp(lo, "map") == 0)       serverLocks |= LOBBY_LOCK_MAP;
+        else {
+          fprintf(stderr,
+                  "Warning: unknown -lock name '%s' (valid: gametype, "
+                  "ai, mines, timelimit, autolock, password, ranked, "
+                  "openhost, map)\n", lo);
+        }
+      }
+    }
+  }
+
+  /* -nolobby: skip lobby, start running immediately (backward-compatible
+   * mode). serverInstanceStartup runs SetLobbyEnabled(false) + StartGame
+   * from cfg.skipLobby; emptyReset is force-disabled in this mode. */
+  bool skipLobby = (argExist(argc, argv, "nolobby") == TRUE);
+  if (skipLobby) {
+    emptyResetEnabled = false;
   }
 
   /* -mapdir: build validated map list for rotation between rounds.
    * Skip if already built (the -mapdir without -map case builds it earlier). */
   {
     int argNum = findArg(argc, argv, "mapdir");
-    if (argNum != ARG_NOT_FOUND && serverSim.mapDirFiles == NULL) {
-      if (!serverSim.lobbyEnabled) {
+    if (argNum != ARG_NOT_FOUND && serverSimGetMapDirFiles(serverSim) == NULL) {
+      if (skipLobby) {
         fprintf(stderr, "Error: -mapdir requires lobby mode (incompatible with -nolobby)\n");
 #ifdef USING_SDL
         SDL_Quit();
 #endif
         return 0;
       }
-      if (serverSimMapDirBuild(&serverSim, (char *)argv[argNum]) == FALSE) {
+      if (serverSimMapDirBuild(serverSim, (char *)argv[argNum]) == FALSE) {
 #ifdef USING_SDL
         SDL_Quit();
 #endif
@@ -1072,6 +1257,7 @@ int main(int argc, char **argv) {
 
   /* WinBolo.net host override — must run before serverInstanceStartup
    * so winbolonetCreateServer hits the override host. */
+  winbolonetCoreSetPreferencesPath("WinBolo.ini");
   {
     int argNum = findArg(argc, argv, "wbnhost");
     if (argNum != ARG_NOT_FOUND) {
@@ -1079,26 +1265,131 @@ int main(int argc, char **argv) {
     }
   }
 
-  serverSim.hasPassword = (pass[0] != '\0');
+  /* Bot count + brain path resolution. Hoisted above instCfg so cfg
+   * can carry them into serverInstanceStartup; the actual bot creation
+   * (botManagerAddBot loop) still runs after startup. */
+  int  numBots = 0;
+  char brainPath[MAX_PATH];
+  brainPath[0] = '\0';
+  {
+    int argNum = findArg(argc, argv, "bots");
+    if (argNum != ARG_NOT_FOUND) {
+      numBots = atoi((char *)argv[argNum]);
+      if (numBots < 0) numBots = 0;
+      if (numBots > MAX_TANKS) numBots = MAX_TANKS;
+    }
+    argNum = findArg(argc, argv, "brain");
+    if (argNum != ARG_NOT_FOUND) {
+      strncpy(brainPath, (char *)argv[argNum], MAX_PATH - 1);
+      brainPath[MAX_PATH - 1] = '\0';
+    }
+    /* If no -brain specified but AI is enabled, auto-discover a brain path
+     * so that lobby "Add Bot" requests have a brain to use. */
+    if (brainPath[0] == '\0' && ai != aiNone) {
+      static const char *candidates[] = {
+        "Brains/GoalHunter/init.lua",
+        "brains/GoalHunter/init.lua",
+        "data/Brains/GoalHunter/init.lua",
+      };
+      int c;
+      for (c = 0; c < 3; c++) {
+        FILE *f = fopen(candidates[c], "r");
+        if (f) {
+          fclose(f);
+          strncpy(brainPath, candidates[c], MAX_PATH - 1);
+          brainPath[MAX_PATH - 1] = '\0';
+          fprintf(stderr, "Auto-discovered brain: %s\n", brainPath);
+          break;
+        }
+      }
+    }
+  }
+
   {
     ServerInstanceConfig instCfg;
-    instCfg.udpPort      = port;
-    instCfg.bindAddr     = useAddr;
-    instCfg.password     = pass;
-    instCfg.maxPlayers   = (BYTE)maxPlayers;
-    instCfg.useWbn       = (argExist(argc, argv, "nowinbolonet") == FALSE);
-    instCfg.compTanks    = (BYTE)ai;
-    instCfg.useTracker   = sTrackerUse;
-    instCfg.trackerAddr  = sTrackerAddr;
-    instCfg.trackerPort  = sTrackerPort;
+    UploadPolicy uploadPolicy = UPLOAD_POLICY_ALLOW;
+    uint8_t      uploadMaxFiles = 0;        /* 0 = leave transport default */
+    uint32_t     uploadMaxStorageBytes = 0; /* 0 = leave transport default */
+
+    {
+      int policyArg = findArg(argc, argv, "uploadpolicy");
+      if (policyArg != ARG_NOT_FOUND) {
+        char policyStr[32];
+        strncpy(policyStr, (char *)argv[policyArg], sizeof(policyStr) - 1);
+        policyStr[sizeof(policyStr) - 1] = '\0';
+        strlower(policyStr);
+        if (strcmp(policyStr, "off") == 0) {
+          uploadPolicy = UPLOAD_POLICY_OFF;
+        } else if (strcmp(policyStr, "allow") == 0) {
+          uploadPolicy = UPLOAD_POLICY_ALLOW;
+        } else if (strcmp(policyStr, "persist") == 0) {
+          uploadPolicy = UPLOAD_POLICY_PERSIST;
+        } else {
+          fprintf(stderr, "Unknown -uploadpolicy '%s'; using allow\n", policyStr);
+          uploadPolicy = UPLOAD_POLICY_ALLOW;
+        }
+      }
+    }
+    {
+      int filesArg = findArg(argc, argv, "uploadmaxfiles");
+      if (filesArg != ARG_NOT_FOUND) {
+        int v = atoi((char *)argv[filesArg]);
+        if (v < 1) {
+          fprintf(stderr, "-uploadmaxfiles %d out of range; clamping to 1\n", v);
+          v = 1;
+        } else if (v > 255) {
+          fprintf(stderr, "-uploadmaxfiles %d out of range; clamping to 255\n", v);
+          v = 255;
+        }
+        uploadMaxFiles = (uint8_t)v;
+      }
+    }
+    {
+      int storageArg = findArg(argc, argv, "uploadmaxstorage");
+      if (storageArg != ARG_NOT_FOUND) {
+        int v = atoi((char *)argv[storageArg]);
+        if (v < 1) {
+          fprintf(stderr, "-uploadmaxstorage %d out of range; clamping to 1\n", v);
+          v = 1;
+        } else if (v > 4096) {
+          fprintf(stderr, "-uploadmaxstorage %d out of range; clamping to 4096\n", v);
+          v = 4096;
+        }
+        uploadMaxStorageBytes = (uint32_t)v * 1024u * 1024u;
+      }
+    }
+
+    memset(&instCfg, 0, sizeof(instCfg));
+    instCfg.udpPort             = port;
+    instCfg.bindAddr            = useAddr;
+    instCfg.password            = pass;
+    instCfg.maxPlayers          = (BYTE)maxPlayers;
+    instCfg.acceptRemoteClients = TRUE;
+    instCfg.useWbn              = (argExist(argc, argv, "nowinbolonet") == FALSE);
+    instCfg.compTanks           = (BYTE)ai;
+    instCfg.useTracker          = sTrackerUse;
+    instCfg.trackerAddr         = sTrackerAddr;
+    instCfg.trackerPort         = sTrackerPort;
+    instCfg.uploadPolicy          = uploadPolicy;
+    instCfg.uploadMaxFiles        = uploadMaxFiles;
+    instCfg.uploadMaxStorageBytes = uploadMaxStorageBytes;
+    instCfg.skipLobby           = skipLobby;
+    instCfg.emptyResetEnabled   = emptyResetEnabled;
+    instCfg.hasPassword         = (pass[0] != '\0');
+    instCfg.botBrainPath        = (brainPath[0] != '\0') ? brainPath : NULL;
+    instCfg.botAiType           = (BYTE)ai;
+    instCfg.autoLockOnGameStart = autoLockOnGameStart;
+    instCfg.ranked              = ranked;
+    instCfg.openHost            = openHost;
+    instCfg.serverLocks         = serverLocks;
     {
       bool natPunchOptOut = (argExist(argc, argv, "no-natpunch") == TRUE);
       instCfg.useNatPortmap   = (argExist(argc, argv, "upnp") == TRUE);
       instCfg.useNatKeepalive = sTrackerUse && !natPunchOptOut;
     }
-    if (serverInstanceStartup(&serverSim, &instCfg) == FALSE) {
+    if (serverInstanceStartup(serverSim, &instCfg) == FALSE) {
       fprintf(stderr, "Error creating network transport\n");
-      serverSimDestroy(&serverSim);
+      serverSimDestroy(serverSim);
 #ifdef USING_SDL
       SDL_Quit();
 #endif
@@ -1107,62 +1398,21 @@ int main(int argc, char **argv) {
   }
   dontSendLog = argExist(argc, argv, "dontsendlog");
 
-  /* Log file recording */
+  /* Log file recording — configure the sim's wantLogging /
+   * userLogFileName state, then register the dedicated-server log
+   * subscriber. The subscriber's sync-replay opens the log on the
+   * current phase (LOBBY for lobby mode, RUNNING for no-lobby). */
   if (argExist(argc, argv, "log") == TRUE) {
     int logArg = findArg(argc, argv, "log");
     char userLogFile[MAX_PATH] = {0};
     if (logArg != ARG_NOT_FOUND && argv[logArg][0] != '-') {
       strncpy(userLogFile, (char *)argv[logArg], MAX_PATH - 1);
     }
-    if (!serverSim.lobbyEnabled) {
-      /* No-lobby: game is already running, start logging immediately */
-      if (userLogFile[0] != '\0') {
-        strncpy(fileName, userLogFile, MAX_PATH - 1);
-      } else {
-        makeLogFileName(fileName, serverSim.mapName);
-      }
-      /* Ensure .wbv extension */
-      {
-        size_t flen = strlen(fileName);
-        if (flen <= 4 || strcmp(fileName + flen - 4, ".wbv") != 0) {
-          strncat(fileName, ".wbv", sizeof(fileName) - flen - 1);
-        }
-      }
-      isLogging = logStart(fileName, &serverSim, &serverSim.sim.mp,
-                           &serverSim.sim.bs, &serverSim.sim.pb,
-                           &serverSim.sim.ss, &serverSim.sim.plyrs,
-                           (BYTE)ai, (BYTE)maxPlayers, serverSim.hasPassword);
-      if (isLogging) {
-        fprintf(stderr, "Logging to %s\n", fileName);
-      } else {
-        fprintf(stderr, "Warning: failed to start logging\n");
-      }
-    } else {
-      /* Lobby mode: start logging now so lobby joins/chat are captured */
-      serverSim.wantLogging = TRUE;
-      if (userLogFile[0] != '\0') {
-        strncpy(fileName, userLogFile, MAX_PATH - 1);
-        strncpy(serverSim.userLogFileName, userLogFile, sizeof(serverSim.userLogFileName) - 1);
-      } else {
-        makeLogFileName(fileName, serverSim.mapName);
-      }
-      {
-        size_t flen = strlen(fileName);
-        if (flen <= 4 || strcmp(fileName + flen - 4, ".wbv") != 0) {
-          strncat(fileName, ".wbv", sizeof(fileName) - flen - 1);
-        }
-      }
-      isLogging = logStart(fileName, &serverSim, &serverSim.sim.mp,
-                           &serverSim.sim.bs, &serverSim.sim.pb,
-                           &serverSim.sim.ss, &serverSim.sim.plyrs,
-                           (BYTE)ai, (BYTE)maxPlayers, serverSim.hasPassword);
-      if (isLogging) {
-        fprintf(stderr, "Logging to %s (lobby)\n", fileName);
-        logAddEvent(log_LobbyEnter, 0, 0, 0, 0, 0, NULL);
-      } else {
-        fprintf(stderr, "Warning: failed to start logging\n");
-      }
+    serverSimSetWantLogging(serverSim, true);
+    if (userLogFile[0] != '\0') {
+      serverSimSetUserLogFileName(serverSim, userLogFile);
     }
+    serverDedicatedLogInstall(serverSim);
   }
 
   /* Initialize and add bot players */
@@ -1180,45 +1430,10 @@ int main(int argc, char **argv) {
       return 0;
     }
   }
+  /* botBrainPath + botAiType were already pushed into the sim via the
+   * cfg block above; the loop below only needs to spawn the configured
+   * bot count (numBots / brainPath resolved earlier). */
   {
-    int numBots = 0;
-    char brainPath[MAX_PATH];
-    int argNum;
-
-    brainPath[0] = '\0';
-    argNum = findArg(argc, argv, "bots");
-    if (argNum != ARG_NOT_FOUND) {
-      numBots = atoi((char *)argv[argNum]);
-      if (numBots < 0) numBots = 0;
-      if (numBots > MAX_TANKS) numBots = MAX_TANKS;
-    }
-    argNum = findArg(argc, argv, "brain");
-    if (argNum != ARG_NOT_FOUND) {
-      strncpy(brainPath, (char *)argv[argNum], MAX_PATH - 1);
-      brainPath[MAX_PATH - 1] = '\0';
-    }
-    /* If no -brain specified but AI is enabled, auto-discover a brain path
-     * so that lobby "Add Bot" requests have a brain to use. */
-    if (brainPath[0] == '\0' && ai != aiNone) {
-      static const char *candidates[] = {
-        "Brains/NewAutopilot/init.lua",
-        "brains/NewAutopilot/init.lua",
-        "data/Brains/NewAutopilot/init.lua",
-      };
-      int c;
-      for (c = 0; c < 3; c++) {
-        FILE *f = fopen(candidates[c], "r");
-        if (f) {
-          fclose(f);
-          strncpy(brainPath, candidates[c], MAX_PATH - 1);
-          brainPath[MAX_PATH - 1] = '\0';
-          fprintf(stderr, "Auto-discovered brain: %s\n", brainPath);
-          break;
-        }
-      }
-    }
-    strncpy(serverSim.botBrainPath, brainPath, sizeof(serverSim.botBrainPath) - 1);
-    serverSim.botBrainPath[sizeof(serverSim.botBrainPath) - 1] = '\0';
     if (numBots > 0 && brainPath[0] != '\0') {
       int i;
       char botName[64];
@@ -1237,17 +1452,18 @@ int main(int argc, char **argv) {
       }
       for (i = 0; i < numBots; i++) {
         snprintf(botName, sizeof(botName), "Bot %d", i + 1);
-        if (!botManagerAddBot(&serverSim, (BYTE)i, brainPath, botName, ai, game, hiddenMines)) {
+        if (!botManagerAddBot(serverSim, (BYTE)i, brainPath, botName, ai, game, hiddenMines)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);
         } else if (allyTeam > 0) {
           /* Shared non-zero team for every bot — server_sim's start-of-round
            * pass converts matching teamNumber into alliances, and the lobby
            * protocol already broadcasts teamNumber to clients so the lobby
            * UI shows the bots on this team. */
-          serverSim.lobbyPlayers[i].teamNumber = (uint8_t)allyTeam;
+          serverSimSetTeamBatch(serverSim, (BYTE)i, (uint8_t)allyTeam);
         }
       }
       if (allyTeam > 0) {
+        serverSimReapplyTeamAlliances(serverSim);
         fprintf(stderr, "Added %d bot(s) with brain '%s' (allied on team %d)\n",
                 numBots, brainPath, allyTeam);
       } else {
@@ -1261,23 +1477,51 @@ int main(int argc, char **argv) {
   if (threadsCreate(TRUE) == FALSE) {
     fprintf(stderr, "Error starting Thread Manager\n");
     threadsDestroy();
-    serverInstanceShutdown(&serverSim);
-    serverSimDestroy(&serverSim);
+    serverInstanceShutdown(serverSim);
+    serverSimDestroy(serverSim);
 #ifdef USING_SDL
     SDL_Quit();
 #endif
     return 0;
   }
-  serverMessageConsoleMessage(&serverSim,"Type \"help\" for help, \"quit\" to exit.");
+  serverMessageConsoleMessage(serverSim,"Type \"help\" for help, \"quit\" to exit.");
 #ifdef _WIN32
-  oldTick = winboloTimer();
+  oldTick = SDL_GetTicks();
   serverTimerGameID = timeSetEvent(SERVER_TICK_LENGTH, 10, serverGameTimer, 0, TIME_PERIODIC);
 #else
-  oldTick = winboloTimer();
+  oldTick = SDL_GetTicks();
   serverTimerGameID = SDL_AddTimer(SERVER_TICK_LENGTH, serverGameTimer, NULL);
 #endif
 
-  processKeys(isQuiet);
+  {
+    CmdStdin *cmdStream = NULL;
+    int cmdArg = findArg(argc, argv, "cmd-stdin");
+    if (cmdArg != ARG_NOT_FOUND) {
+      cmdStream = cmdStdinOpen((char *)argv[cmdArg]);
+      if (cmdStream == NULL) {
+        fprintf(stderr, "Error: failed to open -cmd-stdin file '%s'\n",
+                (char *)argv[cmdArg]);
+#ifdef _WIN32
+        timeKillEvent(serverTimerGameID);
+#else
+        SDL_RemoveTimer(serverTimerGameID);
+#endif
+        threadsDestroy();
+        serverInstanceShutdown(serverSim);
+        serverSimDestroy(serverSim);
+#ifdef USING_SDL
+        SDL_Quit();
+#endif
+        return 0;
+      }
+    }
+    if (cmdStream != NULL) {
+      processCmdStdin(cmdStream);
+      cmdStdinClose(cmdStream);
+    } else {
+      processKeys(isQuiet);
+    }
+  }
 
 #ifdef _WIN32
   timeKillEvent(serverTimerGameID);
@@ -1292,21 +1536,21 @@ int main(int argc, char **argv) {
     key[0] = EMPTY_CHAR;
   }
 
-  serverInstanceShutdown(&serverSim);
+  serverInstanceShutdown(serverSim);
 
   if (isLogging == TRUE) {
     logStop(); /* Finalize zip — must run regardless of WBN upload */
   }
   if (isLogging == TRUE && key[0] != EMPTY_CHAR && argExist(argc, argv, "dontsendlog") == FALSE) {
-    serverMessageConsoleMessage(&serverSim,(char *)"Uploading log file to winbolo.net");
+    serverMessageConsoleMessage(serverSim,(char *)"Uploading log file to winbolo.net");
     httpCreate();
     httpSendLogFile(fileName, key, FALSE);
     httpDestroy();
   }
-  endWinboloTimer();
   geoLookupDestroy();
-  serverSimMapDirDestroy(&serverSim);
-  serverSimDestroy(&serverSim);
+  serverSimMapDirDestroy(serverSim);
+  serverSimDestroy(serverSim);
+  botWorkerPoolDestroy();
 #ifdef _WIN32
   WSACleanup();
 #endif

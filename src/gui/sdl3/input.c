@@ -26,9 +26,9 @@
 *********************************************************/
 
 #include <SDL3/SDL.h>
-#include "../../bolo/global.h"
-#include "../../bolo/screen.h"
-#include "../../bolo/client_sim.h"
+#include "global.h"
+#include "client_sim.h"
+#include "client_render.h"
 #include "../gamefront.h"
 #include "../tiles.h"
 #include "input.h"
@@ -40,8 +40,13 @@
 extern bool smoothScrollingEnabled;
 
 /* Smooth-scroll speed: game pixels advanced per scroll tick.
-   Tile = 16 game pixels.  Adjust to taste. */
-static int smoothScrollSpeedPx = 4;
+   Tile = 16 game pixels, game runs at 20 ticks/sec, so:
+     px=4  →  5 tiles/sec
+     px=6  →  7.5 tiles/sec  (default)
+     px=8  → 10 tiles/sec
+     px=12 → 15 tiles/sec
+   Adjust to taste. */
+static int smoothScrollSpeedPx = 6;
 
 /* Sub-tile pixel accumulators for smooth scrolling (in zoomed pixels,
    matching gDragOffsetX/Y units). */
@@ -107,7 +112,7 @@ bool inputSetup(void) {
 *PURPOSE:
 *  Smooth (pixel-level) arrow-key scrolling.  Advances a
 *  sub-tile pixel accumulator each call; commits full-tile
-*  crossings to the engine via screenUpdateCS and pushes
+*  crossings to the engine via clientRenderFrame and pushes
 *  the remainder to sdl3DrawSetDragOffset for sub-tile
 *  rendering.
 *
@@ -132,10 +137,10 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
   /* No direction held: snap to nearest tile boundary. */
   if (dx == 0 && dy == 0) {
     if (smoothScrollAccumX != 0 || smoothScrollAccumY != 0) {
-      if (smoothScrollAccumX >  tileW / 2) screenUpdateCS(cs, right);
-      if (smoothScrollAccumX < -tileW / 2) screenUpdateCS(cs, left);
-      if (smoothScrollAccumY >  tileH / 2) screenUpdateCS(cs, down);
-      if (smoothScrollAccumY < -tileH / 2) screenUpdateCS(cs, up);
+      if (smoothScrollAccumX >  tileW / 2) clientRenderFrame(cs, right);
+      if (smoothScrollAccumX < -tileW / 2) clientRenderFrame(cs, left);
+      if (smoothScrollAccumY >  tileH / 2) clientRenderFrame(cs, down);
+      if (smoothScrollAccumY < -tileH / 2) clientRenderFrame(cs, up);
       smoothScrollAccumX = 0;
       smoothScrollAccumY = 0;
       sdl3DrawSetDragOffset(0, 0);
@@ -146,10 +151,10 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
   smoothScrollAccumX += dx * stepZoomed;
   smoothScrollAccumY += dy * stepZoomed;
 
-  while (smoothScrollAccumX >= tileW)  { screenUpdateCS(cs, right); smoothScrollAccumX -= tileW; }
-  while (smoothScrollAccumX <= -tileW) { screenUpdateCS(cs, left);  smoothScrollAccumX += tileW; }
-  while (smoothScrollAccumY >= tileH)  { screenUpdateCS(cs, down);  smoothScrollAccumY -= tileH; }
-  while (smoothScrollAccumY <= -tileH) { screenUpdateCS(cs, up);    smoothScrollAccumY += tileH; }
+  while (smoothScrollAccumX >= tileW)  { clientRenderFrame(cs, right); smoothScrollAccumX -= tileW; }
+  while (smoothScrollAccumX <= -tileW) { clientRenderFrame(cs, left);  smoothScrollAccumX += tileW; }
+  while (smoothScrollAccumY >= tileH)  { clientRenderFrame(cs, down);  smoothScrollAccumY -= tileH; }
+  while (smoothScrollAccumY <= -tileH) { clientRenderFrame(cs, up);    smoothScrollAccumY += tileH; }
 
   sdl3DrawSetDragOffset(smoothScrollAccumX, smoothScrollAccumY);
 }
@@ -212,36 +217,27 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 
   /* Combine with touch joystick input in tablet mode */
   if (tb == TNONE && uiModeIsTablet()) {
-    inputTouchSetTankAngle(screenGetTank256DirCS(cs));
+    inputTouchSetTankAngle(clientSimGetTank256Dir(cs));
     tb = inputTouchGetMovement();
   }
 
   /* Mine laying is now handled via InputPacket — see inputIsMineKeyPressed() */
 
-  if (KEY_DOWN(setKeys->kiQuickTree)) {
-    curSelect = getBuildCurrentSelectCS(cs);
-    if (curSelect != BsTrees) {
-      setBuildCurrentSelectCS(cs, BsTrees);
-    }
-  } else if (KEY_DOWN(setKeys->kiQuickRoad)) {
-    curSelect = getBuildCurrentSelectCS(cs);
-    if (curSelect != BsRoad) {
-      setBuildCurrentSelectCS(cs, BsRoad);
-    }
-  } else if (KEY_DOWN(setKeys->kiQuickWall)) {
-    curSelect = getBuildCurrentSelectCS(cs);
-    if (curSelect != BsBuilding) {
-      setBuildCurrentSelectCS(cs, BsBuilding);
-    }
-  } else if (KEY_DOWN(setKeys->kiQuickPillbox)) {
-    curSelect = getBuildCurrentSelectCS(cs);
-    if (curSelect != BsPillbox) {
-      setBuildCurrentSelectCS(cs, BsPillbox);
-    }
-  } else if (KEY_DOWN(setKeys->kiQuickMine)) {
-    curSelect = getBuildCurrentSelectCS(cs);
-    if (curSelect != BsMine) {
-      setBuildCurrentSelectCS(cs, BsMine);
+  {
+    buildSelect newSelect = BsTrees; /* init to suppress warning */
+    bool wantSwitch = false;
+    if (KEY_DOWN(setKeys->kiQuickTree))         { newSelect = BsTrees;    wantSwitch = true; }
+    else if (KEY_DOWN(setKeys->kiQuickRoad))    { newSelect = BsRoad;     wantSwitch = true; }
+    else if (KEY_DOWN(setKeys->kiQuickWall))    { newSelect = BsBuilding; wantSwitch = true; }
+    else if (KEY_DOWN(setKeys->kiQuickPillbox)) { newSelect = BsPillbox;  wantSwitch = true; }
+    else if (KEY_DOWN(setKeys->kiQuickMine))    { newSelect = BsMine;     wantSwitch = true; }
+    if (wantSwitch) {
+      curSelect = clientSimGetCurrentBuildSelect(cs);
+      if (curSelect != newSelect) {
+        sdl3DrawSelectIndentsOff(curSelect, 0, 0);
+        sdl3DrawSelectIndentsOn(newSelect, 0, 0);
+        clientSimSetCurrentBuildSelect(cs, newSelect);
+      }
     }
   }
 
@@ -254,10 +250,10 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     scrollKeyCount++;
     if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
       scrollKeyCount = 0;
-      if (KEY_DOWN(setKeys->kiScrollUp))    { screenUpdateCS(cs, up); }
-      if (KEY_DOWN(setKeys->kiScrollDown))  { screenUpdateCS(cs, down); }
-      if (KEY_DOWN(setKeys->kiScrollLeft))  { screenUpdateCS(cs, left); }
-      if (KEY_DOWN(setKeys->kiScrollRight)) { screenUpdateCS(cs, right); }
+      if (KEY_DOWN(setKeys->kiScrollUp))    { clientRenderFrame(cs, up); }
+      if (KEY_DOWN(setKeys->kiScrollDown))  { clientRenderFrame(cs, down); }
+      if (KEY_DOWN(setKeys->kiScrollLeft))  { clientRenderFrame(cs, left); }
+      if (KEY_DOWN(setKeys->kiScrollRight)) { clientRenderFrame(cs, right); }
     }
   }
 
@@ -302,10 +298,10 @@ void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   scrollKeyCount++;
   if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
     scrollKeyCount = 0;
-    if (KEY_DOWN(setKeys->kiScrollUp))    { screenUpdateCS(cs, up); }
-    if (KEY_DOWN(setKeys->kiScrollDown))  { screenUpdateCS(cs, down); }
-    if (KEY_DOWN(setKeys->kiScrollLeft))  { screenUpdateCS(cs, left); }
-    if (KEY_DOWN(setKeys->kiScrollRight)) { screenUpdateCS(cs, right); }
+    if (KEY_DOWN(setKeys->kiScrollUp))    { clientRenderFrame(cs, up); }
+    if (KEY_DOWN(setKeys->kiScrollDown))  { clientRenderFrame(cs, down); }
+    if (KEY_DOWN(setKeys->kiScrollLeft))  { clientRenderFrame(cs, left); }
+    if (KEY_DOWN(setKeys->kiScrollRight)) { clientRenderFrame(cs, right); }
   }
 }
 
@@ -374,4 +370,12 @@ uint8_t inputConsumeGunsightAdj(void) {
   uint8_t val = lastGunsightAdj;
   lastGunsightAdj = 0;
   return val;
+}
+
+void inputBumpGunsight(int direction) {
+  if (direction > 0) {
+    lastGunsightAdj = 1;
+  } else if (direction < 0) {
+    lastGunsightAdj = 2;
+  }
 }

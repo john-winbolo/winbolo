@@ -25,7 +25,7 @@
 *  Responsible for tracking winbolonetEvents
 *********************************************************/
 
-#include "../bolo/global.h"
+#include "global.h"
 #include "winbolonetevents.h"
 
 winbolonetEvents wbe; /* Winbolo.net Event */
@@ -60,7 +60,7 @@ void winbolonetEventsDestroy(void) {
 *PURPOSE:
 *  Adds an item to the winbolonetEvents data structure.
 *********************************************************/
-void winbolonetEventsAddItem(BYTE itemType, const char *keyA, const char *keyB) {
+void winbolonetEventsAddItem(BYTE itemType, const char *keyA, const char *keyB, bool aIsBot, bool bIsBot) {
   winbolonetEvents q;
 
   q = wbe;
@@ -70,6 +70,8 @@ void winbolonetEventsAddItem(BYTE itemType, const char *keyA, const char *keyB) 
   q->keyA[WINBOLONET_KEY_LEN - 1] = '\0';
   strncpy(q->keyB, keyB, WINBOLONET_KEY_LEN - 1);
   q->keyB[WINBOLONET_KEY_LEN - 1] = '\0';
+  q->aIsBot = aIsBot;
+  q->bIsBot = bIsBot;
   q->next = wbe;
   wbe = q;
 }
@@ -100,7 +102,7 @@ int winbolonetEventsGetSize(void) {
 *  structure. Returns itemType or WINBOLONET_EVENT_NOITEM
 *  if empty.
 *********************************************************/
-BYTE winbolonetEventsRemove(char *keyA, char *keyB) {
+BYTE winbolonetEventsRemove(char *keyA, char *keyB, bool *aIsBot, bool *bIsBot) {
   BYTE returnValue;       /* Return Value - Item type */
   winbolonetEvents inc;
   winbolonetEvents prev;
@@ -122,6 +124,8 @@ BYTE winbolonetEventsRemove(char *keyA, char *keyB) {
       returnValue = prev->itemType;
       strncpy(keyA, prev->keyA, WINBOLONET_KEY_LEN);
       strncpy(keyB, prev->keyB, WINBOLONET_KEY_LEN);
+      if (aIsBot != NULL) *aIsBot = prev->aIsBot;
+      if (bIsBot != NULL) *bIsBot = prev->bIsBot;
       if (prev2 != NULL) {
         prev2->next = NULL;
       } else {

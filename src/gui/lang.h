@@ -1097,75 +1097,249 @@
 #define STR_DLGSETTINGS_USE_UPNP            1207
 #define STR_DLGSETTINGS_USE_NATTRAV         1208
 
-/* Graphics section: tile detail / animation smoothness / skin info */
-#define STR_DLGSETTINGS_GFX_DISCLAIMER      1209
-#define STR_DLGSETTINGS_TILEDETAIL          1210
-#define STR_DLGSETTINGS_TD_CLASSIC          1211
-#define STR_DLGSETTINGS_TD_MATCHZOOM        1212
-#define STR_DLGSETTINGS_TD_HIGHDETAIL       1213
-#define STR_DLGSETTINGS_TD_MATCHZOOM_HINT   1214
-#define STR_DLGSETTINGS_ANIMSMOOTH          1215
-#define STR_DLGSETTINGS_AS_MATCH            1216
-#define STR_DLGSETTINGS_AS_MAX              1217
-#define STR_DLGSETTINGS_FORCESMOOTHSHELLS   1218
-#define STR_DLGSETTINGS_FORCESMOOTH_TIP     1219
-#define STR_DLGSETTINGS_SKINS_DISCLAIMER    1220
-#define STR_DLGSETTINGS_SKIN                1221
-#define STR_DLGSETTINGS_PREVIEW             1222
-#define STR_DLGSETTINGS_INTERP              1223
-#define STR_DLGSETTINGS_INTERP_NEAREST      1224
-#define STR_DLGSETTINGS_INTERP_LINEAR       1225
-#define STR_DLGSETTINGS_INTERP_PIXELART     1226
-
 /* Player-name validation (Phase 2). */
-#define STR_NAME_INVALID_EMPTY              1227
-#define STR_NAME_INVALID_CHARS              1228
-#define STR_NAME_INVALID_MIXED_SCRIPTS      1229
-#define STR_NAME_INVALID_RESERVED_PREFIX    1230
-#define STR_NAME_INVALID_RESERVED_SUFFIX    1231
+#define STR_NAME_INVALID_EMPTY              1209
+#define STR_NAME_INVALID_CHARS              1210
+#define STR_NAME_INVALID_MIXED_SCRIPTS      1211
+#define STR_NAME_INVALID_RESERVED_PREFIX    1212
+#define STR_NAME_INVALID_RESERVED_SUFFIX    1213
 
 /* Settings → Display: country-flag rendering preference (Phase 4). */
-#define STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS  1232
+#define STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS  1214
 
 /* Verified-priority collision policy (Phase 5). */
-#define STR_NAME_RENAMED_BY_VERIFIED        1233
-#define STR_NAME_TAKEN_BY_VERIFIED          1234
-#define STR_NAME_TAKEN_BY_OTHER_VERIFIED    1235
+#define STR_NAME_RENAMED_BY_VERIFIED        1215
+#define STR_NAME_TAKEN_BY_VERIFIED          1216
+#define STR_NAME_TAKEN_BY_OTHER_VERIFIED    1217
 
 /* Localized server→client messages (Phase 9d). Sent over the wire as
  * langid + args by serverSendJoinReject / serverSendServerMessage so
  * each client renders in its own locale. */
-#define STR_REJECT_INCORRECT_PASSWORD       1236
-#define STR_REJECT_GAME_LOCKED              1237
-#define STR_REJECT_SERVER_FULL              1238
-#define STR_REJECT_NAME_POOL_EXHAUSTED      1239
-#define STR_REJECT_INVALID_PLAYER_NAME      1240
-#define STR_REJECT_WBN_VERIFY_FAILED        1241
-#define STR_KICK_ANNOUNCE                   1242
+#define STR_REJECT_INCORRECT_PASSWORD       1218
+#define STR_REJECT_GAME_LOCKED              1219
+#define STR_REJECT_SERVER_FULL              1220
+#define STR_REJECT_NAME_POOL_EXHAUSTED      1221
+#define STR_REJECT_INVALID_PLAYER_NAME      1222
+#define STR_REJECT_WBN_VERIFY_FAILED        1223
+#define STR_KICK_ANNOUNCE                   1224
 
 /* Log viewer comments panel */
-#define STR_LV_WIN_COMMENTS                 1243
-#define STR_LV_INFO_SIGNIN_TO_COMMENT       1244
-#define STR_LV_INFO_NO_WBN_KEY              1245
+#define STR_LV_WIN_COMMENTS                 1225
+#define STR_LV_INFO_SIGNIN_TO_COMMENT       1226
+#define STR_LV_INFO_NO_WBN_KEY              1227
 
 /* Log viewer File menu — open log from WinBolo.net */
-#define STR_LV_MENU_OPEN_WBN                1246
+#define STR_LV_MENU_OPEN_WBN                1228
 
 /* Log viewer zoom menu */
-#define STR_LV_ZOOM                         1247
-#define STR_LV_ZOOM_IN                      1248
-#define STR_LV_ZOOM_OUT                     1249
+#define STR_LV_ZOOM                         1229
+#define STR_LV_ZOOM_IN                      1230
+#define STR_LV_ZOOM_OUT                     1231
 
 /* System Info panel — server-side bot/sim telemetry labels.
  * Bare nouns (no trailing colon, no format specifiers); colons and
  * numeric format specifiers stay literal in the C format strings. */
-#define STR_DLGSYSINFO_SERVER               1250
-#define STR_DLGSYSINFO_BOTPOOL              1251
-#define STR_DLGSYSINFO_TICK                 1252
-#define STR_DLGSYSINFO_BRAIN                1253
-#define STR_DLGSYSINFO_SIMULATION           1254
-#define STR_DLGSYSINFO_BOTPREP              1255
-#define STR_DLGSYSINFO_BRAIN_OVERRUNS       1256
+#define STR_DLGSYSINFO_SERVER               1232
+#define STR_DLGSYSINFO_BOTPOOL              1233
+#define STR_DLGSYSINFO_TICK                 1234
+#define STR_DLGSYSINFO_BRAIN                1235
+#define STR_DLGSYSINFO_SIMULATION           1236
+#define STR_DLGSYSINFO_BOTPREP              1237
+#define STR_DLGSYSINFO_BRAIN_OVERRUNS       1238
+
+/* macOS native menu — App / File / Window menu items mirrored by
+ * src/gui/sdl3/platform/mac_menubar.mm. Not used by the in-window menu. */
+#define STR_MENU_ABOUT_APP                  1239
+#define STR_MENU_PREFERENCES                1240
+#define STR_MENU_SERVICES                   1241
+#define STR_MENU_HIDE_APP                   1242
+#define STR_MENU_HIDE_OTHERS                1243
+#define STR_MENU_SHOW_ALL                   1244
+#define STR_MENU_QUIT_APP                   1245
+#define STR_MENU_WINDOW                     1246
+#define STR_MENU_MINIMIZE                   1247
+#define STR_MENU_ZOOM                       1248
+#define STR_MENU_ENTER_FULL_SCREEN          1249
+#define STR_MENU_BRING_ALL_TO_FRONT         1250
+#define STR_MENU_FIND_INTERNET_GAME         1251
+#define STR_MENU_FIND_LAN_GAME              1252
+#define STR_MENU_JOIN_BY_ADDRESS            1253
+#define STR_MENU_OPEN_MAP_EDITOR            1254
+#define STR_MENU_OPEN_LOG_VIEWER            1255
+
+/* macOS Log Viewer app-menu items — mirror the WinBolo About/Hide/Quit
+ * trio but with "Log Viewer" wording so the standalone Log Viewer.app's
+ * app menu reads correctly. Embedded Log Viewer reuses WinBolo's app
+ * menu so these are not surfaced there. */
+#define STR_MENU_ABOUT_LV                   1256
+#define STR_MENU_HIDE_LV                    1257
+#define STR_MENU_QUIT_LV                    1258
+
+/* macOS Map Editor app-menu items — same idea as the Log Viewer trio.
+ * Standalone MapEditor.app shows these; embedded reuses WinBolo's
+ * app menu. About is not wired (no in-app About dialog exists yet)
+ * so STR_MENU_ABOUT_ME has no companion menu item for now. */
+#define STR_MENU_HIDE_ME                    1259
+#define STR_MENU_QUIT_ME                    1260
+
+/* Settings → Network: WinBolo.net news auto-show toggle. */
+#define STR_DLGSETTINGS_NEWS_AUTOSHOW       1261
+
+/* News popup + welcome News button strings. */
+#define STR_DLGWELCOME_NEWS                 1262
+#define STR_DLGNEWS_TITLE                   1263
+#define STR_DLGNEWS_CONSENT_TITLE           1264
+#define STR_DLGNEWS_CONSENT_BODY1           1265
+#define STR_DLGNEWS_CONSENT_BODY2           1266
+#define STR_DLGNEWS_SHOW                    1267
+#define STR_DLGNEWS_DONT_SHOW               1268
+#define STR_DLGNEWS_LOADING                 1269
+#define STR_DLGNEWS_DONT_AUTOSHOW           1270
+#define STR_DLGNEWS_COMMENTS_FMT            1271
+#define STR_DLGLOBBY_KICKED                 1272
+
+/* Lobby — map chooser */
+#define STR_DLGLOBBY_CHOOSEMAP_TITLE        1273
+#define STR_DLGLOBBY_TAB_SERVERMAPS         1274
+#define STR_DLGLOBBY_TAB_LOCALMAPS          1275
+#define STR_DLGLOBBY_TAB_UPLOAD             1276
+#define STR_DLGLOBBY_TAB_GENERATE           1277
+#define STR_DLGLOBBY_TAB_WBNMAPS            1278
+#define STR_DLGLOBBY_CLOSEMAP_PROMPT        1279
+#define STR_DLGLOBBY_CLOSEMAP_QUESTION      1280
+#define STR_DLGLOBBY_USETHISMAP             1281
+#define STR_DLGLOBBY_REVERTCLOSE            1282
+#define STR_DLGLOBBY_KEEPPICKING            1283
+#define STR_DLGLOBBY_CANCEL_MAPCHOOSER      1284
+/* Lobby — map chooser (continued) */
+#define STR_DLGLOBBY_CHOOSE_MAP_BTN         1388
+
+/* Client-side pre-flight version-mismatch error. Surfaced by the
+ * direct-connect / rejoin entry when an info-request reveals the
+ * server runs a different build than this client. {string1} = server
+ * version (X.Y.Z), {string2} = client version (X.Y.Z). */
+#define STR_REJECT_VERSION_MISMATCH         1389
+
+/* Lobby — upload + WBN errors */
+#define STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT        1285
+#define STR_DLGLOBBY_UPLOAD_ERR_DISABLED        1286
+#define STR_DLGLOBBY_UPLOAD_ERR_FULL            1287
+#define STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN        1288
+#define STR_DLGLOBBY_UPLOAD_ERR_REJECTED        1289
+#define STR_DLGLOBBY_WBN_ERR_DOWNLOAD           1290
+#define STR_DLGLOBBY_WBN_ERR_BADRESPONSE        1291
+#define STR_DLGLOBBY_WBN_ERR_NETERROR           1292
+#define STR_DLGLOBBY_WBN_ERR_HTTPERROR          1293
+#define STR_DLGLOBBY_WBN_ERR_MAPFAILED          1294
+#define STR_DLGLOBBY_WBN_ERR_TOOBIG             1295
+#define STR_DLGLOBBY_WBN_ERR_OOM                1296
+#define STR_DLGLOBBY_WBN_ERR_BADSEARCHRESPONSE  1297
+
+/* Lobby — team controls + player list + AiConfig */
+
+/* Allow-new-players + ranked controls */
+#define STR_DLGLOBBY_ALLOW_NOW              1298
+#define STR_DLGLOBBY_ALLOW_DURING           1299
+#define STR_DLGLOBBY_TOOLTIP_ALLOWNOW       1300
+#define STR_DLGLOBBY_TOOLTIP_ALLOWDURING    1301
+#define STR_DLGLOBBY_TOOLTIP_RANKED_AUTOLOCK 1302
+#define STR_DLGLOBBY_RANKED                 1303
+#define STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED  1304
+#define STR_DLGLOBBY_TOOLTIP_RANKED_NOTHOST 1305
+#define STR_DLGLOBBY_TOOLTIP_RANKED_BOTS    1306
+#define STR_DLGLOBBY_TOOLTIP_RANKED_INFO    1307
+
+/* Team-grouped player list */
+#define STR_DLGLOBBY_TEAM_HEADER            1308
+#define STR_DLGLOBBY_TEAM_MEMBERS_1         1309
+#define STR_DLGLOBBY_TEAM_MEMBERS_N         1310
+#define STR_DLGLOBBY_TEAM_1BOT              1311
+#define STR_DLGLOBBY_TEAM_NBOTS             1312
+#define STR_DLGLOBBY_JOIN_TEAM              1313
+#define STR_DLGLOBBY_TOOLTIP_JOIN           1314
+#define STR_DLGLOBBY_BOT_NAMING             1315
+#define STR_DLGLOBBY_ADDBOT_LBL             1316
+#define STR_DLGLOBBY_TOOLTIP_ADDBOT         1317
+#define STR_DLGLOBBY_TOOLTIP_RMTEAM         1318
+#define STR_DLGLOBBY_TOOLTIP_DRAG           1319
+#define STR_DLGLOBBY_TAG_HOST               1320
+#define STR_DLGLOBBY_TAG_ADMIN              1321
+#define STR_DLGLOBBY_TAG_BOT                1322
+#define STR_DLGLOBBY_PILL_READY             1323
+#define STR_DLGLOBBY_PILL_NOTREADY          1324
+#define STR_DLGLOBBY_TOOLTIP_CONFIG         1325
+#define STR_DLGLOBBY_TOOLTIP_RMBOT          1326
+#define STR_DLGLOBBY_TOOLTIP_KICK           1327
+#define STR_DLGLOBBY_ADD_TEAM               1328
+#define STR_DLGLOBBY_UNASSIGNED_FMT         1329
+#define STR_DLGLOBBY_KICK_FMT               1330
+
+/* Bot AiConfig panel */
+#define STR_DLGLOBBY_BOTCFG_NAME            1331
+#define STR_DLGLOBBY_BOTCFG_REROLL          1332
+#define STR_DLGLOBBY_BOTCFG_REROLL_TIP      1333
+#define STR_DLGLOBBY_BOTCFG_CODE            1334
+#define STR_DLGLOBBY_BOTCFG_NONE            1335
+#define STR_DLGLOBBY_BOTCFG_DIFFICULTY      1336
+#define STR_DLGLOBBY_BOTCFG_EASY            1337
+#define STR_DLGLOBBY_BOTCFG_NORMAL          1338
+#define STR_DLGLOBBY_BOTCFG_HARD            1339
+#define STR_DLGLOBBY_BOTCFG_PERSONALITY     1340
+#define STR_DLGLOBBY_BOTCFG_AGGRESSIVE      1341
+#define STR_DLGLOBBY_BOTCFG_DEFENSIVE       1342
+#define STR_DLGLOBBY_BOTCFG_SNIPER          1343
+#define STR_DLGLOBBY_BOTCFG_DONE            1344
+
+/* Lobby — Balance/Reject/Lock/RankedShape */
+/* Balance from WBN */
+#define STR_DLGLOBBY_BAL_BTN                1345
+#define STR_DLGLOBBY_BAL_POPUP_TITLE        1346
+#define STR_DLGLOBBY_BAL_POPUP_BODY         1347
+#define STR_DLGLOBBY_BAL_POPUP_BOT_SINGULAR 1348
+#define STR_DLGLOBBY_BAL_POPUP_BOT_PLURAL   1349
+#define STR_DLGLOBBY_BAL_BOTS_INCLUDED      1350
+#define STR_DLGLOBBY_BAL_HUMANS_ONLY        1351
+#define STR_DLGLOBBY_BAL_GO                 1352
+#define STR_DLGLOBBY_BAL_TOOLTIP_NOTHOST    1353
+#define STR_DLGLOBBY_BAL_TOOLTIP_NOTENOUGH  1354
+#define STR_DLGLOBBY_BAL_TOOLTIP_INFO       1355
+#define STR_DLGLOBBY_BAL_STATUS_ASKING      1356
+#define STR_DLGLOBBY_BAL_STATUS_BALANCED    1357
+#define STR_DLGLOBBY_BAL_STATUS_NOREPLY     1358
+/* Reject toast */
+#define STR_DLGLOBBY_REJECT_DEFAULT         1359
+#define STR_DLGLOBBY_REJECT_NOTHOST         1360
+#define STR_DLGLOBBY_REJECT_LOCKED          1361
+#define STR_DLGLOBBY_REJECT_INVALID         1362
+#define STR_DLGLOBBY_REJECT_FMT             1363
+/* Lock badge fallback */
+#define STR_DLGLOBBY_LOCK_BADGE             1364
+/* Ranked shape tooltip */
+#define STR_DLGLOBBY_RANKED_SHAPE_TIP       1365
+#define STR_DLGLOBBY_RANKED_SHAPE_TEAM      1366
+#define STR_DLGLOBBY_RANKED_SHAPE_TEAMS     1367
+
+/* Lobby — game settings panel + header */
+/* Game settings panel */
+#define STR_DLGLOBBY_SETTINGS_HEADER        1368
+#define STR_DLGLOBBY_OPENHOST_NOTE          1369
+#define STR_DLGLOBBY_GAMETYPE_LBL           1370
+#define STR_DLGLOBBY_AI_SECTION_LBL         1371
+#define STR_DLGLOBBY_AI_NONE                1372
+#define STR_DLGLOBBY_AI_ALLOW               1373
+#define STR_DLGLOBBY_AI_ADVANTAGE           1374
+#define STR_DLGLOBBY_AI_FULLADV             1375
+#define STR_DLGLOBBY_OTHER_LBL              1376
+#define STR_DLGLOBBY_OPENHOST_CB            1377
+#define STR_DLGLOBBY_OPENHOST_TOOLTIP       1378
+#define STR_DLGLOBBY_TIMELIMIT_MIN          1379
+#define STR_DLGLOBBY_PASSWORD_CB            1380
+#define STR_DLGLOBBY_PASSWORD_TOOLTIP       1381
+/* Desktop header */
+#define STR_DLGLOBBY_SERVERDISP_SP          1382
+#define STR_DLGLOBBY_SERVERDISP_INTERNET    1383
+/* Connectivity badge */
+#define STR_DLGLOBBY_CONN_TEST_TIP          1384
 
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
@@ -1186,19 +1360,74 @@
 #define STR_MAPVALIDATE_START_BASE_OVERLAP  835
 #define STR_MAPVALIDATE_START_PILL_OVERLAP  836
 
+/* In-game votes — back-to-lobby and surrender (menu items, widget
+ * titles, ready-screen buttons, disabled-state tooltips) */
+#define STR_VOTE_BACK_TO_LOBBY              1390
+#define STR_VOTE_SURRENDER                  1391
+#define STR_VOTE_DRAW_TAG                   1392
+#define STR_VOTE_NEEDS_RUNNING_TIP          1393
+#define STR_VOTE_SURRENDER_PICK_TEAM_TIP    1394
+#define STR_VOTE_SURRENDER_TWO_TEAMS_TIP    1395
+
+/* Logviewer — in-game vote events */
+#define STR_LV_VOTE_START_LOBBY             1396
+#define STR_LV_VOTE_START_SURRENDER         1397
+#define STR_LV_VOTE_CAST_YES                1398
+#define STR_LV_VOTE_CAST_NO                 1399
+#define STR_LV_VOTE_PASSED                  1400
+#define STR_LV_VOTE_FAILED                  1401
+
+/* Volume — slider label and Mac preset submenu items */
+#define STR_MENU_VOLUME                     1402
+#define STR_VOLUME_MUTE                     1403
+
+/* Caption shown in the playfield during the game-over → lobby
+ * transition, after a round ends and before the lobby UI appears. */
+#define STR_RETURNING_TO_LOBBY              1404
+
+/* Reject toast — server rejected an action because the lobby is in
+ * the wrong state (e.g. balance request while a proposal is already
+ * in flight). */
+#define STR_DLGLOBBY_REJECT_BAD_STATE       1405
+
+/* Balance — host-side failure pill: shown when the server reports
+ * that a WBN balance call returned without a usable proposal, so
+ * the host doesn't have to wait out the 8 s NOREPLY fallback. */
+#define STR_DLGLOBBY_BAL_STATUS_FAILED      1406
+
+/* Graphics/skin settings strings — merged from andrew-hitbox-and-themes.
+ * Numbered above main's max (1406) to avoid the 1209+ collision. */
+#define STR_DLGSETTINGS_GFX_DISCLAIMER       1407
+#define STR_DLGSETTINGS_TILEDETAIL           1408
+#define STR_DLGSETTINGS_TD_CLASSIC           1409
+#define STR_DLGSETTINGS_TD_MATCHZOOM         1410
+#define STR_DLGSETTINGS_TD_HIGHDETAIL        1411
+#define STR_DLGSETTINGS_TD_MATCHZOOM_HINT    1412
+#define STR_DLGSETTINGS_ANIMSMOOTH           1413
+#define STR_DLGSETTINGS_AS_MATCH             1414
+#define STR_DLGSETTINGS_AS_MAX               1415
+#define STR_DLGSETTINGS_FORCESMOOTHSHELLS    1416
+#define STR_DLGSETTINGS_FORCESMOOTH_TIP      1417
+#define STR_DLGSETTINGS_SKINS_DISCLAIMER     1418
+#define STR_DLGSETTINGS_SKIN                 1419
+#define STR_DLGSETTINGS_PREVIEW              1420
+#define STR_DLGSETTINGS_INTERP               1421
+#define STR_DLGSETTINGS_INTERP_NEAREST       1422
+#define STR_DLGSETTINGS_INTERP_LINEAR        1423
+#define STR_DLGSETTINGS_INTERP_PIXELART      1424
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */
 #ifndef RC_INVOKED
 
-#include "../bolo/global.h"
-#include "../bolo/player_flags.h"
+#include "global.h"
+#include "player_flags.h"
+#include "lang_message.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-typedef unsigned int langid;
 
 /* Header values parsed from a loaded lang/<code>.txt. Returned by
  * langGetLoadedMeta() once a translation has been loaded. The picker
@@ -1208,33 +1437,6 @@ typedef struct {
     char author[64];
     char notes[256];
 } LangFileMeta;
-
-/* Per-message arguments substituted into named placeholders by
- * langGetTextFmt(). The placeholders are:
- *   {player}                    -> playerName
- *   {other}                     -> otherName
- *   {number}/{number2..4}       -> rendered as %d
- *   {string1}/{string2}         -> arbitrary short strings (e.g. a
- *                                  pre-formatted "%.1f", a duration
- *                                  label, etc.)
- * Substitution is non-recursive — braces inside a substituted value
- * (e.g. a player name with "{ACCEL}" in it) are NOT rescanned. */
-#define LANG_MSGARG_STRING_LEN 64
-
-typedef struct {
-    char    playerName[PLAYER_NAME_LEN];
-    uint8_t playerFlags;        /* PLAYER_FLAG_* bits */
-    char    playerCountry[3];   /* ISO 3166-1 alpha-2 + NUL; "" if unknown */
-    char    otherName[PLAYER_NAME_LEN];
-    uint8_t otherFlags;
-    char    otherCountry[3];
-    int  number;
-    int  number2;
-    int  number3;
-    int  number4;
-    char string1[LANG_MSGARG_STRING_LEN];
-    char string2[LANG_MSGARG_STRING_LEN];
-} MessageArgs;
 
 bool langSetup(void);
 void langCleanup(void);

@@ -25,23 +25,36 @@
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
-#include "../../server/server_sim.h"
+#include "server_sim.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef struct BgGame {
-    ServerSim    sim;
+    ServerSim   *sim;
     bool         valid;         /* true if sim was loaded successfully */
     SDL_Texture *tilesTex;      /* Own tile atlas for bg rendering */
+    /* Renderer the texture was created against. SDL3 invalidates child
+     * textures when its renderer is destroyed, so the next bgGameRender
+     * checks this against sdl3DrawGetRenderer() and rebuilds tilesTex
+     * when they differ. NULL = uninitialised (no texture has been
+     * built yet). */
+    SDL_Renderer *texRenderer;
     BYTE         cameraPlayer;  /* Player slot to follow with camera */
     WORLD        viewCenterX;   /* Camera world position */
     WORLD        viewCenterY;
     BYTE         numBots;       /* Number of bots added */
     BYTE         numTeams;      /* Number of teams (0 = FFA) */
     bool         paused;        /* User-toggled pause state (persists across dialogs) */
+    bool         hiddenByForeground;  /* true while a foreground SP/host game is active —
+                                       * bgGameTick early-returns so the bg doesn't dispatch
+                                       * brains to the shared worker pool. Independent of
+                                       * the user-pause flag (paused), which only drives
+                                       * the map-name overlay fade. */
     Uint64       createdTicks;  /* SDL_GetTicks() at creation, for map name fade */
+    Uint64       mapNameFadeStartMs;   /* 0 = use initial 10s timer; nonzero = pause-driven fade from this tick */
+    Uint8        mapNameFadeFromAlpha; /* Starting alpha for the active pause-driven fade */
     /* Bounding box of map content (map coordinates) */
     int          mapMinX, mapMinY, mapMaxX, mapMaxY;
 } BgGame;
@@ -56,6 +69,14 @@ void bgGameTickFixed(BgGame *bg, Uint64 *lastTickTime);
 
 /* Convenience: render background game + semi-transparent dark overlay */
 void bgGameRenderWithOverlay(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH);
+
+/* Toggle pause; also kicks off a fade-in (paused) or fade-out (unpaused)
+ * of the map-name label, starting from its current visible alpha. */
+void bgGameTogglePause(BgGame *bg);
+
+/* Mark bg as hidden by a foreground game (SP or host). While hidden,
+ * bgGameTick is a no-op. Independent of bgGameTogglePause. */
+void bgGameSetHiddenByForeground(BgGame *bg, bool hidden);
 
 /* Shared background game instance used across all pre-game dialogs */
 void bgGameSetShared(BgGame *bg);

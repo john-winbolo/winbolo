@@ -24,11 +24,13 @@
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
+#include "imgui_dialog_utils.h"
+#include "dialog_footer.h"
 
 extern "C" {
 #include "../../gamefront.h"
-#include "../../../bolo/global.h"
-#include "../../../winbolonet/winbolonet.h"
+#include "global.h"
+#include "../../../winbolonet/winbolonet_client.h"
 #include "../../lang.h"
 #include "imgui_winbolonet.h"
 }
@@ -199,6 +201,7 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
         if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_OUT))) {
             gameFrontClearWinbolonetToken();
         }
+        imguiHandOnHover();
         if (inGame) ImGui::EndDisabled();
     } else {
         ImGui::TextUnformatted(langGetText(STR_DLGWBN_LABEL));
@@ -214,6 +217,7 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
             wbnPassword[0] = '\0';
             ImGui::OpenPopup(langGetText(STR_DLGWBN_SIGNIN_TITLE));
         }
+        imguiHandOnHover();
         if (inGame) ImGui::EndDisabled();
     }
 
@@ -222,8 +226,11 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_Appearing);
 
+    static float s_fadeWbnSignIn = 0.0f;
     if (ImGui::BeginPopupModal(langGetText(STR_DLGWBN_SIGNIN_TITLE), &wbnPopupOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            imguiPopupFadeAlpha(&s_fadeWbnSignIn));
         bool busy = (wbnState == WBN_LOGGING_IN);
 
         ImGui::TextWrapped("%s", langGetText(STR_DLGWBN_SIGNIN_BLURB));
@@ -276,26 +283,23 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
         if (busy) {
             wbnDrawSpinner(langGetText(STR_DLGWBN_SIGNINGIN));
         } else {
-            float btnW = 80.0f;
-            float totalW = btnW * 2 + 8.0f;
-            float avail = ImGui::GetContentRegionAvail().x;
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - totalW) * 0.5f);
-
-            if (ImGui::Button(langGetText(STR_DLGWBN_SIGNIN_OK), ImVec2(btnW, 0)) || enterPressed) {
+            int footer = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                            langGetText(STR_DLGWBN_SIGNIN_OK),
+                                            /*enterConfirms*/ true);
+            if (footer == WBUI::FOOTER_CONFIRM || enterPressed) {
                 if (strlen(wbnUsername) == 0 || strlen(wbnPassword) == 0) {
                     SDL_strlcpy(wbnErrorBuf, langGetText(STR_DLGWBN_NEEDCREDS), sizeof(wbnErrorBuf));
                     wbnState = WBN_ERROR;
                 } else {
                     wbnStartLogin();
                 }
-            }
-            ImGui::SameLine(0.0f, 8.0f);
-            if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0))) {
+            } else if (footer == WBUI::FOOTER_CANCEL) {
                 ImGui::CloseCurrentPopup();
                 wbnPopupOpen = false;
             }
         }
 
+        ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
 }

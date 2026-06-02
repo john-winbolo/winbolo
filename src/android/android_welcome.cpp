@@ -15,6 +15,7 @@
 #include "../gui/imgui_theme.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
+#include "../gui/sdl3/dialogs/imgui_dialog_utils.h"
 
 extern "C" {
 #include "../gui/sdl3/sdl3draw.h"
@@ -22,7 +23,7 @@ extern "C" {
 #include "../gui/sdl3/dialogs/imgui_welcome.h"
 #include "../gui/gamefront.h"
 #include "../gui/lang.h"
-#include "../bolo/global.h"
+#include "global.h"
 }
 
 /* Match openingStates enum from gamefront.h */
@@ -261,10 +262,12 @@ extern "C" int imguiWelcomeShow(void) {
                                        ImVec2(restoreSize, restoreSize))) {
                     dialogVisible = true;
                 }
+                imguiHandOnHover();
             } else {
                 if (ImGui::Button("W##restoreDialog", ImVec2(restoreSize, restoreSize))) {
                     dialogVisible = true;
                 }
+                imguiHandOnHover();
             }
 
             ImGui::PopStyleColor(3);
@@ -310,6 +313,7 @@ extern "C" int imguiWelcomeShow(void) {
                     }
                     running = false;
                 }
+                imguiHandOnHover();
                 if (hovered) {
                     ImGui::PopStyleVar();
                 }
@@ -347,6 +351,7 @@ extern "C" int imguiWelcomeShow(void) {
                 if (ImGui::Button("##hideDialog", ImVec2(arrowBtnSize, arrowBtnSize))) {
                     dialogVisible = false;
                 }
+                imguiHandOnHover();
                 /* Draw right-pointing arrow (triangle) on the button */
                 ImVec2 btnMin = ImGui::GetItemRectMin();
                 ImVec2 btnMax = ImGui::GetItemRectMax();
@@ -425,6 +430,7 @@ extern "C" int imguiWelcomeShow(void) {
                     }
                     running = false;
                 }
+                imguiHandOnHover();
                 ImGui::Spacing();
             }
 
@@ -440,6 +446,7 @@ extern "C" int imguiWelcomeShow(void) {
                     result = RESULT_QUIT;
                     running = false;
                 }
+                imguiHandOnHover();
             }
 
             /* Version label */
@@ -481,6 +488,7 @@ extern "C" int imguiWelcomeShow(void) {
             if (ImGui::Button("##playPause", ImVec2(ppSize, ppSize))) {
                 bgPaused = !bgPaused;
             }
+            imguiHandOnHover();
 
             ImVec2 ppMin = ImGui::GetItemRectMin();
             ImVec2 ppMax = ImGui::GetItemRectMax();

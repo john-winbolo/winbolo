@@ -38,6 +38,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 
@@ -358,6 +359,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     IMGUI_CHECKVERSION();
     ImGuiContext *dlgCtx = ImGui::CreateContext();
     ImGui::SetCurrentContext(dlgCtx);
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -794,6 +796,11 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoScrollbar);
 
+        /* Top-right close X — same as Close button. */
+        if (WBUI::DrawPanelCloseX()) {
+            running = false;
+        }
+
         /* ---- Title ---- */
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.75f, 0.3f, 1.0f));
         ImGui::SetWindowFontScale(1.3f);
@@ -850,6 +857,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                 tabs[TAB_SEARCH].fetched = false;
                 triggerFetch(TAB_SEARCH, 1);
             }
+            imguiHandOnHover();
             if (isSearchFetching) ImGui::EndDisabled();
             ImGui::Separator();
         }
@@ -912,6 +920,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                             triggerDownload(e.key);
                         }
                     }
+                    imguiHandOnHover();
 
                     ImGui::TableNextColumn();
                     ImGui::TextUnformatted(e.game_type);
@@ -1051,6 +1060,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                         commentPost = wbn_comments_post_start(e.key, wbnToken,
                                                               commentText, commentRating);
                     }
+                    imguiHandOnHover();
                     if (!canPost) ImGui::EndDisabled();
 
                     if (commentError) {
@@ -1075,6 +1085,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                     if (ImGui::Button(isDownloading ? langGetText(STR_DLGWBN_DOWNLOADING) : langGetText(STR_DLGWBN_VIEWLOG))) {
                         triggerDownload(e.key);
                     }
+                    imguiHandOnHover();
                     if (isDownloading) ImGui::EndDisabled();
                     if (isDownloading) {
                         ImGui::SameLine();
@@ -1099,6 +1110,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             if (ImGui::Button(langGetText(STR_DLGWBN_PREV))) {
                 triggerFetch(currentTab, tab.page - 1);
             }
+            imguiHandOnHover();
             if (isFirst) ImGui::EndDisabled();
 
             ImGui::SameLine();
@@ -1115,6 +1127,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             if (ImGui::Button(langGetText(STR_DLGWBN_NEXT))) {
                 triggerFetch(currentTab, tab.page + 1);
             }
+            imguiHandOnHover();
             if (isLast) ImGui::EndDisabled();
         }
 
@@ -1148,14 +1161,19 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                     delete s;
                 }, ctx, window, filters, 1, NULL, false);
             }
+            imguiHandOnHover();
             ImGui::SameLine();
 #endif
 
+            /* Close is affirmative ("done viewing logs"), not a cancel —
+             * leave it with default primary styling. */
             float closeW = ImGui::CalcTextSize(langGetText(STR_CLOSE)).x + ImGui::GetStyle().FramePadding.x * 2.0f;
             ImGui::SameLine(panelW - closeW - ImGui::GetStyle().WindowPadding.x);
-            if (ImGui::Button(langGetText(STR_CLOSE))) {
+            bool closeClicked = ImGui::Button(langGetText(STR_CLOSE));
+            if (closeClicked || WBUI::CancelKeyPressed()) {
                 running = false;
             }
+            imguiHandOnHover();
         }
 
         ImGui::End(); /* ##WbnBrowser */

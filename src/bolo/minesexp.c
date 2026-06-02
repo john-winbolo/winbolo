@@ -30,7 +30,7 @@
 #include "global.h"
 #include "types.h"
 #include "floodfill.h"
-#include "screen.h"
+#include "client_sim.h"
 #include "sounddist.h"
 #include "explosions.h"
 #include "lgm.h"
@@ -299,6 +299,6 @@ void minesExpCheckFill(GameSim *sim, lgm **lgms, BYTE numLgm, BYTE mx, BYTE my, 
     if (belowPos == TRUE) {
       minesExpAddItem(me, mp, mx, (BYTE) (my+1));
     }
-    if (!sim->isServer) { screenReCalcCS((struct ClientSim *)sim); }
+    if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
   }
 }

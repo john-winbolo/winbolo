@@ -20,7 +20,7 @@
 #include <time.h>
 #include <stdio.h>
 #include "backend.h"
-#include "global.h"
+#include "lv_global.h"
 #include "clientmutex.h"
 #include "draw.h"
 #include "sound.h"

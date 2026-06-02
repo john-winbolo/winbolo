@@ -40,7 +40,7 @@
 #include "players.h"
 #include "pillbox.h"
 #include "rubble.h"
-#include "screen.h"
+#include "brain_data.h"
 #include "screenbullet.h"
 #include "shells.h"
 #include "sounddist.h"
@@ -130,8 +130,8 @@ void shellAdvance1Tick(WORLD *x, WORLD *y,
   *y = (WORLD)((int)*y + yMove);
 }
 
-int shellLifeTicks(int len) {
-  int t = SHELL_LIFE * len - SHELL_START_ADD;
+int shellLifeTicks(float len) {
+  int t = 1 + (int)(SHELL_LIFE * len) - SHELL_START_ADD;
   return t < 0 ? 0 : t;
 }
 
@@ -243,7 +243,7 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   q->x = x;
   q->y = y;
   q->angle = angle;
-  q->length = (BYTE) shellLifeTicks((int)len);
+  q->length = (BYTE) shellLifeTicks(len);
   q->onBoat = onBoat;
   q->creator = sim->viewPlayer;
   q->owner = owner;
@@ -288,8 +288,6 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 	WORLD newY;      /* world y-coord of new shell location */
 	shells position; /* The position in the stack of items */
 	bool needUpdate; /* Does an update need to occur? */
-	int xAdd;        /* Amounts to add */
-	int yAdd;
 	BYTE bmx;        /* Shell map x-coord */
 	BYTE bmy;        /* Shell map y-coord */
 	BYTE sx;         /* Screen - TANK_SUBTRACT Map X and Y Positions */
@@ -326,8 +324,6 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			shellAdvance1Tick(&newX, &newY,
 			                  &position->xAcc, &position->yAcc,
 			                  position->xStep, position->yStep);
-			xAdd = (int)newX - (int)position->x;
-			yAdd = (int)newY - (int)position->y;
 			/* Check for colision */
 			if ((shellsCalcCollision(sim, tk, &newX, &newY, position->angle, position->owner, position->onBoat, numTanks, position->compensationTicks)) == TRUE)
 			{
@@ -831,7 +827,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 	}
 
 	if (returnValue == TRUE && !sim->isServer) {
-		screenReCalcCS((ClientSim *)sim);
+		clientSimRecalc((ClientSim *)sim);
 	}
 
 	return returnValue;
@@ -1172,7 +1168,7 @@ void shellsGetBrainShellsInRect(ClientSim *cs, GameSim *sim, shells *value, BYTE
       } else {
         owner = SHELLS_BRAIN_HOSTILE;
       }
-      screenAddBrainObject(cs, SHELLS_BRAIN_OBJECT_TYPE, position->x, position->y, 0, utilGet16Dir(position->angle), owner, 0);
+      brainDataAddObject(cs, SHELLS_BRAIN_OBJECT_TYPE, position->x, position->y, 0, utilGet16Dir(position->angle), owner, 0);
     }
     position = ShellsTail(position);
   }

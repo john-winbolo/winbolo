@@ -38,7 +38,7 @@
 #include <math.h>
 #include <stdio.h>
 
-#include "../bolo/global.h"
+#include "global.h"
 #include "../gui/sdl3/mapview.h"
 #include "../gui/sdl3/sdl3draw_status.h"
 #include "../gui/sdl3/sdl_bmp.h"
@@ -78,6 +78,7 @@ extern void  lv_playersGetLgmDetails(BYTE playerNumber, BYTE *mx, BYTE *my,
                                      BYTE *px, BYTE *py, BYTE *frame);
 extern void  lv_playersGetLgmStatus(BYTE playerNumber, bool *isOut, bool *isDead);
 extern void  lv_playersGetPlayerName(BYTE playerNum, char *dest);
+extern bool         lv_playersIsBot(BYTE playerNumber);
 extern tankAlliance lv_playersScreenAllience(BYTE playerNum);
 
 extern BYTE         lv_basesGetNumBases(bases *value);
@@ -809,10 +810,21 @@ void lv_drawGameViewFrame(void *screenView, void *mineView,
       if (!lv_playersIsInUse(slot)) continue;
       if (!lv_gameViewIsHudAlive(slot)) continue;
 
-      char name[PLAYER_NAME_LEN];
-      name[0] = '\0';
-      lv_playersGetPlayerName(slot, name);
-      if (name[0] == '\0') continue;
+      char rawName[PLAYER_NAME_LEN];
+      rawName[0] = '\0';
+      lv_playersGetPlayerName(slot, rawName);
+      if (rawName[0] == '\0') continue;
+
+      /* Brain-driven slots get an "[AI]" tag so a viewer scanning the
+       * map can tell bots apart from humans at a glance. Same prefix
+       * lv_playersMakeScreenName applies to the non-camera tank
+       * labels — keeps both label paths visually consistent. */
+      char name[PLAYER_NAME_LEN + 8];
+      if (lv_playersIsBot(slot)) {
+        snprintf(name, sizeof(name), "[AI] %s", rawName);
+      } else {
+        snprintf(name, sizeof(name), "%s", rawName);
+      }
 
       BYTE rawMx = 0, rawMy = 0, rawPx = 0, rawPy = 0, frame = 0;
       bool onBoat = false;

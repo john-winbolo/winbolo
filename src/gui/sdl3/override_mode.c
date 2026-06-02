@@ -34,15 +34,6 @@
 #include "override_mode.h"
 #include "gfx_settings.h"
 
-#include "../../bolo/global.h"
-#include "../../bolo/client_sim.h"
-#include "../../bolo/tank.h"
-#include "../../bolo/util.h"
-#include "../../bolo/pillbox.h"
-#include "../../bolo/bases.h"
-#include "../../bolo/lgm.h"
-#include "../tiles.h"
-
 static bool s_overrideOn = false;
 static int  s_extraDelayMs = 0;        /* 0 = normal speed; >0 = slower */
 static int  s_panX = 0;                /* screen-pixel pan offset, accumulated */
@@ -131,15 +122,12 @@ bool overrideModeGetZoomAnchor(int *outX, int *outY) {
   return true;
 }
 
-/* Render a wide tile region direct from sim using mapViewCalcSquare,
- * so tiles outside the engine's 17×17 screen buffer (which only covers
- * the immediate camera vicinity) still get drawn when the override
- * camera has been panned beyond the buffer.  Drawn before the classic
- * mapViewDrawTiles call so the central tiles get overdrawn with the
- * engine's "fog" / "you can't see" treatment, while the perimeter is
- * filled with raw map data.
- */
-#include "mapview.h"
+/* Perimeter full-map tile fill on pan: DEFERRED in the merge to main.
+ * It read the full map straight from cs->sim (GameSim), but the current
+ * architecture treats ClientSim as opaque and the networked client has
+ * no full-map ServerSim to read.  Re-enabling this needs a public T3/
+ * serverSim tile accessor; until then the override camera just shows
+ * blank perimeter when panned beyond the engine's screen buffer. */
 void overrideModeDrawFullMapTiles(SDL_Renderer *renderer,
                                   struct ClientSim *cs,
                                   int originX, int originY,
@@ -148,112 +136,9 @@ void overrideModeDrawFullMapTiles(SDL_Renderer *renderer,
                                   int edgeX,   int edgeY,
                                   int sheetScale,
                                   SDL_Texture *tilesTex) {
-  if (!s_overrideOn) return;
-  if (!renderer || !cs || !tilesTex) return;
-  if (tileW <= 0 || tileH <= 0) return;
-
-  GameSim *sim = &cs->sim;
-  BYTE selfPlayer = cs->myPlayerNum;
-  BYTE xOffset = cs->xOffset;
-  BYTE yOffset = cs->yOffset;
-
-  /* Buffer-space tile (bx, by) renders at:
-   *   sx = originX + (bx - 1) * tileW - edgeX
-   *   sy = originY + (by - 1) * tileH - edgeY
-   * with bx in [0..MAIN_BACK_BUFFER_SIZE_X-1] for the engine buffer.
-   * To cover the visible viewport we want sx in [originX..originX+gameW]
-   * and sy similarly, so the bx range is:
-   *   bxMin = floor((edgeX) / tileW)               [- 1 buffer slack]
-   *   bxMax = ceil((edgeX + gameW) / tileW) + 1
-   * Iterate from bxMin-1 to bxMax+2 to cover edges with a margin. */
-  int bxMin = (edgeX - tileW) / tileW - 1;
-  int bxMax = (edgeX + gameW) / tileW + 3;
-  int byMin = (edgeY - tileH) / tileH - 1;
-  int byMax = (edgeY + gameH) / tileH + 3;
-
-  int ss = sheetScale;
-  for (int by = byMin; by <= byMax; by++) {
-    for (int bx = bxMin; bx <= bxMax; bx++) {
-      int worldX = (int)xOffset + bx;
-      int worldY = (int)yOffset + by;
-      if (worldX < 0 || worldX > 255) continue;
-      if (worldY < 0 || worldY > 255) continue;
-
-      bool isMine = false;
-      BYTE pos = mapViewCalcSquare(sim, (BYTE)worldX, (BYTE)worldY,
-                                   &isMine, selfPlayer);
-
-      SDL_FRect src = {
-        (float)(mapViewPosX[pos] * ss),
-        (float)(mapViewPosY[pos] * ss),
-        (float)(TILE_SIZE_X * ss),
-        (float)(TILE_SIZE_Y * ss)
-      };
-      SDL_FRect dest = {
-        (float)(originX + (bx - 1) * tileW - edgeX),
-        (float)(originY + (by - 1) * tileH - edgeY),
-        (float)tileW,
-        (float)tileH
-      };
-      SDL_RenderTexture(renderer, tilesTex, &src, &dest);
-
-      if (isMine) {
-        SDL_FRect mineSrc = { (float)(MINE_X * ss), (float)(MINE_Y * ss),
-                              (float)(TILE_SIZE_X * ss), (float)(TILE_SIZE_Y * ss) };
-        SDL_RenderTexture(renderer, tilesTex, &mineSrc, &dest);
-      }
-    }
-  }
-}
-
-/* Convert world units to screen X using the same convention as
- * mapViewDrawShells.  wx is in 1/256-tile (full precision).
- * Quantisation is controlled by the Graphics → Animation style:
- *   Pixel Floor    → floor(wx/16)        — integer game pixel
- *   Pixel Nearest  → round(wx/16)        — nearest game pixel
- *   Smooth         → wx/16.0             — full sub-pixel float */
-static float wuToScreenX(int wx, int originX, int tileW,
-                         int edgeX, int zoomFactor) {
-  float gpx = gfxSettingsWuToGamePixel(wx);
-  return (float)originX - (float)tileW
-       + gpx * (float)zoomFactor
-       - (float)edgeX;
-}
-
-static float wuToScreenY(int wy, int originY, int tileH,
-                         int edgeY, int zoomFactor) {
-  float gpy = gfxSettingsWuToGamePixel(wy);
-  return (float)originY - (float)tileH
-       + gpy * (float)zoomFactor
-       - (float)edgeY;
-}
-
-/* Draw a yellow outlined rectangle covering ±halfWu around (cxWu, cyWu). */
-static void drawHitboxRect(SDL_Renderer *r, int cxWu, int cyWu, int halfWu,
-                           int originX, int originY,
-                           int tileW, int tileH,
-                           int edgeX, int edgeY, int zoomFactor) {
-  float left   = wuToScreenX(cxWu - halfWu, originX, tileW, edgeX, zoomFactor);
-  float top    = wuToScreenY(cyWu - halfWu, originY, tileH, edgeY, zoomFactor);
-  float right  = wuToScreenX(cxWu + halfWu, originX, tileW, edgeX, zoomFactor);
-  float bottom = wuToScreenY(cyWu + halfWu, originY, tileH, edgeY, zoomFactor);
-  SDL_FRect rect = { left, top, right - left, bottom - top };
-  SDL_RenderRect(r, &rect);
-}
-
-/* Filled orange dot centered on (cxWu, cyWu).  Always drawn at a min
- * of 3 screen pixels so it's visible at low zoom. */
-static void drawHitDot(SDL_Renderer *r, int cxWu, int cyWu,
-                       int originX, int originY,
-                       int tileW, int tileH,
-                       int edgeX, int edgeY, int zoomFactor) {
-  float cx = wuToScreenX(cxWu, originX, tileW, edgeX, zoomFactor);
-  float cy = wuToScreenY(cyWu, originY, tileH, edgeY, zoomFactor);
-  /* 1 wu in screen pixels = zoomFactor / 16 */
-  float oneWu = (float)zoomFactor / 16.0f;
-  float size  = oneWu < 3.0f ? 3.0f : oneWu;
-  SDL_FRect dot = { cx - size * 0.5f, cy - size * 0.5f, size, size };
-  SDL_RenderFillRect(r, &dot);
+  (void)renderer; (void)cs; (void)originX; (void)originY;
+  (void)gameW; (void)gameH; (void)tileW; (void)tileH;
+  (void)edgeX; (void)edgeY; (void)sheetScale; (void)tilesTex;
 }
 
 /* Draw a 16-grid over the world view.  Per-game-pixel lines are thin
@@ -315,97 +200,14 @@ void overrideModeDrawOverlays(SDL_Renderer *renderer,
   if (!s_overrideOn) return;
   if (!renderer || !cs) return;
 
-  GameSim *sim = &cs->sim;
+  (void)cs;
   SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
-  /* Grid first so hitboxes/dots overlay on top. */
+  /* Draw the world grid. The hitbox/sub-pixel-dot overlays that used to
+   * live here read tank/pill/base/shell/lgm state straight out of the
+   * GameSim, which the current architecture forbids the renderer from
+   * touching (opaque ClientSim; gui uses T3 / public APIs only). They're
+   * DEFERRED until ported onto public render accessors — the grid (the
+   * part the zoom mode is for) needs no sim access. */
   drawWorldGrid(renderer, originX, originY, tileW, tileH, edgeX, edgeY, zoomFactor);
-
-  /* Tank hitboxes:
-   *   YELLOW = tankIsTankHit ±128 wu shell-vs-tank box (tank.c:1089).
-   *   CYAN   = direction-dependent tank-vs-world bbox used by
-   *            tankNudgeBuildings (boat or land table).  This is the
-   *            collision shape against walls/pillboxes/bases — and
-   *            it's NOT a square: it varies per facing direction. */
-  for (int i = 0; i < MAX_TANKS; i++) {
-    tank *tk = &sim->tanks[i];
-    if (*tk == NULL) continue;
-    if (tankGetDeathWait(tk) > 0) continue;
-    if (tankGetArmour(tk) > TANK_FULL_ARMOUR) continue;
-    WORLD twx, twy;
-    tankGetWorld(tk, &twx, &twy);
-
-    /* Yellow shell hitbox first */
-    SDL_SetRenderDrawColor(renderer, 255, 255, 0, 220);
-    drawHitboxRect(renderer, (int)twx, (int)twy, 128,
-                   originX, originY, tileW, tileH, edgeX, edgeY, zoomFactor);
-
-    /* Cyan world-collision bbox: per-direction insets from edge of
-     * 16x16 sprite, converted to wu offsets via (8 - inset) * 16. */
-    BYTE dirIdx = utilGetDir(tankGetAngle(tk));
-    bool onBoat = tankIsOnBoat(tk);
-    TankBoundingBox bb = tankGetBoundingBox(dirIdx, onBoat);
-    int leftWu   = (int)twx - ((8 - (int)bb.left)   * 16);
-    int rightWu  = (int)twx + ((8 - (int)bb.right)  * 16);
-    int topWu    = (int)twy - ((8 - (int)bb.top)    * 16);
-    int bottomWu = (int)twy + ((8 - (int)bb.bottom) * 16);
-    float l = wuToScreenX(leftWu,   originX, tileW, edgeX, zoomFactor);
-    float r = wuToScreenX(rightWu,  originX, tileW, edgeX, zoomFactor);
-    float t = wuToScreenY(topWu,    originY, tileH, edgeY, zoomFactor);
-    float b = wuToScreenY(bottomWu, originY, tileH, edgeY, zoomFactor);
-    SDL_FRect bbRect = { l, t, r - l, b - t };
-    SDL_SetRenderDrawColor(renderer, 0, 220, 220, 220);
-    SDL_RenderRect(renderer, &bbRect);
-  }
-
-  /* Yellow pill 1-tile hitboxes (pillsIsPillHit is whole-tile). */
-  if (sim->pb != NULL) {
-    BYTE numPb = pillsGetNumPills(&sim->pb);
-    for (BYTE pi = 0; pi < numPb; pi++) {
-      if ((*sim->pb).item[pi].inTank) continue;
-      if ((*sim->pb).item[pi].armour == 0) continue;  /* dead pill = capturable, not a hit target */
-      int mx = (int)(*sim->pb).item[pi].x;
-      int my = (int)(*sim->pb).item[pi].y;
-      /* Tile centre + ±128 wu for a 1-tile box, snapped to grid. */
-      int cxWu = mx * 256 + 128;
-      int cyWu = my * 256 + 128;
-      drawHitboxRect(renderer, cxWu, cyWu, 128,
-                     originX, originY, tileW, tileH, edgeX, edgeY, zoomFactor);
-    }
-  }
-
-  /* Yellow base 1-tile hitboxes (capture/refuel is whole-tile). */
-  if (sim->bs != NULL) {
-    BYTE numBs = basesGetNumBases(&sim->bs);
-    for (BYTE bi = 0; bi < numBs; bi++) {
-      int mx = (int)(*sim->bs).item[bi].x;
-      int my = (int)(*sim->bs).item[bi].y;
-      int cxWu = mx * 256 + 128;
-      int cyWu = my * 256 + 128;
-      drawHitboxRect(renderer, cxWu, cyWu, 128,
-                     originX, originY, tileW, tileH, edgeX, edgeY, zoomFactor);
-    }
-  }
-
-  /* Orange sub-pixel dot at each live shell's authoritative position. */
-  SDL_SetRenderDrawColor(renderer, 255, 140, 0, 255);
-  {
-    shells q = sim->shs;
-    while (q != NULL) {
-      if (!q->shellDead) {
-        drawHitDot(renderer, (int)q->x, (int)q->y,
-                   originX, originY, tileW, tileH, edgeX, edgeY, zoomFactor);
-      }
-      q = q->next;
-    }
-  }
-
-  /* Orange sub-pixel dot at each live LGM's position. */
-  for (int i = 0; i < MAX_TANKS; i++) {
-    lgm *l = &sim->lgmen[i];
-    if (*l == NULL) continue;
-    if ((*l)->inTank || (*l)->isDead) continue;
-    drawHitDot(renderer, (int)(*l)->x, (int)(*l)->y,
-               originX, originY, tileW, tileH, edgeX, edgeY, zoomFactor);
-  }
 }

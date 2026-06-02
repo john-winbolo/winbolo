@@ -26,7 +26,7 @@
 #include <time.h>
 #include <stdio.h>
 #include "backend.h"
-#include "global.h"
+#include "lv_global.h"
 #include "clientmutex.h"
 #include "draw.h"
 #include "sound.h"
@@ -54,6 +54,9 @@
 #include "platform/platform_config.h"
 #include "platform/platform_dialogs.h"
 #include "../gui/sdl3/macos_pinch.h"
+#ifdef __APPLE__
+#include "platform/mac_menubar.h"
+#endif
 
 /* Version string referenced by imgui_dialogs.cpp */
 const char *lv_g_version_string = "1.01";
@@ -421,6 +424,13 @@ static void loadPreferences(void) {
     lv_platform_config_get_string("LOGVIEWER", "Sounds", "Yes", line, sizeof(line));
     g_lv->isSoundsPlaying = (tolower((unsigned char)line[0]) == 'y') ? TRUE : FALSE;
 
+    /* Sound Volume (0-100, mirrors main game) */
+    lv_platform_config_get_string("LOGVIEWER", "Sound Volume", "50", line, sizeof(line));
+    g_lv->soundVolume = atoi(line);
+    if (g_lv->soundVolume < 0) g_lv->soundVolume = 0;
+    if (g_lv->soundVolume > 100) g_lv->soundVolume = 100;
+    lv_soundSetVolume(g_lv->soundVolume);
+
     /* DNS Lookups */
     lv_platform_config_get_string("LOGVIEWER", "DNS Lookups", "No", line, sizeof(line));
     dns = (tolower((unsigned char)line[0]) == 'y') ? TRUE : FALSE;
@@ -466,6 +476,10 @@ static void savePreferences(void) {
 
     /* Sound Effects */
     lv_platform_config_set_string("LOGVIEWER", "Sounds", g_lv->isSoundsPlaying ? "Yes" : "No");
+
+    /* Sound Volume */
+    snprintf(val, sizeof(val), "%d", g_lv->soundVolume);
+    lv_platform_config_set_string("LOGVIEWER", "Sound Volume", val);
 
     /* Use Team Colours */
     lv_platform_config_set_string("LOGVIEWER", "Use Team Colours", g_lv->useTeamColours ? "Yes" : "No");
@@ -516,6 +530,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     g_lv->screenSizeY = MAIN_SCREEN_SIZE_Y + 15; /* default 30 */
     g_lv->isLoaded = FALSE;
     g_lv->isSoundsPlaying = TRUE;
+    g_lv->soundVolume = 50;
 
     /* Game-view skin state — calloc above already zeroed these, but be
      * explicit so the defaults are visible alongside the other init. */
@@ -600,6 +615,13 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
         return;
     }
     lv_imgui_main_menu_init(g_lv);
+#ifdef __APPLE__
+    /* Install the native NSMenu after ImGui + window are up. The shim's
+     * save-on-install / restore-on-uninstall stack swaps WinBolo's menu
+     * out when embedded, and builds a Log Viewer app menu when standalone
+     * (no previous mainMenu to save). */
+    lv_mac_menubar_install(g_lv->window, g_lv);
+#endif
     lv_imgui_controls_init(g_lv);
     lv_imgui_game_info_init();
     lv_imgui_events_init();
@@ -980,6 +1002,33 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
 
         /* Render ImGui UI */
         lv_imgui_context_newframe();
+#ifdef __APPLE__
+        /* Marshal in-window menu state into the native NSMenu once per
+         * frame. Cheap walk over cached NSMenuItem pointers; checkmarks
+         * and enable states mirror the ImGui menu's predicates. */
+        {
+            struct LvMenuState lvms;
+            memset(&lvms, 0, sizeof(lvms));
+            lvms.isLoaded         = g_lv->isLoaded ? true : false;
+            lvms.playIsPlaying    = g_lv->playIsPlaying ? true : false;
+            lvms.modeInformation  = lv_imgui_get_mode_information() ? true : false;
+            lvms.useTeamColours   = g_lv->useTeamColours ? true : false;
+            lvms.gameViewActive   = g_lv->gameView ? true : false;
+            lvms.tankCentred      = lv_imgui_get_tank_centred() ? true : false;
+            lvms.soundEffects     = g_lv->isSoundsPlaying ? true : false;
+            lvms.soundVolume      = g_lv->soundVolume;
+            lvms.dnsLookups       = lv_imgui_get_dns_lookups() ? true : false;
+            lvms.showControls     = lv_g_show_controls_window;
+            lvms.showEvents       = lv_g_show_events_window;
+            lvms.showGameInfo     = lv_g_show_game_info_window;
+            lvms.showItemInfo     = lv_g_show_item_info_window;
+            lvms.showComments     = lv_g_show_comments_window;
+            lvms.zoomStepIndex    = lv_drawGetZoomStepIndex();
+            lvms.zoomStepCount    = lv_drawGetZoomStepCount();
+            lvms.fromMainMenu     = g_lv->fromMainMenu ? true : false;
+            lv_mac_menubar_refresh(&lvms);
+        }
+#endif
         if (g_lv->gameView) {
             lv_imgui_render_game_menu_bar(g_lv);
             lv_imgui_render_game_view(g_lv);
@@ -1018,6 +1067,11 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     }
     savePreferences();
     lv_windowStop(FALSE);
+#ifdef __APPLE__
+    /* Restore the previously-installed NSMenu (WinBolo's, when embedded;
+     * empty stub when standalone since the process is exiting). */
+    lv_mac_menubar_uninstall();
+#endif
     lv_imgui_comments_shutdown();
     lv_imgui_context_shutdown();
     lv_drawCleanupSplash();

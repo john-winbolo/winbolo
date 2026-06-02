@@ -18,27 +18,16 @@
  *   Reusable map view renderer extracted from sdl3draw.c.
  *   Draws tiles, shells, tanks, and LGMs using a
  *   MapViewCtx (renderer + atlas + zoom). Can also build
- *   tile and sprite buffers directly from a GameSim for
- *   the bg_game welcome screen.
+ *   tile and sprite buffers directly from a ServerSim for
+ *   the bg_game welcome screen and braintest.
  *********************************************************/
 
 #include "mapview.h"
-#include "tileloader.h"
-#include "gfx_settings.h"
-#include "override_mode.h"
 #include "../tiles.h"
-#include "../../bolo/tilenum.h"
-#include "../../bolo/bolo_map.h"
-#include "../../bolo/pillbox.h"
-#include "../../bolo/bases.h"
-#include "../../bolo/mines.h"
-#include "../../bolo/tank.h"
-#include "../../bolo/screencalc.h"
-#include "../../bolo/players.h"
-#include "../../bolo/shells.h"
-#include "../../bolo/explosions.h"
-#include "../../bolo/tankexp.h"
-#include "../../bolo/util.h"
+#include "tilenum.h"
+#include "screencalc.h"
+#include "client_render.h"
+#include "util.h"
 
 #include <string.h>
 
@@ -55,17 +44,15 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
                       int originX, int originY, int tileW, int tileH,
                       int edgeX, int edgeY) {
   int ss = ctx->sheetScale;
-  /* Atlas-bleed inset for LINEAR sampling (Max Detail). */
-  float inset = 0.5f;
   BYTE x = 0, y = 0;
   bool done = FALSE;
   while (!done) {
     BYTE pos = screenGetPos(value, x, y);
     SDL_FRect src = {
-      (float)(mapViewPosX[pos] * ss) + inset,
-      (float)(mapViewPosY[pos] * ss) + inset,
-      (float)(TILE_SIZE_X * ss) - 2.0f * inset,
-      (float)(TILE_SIZE_Y * ss) - 2.0f * inset
+      (float)(mapViewPosX[pos] * ss),
+      (float)(mapViewPosY[pos] * ss),
+      (float)(TILE_SIZE_X * ss),
+      (float)(TILE_SIZE_Y * ss)
     };
     SDL_FRect dest = {
       (float)(originX + ((int)x - 1) * tileW - edgeX),
@@ -76,9 +63,8 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &src, &dest);
 
     if (screenIsMine(mineView, x, y)) {
-      SDL_FRect mineSrc = { (float)(MINE_X * ss) + inset, (float)(MINE_Y * ss) + inset,
-                            (float)(TILE_SIZE_X * ss) - 2.0f * inset,
-                            (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
+      SDL_FRect mineSrc = { (float)(MINE_X * ss), (float)(MINE_Y * ss),
+                            (float)(TILE_SIZE_X * ss), (float)(TILE_SIZE_Y * ss) };
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &mineSrc, &dest);
     }
 
@@ -93,69 +79,9 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
 /*********************************************************
  * mapViewDrawShells — moved from sdl3DrawShells.
  *********************************************************/
-/* Smooth-mode sub-wu cache for shells, populated from sim before
- * mapViewDrawShells runs.  Keyed by (worldTileX, worldTileY, dir).
- * Stores the fractional game-pixel offset to add on top of the
- * classic screen position so the shell slides at 1/256-tile precision
- * even though the engine packs only game-pixel-discrete (mx,px). */
-typedef struct {
-  BYTE worldX, worldY, dir;
-  float fracX, fracY;
-} ShellSubPx;
-#define MAX_SHELL_CACHE 256
-static ShellSubPx s_shellSubPx[MAX_SHELL_CACHE];
-static int        s_shellSubPxCount = 0;
-static int        s_shellCacheXOffset = 0;
-static int        s_shellCacheYOffset = 0;
-
-void mapViewSetShellsFromSim(struct GameSim *sim, int xOffset, int yOffset) {
-  s_shellSubPxCount = 0;
-  s_shellCacheXOffset = xOffset;
-  s_shellCacheYOffset = yOffset;
-  if (!sim) return;
-  shells q = sim->shs;
-  while (q != NULL && s_shellSubPxCount < MAX_SHELL_CACHE) {
-    if (!q->shellDead) {
-      int dir = utilGetDir(q->angle);
-      if (dir >= 0 && dir <= 15) {
-        BYTE wx = (BYTE)(q->x >> 8); /* world tile */
-        BYTE wy = (BYTE)(q->y >> 8);
-        float gpxF = (float)q->x / 16.0f; /* world game-pixel float */
-        float gpyF = (float)q->y / 16.0f;
-        float fracX = gpxF - (float)((int)gpxF);
-        float fracY = gpyF - (float)((int)gpyF);
-        s_shellSubPx[s_shellSubPxCount++] =
-          (ShellSubPx){ wx, wy, (BYTE)dir, fracX, fracY };
-      }
-    }
-    q = q->next;
-  }
-}
-
-static bool shellSubPxLookup(BYTE bufMx, BYTE bufMy, int dir,
-                             float *outFracX, float *outFracY) {
-  BYTE wx = (BYTE)(bufMx + s_shellCacheXOffset);
-  BYTE wy = (BYTE)(bufMy + s_shellCacheYOffset);
-  for (int i = 0; i < s_shellSubPxCount; i++) {
-    if (s_shellSubPx[i].worldX == wx
-        && s_shellSubPx[i].worldY == wy
-        && s_shellSubPx[i].dir == dir) {
-      *outFracX = s_shellSubPx[i].fracX;
-      *outFracY = s_shellSubPx[i].fracY;
-      return true;
-    }
-  }
-  return false;
-}
-
-static int spriteStepDensity(const char *spriteName, bool isShell, int zoomFactor);
-
 void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
                        int originX, int originY, int tileW, int tileH,
                        int edgeX, int edgeY) {
-  /* Step density per shell — see spriteStepDensity(). */
-  (void)0;
-
   int total = screenBulletsGetNumEntries(sBullets);
   for (int count = 1; count <= total; count++) {
     BYTE mx, my, px, py, frame;
@@ -195,24 +121,6 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
     float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
     float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
 
-    /* Step-density sub-wu correction: add the fractional game-pixel
-     * from sim, quantized to step_size = 1/density game pixels.
-     * Density 1 → no fraction added (Classic motion).
-     * Density gZoomFactor → finest possible (rounded to 1 screen px). */
-    if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
-      int dir = frame - SHELL_DIR0;
-      int density = spriteStepDensity("shell", true, ctx->zoomFactor);
-      if (density > 1) {
-        float fracX = 0.0f, fracY = 0.0f;
-        if (shellSubPxLookup(mx, my, dir, &fracX, &fracY)) {
-          float qx = SDL_floorf(fracX * (float)density) / (float)density;
-          float qy = SDL_floorf(fracY * (float)density) / (float)density;
-          sx += qx * (float)ctx->zoomFactor;
-          sy += qy * (float)ctx->zoomFactor;
-        }
-      }
-    }
-
     /* Anchor-pixel positioning: place the sprite so its leading pixel lands
      * exactly on the shell's world position (the collision point).
      *
@@ -223,25 +131,11 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
      *
      * Indexed by shell direction 0-15 (N, NNE, NE, ENE, E, ESE, SE, SSE,
      *                                   S, SSW, SW, WSW, W, WNW, NW, NNW). */
-    /* Ingamerotate: skin only ships shell_00, so for dir != 0
-     * redirect src to SHELL_0 and rotate at draw time.  Pivot is the
-     * N-tip (1.5, 0) sprite-local; place dst so the pivot lands on
-     * the un-tip-adjusted (sx, sy) world position. */
-    /* Runtime rotation of _00 is Max-Detail-only.  In Pixelate
-     * modes we let the atlas slot (which falls back to the stock
-     * skin when the user's skin didn't ship shell_<NN>) render
-     * directly — no rotation, no pixel-art-rotated mush. */
-    bool rotateLive = false;
-    if (gfxSettingsGetTileDetail() == GFX_TILE_DETAIL_HIGH_DETAIL
-        && tileLoaderSkinRotates()
-        && frame >= SHELL_DIR1 && frame <= SHELL_DIR15) {
-      int liveDir = frame - SHELL_DIR0;
-      rotateLive = !tileLoaderSkinHasSprite("shell", liveDir);
-    }
-    if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15 && !rotateLive) {
-      int dir = frame - SHELL_DIR0;
-
-      /* Sub-pixel tip anchors (game-pixel units inside the sprite). */
+    if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
+      /* Symmetric diamond, matching brains/GoalHunter/init.lua's
+       * draw_shell_hitbox_viz mirror. Game-pixel offsets in 0..4
+       * range (4 = right/bottom edge of the 4-px sprite). Float so
+       * sub-pixel anchoring works at zoomFactor > 1. */
       static const float kTipCol[16] = {
         1.5f, 3.0f, 4.0f, 4.0f,    /* N   NNE  NE   ENE  */
         4.0f, 4.0f, 4.0f, 3.0f,    /* E   ESE  SE   SSE  */
@@ -254,168 +148,15 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
         4.0f, 4.0f, 3.0f, 3.0f,    /* S   SSW  SW   WSW  */
         1.5f, 0.0f, 0.0f, 0.0f     /* W   WNW  NW   NNW  */
       };
+      int dir = frame - SHELL_DIR0;
       sx -= kTipCol[dir] * (float)ctx->zoomFactor;
       sy -= kTipRow[dir] * (float)ctx->zoomFactor;
     }
-    /* Round shell dest to nearest screen pixel — keeps the sprite
-     * on the screen-pixel grid even after the per-direction tip
-     * subtraction (kTipCol values are non-integer) and any
-     * smooth-shells sub-wu offset.  Cheap; no perf hit. */
-    sx = SDL_floorf(sx + 0.5f);
-    sy = SDL_floorf(sy + 0.5f);
 
     int ss = ctx->sheetScale;
-    /* Atlas-bleed inset: with SCALEMODE_LINEAR (Max Detail) SDL
-     * samples ±0.5 atlas-pixel beyond the source rect and pulls in
-     * the adjacent slot.  Push the source rect 0.5 px inward on
-     * each side. */
-    float inset = 0.5f;
-    if (rotateLive) {
-      /* Ingamerotate: rotate the SHELL_0 atlas slot at draw time.
-       * Dest top-left placed so the N-tip pivot (1.5, 0) lands on
-       * the shell world coord (sx, sy un-tip-adjusted). */
-      int dir = frame - SHELL_DIR0;
-      float dx = sx - 1.5f * (float)ctx->zoomFactor;
-      float dy = sy;
-      SDL_FRect srcR = { (float)(SHELL_0_X * ss) + inset, (float)(SHELL_0_Y * ss) + inset,
-                         (float)(SHELL_0_WIDTH * ss) - 2.0f * inset,
-                         (float)(SHELL_0_HEIGHT * ss) - 2.0f * inset };
-      SDL_FRect dstR = { dx, dy,
-                         (float)(SHELL_0_WIDTH * ctx->zoomFactor),
-                         (float)(SHELL_0_HEIGHT * ctx->zoomFactor) };
-      SDL_FPoint pivot = { 1.5f * (float)ctx->zoomFactor, 0.0f };
-      double angle = (double)dir * 22.5;
-      SDL_RenderTextureRotated(ctx->renderer, ctx->tilesTex, &srcR, &dstR,
-                               angle, &pivot, SDL_FLIP_NONE);
-    } else {
-      SDL_FRect srcR = { (float)(srcX * ss) + inset, (float)(srcY * ss) + inset,
-                         (float)(srcW * ss) - 2.0f * inset,
-                         (float)(srcH * ss) - 2.0f * inset };
-      SDL_FRect dstR = { sx, sy,
-                         (float)(srcW * ctx->zoomFactor),
-                         (float)(srcH * ctx->zoomFactor) };
-      SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
-    }
-
-    /* Override-mode true-world-position marker: orange 1 game-pixel
-     * dot at the shell's tip (the authoritative collision point).
-     * Off in normal play; only useful as a debug overlay. */
-    if (overrideModeIsOn()
-        && frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
-      int dir = frame - SHELL_DIR0;
-      static const float kTipColMark[16] = {
-        1.5f,    1.883f,  4.0f, 4.0f,
-        4.0f,    4.0f,    4.0f, 1.883f,
-        1.5f,    1.117f,  0.0f, 0.0f,
-        0.0f,    0.0f,    0.0f, 1.117f
-      };
-      static const float kTipRowMark[16] = {
-        0.0f,    0.0f,    0.0f, 1.117f,
-        1.5f,    1.883f,  4.0f, 4.0f,
-        4.0f,    4.0f,    3.0f, 1.883f,
-        1.5f,    1.117f,  0.0f, 0.0f
-      };
-      float tipX, tipY;
-      if (rotateLive) {
-        /* sx, sy is the raw world coord in screen pixels (no
-         * tip-adjust applied in the rotate branch). */
-        tipX = sx;
-        tipY = sy;
-      } else {
-        tipX = sx + kTipColMark[dir] * (float)ctx->zoomFactor;
-        tipY = sy + kTipRowMark[dir] * (float)ctx->zoomFactor;
-      }
-      /* True 1 wu at the highest zoom; floors to 2 screen px at low
-       * zoom so the dot is always visible.  1 wu = zoomFactor/16. */
-      float dotSize = (float)ctx->zoomFactor / 16.0f;
-      if (dotSize < 2.0f) dotSize = 2.0f;
-      SDL_FRect dot = { tipX - dotSize * 0.5f, tipY - dotSize * 0.5f,
-                        dotSize, dotSize };
-      SDL_SetRenderDrawColor(ctx->renderer, 255, 140, 0, 255);
-      SDL_RenderFillRect(ctx->renderer, &dot);
-    }
-  }
-}
-
-/*********************************************************
- * mapViewDrawShellsFromSim — render live shells at full 1/256-tile
- * precision direct from sim->shs.  Used when Animation Style is
- * Smooth, instead of the classic screenBullets path which has
- * already discretised positions.  Skips dead shells and explosion
- * frames (those still come from screenBullets).
- *********************************************************/
-void mapViewDrawShellsFromSim(MapViewCtx *ctx, struct GameSim *sim,
-                              int xOffset, int yOffset,
-                              int originX, int originY,
-                              int tileW, int tileH,
-                              int edgeX, int edgeY) {
-  if (!ctx || !sim) return;
-  /* Match the sub-pixel tip table in mapViewDrawShells. */
-  static const float kTipCol[16] = {
-    1.5f, 3.0f, 4.0f, 4.0f,    /* N   NNE  NE   ENE  */
-    4.0f, 4.0f, 4.0f, 3.0f,    /* E   ESE  SE   SSE  */
-    1.5f, 0.0f, 0.0f, 0.0f,    /* S   SSW  SW   WSW  */
-    0.0f, 0.0f, 0.0f, 0.0f     /* W   WNW  NW   NNW  */
-  };
-  static const float kTipRow[16] = {
-    0.0f, 0.0f, 0.0f, 0.0f,    /* N   NNE  NE   ENE  */
-    1.5f, 3.0f, 4.0f, 4.0f,    /* E   ESE  SE   SSE  */
-    4.0f, 4.0f, 3.0f, 3.0f,    /* S   SSW  SW   WSW  */
-    1.5f, 0.0f, 0.0f, 0.0f     /* W   WNW  NW   NNW  */
-  };
-  int zf = ctx->zoomFactor;
-  int ss = ctx->sheetScale;
-  shells q = sim->shs;
-  while (q != NULL) {
-    if (q->shellDead) { q = q->next; continue; }
-    int dir = utilGetDir(q->angle);
-    if (dir < 0 || dir > 15) { q = q->next; continue; }
-
-    /* Atlas src coords for the per-direction shell sprite. */
-    int srcX = 0, srcY = 0, srcW = 0, srcH = 0;
-    switch (dir) {
-      case 0:  srcX=SHELL_0_X;  srcY=SHELL_0_Y;  srcW=SHELL_0_WIDTH;  srcH=SHELL_0_HEIGHT;  break;
-      case 1:  srcX=SHELL_1_X;  srcY=SHELL_1_Y;  srcW=SHELL_1_WIDTH;  srcH=SHELL_1_HEIGHT;  break;
-      case 2:  srcX=SHELL_2_X;  srcY=SHELL_2_Y;  srcW=SHELL_2_WIDTH;  srcH=SHELL_2_HEIGHT;  break;
-      case 3:  srcX=SHELL_3_X;  srcY=SHELL_3_Y;  srcW=SHELL_3_WIDTH;  srcH=SHELL_3_HEIGHT;  break;
-      case 4:  srcX=SHELL_4_X;  srcY=SHELL_4_Y;  srcW=SHELL_4_WIDTH;  srcH=SHELL_4_HEIGHT;  break;
-      case 5:  srcX=SHELL_5_X;  srcY=SHELL_5_Y;  srcW=SHELL_5_WIDTH;  srcH=SHELL_5_HEIGHT;  break;
-      case 6:  srcX=SHELL_6_X;  srcY=SHELL_6_Y;  srcW=SHELL_6_WIDTH;  srcH=SHELL_6_HEIGHT;  break;
-      case 7:  srcX=SHELL_7_X;  srcY=SHELL_7_Y;  srcW=SHELL_7_WIDTH;  srcH=SHELL_7_HEIGHT;  break;
-      case 8:  srcX=SHELL_8_X;  srcY=SHELL_8_Y;  srcW=SHELL_8_WIDTH;  srcH=SHELL_8_HEIGHT;  break;
-      case 9:  srcX=SHELL_9_X;  srcY=SHELL_9_Y;  srcW=SHELL_9_WIDTH;  srcH=SHELL_9_HEIGHT;  break;
-      case 10: srcX=SHELL_10_X; srcY=SHELL_10_Y; srcW=SHELL_10_WIDTH; srcH=SHELL_10_HEIGHT; break;
-      case 11: srcX=SHELL_11_X; srcY=SHELL_11_Y; srcW=SHELL_11_WIDTH; srcH=SHELL_11_HEIGHT; break;
-      case 12: srcX=SHELL_12_X; srcY=SHELL_12_Y; srcW=SHELL_12_WIDTH; srcH=SHELL_12_HEIGHT; break;
-      case 13: srcX=SHELL_13_X; srcY=SHELL_13_Y; srcW=SHELL_13_WIDTH; srcH=SHELL_13_HEIGHT; break;
-      case 14: srcX=SHELL_14_X; srcY=SHELL_14_Y; srcW=SHELL_14_WIDTH; srcH=SHELL_14_HEIGHT; break;
-      case 15: srcX=SHELL_15_X; srcY=SHELL_15_Y; srcW=SHELL_15_WIDTH; srcH=SHELL_15_HEIGHT; break;
-      default: q = q->next; continue;
-    }
-
-    /* World-pixel coords as float (no >>4 floor), converted to
-     * buffer-relative by subtracting the engine's camera tile origin
-     * — same convention the classic path uses with mx,px. */
-    float wpx = (float)q->x / 16.0f - (float)xOffset * (float)TILE_SIZE_X;
-    float wpy = (float)q->y / 16.0f - (float)yOffset * (float)TILE_SIZE_Y;
-
-    /* Same screen-coord convention mapViewDrawShells uses:
-     *   sx = originX - tileW + bbx*zf - edgeX
-     * where bbx is in game pixels.  wpx is now buffer-relative game
-     * pixels at sub-pixel float precision. */
-    float sx = (float)originX - (float)tileW
-             + wpx * (float)zf - (float)edgeX;
-    float sy = (float)originY - (float)tileH
-             + wpy * (float)zf - (float)edgeY;
-
-    sx -= kTipCol[dir] * (float)zf;
-    sy -= kTipRow[dir] * (float)zf;
-
-    SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss),
-                       (float)(srcW * ss), (float)(srcH * ss) };
-    SDL_FRect dstR = { sx, sy, (float)(srcW * zf), (float)(srcH * zf) };
+    SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
+    SDL_FRect dstR = { sx, sy, (float)(srcW * ctx->zoomFactor), (float)(srcH * ctx->zoomFactor) };
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
-    q = q->next;
   }
 }
 
@@ -424,46 +165,6 @@ void mapViewDrawShellsFromSim(MapViewCtx *ctx, struct GameSim *sim,
  * Note: does NOT draw tank labels (labels need fonts
  * which stay in sdl3draw.c).
  *********************************************************/
-/* Per-player sim cache used by mapViewDrawTanks when Smooth animation
- * is on, to render live tanks at full sub-wu precision instead of the
- * game-pixel-discrete (mx,px) the engine packs into screenTanks. */
-static WORLD s_tankPosX[MAX_TANKS];
-static WORLD s_tankPosY[MAX_TANKS];
-static bool  s_tankPosValid = false;
-
-/* Effective step density (wu per step = 16 / density) for a sprite,
- * given AnimSmoothness, the Force-smooth-shells override, and the
- * sprite's per-spriteset max density.  Capped to gZoomFactor —
- * can't be more granular than one screen pixel.
- *   density = 1            → game-pixel grid (Bolo classic)
- *   density = gZoomFactor  → screen-pixel grid (max smoothness)
- *   1 < density < gZoom    → match-to-pixelation, rounded coarser
- *                            than max but finer than classic. */
-static int spriteStepDensity(const char *spriteName, bool isShell, int zoomFactor) {
-  GfxAnimSmoothness s = gfxSettingsGetAnimSmoothness();
-  bool forceSmoothShell = isShell && gfxSettingsGetForceSmoothShells();
-  if (forceSmoothShell || s == GFX_ANIM_SMOOTH_MAX) {
-    return zoomFactor;
-  }
-  if (s == GFX_ANIM_SMOOTH_CLASSIC) return 1;
-  /* MATCH_TO_PIXELATION: per-sprite density, capped at zoomFactor. */
-  int d = tileLoaderGetSpriteMaxDensity(spriteName);
-  if (d < 1) d = 1;
-  if (d > zoomFactor) d = zoomFactor;
-  return d;
-}
-
-void mapViewSetTankAnglesFromSim(struct GameSim *sim) {
-  s_tankPosValid = false;
-  if (!sim) return;
-  for (int i = 0; i < MAX_TANKS; i++) {
-    tank *tk = &sim->tanks[i];
-    if (*tk == NULL) { s_tankPosX[i] = 0; s_tankPosY[i] = 0; continue; }
-    tankGetWorld(tk, &s_tankPosX[i], &s_tankPosY[i]);
-  }
-  s_tankPosValid = true;
-}
-
 void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
                       int originX, int originY, int tileW, int tileH,
                       int edgeX, int edgeY) {
@@ -582,146 +283,19 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
     float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
     float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
 
-    /* Smooth-mode sub-wu correction: the engine packs the tank as a
-     * discrete game-pixel position (snaps to the 1/16-tile grid).
-     * Add the fractional game-pixel from the sim's WORLD coordinate
-     * back on top so the sprite slides at full 1/256-tile precision
-     * — purely additive, so if the cache isn't ready the classic
-     * position is still correct. */
-    /* Step-density sub-wu correction.  density=1 (Classic) → no
-     * fraction added; tank stays on engine game-pixel grid.  Higher
-     * density quantizes the sub-game-pixel offset from sim. */
-    if (s_tankPosValid && playerNum < MAX_TANKS) {
-      char fullName[32];
-      const char *baseName;
-      switch (frame >> 4) {
-        case 0: baseName = "tank_self";     break;
-        case 1: baseName = "tank_selfboat"; break;
-        case 2: baseName = "tank_good";     break;
-        case 3: baseName = "tank_goodboat"; break;
-        case 4: baseName = "tank_evil";     break;
-        case 5: baseName = "tank_evilboat"; break;
-        default: baseName = "tank_self";    break;
-      }
-      SDL_snprintf(fullName, sizeof(fullName), "%s_%02d",
-                   baseName, frame & 0x0F);
-      int density = spriteStepDensity(fullName, false, ctx->zoomFactor);
-      if (density > 1) {
-        float gpxF = (float)s_tankPosX[playerNum] / 16.0f - 8.0f;
-        float gpyF = (float)s_tankPosY[playerNum] / 16.0f - 8.0f;
-        float fracX = gpxF - (float)((int)gpxF);
-        float fracY = gpyF - (float)((int)gpyF);
-        float qx = SDL_floorf(fracX * (float)density) / (float)density;
-        float qy = SDL_floorf(fracY * (float)density) / (float)density;
-        sx += qx * (float)ctx->zoomFactor;
-        sy += qy * (float)ctx->zoomFactor;
-      }
-    }
-    sx = SDL_floorf(sx + 0.5f);
-    sy = SDL_floorf(sy + 0.5f);
-
     {
       int ss = ctx->sheetScale;
-      /* See shell render for why 0.5 — atlas bleed under LINEAR. */
-      float inset = 0.5f;
-
-      /* Ingamerotate: skin only ships tank_*_00.  For dir != 0
-       * redirect src to the _0 atlas slot of the colour group and
-       * rotate at draw time around the sprite centre.  Falls through
-       * to the per-direction atlas slot for non-ingamerotate skins
-       * (or dir == 0). */
-      int useSrcX = srcX, useSrcY = srcY;
-      double rotAngleDeg = 0.0;
-      bool useRotate = false;
-      /* Runtime tank rotation is Max-Detail-only.  Pixelate modes
-       * use whatever's in the per-direction atlas slot (skin's
-       * file if present, stock fallback otherwise). */
-      if (gfxSettingsGetTileDetail() == GFX_TILE_DETAIL_HIGH_DETAIL
-          && tileLoaderSkinRotates()
-          && frame >= TANK_SELF_0 && frame <= TANK_EVILBOAT_0 + 15) {
-        int dir = frame & 0x0F;
-        if (dir != 0) {
-          int group = frame >> 4;
-          int baseFrame = group * 16;
-          int bX = 0, bY = 0;
-          const char *baseName = NULL;
-          switch (baseFrame) {
-            case TANK_SELF_0:      bX = TANK_SELF_0_X;      bY = TANK_SELF_0_Y;      baseName = "tank_self";     break;
-            case TANK_SELFBOAT_0:  bX = TANK_SELFBOAT_0_X;  bY = TANK_SELFBOAT_0_Y;  baseName = "tank_selfboat"; break;
-            case TANK_GOOD_0:      bX = TANK_GOOD_0_X;      bY = TANK_GOOD_0_Y;      baseName = "tank_good";     break;
-            case TANK_GOODBOAT_0:  bX = TANK_GOODBOAT_0_X;  bY = TANK_GOODBOAT_0_Y;  baseName = "tank_goodboat"; break;
-            case TANK_EVIL_0:      bX = TANK_EVIL_0_X;      bY = TANK_EVIL_0_Y;      baseName = "tank_evil";     break;
-            case TANK_EVILBOAT_0:  bX = TANK_EVILBOAT_0_X;  bY = TANK_EVILBOAT_0_Y;  baseName = "tank_evilboat"; break;
-            default: bX = srcX; bY = srcY; break;
-          }
-          /* Skip rotation when the skin ships a hand-crafted
-           * <base>_<NN>; the per-direction atlas slot already has it. */
-          if (baseName && tileLoaderSkinHasSprite(baseName, dir)) {
-            /* leave useRotate = false → atlas slot used directly */
-          } else {
-            useSrcX = bX; useSrcY = bY;
-            rotAngleDeg = (double)dir * 22.5;
-            useRotate = true;
-          }
-        }
-      }
-
-      SDL_FRect srcR = { (float)(useSrcX * ss) + inset, (float)(useSrcY * ss) + inset,
+      /* Inset the source rect by a tiny amount to prevent the GPU from
+         sampling the adjacent atlas row due to float-to-UV precision
+         errors.  BMP-sourced sprites above have green (0,255,0,0) in
+         their transparent pixels which would otherwise bleed through. */
+      float inset = 0.05f;
+      SDL_FRect srcR = { (float)(srcX * ss) + inset, (float)(srcY * ss) + inset,
                          (float)(TILE_SIZE_X * ss) - 2.0f * inset, (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
       SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
-      if (useRotate) {
-        SDL_FPoint pivot = { (float)tileW * 0.5f, (float)tileH * 0.5f };
-        SDL_RenderTextureRotated(ctx->renderer, ctx->tilesTex, &srcR, &dstR,
-                                 rotAngleDeg, &pivot, SDL_FLIP_NONE);
-      } else {
-        SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
-      }
+      SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
     }
   }
-}
-
-/* Smooth-mode sub-wu cache for LGMs.  Keyed by world tile only
- * (one ground LGM per tile is the practical case); stores the
- * fractional game-pixel offset.  Same additive pattern as shells. */
-typedef struct { BYTE worldX, worldY; float fracX, fracY; } LgmSubPx;
-#define MAX_LGM_CACHE 32
-static LgmSubPx s_lgmSubPx[MAX_LGM_CACHE];
-static int      s_lgmSubPxCount = 0;
-static int      s_lgmCacheXOffset = 0;
-static int      s_lgmCacheYOffset = 0;
-
-void mapViewSetLgmsFromSim(struct GameSim *sim, int xOffset, int yOffset) {
-  s_lgmSubPxCount = 0;
-  s_lgmCacheXOffset = xOffset;
-  s_lgmCacheYOffset = yOffset;
-  if (!sim) return;
-  for (int i = 0; i < MAX_TANKS && s_lgmSubPxCount < MAX_LGM_CACHE; i++) {
-    lgm *l = &sim->lgmen[i];
-    if (*l == NULL) continue;
-    if ((*l)->inTank || (*l)->isDead) continue;
-    BYTE wx = (BYTE)((*l)->x >> 8);
-    BYTE wy = (BYTE)((*l)->y >> 8);
-    float gpxF = (float)(*l)->x / 16.0f;
-    float gpyF = (float)(*l)->y / 16.0f;
-    float fracX = gpxF - (float)((int)gpxF);
-    float fracY = gpyF - (float)((int)gpyF);
-    s_lgmSubPx[s_lgmSubPxCount++] =
-      (LgmSubPx){ wx, wy, fracX, fracY };
-  }
-}
-
-static bool lgmSubPxLookup(BYTE bufMx, BYTE bufMy,
-                           float *outFracX, float *outFracY) {
-  BYTE wx = (BYTE)(bufMx + s_lgmCacheXOffset);
-  BYTE wy = (BYTE)(bufMy + s_lgmCacheYOffset);
-  for (int i = 0; i < s_lgmSubPxCount; i++) {
-    if (s_lgmSubPx[i].worldX == wx && s_lgmSubPx[i].worldY == wy) {
-      *outFracX = s_lgmSubPx[i].fracX;
-      *outFracY = s_lgmSubPx[i].fracY;
-      return true;
-    }
-  }
-  return false;
 }
 
 /*********************************************************
@@ -752,137 +326,54 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
     float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
     float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
 
-    /* LGM body anchor: shift the sprite up-left so its (1.5, 2.0)
-     * game-pixel anchor lands on the screen-bullets coord (which is
-     * the sim's lgman->x/y).  Without this the sprite top-left lands
-     * on the body coord, which puts the head 2 pixels north of where
-     * the engine actually thinks the LGM is. */
-    bool isGround = (frame == LGM0 || frame == LGM1 || frame == LGM2);
-    if (isGround) {
+    /* Centre the LGM sprite on its authoritative hit pixel.
+     * LGM_WIDTH=3 and LGM_HEIGHT=4, so the sprite-local centre is
+     * (1.5, 2.0).  Without this offset the sprite top-left lands on
+     * the body coord, putting the head ~2 game-pixels north-west of
+     * where the engine actually thinks the LGM is — which makes
+     * hit/death animations look offset from the sprite. */
+    if (frame == LGM0 || frame == LGM1 || frame == LGM2) {
       sx -= 1.5f * (float)ctx->zoomFactor;
       sy -= 2.0f * (float)ctx->zoomFactor;
     }
 
-    /* Step-density sub-wu correction.  density=1 (Classic) → no
-     * fraction added; LGM stays on engine game-pixel grid. */
-    if (isGround) {
-      const char *spriteName =
-          (frame == LGM0) ? "lgm0" :
-          (frame == LGM1) ? "lgm1" :
-          (frame == LGM2) ? "lgm2" : "lgm0";
-      int density = spriteStepDensity(spriteName, false, ctx->zoomFactor);
-      if (density > 1) {
-        float fracX = 0.0f, fracY = 0.0f;
-        if (lgmSubPxLookup(mx, my, &fracX, &fracY)) {
-          float qx = SDL_floorf(fracX * (float)density) / (float)density;
-          float qy = SDL_floorf(fracY * (float)density) / (float)density;
-          sx += qx * (float)ctx->zoomFactor;
-          sy += qy * (float)ctx->zoomFactor;
-        }
-      }
-    }
-    /* Round to nearest screen pixel. */
-    sx = SDL_floorf(sx + 0.5f);
-    sy = SDL_floorf(sy + 0.5f);
-
     {
       int ss = ctx->sheetScale;
-      float inset = 0.5f;  /* atlas-bleed inset (Max Detail LINEAR) */
-      SDL_FRect srcR = { (float)(srcX * ss) + inset, (float)(srcY * ss) + inset,
-                         (float)(srcW * ss) - 2.0f * inset,
-                         (float)(srcH * ss) - 2.0f * inset };
+      SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
       SDL_FRect dstR = { sx, sy, (float)(srcW * ctx->zoomFactor), (float)(srcH * ctx->zoomFactor) };
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
     }
-
-    /* Override-mode true-world-position marker: orange 1 game-pixel
-     * dot at the LGM body anchor (1.5, 2.0 sprite-local). */
-    if (overrideModeIsOn() && isGround) {
-      float anchorX = sx + 1.5f * (float)ctx->zoomFactor;
-      float anchorY = sy + 2.0f * (float)ctx->zoomFactor;
-      /* 1 wu at high zoom; floor to 2 screen px so it stays visible. */
-      float dotSize = (float)ctx->zoomFactor / 16.0f;
-      if (dotSize < 2.0f) dotSize = 2.0f;
-      SDL_FRect dot = { anchorX - dotSize * 0.5f, anchorY - dotSize * 0.5f,
-                        dotSize, dotSize };
-      SDL_SetRenderDrawColor(ctx->renderer, 255, 140, 0, 255);
-      SDL_RenderFillRect(ctx->renderer, &dot);
-    }
-  }
-}
-
-/*********************************************************
- * mapViewDrawLGMsFromSim — sub-wu LGM render direct from sim.
- *********************************************************/
-void mapViewDrawLGMsFromSim(MapViewCtx *ctx, struct GameSim *sim,
-                            int xOffset, int yOffset,
-                            int originX, int originY,
-                            int tileW, int tileH,
-                            int edgeX, int edgeY) {
-  if (!ctx || !sim) return;
-  int zf = ctx->zoomFactor;
-  int ss = ctx->sheetScale;
-  for (int i = 0; i < MAX_TANKS; i++) {
-    lgm *l = &sim->lgmen[i];
-    if (*l == NULL) continue;
-    if ((*l)->inTank || (*l)->isDead) continue;
-
-    int srcX, srcY;
-    switch ((*l)->frame) {
-      case LGM0: srcX = LGM0_X; srcY = LGM0_Y; break;
-      case LGM1: srcX = LGM1_X; srcY = LGM1_Y; break;
-      case LGM2: srcX = LGM2_X; srcY = LGM2_Y; break;
-      default: continue;
-    }
-
-    /* World-pixel coords as float, with (1.5, 2.0) body anchor.
-     * Subtract the camera tile origin so this matches the classic
-     * path's buffer-relative convention. */
-    float wpx = (float)(*l)->x / 16.0f - (float)xOffset * (float)TILE_SIZE_X;
-    float wpy = (float)(*l)->y / 16.0f - (float)yOffset * (float)TILE_SIZE_Y;
-    float sx = (float)originX - (float)tileW
-             + wpx * (float)zf - (float)edgeX
-             - 1.5f * (float)zf;
-    float sy = (float)originY - (float)tileH
-             + wpy * (float)zf - (float)edgeY
-             - 2.0f * (float)zf;
-
-    SDL_FRect srcR = { (float)(srcX * ss), (float)(srcY * ss),
-                       (float)(LGM_WIDTH * ss), (float)(LGM_HEIGHT * ss) };
-    SDL_FRect dstR = { sx, sy,
-                       (float)(LGM_WIDTH * zf), (float)(LGM_HEIGHT * zf) };
-    SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
   }
 }
 
 /*********************************************************
  * mapViewCalcSquare — adjacency-aware tile calculation
- * from a GameSim. Same logic as screenCalcSquare in
+ * from a ServerSim. Same logic as screenCalcSquare in
  * screen.c but reads from sim instead of module-static cs.
  * Skips the invisiwall mapSetPos mutation (read-only).
  *********************************************************/
 
 /* Read a neighbour tile, treating bases as ROAD and stripping mines. */
-static BYTE mapViewNeighbour(GameSim *sim, BYTE nx, BYTE ny) {
-  if (basesExistPos(&sim->bs, nx, ny) == TRUE) return ROAD;
-  BYTE t = mapGetPos(&sim->mp, nx, ny);
+static BYTE mapViewNeighbour(ServerSim *sim, BYTE nx, BYTE ny) {
+  if (serverSimBaseExistsAt(sim, nx, ny) == TRUE) return ROAD;
+  BYTE t = serverSimGetMapTerrain(sim, nx, ny);
   if (t >= MINE_START && t <= MINE_END) return (BYTE)(t - MINE_SUBTRACT);
   return t;
 }
 
-BYTE mapViewCalcSquare(GameSim *sim, BYTE xValue, BYTE yValue, bool *outMine, BYTE selfPlayer) {
+BYTE mapViewCalcSquare(ServerSim *sim, BYTE xValue, BYTE yValue, bool *outMine, BYTE selfPlayer) {
   BYTE returnValue;
   *outMine = false;
 
   /* Pillbox check */
-  if (pillsExistPos(&sim->pb, xValue, yValue) == TRUE) {
-    returnValue = pillsGetScreenHealth(sim, &sim->pb, xValue, yValue);
+  if (serverSimPillExistsAt(sim, xValue, yValue) == TRUE) {
+    returnValue = serverSimPillGetScreenHealthAt(sim, xValue, yValue, selfPlayer);
     return returnValue;
   }
 
   /* Base check */
-  if (basesExistPos(&sim->bs, xValue, yValue) == TRUE) {
-    baseAlliance ba = basesGetAlliancePos(sim, xValue, yValue);
+  if (serverSimBaseExistsAt(sim, xValue, yValue) == TRUE) {
+    baseAlliance ba = serverSimBaseGetAllianceAt(sim, xValue, yValue, selfPlayer);
     switch (ba) {
     case baseOwnGood:
     case baseAllieGood:
@@ -892,7 +383,7 @@ BYTE mapViewCalcSquare(GameSim *sim, BYTE xValue, BYTE yValue, bool *outMine, BY
       returnValue = BASE_NEUTRAL;
       break;
     case baseDead:
-      if (selfPlayer != NEUTRAL && basesAmOwner(sim, selfPlayer, xValue, yValue) == TRUE) {
+      if (selfPlayer != NEUTRAL && serverSimBaseAmOwnerAt(sim, selfPlayer, xValue, yValue) == TRUE) {
         returnValue = BASE_GOOD;
       } else {
         returnValue = BASE_EVIL;
@@ -907,11 +398,11 @@ BYTE mapViewCalcSquare(GameSim *sim, BYTE xValue, BYTE yValue, bool *outMine, BY
   }
 
   /* Regular terrain with adjacency */
-  BYTE currentPos = mapGetPos(&sim->mp, xValue, yValue);
+  BYTE currentPos = serverSimGetMapTerrain(sim, xValue, yValue);
 
   /* Mine detection (skip invisiwall mutation) */
-  if (mapIsMine(&sim->mp, xValue, yValue) == TRUE) {
-    if (minesExistPos(&sim->mns, &sim->mp, xValue, yValue) == TRUE) {
+  if (serverSimMapIsMine(sim, xValue, yValue) == TRUE) {
+    if (serverSimMineExistsAt(sim, xValue, yValue) == TRUE) {
       *outMine = true;
     }
     if (currentPos != DEEP_SEA) {
@@ -968,7 +459,7 @@ typedef struct {
   bool mines[MAPVIEW_MAX_TILES_W][MAPVIEW_MAX_TILES_H];
 } MapViewTileBuffer;
 
-static void mapViewBuildTileBuffer(GameSim *sim, MapViewTileBuffer *buf,
+static void mapViewBuildTileBuffer(ServerSim *sim, MapViewTileBuffer *buf,
                                    BYTE camMX, BYTE camMY,
                                    int tilesW, int tilesH, BYTE selfPlayer) {
   for (int x = 0; x < tilesW; x++) {
@@ -984,10 +475,10 @@ static void mapViewBuildTileBuffer(GameSim *sim, MapViewTileBuffer *buf,
 
 /*********************************************************
  * mapViewRenderCentered — all-in-one renderer for bg_game.
- * Computes camera, builds tile buffer from GameSim,
- * builds tanks from GameSim, draws everything.
+ * Computes camera, builds tile buffer from ServerSim,
+ * builds tanks from ServerSim render snapshots, draws everything.
  *********************************************************/
-void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
+void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
                            WORLD centerWX, WORLD centerWY,
                            int originX, int originY,
                            int viewW, int viewH,
@@ -1053,16 +544,15 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
     }
   }
 
-  /* Draw tanks directly from GameSim */
+  /* Draw tanks via serverSim render snapshot */
   for (BYTE i = 0; i < MAX_TANKS; i++) {
-    if (sim->tanks[i] == NULL) continue;
-    if (tankGetDeathWait(&sim->tanks[i]) > 0) continue;
-    WORLD twx, twy;
-    tankGetWorld(&sim->tanks[i], &twx, &twy);
+    TankRenderInfo info;
+    if (!serverSimGetTankRender(sim, i, &info)) continue;
+    if (!info.alive) continue;
 
     /* Convert tank world pos to pixel, relative to camera */
-    int tpx = ((int)twx * tileSize >> 8);
-    int tpy = ((int)twy * tileSize >> 8);
+    int tpx = ((int)info.world_x * tileSize >> 8);
+    int tpy = ((int)info.world_y * tileSize >> 8);
     float dx = (float)((tpx - camMX * tileSize) * zf - edgeX + originX - scaledTile / 2);
     float dy = (float)((tpy - camMY * tileSize) * zf - edgeY + originY - scaledTile / 2);
 
@@ -1072,16 +562,14 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
 
     /* Determine tank frame: direction (0-15) + colour offset.
        Pick self/allie/evil sprite based on alliance with selfPlayer. */
-    BYTE dir = tankGetDir(&sim->tanks[i]);
-    bool onBoat = tankIsOnBoat(&sim->tanks[i]);
-    tankAlliance al = playersScreenAllience(&sim->plyrs, selfPlayer, i);
+    tankAlliance al = serverSimGetTankAllianceFor(sim, selfPlayer, i);
     BYTE frameBase;
     switch (al) {
-      case tankSelf:  frameBase = onBoat ? TANK_SELFBOAT_0 : TANK_SELF_0; break;
-      case tankAllie: frameBase = onBoat ? TANK_GOODBOAT_0 : TANK_GOOD_0; break;
-      default:        frameBase = onBoat ? TANK_EVILBOAT_0 : TANK_EVIL_0; break;
+      case tankSelf:  frameBase = info.on_boat ? TANK_SELFBOAT_0 : TANK_SELF_0; break;
+      case tankAllie: frameBase = info.on_boat ? TANK_GOODBOAT_0 : TANK_GOOD_0; break;
+      default:        frameBase = info.on_boat ? TANK_EVILBOAT_0 : TANK_EVIL_0; break;
     }
-    BYTE frame = frameBase + dir;
+    BYTE frame = frameBase + info.dir;
 
     /* Look up atlas coords using the same switch as mapViewDrawTanks.
        For efficiency, use the lookup table approach: the tank frame values
@@ -1193,18 +681,17 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
     SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
   }
 
-  /* Draw shells directly from GameSim */
+  /* Draw shells via serverSim snapshot */
   {
-    shells q = sim->shs;
-    while (q != NULL) {
-      if (!q->shellDead) {
+    enum { kMaxShellRender = 256 };
+    static ShellRender shellBuf[kMaxShellRender];
+    int shellN = serverSimGetShellSnapshot(sim, shellBuf, kMaxShellRender);
+    for (int si = 0; si < shellN; si++) {
+      ShellRender *q = &shellBuf[si];
+      {
         /* Convert shell world coords to pixel position relative to camera */
-        /* Quantisation controlled by Graphics → Animation style.
-         * Pixel Floor (default) gives the classic >>4 behaviour. */
-        float spxF = gfxSettingsWuToGamePixel((int)q->x);
-        float spyF = gfxSettingsWuToGamePixel((int)q->y);
-        int spx = (int)spxF;
-        int spy = (int)spyF;
+        int spx = ((int)q->x * tileSize) >> 8;
+        int spy = ((int)q->y * tileSize) >> 8;
         BYTE dir = utilGetDir(q->angle);
         BYTE frame = dir + SHELL_START_EXPLODE + 1;  /* SHELL_DIR0 + dir */
 
@@ -1226,7 +713,7 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
           case SHELL_DIR13: srcX=SHELL_13_X; srcY=SHELL_13_Y; srcW=SHELL_13_WIDTH; srcH=SHELL_13_HEIGHT; break;
           case SHELL_DIR14: srcX=SHELL_14_X; srcY=SHELL_14_Y; srcW=SHELL_14_WIDTH; srcH=SHELL_14_HEIGHT; break;
           case SHELL_DIR15: srcX=SHELL_15_X; srcY=SHELL_15_Y; srcW=SHELL_15_WIDTH; srcH=SHELL_15_HEIGHT; break;
-          default: goto next_shell;
+          default: continue;
         }
 
         /* Anchor sprite by its TIP pixel (not by center) so the
@@ -1236,21 +723,19 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
          * world coords) sits on the sprite *center* instead of the
          * tip pixel. */
         static const float kTipCol[16] = {
-          1.5f, 3.0f, 4.0f, 4.0f,    /* N   NNE  NE   ENE  */
-          4.0f, 4.0f, 4.0f, 3.0f,    /* E   ESE  SE   SSE  */
-          1.5f, 0.0f, 0.0f, 0.0f,    /* S   SSW  SW   WSW  */
-          0.0f, 0.0f, 0.0f, 0.0f     /* W   WNW  NW   NNW  */
+            1.5f, 3.0f, 4.0f, 4.0f,    /* N   NNE  NE   ENE  */
+            4.0f, 4.0f, 4.0f, 3.0f,    /* E   ESE  SE   SSE  */
+            1.5f, 0.0f, 0.0f, 0.0f,    /* S   SSW  SW   WSW  */
+            0.0f, 0.0f, 0.0f, 0.0f     /* W   WNW  NW   NNW  */
         };
         static const float kTipRow[16] = {
-          0.0f, 0.0f, 0.0f, 0.0f,    /* N   NNE  NE   ENE  */
-          1.5f, 3.0f, 4.0f, 4.0f,    /* E   ESE  SE   SSE  */
-          4.0f, 4.0f, 3.0f, 3.0f,    /* S   SSW  SW   WSW  */
-          1.5f, 0.0f, 0.0f, 0.0f     /* W   WNW  NW   NNW  */
+            0.0f, 0.0f, 0.0f, 0.0f,    /* N   NNE  NE   ENE  */
+            1.5f, 3.0f, 4.0f, 4.0f,    /* E   ESE  SE   SSE  */
+            4.0f, 4.0f, 3.0f, 3.0f,    /* S   SSW  SW   WSW  */
+            1.5f, 0.0f, 0.0f, 0.0f     /* W   WNW  NW   NNW  */
         };
-        float sx = (float)((spx - camMX * tileSize) * zf - edgeX + originX)
-                   - kTipCol[dir] * (float)zf;
-        float sy = (float)((spy - camMY * tileSize) * zf - edgeY + originY)
-                   - kTipRow[dir] * (float)zf;
+        float sx = (float)((spx - camMX * tileSize) * zf - edgeX + originX) - kTipCol[dir] * (float)zf;
+        float sy = (float)((spy - camMY * tileSize) * zf - edgeY + originY) - kTipRow[dir] * (float)zf;
 
         /* Cull off-screen */
         if (sx + srcW * zf >= originX && sx <= originX + viewW &&
@@ -1260,15 +745,16 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
           SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &sSrc, &sDst);
         }
       }
-      next_shell:
-      q = q->next;
     }
   }
 
-  /* Draw explosions directly from GameSim */
+  /* Draw explosions via serverSim snapshot */
   {
-    explosions q = sim->expl;
-    while (q != NULL) {
+    enum { kMaxExplosionRender = 128 };
+    static ExplosionRender explBuf[kMaxExplosionRender];
+    int explN = serverSimGetExplosionSnapshot(sim, explBuf, kMaxExplosionRender);
+    for (int ei = 0; ei < explN; ei++) {
+      ExplosionRender *q = &explBuf[ei];
       int epx = (int)q->mx * tileSize + (int)q->px;
       int epy = (int)q->my * tileSize + (int)q->py;
       float ex = (float)((epx - camMX * tileSize) * zf - edgeX + originX);
@@ -1289,7 +775,7 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
         case 3: srcX=EXPLOSION6_X; srcY=EXPLOSION6_Y; break;
         case 2: srcX=EXPLOSION7_X; srcY=EXPLOSION7_Y; break;
         case 1: srcX=EXPLOSION8_X; srcY=EXPLOSION8_Y; break;
-        default: goto next_explosion;
+        default: continue;
       }
 
       if (ex + scaledTile >= originX && ex <= originX + viewW &&
@@ -1298,31 +784,21 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
         SDL_FRect eDst = { ex, ey, (float)scaledTile, (float)scaledTile };
         SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &eSrc, &eDst);
       }
-      next_explosion:
-      q = q->next;
     }
   }
 
-  /* Draw LGMs (builders) directly from GameSim */
+  /* Draw LGMs (builders) via serverSim render snapshot */
   for (BYTE i = 0; i < MAX_TANKS; i++) {
-    lgm *l = &sim->lgmen[i];
-    if (*l == NULL) continue;
-    if ((*l)->inTank || (*l)->isDead) continue;
+    LgmRender lgmInfo;
+    if (!serverSimGetLgmRender(sim, i, &lgmInfo)) continue;
 
-    /* LGM body anchor: place sprite-local (1.5, 2.0) game-pixel
-     * point on the LGM's authoritative (l->x, l->y).  Quantised by
-     * Graphics → Animation style. */
-    float lpxF = gfxSettingsWuToGamePixel((int)(*l)->x);
-    float lpyF = gfxSettingsWuToGamePixel((int)(*l)->y);
-    float lx = (lpxF - (float)(camMX * tileSize)) * (float)zf
-               - (float)edgeX + (float)originX
-               - 1.5f * (float)zf;
-    float ly = (lpyF - (float)(camMY * tileSize)) * (float)zf
-               - (float)edgeY + (float)originY
-               - 2.0f * (float)zf;
+    int lpx = ((int)lgmInfo.x * tileSize) >> 8;
+    int lpy = ((int)lgmInfo.y * tileSize) >> 8;
+    float lx = (float)((lpx - camMX * tileSize) * zf - edgeX + originX);
+    float ly = (float)((lpy - camMY * tileSize) * zf - edgeY + originY);
 
     int srcX, srcY, srcW, srcH;
-    switch ((*l)->frame) {
+    switch (lgmInfo.frame) {
       case LGM0:
         srcX=LGM0_X; srcY=LGM0_Y; srcW=LGM_WIDTH; srcH=LGM_HEIGHT; break;
       case LGM1:
@@ -1333,6 +809,15 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
         srcX=LGM_HELICOPTER_X; srcY=LGM_HELICOPTER_Y; srcW=TILE_SIZE_X; srcH=TILE_SIZE_Y; break;
     }
 
+    /* Centre the on-foot LGM sprite on its authoritative hit pixel.
+     * Sprite-local centre is (LGM_WIDTH/2, LGM_HEIGHT/2) = (1.5, 2.0)
+     * game pixels. Helicopter frame draws full-tile from its own
+     * (0, 0) anchor so no offset there. */
+    if (lgmInfo.frame == LGM0 || lgmInfo.frame == LGM1 || lgmInfo.frame == LGM2) {
+      lx -= 1.5f * (float)zf;
+      ly -= 2.0f * (float)zf;
+    }
+
     if (lx + srcW * zf >= originX && lx <= originX + viewW &&
         ly + srcH * zf >= originY && ly <= originY + viewH) {
       SDL_FRect lSrc = { (float)(srcX * ss), (float)(srcY * ss), (float)(srcW * ss), (float)(srcH * ss) };
@@ -1341,10 +826,13 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
     }
   }
 
-  /* Draw tank explosions (flying debris) directly from GameSim */
+  /* Draw tank explosions (flying debris) via serverSim snapshot */
   {
-    tkExplosion q = sim->tankExplosions;
-    while (q != NULL) {
+    enum { kMaxTankExpRender = 64 };
+    static TankExplosionRender tkBuf[kMaxTankExpRender];
+    int tkN = serverSimGetTankExplosionSnapshot(sim, tkBuf, kMaxTankExpRender);
+    for (int ti = 0; ti < tkN; ti++) {
+      TankExplosionRender *q = &tkBuf[ti];
       /* Anchor top-left, matching mapViewDrawShells (the real game's path
          for tank fireballs via screenBullets/SHELL_EXPLOSION1). Centering
          here would offset the head half a tile from the trail explosions
@@ -1362,7 +850,6 @@ void mapViewRenderCentered(MapViewCtx *ctx, GameSim *sim,
         SDL_FRect tDst = { tx, ty, (float)scaledTile, (float)scaledTile };
         SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &tSrc, &tDst);
       }
-      q = q->next;
     }
   }
 }

@@ -30,8 +30,8 @@
 #define __WINBOLONET_EVENT
 
 
-#include "../bolo/global.h"
-#include "winbolonet.h"
+#include "global.h"
+#include "winbolonet_core.h"
 
 
 /* Defines */
@@ -49,6 +49,8 @@ struct winboloNetObj {
   BYTE itemType;
   char keyA[WINBOLONET_KEY_LEN];
   char keyB[WINBOLONET_KEY_LEN];
+  bool aIsBot;           /* Actor A is a bot (no WBN key) */
+  bool bIsBot;           /* Actor B is a bot (no WBN key) */
 };
 
 
@@ -76,8 +78,10 @@ void winbolonetEventsDestroy(void);
 *  itemType - The WinBolo.net Item Event Type
 *  keyA     - Key string of user A
 *  keyB     - Key string of user B
+*  aIsBot   - TRUE if actor A is a bot
+*  bIsBot   - TRUE if actor B is a bot
 *********************************************************/
-void winbolonetEventsAddItem(BYTE itemType, const char *keyA, const char *keyB);
+void winbolonetEventsAddItem(BYTE itemType, const char *keyA, const char *keyB, bool aIsBot, bool bIsBot);
 
 /*********************************************************
 *NAME:          winbolonetEventsGetSize
@@ -94,9 +98,11 @@ int winbolonetEventsGetSize(void);
 *  if empty.
 *
 *ARGUMENTS:
-*  keyA - Buffer to copy key of user A (WINBOLONET_KEY_LEN)
-*  keyB - Buffer to copy key of user B (WINBOLONET_KEY_LEN)
+*  keyA   - Buffer to copy key of user A (WINBOLONET_KEY_LEN)
+*  keyB   - Buffer to copy key of user B (WINBOLONET_KEY_LEN)
+*  aIsBot - Output: TRUE if actor A is a bot
+*  bIsBot - Output: TRUE if actor B is a bot
 *********************************************************/
-BYTE winbolonetEventsRemove(char *keyA, char *keyB);
+BYTE winbolonetEventsRemove(char *keyA, char *keyB, bool *aIsBot, bool *bIsBot);
 
 #endif /* __WINBOLONET_EVENT */

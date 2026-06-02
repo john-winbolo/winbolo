@@ -28,10 +28,9 @@
 #ifndef GAMEFRONT_H
 #define GAMEFRONT_H
 
-#include "../bolo/global.h"
-#include "../bolo/screen.h"
-#include "../bolo/transport.h"
-#include "../server/server_sim.h"
+#include "global.h"
+#include "client_enums.h"  /* aiType, gameType */
+#include "server_sim.h"
 #include "input.h"
 #include "winbolo.h"
 
@@ -412,6 +411,18 @@ void gameFrontPutPrefs(keyItems *keys);
 void gameFrontSaveWindowSettings(void);
 
 /*********************************************************
+*NAME:          gameFrontPumpDirty
+*PURPOSE:
+* Consume point for the debounce dirty flag set by
+* gameFrontSaveWindowSettings. Call once per frame from
+* the main event/render loop — when a window-move/resize
+* burst settles inside the 500ms throttle window, this is
+* what flushes the trailing event so the final position
+* survives. Cheap when nothing is dirty.
+*********************************************************/
+void gameFrontPumpDirty(void);
+
+/*********************************************************
 *NAME:          gameFrontSetRemeber
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/4/99
@@ -500,6 +511,28 @@ void gameFrontRequestPlayTutorial(void);
 bool gameFrontConsumePlayTutorialRequest(void);
 
 /*********************************************************
+*NAME:          gameFrontRequestTransition
+*PURPOSE:
+* Posts a state transition the welcome dialog will pick up on
+* its next poll iteration and treat as if the equivalent ghost
+* button was clicked. Used by host-OS shims (e.g. the macOS
+* Dock menu) to trigger welcome-screen actions from outside the
+* in-window UI. Must be called from the main thread — the
+* welcome loop reads the channel on the same thread.
+*********************************************************/
+void gameFrontRequestTransition(openingStates s);
+bool gameFrontConsumeRequestedTransition(openingStates *out);
+
+/*********************************************************
+*NAME:          gameFrontIsAtWelcome
+*PURPOSE:
+* TRUE while gameFrontDialogs() is sitting inside the
+* welcomeShow() poll loop. Lets host-OS menus dim items
+* that only make sense from the welcome screen.
+*********************************************************/
+bool gameFrontIsAtWelcome(void);
+
+/*********************************************************
 *NAME:          gameFrontSetupServer
 *AUTHOR:        John Morrison
 *CREATION DATE: 3/11/99
@@ -567,34 +600,6 @@ void gameFrontEnableRejoin(void);
 *
 *********************************************************/
 bool gameFrontPreferencesExist(void);
-
-/*********************************************************
-*NAME:          gameFrontLoadInBuiltMap
-*AUTHOR:        John Morrison
-*CREATION DATE: 1/5/00
-*LAST MODIFIED: 1/5/00
-*PURPOSE:
-* Attempts to load the built in map by loading the
-* compress resource. Returns Success
-*
-*ARGUMENTS:
-*
-*********************************************************/
-bool gameFrontLoadInBuiltMap(void);
-
-/*********************************************************
-*NAME:          gameFrontLoadTutorial
-*AUTHOR:        John Morrison
-*CREATION DATE: 1/5/00
-*LAST MODIFIED: 1/5/00
-*PURPOSE:
-* Attempts to load the built in tutorial by loading the
-* compress resource. Returns Success
-*
-*ARGUMENTS:
-*
-*********************************************************/
-bool gameFrontLoadTutorial(void);
 
 /*********************************************************
 *NAME:          gameFrontSetWinbolonetToken
@@ -675,6 +680,15 @@ void gameFrontHandleUrlOpen(char *url);
  * Called after joining a game or exiting the lobby. */
 void gameFrontUpdateSteamPresence(struct ClientSim *cs);
 
+/* Set Steam rich presence for the main menu / welcome screen.
+ * Clears any stale map/numplayers/connect tokens. */
+void gameFrontSetSteamPresenceMenu(void);
+
+/* Set Steam rich presence for the lobby screen.
+ * Includes map name, player count, and a connect string so
+ * friends can join the same lobby via Steam. */
+void gameFrontSetSteamPresenceLobby(struct ClientSim *cs);
+
 /*********************************************************
 *NAME:          gameFrontReloadSkins
 *AUTHOR:        John Morrison
@@ -710,16 +724,6 @@ void gameFrontShutdownServer(void);
 ServerSim *gameFrontGetServerSim(void);
 
 /*********************************************************
-*NAME:          gameFrontGetTransport
-*PURPOSE:
-*  Returns a pointer to the active Transport, or NULL
-*  if using the legacy network path.
-*  Returns local transport for single-player, UDP transport
-*  for networked games using the new protocol.
-*********************************************************/
-Transport *gameFrontGetTransport(void);
-
-/*********************************************************
 *NAME:          gameFrontGetPlayerNum
 *PURPOSE:
 *  Returns the local player's slot number.
@@ -728,15 +732,15 @@ Transport *gameFrontGetTransport(void);
 BYTE gameFrontGetPlayerNum(void);
 
 /*********************************************************
-*NAME:          gameFrontLoadDeferredMap
+*NAME:          gameFrontGetSinglePlayerServerSim
 *PURPOSE:
-*  Loads the map from the transport after lobby exit.
-*  Called when the lobby dialog returns (game started)
-*  and the map was downloaded in the background.
-*RETURNS:
-*  TRUE on success, FALSE on failure.
+*  Returns the in-process spServerSim pointer for the
+*  single-player lobby path, or NULL if no single-player
+*  session is active. Used by the lobby UI to mutate
+*  server-side state directly (settings, add bot, team
+*  changes) instead of going through the UDP packet path.
 *********************************************************/
-bool gameFrontLoadDeferredMap(struct ClientSim *cs);
+struct ServerSim *gameFrontGetSinglePlayerServerSim(void);
 
 /* Dialog window position — used to place main window on same monitor */
 extern int gameFrontDialogX;

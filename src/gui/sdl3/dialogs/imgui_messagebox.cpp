@@ -36,6 +36,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 
@@ -54,6 +55,7 @@ static const char *iconPathForType(ImguiMsgType type) {
     switch (type) {
         case IMGUI_MSG_WARNING: return "data/ui/dialog-warning.svg";
         case IMGUI_MSG_ERROR:   return "data/ui/dialog-error.svg";
+        case IMGUI_MSG_NONE:    return NULL;
         default:                return "data/ui/dialog-info.svg";
     }
 }
@@ -91,7 +93,7 @@ static int renderMessageBoxContent(const char *message, ImguiMsgButtons buttons,
 
     float textRegionW = ImGui::GetContentRegionAvail().x;
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + textRegionW);
-    ImGui::TextWrapped("%s", message ? message : "");
+    imguiTextWrappedWithLinks(message ? message : "");
     ImGui::PopTextWrapPos();
 
     /* Push cursor below the icon if the text was shorter */
@@ -102,47 +104,32 @@ static int renderMessageBoxContent(const char *message, ImguiMsgButtons buttons,
         ImGui::SetCursorPosY(afterIconY);
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    /* Buttons */
-    float btnW = 80.0f;
-    float spacing = ImGui::GetStyle().ItemSpacing.x;
-    float availW = ImGui::GetContentRegionAvail().x;
+    /* Focus the primary action so Enter activates it. The helper draws
+     * the buttons; we set focus on the next item before that call so the
+     * first button in the cluster receives focus. */
+    if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
 
     if (buttons == IMGUI_MSG_OK) {
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - btnW) / 2.0f);
-        if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
-        if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0))) {
+        int f = WBUI::DialogFooter(/*cancelLabel*/ nullptr,
+                                   langGetText(STR_OK));
+        if (f == WBUI::FOOTER_CONFIRM || f == WBUI::FOOTER_CANCEL) {
             result = IMGUI_MSG_RESULT_OK;
         }
     } else if (buttons == IMGUI_MSG_YES_NO) {
-        float totalW = btnW * 2 + spacing;
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - totalW) / 2.0f);
-        if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
-        if (ImGui::Button(langGetText(STR_YES), ImVec2(btnW, 0))) {
-            result = IMGUI_MSG_RESULT_YES;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_NO), ImVec2(btnW, 0))) {
-            result = IMGUI_MSG_RESULT_NO;
-        }
+        /* 2-button: [No][Yes] — Yes is the affirmative/primary, No is the
+         * cancel-equivalent. Matches the spec's [Cancel][Confirm] shape. */
+        int f = WBUI::DialogFooter(langGetText(STR_NO),
+                                   langGetText(STR_YES));
+        if (f == WBUI::FOOTER_CONFIRM) result = IMGUI_MSG_RESULT_YES;
+        else if (f == WBUI::FOOTER_CANCEL) result = IMGUI_MSG_RESULT_NO;
     } else { /* IMGUI_MSG_YES_NO_CANCEL */
-        float totalW = btnW * 3 + spacing * 2;
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - totalW) / 2.0f);
-        if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
-        if (ImGui::Button(langGetText(STR_YES), ImVec2(btnW, 0))) {
-            result = IMGUI_MSG_RESULT_YES;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_NO), ImVec2(btnW, 0))) {
-            result = IMGUI_MSG_RESULT_NO;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0))) {
-            result = IMGUI_MSG_RESULT_CANCEL;
-        }
+        /* 3-button: [Cancel (stay)][No (destructive — discard)][Yes (primary — save)]. */
+        int f = WBUI::DialogFooter3(langGetText(STR_CANCEL),
+                                    langGetText(STR_NO),
+                                    langGetText(STR_YES));
+        if (f == WBUI::FOOTER_CONFIRM)         result = IMGUI_MSG_RESULT_YES;
+        else if (f == WBUI::FOOTER_DESTRUCTIVE) result = IMGUI_MSG_RESULT_NO;
+        else if (f == WBUI::FOOTER_CANCEL)     result = IMGUI_MSG_RESULT_CANCEL;
     }
 
     return result;
@@ -183,6 +170,7 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
      * This avoids conflicts with any caller context that may be mid-frame. */
     ImGuiContext *msgCtx = ImGui::CreateContext();
     ImGui::SetCurrentContext(msgCtx);
+    imguiRegisterPlatformOpenUrl();
 
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -194,7 +182,10 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
     ImGui_ImplSDLRenderer3_Init(renderer);
     dialogApplyScaling(s);
 
-    SDL_Texture *iconTex = imguiLoadSvgIcon(renderer, iconPathForType(type), ICON_SIZE);
+    const char *iconPath = iconPathForType(type);
+    SDL_Texture *iconTex = iconPath
+        ? imguiLoadSvgIcon(renderer, iconPath, ICON_SIZE)
+        : nullptr;
 
     /* Compute dialog width: 50% of window, clamped to [420, 700] */
     float dialogW = (float)screenW * DIALOG_WIDTH_FRACTION;
@@ -233,6 +224,24 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
                         result = IMGUI_MSG_RESULT_NO;
                     else
                         result = IMGUI_MSG_RESULT_CANCEL;
+                /* Cmd+W (Mac) / Ctrl+W (other) — same effect as Esc */
+                } else if (k == SDLK_W && (ev.key.mod & KMOD_PRIMARY)) {
+                    if (buttons == IMGUI_MSG_OK)
+                        result = IMGUI_MSG_RESULT_OK;
+                    else if (buttons == IMGUI_MSG_YES_NO)
+                        result = IMGUI_MSG_RESULT_NO;
+                    else
+                        result = IMGUI_MSG_RESULT_CANCEL;
+#ifdef __APPLE__
+                /* Cmd+. — same effect as Esc */
+                } else if (k == SDLK_PERIOD && (ev.key.mod & SDL_KMOD_GUI)) {
+                    if (buttons == IMGUI_MSG_OK)
+                        result = IMGUI_MSG_RESULT_OK;
+                    else if (buttons == IMGUI_MSG_YES_NO)
+                        result = IMGUI_MSG_RESULT_NO;
+                    else
+                        result = IMGUI_MSG_RESULT_CANCEL;
+#endif
                 }
             }
         }
@@ -276,9 +285,12 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
 
         ImGui::SetNextWindowSizeConstraints(ImVec2(dialogW, 0),
                                             ImVec2(dialogW, FLT_MAX));
+        static float s_fadeMsgBox = 0.0f;
         if (ImGui::BeginPopupModal(popupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize |
                                    ImGuiWindowFlags_NoMove)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeMsgBox));
             /* Centre the modal in the window */
             ImVec2 modalSize = ImGui::GetWindowSize();
             ImGui::SetWindowPos(
@@ -291,6 +303,7 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
                 result = r;
                 ImGui::CloseCurrentPopup();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 

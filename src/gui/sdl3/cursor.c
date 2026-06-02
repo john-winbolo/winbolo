@@ -18,8 +18,8 @@
 
 #include <stdbool.h>
 #include <stdio.h>
-#include "../../bolo/global.h"
-#include "../../bolo/screen.h"   /* MAIN_SCREEN_SIZE_X/Y */
+#include "global.h"
+#include "viewport_types.h"   /* MAIN_SCREEN_SIZE_X/Y */
 #include "../tiles.h"             /* TILE_SIZE_X/Y */
 #include "../positions.h"         /* MAIN_OFFSET_X/Y */
 #include "sdl3draw.h"             /* sdl3DrawGetZoomFactor, sdl3DrawGetWindow */

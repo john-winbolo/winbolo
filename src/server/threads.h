@@ -28,7 +28,7 @@
 #ifndef _THREADS_H
 #define _THREADS_H
 
-#include "../bolo/global.h"
+#include "global.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -101,6 +101,21 @@ bool threadsTryWaitForMutex(void);
 *
 *********************************************************/
 void threadsReleaseMutex(void);
+
+/*********************************************************
+*NAME:          threadsCurrentlyHoldsMutex
+*PURPOSE:
+*  Debug-only accessor for asserting the mutex-ownership
+*  contract on functions whose callers are required to hold
+*  the lock (e.g. serverSimApplyCommand). Returns true iff
+*  the calling thread is the current owner. Safe to call
+*  without holding the mutex — only the owning thread writes
+*  its own ID.
+*
+*ARGUMENTS:
+*
+*********************************************************/
+bool threadsCurrentlyHoldsMutex(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

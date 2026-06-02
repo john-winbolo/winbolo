@@ -29,7 +29,6 @@
 
 #include <WinSock2.h>
 #include "..\bolo\global.h"
-#include "..\bolo\screen.h"
 
 
 /*********************************************************

@@ -1,2 +1,11 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Shell scripts and regression-test fixtures must stay LF on every
+# platform. Windows autocrlf converts them to CRLF on checkout, which
+# breaks bash (CR-terminated commands) and breaks byte-exact diffing
+# of harness output.
+*.sh                            text eol=lf
+tests/baseline/expected/*.json  text eol=lf
+tests/baseline/expected/*.jsonl text eol=lf
+tests/baseline/expected/*.out   text eol=lf

@@ -31,7 +31,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include "global.h"
-#include "screen.h"
+#include "game_sim.h"  /* GAME_NUMGAMETICKS_SEC */
 #include "scroll_item_list.h"
 
 
@@ -41,6 +41,8 @@ void scrollItemListCreate(ScrollItemList *list) {
   list->tankSpeed = 0;
   list->tankWX = 0;
   list->tankWY = 0;
+  list->forceForwardImportant = FALSE;
+  list->lastNaturalForwardImportant = FALSE;
 }
 
 
@@ -59,8 +61,14 @@ bool scrollItemListAddW(ScrollItemList *list, WORLD wx, WORLD wy, int baseScore,
     dy = abs((int)(wy >> 8) - (int)(tankWY >> 8));
     range = (dx > dy) ? dx : dy;
 
-    /* Directional penalty: items behind the moving tank get
-     * their range doubled so they lose priority to items ahead. */
+    /* Directional penalty: items behind the moving tank get a small
+     * constant range bump so they lose priority to items ahead. A
+     * fixed offset (rather than a multiplier) keeps the score change
+     * the same regardless of distance — so a sharp tank turn shifts
+     * far-away items by the same few points as nearby ones, instead
+     * of flipping a distant item from heavily-suppressed to dominant.
+     * That step function was the cause of the "aggressive camera
+     * swing on turn-back" behaviour. */
     if (list->tankSpeed > 0 && range > 0) {
       float rad = list->tankAngle * (float)BRADIAN_TO_RADIAN_FACTOR;
       float facingX = (float)sin(rad);
@@ -69,7 +77,7 @@ bool scrollItemListAddW(ScrollItemList *list, WORLD wx, WORLD wy, int baseScore,
       float toItemY = (float)((int)wy - (int)tankWY);
       float dot = facingX * toItemX + facingY * toItemY;
       if (dot < 0.0f) {
-        range *= 2;  /* Behind the tank — double range penalty */
+        range += 4;  /* Behind the tank — small flat penalty. */
       }
     }
 
@@ -176,6 +184,14 @@ bool scrollItemListProcess(ScrollItemList *list, int *targetX, int *targetY) {
     }
   }
 
+  /* Snapshot the natural result for the caller's sticky counter, then
+   * OR in any caller-driven force override. The veto logic below uses
+   * the effective (post-override) flag. */
+  list->lastNaturalForwardImportant = hasForwardImportant;
+  if (list->forceForwardImportant == TRUE) {
+    hasForwardImportant = TRUE;
+  }
+
   for (i = 0; i < list->count; i++) {
     bool isBehind;
     bool vetoLeftAdj, vetoRightAdj, vetoUpAdj, vetoDownAdj;
@@ -227,34 +243,66 @@ bool scrollItemListProcess(ScrollItemList *list, int *targetX, int *targetY) {
       continue;
     }
 
-    /* Validate: check that no higher-priority item was pushed off-screen */
-    modified = TRUE;
-    for (j = 0; j < i; j++) {
-      int margin;
-      if (list->items[j].ignore == TRUE) {
-        continue;
+    /* Validate per-axis: a Y-axis adjustment should only be reverted
+     * by a Y-axis conflict (and same for X). The previous combined
+     * check could revert a fresh Y change because some prior item
+     * happened to sit at the *X* margin from its own earlier X pull,
+     * which had nothing to do with the Y change in flight. That blocked
+     * the camera from scrolling toward items ahead of a moving tank
+     * whenever the priority list also had close items along the
+     * perpendicular axis. */
+    {
+      bool changedX = (*targetX != stashX) ? TRUE : FALSE;
+      bool changedY = (*targetY != stashY) ? TRUE : FALSE;
+      bool conflictX = FALSE;
+      bool conflictY = FALSE;
+
+      modified = TRUE;
+      for (j = 0; j < i; j++) {
+        int margin;
+        if (list->items[j].ignore == TRUE) {
+          continue;
+        }
+        /* Special items (gunsight) are soft — they can trigger scrolling
+         * but don't block hard items from adjusting the viewport. */
+        if (list->items[j].special == TRUE && item->special == FALSE) {
+          continue;
+        }
+        /* When a special item adjusts the viewport, use a wider margin
+         * against hard items to prevent the 1-tile-per-tick scroll from
+         * pushing a hard item just past the trigger threshold. */
+        margin = AUTO_SCROLL_MARGIN;
+        if (item->special == TRUE && list->items[j].special == FALSE) {
+          margin = AUTO_SCROLL_MARGIN * 2;
+        }
+        if (changedX == TRUE && conflictX == FALSE) {
+          if (scrollItemIsLeft(list->items[j].wx, *targetX, margin) ||
+              scrollItemIsRight(list->items[j].wx, *targetX, margin)) {
+            conflictX = TRUE;
+          }
+        }
+        if (changedY == TRUE && conflictY == FALSE) {
+          if (scrollItemIsAbove(list->items[j].wy, *targetY, margin) ||
+              scrollItemIsBelow(list->items[j].wy, *targetY, margin)) {
+            conflictY = TRUE;
+          }
+        }
+        /* Early exit when nothing more can change. */
+        if ((!changedX || conflictX) && (!changedY || conflictY)) {
+          break;
+        }
       }
-      /* Special items (gunsight) are soft — they can trigger scrolling
-       * but don't block hard items from adjusting the viewport. */
-      if (list->items[j].special == TRUE && item->special == FALSE) {
-        continue;
-      }
-      /* When a special item adjusts the viewport, use a wider margin
-       * against hard items to prevent the 1-tile-per-tick scroll from
-       * pushing a hard item just past the trigger threshold. */
-      margin = AUTO_SCROLL_MARGIN;
-      if (item->special == TRUE && list->items[j].special == FALSE) {
-        margin = AUTO_SCROLL_MARGIN * 2;
-      }
-      if (scrollItemIsLeft(list->items[j].wx, *targetX, margin) ||
-          scrollItemIsRight(list->items[j].wx, *targetX, margin) ||
-          scrollItemIsAbove(list->items[j].wy, *targetY, margin) ||
-          scrollItemIsBelow(list->items[j].wy, *targetY, margin)) {
-        item->ignore = TRUE;
+
+      if (conflictX == TRUE) {
         *targetX = stashX;
+        modified = FALSE;
+      }
+      if (conflictY == TRUE) {
         *targetY = stashY;
         modified = FALSE;
-        break;
+      }
+      if (modified == FALSE) {
+        item->ignore = TRUE;
       }
     }
 

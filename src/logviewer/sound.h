@@ -29,7 +29,7 @@
 #ifndef _SOUND_H 
 #define _SOUND_H 
 
-#include "global.h"
+#include "lv_global.h"
 #include "backend.h"
 
 /*********************************************************
@@ -103,5 +103,15 @@ void lv_soundKeepalive(bool value);
 *
 *********************************************************/
 bool lv_soundIsPlayable(void);
+
+/*********************************************************
+*NAME:          lv_soundSetVolume
+*PURPOSE:
+*  Sets the master output gain on the audio stream.
+*
+*ARGUMENTS:
+*  pct - volume percentage in [0, 100]
+*********************************************************/
+void lv_soundSetVolume(int pct);
 
 #endif /* _SOUND_H  */

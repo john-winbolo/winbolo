@@ -24,8 +24,8 @@
  * in the browser, not as ~80 MB of WebAudio AudioBuffer copies).
  */
 
-#include "../bolo/global.h"
-#include "../bolo/screen.h"
+#include "global.h"
+#include "client_enums.h"  /* sndEffects */
 #include "../gui/sound.h"
 
 #include <emscripten.h>
@@ -65,6 +65,11 @@ static const char *kSoundFiles[WB_NUM_SOUNDS] = {
 
 static bool s_isPlayable = FALSE;
 
+/* Mirrors the last value handed to wb_audio_set_gain. WebAudio doesn't
+ * expose a read path back to C, so we shadow it here for the
+ * returning-to-lobby save/restore. */
+static double s_currentGain = 0.5;
+
 /* -------------------------------------------------------
  * JS-side helpers, defined inline via EM_JS.
  *
@@ -86,7 +91,9 @@ EM_JS(void, wb_audio_init, (void), {
 
   var ctx = new Ctx();
   var gain = ctx.createGain();
-  gain.gain.value = 0.25;  /* Match SDL path's SDL_SetAudioStreamGain(0.25). */
+  /* Default to 50%. soundSetVolume() overrides once the saved preference
+     has been read. */
+  gain.gain.value = 0.5;
   gain.connect(ctx.destination);
 
   Module.WB_audio = {
@@ -153,6 +160,11 @@ EM_JS(void, wb_audio_set_muted, (int muted), {
   Module.WB_audio.muted = !!muted;
   /* Suspending the whole context is heavier than just gating BufferSource
      creation.  Stick with the gate so resume is instant. */
+});
+
+EM_JS(void, wb_audio_set_gain, (double gain), {
+  if (!Module.WB_audio || !Module.WB_audio.gainNode) return;
+  Module.WB_audio.gainNode.gain.value = gain;
 });
 
 EM_JS(void, wb_audio_cleanup, (void), {
@@ -232,4 +244,26 @@ bool soundIsPlayable(void) {
 
 void soundSetMuted(bool mute) {
   wb_audio_set_muted(mute ? 1 : 0);
+}
+
+void soundSetVolume(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  s_currentGain = (double)pct / 100.0;
+  wb_audio_set_gain(s_currentGain);
+}
+
+void soundSetReturningToLobby(bool active) {
+  static double savedGain = 0.5;
+  static bool muteActive = false;
+  if (!s_isPlayable) return;
+  if (active && !muteActive) {
+    savedGain = s_currentGain;
+    wb_audio_set_gain(0.0);
+    muteActive = true;
+  } else if (!active && muteActive) {
+    wb_audio_set_gain(savedGain);
+    s_currentGain = savedGain;
+    muteActive = false;
+  }
 }

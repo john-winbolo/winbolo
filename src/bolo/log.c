@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <string.h>
 //#include <winsock2.h>
+#include <SDL3/SDL.h>
 #include "global.h"
 #include "util.h"
 #include "bolo_map.h"
@@ -38,8 +39,8 @@
 #include "game_sim.h"
 #include "netpacks.h"
 #include "zip.h"
-#include "../server/server_sim.h"
-#include "../winbolonet/winbolonet.h"
+#include "server_sim.h"
+#include "../winbolonet/winbolonet_core.h"
 
 zipFile logFile;               /* File to log to */
 unsigned short logLastEvent; /* Last event logged. Increments each time there are no events */
@@ -52,6 +53,69 @@ BYTE logOldKey; /* Old key needed for writing state */
 bool logLastEmpty; /* Was the last log empty? */
 
 logTanks logCheckTanks;
+
+/* Thread that owns the log writer. Captured at logStart. Every mutating
+ * entry point bails if called from any other thread.
+ *
+ * Why: log.c keeps its writer state (logMem / logKey / logNumEvents / ...)
+ * in file-static globals with no synchronisation. The bot worker pool
+ * reaches logAddEvent via clientSimSyncFromSnapshot -> mapSetPos on each
+ * bot's own ClientSim, and concurrent writers interleave bytes in logMem
+ * and desync the XOR-key chain — the resulting .wbv opens, plays for
+ * ~60s, then trips the viewer's lv-corrupt diagnostic. The owner check
+ * makes those off-thread calls drop silently. */
+static SDL_ThreadID logOwnerThread = 0;
+
+/* While TRUE, the writer is recording a lobby segment: world-mutation
+ * events queued via logAddEvent are dropped, and logWriteSnapshot emits
+ * an empty world (no pills/bases/starts, all deep sea, no tanks). The
+ * lobby roster — joins, leaves, team/ready/countdown, chat, votes —
+ * passes through unchanged. handleLobbyEnter sets it on before the
+ * opening snapshot; handleGameStart clears it before the rewriting
+ * snapshot that establishes the real world for the running segment. */
+static bool logLobbyMode = FALSE;
+
+/* Opcodes that touch world state and must be suppressed during a lobby
+ * segment. serverSimResetGameWorld and the lobby-time mapSetPos burst
+ * would otherwise flood the lobby segment with map-cell deltas and
+ * stale base/pill ownership churn — none of which makes sense against
+ * the deep-sea lobby snapshot. */
+static bool logitemMutatesWorld(logitem itemNum) {
+  switch (itemNum) {
+    case log_PlayerLocation:
+    case log_LgmLocation:
+    case log_MapChange:
+    case log_Shell:
+    case log_SoundBuild:
+    case log_SoundFarm:
+    case log_SoundShoot:
+    case log_SoundHitTank:
+    case log_SoundHitTree:
+    case log_SoundHitWall:
+    case log_SoundMineLay:
+    case log_SoundMineExplode:
+    case log_SoundExplosion:
+    case log_SoundBigExplosion:
+    case log_SoundManDie:
+    case log_BaseSetOwner:
+    case log_BaseSetStock:
+    case log_PillSetOwner:
+    case log_PillSetHealth:
+    case log_PillSetPlace:
+    case log_PillSetInTank:
+    case log_LostMan:
+    case log_KillPlayer:
+    case log_PlayerDied:
+    case log_PlayerRejoin:
+      return TRUE;
+    default:
+      return FALSE;
+  }
+}
+
+void logSetLobbyMode(bool enabled) {
+  logLobbyMode = enabled ? TRUE : FALSE;
+}
 
 /*********************************************************
 *NAME:          logCreate
@@ -73,6 +137,7 @@ void logCreate() {
   logMemSize = 0;
   logKey = 0;
   logOldKey = 0;
+  logLobbyMode = FALSE;
 }
 
 /*********************************************************
@@ -122,6 +187,21 @@ void logWriteEmpty() {
 void logWriteTick() {
   BYTE savedKey = logOldKey;
 
+  /* First call pins the owner thread. logStart runs from main() at
+   * startup (sync-replay of CTRL_GAME_PHASE_LOBBY inside
+   * serverDedicatedLogInstall), but every tick afterwards runs from the
+   * SDL timer thread — capturing the owner at logStart would pin the
+   * wrong thread and drop every subsequent logAddEvent. logWriteTick is
+   * only ever called from the timer thread (serverSimLogTick /
+   * simRunHalfStep), so capturing here pins the correct one. The
+   * startup-thread window between logStart and the first logWriteTick
+   * has no concurrent writers (worker pool isn't running yet), so the
+   * log_LobbyEnter / log_PlayerJoined writes during sync-replay pass
+   * through with logOwnerThread still 0. */
+  if (logOwnerThread == 0) {
+    logOwnerThread = SDL_GetCurrentThreadID();
+  }
+
   if (logIsRunning == TRUE) {
     if (logNumEvents > 0) {
       logWriteEmpty();
@@ -152,7 +232,7 @@ void logWriteTick() {
 void logWriteEvents(BYTE key) {
   BYTE data[3];
   unsigned short us;
-  
+
   if (logNumEvents > 0) {
     if (logNumEvents < LOG_SIZE_LONG_DIFF) {
       data[0] = LOG_EVENT ^ key;
@@ -195,6 +275,14 @@ void logStop() {
     zipClose(logFile, "WinBolo Log File");
   }
   logIsRunning = FALSE;
+  /* Intentionally do NOT touch logLobbyMode here. logStart calls
+   * logStop at its top, so resetting the flag would wipe out an
+   * immediately-preceding logSetLobbyMode(TRUE) before the opening
+   * snapshot ever reads it. The flag's lifecycle is owned by the
+   * explicit logSetLobbyMode callers (handleLobbyEnter sets TRUE
+   * before logStart; handleGameStart clears it before the rewriting
+   * snapshot). Process-level state stays clean because logCreate
+   * initialises it FALSE. */
 }
 
 /*********************************************************
@@ -257,6 +345,12 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
   bool changeKey = TRUE; /* Whether to change the encryption key or not */
   unsigned short wordsLen; /* Safe length for words data */
 
+  if (logOwnerThread != 0 && SDL_GetCurrentThreadID() != logOwnerThread) {
+    return;
+  }
+  if (logLobbyMode == TRUE && logitemMutatesWorld(itemNum) == TRUE) {
+    return;
+  }
   if (logIsRunning == TRUE && logMem != NULL) {
     /* Bounds check: ensure we have room in the log buffer.
        Max single event is 6 bytes header + 256 bytes words data */
@@ -525,6 +619,37 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
       logAddToMemory((logMem+logMemSize), words, (BYTE) wordsLen);
       logMemSize += wordsLen;
       break;
+    case log_GameVoteStart:
+      /* event code + kind + initiator player + team (0 = global) */
+      *(logMem+logMemSize) = itemNum ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt1 ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt2 ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt3 ^ logKey;
+      logMemSize++;
+      break;
+    case log_GameVoteCast:
+      /* event code + kind + player + voteYes (0/1) */
+      *(logMem+logMemSize) = itemNum ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt1 ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt2 ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt3 ^ logKey;
+      logMemSize++;
+      break;
+    case log_GameVoteEnd:
+      /* event code + kind + result (0=failed,1=passed) */
+      *(logMem+logMemSize) = itemNum ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt1 ^ logKey;
+      logMemSize++;
+      *(logMem+logMemSize) = opt2 ^ logKey;
+      logMemSize++;
+      break;
     default:
       changeKey = FALSE;
       logNumEvents--;
@@ -575,14 +700,10 @@ int writeData(BYTE *data, int len, BYTE key) {
 *LAST MODIFIED: 25/07/04
 *PURPOSE:
 * ssim  - ServerSim (contains GameSim plus server-specific fields)
-* mp    - Map file
-* pb    - Pillboxes
-* bs    - Bases
-* ss    - Starts
-* plrs  - Players
 * check - Whether to check if running or not
 *********************************************************/
-bool logWriteSnapshot(ServerSim *ssim, map *mp, pillboxes *pb, bases *bs, starts *ss, players *plrs, bool check) {
+bool logWriteSnapshot(ServerSim *ssim, bool check) {
+  GameSim *gs = serverSimGetGameSim(ssim);
   bool returnValue = TRUE; /* Value to return */
   BYTE dataLen;
   BYTE savedDataLen;       /* Non XOR'd datalength */
@@ -604,18 +725,21 @@ bool logWriteSnapshot(ServerSim *ssim, map *mp, pillboxes *pb, bases *bs, starts
 
   if (logNumEvents > 0) {
     logWriteEvents(logOldKey);
+    /* logWriteEvents flushes the queued events but leaves logOldKey
+     * stale at the pre-tick value, while logKey has advanced to the
+     * last event's code. The reader's blockKey after a LOG_EVENT block
+     * equals that last event code, so without re-syncing here the
+     * snapshot marker we write next would be XOR'd with the wrong key
+     * and the whole stream desyncs. The empty branch below gets this
+     * for free via logWriteEmpty's own logOldKey = logKey tail. */
+    logOldKey = logKey;
   } else {
     logWriteEmpty();
     if (logLastEmpty == TRUE) {
-  //    printf("Not snapshotting because nothing happened!\n");
       return TRUE;
     }
     logLastEmpty = TRUE;
-    // Nothing happened return?
   }
-
-  //printf(" Good\n");
-
 
   data[0] = LOG_EVENT_SNAPSHOT;
   ret = writeData(data, 1, logOldKey);
@@ -625,77 +749,133 @@ bool logWriteSnapshot(ServerSim *ssim, map *mp, pillboxes *pb, bases *bs, starts
 
   /* Write start delay and time left */
   if (returnValue == TRUE) {
-    length = htonl(ssim->startDelay);
+    length = htonl(serverSimGetStartDelay(ssim));
     ret = writeData((BYTE *) &length, sizeof(int32_t), logOldKey);
     if (ret != Z_OK) {
       returnValue = FALSE;
     }
   }
   if (returnValue == TRUE) {
-    length = htonl(ssim->gameLength);
+    length = htonl(serverSimGetGameLength(ssim));
     ret = writeData((BYTE *) &length, sizeof(int32_t), logOldKey);
     if (ret != Z_OK) {
       returnValue = FALSE;
     }
   }
 
-  /* Write pill locations */
-  if (returnValue == TRUE) {
-    dataLen = pillsGetPillNetData(pb, data);
-    savedDataLen = dataLen;
-    ret = writeData(&dataLen, 1, logOldKey);   
-    ret = writeData(data, savedDataLen, logOldKey);
-    if (ret != Z_OK) {
-      returnValue = FALSE;
+  if (logLobbyMode == TRUE) {
+    /* Lobby snapshot — empty world. Each of pills/bases/starts is a
+     * 1-byte length-prefixed payload with count=0 (matching the
+     * net-data getters' 0-entry shape). The map is a single all-
+     * deep-sea terminator run (datalen=4, y=sx=ex=0xFF), which the
+     * viewer's run reader at bolo_map.c:371 treats as end-of-map.
+     * Each player slot is the 2-byte "not in use" stub the viewer
+     * already handles at screen.c:1356.
+     *
+     * writeData XORs its buffer in place, so we re-initialise the
+     * scratch bytes ahead of every call rather than reusing them
+     * across calls. */
+    BYTE lenByte;
+    BYTE payload;
+    BYTE terminator[4];
+    BYTE stub[2];
+    if (returnValue == TRUE) {
+      lenByte = 1;
+      payload = 0;
+      ret = writeData(&lenByte, 1, logOldKey);
+      if (ret == Z_OK) ret = writeData(&payload, 1, logOldKey);
+      if (ret != Z_OK) returnValue = FALSE;
     }
-  }
-  /* Write bases locations */
-  if (returnValue == TRUE && logFile) {
-    dataLen = basesGetBaseNetData(bs, data);
-    savedDataLen = dataLen;
-    ret = writeData(&dataLen, 1, logOldKey);
-    ret = writeData(data, savedDataLen, logOldKey);
-    if (ret != Z_OK) {
-      returnValue = FALSE;
+    if (returnValue == TRUE && logFile) {
+      lenByte = 1;
+      payload = 0;
+      ret = writeData(&lenByte, 1, logOldKey);
+      if (ret == Z_OK) ret = writeData(&payload, 1, logOldKey);
+      if (ret != Z_OK) returnValue = FALSE;
     }
-  }
-  /* Write starts locations */
-  if (returnValue == TRUE && logFile) {
-    dataLen = startsGetStartNetData(ss, data);
-    savedDataLen = dataLen;
-    ret = writeData(&dataLen, 1, logOldKey);
-    ret = writeData(data, savedDataLen, logOldKey);
-    if (ret != Z_OK) {
-      returnValue = FALSE;
+    if (returnValue == TRUE && logFile) {
+      lenByte = 1;
+      payload = 0;
+      ret = writeData(&lenByte, 1, logOldKey);
+      if (ret == Z_OK) ret = writeData(&payload, 1, logOldKey);
+      if (ret != Z_OK) returnValue = FALSE;
     }
-  }
-
-  /* Write the map itself */
-  if (returnValue == TRUE && logFile) {
-    xPos = 0;
-    yPos = 0;
-    while (yPos < 0xFF && returnValue == TRUE) {
-      /* Process runs */
-      len = mapPrepareRun(mp, &run, &xPos, &yPos);
-      /* Write the run out */
-      ret = writeData((BYTE *) &run, len, logOldKey);
+    if (returnValue == TRUE && logFile) {
+      terminator[0] = 4;
+      terminator[1] = 0xFF;
+      terminator[2] = 0xFF;
+      terminator[3] = 0xFF;
+      ret = writeData(terminator, 4, logOldKey);
+      if (ret != Z_OK) returnValue = FALSE;
+    }
+    while (count < MAX_TANKS && returnValue == TRUE) {
+      dataLen   = 2;
+      stub[0]   = count;
+      stub[1]   = FALSE;
+      ret = writeData(&dataLen, 1, logOldKey);
+      if (ret == Z_OK) ret = writeData(stub, 2, logOldKey);
+      if (ret != Z_OK) returnValue = FALSE;
+      count++;
+    }
+  } else {
+    /* Write pill locations */
+    if (returnValue == TRUE) {
+      dataLen = pillsGetPillNetData(&gs->pb, data);
+      savedDataLen = dataLen;
+      ret = writeData(&dataLen, 1, logOldKey);
+      ret = writeData(data, savedDataLen, logOldKey);
       if (ret != Z_OK) {
         returnValue = FALSE;
       }
     }
-  }
-
-  /* Write each player */
-  while (count < MAX_TANKS && returnValue == TRUE) {
-    playersPrepareLogSnapshotForPlayer(&ssim->sim, plrs, count, data, &dataLen);
-    savedDataLen = dataLen;
-    ret = writeData((BYTE *) &dataLen, 1, logOldKey);
-    ret = writeData(data, savedDataLen, logOldKey);
-
-    if (ret != Z_OK) {
-      returnValue = FALSE;
+    /* Write bases locations */
+    if (returnValue == TRUE && logFile) {
+      dataLen = basesGetBaseNetData(&gs->bs, data);
+      savedDataLen = dataLen;
+      ret = writeData(&dataLen, 1, logOldKey);
+      ret = writeData(data, savedDataLen, logOldKey);
+      if (ret != Z_OK) {
+        returnValue = FALSE;
+      }
     }
-    count++;
+    /* Write starts locations */
+    if (returnValue == TRUE && logFile) {
+      dataLen = startsGetStartNetData(&gs->ss, data);
+      savedDataLen = dataLen;
+      ret = writeData(&dataLen, 1, logOldKey);
+      ret = writeData(data, savedDataLen, logOldKey);
+      if (ret != Z_OK) {
+        returnValue = FALSE;
+      }
+    }
+
+    /* Write the map itself */
+    if (returnValue == TRUE && logFile) {
+      xPos = 0;
+      yPos = 0;
+      while (yPos < 0xFF && returnValue == TRUE) {
+        /* Process runs */
+        len = mapPrepareRun(&gs->mp, &run, &xPos, &yPos);
+        /* Write the run out */
+        ret = writeData((BYTE *) &run, len, logOldKey);
+        if (ret != Z_OK) {
+          returnValue = FALSE;
+        }
+      }
+    }
+
+    /* Write each player */
+    while (count < MAX_TANKS && returnValue == TRUE) {
+      playersPrepareLogSnapshotForPlayer(gs, &gs->plyrs, count, data, &dataLen);
+      savedDataLen = dataLen;
+      ret = writeData((BYTE *) &dataLen, 1, logOldKey);
+      ret = writeData(data, savedDataLen, logOldKey);
+
+      if (ret != Z_OK) {
+        returnValue = FALSE;
+      }
+      count++;
+    }
   }
   logOldKey = logKey;
 
@@ -713,17 +893,12 @@ bool logWriteSnapshot(ServerSim *ssim, map *mp, pillboxes *pb, bases *bs, starts
 *ARGUMENTS:
 * fileName    - FileName and path of the file to open
 * ssim        - ServerSim (contains GameSim plus server-specific fields)
-* mp          - Map file
-* pb          - Pillboxes
-* bs          - Bases
-* ss          - Starts
-* plrs        - Players
 * ai          - Games AI type
 * maxPlayers  - Maximum number of players allowed in the
 *                game
 * usePassword - Is the game password protected
 *********************************************************/
-bool logStart(char *fileName, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb, starts *ss, players *plrs, BYTE ai, BYTE maxPlayers, bool usePassword) {
+bool logStart(char *fileName, ServerSim *ssim, BYTE ai, BYTE maxPlayers, bool usePassword) {
   bool returnValue; /* Value to return */
   int ret;            /* Function return value */
   zip_fileinfo zi;
@@ -735,6 +910,13 @@ bool logStart(char *fileName, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb
   returnValue = TRUE;
   logStop(); /* Stop the current log if it is running */
   logLastEmpty = FALSE;
+  /* Reset owner-thread capture so the next logWriteTick re-pins it.
+   * Necessary across round boundaries: handleLobbyEnter for a new round
+   * calls logStart on whichever thread published CTRL_GAME_PHASE_LOBBY
+   * (timer thread), so the previous round's owner would still be the
+   * timer thread and the check would pass — but clearing it lets the
+   * capture stay correctly scoped per-log. */
+  logOwnerThread = 0;
 
   count = 0;
   while (count < MAX_TANKS) {
@@ -786,7 +968,7 @@ bool logStart(char *fileName, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb
 
   /* Write Map Name */
   if (returnValue == TRUE) {
-    strcpy((char *)(data+1), ssim->mapName);
+    strcpy((char *)(data+1), serverSimGetMapName(ssim));
     data[0] = (BYTE) strlen((char *)(data+1));
     ret = zipWriteInFileInZip(logFile, data, data[0]+1);
     if (ret != Z_OK) {
@@ -796,8 +978,8 @@ bool logStart(char *fileName, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb
 
   /* Write Game Type, Allow mines, AI type, password */
   if (returnValue == TRUE) {
-    data[0] = gameTypeGet(&ssim->sim.game);
-    data[1] = minesGetAllowHiddenMines(&ssim->sim.mns);
+    data[0] = gameTypeGet(&serverSimGetGameSim(ssim)->game);
+    data[1] = minesGetAllowHiddenMines(&serverSimGetGameSim(ssim)->mns);
     data[2] = ai;
     data[3] = usePassword;
     data[4] = maxPlayers;
@@ -828,7 +1010,7 @@ bool logStart(char *fileName, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb
 
   /* Start time */
   if (returnValue == TRUE) {
-    start = htonl((int32_t)ssim->timeCreated);
+    start = htonl((int32_t)serverSimGetTimeCreated(ssim));
     ret = zipWriteInFileInZip(logFile, &start, sizeof(int32_t));
     if (ret != Z_OK) {
       returnValue = FALSE;
@@ -845,10 +1027,10 @@ bool logStart(char *fileName, ServerSim *ssim, map *mp, bases *bs, pillboxes *pb
     }
   }
 
-  logKey = logOldKey = (BYTE) (ssim->timeCreated & 0xFF);
+  logKey = logOldKey = (BYTE) (serverSimGetTimeCreated(ssim) & 0xFF);
   /* Write Snapshot */
   if (returnValue == TRUE) {
-    returnValue = logWriteSnapshot(ssim, mp, pb, bs, ss, plrs, FALSE);
+    returnValue = logWriteSnapshot(ssim, FALSE);
   }
 
   if (returnValue == TRUE) {

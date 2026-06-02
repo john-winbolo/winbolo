@@ -26,6 +26,8 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <condition_variable>
+#include <deque>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -37,6 +39,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 
@@ -46,11 +49,10 @@ extern "C" {
 #include "../flags.h"
 #include "../../gamefront.h"
 #include "../../currentgames.h"
-#include "../../../bolo/discovery.h"
-#include "../../../bolo/global.h"
-#include "../../../bolo/gametype.h"
-#include "../../../bolo/netpacks.h"
-#include "../../../bolo/bolo_packets.h"
+#include "discovery.h"
+#include "global.h"
+#include "gametype.h"
+#include "wire_limits.h"
 #include "../../../server/geolookup.h"
 #include "../../lang.h"
 #include "imgui_gamebrowser.h"
@@ -60,6 +62,16 @@ static const int DIALOG_W = 1024;
 static const int DIALOG_H = 768;
 
 #define STRVER_LEN 4
+
+/* Servers older than this are hidden from the tracker list. Version strings
+ * are "%d.%d%d" (e.g. "1.19"), so a lexicographic compare of the first
+ * STRVER_LEN chars orders the 1.x series correctly. */
+#define BROWSER_MIN_VERSION "1.19"
+
+static bool browserVersionAllowed(const char *ver) {
+    if (ver == nullptr || strlen(ver) < STRVER_LEN) return false;
+    return strncmp(ver, BROWSER_MIN_VERSION, STRVER_LEN) >= 0;
+}
 
 /* ---- Per-server enriched data ---- */
 struct ServerEntry {
@@ -151,7 +163,8 @@ static void resolveCountryCode(ServerEntry &e) {
 }
 
 /* Send an info request to a server and measure RTT.
- * Creates its own UDP socket so it's self-contained and thread-safe. */
+ * Thin wrapper around discoveryPingServer; the bolo helper owns the
+ * socket and the wire-format parsing. */
 static PingResult pingServer(const PingWork &work) {
     PingResult res;
     res.index = work.index;
@@ -160,116 +173,114 @@ static PingResult pingServer(const PingWork &work) {
     res.freeBases = 0;
     res.numPlayers = 0;
 
-    /* Resolve destination address */
-    struct sockaddr_in dest;
-    memset(&dest, 0, sizeof(dest));
-    dest.sin_family = AF_INET;
-    dest.sin_port = htons(work.port);
-    dest.sin_addr.s_addr = inet_addr(work.address);
-    if (dest.sin_addr.s_addr == INADDR_NONE) {
-        struct hostent *phe = gethostbyname(work.address);
-        if (!phe) return res;
-        dest.sin_addr.s_addr = *((uint32_t *)phe->h_addr_list[0]);
+    DiscoveryPingResult dpr;
+    if (discoveryPingServer(work.address, work.port, &dpr)) {
+        res.pingMs    = dpr.rttMs;
+        res.freePills = dpr.freePills;
+        res.freeBases = dpr.freeBases;
+        res.numPlayers = dpr.numPlayers;
     }
-
-    /* Create a temporary UDP socket */
-    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock == INVALID_SOCKET) return res;
-
-    /* Set receive timeout to 5 seconds */
-#ifdef _WIN32
-    DWORD tv = 5000;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
-#else
-    struct timeval tv;
-    tv.tv_sec = 5;
-    tv.tv_usec = 0;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-#endif
-
-    /* Send info request */
-    BYTE buff[MAX_UDPPACKET_SIZE] = INFOREQUESTHEADER;
-    Uint64 sendTime = SDL_GetTicks();
-    int ret = sendto(sock, (const char *)buff, BOLOPACKET_REQUEST_SIZE, 0,
-                     (struct sockaddr *)&dest, sizeof(dest));
-    WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: sent %d bytes to %s:%u (expected %d)",
-            ret, work.address, work.port, BOLOPACKET_REQUEST_SIZE);
-    if (ret != BOLOPACKET_REQUEST_SIZE) {
-        WB_LOG_WARN(WB_LOG_CAT_NET, "ping: sendto failed for %s:%u", work.address, work.port);
-        closesocket(sock);
-        return res;
-    }
-
-    /* Wait for response */
-    struct sockaddr_in from;
-    socklen_t fromlen = sizeof(from);
-    int len = (int)recvfrom(sock, (char *)buff, MAX_UDPPACKET_SIZE, 0,
-                            (struct sockaddr *)&from, &fromlen);
-    closesocket(sock);
-
-    if (len >= (int)sizeof(INFO_PACKET)) {
-        Uint64 recvTime = SDL_GetTicks();
-        res.pingMs = (int)(recvTime - sendTime);
-
-        INFO_PACKET *info = (INFO_PACKET *)buff;
-        res.freePills = info->free_pills;
-        res.freeBases = info->free_bases;
-        res.numPlayers = info->num_players;
-        WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: %s:%u responded in %dms, players=%d",
-                work.address, work.port, res.pingMs, res.numPlayers);
-    } else {
-#ifdef _WIN32
-        WB_LOG_DEBUG(WB_LOG_CAT_NET, "ping: %s:%u no response (len=%d, err=%d)", work.address, work.port, len, WSAGetLastError());
-#else
-        WB_LOG_DEBUG(WB_LOG_CAT_NET, "ping: %s:%u no response (len=%d, errno=%d)", work.address, work.port, len, errno);
-#endif
-    }
-
     return res;
+}
+
+/* ---- Bounded ping pool ----
+ * The server list can be large; spawning one detached thread per server
+ * (and never joining them) let blocking 5s pings pile up across repeated
+ * browses. A fixed pool of worker threads drains a queue instead, so at
+ * most kPingPoolSize pings run at once regardless of list size. A
+ * generation counter — bumped on each new search and on browser open —
+ * lets workers drop results that belong to a superseded server list
+ * (whose indices no longer match). The pool threads live for the process
+ * (like the bot pool) and idle on a condition variable when empty. */
+static constexpr int            kPingPoolSize = 8;
+static std::mutex               s_pingResultsMtx;
+static std::vector<PingResult>  s_pingResults;
+struct PingJob { PingWork work; uint64_t gen; };
+static std::mutex               s_pingQueueMtx;
+static std::condition_variable  s_pingQueueCv;
+static std::deque<PingJob>      s_pingQueue;
+static std::atomic<uint64_t>    s_pingGeneration{0};
+static std::once_flag           s_pingPoolOnce;
+
+static void pingWorkerFn() {
+    for (;;) {
+        PingJob job;
+        {
+            std::unique_lock<std::mutex> lk(s_pingQueueMtx);
+            s_pingQueueCv.wait(lk, [] { return !s_pingQueue.empty(); });
+            job = s_pingQueue.front();
+            s_pingQueue.pop_front();
+        }
+        /* Skip work already superseded by a newer search. */
+        if (job.gen != s_pingGeneration.load()) continue;
+        PingResult pr = pingServer(job.work);
+        std::lock_guard<std::mutex> lk(s_pingResultsMtx);
+        if (job.gen == s_pingGeneration.load()) {
+            s_pingResults.push_back(pr);
+        }
+    }
+}
+
+static void enqueuePing(const PingWork &w) {
+    std::call_once(s_pingPoolOnce, [] {
+        for (int i = 0; i < kPingPoolSize; i++) {
+            std::thread(pingWorkerFn).detach();
+        }
+    });
+    {
+        std::lock_guard<std::mutex> lk(s_pingQueueMtx);
+        s_pingQueue.push_back(PingJob{w, s_pingGeneration.load()});
+    }
+    s_pingQueueCv.notify_one();
+}
+
+/* Abandon pending/in-flight pings and clear stale results. Called on each
+ * new search and on browser open so old results can't map onto a rebuilt
+ * server list. */
+static void resetPings() {
+    s_pingGeneration.fetch_add(1);
+    {
+        std::lock_guard<std::mutex> lk(s_pingQueueMtx);
+        s_pingQueue.clear();
+    }
+    std::lock_guard<std::mutex> lk(s_pingResultsMtx);
+    s_pingResults.clear();
 }
 
 /* ---- Callback data for async LAN broadcast search ---- */
 struct BroadcastCbData {
     std::vector<ServerEntry> *servers;
     std::mutex *serversMtx;
-    std::mutex *pingResultsMtx;
-    std::vector<PingResult> *pingResults;
 };
 
-static ServerEntry serverEntryFromInfoPacket(INFO_PACKET *info, struct in_addr *addr) {
+static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     ServerEntry e = {};
     e.pingMs = -1;
     e.freePills = 0;
     e.freeBases = 0;
     e.lobbyStatus = 0;
 
-    utilPtoCString(info->mapname, e.mapName);
-    e.password = (info->has_password != 0);
-    e.mines = ((info->allow_mines & 0x80) != 0);
-
-    if (info->gameid.serveraddress.s_addr == 0) {
-        SDL_strlcpy(e.address, inet_ntoa(*addr), sizeof(e.address));
-    } else {
-        SDL_strlcpy(e.address, inet_ntoa(info->gameid.serveraddress), sizeof(e.address));
-    }
-    e.port = info->gameid.serverport;
-    WB_LOG_TRACE(WB_LOG_CAT_NET, "serverEntryFromInfoPacket: raw serverport=%u e.port=%u", (unsigned)info->gameid.serverport, (unsigned)e.port);
+    SDL_strlcpy(e.address, src->address, sizeof(e.address));
+    e.port = src->port;
+    SDL_strlcpy(e.mapName, src->mapName, sizeof(e.mapName));
     SDL_snprintf(e.version, sizeof(e.version), "%d.%d%d",
-                 info->h.versionMajor, info->h.versionMinor, info->h.versionRevision);
-    e.numPlayers = (BYTE)info->num_players;
-    e.numBases = (BYTE)info->free_bases;
-    e.numPills = (BYTE)info->free_pills;
-    e.game = (gameType)info->gametype;
-    e.ai = (aiType)info->allow_AI;
+                 src->versionMajor, src->versionMinor, src->versionRevision);
+    e.numPlayers = src->numPlayers;
+    e.numBases   = src->numBases;
+    e.numPills   = src->numPills;
+    e.mines      = src->mines;
+    e.game       = src->game;
+    e.ai         = src->ai;
+    e.password   = src->password;
 
     resolveCountryCode(e);
     return e;
 }
 
-extern "C" void broadcastServerCallback(INFO_PACKET *info, struct in_addr *addr, void *userData) {
+extern "C" void broadcastServerCallback(const DiscoveryServer *server, void *userData) {
     BroadcastCbData *cbd = (BroadcastCbData *)userData;
 
-    ServerEntry e = serverEntryFromInfoPacket(info, addr);
+    ServerEntry e = serverEntryFromDiscovery(server);
 
     int idx;
     {
@@ -285,19 +296,12 @@ extern "C" void broadcastServerCallback(INFO_PACKET *info, struct in_addr *addr,
         cbd->servers->push_back(e);
     }
 
-    /* Fire a ping for this server */
+    /* Queue a ping for this server (bounded pool). */
     PingWork pw = {};
     SDL_strlcpy(pw.address, e.address, FILENAME_MAX);
     pw.port = e.port;
     pw.index = idx;
-
-    std::mutex *pMtx = cbd->pingResultsMtx;
-    std::vector<PingResult> *pResults = cbd->pingResults;
-    std::thread([pw, pMtx, pResults]() {
-        PingResult pr = pingServer(pw);
-        std::lock_guard<std::mutex> lock(*pMtx);
-        pResults->push_back(pr);
-    }).detach();
+    enqueuePing(pw);
 }
 
 /* ---- Refresh icon (loaded from SVG) ---- */
@@ -344,6 +348,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* Set up ImGui context for this dialog */
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -431,13 +436,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         if (searchResultCg) { currentGamesDestroy(&searchResultCg); searchResultCg = nullptr; }
     }
 
-    /* Ping result state — static so fire-and-forget threads can write safely */
-    static std::mutex pingResultsMtx;
-    static std::vector<PingResult> pingResults;
-    {
-        std::lock_guard<std::mutex> lock(pingResultsMtx);
-        pingResults.clear();
-    }
+    /* Drop any pings still in flight from a previous browser session. */
+    resetPings();
 
     /* Filter state */
     int filterGameType = -1; /* -1 = all */
@@ -506,6 +506,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                             &e.numPlayers, &e.numBases, &e.numPills,
                             &e.mines, &e.game, &e.ai, &e.password);
 
+                        /* Hide servers older than BROWSER_MIN_VERSION. */
+                        if (!browserVersionAllowed(e.version)) {
+                            continue;
+                        }
+
                         resolveCountryCode(e);
                         newServers.push_back(e);
                     }
@@ -528,18 +533,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         statusText = langGetText(STR_DLGBROWSER_GAMES_LOADED);
                         loadingGames = false;
 
-                        /* Fire-and-forget async pings to each server */
+                        /* Queue async pings to each server (bounded pool) */
                         for (int i = 0; i < total; i++) {
                             PingWork pw = {};
                             SDL_strlcpy(pw.address, servers[i].address, FILENAME_MAX);
                             pw.port = servers[i].port;
                             pw.index = i;
-
-                            std::thread([pw]() {
-                                PingResult pr = pingServer(pw);
-                                std::lock_guard<std::mutex> lock(pingResultsMtx);
-                                pingResults.push_back(pr);
-                            }).detach();
+                            enqueuePing(pw);
                         }
                     } else {
                         statusText = langGetText(STR_DLGBROWSER_NO_GAMES);
@@ -577,8 +577,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
         /* Process incoming ping results */
         {
-            std::lock_guard<std::mutex> lock(pingResultsMtx);
-            for (auto &pr : pingResults) {
+            std::lock_guard<std::mutex> lock(s_pingResultsMtx);
+            for (auto &pr : s_pingResults) {
                 std::lock_guard<std::mutex> slock(serversMtx);
                 if (pr.index >= 0 && pr.index < (int)servers.size()) {
                     servers[pr.index].pingMs = pr.pingMs;
@@ -589,7 +589,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     }
                 }
             }
-            pingResults.clear();
+            s_pingResults.clear();
         }
 
         /* Tick the background game at fixed rate (unless paused) */
@@ -692,6 +692,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (ImGui::ImageButton("##refreshBtn", (ImTextureID)s_refreshIcon, iconSz)) {
                     doRefresh = true;
                 }
+                imguiHandOnHover();
                 if (wasSearching) ImGui::EndDisabled();
             } else {
                 /* Text fallback when SVG icon is unavailable */
@@ -702,6 +703,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (ImGui::SmallButton(langGetText(STR_DLGBROWSER_REFRESH))) {
                     doRefresh = true;
                 }
+                imguiHandOnHover();
                 if (wasSearching) ImGui::EndDisabled();
             }
             if (doRefresh) {
@@ -726,6 +728,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (searchThread.joinable()) {
                     searchThread.join();
                 }
+                /* Old search fully stopped: supersede any pings from the
+                 * previous list so their results can't land on the rebuilt
+                 * indices, and drop pending/in-flight work. */
+                resetPings();
 
                 searchResultCg = currentGamesCreate();
                 searchResultMotd[0] = '\0';
@@ -734,7 +740,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
                 struct SearchParams { char addr[FILENAME_MAX]; unsigned short port; bool tracker; };
                 SearchParams sp = {};
-                strncpy(sp.addr, tAddr, FILENAME_MAX - 1);
+                snprintf(sp.addr, FILENAME_MAX, "%s", tAddr);
                 sp.port = tPort;
                 sp.tracker = ut;
 
@@ -748,8 +754,6 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         static BroadcastCbData cbd;
                         cbd.servers = &servers;
                         cbd.serversMtx = &serversMtx;
-                        cbd.pingResultsMtx = &pingResultsMtx;
-                        cbd.pingResults = &pingResults;
                         ret = discoveryFindBroadcastGamesAsync(broadcastServerCallback, &cbd);
                     }
                     searchResultOk = ret;
@@ -901,6 +905,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                 }
                             }
                         }
+                        imguiHandOnHover();
                     }
 
                     /* Map name (C string from tracker/broadcast) */
@@ -1035,25 +1040,24 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
             if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, btnH))) {
                 const ServerEntry &e = servers[selectedItem];
-                if (strlen(e.version) < STRVER_LEN ||
-                    strncmp(e.version, STRVER, STRVER_LEN) != 0) {
-                    errorMsg = langGetText(STR_DLGBROWSER_ERR_VERSION);
+                /* No version-equality gate — the pre-flight info-request
+                 * inside gameFrontSetDlgState(openUdpJoin) surfaces a
+                 * localized "Server is version X, you have Y" error if
+                 * the build mismatches. */
+                char playerName[PLAYER_NAME_LEN];
+                gameFrontGetPlayerName(playerName);
+                if (strlen(playerName) == 0) {
+                    errorMsg = langGetText(STR_DLGBROWSER_ERR_NEEDNAME);
                     ImGui::OpenPopup(errPopupId);
                 } else {
-                    char playerName[PLAYER_NAME_LEN];
-                    gameFrontGetPlayerName(playerName);
-                    if (strlen(playerName) == 0) {
-                        errorMsg = langGetText(STR_DLGBROWSER_ERR_NEEDNAME);
-                        ImGui::OpenPopup(errPopupId);
-                    } else {
-                        gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
-                        gameFrontSetAIType(e.ai);
-                        gameFrontSetDlgState(openUdpJoin);
-                        result = (int)openUdpJoin;
-                        running = false;
-                    }
+                    gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
+                    gameFrontSetAIType(e.ai);
+                    gameFrontSetDlgState(openUdpJoin);
+                    result = (int)openUdpJoin;
+                    running = false;
                 }
             }
+            imguiHandOnHover();
             if (!hasSelection) ImGui::EndDisabled();
 
             /* Rejoin */
@@ -1061,26 +1065,21 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (!hasSelection) ImGui::BeginDisabled();
             if (ImGui::Button(langGetText(STR_DLGTCP_REJOIN), ImVec2(btnW, btnH))) {
                 const ServerEntry &e = servers[selectedItem];
-                if (strlen(e.version) < STRVER_LEN ||
-                    strncmp(e.version, STRVER, STRVER_LEN) != 0) {
-                    errorMsg = langGetText(STR_DLGBROWSER_ERR_VERSION);
+                char playerName[PLAYER_NAME_LEN];
+                gameFrontGetPlayerName(playerName);
+                if (strlen(playerName) == 0) {
+                    errorMsg = langGetText(STR_DLGBROWSER_ERR_NEEDNAME);
                     ImGui::OpenPopup(errPopupId);
                 } else {
-                    char playerName[PLAYER_NAME_LEN];
-                    gameFrontGetPlayerName(playerName);
-                    if (strlen(playerName) == 0) {
-                        errorMsg = langGetText(STR_DLGBROWSER_ERR_NEEDNAME);
-                        ImGui::OpenPopup(errPopupId);
-                    } else {
-                        gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
-                        gameFrontSetAIType(e.ai);
-                        gameFrontEnableRejoin();
-                        gameFrontSetDlgState(openUdpJoin);
-                        result = (int)openUdpJoin;
-                        running = false;
-                    }
+                    gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
+                    gameFrontSetAIType(e.ai);
+                    gameFrontEnableRejoin();
+                    gameFrontSetDlgState(openUdpJoin);
+                    result = (int)openUdpJoin;
+                    running = false;
                 }
             }
+            imguiHandOnHover();
             if (!hasSelection) ImGui::EndDisabled();
 
             /* New Game */
@@ -1094,6 +1093,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 result = (int)setupState;
                 running = false;
             }
+            imguiHandOnHover();
             if (useTracker && ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", langGetText(STR_DLGBROWSER_NEWGAME_PORTFWD_TIP));
             }
@@ -1104,6 +1104,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 gameFrontGetPlayerName(nameEditBuf);
                 ImGui::OpenPopup(setNamePopupId);
             }
+            imguiHandOnHover();
 
             /* Manual Connect */
             ImGui::SameLine();
@@ -1113,20 +1114,27 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 result = useTracker ? (int)openInternetManual : (int)openLanManual;
                 running = false;
             }
+            imguiHandOnHover();
 
-            /* Cancel - right-aligned */
+            /* Cancel - right-aligned, muted-grey styling per dialog spec. */
             ImGui::SameLine(panelW - btnW - 16.0f * s);
-            bool escPressed = ImGui::IsKeyPressed(ImGuiKey_Escape) &&
-                              !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup);
-            if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH)) || escPressed) {
+            WBUI::PushCancelStyle();
+            bool cancelClicked = ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH));
+            WBUI::PopCancelStyle();
+            if (cancelClicked || WBUI::CancelKeyPressed()) {
                 gameFrontSetDlgState(openWelcome);
                 running = false;
             }
+            imguiHandOnHover();
         }
 
         /* ---- Error popup ---- */
-        if (ImGui::BeginPopupModal(errPopupId, nullptr,
+        static float s_fadeGbErr = 0.0f;
+        static bool s_gbErrOpen = true; s_gbErrOpen = true;
+        if (ImGui::BeginPopupModal(errPopupId, &s_gbErrOpen,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeGbErr));
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
             {
@@ -1135,39 +1143,43 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (ImGui::Button(okBuf, ImVec2(80, 0))) {
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 
         /* ---- Set Player Name popup ---- */
-        if (ImGui::BeginPopupModal(setNamePopupId, nullptr,
+        static float s_fadeGbSetName = 0.0f;
+        static bool s_gbSetNameOpen = true; s_gbSetNameOpen = true;
+        if (ImGui::BeginPopupModal(setNamePopupId, &s_gbSetNameOpen,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeGbSetName));
             bool wbnActive = gameFrontGetWinbolonetUse();
             ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_PLAYERNAME));
             ImGui::SameLine(120 * s);
             ImGui::SetNextItemWidth(200 * s);
             if (wbnActive) ImGui::BeginDisabled();
-            ImGui::InputText("##nameEdit", nameEditBuf, PLAYER_NAME_LEN);
+            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+            bool nameEnter = ImGui::InputText("##nameEdit", nameEditBuf, PLAYER_NAME_LEN,
+                                              ImGuiInputTextFlags_EnterReturnsTrue);
             if (wbnActive) ImGui::EndDisabled();
             if (wbnActive) {
                 ImGui::TextUnformatted(langGetText(STR_DLGSETNAME_WBN_LOCKED));
             }
-            ImGui::Spacing();
-            {
-                char okBuf[64], cancelBuf[64];
-                snprintf(okBuf,     sizeof(okBuf),     "%s##name", langGetText(STR_OK));
-                snprintf(cancelBuf, sizeof(cancelBuf), "%s##name", langGetText(STR_CANCEL));
-                if (wbnActive) ImGui::BeginDisabled();
-                if (ImGui::Button(okBuf, ImVec2(80 * s, 0))) {
-                    gameFrontSetPlayerName(nameEditBuf);
-                    ImGui::CloseCurrentPopup();
-                }
-                if (wbnActive) ImGui::EndDisabled();
-                ImGui::SameLine(0.0f, 8.0f);
-                if (ImGui::Button(cancelBuf, ImVec2(80 * s, 0))) {
-                    ImGui::CloseCurrentPopup();
-                }
+            int nameFooter = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                                langGetText(STR_OK),
+                                                /*enterConfirms*/ true,
+                                                /*showSeparator*/ true,
+                                                /*confirmDisabled*/ wbnActive);
+            if (nameFooter == WBUI::FOOTER_CONFIRM || (nameEnter && !wbnActive)) {
+                gameFrontSetPlayerName(nameEditBuf);
+                ImGui::CloseCurrentPopup();
+            } else if (nameFooter == WBUI::FOOTER_CANCEL) {
+                ImGui::CloseCurrentPopup();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 

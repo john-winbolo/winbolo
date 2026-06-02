@@ -61,14 +61,15 @@
 *  Draw* path.
 *********************************************************/
 
-#include "global.h"
+#include "lv_global.h"
 #include "backend.h"
-#include "screenbullet.h"
-#include "screenlgm.h"
-#include "screentank.h"
-#include "pillbox.h"
-#include "bases.h"
-#include "bolo_map.h"
+#include "lv_screenbullet.h"
+#include "lv_screenlgm.h"
+#include "lv_screentank.h"
+#include "lv_pillbox.h"
+#include "lv_bases.h"
+#include "lv_bolo_map.h"
+#include "lv_players.h"
 
 #include <stdlib.h>  /* abort */
 
@@ -139,6 +140,16 @@ void screenLgmGetItem(screenLgm *value, BYTE itemNum,
   lv_screenLgmGetItem(value, itemNum, mx, my, px, py, frame);
 }
 
+/* mapview.c (shared with main game) calls the main-game
+ * playersScreenAllience(); forward to the LogViewer's lv_
+ * equivalent which uses module-globals for plrs/selfPlayer. */
+tankAlliance playersScreenAllience(players *plrs, BYTE selfPlayer,
+                                   BYTE playerNum) {
+  (void)plrs;
+  (void)selfPlayer;
+  return lv_playersScreenAllience(playerNum);
+}
+
 
 /* ====================================================================
  * Part 2 — abort stubs (linker-only).
@@ -147,59 +158,92 @@ void screenLgmGetItem(screenLgm *value, BYTE itemNum,
  * mapView{Centered,BuildTileBuffer,CalcSquare} are not invoked from
  * the logviewer; abort() makes any future accidental call obvious.
  *
- * Forward-declared opaque types (bolo-only — not in logviewer):
- *   struct GameSim, struct tankObj (bolo's `tank`), struct minesObj
- *   (bolo's `mines`).
- * The logviewer does have parallel `bases`, `pillboxes`, `map`, and
- * `baseAlliance` types — these come in via the includes above and are
- * used here only as pointers/enum-values; bodies never deref or
- * compare. ABI-compatible with the bolo definitions at the call site
- * because pointer/enum widths match.
+ * Forward-declared opaque types so the stubs don't drag server_sim.h
+ * (and its bolo internal closure) into the LogViewer's type universe.
+ * The linker resolves these by symbol name; type compatibility with
+ * the real declarations in server_sim.h isn't required at link time.
  * ==================================================================== */
 
-struct GameSim;
-struct tankObj;
-struct minesObj;
+struct ServerSim;
+struct TankRenderInfo;
+struct ShellRender;
+struct ExplosionRender;
+struct LgmRender;
+struct TankExplosionRender;
 
-bool basesExistPos(bases *value, BYTE xValue, BYTE yValue) {
-  (void)value; (void)xValue; (void)yValue;
+bool serverSimBaseExistsAt(const struct ServerSim *sim, BYTE x, BYTE y) {
+  (void)sim; (void)x; (void)y;
   abort();
 }
 
-baseAlliance basesGetAlliancePos(struct GameSim *sim, BYTE xValue, BYTE yValue) {
-  (void)sim; (void)xValue; (void)yValue;
+baseAlliance serverSimBaseGetAllianceAt(struct ServerSim *sim, BYTE x, BYTE y, BYTE viewPlayer) {
+  (void)sim; (void)x; (void)y; (void)viewPlayer;
   abort();
 }
 
-bool basesAmOwner(struct GameSim *sim, BYTE owner, BYTE xValue, BYTE yValue) {
-  (void)sim; (void)owner; (void)xValue; (void)yValue;
+bool serverSimBaseAmOwnerAt(struct ServerSim *sim, BYTE player, BYTE x, BYTE y) {
+  (void)sim; (void)player; (void)x; (void)y;
   abort();
 }
 
-bool pillsExistPos(pillboxes *value, BYTE xValue, BYTE yValue) {
-  (void)value; (void)xValue; (void)yValue;
+bool serverSimPillExistsAt(const struct ServerSim *sim, BYTE x, BYTE y) {
+  (void)sim; (void)x; (void)y;
   abort();
 }
 
-BYTE pillsGetScreenHealth(struct GameSim *sim, pillboxes *value,
-                          BYTE xValue, BYTE yValue) {
-  (void)sim; (void)value; (void)xValue; (void)yValue;
+BYTE serverSimPillGetScreenHealthAt(struct ServerSim *sim, BYTE x, BYTE y, BYTE viewPlayer) {
+  (void)sim; (void)x; (void)y; (void)viewPlayer;
   abort();
 }
 
-BYTE mapGetPos(map *value, BYTE xValue, BYTE yValue) {
-  (void)value; (void)xValue; (void)yValue;
+BYTE serverSimGetMapTerrain(const struct ServerSim *sim, BYTE x, BYTE y) {
+  (void)sim; (void)x; (void)y;
   abort();
 }
 
-bool mapIsMine(map *value, BYTE xValue, BYTE yValue) {
-  (void)value; (void)xValue; (void)yValue;
+bool serverSimMapIsMine(const struct ServerSim *sim, BYTE x, BYTE y) {
+  (void)sim; (void)x; (void)y;
   abort();
 }
 
-bool minesExistPos(struct minesObj **visMines, map *mp,
-                   BYTE xValue, BYTE yValue) {
-  (void)visMines; (void)mp; (void)xValue; (void)yValue;
+bool serverSimMineExistsAt(struct ServerSim *sim, BYTE x, BYTE y) {
+  (void)sim; (void)x; (void)y;
+  abort();
+}
+
+bool serverSimGetTankRender(struct ServerSim *sim, BYTE i,
+                            struct TankRenderInfo *out) {
+  (void)sim; (void)i; (void)out;
+  abort();
+}
+
+tankAlliance serverSimGetTankAllianceFor(struct ServerSim *sim,
+                                         BYTE selfPlayer, BYTE tankNum) {
+  (void)sim; (void)selfPlayer; (void)tankNum;
+  abort();
+}
+
+int serverSimGetShellSnapshot(struct ServerSim *sim,
+                              struct ShellRender *out, int cap) {
+  (void)sim; (void)out; (void)cap;
+  abort();
+}
+
+int serverSimGetExplosionSnapshot(struct ServerSim *sim,
+                                  struct ExplosionRender *out, int cap) {
+  (void)sim; (void)out; (void)cap;
+  abort();
+}
+
+bool serverSimGetLgmRender(struct ServerSim *sim, BYTE i,
+                           struct LgmRender *out) {
+  (void)sim; (void)i; (void)out;
+  abort();
+}
+
+int serverSimGetTankExplosionSnapshot(struct ServerSim *sim,
+                                      struct TankExplosionRender *out, int cap) {
+  (void)sim; (void)out; (void)cap;
   abort();
 }
 
@@ -266,27 +310,38 @@ BYTE screenCalcCrater(BYTE aboveLeft, BYTE above, BYTE aboveRight,
   abort();
 }
 
-int tankGetDeathWait(struct tankObj **value) {
-  (void)value;
-  abort();
-}
-
-BYTE tankGetDir(struct tankObj **value) {
-  (void)value;
-  abort();
-}
-
-void tankGetWorld(struct tankObj **value, WORLD *x, WORLD *y) {
-  (void)value; (void)x; (void)y;
-  abort();
-}
-
-bool tankIsOnBoat(struct tankObj **value) {
-  (void)value;
-  abort();
-}
-
 BYTE utilGetDir(TURNTYPE value) {
   (void)value;
   abort();
+}
+
+
+/* ====================================================================
+ * Part 3 — tank-label icon hooks (linker-only, return "unavailable").
+ *
+ * sdl3draw_status.c's sdl3DrawTankLabel (shared with the main game)
+ * draws a country flag or AI-brain badge beside the tank name. Those
+ * textures live in flags.c / sdl3imgui.cpp, neither of which the
+ * standalone LogViewer links. Returning NULL / false here makes
+ * sdl3DrawTankLabel fall back to rendering the full "name@loc" text,
+ * preserving the LogViewer's existing label appearance.
+ *
+ * Opaque SDL_Texture forward declaration — resolved by symbol name at
+ * link time; the real signatures live in flags.h / sdl3imgui.h.
+ * ==================================================================== */
+
+struct SDL_Texture;
+
+struct SDL_Texture *flagsGetTexture(const char countryCode[2]) {
+  (void)countryCode;
+  return NULL;
+}
+
+struct SDL_Texture *sdl3ImguiGetBrainIcon(void) {
+  return NULL;
+}
+
+bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {
+  (void)playerNum;
+  return false;
 }

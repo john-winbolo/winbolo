@@ -33,7 +33,9 @@
 #include "screentank.h"
 #include "players.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "client_sim.h"
+#include "game_sim.h"
 
 /*********************************************************
 *NAME:          screenTanksCreate
@@ -93,16 +95,35 @@ void screenTanksPrepare(ClientSim *cs, screenTanks *value, tank *tnk, BYTE leftP
     (*value).pos[0].px = tankGetScreenPX(tnk);
     (*value).pos[0].py = tankGetScreenPY(tnk);
     (*value).pos[0].frame = tankGetFrame(tnk);
-    (*value).pos[0].playerNum = cs->myPlayerNum;
+    (*value).pos[0].playerNum = clientSimGetMyPlayerNum(cs);
     /* Get the tanks names */
     (*value).pos[0].playerName[0] = '\0';
     if (tankGetArmour(tnk) <= TANK_FULL_ARMOUR) {
-      playersGetPlayerName(&cs->sim.plyrs, cs->myPlayerNum, playerName, FALSE);
-      labelMakeTankLabel(cs, (*value).pos[0].playerName, playerName, langGetText(MESSAGE_THIS_COMPUTER), TRUE);
+      GameSim *gs = clientSimGetGameSim(cs);
+      BYTE selfPN = clientSimGetMyPlayerNum(cs);
+      playersGetPlayerName(&gs->plyrs, selfPN, playerName, FALSE);
+      /* Prefer the resolved 2-char country code over the
+       * "This Computer" placeholder. The country code arrives via the
+       * WBN news fetch / server-side geo path and is written into
+       * plrs->item[selfPN].location — exactly the same field
+       * playersMakeScreenTanks reads for every other tank, so the self
+       * label parses through sdl3DrawTankLabel's @<loc> splitter the
+       * same as everyone else and gets the country flag drawn beside
+       * it. The placeholder only kicks in pre-handshake when no
+       * country has come back yet. */
+      const char *selfLoc = gs->plyrs->item[selfPN].location;
+      const char *labelLoc = (selfLoc[0] != '\0')
+                             ? selfLoc
+                             : langGetText(MESSAGE_THIS_COMPUTER);
+      labelMakeTankLabel(cs, (*value).pos[0].playerName, playerName,
+                         (char *)labelLoc, TRUE);
     }
   }
   /* Add the rest of the tanks as required */
-  playersMakeScreenTanks(cs, &cs->sim, &cs->sim.plyrs, value, leftPos, rightPos, top, bottom);
+  {
+    GameSim *gs = clientSimGetGameSim(cs);
+    playersMakeScreenTanks(cs, gs, &gs->plyrs, value, leftPos, rightPos, top, bottom);
+  }
 }
 
 /*********************************************************
@@ -116,7 +137,7 @@ void screenTanksPrepare(ClientSim *cs, screenTanks *value, tank *tnk, BYTE leftP
 *ARGUMENTS:
 *  value - Pointer to the screenTanks data structure
 *********************************************************/
-BYTE screenTanksGetNumEntries(screenTanks *value) {
+BYTE screenTanksGetNumEntries(const screenTanks *value) {
   return ((*value).numTanksScreen);
 }
 
@@ -184,7 +205,7 @@ void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, 
 *  playerNum  - Player Number of this tank
 *  playerName - String to hold the player name
 *********************************************************/
-void screenTanksGetItem(screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, BYTE *playerNum, char *playerName) {
+void screenTanksGetItem(const screenTanks *value, BYTE itemNum, BYTE *mx, BYTE *my, BYTE *px, BYTE *py, BYTE *frame, BYTE *playerNum, char *playerName) {
   itemNum--;
   if (itemNum <= (*value).numTanksScreen) {
     *mx = (*value).pos[itemNum].mx;

@@ -13,10 +13,9 @@
 #include <sys/stat.h>
 
 #include "../common/wb_log.h"
-#include "../bolo/screen.h"
-#include "../bolo/client_sim.h"
-#include "../bolo/frontend.h"
-#include "../bolo/gui_message.h"
+#include "client_sim.h"
+#include "frontend.h"
+#include "gui_message.h"
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../gui/draw.h"
@@ -41,6 +40,7 @@ extern bool showGunsight;
 extern bool soundEffects;
 extern bool backgroundSound;
 extern bool useSoundKeepalive;
+extern int  soundVolume;
 extern bool allowNewPlayers;
 extern bool showNewswireMessages;
 extern bool showAssistantMessages;
@@ -91,16 +91,16 @@ void windowReCreate(void)  { }
 void windowSetQuitting(void) { winboloQuit = TRUE; finishedLoop = TRUE; }
 
 void windowApplyMenuChecks(ClientSim *cs) {
-  screenSetGunsightCS(cs, showGunsight);
-  screenSetAutoScroll(cs, autoScrollingEnabled);
-  screenSetLabelOwnTank(cs, labelSelf);
-  screenSetMesageLabelLen(cs, labelMsg);
-  screenSetTankLabelLen(cs, labelTank);
-  screenShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
-  screenShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
-  screenShowMessages(cs, MSG_AI, showAIMessages);
-  screenShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
-  screenShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
+  clientSimSetGunsight(cs, showGunsight);
+  clientSimSetAutoScroll(cs, autoScrollingEnabled);
+  clientSimSetLabelOwnTank(cs, labelSelf);
+  clientSimSetLabelMessage(cs, labelMsg);
+  clientSimSetLabelTankLabel(cs, labelTank);
+  clientSimShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages);
+  clientSimShowMessages(cs, MSG_ASSISTANT, showAssistantMessages);
+  clientSimShowMessages(cs, MSG_AI, showAIMessages);
+  clientSimShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
+  clientSimShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
   clientSimSetAllowNewPlayers(cs, allowNewPlayers);
 }
 
@@ -145,19 +145,19 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
 /* Menu toggles */
 void windowShowGunsight_toggle(ClientSim *cs) {
   showGunsight = !showGunsight;
-  screenSetGunsightCS(cs, showGunsight);
+  clientSimSetGunsight(cs, showGunsight);
 }
 void windowAutomaticScrolling_toggle(ClientSim *cs) {
   autoScrollingEnabled = !autoScrollingEnabled;
-  if (cs) screenSetAutoScroll(cs, autoScrollingEnabled);
+  if (cs) clientSimSetAutoScroll(cs, autoScrollingEnabled);
 }
 void windowShowPillLabels_toggle(ClientSim *cs) {
   BYTE count, total;
   showPillLabels = !showPillLabels;
   sdl3DrawSetPillsStatusClear();
-  total = pillsGetNumPills(&cs->sim.pb);
+  total = clientSimGetPillCount(cs);
   for (count = 1; count <= total; count++) {
-    BYTE pillStat = screenPillAllianceCS(cs, count);
+    BYTE pillStat = clientSimGetPillAlliance(cs, count);
     sdl3DrawStatusPillbox(count, pillStat, showPillLabels);
   }
   sdl3DrawCopyPillsStatus(0, 0);
@@ -166,9 +166,9 @@ void windowShowBaseLabels_toggle(ClientSim *cs) {
   BYTE count, total;
   showBaseLabels = !showBaseLabels;
   sdl3DrawSetBasesStatusClear();
-  total = basesGetNumBases(&cs->sim.bs);
+  total = clientSimGetBaseCount(cs);
   for (count = 1; count <= total; count++) {
-    BYTE baseStat = screenBaseAllianceCS(cs, count);
+    BYTE baseStat = clientSimGetBaseAlliance(cs, count);
     sdl3DrawStatusBase(count, baseStat, showBaseLabels);
   }
   sdl3DrawCopyBasesStatus(0, 0);
@@ -186,19 +186,25 @@ void windowSoundKeepalive(void) {
     soundKeepalive(useSoundKeepalive);
   }
 }
+void windowSetSoundVolume(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  soundVolume = pct;
+  soundSetVolume(pct);
+}
 void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
   allowNewPlayers = !allowNewPlayers;
   clientSimSetAllowNewPlayers(cs, allowNewPlayers);
 }
-void windowMenuNewswire_toggle(ClientSim *cs)    { showNewswireMessages = !showNewswireMessages; if (cs) screenShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages); }
-void windowMenuAssistant_toggle(ClientSim *cs)   { showAssistantMessages = !showAssistantMessages; if (cs) screenShowMessages(cs, MSG_ASSISTANT, showAssistantMessages); }
-void windowMenuAI_toggle(ClientSim *cs)          { showAIMessages = !showAIMessages; if (cs) screenShowMessages(cs, MSG_AI, showAIMessages); }
-void windowMenuNetwork_toggle(ClientSim *cs)     { showNetworkStatusMessages = !showNetworkStatusMessages; if (cs) screenShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages); }
-void windowMenuNetworkDebug_toggle(ClientSim *cs){ showNetworkDebugMessages = !showNetworkDebugMessages; if (cs) screenShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages); }
+void windowMenuNewswire_toggle(ClientSim *cs)    { showNewswireMessages = !showNewswireMessages; if (cs) clientSimShowMessages(cs, MSG_NEWSWIRE, showNewswireMessages); }
+void windowMenuAssistant_toggle(ClientSim *cs)   { showAssistantMessages = !showAssistantMessages; if (cs) clientSimShowMessages(cs, MSG_ASSISTANT, showAssistantMessages); }
+void windowMenuAI_toggle(ClientSim *cs)          { showAIMessages = !showAIMessages; if (cs) clientSimShowMessages(cs, MSG_AI, showAIMessages); }
+void windowMenuNetwork_toggle(ClientSim *cs)     { showNetworkStatusMessages = !showNetworkStatusMessages; if (cs) clientSimShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages); }
+void windowMenuNetworkDebug_toggle(ClientSim *cs){ showNetworkDebugMessages = !showNetworkDebugMessages; if (cs) clientSimShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages); }
 void windowHideMainView_toggle(void)    { hideMainView = !hideMainView; }
-void windowLabelOwnTank_toggle(ClientSim *cs)    { labelSelf = !labelSelf; if (cs) screenSetLabelOwnTank(cs, labelSelf); }
-void windowSetMessageLabelLen(ClientSim *cs, labelLen n){ labelMsg = n; if (cs) screenSetMesageLabelLen(cs, labelMsg); }
-void windowSetTankLabelLen(ClientSim *cs, labelLen n)   { labelTank = n; if (cs) screenSetTankLabelLen(cs, labelTank); }
+void windowLabelOwnTank_toggle(ClientSim *cs)    { labelSelf = !labelSelf; if (cs) clientSimSetLabelOwnTank(cs, labelSelf); }
+void windowSetMessageLabelLen(ClientSim *cs, labelLen n){ labelMsg = n; if (cs) clientSimSetLabelMessage(cs, labelMsg); }
+void windowSetTankLabelLen(ClientSim *cs, labelLen n)   { labelTank = n; if (cs) clientSimSetLabelTankLabel(cs, labelTank); }
 void windowNewGame(void)                 { winboloQuit = FALSE; }
 void windowQuit(void)                    { winboloQuit = TRUE; }
 
@@ -215,7 +221,7 @@ void windowDisableSound(void)           { soundEffects = FALSE; useSoundKeepaliv
 bool windowGetBackgroundSound(void)     { return backgroundSound; }
 void windowRedrawAll(ClientSim *cs) {
   clientMutexWaitFor();
-  sdl3DrawRedrawAll(cs, getBuildCurrentSelectCS(cs), NULL, showPillLabels, showBaseLabels);
+  sdl3DrawRedrawAll(cs, clientSimGetCurrentBuildSelect(cs), NULL, showPillLabels, showBaseLabels);
   clientMutexRelease();
 }
 void *windowWnd(void) { return NULL; }
@@ -223,8 +229,8 @@ void *windowWnd(void) { return NULL; }
 void windowSaveMap(ClientSim *cs) { (void)cs; }
 
 void windowKeyPressed(ClientSim *cs, int keyCode) {
-  if (keyCode == keys.kiTankView) screenTankViewCS(cs);
-  else if (keyCode == keys.kiPillView) screenPillViewCS(cs, 0, 0);
+  if (keyCode == keys.kiTankView) clientSimTankView(cs);
+  else if (keyCode == keys.kiPillView) clientSimPillView(cs, 0, 0);
 }
 void windowButtonAdd(int keyCode)    { (void)keyCode; }
 void windowButtonRemove(int keyCode) { (void)keyCode; }
@@ -234,35 +240,46 @@ void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
 void windowStartTutorial(void) { }
 void windowAllowPlayerNameChange(bool allow) { (void)allow; }
 
+/* Active-cs gate — see desktop frontend in src/gui/sdl3/winbolo.c for
+ * the rationale. NULL = no registration yet; calls fall through. */
+static ClientSim *s_activeUiCs = NULL;
+
+void frontEndSetActiveClientSim(struct ClientSim *cs) {
+  s_activeUiCs = cs;
+}
+
 /* -------------------------------------------------------
  * Frontend callbacks — called by backend (bolo engine)
  * ------------------------------------------------------- */
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
-                            int32_t srtDelay, bool isPillView, tank *tank, int edgeX, int edgeY) {
+                            int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
   if (hideMainView == FALSE && drawBusy == FALSE) {
     BYTE cursorX, cursorY;
-    bool showCursor = screenGetCursorPosCS(cs, &cursorX, &cursorY);
-    sdl3DrawSetNetFailed(cs->netStat == netFailed);
+    bool showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
+    sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
     sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                        NULL, showPillLabels, showBaseLabels,
                        srtDelay, isPillView, edgeX, edgeY,
-                       showCursor, cursorX, cursorY, tank);
+                       showCursor, cursorX, cursorY);
   }
 }
 
-void frontEndUpdateTankStatusBars(BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
+void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (armour > TANK_FULL_ARMOUR) {
     armour = 0;
   }
   sdl3DrawStatusTankBars(0, 0, shells, mines, armour, trees);
 }
 
-void frontEndUpdateBaseStatusBars(BYTE shells, BYTE mines, BYTE armour) {
+void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3DrawStatusBaseBars(0, 0, shells, mines, armour, FALSE);
 }
 
-void frontEndPlaySound(sndEffects value) {
+void frontEndPlaySound(ClientSim *cs, sndEffects value) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (soundEffects == TRUE) soundPlayEffect(value);
 }
 
@@ -270,36 +287,43 @@ void windowPlaySound(sndEffects value) {
   if (soundEffects == TRUE) soundPlayEffect(value);
 }
 
-void frontEndStatusPillbox(BYTE pillNum, pillAlliance pb) {
+void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3DrawStatusPillbox(pillNum, pb, showPillLabels);
   sdl3DrawCopyPillsStatus(0, 0);
 }
 
-void frontEndStatusTank(BYTE tankNum, tankAlliance ts) {
+void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3DrawStatusTank(tankNum, ts);
   sdl3DrawCopyTanksStatus(0, 0);
 }
 
-void frontEndStatusBase(BYTE baseNum, baseAlliance bs) {
+void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3DrawStatusBase(baseNum, bs, showBaseLabels);
   sdl3DrawCopyBasesStatus(0, 0);
 }
 
-void frontEndMessages(char *top, char *bottom) {
+void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (drawBusy == FALSE) sdl3DrawMessages(0, 0, top, bottom);
 }
 
-void frontEndKillsDeaths(int kills, int deaths) {
+void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (drawBusy == FALSE) sdl3DrawKillsDeaths(0, 0, kills, deaths);
 }
 
-void frontEndManStatus(bool isDead, TURNTYPE angle) {
+void frontEndManStatus(ClientSim *cs, bool isDead, TURNTYPE angle) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   clientMutexWaitFor();
   sdl3DrawSetManStatus(0, 0, isDead, angle);
   clientMutexRelease();
 }
 
-void frontEndManClear(void) {
+void frontEndManClear(ClientSim *cs) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   clientMutexWaitFor();
   sdl3DrawSetManClear();
   sdl3DrawCopyManStatus(0, 0);
@@ -312,17 +336,30 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   }
 }
 
-void frontEndGameOver(void) {
+void frontEndDrawReturningToLobby(ClientSim *cs) {
+  if (hideMainView == FALSE && drawBusy == FALSE) {
+    sdl3DrawReturningToLobby(cs);
+  }
+}
+
+void frontEndAudioReturningToLobby(bool active) {
+  soundSetReturningToLobby(active);
+}
+
+void frontEndGameOver(ClientSim *cs) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Game over (time limit expired)");
   finishedLoop = TRUE;
 }
 
-void frontEndClearPlayer(playerNumbers value) {
+void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3ImguiClearPlayer((unsigned char)value);
 }
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
   char cc[3];
-  if (!screenGetGameRunningCS(cs)) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientSimIsRunning(cs)) {
     cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
     sdl3ImguiSetPlayer((unsigned char)value, str, cc);
     return;
@@ -333,17 +370,25 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
   sdl3ImguiSetPlayer((unsigned char)value, str, cc);
   sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, clientType, clientFlags);
 }
-void frontEndSetPlayerCheckState(playerNumbers value, bool isChecked) {
+void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientSimIsRunning(cs)) return;
+  sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
+}
+void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled)   { (void)enabled; }
 
 void frontEndRedrawAll(ClientSim *cs) { windowRedrawAll(cs); }
 
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   showGunsight = !isShown;
-  screenSetGunsightCS(cs, showGunsight);
+  clientSimSetGunsight(cs, showGunsight);
 }
 
 void frontEndShowAllianceRequest(char *playerName, BYTE playerNum) {

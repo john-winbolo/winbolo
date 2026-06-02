@@ -40,9 +40,13 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "../../bolo/global.h"
-#include "../../bolo/screen.h"
-#include "../../bolo/client_sim.h"
+#include "global.h"
+#include "viewport_types.h"  /* screen, screenMines, screenGunsight */
+#include "client_enums.h"    /* buildSelect */
+#include "screentank.h"      /* screenTanks, tank */
+#include "screenbullet.h"    /* screenBullets */
+#include "screenlgm.h"       /* screenLgm */
+#include "client_sim.h"
 /* Status / message / HUD renderers extracted in Phase C of
  * plans/ctrailer.md. sdl3draw.h re-exposes them transparently so
  * existing callers compile unchanged. */
@@ -77,6 +81,13 @@ SDL_Renderer *sdl3DrawGetRenderer(void);
  * sdl3DrawReloadTiles().  Useful for ImGui-based skin previews. */
 SDL_Texture  *sdl3DrawGetTilesTex(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
+
+/* Live game-render destination rect + scale, used by UI overlays to
+ * pin themselves to the actual on-screen game viewport (which can be
+ * letterboxed / pillarboxed / non-integer scaled in custom zoom). Any
+ * pointer may be NULL. */
+void sdl3DrawGetGameRect(float *destX, float *destY,
+                          float *destW, float *destH, float *scale);
 
 /* Atlas sheet scale used when blitting from the texture returned by
  * sdl3DrawGetTilesTexture. Sprite source coords stored in the legacy
@@ -135,7 +146,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
                         screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms,
                         RECT *rcWindow, bool showPillLabels, bool showBaseLabels,
                         int32_t srtDelay, bool isPillView, int edgeX, int edgeY,
-                        bool useCursor, BYTE cursorLeft, BYTE cursorTop, tank *tank);
+                        bool useCursor, BYTE cursorLeft, BYTE cursorTop);
 
 /*********************************************************
 *NAME:          sdl3DrawRedrawAll
@@ -153,6 +164,17 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
 *  "Downloading map data..." message (Phase 5).
 *********************************************************/
 void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack);
+
+/*********************************************************
+*NAME:          sdl3DrawReturningToLobby
+*PURPOSE:
+*  Same chrome + black playfield as sdl3DrawDownloadScreen
+*  with justBlack=true, plus a centred "Returning to lobby"
+*  caption. Rendered during the brief post-game window
+*  where the server has sent CTRL_GAME_PHASE_GAME_OVER
+*  but inLobby has not yet flipped.
+*********************************************************/
+void sdl3DrawReturningToLobby(ClientSim *cs);
 
 /*********************************************************
 *NAME:          sdl3DrawMainScreenBlack
@@ -226,7 +248,7 @@ void sdl3DrawStartDelay(RECT *rcWindow, int32_t srtDelay);
 *NAME:          sdl3DrawSetNetFailed
 *PURPOSE:
 *  Call with v=true before sdl3DrawMainScreen when
-*  cs->netStat==netFailed so the overlay is drawn
+*  clientSimGetNetStatus(cs)==netFailed so the overlay is drawn
 *  inside the same frame.  Call with v=false otherwise.
 *********************************************************/
 void sdl3DrawSetNetFailed(bool v);

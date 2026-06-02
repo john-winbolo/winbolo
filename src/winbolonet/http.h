@@ -34,7 +34,7 @@
 #ifndef __HTTP_H
 #define __HTTP_H
 
-#include "../bolo/global.h"
+#include "global.h"
 
 struct cJSON;
 
@@ -85,6 +85,22 @@ void httpDestroy(void);
 int wbn_api_post(const char *endpoint, const char *json_body, char **response_out);
 
 /*********************************************************
+*NAME:          wbn_api_post_server
+*PURPOSE:
+* Server-scoped low-level POST. Same as wbn_api_post plus
+* an Authorization: Bearer <token> header sourced from the
+* in-memory bearer (set after POST server/register).
+* Refuses to send (returns -1) and logs to stderr when the
+* bearer is empty; no curl is invoked in that case.
+*
+*ARGUMENTS:
+* endpoint     - API path after /api/v1/
+* json_body    - JSON request body string
+* response_out - Receives heap-allocated response string (caller frees)
+*********************************************************/
+int wbn_api_post_server(const char *endpoint, const char *json_body, char **response_out);
+
+/*********************************************************
 *NAME:          wbn_api_call
 *PURPOSE:
 * High-level JSON API call. Serializes the cJSON body,
@@ -99,6 +115,21 @@ int wbn_api_post(const char *endpoint, const char *json_body, char **response_ou
 * response - Receives parsed cJSON response (caller frees)
 *********************************************************/
 int wbn_api_call(const char *endpoint, struct cJSON *body, struct cJSON **response);
+
+/*********************************************************
+*NAME:          wbn_api_call_server
+*PURPOSE:
+* Server-scoped high-level JSON API call. Same shape as
+* wbn_api_call but attaches Authorization: Bearer using the
+* stored server bearer. Returns -1 without invoking curl
+* when the bearer is empty (no *response allocated).
+*
+*ARGUMENTS:
+* endpoint - API path after /api/v1/
+* body     - cJSON object for the request body
+* response - Receives parsed cJSON response (caller frees)
+*********************************************************/
+int wbn_api_call_server(const char *endpoint, struct cJSON *body, struct cJSON **response);
 
 /*********************************************************
 *NAME:          httpSendLogFile
@@ -130,6 +161,15 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback);
 int wbn_api_get(const char *path, char **response_out);
 
 /*********************************************************
+*NAME:          httpGetBaseUrl
+*PURPOSE:
+* Returns the configured WBN base URL (no trailing slash,
+* e.g. "https://wbn.winbolo.net"). Returns an empty string
+* before httpCreate() has succeeded.
+*********************************************************/
+const char *httpGetBaseUrl(void);
+
+/*********************************************************
 *NAME:          wbn_api_download
 *PURPOSE:
 * Downloads a file from WBN to disk. Builds the full URL
@@ -157,6 +197,29 @@ int wbn_api_download(const char *path, const char *dest_path);
 * size_out - Receives buffer size in bytes
 *********************************************************/
 int wbn_api_download_to_memory(const char *path, uint8_t **data_out, size_t *size_out);
+
+/*********************************************************
+*NAME:          wbn_api_download_to_memory_cancellable
+*PURPOSE:
+* Like wbn_api_download_to_memory, but the caller can abort
+* the transfer mid-flight by setting *cancel_flag to a
+* non-zero value (atomic int). Returns -2 on cancel,
+* otherwise the HTTP status code or -1 on transport error.
+* On success, *data_out / *size_out are populated as in the
+* non-cancellable variant; on any non-200 outcome they are
+* left as NULL/0 and any partial buffer is freed.
+*
+*ARGUMENTS:
+* path        - API path after /api/v1/
+* data_out    - Receives heap-allocated buffer (caller frees)
+* size_out    - Receives buffer size in bytes
+* cancel_flag - Pointer to an int polled during transfer
+*               (treat as volatile/atomic). NULL = no cancel.
+*********************************************************/
+int wbn_api_download_to_memory_cancellable(const char *path,
+                                            uint8_t **data_out,
+                                            size_t *size_out,
+                                            volatile int *cancel_flag);
 
 /*********************************************************
 *NAME:          httpSetAltIpAddress

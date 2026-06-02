@@ -26,12 +26,12 @@
 *********************************************************/
 
 /* Includes */
-#include "global.h"
-#include "tilenum.h"
-#include "pillbox.h"
+#include "lv_global.h"
+#include "lv_tilenum.h"
+#include "lv_pillbox.h"
 #include "backend.h"
-#include "players.h"
-#include "messages.h"
+#include "lv_players.h"
+#include "lv_messages.h"
 #include "../gui/lang.h"
 
 /*********************************************************
@@ -425,7 +425,7 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
     /* Neutral pill — normalized to MESSAGE_CAPTURE_PILL ("Neutral Pillbox"). */
     MessageArgs args = {0};
     lv_playersMakeMessageName(owner, ownerName);
-    snprintf(args.playerName, sizeof(args.playerName), "%s", ownerName);
+    snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, ownerName);
     lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
   } else if (owner == NEUTRAL) {
     /* Do nothing */
@@ -433,9 +433,9 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
     /* Stole pill */
     MessageArgs args = {0};
     lv_playersMakeMessageName(owner, ownerName);
-    snprintf(args.playerName, sizeof(args.playerName), "%s", ownerName);
+    snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, ownerName);
     lv_playersGetPlayerName(returnValue, oldOwner);
-    snprintf(args.otherName, sizeof(args.otherName), "%s", oldOwner);
+    snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, oldOwner);
     lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
   }
   (*value)->item[pillNum].owner = owner;

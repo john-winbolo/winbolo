@@ -30,7 +30,6 @@
 #include <math.h>
 #include <stdlib.h>
 #include "global.h"
-#include "screen.h"
 #include "scroll.h"
 #include "scroll_item_list.h"
 #include "tank.h"
@@ -38,6 +37,93 @@
 #include "pillbox.h"
 #include "shells.h"
 #include "bases.h"
+#include "game_sim.h"
+
+
+/* Autoscroll rate cap. Game runs at ~20 ticks/sec; this caps the camera
+ * at one 1-tile move per N ticks on each axis. Picks (at N=5) → 4 tiles/sec
+ * so an 8-tile target jump glides over ~2 seconds instead of whipping
+ * across in 400 ms. Tune here and rebuild.
+ *   N = 5 → 4 tiles/sec  (default)
+ *   N = 4 → 5 tiles/sec
+ *   N = 3 → ~6.7 tiles/sec
+ *   N = 1 → 20 tiles/sec (no cap — original behaviour) */
+#define AUTOSCROLL_TICKS_PER_TILE 5
+
+/* Saturating counters: ticks since last 1-tile autoscroll fired on each
+ * axis. AUTOSCROLL_TICKS_PER_TILE gates the next move. Module-level
+ * because ScrollState is off-limits for this change; single viewer
+ * assumption holds for normal client play. */
+static BYTE g_ticksSinceScrollX = AUTOSCROLL_TICKS_PER_TILE;
+static BYTE g_ticksSinceScrollY = AUTOSCROLL_TICKS_PER_TILE;
+
+/* Smoothed facing angle for the priority/veto math (NOT the lead).
+ *
+ * Raw angle reorients instantly with the tank; if the item list
+ * scores off the raw value, a sharp turn flips every behind item's
+ * directional penalty in one frame and floods the priority list.
+ * Even with the +4 flat penalty, a hard reversal can promote a
+ * previously-suppressed far item enough to swing the target.
+ *
+ * We low-pass filter the bradian angle (wrap-aware so 240° → 30°
+ * takes the short way) at SMOOTH_ANGLE_ALPHA per tick. With 0.2 the
+ * 63% catchup is ~5 ticks (250 ms) — enough that a turn-and-back
+ * within that window barely budges the priorities.
+ *
+ * Reset to current angle whenever the tank is stationary (speed 0)
+ * so a stop-then-go in a new direction doesn't carry stale lag.
+ *
+ * The lead vector still uses raw `angle` so the camera doesn't
+ * briefly aim backwards during a turn. */
+#define SMOOTH_ANGLE_ALPHA 0.2f
+static float g_smoothAngleBR        = 0.0f;
+static BYTE  g_smoothAngleLastSpeed = 0;
+
+/* Forward-important hysteresis.
+ *
+ * The directional veto in scrollItemListProcess engages when any
+ * non-special item is more than 1 tile ahead of the tank in the
+ * facing direction. That's a binary threshold: a small angle change
+ * can drop a near-threshold item below 1 tile of forward component
+ * and disengage the veto, which lets a previously-vetoed behind item
+ * suddenly pull the camera by several tiles. The user observed this
+ * as a stationary-ish turn producing small up/down/up bumps.
+ *
+ * To bridge the wobble, once the natural check has fired TRUE we keep
+ * the effective flag TRUE for FORWARD_IMP_STICKY_TICKS more ticks
+ * even if the natural check briefly flips off. A real direction
+ * change (sustained absence of items ahead) lets the counter expire
+ * and the natural FALSE through. */
+#define FORWARD_IMP_STICKY_TICKS 15
+static BYTE g_forwardImpStickyTicks = 0;
+
+/* Observation-based lead vector.
+ *
+ * The old lead computed where the tank "would be" in 1 second from
+ * its engine `speed` and `angle`. Two problems:
+ *  1. If the tank is wedged against a wall, speed > 0 but the tank
+ *     isn't actually moving — yet the lead still pushes the target
+ *     forward, drifting the camera off a stationary tank.
+ *  2. On a sharp turn the lead instantly snaps to the new facing
+ *     direction even though the tank's real velocity is still
+ *     rotating in; the lead-driven target jump is the "wonky on
+ *     turn" feeling.
+ *
+ * Replace it with a smoothed per-tick measured delta: lead reflects
+ * what the tank actually did, not what speed claims. Stuck → zero
+ * lead. Mid-turn → lead direction lags the angle by a few ticks,
+ * matching how the tank's velocity vector is actually rotating. */
+#define SMOOTH_MOTION_ALPHA 0.2f
+/* Maximum lead distance in world units (256 wu = 1 tile).
+ * Lower = camera commits less to direction-of-motion; reduces visible
+ * shifting when the tank reverses or weaves. 384 = 1.5 tiles, half
+ * the prior 3-tile lead. Bump to 256 (1 tile) for even less commit. */
+#define AUTOSCROLL_MAX_LEAD_WORLD 384
+static WORLD g_prevTankWX     = 0;
+static WORLD g_prevTankWY     = 0;
+static float g_smoothMotionDX = 0.0f;
+static float g_smoothMotionDY = 0.0f;
+static bool  g_motionInit     = FALSE;
 
 
 void scrollCreate(ScrollState *ss) {
@@ -240,6 +326,8 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
   int viewRefX, viewRefY;
   int xmove, ymove;
   int leadDX, leadDY;
+  bool scrolled;
+  bool xAllowed, yAllowed;
   BYTE myPlayer;
   WORLD tankWX, tankWY;
   WORLD gunsightWX, gunsightWY;
@@ -267,15 +355,35 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
   /* Phase 1: initial target leads the tank in its facing direction.
    * The +1 tile inset matches viewRefX so a tank-centered, no-lead
    * viewport produces zero scroll delta. */
+  /* Update the smoothed motion estimate from the per-tick tank delta.
+   * Reset on init or on a teleport-sized jump (e.g. respawn). */
+  {
+    int dx = (int)tankWX - (int)g_prevTankWX;
+    int dy = (int)tankWY - (int)g_prevTankWY;
+    if (g_motionInit == FALSE ||
+        abs(dx) > (4 << 8) || abs(dy) > (4 << 8)) {
+      g_smoothMotionDX = 0.0f;
+      g_smoothMotionDY = 0.0f;
+      g_motionInit = TRUE;
+    } else {
+      g_smoothMotionDX += SMOOTH_MOTION_ALPHA * ((float)dx - g_smoothMotionDX);
+      g_smoothMotionDY += SMOOTH_MOTION_ALPHA * ((float)dy - g_smoothMotionDY);
+    }
+    g_prevTankWX = tankWX;
+    g_prevTankWY = tankWY;
+  }
+
+  /* Lead = smoothed per-tick motion projected forward. The 50× factor
+   * matches the existing calculateProjectedPosition convention so the
+   * resulting magnitudes are comparable to the previous behaviour;
+   * 3-tile clamp unchanged. No lead while the screen tracks a shell. */
   leadDX = 0;
   leadDY = 0;
-  if (speed > 0 && bestShell == NULL) {
-    WORLD leadWX, leadWY;
+  if (bestShell == NULL) {
     int len2;
-    const int leadMaxWorld = 3 << 8;  /* cap lead at 3 tiles */
-    calculateProjectedPosition(tankWX, tankWY, speed, angle, 1.0f, &leadWX, &leadWY);
-    leadDX = (int)leadWX - (int)tankWX;
-    leadDY = (int)leadWY - (int)tankWY;
+    const int leadMaxWorld = AUTOSCROLL_MAX_LEAD_WORLD;
+    leadDX = (int)(g_smoothMotionDX * 50.0f);
+    leadDY = (int)(g_smoothMotionDY * 50.0f);
     len2 = leadDX * leadDX + leadDY * leadDY;
     if (len2 > leadMaxWorld * leadMaxWorld) {
       double len = sqrt((double)len2);
@@ -293,12 +401,33 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
    * leftover manual override. */
   ss->autoScrollOverRide = FALSE;
 
+  /* Update smoothed angle for priority/veto. Snap (no lag) on any
+   * stationary frame so a stop-then-restart doesn't carry over. */
+  {
+    float currentBR = (float)angle;
+    if (g_smoothAngleLastSpeed == 0 || speed == 0) {
+      g_smoothAngleBR = currentBR;
+    } else {
+      float delta = currentBR - g_smoothAngleBR;
+      while (delta >  128.0f) delta -= 256.0f;
+      while (delta < -128.0f) delta += 256.0f;
+      g_smoothAngleBR += SMOOTH_ANGLE_ALPHA * delta;
+      while (g_smoothAngleBR <    0.0f) g_smoothAngleBR += 256.0f;
+      while (g_smoothAngleBR >= 256.0f) g_smoothAngleBR -= 256.0f;
+    }
+    g_smoothAngleLastSpeed = speed;
+  }
+
   /* Phase 2: build the priority item list */
   scrollItemListCreate(&ss->itemList);
-  ss->itemList.tankAngle = angle;
+  ss->itemList.tankAngle = (TURNTYPE)g_smoothAngleBR;
   ss->itemList.tankSpeed = speed;
   ss->itemList.tankWX = tankWX;
   ss->itemList.tankWY = tankWY;
+  /* Carry forward the directional veto across short natural-FALSE
+   * blips while the sticky counter is alive — see
+   * FORWARD_IMP_STICKY_TICKS comment. */
+  ss->itemList.forceForwardImportant = (g_forwardImpStickyTicks > 0) ? TRUE : FALSE;
 
   /* Always add own tank (score 0 — must stay on screen) */
   scrollItemListAddW(&ss->itemList, tankWX, tankWY, 0, 0, FALSE, tankWX, tankWY);
@@ -387,30 +516,69 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
   /* Phase 4: process — adjust target, validate conflicts, apply veto */
   scrollItemListProcess(&ss->itemList, &targetX, &targetY);
 
-  /* Phase 5: execute scroll (at most 1 tile per tick).
-   * Tile-align so deltas come out on tile boundaries. */
-  targetX &= ~0xFF;
-  targetY &= ~0xFF;
-  xmove = targetX - viewRefX;
-  ymove = targetY - viewRefY;
-
-  if (xmove != 0 || ymove != 0) {
-    if (xmove > 0) {
-      (*xValue)++;
-    } else if (xmove < 0) {
-      if (*xValue > 0) (*xValue)--;
-    }
-    if (ymove > 0) {
-      (*yValue)++;
-    } else if (ymove < 0) {
-      if (*yValue > 0) (*yValue)--;
-    }
-
-    if (*xValue > 255 - MAIN_SCREEN_SIZE_X) *xValue = 255 - MAIN_SCREEN_SIZE_X;
-    if (*yValue > 255 - MAIN_SCREEN_SIZE_Y) *yValue = 255 - MAIN_SCREEN_SIZE_Y;
-
-    return TRUE;
+  /* Refresh / decay the forward-important sticky counter based on
+   * what the natural check decided this tick. */
+  if (ss->itemList.lastNaturalForwardImportant == TRUE) {
+    g_forwardImpStickyTicks = FORWARD_IMP_STICKY_TICKS;
+  } else if (g_forwardImpStickyTicks > 0) {
+    g_forwardImpStickyTicks--;
   }
 
-  return FALSE;
+  /* Phase 5: execute scroll (at most 1 tile per tick).
+   *
+   * Deadband hysteresis: only scroll when target is at least 1 full
+   * tile from viewRef. A previous floor-align approach
+   * (targetX &= ~0xFF; xmove = target - viewRef) used the *same*
+   * threshold for "scroll forward" and "scroll back" at each tile
+   * boundary, which made the viewport bounce whenever target wobbled
+   * sub-pixel across that boundary — from sub-pixel tank motion,
+   * integer speed-step lead recomputation, or tank-turn lead
+   * reorientation. With a 1-tile deadband, scroll-forward fires at
+   * target=viewRef+1 and scroll-back at target=viewRef-1, leaving a
+   * 2-tile stable band centred on viewRef. */
+  scrolled = FALSE;
+  {
+    int deltaX = targetX - viewRefX;
+    int deltaY = targetY - viewRefY;
+    const int DEADBAND = (1 << 8);  /* 1 tile in world units */
+    xmove = (deltaX >=  DEADBAND) ?  DEADBAND
+          : (deltaX <= -DEADBAND) ? -DEADBAND : 0;
+    ymove = (deltaY >=  DEADBAND) ?  DEADBAND
+          : (deltaY <= -DEADBAND) ? -DEADBAND : 0;
+  }
+
+  /* Rate cap: independently gate each axis on its own cooldown so a
+   * diagonal move doesn't lock the slower-recovering axis. Counters
+   * advance every autoscroll tick regardless of whether a scroll
+   * fires, so a long quiet period leaves both axes ready to move. */
+  if (g_ticksSinceScrollX < 255) g_ticksSinceScrollX++;
+  if (g_ticksSinceScrollY < 255) g_ticksSinceScrollY++;
+  xAllowed = (g_ticksSinceScrollX >= AUTOSCROLL_TICKS_PER_TILE) ? TRUE : FALSE;
+  yAllowed = (g_ticksSinceScrollY >= AUTOSCROLL_TICKS_PER_TILE) ? TRUE : FALSE;
+
+  if (xmove != 0 && xAllowed == TRUE) {
+    if (xmove > 0) {
+      (*xValue)++;
+    } else if (*xValue > 0) {
+      (*xValue)--;
+    }
+    g_ticksSinceScrollX = 0;
+    scrolled = TRUE;
+  }
+  if (ymove != 0 && yAllowed == TRUE) {
+    if (ymove > 0) {
+      (*yValue)++;
+    } else if (*yValue > 0) {
+      (*yValue)--;
+    }
+    g_ticksSinceScrollY = 0;
+    scrolled = TRUE;
+  }
+
+  if (scrolled == TRUE) {
+    if (*xValue > 255 - MAIN_SCREEN_SIZE_X) *xValue = 255 - MAIN_SCREEN_SIZE_X;
+    if (*yValue > 255 - MAIN_SCREEN_SIZE_Y) *yValue = 255 - MAIN_SCREEN_SIZE_Y;
+  }
+
+  return scrolled;
 }

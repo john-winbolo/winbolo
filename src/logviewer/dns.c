@@ -35,7 +35,7 @@
 #  include <netinet/in.h>
 #endif
 #include <SDL3/SDL.h>
-#include "global.h"
+#include "lv_global.h"
 #include "dns.h"
 
 /* Module level variable on DNS setting */

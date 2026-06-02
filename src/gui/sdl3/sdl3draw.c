@@ -46,26 +46,28 @@
 #include "sdl3draw.h"
 #include "sdl3draw_status.h"
 #include "sdl3imgui.h"
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
+#include "dialogs/imgui_news.h"
+#endif
 #include "cursor.h"
 #include "mapview.h"
-#include "override_mode.h"
-#include "gfx_settings.h"
 #include "../clientmutex.h"
 #include "../tiles.h"
 #include "../ui_mode.h"
 #include "tileloader.h"
 #include "sdl_bmp.h"
-#include "../../bolo/global.h"
-#include "../../bolo/screen.h"
-#include "../../bolo/client_sim.h"
-#include "../../bolo/tank.h"
+#include "global.h"
+#include "client_sim.h"
+#include "override_mode.h"
 #include "../gamefront.h"
-#include "../../bolo/tilenum.h"
+#include "tilenum.h"
 #include "../positions.h"
-#include "../../bolo/screenbullet.h"
-#include "../../bolo/screentank.h"
-#include "../../bolo/screenlgm.h"
+#include "screenbullet.h"
+#include "screentank.h"
+#include "screenlgm.h"
+#include "client_render.h"
 #include "macos_pinch.h"
+#include "../lang.h"
 
 /* From gui/winbolo.h (can't include directly — Win32 headers) */
 #ifndef NO_SELECT
@@ -75,17 +77,21 @@
 #define ZOOM_FACTOR_CUSTOM 0
 #endif
 #ifndef MENU_BAR_HEIGHT
-#define MENU_BAR_HEIGHT 22
+  #ifdef __APPLE__
+    #define MENU_BAR_HEIGHT 0
+  #else
+    #define MENU_BAR_HEIGHT 22
+  #endif
 #endif
 
 static SDL_Window   *gWindow        = NULL;
 static SDL_Renderer *gRenderer      = NULL;
 static SDL_Texture  *gBackgroundTex = NULL;
 static SDL_Texture  *gTilesTex      = NULL;
+static bool          gPendingTileReload = false;  /* set by sdl3DrawReloadTiles(); flushed in sdl3LoadTiles() */
 static SDL_Texture  *gCrosshairTex  = NULL;  /* crosshairs_17x17.png — center pixel (8,8) is aim point */
 static int           gZoomFactor    = 1;
 static int           gSheetScale    = 1;  /* atlas scale: sheet is TILE_FILE * gSheetScale */
-static bool          gPendingTileReload = false; /* deferred reload requested mid-frame */
 
 /* Phase 4 render-target textures.
    Status icon panels (bases/pills/tanks) are drawn directly to the
@@ -168,6 +174,42 @@ static int          gTabletVpZoom = 0;
 static int          gDragOffsetX = 0;
 static int          gDragOffsetY = 0;
 
+/* Sub-pixel autoscroll smoothing.
+ *
+ * The engine moves the viewport in 1-tile (BYTE) steps inside
+ * scrollAutoScroll. Without interpolation each step is a visible
+ * 16-pixel snap at game-tick rate; the rate cap in scroll.c slows
+ * the cadence but every step is still a hard hop.
+ *
+ * Per render frame we compare the engine's tile-aligned offset
+ * (clientSimGetXOffset / YOffset, T1) against the previously-observed
+ * value. When it changes we snapshot the old position and the
+ * SDL_GetTicks() at the change; for the next SMOOTH_AUTOSCROLL_WINDOW_MS
+ * we add a fractional (prev - current) * tileW offset that linearly
+ * decays to zero. Independent of gDragOffsetX/Y above — both feed
+ * additively into edgeX/edgeY at draw time.
+ *
+ * Reset triggers (both snap, no ease):
+ *   - Active ClientSim pointer changes (new game / view-player swap)
+ *   - Engine offset jumps by more than SMOOTH_AUTOSCROLL_SNAP_TILES
+ *     (respawn at a distant spot, teleport, scrollCenterObject) */
+/* Smoothing window — set to match the fastest engine pan cadence so
+ * consecutive pans don't overlap and snap to a new "prev" mid-slide.
+ * TK_UPDATE_TIME=2 ticks = 100 ms is the fireball pan rate during the
+ * tank-explosion death sequence, so the window equals that to keep
+ * dead-tank tracking smooth instead of rubbery. Autoscroll's natural
+ * cadence (rate cap 5 ticks/tile = 250 ms) leaves comfortable headroom
+ * and the slide completes well before the next autoscroll tile move. */
+#define SMOOTH_AUTOSCROLL_WINDOW_MS  100
+#define SMOOTH_AUTOSCROLL_SNAP_TILES 4
+static const void *gSmoothLastCs        = NULL;
+static BYTE        gSmoothLastEngineX   = 0;
+static BYTE        gSmoothLastEngineY   = 0;
+static BYTE        gSmoothPrevEngineX   = 0;
+static BYTE        gSmoothPrevEngineY   = 0;
+static Uint32      gSmoothChangeTimeMsX = 0;
+static Uint32      gSmoothChangeTimeMsY = 0;
+
 /* Configurable status panel origins (zoomed pixel coords).
    -1 means "use desktop default" (zf * STATUS_*_LEFT/TOP).
    Set by sdl3DrawSetStatusPanelOrigins() for tablet mode. */
@@ -240,34 +282,21 @@ static void sdl3RenderText(TTF_Font *font, const char *text, SDL_Color fg, float
 
 /* sdl3SetupDrawArrays moved to mapview.c as mapViewInit() */
 /* (old sdl3SetupDrawArrays body removed — now in mapview.c) */
-static bool sdl3LoadTiles(void); /* forward */
-
-/* Public reload: defer the atlas rebuild to the top of the next frame
- * so it never happens mid-render (which would corrupt gSheetScale for
- * any draw calls that already sampled it earlier in the same frame). */
+/* Builds the sprite sheet from individual SVG/PNG files (with BMP fallback)
+ * and creates gTilesTex from the assembled surface. */
+/* Request the tile atlas be rebuilt (e.g. after a skin / detail-level
+ * change from the settings dialog). Deferred to the next sdl3LoadTiles()
+ * so we never destroy the atlas mid-frame. */
 void sdl3DrawReloadTiles(void) {
   gPendingTileReload = true;
 }
 
-/* Flush a pending tile reload.  Called at the very start of each frame
- * before any draw calls read gSheetScale or gTilesTex. */
-static void sdl3FlushPendingTileReload(void) {
-  if (!gPendingTileReload) return;
-  gPendingTileReload = false;
-  if (gTilesTex != NULL) {
+static bool sdl3LoadTiles(void) {
+  if (gPendingTileReload && gTilesTex != NULL) {
     SDL_DestroyTexture(gTilesTex);
     gTilesTex = NULL;
   }
-  sdl3LoadTiles();
-}
-
-SDL_Texture *sdl3DrawGetTilesTex(void) {
-  return gTilesTex;
-}
-
-/* Builds the sprite sheet from individual SVG/PNG files (with BMP fallback)
- * and creates gTilesTex from the assembled surface. */
-static bool sdl3LoadTiles(void) {
+  gPendingTileReload = false;
   if (gTilesTex != NULL) {
     return TRUE;
   }
@@ -279,15 +308,6 @@ static bool sdl3LoadTiles(void) {
   int atlasZoom = gZoomFactor;
   if (atlasZoom < 1) atlasZoom = 1;
   gSheetScale = atlasZoom;
-
-  /* Apply skin override from environment variable WINBOLO_SKIN if
-   * set.  Useful for testing skins before the Graphics Settings UI
-   * lands.  Setting it to "" or unsetting picks the vanilla sprites. */
-  const char *envSkin = SDL_getenv("WINBOLO_SKIN");
-  if (envSkin && envSkin[0]) {
-    tileLoaderSetSkin(envSkin);
-    SDL_Log("sdl3LoadTiles: skin = '%s' (from WINBOLO_SKIN)", envSkin);
-  }
 
   SDL_Surface *sheet = tileLoaderBuildSheet(TILE_SIZE_X * atlasZoom);
   if (!sheet) {
@@ -307,11 +327,7 @@ static bool sdl3LoadTiles(void) {
     return FALSE;
   }
   SDL_SetTextureBlendMode(gTilesTex, SDL_BLENDMODE_BLEND);
-  /* Sampling mode comes from the user's Graphics > Interpolation
-   * setting (NEAREST / LINEAR / PIXELART). Ingamerotate skins use
-   * NEAREST regardless — crisp rotation is the look there. */
-  SDL_SetTextureScaleMode(gTilesTex,
-                          (SDL_ScaleMode)gfxSettingsGetInterpScaleMode());
+  SDL_SetTextureScaleMode(gTilesTex, SDL_SCALEMODE_NEAREST);
   sdl3DrawStatusSetAtlas(gTilesTex, gSheetScale);
   return TRUE;
 }
@@ -449,6 +465,26 @@ int sdl3DrawGetZoomFactor(void) {
   return gZoomFactor;
 }
 
+/* Expose the live game-render destination rect + scale so UI code can
+ * position ImGui overlays in actual on-screen pixels.
+ *
+ *   on-screen X = gGameDestRect.x + sourceX * gGameScale
+ *
+ * In CUSTOM/ceiling-integer zoom mode the game is drawn into an
+ * off-screen render target at `gZoomFactor` and then blitted into
+ * gGameDestRect, possibly at a non-integer gGameScale. Multiplying
+ * source unscaled coords by gZoomFactor alone is wrong when the
+ * window has been resized to a fractional effective zoom (e.g.
+ * maximized between 3x and 4x). */
+void sdl3DrawGetGameRect(float *destX, float *destY,
+                          float *destW, float *destH, float *scale) {
+  if (destX) *destX = gGameDestRect.x;
+  if (destY) *destY = gGameDestRect.y;
+  if (destW) *destW = gGameDestRect.w;
+  if (destH) *destH = gGameDestRect.h;
+  if (scale) *scale = gGameScale;
+}
+
 SDL_Window *sdl3DrawGetWindow(void) {
   return gWindow;
 }
@@ -581,16 +617,16 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
       /* Transform window coords to game coords */
       float gameX, gameY;
       if (!windowToGameCoords(ev->motion.x, ev->motion.y, &gameX, &gameY)) {
-        screenSetCursorPosCS(cs, 0, 0);
+        clientSimSetCursorPos(cs, 0, 0);
         break;
       }
       cursorMove((int)gameX, (int)gameY);
       BYTE cx = 0, cy = 0;
       if (cursorPos(NULL, &cx, &cy)) {
         if (cx > 16 || cy > 16) cx = 100;
-        screenSetCursorPosCS(cs, cx, cy);
+        clientSimSetCursorPos(cs, cx, cy);
       } else {
-        screenSetCursorPosCS(cs, 0, 0);
+        clientSimSetCursorPos(cs, 0, 0);
       }
       break;
     }
@@ -599,7 +635,7 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
         BYTE xVal = 0, yVal = 0;
         if (cursorPos(NULL, &xVal, &yVal)) {
           clientMutexWaitFor();
-          screenManMoveCS(cs, getBuildCurrentSelectCS(cs));
+          clientSimManMove(cs, clientSimGetCurrentBuildSelect(cs));
           clientMutexRelease();
         } else {
           /* Check if click landed on one of the 5 build-select buttons */
@@ -625,10 +661,10 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
                      yPos >= zf * BS_MINE_OFFSET_Y && yPos <= zf * (BS_MINE_OFFSET_Y + BS_ITEM_SIZE_Y)) {
             newSelect = BsMine;
           }
-          if (newSelect != NO_SELECT && newSelect != getBuildCurrentSelectCS(cs)) {
-            sdl3DrawSelectIndentsOff(getBuildCurrentSelectCS(cs), 0, 0);
+          if (newSelect != NO_SELECT && newSelect != clientSimGetCurrentBuildSelect(cs)) {
+            sdl3DrawSelectIndentsOff(clientSimGetCurrentBuildSelect(cs), 0, 0);
             sdl3DrawSelectIndentsOn(newSelect, 0, 0);
-            setBuildCurrentSelectCS(cs, newSelect);
+            clientSimSetCurrentBuildSelect(cs, newSelect);
           }
         }
       }
@@ -885,10 +921,6 @@ bool sdl3DrawSetup(int zoomFactor) {
     gWindow = NULL;
     return FALSE;
   }
-  /* SDL3 renderer default texture scale mode is LINEAR — flip to
-   * NEAREST so every texture (ours, ImGui's, SDL's logical-
-   * presentation target) inherits hard-edged pixel-art sampling. */
-  SDL_SetDefaultTextureScaleMode(gRenderer, SDL_SCALEMODE_NEAREST);
 
   SDL_SetRenderVSync(gRenderer, 1);
 
@@ -1032,7 +1064,7 @@ bool sdl3DrawSetup(int zoomFactor) {
                                           SDL_TEXTUREACCESS_TARGET,
                                           gGameRTWidth, gGameRTHeight);
     if (gGameRenderTarget) {
-      SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_NEAREST);
+      SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_LINEAR);
       WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawSetup: created game render target %dx%d", gGameRTWidth, gGameRTHeight);
     }
   }
@@ -1047,6 +1079,16 @@ void sdl3DrawCleanup(void) {
 
   /* ImGui cleanup before destroying renderer/window */
   sdl3ImguiCleanup();
+
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
+  /* News popup teardown sits in this process-exit hook (not in
+   * sdl3ImguiCleanup) because sdl3ImguiCleanup also fires on every
+   * game-end / return-to-lobby transition — releasing the fetch
+   * handle there would prevent the View News button from working
+   * after the first game. The SDL renderer is still alive here, so
+   * newsImageCacheShutdown's SDL_DestroyTexture calls land cleanly. */
+  newsPopupShutdown();
+#endif
 
   /* Phase 5 — destroy text/label caches via the status module (which
      owns them since Phase C of plans/ctrailer.md), then close fonts
@@ -1183,7 +1225,7 @@ static void sdl3DrawAdaptRenderTarget(void) {
                                         SDL_TEXTUREACCESS_TARGET,
                                         gGameRTWidth, gGameRTHeight);
   if (gGameRenderTarget) {
-    SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_NEAREST);
+    SDL_SetTextureScaleMode(gGameRenderTarget, SDL_SCALEMODE_LINEAR);
     WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawAdaptRenderTarget: created render target %dx%d", gGameRTWidth, gGameRTHeight);
   }
 #endif
@@ -1193,14 +1235,13 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
                         screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms,
                         RECT *rcWindow, bool showPillLabels, bool showBaseLabels,
                         int32_t srtDelay, bool isPillView, int edgeX, int edgeY,
-                        bool useCursor, BYTE cursorLeft, BYTE cursorTop, tank *tank) {
+                        bool useCursor, BYTE cursorLeft, BYTE cursorTop) {
   (void)rcWindow;
 
   if (gRenderer == NULL) {
     return;
   }
 
-  sdl3FlushPendingTileReload();
   sdl3DrawAdaptRenderTarget();
 
   bool tabletMode = uiModeIsTablet();
@@ -1316,10 +1357,69 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   edgeX += gDragOffsetX;
   edgeY += gDragOffsetY;
 
-  /* Override-mode arrow-key pan.  Applies on top of tablet drag
-   * offset.  Scroll-wheel zoom is applied later (after originX/Y +
-   * gameClip are computed) so the HUD layout stays put — only tiles
-   * and sprites within the gameClip get bigger. */
+  /* Sub-pixel autoscroll smoothing — see gSmoothLastEngine* block at
+   * the top of this file. Eases between successive engine tile-step
+   * updates so the viewport glides instead of snapping. */
+  if (cs != NULL) {
+    BYTE   engineX  = clientSimGetXOffset(cs);
+    BYTE   engineY  = clientSimGetYOffset(cs);
+    Uint32 nowMs    = SDL_GetTicks();
+    int    tileWpx  = TILE_SIZE_X * gZoomFactor;
+    int    tileHpx  = TILE_SIZE_Y * gZoomFactor;
+
+    /* New ClientSim — snap, don't ease across a game/sim swap. */
+    if (cs != gSmoothLastCs) {
+      gSmoothLastCs        = cs;
+      gSmoothLastEngineX   = engineX;
+      gSmoothLastEngineY   = engineY;
+      gSmoothPrevEngineX   = engineX;
+      gSmoothPrevEngineY   = engineY;
+      gSmoothChangeTimeMsX = nowMs;
+      gSmoothChangeTimeMsY = nowMs;
+    }
+
+    if (engineX != gSmoothLastEngineX) {
+      int dx = (int)engineX - (int)gSmoothLastEngineX;
+      if (dx < 0) dx = -dx;
+      /* Big delta = teleport (respawn, view-player change). Snap. */
+      gSmoothPrevEngineX   = (dx > SMOOTH_AUTOSCROLL_SNAP_TILES) ? engineX
+                                                                 : gSmoothLastEngineX;
+      gSmoothLastEngineX   = engineX;
+      gSmoothChangeTimeMsX = nowMs;
+    }
+    if (engineY != gSmoothLastEngineY) {
+      int dy = (int)engineY - (int)gSmoothLastEngineY;
+      if (dy < 0) dy = -dy;
+      gSmoothPrevEngineY   = (dy > SMOOTH_AUTOSCROLL_SNAP_TILES) ? engineY
+                                                                 : gSmoothLastEngineY;
+      gSmoothLastEngineY   = engineY;
+      gSmoothChangeTimeMsY = nowMs;
+    }
+
+    {
+      Uint32 elapsedX = nowMs - gSmoothChangeTimeMsX;
+      Uint32 elapsedY = nowMs - gSmoothChangeTimeMsY;
+      /* dPrev = prev - current; with engine moving forward this is
+       * negative, so adding (1 - t) * dPrev * tileW pulls edgeX back
+       * toward the previous position at t=0 and converges to zero at
+       * t=1, producing the smooth slide. */
+      if (elapsedX < SMOOTH_AUTOSCROLL_WINDOW_MS) {
+        float t = (float)elapsedX / (float)SMOOTH_AUTOSCROLL_WINDOW_MS;
+        int dPrev = (int)gSmoothPrevEngineX - (int)gSmoothLastEngineX;
+        edgeX += (int)((float)(dPrev * tileWpx) * (1.0f - t));
+      }
+      if (elapsedY < SMOOTH_AUTOSCROLL_WINDOW_MS) {
+        float t = (float)elapsedY / (float)SMOOTH_AUTOSCROLL_WINDOW_MS;
+        int dPrev = (int)gSmoothPrevEngineY - (int)gSmoothLastEngineY;
+        edgeY += (int)((float)(dPrev * tileHpx) * (1.0f - t));
+      }
+    }
+  }
+
+  /* Override-mode arrow-key / drag pan — applies on top of tablet drag
+   * + autoscroll offset, before the world is drawn. The scroll-wheel
+   * zoom below is applied after originX/Y + gameClip are computed so the
+   * HUD layout stays put — only the in-clip world scales. */
   if (overrideModeIsOn()) {
     int opx = 0, opy = 0;
     overrideModeGetPanOffset(&opx, &opy);
@@ -1348,22 +1448,17 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     };
     SDL_SetRenderClipRect(gRenderer, &gameClip);
 
-    /* Override-mode scroll-wheel zoom: scale gZoomFactor + tileW/H +
-     * edgeX/Y for the world rendering only.  originX/Y + gameClip
-     * were computed with the unscaled gZoomFactor, so the playfield
-     * bounds stay put.  Anchor the zoom on the cursor position when
-     * available (mouse-wheel zoom keeps the world point under the
-     * cursor stationary) — falls back to the playfield centre. */
-    /* Atlas already uses PIXELART; nothing to override here. */
-    SDL_ScaleMode savedAtlasScale = SDL_SCALEMODE_NEAREST;
-    bool atlasScaleOverridden = false;
-    (void)savedAtlasScale; (void)atlasScaleOverridden;
-
+    /* Override-mode scroll-wheel zoom: scale the world render only
+     * (gZoomFactor + tileW/H + edgeX/Y) inside the gameClip. originX/Y
+     * and the clip were computed with the unscaled gZoomFactor, so the
+     * playfield bounds + HUD stay put while tiles/sprites get bigger.
+     * Anchor on the cursor so the world point under it stays fixed
+     * (falls back to the playfield centre). Restored after drawing. */
+    BYTE savedZoomFactor = gZoomFactor;
     if (overrideModeIsOn()) {
       int zmul = overrideModeZoomMul();
       if (zmul > 1) {
-        int anchorScreenX = -1, anchorScreenY = -1;
-        int anchorRelX, anchorRelY;
+        int anchorScreenX = -1, anchorScreenY = -1, anchorRelX, anchorRelY;
         if (overrideModeGetZoomAnchor(&anchorScreenX, &anchorScreenY)
             && anchorScreenX >= originX && anchorScreenX < originX + gameW
             && anchorScreenY >= originY && anchorScreenY < originY + gameH) {
@@ -1402,10 +1497,10 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
           sdl3RenderText(gFontMsg, str, white, tx, ty);
         }
       }
-    } else if (!isPillView && tankGetDeathWait(tank) != 0 &&
-               ((tankGetLastTankDeath(tank) == LAST_DEATH_BY_DEEPSEA && tankGetDeathWait(tank) < STATIC_ON_TICKS_DEEPSEA) ||
-                (tankGetLastTankDeath(tank) == LAST_DEATH_BY_SHELL   && tankGetDeathWait(tank) < STATIC_ON_TICKS_SHELL) ||
-                (tankGetLastTankDeath(tank) == LAST_DEATH_BY_MINES   && tankGetDeathWait(tank) < STATIC_ON_TICKS_MINES))) {
+    } else if (!isPillView && clientSimGetMyTankDeathWait(cs) != 0 &&
+               ((clientSimGetMyTankLastDeath(cs) == LAST_DEATH_BY_DEEPSEA && clientSimGetMyTankDeathWait(cs) < STATIC_ON_TICKS_DEEPSEA) ||
+                (clientSimGetMyTankLastDeath(cs) == LAST_DEATH_BY_SHELL   && clientSimGetMyTankDeathWait(cs) < STATIC_ON_TICKS_SHELL) ||
+                (clientSimGetMyTankLastDeath(cs) == LAST_DEATH_BY_MINES   && clientSimGetMyTankDeathWait(cs) < STATIC_ON_TICKS_MINES))) {
       /* Tank died and is waiting to respawn — draw Bolo-style pixel static noise */
       /* On iOS use half-res texture so static dots appear larger */
 #if defined(__IPHONEOS__)
@@ -1426,8 +1521,8 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         gStaticLast = 0;
       }
       /* Add new static points when the death tick changes */
-      if (tankGetDeathWait(tank) != gStaticLast) {
-        gStaticLast = tankGetDeathWait(tank);
+      if (clientSimGetMyTankDeathWait(cs) != gStaticLast) {
+        gStaticLast = clientSimGetMyTankDeathWait(cs);
         uint32_t *pixels;
         int pitch;
         if (SDL_LockTexture(gStaticTex, NULL, (void **)&pixels, &pitch)) {
@@ -1458,15 +1553,6 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     } else {
       /* Draw map tiles via mapview */
       MapViewCtx mvCtx = { gRenderer, gTilesTex, gZoomFactor, gSheetScale };
-      /* Override-mode wide-area tile fill: paint a margin around the
-       * 17×17 engine buffer using mapViewCalcSquare direct from sim,
-       * so panning/zooming beyond the buffer doesn't show black. */
-      if (overrideModeIsOn() && cs) {
-        overrideModeDrawFullMapTiles(gRenderer, cs,
-                                     originX, originY, gameW, gameH,
-                                     tileW, tileH, edgeX, edgeY,
-                                     gSheetScale, gTilesTex);
-      }
       mapViewDrawTiles(&mvCtx, value, mineView, originX, originY, tileW, tileH, edgeX, edgeY);
 
       /* Draw pillbox/base number labels (needs fonts — stays here) */
@@ -1480,9 +1566,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
           bool isBase = (pos == BASE_GOOD || pos == BASE_NEUTRAL || pos == BASE_EVIL);
           int labelNum = -1;
           if (isPill && showPillLabels) {
-            labelNum = screenPillNumPosCS(cs, lx, ly) - 1;
+            labelNum = clientSimGetPillNumPos(cs, lx, ly) - 1;
           } else if (isBase && showBaseLabels) {
-            labelNum = screenBaseNumPosCS(cs, lx, ly) - 1;
+            labelNum = clientSimGetBaseNumPos(cs, lx, ly) - 1;
           }
           if (labelNum >= 0) {
             SDL_FRect dest = {
@@ -1556,31 +1642,15 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       /* Sprites via mapview */
       gCurrentEdgeX = edgeX;
       gCurrentEdgeY = edgeY;
-      /* Push live shell sub-wu offsets to mapview so the classic
-       * shell render can add the fractional game-pixel from sim
-       * on top of the discrete (mx,px) the engine packs. */
-      if (cs) mapViewSetShellsFromSim(&cs->sim,
-                                       (int)cs->xOffset, (int)cs->yOffset);
       sdl3DrawStatusSetEdgeOffset(edgeX, edgeY);
       mapViewDrawShells(&mvCtx, sBullets, originX, originY, tileW, tileH, edgeX, edgeY);
-      /* Push live per-tank angles to mapview so the ingamerotate
-       * skin can rotate to full 256-bolo-degree precision instead
-       * of the 16-step direction encoded in screenTanks frames. */
-      if (cs) mapViewSetTankAnglesFromSim(&cs->sim);
       mapViewDrawTanks(&mvCtx, tks, originX, originY, tileW, tileH, edgeX, edgeY);
       /* Tank labels (needs fonts — separate pass after tank sprites) */
       sdl3DrawTankLabels(tks);
-      /* Push live LGM sub-wu offsets so the classic LGM render adds
-       * the fractional game-pixel from sim on top of (mx,px). */
-      if (cs) mapViewSetLgmsFromSim(&cs->sim,
-                                     (int)cs->xOffset, (int)cs->yOffset);
       mapViewDrawLGMs(&mvCtx, lgms, originX, originY, tileW, tileH, edgeX, edgeY);
 
-      /* Ctrl-O override mode: draw hitbox/sub-pixel overlays on top of
-       * the world view.  No-op when off. */
-      overrideModeDrawOverlays(gRenderer, cs,
-                               originX, originY, tileW, tileH,
-                               edgeX, edgeY, gZoomFactor);
+      /* Override-mode world grid overlay (clipped to the gameClip). */
+      overrideModeDrawOverlays(gRenderer, cs, originX, originY, tileW, tileH, edgeX, edgeY, gZoomFactor);
 
       /* Phase 5 overlays (inside clip rect so they stay within the game area) */
       if (isPillView) {
@@ -1591,14 +1661,8 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       }
     }
 
-    /* Restore gZoomFactor BEFORE the clip is cleared, but only for
-     * override-mode zoom — tablet mode expects gZoomFactor to stay
-     * at effectiveZoom through the status-panel draws below.
-     * Override mode must only affect tiles + sprites inside the
-     * playfield clip; HUD/labels stay at the unscaled zoom. */
-    if (overrideModeIsOn() && overrideModeZoomMul() > 1) {
-      gZoomFactor = savedZoomFactor;
-    }
+    /* Restore the base zoom factor the override zoom temporarily scaled. */
+    gZoomFactor = savedZoomFactor;
     SDL_SetRenderClipRect(gRenderer, NULL);
   }
 
@@ -1627,21 +1691,21 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   } else {
     sdl3DrawSetBasesStatusClear();
     {
-      BYTE total = basesGetNumBases(&cs->sim.bs);
+      BYTE total = clientSimGetBaseCount(cs);
       for (BYTE i = 1; i <= total; i++) {
-        sdl3DrawStatusBase(i, screenBaseAllianceCS(cs, i), showBaseLabels);
+        sdl3DrawStatusBase(i, clientSimGetBaseAlliance(cs, i), showBaseLabels);
       }
     }
     sdl3DrawSetPillsStatusClear();
     {
-      BYTE total = pillsGetNumPills(&cs->sim.pb);
+      BYTE total = clientSimGetPillCount(cs);
       for (BYTE i = 1; i <= total; i++) {
-        sdl3DrawStatusPillbox(i, screenPillAllianceCS(cs, i), showPillLabels);
+        sdl3DrawStatusPillbox(i, clientSimGetPillAlliance(cs, i), showPillLabels);
       }
     }
     sdl3DrawSetTanksStatusClear();
     for (BYTE i = 1; i <= MAX_TANKS; i++) {
-      sdl3DrawStatusTank(i, screenTankAllianceCS(cs, i));
+      sdl3DrawStatusTank(i, clientSimGetTankAlliance(cs, i));
     }
 
     sdl3RenderStatusPanels();
@@ -1673,9 +1737,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     int winW, winH;
     SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
 
-    /* Menu bar height — ImGui default is ~20 pixels, but we'll query it later.
-       For now, use a reasonable estimate. */
-    float menuBarHeight = 22.0f;
+    float menuBarHeight = (float)MENU_BAR_HEIGHT;
 
     /* Available area below menu */
     float availW = (float)winW;
@@ -1734,7 +1796,6 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
   (void)rcWindow;
   if (gRenderer == NULL) return;
 
-  sdl3FlushPendingTileReload();
   sdl3DrawAdaptRenderTarget();
 
   bool tabletMode = uiModeIsTablet();
@@ -1779,21 +1840,21 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
   } else {
     sdl3DrawSetBasesStatusClear();
     {
-      BYTE total = basesGetNumBases(&cs->sim.bs);
+      BYTE total = clientSimGetBaseCount(cs);
       for (BYTE i = 1; i <= total; i++) {
-        sdl3DrawStatusBase(i, screenBaseAllianceCS(cs, i), showBasesStatus);
+        sdl3DrawStatusBase(i, clientSimGetBaseAlliance(cs, i), showBasesStatus);
       }
     }
     sdl3DrawSetPillsStatusClear();
     {
-      BYTE total = pillsGetNumPills(&cs->sim.pb);
+      BYTE total = clientSimGetPillCount(cs);
       for (BYTE i = 1; i <= total; i++) {
-        sdl3DrawStatusPillbox(i, screenPillAllianceCS(cs, i), showPillsStatus);
+        sdl3DrawStatusPillbox(i, clientSimGetPillAlliance(cs, i), showPillsStatus);
       }
     }
     sdl3DrawSetTanksStatusClear();
     for (BYTE i = 1; i <= MAX_TANKS; i++) {
-      sdl3DrawStatusTank(i, screenTankAllianceCS(cs, i));
+      sdl3DrawStatusTank(i, clientSimGetTankAlliance(cs, i));
     }
 
     sdl3RenderStatusPanels();
@@ -1807,7 +1868,7 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
     int winW, winH;
     SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
 
-    float menuBarHeight = 22.0f;
+    float menuBarHeight = (float)MENU_BAR_HEIGHT;
     float availW = (float)winW;
     float availH = (float)winH - menuBarHeight;
 
@@ -1851,10 +1912,60 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
   }
 }
 
-void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
-  (void)rcWindow;
-  if (!gRenderer) return;
+/* Blit gGameRenderTarget into the window scaled to fit below the menu bar.
+ * Mirrors the end-of-frame blit in sdl3DrawMainScreen / sdl3DrawRedrawAll;
+ * keeping a copy here so the download / returning-to-lobby paths can share
+ * the same window-coordinate transform without disturbing those callers. */
+static void sdl3BlitGameRTToWindow(void) {
+  SDL_SetRenderTarget(gRenderer, NULL);
 
+  int winW, winH;
+  SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
+
+  float menuBarHeight = (float)MENU_BAR_HEIGHT;
+  float availW = (float)winW;
+  float availH = (float)winH - menuBarHeight;
+
+  float gameAspect = (float)gGameRTWidth / (float)gGameRTHeight;
+  float availAspect = availW / availH;
+  float aspectDiff = gameAspect - availAspect;
+  if (aspectDiff < 0) aspectDiff = -aspectDiff;
+
+  float destW, destH, destX, destY;
+  if (aspectDiff < 0.01f) {
+    destX = 0;
+    destY = menuBarHeight;
+    destW = availW;
+    destH = availH;
+  } else if (gameAspect > availAspect) {
+    destW = availW;
+    destH = availW / gameAspect;
+    destX = 0;
+    destY = menuBarHeight + (availH - destH) / 2.0f;
+  } else {
+    destH = availH;
+    destW = availH * gameAspect;
+    destX = (availW - destW) / 2.0f;
+    destY = menuBarHeight;
+  }
+
+  gGameDestRect.x = destX;
+  gGameDestRect.y = destY;
+  gGameDestRect.w = destW;
+  gGameDestRect.h = destH;
+  gGameScale = destW / (float)gGameRTWidth;
+
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderFillRect(gRenderer, NULL);
+  SDL_SetTextureBlendMode(gGameRenderTarget, SDL_BLENDMODE_NONE);
+  SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);
+}
+
+/* Body of the download / returning-to-lobby chrome draw. Runs against
+ * whatever render target the caller has set up (either gGameRenderTarget
+ * on the desktop resizable path or the window directly on the mobile /
+ * fixed paths). */
+static void sdl3DrawDownloadScreenContent(ClientSim *cs, bool justBlack) {
   int zf = gZoomFactor;
   bool tabletMode = uiModeIsTablet();
 
@@ -1891,21 +2002,21 @@ void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
   } else {
     sdl3DrawSetBasesStatusClear();
     {
-      BYTE total = basesGetNumBases(&cs->sim.bs);
+      BYTE total = clientSimGetBaseCount(cs);
       for (BYTE i = 1; i <= total; i++) {
-        sdl3DrawStatusBase(i, screenBaseAllianceCS(cs, i), FALSE);
+        sdl3DrawStatusBase(i, clientSimGetBaseAlliance(cs, i), FALSE);
       }
     }
     sdl3DrawSetPillsStatusClear();
     {
-      BYTE total = pillsGetNumPills(&cs->sim.pb);
+      BYTE total = clientSimGetPillCount(cs);
       for (BYTE i = 1; i <= total; i++) {
-        sdl3DrawStatusPillbox(i, screenPillAllianceCS(cs, i), FALSE);
+        sdl3DrawStatusPillbox(i, clientSimGetPillAlliance(cs, i), FALSE);
       }
     }
     sdl3DrawSetTanksStatusClear();
     for (BYTE i = 1; i <= MAX_TANKS; i++) {
-      sdl3DrawStatusTank(i, screenTankAllianceCS(cs, i));
+      sdl3DrawStatusTank(i, clientSimGetTankAlliance(cs, i));
     }
     sdl3RenderStatusPanels();
     sdl3RenderCachedText();
@@ -1966,6 +2077,25 @@ void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
   }
 }
 
+void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
+  (void)rcWindow;
+  if (!gRenderer) return;
+
+  sdl3DrawAdaptRenderTarget();
+  bool tabletMode = uiModeIsTablet();
+  bool useRenderTarget = !tabletMode && gGameRenderTarget != NULL;
+
+  if (useRenderTarget) {
+    SDL_SetRenderTarget(gRenderer, gGameRenderTarget);
+  }
+
+  sdl3DrawDownloadScreenContent(cs, justBlack);
+
+  if (useRenderTarget) {
+    sdl3BlitGameRTToWindow();
+  }
+}
+
 void sdl3DrawMainScreenBlack(RECT *rcWindow) {
   (void)rcWindow;
   if (gRenderer == NULL) {
@@ -1973,6 +2103,45 @@ void sdl3DrawMainScreenBlack(RECT *rcWindow) {
   }
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
   SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
+}
+
+void sdl3DrawReturningToLobby(ClientSim *cs) {
+  if (!gRenderer) return;
+
+  sdl3DrawAdaptRenderTarget();
+  bool tabletMode = uiModeIsTablet();
+  bool useRenderTarget = !tabletMode && gGameRenderTarget != NULL;
+
+  if (useRenderTarget) {
+    SDL_SetRenderTarget(gRenderer, gGameRenderTarget);
+  }
+
+  /* justBlack=true skips the download progress bar that was the source of
+   * the white screen. */
+  sdl3DrawDownloadScreenContent(cs, TRUE);
+
+  /* Centred caption in the playfield. Tablet mode uses a different
+   * playfield rect; only the desktop layout matters for this transition
+   * (the mobile UIs don't expose a vote-to-lobby flow). */
+  if (!tabletMode) {
+    int zf = gZoomFactor;
+    int originX = MAIN_OFFSET_X * zf;
+    int originY = MAIN_OFFSET_Y * zf;
+    int playfieldW = MAIN_SCREEN_SIZE_X * TILE_SIZE_X * zf;
+    int playfieldH = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * zf;
+    const char *caption = langGetText(STR_RETURNING_TO_LOBBY);
+    int textW = 0, textH = 0;
+    if (gFontMsg && TTF_GetStringSize(gFontMsg, caption, 0, &textW, &textH)) {
+      float tx = (float)(originX + (playfieldW - textW) / 2);
+      float ty = (float)(originY + (playfieldH - textH) / 2);
+      SDL_Color white = {200, 200, 200, 255};
+      sdl3RenderText(gFontMsg, caption, white, tx, ty);
+    }
+  }
+
+  if (useRenderTarget) {
+    sdl3BlitGameRTToWindow();
+  }
 }
 
 int drawGetFrameRate(void) {
@@ -2210,20 +2379,20 @@ void sdl3DrawTabletStatusGrids(ClientSim *cs) {
 
   sdl3DrawSetBasesStatusClear();
   {
-    BYTE total = basesGetNumBases(&cs->sim.bs);
+    BYTE total = clientSimGetBaseCount(cs);
     for (BYTE i = 1; i <= total; i++) {
-      sdl3DrawStatusBase(i, screenBaseAllianceCS(cs, i), FALSE);
+      sdl3DrawStatusBase(i, clientSimGetBaseAlliance(cs, i), FALSE);
     }
   }
   sdl3DrawSetPillsStatusClear();
   {
-    BYTE total = pillsGetNumPills(&cs->sim.pb);
+    BYTE total = clientSimGetPillCount(cs);
     for (BYTE i = 1; i <= total; i++) {
-      sdl3DrawStatusPillbox(i, screenPillAllianceCS(cs, i), FALSE);
+      sdl3DrawStatusPillbox(i, clientSimGetPillAlliance(cs, i), FALSE);
     }
   }
   sdl3DrawSetTanksStatusClear();
   for (BYTE i = 1; i <= MAX_TANKS; i++) {
-    sdl3DrawStatusTank(i, screenTankAllianceCS(cs, i));
+    sdl3DrawStatusTank(i, clientSimGetTankAlliance(cs, i));
   }
 }

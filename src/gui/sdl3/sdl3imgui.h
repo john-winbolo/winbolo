@@ -97,6 +97,34 @@ void sdl3ImguiShowGameInfo(bool open);
 void sdl3ImguiShowSendMsg(bool open);
 void sdl3ImguiShowPlayersPanel(bool open);
 
+/* True iff the corresponding info / send-message popout is currently
+ * open. On desktop the popout lives in its own native window; on the
+ * web / Android / iOS / tablet builds it lives inline in the ImGui
+ * frame. The wrappers above hide that split — these accessors return
+ * the matching open-state from the same branch. */
+bool sdl3ImguiIsSysInfoOpen(void);
+bool sdl3ImguiIsNetInfoOpen(void);
+bool sdl3ImguiIsGameInfoOpen(void);
+bool sdl3ImguiIsSendMsgOpen(void);
+
+/*********************************************************
+*NAME:          sdl3ImguiAllianceReqInCooldown
+*PURPOSE:
+*  Is an alliance-request cooldown currently active? Mirrors
+*  the in-window Players menu's gating so the native macOS
+*  menu items grey out identically.
+*********************************************************/
+bool sdl3ImguiAllianceReqInCooldown(void);
+
+/*********************************************************
+*NAME:          sdl3ImguiNoteAllianceRequested
+*PURPOSE:
+*  Mark an alliance request as just-fired. Starts the
+*  standard cooldown window; the matching menu items will
+*  report inCooldown=true until it elapses.
+*********************************************************/
+void sdl3ImguiNoteAllianceRequested(void);
+
 /*********************************************************
 *NAME:          sdl3ImguiShowAllianceRequest
 *PURPOSE:
@@ -136,6 +164,45 @@ void sdl3ImguiShowKeySetup(void);
 *********************************************************/
 void sdl3ImguiShowSettings(void);
 
+void sdl3ImguiShowAbout(void);
+void sdl3ImguiShowChangeName(void);
+
+/* Thin int-parameter wrappers used by the native macOS menu bar so the
+ * .mm file doesn't need to pull in bolo enum / dialog-utils headers. */
+void sdl3ImguiSetFrameRate(int rate);
+void sdl3ImguiSetZoom(int zoom);
+void sdl3ImguiSetMessageLabelLen(struct ClientSim *cs, int len);
+void sdl3ImguiSetTankLabelLen(struct ClientSim *cs, int len);
+
+/*********************************************************
+*NAME:          sdl3ImguiStopBrain
+*PURPOSE:
+*  Stop whichever brain (Lua or ONNX) is currently running.
+*  No-op if none is running. Called from the macOS native
+*  Brains > Manual menu item.
+*********************************************************/
+void sdl3ImguiStopBrain(void);
+
+/*********************************************************
+*NAME:          sdl3ImguiStartBrain
+*PURPOSE:
+*  Start the brain at index `idx`. Routes to luaBrainStart()
+*  for Lua brains and mlBrainStartSingleton() for ONNX brains;
+*  also resets the brain-settings descriptor so a re-open of
+*  the Settings dialog rebuilds it for the new brain. No-op
+*  if idx is out of range or the brain has no path.
+*********************************************************/
+void sdl3ImguiStartBrain(int idx, struct ClientSim *cs);
+
+/*********************************************************
+*NAME:          sdl3ImguiShowBrainSettings
+*PURPOSE:
+*  Open the brain-settings dialog. Re-fetches the settings
+*  descriptor so values reflect the currently-running brain.
+*  Called from the macOS native Brains > Settings menu item.
+*********************************************************/
+void sdl3ImguiShowBrainSettings(void);
+
 /*********************************************************
 *NAME:          sdl3ImguiWantsKeyboard
 *PURPOSE:
@@ -159,6 +226,10 @@ void sdl3ImguiClearPlayer(unsigned char playerNum);
 void sdl3ImguiSetPlayerCheckState(unsigned char playerNum, bool isChecked);
 void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping,
                                uint8_t clientType, uint8_t clientFlags);
+/* Ping-only counterpart called from the per-tick snapshot apply path —
+ * preserves the cached clientType/clientFlags that the full meta
+ * updater would otherwise overwrite. */
+void sdl3ImguiUpdatePlayerPing(unsigned char playerNum, uint16_t ping);
 
 /*********************************************************
 *NAME:          sdl3ImguiGetGlobeIcon / GetSteamIcon
@@ -169,6 +240,23 @@ void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping,
 *********************************************************/
 SDL_Texture *sdl3ImguiGetGlobeIcon(void);
 SDL_Texture *sdl3ImguiGetSteamIcon(void);
+
+/*********************************************************
+*NAME:          sdl3ImguiGetBrainIcon
+*PURPOSE:
+*  Returns the SDL_Texture for the AI-brain icon (the badge
+*  shown for bot players). Loads the SVG lazily on first
+*  call. Returns NULL if the SVG could not be loaded.
+*********************************************************/
+SDL_Texture *sdl3ImguiGetBrainIcon(void);
+
+/*********************************************************
+*NAME:          sdl3ImguiPlayerIsBot
+*PURPOSE:
+*  Returns true if the given player slot is flagged as a
+*  bot (PLAYER_FLAG_BOT) in the cached player list.
+*********************************************************/
+bool sdl3ImguiPlayerIsBot(unsigned char playerNum);
 
 /*********************************************************
 *NAME:          sdl3ImguiGetPlatformIcon

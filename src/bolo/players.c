@@ -31,6 +31,7 @@
 #include "allience.h"
 #include "bases.h"
 #include "frontend.h"
+#include "../gui/lang.h"
 #include "global.h"
 #include "labels.h"
 #include "lgm.h"
@@ -39,8 +40,9 @@
 #include "pillbox.h"
 #include "players.h"
 #include "playername_validate.h"
-#include "screen.h"
+#include "brain_data.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"
 #include "screenlgm.h"
 #include "screentank.h"
 #include "tank.h"
@@ -48,6 +50,20 @@
 #include "game_sim.h"
 #include "gametype.h"
 #include "util.h"
+#include "../common/wb_log.h"
+
+/* Hidden-by-trees visibility test for player items (tanks or LGMs).
+ * Returns FALSE when the viewer is within MIN_SIGHT_DISTANCE squares so
+ * adjacent items always render; otherwise delegates to utilIsTankInTrees. */
+static bool playersIsItemInTrees(GameSim *sim, tank viewerTank, WORLD bmx, WORLD bmy) {
+  int xDiff = tankGetScreenMX(&viewerTank) - bmx;
+  int yDiff = tankGetScreenMY(&viewerTank) - bmy;
+  if (xDiff >= MIN_SIGHT_DISTANCE_LEFT && xDiff <= MIN_SIGHT_DISTANCE_RIGHT &&
+      yDiff >= MIN_SIGHT_DISTANCE_LEFT && yDiff <= MIN_SIGHT_DISTANCE_RIGHT) {
+    return FALSE;
+  }
+  return utilIsTankInTrees(&sim->mp, &sim->pb, &sim->bs, bmx, bmy);
+}
 
 
 /*********************************************************
@@ -78,6 +94,52 @@ void playersCreate(players *plrs, bool isServer) {
     (*plrs)->item[count].clientType = CLIENT_TYPE_UNKNOWN;
     (*plrs)->playerBrainNames[count][0] = '\0';
   }
+}
+
+/*********************************************************
+*NAME:          playersResetRoundState
+*PURPOSE:
+* Resets one slot's round/world state (position, alliance,
+* LGM, transient flags) while preserving its connection
+* identity: inUse, playerName, location, clientType,
+* clientFlags, and the slot's playerBrainNames entry.
+*
+* Used by a world reset between rounds so player identity
+* survives without each caller hand-restoring it — the
+* asymmetry that previously dropped PLAYER_FLAG_BOT (and the
+* country code) on the networked game-start path.
+*
+*ARGUMENTS:
+* plrs      - Pointer to the players object
+* playerNum - Slot to reset
+*********************************************************/
+void playersResetRoundState(players *plrs, BYTE playerNum) {
+  player *p;
+
+  if (playerNum >= MAX_TANKS || (*plrs) == NULL) {
+    return;
+  }
+  p = &(*plrs)->item[playerNum];
+
+  /* Alliance holds an allocation — tear down and recreate empty. */
+  allienceDestroy(&p->allie);
+  p->allie = allienceCreate();
+
+  p->mapX = 0;
+  p->mapY = 0;
+  p->pixelX = 0;
+  p->pixelY = 0;
+  p->frame = 0;
+  p->onBoat = FALSE;
+  p->lgmMapX = 0;
+  p->lgmMapY = 0;
+  p->lgmPixelX = 0;
+  p->lgmPixelY = 0;
+  p->lgmFrame = 0;
+  p->speed = 0;
+  p->ping = 0;
+  p->isChecked = FALSE;
+  p->needUpdate = FALSE;
 }
 
 /*********************************************************
@@ -126,7 +188,7 @@ bool playersSetSelf(ClientSim *csParam, GameSim *sim, players *plrs, BYTE player
   returnValue = FALSE;
   if ((*plrs)->item[playerNum].inUse == FALSE) {
     if (playersNameTaken(plrs, playerName) == FALSE) {
-      if (csParam) strcpy(csParam->myLastPlayerName, playerName);
+      if (csParam) clientSimSetMyLastPlayerName(csParam, playerName);
       returnValue = TRUE;
       strcpy((*plrs)->item[playerNum].playerName, playerName);
       (*plrs)->item[playerNum].inUse = TRUE;
@@ -164,8 +226,11 @@ bool playersSetPlayerName(ClientSim *csParam, GameSim *sim, players *plrs, BYTE 
     if (playersNameTaken(plrs, playerName) == FALSE) {
       /* OK to change do so and then make the message */
       returnValue = TRUE;
-      /* Make Message */
-      {
+      /* The "changed name" newswire is part of the in-game UI. Suppress
+       * it during lobby renames (host edits a bot's name, players
+       * tweaking their own name pre-game) — otherwise the messages
+       * queue and flush all at once when the game starts. */
+      if (csParam != NULL && !clientSimIsInLobby(csParam)) {
         MessageArgs args;
         memset(&args, 0, sizeof(args));
         /* New name (playerName) and old name (otherName) refer to the
@@ -189,7 +254,7 @@ bool playersSetPlayerName(ClientSim *csParam, GameSim *sim, players *plrs, BYTE 
         strcat(temp, "@");
         strcat(temp, (*plrs)->item[playerNum].location);
       } else if (isServer == FALSE && csParam) {
-        strcpy(csParam->myLastPlayerName, playerName);
+        clientSimSetMyLastPlayerName(csParam, playerName);
       }
       if (isServer == FALSE) {
         frontEndSetPlayer(csParam, (playerNumbers) playerNum, temp,
@@ -320,7 +385,7 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
   }
 
   /* Update front end if we are in a running game (ie not in the joining phase) */
-  if (csParam == NULL || csParam->netStat != netFailed) {
+  if (csParam == NULL || clientSimGetNetStatus(csParam) != netFailed) {
     strcpy(str, (*plrs)->item[playerNum].playerName);
     if (playerNum != selfPlayer && (*plrs)->item[playerNum].location[0] != '\0') {
       strcat(str, " (");
@@ -333,7 +398,7 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
                         (*plrs)->item[playerNum].ping,
                         playersGetClientType(plrs, playerNum),
                         playersGetClientFlags(plrs, playerNum));
-      frontEndStatusTank((BYTE) (playerNum+1), playersScreenAllience(plrs, selfPlayer, playerNum));
+      frontEndStatusTank(csParam, (BYTE) (playerNum+1), playersScreenAllience(plrs, selfPlayer, playerNum));
       frontEndRedrawAll(csParam);
     }
   }
@@ -509,9 +574,16 @@ uint8_t playersGetAccountFlags(players *plrs, BYTE playerNum) {
   uint8_t flags = 0;
   if (plrs != NULL && (*plrs)->item[playerNum].inUse == TRUE) {
     flags = (*plrs)->item[playerNum].clientFlags
-            & (PLAYER_FLAG_WBN_VERIFIED | PLAYER_FLAG_WBN_STEAM_LINKED);
+            & (PLAYER_FLAG_WBN_VERIFIED
+               | PLAYER_FLAG_WBN_STEAM_LINKED
+               | PLAYER_FLAG_BOT);
   }
   return flags;
+}
+
+bool playersIsBot(players *plrs, BYTE playerNum) {
+  if (playerNum >= MAX_TANKS) return FALSE;
+  return (playersGetAccountFlags(plrs, playerNum) & PLAYER_FLAG_BOT) != 0;
 }
 
 /*********************************************************
@@ -732,13 +804,13 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
 
 /* FIXME: This function could use some optimisation I think */
   {
-    BYTE self = cs->myPlayerNum;
+    BYTE self = clientSimGetMyPlayerNum(cs);
     if (self >= MAX_TANKS || sim->tanks[self] == NULL) return;
     tankGetWorld(&sim->tanks[self], &ourTankX, &ourTankY);
   }
 
   for (count=0;count<MAX_TANKS;count++) {
-    if ((*plrs)->item[count].inUse == TRUE && count != cs->myPlayerNum) {
+    if ((*plrs)->item[count].inUse == TRUE && count != clientSimGetMyPlayerNum(cs)) {
       playerName[0] = EMPTY_CHAR;
       /* Extract fixed map co-ordinates */
       conv = (*plrs)->item[count].mapX;
@@ -771,7 +843,7 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
         } else {
           conv2 = ourTankY - ty;
         }
-        if ((screenIsItemInTrees(sim, MY_TANK(cs), tx, ty) == FALSE) || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)  ) {
+        if ((playersIsItemInTrees(sim, MY_TANK(cs), tx, ty) == FALSE) || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)  ) {
           /* Extract fixed pixel co-ordinates */
           conv = (*plrs)->item[count].mapX;
           conv <<= TANK_SHIFT_MAPSIZE;
@@ -793,12 +865,12 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
           conv >>= TANK_SHIFT_PIXELSIZE;
           py = (BYTE) conv;
           /* Extract player screen name */
-          playersMakeScreenName(cs, plrs, cs->myPlayerNum, count, playerName);
+          playersMakeScreenName(cs, plrs, clientSimGetMyPlayerNum(cs), count, playerName);
           frame = (*plrs)->item[count].frame;
           if ((*plrs)->item[count].onBoat == TRUE) {
             frame += TANK_BOAT_ADD;
           }
-          if (allienceExist(&((*plrs)->item[count].allie), cs->myPlayerNum) == TRUE) {
+          if (allienceExist(&((*plrs)->item[count].allie), clientSimGetMyPlayerNum(cs)) == TRUE) {
             frame += TANK_GOOD_ADD;
           } else {
             frame += TANK_EVIL_ADD;
@@ -836,7 +908,7 @@ void playersMakeScreenLgm(ClientSim *cs, players *plrs, screenLgm *value, BYTE l
   BYTE count;                    /* Looping variable */
 
   for (count=0;count<MAX_TANKS;count++) {
-    if ((*plrs)->item[count].inUse == TRUE && count != cs->myPlayerNum) {
+    if ((*plrs)->item[count].inUse == TRUE && count != clientSimGetMyPlayerNum(cs)) {
       if ((*plrs)->item[count].lgmMapX >= leftPos && (*plrs)->item[count].lgmMapX <= rightPos && (*plrs)->item[count].lgmMapY >= top && (*plrs)->item[count].lgmMapY <= bottom) {
         wx = (*plrs)->item[count].lgmMapX << TANK_SHIFT_MAPSIZE;
         wx += (*plrs)->item[count].lgmPixelX << TANK_SHIFT_RIGHT2;
@@ -854,7 +926,7 @@ void playersMakeScreenLgm(ClientSim *cs, players *plrs, screenLgm *value, BYTE l
           conv2 = ourTankY - wy;
         }
 
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || screenIsItemInTrees(&cs->sim, MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)) {
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)) {
           screenLgmAddItem(value,(BYTE) ((*plrs)->item[count].lgmMapX - leftPos), (BYTE) ((*plrs)->item[count].lgmMapY - top), (*plrs)->item[count].lgmPixelX, (*plrs)->item[count].lgmPixelY, (*plrs)->item[count].lgmFrame);
         }
       }
@@ -891,7 +963,7 @@ BYTE playersGetNumPlayers(players *plrs) {
   } else {
 	// At this point we will print a message to the console, and then allow the function to return
 	// hopefully this will allow a logfile to be generated rather than a seg fault, so that we can perhaps track this error better.
-    fprintf(stderr, "Players is equal to zero, something has happened that shouldn't have.\n");
+    WB_LOG_ERROR(WB_LOG_CAT_SIM, "Players is equal to zero, something has happened that shouldn't have.");
   }
   return returnValue;
 }
@@ -943,15 +1015,15 @@ void playersRebuildSelfAlliance(GameSim *sim, players *plrs, BYTE selfPlayer) {
 
   total = basesGetNumBases(&sim->bs);
   for (count = 1; count <= total; count++) {
-    frontEndStatusBase(count, basesGetStatusNum(sim, count));
+    frontEndStatusBase(clientSimFromSim(sim), count, basesGetStatusNum(sim, count));
   }
   total = pillsGetNumPills(&sim->pb);
   for (count = 1; count <= total; count++) {
-    frontEndStatusPillbox(count, pillsGetAllianceNum(sim, &sim->pb, count));
+    frontEndStatusPillbox(clientSimFromSim(sim), count, pillsGetAllianceNum(sim, &sim->pb, count));
   }
   total = playersGetNumPlayers(&sim->plyrs);
   for (count = 1; count <= total; count++) {
-    frontEndStatusTank(count, playersScreenAllience(plrs, selfPlayer, (BYTE)(count - 1)));
+    frontEndStatusTank(clientSimFromSim(sim), count, playersScreenAllience(plrs, selfPlayer, (BYTE)(count - 1)));
   }
   playersSetAllieMenu(plrs, selfPlayer, FALSE);
 }
@@ -996,7 +1068,7 @@ BYTE playersGetFirstNotUsed(players *plrs) {
 * plrs - Pointer to the players object 
 * playerNum - The number of the player that has left
 *********************************************************/
-void playersLeaveGame(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer) {
+void playersLeaveGame(ClientSim *csParam, GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer) {
   BYTE count;                /* Looping variable */
 
 
@@ -1022,9 +1094,9 @@ void playersLeaveGame(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerN
       (*plrs)->item[playerNum].isChecked = FALSE;
       (*plrs)->playerBrainNames[playerNum][0] = '\0';
       if (isServer == FALSE) {
-        frontEndClearPlayer((playerNumbers) playerNum);
-        frontEndStatusTank((BYTE) (playerNum + 1), tankNone);
-        frontEndSetPlayerCheckState((playerNumbers) playerNum, FALSE);
+        frontEndClearPlayer(csParam, (playerNumbers) playerNum);
+        frontEndStatusTank(csParam, (BYTE) (playerNum + 1), tankNone);
+        frontEndSetPlayerCheckState(csParam, (playerNumbers) playerNum, FALSE);
       }
       /* Make a message about it */
       sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
@@ -1128,7 +1200,7 @@ int playersGetNumChecked(players *plrs) {
 *ARGUMENTS:
 * plrs - Pointer to the players object 
 *********************************************************/
-void playersCheckAllies(players *plrs, BYTE selfPlayer, bool isServer) {
+void playersCheckAllies(ClientSim *csParam, players *plrs, BYTE selfPlayer, bool isServer) {
   BYTE count; /* Looping variable */
 
   count = 0;
@@ -1139,7 +1211,7 @@ void playersCheckAllies(players *plrs, BYTE selfPlayer, bool isServer) {
       (*plrs)->item[count].isChecked = FALSE;
     }
     if (isServer == FALSE) {
-      frontEndSetPlayerCheckState((playerNumbers) count, (*plrs)->item[count].isChecked);
+      frontEndSetPlayerCheckState(csParam, (playerNumbers) count, (*plrs)->item[count].isChecked);
     }
     count++;
   }
@@ -1159,7 +1231,7 @@ void playersCheckAllies(players *plrs, BYTE selfPlayer, bool isServer) {
 * plrs - Pointer to the players object 
 * isChecked - TRUE if check all
 *********************************************************/
-void playersCheckAllNone(players *plrs, BYTE selfPlayer, bool isChecked, bool isServer) {
+void playersCheckAllNone(ClientSim *csParam, players *plrs, BYTE selfPlayer, bool isChecked, bool isServer) {
   BYTE count;         /* Looping variable */
 
   count = 0;
@@ -1167,7 +1239,7 @@ void playersCheckAllNone(players *plrs, BYTE selfPlayer, bool isChecked, bool is
     if ((*plrs)->item[count].inUse == TRUE) {
       (*plrs)->item[count].isChecked = isChecked;
       if (isServer == FALSE) {
-        frontEndSetPlayerCheckState((playerNumbers) count, isChecked);
+        frontEndSetPlayerCheckState(csParam, (playerNumbers) count, isChecked);
       }
     }
     count++;
@@ -1187,7 +1259,7 @@ void playersCheckAllNone(players *plrs, BYTE selfPlayer, bool isChecked, bool is
 * plrs - Pointer to the players object 
 * playerNum - The number of the player to check
 *********************************************************/
-void playersToggleCheckedState(players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer) {
+void playersToggleCheckedState(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer) {
   if (playerNum < MAX_TANKS) {
     if ((*plrs)->item[playerNum].inUse == TRUE  ) {
       if ((*plrs)->item[playerNum].isChecked == TRUE) {
@@ -1196,7 +1268,7 @@ void playersToggleCheckedState(players *plrs, BYTE selfPlayer, BYTE playerNum, b
         (*plrs)->item[playerNum].isChecked = TRUE;
       }
       if (isServer == FALSE) {
-        frontEndSetPlayerCheckState((playerNumbers) playerNum, (*plrs)->item[playerNum].isChecked);
+        frontEndSetPlayerCheckState(csParam, (playerNumbers) playerNum, (*plrs)->item[playerNum].isChecked);
       }
     }
   }
@@ -1216,7 +1288,7 @@ void playersToggleCheckedState(players *plrs, BYTE selfPlayer, BYTE playerNum, b
 * xValue - Your tanks X Map position
 * yValue - Your tanks Y Map position
 *********************************************************/
-void playersCheckNearbyPlayers(players *plrs, BYTE selfPlayer, BYTE xValue, BYTE yValue, bool isServer) {
+void playersCheckNearbyPlayers(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE xValue, BYTE yValue, bool isServer) {
   int xDiff;  /* X and Y differences in location */
   int yDiff;
   BYTE count; /* Looping variable */
@@ -1232,7 +1304,7 @@ void playersCheckNearbyPlayers(players *plrs, BYTE selfPlayer, BYTE xValue, BYTE
         (*plrs)->item[count].isChecked = FALSE;
       }
       if (isServer == FALSE) {
-        frontEndSetPlayerCheckState((playerNumbers) count, (*plrs)->item[count].isChecked);
+        frontEndSetPlayerCheckState(csParam, (playerNumbers) count, (*plrs)->item[count].isChecked);
       }
     }
     count++;
@@ -1326,7 +1398,7 @@ void playersSendMessageAllSelected(ClientSim *cs, GameSim *sim, players *plrs, B
          * client message log. */
         topLine[0] = '\0';
         playersMakeMessageName(cs, plrs, selfPlayer, selfPlayer, topLine);
-        clientMessageAdd(&cs->messages, (messageType) selfPlayer, topLine, messageStr);
+        clientMessageAdd(clientSimGetMessages(cs), (messageType) selfPlayer, topLine, messageStr);
       } else {
         clientSimMessageSendPlayer(cs, selfPlayer, count, messageStr);
       }
@@ -1685,15 +1757,15 @@ void playersLeaveAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE pla
     GameSim *gsim = sim;
     total = basesGetNumBases(&gsim->bs);
     for (count=1;count<=total;count++) {
-      frontEndStatusBase(count, basesGetStatusNum(gsim, count));
+      frontEndStatusBase(clientSimFromSim(gsim), count, basesGetStatusNum(gsim, count));
     }
     total = pillsGetNumPills(&gsim->pb);
     for (count=1;count<=total;count++) {
-      frontEndStatusPillbox(count, pillsGetAllianceNum(gsim, &gsim->pb, count));
+      frontEndStatusPillbox(clientSimFromSim(gsim), count, pillsGetAllianceNum(gsim, &gsim->pb, count));
     }
     total = playersGetNumPlayers(&gsim->plyrs);
     for (count=1;count<=total;count++) {
-      frontEndStatusTank(count, playersScreenAllience(plrs, selfPlayer, (BYTE) (count-1)));
+      frontEndStatusTank(clientSimFromSim(gsim), count, playersScreenAllience(plrs, selfPlayer, (BYTE) (count-1)));
     }
     playersSetAllieMenu(plrs, selfPlayer, isServer);
   }
@@ -1765,15 +1837,15 @@ void playersAcceptAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE ac
     GameSim *gsim = sim;
     total = basesGetNumBases(&gsim->bs);
     for (count=1;count<=total;count++) {
-      frontEndStatusBase(count, basesGetStatusNum(gsim, count));
+      frontEndStatusBase(clientSimFromSim(gsim), count, basesGetStatusNum(gsim, count));
     }
     total = pillsGetNumPills(&gsim->pb);
     for (count=1;count<=total;count++) {
-      frontEndStatusPillbox(count, pillsGetAllianceNum(gsim, &gsim->pb, count));
+      frontEndStatusPillbox(clientSimFromSim(gsim), count, pillsGetAllianceNum(gsim, &gsim->pb, count));
     }
     total = playersGetNumPlayers(&gsim->plyrs);
     for (count=1;count<=total;count++) {
-      frontEndStatusTank(count, playersScreenAllience(plrs, selfPlayer, (BYTE) (count-1)));
+      frontEndStatusTank(clientSimFromSim(gsim), count, playersScreenAllience(plrs, selfPlayer, (BYTE) (count-1)));
     }
     playersSetAllieMenu(plrs, selfPlayer, isServer);
   }
@@ -1793,7 +1865,7 @@ void playersAcceptAlliance(GameSim *sim, players *plrs, BYTE selfPlayer, BYTE ac
 * plrs - Pointer to the players object 
 * playerNum - The number of the player that has left
 *********************************************************/
-void playersConnectionLost(GameSim *sim, players *plrs, BYTE selfPlayer) {
+void playersConnectionLost(ClientSim *csParam, GameSim *sim, players *plrs, BYTE selfPlayer) {
   BYTE count; /* Looping variable */
   BYTE total;   /* Number of alliances acceptedBy has */
   BYTE current; /* Current Allie we are working on  */
@@ -1812,7 +1884,7 @@ void playersConnectionLost(GameSim *sim, players *plrs, BYTE selfPlayer) {
   count = 0;
   while (count < MAX_TANKS) {
     if ((*plrs)->item[count].inUse == TRUE && count != selfPlayer) {
-      playersLeaveGame(sim, plrs, selfPlayer, count, FALSE);
+      playersLeaveGame(csParam, sim, plrs, selfPlayer, count, FALSE);
     }
     count++;
   }
@@ -1860,7 +1932,7 @@ void playersGetBrainTanksInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE
 */
 
   while (count<MAX_TANKS) {
-    if ((*plrs)->item[count].inUse == TRUE && count != cs->myPlayerNum) {
+    if ((*plrs)->item[count].inUse == TRUE && count != clientSimGetMyPlayerNum(cs)) {
       /* X Position */
       wx = (*plrs)->item[count].mapX;
       wx <<= TANK_SHIFT_MAPSIZE;
@@ -1884,18 +1956,18 @@ void playersGetBrainTanksInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE
       } else {
         diffY = tankY - wy;
       }
-      
-      
-      if ((*plrs)->item[count].mapX >= leftPos && (*plrs)->item[count].mapX <= rightPos && (*plrs)->item[count].mapY >= top && (*plrs)->item[count].mapY <= bottom && (screenIsItemInTrees(&cs->sim, MY_TANK(cs), wx, wy) == FALSE || (diffX < MIN_TREEHIDE_DIST && diffY < MIN_TREEHIDE_DIST))) {
+
+
+      if ((*plrs)->item[count].mapX >= leftPos && (*plrs)->item[count].mapX <= rightPos && (*plrs)->item[count].mapY >= top && (*plrs)->item[count].mapY <= bottom && (playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (diffX < MIN_TREEHIDE_DIST && diffY < MIN_TREEHIDE_DIST))) {
         /* In the rectangle */
         /* wx and wy already set */
         /* Info */
-        if (allienceExist(&((*plrs)->item[count].allie), cs->myPlayerNum) == TRUE) {
+        if (allienceExist(&((*plrs)->item[count].allie), clientSimGetMyPlayerNum(cs)) == TRUE) {
           owner = PLAYERS_BRAIN_FRIENDLY;
         } else {
           owner = PLAYERS_BRAIN_HOSTILE;
         }
-        screenAddBrainObject(cs, PLAYERS_BRAIN_OBJECT_TYPE_TANK, wx, wy, count, (*plrs)->item[count].frame, owner, (*plrs)->item[count].speed);
+        brainDataAddObject(cs, PLAYERS_BRAIN_OBJECT_TYPE_TANK, wx, wy, count, (*plrs)->item[count].frame, owner, (*plrs)->item[count].speed);
       }
     }
     count++;
@@ -1944,7 +2016,7 @@ void playersGetBrainLgmsInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE 
 */
 
   while (count<MAX_TANKS) {
-    if ((*plrs)->item[count].inUse == TRUE && count != cs->myPlayerNum) {
+    if ((*plrs)->item[count].inUse == TRUE && count != clientSimGetMyPlayerNum(cs)) {
       if ((*plrs)->item[count].lgmMapX >= leftPos && (*plrs)->item[count].lgmMapX <= rightPos && (*plrs)->item[count].lgmMapY >= top && (*plrs)->item[count].lgmMapY <= bottom) {
         /* In trees check */
         wx = (*plrs)->item[count].lgmMapX << TANK_SHIFT_MAPSIZE;
@@ -1963,7 +2035,7 @@ void playersGetBrainLgmsInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE 
           conv2 = ourTankY - wy;
         }
         
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || (screenIsItemInTrees(&cs->sim, MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST))) {
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || (playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST))) {
           /* In the rectangle */
           /* Object Type */
           if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME) {
@@ -1984,12 +2056,12 @@ void playersGetBrainLgmsInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE 
           conv <<= TANK_SHIFT_RIGHT2;
           wy += conv;
           /* Info */
-          if (allienceExist(&((*plrs)->item[count].allie), cs->myPlayerNum) == TRUE) {
+          if (allienceExist(&((*plrs)->item[count].allie), clientSimGetMyPlayerNum(cs)) == TRUE) {
             owner = PLAYERS_BRAIN_FRIENDLY;
           } else {
             owner = PLAYERS_BRAIN_HOSTILE;
           }
-          screenAddBrainObject(cs, lgmType, wx, wy, count, 0, owner, 0);
+          brainDataAddObject(cs, lgmType, wx, wy, count, 0, owner, 0);
         }
       }
     }
@@ -2069,14 +2141,15 @@ void playersSendAiMessage(ClientSim *cs, GameSim *sim, players *plrs, PlayerBitM
     test = (bitMap >>count);
     test &= 1;
     if ((*plrs)->item[count].inUse == TRUE && test) {
-      if (count == cs->myPlayerNum) {
+      if (count == clientSimGetMyPlayerNum(cs)) {
         /* Self-echo of an AI-generated chat — same dynamic-text path as
          * playersSendMessageAllSelected; bypass the langid callback. */
+        BYTE myPN = clientSimGetMyPlayerNum(cs);
         topLine[0] = '\0';
-        playersMakeMessageName(cs, plrs, cs->myPlayerNum, cs->myPlayerNum, topLine);
-        clientMessageAdd(&cs->messages, (messageType) cs->myPlayerNum, topLine, messageStr);
+        playersMakeMessageName(cs, plrs, myPN, myPN, topLine);
+        clientMessageAdd(clientSimGetMessages(cs), (messageType) myPN, topLine, messageStr);
       } else {
-        clientSimMessageSendPlayer(cs, cs->myPlayerNum, count, messageStr);
+        clientSimMessageSendPlayer(cs, clientSimGetMyPlayerNum(cs), count, messageStr);
       }
     }
     count++;
@@ -2217,7 +2290,7 @@ bool playersCheckSameSquare(players *plrs, BYTE playerNum, BYTE xValue, BYTE yVa
 *********************************************************/
 void playersSetMyLastPlayerName(ClientSim *cs, char *dest)
 {
-  strcpy(cs->myLastPlayerName, dest);
+  clientSimSetMyLastPlayerName(cs, dest);
 }
 
 void playersSetPing(players *plrs, BYTE playerNum, uint16_t ping) {

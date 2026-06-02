@@ -27,16 +27,15 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "dialog_footer.h"
 
 extern "C" {
 #include "../sdl3draw.h"
 #include "../../gamefront.h"
-#include "../../../bolo/global.h"
-#include "../../../bolo/screen.h"
-#include "../../../bolo/client_sim.h"
-#include "../../../bolo/util.h"
-#include "../../../bolo/playername_validate.h"
-#include "../../../winbolonet/winbolonet.h"
+#include "global.h"
+#include "client_sim.h"
+#include "util.h"
+#include "playername_validate.h"
 #include "../../lang.h"
 #include "imgui_setname.h"
 }
@@ -73,6 +72,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
     /* Set up ImGui context */
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr;
@@ -87,7 +87,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
     char playerName[PLAYER_NAME_LEN];
     playerName[0] = '\0';
     if (inGame) {
-        screenGetPlayerNameCS(cs, playerName);
+        clientSimGetPlayerName(cs, playerName);
     } else {
         gameFrontGetPlayerName(playerName);
     }
@@ -128,6 +128,11 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                      ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse);
 
+        /* Top-right close X — same as Cancel. */
+        if (WBUI::DrawPanelCloseX()) {
+            running = false;
+        }
+
         bool wbnLocked = gameFrontGetWinbolonetUse();
 
         if (wbnLocked) {
@@ -149,19 +154,15 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                                               ImGuiInputTextFlags_EnterReturnsTrue);
         if (wbnLocked) ImGui::EndDisabled();
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
         char errPopupId[64];
         SDL_snprintf(errPopupId, sizeof(errPopupId), "%s##setname", langGetText(STR_ERR_TITLE));
 
-        float btnW = 80.0f * s;
-        float btnX = ((float)winW - btnW * 2 - 8.0f * s) / 2.0f;
-        ImGui::SetCursorPosX(btnX);
-
-        if (wbnLocked) ImGui::BeginDisabled();
-        if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0)) || enterPressed) {
+        int footer = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                        langGetText(STR_OK),
+                                        /*enterConfirms*/ true,
+                                        /*showSeparator*/ true,
+                                        /*confirmDisabled*/ wbnLocked);
+        if (footer == WBUI::FOOTER_CONFIRM || enterPressed) {
             char newName[PLAYER_NAME_LEN];
             PlayerNameValidationError nameErr = PLAYER_NAME_OK;
             bool nameOk = playerNameValidate(playerName, newName,
@@ -192,11 +193,11 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
             } else if (inGame) {
                 char oldName[PLAYER_NAME_LEN];
                 oldName[0] = '\0';
-                screenGetPlayerNameCS(cs, oldName);
+                clientSimGetPlayerName(cs, oldName);
                 if (playerNameCompare(oldName, newName) == 0) {
                     running = false;
                 } else {
-                    bool changeOK = screenSetPlayerNameCS(cs, newName);
+                    bool changeOK = clientSimSetPlayerName(cs, newName);
                     if (!changeOK) {
                         errorMsg = langGetText(STR_DLGSETNAME_INUSE_ERR);
                         ImGui::OpenPopup(errPopupId);
@@ -209,18 +210,16 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                 running = false;
             }
         }
-        if (wbnLocked) ImGui::EndDisabled();
-
-        ImGui::SameLine(0.0f, 8.0f);
-        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0)) ||
-            (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
-             !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
+        if (footer == WBUI::FOOTER_CANCEL) {
             running = false;
         }
 
         /* Error popup */
+        static float s_fadeSetNameErr = 0.0f;
         if (ImGui::BeginPopupModal(errPopupId, nullptr,
                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                imguiPopupFadeAlpha(&s_fadeSetNameErr));
             ImGui::Text("%s", errorMsg ? errorMsg : "");
             ImGui::Spacing();
             {
@@ -229,7 +228,9 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                 if (ImGui::Button(okBuf, ImVec2(80, 0))) {
                     ImGui::CloseCurrentPopup();
                 }
+                imguiHandOnHover();
             }
+            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
 

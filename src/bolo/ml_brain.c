@@ -31,6 +31,7 @@
 #include "ml_brain.h"
 #include "obs_builder.h"
 #include "../gym/winbolo_gym.h"
+#include "../common/wb_log.h"
 
 #include <onnxruntime_c_api.h>
 
@@ -46,9 +47,9 @@ static void mlLogOpen(void) {
     if (g_logFile) return;
     g_logFile = fopen("ml_brain_log.jsonl", "w");
     if (g_logFile)
-        fprintf(stderr, "[ML] Log opened: ml_brain_log.jsonl\n");
+        WB_LOG_INFO(WB_LOG_CAT_SIM, "[ML] Log opened: ml_brain_log.jsonl");
     else
-        fprintf(stderr, "[ML] Failed to open log file\n");
+        WB_LOG_WARN(WB_LOG_CAT_SIM, "[ML] Failed to open log file");
 }
 
 static void mlLogClose(void) {
@@ -223,7 +224,7 @@ static bool ensureOrtEnv(void) {
 #define ORT_CHECK(expr) do { \
     OrtStatus *_s = (expr); \
     if (_s != NULL) { \
-        fprintf(stderr, "ONNX Runtime error: %s\n", g_ortApi->GetErrorMessage(_s)); \
+        WB_LOG_ERROR(WB_LOG_CAT_SIM, "ONNX Runtime error: %s", g_ortApi->GetErrorMessage(_s)); \
         g_ortApi->ReleaseStatus(_s); \
         goto cleanup; \
     } \
@@ -249,7 +250,7 @@ MLBrainInstance *mlBrainCreate(const char *onnx_path) {
         OrtStatus *s = g_ortApi->CreateSession(g_ortEnv, wpath, inst->sessionOpts, &inst->session);
         free(wpath);
         if (s != NULL) {
-            fprintf(stderr, "ONNX Runtime error: %s\n", g_ortApi->GetErrorMessage(s));
+            WB_LOG_ERROR(WB_LOG_CAT_SIM, "ONNX Runtime error: %s", g_ortApi->GetErrorMessage(s));
             g_ortApi->ReleaseStatus(s);
             goto cleanup;
         }

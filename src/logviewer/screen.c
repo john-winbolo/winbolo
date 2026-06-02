@@ -32,26 +32,26 @@
 #else
 #  include <arpa/inet.h>
 #endif
-#include "global.h"
+#include "lv_global.h"
 #include "backend.h"
-#include "bolo_map.h"
+#include "lv_bolo_map.h"
 #include "tiles.h"
-#include "pillbox.h"
-#include "bases.h"
-#include "screencalc.h"
-#include "screentank.h"
-#include "screenlgm.h"
-#include "screenbullet.h"
-#include "starts.h"
-#include "util.h"
-#include "shells.h"
-#include "sounddist.h"
-#include "players.h"
+#include "lv_pillbox.h"
+#include "lv_bases.h"
+#include "lv_screencalc.h"
+#include "lv_screentank.h"
+#include "lv_screenlgm.h"
+#include "lv_screenbullet.h"
+#include "lv_starts.h"
+#include "lv_util.h"
+#include "lv_shells.h"
+#include "lv_sounddist.h"
+#include "lv_players.h"
 #include "snapshot.h"
 #include "blocks.h"
 #include "dns.h"
 #include "logviewer.h"
-#include "messages.h"
+#include "lv_messages.h"
 #include "../gui/lang.h"
 
 /* File-scope pointer to the central LogViewerState */
@@ -586,7 +586,7 @@ BYTE lv_screenGetPos(screen *value,BYTE xValue, BYTE yValue) {
   return returnValue;
 }
 
-#include "log.h"
+#include "lv_log.h"
 void lv_windowAddEvent(int eventType, char *msg);
 
 
@@ -621,7 +621,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
           snprintf(mem, sizeof(mem), "%s", str);
         } else if (g_lv->loadedLogVersion == LOG_VERSION_V1) {
           /* Version 1: opt2-opt3 are 2-char country code,
-           * opt4 is accountFlags (bit 0=WBN, bit 1=Steam),
+           * opt4 is accountFlags (bit 0=WBN, bit 1=Steam, bit 5=bot),
            * opt5 reserved (zero in current writers). */
           snprintf(mem, sizeof(mem), "[%c%c]", opt2, opt3);
           accountFlags = opt4;
@@ -630,7 +630,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       }
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", name);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_JOINED, &args);
       }
       if (opt1 < MAX_TANKS) {
@@ -645,7 +645,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersLeaveGame(opt1, TRUE);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
       }
       if (opt1 < MAX_TANKS) {
@@ -678,7 +678,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
       }
       break;
@@ -702,8 +702,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt2, mem);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
-        snprintf(args.otherName, sizeof(args.otherName), "%s", mem);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
+        snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, mem);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_REQUEST, &args);
       }
       break;
@@ -715,8 +715,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt2, mem);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
-        snprintf(args.otherName, sizeof(args.otherName), "%s", mem);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
+        snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, mem);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_ACCEPT, &args);
       }
       break;
@@ -726,7 +726,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_ALLY_LEAVE, &args);
       }
       break;
@@ -836,8 +836,8 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, name);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", name);
-        snprintf(args.string1, sizeof(args.string1), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
+        snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_ALL, &args);
       }
       break;
@@ -851,9 +851,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt2, name2);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", name);
-        snprintf(args.otherName, sizeof(args.otherName), "%s", name2);
-        snprintf(args.string1, sizeof(args.string1), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, name);
+        snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, name2);
+        snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MSG_PLAYERS, &args);
       }
       break;
@@ -863,7 +863,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_utilPtoCString(mem, str);
       {
         MessageArgs args = {0};
-        snprintf(args.string1, sizeof(args.string1), "%s", str);
+        snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
         lv_messageAdd(networkMessage, MESSAGE_NETSERVER, STR_LV_MSG_SERVER, &args);
       }
       break;
@@ -945,13 +945,13 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, mem);
       if (opt1 == opt2 || opt2 == NEUTRAL) {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", mem);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, mem);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_DIED, &args);
       } else {
         MessageArgs args = {0};
         lv_playersGetPlayerName(opt2, str);
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
-        snprintf(args.otherName, sizeof(args.otherName), "%s", mem);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
+        snprintf(args.otherName, sizeof(args.otherName), "%.*s", (int)sizeof(args.otherName) - 1, mem);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_KILLED, &args);
       }
       if (opt1 < MAX_TANKS) g_lv->deaths[opt1]++;
@@ -970,7 +970,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_REJOINED, &args);
       }
       if (opt1 < MAX_TANKS) {
@@ -984,7 +984,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_PLAYER_LEAVING, &args);
       }
       if (opt1 < MAX_TANKS) {
@@ -1034,7 +1034,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_READY, &args);
       }
       break;
@@ -1043,7 +1043,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_UNREADY, &args);
       }
       break;
@@ -1053,7 +1053,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         if (opt2 == 0) {
           lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_LEFT_TEAM, &args);
         } else {
@@ -1073,7 +1073,7 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_playersGetPlayerName(opt1, str);
       {
         MessageArgs args = {0};
-        snprintf(args.playerName, sizeof(args.playerName), "%s", str);
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
         lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_MAP_SKIP_VOTE, &args);
       }
       break;
@@ -1083,12 +1083,46 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_utilPtoCString(mem, str);
       {
         MessageArgs args = {0};
-        snprintf(args.string1, sizeof(args.string1), "%s", str);
+        snprintf(args.string1, sizeof(args.string1), "%.*s", (int)sizeof(args.string1) - 1, str);
         lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_MAP_SKIPPED, &args);
       }
       break;
     case log_BalanceApplied:
       lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_TEAM_BALANCE, NULL);
+      break;
+    case log_GameVoteStart:
+      logReadBytes(&opt1, 1);  /* kind */
+      logReadBytes(&opt2, 1);  /* initiator */
+      logReadBytes(&opt3, 1);  /* team (0 = global) */
+      lv_playersGetPlayerName(opt2, str);
+      {
+        MessageArgs args = {0};
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE,
+                      opt1 == GAME_VOTE_KIND_SURRENDER
+                          ? STR_LV_VOTE_START_SURRENDER
+                          : STR_LV_VOTE_START_LOBBY,
+                      &args);
+      }
+      break;
+    case log_GameVoteCast:
+      logReadBytes(&opt1, 1);  /* kind */
+      logReadBytes(&opt2, 1);  /* player */
+      logReadBytes(&opt3, 1);  /* voteYes (0/1) */
+      lv_playersGetPlayerName(opt2, str);
+      {
+        MessageArgs args = {0};
+        snprintf(args.playerName, sizeof(args.playerName), "%.*s", (int)sizeof(args.playerName) - 1, str);
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE,
+                      opt3 ? STR_LV_VOTE_CAST_YES : STR_LV_VOTE_CAST_NO,
+                      &args);
+      }
+      break;
+    case log_GameVoteEnd:
+      logReadBytes(&opt1, 1);  /* kind */
+      logReadBytes(&opt2, 1);  /* result */
+      lv_messageAdd(networkStatus, MESSAGE_NETSERVER,
+                    opt2 ? STR_LV_VOTE_PASSED : STR_LV_VOTE_FAILED, NULL);
       break;
     default:
       lv_windowStop(TRUE);
@@ -1460,12 +1494,15 @@ static int walkSkipEventBody(BYTE code) {
     case log_SoundExplosion:
     case log_SoundBigExplosion:
     case log_SoundManDie:
+    case log_GameVoteEnd:
       { BYTE b[2]; if (logReadBytes(b, 2) != 2) return -1; }
       return 2;
     case log_MapChange:
     case log_BaseSetOwner:
     case log_PillSetOwner:
     case log_PillSetPlace:
+    case log_GameVoteStart:
+    case log_GameVoteCast:
       { BYTE b[3]; if (logReadBytes(b, 3) != 3) return -1; }
       return 3;
     case log_BaseSetStock:

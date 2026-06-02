@@ -49,10 +49,9 @@
 
 /* Bolo types (included after SDL3 to avoid #pragma pack conflicts) */
 extern "C" {
-#include "../../bolo/global.h"    /* BYTE, bool, FALSE/TRUE */
-#include "../../bolo/screen.h"   /* labelLen, lblNone/lblShort/lblLong */
-#include "../../bolo/client_sim.h"
-#include "../../bolo/netpacks.h" /* PACKET_MAX_CHAT_MESSAGE */
+#include "global.h"    /* BYTE, bool, FALSE/TRUE */
+#include "client_sim.h"
+#include "wire_limits.h"
 #include "../gamefront.h"
 #include "../lang.h"
 }
@@ -63,12 +62,8 @@ extern "C" {
 #include "luabrainshandler.h"
 #include "flags.h"
 
-/* Include players.h with C linkage — no #pragma pack inside, safe here */
 extern "C" {
-#include "../../bolo/players.h"
-#include "../../bolo/transport.h"
-#include "../../bolo/transport_udp.h"
-#include "../../bolo/bot_manager.h"
+#include "client_net.h"
 #include "../../server/server_lifecycle.h"
 #include "../../server/threads.h"
 }
@@ -85,6 +80,10 @@ extern "C" {
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "dialogs/imgui_dialog_utils.h"
+#include "dialogs/dialog_footer.h"
+#include "dialogs/imgui_keysetup.h"
+#include "dialogs/imgui_about.h"
+#include "platform/mac_menubar.h"
 
 extern "C" void windowSetQuitting(void);
 
@@ -100,22 +99,16 @@ extern "C" int  windowGetDrawTime(void);
 extern "C" int  windowGetSimTime(void);
 extern "C" int  windowGetNetTime(void);
 extern "C" int  windowGetAiTime(void);
-/* gameFrontGetTransport: now provided by gamefront.h */
-extern "C" uint16_t transportUdpClientGetPing(Transport *t);
 /* Dialog helpers — declared without pulling in pragma-pack headers */
-extern "C" void screenGetPlayerNameCS(struct ClientSim *cs, char *dest);
-extern "C" bool screenSetPlayerNameCS(struct ClientSim *cs, char *name);
 /* gameFrontSetGameOptions: now provided by gamefront.h */
 extern "C" void utilStripName(char *name);
 
 /* Key setup helpers */
 extern "C" void windowGetKeys(keyItems *value);
 extern "C" void windowSetKeys(keyItems *value);
+extern "C" bool useAutoslow;
+extern "C" bool useAutohide;
 extern "C" void windowKeyPressed(struct ClientSim *cs, int keyCode);
-extern "C" bool screenGetTankAutoSlowdownCS(struct ClientSim *csPtr);
-extern "C" void screenSetTankAutoSlowdownCS(struct ClientSim *csPtr, bool useSlowdown);
-extern "C" bool screenGetTankAutoHideGunsightCS(struct ClientSim *csPtr);
-extern "C" void screenSetTankAutoHideGunsightCS(struct ClientSim *csPtr, bool useAutohide);
 extern "C" void inputTouchSetAbsoluteSteering(bool enabled);
 extern "C" bool inputTouchGetAbsoluteSteering(void);
 
@@ -142,7 +135,11 @@ extern "C" bool inputTouchGetAbsoluteSteering(void);
 #endif
 
 #ifndef MENU_BAR_HEIGHT
-#define MENU_BAR_HEIGHT 22
+  #ifdef __APPLE__
+    #define MENU_BAR_HEIGHT 0
+  #else
+    #define MENU_BAR_HEIGHT 22
+  #endif
 #endif
 
 /* -------------------------------------------------------
@@ -159,6 +156,7 @@ extern "C" void windowShowBaseLabels_toggle(struct ClientSim *cs);
 extern "C" void windowSoundEffects_toggle(void);
 extern "C" void windowBackgroundSoundChange_toggle(void);
 extern "C" void windowSoundKeepalive(void);
+extern "C" void windowSetSoundVolume(int pct);
 extern "C" void windowMenuAllowNewPlayers_toggle(struct ClientSim *cs);
 extern "C" void windowMenuNewswire_toggle(struct ClientSim *cs);
 extern "C" void windowMenuAssistant_toggle(struct ClientSim *cs);
@@ -179,14 +177,6 @@ extern "C" void windowNewGame(void);
 extern "C" void windowQuit(void);
 extern "C" void windowSaveMap(struct ClientSim *cs);
 
-/* Backend functions called directly from menu */
-extern "C" void screenRequestAllianceCS(struct ClientSim *csPtr);
-extern "C" void screenLeaveAllianceCS(struct ClientSim *csPtr);
-extern "C" void screenCheckAllNonePlayersCS(struct ClientSim *csPtr, bool isChecked);
-extern "C" void screenCheckAlliedPlayersCS(struct ClientSim *csPtr);
-extern "C" void screenCheckNearbyPlayersCS(struct ClientSim *csPtr);
-extern "C" void screenTogglePlayerCheckStateCS(struct ClientSim *csPtr, BYTE playerNum);
-
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
 extern "C" bool smoothScrollingEnabled;
@@ -203,6 +193,7 @@ extern "C" bool soundEffects;
 extern "C" void soundSetMuted(bool mute);
 extern "C" bool backgroundSound;
 extern "C" bool useSoundKeepalive;
+extern "C" int  soundVolume;
 extern "C" bool showNewswireMessages;
 extern "C" bool showAssistantMessages;
 extern "C" bool showAIMessages;
@@ -267,17 +258,31 @@ static uint8_t  s_playerFlags[MAX_PLAYERS] = {};
 /* WBN/Steam icon textures */
 static SDL_Texture *s_iconGlobe = nullptr;
 static SDL_Texture *s_iconSteam = nullptr;
+static SDL_Texture *s_iconBrain = nullptr;
+/* Large brain texture used for tank-label overlays. The small s_iconBrain
+ * is rasterized at WBN_ICON_SIZE for the player-popup / renderPlayerName
+ * paths; sized up to a tank-label height (~16-48 px depending on zoom)
+ * the small one looks soft because the SVG's vector edges were already
+ * baked into a 14-px bitmap. WBN_ICON_TANK_LABEL_SIZE rasterizes the
+ * same SVG at a height that covers the realistic zoom range so the
+ * label-side blit is a (sharp) downscale rather than an upscale. */
+static SDL_Texture *s_iconBrainLg = nullptr;
 static bool s_wbnIconsLoaded = false;
 #define WBN_ICON_SIZE 14
+#define WBN_ICON_TANK_LABEL_SIZE 48
 
 static void ensureWbnIconsLoaded(void) {
     if (s_wbnIconsLoaded) return;
     s_wbnIconsLoaded = true;
     SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
-    s_iconGlobe = imguiLoadSvgIcon(r, "data/ui/globe.svg", WBN_ICON_SIZE);
-    s_iconSteam = imguiLoadSvgIcon(r, "data/ui/steam.svg", WBN_ICON_SIZE);
-    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] globe=%p steam=%p s_renderer=%p drawRenderer=%p",
+    s_iconGlobe   = imguiLoadSvgIconWhite(r, "data/ui/globe.svg", WBN_ICON_SIZE);
+    s_iconSteam   = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
+    s_iconBrain   = imguiLoadSvgIconWhite(r, "data/ui/brain.svg", WBN_ICON_SIZE);
+    s_iconBrainLg = imguiLoadSvgIconWhite(r, "data/ui/brain.svg",
+                                          WBN_ICON_TANK_LABEL_SIZE);
+    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] globe=%p steam=%p brain=%p brainLg=%p s_renderer=%p drawRenderer=%p",
             (void *)s_iconGlobe, (void *)s_iconSteam,
+            (void *)s_iconBrain, (void *)s_iconBrainLg,
             (void *)s_renderer, (void *)sdl3DrawGetRenderer());
 }
 
@@ -307,7 +312,6 @@ static char s_settingsNameBuf[33] = "";  /* PLAYER_NAME_LEN = 33 */
 static bool s_wbnInitialised     = false;
 
 /* Modal dialog state */
-static bool s_showAbout          = false;
 static bool s_closeAllPopups     = false;
 
 static bool s_showChangeName     = false;
@@ -326,39 +330,42 @@ static char s_joinConfirmUrl[512]   = "";
 static char s_joinConfirmAddr[256]  = "";
 static int  s_joinConfirmPort       = 0;
 
-/* Key Setup modal state */
-/* Which binding is currently being captured; -1 = none */
-enum KeySetupField {
-    ksNone = -1,
-    ksForward, ksBackward, ksTurnLeft, ksTurnRight,
-    ksShoot, ksLayMine, ksGunIncrease, ksGunDecrease,
-    ksTankView, ksPillView,
-    ksScrollUp, ksScrollDown, ksScrollLeft, ksScrollRight,
-    ksQuickTree, ksQuickRoad, ksQuickWall, ksQuickPillbox, ksQuickMine,
-};
-
-static bool         s_showKeySetup        = false;
-static keyItems     s_keySetupKeys;          /* working copy */
-static bool         s_keySetupAutoSlowdown  = false;
-static bool         s_keySetupAutoGunsight  = false;
-static KeySetupField s_keySetupWaiting      = ksNone;
+/* Key Setup modal state is owned by imgui_keysetup.cpp now —
+ * trigger via imguiKeySetupOpenInGame, render each frame via
+ * imguiKeySetupRenderInGamePopup, route key-capture scancodes
+ * through imguiKeySetupHandleInGameScancode. This file used to
+ * carry a parallel copy of the form + state; the two diverged
+ * (Auto Slowdown not persisting from the in-game popup was the
+ * symptom) so it was consolidated into the standalone dialog's
+ * module. */
 
 /* Send Message panel state */
 enum SendMsgRecipient { kSendAll = 0, kSendAllies, kSendNearby, kSendSelected };
 static int    s_sendMsgRecipient  = kSendAll;
 /* Sized to match the wire payload cap (PACKET_MAX_CHAT_MESSAGE bytes) used by
- * transportUdpClientSendChat / transport_udp_server PACKET_CHAT_MESSAGE,
- * + 1 for NUL. ImGui's InputText caps insertions at sizeof(buf) and
- * rejects a whole UTF-8 codepoint that would overflow rather than
- * splitting it, so this is the limit users see in the dialog too. */
+ * the CMD_CHAT body inside a PACKET_COMMAND_TICK frame (submitted via
+ * clientSimSubmitCommand, applied by the CMD_CHAT dispatcher arm), + 1
+ * for NUL. ImGui's InputText caps insertions at sizeof(buf) and rejects
+ * a whole UTF-8 codepoint that would overflow rather than splitting it,
+ * so this is the limit users see in the dialog too. */
 static char   s_sendMsgBuf[PACKET_MAX_CHAT_MESSAGE + 1] = "";
 static Uint64 s_sendMsgCooldownEnd = 0;   /* SDL_GetTicks() value; 0 = not in cooldown */
 static bool   s_sendMsgFocusInput = false; /* Set true to focus the text input next frame */
+static int    s_sendMsgFocusFrames = 0;
+static bool   s_sendMsgHideNav = false;
 #define SEND_MSG_WAIT_MS 2000
 
 /* Alliance request cooldown */
 static Uint64 s_allianceReqCooldownEnd = 0; /* SDL_GetTicks() value; 0 = not in cooldown */
 #define ALLIANCE_REQ_WAIT_MS 5000
+
+bool sdl3ImguiAllianceReqInCooldown(void) {
+    return (s_allianceReqCooldownEnd != 0 && SDL_GetTicks() < s_allianceReqCooldownEnd);
+}
+
+void sdl3ImguiNoteAllianceRequested(void) {
+    s_allianceReqCooldownEnd = SDL_GetTicks() + ALLIANCE_REQ_WAIT_MS;
+}
 
 /* -------------------------------------------------------
  * Pop-out window support (desktop only)
@@ -407,6 +414,7 @@ static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h) {
 
     pw->imguiCtx = ImGui::CreateContext();
     ImGui::SetCurrentContext(pw->imguiCtx);
+    imguiRegisterPlatformOpenUrl();
 
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -548,10 +556,10 @@ static void renderSysInfoContent(void) {
          * tick. Take the same mutex serverInstanceTick uses so the
          * snapshot is consistent. Cheap — these are quick reads. */
         threadsWaitForMutex();
-        hasBots = botManagerHasAnyBot();
-        botManagerGetPoolStats(&ps);
+        hasBots = serverSimHasAnyBot(spSim);
+        serverSimGetBotPoolStats(spSim, &ps);
         for (int i = 0; i < MAX_TANKS; i++) {
-            botInfoValid[i] = botManagerGetBotInfo((BYTE)i, &botInfos[i]);
+            botInfoValid[i] = serverSimGetBotInfo(spSim, (BYTE)i, &botInfos[i]);
         }
         serverLifecycleGetTickStats(&tickLast, &tickEwma);
         serverLifecycleGetSimStats(&simLast, &simEwma);
@@ -711,10 +719,9 @@ static void renderNetInfoContent(ClientSim *cs) {
     ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_SERVER), str);
 
     /* Client in a networked game: prepend player location to port */
-    if (cs->networkGameType != netSingle) {
+    if (clientSimGetNetType(cs) != netSingle) {
         char addr[256];
-        players *plrs = &cs->sim.plyrs;
-        playersGetPlayerLocation(plrs, cs->myPlayerNum, addr);
+        clientSimGetPlayerLocation(cs, clientSimGetMyPlayerNum(cs), addr);
         netGetOurAddressStr(cs, str);
         const char *portPart = strchr(str, ':');
         if (portPart) {
@@ -729,15 +736,12 @@ static void renderNetInfoContent(ClientSim *cs) {
 
     netGetStats(cs, str, &ping, &ppsec, &numErrors);
     /* Prefer stats from new UDP transport when active */
-    {
-        Transport *tp = gameFrontGetTransport();
-        if (tp) {
-            uint16_t udpPing = transportUdpClientGetPing(tp);
-            if (udpPing > 0) ping = (int)udpPing;
-            int udpErrors = 0;
-            transportUdpClientGetNetStats(tp, &ppsIn, &ppsOut, &bpsIn, &bpsOut, &udpErrors);
-            numErrors = udpErrors;
-        }
+    if (clientSimHasTransport(cs)) {
+        uint16_t udpPing = clientSimGetNetPing(cs);
+        if (udpPing > 0) ping = (int)udpPing;
+        int udpErrors = 0;
+        clientSimGetUdpNetStats(cs, &ppsIn, &ppsOut, &bpsIn, &bpsOut, &udpErrors);
+        numErrors = udpErrors;
     }
     ImGui::Separator();
     ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_STATUS), str);
@@ -834,37 +838,38 @@ static void renderNetInfoPanel(ClientSim *cs) {
 static void renderGameInfoContent(ClientSim *cs) {
     char mapName[256];
     mapName[0] = '\0';
-    screenGetMapNameCS(cs, mapName);
+    strcpy(mapName, clientSimGetMapName(cs));
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_MAPNAME), mapName);
     if (strncmp(mapName, "rand_", 5) == 0) {
         ImGui::SameLine();
         if (ImGui::SmallButton(langGetText(STR_DLGGAMEINFO_COPYSEED))) {
             SDL_SetClipboardText(mapName + 5);
         }
+        imguiHandOnHover();
     }
     {
         MessageArgs args = {};
-        args.number = (int)screenGetNumPlayersCS(cs);
+        args.number = (int)clientSimGetNumPlayers(cs);
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMEINFO_NUMPLAYERS, &args));
     }
 
-    gameType *gt = &cs->sim.game;
+    gameType gt = clientSimGetGameType(cs);
     langid gtStr = STR_DLGGAMEINFO_STRICT;
-    if      (*gt == gameOpen)       gtStr = STR_DLGGAMEINFO_OPEN;
-    else if (*gt == gameTournament) gtStr = STR_DLGGAMEINFO_TOURN;
+    if      (gt == gameOpen)       gtStr = STR_DLGGAMEINFO_OPEN;
+    else if (gt == gameTournament) gtStr = STR_DLGGAMEINFO_TOURN;
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_GAMETYPE), langGetText(gtStr));
 
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_HIDDENMINES),
-                screenGetAllowHiddenMinesCS(cs) ? langGetText(STR_YES) : langGetText(STR_NO));
+                clientSimGetAllowHiddenMines(cs) ? langGetText(STR_YES) : langGetText(STR_NO));
 
-    aiType ai = screenGetAiTypeCS(cs);
+    aiType ai = clientSimGetAiType(cs);
     langid aiStr = STR_NO;
     if      (ai == aiYes)          aiStr = STR_YES;
     else if (ai == aiYesAdvantage) aiStr = STR_DLGGAMEINFO_AIADV;
     else if (ai == aiFull)         aiStr = STR_DLGGAMEINFO_FULLADV;
     ImGui::Text("%s %s", langGetText(STR_DLGGAMEINFO_AILABEL), langGetText(aiStr));
 
-    long timeLeft = screenGetGameTimeLeftCS(cs);
+    long timeLeft = clientSimGetGmeLength(cs);
     if (timeLeft == UNLIMITED_GAME_TIME) {
         ImGui::Text("%s %s", langGetText(STR_DLGGAMEINFO_TIMELIMIT),
                     langGetText(STR_DLGGAMEINFO_UNLIMITED));
@@ -1000,10 +1005,10 @@ static void renderSendMsgContent(ClientSim *cs) {
     /* "Sending to N player(s)" label */
     int numSend = 0;
     switch (s_sendMsgRecipient) {
-        case kSendAll:      numSend = (int)screenGetNumPlayersCS(cs);     break;
-        case kSendAllies:   numSend = screenNumAlliesCS(cs);              break;
-        case kSendNearby:   numSend = screenNumNearbyTanksCS(cs);         break;
-        case kSendSelected: numSend = screenNumCheckedPlayersCS(cs);      break;
+        case kSendAll:      numSend = (int)clientSimGetNumPlayers(cs);     break;
+        case kSendAllies:   numSend = clientSimGetNumAllies(cs);              break;
+        case kSendNearby:   numSend = clientSimGetNumNearbyTanks(cs);         break;
+        case kSendSelected: numSend = clientSimGetNumCheckedPlayers(cs);      break;
     }
     {
         MessageArgs args = {};
@@ -1017,15 +1022,25 @@ static void renderSendMsgContent(ClientSim *cs) {
      * (3 bytes each); for ASCII it's 128. */
     /* Auto-focus on window appear or when Ctrl+M re-pressed */
     bool wantSelectAll = false;
-    if (ImGui::IsWindowAppearing() || s_sendMsgFocusInput) {
+    if (s_sendMsgFocusInput) {
+        s_sendMsgFocusFrames = 2;
+        s_sendMsgFocusInput = false;
+    }
+    if (ImGui::IsWindowAppearing() || s_sendMsgFocusFrames > 0) {
         ImGui::SetWindowFocus();
         ImGui::SetKeyboardFocusHere(0);
         wantSelectAll = true;
-        s_sendMsgFocusInput = false;
+        if (s_sendMsgFocusFrames > 0) s_sendMsgFocusFrames--;
     }
     ImGui::SetNextItemWidth(-1.0f);
+    if (s_sendMsgHideNav)
+        ImGui::GetCurrentWindow()->DC.NavHideHighlightOneFrame = true;
     bool pressedEnter = ImGui::InputText("##msg", s_sendMsgBuf, sizeof(s_sendMsgBuf),
                                          ImGuiInputTextFlags_EnterReturnsTrue);
+    if (s_sendMsgHideNav) {
+        ImGui::GetCurrentContext()->NavCursorVisible = false;
+        if (ImGui::IsItemActive()) s_sendMsgHideNav = false;
+    }
     if (wantSelectAll) {
         if (ImGuiInputTextState *state = ImGui::GetInputTextState(ImGui::GetItemID()))
             state->SelectAll();
@@ -1036,14 +1051,15 @@ static void renderSendMsgContent(ClientSim *cs) {
                        SDL_GetTicks() < s_sendMsgCooldownEnd);
     if (inCooldown) ImGui::BeginDisabled();
     bool doSend = ImGui::Button(langGetText(STR_DLGMSG_BUTTON)) || (!inCooldown && pressedEnter);
+    imguiHandOnHover();
     if (inCooldown) ImGui::EndDisabled();
 
     if (doSend && s_sendMsgBuf[0] != '\0') {
         switch (s_sendMsgRecipient) {
-            case kSendAll:      screenSendMessageAllPlayersCS(cs, s_sendMsgBuf);  break;
-            case kSendAllies:   screenSendMessageAllAlliesCS(cs, s_sendMsgBuf);   break;
-            case kSendNearby:   screenSendMessageAllNearbyCS(cs, s_sendMsgBuf);   break;
-            case kSendSelected: screenSendMessageAllSelectedCS(cs, s_sendMsgBuf); break;
+            case kSendAll:      clientSimSendMessageAllPlayers(cs, s_sendMsgBuf);  break;
+            case kSendAllies:   clientSimSendMessageAllAllies(cs, s_sendMsgBuf);   break;
+            case kSendNearby:   clientSimSendMessageAllNearby(cs, s_sendMsgBuf);   break;
+            case kSendSelected: clientSimSendMessageAllSelected(cs, s_sendMsgBuf); break;
         }
         s_sendMsgCooldownEnd = SDL_GetTicks() + SEND_MSG_WAIT_MS;
 #if BOLO_MOBILE
@@ -1053,9 +1069,8 @@ static void renderSendMsgContent(ClientSim *cs) {
             dialogDismissKeyboard(s_window);
         }
 #else
-        /* Re-focus the input and select all so the user can type to
-         * overwrite the previous message immediately after cooldown. */
         s_sendMsgFocusInput = true;
+        s_sendMsgHideNav = true;
 #endif
     }
 }
@@ -1118,25 +1133,28 @@ static void renderPlayersPanel(ClientSim *cs) {
     }
 
     /* Selection helpers */
-    if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALL)))    screenCheckAllNonePlayersCS(cs, true);
+    if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALL)))    clientSimCheckAllNonePlayers(cs, true);
+    imguiHandOnHover();
     ImGui::SameLine();
-    if (ImGui::Button(langGetText(STR_DLGPLAYERS_NONE)))   screenCheckAllNonePlayersCS(cs, false);
+    if (ImGui::Button(langGetText(STR_DLGPLAYERS_NONE)))   clientSimCheckAllNonePlayers(cs, false);
+    imguiHandOnHover();
     ImGui::SameLine();
-    if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALLIES))) screenCheckAlliedPlayersCS(cs);
+    if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALLIES))) clientSimCheckAlliedPlayers(cs);
+    imguiHandOnHover();
     ImGui::SameLine();
-    if (ImGui::Button(langGetText(STR_DLGPLAYERS_NEARBY))) screenCheckNearbyPlayersCS(cs);
+    if (ImGui::Button(langGetText(STR_DLGPLAYERS_NEARBY))) clientSimCheckNearbyPlayers(cs);
+    imguiHandOnHover();
 
     ImGui::Separator();
 
     /* Pre-compute alliance state */
-    players *plrs = &cs->sim.plyrs;
-    BYTE self = cs->myPlayerNum;
+    BYTE self = clientSimGetMyPlayerNum(cs);
     bool hasAllies  = false;
     bool canRequest = false;
     bool isAlly[MAX_PLAYERS] = {};
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (s_playerEnabled[i] && i != self) {
-            isAlly[i] = playersIsAllie(plrs, self, (BYTE)i);
+            isAlly[i] = clientSimIsPlayerAlly(cs, self, (BYTE)i);
             if (isAlly[i]) hasAllies = true;
             else if (s_playerChecked[i]) canRequest = true;
         }
@@ -1165,8 +1183,9 @@ static void renderPlayersPanel(ClientSim *cs) {
             ImGui::SameLine();
         }
 
-        /* Flag icon */
-        if (s_playerCountry[i][0] != '\0') {
+        /* Flag icon — skipped for bots (no real country; renderPlayerName
+         * below shows a brain icon in the platform-icon slot instead). */
+        if (!(s_playerFlags[i] & PLAYER_FLAG_BOT) && s_playerCountry[i][0] != '\0') {
             SDL_Texture *flagTex = flagsGetTexture(s_playerCountry[i]);
             if (flagTex) {
                 ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
@@ -1174,7 +1193,7 @@ static void renderPlayersPanel(ClientSim *cs) {
             }
         }
 
-        /* Platform / WBN / Steam icons */
+        /* Platform / WBN / Steam icons (brain icon for bots) */
         renderPlayerName(NULL, s_playerFlags[i], s_playerClientType[i], "", false);
 
         const char *label = s_playerName[i][0] ? s_playerName[i] : nullptr;
@@ -1201,7 +1220,7 @@ static void renderPlayersPanel(ClientSim *cs) {
             snprintf(checkLabel, sizeof(checkLabel), "##chk%d", i);
             bool checked = s_playerChecked[i];
             if (ImGui::Checkbox(checkLabel, &checked)) {
-                screenTogglePlayerCheckStateCS(cs, (BYTE)i);
+                clientSimTogglePlayerCheckState(cs, (BYTE)i);
             }
             ImGui::SameLine();
         }
@@ -1212,8 +1231,9 @@ static void renderPlayersPanel(ClientSim *cs) {
                               ImGuiSelectableFlags_DontClosePopups,
                               ImVec2(fullWidth - pingWidth - spacing -
                                      (i != self ? ImGui::GetFrameHeight() + spacing : 0), 0))) {
-            if (i != self) screenTogglePlayerCheckStateCS(cs, (BYTE)i);
+            if (i != self) clientSimTogglePlayerCheckState(cs, (BYTE)i);
         }
+        imguiHandOnHover();
 
         /* Right-aligned ping */
         ImGui::SameLine(fullWidth - pingWidth);
@@ -1247,18 +1267,66 @@ static void renderPlayersPanel(ClientSim *cs) {
     /* Alliance actions */
     ImGui::Separator();
     {
+        bool rankedGame   = clientSimGetLobbyRanked(cs);
         bool inCooldown = (s_allianceReqCooldownEnd != 0 &&
                            SDL_GetTicks() < s_allianceReqCooldownEnd);
         if (hasAllies) {
             if (ImGui::Button(langGetText(STR_LEAVE_ALLIANCE), ImVec2(-1, 0)))
-                screenLeaveAllianceCS(cs);
+                clientSimLeaveAllianceSelf(cs);
+                imguiHandOnHover();
         } else {
-            if (!canRequest || inCooldown) ImGui::BeginDisabled();
+            bool disabled = !canRequest || inCooldown || rankedGame;
+            if (disabled) ImGui::BeginDisabled();
             if (ImGui::Button(langGetText(STR_REQUEST_ALLIANCE), ImVec2(-1, 0))) {
-                screenRequestAllianceCS(cs);
+                clientSimRequestAllianceSelected(cs);
                 s_allianceReqCooldownEnd = SDL_GetTicks() + ALLIANCE_REQ_WAIT_MS;
             }
-            if (!canRequest || inCooldown) ImGui::EndDisabled();
+            imguiHandOnHover();
+            if (disabled) ImGui::EndDisabled();
+            if (rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Alliances are disabled in ranked games.");
+            }
+        }
+    }
+
+    /* In-game vote actions — siblings of Request Alliance, only during
+     * the running game phase. */
+    if (clientSimGetNetStatus(cs) == netRunning) {
+        /* Count active teams (distinct teamNumber across connected
+         * humans) for the surrender precondition. */
+        bool teamSeen[17] = {0};
+        int activeTeams = 0;
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
+            if (!ls || !ls->connected || ls->isBot) continue;
+            uint8_t t = ls->teamNumber;
+            if (t == 0 || t > 16) continue;
+            if (!teamSeen[t]) { teamSeen[t] = true; activeTeams++; }
+        }
+
+        if (ImGui::Button(langGetText(STR_VOTE_BACK_TO_LOBBY), ImVec2(-1, 0))) {
+            clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_BACK_TO_LOBBY,
+                                           GAME_VOTE_TOGGLE_OPEN_ONLY);
+            clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_BACK_TO_LOBBY, true);
+        }
+
+        const ClientLobbySlot *meSlot =
+            clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+        bool meUnassigned = (meSlot && meSlot->teamNumber == 0);
+        bool surrDisabled = (activeTeams != 2) || meUnassigned;
+        if (surrDisabled) ImGui::BeginDisabled();
+        if (ImGui::Button(langGetText(STR_VOTE_SURRENDER), ImVec2(-1, 0))) {
+            clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_SURRENDER,
+                                           GAME_VOTE_TOGGLE_OPEN_ONLY);
+            clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_SURRENDER, true);
+        }
+        if (surrDisabled) ImGui::EndDisabled();
+        if (surrDisabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            if (meUnassigned) {
+                ImGui::SetTooltip("%s", langGetText(STR_VOTE_SURRENDER_PICK_TEAM_TIP));
+            } else {
+                ImGui::SetTooltip("%s", langGetText(STR_VOTE_SURRENDER_TWO_TEAMS_TIP));
+            }
         }
     }
 
@@ -1272,29 +1340,8 @@ static void renderPlayersPanel(ClientSim *cs) {
     ImGui::End();
 }
 
-/* -------------------------------------------------------
- * About modal
- * ------------------------------------------------------- */
-static void renderAboutModal(void) {
-    char title[128];
-    snprintf(title, sizeof(title), "%s###about", langGetText(STR_DLGABOUT_TITLE));
-    if (s_showAbout) {
-        ImGui::OpenPopup(title);
-        s_showAbout = false;
-    }
-    if (ImGui::BeginPopupModal(title, nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-        ImGui::TextUnformatted(langGetText(STR_DLGABOUT_VERSION));
-        ImGui::TextUnformatted(langGetText(STR_DLGABOUT_COPYRIGHT));
-        ImGui::Separator();
-        ImGui::TextDisabled("%s", langGetText(STR_DLGABOUT_BOLOCOPYRIGHT));
-        ImGui::Spacing();
-        if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0)))
-            ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    }
-}
+/* About modal + linked markdown popups live in dialogs/imgui_about.cpp so
+ * the welcome screen (its own ImGui context) can show the same dialog. */
 
 /* -------------------------------------------------------
  * "Join Game?" confirmation modal — shown when a winbolo://
@@ -1307,9 +1354,13 @@ static void renderJoinConfirmModal(void) {
         ImGui::OpenPopup(title);
         s_showJoinConfirm = false;
     }
-    if (ImGui::BeginPopupModal(title, nullptr,
+    static float s_fadeJoinConfirm = 0.0f;
+    bool joinOpen = true;
+    if (ImGui::BeginPopupModal(title, &joinOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            imguiPopupFadeAlpha(&s_fadeJoinConfirm));
+        if (s_closeAllPopups) { ImGui::PopStyleVar(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
         ImGui::TextUnformatted(langGetText(STR_DLGJOIN_BLURB));
         ImGui::Spacing();
         if (s_joinConfirmPort > 0) {
@@ -1317,20 +1368,17 @@ static void renderJoinConfirmModal(void) {
         } else {
             ImGui::TextUnformatted(s_joinConfirmAddr);
         }
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        if (ImGui::Button(langGetText(STR_DLGJOIN_BUTTON), ImVec2(80, 0))) {
+        int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                   langGetText(STR_DLGJOIN_BUTTON));
+        if (f == WBUI::FOOTER_CONFIRM) {
             ImGui::CloseCurrentPopup();
             /* Leave current game and return to menu with the URL queued */
             gameFrontHandleUrlOpen(s_joinConfirmUrl);
             windowNewGame();
-        }
-        ImGui::SameLine(0.0f, 8.0f);
-        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(80, 0)) ||
-            ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        } else if (f == WBUI::FOOTER_CANCEL) {
             ImGui::CloseCurrentPopup();
         }
+        ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
 }
@@ -1345,21 +1393,26 @@ static void renderChangeNameModal(ClientSim *cs) {
         ImGui::OpenPopup(title);
         s_showChangeName    = false;
         s_changeNameBuf[0] = '\0';
-        screenGetPlayerNameCS(cs, s_changeNameBuf);
+        clientSimGetPlayerName(cs, s_changeNameBuf);
     }
-    if (ImGui::BeginPopupModal(title, nullptr,
+    static float s_fadeChangeName = 0.0f;
+    bool changeNameOpen = true;
+    if (ImGui::BeginPopupModal(title, &changeNameOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            imguiPopupFadeAlpha(&s_fadeChangeName));
+        if (s_closeAllPopups) { ImGui::PopStyleVar(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
         ImGui::TextUnformatted(langGetText(STR_DLGSETNAME_BLURB));
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(0);
         ImGui::SetNextItemWidth(300);
         bool enter = ImGui::InputText("##name", s_changeNameBuf,
                                       sizeof(s_changeNameBuf),
                                       ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::Spacing();
-        bool doOK     = ImGui::Button(langGetText(STR_OK),     ImVec2(120, 0)) || enter;
-        ImGui::SameLine();
-        bool doCancel = ImGui::Button(langGetText(STR_CANCEL), ImVec2(120, 0));
+        int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                   langGetText(STR_OK),
+                                   /*enterConfirms*/ true);
+        bool doOK     = (f == WBUI::FOOTER_CONFIRM) || enter;
+        bool doCancel = (f == WBUI::FOOTER_CANCEL);
 
         if (doOK) {
             s_changeNameBuf[32] = '\0'; /* PLAYER_NAME_LAST - 1 */
@@ -1369,13 +1422,386 @@ static void renderChangeNameModal(ClientSim *cs) {
             } else if (s_changeNameBuf[0] == '*') {
                 /* invalid — stay open */
             } else {
-                if (screenSetPlayerNameCS(cs, s_changeNameBuf))
+                if (clientSimSetPlayerName(cs, s_changeNameBuf))
                     ImGui::CloseCurrentPopup();
                 /* else: name in use — stay open */
             }
         }
         if (doCancel) ImGui::CloseCurrentPopup();
+        ImGui::PopStyleVar();
         ImGui::EndPopup();
+    }
+}
+
+/* -------------------------------------------------------
+ * In-game vote widget — one floating window per active vote.
+ *
+ * Each widget is its own top-level ImGui window (no parent
+ * constraint) so the OS window decoration / multi-viewport
+ * platform can drag it outside the main game window. We give
+ * it a half-transparent background so it doesn't fully obscure
+ * the battlefield underneath.
+ *
+ * Pressing the title-bar X just hides locally; the vote keeps
+ * running. Re-press the menu item to bring it back.
+ * ------------------------------------------------------- */
+/* Per-kind layout state for the vote widget's auto-positioning.
+ *
+ * Lifecycle:
+ *   - active=false initially. When the widget first becomes visible
+ *     we set the window to (321*zoom, 0) — flush against the right
+ *     edge of the game viewport. After ImGui::Begin we capture the
+ *     real size into capturedW/H but mark sizeKnown for next frame.
+ *   - On the second frame, with size in hand, we re-position the
+ *     window centred in the status-panel column [321, 437], or
+ *     below an already-shown sibling vote widget if that centre
+ *     would overlap it. Then positioned=true and we stop forcing
+ *     SetNextWindowPos so the user can drag the window freely.
+ *   - When the widget hides (X-close, auto-dismiss, vote concludes
+ *     >5s ago) we clear active=false so the next appearance
+ *     re-runs the positioning. */
+/* Shared auto-positioning + sizing state for floating panels that
+ * pin themselves against the status-panel column. Used by the vote
+ * widgets AND the alliance-request modal — anything that wants to
+ * sit in the right-of-game column with the same anti-overlap rules. */
+struct AutoPanelLayout {
+    bool  active;
+    bool  sizeKnown;
+    bool  positioned;
+    float capturedW;
+    float capturedH;
+    float lastX;
+    float lastY;
+};
+static AutoPanelLayout s_voteLayout[2];
+static AutoPanelLayout s_allianceLayout;
+
+/* Source-pixel anchor band for the right-edge column. Status panel
+ * starts at x=321 (MAIN_OFFSET_X + MAIN_SCREEN_SIZE_X * TILE_SIZE_X)
+ * and ends at x=437. Used as the centering bounds before zoom +
+ * gameScale scaling. */
+static constexpr float VOTE_ANCHOR_X_LEFT  = 321.0f;
+static constexpr float VOTE_ANCHOR_X_RIGHT = 437.0f;
+static constexpr float VOTE_ANCHOR_Y_TOP   = 0.0f;
+
+static int voteLayoutIndex(uint8_t kind) {
+    if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) return 0;
+    if (kind == GAME_VOTE_KIND_SURRENDER)     return 1;
+    return -1;
+}
+
+static bool rectsIntersect(float ax, float ay, float aw, float ah,
+                            float bx, float by, float bw, float bh) {
+    return !(ax + aw <= bx || bx + bw <= ax ||
+             ay + ah <= by || by + bh <= ay);
+}
+
+/* Compute the on-screen anchor band in actual pixels, accounting for
+ * integer-zoom render-target plus the non-integer blit scale used
+ * when the window is resized between integer zoom levels.
+ *
+ *   on-screen X = destX + sourceX * zoomFactor * gameScale
+ *
+ * sourceX comes from VOTE_ANCHOR_X_* (game-source coords). */
+static void autoPanelComputeAnchors(float *anchorXL, float *anchorXR,
+                                    float *anchorY) {
+    int rawZoom = sdl3DrawGetZoomFactor();
+    if (rawZoom < 1) rawZoom = 1;
+    float destX = 0.0f, destY = 0.0f, gameScale = 1.0f;
+    sdl3DrawGetGameRect(&destX, &destY, NULL, NULL, &gameScale);
+    if (gameScale <= 0.0f) gameScale = 1.0f;
+    float effZoom = (float)rawZoom * gameScale;
+    if (anchorXL) *anchorXL = destX + VOTE_ANCHOR_X_LEFT  * effZoom;
+    if (anchorXR) *anchorXR = destX + VOTE_ANCHOR_X_RIGHT * effZoom;
+    if (anchorY)  *anchorY  = destY + VOTE_ANCHOR_Y_TOP   * effZoom;
+}
+
+/* Pre-Begin step: set window position, size cap, and background
+ * alpha for an auto-positioned panel. siblings (optional) are other
+ * already-positioned panels we should stack underneath instead of
+ * overlapping. */
+static void autoPanelApply(AutoPanelLayout &lay,
+                            float anchorXL, float anchorXR, float anchorY,
+                            float guessW, float guessH,
+                            AutoPanelLayout *const *siblings,
+                            int numSiblings,
+                            float bgAlpha) {
+    float anchorCenter = 0.5f * (anchorXL + anchorXR);
+
+    if (!lay.active) {
+        /* Stage 1: first frame visible. Pre-guess the size to centre
+         * roughly; stage 2 re-centres precisely once Begin gives us
+         * the real content size. */
+        lay.active = true;
+        lay.sizeKnown = false;
+        lay.positioned = false;
+        float guessX = anchorCenter - guessW * 0.5f;
+        for (int j = 0; j < numSiblings; j++) {
+            const AutoPanelLayout *other = siblings[j];
+            if (!other || !other->active || !other->positioned) continue;
+            if (rectsIntersect(guessX, anchorY, guessW, guessH,
+                               other->lastX, other->lastY,
+                               other->capturedW, other->capturedH)) {
+                guessX = other->lastX;
+            }
+        }
+        if (guessX < anchorXL) guessX = anchorXL;
+        ImGui::SetNextWindowPos(ImVec2(guessX, anchorY), ImGuiCond_Always);
+        lay.lastX = guessX;
+        lay.lastY = anchorY;
+    } else if (lay.sizeKnown && !lay.positioned && lay.capturedW > 60.0f) {
+        /* Stage 2: we now have the real auto-sized width; recentre. */
+        float targetX = anchorCenter - lay.capturedW * 0.5f;
+        float targetY = anchorY;
+        for (int j = 0; j < numSiblings; j++) {
+            const AutoPanelLayout *other = siblings[j];
+            if (!other || !other->active || !other->positioned) continue;
+            if (rectsIntersect(targetX, targetY, lay.capturedW, lay.capturedH,
+                               other->lastX, other->lastY,
+                               other->capturedW, other->capturedH)) {
+                targetX = other->lastX;
+                targetY = other->lastY + other->capturedH;
+            }
+        }
+        if (targetX < anchorXL) targetX = anchorXL;
+        ImGui::SetNextWindowPos(ImVec2(targetX, targetY), ImGuiCond_Always);
+        lay.lastX = targetX;
+        lay.lastY = targetY;
+        lay.positioned = true;
+    }
+    /* Stage 3 (positioned): no SetNextWindowPos — user can drag. */
+
+    /* Width cap: never extend past the WinBolo window's right edge.
+     * AutoResize still fits to content; when capped, the height grows
+     * downward instead. */
+    {
+        float windowRight = ImGui::GetIO().DisplaySize.x;
+        float maxW = windowRight - lay.lastX;
+        if (maxW < 60.0f) maxW = 60.0f;
+        ImGui::SetNextWindowSizeConstraints(
+            ImVec2(40.0f, 40.0f),
+            ImVec2(maxW,  FLT_MAX));
+    }
+
+    ImGui::SetNextWindowBgAlpha(bgAlpha);
+}
+
+/* Post-Begin step: refresh captured size + on-screen position so
+ * stage 2 can centre using the real size and stage 3 can honor user
+ * drags. */
+static void autoPanelCapture(AutoPanelLayout &lay) {
+    ImVec2 wPos  = ImGui::GetWindowPos();
+    ImVec2 wSize = ImGui::GetWindowSize();
+    lay.capturedW = wSize.x;
+    lay.capturedH = wSize.y;
+    lay.sizeKnown = true;
+    if (lay.positioned) {
+        lay.lastX = wPos.x;
+        lay.lastY = wPos.y;
+    }
+}
+
+static void autoPanelReset(AutoPanelLayout &lay) {
+    lay.active = false;
+    lay.sizeKnown = false;
+    lay.positioned = false;
+}
+
+static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
+                                    const ClientGameVoteSnapshot *snap) {
+    int li = voteLayoutIndex(kind);
+    if (li < 0) return;
+    AutoPanelLayout &lay = s_voteLayout[li];
+
+    /* Only render while a vote is in-flight or recently concluded
+     * and the user hasn't dismissed. */
+    if (snap->active == GAME_VOTE_ACTIVE_NONE) { autoPanelReset(lay); return; }
+    if (!snap->widgetVisible)                  { autoPanelReset(lay); return; }
+
+    /* Auto-dismiss 5 seconds after the vote concludes (pass / fail /
+     * cancel). Back-to-lobby with the server's return-to-lobby
+     * countdown still active is exempt — keep the widget through the
+     * full N → 1 countdown. */
+    if (snap->active != GAME_VOTE_ACTIVE_RUNNING && snap->concludedAtMs != 0) {
+        bool lobbyCountdownActive =
+            (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) &&
+            (clientSimGetReturnToLobbySecs(cs) > 0);
+        uint32_t age = SDL_GetTicks() - snap->concludedAtMs;
+        if (age >= 5000u && !lobbyCountdownActive) {
+            clientSimSetGameVoteWidgetVisible(cs, kind, false);
+            autoPanelReset(lay);
+            return;
+        }
+    }
+
+    /* Apply the shared auto-panel layout (anti-overlap clamp + width
+     * cap + transparency). Siblings: the other vote widget (so they
+     * stack instead of overlapping each other). */
+    float anchorXL, anchorXR, anchorY;
+    autoPanelComputeAnchors(&anchorXL, &anchorXR, &anchorY);
+    AutoPanelLayout *siblings[1] = { &s_voteLayout[1 - li] };
+    autoPanelApply(lay, anchorXL, anchorXR, anchorY,
+                    200.0f, 140.0f, siblings, 1, 0.55f);
+
+    /* Build the title — includes (Draw) tag for ranked manual
+     * back-to-lobby votes. The ###id suffix is ImGui's internal
+     * window identifier and stays out of the localized portion. */
+    char title[128];
+    const char *kindName = (kind == GAME_VOTE_KIND_BACK_TO_LOBBY)
+                           ? langGetText(STR_VOTE_BACK_TO_LOBBY)
+                           : langGetText(STR_VOTE_SURRENDER);
+    bool drawTag = (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) &&
+                   (snap->triggerSrc == GAME_VOTE_TRIGGER_MANUAL) &&
+                   clientSimGetLobbyRanked(cs);
+    snprintf(title, sizeof(title), "%s%s###gamevote_%u",
+             kindName,
+             drawTag ? langGetText(STR_VOTE_DRAW_TAG) : "",
+             (unsigned)kind);
+
+    bool open = true;
+    if (!ImGui::Begin(title, &open,
+                      ImGuiWindowFlags_AlwaysAutoResize |
+                      ImGuiWindowFlags_NoCollapse |
+                      ImGuiWindowFlags_NoSavedSettings |
+                      ImGuiWindowFlags_NoFocusOnAppearing |
+                      ImGuiWindowFlags_NoBringToFrontOnFocus |
+                      ImGuiWindowFlags_NoNavInputs)) {
+        ImGui::End();
+        if (!open) { clientSimSetGameVoteWidgetVisible(cs, kind, false); autoPanelReset(lay); }
+        return;
+    }
+
+    autoPanelCapture(lay);
+
+    /* Tally + circular progress.
+     *
+     * Ring is split into one slice per eligible voter:
+     *   - green  : voted yes
+     *   - red    : voted no
+     *   - gray   : not yet voted (background)
+     *
+     * When eligibleCount is unknown (legacy server / not running) we
+     * fall back to a single yes-vs-threshold green arc on a gray
+     * background, matching the pre-noCount behavior. */
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImVec2 base = ImGui::GetCursorScreenPos();
+    float radius = 22.0f;
+    ImVec2 centre(base.x + radius + 2.0f, base.y + radius + 2.0f);
+
+    /* Background ring (drawn always; the colored arcs paint over it). */
+    dl->AddCircle(centre, radius, IM_COL32(120, 120, 120, 200), 36, 3.0f);
+
+    const ImU32 kYes  = IM_COL32(80, 200, 80, 255);
+    const ImU32 kNo   = IM_COL32(220, 70, 70, 255);
+    const float kStart = -IM_PI * 0.5f;   /* 12 o'clock */
+
+    if (snap->eligibleCount > 0) {
+        float slice = (2.0f * IM_PI) / (float)snap->eligibleCount;
+        if (snap->yesCount > 0) {
+            float a0 = kStart;
+            float a1 = a0 + slice * (float)snap->yesCount;
+            dl->PathArcTo(centre, radius, a0, a1, 36);
+            dl->PathStroke(kYes, 0, 3.5f);
+        }
+        if (snap->noCount > 0) {
+            float a0 = kStart + slice * (float)snap->yesCount;
+            float a1 = a0 + slice * (float)snap->noCount;
+            dl->PathArcTo(centre, radius, a0, a1, 36);
+            dl->PathStroke(kNo, 0, 3.5f);
+        }
+    } else if (snap->threshold > 0 && snap->yesCount > 0) {
+        float progress = (float)snap->yesCount / (float)snap->threshold;
+        if (progress > 1.0f) progress = 1.0f;
+        float a0 = kStart;
+        float a1 = a0 + progress * IM_PI * 2.0f;
+        dl->PathArcTo(centre, radius, a0, a1, 36);
+        dl->PathStroke(kYes, 0, 3.5f);
+    }
+
+    /* Reserve the space for the ring + put the tally text next to it. */
+    ImGui::Dummy(ImVec2(radius * 2 + 8, radius * 2 + 4));
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    ImGui::Text("%u / %u",
+                (unsigned)snap->yesCount, (unsigned)snap->threshold);
+    if (snap->active == GAME_VOTE_ACTIVE_RUNNING) {
+        /* Solo (single eligible voter) "are you sure?" grace: server
+         * gives one-human votes 5 s after the yes before firing, so
+         * a misclick is reversible. Multi-human votes fire instantly
+         * on unanimity, so this branch only ever shows for solo. */
+        bool soloPendingPass = (snap->threshold == 1 &&
+                                snap->yesCount >= snap->threshold);
+        if (soloPendingPass) {
+            ImGui::TextColored(ImVec4(0.0f, 0.85f, 0.0f, 1.0f),
+                               "Passing in %us...",
+                               (unsigned)snap->secondsRemaining);
+        } else if (snap->eligibleCount > 1) {
+            /* Only show the 60-s deadline when there's more than one
+             * voter — for a solo vote it's meaningless since the
+             * single voter decides instantly on yes. */
+            ImGui::TextDisabled("%us left", (unsigned)snap->secondsRemaining);
+        }
+    } else if (snap->active == GAME_VOTE_ACTIVE_PASSED) {
+        /* For back-to-lobby: show "Return to lobby in N" while the
+         * server's snapshot-driven countdown is still running, then
+         * fall back to plain "Passed" once it's expired (or for
+         * surrender, which doesn't drive the countdown itself). */
+        uint8_t rtlSecs = clientSimGetReturnToLobbySecs(cs);
+        if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY && rtlSecs > 0) {
+            /* Wrap so the line fits when the widget is width-capped
+             * against a narrow status column (e.g. at 1x zoom). */
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                                  ImVec4(0.0f, 0.9f, 0.0f, 1.0f));
+            ImGui::TextWrapped("Return to lobby in %u", (unsigned)rtlSecs);
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::TextColored(ImVec4(0.0f, 0.9f, 0.0f, 1.0f), "Passed");
+        }
+    } else if (snap->active == GAME_VOTE_ACTIVE_FAILED) {
+        ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.2f, 1.0f), "Failed");
+    } else if (snap->active == GAME_VOTE_ACTIVE_CANCELLED) {
+        ImGui::TextDisabled("Cancelled");
+    }
+    ImGui::EndGroup();
+
+    /* Yes / No buttons — only meaningful while the vote is running.
+     * Highlight the user's current choice so they can see their stance. */
+    if (snap->active == GAME_VOTE_ACTIVE_RUNNING) {
+        ImGui::Spacing();
+        BYTE me = clientSimGetMyPlayerNum(cs);
+        bool myYes = (me < 16) && ((snap->votes >> me) & 1u);
+        bool myAns = clientSimGameVoteMyVote(cs, kind) || myYes;
+        (void)myAns;
+
+        if (myYes) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.6f, 0.0f, 1.0f));
+        if (ImGui::Button(langGetText(STR_YES), ImVec2(80, 0))) {
+            clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_YES);
+        }
+        if (myYes) ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+        if (ImGui::Button(langGetText(STR_NO), ImVec2(80, 0))) {
+            clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_NO);
+        }
+    }
+
+    ImGui::End();
+    if (!open) {
+        clientSimSetGameVoteWidgetVisible(cs, kind, false);
+        autoPanelReset(lay);
+    }
+}
+
+static void renderGameVoteWidgets(ClientSim *cs) {
+    if (!cs) return;
+    if (clientSimGetNetStatus(cs) != netRunning) return;
+    static const uint8_t kinds[] = {
+        GAME_VOTE_KIND_BACK_TO_LOBBY, GAME_VOTE_KIND_SURRENDER
+    };
+    for (size_t i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++) {
+        ClientGameVoteSnapshot snap = {};
+        if (!clientSimGetGameVote(cs, kinds[i], &snap)) continue;
+        renderOneGameVoteWidget(cs, kinds[i], &snap);
     }
 }
 
@@ -1389,37 +1815,44 @@ static void renderAllianceRequest(ClientSim *cs) {
         s_allianceVisible = true;
         s_showAllianceOpen = false;
     }
-    if (!s_allianceVisible) return;
+    if (!s_allianceVisible) { autoPanelReset(s_allianceLayout); return; }
 
-    /* Pin to the top of the status panel (right of the main game view).
-     * MAIN_OFFSET_X=81, MAIN_SCREEN_SIZE_X=15, TILE_SIZE_X=16  =>  321 px at zoom 1 */
-    float menuH      = ImGui::GetFrameHeight();
-    float statusLeft = (float)(zoomFactor * 321);
-    ImGui::SetNextWindowPos(ImVec2(statusLeft, menuH), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_Always);
+    /* Use the same auto-positioning + width cap + transparency as
+     * the vote widgets. Siblings: both vote widgets so the alliance
+     * request stacks below any active vote. */
+    float anchorXL, anchorXR, anchorY;
+    autoPanelComputeAnchors(&anchorXL, &anchorXR, &anchorY);
+    AutoPanelLayout *siblings[2] = { &s_voteLayout[0], &s_voteLayout[1] };
+    autoPanelApply(s_allianceLayout, anchorXL, anchorXR, anchorY,
+                    220.0f, 100.0f, siblings, 2, 0.55f);
+
     char title[128];
     snprintf(title, sizeof(title), "%s###alliancereq", langGetText(STR_DLGALLIANCE_TITLE));
     if (ImGui::Begin(title, &s_allianceVisible,
                      ImGuiWindowFlags_AlwaysAutoResize |
-                     ImGuiWindowFlags_NoMove |
-                     ImGuiWindowFlags_NoCollapse)) {
+                     ImGuiWindowFlags_NoCollapse |
+                     ImGuiWindowFlags_NoSavedSettings)) {
+        autoPanelCapture(s_allianceLayout);
         {
             MessageArgs args = {};
             strncpy(args.playerName, s_alliancePlayerName, sizeof(args.playerName) - 1);
-            args.playerFlags = playersGetAccountFlags(&cs->sim.plyrs, s_alliancePlayerNum);
-            playersGetCountryCode(&cs->sim.plyrs, s_alliancePlayerNum, args.playerCountry);
-            ImGui::TextUnformatted(langGetTextFmt(STR_DLGALLIANCE_BLURB, &args));
+            args.playerFlags = clientSimGetPlayerAccountFlags(cs, s_alliancePlayerNum);
+            clientSimGetPlayerCountryCode(cs, s_alliancePlayerNum, args.playerCountry);
+            ImGui::TextWrapped("%s", langGetTextFmt(STR_DLGALLIANCE_BLURB, &args));
         }
         ImGui::Spacing();
-        if (ImGui::Button(langGetText(STR_DLGALLIANCE_ACCEPT), ImVec2(120, 0))) {
+        if (ImGui::Button(langGetText(STR_DLGALLIANCE_ACCEPT), ImVec2(80, 0))) {
             clientSimAllianceAccept(cs, s_alliancePlayerNum);
             s_allianceVisible = false;
         }
+        imguiHandOnHover();
         ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(120, 0)))
+        if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(80, 0)))
             s_allianceVisible = false;
+            imguiHandOnHover();
     }
     ImGui::End();
+    if (!s_allianceVisible) autoPanelReset(s_allianceLayout);
 }
 
 /* -------------------------------------------------------
@@ -1433,9 +1866,13 @@ static void renderPasswordModal(void) {
         s_showPasswordOpen  = false;
         s_passwordBuf[0]   = '\0';
     }
-    if (ImGui::BeginPopupModal(title, nullptr,
+    static float s_fadePassword = 0.0f;
+    bool passOpen = true;
+    if (ImGui::BeginPopupModal(title, &passOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                            imguiPopupFadeAlpha(&s_fadePassword));
+        if (s_closeAllPopups) { ImGui::PopStyleVar(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
         ImGui::TextUnformatted(langGetText(STR_DLGPASSWORD_BLURB));
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(0);
         ImGui::SetNextItemWidth(270);
@@ -1443,214 +1880,26 @@ static void renderPasswordModal(void) {
                                       sizeof(s_passwordBuf),
                                       ImGuiInputTextFlags_Password |
                                       ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::Spacing();
-        if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0)) || enter) {
+        int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                   langGetText(STR_OK),
+                                   /*enterConfirms*/ true);
+        if (f == WBUI::FOOTER_CONFIRM || enter) {
             /* gameOpen=1, aiNone=0, justPass=TRUE */
             gameFrontSetGameOptions(s_passwordBuf, (gameType)1, false, (aiType)0, 0, 0, true);
             ImGui::CloseCurrentPopup();
+        } else if (f == WBUI::FOOTER_CANCEL) {
+            /* Abort the join attempt. */
+            ImGui::CloseCurrentPopup();
         }
+        ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
 }
 
-/* -------------------------------------------------------
- * Key Setup modal
- * Mirrors dialogKeySetup.c — allows the user to rebind
- * all game keys.  Key capture is driven by the SDL event
- * loop in sdl3ImguiProcessEvents().
- * ------------------------------------------------------- */
-
-/* Return a human-readable name for a scancode. */
-static const char *keySetupScancodeLabel(int scancode) {
-    const char *name = SDL_GetScancodeName((SDL_Scancode)scancode);
-    if (name && name[0] != '\0') return name;
-    return langGetText(STR_DLGKEYSETUP_NONE_VAL);
-}
-
-/* Map a KeySetupField to the corresponding keyItems member and label. */
-static int *keySetupFieldPtr(KeySetupField f, keyItems *ki) {
-    switch (f) {
-        case ksForward:    return &ki->kiForward;
-        case ksBackward:   return &ki->kiBackward;
-        case ksTurnLeft:   return &ki->kiLeft;
-        case ksTurnRight:  return &ki->kiRight;
-        case ksShoot:      return &ki->kiShoot;
-        case ksLayMine:    return &ki->kiLayMine;
-        case ksGunIncrease:return &ki->kiGunIncrease;
-        case ksGunDecrease:return &ki->kiGunDecrease;
-        case ksTankView:   return &ki->kiTankView;
-        case ksPillView:   return &ki->kiPillView;
-        case ksScrollUp:   return &ki->kiScrollUp;
-        case ksScrollDown: return &ki->kiScrollDown;
-        case ksScrollLeft: return &ki->kiScrollLeft;
-        case ksScrollRight:return &ki->kiScrollRight;
-        case ksQuickTree:  return &ki->kiQuickTree;
-        case ksQuickRoad:  return &ki->kiQuickRoad;
-        case ksQuickWall:  return &ki->kiQuickWall;
-        case ksQuickPillbox:return &ki->kiQuickPillbox;
-        case ksQuickMine:  return &ki->kiQuickMine;
-        default:           return nullptr;
-    }
-}
-
-/* Render a single key-binding row: "Label   [Key Name]  [Change]" */
-static void keySetupRow(const char *label, KeySetupField field) {
-    int *ptr = keySetupFieldPtr(field, &s_keySetupKeys);
-    if (!ptr) return;
-
-    bool waiting = (s_keySetupWaiting == field);
-
-    ImGui::TableNextRow();
-    ImGui::TableSetColumnIndex(0);
-    ImGui::TextUnformatted(label);
-
-    ImGui::TableSetColumnIndex(1);
-    if (waiting) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
-                           langGetText(STR_DLGKEYSETUP_PRESSAKEY));
-    } else {
-        ImGui::TextUnformatted(keySetupScancodeLabel(*ptr));
-    }
-
-    ImGui::TableSetColumnIndex(2);
-    ImGui::PushID((int)field);
-    if (waiting) {
-        if (ImGui::SmallButton(langGetText(STR_CANCEL))) {
-            s_keySetupWaiting = ksNone;
-        }
-    } else {
-        if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
-            s_keySetupWaiting = field;
-        }
-    }
-    ImGui::PopID();
-}
-
-static void renderKeySetupModal(ClientSim *cs) {
-    char title[128];
-    snprintf(title, sizeof(title), "%s###keysetup", langGetText(STR_DLGKEYSETUP_TITLE));
-    if (s_showKeySetup) {
-        ImGui::OpenPopup(title);
-        s_showKeySetup = false;
-        windowGetKeys(&s_keySetupKeys);
-        s_keySetupAutoSlowdown = screenGetTankAutoSlowdownCS(cs);
-        s_keySetupAutoGunsight = screenGetTankAutoHideGunsightCS(cs);
-        s_keySetupWaiting      = ksNone;
-    }
-
-    /* Keep the popup centered on first use */
-    ImGuiIO &io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
-                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(420, 560), ImGuiCond_Always);
-
-    /* ImGuiWindowFlags_NoMove so the user cannot accidentally drag it off-screen */
-    bool open = true;
-    if (!ImGui::BeginPopupModal(title, &open,
-                                ImGuiWindowFlags_NoResize |
-                                ImGuiWindowFlags_NoMove)) {
-        return;
-    }
-    if (s_closeAllPopups) { ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-
-    /* While this modal is open ALL keyboard/mouse events are consumed by ImGui
-     * (BeginPopupModal sets WantCaptureKeyboard + WantCaptureMouse).
-     * sdl3ImguiProcessEvents additionally intercepts SDL_EVENT_KEY_DOWN when
-     * s_keySetupWaiting != ksNone to route the raw scancode here. */
-
-    if (s_keySetupWaiting != ksNone) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
-                           langGetText(STR_DLGKEYSETUP_PRESS_OR_CANCEL));
-        ImGui::Separator();
-    }
-
-    /* Scrollable region containing all binding rows */
-    float footerH = ImGui::GetFrameHeightWithSpacing() * 3.0f + ImGui::GetStyle().ItemSpacing.y * 2.0f;
-    ImGui::BeginChild("##bindings", ImVec2(0.0f, -footerH), false);
-
-    constexpr ImGuiTableFlags tflags =
-        ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit |
-        ImGuiTableFlags_RowBg;
-
-    auto section = [&](const char *sectionTitle) {
-        ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "%s", sectionTitle);
-        ImGui::BeginTable(sectionTitle, 3, tflags, ImVec2(-1, 0));
-        ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_ACTION),
-                                ImGuiTableColumnFlags_WidthFixed, 140.0f);
-        ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_KEY),
-                                ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("",        ImGuiTableColumnFlags_WidthFixed,  68.0f);
-    };
-    auto endSection = [&]() { ImGui::EndTable(); };
-
-    section(langGetText(STR_DLGKEYSETUP_DRIVETANK));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_FASTER),    ksForward);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SLOWER),    ksBackward);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_TURNLEFT),  ksTurnLeft);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_TURNRIGHT), ksTurnRight);
-    endSection();
-
-    section(langGetText(STR_DLGKEYSETUP_WEAPONS));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SHOOT),    ksShoot);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_LAYMINE),  ksLayMine);
-    endSection();
-
-    section(langGetText(STR_DLGKEYSETUP_GUNRANGE));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_INCREASE), ksGunIncrease);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_DECREASE), ksGunDecrease);
-    endSection();
-
-    section(langGetText(STR_DLGKEYSETUP_VIEW));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_TANKVIEW), ksTankView);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_PILLVIEW), ksPillView);
-    endSection();
-
-    section(langGetText(STR_DLGKEYSETUP_SCROLL));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SCROLLUP),    ksScrollUp);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SCROLLDOWN),  ksScrollDown);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SCROLLLEFT),  ksScrollLeft);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_SCROLLRIGHT), ksScrollRight);
-    endSection();
-
-    section(langGetText(STR_DLGKEYSETUP_QUICKKEYS));
-    keySetupRow(langGetText(STR_DLGKEYSETUP_TREE),         ksQuickTree);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_ROAD),         ksQuickRoad);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_WALL),         ksQuickWall);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_QUICKPILLBOX), ksQuickPillbox);
-    keySetupRow(langGetText(STR_DLGKEYSETUP_QUICKMINE),    ksQuickMine);
-    endSection();
-
-    ImGui::EndChild();
-
-    ImGui::Separator();
-    ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_AUTOSLOWDOWN), &s_keySetupAutoSlowdown);
-    ImGui::SameLine();
-    ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_AUTOGUNSIGHT), &s_keySetupAutoGunsight);
-    ImGui::Spacing();
-
-    /* OK / Cancel — disabled while a key-capture is pending so the user
-     * must press a key or click Cancel on the row first. */
-    bool busy = (s_keySetupWaiting != ksNone);
-    if (busy) ImGui::BeginDisabled();
-
-    if (ImGui::Button(langGetText(STR_OK), ImVec2(120, 0))) {
-        windowSetKeys(&s_keySetupKeys);
-        screenSetTankAutoSlowdownCS(cs, s_keySetupAutoSlowdown);
-        screenSetTankAutoHideGunsightCS(cs, s_keySetupAutoGunsight);
-        s_keySetupWaiting = ksNone;
-        ImGui::CloseCurrentPopup();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(120, 0))) {
-        s_keySetupWaiting = ksNone;
-        ImGui::CloseCurrentPopup();
-    }
-
-    if (busy) ImGui::EndDisabled();
-
-    ImGui::EndPopup();
-}
+/* The in-game Key Setup popup lives in imgui_keysetup.cpp now —
+ * see imguiKeySetupRenderInGamePopup. This file used to carry a
+ * parallel copy. Removing it pinned the persistence bug (only
+ * one OK handler now to keep in sync with INI write). */
 
 /* -------------------------------------------------------
  * Settings panel — collects Edit + WinBolo menu options
@@ -1684,9 +1933,11 @@ static void renderSettingsPanel(ClientSim *cs) {
             windowSaveMap(cs);
             s_showSettings = false;
         }
+        imguiHandOnHover();
         if (ImGui::Button(langGetText(STR_MENU_LEAVE_GAME), ImVec2(-1, 0))) {
             windowNewGame();
         }
+        imguiHandOnHover();
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
@@ -1703,7 +1954,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             s_settingsNameBuf[32] = '\0';
             utilStripName(s_settingsNameBuf);
             if (s_settingsNameBuf[0] != '\0' && s_settingsNameBuf[0] != '*') {
-                screenSetPlayerNameCS(cs, s_settingsNameBuf);
+                clientSimSetPlayerName(cs, s_settingsNameBuf);
             }
         }
         ImGui::SameLine();
@@ -1714,9 +1965,10 @@ static void renderSettingsPanel(ClientSim *cs) {
                 s_settingsNameBuf[32] = '\0';
                 utilStripName(s_settingsNameBuf);
                 if (s_settingsNameBuf[0] != '\0' && s_settingsNameBuf[0] != '*') {
-                    screenSetPlayerNameCS(cs, s_settingsNameBuf);
+                    clientSimSetPlayerName(cs, s_settingsNameBuf);
                 }
             }
+            imguiHandOnHover();
         }
 
         if (!uiModeIsTablet()) {
@@ -1730,6 +1982,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS))) {
                 sdl3ImguiShowKeySetup();
             }
+            imguiHandOnHover();
         }
 #endif
     }
@@ -1907,6 +2160,13 @@ static void renderSettingsPanel(ClientSim *cs) {
                 windowSoundKeepalive();
             }
         }
+        {
+            int vol = soundVolume;
+            ImGui::SetNextItemWidth(200.0f);
+            if (ImGui::SliderInt(langGetText(STR_MENU_VOLUME), &vol, 0, 100, "%d%%")) {
+                windowSetSoundVolume(vol);
+            }
+        }
     }
 
     /* ---- Messages ---- */
@@ -2008,7 +2268,7 @@ static void renderMenuBar(ClientSim *cs) {
     /* ---- File ---------------------------------------- */
     if (ImGui::BeginMenu(langGetText(STR_MENU_FILE))) {
         if (ImGui::MenuItem(langGetText(STR_MENU_NEW)))                       windowNewGame();
-        if (ImGui::MenuItem(langGetText(STR_MENU_SAVE_MAP), "Ctrl+S"))        windowSaveMap(cs);
+        if (ImGui::MenuItem(langGetText(STR_MENU_SAVE_MAP), KMOD_PRIMARY_LABEL "S"))        windowSaveMap(cs);
         ImGui::Separator();
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
@@ -2092,8 +2352,8 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::MenuItem(langGetText(STR_MENU_SMOOTH_SCROLLING), nullptr, (bool)smoothScrollingEnabled)) windowSmoothScrolling_toggle();
 
         ImGui::Separator();
-        if (ImGui::MenuItem(langGetText(STR_MENU_AUTO_SCROLLING), "Ctrl+A", (bool)autoScrollingEnabled)) windowAutomaticScrolling_toggle(cs);
-        if (ImGui::MenuItem(langGetText(STR_MENU_SHOW_GUNSIGHT),  "Ctrl+G", (bool)showGunsight))        windowShowGunsight_toggle(cs);
+        if (ImGui::MenuItem(langGetText(STR_MENU_AUTO_SCROLLING), KMOD_PRIMARY_LABEL "A", (bool)autoScrollingEnabled)) windowAutomaticScrolling_toggle(cs);
+        if (ImGui::MenuItem(langGetText(STR_MENU_SHOW_GUNSIGHT),  KMOD_PRIMARY_LABEL "G", (bool)showGunsight))        windowShowGunsight_toggle(cs);
 
         if (ImGui::BeginMenu(langGetText(STR_MENU_MSG_NAMES_SUB))) {
             if (ImGui::MenuItem(langGetText(STR_SHORT), nullptr, labelMsg == lblShort)) windowSetMessageLabelLen(cs, lblShort);
@@ -2102,28 +2362,17 @@ static void renderMenuBar(ClientSim *cs) {
         }
 
         if (ImGui::BeginMenu(langGetText(STR_MENU_TANK_LABELS_SUB))) {
-            if (ImGui::MenuItem(langGetText(STR_NONE),               "Ctrl+1", labelTank == lblNone))  windowSetTankLabelLen(cs, lblNone);
-            if (ImGui::MenuItem(langGetText(STR_SHORT),              "Ctrl+2", labelTank == lblShort)) windowSetTankLabelLen(cs, lblShort);
-            if (ImGui::MenuItem(langGetText(STR_LONG),               "Ctrl+3", labelTank == lblLong))  windowSetTankLabelLen(cs, lblLong);
+            if (ImGui::MenuItem(langGetText(STR_NONE),               KMOD_PRIMARY_LABEL "1", labelTank == lblNone))  windowSetTankLabelLen(cs, lblNone);
+            if (ImGui::MenuItem(langGetText(STR_SHORT),              KMOD_PRIMARY_LABEL "2", labelTank == lblShort)) windowSetTankLabelLen(cs, lblShort);
+            if (ImGui::MenuItem(langGetText(STR_LONG),               KMOD_PRIMARY_LABEL "3", labelTank == lblLong))  windowSetTankLabelLen(cs, lblLong);
             if (ImGui::MenuItem(langGetText(STR_MENU_NO_OWN_LABEL),  nullptr, !(bool)labelSelf))       windowLabelOwnTank_toggle(cs);
             ImGui::EndMenu();
         }
 
-        if (ImGui::MenuItem(langGetText(STR_MENU_PILLBOX_LABELS), "Ctrl+P", (bool)showPillLabels)) windowShowPillLabels_toggle(cs);
-        if (ImGui::MenuItem(langGetText(STR_MENU_BASE_LABELS),    "Ctrl+B", (bool)showBaseLabels)) windowShowBaseLabels_toggle(cs);
+        if (ImGui::MenuItem(langGetText(STR_MENU_PILLBOX_LABELS), KMOD_PRIMARY_LABEL "P", (bool)showPillLabels)) windowShowPillLabels_toggle(cs);
+        if (ImGui::MenuItem(langGetText(STR_MENU_BASE_LABELS),    KMOD_PRIMARY_LABEL "B", (bool)showBaseLabels)) windowShowBaseLabels_toggle(cs);
         ImGui::Separator();
-        if (ImGui::MenuItem(langGetText(STR_MENU_HIDE_MAIN),      "Ctrl+H", (bool)hideMainView))   windowHideMainView_toggle();
-        ImGui::Separator();
-        {
-            const char *presetLabel = (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets)
-                ? s_devicePresets[g_currentDevicePreset].name : langGetText(STR_MENU_DESKTOP);
-            char deviceMenuItem[96];
-            SDL_snprintf(deviceMenuItem, sizeof(deviceMenuItem), "%s %s",
-                         langGetText(STR_MENU_DEVICE), presetLabel);
-            if (ImGui::MenuItem(deviceMenuItem, "Ctrl+T")) {
-                dialogCycleDevicePreset(sdl3DrawGetWindow());
-            }
-        }
+        if (ImGui::MenuItem(langGetText(STR_MENU_HIDE_MAIN),      KMOD_PRIMARY_LABEL "H", (bool)hideMainView))   windowHideMainView_toggle();
 
         ImGui::EndMenu();
     }
@@ -2131,12 +2380,22 @@ static void renderMenuBar(ClientSim *cs) {
     /* ---- WinBolo ------------------------------------- */
     if (ImGui::BeginMenu(langGetText(STR_MENU_WINBOLO))) {
         if (ImGui::MenuItem(langGetText(STR_ALLOW_NEW_PLAYERS),    nullptr, (bool)allowNewPlayers))           windowMenuAllowNewPlayers_toggle(cs);
-        if (ImGui::MenuItem(langGetText(STR_MENU_SETKEYS),         "Ctrl+K"))                                 sdl3ImguiShowKeySetup();
+        if (ImGui::MenuItem(langGetText(STR_MENU_SETKEYS),         KMOD_PRIMARY_LABEL "K"))                                 sdl3ImguiShowKeySetup();
         if (ImGui::MenuItem(langGetText(STR_DLGCHANGENAME_TITLE)))                                            s_showChangeName = true;
         ImGui::Separator();
         if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_EFFECTS),   nullptr, (bool)soundEffects))              windowSoundEffects_toggle();
         if (ImGui::MenuItem(langGetText(STR_MENU_BACKGROUND_SOUND),nullptr, (bool)backgroundSound))           windowBackgroundSoundChange_toggle();
         if (ImGui::MenuItem(langGetText(STR_MENU_SOUND_KEEPALIVE), nullptr, (bool)useSoundKeepalive))         windowSoundKeepalive();
+        {
+            int vol = soundVolume;
+            const float sliderW = 160.0f;
+            ImGui::TextUnformatted(langGetText(STR_MENU_VOLUME));
+            ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - sliderW);
+            ImGui::SetNextItemWidth(sliderW);
+            if (ImGui::SliderInt("##volume", &vol, 0, 100, "%d%%")) {
+                windowSetSoundVolume(vol);
+            }
+        }
         ImGui::Separator();
         if (ImGui::MenuItem(langGetText(STR_MENU_NEWSWIRE_MSGS),   nullptr, (bool)showNewswireMessages))      windowMenuNewswire_toggle(cs);
         if (ImGui::MenuItem(langGetText(STR_MENU_ASSISTANT_MSGS),  nullptr, (bool)showAssistantMessages))     windowMenuAssistant_toggle(cs);
@@ -2144,22 +2403,34 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::MenuItem(langGetText(STR_MENU_NETSTATUS_MSGS),  nullptr, (bool)showNetworkStatusMessages)) windowMenuNetwork_toggle(cs);
         if (ImGui::MenuItem(langGetText(STR_MENU_NETDEBUG_MSGS),   nullptr, (bool)showNetworkDebugMessages))  windowMenuNetworkDebug_toggle(cs);
         ImGui::Separator();
-        if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     "Ctrl+R"))                                 screenRequestAllianceCS(cs);
-        if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))                                                 screenLeaveAllianceCS(cs);
+        {
+            bool rankedGame = clientSimGetLobbyRanked(cs);
+            if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     KMOD_PRIMARY_LABEL "R", false, !rankedGame))
+                clientSimRequestAllianceSelected(cs);
+            if (rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Alliances are disabled in ranked games.");
+            }
+            if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))                                             clientSimLeaveAllianceSelf(cs);
+        }
+
         ImGui::Separator();
         if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS)))                                                  sdl3ImguiShowSettings();
         ImGui::EndMenu();
     }
 
     /* ---- Players ------------------------------------- */
+    /* Widen the popup so flag + platform/WBN/Steam icons + name + ping +
+     * checkmark can all fit on one row without overlap. */
+    ImGui::SetNextWindowSizeConstraints(ImVec2(420.0f, 0.0f),
+                                        ImVec2(FLT_MAX, FLT_MAX));
     if (ImGui::BeginMenu(langGetText(STR_MENU_PLAYERS))) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
-            if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), "Ctrl+M", s_popSendMsg.open))
+            if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), KMOD_PRIMARY_LABEL "M", s_popSendMsg.open))
                 togglePopOut(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200);
         } else {
 #endif
-            if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), "Ctrl+M")) {
+            if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), KMOD_PRIMARY_LABEL "M")) {
                 s_showSendMsg = !s_showSendMsg;
                 if (s_showSendMsg) s_sendMsgFocusInput = true;
             }
@@ -2167,19 +2438,18 @@ static void renderMenuBar(ClientSim *cs) {
         }
 #endif
         ImGui::Separator();
-        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALL),    false, ImGuiSelectableFlags_DontClosePopups))   screenCheckAllNonePlayersCS(cs, true);
-        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NONE),   false, ImGuiSelectableFlags_DontClosePopups))   screenCheckAllNonePlayersCS(cs, false);
-        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALLIES), false, ImGuiSelectableFlags_DontClosePopups))   screenCheckAlliedPlayersCS(cs);
-        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NEARBY), false, ImGuiSelectableFlags_DontClosePopups))   screenCheckNearbyPlayersCS(cs);
+        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALL),    false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAllNonePlayers(cs, true);
+        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NONE),   false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAllNonePlayers(cs, false);
+        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALLIES), false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAlliedPlayers(cs);
+        if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NEARBY), false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckNearbyPlayers(cs);
         /* Pre-compute alliance state for each player */
-        players *plrs = &cs->sim.plyrs;
-        BYTE self = cs->myPlayerNum;
+        BYTE self = clientSimGetMyPlayerNum(cs);
         bool hasAllies  = false;
         bool canRequest = false;
         bool isAlly[MAX_PLAYERS] = {};
         for (int i = 0; i < MAX_PLAYERS; i++) {
             if (s_playerEnabled[i] && i != self) {
-                isAlly[i] = playersIsAllie(plrs, self, (BYTE)i);
+                isAlly[i] = clientSimIsPlayerAlly(cs, self, (BYTE)i);
                 if (isAlly[i]) {
                     hasAllies = true;
                 } else if (s_playerChecked[i]) {
@@ -2207,8 +2477,11 @@ static void renderMenuBar(ClientSim *cs) {
                 ImGui::PopStyleColor();
                 ImGui::SameLine();
             }
-            /* Render flag icon inline before player name */
-            if (s_playerEnabled[i] && s_playerCountry[i][0] != '\0') {
+            /* Render flag icon inline before player name. Skipped for
+             * bots — the brain icon emitted by renderPlayerName below
+             * takes the platform-icon slot and stands in for both. */
+            if (s_playerEnabled[i] && !(s_playerFlags[i] & PLAYER_FLAG_BOT)
+                && s_playerCountry[i][0] != '\0') {
                 SDL_Texture *flagTex = flagsGetTexture(s_playerCountry[i]);
                 if (flagTex) {
                     ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
@@ -2216,8 +2489,18 @@ static void renderMenuBar(ClientSim *cs) {
                 }
             }
             if (s_playerEnabled[i]) {
-                /* Custom row: selectable name on left, colored WBN+ping on right */
-                float fullWidth = ImGui::GetContentRegionAvail().x;
+                /* Row layout: flag, icons, name, ping, check. Icons go inline
+                 * right after the flag (before the name); the checkmark sits
+                 * at the right edge of the popup, to the right of the ping. */
+                ensureWbnIconsLoaded();
+                ensurePlatformIconsLoaded();
+                uint8_t pflags = s_playerFlags[i];
+                uint8_t pct    = s_playerClientType[i];
+                renderPlayerName(NULL, pflags, pct, "", false);
+
+                ImGuiContext &g = *GImGui;
+                float checkSz = g.FontSize * 0.866f;
+                float spacing = ImGui::GetStyle().ItemSpacing.x;
 
                 /* Build ping string */
                 char pingStr[16];
@@ -2226,36 +2509,26 @@ static void renderMenuBar(ClientSim *cs) {
                 } else {
                     snprintf(pingStr, sizeof(pingStr), "---");
                 }
-                /* Measure right-side width: icons + ping + checkmark (rightmost) */
-                ensureWbnIconsLoaded();
-                ensurePlatformIconsLoaded();
-                ImGuiContext &g = *GImGui;
-                float checkSz = g.FontSize * 0.866f;
-                float iconW = (float)WBN_ICON_SIZE;
                 float pingWidth = ImGui::CalcTextSize(pingStr).x;
-                float spacing = ImGui::GetStyle().ItemSpacing.x;
-                uint8_t pflags = s_playerFlags[i];
-                uint8_t pct    = s_playerClientType[i];
-                float iconsWidth = 0.0f;
-                if (sdl3ImguiGetPlatformIcon(pct))                         iconsWidth += iconW + spacing;
-                if ((pflags & PLAYER_FLAG_WBN_VERIFIED) && s_iconGlobe)    iconsWidth += iconW + spacing;
-                if ((pflags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam)
-                    iconsWidth += iconW + spacing;
-                float rightWidth = iconsWidth + pingWidth + spacing + checkSz;
 
-                /* Selectable player name (no highlight) */
+                /* Anchor everything to the row's right edge (window-local). */
+                float rowRightX   = ImGui::GetContentRegionMax().x;
+                float checkLocalX = rowRightX - checkSz;
+                float pingLocalX  = checkLocalX - spacing - pingWidth;
+                float nameWidth   = pingLocalX - ImGui::GetCursorPosX() - spacing;
+                if (nameWidth < 1.0f) nameWidth = 1.0f;
+
+                /* Selectable player name (fills the slot between icons and ping). */
                 char selectLabel[64];
                 snprintf(selectLabel, sizeof(selectLabel), "%s##sel%d", label, i);
-                if (ImGui::Selectable(selectLabel, false, ImGuiSelectableFlags_DontClosePopups, ImVec2(fullWidth - rightWidth - spacing, 0))) {
-                    screenTogglePlayerCheckStateCS(cs, (BYTE)i);
+                if (ImGui::Selectable(selectLabel, false, ImGuiSelectableFlags_DontClosePopups,
+                                      ImVec2(nameWidth, 0))) {
+                    clientSimTogglePlayerCheckState(cs, (BYTE)i);
                 }
+                imguiHandOnHover();
 
-                /* Right-aligned platform/WBN/Steam icons */
-                ImGui::SameLine(fullWidth - rightWidth);
-                renderPlayerName(NULL, pflags, pct, "", false);
-
-                /* Ping with color coding */
-                ImGui::SameLine();
+                /* Ping with color coding — anchored just left of the checkmark slot. */
+                ImGui::SameLine(pingLocalX);
                 ImVec4 pingColor;
                 if (s_playerPing[i] == 0)        pingColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
                 else if (s_playerPing[i] < 50)   pingColor = ImVec4(0.0f, 0.9f, 0.0f, 1.0f);
@@ -2265,10 +2538,11 @@ static void renderMenuBar(ClientSim *cs) {
                 ImGui::TextUnformatted(pingStr);
                 ImGui::PopStyleColor();
 
-                /* Render checkmark to the right of ping (same as MenuItem tick) */
+                /* Checkmark at the far right of the popup, right of the ping. */
                 if (s_playerChecked[i]) {
-                    float checkX = ImGui::GetWindowPos().x + ImGui::GetStyle().WindowPadding.x + fullWidth - checkSz;
-                    ImVec2 pos = ImVec2(checkX, ImGui::GetItemRectMin().y + g.FontSize * 0.134f * 0.5f);
+                    float checkScreenX = ImGui::GetWindowPos().x + checkLocalX;
+                    ImVec2 pos = ImVec2(checkScreenX,
+                                        ImGui::GetItemRectMin().y + g.FontSize * 0.134f * 0.5f);
                     ImGui::RenderCheckMark(ImGui::GetWindowDrawList(), pos,
                                            ImGui::GetColorU32(ImGuiCol_Text), checkSz);
                 }
@@ -2283,22 +2557,65 @@ static void renderMenuBar(ClientSim *cs) {
             if (hasAllies) {
                 /* Already in an alliance — show Leave */
                 if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))
-                    screenLeaveAllianceCS(cs);
+                    clientSimLeaveAllianceSelf(cs);
             } else {
                 /* Not in an alliance — show Request */
                 if (!canRequest || inCooldown) ImGui::BeginDisabled();
                 if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE))) {
-                    screenRequestAllianceCS(cs);
+                    clientSimRequestAllianceSelected(cs);
                     s_allianceReqCooldownEnd = SDL_GetTicks() + ALLIANCE_REQ_WAIT_MS;
                 }
                 if (!canRequest || inCooldown) ImGui::EndDisabled();
+            }
+        }
+        ImGui::Separator();
+        {
+            bool running = clientSimGetNetStatus(cs) == netRunning;
+            int activeTeams = 0;
+            bool teamSeen[17] = {0};
+            if (running) {
+                for (int i = 0; i < MAX_PLAYERS; i++) {
+                    const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
+                    if (!ls || !ls->connected || ls->isBot) continue;
+                    uint8_t t = ls->teamNumber;
+                    if (t == 0 || t > 16) continue;
+                    if (!teamSeen[t]) { teamSeen[t] = true; activeTeams++; }
+                }
+            }
+
+            if (ImGui::MenuItem(langGetText(STR_VOTE_BACK_TO_LOBBY), nullptr, false, running)) {
+                clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_BACK_TO_LOBBY,
+                                               GAME_VOTE_TOGGLE_OPEN_ONLY);
+                clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_BACK_TO_LOBBY, true);
+            }
+            if (!running && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("%s", langGetText(STR_VOTE_NEEDS_RUNNING_TIP));
+            }
+
+            const ClientLobbySlot *meSlot =
+                clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+            bool meUnassigned = (meSlot && meSlot->teamNumber == 0);
+            bool surrEnabled = running && (activeTeams == 2) && !meUnassigned;
+            if (ImGui::MenuItem(langGetText(STR_VOTE_SURRENDER), nullptr, false, surrEnabled)) {
+                clientSimNetSendGameVoteToggle(cs, GAME_VOTE_KIND_SURRENDER,
+                                               GAME_VOTE_TOGGLE_OPEN_ONLY);
+                clientSimSetGameVoteWidgetVisible(cs, GAME_VOTE_KIND_SURRENDER, true);
+            }
+            if (!surrEnabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                if (!running) {
+                    ImGui::SetTooltip("%s", langGetText(STR_VOTE_NEEDS_RUNNING_TIP));
+                } else if (meUnassigned) {
+                    ImGui::SetTooltip("%s", langGetText(STR_VOTE_SURRENDER_PICK_TEAM_TIP));
+                } else {
+                    ImGui::SetTooltip("%s", langGetText(STR_VOTE_SURRENDER_TWO_TEAMS_TIP));
+                }
             }
         }
         ImGui::EndMenu();
     }
 
     /* ---- Brains -------------------------------------- */
-    if (ImGui::BeginMenu(langGetText(STR_MENU_BRAINS), screenGetAiTypeCS(cs) != aiNone)) {
+    if (ImGui::BeginMenu(langGetText(STR_MENU_BRAINS), clientSimGetAiType(cs) != aiNone)) {
         bool running = luaBrainIsRunning() != 0;
         int  runIdx  = luaBrainGetRunningIndex();
 
@@ -2354,7 +2671,7 @@ static void renderMenuBar(ClientSim *cs) {
     /* ---- Help ---------------------------------------- */
     if (ImGui::BeginMenu(langGetText(STR_MENU_HELP))) {
         if (ImGui::MenuItem(langGetText(STR_MENU_HELP)))  { /* TODO: open help file */ }
-        if (ImGui::MenuItem(langGetText(STR_MENU_ABOUT))) s_showAbout = true;
+        if (ImGui::MenuItem(langGetText(STR_MENU_ABOUT))) aboutPopupOpen();
         ImGui::EndMenu();
     }
 
@@ -2366,7 +2683,9 @@ static void renderMenuBar(ClientSim *cs) {
  * ------------------------------------------------------- */
 #ifdef _WIN32
 #include <commctrl.h>  /* SetWindowSubclass */
+#ifdef _MSC_VER
 #pragma comment(lib, "comctl32.lib")
+#endif
 
 #define ASPECT_SUBCLASS_ID 1
 
@@ -2564,6 +2883,11 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     s_mainImguiCtx = ImGui::GetCurrentContext();
+    imguiRegisterPlatformOpenUrl();
+
+#ifdef __APPLE__
+    mac_menubar_install(s_window, NULL);
+#endif
 
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -2608,6 +2932,9 @@ void sdl3ImguiResetFrameState(void) {
 
 void sdl3ImguiProcessEvents(ClientSim *cs) {
     if (!s_window) return;
+#ifdef __APPLE__
+    mac_menubar_set_clientsim(cs);
+#endif
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
         SDL_Event rawEv = ev;
@@ -2733,10 +3060,11 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
-        /* Ctrl+key shortcuts — only for events on the main window */
+        /* Cmd+key shortcuts (non-macOS — macOS routes these through NSMenu in mac_menubar.mm) */
+#ifndef __APPLE__
         if (ev.type == SDL_EVENT_KEY_DOWN &&
             ev.key.windowID == SDL_GetWindowID(s_window) &&
-            (ev.key.mod & SDL_KMOD_CTRL) != 0) {
+            (ev.key.mod & KMOD_PRIMARY) != 0) {
             switch (ev.key.scancode) {
             case SDL_SCANCODE_M:
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
@@ -2785,29 +3113,21 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 windowHideMainView_toggle();
                 continue;
             case SDL_SCANCODE_R:
-                screenRequestAllianceCS(cs);
-                continue;
-            case SDL_SCANCODE_T:
-                /* Cycle through device resolution presets */
-                dialogCycleDevicePreset(sdl3DrawGetWindow());
+                clientSimRequestAllianceSelected(cs);
                 continue;
             default:
                 break;
             }
         }
+#endif
 
-        /* Key capture for the Key Setup modal — intercept before the game sees it. */
-        if (s_keySetupWaiting != ksNone && ev.type == SDL_EVENT_KEY_DOWN &&
+        /* Key capture for the Key Setup modal — intercept before the
+         * game sees it. State + the actual binding write live in
+         * imgui_keysetup.cpp now; we just feed it the scancode. */
+        if (imguiKeySetupIsCapturingInGameKey() &&
+            ev.type == SDL_EVENT_KEY_DOWN &&
             ev.key.windowID == SDL_GetWindowID(s_window)) {
-            SDL_Scancode sc = ev.key.scancode;
-            if (sc == SDL_SCANCODE_ESCAPE) {
-                /* Escape cancels the current capture but leaves the modal open. */
-                s_keySetupWaiting = ksNone;
-            } else {
-                int *ptr = keySetupFieldPtr(s_keySetupWaiting, &s_keySetupKeys);
-                if (ptr) *ptr = (int)sc;
-                s_keySetupWaiting = ksNone;
-            }
+            imguiKeySetupHandleInGameScancode((int)ev.key.scancode);
             /* Do NOT forward to the game — key was consumed by the dialog. */
             continue;
         }
@@ -2926,13 +3246,25 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             if (isGameInput) continue;
         }
 
+        /* Mouse wheel adjusts gunsight range while in-game. Reaches here
+         * only when ImGui isn't capturing the mouse (the swallow block
+         * above continues out for wheel events over UI panels). */
+        if (ev.type == SDL_EVENT_MOUSE_WHEEL &&
+            cs && clientSimGetNetStatus(cs) == netRunning) {
+            if (ev.wheel.y > 0.0f) {
+                inputBumpGunsight(+1);
+            } else if (ev.wheel.y < 0.0f) {
+                inputBumpGunsight(-1);
+            }
+        }
+
         /* Handle winbolo:// URL opened while app is already running.
            macOS delivers URL scheme activations as SDL_EVENT_DROP_FILE. */
         if (ev.type == SDL_EVENT_DROP_FILE && ev.drop.data) {
             const char *url = ev.drop.data;
             if (strncmp(url, "winbolo://", 10) == 0) {
                 WB_LOG_INFO(WB_LOG_CAT_GUI, "[URL] Received winbolo:// link while running: %s", url);
-                if (cs && cs->netStat == netRunning) {
+                if (cs && clientSimGetNetStatus(cs) == netRunning) {
                     /* In-game: show confirmation popup instead of switching immediately */
                     strncpy(s_joinConfirmUrl, url, sizeof(s_joinConfirmUrl) - 1);
                     s_joinConfirmUrl[sizeof(s_joinConfirmUrl) - 1] = '\0';
@@ -2981,7 +3313,6 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 /* Enforce aspect ratio: adjust height to match width */
                 int w = ev.window.data1;
                 int h = ev.window.data2;
-                int contentH = h - MENU_BAR_HEIGHT;
                 int correctContentH = w * SDL3_SCREEN_H / SDL3_SCREEN_W;
                 int correctH = correctContentH + MENU_BAR_HEIGHT;
                 if (h != correctH) {
@@ -3049,6 +3380,12 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
            using SDL_GetRenderLogicalPresentationRect for resizable window support */
         sdl3DrawHandleEvent(cs, &rawEv);
     }
+
+    /* Consume the window-settings dirty flag: the throttle in
+     * gameFrontSaveWindowSettings drops moves/resizes that arrive inside
+     * its 500ms window. Pumping each frame guarantees the trailing
+     * event in a drag burst eventually flushes once idle. */
+    gameFrontPumpDirty();
 }
 
 void sdl3ImguiForwardEvent(const void *event) {
@@ -3069,8 +3406,182 @@ bool sdl3ImguiIsDialogOpen(void) {
            (g && g->OpenPopupStack.Size > 0);
 }
 
+#ifdef __APPLE__
+/* Build a fresh MacMenuState from current globals + display geometry.
+ * Fit1x..fit4x mirror the in-window Window Size enable-gating arithmetic
+ * at line ~2038 above; the device-label format mirrors the in-window
+ * snprintf at line ~2099. */
+static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
+    s->frameRate       = frameRate;
+    s->zoomFactor      = (int)zoomFactor;
+    s->smoothScrolling = smoothScrollingEnabled;
+    s->autoScrolling   = autoScrollingEnabled;
+    s->showGunsight    = showGunsight;
+    s->showPillLabels  = showPillLabels;
+    s->showBaseLabels  = showBaseLabels;
+    s->hideMainView    = hideMainView;
+    s->noOwnLabel      = !labelSelf;
+    s->labelMsg        = (int)labelMsg;
+    s->labelTank       = (int)labelTank;
+
+    s->allowNewPlayers       = allowNewPlayers;
+    s->soundEffects          = soundEffects;
+    s->backgroundSound       = backgroundSound;
+    s->useSoundKeepalive     = useSoundKeepalive;
+    s->soundVolume           = soundVolume;
+    s->newswireMessages      = showNewswireMessages;
+    s->assistantMessages     = showAssistantMessages;
+    s->aiMessages            = showAIMessages;
+    s->networkStatusMessages = showNetworkStatusMessages;
+    s->networkDebugMessages  = showNetworkDebugMessages;
+
+    s->sysInfoOpen  = sdl3ImguiIsSysInfoOpen();
+    s->netInfoOpen  = sdl3ImguiIsNetInfoOpen();
+    s->gameInfoOpen = sdl3ImguiIsGameInfoOpen();
+    s->sendMsgOpen  = sdl3ImguiIsSendMsgOpen();
+
+    int dispW = 99999, dispH = 99999;
+    if (s_window) {
+        SDL_DisplayID dispID = SDL_GetDisplayForWindow(s_window);
+        SDL_Rect usable;
+        if (SDL_GetDisplayUsableBounds(dispID, &usable)) {
+            dispW = usable.w;
+            dispH = usable.h;
+        }
+    }
+    s->fit1x = (1 * SDL3_SCREEN_W <= dispW) && (1 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
+    s->fit2x = (2 * SDL3_SCREEN_W <= dispW) && (2 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
+    s->fit3x = (3 * SDL3_SCREEN_W <= dispW) && (3 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
+    s->fit4x = (4 * SDL3_SCREEN_W <= dispW) && (4 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
+
+    /* Alliance gating — mirrors the in-window Players menu pre-compute
+     * at line ~2157. NULL cs leaves both predicates false, so the native
+     * Request/Leave Alliance items render disabled during bring-up. */
+    bool hasAllies = false, canRequest = false;
+    if (cs) {
+        BYTE self = clientSimGetMyPlayerNum(cs);
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            if (s_playerEnabled[i] && i != self) {
+                bool ally = clientSimIsPlayerAlly(cs, self, (BYTE)i);
+                if (ally) hasAllies = true;
+                else if (s_playerChecked[i]) canRequest = true;
+            }
+        }
+    }
+    s->hasAllies  = hasAllies;
+    s->canRequest = canRequest;
+    s->inCooldown = sdl3ImguiAllianceReqInCooldown();
+
+    /* Vote gating — same pre-compute as the in-window Players menu vote
+     * block (count active human teams, check our own team assignment).
+     * NULL cs leaves both predicates false, matching the alliance block. */
+    bool voteRunning = false, voteCanSurrender = false;
+    if (cs) {
+        voteRunning = (clientSimGetNetStatus(cs) == netRunning);
+        if (voteRunning) {
+            int activeTeams = 0;
+            bool teamSeen[17] = {0};
+            for (int i = 0; i < MAX_PLAYERS; i++) {
+                const ClientLobbySlot *ls = clientSimGetLobbySlot(cs, (BYTE)i);
+                if (!ls || !ls->connected || ls->isBot) continue;
+                uint8_t t = ls->teamNumber;
+                if (t == 0 || t > 16) continue;
+                if (!teamSeen[t]) { teamSeen[t] = true; activeTeams++; }
+            }
+            const ClientLobbySlot *meSlot =
+                clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+            bool meUnassigned = (meSlot && meSlot->teamNumber == 0);
+            voteCanSurrender = (activeTeams == 2) && !meUnassigned;
+        }
+    }
+    s->voteRunning      = voteRunning;
+    s->voteCanSurrender = voteCanSurrender;
+
+    /* Per-slot snapshot — uses the fresh ping accessor (the s_playerPing
+     * cache is updated only when the server pushes; the accessor includes
+     * unflushed local timing). Stale slot rows in the native menu are
+     * cheap (one drawRect per refresh), so we fill all 16 unconditionally
+     * and let mac_menubar_refresh() decide between view + numeric title. */
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        struct MacPlayerSlot *p = &s->players[i];
+        p->enabled = s_playerEnabled[i];
+        p->checked = s_playerChecked[i];
+        if (p->enabled) {
+            memcpy(p->name, s_playerName[i], sizeof p->name);
+            p->name[sizeof p->name - 1] = '\0';
+            memcpy(p->country, s_playerCountry[i], sizeof p->country);
+            p->country[sizeof p->country - 1] = '\0';
+            p->pflags = (int)s_playerFlags[i];
+            p->ptype  = (int)s_playerClientType[i];
+            p->ping   = cs ? (int)clientSimGetPlayerPing(cs, (BYTE)i) : 0;
+        } else {
+            p->name[0]    = '\0';
+            p->country[0] = '\0';
+            p->pflags     = 0;
+            p->ptype      = 0;
+            p->ping       = 0;
+        }
+    }
+
+    /* Brains submenu snapshot — parent is enabled-gated on aiActive (so
+     * the menu is visible-but-disabled until an AI tank is in play); the
+     * brain list is capped at 16 entries (mac_menubar refresh sizes its
+     * NSMenuItem cache to match). The Settings entry is only meaningful
+     * for Lua brains — ONNX brains have no set_setting hook. */
+    s->aiActive           = cs ? (clientSimGetAiType(cs) != aiNone) : false;
+    s->brainRunning       = luaBrainIsRunning();
+    s->brainRunIdx        = luaBrainGetRunningIndex();
+    s->brainSettingsShown = s->brainRunning && !mlBrainSingletonIsRunning();
+
+    int totalBrains = luaBrainGetNum();
+    int snapCount   = (totalBrains > 16) ? 16 : totalBrains;
+    s->brainCount   = snapCount;
+    for (int i = 0; i < snapCount; i++) {
+        const char *name = luaBrainGetName(i);
+        const char *src  = name ? name : "?";
+        strncpy(s->brainNames[i], src, sizeof s->brainNames[i] - 1);
+        s->brainNames[i][sizeof s->brainNames[i] - 1] = '\0';
+    }
+}
+#endif
+
+/* Drain any pending NAME_* reject (CTRL_COMMAND_REJECTED with a
+ * CMD_REJECT_NAME_* reason) into the in-game message overlay when
+ * we're not in the lobby. The lobby toast in renderLobbyRejectToast
+ * handles the in-lobby case; this closes the gap for in-game name
+ * changes (WinBolo > Change Name, Settings > Player Name), which
+ * non-WBN servers accept at any phase. Clearing the reject after
+ * surfacing avoids re-showing the same line in the lobby toast on
+ * return to lobby. Non-name reason codes (1-8) fall through and stay
+ * pending so the lobby toast still surfaces them later. */
+static void drainInGameNameReject(ClientSim *cs) {
+    if (!cs) return;
+    if (clientSimIsInLobby(cs)) return;
+    if (clientSimGetLobbyLastRejectPacket(cs) == 0) return;
+    langid msgId;
+    switch (clientSimGetLobbyLastRejectReason(cs)) {
+        case  9: msgId = STR_NAME_INVALID_EMPTY;           break;  /* CMD_REJECT_NAME_EMPTY */
+        case 10: msgId = STR_NAME_INVALID_RESERVED_PREFIX; break;  /* CMD_REJECT_NAME_RESERVED_PREFIX */
+        case 11: msgId = STR_NAME_INVALID_RESERVED_SUFFIX; break;  /* CMD_REJECT_NAME_RESERVED_SUFFIX */
+        case 12: msgId = STR_NAME_INVALID_MIXED_SCRIPTS;   break;  /* CMD_REJECT_NAME_MIXED_SCRIPTS */
+        case 13: msgId = STR_NAME_INVALID_CHARS;           break;  /* CMD_REJECT_NAME_INVALID */
+        case 14: msgId = STR_DLGSETNAME_INUSE_ERR;         break;  /* CMD_REJECT_NAME_TAKEN */
+        default: return;
+    }
+    clientSimNetStatusMessage(cs, langGetText(msgId));
+    clientSimClearLobbyLastReject(cs);
+}
+
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (!s_window || !s_renderer) return;
+
+#ifdef __APPLE__
+    if (!uiModeIsTablet()) {
+        MacMenuState mms = {};
+        populateMacMenuState(&mms, cs);
+        mac_menubar_refresh(&mms);
+    }
+#endif
 
     /* Build the ImGui frame */
     ImGui_ImplSDLRenderer3_NewFrame();
@@ -3106,7 +3617,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (uiModeIsTablet()) {
         sdl3ImguiTabletOverlay(cs);
     } else {
+#ifndef __APPLE__
         renderMenuBar(cs);
+#endif
     }
 
     /* Override-mode slowdown indicator — small overlay top-left of the
@@ -3162,11 +3675,19 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     renderPlayersPanel(cs);
 
     /* Modal dialogs */
-    renderAboutModal();
+    aboutPopupRender();
     renderChangeNameModal(cs);
     renderAllianceRequest(cs);
+    renderGameVoteWidgets(cs);
+    /* Per-frame tick that emits the 3/2/1 newswire lines while a
+     * vote-driven back-to-lobby is in-flight. Counts off the local
+     * clock; no per-second server broadcast involved. */
+    clientSimTickLobbyReturnCountdown(cs);
+    /* Surface in-game CMD_REJECT_NAME_* rejects through the message
+     * overlay. The lobby toast handles the in-lobby case. */
+    drainInGameNameReject(cs);
     renderPasswordModal();
-    renderKeySetupModal(cs);
+    imguiKeySetupRenderInGamePopup(cs);
     renderJoinConfirmModal();
 
     /* Extra render callback (e.g. Android players panel) */
@@ -3189,7 +3710,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                 "###sysinfo", "###netinfo", "###gameinfo",
                 "###sendmsg", "###playerspanel", "###settings",
                 "###brainsettings", "###alliancereq",
-                "###about", "###changename",
+                "###about", "###thirdparty", "###authors", "###changename",
                 "###passwordreq", "###keysetup",
             };
             bool overDialog = false;
@@ -3224,6 +3745,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                 s_brainSettingsOpen  = false;
                 s_allianceVisible    = false;
                 s_closeAllPopups = true;
+                aboutPopupCloseAll();
                 dialogDismissKeyboard(s_window);
             }
         }
@@ -3310,17 +3832,90 @@ void sdl3ImguiSetExtraRenderCallback(sdl3ImguiExtraRenderFn fn) {
 }
 
 void sdl3ImguiShowSysInfo(bool open) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) {
+        if (open) {
+            if (!s_popSysInfo.open) {
+                sysInfoGraphReset();
+                popOutCreate(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE), 440, 600);
+            }
+        } else {
+            if (s_popSysInfo.open) popOutDestroy(&s_popSysInfo);
+        }
+        return;
+    }
+#endif
     if (open && !s_showSysInfo) sysInfoGraphReset();
     s_showSysInfo = open;
 }
+bool sdl3ImguiIsSysInfoOpen(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) return s_popSysInfo.open;
+#endif
+    return s_showSysInfo;
+}
 void sdl3ImguiShowNetInfo(bool open) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) {
+        if (open) {
+            if (!s_popNetInfo.open) {
+                pingGraphReset();
+                popOutCreate(&s_popNetInfo, langGetText(STR_DLGNETINFO_TITLE), 360, 420);
+            }
+        } else {
+            if (s_popNetInfo.open) popOutDestroy(&s_popNetInfo);
+        }
+        return;
+    }
+#endif
     if (open && !s_showNetInfo) pingGraphReset();
     s_showNetInfo = open;
 }
+bool sdl3ImguiIsNetInfoOpen(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) return s_popNetInfo.open;
+#endif
+    return s_showNetInfo;
+}
 void sdl3ImguiShowGameInfo(bool open) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) {
+        if (open) {
+            if (!s_popGameInfo.open) {
+                popOutCreate(&s_popGameInfo, langGetText(STR_DLGGAMEINFO_TITLE), 320, 200);
+            }
+        } else {
+            if (s_popGameInfo.open) popOutDestroy(&s_popGameInfo);
+        }
+        return;
+    }
+#endif
     s_showGameInfo = open;
 }
+bool sdl3ImguiIsGameInfoOpen(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) return s_popGameInfo.open;
+#endif
+    return s_showGameInfo;
+}
 void sdl3ImguiShowSendMsg(bool open) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) {
+        if (open) {
+            if (!s_popSendMsg.open) {
+                popOutCreate(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200);
+            }
+            /* Match the modal-path side effects so the user gets a fresh
+             * cooldown and a focused input regardless of which path opened
+             * Send Message. */
+            s_sendMsgCooldownEnd = 0;
+            s_sendMsgFocusInput  = true;
+        } else {
+            if (s_popSendMsg.open) popOutDestroy(&s_popSendMsg);
+        }
+        return;
+    }
+#endif
     s_showSendMsg = open;
     if (open) {
         /* Reset cooldown so the Send button is always enabled on fresh open */
@@ -3331,6 +3926,12 @@ void sdl3ImguiShowSendMsg(bool open) {
         s_showPlayersPanel = false;
 #endif
     }
+}
+bool sdl3ImguiIsSendMsgOpen(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (!uiModeIsTablet()) return s_popSendMsg.open;
+#endif
+    return s_showSendMsg;
 }
 void sdl3ImguiShowSettings(void) {
     s_showSettings = !s_showSettings;
@@ -3345,6 +3946,57 @@ void sdl3ImguiShowSettings(void) {
 #endif
     }
 }
+extern "C" void sdl3ImguiShowAbout(void) {
+    aboutPopupOpen();
+}
+extern "C" void sdl3ImguiShowChangeName(void) {
+    s_showChangeName = true;
+}
+extern "C" void sdl3ImguiSetFrameRate(int rate) {
+    windowSetFrameRate(rate, true);
+}
+extern "C" void sdl3ImguiSetZoom(int zoom) {
+    s_pendingZoom = (BYTE)zoom;
+}
+extern "C" void sdl3ImguiSetMessageLabelLen(ClientSim *cs, int len) {
+    windowSetMessageLabelLen(cs, (labelLen)len);
+}
+extern "C" void sdl3ImguiSetTankLabelLen(ClientSim *cs, int len) {
+    windowSetTankLabelLen(cs, (labelLen)len);
+}
+
+/* Brain-control trampolines for the macOS native Brains menu.
+ * Encapsulate the luaBrain/mlBrain split + s_brainSettings ownership so
+ * the .mm shim stays data-driven (via MacMenuState) and doesn't need to
+ * link against the brain handler. Mirrors the in-window Brains menu at
+ * renderMenuBar() above. */
+extern "C" void sdl3ImguiStopBrain(void) {
+    if (luaBrainIsRunning()) {
+        luaBrainStop();
+        mlBrainStopSingleton();
+    }
+}
+extern "C" void sdl3ImguiStartBrain(int idx, ClientSim *cs) {
+    if (idx < 0 || idx >= luaBrainGetNum()) return;
+    const char *path = luaBrainGetPath(idx);
+    const char *name = luaBrainGetName(idx);
+    if (!path) return;
+    if (luaBrainGetType(idx) == BRAIN_TYPE_ONNX) {
+        mlBrainStartSingleton(path, name ? name : "", cs);
+    } else {
+        luaBrainStart(path, name ? name : "", cs);
+    }
+    luaBrainFreeSettings(s_brainSettings);
+    s_brainSettings      = nullptr;
+    s_brainSettingsCount = 0;
+    s_brainSettingsOpen  = false;
+}
+extern "C" void sdl3ImguiShowBrainSettings(void) {
+    luaBrainFreeSettings(s_brainSettings);
+    s_brainSettings      = luaBrainGetSettings(&s_brainSettingsCount);
+    s_brainSettingsOpen  = true;
+}
+
 void sdl3ImguiShowPlayersPanel(bool open) {
     s_showPlayersPanel = open;
 #if BOLO_MOBILE
@@ -3357,7 +4009,11 @@ void sdl3ImguiShowPlayersPanel(bool open) {
 
 bool sdl3ImguiWantsKeyboard(void) {
     if (!s_window) return false;
-    return ImGui::GetIO().WantCaptureKeyboard;
+    ImGuiIO &io = ImGui::GetIO();
+    if (io.WantTextInput) return true;
+    if (ImGui::GetCurrentContext()->ActiveId != 0) return true;
+    if (sdl3ImguiIsDialogOpen()) return true;
+    return false;
 }
 
 void sdl3ImguiClearNavFocus(void) {
@@ -3410,6 +4066,11 @@ void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping,
     s_playerFlags[playerNum] = clientFlags;
 }
 
+void sdl3ImguiUpdatePlayerPing(unsigned char playerNum, uint16_t ping) {
+    if (playerNum >= MAX_PLAYERS) return;
+    s_playerPing[playerNum] = ping;
+}
+
 SDL_Texture *sdl3ImguiGetGlobeIcon(void) {
     ensureWbnIconsLoaded();
     return s_iconGlobe;
@@ -3418,6 +4079,21 @@ SDL_Texture *sdl3ImguiGetGlobeIcon(void) {
 SDL_Texture *sdl3ImguiGetSteamIcon(void) {
     ensureWbnIconsLoaded();
     return s_iconSteam;
+}
+
+SDL_Texture *sdl3ImguiGetBrainIcon(void) {
+    /* Returns the larger rasterization — the only consumer is the
+     * tank-label overlay (sdl3DrawTankLabel), which scales the icon to
+     * the TTF label height and would alias badly off the 14-px popup
+     * texture. renderPlayerName / the in-game player menu read
+     * s_iconBrain directly. */
+    ensureWbnIconsLoaded();
+    return s_iconBrainLg;
+}
+
+bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {
+    if (playerNum >= MAX_PLAYERS) return false;
+    return (s_playerFlags[playerNum] & PLAYER_FLAG_BOT) != 0;
 }
 
 SDL_Texture *sdl3ImguiGetPlatformIcon(uint8_t clientType) {
@@ -3440,33 +4116,41 @@ static const char *platformName(uint8_t ct) {
 void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry) {
     ensurePlatformIconsLoaded();
-    SDL_Texture *platTex = sdl3ImguiGetPlatformIcon(clientType);
-    if (platTex) {
-        ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
-        /* ImGui 1.91.9+ removed tint_col from Image(); ImageWithBg takes
-         * (size, uv0, uv1, bg_col, tint_col) - bg transparent. */
-        ImGui::ImageWithBg((ImTextureID)platTex,
-                           ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
-                           ImVec2(0, 0), ImVec2(1, 1),
-                           ImVec4(0, 0, 0, 0), tint);
-        if (ImGui::IsItemHovered()) {
-            const char *plat = platformName(clientType);
-            if (flags & PLAYER_FLAG_SUPPORTER)
-                ImGui::SetTooltip("%s — Supporter", plat);
-            else
-                ImGui::SetTooltip("%s", plat);
-        }
-        ImGui::SameLine();
-    }
-
     ensureWbnIconsLoaded();
-    if ((flags & PLAYER_FLAG_WBN_VERIFIED) && s_iconGlobe) {
-        ImGui::Image((ImTextureID)s_iconGlobe, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+    if ((flags & PLAYER_FLAG_BOT) && s_iconBrain) {
+        /* Bot slot: brain icon stands in for the platform badge and the
+         * WBN/Steam badges are skipped — a bot can never be either. */
+        ImGui::Image((ImTextureID)s_iconBrain, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("AI player");
         ImGui::SameLine();
-    }
-    if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
-        ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-        ImGui::SameLine();
+    } else {
+        SDL_Texture *platTex = sdl3ImguiGetPlatformIcon(clientType);
+        if (platTex) {
+            ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
+            /* ImGui 1.91.9+ removed tint_col from Image(); ImageWithBg takes
+             * (size, uv0, uv1, bg_col, tint_col) - bg transparent. */
+            ImGui::ImageWithBg((ImTextureID)platTex,
+                               ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
+                               ImVec2(0, 0), ImVec2(1, 1),
+                               ImVec4(0, 0, 0, 0), tint);
+            if (ImGui::IsItemHovered()) {
+                const char *plat = platformName(clientType);
+                if (flags & PLAYER_FLAG_SUPPORTER)
+                    ImGui::SetTooltip("%s — Supporter", plat);
+                else
+                    ImGui::SetTooltip("%s", plat);
+            }
+            ImGui::SameLine();
+        }
+
+        if ((flags & PLAYER_FLAG_WBN_VERIFIED) && s_iconGlobe) {
+            ImGui::Image((ImTextureID)s_iconGlobe, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+            ImGui::SameLine();
+        }
+        if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
+            ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+            ImGui::SameLine();
+        }
     }
     /* Icon-only mode: a NULL/empty name skips the text and trailing
      * country flag so callers can use this helper to render just the
@@ -3492,7 +4176,8 @@ void sdl3ImguiSetPlayerCheckState(unsigned char playerNum, bool isChecked) {
 }
 
 void sdl3ImguiShowKeySetup(void) {
-    s_showKeySetup = true;
+    /* Hands off to imgui_keysetup.cpp's in-game popup wrapper. */
+    imguiKeySetupOpenInGame();
 }
 
 void sdl3ImguiCleanup(void) {
@@ -3504,6 +4189,8 @@ void sdl3ImguiCleanup(void) {
     flagsDestroy();
     if (s_iconGlobe) { SDL_DestroyTexture(s_iconGlobe); s_iconGlobe = nullptr; }
     if (s_iconSteam) { SDL_DestroyTexture(s_iconSteam); s_iconSteam = nullptr; }
+    if (s_iconBrain) { SDL_DestroyTexture(s_iconBrain); s_iconBrain = nullptr; }
+    if (s_iconBrainLg) { SDL_DestroyTexture(s_iconBrainLg); s_iconBrainLg = nullptr; }
     s_wbnIconsLoaded = false;
     for (int i = 0; i < CLIENT_TYPE_COUNT; i++) {
         /* Slot may alias another (e.g. WEB → globe.svg), but each load returns a

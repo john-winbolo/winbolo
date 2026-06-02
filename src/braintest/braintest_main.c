@@ -25,7 +25,7 @@
  *     BrainTest [options]
  *
  *   Options:
- *     -brain PATH      Brain script (default: brains/NewAutopilot)
+ *     -brain PATH      Brain script (default: brains/GoalHunter)
  *     -noplayers N     Number of bot players (default: 1)
  *     -map PATH        Map file (default: built-in Everard Island)
  *     -follow N        Follow bot N with camera (default: 0)
@@ -44,6 +44,11 @@
  *     F                Toggle free camera / follow mode
  *     Left click       Show A* cost + path to clicked tile (magenta)
  *     Right click      Clear click path overlay
+ *
+ *   This file uses bot_manager.h, brain_pathfinder.h,
+ *   brain_overlay.h, braincore.h, and control_event.h directly.
+ *   The "braintest" CMake profile in cmake/bolo_lib.cmake grants
+ *   this access; see the profile's doc-comment for rationale.
  *********************************************************/
 
 #include <SDL3/SDL.h>
@@ -59,24 +64,29 @@
 #include <unistd.h>
 #endif
 
-#include "../bolo/global.h"
-#include "../bolo/everard_map.h"
-#include "../bolo/tank.h"
-#include "../bolo/bot_manager.h"
-#include "../bolo/players.h"
-#include "../bolo/bolo_map.h"
-#include "../bolo/pillbox.h"
-#include "../bolo/bases.h"
-#include "../bolo/starts.h"
-#include "../bolo/allience.h"
-#include "../bolo/brain_pathfinder.h"
-#include "../bolo/gui_message.h"
-#include "../server/server_sim.h"
+#include "bolo_rand.h"
+#include "global.h"
+#include "everard_map.h"
+#include "tank.h"
+#include "players.h"
+#include "allience.h"
+#include "explosions.h"
+#include "minesexp.h"
+#include "control_event.h"
+#include "brain_pathfinder.h"
+#include "gui_message.h"
+#include "server_sim.h"
+#include "server_sim_lifecycle.h"
+#include "bot_worker_pool.h"
+#include "bot_manager.h"
+#include "game_sim.h"
+#include "../server/server_lifecycle.h"
+#include "../server/threads.h"
 #include "../gui/sdl3/mapview.h"
 #include "../gui/sdl3/tileloader.h"
 #include "../gui/sdl3/luabrainshandler.h"
-#include "../bolo/braincore.h"
-#include "../bolo/brain_overlay.h"
+#include "braincore.h"
+#include "brain_overlay.h"
 #include "braintest_viz_registry.h"
 #include "braintest_vizwindow.h"
 #include "braintest_panel_registry.h"
@@ -89,8 +99,8 @@
 #include "braintest_vizdetail_registry.h"
 #include "braintest_vizdetailwindow.h"
 #include "braintest_pillcontrib_registry.h"
-#include "na_overlay_pillcontrib.h"
-#include "../bolo/brain_pathfinder.h"
+#include "gh_overlay_pillcontrib.h"
+#include "brain_pathfinder.h"
 
 /* Built-in text renderer lives in panelwindow.cpp (needs ImGui). */
 void panelRenderText(int registry_idx, const char *body);
@@ -111,8 +121,8 @@ void gameFrontSetPlayerName(char *pn) { (void)pn; }
 void gameFrontSetAIType(aiType ait) { (void)ait; }
 void gameFrontEnableRejoin(void) {}
 
-time_t windowsGetTicks(void) { return (time_t)winboloTimer(); }
-time_t serverMainGetTicks(void) { return (time_t)winboloTimer(); }
+time_t windowsGetTicks(void) { return (time_t)SDL_GetTicks(); }
+time_t serverMainGetTicks(void) { return (time_t)SDL_GetTicks(); }
 
 /* ------------------------------------------------------------------ */
 /* Configuration                                                       */
@@ -126,6 +136,13 @@ time_t serverMainGetTicks(void) { return (time_t)winboloTimer(); }
 #define MAX_ZOOM           16
 #define CONTROL_BAR_HEIGHT 32   /* timeline scrubber strip at bottom */
 #define MAX_RECORDING_FRAMES 90000
+
+/* Sliding-window cap. Default = 3000 frames ≈ 60 sec @ 50 Hz; oldest
+ * frames evicted in keyframe-aligned chunks once the buffer fills.
+ * --record-all on the command line bumps this to MAX_RECORDING_FRAMES
+ * (effectively unlimited — full session retained). Lower default
+ * keeps memory bounded on multi-hour runs. */
+static int g_recordingMaxFrames = 3000;
 
 /* Playback / live-replay speed presets, ms-per-tick. Lower = faster. */
 static const int SPEED_PRESETS[] = {
@@ -247,13 +264,21 @@ typedef struct {
     VizDetailEntry *vizDetails;
     int             vizDetailCount;
 
-    /* pill_contrib registry snapshot (per-pill, per-tile danger
-     * contribution maps). Same scrub-back rationale as vizDetails:
-     * brain isn't running in playback so the shift-2 overlay needs
-     * the recorded data to remain functional. malloc'd per frame;
-     * freed in recordingFreeFrame. */
-    PillContribEntry *pillContrib;
-    int               pillContribCount;
+    /* pill_contrib registry snapshot (per-bot, per-pill, per-tile
+     * danger contribution maps). Same scrub-back rationale as
+     * vizDetails. Storage uses per-pill refcounted cells (see
+     * PillContribCell below) so consecutive frames that have an
+     * identical pill entry share one allocation. pcontrib is highly
+     * stable tick-to-tick (changes only on pill death or anger
+     * tick), so dedup typically saves >90% of this section's bytes.
+     *
+     * pillContribPtrs[bot] is either NULL or a malloc'd array of
+     * `pillContribCounts[bot]` (const PillContribEntry *) pointers.
+     * Each pointer either references a cell this frame owns (which
+     * it will free when refcount hits 0) or one shared from an
+     * earlier frame. */
+    const PillContribEntry       **pillContribPtrs[PILLCONTRIB_MAX_BOTS];
+    int                            pillContribCounts[PILLCONTRIB_MAX_BOTS];
 
     /* Strategic placement heatmap text snapshotted when the [8]
      * overlay is on; NULL otherwise (saves the Lua poll cost). */
@@ -288,7 +313,7 @@ typedef struct {
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-    ServerSim    sim;
+    ServerSim   *sim;
     bool         simValid;
     SDL_Window  *window;
     SDL_Renderer*renderer;
@@ -521,6 +546,42 @@ static void recordingInit(RecordingBuffer *rb) {
     rb->playbackBrainMap = (BYTE *)calloc(mapSz, 1);
 }
 
+/* Refcount-headered pcontrib cell. Frames that captured the same
+ * pill entry (unchanged content) share one cell across all of them;
+ * we free when the last frame referencing it goes away.
+ *
+ * Layout: refcount lives BEFORE the PillContribEntry so callers can
+ * still use a plain `const PillContribEntry *` everywhere. cell_of()
+ * recovers the cell pointer from an entry pointer via offsetof. */
+typedef struct {
+    int              refcount;
+    PillContribEntry entry;
+} PillContribCell;
+
+static inline PillContribCell *pcontrib_cell_of(const PillContribEntry *e) {
+    return (PillContribCell *)((char *)e - offsetof(PillContribCell, entry));
+}
+
+/* Drop one reference to each cell pointed to by pillContribPtrs[b][*]
+ * and free the per-bot pointer array. Called from recordingFreeFrame
+ * and as part of the truncate-tail path. */
+static void recordingReleasePcontrib(RecordingFrame *f) {
+    for (int b = 0; b < PILLCONTRIB_MAX_BOTS; b++) {
+        const PillContribEntry **arr = f->pillContribPtrs[b];
+        if (!arr) continue;
+        int n = f->pillContribCounts[b];
+        for (int i = 0; i < n; i++) {
+            const PillContribEntry *e = arr[i];
+            if (!e) continue;
+            PillContribCell *c = pcontrib_cell_of(e);
+            if (--c->refcount <= 0) free(c);
+        }
+        free(arr);
+        f->pillContribPtrs[b] = NULL;
+        f->pillContribCounts[b] = 0;
+    }
+}
+
 static void recordingFreeFrame(RecordingFrame *f) {
     free(f->fullMap);
     free(f->mapDeltas);
@@ -537,7 +598,7 @@ static void recordingFreeFrame(RecordingFrame *f) {
     free(f->pathX);
     free(f->pathY);
     free(f->vizDetails);
-    free(f->pillContrib);
+    recordingReleasePcontrib(f);
     SDL_free(f->stratPlaceText);
     memset(f, 0, sizeof(*f));
 }
@@ -720,7 +781,7 @@ static void mapTileToScreen(BrainTestApp *app, float tx, float ty,
 static void renderCellValues(BrainTestApp *app, int screenW, int screenH) {
     if (!vizFlag(app->regIdxValues)) return;
     if (!vizFlag(app->regIdxDanger) && !vizFlag(app->regIdxInfluence)) return;
-    BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
+    BrainPathfinder *pf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     if (!pf) return;
 
     int zf = app->zoomFactor;
@@ -812,7 +873,7 @@ static void mapTileWindow(BrainTestApp *app, int screenW, int screenH,
  * brainPathfinderSetMap). */
 static void renderFogOverlay(BrainTestApp *app, int screenW, int screenH) {
     if (!vizFlag(app->regIdxFog)) return;
-    BrainPathfinder *bpf = botManagerGetBrainPathfinder(app->followBot);
+    BrainPathfinder *bpf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     if (!bpf || !bpf->map) return;
 
     int   tp, startX, startY, endX, endY;
@@ -1012,8 +1073,8 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
         }
     }
     if (!haveOrigin) {
-        if (!serverSimGetTankState(&app->sim, app->followBot, &twx, &twy)) return;
-        tank *t = &app->sim.sim.tanks[app->followBot];
+        if (!serverSimGetTankState(app->sim, app->followBot, &twx, &twy)) return;
+        tank *t = &serverSimGetGameSim(app->sim)->tanks[app->followBot];
         in_boat    = tankIsOnBoat(t) ? 1 : 0;
         res_shells = tankGetShells(t);
         res_trees  = tankGetTrees(t);
@@ -1090,7 +1151,7 @@ static void startCostToHeatmap(BrainTestApp *app, bool lowDanger) {
  * cheaper. Shift+7 cycles which slate (0..3) is being viewed. */
 static void renderDijkstraHeatmap(BrainTestApp *app, int screenW, int screenH) {
     if (!vizFlag(app->regIdxDijkstra)) return;
-    BrainPathfinder *botPf = botManagerGetBrainPathfinder(app->followBot);
+    BrainPathfinder *botPf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     if (!botPf) return;
 
     int viewSlate = app->dijViewSlate;
@@ -1107,7 +1168,7 @@ static void renderDijkstraHeatmap(BrainTestApp *app, int screenW, int screenH) {
     {
         int dijKind = botPf->dij_slates[viewSlate].kind;
         uint32_t dijStarted = botPf->dij_slates[viewSlate].started_tick;
-        uint32_t curTick    = app->sim.tick / 2;
+        uint32_t curTick    = serverSimGetTick(app->sim) / 2;
         int life = (dijStarted > 0) ? (int)(curTick - dijStarted) : 0;
         char dijLabel[160];
         SDL_snprintf(dijLabel, sizeof(dijLabel),
@@ -1173,7 +1234,7 @@ static void renderStratPlaceHeatmap(BrainTestApp *app, int screenW, int screenH)
         if (!app->stratPlaceText || nowMs - sLastStratPoll > 500) {
             sLastStratPoll = nowMs;
             SDL_free(app->stratPlaceText);
-            app->stratPlaceText = botManagerEvalLuaString(app->followBot,
+            app->stratPlaceText = serverSimBotEvalLuaString(app->sim, app->followBot,
                 "return brain.get_strategic_place_heatmap()");
         }
         stratText = app->stratPlaceText;
@@ -1270,7 +1331,7 @@ static void vizToggleSaveCallback(int idx) {
  * X-key suppress flag into every active bot's Lua state. Also
  * pushes _BT_VIZ_IDS (the table viz.lua's vid() reads to learn
  * which integer to stamp on each overlay command). */
-static void pushVizStateToBots(bool vizSuppressActive);
+static void pushVizStateToBots(ServerSim *sim, bool vizSuppressActive);
 
 static int vizRegisterCallback(const char *id, const char *label,
                                 const char *short_desc, const char *long_desc,
@@ -1308,7 +1369,7 @@ static void preThinkHook(int playerNum) {
  * are single characters. */
 static bool isReservedShortcut(char k) {
     /* P is intentionally NOT here — the old host-owned P-window-with-
-     * tabs is gone, so bots are free to claim P (e.g. NewAutopilot's
+     * tabs is gone, so bots are free to claim P (e.g. GoalHunter's
      * Pool breakdown). */
     static const char *reserved = "VMXHFTLGCBQ";
     if (k == '\0') return false;
@@ -1322,7 +1383,7 @@ static bool isReservedShortcut(char k) {
 /* Brain → host callback for the panel registry. Auto-namespaces
  * the panel type with the registering bot's brain name so two
  * brains registering "pool_grid" with different schemas don't
- * collide ("NewAutopilot:pool_grid" vs "OtherBot:pool_grid").
+ * collide ("GoalHunter:pool_grid" vs "OtherBot:pool_grid").
  * Per-bot panel modules in brains/<botname>/braintest_panels/
  * register their renderers under the same namespaced names.
  *
@@ -1400,11 +1461,8 @@ static void vizDetailClearCallback(void) {
     vizDetailRegistryClear();
 }
 
-static void pillContribClearCallback(void) {
-    pillContribClear();
-}
-static int pillContribBeginPillCallback(int pill_id, int mx, int my) {
-    return pillContribBeginPill(pill_id, mx, my);
+static int pillContribBeginPillCallback(int bot, int pill_id, int mx, int my) {
+    return pillContribBeginPill(bot, pill_id, mx, my);
 }
 static void pillContribAddTileCallback(int slot, int tx, int ty, float value) {
     pillContribAddTile(slot, tx, ty, value);
@@ -1425,11 +1483,32 @@ static int shotSimPoiRegisterCallback(const char *name,
  * followBot + recording-enabled flag + sim tick in file-statics the
  * callback can read. Updated every frame the panel window is visible. */
 static BYTE     g_panelPollFollowBot   = 0;
+/* The poll callback is invoked from inside the ImGui panel renderer
+ * with no app handle. Stash the sim here so it can route through the
+ * per-sim BotManager. Updated alongside g_panelPollFollowBot each
+ * frame the panel window is visible. */
+static ServerSim *g_panelPollSim       = NULL;
+/* Exposed via braintest_panel_registry.h so per-brain panel
+ * renderers (under brains/<name>/braintest_panels/) can route
+ * through serverSim* wrappers without holding an app handle. */
+ServerSim *braintestGetCurrentSim(void) {
+    return g_panelPollSim;
+}
+
 /* Off by default: recording produces one file per polled tick per
  * panel, which adds up fast over long sessions and has no rotation
  * yet. Opt in with --record-panels when you want offline replay. */
 static bool     g_panelRecordEnabled   = false;
 static char     g_panelRecordDir[FILENAME_MAX] = "";
+
+/* Per-frame pcontrib snapshot for playback's shift-2 overlay. Off by
+ * default: even with per-pill refcount sharing the long tail of
+ * occasionally-changing entries still grows ~2 KB per changed pill
+ * per frame, which adds up over multi-hour sessions. Turn on with
+ * --record-pcontrib when you actually need scrub-replay of the
+ * danger-contribution overlay. With this off, the live overlay still
+ * works during play — only playback's view of it is empty. */
+static bool     g_recordPcontribEnabled = false;
 static uint32_t g_panelPollTick        = 0;
 /* Playback bridge — when set, the poll callback returns the
  * recorded panel JSON for `g_panelPollFrame` instead of asking
@@ -1459,8 +1538,7 @@ static char *panelPollCallback(int panel_idx) {
     if (!e || !e->lua_expr[0]) return NULL;
     /* Playback path: serve the recorded JSON for this frame. We
      * hand back a heap-allocated copy because the panel window
-     * frees what we return. NULL → renderer keeps showing whatever
-     * it already had (better than blanking on a gap). */
+     * frees what we return. */
     if (g_panelPollRecording
         && g_panelPollFrame >= 0
         && g_panelPollFrame < g_panelPollRecording->count
@@ -1474,11 +1552,24 @@ static char *panelPollCallback(int panel_idx) {
             if (copy) memcpy(copy, rec, n + 1);
             return copy;
         }
-        /* No recorded data for this frame/panel (e.g. followBot was different
-         * during recording, or bot just registered it). Fall through to
-         * poll the live brain so the panel doesn't blank out. */
+        /* No recorded data for this frame. We USED to fall through and
+         * poll the live brain, which silently showed today's state as
+         * if it were historical — actively misleading. Return a clear
+         * sentinel JSON so the panel renders "-" everywhere instead. */
+        static const char *kNoData =
+            "{\"phase\":\"-\",\"tick\":-1,\"replan_left\":-1,\"bot\":-1,"
+            "\"sections\":[{\"id\":\"nodata\",\"name\":\"NO RECORDING DATA\","
+            "\"weight\":1.0,\"winner_id\":-1,"
+            "\"rows\":[{\"id\":-1,\"mx\":0,\"my\":0,\"cost\":-1,"
+            "\"weighted\":-1,\"is_winner\":false,\"active_goal\":false,"
+            "\"stale\":-1,\"formula\":\"spot{-} + pickup{-}*wound_x2{-} + (stale{-} + diff{-} + anger{-} + xfire{-} + intcpt{-}) * hp{-} + ammo{-}||NO recorded data for this frame: the panel was either not registered yet, the bot owning it was not active, or the brain returned nil. Playback NO LONGER falls back to live brain — the previous fallback silently showed current-state values mislabeled as historical.\",\"reject\":null,\"reject_remaining\":0,\"imminent\":false}]}]}";
+        size_t n = strlen(kNoData);
+        char *copy = (char *)malloc(n + 1);
+        if (copy) memcpy(copy, kNoData, n + 1);
+        return copy;
     }
-    char *body = botManagerEvalLuaString(g_panelPollFollowBot, e->lua_expr);
+    char *body = serverSimBotEvalLuaString(g_panelPollSim,
+                                           g_panelPollFollowBot, e->lua_expr);
     /* Persist to disk so the same per-tick snapshot can be inspected
      * offline (great for "look at the queue at tick 4321" — files
      * are JSON for typed panels, raw text for the "text" type). */
@@ -1507,10 +1598,18 @@ static void signalHandler(int sig) {
 /* Command-line parsing                                                */
 /* ------------------------------------------------------------------ */
 
-static char optBrain[512] = "brains/NewAutopilot";
+static char optBrain[512] = "brains/GoalHunter";
 static char optMap[512]   = "";
 static int  optNumPlayers = 1;
+static int  optNumTeams   = 0;   /* 0 = FFA (no alliances); otherwise round-robin team assignment */
 static int  optFollow     = 0;
+/* -victim_ids <comma-sep player ids>: mark each listed bot as a
+ * test "victim". The brain reads _BT_VICTIM = true on that bot's
+ * Lua state, which can be wired up to perform actions that
+ * facilitate testing the real bots — e.g. sending the LGM out to
+ * be targeted by kill_lgm, dropping a pill at a fixed spot, parking
+ * the tank as bait, etc. Default: no victims; bots behave normally. */
+static bool optVictim[MAX_TANKS] = { false };
 static aiType  optAI      = aiFull;
 static gameType optGame   = gameOpen;
 /* --opt: load the brain from its stripped opt/ subdirectory and start
@@ -1530,19 +1629,29 @@ static int  optProfileLog = 0;
 static int  optLogJson    = 0;
 static int  optAutoStart = 0;
 static int  optMaxTicks = 0;   /* 0 = run forever */
+/* Brain-dispatch thread count (workers + producer). 0 = use the default
+ * (2). Set via -threads; clamped to [1, cores] at init. */
+static int  optThreads = 0;
 
 static void printUsage(const char *prog) {
     fprintf(stderr,
         "Usage: %s [options]\n"
         "\n"
         "Options:\n"
-        "  -brain PATH      Brain script directory (default: brains/NewAutopilot)\n"
+        "  -brain PATH      Brain script directory (default: brains/GoalHunter)\n"
         "  -noplayers N     Number of bot players (default: 1)\n"
+        "  -threads N       Brain dispatch threads incl. producer (default: 2, max: cores)\n"
+        "  -teams N         Split bots into N teams via round-robin (default: 0 = FFA)\n"
         "  -map PATH        Map file (default: built-in Everard Island)\n"
         "  -follow N        Follow bot N with camera (default: 0)\n"
         "  -ai TYPE         AI type: none, yes, advantage, full (default: full)\n"
         "  -game TYPE       Game type: open, tournament, strict (default: open)\n"
         "  --record-panels  Write per-tick panel JSON to debug_sessions/<ts>/panels/\n"
+        "  --record-pcontrib  Record per-tick pill-contribution snapshots so the\n"
+        "                     shift-2 overlay works during playback (off by default;\n"
+        "                     each changed pill entry is ~2 KB so long runs grow fast)\n"
+        "  --record-all      Keep ALL recorded frames (up to ~30 min). Default is a\n"
+        "                     60-second sliding window so long runs stay bounded.\n"
         "  --opt            Load stripped opt/ brain (debug=false). Production-mode feel.\n"
         "  --run-script PATH  Run PATH as a Lua script in the brain's VM after Brain.open,\n"
         "                     then exit. The script has full access to cpf, world, etc.\n"
@@ -1553,6 +1662,11 @@ static void printUsage(const char *prog) {
         "                     traces. On by default in dev mode.\n"
         "  --auto-start       Skip the auto-pause at tick 4 and run immediately.\n"
         "  --max-ticks N      Exit automatically after N ticks (flushes perf log).\n"
+        "  -victim_ids IDS  Comma-sep list of bot ids to flag as test victims\n"
+        "                   (e.g. -victim_ids 0,2). The brain reads _BT_VICTIM=true\n"
+        "                   on each marked bot, which can be wired up to perform\n"
+        "                   actions that facilitate testing the real bots — e.g.\n"
+        "                   sending the LGM out to be targeted by kill_lgm.\n"
         "\n"
         "Controls:\n"
         "  Arrows           Scroll map (switches to free camera)\n"
@@ -1576,6 +1690,14 @@ static bool parseArgs(int argc, char **argv) {
             optNumPlayers = atoi(argv[++i]);
             if (optNumPlayers < 1) optNumPlayers = 1;
             if (optNumPlayers > 16) optNumPlayers = 16;
+        } else if ((strcmp(argv[i], "-threads") == 0 || strcmp(argv[i], "--threads") == 0) && i + 1 < argc) {
+            optThreads = atoi(argv[++i]);
+            if (optThreads < 1) optThreads = 1;
+            if (optThreads > MAX_TANKS) optThreads = MAX_TANKS;
+        } else if ((strcmp(argv[i], "-teams") == 0 || strcmp(argv[i], "--teams") == 0) && i + 1 < argc) {
+            optNumTeams = atoi(argv[++i]);
+            if (optNumTeams < 0) optNumTeams = 0;
+            if (optNumTeams > MAX_TANKS) optNumTeams = MAX_TANKS;
         } else if ((strcmp(argv[i], "-map") == 0 || strcmp(argv[i], "--map") == 0) && i + 1 < argc) {
             strncpy(optMap, argv[++i], sizeof(optMap) - 1);
         } else if ((strcmp(argv[i], "-follow") == 0 || strcmp(argv[i], "--follow") == 0) && i + 1 < argc) {
@@ -1599,6 +1721,18 @@ static bool parseArgs(int argc, char **argv) {
              * no rotation yet so a long session creates many files.
              * Use when you want to inspect / replay later. */
             g_panelRecordEnabled = true;
+        } else if (strcmp(argv[i], "--record-pcontrib") == 0) {
+            /* Enable per-tick pill-danger-contribution snapshots so
+             * the shift-2 overlay works during playback. Off by
+             * default because each changed pill entry is ~2 KB and
+             * long sessions push the recording buffer multi-GB. */
+            g_recordPcontribEnabled = true;
+        } else if (strcmp(argv[i], "--record-all") == 0) {
+            /* Disable the sliding-window cap on the recording buffer:
+             * keep ALL frames up to MAX_RECORDING_FRAMES (~30 min @
+             * 50Hz) instead of the default 60-second rolling window.
+             * Off by default to keep memory bounded on long runs. */
+            g_recordingMaxFrames = MAX_RECORDING_FRAMES;
         } else if (strcmp(argv[i], "--opt") == 0) {
             /* Load brain from the stripped opt/ subdirectory with
              * BRAIN_DEBUG_MODE=false — true production-mode feel. */
@@ -1618,6 +1752,25 @@ static bool parseArgs(int argc, char **argv) {
             optMaxTicks = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--run-script") == 0 && i + 1 < argc) {
             strncpy(optRunScript, argv[++i], sizeof(optRunScript) - 1);
+        } else if ((strcmp(argv[i], "-victim_ids") == 0
+                    || strcmp(argv[i], "--victim_ids") == 0) && i + 1 < argc) {
+            /* Comma-separated bot player ids. Each marked bot gets
+             * _BT_VICTIM = true injected after Brain.open. The brain
+             * can hook this to perform whatever test-facilitation
+             * behavior is needed (LGM dispatch, pill drop, tank park,
+             * etc.). */
+            const char *list = argv[++i];
+            const char *p = list;
+            while (*p) {
+                char *endp;
+                long n = strtol(p, &endp, 10);
+                if (endp == p) break;
+                if (n >= 0 && n < MAX_TANKS) {
+                    optVictim[n] = true;
+                }
+                p = endp;
+                while (*p == ',' || *p == ' ') p++;
+            }
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printUsage(argv[0]);
             exit(0);
@@ -1665,12 +1818,11 @@ static bool findBrainScript(const char *base, char *out, size_t outLen) {
 /* ------------------------------------------------------------------ */
 
 static void calcMapBounds(BrainTestApp *app) {
-    GameSim *gs = &app->sim.sim;
     int minX = 255, minY = 255, maxX = 0, maxY = 0;
 
     for (int y = 0; y < MAP_ARRAY_SIZE; y++) {
         for (int x = 0; x < MAP_ARRAY_SIZE; x++) {
-            if (mapGetPos(&gs->mp, (BYTE)x, (BYTE)y) != DEEP_SEA) {
+            if (serverSimGetMapTerrain(app->sim, (BYTE)x, (BYTE)y) != DEEP_SEA) {
                 if (x < minX) minX = x;
                 if (x > maxX) maxX = x;
                 if (y < minY) minY = y;
@@ -1678,23 +1830,32 @@ static void calcMapBounds(BrainTestApp *app) {
             }
         }
     }
-    BYTE np = pillsGetNumPills(&gs->pb);
+    BYTE np = serverSimGetPillCount(app->sim);
     for (BYTE i = 1; i <= np; i++) {
-        pillbox p; pillsGetPill(&gs->pb, &p, i);
-        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+        BYTE px, py;
+        if (!serverSimGetPill(app->sim, i, &px, &py, NULL, NULL, NULL)) continue;
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
     }
-    BYTE nb = basesGetNumBases(&gs->bs);
+    BYTE nb = serverSimGetBaseCount(app->sim);
     for (BYTE i = 1; i <= nb; i++) {
-        base b; basesGetBase(&gs->bs, &b, i);
-        if (b.x < minX) minX = b.x; if (b.x > maxX) maxX = b.x;
-        if (b.y < minY) minY = b.y; if (b.y > maxY) maxY = b.y;
+        BYTE bx, by;
+        if (!serverSimGetBase(app->sim, i, &bx, &by, NULL)) continue;
+        if (bx < minX) minX = bx;
+        if (bx > maxX) maxX = bx;
+        if (by < minY) minY = by;
+        if (by > maxY) maxY = by;
     }
-    BYTE ns = startsGetNumStarts(&gs->ss);
+    BYTE ns = serverSimGetStartCount(app->sim);
     for (BYTE i = 1; i <= ns; i++) {
-        start st; startsGetStartStruct(&gs->ss, &st, i);
-        if (st.x < minX) minX = st.x; if (st.x > maxX) maxX = st.x;
-        if (st.y < minY) minY = st.y; if (st.y > maxY) maxY = st.y;
+        BYTE sx, sy;
+        if (!serverSimGetStart(app->sim, i, &sx, &sy, NULL)) continue;
+        if (sx < minX) minX = sx;
+        if (sx > maxX) maxX = sx;
+        if (sy < minY) minY = sy;
+        if (sy > maxY) maxY = sy;
     }
 
     int pad = 5;
@@ -1765,7 +1926,7 @@ static bool screenToWU(BrainTestApp *app, float sx, float sy,
 
 /* Copy terrain/danger/influence/config from brain's pathfinder to debug PF */
 static void syncDebugPathfinder(BrainTestApp *app) {
-    BrainPathfinder *src = botManagerGetBrainPathfinder(app->followBot);
+    BrainPathfinder *src = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     BrainPathfinder *dst = app->debugPF;
     if (!src || !dst) return;
 
@@ -1826,10 +1987,10 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
     }
     if (!got_origin) {
         WORLD twx, twy;
-        if (!serverSimGetTankState(&app->sim, app->followBot, &twx, &twy)) return;
+        if (!serverSimGetTankState(app->sim, app->followBot, &twx, &twy)) return;
         smx = twx >> 8;
         smy = twy >> 8;
-        tank *t = &app->sim.sim.tanks[app->followBot];
+        tank *t = &serverSimGetGameSim(app->sim)->tanks[app->followBot];
         in_boat    = tankIsOnBoat(t) ? 1 : 0;
         res_shells = tankGetShells(t);
         res_trees  = tankGetTrees(t);
@@ -1842,7 +2003,10 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
     dpf->dest_x = -1;
     dpf->dest_y = -1;
 
-    /* Run A* to completion with a generous budget */
+    /* Run PathTo so pf->status / closed set / parent chain get populated
+     * — required by brainPathfinderTracePath below to draw the pink
+     * click-path line.  Cost is read from pf->g_cost at the dest node
+     * (cheaper of land vs boat layer). */
     int nx, ny;
     int status = 0;
     for (int iter = 0; iter < 20 && status == 0; iter++) {
@@ -1850,13 +2014,6 @@ static void computeClickPath(BrainTestApp *app, int dmx, int dmy) {
                                         in_boat, res_shells, res_trees, res_mines, res_armour,
                                         100000, &nx, &ny);
     }
-
-    /* A* cost: real path cost if A* completed, sentinel otherwise so
-     * the HUD can render "unreached" without conflating with the
-     * estimate. Node space is doubled for boat/land: land nodes at
-     * y*256+x, boat nodes at 65536+y*256+x. Take the minimum so water
-     * tiles (only reachable in boat mode) show the correct cost rather
-     * than reading the uninitialized land-mode slot (which is 0). */
     if (status == 1) {
         int ni_land = dmy * 256 + dmx;
         int ni_boat = 65536 + ni_land;
@@ -1907,7 +2064,7 @@ static inline void blendPixel(uint8_t *pixels, int pitch, int x, int y,
 }
 
 static void updateOverlayTexture(BrainTestApp *app) {
-    BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
+    BrainPathfinder *pf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     if (!pf) return;
     if (!vizFlag(app->regIdxInfluence) && !vizFlag(app->regIdxDanger) && !vizFlag(app->regIdxFrontLine)) return;
 
@@ -1918,7 +2075,7 @@ static void updateOverlayTexture(BrainTestApp *app) {
      * just swapped pf->danger_grid to a different historical state. */
     uint32_t cacheKey = app->playbackMode
         ? (0x80000000u | (uint32_t)app->playbackFrame)
-        : app->sim.tick;
+        : serverSimGetTick(app->sim);
     if (cacheKey == app->overlayTick && !app->overlayDirty) return;
     app->overlayTick = cacheKey;
     app->overlayDirty = false;
@@ -1988,7 +2145,7 @@ static void updateCachedPath(BrainTestApp *app) {
     /* In playback the path was already patched in from the recorded
      * frame; re-tracing the live brain's slate would clobber it. */
     if (app->playbackMode) return;
-    BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
+    BrainPathfinder *pf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     if (!pf) return;
 
     /* The brain mostly navigates by Dijkstra slate lookup now —
@@ -2002,7 +2159,7 @@ static void updateCachedPath(BrainTestApp *app) {
      * trace which uses pf->dest_x/y from the last A* search. */
     int n = 0;
     BrainGoalInfo gi;
-    if (botManagerGetGoalInfo(app->followBot, &gi)
+    if (serverSimGetBotGoalInfo(app->sim, app->followBot, &gi)
         && gi.kind[0] != '\0'
         && strcmp(gi.kind, "none") != 0) {
         /* Ask the pathfinder which slate currently holds the freshest
@@ -2124,7 +2281,7 @@ static void renderOverlay(BrainTestApp *app, int screenW, int screenH) {
  * the bot's Lua globals: _BT_VIZ_<UPPER_ID> per-id booleans plus
  * _BT_VIZ_IDS = {id=idx, ...} lookup. Pushed every brain frame so
  * a freshly-spawned bot sees current state on its first think. */
-static void pushVizStateToBots(bool vizSuppressActive) {
+static void pushVizStateToBots(ServerSim *sim, bool vizSuppressActive) {
     char buf[16384];
     int  off = 0;
     int  n = vizRegistryCount();
@@ -2170,7 +2327,46 @@ static void pushVizStateToBots(bool vizSuppressActive) {
     }
     if (off == 0) return;
     for (int i = 0; i < MAX_TANKS; i++) {
-        if (botManagerIsBot((BYTE)i)) botManagerExecLua((BYTE)i, buf);
+        if (serverSimIsBot(sim, (BYTE)i)) serverSimBotExecLua(sim, (BYTE)i, buf);
+    }
+}
+
+/* Drop the oldest KEYFRAME_INTERVAL frames so the new head is still a
+ * keyframe (preserves delta-chain validity for the remaining frames).
+ * Adjusts every index that points into the frame array: playbackFrame,
+ * playbackMapFrame, panelPoll cursor. Called from recordingCapture when
+ * the configured sliding-window cap is hit. */
+static void recordingEvictHead(BrainTestApp *app) {
+    RecordingBuffer *rb = &app->recording;
+    int drop = KEYFRAME_INTERVAL;
+    if (drop > rb->count) drop = rb->count;
+    if (drop <= 0) return;
+    for (int i = 0; i < drop; i++) recordingFreeFrame(&rb->frames[i]);
+    if (rb->count > drop) {
+        memmove(&rb->frames[0], &rb->frames[drop],
+                (rb->count - drop) * sizeof(RecordingFrame));
+    }
+    rb->count -= drop;
+    /* Shift cursors. Two distinct clamps because the sentinel values
+     * differ by purpose:
+     *   - playbackFrame and g_panelPollFrame are real frame cursors
+     *     (0..count-1). If their previous target got evicted we snap
+     *     them to 0 — the oldest still-live frame.
+     *   - playbackMapFrame is a CACHE VALIDITY MARKER, not a cursor.
+     *     -1 means "the playback map buffer is stale; rebuild on
+     *     next read". Snapping it to -1 (rather than 0) is the right
+     *     call when the frame it pointed at is gone — there's no
+     *     guarantee the cached map content still applies to frame 0.
+     */
+    app->playbackFrame -= drop;
+    if (app->playbackFrame < 0) app->playbackFrame = 0;
+    if (rb->playbackMapFrame >= 0) {
+        rb->playbackMapFrame -= drop;
+        if (rb->playbackMapFrame < 0) rb->playbackMapFrame = -1;
+    }
+    if (g_panelPollFrame >= 0) {
+        g_panelPollFrame -= drop;
+        if (g_panelPollFrame < 0) g_panelPollFrame = 0;
     }
 }
 
@@ -2183,6 +2379,12 @@ static void pushVizStateToBots(bool vizSuppressActive) {
  * at that tick). */
 static void recordingCapture(BrainTestApp *app) {
     RecordingBuffer *rb = &app->recording;
+    /* Sliding-window: evict oldest keyframe-aligned chunk before
+     * appending. Hard ceiling stays MAX_RECORDING_FRAMES regardless. */
+    if (rb->count >= g_recordingMaxFrames
+        && g_recordingMaxFrames < MAX_RECORDING_FRAMES) {
+        recordingEvictHead(app);
+    }
     if (rb->count >= MAX_RECORDING_FRAMES) return;
     if (rb->count >= rb->capacity) {
         int newCap = rb->capacity == 0 ? 1024 : rb->capacity * 2;
@@ -2192,9 +2394,10 @@ static void recordingCapture(BrainTestApp *app) {
         rb->capacity = newCap;
     }
 
+    GameSim *gs = serverSimGetGameSim(app->sim);
     RecordingFrame *f = &rb->frames[rb->count];
     memset(f, 0, sizeof(*f));
-    f->tick = app->sim.tick;
+    f->tick = serverSimGetTick(app->sim);
 
     int mapSz  = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
     int gridSz = 65536;
@@ -2202,7 +2405,7 @@ static void recordingCapture(BrainTestApp *app) {
     f->isKeyframe = needKeyframe;
 
     /* ── Map terrain ── */
-    const BYTE *curMap = &app->sim.sim.mp->mapItem[0][0];
+    const BYTE *curMap = &gs->mp->mapItem[0][0];
     if (needKeyframe) {
         f->fullMap = (BYTE *)malloc(mapSz);
         memcpy(f->fullMap, curMap, mapSz);
@@ -2226,7 +2429,7 @@ static void recordingCapture(BrainTestApp *app) {
     memcpy(rb->prevMap, curMap, mapSz);
 
     /* ── Pathfinder grids (followed bot) ── */
-    BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
+    BrainPathfinder *pf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     if (pf) {
         if (needKeyframe) {
             f->fullDanger = (uint16_t *)malloc(gridSz * sizeof(uint16_t));
@@ -2325,7 +2528,7 @@ static void recordingCapture(BrainTestApp *app) {
     /* Recording is god-view: capture every tank/shell regardless of how
      * far they are from followBot. Without this, tanks that drift outside
      * followBot's snapshot viewport vanish from playback. */
-    serverSimBuildSnapshot(&app->sim, app->followBot, &hdr,
+    serverSimBuildSnapshot(app->sim, app->followBot, &hdr,
                            f->tanks, MAX_TANKS,
                            f->snapShells, MAX_SNAPSHOT_SHELLS,
                            dummyTkExp, 0,
@@ -2337,32 +2540,32 @@ static void recordingCapture(BrainTestApp *app) {
     f->shellCount = hdr.shellCount;
 
     /* ── Bases / pills (read directly from the server sim) ── */
-    f->baseCount = app->sim.sim.bs->numBases;
+    f->baseCount = gs->bs->numBases;
     if (f->baseCount > MAX_SNAPSHOT_BASES) f->baseCount = MAX_SNAPSHOT_BASES;
     for (int i = 0; i < f->baseCount; i++) {
-        f->snapBases[i].owner  = app->sim.sim.bs->item[i].owner;
-        f->snapBases[i].armour = app->sim.sim.bs->item[i].armour;
-        f->snapBases[i].shells = app->sim.sim.bs->item[i].shells;
-        f->snapBases[i].mines  = app->sim.sim.bs->item[i].mines;
+        f->snapBases[i].owner  = gs->bs->item[i].owner;
+        f->snapBases[i].armour = gs->bs->item[i].armour;
+        f->snapBases[i].shells = gs->bs->item[i].shells;
+        f->snapBases[i].mines  = gs->bs->item[i].mines;
     }
-    f->pillCount = app->sim.sim.pb->numPills;
+    f->pillCount = gs->pb->numPills;
     if (f->pillCount > MAX_SNAPSHOT_PILLS) f->pillCount = MAX_SNAPSHOT_PILLS;
     for (int i = 0; i < f->pillCount; i++) {
-        f->snapPills[i].x      = app->sim.sim.pb->item[i].x;
-        f->snapPills[i].y      = app->sim.sim.pb->item[i].y;
-        f->snapPills[i].owner  = app->sim.sim.pb->item[i].owner;
-        f->snapPills[i].armour = app->sim.sim.pb->item[i].armour;
-        f->snapPills[i].speed  = app->sim.sim.pb->item[i].speed;
-        f->snapPills[i].inTank = app->sim.sim.pb->item[i].inTank ? 1 : 0;
+        f->snapPills[i].x      = gs->pb->item[i].x;
+        f->snapPills[i].y      = gs->pb->item[i].y;
+        f->snapPills[i].owner  = gs->pb->item[i].owner;
+        f->snapPills[i].armour = gs->pb->item[i].armour;
+        f->snapPills[i].speed  = gs->pb->item[i].speed;
+        f->snapPills[i].inTank = gs->pb->item[i].inTank ? 1 : 0;
     }
 
     /* ── Camera + brain perf for HUD ── */
     f->viewCenterX = app->viewCenterX;
     f->viewCenterY = app->viewCenterY;
-    f->thinkMs     = (float)botManagerGetLastThinkMs(app->followBot);
+    f->thinkMs     = (float)serverSimGetBotLastThinkMs(app->sim, app->followBot);
 
     /* ── Goal info (drives scrubber goal-change tick markers) ── */
-    if (botManagerGetGoalInfo(app->followBot, &f->goalInfo)) {
+    if (serverSimGetBotGoalInfo(app->sim, app->followBot, &f->goalInfo)) {
         f->goalInfoValid = true;
     }
 
@@ -2371,7 +2574,7 @@ static void recordingCapture(BrainTestApp *app) {
      * playback still shows that bot's overlays for the scrubbed
      * tick (not whatever they emitted most recently live). */
     for (BYTE oi = 0; oi < MAX_TANKS; oi++) {
-        OverlayCmdBuffer *ovl = botManagerGetOverlayCmds(oi);
+        OverlayCmdBuffer *ovl = serverSimGetBotOverlayCmds(app->sim, oi);
         if (ovl && ovl->count > 0) {
             f->botOverlayCmdCount[oi] = ovl->count;
             f->botOverlayCmds[oi] = (OverlayCmd *)malloc(
@@ -2411,7 +2614,7 @@ static void recordingCapture(BrainTestApp *app) {
         const PanelRegistryEntry *e = panelRegistryGet(pi);
         if (!e || !e->lua_expr[0]) continue;
         f->recordedPanels[pi] =
-            botManagerEvalLuaString(e->bot_owner, e->lua_expr);
+            serverSimBotEvalLuaString(app->sim, e->bot_owner, e->lua_expr);
     }
 
     /* ── Shot-sim POI poll snapshots ── eval every POI owned by the
@@ -2453,32 +2656,75 @@ static void recordingCapture(BrainTestApp *app) {
         }
     }
 
-    /* pill_contrib snapshot — same scrub-back rationale as
-     * vizDetails. Each PillContribEntry is fixed-size (inline
-     * tile array), so a single malloc + memcpy captures the lot. */
-    {
-        int pcc = pillContribCount();
-        if (pcc > 0) {
-            f->pillContrib = (PillContribEntry *)malloc(pcc * sizeof(PillContribEntry));
-            if (f->pillContrib) {
-                for (int i = 0; i < pcc; i++) {
-                    const PillContribEntry *src = pillContribGet(i);
-                    if (src) f->pillContrib[i] = *src;
-                }
-                f->pillContribCount = pcc;
-            } else {
-                f->pillContribCount = 0;
+    /* pill_contrib snapshot — gated on --record-pcontrib. Even with
+     * per-pill refcount sharing, long runs accumulate enough distinct
+     * entries to dominate the recording buffer; default off to keep
+     * memory bounded. When disabled, leave pillContribPtrs[b] = NULL
+     * (memset of the frame at the top of recordingCapture already
+     * zeroed them) — playback's snapshot patch-in will see counts=0
+     * everywhere and the shift-2 overlay just renders nothing. */
+    if (g_recordPcontribEnabled) {
+        RecordingFrame *prev = (rb->count > 0) ? &rb->frames[rb->count - 1] : NULL;
+        for (int b = 0; b < PILLCONTRIB_MAX_BOTS; b++) {
+            int pcc = pillContribCount(b);
+            if (pcc <= 0) {
+                f->pillContribPtrs[b]   = NULL;
+                f->pillContribCounts[b] = 0;
+                continue;
             }
-        } else {
-            f->pillContrib = NULL;
-            f->pillContribCount = 0;
+            const PillContribEntry **arr =
+                (const PillContribEntry **)malloc(pcc * sizeof(PillContribEntry *));
+            if (!arr) {
+                f->pillContribPtrs[b]   = NULL;
+                f->pillContribCounts[b] = 0;
+                continue;
+            }
+            f->pillContribPtrs[b]   = arr;
+            f->pillContribCounts[b] = pcc;
+
+            const PillContribEntry **prev_arr = prev ? prev->pillContribPtrs[b] : NULL;
+            int prev_n = prev ? prev->pillContribCounts[b] : 0;
+
+            for (int i = 0; i < pcc; i++) {
+                const PillContribEntry *src = pillContribGet(b, i);
+                if (!src) { arr[i] = NULL; continue; }
+
+                /* Try to share: same pill_id + byte-identical content
+                 * as some entry in the previous frame's pcontrib for
+                 * this bot. Inner loop is bounded by PILLCONTRIB_MAX_PILLS
+                 * (16) and the memcmp is ~2 KB on hit, so worst case is
+                 * ~32 KB/bot/tick — negligible vs the malloc savings. */
+                const PillContribEntry *shared = NULL;
+                if (prev_arr) {
+                    for (int j = 0; j < prev_n; j++) {
+                        const PillContribEntry *pe = prev_arr[j];
+                        if (pe && pe->pill_id == src->pill_id
+                            && memcmp(pe, src, sizeof(*pe)) == 0) {
+                            shared = pe;
+                            break;
+                        }
+                    }
+                }
+
+                if (shared) {
+                    pcontrib_cell_of(shared)->refcount++;
+                    arr[i] = shared;
+                } else {
+                    PillContribCell *c =
+                        (PillContribCell *)malloc(sizeof(PillContribCell));
+                    if (!c) { arr[i] = NULL; continue; }
+                    c->refcount = 1;
+                    c->entry    = *src;
+                    arr[i]      = &c->entry;
+                }
+            }
         }
     }
 
     /* Strategic placement heatmap — only poll Lua when [8] is on so
      * recordings don't pay the brain query cost on every tick. */
-    if (vizFlag(app->regIdxStratPlace) && botManagerIsBot(app->followBot)) {
-        f->stratPlaceText = botManagerEvalLuaString(app->followBot,
+    if (vizFlag(app->regIdxStratPlace) && serverSimIsBot(app->sim, app->followBot)) {
+        f->stratPlaceText = serverSimBotEvalLuaString(app->sim, app->followBot,
             "return brain.get_strategic_place_heatmap()");
     } else {
         f->stratPlaceText = NULL;
@@ -2545,7 +2791,7 @@ static void mapTileToScreenPrecise(BrainTestApp *app, float tx, float ty,
 }
 
 static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
-    OverlayCmdBuffer *buf = botManagerGetOverlayCmds(app->followBot);
+    OverlayCmdBuffer *buf = serverSimGetBotOverlayCmds(app->sim, app->followBot);
     if (!buf || buf->count == 0) return;
 
     SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
@@ -2692,8 +2938,8 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
      * think time the brain spent on that frame) so the HUD reflects
      * what's actually rendered, not where the live sim has advanced
      * to in the background. */
-    uint32_t hudTick = app->sim.tick / 2;
-    double   thinkMs = botManagerGetLastThinkMs(app->followBot);
+    uint32_t hudTick = serverSimGetTick(app->sim) / 2;
+    double   thinkMs = serverSimGetBotLastThinkMs(app->sim, app->followBot);
     if (app->playbackMode
         && app->playbackFrame >= 0
         && app->playbackFrame < app->recording.count) {
@@ -2818,12 +3064,13 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
              * Shift+7) so the panel agrees with the heatmap pixel
              * under the cursor. The slate's g_cost array is
              * initialized to COST_INF for unreached nodes. */
-            BrainPathfinder *pfDij = botManagerGetBrainPathfinder(app->followBot);
+            BrainPathfinder *pfDij = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
             const DijkstraSlate *s = pfDij
                 ? brainPathfinderDijkstraGetSlate(pfDij, app->dijViewSlate)
                 : NULL;
-            int in_boat = (app->sim.sim.tanks[app->followBot] != NULL &&
-                           tankIsOnBoat(&app->sim.sim.tanks[app->followBot])) ? 1 : 0;
+            GameSim *gs = serverSimGetGameSim(app->sim);
+            int in_boat = (gs->tanks[app->followBot] != NULL &&
+                           tankIsOnBoat(&gs->tanks[app->followBot])) ? 1 : 0;
             float dij = 1e30f;
             if (s && s->g_cost) {
                 int ni_base = app->clickMY * 256 + app->clickMX;
@@ -2939,9 +3186,9 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
 static void appTickBrain(BrainTestApp *app) {
     if (!app->simValid || app->numBots == 0) return;
 
-    app->sim.sim.isInMenu = isInMenu;
+    serverSimGetGameSim(app->sim)->isInMenu = isInMenu;
 
-    pushVizStateToBots(app->vizSuppressActive || optProduction);
+    pushVizStateToBots(app->sim, app->vizSuppressActive || optProduction);
 
     /* Clear the viz_detail registry ONCE before any bot's think runs.
      * The registry is global, so if each bot called overlay_detail_clear
@@ -2951,13 +3198,30 @@ static void appTickBrain(BrainTestApp *app) {
      * Brain.think a fresh registry that all bots accumulate into; the
      * recording capture below catches the union after botManagerTick. */
     vizDetailRegistryClear();
-    /* Same multi-bot rationale: clear pillcontrib once host-side
-     * so per-bot Lua emit just appends to the union. */
-    pillContribClear();
+    /* Clear pillcontrib for every bot once per tick. Each bot's
+     * Brain.think then appends to its own slot range — no race. */
+    pillContribClearAll();
 
-    botManagerTick(&app->sim, optAI);
+    /* Push the "do we need pillcontrib export this tick" flag to every
+     * bot.  Brain skips the per-pill add_all loop when false, saving a
+     * non-trivial chunk of think_ms on debug runs that aren't actually
+     * looking at the shift-2 overlay or recording pcontrib snapshots. */
     {
-        double ms = botManagerGetLastThinkMs(app->followBot);
+        bool need_pc = (app->pillContribSel > 0) || g_recordPcontribEnabled;
+        char line[64];
+        SDL_snprintf(line, sizeof(line),
+                     "_G._BT_PCONTRIB_NEEDED=%s",
+                     need_pc ? "true" : "false");
+        for (BYTE i = 0; i < MAX_TANKS; i++) {
+            if (serverSimIsBot(app->sim, i)) {
+                serverSimBotExecLua(app->sim, i, line);
+            }
+        }
+    }
+
+    serverSimBotTick(app->sim, optAI);
+    {
+        double ms = serverSimGetBotLastThinkMs(app->sim, app->followBot);
         app->cpuHist[app->cpuHistHead] = (float)ms;
         app->cpuHistHead = (app->cpuHistHead + 1) % CPU_HIST_BARS;
         if (app->cpuHistCount < CPU_HIST_BARS) app->cpuHistCount++;
@@ -2966,33 +3230,19 @@ static void appTickBrain(BrainTestApp *app) {
     /* Update goal-info cache for the scrubber's goal-change ticks
      * and per-frame replan markers. */
     app->goalInfoValid =
-        botManagerGetGoalInfo(app->followBot, &app->goalInfo);
+        serverSimGetBotGoalInfo(app->sim, app->followBot, &app->goalInfo);
 }
 
 static void appTickSim(BrainTestApp *app) {
     if (!app->simValid || app->numBots == 0) return;
 
-    serverSimTick(&app->sim);
-    {
-        GameEvent savedEvents[MAX_SNAPSHOT_EVENTS];
-        uint8_t savedCount = app->sim.eventCount;
-        if (savedCount > 0) {
-            memcpy(savedEvents, app->sim.events,
-                   savedCount * sizeof(GameEvent));
-        }
-        serverSimTick(&app->sim);
-        if (savedCount > 0 && savedCount + app->sim.eventCount <= MAX_SNAPSHOT_EVENTS) {
-            memmove(app->sim.events + savedCount, app->sim.events,
-                    app->sim.eventCount * sizeof(GameEvent));
-            memcpy(app->sim.events, savedEvents,
-                   savedCount * sizeof(GameEvent));
-            app->sim.eventCount += savedCount;
-        }
-    }
+    /* serverSimTick internally runs the keys + game half-steps that
+     * make up one 20ms frame. */
+    serverSimTick(app->sim);
 
     if (!app->freeCamera && app->followBot < MAX_TANKS) {
         WORLD wx, wy;
-        if (serverSimGetTankState(&app->sim, app->followBot, &wx, &wy)) {
+        if (serverSimGetTankState(app->sim, app->followBot, &wx, &wy)) {
             app->viewCenterX = app->viewCenterX + ((int)wx - (int)app->viewCenterX) / 4;
             app->viewCenterY = app->viewCenterY + ((int)wy - (int)app->viewCenterY) / 4;
         }
@@ -3014,12 +3264,12 @@ static void appTick(BrainTestApp *app) {
 }
 
 static void refreshGoalInfo(BrainTestApp *app) {
-    app->goalInfoValid = botManagerGetGoalInfo(app->followBot, &app->goalInfo);
+    app->goalInfoValid = serverSimGetBotGoalInfo(app->sim, app->followBot, &app->goalInfo);
 
-    BrainPathfinder *pf = botManagerGetBrainPathfinder(app->followBot);
+    BrainPathfinder *pf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
     if (pf && app->goalInfoValid && app->goalInfo.mx > 0) {
         WORLD twx, twy;
-        bool hasTank = serverSimGetTankState(&app->sim, app->followBot, &twx, &twy);
+        bool hasTank = serverSimGetTankState(app->sim, app->followBot, &twx, &twy);
         /* Always compute the estimate (this is what the brain uses for ranking) */
         if (hasTank) {
             app->targetEstCost = brainPathfinderEstimateCost(pf,
@@ -3364,7 +3614,7 @@ static bool shotSimTankPosCallback(int *outWX, int *outWY, void *ud) {
         *outWY = (int)ts->worldY;
         return true;
     }
-    struct tankObj *t = app->sim.sim.tanks[pn];
+    struct tankObj *t = serverSimGetGameSim(app->sim)->tanks[pn];
     if (!t) return false;
     *outWX = (int)t->x;
     *outWY = (int)t->y;
@@ -3387,7 +3637,7 @@ static bool shotSimTankAngleCallback(float *outAngle, void *ud) {
         *outAngle = (float)ts->angle / 256.0f;
         return true;
     }
-    struct tankObj *t = app->sim.sim.tanks[pn];
+    struct tankObj *t = serverSimGetGameSim(app->sim)->tanks[pn];
     if (!t) return false;
     *outAngle = (float)t->angle;
     return true;
@@ -3411,7 +3661,7 @@ static bool shotSimPoiPollLive(int idx, BrainTestApp *app, int *outWX, int *outW
         "if _x == nil or _y == nil then return nil end "
         "return tostring(math.floor(_x))..','..tostring(math.floor(_y))",
         e->lua_expr);
-    char *body = botManagerEvalLuaString(app->followBot, wrap);
+    char *body = serverSimBotEvalLuaString(app->sim, app->followBot, wrap);
     if (!body || !body[0]) { free(body); return false; }
     int wx = 0, wy = 0;
     bool ok = (sscanf(body, "%d,%d", &wx, &wy) == 2);
@@ -3494,7 +3744,7 @@ static void appRender(BrainTestApp *app) {
         static int16_t  *savedInflu     = NULL;
         static uint16_t *savedOverl     = NULL;
         const  BYTE     *savedBrainMapPtr = NULL;  /* pointer-swap, not byte-copy */
-        BrainPathfinder *pbPf = botManagerGetBrainPathfinder(app->followBot);
+        BrainPathfinder *pbPf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
         struct basesObj  savedBases;
         struct pillsObj  savedPills;
         /* Temp objects for tanks/lgm/shells. The sim holds POINTERS to
@@ -3530,6 +3780,7 @@ static void appRender(BrainTestApp *app) {
         WORLD savedViewCenterX = 0, savedViewCenterY = 0;
         bool patchedCamera = false;
         bool patched = false;
+        GameSim *gs = serverSimGetGameSim(app->sim);
         if (app->playbackMode
             && app->playbackFrame >= 0
             && app->playbackFrame < app->recording.count) {
@@ -3543,8 +3794,8 @@ static void appRender(BrainTestApp *app) {
             if (!savedInflu)    savedInflu    = (int16_t  *)malloc(gridSz * sizeof(int16_t));
             if (!savedOverl)    savedOverl    = (uint16_t *)malloc(gridSz * sizeof(uint16_t));
             /* Map terrain. */
-            memcpy(savedMapBytes, &app->sim.sim.mp->mapItem[0][0], mapSz);
-            memcpy(&app->sim.sim.mp->mapItem[0][0],
+            memcpy(savedMapBytes, &gs->mp->mapItem[0][0], mapSz);
+            memcpy(&gs->mp->mapItem[0][0],
                    app->recording.playbackMap, mapSz);
             /* Pathfinder grids + brainMap (used by overlay renderers). */
             if (pbPf) {
@@ -3565,21 +3816,21 @@ static void appRender(BrainTestApp *app) {
                 }
             }
             /* Bases & pills — full copy, simpler than per-field patch. */
-            savedBases = *app->sim.sim.bs;
-            savedPills = *app->sim.sim.pb;
-            for (int i = 0; i < pf_->baseCount && i < app->sim.sim.bs->numBases; i++) {
-                app->sim.sim.bs->item[i].owner  = pf_->snapBases[i].owner;
-                app->sim.sim.bs->item[i].armour = pf_->snapBases[i].armour;
-                app->sim.sim.bs->item[i].shells = pf_->snapBases[i].shells;
-                app->sim.sim.bs->item[i].mines  = pf_->snapBases[i].mines;
+            savedBases = *gs->bs;
+            savedPills = *gs->pb;
+            for (int i = 0; i < pf_->baseCount && i < gs->bs->numBases; i++) {
+                gs->bs->item[i].owner  = pf_->snapBases[i].owner;
+                gs->bs->item[i].armour = pf_->snapBases[i].armour;
+                gs->bs->item[i].shells = pf_->snapBases[i].shells;
+                gs->bs->item[i].mines  = pf_->snapBases[i].mines;
             }
-            for (int i = 0; i < pf_->pillCount && i < app->sim.sim.pb->numPills; i++) {
-                app->sim.sim.pb->item[i].x      = pf_->snapPills[i].x;
-                app->sim.sim.pb->item[i].y      = pf_->snapPills[i].y;
-                app->sim.sim.pb->item[i].owner  = pf_->snapPills[i].owner;
-                app->sim.sim.pb->item[i].armour = pf_->snapPills[i].armour;
-                app->sim.sim.pb->item[i].speed  = pf_->snapPills[i].speed;
-                app->sim.sim.pb->item[i].inTank = pf_->snapPills[i].inTank ? TRUE : FALSE;
+            for (int i = 0; i < pf_->pillCount && i < gs->pb->numPills; i++) {
+                gs->pb->item[i].x      = pf_->snapPills[i].x;
+                gs->pb->item[i].y      = pf_->snapPills[i].y;
+                gs->pb->item[i].owner  = pf_->snapPills[i].owner;
+                gs->pb->item[i].armour = pf_->snapPills[i].armour;
+                gs->pb->item[i].speed  = pf_->snapPills[i].speed;
+                gs->pb->item[i].inTank = pf_->snapPills[i].inTank ? TRUE : FALSE;
             }
 
             /* ── Tanks ── reconstruct from TankSnapshot wire entries
@@ -3588,8 +3839,8 @@ static void appRender(BrainTestApp *app) {
              * speed/onBoat/death/resources). */
             memset(tempTanks, 0, sizeof(tempTanks));
             for (int i = 0; i < MAX_TANKS; i++) {
-                savedTanks[i] = app->sim.sim.tanks[i];
-                app->sim.sim.tanks[i] = NULL;
+                savedTanks[i] = gs->tanks[i];
+                gs->tanks[i] = NULL;
             }
             for (int i = 0; i < pf_->tankCount; i++) {
                 TankSnapshot *ts = &pf_->tanks[i];
@@ -3611,7 +3862,7 @@ static void appRender(BrainTestApp *app) {
                 t->shells    = ts->shells;
                 t->mines     = ts->mines;
                 t->trees     = ts->trees;
-                app->sim.sim.tanks[pn] = t;
+                gs->tanks[pn] = t;
             }
 
             /* ── LGMs ── lgmFrame is encoded as actual_frame+1 with 0
@@ -3619,8 +3870,8 @@ static void appRender(BrainTestApp *app) {
              * from lgmMX/MY map coords + lgmPX/PY pixel offsets. */
             memset(tempLgmen, 0, sizeof(tempLgmen));
             for (int i = 0; i < MAX_TANKS; i++) {
-                savedLgmen[i] = app->sim.sim.lgmen[i];
-                app->sim.sim.lgmen[i] = NULL;
+                savedLgmen[i] = gs->lgmen[i];
+                gs->lgmen[i] = NULL;
             }
             for (int i = 0; i < pf_->tankCount; i++) {
                 TankSnapshot *ts = &pf_->tanks[i];
@@ -3634,13 +3885,13 @@ static void appRender(BrainTestApp *app) {
                 l->y = (WORLD)((ts->lgmMY << 8) + (ts->lgmPY << 4));
                 l->inTank    = FALSE;
                 l->isDead    = FALSE;
-                app->sim.sim.lgmen[pn] = l;
+                gs->lgmen[pn] = l;
             }
 
             /* ── Shells ── linked list reconstruction. */
             memset(tempShellNodes, 0, sizeof(tempShellNodes));
-            savedShells = app->sim.sim.shs;
-            app->sim.sim.shs = NULL;
+            savedShells = gs->shs;
+            gs->shs = NULL;
             if (pf_->shellCount > 0) {
                 for (int i = 0; i < pf_->shellCount; i++) {
                     struct shellsObj *s = &tempShellNodes[i];
@@ -3653,26 +3904,26 @@ static void appRender(BrainTestApp *app) {
                     s->next = (i + 1 < pf_->shellCount) ? &tempShellNodes[i + 1] : NULL;
                     s->prev = (i > 0) ? &tempShellNodes[i - 1] : NULL;
                 }
-                app->sim.sim.shs = &tempShellNodes[0];
+                gs->shs = &tempShellNodes[0];
             }
 
             /* ── Explosions ── hide entirely during playback. Live
              * explosion animation frames don't correspond to anything
              * recorded, so playing them back at a scrubbed tick is
              * just visual noise. Save heads, NULL the lists. */
-            savedExpl      = app->sim.sim.expl;
-            savedTkExpl    = app->sim.sim.tankExplosions;
-            savedMinesExpl = app->sim.sim.minesExplosions;
-            app->sim.sim.expl            = NULL;
-            app->sim.sim.tankExplosions  = NULL;
-            app->sim.sim.minesExplosions = NULL;
+            savedExpl      = gs->expl;
+            savedTkExpl    = gs->tankExplosions;
+            savedMinesExpl = gs->minesExplosions;
+            gs->expl            = NULL;
+            gs->tankExplosions  = NULL;
+            gs->minesExplosions = NULL;
 
             /* ── Brain overlay command buffers ── pointer-swap each
              * active bot's OverlayCmdBuffer to the recorded cmds.
              * We don't memcpy the whole buffer; we just retarget its
              * cmds/count fields and reset them after render. */
             for (BYTE oi = 0; oi < MAX_TANKS; oi++) {
-                OverlayCmdBuffer *ovl = botManagerGetOverlayCmds(oi);
+                OverlayCmdBuffer *ovl = serverSimGetBotOverlayCmds(app->sim, oi);
                 if (!ovl) continue;
                 savedOvlBufs[oi]  = ovl;
                 savedOvlCmds[oi]  = ovl->cmds;
@@ -3688,7 +3939,12 @@ static void appRender(BrainTestApp *app) {
              * so the next live brain tick repopulates the live
              * registry without interference. */
             vizDetailSetPlaybackView(pf_->vizDetails, pf_->vizDetailCount);
-            pillContribSetPlaybackView(pf_->pillContrib, pf_->pillContribCount);
+            {
+                PillContribSnapshot snap;
+                snap.entries = pf_->pillContribPtrs;
+                snap.counts  = pf_->pillContribCounts;
+                pillContribSetPlaybackView(&snap);
+            }
 
             /* ── A* / Dijkstra path overlay ── temporarily replace
              * app->cachedPath_* with the recorded path. The
@@ -3727,16 +3983,10 @@ static void appRender(BrainTestApp *app) {
             patched = true;
         }
 
-        /* Set perspective to followed bot for correct coloring */
-        BYTE prevSelf = app->sim.sim.viewPlayer;
-        app->sim.sim.viewPlayer = app->followBot;
-
         MapViewCtx ctx = { app->renderer, app->tilesTex, app->zoomFactor, 1 };
-        mapViewRenderCentered(&ctx, &app->sim.sim,
+        mapViewRenderCentered(&ctx, app->sim,
                               app->viewCenterX, app->viewCenterY,
                               0, 0, screenW, screenH, app->followBot);
-
-        app->sim.sim.viewPlayer = prevSelf;
 
         /* Debug overlays */
         renderOverlay(app, screenW, screenH);
@@ -3767,7 +4017,7 @@ static void appRender(BrainTestApp *app) {
         if (patched) {
             int mapSz = MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
             int gridSz = 65536;
-            memcpy(&app->sim.sim.mp->mapItem[0][0], savedMapBytes, mapSz);
+            memcpy(&gs->mp->mapItem[0][0], savedMapBytes, mapSz);
             if (pbPf) {
                 memcpy(pbPf->danger_grid,    savedDanger, gridSz * sizeof(uint16_t));
                 memcpy(pbPf->influence_grid, savedInflu,  gridSz * sizeof(int16_t));
@@ -3776,20 +4026,20 @@ static void appRender(BrainTestApp *app) {
                     pbPf->map = savedBrainMapPtr;
                 }
             }
-            *app->sim.sim.bs = savedBases;
-            *app->sim.sim.pb = savedPills;
+            *gs->bs = savedBases;
+            *gs->pb = savedPills;
             for (int i = 0; i < MAX_TANKS; i++) {
-                app->sim.sim.tanks[i] = savedTanks[i];
-                app->sim.sim.lgmen[i] = savedLgmen[i];
+                gs->tanks[i] = savedTanks[i];
+                gs->lgmen[i] = savedLgmen[i];
                 if (savedOvlBufs[i]) {
                     savedOvlBufs[i]->cmds  = savedOvlCmds[i];
                     savedOvlBufs[i]->count = savedOvlCount[i];
                 }
             }
-            app->sim.sim.shs            = savedShells;
-            app->sim.sim.expl            = savedExpl;
-            app->sim.sim.tankExplosions  = savedTkExpl;
-            app->sim.sim.minesExplosions = savedMinesExpl;
+            gs->shs            = savedShells;
+            gs->expl            = savedExpl;
+            gs->tankExplosions  = savedTkExpl;
+            gs->minesExplosions = savedMinesExpl;
             if (patchedPath) app->cachedPathLen = savedCachedPathLen;
             if (patchedCamera) {
                 app->viewCenterX = savedViewCenterX;
@@ -3829,6 +4079,32 @@ static void appRender(BrainTestApp *app) {
         SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
     }
 
+    /* Big, unmissable MANUAL MODE banner. Manual control hijacks the
+     * keyboard — Space becomes Shoot, not pause/resume — so make it
+     * impossible to miss that you're in it. Pulses so it reads as a live
+     * state, not a static label. */
+    if (app->manualControl) {
+        const char *msg = "MANUAL MODE  -  press M to exit";
+        float scale = 3.0f;
+        float tw = (float)strlen(msg) * 8.0f * scale;
+        float th = 8.0f * scale;
+        float x = (screenW - tw) * 0.5f;
+        if (x < 8.0f) x = 8.0f;
+        float y = 14.0f;
+        float pulse = 0.55f + 0.45f * sinf((float)SDL_GetTicks() * 0.006f);
+        Uint8 a = (Uint8)(pulse * 255.0f);
+        SDL_FRect bg = { x - 12.0f, y - 8.0f, tw + 24.0f, th + 16.0f };
+        SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(app->renderer, 170, 0, 0, (Uint8)(a * 0.75f));
+        SDL_RenderFillRect(app->renderer, &bg);
+        SDL_SetRenderDrawColor(app->renderer, 255, 70, 70, 255);
+        SDL_RenderRect(app->renderer, &bg);
+        SDL_SetRenderScale(app->renderer, scale, scale);
+        SDL_SetRenderDrawColor(app->renderer, 255, 235, 235, a);
+        SDL_RenderDebugText(app->renderer, x / scale, y / scale, msg);
+        SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
+    }
+
     /* Shot-sim result on top of the map (under ImGui panels). */
     renderShotSimResult(app, screenW, screenH);
 
@@ -3837,10 +4113,10 @@ static void appRender(BrainTestApp *app) {
      * with alpha proportional to the contribution value. Honors the
      * playback override transparently via pillContribGet. */
     if (app->pillContribSel > 0) {
-        int n = pillContribCount();
+        int n = pillContribCount(app->followBot);
         int sel0 = app->pillContribSel - 1; /* shift to 0-based */
         if (sel0 < n) {
-            const PillContribEntry *pe = pillContribGet(sel0);
+            const PillContribEntry *pe = pillContribGet(app->followBot, sel0);
             if (pe) {
                 /* Find max value for normalization. */
                 float vmax = 1.0f;
@@ -4050,7 +4326,8 @@ static void appRender(BrainTestApp *app) {
         int pw, ph;
         SDL_GetWindowSize(app->panelWindow, &pw, &ph);
         g_panelPollFollowBot = app->followBot;
-        g_panelPollTick      = app->sim.tick / 2; /* brain tick */
+        g_panelPollSim       = app->sim;
+        g_panelPollTick      = serverSimGetTick(app->sim) / 2; /* brain tick */
         panelWindowRender(app->panelRenderer, pw, ph,
                           (int)app->followBot, panelPollCallback);
     }
@@ -4059,7 +4336,8 @@ static void appRender(BrainTestApp *app) {
      * when its slot is visible, so the cost is bounded by what the
      * user actually opened. */
     g_panelPollFollowBot = app->followBot;
-    g_panelPollTick      = app->sim.tick / 2;
+    g_panelPollSim       = app->sim;
+    g_panelPollTick      = serverSimGetTick(app->sim) / 2;
     botWindowRenderAll((int)app->followBot, panelPollCallback);
 }
 
@@ -4070,7 +4348,7 @@ static void appRender(BrainTestApp *app) {
 int main(int argc, char *argv[]) {
     if (!parseArgs(argc, argv)) return 1;
 
-    srand((unsigned int)(time(NULL) ^ getpid()));
+    bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
 
     /* Clear optimize.log from any previous run so each BrainTest session
      * starts with a fresh diagnostic log. Lua-side writers open with "a"
@@ -4172,10 +4450,24 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "BrainTest - Brain Debug Viewer\n");
     fprintf(stderr, "  Brain:   %s\n", optBrain);
     fprintf(stderr, "  Players: %d\n", optNumPlayers);
+    if (optNumTeams >= 2) {
+        fprintf(stderr, "  Teams:   %d\n", optNumTeams);
+    } else {
+        fprintf(stderr, "  Teams:   FFA\n");
+    }
     fprintf(stderr, "  Map:     %s\n", optMap[0] ? optMap : "(built-in Everard Island)");
     fprintf(stderr, "  AI:      %s\n", aiNames[optAI]);
     fprintf(stderr, "  Game:    %s\n", gameNames[optGame]);
     fprintf(stderr, "  Opt:     %s\n", optProduction ? "yes (opt/, debug=false)" : "no (source, debug=true)");
+
+    /* Restore SDL2-style keycode behavior: event.key.key carries the
+     * unmodified keycode (Shift+2 → SDLK_2, not SDLK_AT). Without this,
+     * every `case SDLK_<digit>:` branch that checks SDL_KMOD_SHIFT
+     * inside (e.g. shift+2 pillcontrib cycle, shift+5 low-danger
+     * weight, shift+7 dijkstra slate cycle) is silently unreachable on
+     * US layouts because SDL3 translates the keycode through the
+     * current shift state by default. Must be set BEFORE SDL_Init. */
+    SDL_SetHint(SDL_HINT_KEYCODE_OPTIONS, "no_modifiers");
 
     /* Initialize SDL */
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -4183,7 +4475,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    initWinboloTimer();
+    threadsCreate(FALSE);
     clientMutexCreate();
     langSetup();
 
@@ -4222,8 +4514,10 @@ int main(int argc, char *argv[]) {
     brainCoreSetVizDetailAppendBodyCallback(vizDetailAppendBodyCallback);
     brainCoreSetVizDetailClearCallback(vizDetailClearCallback);
     brainCoreSetYieldCallback(SDL_PumpEvents);
-    botManagerSetPreThinkHook(preThinkHook);
-    naPillContribSetClearCallback(pillContribClearCallback);
+    /* Clear is host-driven now (called once per tick before bot loop
+     * via pillContribClearAll), so there's no Lua-side clear binding
+     * to wire up. preThinkHook is installed below via the sim-owned
+     * serverSimSetBotPreThinkHook once app.sim exists. */
     naPillContribSetBeginPillCallback(pillContribBeginPillCallback);
     naPillContribSetAddTileCallback(pillContribAddTileCallback);
     /* Built-in panel renderer: type "text" → plain unformatted
@@ -4270,21 +4564,31 @@ int main(int argc, char *argv[]) {
     SDL_PumpEvents();
     bool mapLoaded = false;
     if (optMap[0]) {
-        mapLoaded = serverSimCreate(&app.sim, optMap, optGame, false, 0, -1);
+        app.sim = serverSimCreate(optMap, optGame, false, 0, -1);
+        mapLoaded = (app.sim != NULL);
         if (!mapLoaded) {
             fprintf(stderr, "Failed to load map '%s'\n", optMap);
         }
     }
     if (!mapLoaded) {
         BYTE emap[6000] = E_MAP;
-        if (!serverSimCreateCompressed(&app.sim, emap, 5097, optGame, false, 0, -1)) {
+        app.sim = serverSimCreateCompressed(emap, 5097, "Everard Island", optGame, false, 0, -1);
+        if (app.sim == NULL) {
             fprintf(stderr, "serverSimCreateCompressed failed\n");
             return 1;
         }
-        strncpy(app.sim.mapName, "Everard Island", MAP_STR_SIZE - 1);
     }
-    app.sim.lobbyEnabled = false;
-    app.sim.state = serverStateRunning;
+    /* braintest is a local headless sim — no lobby, run immediately.
+     * cfg.skipLobby drives SetLobbyEnabled(false) + StartGame inside
+     * serverInstanceStartup; the manual StartGame later in this
+     * function is dropped accordingly. */
+    {
+        ServerInstanceConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.acceptRemoteClients = false;
+        cfg.skipLobby           = true;
+        serverInstanceStartup(app.sim, &cfg);
+    }
     app.simValid = true;
 
     /* Calculate map bounds */
@@ -4292,23 +4596,39 @@ int main(int argc, char *argv[]) {
     app.viewCenterX = ((app.mapMinX + app.mapMaxX) / 2) << 8;
     app.viewCenterY = ((app.mapMinY + app.mapMaxY) / 2) << 8;
 
-    /* Add bots */
-    if (!botManagerInit(0)) {
-        fprintf(stderr, "botManagerInit failed\n");
-        return 1;
+    /* Add bots.  Default to 2 brain dispatch threads — enough parallelism
+     * for most maps without over-subscribing the CPU. Override with
+     * -threads N (workers + producer). */
+    {
+        int desired_threads = (optThreads > 0) ? optThreads : 2;
+        int cores = SDL_GetNumLogicalCPUCores();
+        if (desired_threads > cores) desired_threads = cores;
+        if (!botManagerInit(desired_threads)) {
+            fprintf(stderr, "botManagerInit failed\n");
+            return 1;
+        }
+        serverSimRequestBotThreads(app.sim, desired_threads);
     }
+    /* Pre-think hook needs the per-sim BotManager; install it now that
+     * app.sim exists. Bots have not been added yet, so no tick can fire
+     * before this returns. */
+    serverSimSetBotPreThinkHook(app.sim, preThinkHook);
     /* BrainTest defaults to debug-mode brains: viz-supporting code
      * runs, brain loads from un-stripped source. Toggle with 'B' at
      * runtime to feel production perf without reloading.
      *
      * --opt CLI flag flips the default off so bots load from stripped
      * opt/ source with BRAIN_DEBUG_MODE=false — true production feel. */
-    botManagerSetDefaultDebugMode(!optProduction);
-    /* Effective profiling flags. In dev mode (no --opt) both default to
-     * on so the Y panel + logs Just Work. In --opt mode you opt in via
-     * --profile (memory only) or --profile-log (memory + files). */
+    serverSimSetBotDefaultDebugMode(app.sim, !optProduction);
+    /* Effective profiling flags.
+     * - Memory profiling (Y panel + slow-tick warnings): on by default
+     *   in dev mode (no --opt), opt-in via --profile in --opt mode.
+     * - File-writing profile logs (performance.ticks.log,
+     *   optimize.log): ONLY when --profile-log is explicitly passed.
+     *   Used to auto-enable in dev mode too, which silently wrote
+     *   tens of MB per game during normal BrainTest use. */
     int effProfile    = (!optProduction) || optProfile    || optProfileLog;
-    int effProfileLog = (!optProduction) || optProfileLog;
+    int effProfileLog = optProfileLog;
     /* JSONL behavior trace: dev mode = on, --opt = off unless --log-json. */
     int effLogJson    = (!optProduction) || optLogJson;
     luaBrainsSetProfile(effProfile, effProfileLog);
@@ -4362,8 +4682,8 @@ int main(int argc, char *argv[]) {
 
     if (findBrainScript(optBrain, brainPath, sizeof(brainPath))) {
         fprintf(stderr, "  Brain script: %s\n", brainPath);
-        /* Extract brain dir basename ("brains/NewAutopilot" or
-         * "brains/NewAutopilot/init.lua" -> "NewAutopilot") so the
+        /* Extract brain dir basename ("brains/GoalHunter" or
+         * "brains/GoalHunter/init.lua" -> "GoalHunter") so the
          * panel-register callback can namespace types with it. */
         char brainName[64] = "";
         {
@@ -4391,7 +4711,7 @@ int main(int argc, char *argv[]) {
             SDL_snprintf(g_currentInitBrainName,
                          sizeof(g_currentInitBrainName), "%s", brainName);
             SDL_PumpEvents(); /* keep window responsive during brain.open() */
-            bool ok = botManagerAddBot(&app.sim, (BYTE)i, brainPath, name,
+            bool ok = serverSimCreateBot(app.sim, (BYTE)i, brainPath, name,
                                        optAI, optGame, false);
             SDL_PumpEvents();
             g_currentInitBot = -1;
@@ -4399,6 +4719,15 @@ int main(int argc, char *argv[]) {
             if (ok) app.numBots++;
         }
         fprintf(stderr, "  Added %d bots\n", app.numBots);
+        if (optNumTeams >= 2) {
+            for (int i = 0; i < optNumPlayers; i++) {
+                serverSimSetTeamBatch(app.sim, (BYTE)i,
+                                      (BYTE)((i % optNumTeams) + 1));
+            }
+            serverSimReapplyTeamAlliances(app.sim);
+            fprintf(stderr, "  Assigned %d bots to %d teams (round-robin)\n",
+                    optNumPlayers, optNumTeams);
+        }
         /* Publish the per-run session dir to each bot's Lua state so the
          * brain's optimize.log + performance.ticks.log writers land
          * inside debug_sessions/<ts>/ instead of cwd. Forward-slashes so
@@ -4409,9 +4738,19 @@ int main(int argc, char *argv[]) {
             SDL_snprintf(setSession, sizeof(setSession),
                          "_G.DEBUG_SESSION_DIR=\"%s\"", g_sessionDir);
             for (int i = 0; i < optNumPlayers; i++) {
-                if (botManagerIsBot((BYTE)i)) {
-                    botManagerExecLua((BYTE)i, setSession);
+                if (serverSimIsBot(app.sim, (BYTE)i)) {
+                    serverSimBotExecLua(app.sim, (BYTE)i, setSession);
                 }
+            }
+        }
+        /* -victim_ids: stamp _BT_VICTIM=true on each listed bot. The
+         * brain's victim hook decides what to do with it (LGM dispatch,
+         * pill drop, tank parking, etc.) to facilitate testing of the
+         * non-victim bots. */
+        for (int i = 0; i < optNumPlayers; i++) {
+            if (optVictim[i] && serverSimIsBot(app.sim, (BYTE)i)) {
+                serverSimBotExecLua(app.sim, (BYTE)i, "_G._BT_VICTIM=true");
+                fprintf(stderr, "  Bot %d: victim mode\n", i);
             }
         }
     } else {
@@ -4483,7 +4822,7 @@ int main(int argc, char *argv[]) {
                     SDL_snprintf(buf, sizeof(buf),
                         "if brain and brain.manual_key then "
                         "brain.manual_key('%s',false) end", role);
-                    botManagerExecLua(app.followBot, buf);
+                    serverSimBotExecLua(app.sim, app.followBot, buf);
                 }
                 break;
             }
@@ -4502,35 +4841,36 @@ int main(int argc, char *argv[]) {
                         SDL_snprintf(buf, sizeof(buf),
                             "if brain and brain.manual_key then "
                             "brain.manual_key('%s',true) end", role);
-                        botManagerExecLua(app.followBot, buf);
+                        serverSimBotExecLua(app.sim, app.followBot, buf);
                         /* Suppress BrainTest hotkey conflict — the
                          * configured key has been consumed by the
                          * brain. */
                         break;
                     }
                 }
-                if (ev.key.repeat) break;
+                if (ev.key.repeat) {
+                    break;
+                }
                 /* Skip BrainTest hotkeys while a text field is being
                  * edited inside the V dialog (its own ImGui context
-                 * — has the V-dialog filter input). The main-window
-                 * ImGui context has no text inputs today (shot-sim
-                 * panel + shortcuts window are all buttons/radios/
-                 * tables), so we don't gate on its WantTextInput —
-                 * doing so was eating SPACE / TAB / etc. when the
-                 * shot-sim panel just had focus without any text
-                 * field active. Re-add a main-context gate when a
-                 * real text input lands there. */
-                if (vizWindowWantsTextInput()) break;
+                 * — has the V-dialog filter input). */
+                if (vizWindowWantsTextInput()) {
+                    break;
+                }
                 switch (ev.key.key) {
                 case SDLK_SPACE:
                     app.paused = !app.paused;
                     break;
                 case SDLK_TAB:
-                    /* Cycle to next active bot */
+                    /* Cycle to next active bot. Reset pill-contrib
+                     * selection — the per-bot pill list is different
+                     * for the new bot, so the old cycle index would
+                     * be meaningless (or out of range). */
                     for (int tries = 0; tries < MAX_TANKS; tries++) {
                         app.followBot = (app.followBot + 1) % MAX_TANKS;
-                        if (botManagerIsBot(app.followBot)) break;
+                        if (serverSimIsBot(app.sim, app.followBot)) break;
                     }
+                    app.pillContribSel = 0;
                     break;
                 case SDLK_F:
                     app.freeCamera = !app.freeCamera;
@@ -4545,7 +4885,7 @@ int main(int argc, char *argv[]) {
                      *     blocks (and any code branching on the global).
                      *   - Stripped allocations / overlays in opt/ are
                      *     not reachable from this build at all. */
-                    bool now_on = botManagerToggleAllBrainDebugMode();
+                    bool now_on = serverSimToggleAllBrainDebugMode(app.sim);
                     fprintf(stderr, "BRAIN_DEBUG_MODE = %s\n",
                             now_on ? "true" : "false");
                     break;
@@ -4564,9 +4904,10 @@ int main(int argc, char *argv[]) {
                         app.pillContribSel = 0;
                     } else if (ev.key.mod & SDL_KMOD_SHIFT) {
                         /* shift-2: cycle through pill_contrib overlays
-                         * one pill at a time. Wraps via 0 (off) so the
-                         * user can return to a clean view between cycles. */
-                        int n = pillContribCount();
+                         * for the currently-followed bot, one pill at a
+                         * time. Wraps via 0 (off) so the user can return
+                         * to a clean view between cycles. */
+                        int n = pillContribCount(app.followBot);
                         app.pillContribSel++;
                         if (app.pillContribSel > n) app.pillContribSel = 0;
                     } else {
@@ -4694,6 +5035,12 @@ int main(int argc, char *argv[]) {
                     vizDetailWindowToggle();
                     break;
                 case SDLK_M: {
+                    /* Manual control hijacks the keyboard (Space = Shoot)
+                     * and only makes sense against the live sim — don't let
+                     * it turn on while reviewing recorded history. */
+                    if (!app.manualControl && app.playbackMode) {
+                        break;
+                    }
                     app.manualControl = !app.manualControl;
                     /* Notify the brain via the optional hook. Brains
                      * that don't implement Brain.set_manual_mode just
@@ -4703,7 +5050,7 @@ int main(int argc, char *argv[]) {
                         "if brain and brain.set_manual_mode then "
                         "brain.set_manual_mode(%d) end",
                         app.manualControl ? 1 : 0);
-                    botManagerExecLua(app.followBot, buf);
+                    serverSimBotExecLua(app.sim, app.followBot, buf);
                     break;
                 }
                 case SDLK_F1:
@@ -5016,7 +5363,7 @@ int main(int argc, char *argv[]) {
 
                         /* Forward to brain.on_click(mx, my, {shift,
                          * ctrl, alt}) so brains can implement custom
-                         * click handlers — NewAutopilot uses
+                         * click handlers — GoalHunter uses
                          * shift+click to toggle the pill inspector
                          * overlay and ctrl+click to force-attack a
                          * pill. The cost-query path above runs
@@ -5031,7 +5378,7 @@ int main(int argc, char *argv[]) {
                             (mod & SDL_KMOD_SHIFT) ? "true" : "false",
                             (mod & SDL_KMOD_CTRL)  ? "true" : "false",
                             (mod & SDL_KMOD_ALT)   ? "true" : "false");
-                        botManagerExecLua(app.followBot, luaBuf);
+                        serverSimBotExecLua(app.sim, app.followBot, luaBuf);
                     }
                 } else if (ev.button.button == SDL_BUTTON_RIGHT) {
                     app.rightDown = true;
@@ -5084,6 +5431,16 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        /* Manual control only applies to the LIVE sim. The moment we enter
+         * playback (scrub back in time), force it off so the keyboard goes
+         * back to BrainTest (notably Space = pause/resume, not Shoot). */
+        if (app.playbackMode && app.manualControl) {
+            app.manualControl = false;
+            serverSimBotExecLua(app.sim, app.followBot,
+                "if brain and brain.set_manual_mode then "
+                "brain.set_manual_mode(0) end");
+        }
+
         /* Arrow key scrolling (continuous while held) */
         if (keystate[SDL_SCANCODE_LEFT] || keystate[SDL_SCANCODE_RIGHT] ||
             keystate[SDL_SCANCODE_UP] || keystate[SDL_SCANCODE_DOWN]) {
@@ -5116,6 +5473,16 @@ int main(int argc, char *argv[]) {
         int tickMs = SPEED_PRESETS[app.speedIndex];
         if (!app.paused) {
             Uint64 now = SDL_GetTicks();
+            /* Spiral-of-death guard. When per-tick work (brain + recording
+             * capture) exceeds tickMs — which it does for large games — an
+             * unclamped catch-up loop runs ever more ticks per frame and
+             * starves rendering (observed: 24 ticks/frame, <1 fps). Cap the
+             * ticks we run per render frame; if still behind after the cap,
+             * abandon the backlog (lastTickTime = now). The sim then runs
+             * slower than real time under load, but the UI stays responsive
+             * — the right trade-off for a debug/visualizer tool. */
+            const int kMaxTicksPerFrame = 4;
+            int liveTicksThisFrame = 0;
             while (now - lastTickTime >= (Uint64)tickMs) {
                 if (app.playbackMode) {
                     if (app.playbackFrame + 1 < app.recording.count) {
@@ -5130,18 +5497,27 @@ int main(int argc, char *argv[]) {
                     appTickBrain(&app);
                     recordingCapture(&app);
                     firstBrainSeeded = true;
-                    if (!autoPauseDone && app.sim.tick >= 4) {
+                    if (!autoPauseDone && serverSimGetTick(app.sim) >= 4) {
                         if (!optAutoStart) app.paused = true;
                         autoPauseDone = true;
                         lastTickTime += tickMs;
                         break;
                     }
-                    if (optMaxTicks > 0 && (int)app.sim.tick >= optMaxTicks) {
+                    if (optMaxTicks > 0 && (int)serverSimGetTick(app.sim) >= optMaxTicks) {
                         appQuit = TRUE;
                         break;
                     }
                 }
                 lastTickTime += tickMs;
+                if (++liveTicksThisFrame >= kMaxTicksPerFrame) {
+                    /* Hit the per-frame cap. If real time has already
+                     * outrun us again, drop the accumulated backlog so the
+                     * next frame starts fresh instead of compounding. */
+                    if (now - lastTickTime >= (Uint64)tickMs) {
+                        lastTickTime = now;
+                    }
+                    break;
+                }
             }
         } else {
             lastTickTime = SDL_GetTicks();
@@ -5163,7 +5539,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Cleanup */
-    fprintf(stderr, "Shutting down after tick %u\n", app.sim.tick);
+    fprintf(stderr, "Shutting down after tick %u\n", serverSimGetTick(app.sim));
     if (app.costToThread) {
         app.costToAbort = true;
         SDL_WaitThread(app.costToThread, NULL);
@@ -5172,12 +5548,11 @@ int main(int argc, char *argv[]) {
     free(app.costToGrid);
     if (app.costToMutex) SDL_DestroyMutex(app.costToMutex);
     recordingDestroy(&app.recording);
-    botManagerDestroy(&app.sim);
     if (app.debugPF) brainPathfinderDestroy(app.debugPF);
     if (app.overlayTex) SDL_DestroyTexture(app.overlayTex);
     if (app.tilesTex) SDL_DestroyTexture(app.tilesTex);
     tileLoaderCleanup();
-    if (app.simValid) serverSimDestroy(&app.sim);
+    if (app.simValid) serverSimDestroy(app.sim);
     /* Persist viz registry state. */
     {
         char path[FILENAME_MAX];
@@ -5202,7 +5577,8 @@ int main(int argc, char *argv[]) {
     SDL_DestroyWindow(app.window);
     langCleanup();
     clientMutexDestroy();
-    endWinboloTimer();
+    threadsDestroy();
+    botWorkerPoolDestroy();
     SDL_Quit();
 
     return 0;

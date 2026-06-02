@@ -28,24 +28,23 @@
 #include <stdio.h>
 #include <string.h>
 #include "server_sim.h"
-#include "../bolo/messages.h"
+#include "messages.h"
 
 void serverMessageSetQuietMode(ServerSim *sim, bool modeOn) {
-  sim->isServerQuiet = modeOn;
+  serverSimSetQuiet(sim, modeOn);
 }
 
 void serverMessagesSetLogFile(ServerSim *sim, char *logFile) {
-  strcpy(sim->serverMessageLogFile, logFile);
-  sim->serverMessageUseLogFile = TRUE;
+  serverSimSetMessageLogFile(sim, logFile);
 }
 
 void serverMessageAdd(ServerSim *sim, messageType msgType, char *top, char *bottom) {
   FILE *fp;
-  if (msgType != assistantMessage && sim->isServerQuiet == FALSE) {
-    if (sim->serverMessageUseLogFile == FALSE) {
+  if (msgType != assistantMessage && !serverSimIsQuiet(sim)) {
+    if (!serverSimGetServerMessageUseLogFile(sim)) {
       fprintf(stdout, "%s\n%s\n", top, bottom);
      } else {
-      fp = fopen(sim->serverMessageLogFile, "a");
+      fp = fopen(serverSimGetServerMessageLogFile(sim), "a");
       if (fp) {
         fprintf(fp, "%s\n%s\n", top, bottom);
         fclose(fp);
@@ -56,11 +55,11 @@ void serverMessageAdd(ServerSim *sim, messageType msgType, char *top, char *bott
 
 void serverMessageConsoleMessage(ServerSim *sim, char *msg) {
   FILE *fp;
-  if (sim->isServerQuiet == FALSE) {
-    if (sim->serverMessageUseLogFile == FALSE) {
+  if (!serverSimIsQuiet(sim)) {
+    if (!serverSimGetServerMessageUseLogFile(sim)) {
       fprintf(stderr, "%s\n", msg);
     } else {
-      fp = fopen(sim->serverMessageLogFile, "a");
+      fp = fopen(serverSimGetServerMessageLogFile(sim), "a");
       if (fp) {
         fprintf(fp, "%s\n", msg);
         fclose(fp);

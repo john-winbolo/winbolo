@@ -26,7 +26,7 @@
 *  (Uses SDL3)
 *********************************************************/
 
-#include "global.h"
+#include "lv_global.h"
 #include <SDL3/SDL.h>
 #include <stdio.h>
 #include "backend.h"
@@ -374,7 +374,9 @@ bool lv_soundSetup(void) {
         return FALSE;
     }
 
-    SDL_SetAudioStreamGain(audioStream, 0.25f);
+    /* Default to 50%; loadPreferences() applies the saved value by
+     * calling lv_soundSetVolume() once g_lv->soundVolume is populated. */
+    SDL_SetAudioStreamGain(audioStream, 0.5f);
 
     /* Load all sound effects from data/sounds/ relative to the executable */
     {
@@ -666,4 +668,12 @@ void lv_soundKeepalive(bool value) {
 *********************************************************/
 bool lv_soundIsPlayable(void) {
     return isPlayable;
+}
+
+void lv_soundSetVolume(int pct) {
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    if (audioStream) {
+        SDL_SetAudioStreamGain(audioStream, (float)pct / 100.0f);
+    }
 }

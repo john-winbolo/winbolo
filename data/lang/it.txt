@@ -422,6 +422,7 @@ STR_DLGLOBBY_BOT_FMT={player} [Bot]
 STR_DLGLOBBY_YOU_FMT={player} (Tu)
 STR_DLGLOBBY_STARTING_FMT=Avvio tra {number}...
 STR_DLGLOBBY_LOSTCONNECTION=Hai perso la connessione al server.
+STR_DLGLOBBY_KICKED=Sei stato espulso dal server.
 STR_DLGLOBBY_ME=Io
 STR_DLGLOBBY_PLAYER_COL=Giocatore
 STR_DLGLOBBY_PING_COL=Ping
@@ -943,6 +944,14 @@ STR_LV_MAP_SKIP_VOTE={player} ha votato per saltare la mappa.
 STR_LV_MAP_SKIPPED=Mappa saltata. Nuova mappa: {string1}
 STR_LV_TEAM_BALANCE=Equilibrio squadre applicato.
 
+# Log viewer — votazioni in partita
+STR_LV_VOTE_START_LOBBY={player} ha avviato una votazione per tornare alla sala d'attesa.
+STR_LV_VOTE_START_SURRENDER={player} ha avviato una votazione per arrendersi.
+STR_LV_VOTE_CAST_YES={player} ha votato sì.
+STR_LV_VOTE_CAST_NO={player} ha votato no.
+STR_LV_VOTE_PASSED=Votazione approvata.
+STR_LV_VOTE_FAILED=Votazione respinta.
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=Apri
 STR_LV_MENU_ACTION=Azione
@@ -1071,10 +1080,10 @@ STR_DLGLOBBY_PORTMAP_CHECKING=Verifica raggiungibilità del server…
 STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Server raggiungibile
 STR_DLGLOBBY_PORTMAP_UNREACHABLE=Server irraggiungibile
 STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Tentativo di aprire una porta del firewall tramite UPnP / NAT-PMP e verifica che il tracker possa raggiungerti attraverso la tua rete. Solitamente si completa entro 30 secondi.
-STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Porta inoltrata automaticamente tramite UPnP/NAT-PMP su %s:%u. I giocatori si collegano direttamente senza ulteriori passaggi.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Porta inoltrata automaticamente tramite UPnP/NAT-PMP su {string1}:{number}. I giocatori si collegano direttamente senza ulteriori passaggi.
 STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Non è stato possibile stabilire l'inoltro diretto della porta, ma il NAT traversal è attivo. I giocatori si coordinano tramite il tracker per attraversare il firewall della tua rete. Funziona per la maggior parte delle reti domestiche; i giocatori con NAT simmetrico o CGN potrebbero comunque non riuscire a connettersi.
-STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Rilevato NAT simmetrico — la tua rete riscrive la porta di origine per ogni destinazione, impedendo ai giocatori di raggiungerti anche tramite NAT traversal. Per ospitare correttamente, inoltra manualmente la porta UDP %u del tuo router verso questa macchina.
-STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Impossibile aprire automaticamente una porta del firewall (UPnP/NAT-PMP rifiutato o non disponibile) e il tracker non ha potuto confermare la raggiungibilità bidirezionale. Per ospitare correttamente, inoltra manualmente la porta UDP %u del tuo router verso questa macchina.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Rilevato NAT simmetrico — la tua rete riscrive la porta di origine per ogni destinazione, impedendo ai giocatori di raggiungerti anche tramite NAT traversal. Per ospitare correttamente, inoltra manualmente la porta UDP {number} del tuo router verso questa macchina.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Impossibile aprire automaticamente una porta del firewall (UPnP/NAT-PMP rifiutato o non disponibile) e il tracker non ha potuto confermare la raggiungibilità bidirezionale. Per ospitare correttamente, inoltra manualmente la porta UDP {number} del tuo router verso questa macchina.
 STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Raggiungibilità del server
 STR_DLGLOBBY_TEST_CONNECTIVITY=Verifica connettività
 STR_DLGLOBBY_TEST_TESTING=Verifica in corso…
@@ -1130,3 +1139,199 @@ STR_DLGSYSINFO_BRAIN=Brain
 STR_DLGSYSINFO_SIMULATION=Simulazione
 STR_DLGSYSINFO_BOTPREP=Preparazione bot
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Sforamenti Brain
+
+# macOS App menu and Window menu items
+STR_MENU_ABOUT_APP=Informazioni su WinBolo
+STR_MENU_PREFERENCES=Preferenze…
+STR_MENU_SERVICES=Servizi
+STR_MENU_HIDE_APP=Nascondi WinBolo
+STR_MENU_HIDE_OTHERS=Nascondi altri
+STR_MENU_SHOW_ALL=Mostra tutti
+STR_MENU_QUIT_APP=Esci da WinBolo
+STR_MENU_ABOUT_LV=Informazioni su Visualizzatore log
+STR_MENU_HIDE_LV=Nascondi Visualizzatore log
+STR_MENU_QUIT_LV=Esci da Visualizzatore log
+STR_MENU_HIDE_ME=Nascondi Editor mappe
+STR_MENU_QUIT_ME=Esci da Editor mappe
+STR_MENU_WINDOW=Finestra
+STR_MENU_MINIMIZE=Riduci a icona nel Dock
+STR_MENU_ZOOM=Zoom
+STR_MENU_ENTER_FULL_SCREEN=Entra in schermo intero
+STR_MENU_BRING_ALL_TO_FRONT=Porta tutto in primo piano
+
+# macOS Dock menu — welcome-screen actions exposed via the Dock right-click
+STR_MENU_FIND_INTERNET_GAME=Trova partita Internet…
+STR_MENU_FIND_LAN_GAME=Trova partita LAN…
+STR_MENU_JOIN_BY_ADDRESS=Unisciti tramite indirizzo…
+STR_MENU_OPEN_MAP_EDITOR=Apri editor mappe
+STR_MENU_OPEN_LOG_VIEWER=Apri visualizzatore log
+
+# Settings → Network: WinBolo.net news auto-show toggle.
+STR_DLGSETTINGS_NEWS_AUTOSHOW=Mostra notizie da winbolo.net all'avvio
+
+# News popup + welcome News button strings.
+STR_DLGWELCOME_NEWS=Notizie
+STR_DLGNEWS_TITLE=Notizie
+STR_DLGNEWS_CONSENT_TITLE=WinBolo News
+STR_DLGNEWS_CONSENT_BODY1=WinBolo può mostrarti i nuovi post di winbolo.net all'avvio del gioco. WBN verrà controllato una sola volta all'avvio e questa finestra si aprirà solo quando c'è qualcosa di nuovo.
+STR_DLGNEWS_CONSENT_BODY2=Puoi modificare questa impostazione in qualsiasi momento nelle Impostazioni.
+STR_DLGNEWS_SHOW=Mostra notizie
+STR_DLGNEWS_DONT_SHOW=Non mostrare
+STR_DLGNEWS_LOADING=Caricamento…
+STR_DLGNEWS_DONT_AUTOSHOW=Non mostrare le notizie automaticamente in futuro
+
+# Lobby — selettore mappa
+STR_DLGLOBBY_CHOOSEMAP_TITLE=Scegli mappa
+STR_DLGLOBBY_TAB_SERVERMAPS=Mappe del server
+STR_DLGLOBBY_TAB_LOCALMAPS=Mappe locali
+STR_DLGLOBBY_TAB_UPLOAD=Carica
+STR_DLGLOBBY_TAB_GENERATE=Genera
+STR_DLGLOBBY_TAB_WBNMAPS=Mappe Winbolo.net
+STR_DLGLOBBY_CLOSEMAP_PROMPT=Hai visualizzato in anteprima una mappa diversa.
+STR_DLGLOBBY_CLOSEMAP_QUESTION=Cosa vuoi fare?
+STR_DLGLOBBY_USETHISMAP=Usa questa mappa
+STR_DLGLOBBY_REVERTCLOSE=Ripristina e chiudi
+STR_DLGLOBBY_KEEPPICKING=Continua a scegliere
+STR_DLGLOBBY_CANCEL_MAPCHOOSER=Annulla
+STR_DLGLOBBY_CHOOSE_MAP_BTN=Scegli mappa
+
+# Lobby — errori di caricamento e WBN
+STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT=È già in corso un altro caricamento.
+STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Caricamenti disabilitati su questo server.
+STR_DLGLOBBY_UPLOAD_ERR_FULL=La libreria mappe del server è piena.
+STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=Troppe richieste \xe2\x80\x94 attendi un momento prima di riprovare.
+STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Caricamento rifiutato dal server.
+STR_DLGLOBBY_WBN_ERR_DOWNLOAD=Download non riuscito
+STR_DLGLOBBY_WBN_ERR_BADRESPONSE=Risposta non valida da WinBolo.net
+STR_DLGLOBBY_WBN_ERR_NETERROR=Errore di rete durante il recupero della mappa
+STR_DLGLOBBY_WBN_ERR_HTTPERROR=WBN ha restituito HTTP {number}
+STR_DLGLOBBY_WBN_ERR_MAPFAILED=Download della mappa non riuscito
+STR_DLGLOBBY_WBN_ERR_TOOBIG=La mappa supera il limite di 64 KB per i caricamenti
+STR_DLGLOBBY_WBN_ERR_OOM=Memoria esaurita durante la messa in coda del caricamento
+STR_DLGLOBBY_WBN_ERR_BADSEARCHRESPONSE=Risposta di ricerca non valida da WinBolo.net
+
+# Lobby — controlli nuovi giocatori e partita classificata
+STR_DLGLOBBY_ALLOW_NOW=Adesso
+STR_DLGLOBBY_ALLOW_DURING=Durante la partita
+STR_DLGLOBBY_TOOLTIP_ALLOWNOW=Accetta nuove richieste di accesso finché il lobby è aperto.
+STR_DLGLOBBY_TOOLTIP_ALLOWDURING=Continua ad accettare nuovi giocatori dopo l'inizio della partita.
+STR_DLGLOBBY_TOOLTIP_RANKED_AUTOLOCK=Le partite classificate bloccano l'accesso ai nuovi giocatori all'inizio della partita.
+STR_DLGLOBBY_RANKED=Partita classificata
+STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED=Bloccato dall'amministratore del server.
+STR_DLGLOBBY_TOOLTIP_RANKED_NOTHOST=Solo l'host o un amministratore può attivare la partita classificata.
+STR_DLGLOBBY_TOOLTIP_RANKED_BOTS=Rimuovi tutti i bot dal lobby prima di contrassegnare\nla partita come classificata. Le partite classificate sono solo per umani.
+STR_DLGLOBBY_TOOLTIP_RANKED_INFO=Le partite classificate vietano i bot e impongono il tipo di partita torneo\n— senza modalità «Aperto» prearmata. Questa attivazione reimposta lo stato di prontezza\ndi ogni giocatore affinché l'host possa confermare la nuova configurazione.
+
+# Lobby — lista giocatori per squadra + modale di espulsione
+STR_DLGLOBBY_TEAM_HEADER=Squadra {number}
+STR_DLGLOBBY_TEAM_MEMBERS_1=· 1 giocatore
+STR_DLGLOBBY_TEAM_MEMBERS_N=· {number} giocatori
+STR_DLGLOBBY_TEAM_1BOT=1 bot
+STR_DLGLOBBY_TEAM_NBOTS=bot
+STR_DLGLOBBY_JOIN_TEAM=Unisciti
+STR_DLGLOBBY_TOOLTIP_JOIN=Spostati nella Squadra {number}.
+STR_DLGLOBBY_BOT_NAMING=Nomi bot:
+STR_DLGLOBBY_ADDBOT_LBL=Aggiungi bot
+STR_DLGLOBBY_TOOLTIP_ADDBOT=Aggiungi un bot alla Squadra {number} con nome del gruppo selezionato.
+STR_DLGLOBBY_TOOLTIP_RMTEAM=Rimuovi la Squadra {number} (e i suoi bot).
+STR_DLGLOBBY_TOOLTIP_DRAG=Trascina su una squadra per spostare
+STR_DLGLOBBY_TAG_HOST=HOST
+STR_DLGLOBBY_TAG_ADMIN=ADMIN
+STR_DLGLOBBY_TAG_BOT=BOT
+STR_DLGLOBBY_PILL_READY=PRONTO
+STR_DLGLOBBY_PILL_NOTREADY=NON PRONTO
+STR_DLGLOBBY_TOOLTIP_CONFIG=Configura bot
+STR_DLGLOBBY_TOOLTIP_RMBOT=Rimuovi bot
+STR_DLGLOBBY_TOOLTIP_KICK=Espelli giocatore
+STR_DLGLOBBY_ADD_TEAM=Aggiungi squadra
+STR_DLGLOBBY_UNASSIGNED_FMT=Non assegnati ({number}):
+STR_DLGLOBBY_KICK_FMT=Espellere "{player}"?
+
+# Lobby — pannello configurazione bot (AiConfig)
+STR_DLGLOBBY_BOTCFG_NAME=Nome (personalizzato)
+STR_DLGLOBBY_BOTCFG_REROLL=Nuovo nome
+STR_DLGLOBBY_BOTCFG_REROLL_TIP=Scegli un nuovo nome casuale dal gruppo della squadra.
+STR_DLGLOBBY_BOTCFG_CODE=Codice bot
+STR_DLGLOBBY_BOTCFG_NONE=(nessuno)
+STR_DLGLOBBY_BOTCFG_DIFFICULTY=Difficoltà
+STR_DLGLOBBY_BOTCFG_EASY=Facile
+STR_DLGLOBBY_BOTCFG_NORMAL=Normale
+STR_DLGLOBBY_BOTCFG_HARD=Difficile
+STR_DLGLOBBY_BOTCFG_PERSONALITY=Personalità
+STR_DLGLOBBY_BOTCFG_AGGRESSIVE=Aggressivo
+STR_DLGLOBBY_BOTCFG_DEFENSIVE=Difensivo
+STR_DLGLOBBY_BOTCFG_SNIPER=Cecchino
+STR_DLGLOBBY_BOTCFG_DONE=Fatto
+
+# Lobby — bilanciamento squadre da WBN
+STR_DLGLOBBY_BAL_BTN=Bilancia da WBN
+STR_DLGLOBBY_BAL_POPUP_TITLE=Bilancia squadre da WBN
+STR_DLGLOBBY_BAL_POPUP_BODY=Questa operazione cancellerà tutte le squadre del lobby e le sostituirà con due squadre bilanciate per livello da winbolo.net. La nuova distribuzione ha effetto immediato.
+STR_DLGLOBBY_BAL_POPUP_BOT_SINGULAR=Al momento è presente 1 bot nel lobby. Scegli se il bot deve partecipare alla distribuzione bilanciata o essere rimosso per una partita solo tra umani.
+STR_DLGLOBBY_BAL_POPUP_BOT_PLURAL=Al momento sono presenti {number} bot nel lobby. Scegli se i bot devono partecipare alla distribuzione bilanciata o essere rimossi per una partita solo tra umani.
+STR_DLGLOBBY_BAL_BOTS_INCLUDED=Bot inclusi
+STR_DLGLOBBY_BAL_HUMANS_ONLY=Solo umani
+STR_DLGLOBBY_BAL_GO=Bilancia
+STR_DLGLOBBY_BAL_TOOLTIP_NOTHOST=Solo l'host o un amministratore può richiedere una distribuzione\ndelle squadre bilanciata per livello da winbolo.net.
+STR_DLGLOBBY_BAL_TOOLTIP_NOTENOUGH=Sono necessari almeno due giocatori connessi prima che\nil lobby possa essere diviso in squadre bilanciate.
+STR_DLGLOBBY_BAL_TOOLTIP_INFO=Chiedi a winbolo.net di dividere il lobby in due squadre\nbilanciate per livello. La distribuzione viene applicata immediatamente\nappena WBN risponde — le squadre esistenti vengono sostituite.
+STR_DLGLOBBY_BAL_STATUS_ASKING=Richiesta a WBN\xe2\x80\xa6
+STR_DLGLOBBY_BAL_STATUS_BALANCED=Squadre bilanciate
+STR_DLGLOBBY_BAL_STATUS_NOREPLY=Nessuna risposta da WBN
+
+# Lobby — notifica di rifiuto
+STR_DLGLOBBY_REJECT_DEFAULT=rifiutato
+STR_DLGLOBBY_REJECT_NOTHOST=azione riservata all'host
+STR_DLGLOBBY_REJECT_LOCKED=impostazione bloccata dal server
+STR_DLGLOBBY_REJECT_INVALID=richiesta non valida
+STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Modifica al lobby rifiutata: {string1}
+
+# Lobby — badge di blocco
+STR_DLGLOBBY_LOCK_BADGE=[bloccato]
+
+# Lobby — tooltip forma classificata
+STR_DLGLOBBY_RANKED_SHAPE_TIP=Le partite classificate richiedono esattamente due squadre di uguale\ndimensione: 1v1, 2v2 o 3v3 giocatori umani.\n(Al momento {number} {string1}, dimensioni {number2} vs {number3}.)
+STR_DLGLOBBY_RANKED_SHAPE_TEAM=squadra
+STR_DLGLOBBY_RANKED_SHAPE_TEAMS=squadre
+
+# Lobby — pannello impostazioni di partita
+STR_DLGLOBBY_SETTINGS_HEADER=Impostazioni di partita
+STR_DLGLOBBY_OPENHOST_NOTE=L'host ha consentito a tutti i giocatori di modificare le impostazioni di partita.
+STR_DLGLOBBY_GAMETYPE_LBL=Tipo di partita
+STR_DLGLOBBY_AI_SECTION_LBL=Giocatori computer
+STR_DLGLOBBY_AI_NONE=Nessun carro armato computer
+STR_DLGLOBBY_AI_ALLOW=Consenti carri armati computer
+STR_DLGLOBBY_AI_ADVANTAGE=Consenti con vantaggio
+STR_DLGLOBBY_AI_FULLADV=Consenti con vantaggio completo
+STR_DLGLOBBY_OTHER_LBL=Altro
+STR_DLGLOBBY_OPENHOST_CB=Consenti a tutti i giocatori di modificare le impostazioni
+STR_DLGLOBBY_OPENHOST_TOOLTIP=Quando attivato, qualsiasi giocatore connesso può modificare le impostazioni\ndel lobby — incluso cambiare la mappa, aggiungere o rimuovere\nbot e cambiare squadra.
+STR_DLGLOBBY_TIMELIMIT_MIN=min
+STR_DLGLOBBY_PASSWORD_CB=Password
+STR_DLGLOBBY_PASSWORD_TOOLTIP=Quando attivato, i nuovi client devono fornire la\npassword per accedere. I giocatori già connessi non sono interessati.
+
+# Lobby — intestazione desktop
+STR_DLGLOBBY_SERVERDISP_SP=Giocatore singolo
+STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
+
+# Lobby — badge di connettività
+STR_DLGLOBBY_CONN_TEST_TIP=Test in corso
+STR_DLGNEWS_COMMENTS_FMT=Commenti: {number}
+
+# In-game votes
+STR_VOTE_BACK_TO_LOBBY=Voto: Torna alla lobby
+STR_VOTE_SURRENDER=Voto: Resa
+STR_VOTE_DRAW_TAG= (Pareggio)
+STR_VOTE_NEEDS_RUNNING_TIP=Disponibile quando la partita è in corso.
+STR_VOTE_SURRENDER_PICK_TEAM_TIP=Scegli una squadra prima di votare la resa.
+STR_VOTE_SURRENDER_TWO_TEAMS_TIP=La resa è disponibile solo quando rimangono esattamente due squadre\ncon giocatori umani.
+
+# Volume — slider label and Mac preset submenu items
+STR_MENU_VOLUME=Volume
+STR_VOLUME_MUTE=Disattiva audio
+STR_REJECT_VERSION_MISMATCH=Il server è alla versione {string1}, tu hai {string2} — aggiorna per favore.
+STR_RETURNING_TO_LOBBY=Ritorno alla lobby
+
+# Balance — WBN-failure status pill + reject toast for non-ranked balance state
+STR_DLGLOBBY_REJECT_BAD_STATE=non consentito adesso
+STR_DLGLOBBY_BAL_STATUS_FAILED=bilanciamento WBN fallito

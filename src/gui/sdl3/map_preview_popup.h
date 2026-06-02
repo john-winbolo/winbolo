@@ -22,7 +22,7 @@
 #define MAP_PREVIEW_POPUP_H
 
 #include <SDL3/SDL.h>
-#include "../../bolo/global.h"
+#include "global.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -59,6 +59,28 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer);
 /* Close the popup if open (e.g. when the underlying map changes).
  * Frees map data but keeps the tile atlas for fast re-open. */
 void mapPreviewPopupClose(void);
+
+/* True iff the popup window is currently open. Used by callers
+ * (e.g. the lobby's MAP_CHANGE handler) to decide whether to
+ * refresh the popup in place vs. just drop the old data. */
+bool mapPreviewPopupIsOpen(void);
+
+/* If the popup is open, swap its underlying compressed-map bytes
+ * for the freshly-arrived ones — keeping the user's current zoom
+ * and pan so the window seamlessly updates in place when the map
+ * changes server-side. No-op if the popup is closed. */
+void mapPreviewPopupRefreshOpen(const BYTE *compressedData, int compressedLen);
+
+/* Returns true once after the user clicks "Change" inside the popup
+ * (which also closes the popup). The lobby polls this each frame
+ * and, on a true return, opens its Choose Map dialog. The flag is
+ * latched, so a missed poll is fine — the next call still sees it. */
+bool mapPreviewPopupConsumeChangeRequest(void);
+
+/* When false, the "Change" button is hidden from the popup
+ * footer — for lobby viewers without map-edit authority. Default
+ * is true (legacy behaviour). Set per-frame from the lobby. */
+void mapPreviewPopupSetShowChange(bool show);
 
 /* Call on dialog exit to free all resources. */
 void mapPreviewPopupDestroy(void);
