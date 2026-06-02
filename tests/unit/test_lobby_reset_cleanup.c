@@ -59,12 +59,10 @@ int run_remove_player_clears_slot(void) {
      * slot is no longer re-announced to new clients — no phantom. */
     UT_ASSERT_MSG(playersIsInUse(&serverSimGetGameSim(sim)->plyrs, 0) == FALSE,
                   "slot must be cleared (not inUse) after removePlayer");
-    {
-        char nm[PLAYER_NAME_LEN];
-        playersGetPlayerName(&serverSimGetGameSim(sim)->plyrs, 0, nm, TRUE);
-        UT_ASSERT_MSG(nm[0] == '\0',
-                      "departed slot name must be blanked (got '%s')", nm);
-    }
+    /* Raw name field, not playersGetPlayerName — the accessor returns the
+     * "???" placeholder for a not-inUse slot, which would mask the clear. */
+    UT_ASSERT_MSG(serverSimGetGameSim(sim)->plyrs->item[0].playerName[0] == '\0',
+                  "departed slot name field must be blanked");
 
     serverSimDestroy(sim);
     return 0;
