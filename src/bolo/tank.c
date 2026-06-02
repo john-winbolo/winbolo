@@ -888,7 +888,7 @@ void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yP
      * TANK_SUBTRACT is kept so the rendering formula stays unchanged. */
     int32_t xStepHP, yStepHP, xAccHP = 0, yAccHP = 0;
     utilCalcDistanceHP(&xStepHP, &yStepHP, (*value)->angle, SHELL_SPEED);
-    int totalTicks = SHELL_LIFE * (int)((*value)->sightLen / 2);
+    int totalTicks = (SHELL_LIFE * (int)(*value)->sightLen) / 2;
     x = (*value)->x;
     y = (*value)->y;
     for (int i = 0; i < totalTicks; i++) {
