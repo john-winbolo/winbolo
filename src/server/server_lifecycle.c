@@ -238,6 +238,11 @@ void serverInstanceTick(ServerSim *sim) {
     transportUdpServerRecv(sim);
   }
 
+  /* Run deferred removals for slots force-disconnected mid-publish (control
+   * queue overflow). Done here, after recv processing and outside any
+   * publish, so serverSimRemovePlayer can safely fan its events out. */
+  transportUdpServerDrainPendingRemovals(sim);
+
   if (sim->state == serverStateRunning) {
     /* Run brain AI bots — queues two InputPackets per bot (keys + game) */
     if (serverSimGetNumBots(sim) > 0) {
@@ -404,6 +409,12 @@ void serverInstanceTick(ServerSim *sim) {
          * inside; no-op when WBN isn't running. */
         transportUdpServerBroadcastWbnRekey(sim);
       }
+      /* Close the rotation window: the new session's server_key is now
+       * installed, so the deferred lobby_update (held dirty by
+       * serverSimReturnToLobby's map pick) flushes against the right
+       * key on the next WBN tick. Cleared unconditionally so a WBN-off
+       * run doesn't leave the flag stuck. */
+      sim->wbnSessionRotating = FALSE;
       /* Republish the bot brain catalogue.  Mid-game joiners were gated
        * out of the BrainList during their sync replay (see
        * serverSimSyncSubscriber), so they need it now before the lobby
@@ -425,10 +436,17 @@ void serverInstanceTick(ServerSim *sim) {
       serverSimPublishLobbySettings(sim);
       {
         BYTE pi;
+        /* Republish EVERY slot, not just connected ones. A player who
+         * left mid-round had their CTRL_LOBBY_SLOT suppressed — the
+         * leave-time publish is gated to lobby/countdown state
+         * (transport_udp_server.c PACKET_QUIT), so a running-state quit
+         * never told clients to clear that slot. The client's lobbySlots
+         * mirror is only mutated by CTRL_LOBBY_SLOT (CTRL_PLAYER_LEAVE is
+         * chat-only), so without this the departed player lingers as a
+         * ghost in the returning lobby. A vacant slot fills as
+         * connected=false (serverSimFillLobbySlotEvent), which clears it. */
         for (pi = 0; pi < MAX_TANKS; pi++) {
-          if (sim->playerConnected[pi]) {
-            serverSimPublishLobbySlot(sim, pi);
-          }
+          serverSimPublishLobbySlot(sim, pi);
         }
       }
       /* Send the win message now that players are back in the lobby */
@@ -493,6 +511,11 @@ void serverInstanceTick(ServerSim *sim) {
       sim->state != serverStateCountdown &&
       serverSimCheckEmptyReset(sim)) {
     serverSimConsoleMessage("Empty reset timer expired. Resetting to lobby...");
+    /* Empty-reset bypasses serverSimReturnToLobby, so open the WBN
+     * session-rotation window here before the map pick below reports
+     * the next round's map. Cleared after BeginSession installs the
+     * new key. */
+    sim->wbnSessionRotating = TRUE;
     /* Empty-reset fires from the running state without going through
      * GAME_OVER, so handleGameOver never stashed the in-flight round.
      * Do it here so the upload below picks it up. */
@@ -528,6 +551,8 @@ void serverInstanceTick(ServerSim *sim) {
       /* Same rotation push as the game-over → lobby site. */
       transportUdpServerBroadcastWbnRekey(sim);
     }
+    /* Close the rotation window — new key installed (or WBN off). */
+    sim->wbnSessionRotating = FALSE;
     /* Empty-reset bypasses serverSimReturnToLobby, so the lobby phase
      * event is never published from the state machine. Publish it
      * explicitly so handleLobbyEnter fires and starts a fresh log for

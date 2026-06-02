@@ -974,6 +974,29 @@ static void simRunHalfStep(ServerSim *sim) {
         }
     }
 
+    /* End the round once the last human leaves, so the server drops back
+     * to the lobby instead of looping a bot-only game forever (which it
+     * otherwise does — the empty/auto-close checks count bots via
+     * serverSimGetNumPlayers). Gated on roundHadHuman so a game that
+     * legitimately started with only bots (all bots ready) isn't ended
+     * the instant it starts, which would loop start<->gameover. Only for
+     * lobby-enabled servers; a no-lobby game-over means shutdown, which a
+     * transient human dropout shouldn't trigger. Suppress the win message
+     * — nobody won, everyone left. Routes through the normal GAME_OVER ->
+     * countdown -> returnToLobby flow (WBN swap, log flush, republish). */
+    if (sim->lobbyEnabled) {
+        if (serverSimGetNumHumans(sim) > 0) {
+            sim->roundHadHuman = true;
+        } else if (sim->roundHadHuman) {
+            mapSetChangeCallback(NULL);
+            serverSimSetSuppressNextWinMessage(sim, true);
+            serverSimConsoleMessage("No human players remaining. Returning to lobby.");
+            serverSimEnterGameOver(sim);
+            sim->tick++;
+            return;
+        }
+    }
+
     /* Server tick parity controls world systems only.
      * Per-player keys vs game is determined by the INPUT's tick parity,
      * so client/server parity is always aligned regardless of when
@@ -1831,6 +1854,17 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         evt.type = CTRL_BALANCE_PROPOSAL;
         serverSimPublishControl(sim, &evt);
     }
+
+    /* Clear the players-struct identity for the vacated slot. Done last,
+     * after every read above that needs the departing player's name /
+     * alliances (CTRL_PLAYER_LEAVE fill, rejoin-ownership record, ally
+     * migration). Without this the slot stays inUse with the old name and
+     * the join sync-replay's inUse-gated CTRL_PLAYER_JOIN loop re-announces
+     * the departed player or bot to every new client as a frozen phantom —
+     * it never receives snapshot updates, which gate on playerConnected.
+     * This is the identity teardown serverSimResetGameWorld's comment
+     * already delegates to the leave path. */
+    playersClearSlot(&sim->sim.plyrs, playerNum);
 }
 
 bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
@@ -2787,6 +2821,17 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
 void serverSimWbnLobbyUpdate(ServerSim *sim, bool force) {
     time_t now;
     if (sim == NULL || !winbolonetIsRunning()) return;
+    /* During a session rotation (round end → new register) the
+     * still-set winboloNetServerKey belongs to the round that just
+     * quit. Sending a lobby_update now would rename that finished
+     * game's map on the tracker. Hold the change as dirty; it flushes
+     * on the next WBN tick once BeginSession has installed the new
+     * key (see serverInstanceTick's rotation sites). force is honored
+     * for nothing here — the rotation guard outranks it. */
+    if (sim->wbnSessionRotating) {
+        sim->wbnLobbyDirty = TRUE;
+        return;
+    }
     now = time(NULL);
     if (!force && (now - sim->wbnLobbyLastSent) < WBN_LOBBY_UPDATE_INTERVAL) {
         /* Within the rate-limit window: defer to the next tick. */
@@ -2878,6 +2923,13 @@ void serverSimReturnToLobby(ServerSim *sim) {
         return;
     }
 
+    /* Open the WBN session-rotation window. The map regenerate / rotation
+     * below and the post-tick lifecycle map pick both touch the new
+     * round's map; without this guard their serverSimWbnLobbyUpdate would
+     * report that map against the just-finished round's server_key. The
+     * lifecycle clears the flag after BeginSession installs the new key. */
+    sim->wbnSessionRotating = TRUE;
+
     /* Clear in-game vote state — any in-flight or just-concluded votes
      * are scoped to the round we're leaving. */
     serverSimGameVoteResetAll(sim);
@@ -2942,6 +2994,20 @@ void serverSimReturnToLobby(ServerSim *sim) {
     for (i = 0; i < MAX_TANKS; i++) {
         if (sim->lobbyPlayers[i].isBot) {
             sim->lobbyPlayers[i].ready = TRUE;
+        }
+    }
+
+    /* Reconcile the players table against the restored connection state:
+     * clear any slot still marked inUse but no longer connected. The leave
+     * path (serverSimRemovePlayer -> playersClearSlot) already does this per
+     * departure; this round-boundary backstop heals any slot that diverged
+     * through a path that bypassed it, so a stale identity can't survive
+     * into the new round and be re-announced to joiners by the inUse-gated
+     * CTRL_PLAYER_JOIN sync-replay. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i] &&
+            playersIsInUse(&sim->sim.plyrs, i) == TRUE) {
+            playersClearSlot(&sim->sim.plyrs, i);
         }
     }
     sim->hadPlayersEver = TRUE;
@@ -3228,6 +3294,10 @@ static void serverSimStaggerBaseTimers(ServerSim *sim) {
 void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
 
+    /* Fresh round — the last-human-left return-to-lobby check arms only
+     * once a human is seen this round. */
+    sim->roundHadHuman = false;
+
     /* Wire any bots in the roster into the running game (idempotent on
      * a fresh sim with zero bots). */
     botManagerOnGameStart(sim);
@@ -3310,6 +3380,9 @@ void serverSimStartGame(ServerSim *sim) {
 
     /* Fresh round — drop any vote state from the previous game. */
     serverSimGameVoteResetAll(sim);
+
+    /* Arms the last-human-left return-to-lobby check from a clean slate. */
+    sim->roundHadHuman = false;
 
     /* Reset the game world (map, world systems, queues, tick) */
     serverSimResetGameWorld(sim);

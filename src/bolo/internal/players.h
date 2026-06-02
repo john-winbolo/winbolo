@@ -147,6 +147,24 @@ void playersDestroy(players *plrs);
 void playersResetRoundState(players *plrs, BYTE playerNum);
 
 /*********************************************************
+*NAME:          playersClearSlot
+*PURPOSE:
+* Clears one slot back to the empty state set by
+* playersCreate: inUse FALSE, name/location/brain-name
+* blanked, clientType/clientFlags reset, and the alliance
+* object torn down and recreated empty. Unlike
+* playersResetRoundState (which preserves identity), this is
+* the full leave-path teardown: a slot left inUse with a
+* stale name is re-announced to every new client by the join
+* sync-replay's inUse-gated CTRL_PLAYER_JOIN.
+*
+*ARGUMENTS:
+* plrs      - Pointer to the players object
+* playerNum - Slot to clear
+*********************************************************/
+void playersClearSlot(players *plrs, BYTE playerNum);
+
+/*********************************************************
 *NAME:          playersSetSelf
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99

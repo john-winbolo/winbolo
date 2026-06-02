@@ -1352,6 +1352,94 @@ void clientSimSetConnectErrorReason(ClientSim *cs, const char *str) {
   cs->connectErrorReason[sizeof(cs->connectErrorReason) - 1] = '\0';
 }
 
+/* Reset the transient game world to a clean slate on entering the
+ * lobby. Mirrors serverSimResetGameWorld's subsystem rebuild so the
+ * client's GameSim drops the round that just ended — otherwise the
+ * frozen last-round world (every remote player frozen where they
+ * stopped, spent shells, in-flight explosions, mine craters) lingers
+ * behind the lobby until the next game's first full-sync snapshot
+ * repopulates it.
+ *
+ * Scope is deliberately the transient/dynamic world only. The map
+ * itself — terrain plus pill/base placement and ownership — is owned by
+ * the CTRL_LOBBY_MAP_CHANGE reinstall path and is NOT touched here, so
+ * the two reactions don't fight over mp/pb/bs. Player identity in
+ * cs->sim.plyrs (name, country, flags) is connection-scoped and
+ * survives; only round-scoped render state is cleared, matching the
+ * server.
+ *
+ * The local slot is preserved: only MY_TANK is a real tank object on
+ * the client, and the snapshot's first-sync branch repositions it but
+ * does NOT recreate it (client_snapshot.c gates on MY_TANK != NULL).
+ * Nulling it would leave windowRunGameTick dereferencing NULL the
+ * instant the next round flips inLobby false. Remote players carry no
+ * tanks[] entry — they render from cs->sim.plyrs + the interp context
+ * (client_snapshot.c's other-player branch) — so their stale positions
+ * are cleared there instead.
+ *
+ * Subsystem rebuilds use the same set and order as
+ * serverSimResetGameWorld; keep them in step. */
+void clientSimResetWorld(ClientSim *cs) {
+  BYTE i;
+  GameSim *gs;
+  if (cs == NULL) return;
+  gs = clientSimGetGameSim(cs);
+
+  /* Clear remote players' render state — frozen tank/LGM positions in
+   * the players struct plus the interpolation history feeding them. Any
+   * stray remote tanks[] object (defensive; the snapshot path doesn't
+   * create them) is torn down too. The local slot is skipped so MY_TANK
+   * stays valid. */
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (i == cs->myPlayerNum) continue;
+    if (gs->tanks[i] != NULL) {
+      tankDestroy(gs, &gs->tanks[i]);
+      gs->tanks[i] = NULL;
+    }
+    if (gs->lgmen[i] != NULL) {
+      lgmDestroy(&gs->lgmen[i]);
+      gs->lgmen[i] = NULL;
+    }
+    playersResetRoundState(&gs->plyrs, i);
+  }
+  interpCreate(&cs->interpCtx, cs->myPlayerNum);
+
+  shellsDestroy(&gs->shs);
+  gs->shs = shellsCreate();
+
+  explosionsDestroy(&gs->expl);
+  explosionsCreate(&gs->expl);
+
+  minesDestroy(&gs->mns);
+  minesCreate(&gs->mns, gs->hiddenMines);
+
+  minesExpDestroy(&gs->minesExplosions);
+  minesExpCreate(&gs->minesExplosions);
+
+  rubbleDestroy(&gs->rbl);
+  rubbleCreate(&gs->rbl);
+
+  buildingDestroy(&gs->blds);
+  buildingCreate(&gs->blds);
+
+  grassDestroy(&gs->grs);
+  grassCreate(&gs->grs);
+
+  swampDestroy(&gs->swp);
+  swampCreate(&gs->swp);
+
+  floodDestroy(&gs->ff);
+  floodCreate(&gs->ff);
+
+  tkExplosionDestroy(&gs->tankExplosions);
+  tkExplosionCreate(&gs->tankExplosions);
+
+  /* Client-only round-scoped render/predict state (interp reset above
+   * alongside the per-player clear). */
+  cs->serverShellCount = 0;
+  cs->predictedShellCount = 0;
+}
+
 bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name) {
   GameSim *gs;
   if (cs == NULL || buf == NULL || len <= 0) return false;

@@ -244,6 +244,12 @@ static struct {
      * by the UDP server around the register call; consumed by the
      * carrier path (Phase 5).  Unused in Phase 3. */
     bool                    controlSyncInProgress[MAX_TANKS];
+    /* Slots that were force-disconnected from inside a control-event
+     * deliver callback (queue overflow) and still need their sim-side
+     * teardown (serverSimRemovePlayer). That call publishes events, so it
+     * can't run mid-publish; it is deferred to
+     * transportUdpServerDrainPendingRemovals at a safe point in the tick. */
+    bool                    pendingSimRemove[MAX_TANKS];
     /* Most recent tick at which controlEventQueues[i].ackedSeq advanced
      * (or the tick the slot connected, for a fresh slot).  Bounds how
      * long the queue may sit unacked before the per-client retransmit
@@ -667,6 +673,12 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
                   idx, mpDiagCtrlName((int)evt->type),
                   (unsigned)q->ackedSeq, (unsigned)q->nextSeq);
         serverDisconnectClient(serverSimGetActive(), idx, false);
+        /* serverDisconnectClient handles the transport teardown and stops
+         * the recursion (connected=false), but the sim-side removal
+         * (serverSimRemovePlayer) publishes events and so can't run inside
+         * this deliver callback. Defer it; otherwise the slot keeps
+         * playerConnected/inUse set and leaks as a phantom. */
+        udpServer.pendingSimRemove[idx] = true;
         return;
     }
     /* If the queue was empty (ackedSeq == nextSeq) we have to restart the
@@ -1960,6 +1972,19 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
      * this; running this here rather than in each caller keeps the
      * leave-side hook centralized alongside the chat broadcast above. */
     lobbyAutoUnreadyOnChange(sim);
+}
+
+void transportUdpServerDrainPendingRemovals(ServerSim *sim) {
+    int i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!udpServer.pendingSimRemove[i]) continue;
+        udpServer.pendingSimRemove[i] = false;
+        /* Skip if the slot was reused by a fresh join since the overflow —
+         * serverDisconnectClient cleared connected; a reconnect sets it
+         * again, and we must not tear the new player down. */
+        if (udpServer.clients[i].connected) continue;
+        serverSimRemovePlayer(sim, (BYTE)i);
+    }
 }
 
 /* Send a localized server-originated message to all connected clients

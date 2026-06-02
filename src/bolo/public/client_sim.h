@@ -169,6 +169,13 @@ ClientSim *clientSimAlloc(void);
  * GmeStartDelay,GmeLength} setters when needed. */
 bool clientSimCreate(ClientSim *cs);
 void clientSimDestroy(ClientSim *cs);
+/* Resets the transient game world (tanks, LGMs, per-tick sim systems)
+ * to a clean slate on entering the lobby, leaving the map, player
+ * identity, connection, and lobby mirror intact. Mirrors
+ * serverSimResetGameWorld so the last round doesn't linger behind the
+ * lobby. Driven by CTRL_GAME_PHASE_LOBBY so it is identical on SP,
+ * host, and remote clients. */
+void clientSimResetWorld(ClientSim *cs);
 void clientSimSetPlayerNum(ClientSim *cs, BYTE playerNum);
 
 /*********************************************************

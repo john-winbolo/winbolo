@@ -142,6 +142,24 @@ void playersResetRoundState(players *plrs, BYTE playerNum) {
   p->needUpdate = FALSE;
 }
 
+void playersClearSlot(players *plrs, BYTE playerNum) {
+  player *p;
+
+  if (plrs == NULL || (*plrs) == NULL || playerNum >= MAX_TANKS) {
+    return;
+  }
+  p = &(*plrs)->item[playerNum];
+
+  /* Round/world state, then identity back to the playersCreate baseline. */
+  playersResetRoundState(plrs, playerNum);
+  p->inUse = FALSE;
+  p->playerName[0] = '\0';
+  p->location[0] = '\0';
+  p->clientType = CLIENT_TYPE_UNKNOWN;
+  p->clientFlags = 0;
+  (*plrs)->playerBrainNames[playerNum][0] = '\0';
+}
+
 /*********************************************************
 *NAME:          playersDestroy
 *AUTHOR:        John Morrison

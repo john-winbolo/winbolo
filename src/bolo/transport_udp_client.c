@@ -843,16 +843,21 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     (unsigned)c->mapDownloadTotal,
                     (unsigned)c->playerNum);
                 c->joinState = UDP_CLIENT_CONNECTED;
-                /* No-lobby joiner: server is already running, so install
-                 * the buffered map onto the ClientSim immediately. The
-                 * lobby case defers install until the LOBBY→RUNNING
-                 * phase transition runs it (see clientSimApplyControlOrdered).
-                 * Order: install → flag → event. */
-                if (!c->clientSim->inLobby) {
-                    installCompressedMap(c->clientSim, c->mapDownloadBuf,
-                                         (int)c->mapDownloadTotal, NULL);
-                    c->mapInstalled = true;
-                }
+                /* Install the buffered map immediately, whether the server
+                 * is running or in the lobby. The lobby case used to defer
+                 * install to the LOBBY→RUNNING transition, but that left a
+                 * remote client showing the PREVIOUS round's map (its
+                 * captured bases/pills) behind the lobby, while the
+                 * in-process host — which installs inline on
+                 * CTRL_LOBBY_MAP_CHANGE — showed the fresh neutral map. That
+                 * transport split is the asymmetric-runtime bug class; both
+                 * paths now reinstall on a lobby map (re)download. The
+                 * LOBBY→RUNNING transition's queue/ack reset still runs; its
+                 * own install step is gated on !mapInstalled, so it is a
+                 * no-op now. Order: install → flag → event. */
+                installCompressedMap(c->clientSim, c->mapDownloadBuf,
+                                     (int)c->mapDownloadTotal, NULL);
+                c->mapInstalled = true;
                 {
                     ControlEvent evt = { .type = CTRL_MAP_DOWNLOAD_COMPLETE };
                     clientSimApplyControl(c->clientSim, &evt);

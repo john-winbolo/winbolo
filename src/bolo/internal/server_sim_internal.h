@@ -88,6 +88,12 @@ struct ServerSim {
      * the lobby countdown starts. */
     bool     wbnLobbyDirty;        /* a lobby field changed since last send */
     time_t   wbnLobbyLastSent;     /* last server/lobby_update send time */
+    bool     wbnSessionRotating;   /* TRUE between round-end and the next
+                                      * session's register: suppresses
+                                      * lobby_update so the next round's map
+                                      * never reports against the old (just-
+                                      * quit) server_key. The change is held
+                                      * as dirty and flushed on the new key. */
     uint8_t  mapMd5[16];           /* MD5 of the active map's BMAPBOLO bytes */
     bool     mapMd5Valid;          /* mapMd5 holds a usable hash */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
@@ -109,6 +115,10 @@ struct ServerSim {
     int32_t      countdownTicks;     /* Countdown timer (in ticks) */
     int32_t      originalGameLength; /* Cached for reset between rounds */
     bool         hadPlayersEver;     /* For auto-close detection */
+    bool         roundHadHuman;      /* A human was present during this running
+                                      * round; gates the return-to-lobby when
+                                      * the last human leaves so a bot-only
+                                      * game start doesn't loop. */
     bool         quitOnWin;          /* Server should check for win condition */
     bool         autoCloseOnEmpty;   /* Server should close when all players leave */
     char         pendingWinMessage[512]; /* Win message to send after returning to lobby */
