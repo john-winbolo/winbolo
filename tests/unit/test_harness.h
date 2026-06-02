@@ -171,6 +171,13 @@ int run_return_to_lobby_drops_wbn_keeps_identity(void);
 int run_wbn_lobby_update_deferred_during_rotation(void);
 int run_wbn_lobby_update_sends_when_not_rotating(void);
 
+/* Lobby/leave cleanup (test_lobby_reset_cleanup.c). Removed slots clear
+ * (no phantom re-announce), and the last human leaving a running game
+ * returns the server to the lobby. */
+int run_remove_player_clears_slot(void);
+int run_last_human_leave_returns_to_lobby(void);
+int run_humanless_round_does_not_autoend(void);
+
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
  * the host's reliable control queue at game start with 16 players. */

@@ -2403,6 +2403,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
+    tests/unit/test_lobby_reset_cleanup.c
     tests/unit/test_log_roundtrip.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
@@ -2572,6 +2573,9 @@ set(_unit_test_names
     return_to_lobby_drops_wbn_keeps_identity
     wbn_lobby_update_deferred_during_rotation
     wbn_lobby_update_sends_when_not_rotating
+    remove_player_clears_slot
+    last_human_leave_returns_to_lobby
+    humanless_round_does_not_autoend
     log_roundtrip_basic
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world
