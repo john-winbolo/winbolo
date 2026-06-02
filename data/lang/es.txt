@@ -268,6 +268,7 @@ STR_DLGNETINFO_KBIN=KB/s entrada:
 STR_DLGNETINFO_KBOUT=KB/s salida:
 STR_DLGNETINFO_PACKETS_RATE=Paquetes/s: {number} entrada / {number2} salida
 STR_DLGNETINFO_KB_RATE=KB/s: {string1} entrada / {string2} salida
+STR_DLGNETINFO_LOSS=Pérdida de paquetes: {number}% ({number2}/{number3} este seg., {number4} total partida)
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Copiar semilla

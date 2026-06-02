@@ -712,6 +712,7 @@ static void renderNetInfoContent(ClientSim *cs) {
     int  ping = 0, ppsec = 0, numErrors = 0;
     int  ppsIn = 0, ppsOut = 0;
     int  bpsIn = 0, bpsOut = 0;
+    int  snapshotsRecv = 0, snapshotsLost = 0, snapshotsLostTotal = 0;
 
     netGetServerAddressStr(cs, str);
     ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_SERVER), str);
@@ -738,7 +739,8 @@ static void renderNetInfoContent(ClientSim *cs) {
         uint16_t udpPing = clientSimGetNetPing(cs);
         if (udpPing > 0) ping = (int)udpPing;
         int udpErrors = 0;
-        clientSimGetUdpNetStats(cs, &ppsIn, &ppsOut, &bpsIn, &bpsOut, &udpErrors);
+        clientSimGetUdpNetStats(cs, &ppsIn, &ppsOut, &bpsIn, &bpsOut, &udpErrors,
+                                &snapshotsRecv, &snapshotsLost, &snapshotsLostTotal);
         numErrors = udpErrors;
     }
     ImGui::Separator();
@@ -764,6 +766,23 @@ static void renderNetInfoContent(ClientSim *cs) {
         MessageArgs args = {};
         args.number = numErrors;
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGNETINFO_ERRORS, &args));
+    }
+    /* Inbound snapshot loss.  Computed from serverTick gaps — counts
+     * snapshots the wire dropped before reaching us, distinct from the
+     * cumulative "errors" line above.  Shows current 1-second window
+     * (percent + raw counts) plus a game-long lost count. */
+    {
+        int total = snapshotsRecv + snapshotsLost;
+        MessageArgs args = {};
+        if (total > 0) {
+            args.number = (snapshotsLost * 100 + total / 2) / total;
+        } else {
+            args.number = 0;
+        }
+        args.number2 = snapshotsLost;
+        args.number3 = total;
+        args.number4 = snapshotsLostTotal;
+        ImGui::TextUnformatted(langGetTextFmt(STR_DLGNETINFO_LOSS, &args));
     }
 
     /* Ping graph */
