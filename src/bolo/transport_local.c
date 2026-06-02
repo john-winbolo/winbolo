@@ -50,6 +50,14 @@ typedef struct {
     uint32_t queueWriteIdx;
     bool ticksServer;           /* If false, tick() skips serverSimTick() */
     ClientSim *cs;              /* Owning ClientSim — snapshot dest at tick end */
+    /* Per-tick event dedup. Client polls every ~10ms but the server
+     * advances every ~20ms, so the same EVENT_* lands in two snapshots
+     * back-to-back unless we gate.  Without this, harvest/explosion
+     * sounds echo, newswire lines duplicate, and Steam stats double-
+     * count.  Matches the per-event reliable-seq dedup the UDP
+     * transport gets via reliableEventAck. */
+    uint32_t lastDeliveredTick;
+    bool     hasLastDelivered;
 } TransportLocalCtx;
 
 static void localSendInput(void *ctx, const InputPacket *input) {
@@ -92,6 +100,11 @@ static bool localGetSnapshot(void *ctx, BYTE clientIdx,
                            pills, maxPills,
                            events, maxEvents,
                            false);
+    if (lctx->hasLastDelivered && hdr->serverTick == lctx->lastDeliveredTick) {
+        hdr->reliableEventCount = 0;
+    }
+    lctx->lastDeliveredTick = hdr->serverTick;
+    lctx->hasLastDelivered = true;
     return TRUE;
 }
 
@@ -117,7 +130,8 @@ static bool localTick(void *ctx) {
 
     /* Pull and apply a snapshot every tick — the local transport now
      * owns the client-side snapshot apply that frontends used to drive
-     * via per-frame clientSimNetSyncSnapshot calls. */
+     * via per-frame clientSimNetSyncSnapshot calls.  Routed through
+     * localGetSnapshot so the per-tick event dedup applies here too. */
     if (lctx->cs != NULL) {
         SnapshotHeader snapHdr;
         TankSnapshot snapTanks[MAX_TANKS];
@@ -126,14 +140,13 @@ static bool localTick(void *ctx) {
         BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
         PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
         GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-        serverSimBuildSnapshot(lctx->sim, lctx->playerNum, &snapHdr,
-                               snapTanks, MAX_TANKS,
-                               snapShells, MAX_SNAPSHOT_SHELLS,
-                               snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                               snapBases, MAX_SNAPSHOT_BASES,
-                               snapPills, MAX_SNAPSHOT_PILLS,
-                               snapEvents, MAX_SNAPSHOT_EVENTS,
-                               false);
+        localGetSnapshot(ctx, lctx->playerNum, &snapHdr,
+                         snapTanks, MAX_TANKS,
+                         snapShells, MAX_SNAPSHOT_SHELLS,
+                         snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
+                         snapBases, MAX_SNAPSHOT_BASES,
+                         snapPills, MAX_SNAPSHOT_PILLS,
+                         snapEvents, MAX_SNAPSHOT_EVENTS);
         clientSimSyncFromSnapshot(lctx->cs, &snapHdr,
                                   snapTanks, snapHdr.tankCount,
                                   snapShells, snapHdr.shellCount,
