@@ -1831,6 +1831,17 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         evt.type = CTRL_BALANCE_PROPOSAL;
         serverSimPublishControl(sim, &evt);
     }
+
+    /* Clear the players-struct identity for the vacated slot. Done last,
+     * after every read above that needs the departing player's name /
+     * alliances (CTRL_PLAYER_LEAVE fill, rejoin-ownership record, ally
+     * migration). Without this the slot stays inUse with the old name and
+     * the join sync-replay's inUse-gated CTRL_PLAYER_JOIN loop re-announces
+     * the departed player or bot to every new client as a frozen phantom —
+     * it never receives snapshot updates, which gate on playerConnected.
+     * This is the identity teardown serverSimResetGameWorld's comment
+     * already delegates to the leave path. */
+    playersClearSlot(&sim->sim.plyrs, playerNum);
 }
 
 bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
