@@ -431,10 +431,17 @@ void serverInstanceTick(ServerSim *sim) {
       serverSimPublishLobbySettings(sim);
       {
         BYTE pi;
+        /* Republish EVERY slot, not just connected ones. A player who
+         * left mid-round had their CTRL_LOBBY_SLOT suppressed — the
+         * leave-time publish is gated to lobby/countdown state
+         * (transport_udp_server.c PACKET_QUIT), so a running-state quit
+         * never told clients to clear that slot. The client's lobbySlots
+         * mirror is only mutated by CTRL_LOBBY_SLOT (CTRL_PLAYER_LEAVE is
+         * chat-only), so without this the departed player lingers as a
+         * ghost in the returning lobby. A vacant slot fills as
+         * connected=false (serverSimFillLobbySlotEvent), which clears it. */
         for (pi = 0; pi < MAX_TANKS; pi++) {
-          if (sim->playerConnected[pi]) {
-            serverSimPublishLobbySlot(sim, pi);
-          }
+          serverSimPublishLobbySlot(sim, pi);
         }
       }
       /* Send the win message now that players are back in the lobby */
