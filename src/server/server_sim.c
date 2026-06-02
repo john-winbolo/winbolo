@@ -2996,6 +2996,20 @@ void serverSimReturnToLobby(ServerSim *sim) {
             sim->lobbyPlayers[i].ready = TRUE;
         }
     }
+
+    /* Reconcile the players table against the restored connection state:
+     * clear any slot still marked inUse but no longer connected. The leave
+     * path (serverSimRemovePlayer -> playersClearSlot) already does this per
+     * departure; this round-boundary backstop heals any slot that diverged
+     * through a path that bypassed it, so a stale identity can't survive
+     * into the new round and be re-announced to joiners by the inUse-gated
+     * CTRL_PLAYER_JOIN sync-replay. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!sim->playerConnected[i] &&
+            playersIsInUse(&sim->sim.plyrs, i) == TRUE) {
+            playersClearSlot(&sim->sim.plyrs, i);
+        }
+    }
     sim->hadPlayersEver = TRUE;
     sim->gameLength = sim->originalGameLength;
     sim->emptyResetTicks = -1;
