@@ -1560,20 +1560,6 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         }
       }
 
-      /* Gunsight overlay — custom 17×17 crosshair, center pixel (8,8) = aim point.
-       * Top-left is at the same position as the old 16×16 tile sprite so the
-       * center aligns with the gunsight world position. */
-      if (gs->mapX != NO_GUNSIGHT && gCrosshairTex) {
-        int gsGameX = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
-        int gsGameY = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
-        SDL_FRect gsDest = {
-          (float)(originX + (gsGameX - TILE_SIZE_X) * gZoomFactor - edgeX),
-          (float)(originY + (gsGameY - TILE_SIZE_Y) * gZoomFactor - edgeY),
-          17.0f * (float)gZoomFactor, 17.0f * (float)gZoomFactor
-        };
-        SDL_RenderTexture(gRenderer, gCrosshairTex, NULL, &gsDest);
-      }
-
       /* Build-mode cursor overlay */
       if (useCursor) {
         SDL_FRect curSrc = { (float)(MOUSE_SQUARE_X * gSheetScale), (float)(MOUSE_SQUARE_Y * gSheetScale),
@@ -1595,6 +1581,22 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       /* Tank labels (needs fonts — separate pass after tank sprites) */
       sdl3DrawTankLabels(tks);
       mapViewDrawLGMs(&mvCtx, lgms, originX, originY, tileW, tileH, edgeX, edgeY);
+
+      /* Gunsight overlay — custom 17×17 crosshair, center pixel (8,8) = aim point.
+       * Top-left is at the same position as the old 16×16 tile sprite so the
+       * center aligns with the gunsight world position. Drawn after the sprite
+       * passes so the aiming reticle stays on top of tanks (incl. boat tanks),
+       * shells, and LGMs rather than being painted over by them. */
+      if (gs->mapX != NO_GUNSIGHT && gCrosshairTex) {
+        int gsGameX = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
+        int gsGameY = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
+        SDL_FRect gsDest = {
+          (float)(originX + (gsGameX - TILE_SIZE_X) * gZoomFactor - edgeX),
+          (float)(originY + (gsGameY - TILE_SIZE_Y) * gZoomFactor - edgeY),
+          17.0f * (float)gZoomFactor, 17.0f * (float)gZoomFactor
+        };
+        SDL_RenderTexture(gRenderer, gCrosshairTex, NULL, &gsDest);
+      }
 
       /* Phase 5 overlays (inside clip rect so they stay within the game area) */
       if (isPillView) {
