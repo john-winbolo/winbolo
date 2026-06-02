@@ -3115,6 +3115,18 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             if (isGameInput) continue;
         }
 
+        /* Mouse wheel adjusts gunsight range while in-game. Reaches here
+         * only when ImGui isn't capturing the mouse (the swallow block
+         * above continues out for wheel events over UI panels). */
+        if (ev.type == SDL_EVENT_MOUSE_WHEEL &&
+            cs && clientSimGetNetStatus(cs) == netRunning) {
+            if (ev.wheel.y > 0.0f) {
+                inputBumpGunsight(+1);
+            } else if (ev.wheel.y < 0.0f) {
+                inputBumpGunsight(-1);
+            }
+        }
+
         /* Handle winbolo:// URL opened while app is already running.
            macOS delivers URL scheme activations as SDL_EVENT_DROP_FILE. */
         if (ev.type == SDL_EVENT_DROP_FILE && ev.drop.data) {
