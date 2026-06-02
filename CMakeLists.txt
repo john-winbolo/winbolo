@@ -2212,6 +2212,21 @@ if(HAVE_SENTRY AND TARGET crashpad_handler)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:crashpad_handler>" "${DIST_DIR}/")
 endif()
 
+# Strip debug info from the staged Linux binaries before zipping.  Only Linux
+# carries embedded DWARF in the ELF binaries; Windows keeps it in separate .pdb
+# files and macOS in .dSYM bundles, so neither needs stripping here.  We strip
+# the staged copies in DIST_DIR, never the build-tree originals, so the symbols
+# uploaded to Sentry stay intact regardless of build/upload order.
+set(DIST_STRIP_CMD "")
+if(UNIX AND NOT APPLE AND CMAKE_STRIP)
+    set(DIST_STRIP_CMD
+        COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:WinBolo>"
+        COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:WinBoloDS>"
+        COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:LogViewer>"
+        COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:MapEditor>"
+        COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:BrainTest>")
+endif()
+
 add_custom_target(dist
     DEPENDS WinBolo WinBoloDS LogViewer MapEditor BrainTest
     COMMENT "Creating distribution zip ${DIST_ZIP}"
@@ -2245,6 +2260,9 @@ add_custom_target(dist
 
     # Brain scripts
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/brains/GoalHunter" "${DIST_DIR}/Brains/GoalHunter"
+
+    # Strip debug info from the staged Linux binaries (no-op on Win/macOS)
+    ${DIST_STRIP_CMD}
 
     # Create zip
     COMMAND ${CMAKE_COMMAND} -E rm -f "${DIST_ZIP}"
