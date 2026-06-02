@@ -371,3 +371,11 @@ uint8_t inputConsumeGunsightAdj(void) {
   lastGunsightAdj = 0;
   return val;
 }
+
+void inputBumpGunsight(int direction) {
+  if (direction > 0) {
+    lastGunsightAdj = 1;
+  } else if (direction < 0) {
+    lastGunsightAdj = 2;
+  }
+}
