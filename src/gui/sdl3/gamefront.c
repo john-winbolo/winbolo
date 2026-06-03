@@ -1061,8 +1061,18 @@ bool gameFrontSetDlgState(openingStates newState) {
      * committing to a JOIN_REQUEST whose new-protocol length gate would
      * silently drop on mismatch. On version mismatch surface a
      * localized "Server is version X, you have Y" error; on timeout
-     * fall through to the standard "server unreachable" error. */
-    {
+     * fall through to the standard "server unreachable" error.
+     *
+     * Skip when joining our own freshly-started server: the version
+     * is BOLO_VERSION_* by definition, and the round-trip races the
+     * host timer's first fire — under rapid open-LAN-finder /
+     * New-Game cycling on Windows the response can miss the 5-second
+     * SO_RCVTIMEO and look like a crash. spServerSimActive is set
+     * by gameFrontSetupServer two stack frames up before this
+     * recurses into openUdpJoin, so it's only true on the self-host
+     * path; every remote join (LAN finder Join, Manual Connect,
+     * tracker Join) leaves it false and still pre-flights. */
+    if (!spServerSimActive) {
       DiscoveryPingResult dpr;
       if (!discoveryPingServer(gameFrontUdpAddress, gameFrontTargetUdp, &dpr)) {
         imguiMessageBoxEx(DIALOG_BOX_TITLE,

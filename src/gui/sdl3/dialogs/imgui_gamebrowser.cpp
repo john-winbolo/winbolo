@@ -1200,12 +1200,21 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         dialogFrameCapEnd(frameCapStart);
     }
 
-    /* Detach search thread if still running — static state keeps it safe */
+    /* Halt the LAN broadcast search and drop the ping pool's pending
+     * work before the dialog returns. Without this, the New Game path
+     * that follows opens a fresh UDP server on port 27500, and the
+     * still-running broadcast worker sends INFO_REQUESTs that the
+     * new server queues ahead of the host's own version-pre-flight
+     * discoveryPingServer, racing it past the 5-second recvfrom
+     * timeout. resetPings() supersedes anything already popped by a
+     * pool worker so its eventual result is dropped; the workers
+     * themselves block on their own ephemeral-port sockets and don't
+     * touch port 27500, so they don't need to be joined. */
+    discoveryAbortBroadcastSearch();
+    resetPings();
     if (searchThread.joinable()) {
-        searchThread.detach();
+        searchThread.join();
     }
-
-    /* Ping threads are fire-and-forget (detached), nothing to clean up */
 
     /* Destroy refresh icon texture */
     if (s_refreshIcon) { SDL_DestroyTexture(s_refreshIcon); s_refreshIcon = nullptr; }

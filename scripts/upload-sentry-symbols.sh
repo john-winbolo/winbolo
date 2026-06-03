@@ -71,10 +71,16 @@ echo "  Project: $PROJECT"
 echo "  Path:    $BUILD_PATH"
 echo ""
 
-# Find only our own binaries/debug symbols, excluding FetchContent _deps
-# which contains test fixtures (e.g. crashpad's "Wrong CRC.zip") that
-# break sentry-cli's archive scanner.
-find "$BUILD_PATH" -path "*/_deps" -prune -o \( \
+# Find our own binaries plus third-party PDBs from _deps (SDL3, libcurl,
+# onnxruntime, sentry/crashpad, etc.) so vendor frames symbolicate too.
+# Excludes specific subtrees that ship test fixtures sentry-cli chokes on:
+#   - crashpad's bundled zlib test data (malformed .zip files)
+#   - breakpad's testdata PDBs (e.g. kernel32.pdb) which would upload as noise
+find "$BUILD_PATH" \
+    \( -path "*/_deps/sentry-src/external/crashpad/third_party/zlib*" \
+    -o -path "*/_deps/sentry-src/external/breakpad/src/processor/testdata*" \
+    -o -path "*/_deps/sentry-src/external/breakpad/src/tools/windows/dump_syms/testdata*" \
+    \) -prune -o \( \
     -name "*.pdb" -o \
     -name "*.dSYM" -o \
     -name "WinBolo" -o \
