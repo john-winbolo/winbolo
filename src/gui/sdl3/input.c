@@ -55,6 +55,16 @@ static int smoothScrollAccumY = 0;
 
 static BYTE scrollKeyCount = 0;
 
+/* Pill view auto-repeat: minimum wall-clock gap between pill advances while a
+ * key is held. Each advance jumps a whole pill, so these are deliberately slow
+ * compared with map scrolling. Wall-clock based so they're independent of how
+ * often inputGetKeys/inputScroll are polled. The pill-view toggle key cycles a
+ * bit faster than directional stepping. */
+#define PILLVIEW_CYCLE_INTERVAL_MS 165
+#define PILLVIEW_STEP_INTERVAL_MS  250
+static Uint32 pillViewCycleMs = 0;
+static Uint32 pillViewStepMs  = 0;
+
 /* Gunsight adjustment state — set by inputGetKeys, consumed by
  * screenBuildInputPacket via inputConsumeGunsightAdj().
  * 0 = no change, 1 = increase, 2 = decrease. */
@@ -102,9 +112,59 @@ static bool keyDown(int sc) {
 *********************************************************/
 bool inputSetup(void) {
   scrollKeyCount = 0;
+  pillViewCycleMs = 0;
+  pillViewStepMs = 0;
   smoothScrollAccumX = 0;
   smoothScrollAccumY = 0;
   return TRUE;
+}
+
+/*********************************************************
+*NAME:          pillViewInputStep
+*PURPOSE:
+*  Handles the pill-view toggle key (enter / cycle to next
+*  pill) and, while in pill view, directional pill stepping
+*  via the scroll keys. Both auto-repeat while a key is held,
+*  with the first action firing immediately and subsequent
+*  ones gated to PILLVIEW_STEP_INTERVAL_MS so it doesn't race
+*  through the pills. Returns TRUE if in pill view after
+*  processing (caller then suppresses map scrolling).
+*********************************************************/
+static bool pillViewInputStep(ClientSim *cs, keyItems *setKeys) {
+  bool inPill = clientSimIsInPillView(cs);
+  Uint32 now  = SDL_GetTicks();
+
+  /* Pill-view toggle key: enters pill view when not already in it, else
+   * advances to the next pill. First press acts immediately, then repeats
+   * on the cycle cadence. */
+  bool cycle = KEY_DOWN(setKeys->kiPillView);
+  if (!cycle) {
+    pillViewCycleMs = 0;
+  } else if (pillViewCycleMs == 0 ||
+             (now - pillViewCycleMs) >= PILLVIEW_CYCLE_INTERVAL_MS) {
+    pillViewCycleMs = now;
+    clientSimPillView(cs, 0, 0);
+    inPill = clientSimIsInPillView(cs);
+  }
+
+  /* Directional pill stepping — only in pill view, on the slower step
+   * cadence (computed from inPill so it can't fire on the entering press). */
+  bool stepUp    = inPill && KEY_DOWN(setKeys->kiScrollUp);
+  bool stepDown  = inPill && KEY_DOWN(setKeys->kiScrollDown);
+  bool stepLeft  = inPill && KEY_DOWN(setKeys->kiScrollLeft);
+  bool stepRight = inPill && KEY_DOWN(setKeys->kiScrollRight);
+  if (!stepUp && !stepDown && !stepLeft && !stepRight) {
+    pillViewStepMs = 0;
+  } else if (pillViewStepMs == 0 ||
+             (now - pillViewStepMs) >= PILLVIEW_STEP_INTERVAL_MS) {
+    pillViewStepMs = now;
+    if (stepUp)    { clientRenderFrame(cs, up); }
+    if (stepDown)  { clientRenderFrame(cs, down); }
+    if (stepLeft)  { clientRenderFrame(cs, left); }
+    if (stepRight) { clientRenderFrame(cs, right); }
+  }
+
+  return clientSimIsInPillView(cs);
 }
 
 /*********************************************************
@@ -122,6 +182,7 @@ bool inputSetup(void) {
 *********************************************************/
 static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
   int dx = 0, dy = 0;
+
   if (KEY_DOWN(setKeys->kiScrollLeft))  dx -= 1;
   if (KEY_DOWN(setKeys->kiScrollRight)) dx += 1;
   if (KEY_DOWN(setKeys->kiScrollUp))    dy -= 1;
@@ -241,7 +302,13 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     }
   }
 
-  if (smoothScrollingEnabled) {
+  /* Pill view consumes the scroll keys (and the pill-view toggle key) to
+   * step between pills; map scrolling is suppressed while it is active. */
+  if (pillViewInputStep(cs, setKeys)) {
+    smoothScrollAccumX = 0;
+    smoothScrollAccumY = 0;
+    sdl3DrawSetDragOffset(0, 0);
+  } else if (smoothScrollingEnabled) {
     smoothScrollTick(cs, setKeys);
   } else {
     /* Drop any stale sub-tile accumulation from a previous smooth-scroll session. */
@@ -284,6 +351,15 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 *********************************************************/
 void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
+    return;
+  }
+
+  /* Pill view consumes the scroll keys (and the pill-view toggle key) to
+   * step between pills; map scrolling is suppressed while it is active. */
+  if (pillViewInputStep(cs, setKeys)) {
+    smoothScrollAccumX = 0;
+    smoothScrollAccumY = 0;
+    sdl3DrawSetDragOffset(0, 0);
     return;
   }
 
