@@ -6282,7 +6282,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         if (chatHistH < 20.0f) chatHistH = 20.0f;
 
                         ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHistH), ImGuiChildFlags_Borders);
+                        /* Wrap long lines at the child's right edge so a
+                         * full-length (128-char) message flows onto extra
+                         * lines instead of running off the panel. */
+                        ImGui::PushTextWrapPos(0.0f);
                         ImGui::TextUnformatted(clientSimGetLobbyChatHistory(cs));
+                        ImGui::PopTextWrapPos();
                         if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
                             ImGui::SetScrollHereY(1.0f);
                         }
@@ -6608,7 +6613,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 if (chatHeight < ImGui::GetTextLineHeightWithSpacing() * 3.4f)
                     chatHeight = ImGui::GetTextLineHeightWithSpacing() * 3.4f;
                 ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHeight), ImGuiChildFlags_Borders);
+                /* Wrap long lines at the child's right edge (see the
+                 * lobby Chat tab above). */
+                ImGui::PushTextWrapPos(0.0f);
                 ImGui::TextUnformatted(clientSimGetLobbyChatHistory(cs));
+                ImGui::PopTextWrapPos();
                 if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
                     ImGui::SetScrollHereY(1.0f);
                 }

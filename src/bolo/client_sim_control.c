@@ -428,6 +428,11 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * the RUNNING phase event and every subscriber should pick
          * up the lobby→game flip from this event. */
         cs->inLobby = false;
+        /* Clear the lobby chat as the round starts so the lobby we
+         * return to shows only this round's exit reason (and any new
+         * lobby chat after). Keeping it across the game was confusing —
+         * a "X has joined" line stayed visible after X left mid-round. */
+        cs->lobbyChatHistory[0] = '\0';
         frontEndAudioReturningToLobby(false);
         break;
     case CTRL_GAME_PHASE_GAME_OVER:
@@ -506,7 +511,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         if (cs->inLobby) {
             cs->netStat = netLobby;
             cs->countdownSeconds = 0;
-            cs->lobbyChatHistory[0] = '\0';
+            /* Chat is cleared at game start (CTRL_GAME_PHASE_RUNNING),
+             * not here — so the win/exit message published as the round
+             * ends survives into the lobby we return to. */
         }
         break;
     }
