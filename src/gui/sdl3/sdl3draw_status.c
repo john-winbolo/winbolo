@@ -751,21 +751,25 @@ void sdl3DrawTankLabel(char *str, BYTE playerNum,
   SDL_RenderTexture(gRenderer, gLabelTex[playerNum], NULL, &d);
 
   /* Country flag (humans) or brain icon (bots) drawn just after the name,
-   * scaled to the text height and vertically centred against it. */
+   * at 75% of the text height with partial alpha so the icon sits
+   * unobtrusively beside the name. Texture is shared with chat/lobby/browser
+   * renders, so the alpha mod is restored to 255 after drawing. */
   SDL_Texture *icon = NULL;
   float iconW = 0.0f, iconH = 0.0f;
   if (gLabelBot[playerNum]) {
     icon = sdl3ImguiGetBrainIcon();
-    if (icon) { iconH = texH; iconW = texH; }  /* brain icon is square */
+    if (icon) { iconH = texH * 0.75f; iconW = iconH; }  /* brain icon is square */
   } else if (gLabelCountry[playerNum][0] != '\0') {
     icon = flagsGetTexture(gLabelCountry[playerNum]);
-    if (icon) { iconH = texH; iconW = texH * (float)FLAG_WIDTH / (float)FLAG_HEIGHT; }
+    if (icon) { iconH = texH * 0.75f; iconW = iconH * (float)FLAG_WIDTH / (float)FLAG_HEIGHT; }
   }
   if (icon) {
     float gap = 2.0f * (float)gZoomFactor;
     SDL_SetTextureBlendMode(icon, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureAlphaMod(icon, 170);
     SDL_FRect id = { sx + texW + gap, sy + (texH - iconH) * 0.5f, iconW, iconH };
     SDL_RenderTexture(gRenderer, icon, NULL, &id);
+    SDL_SetTextureAlphaMod(icon, 255);
   }
 }
 
