@@ -2027,9 +2027,25 @@ static void serverSendServerMessage(ServerSim *sim, langid id, int argCount,
  * localized they should migrate to serverSendServerMessage above. */
 static void serverSendServerEnglishBroadcast(ServerSim *sim, const char *message) {
     ControlEvent evt;
+    size_t maxChars = sizeof(evt.u.serverText.text) - 1; /* PACKET_MAX_CHAT_MESSAGE */
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_SERVER_TEXT;
-    SDL_strlcpy(evt.u.serverText.text, message, sizeof(evt.u.serverText.text));
+    if (SDL_strlen(message) <= maxChars) {
+        SDL_strlcpy(evt.u.serverText.text, message, sizeof(evt.u.serverText.text));
+    } else {
+        /* CTRL_SERVER_TEXT / PACKET_CHAT_BROADCAST cap the wire payload at
+         * PACKET_MAX_CHAT_MESSAGE. Rather than let SDL_strlcpy lop the tail
+         * mid-character (a long winners list overflows the cap), cut on a
+         * UTF-8 boundary and append an ellipsis so the overflow reads as an
+         * intentional truncation. */
+        size_t cut = maxChars - 3; /* leave room for "..." */
+        while (cut > 0 && ((unsigned char)message[cut] & 0xC0) == 0x80) {
+            cut--; /* back up so a multi-byte sequence isn't split */
+        }
+        SDL_memcpy(evt.u.serverText.text, message, cut);
+        SDL_strlcpy(evt.u.serverText.text + cut, "...",
+                    sizeof(evt.u.serverText.text) - cut);
+    }
     /* In-process subscribers (SP host bots + human) consume CTRL_SERVER_TEXT
      * directly; UDP clients receive the encoder-emitted
      * PACKET_CHAT_BROADCAST(fromPlayer=0xFE) via the codec. */

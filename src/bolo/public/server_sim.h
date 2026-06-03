@@ -1080,6 +1080,19 @@ bool serverSimBuildSurrenderWinMessage(ServerSim *sim, uint8_t surrenderTeam,
                                        char *buf, size_t bufSize);
 
 /*********************************************************
+ *NAME:          serverSimResolveGameOver
+ *PURPOSE:
+ *  Resolves game-outcome policy at the running->gameOver
+ *  transition: builds the win/exit message into the sim's
+ *  pendingWinMessage and sends the matching WBN win events,
+ *  branching on surrender vs manual back-to-lobby vote vs a
+ *  normal base-ownership win. No-op when the sim has no lobby.
+ *  Called once from the host's game-over transition so every
+ *  host (dedicated + in-process) runs identical crediting.
+ *********************************************************/
+void serverSimResolveGameOver(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimCheckEmptyReset
  *PURPOSE:
  *  Checks if the server has been empty long enough to
