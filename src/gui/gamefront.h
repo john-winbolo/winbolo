@@ -689,6 +689,13 @@ void gameFrontSetSteamPresenceMenu(void);
  * friends can join the same lobby via Steam. */
 void gameFrontSetSteamPresenceLobby(struct ClientSim *cs);
 
+/* Throttled per-frame refreshers for the lobby and in-game loops. Safe to
+ * call every frame; they push to Steam at most a few times per second so the
+ * player count and (for hosts) the resolved external address stay current
+ * without hitting Steam's rich-presence rate limit. */
+void gameFrontTickSteamPresenceLobby(struct ClientSim *cs);
+void gameFrontTickSteamPresenceGame(struct ClientSim *cs);
+
 /*********************************************************
 *NAME:          gameFrontReloadSkins
 *AUTHOR:        John Morrison

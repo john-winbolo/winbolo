@@ -122,12 +122,10 @@ static void lobbySendReadyToggle(ClientSim *cs, bool ready) {
     /* Both single-player and multiplayer now go through the same
      * ready toggle. The server's all-ready detector trips the
      * lobby→running transition (synchronously via StartGameInPlace
-     * when worldPreLoaded, via countdown+StartGame otherwise). For
-     * SP the rich-presence update happens immediately on Ready;
-     * the next presence cycle picks up the running state. */
-    if (cs && clientSimIsSinglePlayer(cs) && ready) {
-        gameFrontUpdateSteamPresence(cs);
-    }
+     * when worldPreLoaded, via countdown+StartGame otherwise).
+     * Rich presence is driven by the lobby/game loops' throttled
+     * gameFrontTickSteamPresence* refreshers, so there's nothing to
+     * push from here. */
     clientSimNetSendReady(cs, ready);
 }
 
@@ -5520,8 +5518,14 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     int result = 0;
     bool running = true;
 
+    /* Show the lobby in Steam immediately on entry; the throttled tick at
+     * the top of the loop keeps the player count / connect address current
+     * (e.g. once the host's external address resolves via the tracker). */
+    gameFrontSetSteamPresenceLobby(cs);
+
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
+        gameFrontTickSteamPresenceLobby(cs);
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
