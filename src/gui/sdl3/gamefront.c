@@ -1909,7 +1909,14 @@ bool gameFrontSetupServer(void) {
    * this back off for Local games. */
   cfg.useWbn              = TRUE;
   cfg.compTanks           = (BYTE)compTanks;
-  cfg.useTracker          = gameFrontTrackerEnabled;
+  /* Internet host: always register with the tracker (no user toggle). The
+   * tracker is what makes the game discoverable and resolves the host's
+   * external address for NAT traversal and Steam "Join Game". Address/port
+   * come from the INI ([TRACKER] Address/Port, default tracker.winbolo.com:
+   * 50000) — there is no in-app UI for it. The LAN-only block below forces
+   * this back off for Local games; the single-player/passive path disables
+   * it separately. */
+  cfg.useTracker          = TRUE;
   cfg.trackerAddr         = gameFrontTrackerAddr;
   cfg.trackerPort         = gameFrontTrackerPort;
   cfg.useNatKeepalive     = gameFrontUseNatTraversal;
