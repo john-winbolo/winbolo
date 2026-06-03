@@ -56,6 +56,8 @@ extern "C" {
 #include "../../../server/geolookup.h"
 #include "../../lang.h"
 #include "imgui_gamebrowser.h"
+#include "imgui_keysetup.h"
+#include "imgui_nethint.h"
 }
 
 static const int DIALOG_W = 1024;
@@ -463,6 +465,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* Auto-refresh on open */
     bool autoRefresh = true;
 
+    /* First-time net-play setup hint: show once ever, as a popup inside
+     * this (Internet / LAN) window. Persists a flag so it never reappears. */
+    if (!gameFrontGetNetHintShown()) {
+        imguiNetHintOpen();
+        gameFrontSetNetHintShown(TRUE);
+    }
+
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
         SDL_Event ev;
@@ -470,6 +479,14 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
+            /* Key capture for the net-hint's in-game Set Keys popup —
+             * feed the scancode and don't let the browser see it. */
+            if (imguiKeySetupIsCapturingInGameKey() &&
+                ev.type == SDL_EVENT_KEY_DOWN &&
+                ev.key.windowID == SDL_GetWindowID(window)) {
+                imguiKeySetupHandleInGameScancode((int)ev.key.scancode);
+                continue;
+            }
             if (ev.type == SDL_EVENT_QUIT) {
                 gameFrontSetDlgState(openWelcome);
                 running = false;
@@ -1185,6 +1202,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
         ImGui::End(); /* ##GameBrowser panel */
         ImGui::End(); /* ##GameBrowserBg host */
+
+        /* First-time net-play setup hint (+ nested Set Keys popup). */
+        imguiNetHintRenderPopup();
 
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);

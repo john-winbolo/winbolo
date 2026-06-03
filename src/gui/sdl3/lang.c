@@ -1266,6 +1266,9 @@ static const LangEntry langTable[] = {
     {1406, "WBN balance failed"},
     /* Net Info — inbound snapshot loss for the last 1-second window */
     {1407, "Packet loss: {number}% ({number2}/{number3} this sec, {number4} game total)"},
+    /* First-time net-play setup hint */
+    {1408, "Getting Started"},
+    {1409, "Before jumping in to net play, you may want to set up your keys and choose a player name. You can change these any time later from the menu."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

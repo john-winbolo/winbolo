@@ -256,6 +256,9 @@ ClientSim *humanSim = NULL;
  * host doesn't dial out. */
 static bool s_isLanOnly = FALSE;
 
+/* First-time net-play setup hint flag (loaded from / saved to prefs). */
+static int s_netHintShown = 0;
+
 /* Set TRUE by the openUdpJoin error path when a join attempt fails
  * (server NACK'd the JOIN_REQUEST, name taken, password wrong, server
  * full, etc.). The outer dialog loop's openLan / openInternet /
@@ -1529,6 +1532,27 @@ void gameFrontSetPlayerName(char *pn) {
   strcpy(gameFrontName, pn);
 }
 
+/* Persist the current in-memory player name to long-term prefs. */
+void gameFrontPersistPlayerName(void) {
+  const char *prefsFile = getPreferenceFilePath();
+  WritePrivateProfileString("SETTINGS", "Player Name", gameFrontName, prefsFile);
+}
+
+/* First-time net-play setup hint: appears once ever when the user first
+ * heads into Internet / LAN play. Backed by the [SETTINGS] "Net Setup
+ * Hint Shown" pref so it never reappears across launches. */
+int gameFrontGetNetHintShown(void) {
+  return s_netHintShown;
+}
+
+void gameFrontSetNetHintShown(int shown) {
+  s_netHintShown = shown ? 1 : 0;
+  const char *prefsFile = getPreferenceFilePath();
+  char buf[8];
+  intToStr(s_netHintShown, buf, sizeof(buf));
+  WritePrivateProfileString("SETTINGS", "Net Setup Hint Shown", buf, prefsFile);
+}
+
 void gameFrontSetAIType(aiType ait) {
   compTanks = ait;
   if (humanSim != NULL) {
@@ -1907,6 +1931,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   /* Player Name */
   strcpy(def, langGetText(STR_DLGGAMESETUP_DEFAULTNAME));
   GetPrivateProfileString("SETTINGS", "Player Name", def, gameFrontName, sizeof(gameFrontName), prefsFile);
+
+  /* First-time net-play setup hint: shown once ever, then suppressed. */
+  GetPrivateProfileString("SETTINGS", "Net Setup Hint Shown", "0", buff, sizeof(buff), prefsFile);
+  s_netHintShown = atoi(buff);
 
   /* Target Address */
   def[0] = '\0';

@@ -354,6 +354,13 @@ void gameFrontGetPlayerName(char *pn);
 *********************************************************/
 void gameFrontSetPlayerName(char *pn);
 
+/* Persist the current in-memory player name to long-term prefs. */
+void gameFrontPersistPlayerName(void);
+
+/* First-time net-play setup hint: shown once ever, persisted in prefs. */
+int  gameFrontGetNetHintShown(void);
+void gameFrontSetNetHintShown(int shown);
+
 /*********************************************************
 *NAME:          gameFrontSetAIType
 *AUTHOR:        John Morrison

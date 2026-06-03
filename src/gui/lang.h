@@ -1399,6 +1399,10 @@
  * {number} = percentage, {number2} = lost count, {number3} = total expected. */
 #define STR_DLGNETINFO_LOSS                 1407
 
+/* First-time net-play setup hint */
+#define STR_DLGNETHINT_TITLE                1408
+#define STR_DLGNETHINT_MSG                  1409
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */
