@@ -207,6 +207,7 @@ static BYTE        gSmoothPrevEngineX   = 0;
 static BYTE        gSmoothPrevEngineY   = 0;
 static Uint32      gSmoothChangeTimeMsX = 0;
 static Uint32      gSmoothChangeTimeMsY = 0;
+static bool        gSmoothWasPillView   = false;
 
 /* Configurable status panel origins (zoomed pixel coords).
    -1 means "use desktop default" (zf * STATUS_*_LEFT/TOP).
@@ -1353,8 +1354,15 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     int    tileWpx  = TILE_SIZE_X * gZoomFactor;
     int    tileHpx  = TILE_SIZE_Y * gZoomFactor;
 
-    /* New ClientSim — snap, don't ease across a game/sim swap. */
-    if (cs != gSmoothLastCs) {
+    /* New ClientSim — snap, don't ease across a game/sim swap.
+     * Pill view is camera-locked on the pill: it must centre instantly
+     * with no slide, both on entry and when scrolling between pills
+     * (which can be a sub-snap-threshold tile step), so snap there too.
+     * Leaving pill view jumps the camera back to the tank in one step;
+     * snap that transition frame as well so the tank isn't eased into
+     * view. */
+    bool inPillView = clientSimIsInPillView(cs);
+    if (cs != gSmoothLastCs || inPillView || gSmoothWasPillView) {
       gSmoothLastCs        = cs;
       gSmoothLastEngineX   = engineX;
       gSmoothLastEngineY   = engineY;
@@ -1363,6 +1371,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       gSmoothChangeTimeMsX = nowMs;
       gSmoothChangeTimeMsY = nowMs;
     }
+    gSmoothWasPillView = inPillView;
 
     if (engineX != gSmoothLastEngineX) {
       int dx = (int)engineX - (int)gSmoothLastEngineX;
