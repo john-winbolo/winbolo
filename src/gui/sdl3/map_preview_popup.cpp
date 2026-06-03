@@ -30,12 +30,14 @@
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
+#include "dialogs/dialog_footer.h"   /* C++ (namespace WBUI) — outside extern "C" */
 
 extern "C" {
 #include "global.h"
 #include "map_preview_popup.h"
 #include "map_preview_view.h"
 #include "macos_pinch.h"
+#include "../lang.h"
 }
 
 /* Singleton popup state. */
@@ -119,13 +121,18 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
      * across re-opens (ImGui retains per-window state via the
      * "Map Preview" ID). */
     {
+        /* Default geometry matches the Choose Map dialog
+         * (imgui_lobby.cpp lobbyChooseMapRenderWindow): full screen minus
+         * a 15px gutter and ~3 lines at the bottom, with the same min
+         * sizes and 0.85-height cap. */
         ImVec2 displaySize = ImGui::GetIO().DisplaySize;
         const float kGutter = 15.0f;
         float lineH = ImGui::GetTextLineHeightWithSpacing();
         float winW = displaySize.x - kGutter * 2.0f;
         float winH = displaySize.y - kGutter * 2.0f - lineH * 3.0f;
-        if (winW < 320.0f) winW = 320.0f;
-        if (winH < 240.0f) winH = 240.0f;
+        if (winW < 480.0f) winW = 480.0f;
+        if (winH < 320.0f) winH = 320.0f;
+        if (winH > displaySize.y * 0.85f) winH = displaySize.y * 0.85f;
         ImGui::SetNextWindowSize(ImVec2(winW, winH),  ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowPos (ImVec2(kGutter, kGutter),
                                  ImGuiCond_FirstUseEver);
@@ -143,10 +150,12 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
             ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             g_popupOpen = false;
         }
-        /* Reserve room below the image for the Change / Close button
-         * row. The image fills everything above; the buttons sit on
-         * a single line at the bottom of the modal content. */
-        float btnRowH = ImGui::GetFrameHeightWithSpacing();
+        /* Reserve room below the image for the DialogFooter — the button
+         * row PLUS the separator + spacing it draws above the row. (Just
+         * one frame-height clipped the buttons in this NoScrollbar
+         * window.) The image fills everything above. */
+        float btnRowH = ImGui::GetFrameHeightWithSpacing()
+                      + ImGui::GetStyle().ItemSpacing.y * 3.0f + 2.0f;
         ImVec2 full = ImGui::GetContentRegionAvail();
         ImVec2 contentSize(full.x, full.y - btnRowH);
         if (contentSize.y < 64.0f) contentSize.y = 64.0f;
@@ -194,35 +203,23 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
             ImGui::Text("Map preview loading...");
         }
 
-        /* Button row — centered pair so the action bar reads the same
-         * as the Choose Map dialog's Cancel / Set Map row. */
-        {
-            const char *changeLbl = "Change";
-            const char *closeLbl  = "Close";
-            float wChange = g_showChangeButton
-                ? ImGui::CalcTextSize(changeLbl).x
-                  + ImGui::GetStyle().FramePadding.x * 2.0f
-                : 0.0f;
-            float wClose  = ImGui::CalcTextSize(closeLbl).x
-                          + ImGui::GetStyle().FramePadding.x * 2.0f;
-            float gap     = g_showChangeButton
-                ? ImGui::GetStyle().ItemSpacing.x : 0.0f;
-            float total   = wChange + gap + wClose;
-            float startX  = (ImGui::GetContentRegionAvail().x - total) * 0.5f;
-            if (startX > 0.0f) {
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
+        /* Footer row — standard 2-button dialog footer (dialog_footer.h:
+         * back-out/Close on the left, primary on the right). When the
+         * lobby grants map-change permission we show [Close] [Choose map];
+         * otherwise it's a lone view-only [Close]. "Choose map" latches a
+         * request the lobby polls (mapPreviewPopupConsumeChangeRequest) to
+         * open its Choose Map dialog. */
+        if (g_showChangeButton) {
+            int f = WBUI::DialogFooter(langGetText(STR_CLOSE),
+                                       langGetText(STR_DLGLOBBY_CHOOSE_MAP_BTN));
+            if (f == WBUI::FOOTER_CONFIRM) {
+                g_changeRequested = true;
+                g_popupOpen       = false;
+            } else if (f == WBUI::FOOTER_CANCEL) {
+                g_popupOpen = false;
             }
-            if (g_showChangeButton) {
-                if (ImGui::Button(changeLbl)) {
-                    /* Latch the request and close the popup. The lobby's
-                     * frame loop polls mapPreviewPopupConsumeChangeRequest
-                     * and opens its Choose Map dialog on a true return. */
-                    g_changeRequested = true;
-                    g_popupOpen       = false;
-                }
-                ImGui::SameLine();
-            }
-            if (ImGui::Button(closeLbl)) {
+        } else {
+            if (WBUI::DialogFooter(nullptr, langGetText(STR_CLOSE)) != WBUI::FOOTER_NONE) {
                 g_popupOpen = false;
             }
         }
