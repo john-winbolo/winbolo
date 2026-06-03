@@ -1353,12 +1353,19 @@ if(EXISTS "${STEAMWORKS_SDK_DIR}/public/steam/steam_api.h")
             COMMENT "Copying libsteam_api.so to WinBolo output directory"
         )
     endif()
-    add_custom_command(TARGET WinBolo POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/steam_appid.txt"
-            "$<TARGET_FILE_DIR:WinBolo>"
-        COMMENT "Copying steam_appid.txt to WinBolo output directory"
-    )
+    # On macOS, $<TARGET_FILE_DIR:WinBolo> is WinBolo.app/Contents/MacOS, so
+    # copying steam_appid.txt there embeds it inside the signed bundle — it then
+    # has to be stripped before signing/notarizing. Skip it on Apple; Steam
+    # supplies the App ID via env when it launches the game. For local Mac dev
+    # testing, drop a steam_appid.txt into the cwd by hand.
+    if(NOT APPLE)
+        add_custom_command(TARGET WinBolo POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_SOURCE_DIR}/steam_appid.txt"
+                "$<TARGET_FILE_DIR:WinBolo>"
+            COMMENT "Copying steam_appid.txt to WinBolo output directory"
+        )
+    endif()
 endif()
 # On Windows, also copy vcpkg / imported DLLs (curl, zlib, etc.)
 if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")

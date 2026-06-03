@@ -350,9 +350,26 @@ static void gameFrontLockToggleCallback(bool allow) {
  *   #StatusInGameSolo      — playing alone (uses %map%)
  *   #StatusInGamePlural    — playing with N players (uses %map%, %numplayers%)
  * ------------------------------------------------------- */
-static void gameFrontSetConnectIfAvailable(void) {
+static void gameFrontSetConnectIfAvailable(ClientSim *cs) {
+  char connect[FILENAME_MAX];
+  /* Host on an Internet game: advertise the externally-reachable address
+   * (the same one the lobby header shows) so friends connect to us, not to
+   * our loopback/private gameFrontUdpAddress. Mirrors the lobby's own
+   * address-replacement gating in imgui_lobby. */
+  if (cs != NULL && !clientSimIsSinglePlayer(cs) && !clientSimIsLanOnly(cs) &&
+      serverInstanceIsNatPunchActive()) {
+    ServerPortmapInfo pm;
+    serverInstanceGetPortmapInfo(&pm);
+    if (pm.externalIp[0] != '\0' && pm.externalPort != 0) {
+      snprintf(connect, sizeof(connect), "+connect %.255s:%u",
+               pm.externalIp, (unsigned)pm.externalPort);
+      steam_set_rich_presence("connect", connect);
+      return;
+    }
+  }
+  /* Client (or host before its external address has resolved): the address
+   * we joined is reachable by our friends too. */
   if (udpTransportActive && gameFrontUdpAddress[0] != '\0') {
-    char connect[FILENAME_MAX];
     snprintf(connect, sizeof(connect), "+connect %.255s:%u",
              gameFrontUdpAddress, (unsigned)gameFrontTargetUdp);
     steam_set_rich_presence("connect", connect);
@@ -366,10 +383,13 @@ void gameFrontUpdateSteamPresence(ClientSim *cs) {
   snprintf(numStr, sizeof(numStr), "%d", (int)numPlayers);
   steam_set_rich_presence("map", clientSimGetMapName(cs));
   steam_set_rich_presence("numplayers", numStr);
+  /* "Solo" is a property of the game *mode*, not the live player count: an
+   * Internet game with one player present is still an open, joinable game
+   * and must not read as solo. Single-player is the only true solo case. */
   steam_set_rich_presence("steam_display",
-                          numPlayers == 1 ? "#StatusInGameSolo"
-                                          : "#StatusInGamePlural");
-  gameFrontSetConnectIfAvailable();
+                          clientSimIsSinglePlayer(cs) ? "#StatusInGameSolo"
+                                                      : "#StatusInGamePlural");
+  gameFrontSetConnectIfAvailable(cs);
 }
 
 void gameFrontSetSteamPresenceMenu(void) {
@@ -399,7 +419,32 @@ void gameFrontSetSteamPresenceLobby(ClientSim *cs) {
   steam_set_rich_presence("steam_display",
                           numPlayers == 1 ? "#StatusInLobbySingular"
                                           : "#StatusInLobbyPlural");
-  gameFrontSetConnectIfAvailable();
+  gameFrontSetConnectIfAvailable(cs);
+}
+
+/* Steam rate-limits rich-presence updates, so the per-frame lobby/game
+ * loops refresh through these throttled wrappers instead of pushing every
+ * frame. Both share one timer (you're only ever in one state at a time);
+ * the first call after a quiet period fires immediately. */
+#define STEAM_PRESENCE_REFRESH_MS 3000u
+static uint32_t s_steamPresenceLastMs = 0;
+
+static bool gameFrontSteamPresenceDue(void) {
+  uint32_t now = (uint32_t)SDL_GetTicks();
+  if (s_steamPresenceLastMs != 0 &&
+      (now - s_steamPresenceLastMs) < STEAM_PRESENCE_REFRESH_MS) {
+    return false;
+  }
+  s_steamPresenceLastMs = now;
+  return true;
+}
+
+void gameFrontTickSteamPresenceLobby(ClientSim *cs) {
+  if (gameFrontSteamPresenceDue()) gameFrontSetSteamPresenceLobby(cs);
+}
+
+void gameFrontTickSteamPresenceGame(ClientSim *cs) {
+  if (gameFrontSteamPresenceDue()) gameFrontUpdateSteamPresence(cs);
 }
 
 extern bool isTutorial;
@@ -1119,15 +1164,23 @@ bool gameFrontSetDlgState(openingStates newState) {
      * handshake, map download + install, and inline snapshot apply
      * by itself — the frontend only ticks it until the join state
      * settles or inLobby flips true. */
+    /* Match the Internet-host config in gameFrontSetupServer: an Internet
+     * join turns the tracker on (NAT traversal + external-address
+     * resolution) and, if the player is signed in, sends the WBN identity
+     * token. LAN joins and SP/tutorial stay private — no tracker, no WBN.
+     * Gated on s_isLanOnly (false only for Internet games), not on the old
+     * buried default-off "Use Tracker" checkbox. WBN from the join side
+     * carries only the player's own identity — there is no server being
+     * registered here — so it follows the sign-in state. */
     clientSimConnectUdp(humanSim, gameFrontUdpAddress,
                         gameFrontTargetUdp,
                         gameFrontName,
                         winbolonetGetCountryCode(),
                         password,
-                        gameFrontWbnUse ? gameFrontWbnToken : "",
+                        (!s_isLanOnly && gameFrontWbnUse) ? gameFrontWbnToken : "",
                         "",
                         wantRejoin,
-                        gameFrontTrackerEnabled ? gameFrontTrackerAddr : "",
+                        !s_isLanOnly ? gameFrontTrackerAddr : "",
                         gameFrontTrackerPort);
     if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
       const char *reason = clientSimGetConnectErrorReason(humanSim);
@@ -1864,7 +1917,14 @@ bool gameFrontSetupServer(void) {
    * this back off for Local games. */
   cfg.useWbn              = TRUE;
   cfg.compTanks           = (BYTE)compTanks;
-  cfg.useTracker          = gameFrontTrackerEnabled;
+  /* Internet host: always register with the tracker (no user toggle). The
+   * tracker is what makes the game discoverable and resolves the host's
+   * external address for NAT traversal and Steam "Join Game". Address/port
+   * come from the INI ([TRACKER] Address/Port, default tracker.winbolo.com:
+   * 50000) — there is no in-app UI for it. The LAN-only block below forces
+   * this back off for Local games; the single-player/passive path disables
+   * it separately. */
+  cfg.useTracker          = TRUE;
   cfg.trackerAddr         = gameFrontTrackerAddr;
   cfg.trackerPort         = gameFrontTrackerPort;
   cfg.useNatKeepalive     = gameFrontUseNatTraversal;
