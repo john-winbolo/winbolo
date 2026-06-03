@@ -34,6 +34,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 #include <math.h>
 #include <stdio.h>
+#include <limits.h>
 #include <string.h>
 
 #include "../../common/wb_log.h"
@@ -172,41 +173,36 @@ static int          gTabletVpZoom = 0;
 static int          gDragOffsetX = 0;
 static int          gDragOffsetY = 0;
 
-/* Sub-pixel autoscroll smoothing.
+/* DEBUG: per-frame render log for autoscroll diagnostics. Captures
+ * exactly what edgeX/edgeY ends up at on the frame the renderer draws,
+ * so we can tell whether smooth engine state translates to smooth
+ * rendering or if something downstream re-introduces oscillation.
+ * Logs only when values CHANGE from last frame to keep the file small. */
+/* Debug file logging. Off for shipping builds — flip to 1 to re-enable
+ * the render.log / cursor_square.log traces. When 0 no file is opened
+ * or written. */
+#define WB_DEBUG_FILE_LOG 0
+
+static FILE *gRenderLog = NULL;
+static bool  gRenderLogTried = false;
+static int   gRenderLogPrevEngineX = -1, gRenderLogPrevEngineY = -1;
+static int   gRenderLogPrevSubX = -1, gRenderLogPrevSubY = -1;
+static int   gRenderLogPrevEdgeX = INT_MIN, gRenderLogPrevEdgeY = INT_MIN;
+static int   gRenderLogFrameCounter = 0;
+static int   gRenderLogEntryCount = 0;
+
+/* Sub-pixel autoscroll smoothing — engine-driven.
  *
- * The engine moves the viewport in 1-tile (BYTE) steps inside
- * scrollAutoScroll. Without interpolation each step is a visible
- * 16-pixel snap at game-tick rate; the rate cap in scroll.c slows
- * the cadence but every step is still a hard hop.
+ * scroll.c carries sub-tile precision in ScrollState (subPosX/Y in
+ * 1/256-tile units) and decomposes a continuous fractional view target
+ * into a BYTE *xValue plus that fractional remainder. Per frame the
+ * renderer just reads the remainder and folds it into edgeX/Y as a
+ * sub-pixel drag offset; nothing here interpolates. The previous
+ * prev-vs-last tile snapshot model has been removed.
  *
- * Per render frame we compare the engine's tile-aligned offset
- * (clientSimGetXOffset / YOffset, T1) against the previously-observed
- * value. When it changes we snapshot the old position and the
- * SDL_GetTicks() at the change; for the next SMOOTH_AUTOSCROLL_WINDOW_MS
- * we add a fractional (prev - current) * tileW offset that linearly
- * decays to zero. Independent of gDragOffsetX/Y above — both feed
- * additively into edgeX/edgeY at draw time.
- *
- * Reset triggers (both snap, no ease):
- *   - Active ClientSim pointer changes (new game / view-player swap)
- *   - Engine offset jumps by more than SMOOTH_AUTOSCROLL_SNAP_TILES
- *     (respawn at a distant spot, teleport, scrollCenterObject) */
-/* Smoothing window — set to match the fastest engine pan cadence so
- * consecutive pans don't overlap and snap to a new "prev" mid-slide.
- * TK_UPDATE_TIME=2 ticks = 100 ms is the fireball pan rate during the
- * tank-explosion death sequence, so the window equals that to keep
- * dead-tank tracking smooth instead of rubbery. Autoscroll's natural
- * cadence (rate cap 5 ticks/tile = 250 ms) leaves comfortable headroom
- * and the slide completes well before the next autoscroll tile move. */
-#define SMOOTH_AUTOSCROLL_WINDOW_MS  100
-#define SMOOTH_AUTOSCROLL_SNAP_TILES 4
-static const void *gSmoothLastCs        = NULL;
-static BYTE        gSmoothLastEngineX   = 0;
-static BYTE        gSmoothLastEngineY   = 0;
-static BYTE        gSmoothPrevEngineX   = 0;
-static BYTE        gSmoothPrevEngineY   = 0;
-static Uint32      gSmoothChangeTimeMsX = 0;
-static Uint32      gSmoothChangeTimeMsY = 0;
+ * Side effect: tile shifts NOT driven by autoscroll (e.g. the fireball
+ * pan during the tank-explosion death sequence) snap by a whole tile
+ * each step. Death anim only, brief — accepted tradeoff. */
 
 /* Configurable status panel origins (zoomed pixel coords).
    -1 means "use desktop default" (zf * STATUS_*_LEFT/TOP).
@@ -608,7 +604,7 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
       }
       cursorMove((int)gameX, (int)gameY);
       BYTE cx = 0, cy = 0;
-      if (cursorPos(NULL, &cx, &cy)) {
+      if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
         if (cx > 16 || cy > 16) cx = 100;
         clientSimSetCursorPos(cs, cx, cy);
       } else {
@@ -619,7 +615,7 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
       if (ev->button.button == SDL_BUTTON_LEFT) {
         BYTE xVal = 0, yVal = 0;
-        if (cursorPos(NULL, &xVal, &yVal)) {
+        if (cursorPos(NULL, &xVal, &yVal, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
           clientMutexWaitFor();
           clientSimManMove(cs, clientSimGetCurrentBuildSelect(cs));
           clientMutexRelease();
@@ -1343,62 +1339,48 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   edgeX += gDragOffsetX;
   edgeY += gDragOffsetY;
 
-  /* Sub-pixel autoscroll smoothing — see gSmoothLastEngine* block at
-   * the top of this file. Eases between successive engine tile-step
-   * updates so the viewport glides instead of snapping. */
+  /* Sub-pixel autoscroll — read engine sub-tile remainder and fold
+   * into edgeX/Y as a fractional drag offset. See the comment block at
+   * the top of this file. */
   if (cs != NULL) {
-    BYTE   engineX  = clientSimGetXOffset(cs);
-    BYTE   engineY  = clientSimGetYOffset(cs);
-    Uint32 nowMs    = SDL_GetTicks();
-    int    tileWpx  = TILE_SIZE_X * gZoomFactor;
-    int    tileHpx  = TILE_SIZE_Y * gZoomFactor;
+    int subX    = clientSimGetSubPosX(cs);  /* 0..255, 1/256-tile units */
+    int subY    = clientSimGetSubPosY(cs);
+    int tileWpx = TILE_SIZE_X * gZoomFactor;
+    int tileHpx = TILE_SIZE_Y * gZoomFactor;
+    edgeX += subX * tileWpx / 256;
+    edgeY += subY * tileHpx / 256;
 
-    /* New ClientSim — snap, don't ease across a game/sim swap. */
-    if (cs != gSmoothLastCs) {
-      gSmoothLastCs        = cs;
-      gSmoothLastEngineX   = engineX;
-      gSmoothLastEngineY   = engineY;
-      gSmoothPrevEngineX   = engineX;
-      gSmoothPrevEngineY   = engineY;
-      gSmoothChangeTimeMsX = nowMs;
-      gSmoothChangeTimeMsY = nowMs;
-    }
-
-    if (engineX != gSmoothLastEngineX) {
-      int dx = (int)engineX - (int)gSmoothLastEngineX;
-      if (dx < 0) dx = -dx;
-      /* Big delta = teleport (respawn, view-player change). Snap. */
-      gSmoothPrevEngineX   = (dx > SMOOTH_AUTOSCROLL_SNAP_TILES) ? engineX
-                                                                 : gSmoothLastEngineX;
-      gSmoothLastEngineX   = engineX;
-      gSmoothChangeTimeMsX = nowMs;
-    }
-    if (engineY != gSmoothLastEngineY) {
-      int dy = (int)engineY - (int)gSmoothLastEngineY;
-      if (dy < 0) dy = -dy;
-      gSmoothPrevEngineY   = (dy > SMOOTH_AUTOSCROLL_SNAP_TILES) ? engineY
-                                                                 : gSmoothLastEngineY;
-      gSmoothLastEngineY   = engineY;
-      gSmoothChangeTimeMsY = nowMs;
-    }
-
-    {
-      Uint32 elapsedX = nowMs - gSmoothChangeTimeMsX;
-      Uint32 elapsedY = nowMs - gSmoothChangeTimeMsY;
-      /* dPrev = prev - current; with engine moving forward this is
-       * negative, so adding (1 - t) * dPrev * tileW pulls edgeX back
-       * toward the previous position at t=0 and converges to zero at
-       * t=1, producing the smooth slide. */
-      if (elapsedX < SMOOTH_AUTOSCROLL_WINDOW_MS) {
-        float t = (float)elapsedX / (float)SMOOTH_AUTOSCROLL_WINDOW_MS;
-        int dPrev = (int)gSmoothPrevEngineX - (int)gSmoothLastEngineX;
-        edgeX += (int)((float)(dPrev * tileWpx) * (1.0f - t));
+    /* DEBUG: log frames where rendering offset CHANGES, capped at 600
+     * entries (~10s at 60fps) so we can see whether the renderer
+     * draws smoothly or shakes given a smooth engine input. */
+    if (WB_DEBUG_FILE_LOG) {
+    if (!gRenderLog && !gRenderLogTried) {
+      gRenderLogTried = true;
+      gRenderLog = fopen("render.log", "a");
+      if (gRenderLog) {
+        fprintf(gRenderLog, "--- render log: f=frame engine=(xOff,yOff) sub=(subX,subY) drag=(dx,dy) edge=(edgeX,edgeY) zoom=z ---\n");
+        fflush(gRenderLog);
       }
-      if (elapsedY < SMOOTH_AUTOSCROLL_WINDOW_MS) {
-        float t = (float)elapsedY / (float)SMOOTH_AUTOSCROLL_WINDOW_MS;
-        int dPrev = (int)gSmoothPrevEngineY - (int)gSmoothLastEngineY;
-        edgeY += (int)((float)(dPrev * tileHpx) * (1.0f - t));
-      }
+    }
+    gRenderLogFrameCounter++;
+    int engineX = (int)clientSimGetXOffset(cs);
+    int engineY = (int)clientSimGetYOffset(cs);
+    bool changed = (engineX != gRenderLogPrevEngineX || engineY != gRenderLogPrevEngineY ||
+                    subX != gRenderLogPrevSubX || subY != gRenderLogPrevSubY ||
+                    edgeX != gRenderLogPrevEdgeX || edgeY != gRenderLogPrevEdgeY);
+    if (gRenderLog && changed && gRenderLogEntryCount < 600) {
+      fprintf(gRenderLog, "[f=%d] engine=(%d,%d) sub=(%d,%d) drag=(%d,%d) edge=(%d,%d) zoom=%d\n",
+              gRenderLogFrameCounter, engineX, engineY, subX, subY,
+              gDragOffsetX, gDragOffsetY, edgeX, edgeY, gZoomFactor);
+      fflush(gRenderLog);
+      gRenderLogEntryCount++;
+      gRenderLogPrevEngineX = engineX;
+      gRenderLogPrevEngineY = engineY;
+      gRenderLogPrevSubX = subX;
+      gRenderLogPrevSubY = subY;
+      gRenderLogPrevEdgeX = edgeX;
+      gRenderLogPrevEdgeY = edgeY;
+    }
     }
   }
 
@@ -1564,12 +1546,39 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       if (useCursor) {
         SDL_FRect curSrc = { (float)(MOUSE_SQUARE_X * gSheetScale), (float)(MOUSE_SQUARE_Y * gSheetScale),
                              (float)(TILE_SIZE_X * gSheetScale), (float)(TILE_SIZE_Y * gSheetScale) };
-        SDL_FRect curDest = {
-          (float)(originX + ((int)cursorLeft - 1) * tileW - edgeX),
-          (float)(originY + ((int)cursorTop  - 1) * tileH - edgeY),
-          (float)tileW, (float)tileH
-        };
+        float curDestX = (float)(originX + ((int)cursorLeft - 1) * tileW - edgeX);
+        float curDestY = (float)(originY + ((int)cursorTop  - 1) * tileH - edgeY);
+        SDL_FRect curDest = { curDestX, curDestY, (float)tileW, (float)tileH };
         SDL_RenderTexture(gRenderer, gTilesTex, &curSrc, &curDest);
+
+        /* DEBUG: log the cursor square position relative to the render
+         * origin and edgeX, so a "square doesn't match mouse" report can
+         * be cross-referenced with the cursor.log entry that produced
+         * the cursorLeft/Top values. Logs only when those inputs change. */
+        if (WB_DEBUG_FILE_LOG) {
+          static int sLastCl = -1, sLastCt = -1, sLastEdgeX = INT_MIN, sLastEdgeY = INT_MIN;
+          static FILE *sLog = NULL;
+          static bool sLogTried = false;
+          static int sCount = 0;
+          if (!sLog && !sLogTried) {
+            sLogTried = true;
+            sLog = fopen("cursor_square.log", "a");
+            if (sLog) fprintf(sLog, "--- cursor_square session start ---\n");
+          }
+          if (sLog && sCount < 2000 &&
+              ((int)cursorLeft != sLastCl || (int)cursorTop != sLastCt ||
+               edgeX != sLastEdgeX || edgeY != sLastEdgeY)) {
+            fprintf(sLog, "[sq] cur=(%u,%u) edge=(%d,%d) zf=%d destPx=(%.1f,%.1f) tileW=%d tileH=%d\n",
+                    (unsigned)cursorLeft, (unsigned)cursorTop, edgeX, edgeY, gZoomFactor,
+                    (double)curDestX, (double)curDestY, tileW, tileH);
+            fflush(sLog);
+            sLastCl = (int)cursorLeft;
+            sLastCt = (int)cursorTop;
+            sLastEdgeX = edgeX;
+            sLastEdgeY = edgeY;
+            sCount++;
+          }
+        }
       }
 
       /* Sprites via mapview */

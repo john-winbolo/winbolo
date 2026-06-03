@@ -69,8 +69,10 @@
 #include "../winbolo.h"
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
+#include "../tiles.h"
 #include "luabrainshandler.h"
 #include "bg_game.h"
+#include "cursor.h"
 
 #include "dialog_backend.h"
 #include "dialogs/imgui_messagebox.h"
@@ -1439,9 +1441,53 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
                             int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
   if (hideMainView == FALSE && drawBusy == FALSE) {
-    BYTE cursorX, cursorY;
+    BYTE cursorX = 0, cursorY = 0;
     bool showCursor;
 
+    /* Track view scroll in pixels and warp the OS mouse by the same delta
+     * so the cursor stays glued to its world tile while the map slides.
+     * Total view shift = xOffset whole-tile shift + subPos sub-tile shift.
+     * The cursor cell then stays the same frame to frame (no flicker) as
+     * autoscroll bumps subPos. Skip warps larger than a few tiles — those
+     * come from respawn / scrollCenterObject / mode switch and the user
+     * wants the cursor to stay where it is, not teleport. */
+    {
+      int zf      = sdl3DrawGetZoomFactor();
+      int tileWpx = TILE_SIZE_X * zf;
+      int tileHpx = TILE_SIZE_Y * zf;
+      int subX    = clientSimGetSubPosX(cs);
+      int subY    = clientSimGetSubPosY(cs);
+      int curScrollPxX = (int)clientSimGetXOffset(cs) * tileWpx + subX * tileWpx / 256;
+      int curScrollPxY = (int)clientSimGetYOffset(cs) * tileHpx + subY * tileHpx / 256;
+      static int  sLastScrollPxX = 0;
+      static int  sLastScrollPxY = 0;
+      static bool sLastScrollPxValid = FALSE;
+      if (sLastScrollPxValid) {
+        int dpx = curScrollPxX - sLastScrollPxX;
+        int dpy = curScrollPxY - sLastScrollPxY;
+        int maxAuto = 4 * tileWpx;
+        if (abs(dpx) <= maxAuto && abs(dpy) <= maxAuto) {
+          cursorApplyScrollDelta(dpx, dpy);
+        }
+      }
+      sLastScrollPxX = curScrollPxX;
+      sLastScrollPxY = curScrollPxY;
+      sLastScrollPxValid = TRUE;
+    }
+
+    /* Refresh cursor cell every frame: the autoscroll sub-tile offset
+     * changes per tick, so the visually-rendered tile under a stationary
+     * mouse changes too. cursorPos re-derives the cell from the cached
+     * mouse pixel + current subPos and stores it in the viewport's
+     * cursorPosX/Y, which clientSimGetCursorPos then reads. */
+    {
+      BYTE cx = 0, cy = 0;
+      if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
+        clientSimSetCursorPos(cs, cx, cy);
+      } else {
+        clientSimSetCursorPos(cs, 0, 0);
+      }
+    }
     showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
     sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
     sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,

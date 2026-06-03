@@ -39,9 +39,6 @@
 #include "scroll.h"
 #include "frontend.h"
 
-/* Forward declaration — implemented in gui/sdl3/cursor.c */
-extern void moveMousePointer(updateType value);
-
 /*********************************************************
 *NAME:          clientUiOnTick
 *PURPOSE:
@@ -81,17 +78,32 @@ void clientUiOnTick(ClientSim *csPtr, bool isBrain) {
     return;
   }
 
-  /* Update scrolling based on tank position */
-  if (tankGetSpeed(&MY_TANK(csPtr)) > 0) {
+  /* Update scrolling based on tank position. Autoscroll needs to tick
+   * every frame even when parked so its event detection (parked-rear
+   * threat) and sub-tile slide keep progressing. Other scroll modes
+   * (manual, no-auto) only need ticks when the tank is actually moving. */
+  if (tankGetSpeed(&MY_TANK(csPtr)) > 0 || clientSimGetScroll(csPtr)->autoScroll) {
     tankGetGunsight(&MY_TANK(csPtr), &tmx, &tmy, &pmx, &pmy);
     if (clientSimIsInPillView(csPtr) == FALSE) {
       int oldXOffset = clientSimGetXOffset(csPtr);
       int oldYOffset = clientSimGetYOffset(csPtr);
       if (scrollUpdate(clientSimGetScroll(csPtr), clientSimGetGameSim(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), tankGetScreenMX(&MY_TANK(csPtr)), tankGetScreenMY(&MY_TANK(csPtr)), TRUE, tmx, tmy, tankGetSpeed(&MY_TANK(csPtr)), tankGetArmour(&MY_TANK(csPtr)), (TURNTYPE)(tankGetTravelAngel(&MY_TANK(csPtr))), FALSE, clientSimTankIsDead(csPtr)) == TRUE) {
-        if (oldXOffset < clientSimGetXOffset(csPtr)) { clientSimSetCursorPosX(csPtr, clientSimGetCursorPosX(csPtr) - 1); moveMousePointer(right); }
-        else if (oldXOffset > clientSimGetXOffset(csPtr)) { clientSimSetCursorPosX(csPtr, clientSimGetCursorPosX(csPtr) + 1); moveMousePointer(left); }
-        if (oldYOffset < clientSimGetYOffset(csPtr)) { clientSimSetCursorPosY(csPtr, clientSimGetCursorPosY(csPtr) - 1); moveMousePointer(down); }
-        else if (oldYOffset > clientSimGetYOffset(csPtr)) { clientSimSetCursorPosY(csPtr, clientSimGetCursorPosY(csPtr) + 1); moveMousePointer(up); }
+        /* OS-cursor follow is handled centrally by the per-frame mouse
+         * warp in frontEndDrawMainScreen, which tracks the full scroll
+         * delta (whole-tile xOffset + sub-tile subPos) and warps in
+         * pixels. The cursor cell index follows from the per-frame
+         * cursorPos refresh; the explicit ±1 bumps here are there so
+         * the cell is correct on this very tick before render. */
+        if (oldXOffset < clientSimGetXOffset(csPtr)) {
+          clientSimSetCursorPosX(csPtr, clientSimGetCursorPosX(csPtr) - 1);
+        } else if (oldXOffset > clientSimGetXOffset(csPtr)) {
+          clientSimSetCursorPosX(csPtr, clientSimGetCursorPosX(csPtr) + 1);
+        }
+        if (oldYOffset < clientSimGetYOffset(csPtr)) {
+          clientSimSetCursorPosY(csPtr, clientSimGetCursorPosY(csPtr) - 1);
+        } else if (oldYOffset > clientSimGetYOffset(csPtr)) {
+          clientSimSetCursorPosY(csPtr, clientSimGetCursorPosY(csPtr) + 1);
+        }
         clientSimRecalc(csPtr);
       }
     }

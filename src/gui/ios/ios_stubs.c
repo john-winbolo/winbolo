@@ -29,8 +29,10 @@ typedef struct { long left, top, right, bottom; } RECT;
 bool cursorSetup(void) { return true; }
 void cursorCleanup(void) {}
 void cursorMove(int mouseX, int mouseY) { (void)mouseX; (void)mouseY; }
-bool cursorPos(RECT *rcWindow, BYTE *xValue, BYTE *yValue) {
+bool cursorPos(RECT *rcWindow, BYTE *xValue, BYTE *yValue,
+               int subPosX, int subPosY) {
     (void)rcWindow; (void)xValue; (void)yValue;
+    (void)subPosX; (void)subPosY;
     return false;
 }
 void cursorAcquireCursor(void) {}

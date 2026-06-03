@@ -1150,6 +1150,8 @@ labelLen    clientSimGetLabelTankLabel(const ClientSim *cs)     { return cs->lab
 BYTE     clientSimGetMyPlayerNum(const ClientSim *cs)       { return cs->myPlayerNum; }
 BYTE     clientSimGetXOffset(const ClientSim *cs)           { return cs->viewport.xOffset; }
 BYTE     clientSimGetYOffset(const ClientSim *cs)           { return cs->viewport.yOffset; }
+int      clientSimGetSubPosX(const ClientSim *cs)           { return (int)cs->scroll.subPosX; }
+int      clientSimGetSubPosY(const ClientSim *cs)           { return (int)cs->scroll.subPosY; }
 BYTE     clientSimGetPillViewX(const ClientSim *cs)         { return cs->viewport.pillViewX; }
 BYTE     clientSimGetPillViewY(const ClientSim *cs)         { return cs->viewport.pillViewY; }
 BYTE     clientSimGetPendingBuildAction(const ClientSim *cs){ return cs->pendingBuildAction; }
@@ -1733,6 +1735,15 @@ bool clientSimTankScroll(ClientSim *cs) {
 
   /* Don't scroll the view while in pill view — the view is locked on the pill */
   if (clientSimIsInPillView(cs) == TRUE) {
+    return FALSE;
+  }
+
+  /* When autoscroll is on, scrollAutoScroll (called from clientUiOnTick)
+   * is the sole owner of *xValue/*yValue and subPosX/Y. The legacy
+   * per-tank-tick scrollManual call here stomps on subPos (resets to 0)
+   * mid-frame, producing a visible flicker — the renderer at 60Hz can
+   * sample between the zero-out and the next scrollAutoScroll. Skip it. */
+  if (cs->scroll.autoScroll) {
     return FALSE;
   }
 

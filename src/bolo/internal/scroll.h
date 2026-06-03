@@ -29,10 +29,11 @@
 #ifndef SCROLL_H
 #define SCROLL_H
 
+#include <stdint.h>
 #include "global.h"
 #include "types.h"
 #include "game_sim.h"
-#include "scroll_item_list.h"
+#include "viewport_types.h"  /* MAIN_SCREEN_SIZE_X/Y */
 
 #ifndef SCROLLSTATE_TYPEDEF
 #define SCROLLSTATE_TYPEDEF
@@ -49,7 +50,13 @@ typedef struct ScrollState ScrollState;
 /* The distance from the edge the tank has to beed to scroll when autoscroll is off */
 #define NO_SCROLL_EDGE 2
 
-/* Per-instance scroll state (moved from module-level globals) */
+/* Per-instance scroll state (moved from module-level globals).
+ *
+ * Autoscroll model: the view targets tank_center + currentOffset. The
+ * offset is only recomputed on discrete events (gunsight edge cross,
+ * new threat entering concern radius, parked with rear threat) — not
+ * every tick. Between events the offset is fixed; when it changes,
+ * currentOffset slides toward targetOffset one tile at a time. */
 struct ScrollState {
   bool autoScroll;
   BYTE scrollX, scrollY;
@@ -57,7 +64,29 @@ struct ScrollState {
   bool autoScrollOverRide;
   bool mods;
   bool stickyX, stickyXDir, stickyY, stickyYDir;
-  ScrollItemList itemList;
+
+  /* Autoscroll offset relative to tank center.
+   * target = whole tiles (computed from threat geometry).
+   * currentSub = sub-tile units (1/256 tile) for smooth slide. */
+  int8_t  targetOffsetX, targetOffsetY;
+  int16_t currentOffsetSubX, currentOffsetSubY;
+
+  /* Sub-tile pixel position within the current view tile (0..255 in
+   * 1/256-tile units). Read by the GUI each frame and applied as a
+   * drag offset, so the view scrolls continuously across tile
+   * boundaries instead of snapping. */
+  int16_t subPosX, subPosY;
+
+  /* Event detection state. */
+  bool  initialized;        /* false until the first scrollAutoScroll tick has
+                             * captured the current threat/gunsight baseline;
+                             * suppresses spurious "newly entered" events on
+                             * game start, respawn, and mode swap. */
+  DWORD lastRecalcTick;     /* last tick we updated targetOffset */
+  DWORD parkedSinceTick;    /* tick when speed last became 0 (0 = not parked) */
+  bool  gunsightWasInside;  /* gunsight inside view last tick — edge-cross detector */
+  bool  prevThreatTank[MAX_TANKS];
+  bool  prevThreatPill[MAX_PILLS];
 };
 
 /* Prototypes */
