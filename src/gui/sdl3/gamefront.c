@@ -1164,15 +1164,23 @@ bool gameFrontSetDlgState(openingStates newState) {
      * handshake, map download + install, and inline snapshot apply
      * by itself — the frontend only ticks it until the join state
      * settles or inLobby flips true. */
+    /* Match the Internet-host config in gameFrontSetupServer: an Internet
+     * join turns the tracker on (NAT traversal + external-address
+     * resolution) and, if the player is signed in, sends the WBN identity
+     * token. LAN joins and SP/tutorial stay private — no tracker, no WBN.
+     * Gated on s_isLanOnly (false only for Internet games), not on the old
+     * buried default-off "Use Tracker" checkbox. WBN from the join side
+     * carries only the player's own identity — there is no server being
+     * registered here — so it follows the sign-in state. */
     clientSimConnectUdp(humanSim, gameFrontUdpAddress,
                         gameFrontTargetUdp,
                         gameFrontName,
                         winbolonetGetCountryCode(),
                         password,
-                        gameFrontWbnUse ? gameFrontWbnToken : "",
+                        (!s_isLanOnly && gameFrontWbnUse) ? gameFrontWbnToken : "",
                         "",
                         wantRejoin,
-                        gameFrontTrackerEnabled ? gameFrontTrackerAddr : "",
+                        !s_isLanOnly ? gameFrontTrackerAddr : "",
                         gameFrontTrackerPort);
     if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
       const char *reason = clientSimGetConnectErrorReason(humanSim);
