@@ -3586,6 +3586,17 @@ void serverSimSendWbnWinEvents(ServerSim *sim) {
     }
 }
 
+/* Advance a write cursor by an snprintf result, clamped so it never runs
+ * past the buffer. snprintf returns the length it WOULD have written, which
+ * can exceed the space left on truncation; added to pos unclamped that
+ * overshoots bufSize and the next (bufSize - pos) underflows. Callers must
+ * pass pos < bufSize. */
+static size_t winMsgAdvance(size_t pos, size_t bufSize, int written) {
+    if (written < 0) return pos;
+    if ((size_t)written >= bufSize - pos) return bufSize - 1;
+    return pos + (size_t)written;
+}
+
 bool serverSimBuildWinMessage(ServerSim *sim, char *buf, size_t bufSize) {
     BYTE count;
     BYTE max;
@@ -3618,16 +3629,122 @@ bool serverSimBuildWinMessage(ServerSim *sim, char *buf, size_t bufSize) {
 
     /* Build winner message */
     pos = 0;
-    pos += snprintf(buf + pos, bufSize - pos, "Game Won! Winners:");
+    pos = winMsgAdvance(pos, bufSize,
+                        snprintf(buf + pos, bufSize - pos, "Game Won! Winners:"));
     for (count = 0; count < MAX_TANKS && pos < bufSize - 1; count++) {
         if (!sim->playerConnected[count]) continue;
         if (playersIsAllie(&sim->sim.plyrs, count, first) || count == first) {
             playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
-            pos += snprintf(buf + pos, bufSize - pos, " %s", name);
+            pos = winMsgAdvance(pos, bufSize,
+                                snprintf(buf + pos, bufSize - pos, " %s", name));
         }
     }
 
     return TRUE;
+}
+
+void serverSimSendWbnSurrenderWinEvents(ServerSim *sim, uint8_t surrenderTeam) {
+    BYTE count;
+    if (surrenderTeam == 0) return;
+
+    /* A surrender doesn't sweep the bases, so the base-ownership winner
+     * logic never fires. The winners are the opposing side: every
+     * connected player on a real team other than the one that gave up. */
+    for (count = 0; count < MAX_TANKS; count++) {
+        uint8_t t;
+        if (!sim->playerConnected[count]) continue;
+        t = sim->lobbyPlayers[count].teamNumber;
+        if (t == 0 || t == surrenderTeam) continue;
+        winbolonetAddEvent(WINBOLO_NET_EVENT_WIN, TRUE, count, WINBOLO_NET_NO_PLAYER,
+                           botManagerIsBot(sim, count), FALSE);
+    }
+}
+
+bool serverSimBuildSurrenderWinMessage(ServerSim *sim, uint8_t surrenderTeam,
+                                       char *buf, size_t bufSize) {
+    BYTE count;
+    char name[256];
+    size_t pos;
+    bool any = FALSE;
+    const char *tname;
+
+    if (surrenderTeam == 0) {
+        snprintf(buf, bufSize, "Game over!");
+        return FALSE;
+    }
+
+    /* Lead with the same surrender announcement shown in-game, so the
+     * returning lobby explains why the round ended above the winners. */
+    tname = sim->teams[surrenderTeam].name[0]
+            ? sim->teams[surrenderTeam].name : "?";
+    pos = 0;
+    pos = winMsgAdvance(pos, bufSize,
+                        snprintf(buf + pos, bufSize - pos,
+                                 "*** Team %s has surrendered. ***", tname));
+
+    /* The opposing side wins; list them on a second line. If nobody from
+     * the winning side is still connected, the surrender line stands alone. */
+    for (count = 0; count < MAX_TANKS && pos < bufSize - 1; count++) {
+        uint8_t t;
+        if (!sim->playerConnected[count]) continue;
+        t = sim->lobbyPlayers[count].teamNumber;
+        if (t == 0 || t == surrenderTeam) continue;
+        if (!any) {
+            pos = winMsgAdvance(pos, bufSize,
+                                snprintf(buf + pos, bufSize - pos,
+                                         "\nGame Won! Winners:"));
+            any = TRUE;
+        }
+        playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+        pos = winMsgAdvance(pos, bufSize,
+                            snprintf(buf + pos, bufSize - pos, " %s", name));
+    }
+
+    return TRUE;
+}
+
+void serverSimResolveGameOver(ServerSim *sim) {
+    /* Game-outcome policy at the running->gameOver transition: decide the
+     * win/exit message and WBN crediting. Kept here in the sim core (not in
+     * the dedicated-server lifecycle tick) so every host that resolves a
+     * game over — dedicated server and in-process SP/host alike — runs the
+     * identical branch. Lobby-less sims (e.g. background game) have no lobby
+     * to return a message to. */
+    if (!sim->lobbyEnabled) return;
+
+    if (sim->surrenderTeamId != 0) {
+        /* A surrender vote ended the round — the opposing team wins.
+         * The returnToLobbyTicks countdown set suppressNextWinMessage
+         * (shared with a plain back-to-lobby vote); consume and ignore
+         * it so the winner line still reaches the lobby. The base sweep
+         * never fires on a surrender, so credit the win by team. */
+        serverSimConsumeSuppressNextWinMessage(sim);
+        serverSimBuildSurrenderWinMessage(sim, sim->surrenderTeamId,
+                                          sim->pendingWinMessage,
+                                          sizeof(sim->pendingWinMessage));
+        serverSimSendWbnSurrenderWinEvents(sim, sim->surrenderTeamId);
+    } else if (sim->returnToLobbyByVote) {
+        /* A manual back-to-lobby vote ended the round — no winner, but
+         * leave a line in the returning lobby explaining why (the
+         * in-game announcement only reached the newswire). Consume and
+         * ignore the suppress flag the countdown set. */
+        serverSimConsumeSuppressNextWinMessage(sim);
+        SDL_strlcpy(sim->pendingWinMessage,
+                    "*** Players voted to return to the lobby. ***",
+                    sizeof(sim->pendingWinMessage));
+    } else {
+        if (serverSimConsumeSuppressNextWinMessage(sim)) {
+            /* Vote-driven game end already announced itself. */
+            sim->pendingWinMessage[0] = '\0';
+        } else {
+            /* Capture win message now while game state is intact;
+             * it will be sent after players return to the lobby. */
+            serverSimBuildWinMessage(sim,
+                                     sim->pendingWinMessage,
+                                     sizeof(sim->pendingWinMessage));
+        }
+        serverSimSendWbnWinEvents(sim);
+    }
 }
 
 bool serverSimCheckEmptyReset(ServerSim *sim) {
@@ -4071,6 +4188,8 @@ void serverSimGameVoteResetAll(ServerSim *sim) {
     sim->gameVotes[1].kind = GAME_VOTE_KIND_SURRENDER;
     sim->baseMonopolyTriggeredThisRound = false;
     sim->returnToLobbyTicks = 0;
+    sim->surrenderTeamId = 0;
+    sim->returnToLobbyByVote = false;
 }
 
 static void gameVoteStart(ServerSim *sim, uint8_t kind, uint8_t triggerSrc,
@@ -4114,6 +4233,14 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
          * so clients can render their own 3/2/1 countdown.
          *
          * Budget: 7 seconds at 100Hz (each serverSimTick call). */
+        /* A player-initiated vote leaves a line in the returning lobby
+         * explaining why the round ended (no in-game newswire line —
+         * clients already render the 3/2/1 countdown). Base-monopoly
+         * auto-votes keep their existing winner reporting and don't add
+         * this line. */
+        if (gv->triggerSrc == GAME_VOTE_TRIGGER_MANUAL) {
+            sim->returnToLobbyByVote = true;
+        }
         sim->returnToLobbyTicks = 700;
     } else if (kind == GAME_VOTE_KIND_SURRENDER) {
         char buf[160];
@@ -4123,13 +4250,13 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
                  "*** Team %s has surrendered. ***", tname);
         publishServerMessage(sim, buf);
 
-        /* Auto-start a back-to-lobby vote unless one is already running. */
-        struct ServerGameVote *btl = gameVoteSlot(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
-        if (btl && btl->active != GAME_VOTE_ACTIVE_RUNNING) {
-            gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
-                          GAME_VOTE_TRIGGER_POST_SURRENDER, 0, nowMs, NEUTRAL);
-            publishGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
-        }
+        /* A surrender ends the round immediately — no chained
+         * back-to-lobby vote. Record the team that gave up so the
+         * game-over handler credits the opposing team with the win
+         * (WBN events + lobby winner line), then return to the lobby on
+         * the same countdown a back-to-lobby vote uses. */
+        sim->surrenderTeamId = gv->teamId;
+        sim->returnToLobbyTicks = 700;
     }
 }
 

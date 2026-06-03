@@ -243,6 +243,17 @@ struct ServerSim {
      * "Game over!" line on top of the 3/2/1 countdown. Cleared once
      * consumed. */
     bool     suppressNextWinMessage;
+    /* Non-zero when a surrender vote ended the round: the team that gave
+     * up. The game-over handler credits the opposing team with the win
+     * (WBN events + lobby winner line) instead of the base-ownership
+     * sweep, which never fires on a surrender. Reset by
+     * serverSimGameVoteResetAll. */
+    uint8_t  surrenderTeamId;
+    /* True when a manual back-to-lobby vote ended the round. The
+     * game-over handler leaves a lobby line explaining why the round
+     * ended (the in-game announcement only reaches the newswire, which
+     * the returning lobby never sees). Reset by serverSimGameVoteResetAll. */
+    bool     returnToLobbyByVote;
 
     /* Map directory rotation — validated map file paths for random selection */
     char       **mapDirFiles;             /* Array of validated map file paths (malloc'd) */
