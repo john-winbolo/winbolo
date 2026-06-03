@@ -1059,6 +1059,27 @@ void serverSimSendWbnWinEvents(ServerSim *sim);
 bool serverSimBuildWinMessage(ServerSim *sim, char *buf, size_t bufSize);
 
 /*********************************************************
+ *NAME:          serverSimSendWbnSurrenderWinEvents
+ *PURPOSE:
+ *  Sends WINBOLO_NET_EVENT_WIN for each player on the side
+ *  that did NOT surrender (i.e. on a real team other than
+ *  surrenderTeam). Used when a surrender vote ends the round,
+ *  where the base-ownership sweep never fires. No-op when
+ *  surrenderTeam is 0.
+ *********************************************************/
+void serverSimSendWbnSurrenderWinEvents(ServerSim *sim, uint8_t surrenderTeam);
+
+/*********************************************************
+ *NAME:          serverSimBuildSurrenderWinMessage
+ *PURPOSE:
+ *  Builds a "Game Won! Winners: ..." message listing every
+ *  player on the side that did NOT surrender. Returns TRUE if
+ *  any winner was listed, FALSE (message "Game over!") if not.
+ *********************************************************/
+bool serverSimBuildSurrenderWinMessage(ServerSim *sim, uint8_t surrenderTeam,
+                                       char *buf, size_t bufSize);
+
+/*********************************************************
  *NAME:          serverSimCheckEmptyReset
  *PURPOSE:
  *  Checks if the server has been empty long enough to

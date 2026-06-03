@@ -3630,6 +3630,62 @@ bool serverSimBuildWinMessage(ServerSim *sim, char *buf, size_t bufSize) {
     return TRUE;
 }
 
+void serverSimSendWbnSurrenderWinEvents(ServerSim *sim, uint8_t surrenderTeam) {
+    BYTE count;
+    if (surrenderTeam == 0) return;
+
+    /* A surrender doesn't sweep the bases, so the base-ownership winner
+     * logic never fires. The winners are the opposing side: every
+     * connected player on a real team other than the one that gave up. */
+    for (count = 0; count < MAX_TANKS; count++) {
+        uint8_t t;
+        if (!sim->playerConnected[count]) continue;
+        t = sim->lobbyPlayers[count].teamNumber;
+        if (t == 0 || t == surrenderTeam) continue;
+        winbolonetAddEvent(WINBOLO_NET_EVENT_WIN, TRUE, count, WINBOLO_NET_NO_PLAYER,
+                           botManagerIsBot(sim, count), FALSE);
+    }
+}
+
+bool serverSimBuildSurrenderWinMessage(ServerSim *sim, uint8_t surrenderTeam,
+                                       char *buf, size_t bufSize) {
+    BYTE count;
+    char name[256];
+    size_t pos;
+    bool any = FALSE;
+    const char *tname;
+
+    if (surrenderTeam == 0) {
+        snprintf(buf, bufSize, "Game over!");
+        return FALSE;
+    }
+
+    /* Lead with the same surrender announcement shown in-game, so the
+     * returning lobby explains why the round ended above the winners. */
+    tname = sim->teams[surrenderTeam].name[0]
+            ? sim->teams[surrenderTeam].name : "?";
+    pos = 0;
+    pos += snprintf(buf + pos, bufSize - pos,
+                    "*** Team %s has surrendered. ***", tname);
+
+    /* The opposing side wins; list them on a second line. If nobody from
+     * the winning side is still connected, the surrender line stands alone. */
+    for (count = 0; count < MAX_TANKS && pos < bufSize - 1; count++) {
+        uint8_t t;
+        if (!sim->playerConnected[count]) continue;
+        t = sim->lobbyPlayers[count].teamNumber;
+        if (t == 0 || t == surrenderTeam) continue;
+        if (!any) {
+            pos += snprintf(buf + pos, bufSize - pos, "\nGame Won! Winners:");
+            any = TRUE;
+        }
+        playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
+        pos += snprintf(buf + pos, bufSize - pos, " %s", name);
+    }
+
+    return TRUE;
+}
+
 bool serverSimCheckEmptyReset(ServerSim *sim) {
     BYTE numPlayers = serverSimGetNumPlayers(sim);
 
@@ -4071,6 +4127,8 @@ void serverSimGameVoteResetAll(ServerSim *sim) {
     sim->gameVotes[1].kind = GAME_VOTE_KIND_SURRENDER;
     sim->baseMonopolyTriggeredThisRound = false;
     sim->returnToLobbyTicks = 0;
+    sim->surrenderTeamId = 0;
+    sim->returnToLobbyByVote = false;
 }
 
 static void gameVoteStart(ServerSim *sim, uint8_t kind, uint8_t triggerSrc,
@@ -4114,6 +4172,13 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
          * so clients can render their own 3/2/1 countdown.
          *
          * Budget: 7 seconds at 100Hz (each serverSimTick call). */
+        publishServerMessage(sim, "*** Returning to the lobby. ***");
+        /* A player-initiated vote leaves a line in the returning lobby
+         * explaining why the round ended. Base-monopoly auto-votes keep
+         * their existing winner reporting and don't add this line. */
+        if (gv->triggerSrc == GAME_VOTE_TRIGGER_MANUAL) {
+            sim->returnToLobbyByVote = true;
+        }
         sim->returnToLobbyTicks = 700;
     } else if (kind == GAME_VOTE_KIND_SURRENDER) {
         char buf[160];
@@ -4123,13 +4188,13 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
                  "*** Team %s has surrendered. ***", tname);
         publishServerMessage(sim, buf);
 
-        /* Auto-start a back-to-lobby vote unless one is already running. */
-        struct ServerGameVote *btl = gameVoteSlot(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
-        if (btl && btl->active != GAME_VOTE_ACTIVE_RUNNING) {
-            gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
-                          GAME_VOTE_TRIGGER_POST_SURRENDER, 0, nowMs, NEUTRAL);
-            publishGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
-        }
+        /* A surrender ends the round immediately — no chained
+         * back-to-lobby vote. Record the team that gave up so the
+         * game-over handler credits the opposing team with the win
+         * (WBN events + lobby winner line), then return to the lobby on
+         * the same countdown a back-to-lobby vote uses. */
+        sim->surrenderTeamId = gv->teamId;
+        sim->returnToLobbyTicks = 700;
     }
 }
 
