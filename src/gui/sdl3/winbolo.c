@@ -1414,9 +1414,10 @@ void windowSaveMap(ClientSim *cs) {
 void windowKeyPressed(ClientSim *cs, int keyCode) {
   if (keyCode == keys.kiTankView) {
     clientSimTankView(cs);
-  } else if (keyCode == keys.kiPillView) {
-    clientSimPillView(cs, 0, 0);
   }
+  /* Pill view (enter + hold-to-cycle) is handled by polling in
+   * pillViewInputStep so holding the key auto-repeats through pills;
+   * dispatching it here too would double-step on the entering press. */
 }
 
 void windowButtonAdd(int keyCode) {
