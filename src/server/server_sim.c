@@ -2332,13 +2332,16 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         }
     }
 
-    /* Additional viewports: pillboxes owned by this client (not in tank) */
+    /* Additional viewports: pillboxes owned by this client or its allies
+     * (not in tank). Allied pills are visible to the player, so their
+     * surroundings must be sent too. */
     if (!noCull && sim->sim.pb != NULL) {
         int halfView = (SNAPSHOT_SCREEN_SIZE / 2) + SNAPSHOT_VIEWPORT_MARGIN;
         BYTE np = pillsGetNumPills(&sim->sim.pb);
         BYTE p;
         for (p = 0; p < np && numViewports < MAX_VIEWPORTS; p++) {
-            if ((*sim->sim.pb).item[p].owner != clientIdx) continue;
+            BYTE owner = (*sim->sim.pb).item[p].owner;
+            if (!playersIsAllie(&sim->sim.plyrs, owner, clientIdx)) continue;
             if ((*sim->sim.pb).item[p].inTank) continue;
             viewports[numViewports].minMX = (*sim->sim.pb).item[p].x - halfView;
             viewports[numViewports].maxMX = (*sim->sim.pb).item[p].x + halfView;
