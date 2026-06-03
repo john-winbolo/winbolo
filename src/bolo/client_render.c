@@ -26,6 +26,8 @@
 *********************************************************/
 
 /* Includes */
+#include <stdio.h>
+
 #include "global.h"
 #include "client_render.h"
 #include "client_sim.h"
@@ -42,8 +44,71 @@
 #include "interpolation.h"
 #include "util.h"
 
-/* Forward declaration — implemented in gui/sdl3/cursor.c */
-extern void moveMousePointer(updateType value);
+/* Returns TRUE iff the proposed view origin (newXOff, newYOff) leaves
+ * the entire tank sprite on screen.
+ *
+ * The renderer draws everything offset by one tile (originX - tileW),
+ * so the back-buffer's leftmost/topmost column is an off-screen border
+ * and the first *visible* map column/row is newXOff+1 / newYOff+1. The
+ * visible world rectangle is therefore:
+ *   x: [(newXOff+1)*256 , (newXOff+1+MAIN_SCREEN_SIZE_X)*256]
+ *   y: [(newYOff+1)*256 , (newYOff+1+MAIN_SCREEN_SIZE_Y)*256]
+ * in world units (256 per tile).
+ *
+ * The tank sprite is one tile wide, centred on the tank's world
+ * position: it spans [tank-TANK_SUBTRACT, tank+TANK_SUBTRACT]
+ * (TANK_SUBTRACT = 128 = half a tile). The check is pixel-precise, so
+ * an arrow press that would push any part of the sprite past a visible
+ * edge is ignored rather than firing and bouncing back next tick. */
+static bool manualScrollKeepsTankOnScreen(ClientSim *csPtr, int newXOff, int newYOff) {
+  WORLD tx, ty;
+  int viewLeft, viewRight, viewTop, viewBot;
+
+  if (newXOff < 0 || newYOff < 0) return FALSE;
+  if (newXOff + MAIN_SCREEN_SIZE_X > 255) return FALSE;
+  if (newYOff + MAIN_SCREEN_SIZE_Y > 255) return FALSE;
+
+  tankGetWorld(&MY_TANK(csPtr), &tx, &ty);
+  viewLeft  = (newXOff + 1) * 256;
+  viewRight = (newXOff + 1 + MAIN_SCREEN_SIZE_X) * 256;
+  viewTop   = (newYOff + 1) * 256;
+  viewBot   = (newYOff + 1 + MAIN_SCREEN_SIZE_Y) * 256;
+
+  if ((int)tx - TANK_SUBTRACT < viewLeft)  return FALSE;
+  if ((int)tx + TANK_SUBTRACT > viewRight) return FALSE;
+  if ((int)ty - TANK_SUBTRACT < viewTop)   return FALSE;
+  if ((int)ty + TANK_SUBTRACT > viewBot)   return FALSE;
+
+  return TRUE;
+}
+
+/* DEBUG: log every arrow-key pan that sets autoScrollOverRide. Pairs
+ * with the OVERRIDE_HOLD / OVERRIDE_CLEAR entries autoscroll.log gets
+ * from scroll.c so we can tell whether the producer side is actually
+ * firing the flag and whether the engine tick sees it. */
+/* Debug file logging. Off for shipping builds — flip to 1 to re-enable
+ * the manual_scroll.log trace. When 0 no file is opened or written. */
+#define WB_DEBUG_FILE_LOG 0
+
+static FILE *gManScrollLog = NULL;
+static bool  gManScrollTried = FALSE;
+static int   gManScrollEntries = 0;
+static void manScrollLog(const char *dir, ClientSim *cs) {
+  if (!WB_DEBUG_FILE_LOG) return;
+  if (gManScrollEntries >= 2000) return;
+  if (!gManScrollLog && !gManScrollTried) {
+    gManScrollTried = TRUE;
+    gManScrollLog = fopen("manual_scroll.log", "a");
+    if (gManScrollLog) fprintf(gManScrollLog, "--- manual_scroll session start ---\n");
+  }
+  if (!gManScrollLog) return;
+  fprintf(gManScrollLog, "[man] dir=%s view=(%u,%u) override_set=TRUE\n",
+          dir,
+          (unsigned)clientSimGetXOffset(cs),
+          (unsigned)clientSimGetYOffset(cs));
+  fflush(gManScrollLog);
+  gManScrollEntries++;
+}
 
 /*********************************************************
 *NAME:          clientRenderFrame
@@ -58,10 +123,6 @@ extern void moveMousePointer(updateType value);
 *********************************************************/
 void clientRenderFrame(ClientSim *csPtr, updateType value) {
   static bool b = FALSE;
-  BYTE x; /* X and Y co-ords of the tank */
-  BYTE y;
-  BYTE px; /* Pixel X and Y co-ords of the tank */
-  BYTE py;
   screenGunsight gs;
   screenBullets sBullets;
   screenLgm lgms;
@@ -105,18 +166,6 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
     return;
   }
 
-  x = tankGetScreenMX(&MY_TANK(csPtr));
-  y = tankGetScreenMY(&MY_TANK(csPtr));
-  px = tankGetScreenPX(&MY_TANK(csPtr));
-  py = tankGetScreenPY(&MY_TANK(csPtr));
-
-  if (px >3 || (x - clientSimGetXOffset(csPtr)) == 0) {
-    x++;
-  }
-  if (py >2) {
-    y++;
-  }
-
   screenLgmCreate(&lgms);
   sBullets = screenBulletsCreate();
   screenTanksCreate(&scnTnk);
@@ -127,12 +176,15 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
     break;
   case left:
     if (clientSimIsInPillView(csPtr) == FALSE) {
-      if (scrollCheck((BYTE) (clientSimGetXOffset(csPtr)-1), clientSimGetYOffset(csPtr), x, y) == TRUE) {
+      if (manualScrollKeepsTankOnScreen(csPtr, (int)clientSimGetXOffset(csPtr) - 1, clientSimGetYOffset(csPtr))) {
         clientSimSetXOffset(csPtr, clientSimGetXOffset(csPtr) - 1);
-		moveMousePointer(left);
         if (clientSimGetXOffset(csPtr) != oldXOffset) {
           clientSimSetCursorPosX(csPtr, clientSimGetCursorPosX(csPtr) + 1);
         }
+        clientSimGetScroll(csPtr)->autoScrollOverRide = TRUE;
+        clientSimGetScroll(csPtr)->subPosX = 0;
+        clientSimGetScroll(csPtr)->subPosY = 0;
+        manScrollLog("left", csPtr);
       }
     } else {
       clientSimPillView(csPtr, -1, 0);
@@ -141,12 +193,15 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
     break;
   case right:
     if (clientSimIsInPillView(csPtr) == FALSE) {
-      if (scrollCheck((BYTE) (clientSimGetXOffset(csPtr)+1), clientSimGetYOffset(csPtr), x, y) == TRUE) {
+      if (manualScrollKeepsTankOnScreen(csPtr, (int)clientSimGetXOffset(csPtr) + 1, clientSimGetYOffset(csPtr))) {
         clientSimSetXOffset(csPtr, clientSimGetXOffset(csPtr) + 1);
-		moveMousePointer(right);
         if (clientSimGetXOffset(csPtr) != oldXOffset) {
           clientSimSetCursorPosX(csPtr, clientSimGetCursorPosX(csPtr) - 1);
         }
+        clientSimGetScroll(csPtr)->autoScrollOverRide = TRUE;
+        clientSimGetScroll(csPtr)->subPosX = 0;
+        clientSimGetScroll(csPtr)->subPosY = 0;
+        manScrollLog("right", csPtr);
       }
     } else {
       clientSimPillView(csPtr, 1, 0);
@@ -155,12 +210,15 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
     break;
   case up:
     if (clientSimIsInPillView(csPtr) == FALSE) {
-      if (scrollCheck(clientSimGetXOffset(csPtr), (BYTE) (clientSimGetYOffset(csPtr)-1), x, y) == TRUE) {
+      if (manualScrollKeepsTankOnScreen(csPtr, clientSimGetXOffset(csPtr), (int)clientSimGetYOffset(csPtr) - 1)) {
         clientSimSetYOffset(csPtr, clientSimGetYOffset(csPtr) - 1);
-		moveMousePointer(up);
         if (clientSimGetYOffset(csPtr) != oldYOffset) {
           clientSimSetCursorPosY(csPtr, clientSimGetCursorPosY(csPtr) + 1);
         }
+        clientSimGetScroll(csPtr)->autoScrollOverRide = TRUE;
+        clientSimGetScroll(csPtr)->subPosX = 0;
+        clientSimGetScroll(csPtr)->subPosY = 0;
+        manScrollLog("up", csPtr);
       }
     } else {
       clientSimPillView(csPtr, 0, -1);
@@ -170,12 +228,15 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
   case down:
   default:
     if (clientSimIsInPillView(csPtr) == FALSE) {
-      if (scrollCheck(clientSimGetXOffset(csPtr), (BYTE) (clientSimGetYOffset(csPtr)+1), x, y) == TRUE) {
+      if (manualScrollKeepsTankOnScreen(csPtr, clientSimGetXOffset(csPtr), (int)clientSimGetYOffset(csPtr) + 1)) {
         clientSimSetYOffset(csPtr, clientSimGetYOffset(csPtr) + 1);
-		moveMousePointer(down);
         if (clientSimGetYOffset(csPtr) != oldYOffset) {
           clientSimSetCursorPosY(csPtr, clientSimGetCursorPosY(csPtr) - 1);
         }
+        clientSimGetScroll(csPtr)->autoScrollOverRide = TRUE;
+        clientSimGetScroll(csPtr)->subPosX = 0;
+        clientSimGetScroll(csPtr)->subPosY = 0;
+        manScrollLog("down", csPtr);
       }
     } else {
       clientSimPillView(csPtr, 0, 1);

@@ -70,8 +70,16 @@ void cursorMove(int mouseX, int mouseY);
 *  If it is, xValue and yValue are filled with the map
 *  tile coordinates (1-based). Otherwise they are set
 *  to 0.
+*
+*  subPosX/subPosY are the engine's sub-tile view offset
+*  in 1/256-tile units (0..255), matching what the renderer
+*  folds into edgeX/Y. They must be added to the mouse
+*  pixel position before the tile division, otherwise the
+*  reported tile lags behind the visually-shifted view by
+*  up to one tile.
 *********************************************************/
-bool cursorPos(RECT *rcWindow, BYTE *xValue, BYTE *yValue);
+bool cursorPos(RECT *rcWindow, BYTE *xValue, BYTE *yValue,
+               int subPosX, int subPosY);
 
 /*********************************************************
 *NAME:          cursorAcquireCursor
@@ -102,5 +110,17 @@ void cursorSetPos(RECT rcWindow, BYTE xValue, BYTE yValue);
 *  Moves the mouse pointer to counteract map scrolling.
 *********************************************************/
 void moveMousePointer(updateType value);
+
+/*********************************************************
+*NAME:          cursorApplyScrollDelta
+*PURPOSE:
+*  Shift the OS cursor (and cached mouse position) by the
+*  same pixel delta that the view scrolled this frame, so
+*  the cursor stays glued to its world tile while the map
+*  slides beneath it. No-op when the cursor is outside the
+*  main view area. dpx/dpy are in main-view pixels (same
+*  units as gCachedMouseX/Y).
+*********************************************************/
+void cursorApplyScrollDelta(int dpx, int dpy);
 
 #endif /* CURSOR_H */

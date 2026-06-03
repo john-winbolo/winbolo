@@ -137,7 +137,7 @@ struct ClientSim {
     /* Per-instance message state (was messages.c globals) */
     MessageState messages;
 
-    /* Per-instance scroll state (was scroll.c globals) */
+    /* Per-instance scroll state (was scroll.c globals). */
     ScrollState scroll;
 
     /* Per-instance label state (was labels.c globals) */
