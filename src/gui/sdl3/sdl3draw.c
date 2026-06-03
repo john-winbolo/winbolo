@@ -1095,6 +1095,7 @@ void sdl3DrawCleanup(void) {
   if (gTankBarsTex)      { SDL_DestroyTexture(gTankBarsTex);      gTankBarsTex      = NULL; }
   if (gBaseBarsTex)      { SDL_DestroyTexture(gBaseBarsTex);      gBaseBarsTex      = NULL; }
   if (gCrosshairTex)     { SDL_DestroyTexture(gCrosshairTex);     gCrosshairTex     = NULL; }
+  if (gStaticTex)        { SDL_DestroyTexture(gStaticTex);        gStaticTex        = NULL; }
   if (gGameRenderTarget) { SDL_DestroyTexture(gGameRenderTarget); gGameRenderTarget = NULL; }
   if (gTilesTex) {
     SDL_DestroyTexture(gTilesTex);
