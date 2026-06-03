@@ -6192,14 +6192,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         if (ImGui::IsItemHovered()) {
                             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                         }
-                        /* Click behavior: privileged users jump straight
-                         * to the Choose Map dialog; everyone else gets
-                         * the zoomed preview popup. */
-                        if (effHostMap) {
-                            if (ImGui::IsItemClicked()) {
-                                lobbyChooseMapOpen(cs, renderer);
-                            }
-                        } else if (popupCompressedData) {
+                        /* Click always opens the view-only zoomed preview
+                         * popup — for everyone, including privileged users
+                         * (e.g. when "allow all players to change settings"
+                         * is on). The popup's "Choose map" button (shown to
+                         * users who may change the map) opens the chooser. */
+                        if (popupCompressedData) {
                             mapPreviewPopupOnClick(popupCompressedData, popupCompressedLen,
                                                    mapBounds.minX, mapBounds.minY,
                                                    mapBounds.maxX, mapBounds.maxY);
@@ -6712,14 +6710,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                 }
-                /* Click behavior: privileged users jump straight to the
-                 * Choose Map dialog; everyone else gets the zoomed
-                 * preview popup. */
-                if (effHostMap) {
-                    if (ImGui::IsItemClicked()) {
-                        lobbyChooseMapOpen(cs, renderer);
-                    }
-                } else if (popupCompressedData) {
+                /* Click always opens the view-only zoomed preview popup —
+                 * for everyone, including privileged users (e.g. when
+                 * "allow all players to change settings" is on). The
+                 * popup's "Choose map" button opens the chooser. */
+                if (popupCompressedData) {
                     mapPreviewPopupOnClick(popupCompressedData, popupCompressedLen,
                                            mapBounds.minX, mapBounds.minY,
                                            mapBounds.maxX, mapBounds.maxY);
@@ -6873,9 +6868,14 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                  & PLAYER_FLAG_ADMIN));
             bool effHostMap = isHostLocal || isAdminLocal ||
                               (cs && clientSimGetLobbyOpenHost(cs));
-            mapPreviewPopupSetShowChange(effHostMap);
+            /* Only offer "Choose map" in the popup when the user may
+             * actually change it — same gate as the inline Choose Map
+             * button (hidden when the server pins the map). */
+            bool mapChangeAllowed = effHostMap &&
+                !(cs && (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP));
+            mapPreviewPopupSetShowChange(mapChangeAllowed);
             mapPreviewPopupRenderModal(renderer);
-            if (mapPreviewPopupConsumeChangeRequest() && effHostMap) {
+            if (mapPreviewPopupConsumeChangeRequest() && mapChangeAllowed) {
                 lobbyChooseMapOpen(cs, renderer);
             }
         }
