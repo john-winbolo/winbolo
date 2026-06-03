@@ -78,6 +78,8 @@ void screenTanksPrepare(ClientSim *cs, screenTanks *value, tank *tnk, BYTE leftP
   char playerName[PLAYER_NAME_LEN] = "\0"; /* Player Name */
   BYTE x; /* X and Y map pos of it */
   BYTE y;
+  BYTE px;
+  BYTE py;
   BYTE count; /* Looping variable */
 
   for (count=0;count<MAX_TANKS;count++) {
@@ -87,13 +89,15 @@ void screenTanksPrepare(ClientSim *cs, screenTanks *value, tank *tnk, BYTE leftP
 
   x = tankGetScreenMX(tnk);
   y = tankGetScreenMY(tnk);
+  px = tankGetScreenPX(tnk);
+  py = tankGetScreenPY(tnk);
 
   if (x >= leftPos && x <= rightPos && y >= top && y <= bottom) {
     (*value).numTanksScreen = 1;
     (*value).pos[0].mx = x - leftPos;
     (*value).pos[0].my = y - top;
-    (*value).pos[0].px = tankGetScreenPX(tnk);
-    (*value).pos[0].py = tankGetScreenPY(tnk);
+    (*value).pos[0].px = px;
+    (*value).pos[0].py = py;
     (*value).pos[0].frame = tankGetFrame(tnk);
     (*value).pos[0].playerNum = clientSimGetMyPlayerNum(cs);
     /* Get the tanks names */

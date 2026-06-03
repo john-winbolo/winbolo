@@ -435,6 +435,11 @@ labelLen     clientSimGetLabelTankLabel(const ClientSim *cs);
 BYTE           clientSimGetMyPlayerNum(const ClientSim *cs);
 BYTE           clientSimGetXOffset(const ClientSim *cs);
 BYTE           clientSimGetYOffset(const ClientSim *cs);
+/* Sub-tile view offset in 1/256-tile units (0..255). Renderer adds this
+ * as a sub-pixel drag offset so the view glides across tile boundaries
+ * instead of snapping each tile shift. */
+int            clientSimGetSubPosX(const ClientSim *cs);
+int            clientSimGetSubPosY(const ClientSim *cs);
 BYTE           clientSimGetPillViewX(const ClientSim *cs);
 BYTE           clientSimGetPillViewY(const ClientSim *cs);
 BYTE           clientSimGetPendingBuildAction(const ClientSim *cs);

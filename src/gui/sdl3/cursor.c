@@ -16,6 +16,7 @@
 /* SDL3 must come before bolo headers (#pragma pack guard) */
 #include <SDL3/SDL.h>
 
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include "global.h"
@@ -121,30 +122,82 @@ void cursorMove(int mouseX, int mouseY) {
 *  If it is, xValue and yValue are filled with the map
 *  tile coordinates (1-based). Otherwise they are set
 *  to 0.
+*
+*  The result must reflect both the latest mouse position
+*  and the current sub-tile view offset, so this recomputes
+*  on every call rather than caching by mouse-pos alone —
+*  subPosX/Y change every tick while autoscroll is active,
+*  and a cached column would drift left of the rendered
+*  cursor square as the world scrolls under a stationary
+*  mouse.
 *********************************************************/
-bool cursorPos(RECT *rcWindow, BYTE *xValue, BYTE *yValue) {
+/* DEBUG: per-call cursor decision log. Captures the inputs (mx, my,
+ * subPos, zoom) and outputs (xPos, yPos, col, row) so we can correlate
+ * "cursor jumped to a wrong tile" reports with the math that produced
+ * the jump. Logs only when the column/row CHANGES so the file stays
+ * small. Remove once cursor behavior is locked in. */
+/* Debug file logging. Off for shipping builds — flip to 1 to re-enable
+ * the cursor.log trace. When 0 no file is opened or written. */
+#define WB_DEBUG_FILE_LOG 0
+
+static FILE *gCursorLog = NULL;
+static bool  gCursorLogTried = false;
+static BYTE  gCursorLogLastCol = 0xFF, gCursorLogLastRow = 0xFF;
+static int   gCursorLogEntries = 0;
+
+static void cursorLog(const char *fmt, ...) {
+  if (!WB_DEBUG_FILE_LOG) return;
+  if (gCursorLogEntries >= 2000) return;
+  if (!gCursorLog && !gCursorLogTried) {
+    gCursorLogTried = true;
+    gCursorLog = fopen("cursor.log", "a");
+    if (gCursorLog) {
+      fprintf(gCursorLog, "--- cursor session start ---\n");
+      fflush(gCursorLog);
+    }
+  }
+  if (!gCursorLog) return;
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(gCursorLog, fmt, ap);
+  va_end(ap);
+  fflush(gCursorLog);
+  gCursorLogEntries++;
+}
+
+bool cursorPos(RECT *rcWindow, BYTE *xValue, BYTE *yValue,
+               int subPosX, int subPosY) {
   (void)rcWindow; /* SDL3 uses window-relative coords from SDL_GetMouseState */
-  static float oldX = -1.0f;
-  static float oldY = -1.0f;
 
   if (cursorInMainView) {
-    /* Use cached transformed game coordinates instead of SDL_GetMouseState,
-       which returns raw window coords and doesn't account for scaling. */
     float mx = gCachedMouseX;
     float my = gCachedMouseY;
-    if (mx != oldX || my != oldY) {
-      oldX = mx;
-      oldY = my;
-      int zf   = sdl3DrawGetZoomFactor();
-      int xPos = (int)mx - (zf * MAIN_OFFSET_X);
-      int yPos = (int)my - (zf * MAIN_OFFSET_Y);
-      div_t dx = div(xPos, zf * (MAIN_SCREEN_SIZE_X + 1));
-      div_t dy = div(yPos, zf * (MAIN_SCREEN_SIZE_Y + 1));
-      *xValue = (BYTE)(dx.quot + 1);
-      *yValue = (BYTE)(dy.quot + 1);
-      if (*xValue > MAIN_SCREEN_SIZE_X || *yValue > MAIN_SCREEN_SIZE_Y) {
-        return false;
-      }
+    int zf    = sdl3DrawGetZoomFactor();
+    int tileW = zf * TILE_SIZE_X;
+    int tileH = zf * TILE_SIZE_Y;
+    int xPos  = (int)mx - (zf * MAIN_OFFSET_X);
+    int yPos  = (int)my - (zf * MAIN_OFFSET_Y);
+    int edgePxX = subPosX * tileW / 256;
+    int edgePxY = subPosY * tileH / 256;
+    xPos += edgePxX;
+    yPos += edgePxY;
+    div_t dx = div(xPos, tileW);
+    div_t dy = div(yPos, tileH);
+    *xValue = (BYTE)(dx.quot + 1);
+    *yValue = (BYTE)(dy.quot + 1);
+    if (*xValue > MAIN_SCREEN_SIZE_X || *yValue > MAIN_SCREEN_SIZE_Y) {
+      cursorLog("[cur] OUT_OF_RANGE mx=%.1f my=%.1f zf=%d xPos=%d yPos=%d col=%u row=%u\n",
+                (double)mx, (double)my, zf, xPos, yPos,
+                (unsigned)*xValue, (unsigned)*yValue);
+      return false;
+    }
+    if (*xValue != gCursorLogLastCol || *yValue != gCursorLogLastRow) {
+      cursorLog("[cur] mx=%.1f my=%.1f zf=%d xPos=%d yPos=%d -> col=%u row=%u (was %u,%u)\n",
+                (double)mx, (double)my, zf, xPos, yPos,
+                (unsigned)*xValue, (unsigned)*yValue,
+                (unsigned)gCursorLogLastCol, (unsigned)gCursorLogLastRow);
+      gCursorLogLastCol = *xValue;
+      gCursorLogLastRow = *yValue;
     }
   } else {
     *xValue = 0;
@@ -194,6 +247,32 @@ void cursorSetPos(RECT rcWindow, BYTE xValue, BYTE yValue) {
   float x = (float)((xValue - 1) * zf * TILE_SIZE_X + zf * MAIN_OFFSET_X + MIDDLE_PIXEL);
   float y = (float)((yValue - 1) * zf * TILE_SIZE_Y + zf * MAIN_OFFSET_Y + MIDDLE_PIXEL);
   SDL_WarpMouseInWindow(sdl3DrawGetWindow(), x, y);
+}
+
+/*********************************************************
+*NAME:          cursorApplyScrollDelta
+*PURPOSE:
+*  Sub-pixel scroll-tracking warp. Called once per render
+*  frame with the pixel delta the view scrolled (sum of
+*  whole-tile xOffset bumps and sub-tile autoscroll ease,
+*  in main-view pixels). Shifts both the cached game-coord
+*  mouse position and the OS cursor by the same delta so
+*  the mouse stays over the same world tile while the map
+*  slides beneath it. Pairs with the subPos correction in
+*  cursorPos: warp keeps the OS cursor and gCachedMouseX
+*  in sync with the new world position; subPos correction
+*  then computes the same tile cell every frame.
+*********************************************************/
+void cursorApplyScrollDelta(int dpx, int dpy) {
+  if (!cursorInMainView) return;
+  if (dpx == 0 && dpy == 0) return;
+  gCachedMouseX -= (float)dpx;
+  gCachedMouseY -= (float)dpy;
+  float mx, my;
+  SDL_GetMouseState(&mx, &my);
+  mx -= (float)dpx;
+  my -= (float)dpy;
+  SDL_WarpMouseInWindow(sdl3DrawGetWindow(), mx, my);
 }
 
 /*********************************************************
