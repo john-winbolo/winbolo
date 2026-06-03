@@ -259,19 +259,10 @@ void serverInstanceTick(ServerSim *sim) {
     Uint64 simEnd = SDL_GetPerformanceCounter();
     /* If game ended during this tick, publish game-over events */
     if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
-      if (sim->lobbyEnabled) {
-        if (serverSimConsumeSuppressNextWinMessage(sim)) {
-          /* Vote-driven game end already announced itself. */
-          sim->pendingWinMessage[0] = '\0';
-        } else {
-          /* Capture win message now while game state is intact;
-           * it will be sent after players return to the lobby. */
-          serverSimBuildWinMessage(sim,
-                                   sim->pendingWinMessage,
-                                   sizeof(sim->pendingWinMessage));
-        }
-        serverSimSendWbnWinEvents(sim);
-      }
+      /* Decide the win/exit message and WBN crediting. The policy lives in
+       * the sim core (serverSimResolveGameOver) so the dedicated server and
+       * the in-process SP/host both resolve a game over identically. */
+      serverSimResolveGameOver(sim);
       {
         ControlEvent phaseEvt;
         ControlEvent overEvt;

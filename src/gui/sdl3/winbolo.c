@@ -500,6 +500,14 @@ int main(int argc, char *argv[]) {
         sdl3ImguiProcessEvents(cs);
         steam_run_callbacks();
 
+        /* Keep in-game rich presence fresh — live player count, and the
+         * host's external connect address once the tracker resolves it.
+         * Throttled internally; gated to the running game so lobby/countdown
+         * frames don't stomp the lobby presence. */
+        if (cs && clientSimGetNetStatus(cs) == netRunning) {
+          gameFrontTickSteamPresenceGame(cs);
+        }
+
         /* Run game tick on main thread when timer signals */
         if (SDL_GetAtomicInt(&needsGameTick)) {
           SDL_SetAtomicInt(&needsGameTick, 0);
@@ -1408,9 +1416,10 @@ void windowSaveMap(ClientSim *cs) {
 void windowKeyPressed(ClientSim *cs, int keyCode) {
   if (keyCode == keys.kiTankView) {
     clientSimTankView(cs);
-  } else if (keyCode == keys.kiPillView) {
-    clientSimPillView(cs, 0, 0);
   }
+  /* Pill view (enter + hold-to-cycle) is handled by polling in
+   * pillViewInputStep so holding the key auto-repeats through pills;
+   * dispatching it here too would double-step on the entering press. */
 }
 
 void windowButtonAdd(int keyCode) {

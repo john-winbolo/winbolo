@@ -1090,6 +1090,7 @@ void sdl3DrawCleanup(void) {
   if (gTankBarsTex)      { SDL_DestroyTexture(gTankBarsTex);      gTankBarsTex      = NULL; }
   if (gBaseBarsTex)      { SDL_DestroyTexture(gBaseBarsTex);      gBaseBarsTex      = NULL; }
   if (gCrosshairTex)     { SDL_DestroyTexture(gCrosshairTex);     gCrosshairTex     = NULL; }
+  if (gStaticTex)        { SDL_DestroyTexture(gStaticTex);        gStaticTex        = NULL; }
   if (gGameRenderTarget) { SDL_DestroyTexture(gGameRenderTarget); gGameRenderTarget = NULL; }
   if (gTilesTex) {
     SDL_DestroyTexture(gTilesTex);
@@ -1343,8 +1344,14 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
    * into edgeX/Y as a fractional drag offset. See the comment block at
    * the top of this file. */
   if (cs != NULL) {
-    int subX    = clientSimGetSubPosX(cs);  /* 0..255, 1/256-tile units */
-    int subY    = clientSimGetSubPosY(cs);
+    /* Pill view is camera-locked on the pill and must stay exactly
+     * centred — no sub-tile drift. scrollCenterObject already zeroes
+     * subPos on entry / cycling / return-to-tank, but ignore it here
+     * too so the pill can never render a fraction of a tile off centre
+     * regardless of what subPos last held. */
+    bool inPillView = clientSimIsInPillView(cs);
+    int subX    = inPillView ? 0 : clientSimGetSubPosX(cs);  /* 0..255, 1/256-tile units */
+    int subY    = inPillView ? 0 : clientSimGetSubPosY(cs);
     int tileWpx = TILE_SIZE_X * gZoomFactor;
     int tileHpx = TILE_SIZE_Y * gZoomFactor;
     edgeX += subX * tileWpx / 256;
