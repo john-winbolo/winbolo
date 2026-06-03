@@ -4172,10 +4172,11 @@ static void gameVoteFirePass(ServerSim *sim, struct ServerGameVote *gv,
          * so clients can render their own 3/2/1 countdown.
          *
          * Budget: 7 seconds at 100Hz (each serverSimTick call). */
-        publishServerMessage(sim, "*** Returning to the lobby. ***");
         /* A player-initiated vote leaves a line in the returning lobby
-         * explaining why the round ended. Base-monopoly auto-votes keep
-         * their existing winner reporting and don't add this line. */
+         * explaining why the round ended (no in-game newswire line —
+         * clients already render the 3/2/1 countdown). Base-monopoly
+         * auto-votes keep their existing winner reporting and don't add
+         * this line. */
         if (gv->triggerSrc == GAME_VOTE_TRIGGER_MANUAL) {
             sim->returnToLobbyByVote = true;
         }
