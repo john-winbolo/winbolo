@@ -2088,6 +2088,7 @@ set(MAPEDITOR_SOURCES
     src/server/server_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialogs/imgui_nav_outline.cpp
     src/third_party/stb/stb_image_write_impl.c
     src/mapeditor/mapeditor_main.c
     src/braintest/braintest_frontend.c

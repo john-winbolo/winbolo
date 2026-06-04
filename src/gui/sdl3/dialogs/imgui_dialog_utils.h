@@ -587,6 +587,7 @@ static inline void dialogRestorePosition(SDL_Window *win) {
  * Call AFTER ImGui_ImplSDL3_ProcessEvent so ImGui still sees the raw
  * gamepad event (it polls button state, not the event, but be safe). */
 extern "C" bool dialogNavIsInsideSubRegion(void);  /* imgui_nav_outline.cpp */
+extern "C" bool dialogNavWasInsideSubRegionAtFrameStart(void);  /* imgui_nav_outline.cpp */
 static inline bool dialogHandleGamepadCancelEvent(SDL_Window *window, SDL_Event *ev) {
     if (!ev || !window) return false;
     if (ev->type != SDL_EVENT_GAMEPAD_BUTTON_DOWN) return false;

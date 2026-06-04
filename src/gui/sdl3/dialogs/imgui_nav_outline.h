@@ -36,6 +36,16 @@ void dialogDrawNavOutline(void);
  * ImGui's NavCancel instead of closing the dialog. */
 bool dialogNavIsInsideSubRegion(void);
 
+/* Same predicate, but the value as of the START of the current frame,
+ * before ImGui's NavUpdate may have popped a sub-region this frame.
+ * The SDL gamepad B path checks at event time (pre-pop); the keyboard /
+ * Steam Input Escape path runs during render (post-pop), so it must use
+ * this to avoid an off-by-one where one B press both pops the last
+ * sub-region AND closes the dialog — leaving no resting step at the top
+ * level to navigate to the footer buttons.  Snapshot is promoted once
+ * per frame; call dialogNavIsInsideSubRegion() for the live value. */
+bool dialogNavWasInsideSubRegionAtFrameStart(void);
+
 #ifdef __cplusplus
 }
 #endif

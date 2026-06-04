@@ -116,7 +116,7 @@ bool CancelKeyPressed() {
        Steam launch, where the pad is hidden from SDL and B arrives as an
        injected Escape.  Ctrl+W / Cmd+. stay explicit close shortcuts and
        still close from anywhere. */
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !dialogNavIsInsideSubRegion()) return true;
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !dialogNavWasInsideSubRegionAtFrameStart()) return true;
     if (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN()) return true;
 #ifdef __APPLE__
     if (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper) return true;

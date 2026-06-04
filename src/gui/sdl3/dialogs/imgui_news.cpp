@@ -438,7 +438,7 @@ static void renderNewsModal(void) {
        ImGui's NavCancel rather than closing the whole popup — matches the
        dialog footer / lobby cancel paths for controller nav. */
     bool escClosed    = ImGui::IsKeyPressed(ImGuiKey_Escape) &&
-                        !dialogNavIsInsideSubRegion();
+                        !dialogNavWasInsideSubRegionAtFrameStart();
 
     bool shouldClose = !open || closeClicked || escClosed;
     if (shouldClose) {

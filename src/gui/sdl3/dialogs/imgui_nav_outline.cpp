@@ -15,9 +15,26 @@
 #include "imgui_internal.h"
 #include "imgui_nav_outline.h"
 
+/* Promoted once per frame from dialogDrawNavOutline (called near end of
+   frame, after the widgets' CancelKeyPressed checks).  So a read during
+   the next frame's rendering returns the prior frame's end state, which
+   is this frame's pre-NavUpdate (pre-pop) value. */
+static bool s_navInsideSubRegionPrevFrame = false;
+static bool s_navInsideSubRegionThisFrame = false;
+
+extern "C" bool dialogNavWasInsideSubRegionAtFrameStart(void) {
+    return s_navInsideSubRegionPrevFrame;
+}
+
 extern "C" void dialogDrawNavOutline(void) {
     ImGuiContext *g = ImGui::GetCurrentContext();
     if (!g) return;
+
+    /* Promote the sub-region snapshot before any early-out below so the
+       pre-pop value stays current every frame regardless of nav state. */
+    s_navInsideSubRegionPrevFrame = s_navInsideSubRegionThisFrame;
+    s_navInsideSubRegionThisFrame = dialogNavIsInsideSubRegion();
+
     if (g->NavId == 0) return;
     if (!g->NavCursorVisible) return;
     ImGuiWindow *win = g->NavWindow;
