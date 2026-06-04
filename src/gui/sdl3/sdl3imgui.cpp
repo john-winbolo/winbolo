@@ -2102,7 +2102,12 @@ static void renderSettingsPanel(ClientSim *cs) {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     } else {
-        ImGui::SetNextWindowSize(ImVec2(460, 580), ImGuiCond_FirstUseEver);
+        /* Scale the panel with the Deck font/layout multiplier — the
+           font and style sizes are bumped 1.5x there, so a fixed 460px
+           window clips the wider translated labels and combos. */
+        const float deckMul = dialogDeckFontMul();
+        ImGui::SetNextWindowSize(ImVec2(520 * deckMul, 580 * deckMul),
+                                 ImGuiCond_FirstUseEver);
     }
     bool *pOpen = uiModeIsTablet() ? nullptr : &s_showSettings;
     ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
@@ -3897,13 +3902,22 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
        Regular ImGui windows (Settings, Players, Send Message, etc.)
        aren't auto-closed by anything, so handle them here.  Skipped
        while a popup is on the stack or a text input is active — those
-       want B for popup-close / clear-text first. */
+       want B for popup-close / clear-text first.
+
+       Accept both the SDL gamepad B (desktop pad) and Escape: on a
+       Steam launch Steam Input grabs the physical pad and hides it from
+       SDL, so B never arrives as ImGuiKey_GamepadFaceRight — it's
+       injected as Escape by imguiSteamNavFeedCurrentContext (and the
+       keyboard Escape lands the same way).  Without the Escape branch
+       these panels can't be closed with B on the Deck. */
     {
         ImGuiContext *ctx = ImGui::GetCurrentContext();
         bool anyPopup = (ctx && ctx->OpenPopupStack.Size > 0);
-        if (inputGamepadIsConnected() && !anyPopup &&
-            !ImGui::GetIO().WantTextInput &&
-            ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+        bool cancelEdge =
+            (inputGamepadIsConnected() &&
+             ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+        if (cancelEdge && !anyPopup && !ImGui::GetIO().WantTextInput) {
             if      (s_showSettings)       s_showSettings = false;
             else if (s_showSendMsg)        s_showSendMsg = false;
             else if (s_showPlayersPanel)   s_showPlayersPanel = false;
