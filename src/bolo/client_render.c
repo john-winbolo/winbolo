@@ -86,6 +86,12 @@ bool clientRenderCanScroll(ClientSim *csPtr, updateType value) {
   int xOff, yOff;
 
   if (MY_TANK(csPtr) == NULL) return FALSE;
+  /* ENHANCED is the stock GitHub-main behaviour: the smooth-scroll edge
+   * block did not exist there, so always permit and let clientRenderFrame's
+   * own manualScrollKeepsTankOnScreen handle the edge. Keeping this gate
+   * mechanism-scoped means SCROLL_MECHANISM_DEFAULT is the single toggle
+   * back to main. */
+  if (scrollGetMechanism() == SCROLL_MECH_ENHANCED) return TRUE;
   if (clientSimIsInPillView(csPtr)) return TRUE; /* pill view scrolls freely */
 
   xOff = (int)clientSimGetXOffset(csPtr);
