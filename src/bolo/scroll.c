@@ -269,69 +269,66 @@ void scrollCenterObject(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE object
   ss->initialized = FALSE;
 }
 
-/* Classic WinBolo autoscroll, stripped to the core (first-commit
- * behaviour minus the enemy-awareness + sticky passes): gunsight-edge
- * tile-burst scroll + hard on-screen clamp. Integer-tile only — no
- * sub-tile smoothing (subPos forced 0). */
+/* Classic WinBolo autoscroll — STARTING POINT.
+ *
+ * Seeded as an exact copy of the landed no-autoscroll behaviour
+ * (manual keys handled by the dispatch; this is the auto path: the
+ * screen-edge nudge, integer-tile, no sub-tile smoothing). It is its
+ * own function so the autoscroll can be built up from here without
+ * touching the working scrollNoAutoScroll. The dispatch gates it on
+ * forward motion, same as no-autoscroll. */
 static bool scrollClassicAutoScroll(ScrollState *ss, BYTE *xValue, BYTE *yValue,
-                                    BYTE objectX, BYTE objectY,
-                                    BYTE gunsightX, BYTE gunsightY, BYTE speed) {
-  bool returnValue = FALSE;
+                                    BYTE objectX, BYTE objectY, TURNTYPE angle) {
+  bool returnValue;
+  bool leftPos;
+  bool rightPos;
+  bool upPos;
+  bool downPos;
 
-  if (ss->scrollX == 0 && ss->scrollY == 0) {
-    /* Start a scroll burst when the gunsight runs off a screen edge. */
-    if (((gunsightX - 1) - (*xValue)) >= MAIN_SCREEN_SIZE_X) {
-      ss->scrollX = (BYTE)(speed / SCROLL_DIVIDE);
-      if (ss->scrollX == 0) ss->scrollX = 1;
-      ss->xPositive = TRUE;
-    }
-    if ((gunsightX) < (*xValue)) {
-      ss->scrollX = (BYTE)(speed / SCROLL_DIVIDE);
-      if (ss->scrollX == 0) ss->scrollX = 1;
-      ss->xPositive = FALSE;
-    }
-    if (((gunsightY - 1) - (*yValue)) >= MAIN_SCREEN_SIZE_Y) {
-      ss->scrollY = (BYTE)(speed / SCROLL_DIVIDE);
-      if (ss->scrollY == 0) ss->scrollY = 1;
-      ss->yPositive = TRUE;
-    }
-    if (gunsightY < (*yValue)) {
-      ss->scrollY = (BYTE)(speed / SCROLL_DIVIDE);
-      if (ss->scrollY == 0) ss->scrollY = 1;
-      ss->yPositive = FALSE;
-    }
-  }
-
-  if (ss->scrollX > 0) {
-    returnValue = TRUE;
-    ss->scrollX--;
-    if (ss->xPositive == TRUE) { (*xValue)++; } else { (*xValue)--; }
-  }
-  if (ss->scrollY > 0) {
-    returnValue = TRUE;
-    ss->scrollY--;
-    if (ss->yPositive == TRUE) { (*yValue)++; } else { (*yValue)--; }
-  }
-
-  /* Hard safety: the tank must always be on screen. */
-  if (objectX <= (*xValue)) {
-    *xValue = objectX - 1;
-    if (ss->xPositive == FALSE) ss->scrollX = 0;
-  } else if ((int)objectX >= (int)(*xValue) + MAIN_SCREEN_SIZE_X) {
-    *xValue = objectX - MAIN_SCREEN_SIZE_X + 1;
-    if (ss->xPositive == TRUE) ss->scrollX = 0;
-  }
-  if (objectY <= (*yValue)) {
-    *yValue = objectY - 1;
-    if (ss->yPositive == FALSE) ss->scrollY = 0;
-  } else if ((int)objectY >= (int)(*yValue) + MAIN_SCREEN_SIZE_Y) {
-    *yValue = objectY - MAIN_SCREEN_SIZE_Y + 1;
-    if (ss->yPositive == TRUE) ss->scrollY = 0;
-  }
-
-  /* Classic = integer tiles, no sub-tile smoothing. */
+  leftPos = FALSE;
+  rightPos = FALSE;
+  upPos = FALSE;
+  downPos = FALSE;
+  returnValue = FALSE;
   ss->subPosX = 0;
   ss->subPosY = 0;
+
+  if (angle >= BRADIANS_SSWEST && angle <= BRADIANS_NNWEST) {
+    rightPos = TRUE;
+  }
+  if (angle >= BRADIANS_NNEAST && angle <= BRADIANS_SSEAST) {
+    leftPos = TRUE;
+  }
+  if (angle >= BRADIANS_SEASTE  && angle <= BRADIANS_SWESTW) {
+    downPos = TRUE;
+  }
+  if (angle <= BRADIANS_NEASTE || angle >= BRADIANS_NWESTW) {
+    upPos = TRUE;
+  }
+
+  if ((objectX - (*xValue)) >= (MAIN_SCREEN_SIZE_X-NO_SCROLL_EDGE) && leftPos == TRUE) {
+    (*xValue)++;
+    returnValue = TRUE;
+  }
+  if ((objectX-1) < (*xValue)+NO_SCROLL_EDGE && rightPos == TRUE) {
+    (*xValue)--;
+    returnValue = TRUE;
+  }
+  if ((objectY - (*yValue)) >= (MAIN_SCREEN_SIZE_Y-NO_SCROLL_EDGE) && downPos == TRUE) {
+    (*yValue)++;
+    returnValue = TRUE;
+  }
+  if (objectY <= (*yValue)+NO_SCROLL_EDGE && upPos == TRUE) {
+   (*yValue)--;
+   returnValue = TRUE;
+  }
+  if (ss->mods == TRUE && returnValue == TRUE) {
+    ss->mods = FALSE;
+  }
+  if (returnValue == TRUE) {
+    ss->autoScrollOverRide = FALSE;
+  }
+
   return returnValue;
 }
 
@@ -356,14 +353,15 @@ bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYT
       returnValue = FALSE;
     }
   } else if (g_scrollMechanism == SCROLL_MECH_CLASSIC_AUTOSCROLL) {
-    /* Classic gunsight-edge autoscroll. */
+    /* Classic autoscroll — starts as a copy of the landed no-autoscroll
+     * behaviour (manual keys + forward-motion edge nudge, parked = no
+     * fight). Build the autoscroll up from scrollClassicAutoScroll. */
     if (manual == TRUE) {
       returnValue = scrollManual(ss, xValue, yValue, objectX, objectY, angle);
-    } else if (isTank == TRUE && armour <= TANK_FULL_ARMOUR) {
-      returnValue = scrollClassicAutoScroll(ss, xValue, yValue, objectX, objectY,
-                                            gunsightX, gunsightY, speed);
+    } else if (speed > 0) {
+      returnValue = scrollClassicAutoScroll(ss, xValue, yValue, objectX, objectY, angle);
     } else {
-      returnValue = scrollNoAutoScroll(ss, xValue, yValue, objectX, objectY, angle);
+      returnValue = FALSE;
     }
   } else {
     /* SCROLL_MECH_ENHANCED — John's current sub-tile / threat-aware path. */
