@@ -23,10 +23,22 @@ extern "C" {
    pointer compare per call. */
 static const char *s_steam_input_current_set = nullptr;
 
+/* Edge-latch arming for the Accept/Cancel keys — see latchedPress() and
+   imguiSteamNavFeedCurrentContext() for the rationale.  Disarmed = the
+   button must be released before it can fire again. */
+static bool s_acceptArmed = true;
+static bool s_cancelArmed = true;
+
 static void activate_set(const char *desired) {
     if (desired != s_steam_input_current_set) {
         steam_input_activate_action_set(desired);
         s_steam_input_current_set = desired;
+        /* The same physical button maps to different actions per set
+           (A is Fire in InGame, Accept in Menu), so a button held across
+           a set switch must not read as a fresh menu press.  Force a
+           release-before-fire on both activating keys. */
+        s_acceptArmed = false;
+        s_cancelArmed = false;
     }
 }
 
@@ -36,6 +48,25 @@ extern "C" void imguiSteamNavActivateMenuSet(void) {
 
 extern "C" void imguiSteamNavActivateGameSet(void) {
     activate_set(SI_SET_IN_GAME);
+}
+
+/* Accept/Cancel are edge-latched globally (one shared state across every
+   ImGui context the feed serves): they emit a key-down only on a fresh
+   press after a release, never while the button stays held.  Without
+   this, the press that activates a menu item (e.g. selecting Single
+   Player) is still physically held when the next dialog opens in its own
+   ImGui context — which starts with fresh key state, reads the held
+   button as a brand-new press, and instantly activates that dialog's
+   default-focused item (the top-left Back button → "return to menu?").
+   Single-player surfaced it because its lobby opens with no network
+   delay, so the button is still down on the first frame.  Directional
+   nav is left continuous so hold-to-repeat still scrolls lists.  The
+   arming state lives up by activate_set so a set switch can also disarm
+   it (a held Fire button must not read as Accept in the Menu set). */
+static bool latchedPress(bool pressed, bool *armed) {
+    bool emit = pressed && *armed;
+    *armed = !pressed;   /* re-arm only once the button is released */
+    return emit;
 }
 
 extern "C" void imguiSteamNavFeedCurrentContext(void) {
@@ -59,9 +90,11 @@ extern "C" void imguiSteamNavFeedCurrentContext(void) {
        every dialog and the main context set — so these always take. */
     ImGuiIO &io = ImGui::GetIO();
     io.AddKeyEvent(ImGuiKey_Space,
-                   steam_input_is_action_pressed(SI_ACTION_MENU_ACCEPT));
+                   latchedPress(steam_input_is_action_pressed(SI_ACTION_MENU_ACCEPT),
+                                &s_acceptArmed));
     io.AddKeyEvent(ImGuiKey_Escape,
-                   steam_input_is_action_pressed(SI_ACTION_MENU_CANCEL));
+                   latchedPress(steam_input_is_action_pressed(SI_ACTION_MENU_CANCEL),
+                                &s_cancelArmed));
     io.AddKeyEvent(ImGuiKey_UpArrow,
                    steam_input_is_action_pressed(SI_ACTION_MENU_NAV_UP));
     io.AddKeyEvent(ImGuiKey_DownArrow,
